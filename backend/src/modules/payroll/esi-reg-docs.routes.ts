@@ -227,7 +227,21 @@ esiRegDocsRouter.get(
       whereParts.push("e.branch_id = ?");
       params.push(branchId);
     }
-    if (search) {
+    // Date of joining range (YYYY-MM-DD, either end optional).
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    const dateFrom = String(req.query.date_from ?? "");
+    const dateTo = String(req.query.date_to ?? "");
+    if (dateRe.test(dateFrom)) { whereParts.push("e.date_of_joining >= ?"); params.push(dateFrom); }
+    if (dateRe.test(dateTo)) { whereParts.push("e.date_of_joining <= ?"); params.push(dateTo); }
+
+    // Several employee codes pasted (space / comma / semicolon / newline
+    // separated) → exact match on all of them. A single term keeps the old
+    // code-or-name LIKE behaviour.
+    const searchTokens = (search ?? "").split(/[\s,;]+/).filter(Boolean).slice(0, 200);
+    if (searchTokens.length > 1) {
+      whereParts.push(`e.employee_code IN (${searchTokens.map(() => "?").join(",")})`);
+      params.push(...searchTokens);
+    } else if (search) {
       whereParts.push(
         "(e.employee_code LIKE ? OR CONCAT(e.first_name,' ',e.last_name) LIKE ?)",
       );
@@ -1082,6 +1096,10 @@ esiRegDocsRouter.get(
     if (branchId) {
       whereParts.push("e.branch_id = ?");
       params.push(branchId);
+    }
+    for (const [col, op, key] of [["date_of_joining", ">=", "date_from"], ["date_of_joining", "<=", "date_to"]] as const) {
+      const v = String(req.query[key] ?? "");
+      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) { whereParts.push(`e.${col} ${op} ?`); params.push(v); }
     }
 
     // All ESI Form 1 fields in the same sequence used to fill the ESIC portal,

@@ -39,13 +39,15 @@ interface ListResponse {
   limit: number;
 }
 
-function useEsiList(params: { search: string; branchId: string; page: number }) {
+function useEsiList(params: { search: string; branchId: string; page: number; dateFrom: string; dateTo: string }) {
   return useQuery<ListResponse>({
     queryKey: ["esi-reg-docs", params],
     queryFn: () => {
-      const qs = new URLSearchParams({ page: String(params.page), limit: "50" });
+      const qs = new URLSearchParams({ page: String(params.page), limit: params.search.trim().split(/[\s,;]+/).length > 1 ? "200" : "50" });
       if (params.search) qs.set("search", params.search);
       if (params.branchId) qs.set("branch_id", params.branchId);
+      if (params.dateFrom) qs.set("date_from", params.dateFrom);
+      if (params.dateTo) qs.set("date_to", params.dateTo);
       return hrmsApi.get<ListResponse>(`/api/payroll/esi-reg-docs?${qs}`);
     },
     staleTime: 30_000,
@@ -667,12 +669,19 @@ export default function EsiRegDocsTab() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [branchId, setBranchId] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [docs, setDocsState] = useState<Set<DocKey>>(loadDocs);
   const setDocs = (next: Set<DocKey>) => {
     setDocsState(next);
     try { localStorage.setItem(DOCS_STORAGE_KEY, JSON.stringify([...next])); } catch { /* per-viewer convenience only */ }
   };
   const docsParam = [...docs].join(",");
+  // Pasted list of employee codes → report the ones that are not in this queue.
+  const pastedCodes = useMemo(() => {
+    const t = search.trim().split(/[\s,;]+/).filter(Boolean);
+    return t.length > 1 ? Array.from(new Set(t)) : [];
+  }, [search]);
   const [page] = useState(1);
   const branches = useBranches().data ?? [];
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -681,8 +690,14 @@ export default function EsiRegDocsTab() {
   const [bulkDownloading, setBulkDownloading] = useState(false);
   const [reminding, setReminding] = useState(false);
 
-  const { data, isLoading } = useEsiList({ search, branchId, page });
+  const { data, isLoading } = useEsiList({ search, branchId, page, dateFrom, dateTo });
   const employees = data?.employees ?? [];
+  const notFoundCodes = useMemo(() => {
+    if (!pastedCodes.length || !data) return [];
+    const have = new Set(employees.map((e) => e.emp_code.toLowerCase()));
+    return pastedCodes.filter((c) => !have.has(c.toLowerCase()));
+  }, [pastedCodes, data, employees]);
+  const [zipProgress, setZipProgress] = useState<string | null>(null);
 
   const allSelected = useMemo(
     () => employees.length > 0 && selected.size === employees.length,
@@ -753,6 +768,25 @@ export default function EsiRegDocsTab() {
     }
   }
 
+  /** One ZIP per selected employee, downloaded one after another. */
+  async function downloadSeparate() {
+    const list = employees.filter((e) => selected.has(e.employee_id));
+    if (list.length === 0 || docs.size === 0) return;
+    for (let i = 0; i < list.length; i++) {
+      const emp = list[i];
+      setZipProgress(`${i + 1}/${list.length}`);
+      try {
+        const blob = await hrmsApi.getBlob(`/api/payroll/esi-reg-docs/${emp.employee_id}/download?docs=${docsParam}`);
+        const safeName = emp.name.replace(/[^A-Za-z0-9 _-]/g, "").trim();
+        triggerBlobDownload(blob, `${emp.emp_code} - ${safeName}.zip`);
+      } catch {
+        toast({ title: `Download failed for ${emp.emp_code}`, variant: "destructive" });
+      }
+      await new Promise((r) => setTimeout(r, 400)); // let the browser accept each download
+    }
+    setZipProgress(null);
+  }
+
   async function sendReminders() {
     if (selected.size === 0) return;
     setReminding(true);
@@ -787,7 +821,7 @@ export default function EsiRegDocsTab() {
   async function exportCsv() {
     try {
       const blob = await hrmsApi.getBlob(
-        `/api/payroll/esi-reg-docs/export-csv${branchId ? `?branch_id=${encodeURIComponent(branchId)}` : ""}`,
+        `/api/payroll/esi-reg-docs/export-csv?${new URLSearchParams({ ...(branchId ? { branch_id: branchId } : {}), ...(dateFrom ? { date_from: dateFrom } : {}), ...(dateTo ? { date_to: dateTo } : {}) })}`,
       );
       triggerBlobDownload(blob, `ESI_Reg_${new Date().toISOString().slice(0, 10)}.csv`);
     } catch {
@@ -797,7 +831,7 @@ export default function EsiRegDocsTab() {
 
   function handleUploaded(employeeId: string, patch: Partial<EsiEmployee>) {
     queryClient.setQueryData<ListResponse>(
-      ["esi-reg-docs", { search, branchId, page }],
+      ["esi-reg-docs", { search, branchId, page, dateFrom, dateTo }],
       (old) => {
         if (!old) return old;
         return {
@@ -829,6 +863,13 @@ export default function EsiRegDocsTab() {
         </div>
       </div>
 
+      {notFoundCodes.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+          {notFoundCodes.length} of {pastedCodes.length} pasted code{pastedCodes.length !== 1 ? "s" : ""} not in the pending-ESI list
+          (already registered, not ESI-eligible, other branch or inactive): {notFoundCodes.join(", ")}
+        </div>
+      )}
+
       <DocSelector docs={docs} onChange={setDocs} />
 
       {!isLoading && <KpiStrip employees={employees} total={data?.total ?? employees.length} docs={docs} />}
@@ -837,12 +878,23 @@ export default function EsiRegDocsTab() {
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <Input
-            placeholder="Search by name or emp code…"
+            placeholder="Search name / emp code — or paste many codes"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 rounded-xl border-blue-200"
           />
         </div>
+        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+          Joined
+          <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => { setDateFrom(e.target.value); setSelected(new Set()); }}
+            aria-label="Joining date from" className="h-10 rounded-xl border border-blue-200 bg-white px-2 text-sm text-slate-700" />
+          to
+          <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setDateTo(e.target.value); setSelected(new Set()); }}
+            aria-label="Joining date to" className="h-10 rounded-xl border border-blue-200 bg-white px-2 text-sm text-slate-700" />
+          {(dateFrom || dateTo) && (
+            <button type="button" className="text-blue-700 hover:underline" onClick={() => { setDateFrom(""); setDateTo(""); }}>clear</button>
+          )}
+        </label>
         <select
           value={branchId}
           onChange={(e) => { setBranchId(e.target.value); setSelected(new Set()); }}
@@ -869,6 +921,16 @@ export default function EsiRegDocsTab() {
         >
           {bulkDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
           Bulk ZIP {selected.size > 0 && `(${selected.size})`}
+        </Button>
+        <Button
+          variant="outline"
+          className="gap-2 rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+          disabled={selected.size === 0 || zipProgress !== null || docs.size === 0}
+          onClick={downloadSeparate}
+          title="Download one ZIP per selected employee"
+        >
+          {zipProgress ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+          {zipProgress ? `Zipping ${zipProgress}` : `Separate ZIPs${selected.size > 0 ? ` (${selected.size})` : ""}`}
         </Button>
         <Button
           variant="outline"

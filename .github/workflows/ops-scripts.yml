@@ -78,6 +78,7 @@ on:
           - ops-pending-audit
           - ops-pending-evidence
           - ops-pending-person
+          - esi-person-check
           - bank-manual-approve
           - digilocker-pending-diagnose
           - digilocker-sync-pending
@@ -400,6 +401,10 @@ jobs:
             digilocker-pending-diagnose)
               # Read-only in both modes: SELECTs only, codes and counts.
               npx tsx scripts/digilocker-pending-diagnose.ts
+              ;;
+            esi-person-check)
+              # Read-only: employee_codes = employee codes (space/comma separated).
+              npx tsx scripts/esi-person-check.ts "${INPUT_EMPLOYEE_CODES}"
               ;;
             ops-pending-person)
               # Read-only: employee_codes carries names or codes, comma-separated.
