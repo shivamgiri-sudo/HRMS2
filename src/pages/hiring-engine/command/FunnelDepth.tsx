@@ -9,11 +9,13 @@ import JourneyCompare from "./charts/JourneyCompare";
 import JourneyFunnel from "./charts/JourneyFunnel";
 import CampaignProgressTable from "./CampaignProgressTable";
 import FootfallPlan from "./FootfallPlan";
+import ResponseChannels from "./ResponseChannels";
 
 export function SummaryFunnelDepth({ analytics, planHref }: { analytics: DriveAnalytics; planHref?: string }) {
   return (
     <div className="space-y-4" data-funnel-depth="summary">
       <JourneyCompare analytics={analytics} />
+      <ResponseChannels analytics={analytics} />
       <div className="grid gap-4 lg:grid-cols-3">
         {SOURCE_TYPES.map((t) => <JourneyFunnel key={t} analytics={analytics} type={t} />)}
       </div>
@@ -33,6 +35,7 @@ export function DriveFunnelDepth({ analytics, type, insights, planHref, withFunn
         {withFunnel && <JourneyFunnel analytics={analytics} type={type} />}
         <FootfallPlan analytics={analytics} type={type} planHref={planHref} />
       </div>
+      <ResponseChannels analytics={analytics} only={type} />
       {insights}
       {type !== "he" && <CampaignProgressTable analytics={analytics} only={type} title="Campaign progress for this drive" />}
     </div>

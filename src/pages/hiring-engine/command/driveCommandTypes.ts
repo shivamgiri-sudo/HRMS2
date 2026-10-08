@@ -117,6 +117,9 @@ export interface CampaignProgress {
   stages: { leads: number; qualified: number; contacted: number; invited: number; confirmed: number; arrived: number; selected: number; joined: number;
     /** Absent on older servers. */ fills?: number; screened?: number; replied?: number };
 }
+// backend/src/modules/hiring-engine/he-response-stats.service.ts
+export type ConfirmVia = "email" | "web" | "whatsapp" | "voice_bot" | "call_file" | "hr" | "unknown";
+export type RateChannel = "email" | "whatsapp" | "voice_bot";
 /** People at each journey stage of one drive type (PersonStages). */
 export interface JourneyCounts { leads: number; fills: number; screened: number; qualified: number; contacted: number; invited: number; replied: number; confirmed: number; arrived: number }
 // backend/src/modules/hiring-engine/he-drive-analytics.service.ts (OpenSeats)
@@ -146,6 +149,9 @@ export interface DriveAnalytics {
   journey?: Record<SourceType, JourneyCounts> | null;
   /** Open seats per requisition in scope. Absent on older servers. */
   openSeats?: OpenSeats[];
+  /** Confirmed matches by channel and response rate per channel, per type (he-response-stats.service.ts); null when not read. Absent on older servers. */
+  confirmedByChannel?: Record<SourceType, Record<ConfirmVia, number>> | null;
+  responseRate?: Record<SourceType, Record<RateChannel, { contacted: number; responded: number }>> | null;
   requisitionCount: number;
   truncated: boolean;
   partial: boolean;

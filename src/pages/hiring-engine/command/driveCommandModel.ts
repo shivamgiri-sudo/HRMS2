@@ -262,7 +262,7 @@ const SECTION_LABEL: Record<string, string> = {
   planned: "already planned days", calibration: "calibrated show rates", readiness: "readiness checks",
   "insight:contact": "contact timing", "insight:reminders": "reminders", "insight:distance": "travel distance", "insight:channel": "message delivery",
   "insight:language": "message language", "insight:slots": "slot bookings", "insight:sources": "source comparison", "insight:plan": "planning facts",
-  "insight:tomorrow": "tomorrow's plan", "insight:streams": "stream pools",
+  "insight:tomorrow": "tomorrow's plan", "insight:streams": "stream pools", responses: "answers by channel",
 };
 export function sectionLabels(ids: readonly string[] | null | undefined): string[] {
   return [...new Set((Array.isArray(ids) ? ids : []).filter((x) => typeof x === "string" && x !== "").map((x) => SECTION_LABEL[x] ?? x))];

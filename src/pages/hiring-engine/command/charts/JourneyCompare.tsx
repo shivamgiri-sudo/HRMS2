@@ -10,6 +10,7 @@ import { useIsDark } from "../chartTheme";
 import { BTN, EmptyBlock, Note } from "./ChartFrame";
 import { download } from "./download";
 import { ShapeGlyph } from "./TypePatterns";
+import { confirmedSplit } from "../responseChannelsModel";
 import { JOURNEY_DEFINITIONS, SAMPLE_NOTE, SUBSET_NOTE, heatBucket, journeyCompare, journeyCsv, journeyCsvName, type CompareCell } from "./journeyModel";
 
 const HEAT = [
@@ -19,13 +20,14 @@ const HEAT = [
   "bg-blue-200 dark:bg-blue-800",
 ] as const;
 
-function RateCell({ c }: { c: CompareCell }) {
+/** `extra`: a second line under the count (the Confirmed row's split by channel). */
+function RateCell({ c, extra }: { c: CompareCell; extra?: string }) {
   if (c.count === null) return <td colSpan={3} className="px-2 py-2 text-center text-slate-600 dark:text-slate-300">n/a</td>;
   const b = heatBucket(c.rate);
   const Icon = c.level === "high" ? ArrowUp : c.level === "low" ? ArrowDown : null;
   return (
     <>
-      <td className="px-2 py-2 text-right font-semibold tabular-nums">{c.countText}</td>
+      <td className="px-2 py-2 text-right font-semibold tabular-nums">{c.countText}{extra && <span className="block max-w-[160px] text-[11px] font-normal text-slate-700 dark:text-slate-200" data-split>{extra}</span>}</td>
       <td className={`px-2 py-2 text-right tabular-nums ${b === null ? "" : HEAT[b]}`} data-level={c.level ?? "none"}>
         <span className="inline-flex items-center justify-end gap-1">
           {Icon && <Icon className="h-3 w-3 shrink-0" aria-hidden />}
@@ -86,7 +88,7 @@ export default function JourneyCompare({ analytics }: { analytics: DriveAnalytic
               {v.rows.map((r) => (
                 <tr key={r.key} className="border-b border-slate-100 last:border-0 dark:border-slate-800" data-compare-stage={r.key}>
                   <th scope="row" className="px-2 py-2 text-left font-semibold">{r.label}</th>
-                  {SOURCE_TYPES.map((t) => <RateCell key={t} c={r.cells[t]} />)}
+                  {SOURCE_TYPES.map((t) => <RateCell key={t} c={r.cells[t]} extra={r.key === "confirmed" ? confirmedSplit(analytics, t)?.text : undefined} />)}
                 </tr>
               ))}
             </tbody>
