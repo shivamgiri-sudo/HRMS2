@@ -10,6 +10,8 @@ import type { FollowupSwitches, RowTag } from "./qualified-followup.policy.js";
 import { maskMobile, metaErrorCode, type StopReason } from "./qualified-followup.rules.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import { collectResponsesSection, responsesLines, type ResponsesSection } from "./qualified-followup.report-responses.js";
+import { collectUnifiedReport, unifiedLines, unifiedSubject, type UnifiedReport } from "./qualified-followup.report-unified.js";
+import type { PinbotQuality } from "./qualified-followup.rules.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
 const IST_MS = 5.5 * 3600_000;
@@ -34,6 +36,8 @@ export interface DailyReportData {
   callFiles: Array<{ slot: string | null; status: string; rows: number; notFiled: number; merged: number }> | null;
   /** Candidate responses and inbound health (null = unavailable); absent = the section is not shown. */
   responses?: ResponsesSection | null;
+  /** The unified method's sections for every tag (per source, budget, multi-path, inbound, shadow); absent = not shown, old subject. */
+  unified?: UnifiedReport;
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -54,7 +58,7 @@ export function groupWaFailures(errors: Array<string | null | undefined>): Daily
   return [...by].map(([code, g]) => ({ code, ...g })).sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
 }
 
-export async function collectDailyReport(from: Date, to: Date, tag: RowTag): Promise<DailyReportData> {
+export async function collectDailyReport(from: Date, to: Date, tag: RowTag, u?: { switches: FollowupSwitches; quality: PinbotQuality | null }): Promise<DailyReportData> {
   const f = istWall(from);
   const t = istWall(to);
   const inWin = (col: string) => `${col} >= ? AND ${col} < ?`;
@@ -139,6 +143,7 @@ export async function collectDailyReport(from: Date, to: Date, tag: RowTag): Pro
     date: new Date(to.getTime() + IST_MS).toISOString().slice(0, 10), mode: tag, perSource, skipped,
     waFailuresByCode: groupWaFailures(fails.map((r) => r.wa_error)), blockedByReason, callFiles: await collectCallFiles(f, t, tag),
     responses: await collectResponsesSection(f, t, to),
+    ...(u ? { unified: await collectUnifiedReport(from, to, u.switches, u.quality) } : {}),
   };
 }
 
@@ -172,7 +177,8 @@ function callFileLines(c: DailyReportData["callFiles"]): { head: string; lines: 
 const stoppedText = (m: Partial<Record<StopReason, number>>) => Object.entries(m).map(([k, v]) => `${k} ${v}`).join(", ") || "-";
 
 export function buildDailyReport(d: DailyReportData): { subject: string; html: string; text: string } {
-  const subject = `[HRMS] Qualified follow-up daily report ${d.date} (${d.mode})`;
+  const subject = d.unified ? unifiedSubject(d.unified) : `[HRMS] Qualified follow-up daily report ${d.date} (${d.mode})`;
+  const uni = d.unified ? unifiedLines(d.unified) : null;
   const head = ["Source", "Enqueued", "Emailed", "Email failed", "WhatsApp sent", "WhatsApp failed", "Call in file", "Call queued", "Called", "Stopped"];
   const cells = (p: DailyReportData["perSource"][number]) => [p.sourceType, p.enqueued, p.emailed, p.emailFailed, p.whatsapped, p.waFailed, p.callInFile, p.callQueued, p.called, stoppedText(p.stopped)];
   const table = `<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse"><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr>${
@@ -186,9 +192,10 @@ export function buildDailyReport(d: DailyReportData): { subject: string; html: s
   const cf = callFileLines(d.callFiles);
   const cfHtml = `<p>${esc(cf.head)}</p>${cf.lines.length ? `<ul>${cf.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}`;
   const resp = d.responses === undefined ? null : responsesLines(d.responses);
-  const html = `<h3>Qualified follow-up, last 24 hours to ${esc(d.date)} 08:30 IST (${esc(d.mode)})</h3>${table}<h3>Calling files</h3>${cfHtml}<h3>Skipped</h3>${skipHtml}<h3>WhatsApp failures by Meta code</h3>${failHtml}<h3>Blocked or skipped by reason</h3>${blockedHtml}${resp?.html ?? ""}`;
+  const html = `<h3>Qualified follow-up, last 24 hours to ${esc(d.date)} 08:30 IST (${esc(d.mode)})</h3>${uni?.html ?? ""}${uni ? `<h3>Pipeline rows (${esc(d.mode)})</h3>` : ""}${table}<h3>Calling files</h3>${cfHtml}<h3>Skipped</h3>${skipHtml}<h3>WhatsApp failures by Meta code</h3>${failHtml}<h3>Blocked or skipped by reason</h3>${blockedHtml}${resp?.html ?? ""}`;
   const text = [
     `Qualified follow-up, last 24 hours to ${d.date} 08:30 IST (${d.mode})`, "",
+    ...(uni ? [...uni.text, "", `Pipeline rows (${d.mode})`] : []),
     ...d.perSource.map((p) => cells(p).map((c, i) => `${head[i]} ${c}`).join(" | ").replace(/^Source /, "")),
     "", "Calling files", cf.head, ...cf.lines,
     "", "Skipped",
@@ -203,7 +210,7 @@ export function buildDailyReport(d: DailyReportData): { subject: string; html: s
 }
 
 /** Window = the 24 hours before `now`. true = sent (or dry-run handled); false = failed, nothing lost, the worker may retry. */
-export async function runDailyReport(s: FollowupSwitches, tag: RowTag, now: Date): Promise<boolean> {
+export async function runDailyReport(s: FollowupSwitches, tag: RowTag, now: Date, quality: PinbotQuality | null = null): Promise<boolean> {
   const to = tag === "test" ? s.testEmail : s.callFileTo;
   if (tag !== "dry_run" && !to) {
     logger.error("[qualified-followup] daily report has no recipient");
@@ -211,7 +218,7 @@ export async function runDailyReport(s: FollowupSwitches, tag: RowTag, now: Date
   }
   let report: ReturnType<typeof buildDailyReport>;
   try {
-    report = buildDailyReport(await collectDailyReport(new Date(now.getTime() - 24 * 3600_000), now, tag));
+    report = buildDailyReport(await collectDailyReport(new Date(now.getTime() - 24 * 3600_000), now, tag, { switches: s, quality }));
   } catch (err) {
     logger.error({ err: scrub((err as Error)?.message).slice(0, 255) }, "[qualified-followup] daily report selection failed");
     return false;

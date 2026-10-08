@@ -46,7 +46,7 @@ export interface TickDeps {
   runStageB: (s: FollowupSwitches, tag: RowTag, now: Date, o: StepScope) => Promise<unknown>;
   runCallFileBatch: (s: FollowupSwitches, tag: RowTag, now: Date, o: { slotKey: string; config: CallFileConfig }) => Promise<CallFileResult>;
   callFileConfig: () => Promise<CallFileConfig>;
-  runDailyReport: (s: FollowupSwitches, tag: RowTag, now: Date) => Promise<boolean>;
+  runDailyReport: (s: FollowupSwitches, tag: RowTag, now: Date, quality: PinbotQuality | null) => Promise<boolean>;
   getPinbotQuality: () => Promise<PinbotQuality | null>;
 }
 
@@ -182,7 +182,8 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
     const tries = (reportAttempts.get(reportSlot) ?? 0) + 1;
     reportAttempts.set(reportSlot, tries);
     // A failed report leaves the slot open for the next tick, capped like the calling file.
-    r.report = await guarded("report", () => deps.runDailyReport(s, plan[0].tag, now), false);
+    // One report for every tag: the pipeline-row table is the first tag's, the unified sections cover all tags.
+    r.report = await guarded("report", async () => deps.runDailyReport(s, plan[0].tag, now, await deps.getPinbotQuality().catch(() => null)), false);
     if (r.report || tries >= MAX_FILE_ATTEMPTS) doneReportSlots.add(reportSlot);
     noteReport(reportSlot, r.report, tries);
   }

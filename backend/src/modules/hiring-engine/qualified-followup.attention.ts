@@ -129,6 +129,47 @@ export interface FollowupAudit {
   wa_due_at: string | null; wa_sent_at: string | null; wa_status: string | null; wa_error: string | null; wa_attempts: number; wa_template_key: string | null;
   call_due_at: string | null; call_state: string; call_error: string | null; call_attempts: number; called_at: string | null;
   stopped_reason: string | null; stopped_at: string | null;
+  /** Per-person timeline (spec 4.8): sends, replies, guard skips, stops and shadow rows, oldest first. Empty when it cannot be read. */
+  timeline: TimelineEntry[];
+}
+
+export interface TimelineEntry { at: string; kind: "sent" | "skip" | "shadow" | "reply" | "stop"; step: string; detail: string }
+
+const TIMELINE_CAP = 200;
+
+async function readSafe<T>(what: string, fn: () => Promise<T[]>): Promise<T[]> {
+  try { return await fn(); } catch (err) { logAttentionError(`timeline ${what}`, err); return []; }
+}
+
+/** Messages of the person for this requisition (and every reply), the row's skips and the person's opt-out, and the row's shadow rows. */
+export async function followupTimeline(r: { id: string; mobile10: string; requisitionId: string; heLeadId: string | null }): Promise<TimelineEntry[]> {
+  const out: TimelineEntry[] = [];
+  const msgs = await readSafe("messages", async () => (await db.execute<RowDataPacket[]>(
+    `SELECT m.created_at AS at, m.direction, m.channel, m.template_key, m.delivery_status, m.sent_by FROM he_message m
+      WHERE m.mobile10 = ? AND (m.requisition_id = ? OR m.direction = 'in') ORDER BY m.created_at LIMIT ${TIMELINE_CAP}`, [r.mobile10, r.requisitionId]))[0]);
+  for (const m of msgs) {
+    if (m.direction === "in") { out.push({ at: String(m.at), kind: "reply", step: String(m.channel ?? "whatsapp"), detail: "reply" }); continue; }
+    const by = m.sent_by === "followup" ? "follow-up" : m.sent_by ? String(m.sent_by) : "engine";
+    out.push({ at: String(m.at), kind: "sent", step: String(m.channel ?? "whatsapp"),
+      detail: scrub(`${String(m.template_key ?? "message").split(":")[0]} by ${by}${m.delivery_status ? ` (${m.delivery_status})` : ""}`) ?? "" });
+  }
+  if (r.heLeadId) {
+    const ev = await readSafe("events", async () => (await db.execute<RowDataPacket[]>(
+      `SELECT e.created_at AS at, e.event_type, e.channel, e.detail FROM he_lead_event e
+        WHERE e.lead_id = ? AND (e.event_type = 'opted_out' OR (e.event_type = 'followup_skip' AND JSON_UNQUOTE(JSON_EXTRACT(e.meta_json, '$.followupId')) = ?))
+        ORDER BY e.created_at LIMIT ${TIMELINE_CAP}`, [r.heLeadId, r.id]))[0]);
+    for (const e of ev) {
+      const detail = String(e.detail ?? "");
+      if (e.event_type === "followup_skip") {
+        const [step, ...why] = detail.split(":");
+        out.push({ at: String(e.at), kind: "skip", step: String(e.channel ?? step), detail: scrub(why.join(":") || detail) ?? "" });
+      } else out.push({ at: String(e.at), kind: "stop", step: String(e.channel ?? "system"), detail: `opted out${detail ? `: ${scrub(detail)}` : ""}` });
+    }
+  }
+  const sh = await readSafe("shadow", async () => (await db.execute<RowDataPacket[]>(
+    `SELECT s.would_at AS at, s.step, s.verdict, s.template_key FROM followup_shadow s WHERE s.followup_id = ? ORDER BY s.would_at LIMIT ${TIMELINE_CAP}`, [r.id]))[0]);
+  for (const x of sh) out.push({ at: String(x.at), kind: "shadow", step: String(x.step), detail: `${String(x.verdict)}${x.template_key ? ` ${String(x.template_key)}` : ""}` });
+  return out.map((e, i) => ({ e, i })).sort((a, b) => (a.e.at < b.e.at ? -1 : a.e.at > b.e.at ? 1 : a.i - b.i)).map(({ e }) => e);
 }
 
 const s = (v: unknown): string | null => (v == null ? null : String(v));
@@ -138,7 +179,7 @@ export async function getFollowupAudit(id: string): Promise<FollowupAudit | null
     `SELECT id, source_type, origin_id, origin_label, mode_at_enqueue, mobile10, requisition_id, qualified_at,
             email_due_at, email_sent_at, email_status, email_error, email_attempts,
             wa_due_at, wa_sent_at, wa_status, wa_error, wa_attempts, wa_template_key,
-            call_due_at, call_state, call_error, call_attempts, called_at, stopped_reason, stopped_at
+            call_due_at, call_state, call_error, call_attempts, called_at, stopped_reason, stopped_at, he_lead_id
        FROM qualified_followup WHERE id = ? LIMIT 1`, [id]);
   const r = rows[0];
   if (!r) return null;
@@ -150,6 +191,7 @@ export async function getFollowupAudit(id: string): Promise<FollowupAudit | null
     wa_due_at: s(r.wa_due_at), wa_sent_at: s(r.wa_sent_at), wa_status: s(r.wa_status), wa_error: scrub(r.wa_error), wa_attempts: Number(r.wa_attempts ?? 0), wa_template_key: s(r.wa_template_key),
     call_due_at: s(r.call_due_at), call_state: String(r.call_state), call_error: scrub(r.call_error), call_attempts: Number(r.call_attempts ?? 0), called_at: s(r.called_at),
     stopped_reason: s(r.stopped_reason), stopped_at: s(r.stopped_at),
+    timeline: await followupTimeline({ id: String(r.id), mobile10: String(r.mobile10 ?? ""), requisitionId: String(r.requisition_id), heLeadId: r.he_lead_id ? String(r.he_lead_id) : null }),
   };
 }
 

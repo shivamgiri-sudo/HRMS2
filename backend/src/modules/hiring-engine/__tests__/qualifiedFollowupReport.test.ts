@@ -161,7 +161,7 @@ describe("runDailyReport", () => {
     execute.mockResolvedValue([[]]);
     expect(await runDailyReport(readSwitches(liveEnv), "live", now)).toBe(true);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0]![0]).toMatchObject({ to: "shivam.giri@teammas.in", subject: expect.stringContaining("(live)") });
+    expect(send.mock.calls[0]![0]).toMatchObject({ to: "shivam.giri@teammas.in", subject: "Follow-up daily report 2026-10-07 — 0 enrolled, 0 sent, multi-path 0" });
   });
   it("test mode goes only to the test email", async () => {
     execute.mockResolvedValue([[]]);
