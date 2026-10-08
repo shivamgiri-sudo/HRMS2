@@ -128,12 +128,14 @@ describe("DriveCommandCenter", () => {
 });
 
 describe("campaign map placement (WS3 C4)", () => {
-  it("the Summary's always slot carries the campaign map next to the action queue; other sections do not", () => {
+  it("the section extra (campaign map on the Summary, pool bridge on Hiring Engine) sits in the always slot; Live / Old Meta have none", () => {
     const f = defaultFilters();
     const summary = renderToStaticMarkup(<>{sectionParts("summary", null, null, undefined, null, 0, f, undefined, undefined, undefined, <p>CAMPAIGN-MAP</p>).always}</>);
     expect(summary).toContain("CAMPAIGN-MAP");
-    const he = renderToStaticMarkup(<>{sectionParts("he", null, null, undefined, null, 0, f, undefined, undefined, undefined, <p>CAMPAIGN-MAP</p>).always}</>);
-    expect(he).not.toContain("CAMPAIGN-MAP");
+    const he = renderToStaticMarkup(<>{sectionParts("he", null, null, undefined, null, 0, f, undefined, undefined, undefined, <p>POOL-BRIDGE</p>).always}</>);
+    expect(he).toContain("POOL-BRIDGE");
+    const live = renderToStaticMarkup(<>{sectionParts("live", null, null, undefined, null, 0, f, undefined, undefined, undefined, <p>X-EXTRA</p>).always}</>);
+    expect(live).not.toContain("X-EXTRA");
   });
   it("the full page renders the map on the Summary (server render: loading state)", () => {
     const html = renderToStaticMarkup(<DriveCommandCenter />);

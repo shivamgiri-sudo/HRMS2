@@ -38,10 +38,12 @@ import { DriveFunnelDepth, SummaryFunnelDepth } from "./FunnelDepth";
 import CampaignMatrix from "./CampaignMatrix";
 import RelinkDialog from "./RelinkDialog";
 import { RELINK_ROLES } from "./relinkModel";
+import { BRIDGE_ROLES } from "./poolBridgeModel";
 import type { CellAction, MatrixRowData } from "./campaignMatrixModel";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
 const CriteriaSection = lazy(() => import("@/components/selection/CriteriaSection"));
+const PoolBridgeCard = lazy(() => import("./PoolBridgeCard"));
 
 const RETRY_BTN = "min-h-11 cursor-pointer rounded-lg border border-rose-400 bg-white px-3 text-sm font-semibold text-rose-800 transition-colors duration-150 hover:bg-rose-100 motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:bg-slate-900 dark:text-rose-200 dark:hover:bg-slate-800 sm:min-h-8";
 const PULSE = "animate-pulse rounded-xl border border-slate-200 bg-slate-100 motion-reduce:animate-none dark:border-slate-700 dark:bg-slate-800";
@@ -147,13 +149,13 @@ function SummaryCharts({ analytics, insights, planHref }: { analytics: DriveAnal
  * drive type inside its section (the Summary shows `insights`, all types).
  */
 export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode, followupOpen = 0, filters?: Filters, onFilters?: (f: Filters) => void,
-  typeInsights?: (t: SourceType) => ReactNode, now?: Date, matrix?: ReactNode): { gated: ReactNode; always: ReactNode } {
+  typeInsights?: (t: SourceType) => ReactNode, now?: Date, extra?: ReactNode): { gated: ReactNode; always: ReactNode } {
   const planHref = commandHash("plan", filters ?? defaultFilters());
   if (section === "summary") {
     // The action queue does not wait for analytics; DriveCommandView draws the Summary's always slot above the gated charts.
     return {
       gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} planHref={planHref} />}<FollowupPanel requisitionId={actions?.requisitionId ?? null} qualifiedTracked={analytics?.qualifiedTracked ?? null} openSignal={followupOpen} /></>,
-      always: filters || matrix ? <>{filters && <ActionQueuePanel filters={filters} />}{matrix}</> : null,
+      always: filters || extra ? <>{filters && <ActionQueuePanel filters={filters} />}{extra}</> : null,
     };
   }
   if (section === "plan") return { gated: null, always: plan ?? null }; // the Plan section loads its own data
@@ -170,10 +172,13 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
         </div>
       ),
       always: (
+        <>
+        {extra}
         <section aria-labelledby="all-drives-heading" className="space-y-2">
           <h3 id="all-drives-heading" className="text-base font-bold text-slate-900 dark:text-slate-100">All drives</h3>
           <Suspense fallback={<div className={PULSE} style={{ height: 240 }} aria-busy="true" />}><DrivesTab /></Suspense>
         </section>
+        </>
       ),
     };
   }
@@ -228,6 +233,7 @@ export default function DriveCommandCenter() {
   const [dialog, setDialog] = useState<{ kind: "extend_stream"; streamId: string } | { kind: "create_stream"; requisitionId: string; sourceType: SourceType; originId?: string | null; originLabel?: string }
     | { kind: "relink"; row: MatrixRowData } | null>(null);
   const canMap = useHasRole(...RELINK_ROLES);
+  const canBridge = useHasRole(...BRIDGE_ROLES);
   const [matrixTick, setMatrixTick] = useState(0);
   const onMatrixAction = useCallback((a: CellAction, row: MatrixRowData) => {
     if (a.kind === "map_it") setDialog({ kind: "create_stream", requisitionId: a.prefill.requisitionId, sourceType: a.prefill.sourceType, originId: a.prefill.originId, originLabel: row.campaign?.name ?? "" });
@@ -262,6 +268,8 @@ export default function DriveCommandCenter() {
   const matrix = section === "summary" ? (
     <CampaignMatrix branch={filters.branch} requisitionId={filters.requisitionId} canWrite={canMap} analytics={data ? { campaigns: data.campaigns, byRequisition: data.byRequisition } : null}
       reloadSignal={matrixTick} onAction={onMatrixAction} />
+  ) : section === "he" && canBridge ? (
+    <Suspense fallback={<div className={PULSE} style={{ height: 120 }} aria-busy="true" />}><PoolBridgeCard /></Suspense>
   ) : null;
   const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan, followupOpen, filters, (f) => go(section, f), typeInsights, undefined, matrix);
   return (
