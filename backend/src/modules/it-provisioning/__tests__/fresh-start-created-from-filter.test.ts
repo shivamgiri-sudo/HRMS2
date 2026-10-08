@@ -18,10 +18,7 @@ const mockExecute = vi.fn(async (sql: string) => {
 });
 
 vi.mock("../../../db/mysql.js", () => ({
-  db: {
-    execute: (...args: unknown[]) =>
-      mockExecute(...(args as [string, unknown[]])),
-  },
+  db: { execute: (...args: unknown[]) => mockExecute(...(args as [string, unknown[]])) },
 }));
 
 import { listProvisioningRequests } from "../it-provisioning.service.js";

@@ -4,11 +4,11 @@
  * Access: super_admin, admin, hr only
  */
 
-import { Router } from "express";
-import type { Response } from "express";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { Router } from 'express';
+import type { Response } from 'express';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import {
   getReconciliationSummary,
   getScopedProvisioningCounts,
@@ -37,15 +37,13 @@ import { buildEmployeeScopeCondition, resolveUserBusinessScope } from '../../sha
 
 const router = Router();
 import type { RoleKey } from "../../platform/policy/index.js";
-const RECONCILIATION_ROLES: RoleKey[] = ["super_admin", "admin", "hr"];
+const RECONCILIATION_ROLES: RoleKey[] = ['super_admin', 'admin', 'hr'];
 
 router.use(requireAuth);
 router.use(requireRole(...RECONCILIATION_ROLES));
 
-const h =
-  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 // Summary — all counts in one call (used by dashboard header)
 router.get('/summary', h(async (req, res) => {

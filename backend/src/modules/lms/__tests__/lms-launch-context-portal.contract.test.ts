@@ -20,14 +20,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const routeSource = readFileSync(
-  resolve(process.cwd(), "src/modules/lms/lms.routes.ts"),
-  "utf8",
-);
-const serviceSource = readFileSync(
-  resolve(process.cwd(), "src/modules/lms/lms.service.ts"),
-  "utf8",
-);
+const routeSource = readFileSync(resolve(process.cwd(), "src/modules/lms/lms.routes.ts"), "utf8");
+const serviceSource = readFileSync(resolve(process.cwd(), "src/modules/lms/lms.service.ts"), "utf8");
 
 /** Keys the service actually puts on the access object it returns. */
 function serviceAccessKeys(): string[] {
@@ -46,11 +40,8 @@ function wirePortals(): string[] {
 /** The route's portal -> access-key translation. */
 function portalAccessMap(): Record<string, string> {
   const block = routeSource.match(/PORTAL_ACCESS_KEY[^=]*=\s*\{([^}]*)\}/);
-  if (!block)
-    throw new Error("PORTAL_ACCESS_KEY map not found in lms.routes.ts");
-  return Object.fromEntries(
-    [...block[1].matchAll(/(\w+)\s*:\s*"([^"]+)"/g)].map((m) => [m[1], m[2]]),
-  );
+  if (!block) throw new Error("PORTAL_ACCESS_KEY map not found in lms.routes.ts");
+  return Object.fromEntries([...block[1].matchAll(/(\w+)\s*:\s*"([^"]+)"/g)].map((m) => [m[1], m[2]]));
 }
 
 describe("LMS /launch-context portal access resolution", () => {
@@ -67,14 +58,11 @@ describe("LMS /launch-context portal access resolution", () => {
     const keys = serviceAccessKeys();
 
     for (const portal of wirePortals()) {
-      expect(
-        map[portal],
-        `no PORTAL_ACCESS_KEY entry for portal "${portal}"`,
-      ).toBeDefined();
+      expect(map[portal], `no PORTAL_ACCESS_KEY entry for portal "${portal}"`).toBeDefined();
       expect(
         keys,
         `portal "${portal}" maps to access key "${map[portal]}", which lms.service.ts never sets — ` +
-          `the lookup would be undefined and 403 every caller`,
+          `the lookup would be undefined and 403 every caller`
       ).toContain(map[portal]);
     }
   });
@@ -85,9 +73,7 @@ describe("LMS /launch-context portal access resolution", () => {
 
   it("does not index the access object by raw portal name", () => {
     expect(routeSource).not.toMatch(/access\.access\[\s*portal\s*\]/);
-    expect(routeSource).toMatch(
-      /access\.access\[\s*PORTAL_ACCESS_KEY\[\s*portal\s*\]\s*\]/,
-    );
+    expect(routeSource).toMatch(/access\.access\[\s*PORTAL_ACCESS_KEY\[\s*portal\s*\]\s*\]/);
   });
 
   it("leaves /native/employee reading the service key directly", () => {

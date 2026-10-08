@@ -31,7 +31,7 @@ function catalogueKeys(src: string, code: string): string[] | null {
   if (i === -1) return null;
   const end = src.indexOf("\n  },", i);
   const seg = src.slice(i, end === -1 ? undefined : end);
-  return [...seg.matchAll(/key:\s*"([^"]+)"/g)].map((m) => m[1]);
+  return [...seg.matchAll(/key:\s*"([^"]+)"/g)].map(m => m[1]);
 }
 
 /** Report codes whose serving SQL emits `AS cost_centre_code`, from every layer. */
@@ -41,16 +41,11 @@ function codesEmittingCostCentre(): Set<string> {
   // Inline blocks and the high-risk router: split on the case/handler boundary and look inside.
   for (const [file, splitter] of [
     ["src/modules/reporting/report-suite.routes.ts", /(?=\n {4}case ")/],
-    [
-      "src/modules/reporting/report-suite-highrisk.routes.ts",
-      /(?=\n\w*[Rr]outer\.get\()/,
-    ],
+    ["src/modules/reporting/report-suite-highrisk.routes.ts", /(?=\n\w*[Rr]outer\.get\()/],
   ] as const) {
     const src = read(file);
     for (const part of src.split(splitter)) {
-      const m =
-        /^\n {4}case "([a-z0-9-]+)"/.exec(part) ??
-        /\.get\("\/([a-z0-9-]+)"/.exec(part);
+      const m = /^\n {4}case "([a-z0-9-]+)"/.exec(part) ?? /\.get\("\/([a-z0-9-]+)"/.exec(part);
       if (m && /AS cost_centre_code/.test(part)) out.add(m[1]);
     }
   }
@@ -59,17 +54,12 @@ function codesEmittingCostCentre(): Set<string> {
   // rather than importing it, so this stays a pure source check like its siblings.
   const indexSrc = read("src/modules/reporting/executors/index.ts");
   const dir = resolve(ROOT, "src/modules/reporting/executors");
-  for (const file of readdirSync(dir).filter((f) =>
-    f.endsWith(".executor.ts"),
-  )) {
+  for (const file of readdirSync(dir).filter(f => f.endsWith(".executor.ts"))) {
     const src = readFileSync(resolve(dir, file), "utf8");
     for (const part of src.split(/(?=\nexport async function )/)) {
       const fn = /^\nexport async function (\w+)\(/.exec(part)?.[1];
       if (!fn || !/AS cost_centre_code/.test(part)) continue;
-      for (const m of indexSrc.matchAll(
-        new RegExp(`"([a-z0-9-]+)":\\s*${fn}\\b`, "g"),
-      ))
-        out.add(m[1]);
+      for (const m of indexSrc.matchAll(new RegExp(`"([a-z0-9-]+)":\\s*${fn}\\b`, "g"))) out.add(m[1]);
     }
   }
   return out;
@@ -101,9 +91,7 @@ const NO_FRONTEND_ENTRY = new Set<string>([
 
 describe("a column the SQL emits must be declared in both catalogues", () => {
   const emitting = new Set(
-    [...codesEmittingCostCentre()].filter(
-      (c) => !EMITS_IN_SUBQUERY_ONLY.has(c),
-    ),
+    [...codesEmittingCostCentre()].filter(c => !EMITS_IN_SUBQUERY_ONLY.has(c)),
   );
 
   it("finds the reports that emit cost centre", () => {
@@ -112,7 +100,7 @@ describe("a column the SQL emits must be declared in both catalogues", () => {
 
   it("every emitting report declares cost centre in the BACKEND catalogue", () => {
     const offenders = [...emitting]
-      .filter((code) => {
+      .filter(code => {
         const keys = catalogueKeys(backendCatalog, code);
         return keys !== null && !keys.includes("cost_centre_code");
       })
@@ -127,8 +115,8 @@ describe("a column the SQL emits must be declared in both catalogues", () => {
   it("every emitting report declares cost centre in the FRONTEND catalogue", () => {
     // A missing entry is the separate, tracked gap; a present-but-incomplete entry is the bug.
     const offenders = [...emitting]
-      .filter((code) => !NO_FRONTEND_ENTRY.has(code))
-      .filter((code) => {
+      .filter(code => !NO_FRONTEND_ENTRY.has(code))
+      .filter(code => {
         const keys = catalogueKeys(frontendCatalog, code);
         return keys !== null && !keys.includes("cost_centre_code");
       })
@@ -143,11 +131,9 @@ describe("a column the SQL emits must be declared in both catalogues", () => {
 
   it("the unlisted-report backlog only shrinks", () => {
     const stillMissing = [...NO_FRONTEND_ENTRY].filter(
-      (code) => catalogueKeys(frontendCatalog, code) === null,
+      code => catalogueKeys(frontendCatalog, code) === null,
     );
-    const nowListed = [...NO_FRONTEND_ENTRY]
-      .filter((c) => !stillMissing.includes(c))
-      .sort();
+    const nowListed = [...NO_FRONTEND_ENTRY].filter(c => !stillMissing.includes(c)).sort();
 
     expect(
       nowListed,

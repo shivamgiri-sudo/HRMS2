@@ -37,21 +37,15 @@ describe("EPF masking helpers", () => {
     expect(serialized).not.toContain("123456789012");
     expect(serialized).not.toContain("ABCDE1234F");
     expect(serialized).not.toContain("public-token-value");
-    expect(
-      String((sanitized as Record<string, unknown>).aadhaar_number ?? ""),
-    ).toContain("XXXX");
+    expect(String((sanitized as Record<string, unknown>).aadhaar_number ?? "")).toContain("XXXX");
   });
 });
 
 describe("Luckpay webhook secret helper", () => {
   it("accepts the configured shared secret and rejects missing or mismatched values", () => {
-    expect(verifyLuckpayWebhookSecret("shared-secret", "shared-secret")).toBe(
-      true,
-    );
+    expect(verifyLuckpayWebhookSecret("shared-secret", "shared-secret")).toBe(true);
     expect(verifyLuckpayWebhookSecret(undefined, "shared-secret")).toBe(false);
-    expect(verifyLuckpayWebhookSecret("bad-secret", "shared-secret")).toBe(
-      false,
-    );
+    expect(verifyLuckpayWebhookSecret("bad-secret", "shared-secret")).toBe(false);
   });
 });
 

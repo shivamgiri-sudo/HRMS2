@@ -18,21 +18,11 @@ import { describe, expect, it } from "vitest";
  * than the display detail, which is visible on the page.
  */
 const SERVICE = readFileSync(
-  resolve(
-    process.cwd(),
-    "src/modules/payroll-head-review/payroll-head-review.service.ts",
-  ),
+  resolve(process.cwd(), "src/modules/payroll-head-review/payroll-head-review.service.ts"),
   "utf8",
 );
 const QUEUE = readFileSync(
-  resolve(
-    process.cwd(),
-    "..",
-    "src",
-    "pages",
-    "payroll",
-    "PayrollHeadSalaryReviewQueue.tsx",
-  ),
+  resolve(process.cwd(), "..", "src", "pages", "payroll", "PayrollHeadSalaryReviewQueue.tsx"),
   "utf8",
 );
 const HELPER = SERVICE.slice(
@@ -54,19 +44,12 @@ describe("Penny-drop overlay — must not become a payment authorisation", () =>
   });
 
   it("the queue tile shows Payable only from the classifier, never from a penny drop", () => {
-    const bankCase = QUEUE.slice(
-      QUEUE.indexOf("case 'bank': {"),
-      QUEUE.indexOf("case 'bank': {") + 1200,
-    );
+    const bankCase = QUEUE.slice(QUEUE.indexOf("case 'bank': {"), QUEUE.indexOf("case 'bank': {") + 1200);
     // Payable ✓ must be gated on s.bank.payable, and the penny-drop branch must
     // sit after it with its own distinct label.
-    expect(bankCase).toMatch(
-      /if \(s\.bank\.payable\) return \{ text: 'Payable ✓'/,
-    );
+    expect(bankCase).toMatch(/if \(s\.bank\.payable\) return \{ text: 'Payable ✓'/);
     expect(bankCase).toMatch(/penny_drop\?\.verified.*Penny-drop verified/s);
-    expect(bankCase.indexOf("s.bank.payable")).toBeLessThan(
-      bankCase.indexOf("penny_drop"),
-    );
+    expect(bankCase.indexOf("s.bank.payable")).toBeLessThan(bankCase.indexOf("penny_drop"));
   });
 });
 
@@ -75,9 +58,7 @@ describe("Penny-drop overlay — resolves the right record", () => {
     // 4 rows carry verification_status='verified' against verification_method
     // 'mock' -- the local stub. A green chip for an account nobody checked is
     // worse than no chip.
-    expect(HELPER).toMatch(
-      /verification_status === "verified" && r\.verification_method === "penny_drop"/,
-    );
+    expect(HELPER).toMatch(/verification_status === "verified" && r\.verification_method === "penny_drop"/);
   });
 
   it("joins on employee_code, because employees.candidate_id is empty", () => {
@@ -91,9 +72,7 @@ describe("Penny-drop overlay — resolves the right record", () => {
     // candidate_bank_verification holds multiple attempts per candidate; without
     // a bound the join would fan the employee out into duplicate queue rows.
     expect(HELPER).toContain("LIMIT 1");
-    expect(HELPER).toMatch(
-      /ORDER BY \(c2\.verification_status = 'verified'\) DESC/,
-    );
+    expect(HELPER).toMatch(/ORDER BY \(c2\.verification_status = 'verified'\) DESC/);
   });
 
   it("degrades to an empty overlay rather than taking the queue down", () => {

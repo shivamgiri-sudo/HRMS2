@@ -1,24 +1,14 @@
 import { describe, it, expect } from "vitest";
-import {
-  redactSensitive,
-  redactObject,
-  safeStringify,
-} from "../logRedaction.js";
+import { redactSensitive, redactObject, safeStringify } from "../logRedaction.js";
 
 describe("Log Redaction", () => {
   describe("redactSensitive", () => {
     it("should redact JWT tokens", () => {
       // Dynamically construct a fake JWT-shaped string to avoid GitGuardian false positives
       // This is NOT a real JWT - it's just base64-encoded test data with the JWT structure
-      const header = Buffer.from('{"alg":"none","typ":"TEST"}').toString(
-        "base64url",
-      );
-      const payload = Buffer.from('{"sub":"test-fixture","iat":0}').toString(
-        "base64url",
-      );
-      const signature = Buffer.from("fake-signature-for-testing").toString(
-        "base64url",
-      );
+      const header = Buffer.from('{"alg":"none","typ":"TEST"}').toString("base64url");
+      const payload = Buffer.from('{"sub":"test-fixture","iat":0}').toString("base64url");
+      const signature = Buffer.from("fake-signature-for-testing").toString("base64url");
       const fakeJwt = `${header}.${payload}.${signature}`;
 
       const input = `Token: ${fakeJwt}`;
@@ -85,11 +75,7 @@ describe("Log Redaction", () => {
     });
 
     it("should redact token fields", () => {
-      const obj = {
-        refreshToken: "abc123",
-        accessToken: "def456",
-        userId: "user1",
-      };
+      const obj = { refreshToken: "abc123", accessToken: "def456", userId: "user1" };
       const result = redactObject(obj);
       expect(result.refreshToken).toBe("[REDACTED]");
       expect(result.accessToken).toBe("[REDACTED]");

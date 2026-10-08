@@ -20,14 +20,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const source = readFileSync(
-  resolve(process.cwd(), "src/modules/ats/ats.otp.service.ts"),
-  "utf8",
-);
-const routesSource = readFileSync(
-  resolve(process.cwd(), "src/modules/ats/onboarding-full.routes.ts"),
-  "utf8",
-);
+const source = readFileSync(resolve(process.cwd(), "src/modules/ats/ats.otp.service.ts"), "utf8");
+const routesSource = readFileSync(resolve(process.cwd(), "src/modules/ats/onboarding-full.routes.ts"), "utf8");
 
 describe("onboarding OTP sends via SMS and email unconditionally, not as a fallback", () => {
   it("the exported function reflects dual-send, not the old ViaSms fallback name", () => {
@@ -36,12 +30,8 @@ describe("onboarding OTP sends via SMS and email unconditionally, not as a fallb
   });
 
   it("the email send is not gated on smsSuccess or nested inside the SMS try/catch", () => {
-    const fn = source.slice(
-      source.indexOf("export async function sendOnboardingOtp("),
-    );
-    const emailBlockStart = fn.indexOf(
-      "Always attempted, regardless of the SMS outcome",
-    );
+    const fn = source.slice(source.indexOf("export async function sendOnboardingOtp("));
+    const emailBlockStart = fn.indexOf("Always attempted, regardless of the SMS outcome");
     expect(emailBlockStart).toBeGreaterThan(-1);
     // The SMS section's own catch block (the one guarding smsProvider work) must
     // close before the email block begins — i.e. email is a sibling statement,

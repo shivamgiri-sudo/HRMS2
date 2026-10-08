@@ -21,13 +21,8 @@ import { fileURLToPath } from "url";
  * Quantity is still written and still displayed. It must never refuse anything.
  */
 
-const { execute, getConnection } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  getConnection: vi.fn(),
-}));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute, query: execute, getConnection },
-}));
+const { execute, getConnection } = vi.hoisted(() => ({ execute: vi.fn(), getConnection: vi.fn() }));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute, getConnection } }));
 
 import { budgetConsumptionService } from "../budget-consumption.service.js";
 
@@ -39,19 +34,12 @@ const read = (p: string) => fs.readFileSync(path.join(backendRoot, p), "utf8");
  *  NOIDA-2's "Security Service Charges": 1 Month planned, the month already booked, money left. */
 function lineConnection(over: Partial<Record<string, unknown>> = {}) {
   const line = {
-    id: "bl1",
-    tax_treatment: "non_gst",
-    budget_status: "active",
-    unit: "Month",
+    id: "bl1", tax_treatment: "non_gst", budget_status: "active", unit: "Month",
     // availability() measures against pnl_cost_amount, not gross_amount — see the note in
     // budget-consumption-net-basis.test.ts. Equal here because this line is not ITC-eligible.
-    gross_amount: 119_000,
-    pnl_cost_amount: 119_000,
-    quantity: 1,
-    reserved_amount: 0,
-    reserved_quantity: 1,
-    consumed_amount: 0,
-    consumed_quantity: 0,
+    gross_amount: 119_000, pnl_cost_amount: 119_000, quantity: 1,
+    reserved_amount: 0, reserved_quantity: 1,
+    consumed_amount: 0, consumed_quantity: 0,
     ...over,
   };
   const writes: Array<{ sql: string; params: unknown[] }> = [];
@@ -76,58 +64,37 @@ describe("the quantity ledger never refuses", () => {
     // 1 Month planned and already reserved; Rs 1,19,000 still unspent. Before this, reserve()
     // threw GRN_EXCEEDS_BUDGET_QUANTITY and the spend was hard-blocked.
     const conn = lineConnection();
-    await expect(
-      budgetConsumptionService.reserve(conn, "bl1", 9_000, 1, 9_000),
-    ).resolves.toBeUndefined();
+    await expect(budgetConsumptionService.reserve(conn, "bl1", 9_000, 1, 9_000)).resolves.toBeUndefined();
     expect(conn.writes.at(-1)!.params[0]).toBe(9_000);
   });
 
   it("reserve() still refuses when the MONEY runs out", async () => {
     const conn = lineConnection({ reserved_amount: 115_000 });
     await expect(
-      budgetConsumptionService.reserve(conn, "bl1", 9_000, 1, 9_000),
+      budgetConsumptionService.reserve(conn, "bl1", 9_000, 1, 9_000)
     ).rejects.toMatchObject({ code: "GRN_EXCEEDS_BUDGET_AMOUNT" });
   });
 
   it("consume() no longer refuses when the reserved unit count is short of the GRN's", async () => {
     // Drifted ledger: money reserved, quantity not. This used to throw RESERVATION_INSUFFICIENT
     // and strand the GRN between Branch Head approval and payment.
-    const conn = lineConnection({
-      reserved_amount: 9_000,
-      reserved_quantity: 0,
-    });
-    await expect(
-      budgetConsumptionService.consume(conn, "bl1", 9_000, 1, 9_000),
-    ).resolves.toBeUndefined();
+    const conn = lineConnection({ reserved_amount: 9_000, reserved_quantity: 0 });
+    await expect(budgetConsumptionService.consume(conn, "bl1", 9_000, 1, 9_000)).resolves.toBeUndefined();
   });
 
   it("consume() still refuses when the reserved MONEY is short", async () => {
     const conn = lineConnection({ reserved_amount: 100, reserved_quantity: 5 });
     await expect(
-      budgetConsumptionService.consume(conn, "bl1", 9_000, 1, 9_000),
+      budgetConsumptionService.consume(conn, "bl1", 9_000, 1, 9_000)
     ).rejects.toMatchObject({ code: "RESERVATION_INSUFFICIENT" });
   });
 
   it("release() and reverseConsumption() are not blocked by a drifted unit count", async () => {
-    const release = lineConnection({
-      reserved_amount: 9_000,
-      reserved_quantity: 0,
-    });
+    const release = lineConnection({ reserved_amount: 9_000, reserved_quantity: 0 });
+    await expect(budgetConsumptionService.release(release, "bl1", 9_000, 1, 9_000)).resolves.toBeUndefined();
+    const reverse = lineConnection({ consumed_amount: 9_000, consumed_quantity: 0 });
     await expect(
-      budgetConsumptionService.release(release, "bl1", 9_000, 1, 9_000),
-    ).resolves.toBeUndefined();
-    const reverse = lineConnection({
-      consumed_amount: 9_000,
-      consumed_quantity: 0,
-    });
-    await expect(
-      budgetConsumptionService.reverseConsumption(
-        reverse,
-        "bl1",
-        9_000,
-        1,
-        9_000,
-      ),
+      budgetConsumptionService.reverseConsumption(reverse, "bl1", 9_000, 1, 9_000)
     ).resolves.toBeUndefined();
   });
 
@@ -144,23 +111,17 @@ describe("no GRN path gates on quantity any more", () => {
   it("the budget-line picker filters on money alone", () => {
     const service = read("src/modules/process-pnl/branch-budget.service.ts");
     expect(service).toContain("HAVING available_gross_amount > 0");
-    expect(service).not.toContain(
-      "HAVING available_quantity > 0 AND available_gross_amount > 0",
-    );
+    expect(service).not.toContain("HAVING available_quantity > 0 AND available_gross_amount > 0");
   });
 
   it("neither GRN save path throws HEADROOM_EXCEEDED on quantity", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
-    expect(service).not.toContain(
-      "split allocation exceeds available quantity",
-    );
+    expect(service).not.toContain("split allocation exceeds available quantity");
     // The money-side branch-aggregate gate is untouched and still the hard limit. It now also
     // passes the row's TAXABLE value, so a line planned as non_gst/exempt is weighed against the
     // taxable figure it will actually be charged rather than the tax-inclusive one — still money,
     // still the hard limit, just the right money.
-    expect(service).toContain(
-      "const draws = allocateAcrossLines(preferredLineId, grossTarget, netLines, netTarget);",
-    );
+    expect(service).toContain("const draws = allocateAcrossLines(preferredLineId, grossTarget, netLines, netTarget);");
   });
 
   it("linking an unbudgeted split is not blocked by the line's unit count", () => {
@@ -170,9 +131,7 @@ describe("no GRN path gates on quantity any more", () => {
 
   it("the legacy single-line create path drops its quantity refusal, keeps the money one", () => {
     const service = read("src/modules/finance/grn.service.ts");
-    expect(service).not.toContain(
-      "GRN quantity exceeds available approved quantity",
-    );
+    expect(service).not.toContain("GRN quantity exceeds available approved quantity");
     // The money refusal survives; it is now the BRANCH AGGREGATE rather than the single line the
     // raiser picked, so create and allocation-save answer alike instead of contradicting.
     expect(service).toContain("if (amounts.grossAmount > absorbable + 0.01) {");

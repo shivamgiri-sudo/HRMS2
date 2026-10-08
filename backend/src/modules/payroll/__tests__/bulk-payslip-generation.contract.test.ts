@@ -68,8 +68,6 @@ describe("bulk payslip generation", () => {
   });
 
   it("imports the generator from the payslip service module", () => {
-    expect(source).toMatch(
-      /import\s*\{\s*payslipService\s*\}\s*from\s*["']\.\/payslip\.service\.js["']/,
-    );
+    expect(source).toMatch(/import\s*\{\s*payslipService\s*\}\s*from\s*["']\.\/payslip\.service\.js["']/);
   });
 });

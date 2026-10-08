@@ -41,46 +41,23 @@ export type ConfiguredRecipient = {
  * constant here plus rows — not a schema change.
  */
 export const CONFIGURABLE_EVENTS = [
-  {
-    code: "IT_EMAIL_DOMAIN_ASSET",
-    label: "IT — domain account, official email, assets",
-    fallbackRole: "it",
-  },
-  {
-    code: "ADMIN_BIOMETRIC_ID_CARD",
-    label: "Admin — biometric enrolment and ID card",
-    fallbackRole: "admin",
-  },
-  {
-    code: "WFM_PROCESS_ALIGNMENT",
-    label: "WFM — process and roster alignment",
-    fallbackRole: "wfm",
-  },
-  {
-    code: "APPOINTMENT_LETTER_ESIGN",
-    label: "HR — appointment letter issue and eSign",
-    fallbackRole: "hr",
-  },
-  {
-    code: "JOB_REQUISITION_RAISED",
-    label: "Recruitment — requisition raised for approval",
-    fallbackRole: "branch_head",
-  },
+  { code: "IT_EMAIL_DOMAIN_ASSET", label: "IT — domain account, official email, assets", fallbackRole: "it" },
+  { code: "ADMIN_BIOMETRIC_ID_CARD", label: "Admin — biometric enrolment and ID card", fallbackRole: "admin" },
+  { code: "WFM_PROCESS_ALIGNMENT", label: "WFM — process and roster alignment", fallbackRole: "wfm" },
+  { code: "APPOINTMENT_LETTER_ESIGN", label: "HR — appointment letter issue and eSign", fallbackRole: "hr" },
+  { code: "JOB_REQUISITION_RAISED", label: "Recruitment — requisition raised for approval", fallbackRole: "branch_head" },
 ] as const;
 
-export type ConfigurableEventCode =
-  (typeof CONFIGURABLE_EVENTS)[number]["code"];
+export type ConfigurableEventCode = (typeof CONFIGURABLE_EVENTS)[number]["code"];
 
 /** True when the table exists — it may not, since migrations are applied by hand. */
 let tablePresent: boolean | null = null;
 async function hasTable(): Promise<boolean> {
   if (tablePresent !== null) return tablePresent;
-  const [r] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT COUNT(*) n FROM information_schema.TABLES
+  const [r] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) n FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branch_notification_recipient'`,
-    )
-    .catch(() => [[{ n: 0 }]] as unknown as [RowDataPacket[]]);
+  ).catch(() => [[{ n: 0 }]] as unknown as [RowDataPacket[]]);
   tablePresent = Number(r[0]?.n ?? 0) > 0;
   return tablePresent;
 }
@@ -113,16 +90,12 @@ function mapRow(x: RowDataPacket): ConfiguredRecipient {
 }
 
 /** Everything configured for a branch, for the admin screen. */
-export async function listBranchRecipients(
-  branchId: string,
-): Promise<ConfiguredRecipient[]> {
+export async function listBranchRecipients(branchId: string): Promise<ConfiguredRecipient[]> {
   if (!(await hasTable())) return [];
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `${SELECT_SQL} WHERE r.branch_id = ? ORDER BY r.event_code, r.recipient_type, e.full_name`,
-      [branchId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `${SELECT_SQL} WHERE r.branch_id = ? ORDER BY r.event_code, r.recipient_type, e.full_name`,
+    [branchId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   return rows.map(mapRow);
 }
 
@@ -135,21 +108,14 @@ export async function listBranchRecipients(
 export async function getConfiguredRecipients(
   branchId: string | null,
   eventCode: string,
-): Promise<{
-  to: Array<{ userId: string | null; email: string }>;
-  cc: string[];
-} | null> {
+): Promise<{ to: Array<{ userId: string | null; email: string }>; cc: string[] } | null> {
   if (!branchId || !(await hasTable())) return null;
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `${SELECT_SQL} WHERE r.branch_id = ? AND r.event_code = ? AND r.active_status = 1`,
-      [branchId, eventCode],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `${SELECT_SQL} WHERE r.branch_id = ? AND r.event_code = ? AND r.active_status = 1`,
+    [branchId, eventCode],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
 
-  const all = rows
-    .map(mapRow)
-    .filter((r) => r.resolvedEmail && r.resolvedEmail.includes("@"));
+  const all = rows.map(mapRow).filter((r) => r.resolvedEmail && r.resolvedEmail.includes("@"));
   if (all.length === 0) return null;
 
   // userId is carried through so a configured employee still gets an in-app
@@ -163,11 +129,8 @@ export async function getConfiguredRecipients(
     to.push({ userId: r.userId, email: r.resolvedEmail! });
   }
   const toEmails = to.map((t) => t.email);
-  const cc = [
-    ...new Set(
-      all.filter((r) => r.recipientType === "cc").map((r) => r.resolvedEmail!),
-    ),
-  ].filter((e) => !toEmails.includes(e));
+  const cc = [...new Set(all.filter((r) => r.recipientType === "cc").map((r) => r.resolvedEmail!))]
+    .filter((e) => !toEmails.includes(e));
 
   // A branch configured with CC only and no TO is a misconfiguration, not an
   // instruction to send to nobody. Fall back so the task still reaches someone.
@@ -185,31 +148,19 @@ export async function upsertRecipient(input: {
   actorUserId: string | null;
 }): Promise<{ id: string }> {
   if (!(await hasTable())) {
-    throw Object.assign(
-      new Error(
-        "Recipient configuration is not available on this environment yet.",
-      ),
-      { statusCode: 503 },
-    );
+    throw Object.assign(new Error("Recipient configuration is not available on this environment yet."),
+      { statusCode: 503 });
   }
   const employeeId = input.employeeId || null;
   const email = (input.email ?? "").trim() || null;
   if (!employeeId && !email) {
-    throw Object.assign(
-      new Error("Choose an employee or enter an email address."),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error("Choose an employee or enter an email address."), { statusCode: 400 });
   }
   if (email && !email.includes("@")) {
-    throw Object.assign(new Error(`"${email}" is not an email address.`), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error(`"${email}" is not an email address.`), { statusCode: 400 });
   }
   if (!CONFIGURABLE_EVENTS.some((e) => e.code === input.eventCode)) {
-    throw Object.assign(
-      new Error(`Unknown notification event "${input.eventCode}".`),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error(`Unknown notification event "${input.eventCode}".`), { statusCode: 400 });
   }
 
   const id = randomUUID();
@@ -220,26 +171,14 @@ export async function upsertRecipient(input: {
      ON DUPLICATE KEY UPDATE
        active_status = 1, remarks = VALUES(remarks),
        updated_by = VALUES(updated_by), updated_at = NOW()`,
-    [
-      id,
-      input.branchId,
-      input.eventCode,
-      input.recipientType,
-      employeeId,
-      email,
-      input.remarks ?? null,
-      input.actorUserId,
-      input.actorUserId,
-    ],
+    [id, input.branchId, input.eventCode, input.recipientType, employeeId, email,
+     input.remarks ?? null, input.actorUserId, input.actorUserId],
   );
   // affectedRows is 2 on an update, 1 on an insert.
   return { id: res.affectedRows === 1 ? id : id };
 }
 
-export async function removeRecipient(
-  id: string,
-  actorUserId: string | null,
-): Promise<void> {
+export async function removeRecipient(id: string, actorUserId: string | null): Promise<void> {
   if (!(await hasTable())) return;
   // Deactivated, not deleted: who used to receive a notification is part of the
   // audit trail for anything that was sent.

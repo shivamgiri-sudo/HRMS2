@@ -1,14 +1,14 @@
-import { randomUUID } from "crypto";
-import { db } from "../../db/mysql.js";
-import { isOfficialDomain } from "../../shared/email-domains.js";
-import { getDispatchBlock } from "../../shared/notification-dispatch-block.js";
-import type { RowDataPacket } from "mysql2";
-import { providerFactory } from "./providers/provider.factory.js";
-import { providerConfigService } from "./provider-config.service.js";
-import { templateService } from "./template.service.js";
-import { resolveSmsForEvent } from "./event-sms-template-map.js";
-import { notificationPreferencesService } from "./notification-preferences.service.js";
-import { inboxService } from "../inbox/inbox.service.js";
+import { randomUUID } from 'crypto';
+import { db } from '../../db/mysql.js';
+import { isOfficialDomain } from '../../shared/email-domains.js';
+import { getDispatchBlock } from '../../shared/notification-dispatch-block.js';
+import type { RowDataPacket } from 'mysql2';
+import { providerFactory } from './providers/provider.factory.js';
+import { providerConfigService } from './provider-config.service.js';
+import { templateService } from './template.service.js';
+import { resolveSmsForEvent } from './event-sms-template-map.js';
+import { notificationPreferencesService } from './notification-preferences.service.js';
+import { inboxService } from '../inbox/inbox.service.js';
 import type {
   SendMessageDTO,
   BulkSendDTO,
@@ -18,7 +18,7 @@ import type {
   PaginatedDispatchLogs,
   DispatchStats,
   Channel,
-} from "./communication.types.js";
+} from './communication.types.js';
 
 interface EmployeeRecipientRow extends RowDataPacket {
   id: string;
@@ -49,11 +49,11 @@ interface EmployeeRecipientRow extends RowDataPacket {
  * delivery enforce; a second copy of a security allowlist drifts.
  */
 export function resolveEmailContact(
-  emp: Pick<EmployeeRecipientRow, "email" | "official_email">,
+  emp: Pick<EmployeeRecipientRow, 'email' | 'official_email'>,
   preferOfficial?: boolean,
 ): string | null {
   if (preferOfficial) {
-    const official = (emp.official_email ?? "").trim();
+    const official = (emp.official_email ?? '').trim();
     if (official && isOfficialDomain(official)) return official;
   }
   return emp.email;
@@ -103,10 +103,9 @@ const BODY_PREVIEW_LIMIT = 500;
 class DispatchService {
   private humanizeTemplateName(name: string): string {
     return name
-      .split("/")
-      .pop()!
-      .replace(/[_-]+/g, " ")
-      .replace(/\b\w/g, (char) => char.toUpperCase());
+      .split('/').pop()!
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, char => char.toUpperCase());
   }
 
   /** Channels already reported as unconfigured — one log line each, not one per message. */
@@ -122,11 +121,8 @@ class DispatchService {
   private async channelUnconfigured(channel: Channel): Promise<boolean> {
     try {
       const dbConfig = await providerConfigService.loadActiveConfig(channel);
-      const provider = await providerFactory.getProviderAsync(
-        channel,
-        dbConfig,
-      );
-      if (typeof provider.isConfigured !== "function") return false;
+      const provider = await providerFactory.getProviderAsync(channel, dbConfig);
+      if (typeof provider.isConfigured !== 'function') return false;
       if (provider.isConfigured()) return false;
 
       if (!this.unconfiguredWarned.has(channel)) {
@@ -168,10 +164,9 @@ class DispatchService {
     templateName: string,
     subject: string | undefined,
   ): Promise<void> {
-    const reason =
-      channel === "email"
-        ? "No deliverable email address on the employee record"
-        : "No mobile number on the employee record";
+    const reason = channel === 'email'
+      ? 'No deliverable email address on the employee record'
+      : 'No mobile number on the employee record';
     try {
       await db.execute(
         `INSERT INTO dispatch_log
@@ -190,32 +185,29 @@ class DispatchService {
           (subject ?? this.humanizeTemplateName(templateName)).slice(0, 200),
           reason,
           dto.is_critical ? 1 : 0,
-          dto.is_critical ? "critical" : "standard",
+          dto.is_critical ? 'critical' : 'standard',
         ],
       );
     } catch (err) {
-      console.error(
-        `[dispatch] could not record undeliverable ${channel} for ${emp.id}:`,
-        err,
-      );
+      console.error(`[dispatch] could not record undeliverable ${channel} for ${emp.id}:`, err);
     }
   }
 
   private plainText(value: string): string {
     return value
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/\s+/g, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
       .trim();
   }
 
   async send(dto: SendMessageDTO): Promise<DispatchResult> {
-    const placeholders = dto.recipient_employee_ids.map(() => "?").join(",");
+    const placeholders = dto.recipient_employee_ids.map(() => '?').join(',');
     const [employees] = await db.execute<EmployeeRecipientRow[]>(
       `SELECT id, user_id, full_name, email, official_email, mobile AS phone FROM employees WHERE id IN (${placeholders})`,
-      dto.recipient_employee_ids,
+      dto.recipient_employee_ids
     );
 
     const queued: string[] = [];
@@ -225,30 +217,20 @@ class DispatchService {
     for (const emp of employees) {
       try {
         // Get template category and name for preference routing
-        let category = "announcements";
-        let resolvedTemplateName = dto.template_name ?? "custom";
+        let category = 'announcements';
+        let resolvedTemplateName = dto.template_name ?? 'custom';
         if (dto.template_id) {
           const t = await templateService.getTemplateById(dto.template_id);
-          if (t) {
-            category = t.category;
-            resolvedTemplateName = t.name;
-          }
+          if (t) { category = t.category; resolvedTemplateName = t.name; }
         }
 
         const context = {
           ...dto.data,
-          employee: {
-            ...(dto.data.employee ?? {}),
-            name: emp.full_name,
-            id: emp.id,
-          },
-          company: {
-            name: "Mas Callnet India Pvt Ltd",
-            ...(dto.data.company ?? {}),
-          },
+          employee: { ...(dto.data.employee ?? {}), name: emp.full_name, id: emp.id },
+          company: { name: 'Mas Callnet India Pvt Ltd', ...(dto.data.company ?? {}) },
         };
         const portalRendered = await templateService.renderTemplate({
-          template_id: dto.template_id,
+          template_id:   dto.template_id,
           template_name: dto.template_name,
           data: context,
         });
@@ -258,39 +240,21 @@ class DispatchService {
           await inboxService.createItem({
             user_id: emp.user_id,
             type: portal.type ?? category,
-            title:
-              portal.title ??
-              portalRendered.subject ??
-              this.humanizeTemplateName(resolvedTemplateName),
-            description:
-              portal.message ??
-              this.plainText(portalRendered.text ?? portalRendered.html).slice(
-                0,
-                1200,
-              ),
+            title: portal.title ?? portalRendered.subject ?? this.humanizeTemplateName(resolvedTemplateName),
+            description: portal.message ?? this.plainText(portalRendered.text ?? portalRendered.html).slice(0, 1200),
             entity_type: portal.entity_type ?? category,
             entity_id: portal.entity_id,
-            action_url: portal.action_url ?? "/notifications",
-            priority:
-              portal.priority ?? (dto.is_critical ? "urgent" : "normal"),
+            action_url: portal.action_url ?? '/notifications',
+            priority: portal.priority ?? (dto.is_critical ? 'urgent' : 'normal'),
           });
           portalCreated += 1;
         }
 
-        const preference =
-          await notificationPreferencesService.getDeliveryPreference(
-            emp.id,
-            category,
-          );
+        const preference = await notificationPreferencesService.getDeliveryPreference(emp.id, category);
         const preferredChannel = dto.channel ?? preference.channel;
-        let channels =
-          !preference.enabled && !dto.is_critical
-            ? []
-            : Array.from(
-                new Set(
-                  dto.channels?.length ? dto.channels : [preferredChannel],
-                ),
-              );
+        let channels = !preference.enabled && !dto.is_critical
+          ? []
+          : Array.from(new Set(dto.channels?.length ? dto.channels : [preferredChannel]));
 
         // Operator emergency stop. This path had no enable flag of any kind, so
         // the only way to halt a runaway event was `pm2 stop hrms2-workers` —
@@ -337,9 +301,7 @@ class DispatchService {
           }
 
           const contact: string | null =
-            channel === "email"
-              ? resolveEmailContact(emp, dto.prefer_official_email)
-              : emp.phone;
+            channel === 'email' ? resolveEmailContact(emp, dto.prefer_official_email) : emp.phone;
           if (!contact) {
             failed.push(`${emp.id}:${channel}`);
             // Record the non-delivery instead of dropping it silently.
@@ -356,13 +318,7 @@ class DispatchService {
             // reached" is a fact about a person and belongs in the ledger, while
             // "this channel has no credentials" is one fact about the system and
             // would be pure noise repeated per message.
-            await this.recordUndeliverable(
-              dto,
-              emp,
-              channel,
-              resolvedTemplateName,
-              portalRendered.subject,
-            );
+            await this.recordUndeliverable(dto, emp, channel, resolvedTemplateName, portalRendered.subject);
             continue;
           }
 
@@ -386,30 +342,18 @@ class DispatchService {
               emp.id,
               contact,
               channel,
-              rendered.subject ??
-                portalRendered.subject ??
-                this.humanizeTemplateName(resolvedTemplateName),
-              (channel === "email"
-                ? rendered.html
-                : (rendered.text ?? rendered.html)
-              ).slice(0, BODY_PREVIEW_LIMIT),
+              rendered.subject ?? portalRendered.subject ?? this.humanizeTemplateName(resolvedTemplateName),
+              (channel === 'email' ? rendered.html : rendered.text ?? rendered.html).slice(0, BODY_PREVIEW_LIMIT),
               dto.is_critical ? 1 : 0,
-              dto.is_critical ? "critical" : "standard",
-            ],
+              dto.is_critical ? 'critical' : 'standard',
+            ]
           );
 
           // context carries the same data _deliver needs to resolve an SMS DLT template for
           // this event (see resolveSmsForEvent) — event_code alone isn't enough, the template's
           // variables (from_date, course_name, etc.) live in here.
-          this._deliver(
-            dispatchId,
-            channel,
-            contact,
-            rendered,
-            dto.event_code,
-            context,
-          ).catch((err) =>
-            console.error(`[dispatch] delivery failed for ${dispatchId}:`, err),
+          this._deliver(dispatchId, channel, contact, rendered, dto.event_code, context).catch(err =>
+            console.error(`[dispatch] delivery failed for ${dispatchId}:`, err)
           );
           queued.push(dispatchId);
         }
@@ -419,12 +363,7 @@ class DispatchService {
       }
     }
 
-    return {
-      queued: queued.length,
-      failed: failed.length,
-      dispatch_ids: queued,
-      portal_created: portalCreated,
-    };
+    return { queued: queued.length, failed: failed.length, dispatch_ids: queued, portal_created: portalCreated };
   }
 
   private async _deliver(
@@ -442,7 +381,7 @@ class DispatchService {
     if (!provider.validateRecipient(contact)) {
       await db.execute(
         "UPDATE dispatch_log SET status = 'failed', error_message = 'Invalid recipient format' WHERE id = ?",
-        [dispatchId],
+        [dispatchId]
       );
       return;
     }
@@ -453,7 +392,7 @@ class DispatchService {
     // fail. Of the ~46 notification-catalogue events, only a handful have a registered DLT
     // template mapped (event-sms-template-map.ts); everything else is deliberately not
     // attempted rather than sent doomed and logged as an indistinguishable "failed".
-    if (channel === "sms") {
+    if (channel === 'sms') {
       const resolved = resolveSmsForEvent(eventCode, data);
       if (!resolved) {
         await db.execute(
@@ -461,47 +400,31 @@ class DispatchService {
           [
             eventCode
               ? `No registered DLT template mapped for event '${eventCode}' — SMS not attempted.`
-              : "No event_code on this dispatch, so no DLT template could be resolved — SMS not attempted.",
+              : 'No event_code on this dispatch, so no DLT template could be resolved — SMS not attempted.',
             dispatchId,
-          ],
+          ]
         );
         return;
       }
-      const result = await provider.send(
-        contact,
-        resolved.dltContentId,
-        resolved.body,
-      );
+      const result = await provider.send(contact, resolved.dltContentId, resolved.body);
       await db.execute(
         `UPDATE dispatch_log SET status = ?, error_message = ?, sent_at = IF(? = 'sent', NOW(), sent_at) WHERE id = ?`,
-        [
-          result.success ? "sent" : "failed",
-          result.error ?? null,
-          result.success ? "sent" : "",
-          dispatchId,
-        ],
+        [result.success ? 'sent' : 'failed', result.error ?? null, result.success ? 'sent' : '', dispatchId]
       );
       return;
     }
 
     const [logRows] = await db.execute<SubjectRow[]>(
-      "SELECT subject FROM dispatch_log WHERE id = ?",
-      [dispatchId],
+      'SELECT subject FROM dispatch_log WHERE id = ?', [dispatchId]
     );
-    const subject = logRows[0]?.subject ?? "";
+    const subject = logRows[0]?.subject ?? '';
 
-    const body =
-      channel === "email" ? rendered.html : (rendered.text ?? rendered.html);
+    const body = channel === 'email' ? rendered.html : (rendered.text ?? rendered.html);
     const result = await provider.send(contact, subject, body);
 
     await db.execute(
       `UPDATE dispatch_log SET status = ?, error_message = ?, sent_at = IF(? = 'sent', NOW(), sent_at) WHERE id = ?`,
-      [
-        result.success ? "sent" : "failed",
-        result.error ?? null,
-        result.success ? "sent" : "",
-        dispatchId,
-      ],
+      [result.success ? 'sent' : 'failed', result.error ?? null, result.success ? 'sent' : '', dispatchId]
     );
   }
 
@@ -516,25 +439,25 @@ class DispatchService {
     if (dto.recipient_filter.status)      { q += ' AND status = ?';      p.push(dto.recipient_filter.status); }
     const [rows] = await db.execute<EmployeeIdRow[]>(q, p);
     return this.send({
-      template_id: dto.template_id,
-      template_name: dto.template_name,
-      recipient_employee_ids: rows.map((r) => r.id),
-      data: dto.data,
-      channel: dto.channel,
-      channels: dto.channels,
-      portal: dto.portal,
+      template_id:            dto.template_id,
+      template_name:          dto.template_name,
+      recipient_employee_ids: rows.map(r => r.id),
+      data:                   dto.data,
+      channel:                dto.channel,
+      channels:               dto.channels,
+      portal:                 dto.portal,
     });
   }
 
   async retry(dispatchId: string): Promise<void> {
     const [rows] = await db.execute<RetryLogRow[]>(
-      "SELECT channel, recipient_contact, body_preview, event_code FROM dispatch_log WHERE id = ?",
-      [dispatchId],
+      'SELECT channel, recipient_contact, body_preview, event_code FROM dispatch_log WHERE id = ?',
+      [dispatchId]
     );
     if (!rows[0]) {
-      throw Object.assign(new Error("Dispatch not found"), {
+      throw Object.assign(new Error('Dispatch not found'), {
         statusCode: 404,
-        code: "DISPATCH_NOT_FOUND",
+        code: 'DISPATCH_NOT_FOUND',
       });
     }
     const log = rows[0];
@@ -555,20 +478,20 @@ class DispatchService {
     //
     // SMS and WhatsApp bodies are all well under the limit (0 of 1,823 truncated), so retry stays
     // available there and this is not a blanket disablement.
-    const body = log.body_preview ?? "";
+    const body = log.body_preview ?? '';
     if (body.length >= BODY_PREVIEW_LIMIT) {
       throw Object.assign(
         new Error(
-          "This message cannot be resent: only a 500-character preview of it was retained, so a " +
-            "retry would deliver a truncated message. Re-trigger the original event to send it in full.",
+          'This message cannot be resent: only a 500-character preview of it was retained, so a ' +
+          'retry would deliver a truncated message. Re-trigger the original event to send it in full.',
         ),
-        { statusCode: 409, code: "DISPATCH_BODY_NOT_RETAINED" },
+        { statusCode: 409, code: 'DISPATCH_BODY_NOT_RETAINED' },
       );
     }
 
     await db.execute(
       "UPDATE dispatch_log SET status = 'queued', retry_count = retry_count + 1 WHERE id = ?",
-      [dispatchId],
+      [dispatchId]
     );
     // text as well as html: _deliver picks `text ?? html` for sms/whatsapp, and the stored preview
     // for those channels is already the text rendering, not markup.
@@ -580,14 +503,8 @@ class DispatchService {
     // "skipped, no data to build the template variables from" rather than a real resend; that is
     // correct, not a regression — retrying it today (pre-fix) sent the same doomed non-DLT
     // subject as the original attempt and was rejected identically.
-    this._deliver(
-      dispatchId,
-      log.channel,
-      log.recipient_contact,
-      { html: body, text: body },
-      log.event_code ?? undefined,
-    ).catch((err) =>
-      console.error(`[dispatch] retry delivery failed for ${dispatchId}:`, err),
+    this._deliver(dispatchId, log.channel, log.recipient_contact, { html: body, text: body }, log.event_code ?? undefined).catch(err =>
+      console.error(`[dispatch] retry delivery failed for ${dispatchId}:`, err)
     );
   }
 
@@ -595,7 +512,7 @@ class DispatchService {
     const page  = filters.page  ?? 1;
     const limit = filters.limit ?? 50;
     const offset = (page - 1) * limit;
-    let q = "SELECT * FROM dispatch_log WHERE 1=1";
+    let q = 'SELECT * FROM dispatch_log WHERE 1=1';
     const p: unknown[] = [];
     // Branch scoping: only dispatches addressed to employees inside the caller's scope (org-wide: all).
     if (scope && scope.sql !== '1=1') {
@@ -608,14 +525,14 @@ class DispatchService {
     if (filters.date_from)   { q += ' AND sent_at >= ?';              p.push(filters.date_from); }
     if (filters.date_to)     { q += ' AND sent_at <= ?';              p.push(filters.date_to); }
 
-    const countQ = q.replace("SELECT *", "SELECT COUNT(*) AS total");
+    const countQ = q.replace('SELECT *', 'SELECT COUNT(*) AS total');
     const [countRows] = await db.execute<DispatchLogTotalRow[]>(countQ, p);
 
     q += ` ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
     const [rows] = await db.execute<RowDataPacket[]>(q, p);
 
     return {
-      logs: rows as DispatchLog[],
+      logs:  rows as DispatchLog[],
       total: countRows[0]?.total ?? 0,
       page,
       limit,
@@ -648,10 +565,7 @@ class DispatchService {
     }
     return {
       total_sent_today: Number(todayRows[0]?.c ?? 0),
-      delivery_rate:
-        Number(delivRows[0]?.t ?? 0) > 0
-          ? (Number(delivRows[0]?.d ?? 0) / Number(delivRows[0]?.t ?? 0)) * 100
-          : 0,
+      delivery_rate: Number(delivRows[0]?.t ?? 0) > 0 ? (Number(delivRows[0]?.d ?? 0) / Number(delivRows[0]?.t ?? 0)) * 100 : 0,
       failed_count: Number(failedRows[0]?.c ?? 0),
       retried_count: Number(retryRows[0]?.c ?? 0),
       bounced_count: Number(bounceRows[0]?.c ?? 0),

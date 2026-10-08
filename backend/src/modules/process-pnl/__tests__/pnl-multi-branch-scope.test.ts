@@ -23,9 +23,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
  */
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute, query: execute, getConnection: vi.fn() },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute, getConnection: vi.fn() } }));
 
 /**
  * Runs listProcesses against a mocked driver and returns every statement it issued.
@@ -48,13 +46,8 @@ async function baseQueryFor(filters: Record<string, unknown>) {
   // filters would be served from the cache and issue no SQL at all — which reads as "the
   // predicate is missing" when in fact the query never ran.
   processPnlService.invalidateCaches();
-  await processPnlService
-    .listProcesses(filters as never)
-    .catch(() => undefined);
-  expect(
-    statements.length,
-    "listProcesses issued no query at all",
-  ).toBeGreaterThan(0);
+  await processPnlService.listProcesses(filters as never).catch(() => undefined);
+  expect(statements.length, "listProcesses issued no query at all").toBeGreaterThan(0);
   return { sql: statements.join(" "), params };
 }
 
@@ -66,10 +59,7 @@ describe("the branch entitlement predicate", () => {
   });
 
   it("uses an IN predicate for a multi-branch entitlement", async () => {
-    const q = await baseQueryFor({
-      period: "2026-02",
-      branchIds: ["br1", "br2", "br3"],
-    });
+    const q = await baseQueryFor({ period: "2026-02", branchIds: ["br1", "br2", "br3"] });
     expect(q.sql).toMatch(/p\.branch_id IN \(\?, \?, \?\)/);
     expect(q.params).toEqual(expect.arrayContaining(["br1", "br2", "br3"]));
   });
@@ -85,11 +75,7 @@ describe("the branch entitlement predicate", () => {
   it("ANDs the requested branch WITH the entitlement rather than replacing it", async () => {
     // Asking for a branch outside your entitlement must return nothing, not that branch. Both
     // predicates present means the intersection, which for a disjoint pair is empty.
-    const q = await baseQueryFor({
-      period: "2026-04",
-      branchId: "br9",
-      branchIds: ["br1", "br2"],
-    });
+    const q = await baseQueryFor({ period: "2026-04", branchId: "br9", branchIds: ["br1", "br2"] });
     expect(q.sql).toContain("p.branch_id = ?");
     expect(q.sql).toMatch(/p\.branch_id IN \(\?, \?\)/);
     expect(q.params).toEqual(expect.arrayContaining(["br9", "br1", "br2"]));
@@ -106,10 +92,7 @@ describe("the branch entitlement predicate", () => {
   });
 
   it("binds every branch as a parameter, never interpolating one", async () => {
-    const q = await baseQueryFor({
-      period: "2026-06",
-      branchIds: ["br1'; DROP TABLE x; --"],
-    });
+    const q = await baseQueryFor({ period: "2026-06", branchIds: ["br1'; DROP TABLE x; --"] });
     expect(q.sql).not.toContain("DROP TABLE");
     expect(q.params).toContain("br1'; DROP TABLE x; --");
   });
@@ -127,15 +110,10 @@ describe("the routes resolve a set, not a single branch", () => {
   });
 
   it("uses the set resolver in both P&L read paths", () => {
-    for (const [name, src] of [
-      ["process-pnl", PNL],
-      ["bpo-pnl", BPO],
-    ] as const) {
+    for (const [name, src] of [["process-pnl", PNL], ["bpo-pnl", BPO]] as const) {
       const scoped = src.slice(src.indexOf("async function scopedFilters"));
       const body = scoped.slice(0, scoped.indexOf("\n}"));
-      expect(body, `${name} scopedFilters must resolve the set`).toContain(
-        "resolveFinanceBranchScopeSet",
-      );
+      expect(body, `${name} scopedFilters must resolve the set`).toContain("resolveFinanceBranchScopeSet");
     }
   });
 

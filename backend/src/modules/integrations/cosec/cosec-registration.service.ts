@@ -128,12 +128,7 @@ export async function registerEmployeeInCosec(
   employeeCode: string,
 ): Promise<CosecRegistrationResult> {
   if (env.NCOSEC_SYNC_ENABLED !== "true") {
-    return {
-      success: true,
-      cosecUserId: employeeCode,
-      action: "skipped",
-      message: "COSEC sync disabled",
-    };
+    return { success: true, cosecUserId: employeeCode, action: "skipped", message: "COSEC sync disabled" };
   }
 
   // 1. Fetch employee data from mas_hrms
@@ -155,12 +150,7 @@ export async function registerEmployeeInCosec(
   if (!rows.length) {
     const msg = `Employee ${employeeCode} not found in mas_hrms`;
     await markQueue(employeeId, employeeCode, "failed", msg);
-    return {
-      success: false,
-      cosecUserId: employeeCode,
-      action: "skipped",
-      message: msg,
-    };
+    return { success: false, cosecUserId: employeeCode, action: "skipped", message: msg };
   }
 
   const emp = rows[0] as RowDataPacket;
@@ -168,9 +158,7 @@ export async function registerEmployeeInCosec(
   const deptName: string = (emp.department_name as string) ?? "GENERAL";
   const desgName: string = (emp.designation_name as string) ?? "ASSOCIATE";
   const fullName: string = (emp.full_name as string) ?? employeeCode;
-  const joinDt: Date = emp.date_of_joining
-    ? new Date(emp.date_of_joining as string)
-    : new Date();
+  const joinDt: Date = emp.date_of_joining ? new Date(emp.date_of_joining as string) : new Date();
 
   // 2. Connect to COSEC MSSQL
   let pool: sql.ConnectionPool | null = null;
@@ -179,30 +167,9 @@ export async function registerEmployeeInCosec(
 
     // 3. Resolve FK master IDs (insert if missing)
     const [brcId, dptId, dsgId] = await Promise.all([
-      resolveOrInsertCosecMaster(
-        pool,
-        "Mx_BranchMst",
-        "BRCID",
-        "Name",
-        branchName,
-        { ORGID: COSEC_ORG_ID },
-      ),
-      resolveOrInsertCosecMaster(
-        pool,
-        "Mx_DepartmentMst",
-        "DPTID",
-        "Name",
-        deptName,
-        { ORGID: COSEC_ORG_ID },
-      ),
-      resolveOrInsertCosecMaster(
-        pool,
-        "Mx_DesignationMst",
-        "DSGID",
-        "Name",
-        desgName,
-        { ORGID: COSEC_ORG_ID },
-      ),
+      resolveOrInsertCosecMaster(pool, "Mx_BranchMst", "BRCID", "Name", branchName, { ORGID: COSEC_ORG_ID }),
+      resolveOrInsertCosecMaster(pool, "Mx_DepartmentMst", "DPTID", "Name", deptName, { ORGID: COSEC_ORG_ID }),
+      resolveOrInsertCosecMaster(pool, "Mx_DesignationMst", "DSGID", "Name", desgName, { ORGID: COSEC_ORG_ID }),
     ]);
 
     // 4. Check if user already exists
@@ -213,9 +180,7 @@ export async function registerEmployeeInCosec(
       { uid: { type: sql.NVarChar(50), value: employeeCode } },
     );
 
-    const action: "inserted" | "updated" = existing.length
-      ? "updated"
-      : "inserted";
+    const action: "inserted" | "updated" = existing.length ? "updated" : "inserted";
 
     if (action === "inserted") {
       const req = pool.request();
@@ -225,16 +190,8 @@ export async function registerEmployeeInCosec(
       inp("uid", sql.NVarChar(50), employeeCode);
       inp("name", sql.NVarChar(100), fullName.substring(0, 100));
       inp("fullName", sql.NVarChar(200), fullName.substring(0, 200));
-      inp(
-        "firstName",
-        sql.NVarChar(100),
-        fullName.split(" ")[0].substring(0, 100),
-      );
-      inp(
-        "lastName",
-        sql.NVarChar(100),
-        (fullName.split(" ").slice(1).join(" ") || "").substring(0, 100),
-      );
+      inp("firstName", sql.NVarChar(100), fullName.split(" ")[0].substring(0, 100));
+      inp("lastName", sql.NVarChar(100), (fullName.split(" ").slice(1).join(" ") || "").substring(0, 100));
       inp("orgId", sql.Int, COSEC_ORG_ID);
       inp("brcId", sql.Int, brcId);
       inp("dptId", sql.Int, dptId);
@@ -303,10 +260,7 @@ export async function registerEmployeeInCosec(
         [employeeId, employeeCode, fullName],
       )
       .catch((err: unknown) => {
-        console.warn(
-          "[CosecReg] enrollment row update failed (non-blocking):",
-          err,
-        );
+        console.warn("[CosecReg] enrollment row update failed (non-blocking):", err);
       });
 
     const msg = `${action} UserID=${employeeCode} in COSEC`;
@@ -315,17 +269,9 @@ export async function registerEmployeeInCosec(
     return { success: true, cosecUserId: employeeCode, action, message: msg };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(
-      `[CosecReg] registration failed for ${employeeCode}:`,
-      message,
-    );
+    console.error(`[CosecReg] registration failed for ${employeeCode}:`, message);
     await markQueue(employeeId, employeeCode, "failed", message);
-    return {
-      success: false,
-      cosecUserId: employeeCode,
-      action: "skipped",
-      message,
-    };
+    return { success: false, cosecUserId: employeeCode, action: "skipped", message };
   } finally {
     pool?.close().catch(() => undefined);
   }

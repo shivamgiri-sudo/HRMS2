@@ -11,10 +11,7 @@ import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope 
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -61,13 +58,9 @@ router.post("/employees/:id/confirm", requireRole("admin", "hr"), requireEmploye
 }));
 
 // Admin/HR see any employee; employee sees own
-router.get(
-  "/employees/:id/lifecycle",
-  selfOrAdminHr("id"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    res.json({ data: await lifecycleService.listEvents(req.params.id) });
-  }),
-);
+router.get("/employees/:id/lifecycle", selfOrAdminHr("id"), h(async (req: AuthenticatedRequest, res: Response) => {
+  res.json({ data: await lifecycleService.listEvents(req.params.id) });
+}));
 
 router.post("/employees/:id/lifecycle", requireRole("admin", "hr"), requireEmployeeScope("id"), h(async (req: AuthenticatedRequest, res: Response) => {
   const event = await lifecycleService.createEvent(
@@ -78,28 +71,17 @@ router.post("/employees/:id/lifecycle", requireRole("admin", "hr"), requireEmplo
 }));
 
 // Admin/HR see any employee's documents; employee sees own
-router.get(
-  "/employees/:id/documents",
-  selfOrAdminHr("id"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const docs = await lifecycleService.listDocuments(req.params.id);
-    // Previously logged one synthetic "list:<employeeId>" row per view — a value
-    // /documents/:id/access-log (below) could never look up, since it queries by
-    // a real document id, so the Access Log tab always returned zero rows. Log
-    // one real row per document actually returned instead, so ids can match.
-    await Promise.all(
-      docs.map((d) =>
-        lifecycleService.logDocumentAccess(
-          String(d.id),
-          req.authUser!.id,
-          "view",
-          req.ip,
-        ),
-      ),
-    );
-    res.json({ data: docs });
-  }),
-);
+router.get("/employees/:id/documents", selfOrAdminHr("id"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const docs = await lifecycleService.listDocuments(req.params.id);
+  // Previously logged one synthetic "list:<employeeId>" row per view — a value
+  // /documents/:id/access-log (below) could never look up, since it queries by
+  // a real document id, so the Access Log tab always returned zero rows. Log
+  // one real row per document actually returned instead, so ids can match.
+  await Promise.all(
+    docs.map((d) => lifecycleService.logDocumentAccess(String(d.id), req.authUser!.id, "view", req.ip))
+  );
+  res.json({ data: docs });
+}));
 
 router.post("/documents/:id/verify", requireRole("admin", "hr"), requireDocumentScope("id"), h(async (req: AuthenticatedRequest, res: Response) => {
   await lifecycleService.verifyDocument(req.params.id, req.authUser!.id, req.body.remarks, req);
@@ -112,13 +94,7 @@ router.post("/documents/:id/verify", requireRole("admin", "hr"), requireDocument
 // page-code Gate this data actually sits behind — not just admin/hr. The
 // write action (/documents/:id/verify above) stays admin,hr-only; this only
 // widens who can VIEW.
-const DOC_VERIFICATION_READ_ROLES = [
-  "admin",
-  "hr",
-  "branch_hr",
-  "it_head",
-  "branch_head",
-] as const;
+const DOC_VERIFICATION_READ_ROLES = ["admin", "hr", "branch_hr", "it_head", "branch_head"] as const;
 
 router.get("/documents/expiring", requireRole(...DOC_VERIFICATION_READ_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const days = req.query.days ? parseInt(req.query.days as string, 10) : 30;
@@ -161,11 +137,10 @@ router.get("/documents/:id/access-log", requireRole(...DOC_VERIFICATION_READ_ROL
       WHERE dal.document_id = ?
       ORDER BY dal.accessed_at DESC
       LIMIT 100`,
-      [req.params.id],
-    );
-    res.json({ data: rows });
-  }),
-);
+    [req.params.id]
+  );
+  res.json({ data: rows });
+}));
 
 // ─── GET /employees/:id/compliance-report ─────────────────────────────────
 // Full joiner/leaver compliance audit trail for one employee.
@@ -173,9 +148,9 @@ router.get("/documents/:id/access-log", requireRole(...DOC_VERIFICATION_READ_ROL
 router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super_admin"), requireEmployeeScope("id"), h(async (req: AuthenticatedRequest, res: Response) => {
   const empId = req.params.id;
 
-    // 1. Employee profile
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.id, e.employee_code, e.full_name, e.email, e.mobile, e.gender,
+  // 1. Employee profile
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.full_name, e.email, e.mobile, e.gender,
             e.date_of_birth, e.date_of_joining, e.salary_start_date, e.date_of_exit,
             e.employment_type, e.employment_status,
             b.branch_name, d.dept_name AS department_name,
@@ -195,17 +170,14 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
        LEFT JOIN auth_user          au  ON au.id  = e.user_id
       WHERE e.id = ?
       LIMIT 1`,
-      [empId],
-    );
-    if (!empRows.length)
-      return res
-        .status(404)
-        .json({ success: false, error: "Employee not found" });
-    const employee = empRows[0];
+    [empId]
+  );
+  if (!empRows.length) return res.status(404).json({ success: false, error: "Employee not found" });
+  const employee = empRows[0];
 
-    // 2. ATS candidate + onboarding trail (if joined via ATS)
-    const [atsRows] = await db.execute<RowDataPacket[]>(
-      `SELECT c.id AS candidate_id, c.candidate_code, c.full_name AS candidate_name,
+  // 2. ATS candidate + onboarding trail (if joined via ATS)
+  const [atsRows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id AS candidate_id, c.candidate_code, c.full_name AS candidate_name,
             c.mobile AS candidate_mobile, c.email AS candidate_email,
             c.current_stage AS ats_stage, c.walk_in_date, c.sourcing_channel,
             c.created_at AS applied_at,
@@ -249,13 +221,13 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
        */
       WHERE c.candidate_code = (SELECT employee_code FROM employees WHERE id = ?)
       LIMIT 1`,
-      [empId],
-    );
-    const atsProfile = atsRows[0] ?? null;
+    [empId]
+  );
+  const atsProfile = atsRows[0] ?? null;
 
-    // 3. Provisioning tasks (join + exit)
-    const [provRows] = await db.execute<RowDataPacket[]>(
-      `SELECT pr.id, pr.request_type, pr.task_code, pr.assigned_role,
+  // 3. Provisioning tasks (join + exit)
+  const [provRows] = await db.execute<RowDataPacket[]>(
+    `SELECT pr.id, pr.request_type, pr.task_code, pr.assigned_role,
             pr.status, pr.requested_at, pr.actioned_at,
             pr.evidence_note, pr.locked,
             COALESCE(
@@ -270,12 +242,12 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
        LEFT JOIN employees actor_emp ON actor_emp.user_id = actor.id AND actor_emp.active_status = 1
       WHERE pr.employee_id = ?
       ORDER BY pr.requested_at ASC`,
-      [empId],
-    );
+    [empId]
+  );
 
-    // 4. Exit request (if any)
-    const [exitRows] = await db.execute<RowDataPacket[]>(
-      `SELECT er.id, er.exit_type, er.exit_sub_type, er.exit_reason_category,
+  // 4. Exit request (if any)
+  const [exitRows] = await db.execute<RowDataPacket[]>(
+    `SELECT er.id, er.exit_type, er.exit_sub_type, er.exit_reason_category,
             er.resignation_reason, er.status,
             er.last_working_day_proposed, er.last_working_day_confirmed,
             er.notice_period_days, er.notice_start_date, er.notice_end_date,
@@ -301,13 +273,13 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
       WHERE er.employee_id = ?
       ORDER BY er.created_at DESC
       LIMIT 1`,
-      [empId],
-    );
-    const exitRequest = exitRows[0] ?? null;
+    [empId]
+  );
+  const exitRequest = exitRows[0] ?? null;
 
-    // 5. Sensitive action log for this employee (all modules)
-    const [auditRows] = await db.execute<RowDataPacket[]>(
-      `SELECT sal.action_type, sal.module_key, sal.change_summary,
+  // 5. Sensitive action log for this employee (all modules)
+  const [auditRows] = await db.execute<RowDataPacket[]>(
+    `SELECT sal.action_type, sal.module_key, sal.change_summary,
             sal.acted_at, sal.ip_address,
             COALESCE(
               NULLIF(actor_emp.full_name, ''),
@@ -321,12 +293,12 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
       WHERE sal.entity_id = ? AND sal.entity_type IN ('employee','user','exit_request','it_provisioning_request')
       ORDER BY sal.acted_at ASC
       LIMIT 500`,
-      [empId],
-    );
+    [empId]
+  );
 
-    // 6. Journey log events
-    const [journeyRows] = await db.execute<RowDataPacket[]>(
-      `SELECT jl.event_type, jl.event_date, jl.description, jl.old_value, jl.new_value,
+  // 6. Journey log events
+  const [journeyRows] = await db.execute<RowDataPacket[]>(
+    `SELECT jl.event_type, jl.event_date, jl.description, jl.old_value, jl.new_value,
             jl.module, jl.metadata, jl.created_at,
             COALESCE(
               NULLIF(actor_emp.full_name, ''),
@@ -338,293 +310,145 @@ router.get("/employees/:id/compliance-report", requireRole("admin", "hr", "super
        LEFT JOIN employees actor_emp ON actor_emp.user_id = actor.id AND actor_emp.active_status = 1
       WHERE jl.employee_id = ?
       ORDER BY jl.event_date ASC, jl.created_at ASC`,
-      [empId],
-    );
+    [empId]
+  );
 
-    // 7. Build unified ordered timeline
-    type TimelineEvent = {
-      ts: string;
-      category: string;
-      event: string;
-      description: string;
-      actor: string;
-      details: Record<string, unknown>;
-    };
+  // 7. Build unified ordered timeline
+  type TimelineEvent = {
+    ts: string;
+    category: string;
+    event: string;
+    description: string;
+    actor: string;
+    details: Record<string, unknown>;
+  };
 
-    const timeline: TimelineEvent[] = [];
+  const timeline: TimelineEvent[] = [];
 
-    const push = (
-      ts: string | null | undefined,
-      category: string,
-      event: string,
-      description: string,
-      actor: string,
-      details: Record<string, unknown> = {},
-    ) => {
-      if (!ts) return;
-      timeline.push({ ts, category, event, description, actor, details });
-    };
+  const push = (ts: string | null | undefined, category: string, event: string, description: string, actor: string, details: Record<string, unknown> = {}) => {
+    if (!ts) return;
+    timeline.push({ ts, category, event, description, actor, details });
+  };
 
-    // ATS events
-    if (atsProfile) {
-      push(
-        atsProfile.applied_at,
-        "ATS",
-        "CANDIDATE_APPLIED",
-        `Candidate ${atsProfile.candidate_code} applied via ${atsProfile.sourcing_channel ?? "direct"}`,
-        "System",
-        {
-          candidate_id: atsProfile.candidate_id,
-          sourcing_channel: atsProfile.sourcing_channel,
-        },
-      );
-      push(
-        atsProfile.onboarding_created_at,
-        "ATS",
-        "ONBOARDING_INITIATED",
-        "Onboarding request created",
-        atsProfile.onboarding_requested_by_name ?? "HR",
-        {
-          onboarding_id: atsProfile.onboarding_id,
-          status: atsProfile.onboarding_status,
-        },
-      );
-      push(
-        atsProfile.offer_created_at,
-        "ATS",
-        "OFFER_CREATED",
-        `Offer created — CTC: ${atsProfile.offered_ctc ?? "—"}, DOJ: ${atsProfile.offered_doj ?? "—"}`,
-        atsProfile.offer_prepared_by_name ?? "HR",
-        { offered_ctc: atsProfile.offered_ctc, emp_type: atsProfile.emp_type },
-      );
-    }
+  // ATS events
+  if (atsProfile) {
+    push(atsProfile.applied_at, "ATS", "CANDIDATE_APPLIED", `Candidate ${atsProfile.candidate_code} applied via ${atsProfile.sourcing_channel ?? "direct"}`, "System", { candidate_id: atsProfile.candidate_id, sourcing_channel: atsProfile.sourcing_channel });
+    push(atsProfile.onboarding_created_at, "ATS", "ONBOARDING_INITIATED", "Onboarding request created", atsProfile.onboarding_requested_by_name ?? "HR", { onboarding_id: atsProfile.onboarding_id, status: atsProfile.onboarding_status });
+    push(atsProfile.offer_created_at, "ATS", "OFFER_CREATED", `Offer created — CTC: ${atsProfile.offered_ctc ?? "—"}, DOJ: ${atsProfile.offered_doj ?? "—"}`, atsProfile.offer_prepared_by_name ?? "HR", { offered_ctc: atsProfile.offered_ctc, emp_type: atsProfile.emp_type });
+  }
 
-    // Employee joining
-    push(
-      employee.date_of_joining ? `${employee.date_of_joining}T00:00:00` : null,
-      "JOINING",
-      "EMPLOYEE_CODE_ASSIGNED",
-      `Employee code ${employee.employee_code} assigned — ${employee.full_name} joined as ${employee.employment_type}`,
-      "HR",
-      {
-        employee_code: employee.employee_code,
-        employment_status: employee.employment_status,
-      },
-    );
+  // Employee joining
+  push(employee.date_of_joining ? `${employee.date_of_joining}T00:00:00` : null, "JOINING", "EMPLOYEE_CODE_ASSIGNED", `Employee code ${employee.employee_code} assigned — ${employee.full_name} joined as ${employee.employment_type}`, "HR", { employee_code: employee.employee_code, employment_status: employee.employment_status });
 
-    // Provisioning tasks
-    for (const p of provRows) {
-      push(
-        p.requested_at,
-        "PROVISIONING",
-        `${p.task_code}_DISPATCHED`,
-        `${p.request_type === "join" ? "Join" : "Exit"} provisioning task dispatched: ${p.task_code} → ${p.assigned_role}`,
-        "System",
-        { task_code: p.task_code, assigned_role: p.assigned_role },
-      );
-      if (p.actioned_at) {
-        const detail: Record<string, unknown> = {
-          status: p.status,
-          evidence_note: p.evidence_note,
-        };
-        if (p.task_code === "IT_EMAIL_DOMAIN_ASSET") {
-          detail.official_email = p.official_email;
-          detail.domain_account = p.domain_account;
-          detail.asset_tag = p.asset_tag;
-        }
-        if (p.task_code === "ADMIN_BIOMETRIC_ID_CARD") {
-          detail.biometric_enrolled = p.biometric_enrolled;
-          detail.id_card_printed = p.id_card_printed;
-        }
-        push(
-          p.actioned_at,
-          "PROVISIONING",
-          `${p.task_code}_${p.status.toUpperCase()}`,
-          `Task ${p.status}: ${p.evidence_note ?? p.task_code}`,
-          p.actioned_by_name ?? "Admin",
-          detail,
-        );
+  // Provisioning tasks
+  for (const p of provRows) {
+    push(p.requested_at, "PROVISIONING", `${p.task_code}_DISPATCHED`, `${p.request_type === "join" ? "Join" : "Exit"} provisioning task dispatched: ${p.task_code} → ${p.assigned_role}`, "System", { task_code: p.task_code, assigned_role: p.assigned_role });
+    if (p.actioned_at) {
+      const detail: Record<string, unknown> = { status: p.status, evidence_note: p.evidence_note };
+      if (p.task_code === "IT_EMAIL_DOMAIN_ASSET") {
+        detail.official_email = p.official_email;
+        detail.domain_account = p.domain_account;
+        detail.asset_tag = p.asset_tag;
       }
-    }
-
-    // Journey log events
-    for (const j of journeyRows) {
-      push(
-        j.created_at,
-        "LIFECYCLE",
-        j.event_type,
-        j.description ?? j.event_type,
-        j.triggered_by_name ?? "System",
-        {
-          module: j.module,
-          old_value: j.old_value,
-          new_value: j.new_value,
-          ...(j.metadata
-            ? typeof j.metadata === "string"
-              ? JSON.parse(j.metadata)
-              : j.metadata
-            : {}),
-        },
-      );
-    }
-
-    // Audit log events
-    for (const a of auditRows) {
-      push(
-        a.acted_at,
-        "AUDIT",
-        a.action_type,
-        `${a.action_type.replace(/_/g, " ")} [${a.module_key}]`,
-        a.actor_name ?? "System",
-        {
-          module_key: a.module_key,
-          ip_address: a.ip_address,
-          ...(a.change_summary
-            ? typeof a.change_summary === "string"
-              ? JSON.parse(a.change_summary)
-              : a.change_summary
-            : {}),
-        },
-      );
-    }
-
-    // Exit events
-    if (exitRequest) {
-      push(
-        exitRequest.submitted_at,
-        "EXIT",
-        "EXIT_SUBMITTED",
-        `${exitRequest.exit_sub_type} submitted — reason: ${exitRequest.exit_reason_category ?? "—"}`,
-        exitRequest.initiated_by_name ?? exitRequest.initiated_by,
-        {
-          exit_type: exitRequest.exit_type,
-          exit_sub_type: exitRequest.exit_sub_type,
-          proposed_lwd: exitRequest.last_working_day_proposed,
-        },
-      );
-      push(
-        exitRequest.manager_actioned_at,
-        "EXIT",
-        "EXIT_MANAGER_ACTIONED",
-        "Manager actioned exit request",
-        "Manager",
-        { status: exitRequest.status },
-      );
-      push(
-        exitRequest.hr_actioned_at,
-        "EXIT",
-        "EXIT_HR_ACTIONED",
-        "HR actioned exit request",
-        "HR",
-        {
-          status: exitRequest.status,
-          confirmed_lwd: exitRequest.last_working_day_confirmed,
-        },
-      );
-      push(
-        exitRequest.admin_actioned_at,
-        "EXIT",
-        "EXIT_ADMIN_ACTIONED",
-        "Admin actioned exit request",
-        "Admin",
-        {},
-      );
-      push(
-        exitRequest.exit_confirmed_at,
-        "EXIT",
-        "EXIT_CONFIRMED",
-        `Employee marked exited — LWD: ${exitRequest.last_working_day_confirmed ?? "—"}`,
-        "HR",
-        { final_status: "Exited" },
-      );
-      if (exitRequest.revoked_at) {
-        push(
-          exitRequest.revoked_at,
-          "EXIT",
-          "EXIT_REVOKED",
-          `Exit revoked: ${exitRequest.revoke_reason ?? "—"}`,
-          exitRequest.revoked_by_name ?? "HR",
-          {},
-        );
+      if (p.task_code === "ADMIN_BIOMETRIC_ID_CARD") {
+        detail.biometric_enrolled = p.biometric_enrolled;
+        detail.id_card_printed = p.id_card_printed;
       }
+      push(p.actioned_at, "PROVISIONING", `${p.task_code}_${p.status.toUpperCase()}`, `Task ${p.status}: ${p.evidence_note ?? p.task_code}`, p.actioned_by_name ?? "Admin", detail);
     }
+  }
 
-    // Sort by timestamp ascending
-    timeline.sort(
-      (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
-    );
-
-    res.json({
-      success: true,
-      data: {
-        employee,
-        ats_profile: atsProfile,
-        exit_request: exitRequest,
-        provisioning_tasks: provRows,
-        timeline,
-      },
+  // Journey log events
+  for (const j of journeyRows) {
+    push(j.created_at, "LIFECYCLE", j.event_type, j.description ?? j.event_type, j.triggered_by_name ?? "System", {
+      module: j.module,
+      old_value: j.old_value,
+      new_value: j.new_value,
+      ...(j.metadata ? (typeof j.metadata === "string" ? JSON.parse(j.metadata) : j.metadata) : {}),
     });
-  }),
-);
+  }
+
+  // Audit log events
+  for (const a of auditRows) {
+    push(a.acted_at, "AUDIT", a.action_type, `${a.action_type.replace(/_/g, " ")} [${a.module_key}]`, a.actor_name ?? "System", {
+      module_key: a.module_key,
+      ip_address: a.ip_address,
+      ...(a.change_summary ? (typeof a.change_summary === "string" ? JSON.parse(a.change_summary) : a.change_summary) : {}),
+    });
+  }
+
+  // Exit events
+  if (exitRequest) {
+    push(exitRequest.submitted_at, "EXIT", "EXIT_SUBMITTED", `${exitRequest.exit_sub_type} submitted — reason: ${exitRequest.exit_reason_category ?? "—"}`, exitRequest.initiated_by_name ?? exitRequest.initiated_by, { exit_type: exitRequest.exit_type, exit_sub_type: exitRequest.exit_sub_type, proposed_lwd: exitRequest.last_working_day_proposed });
+    push(exitRequest.manager_actioned_at, "EXIT", "EXIT_MANAGER_ACTIONED", "Manager actioned exit request", "Manager", { status: exitRequest.status });
+    push(exitRequest.hr_actioned_at, "EXIT", "EXIT_HR_ACTIONED", "HR actioned exit request", "HR", { status: exitRequest.status, confirmed_lwd: exitRequest.last_working_day_confirmed });
+    push(exitRequest.admin_actioned_at, "EXIT", "EXIT_ADMIN_ACTIONED", "Admin actioned exit request", "Admin", {});
+    push(exitRequest.exit_confirmed_at, "EXIT", "EXIT_CONFIRMED", `Employee marked exited — LWD: ${exitRequest.last_working_day_confirmed ?? "—"}`, "HR", { final_status: "Exited" });
+    if (exitRequest.revoked_at) {
+      push(exitRequest.revoked_at, "EXIT", "EXIT_REVOKED", `Exit revoked: ${exitRequest.revoke_reason ?? "—"}`, exitRequest.revoked_by_name ?? "HR", {});
+    }
+  }
+
+  // Sort by timestamp ascending
+  timeline.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+
+  res.json({
+    success: true,
+    data: {
+      employee,
+      ats_profile: atsProfile,
+      exit_request: exitRequest,
+      provisioning_tasks: provRows,
+      timeline,
+    },
+  });
+}));
 
 // ─── GET /employees/:id/compliance-report/download ────────────────────────────
 // Server-side text file download for the compliance audit report.
 // Replaces the client-side Blob download in NativeComplianceAuditReport.tsx.
-router.get(
-  "/employees/:id/compliance-report/download",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const empId = req.params.id;
+router.get("/employees/:id/compliance-report/download", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const empId = req.params.id;
 
-    // Fetch the same data as the compliance-report endpoint (compact re-query)
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.id, e.employee_code, e.full_name, e.date_of_joining, e.date_of_exit,
+  // Fetch the same data as the compliance-report endpoint (compact re-query)
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.full_name, e.date_of_joining, e.date_of_exit,
             e.employment_status, b.branch_name, p.process_name
        FROM employees e
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
       WHERE e.id = ? LIMIT 1`,
-      [empId],
-    );
-    if (!empRows.length) {
-      res.status(404).json({ success: false, error: "Employee not found" });
-      return;
-    }
-    const emp = empRows[0] as {
-      id: number;
-      employee_code: string;
-      full_name: string;
-      date_of_joining: string | null;
-      date_of_exit: string | null;
-      employment_status: string;
-      branch_name: string | null;
-      process_name: string | null;
-    };
+    [empId]
+  );
+  if (!empRows.length) { res.status(404).json({ success: false, error: "Employee not found" }); return; }
+  const emp = empRows[0] as {
+    id: number; employee_code: string; full_name: string;
+    date_of_joining: string | null; date_of_exit: string | null;
+    employment_status: string; branch_name: string | null; process_name: string | null;
+  };
 
-    // Re-use the existing compliance-report endpoint data by making an internal call
-    // (simpler than duplicating all the timeline SQL here — delegate to the same service)
-    // We call the same DB logic inline since it's already in this router.
-    const fmtDate = (d: string | null) =>
-      d ? new Date(d).toLocaleDateString("en-IN") : "—";
-    const now = new Date().toLocaleString("en-IN");
+  // Re-use the existing compliance-report endpoint data by making an internal call
+  // (simpler than duplicating all the timeline SQL here — delegate to the same service)
+  // We call the same DB logic inline since it's already in this router.
+  const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString('en-IN') : '—';
+  const now = new Date().toLocaleString('en-IN');
 
-    const lines: string[] = [
-      `JOINER/LEAVER COMPLIANCE AUDIT REPORT`,
-      `Employee: ${emp.full_name} (${emp.employee_code})`,
-      `Status: ${emp.employment_status} | Joining: ${fmtDate(emp.date_of_joining)} | Exit: ${fmtDate(emp.date_of_exit)}`,
-      `Branch: ${emp.branch_name ?? "—"} | Process: ${emp.process_name ?? "—"}`,
-      `Generated: ${now}`,
-      ``,
-      `(Full timeline available in the HRMS Compliance Audit Report viewer)`,
-    ];
+  const lines: string[] = [
+    `JOINER/LEAVER COMPLIANCE AUDIT REPORT`,
+    `Employee: ${emp.full_name} (${emp.employee_code})`,
+    `Status: ${emp.employment_status} | Joining: ${fmtDate(emp.date_of_joining)} | Exit: ${fmtDate(emp.date_of_exit)}`,
+    `Branch: ${emp.branch_name ?? '—'} | Process: ${emp.process_name ?? '—'}`,
+    `Generated: ${now}`,
+    ``,
+    `(Full timeline available in the HRMS Compliance Audit Report viewer)`,
+  ];
 
-    const content = lines.join("\n");
-    const filename = `compliance-report-${emp.employee_code.replace(/[^A-Z0-9]/gi, "_")}-${Date.now()}.txt`;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("Cache-Control", "no-store");
-    res.send(content);
-  }),
-);
+  const content = lines.join('\n');
+  const filename = `compliance-report-${emp.employee_code.replace(/[^A-Z0-9]/gi, '_')}-${Date.now()}.txt`;
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(content);
+}));
 
 export { router as lifecycleRouter };

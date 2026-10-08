@@ -17,10 +17,7 @@ import { describe, expect, it } from "vitest";
  */
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const routes = fs.readFileSync(
-  path.resolve(DIR, "../bulk-upload.routes.ts"),
-  "utf8",
-);
+const routes = fs.readFileSync(path.resolve(DIR, "../bulk-upload.routes.ts"), "utf8");
 
 /** The GET /batches handler only — later handlers have their own, different scoping needs. */
 function batchesHandler(): string {
@@ -57,9 +54,7 @@ describe("GET /batches is scoped", () => {
      * would hide two thirds of the history from a branch head, including uploads that genuinely
      * belong to their branch. The uploader's own branch is the fallback, which resolves for all 65.
      */
-    expect(batchesHandler()).toContain(
-      "COALESCE(ub.branch_id, uploader_emp.branch_id)",
-    );
+    expect(batchesHandler()).toContain("COALESCE(ub.branch_id, uploader_emp.branch_id)");
   });
 
   it("resolves the uploader's display name server-side", () => {
@@ -74,14 +69,10 @@ describe("filters narrow, and never widen, what scope allows", () => {
   it("applies every filter as an additional AND, not as a replacement", () => {
     const handler = batchesHandler();
     // Each filter pushes onto the same `where` list that already holds the scope predicate.
-    for (const column of [
-      "ub.upload_type_code = ?",
-      "ub.batch_status = ?",
-      "ub.uploaded_by = ?",
-    ]) {
+    for (const column of ["ub.upload_type_code = ?", "ub.batch_status = ?", "ub.uploaded_by = ?"]) {
       expect(handler).toContain(column);
     }
-    expect(handler).toContain('where.join(" AND ")');
+    expect(handler).toContain("where.join(\" AND \")");
   });
 
   it("binds every filter as a parameter, interpolating nothing user-supplied into the SQL", () => {
@@ -97,17 +88,8 @@ describe("filters narrow, and never widen, what scope allows", () => {
     expect(sqlStart, "the batches SELECT was not found").toBeGreaterThan(-1);
     const sql = handler.slice(sqlStart, handler.indexOf("`", sqlStart + 1) + 1);
 
-    for (const name of [
-      "uploadType",
-      "status",
-      "uploadedBy",
-      "search",
-      "from",
-      "to",
-    ]) {
-      expect(sql, `${name} must be bound, not interpolated`).not.toContain(
-        "${" + name + "}",
-      );
+    for (const name of ["uploadType", "status", "uploadedBy", "search", "from", "to"]) {
+      expect(sql, `${name} must be bound, not interpolated`).not.toContain("${" + name + "}");
     }
     // LIMIT is the only interpolated value, and is clamped to a number before it gets there.
     expect(sql).toContain("LIMIT ${limit}");
@@ -119,10 +101,7 @@ describe("filter options cannot leak another branch's data", () => {
   it("scopes the options query the same way as the list", () => {
     const start = routes.indexOf('router.get("/batches/filter-options"');
     expect(start, "filter-options handler not found").toBeGreaterThan(-1);
-    const handler = routes.slice(
-      start,
-      routes.indexOf("router.", start + 10) || undefined,
-    );
+    const handler = routes.slice(start, routes.indexOf("router.", start + 10) || undefined);
     // An unscoped options list would name upload types and uploaders the caller cannot see —
     // disclosing that another branch's uploads exist even while the rows stay hidden.
     expect(handler).toContain("buildScopeWhereClause");

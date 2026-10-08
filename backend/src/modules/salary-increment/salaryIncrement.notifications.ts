@@ -25,9 +25,7 @@ interface IncrementContextRow extends RowDataPacket {
 }
 
 /** Increment implemented — the new CTC is now active. */
-export async function notifySalaryIncrementLetter(
-  requestId: string,
-): Promise<void> {
+export async function notifySalaryIncrementLetter(requestId: string): Promise<void> {
   try {
     const [rows] = await db.execute<IncrementContextRow[]>(
       `SELECT sir.employee_id, e.branch_id, e.process_id,
@@ -48,11 +46,7 @@ export async function notifySalaryIncrementLetter(
     await notificationGateway.notify({
       eventCode: "salary_increment_letter",
       dedupeKey: `salary_increment_request:${requestId}:implemented`,
-      context: {
-        employeeId: r.employee_id,
-        branchId: r.branch_id,
-        processId: r.process_id,
-      },
+      context: { employeeId: r.employee_id, branchId: r.branch_id, processId: r.process_id },
       entityType: "salary_increment_request",
       entityId: requestId,
       correlationId: `salary_increment:${requestId}`,
@@ -68,9 +62,6 @@ export async function notifySalaryIncrementLetter(
       },
     });
   } catch (err) {
-    console.error(
-      `[salary-increment-notify] letter ${requestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[salary-increment-notify] letter ${requestId}:`, (err as Error).message);
   }
 }

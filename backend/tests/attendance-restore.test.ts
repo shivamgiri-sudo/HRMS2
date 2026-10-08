@@ -1,8 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  applyRestore,
-  type DateRestorePlan,
-} from "../src/shared/attendanceRestore.js";
+import { applyRestore, type DateRestorePlan } from "../src/shared/attendanceRestore.js";
 
 /**
  * Regression cover for a discard that reported success while doing nothing.
@@ -45,7 +42,7 @@ describe("applyRestore — delete", () => {
   });
 
   it("records rows actually affected, so the count cannot claim phantom work", async () => {
-    execute.mockResolvedValue([{ affectedRows: 0 }, []]); // nothing matched
+    execute.mockResolvedValue([{ affectedRows: 0 }, []]);   // nothing matched
     const p = plan();
     await applyRestore(conn, "emp-1", [p], new Map(), "u1", "reason");
     expect(p.appliedRows).toBe(0);
@@ -66,12 +63,9 @@ describe("applyRestore — delete", () => {
 describe("applyRestore — rows it must never touch", () => {
   it("writes nothing for skip_locked or skip_owned", async () => {
     await applyRestore(
-      conn,
-      "emp-1",
+      conn, "emp-1",
       [plan({ mode: "skip_locked" }), plan({ mode: "skip_owned" })],
-      new Map(),
-      "u1",
-      "reason",
+      new Map(), "u1", "reason"
     );
     expect(execute).not.toHaveBeenCalled();
   });
@@ -79,11 +73,7 @@ describe("applyRestore — rows it must never touch", () => {
 
 describe("applyRestore — unlocking so the engine can recompute", () => {
   it("clears is_locked and ownership on the partial path", async () => {
-    const p = plan({
-      mode: "partial",
-      restoredStatus: "absent",
-      restoredLwp: 1,
-    });
+    const p = plan({ mode: "partial", restoredStatus: "absent", restoredLwp: 1 });
     await applyRestore(conn, "emp-1", [p], new Map(), "u1", "reason");
     const [sql] = execute.mock.calls[0];
     // Every attendance-engine write is guarded by IF(is_locked = 0, ...), so a
@@ -106,19 +96,9 @@ describe("applyRestore — unlocking so the engine can recompute", () => {
 describe("applyRestore — snapshot", () => {
   it("restores only columns the snapshot actually carries", async () => {
     const snapshots = new Map([
-      [
-        "2026-07-28",
-        {
-          row_existed: 1,
-          snapshot: { attendance_status: "absent", lwp_value: 1, is_locked: 0 },
-        },
-      ],
+      ["2026-07-28", { row_existed: 1, snapshot: { attendance_status: "absent", lwp_value: 1, is_locked: 0 } }],
     ]);
-    const p = plan({
-      mode: "snapshot",
-      restoredStatus: "absent",
-      restoredLwp: 1,
-    });
+    const p = plan({ mode: "snapshot", restoredStatus: "absent", restoredLwp: 1 });
     await applyRestore(conn, "emp-1", [p], snapshots as any, "u1", "reason");
 
     const [sql, params] = execute.mock.calls[0];

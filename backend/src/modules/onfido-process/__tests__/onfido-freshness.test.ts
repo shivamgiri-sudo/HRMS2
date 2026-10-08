@@ -1,18 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { query, state } = vi.hoisted(() => ({
-  query: vi.fn(),
-  state: { inflight: 0, max: 0 },
-}));
-vi.mock("../../../db/onfidoDb.js", () => ({
-  getOnfidoPool: async () => ({ query }),
-}));
+const { query, state } = vi.hoisted(() => ({ query: vi.fn(), state: { inflight: 0, max: 0 } }));
+vi.mock("../../../db/onfidoDb.js", () => ({ getOnfidoPool: async () => ({ query }) }));
 
-import {
-  findGapMonths,
-  getDataFreshness,
-  FRESHNESS_SOURCES,
-} from "../onfido-freshness.service";
+import { findGapMonths, getDataFreshness, FRESHNESS_SOURCES } from "../onfido-freshness.service";
 
 describe("getDataFreshness", () => {
   it("runs the latest-date probe and the gap scan together and returns the same rows", async () => {
@@ -21,11 +12,7 @@ describe("getDataFreshness", () => {
       state.max = Math.max(state.max, state.inflight);
       await new Promise((r) => setTimeout(r, 5));
       state.inflight -= 1;
-      return [
-        /MAX\(/.test(sql)
-          ? [{ d: "2026-09-28" }]
-          : [{ m: "2026-07" }, { m: "2026-09" }],
-      ];
+      return [/MAX\(/.test(sql) ? [{ d: "2026-09-28" }] : [{ m: "2026-07" }, { m: "2026-09" }]];
     });
     const out = await getDataFreshness();
     expect(out).toHaveLength(FRESHNESS_SOURCES.length);

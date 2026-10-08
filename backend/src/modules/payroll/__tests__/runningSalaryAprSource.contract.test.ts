@@ -28,13 +28,9 @@ import fs from "fs";
 import path from "path";
 
 const SERVICE = fs.readFileSync(
-  path.resolve(__dirname, "..", "running-salary.service.ts"),
-  "utf8",
-);
+  path.resolve(__dirname, "..", "running-salary.service.ts"), "utf8");
 const ROUTES = fs.readFileSync(
-  path.resolve(__dirname, "..", "running-salary.routes.ts"),
-  "utf8",
-);
+  path.resolve(__dirname, "..", "running-salary.routes.ts"), "utf8");
 
 describe("running salary reports APR provenance", () => {
   it("reads the source columns it classifies on", () => {
@@ -69,9 +65,7 @@ describe("running salary reports APR provenance", () => {
   it("derives the verified figure by subtraction, so the split cannot drift from the total", () => {
     // The whole safety property: verified = total - fallback. Any independent
     // recomputation of the verified amount could disagree with what is paid.
-    expect(SERVICE).toMatch(
-      /earnedSalaryTillDate\s*-\s*fallbackSalaryTillDate/,
-    );
+    expect(SERVICE).toMatch(/earnedSalaryTillDate\s*-\s*fallbackSalaryTillDate/);
     expect(SERVICE).toMatch(/cappedEarned\s*-\s*fallbackPaidDays/);
   });
 

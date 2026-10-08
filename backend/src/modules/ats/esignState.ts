@@ -47,42 +47,41 @@ export type EsignBucket = "completed" | "in_progress" | "not_started";
  * work, but dropping it would break the row-count identity that makes the
  * denominator trustworthy.
  */
-export const ESIGN_STATE_BUCKET: Readonly<Record<string, EsignBucket>> =
-  Object.freeze({
-    // ── completed ──────────────────────────────────────────────────────────────
-    // Terminal and satisfied: a signature or a verification outcome is on file.
-    esign_completed: "completed",
-    employee_confirmed: "completed",
-    verified: "completed",
-    completed: "completed",
-    signed_verified: "completed",
-    wet_signed_uploaded: "completed",
+export const ESIGN_STATE_BUCKET: Readonly<Record<string, EsignBucket>> = Object.freeze({
+  // ── completed ──────────────────────────────────────────────────────────────
+  // Terminal and satisfied: a signature or a verification outcome is on file.
+  esign_completed: "completed",
+  employee_confirmed: "completed",
+  verified: "completed",
+  completed: "completed",
+  signed_verified: "completed",
+  wet_signed_uploaded: "completed",
 
-    // ── in_progress ────────────────────────────────────────────────────────────
-    // The document is in flight: someone (candidate, employee or HR) has an
-    // outstanding action on a document that already exists.
-    esign_initiated: "in_progress",
-    pending_candidate_esign: "in_progress",
-    ready_for_esign: "in_progress",
-    employee_review_pending: "in_progress",
-    uploaded_pending_review: "in_progress",
-    uploaded_pending_esign: "in_progress",
-    correction_requested: "in_progress",
-    needs_correction: "in_progress",
-    // A failed signature is in progress, not terminal: the reconciliation worker
-    // and a re-dispatch can both still carry it to completion, and Requirement 6
-    // criterion 3 requires it inside the denominator.
-    esign_failed: "in_progress",
+  // ── in_progress ────────────────────────────────────────────────────────────
+  // The document is in flight: someone (candidate, employee or HR) has an
+  // outstanding action on a document that already exists.
+  esign_initiated: "in_progress",
+  pending_candidate_esign: "in_progress",
+  ready_for_esign: "in_progress",
+  employee_review_pending: "in_progress",
+  uploaded_pending_review: "in_progress",
+  uploaded_pending_esign: "in_progress",
+  correction_requested: "in_progress",
+  needs_correction: "in_progress",
+  // A failed signature is in progress, not terminal: the reconciliation worker
+  // and a re-dispatch can both still carry it to completion, and Requirement 6
+  // criterion 3 requires it inside the denominator.
+  esign_failed: "in_progress",
 
-    // ── not_started ────────────────────────────────────────────────────────────
-    // Nothing has been asked of anyone outside HR yet — the document is still
-    // being prepared.
-    draft_generated: "not_started",
-    hr_fill_required: "not_started",
-    pending_hr_upload: "not_started",
-    pending_generation: "not_started",
-    template_pending: "not_started",
-  } as const satisfies Record<string, EsignBucket>);
+  // ── not_started ────────────────────────────────────────────────────────────
+  // Nothing has been asked of anyone outside HR yet — the document is still
+  // being prepared.
+  draft_generated: "not_started",
+  hr_fill_required: "not_started",
+  pending_hr_upload: "not_started",
+  pending_generation: "not_started",
+  template_pending: "not_started",
+} as const satisfies Record<string, EsignBucket>);
 
 /**
  * Distinct unrecognised status values already logged by this process.
@@ -102,9 +101,7 @@ const loggedUnknownStates = new Set<string>();
  * not claim a signature that may not exist) and is counted rather than dropped,
  * per Requirement 6 criteria 1 and 5.
  */
-export function classifyEsignState(
-  status: string | null | undefined,
-): EsignBucket {
+export function classifyEsignState(status: string | null | undefined): EsignBucket {
   if (status === null || status === undefined) {
     warnUnrecognised(status === null ? "<null>" : "<undefined>");
     return "not_started";

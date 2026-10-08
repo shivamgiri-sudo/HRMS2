@@ -41,7 +41,9 @@ import type { Request } from "express";
 
 /** The money events permitted to use the strict path. Adding one is a deliberate act. */
 export type MoneyEventAction =
-  "FULL_FINAL_PAID" | "PAYROLL_DISBURSED" | "PAYMENT_FILE_RELEASED";
+  | "FULL_FINAL_PAID"
+  | "PAYROLL_DISBURSED"
+  | "PAYMENT_FILE_RELEASED";
 
 export interface MoneyEventAuditEntry {
   actor_user_id: string;
@@ -70,7 +72,7 @@ function requestIdFrom(entry: MoneyEventAuditEntry): string | null {
  */
 export async function recordMoneyEventAudit(
   conn: PoolConnection,
-  entry: MoneyEventAuditEntry,
+  entry: MoneyEventAuditEntry
 ): Promise<void> {
   await conn.execute(
     `INSERT INTO sensitive_action_log
@@ -94,6 +96,6 @@ export async function recordMoneyEventAudit(
       null,
       null,
       entry.employee_id ?? null,
-    ],
+    ]
   );
 }

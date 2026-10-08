@@ -62,22 +62,12 @@ const n = (v: unknown): number => {
   const p = Number(v ?? 0);
   return Number.isFinite(p) ? p : 0;
 };
-const money = (v: number) =>
-  v.toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+const money = (v: number) => v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 type Row = { label: string; a: number; b: number; note?: string };
 let anyRealFail = false;
 
-function printTable(
-  title: string,
-  colA: string,
-  colB: string,
-  rows: Row[],
-  toleranceCheck: boolean,
-) {
+function printTable(title: string, colA: string, colB: string, rows: Row[], toleranceCheck: boolean) {
   console.log(`\n=== ${title} ===`);
   if (!rows.length) {
     console.log("  (no rows)");
@@ -91,7 +81,7 @@ function printTable(
     const diff = r.a - r.b;
     const pass = Math.abs(diff) <= TOLERANCE;
     if (toleranceCheck && !pass) anyRealFail = true;
-    const status = toleranceCheck ? (pass ? "PASS" : "FAIL") : (r.note ?? "");
+    const status = toleranceCheck ? (pass ? "PASS" : "FAIL") : r.note ?? "";
     const suffix = toleranceCheck && r.note ? `  (${r.note})` : "";
     console.log(
       `  ${r.label.padEnd(w)}  ${money(r.a).padStart(16)}  ${money(r.b).padStart(16)}  ${money(diff).padStart(14)}  ${status}${suffix}`,
@@ -101,18 +91,12 @@ function printTable(
 
 async function main() {
   const { db } = await import("../src/db/mysql.js");
-  const { getCeoOverview } =
-    await import("../src/modules/process-pnl/ceo-overview.service.js");
-  const { getPnlReconciliation } =
-    await import("../src/modules/process-pnl/pnl-reconciliation.service.js");
-  const { bpoPnlAllocationOverlayService } =
-    await import("../src/modules/process-pnl/bpo-pnl-allocation-overlay.service.js");
-  const { canonicalPnlService } =
-    await import("../src/modules/process-pnl/canonical-pnl.service.js");
+  const { getCeoOverview } = await import("../src/modules/process-pnl/ceo-overview.service.js");
+  const { getPnlReconciliation } = await import("../src/modules/process-pnl/pnl-reconciliation.service.js");
+  const { bpoPnlAllocationOverlayService } = await import("../src/modules/process-pnl/bpo-pnl-allocation-overlay.service.js");
+  const { canonicalPnlService } = await import("../src/modules/process-pnl/canonical-pnl.service.js");
 
-  console.log(
-    `\nP&L RECONCILIATION — period ${PERIOD}, tolerance Rs ${TOLERANCE}`,
-  );
+  console.log(`\nP&L RECONCILIATION — period ${PERIOD}, tolerance Rs ${TOLERANCE}`);
   console.log("=".repeat(72));
 
   // ── A. Internal consistency: ceo-overview branch totals vs pnl-reconciliation branch rollup ──
@@ -133,8 +117,7 @@ async function main() {
        LEFT JOIN cost_centre_master ccm ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = p.cost_centre_code COLLATE utf8mb4_unicode_ci
       WHERE p.period_code = ? AND ccm.active_status = 0
         AND REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name,'')),'.',''),' ',''),',','') LIKE '%mascallnet%'
-      GROUP BY ccm.branch_id`,
-    [PERIOD],
+      GROUP BY ccm.branch_id`, [PERIOD],
   );
   const [inactiveGrnRows] = await db.query<any[]>(
     `SELECT ccm.branch_id, SUM(l.total) amt FROM grn_entry_line_snapshot l
@@ -142,21 +125,18 @@ async function main() {
        LEFT JOIN cost_centre_master ccm ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = l.cost_centre_code COLLATE utf8mb4_unicode_ci
       WHERE g.period_code = ? AND g.is_rejected = 0 AND ccm.active_status = 0
         AND REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name,'')),'.',''),' ',''),',','') LIKE '%mascallnet%'
-      GROUP BY ccm.branch_id`,
-    [PERIOD],
+      GROUP BY ccm.branch_id`, [PERIOD],
   );
   const [unmappedPayrollRows] = await db.query<any[]>(
     `SELECT e.branch_id, SUM(COALESCE(l.gross_salary,0)+COALESCE(l.pf_employer,0)+COALESCE(l.esic_employer,0)+COALESCE(l.gratuity,0)) amt
        FROM salary_prep_line l JOIN salary_prep_run r ON r.id=l.run_id JOIN employees e ON e.id=l.employee_id
-      WHERE r.run_month = ? AND e.cost_centre_id IS NULL GROUP BY e.branch_id`,
-    [PERIOD],
+      WHERE r.run_month = ? AND e.cost_centre_id IS NULL GROUP BY e.branch_id`, [PERIOD],
   );
   const [inactiveCcPayrollRows] = await db.query<any[]>(
     `SELECT e.branch_id, SUM(COALESCE(l.gross_salary,0)+COALESCE(l.pf_employer,0)+COALESCE(l.esic_employer,0)+COALESCE(l.gratuity,0)) amt
        FROM salary_prep_line l JOIN salary_prep_run r ON r.id=l.run_id JOIN employees e ON e.id=l.employee_id
        JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
-      WHERE r.run_month = ? AND ccm.active_status = 0 GROUP BY e.branch_id`,
-    [PERIOD],
+      WHERE r.run_month = ? AND ccm.active_status = 0 GROUP BY e.branch_id`, [PERIOD],
   );
   const [branchMismatchRows] = await db.query<any[]>(
     `SELECT e.branch_id AS emp_branch, ccm.branch_id AS cc_branch,
@@ -164,11 +144,9 @@ async function main() {
        FROM salary_prep_line l JOIN salary_prep_run r ON r.id=l.run_id JOIN employees e ON e.id=l.employee_id
        JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id AND ccm.active_status = 1
       WHERE r.run_month = ? AND e.branch_id <> ccm.branch_id
-      GROUP BY e.branch_id, ccm.branch_id`,
-    [PERIOD],
+      GROUP BY e.branch_id, ccm.branch_id`, [PERIOD],
   );
-  const byBranch = (rs: any[]) =>
-    new Map(rs.map((r) => [r.branch_id ?? "", n(r.amt)]));
+  const byBranch = (rs: any[]) => new Map(rs.map((r) => [r.branch_id ?? "", n(r.amt)]));
   const inactiveRev = byBranch(inactiveRevRows);
   const inactiveGrn = byBranch(inactiveGrnRows);
   const unmappedPayroll = byBranch(unmappedPayrollRows);
@@ -179,19 +157,11 @@ async function main() {
   const mismatchNet = new Map<string, number>();
   for (const r of branchMismatchRows as any[]) {
     const amt = n(r.amt);
-    mismatchNet.set(
-      r.emp_branch ?? "",
-      (mismatchNet.get(r.emp_branch ?? "") ?? 0) + amt,
-    );
-    mismatchNet.set(
-      r.cc_branch ?? "",
-      (mismatchNet.get(r.cc_branch ?? "") ?? 0) - amt,
-    );
+    mismatchNet.set(r.emp_branch ?? "", (mismatchNet.get(r.emp_branch ?? "") ?? 0) + amt);
+    mismatchNet.set(r.cc_branch ?? "", (mismatchNet.get(r.cc_branch ?? "") ?? 0) - amt);
   }
 
-  const reconByBranch = new Map(
-    recon.branches.map((b) => [b.branchId ?? "", b]),
-  );
+  const reconByBranch = new Map(recon.branches.map((b) => [b.branchId ?? "", b]));
   const revenueRows: Row[] = [];
   const peopleRows: Row[] = [];
   const grnRows: Row[] = [];
@@ -201,100 +171,40 @@ async function main() {
     const r = reconByBranch.get(key);
     if (!r) continue; // a branch with 0 cost centres in recon's scope — nothing to compare
     const revAdj = inactiveRev.get(key) ?? 0;
-    const peopleAdj =
-      (unmappedPayroll.get(key) ?? 0) +
-      (inactiveCcPayroll.get(key) ?? 0) +
-      (mismatchNet.get(key) ?? 0);
+    const peopleAdj = (unmappedPayroll.get(key) ?? 0) + (inactiveCcPayroll.get(key) ?? 0) + (mismatchNet.get(key) ?? 0);
     const grnAdj = inactiveGrn.get(key) ?? 0;
-    revenueRows.push({
-      label: b.branchName,
-      a: b.revenue - revAdj,
-      b: r.revenue,
-      note: revAdj
-        ? `raw diff explained by Rs ${money(revAdj)} inactive-CC revenue`
-        : undefined,
-    });
-    peopleRows.push({
-      label: b.branchName,
-      a: b.peopleCost - peopleAdj,
-      b: r.payrollCost,
-      note: peopleAdj
-        ? `raw diff explained by Rs ${money(peopleAdj)} unmapped/inactive/branch-mismatch payroll`
-        : undefined,
-    });
-    grnRows.push({
-      label: b.branchName,
-      a: b.indirectCost - grnAdj,
-      b: r.grnActual,
-      note: grnAdj
-        ? `raw diff explained by Rs ${money(grnAdj)} inactive-CC GRN`
-        : undefined,
-    });
+    revenueRows.push({ label: b.branchName, a: b.revenue - revAdj, b: r.revenue, note: revAdj ? `raw diff explained by Rs ${money(revAdj)} inactive-CC revenue` : undefined });
+    peopleRows.push({ label: b.branchName, a: b.peopleCost - peopleAdj, b: r.payrollCost, note: peopleAdj ? `raw diff explained by Rs ${money(peopleAdj)} unmapped/inactive/branch-mismatch payroll` : undefined });
+    grnRows.push({ label: b.branchName, a: b.indirectCost - grnAdj, b: r.grnActual, note: grnAdj ? `raw diff explained by Rs ${money(grnAdj)} inactive-CC GRN` : undefined });
   }
-  console.log(
-    "\n(Each row below is ceo-overview's figure MINUS the known, documented active/unmapped/branch-attribution scope adjustment — i.e. the RESIDUAL after accounting for the two functions' deliberately different scopes. A residual PASS means the underlying P&L math agrees; it does not mean the two raw totals are equal.)",
-  );
-  printTable(
-    "A1. REVENUE residual — ceo-overview (scope-adjusted) vs pnl-reconciliation (by branch)",
-    "ceo adj.",
-    "reconciliation",
-    revenueRows,
-    true,
-  );
-  printTable(
-    "A2. PEOPLE COST residual — ceo-overview (scope-adjusted) vs pnl-reconciliation (by branch)",
-    "ceo adj.",
-    "reconciliation",
-    peopleRows,
-    true,
-  );
-  printTable(
-    "A3. INDIRECT/GRN residual — ceo-overview (scope-adjusted) vs pnl-reconciliation (by branch)",
-    "ceo adj.",
-    "reconciliation",
-    grnRows,
-    true,
-  );
+  console.log("\n(Each row below is ceo-overview's figure MINUS the known, documented active/unmapped/branch-attribution scope adjustment — i.e. the RESIDUAL after accounting for the two functions' deliberately different scopes. A residual PASS means the underlying P&L math agrees; it does not mean the two raw totals are equal.)");
+  printTable("A1. REVENUE residual — ceo-overview (scope-adjusted) vs pnl-reconciliation (by branch)", "ceo adj.", "reconciliation", revenueRows, true);
+  printTable("A2. PEOPLE COST residual — ceo-overview (scope-adjusted) vs pnl-reconciliation (by branch)", "ceo adj.", "reconciliation", peopleRows, true);
+  printTable("A3. INDIRECT/GRN residual — ceo-overview (scope-adjusted) vs pnl-reconciliation (by branch)", "ceo adj.", "reconciliation", grnRows, true);
 
   // ── B. Front-door consistency: cached (canonical) vs uncached (bpo overlay) process rows ──
   const [cached, uncached] = await Promise.all([
     canonicalPnlService.getSummary({ period: PERIOD }),
     bpoPnlAllocationOverlayService.getSummary({ period: PERIOD }),
   ]);
-  const uncachedByProcess = new Map(
-    uncached.rows.map((r: any) => [r.processId, r]),
-  );
+  const uncachedByProcess = new Map(uncached.rows.map((r: any) => [r.processId, r]));
   const frontDoorRows: Row[] = (cached.rows as any[]).map((r) => ({
     label: r.processName ?? r.processId,
     a: n(r.operatingProfit),
     b: n(uncachedByProcess.get(r.processId)?.operatingProfit),
   }));
-  printTable(
-    "B. OPERATING PROFIT — cached /pnl/summary vs uncached /pnl/bpo/summary (by process)",
-    "cached",
-    "uncached",
-    frontDoorRows,
-    true,
-  );
+  printTable("B. OPERATING PROFIT — cached /pnl/summary vs uncached /pnl/bpo/summary (by process)", "cached", "uncached", frontDoorRows, true);
 
   // ── C. Mirror freshness vs live db_bill ──
-  console.log(
-    "\n=== C. MIRROR FRESHNESS — mas_hrms mirror vs live db_bill ===",
-  );
+  console.log("\n=== C. MIRROR FRESHNESS — mas_hrms mirror vs live db_bill ===");
   if (!process.env.BILL_DB_HOST) {
     console.log("  SKIPPED — BILL_DB_HOST not configured in this environment.");
   } else {
     try {
       const { billQuery } = await import("../src/db/billDb.js");
       const [y, m] = PERIOD.split("-").map(Number);
-      const financeYear =
-        m >= 4
-          ? `${y}-${String(y + 1).slice(2)}`
-          : `${y - 1}-${String(y).slice(2)}`;
-      const monthName = new Date(Date.UTC(2000, m - 1, 1)).toLocaleString(
-        "en-US",
-        { month: "short" },
-      );
+      const financeYear = m >= 4 ? `${y}-${String(y + 1).slice(2)}` : `${y - 1}-${String(y).slice(2)}`;
+      const monthName = new Date(Date.UTC(2000, m - 1, 1)).toLocaleString("en-US", { month: "short" });
 
       // GRN: schema/columns confirmed live this session (expense_entry_master), simpler and
       // lower-risk than tbl_invoice's inconsistent month dialects (see
@@ -314,15 +224,9 @@ async function main() {
       const mirrorRow = (mirrorGrn as any[])[0] ?? {};
       const mirrorN = n(mirrorRow.n);
       const mirrorAmt = n(mirrorRow.amt);
-      console.log(
-        `  GRN — live db_bill.expense_entry_master (FinanceYear=${financeYear}, FinanceMonth=${monthName}, not rejected): n=${liveN} amt=Rs ${money(liveAmt)}`,
-      );
-      console.log(
-        `  GRN — mas_hrms mirror grn_entry_snapshot (period_code=${PERIOD}): n=${mirrorN} amt=Rs ${money(mirrorAmt)}, last synced ${mirrorRow.latest ?? "never"}`,
-      );
-      console.log(
-        `  GRN mirror gap: ${liveN - mirrorN} rows, Rs ${money(liveAmt - mirrorAmt)} — expected to be 0 for a fully-synced closed month; a nonzero gap on a CLOSED period (not the current month) is a real sync problem, not staleness.`,
-      );
+      console.log(`  GRN — live db_bill.expense_entry_master (FinanceYear=${financeYear}, FinanceMonth=${monthName}, not rejected): n=${liveN} amt=Rs ${money(liveAmt)}`);
+      console.log(`  GRN — mas_hrms mirror grn_entry_snapshot (period_code=${PERIOD}): n=${mirrorN} amt=Rs ${money(mirrorAmt)}, last synced ${mirrorRow.latest ?? "never"}`);
+      console.log(`  GRN mirror gap: ${liveN - mirrorN} rows, Rs ${money(liveAmt - mirrorAmt)} — expected to be 0 for a fully-synced closed month; a nonzero gap on a CLOSED period (not the current month) is a real sync problem, not staleness.`);
 
       // Revenue: report the mirror's own freshness for this period as a plain readout — the
       // particular-snapshot table mirrors db_bill.inv_particulars (line-level), a different
@@ -335,20 +239,14 @@ async function main() {
         [PERIOD],
       );
       const rf = (revFreshness as any[])[0] ?? {};
-      console.log(
-        `  Revenue mirror (billing_invoice_particular_snapshot, period_code=${PERIOD}): n=${n(rf.n)} rows, last synced ${rf.latest ?? "never"}.`,
-      );
+      console.log(`  Revenue mirror (billing_invoice_particular_snapshot, period_code=${PERIOD}): n=${n(rf.n)} rows, last synced ${rf.latest ?? "never"}.`);
     } catch (error) {
-      console.log(
-        `  UNREACHABLE — ${error instanceof Error ? error.message : String(error)}`,
-      );
+      console.log(`  UNREACHABLE — ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   // ── D1. IDC guard ──
-  console.log(
-    "\n=== D1. IDC GUARD — employee_code LIKE 'IDC%' present in mas_hrms payroll? ===",
-  );
+  console.log("\n=== D1. IDC GUARD — employee_code LIKE 'IDC%' present in mas_hrms payroll? ===");
   const [idcRows] = await db.query<any[]>(
     `SELECT COUNT(*) AS cnt, COALESCE(SUM(COALESCE(l.gross_salary,0)+COALESCE(l.pf_employer,0)+COALESCE(l.esic_employer,0)+COALESCE(l.gratuity,0)),0) AS amt
        FROM salary_prep_line l JOIN salary_prep_run r ON r.id = l.run_id JOIN employees e ON e.id = l.employee_id
@@ -356,9 +254,7 @@ async function main() {
     [PERIOD],
   );
   const idcCount = n((idcRows as any[])[0]?.cnt);
-  console.log(
-    `  IDC-coded employees in mas_hrms payroll for ${PERIOD}: ${idcCount}${idcCount === 0 ? " (expected — IDC payroll should never appear in mas_hrms)" : " *** CONTAMINATION — see PAYROLL_IDC_CODE_IN_MAS_HRMS exception ***"}`,
-  );
+  console.log(`  IDC-coded employees in mas_hrms payroll for ${PERIOD}: ${idcCount}${idcCount === 0 ? " (expected — IDC payroll should never appear in mas_hrms)" : " *** CONTAMINATION — see PAYROLL_IDC_CODE_IN_MAS_HRMS exception ***"}`);
 
   // ── D2. GRN backfill buckets ──
   console.log("\n=== D2. GRN COST-ALLOCATION BACKFILL SCOPE (FY2026-27) ===");
@@ -389,43 +285,24 @@ async function main() {
   const scopeN = n((scope as any[])[0]?.n);
   const b1N = n((bucket1 as any[])[0]?.n);
   const b3N = n((bucket3 as any[])[0]?.n);
-  console.log(
-    `  Total in-scope (no grn_cost_allocation row): ${scopeN} GRNs, Rs ${money(n((scope as any[])[0]?.amt))}`,
-  );
-  console.log(
-    `  Bucket (1) clean single-match (backfillable now): ${b1N} GRNs, Rs ${money(n((bucket1 as any[])[0]?.amt))}`,
-  );
-  console.log(
-    `  Bucket (3) no budget header at all for branch+FY: ${b3N} GRNs, Rs ${money(n((bucket3 as any[])[0]?.amt))}`,
-  );
-  console.log(
-    `  Bucket (2) [wrong head / ambiguous] ~= ${scopeN - b1N - b3N} GRNs (remainder — real governance gap, never force-matched)`,
-  );
+  console.log(`  Total in-scope (no grn_cost_allocation row): ${scopeN} GRNs, Rs ${money(n((scope as any[])[0]?.amt))}`);
+  console.log(`  Bucket (1) clean single-match (backfillable now): ${b1N} GRNs, Rs ${money(n((bucket1 as any[])[0]?.amt))}`);
+  console.log(`  Bucket (3) no budget header at all for branch+FY: ${b3N} GRNs, Rs ${money(n((bucket3 as any[])[0]?.amt))}`);
+  console.log(`  Bucket (2) [wrong head / ambiguous] ~= ${scopeN - b1N - b3N} GRNs (remainder — real governance gap, never force-matched)`);
 
   // ── D3. pnl-reconciliation.service context ──
-  console.log(
-    "\n=== D3. pnl-reconciliation.service.ts VERDICT (context, not pass/fail) ===",
-  );
+  console.log("\n=== D3. pnl-reconciliation.service.ts VERDICT (context, not pass/fail) ===");
   console.log(`  mode: ${recon.mode}`);
-  if (recon.blockers.length)
-    recon.blockers.forEach((b) => console.log(`  blocker: ${b}`));
+  if (recon.blockers.length) recon.blockers.forEach((b) => console.log(`  blocker: ${b}`));
   else console.log("  blockers: none");
   if (recon.exceptions.length) {
-    recon.exceptions.forEach((e) =>
-      console.log(
-        `  exception: ${e.code} — ${e.label} — count=${e.count} amt=Rs ${money(e.amount)}`,
-      ),
-    );
+    recon.exceptions.forEach((e) => console.log(`  exception: ${e.code} — ${e.label} — count=${e.count} amt=Rs ${money(e.amount)}`));
   } else {
     console.log("  exceptions: none");
   }
 
   console.log("\n" + "=".repeat(72));
-  console.log(
-    anyRealFail
-      ? "RESULT: FAIL — see Section A/B rows above."
-      : "RESULT: PASS — Sections A and B agree within tolerance.",
-  );
+  console.log(anyRealFail ? "RESULT: FAIL — see Section A/B rows above." : "RESULT: PASS — Sections A and B agree within tolerance.");
   process.exit(anyRealFail ? 1 : 0);
 }
 

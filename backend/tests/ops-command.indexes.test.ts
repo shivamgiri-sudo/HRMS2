@@ -13,30 +13,15 @@ vi.mock("../src/db/mysql.js", () => ({
   },
 }));
 
-import {
-  ensureOpsIndexes,
-  OPS_INDEXES,
-  type OpsIndexSpec,
-} from "../src/modules/operations/ops-command.indexes.js";
+import { ensureOpsIndexes, OPS_INDEXES, type OpsIndexSpec } from "../src/modules/operations/ops-command.indexes.js";
 
-const spec: OpsIndexSpec = {
-  table: "attendance_daily_record",
-  name: "idx_ops_adr_cover",
-  columns: "record_date, employee_id",
-};
+const spec: OpsIndexSpec = { table: "attendance_daily_record", name: "idx_ops_adr_cover", columns: "record_date, employee_id" };
 
 /** db.execute answers by query text: table exists / index missing / busy count. */
-function dbState(opts: {
-  tableExists?: boolean;
-  indexExists?: boolean;
-  busy?: number;
-  busyThrows?: boolean;
-}) {
+function dbState(opts: { tableExists?: boolean; indexExists?: boolean; busy?: number; busyThrows?: boolean }) {
   h.execute.mockImplementation(async (sql: string) => {
-    if (sql.includes("information_schema.TABLES"))
-      return [[{ n: opts.tableExists === false ? 0 : 1 }]];
-    if (sql.includes("information_schema.STATISTICS"))
-      return [[{ n: opts.indexExists ? 1 : 0 }]];
+    if (sql.includes("information_schema.TABLES")) return [[{ n: opts.tableExists === false ? 0 : 1 }]];
+    if (sql.includes("information_schema.STATISTICS")) return [[{ n: opts.indexExists ? 1 : 0 }]];
     if (sql.includes("PROCESSLIST")) {
       if (opts.busyThrows) throw new Error("no privilege");
       return [[{ n: opts.busy ?? 0 }]];
@@ -59,17 +44,8 @@ describe("ensureOpsIndexes — must never block or fail the server", () => {
     expect(r.created).toEqual(["idx_ops_adr_cover"]);
     const sqls = h.connExecute.mock.calls.map((c) => String(c[0]));
     expect(sqls[0]).toBe("SET SESSION lock_wait_timeout = 3");
-    expect(
-      sqls.some(
-        (s) =>
-          s.startsWith(
-            "ALTER TABLE `attendance_daily_record` ADD INDEX `idx_ops_adr_cover`",
-          ) && s.includes("ALGORITHM=INPLACE, LOCK=NONE"),
-      ),
-    ).toBe(true);
-    expect(
-      sqls.some((s) => s === "SET SESSION lock_wait_timeout = DEFAULT"),
-    ).toBe(true);
+    expect(sqls.some((s) => s.startsWith("ALTER TABLE `attendance_daily_record` ADD INDEX `idx_ops_adr_cover`") && s.includes("ALGORITHM=INPLACE, LOCK=NONE"))).toBe(true);
+    expect(sqls.some((s) => s === "SET SESSION lock_wait_timeout = DEFAULT")).toBe(true);
     expect(h.release).toHaveBeenCalledTimes(1);
   });
 
@@ -97,10 +73,7 @@ describe("ensureOpsIndexes — must never block or fail the server", () => {
   it("a lock timeout is reported, not thrown, and the connection is still released", async () => {
     dbState({});
     h.connExecute.mockImplementation(async (sql: string) => {
-      if (String(sql).startsWith("ALTER"))
-        throw new Error(
-          "Lock wait timeout exceeded; try restarting transaction",
-        );
+      if (String(sql).startsWith("ALTER")) throw new Error("Lock wait timeout exceeded; try restarting transaction");
       return [[]];
     });
     const r = await ensureOpsIndexes([spec]);
@@ -111,28 +84,19 @@ describe("ensureOpsIndexes — must never block or fail the server", () => {
 
   it("a missing table or a database error is reported, not thrown", async () => {
     dbState({ tableExists: false });
-    expect((await ensureOpsIndexes([spec])).failed[0].reason).toBe(
-      "table missing",
-    );
+    expect((await ensureOpsIndexes([spec])).failed[0].reason).toBe("table missing");
     h.execute.mockRejectedValue(new Error("connection lost"));
-    expect((await ensureOpsIndexes([spec])).failed[0].reason).toContain(
-      "connection lost",
-    );
+    expect((await ensureOpsIndexes([spec])).failed[0].reason).toContain("connection lost");
   });
 
   it("rejects unsafe identifiers instead of building SQL from them", async () => {
     dbState({});
-    const r = await ensureOpsIndexes([
-      { table: "x; DROP TABLE employees", name: "i", columns: "a" },
-    ]);
+    const r = await ensureOpsIndexes([{ table: "x; DROP TABLE employees", name: "i", columns: "a" }]);
     expect(r.failed[0].reason).toBe("invalid identifier");
     expect(h.connExecute).not.toHaveBeenCalled();
   });
 
   it("only declares indexes the queries use (no employees indexes)", () => {
-    expect(OPS_INDEXES.map((i) => i.table)).toEqual([
-      "attendance_daily_record",
-      "kpi_daily_actual",
-    ]);
+    expect(OPS_INDEXES.map((i) => i.table)).toEqual(["attendance_daily_record", "kpi_daily_actual"]);
   });
 });

@@ -16,19 +16,14 @@ type ScopeActor = { id: string; role?: string; isDemo?: boolean };
  * be refused. For the WFM screens only, an explicit branch assignment row is honoured as
  * branch scope. No branch row still fails closed.
  */
-export async function resolveWfmScope(
-  actor: ScopeActor,
-): Promise<DashboardScope> {
+export async function resolveWfmScope(actor: ScopeActor): Promise<DashboardScope> {
   try {
     return await resolveDashboardScopeForRequest(
       { id: actor.id, role: actor.role, isDemo: actor.isDemo },
       actor.role ?? "",
     );
   } catch (err) {
-    if (
-      !(err instanceof DashboardScopeConfigurationError) ||
-      !PROCESS_SCOPED_WFM_ROLES.has(actor.role ?? "")
-    ) {
+    if (!(err instanceof DashboardScopeConfigurationError) || !PROCESS_SCOPED_WFM_ROLES.has(actor.role ?? "")) {
       throw err;
     }
     const [rows] = await db.execute<RowDataPacket[]>(

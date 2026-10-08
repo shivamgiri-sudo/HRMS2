@@ -12,18 +12,15 @@ describe("performance source schedule validation", () => {
   });
 
   it("rejects schedules more frequent than every five minutes", () => {
-    expect(() => validatePerformanceCron("* * * * *", "Asia/Kolkata")).toThrow(
-      /five minutes/i,
-    );
+    expect(() => validatePerformanceCron("* * * * *", "Asia/Kolkata"))
+      .toThrow(/five minutes/i);
   });
 
   it("rejects invalid cron expressions and timezones", () => {
-    expect(() => validatePerformanceCron("not-a-cron", "Asia/Kolkata")).toThrow(
-      /invalid cron/i,
-    );
-    expect(() =>
-      validatePerformanceCron("0 2 * * *", "Invalid/Timezone"),
-    ).toThrow(/timezone/i);
+    expect(() => validatePerformanceCron("not-a-cron", "Asia/Kolkata"))
+      .toThrow(/invalid cron/i);
+    expect(() => validatePerformanceCron("0 2 * * *", "Invalid/Timezone"))
+      .toThrow(/timezone/i);
   });
 });
 
@@ -43,9 +40,7 @@ describe("scheduled ingestion safety contract", () => {
 
   it("blocks rows outside the selected correction window", () => {
     expect(serviceCode).toContain("EVENT_DATE_OUTSIDE_WINDOW");
-    expect(serviceCode).toContain(
-      "eventDate < input.from || eventDate > input.to",
-    );
+    expect(serviceCode).toContain("eventDate < input.from || eventDate > input.to");
   });
 
   it("blocks partial and empty publication unless explicitly configured", () => {
@@ -62,8 +57,6 @@ describe("scheduled ingestion safety contract", () => {
 
   it("requires write access for schedule changes and run-now", () => {
     expect(routeCode).toMatch(/router\.put\([\s\S]*requireWriteAccess/);
-    expect(routeCode).toMatch(
-      /"\/datasets\/:id\/run-now"[\s\S]*requireWriteAccess/,
-    );
+    expect(routeCode).toMatch(/"\/datasets\/:id\/run-now"[\s\S]*requireWriteAccess/);
   });
 });

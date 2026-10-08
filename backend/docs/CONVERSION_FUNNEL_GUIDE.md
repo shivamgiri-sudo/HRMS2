@@ -3,7 +3,6 @@
 ## Overview
 
 The Conversion Funnel system tracks customer progression through multi-stage sales processes across four primary channels:
-
 - **Inbound**: Incoming calls from customers
 - **Outbound**: Proactive outbound calls to customers
 - **Chat**: Real-time chat interactions
@@ -12,10 +11,9 @@ The Conversion Funnel system tracks customer progression through multi-stage sal
 ## Funnel Stages by Channel
 
 ### 1. Inbound Process Funnel
-
 ```
-Call Connect (100%)
-    ↓
+Call Connect (100%) 
+    ↓ 
 Concern Identified (~85%)
     ↓
 Offer Prepared (~70%)
@@ -26,7 +24,6 @@ Sale Completed (~40%)
 ```
 
 **Metrics Tracked:**
-
 - `call_initiated_at`: When the call started
 - `call_connected_at`: When agent connected
 - `concern_identified_at`: When issue/concern was identified
@@ -37,7 +34,6 @@ Sale Completed (~40%)
 - `csat_score`: Customer Satisfaction score
 
 ### 2. Outbound Process Funnel
-
 ```
 Dial Initiated (100%)
     ↓
@@ -49,7 +45,6 @@ Sale Completed (~45%)
 ```
 
 **Metrics Tracked:**
-
 - `dial_initiated_at`: When dial was initiated
 - `dial_attempted_count`: Number of dial attempts
 - `connection_established_at`: When customer picked up
@@ -60,7 +55,6 @@ Sale Completed (~45%)
 - `attempt_number`: Which attempt resulted in sale
 
 ### 3. Chat Process Funnel
-
 ```
 Chat Initiated (100%)
     ↓
@@ -74,7 +68,6 @@ Sale Completed (~50%)
 ```
 
 **Metrics Tracked:**
-
 - `chat_initiated_at`: When chat was started
 - `first_response_at`: When agent responded
 - `first_response_time_secs`: Time to first response
@@ -89,7 +82,6 @@ Sale Completed (~50%)
 - `csat_score`: Customer Satisfaction score
 
 ### 4. Email Process Funnel
-
 ```
 Email Received (100%)
     ↓
@@ -103,7 +95,6 @@ Sale Completed (~40%)
 ```
 
 **Metrics Tracked:**
-
 - `email_received_at`: When email was received
 - `email_subject`: Email subject
 - `email_category`: Category of inquiry
@@ -124,7 +115,6 @@ Sale Completed (~40%)
 ### Core Tables
 
 #### `conversion_funnel_event`
-
 Main event table tracking all funnel progression entries.
 
 ```sql
@@ -143,35 +133,27 @@ Main event table tracking all funnel progression entries.
 ```
 
 #### `inbound_funnel_detail`
-
 Inbound-specific metrics and timestamps.
 
 #### `outbound_funnel_detail`
-
 Outbound-specific metrics and call attempt tracking.
 
 #### `chat_funnel_detail`
-
 Chat-specific metrics including response times and message counts.
 
 #### `email_funnel_detail`
-
 Email-specific metrics including response times and exchange counts.
 
 #### `funnel_stage_config`
-
 Configuration for each funnel stage including SLAs and targets.
 
 #### `funnel_daily_snapshot`
-
 Daily aggregated metrics for dashboards and reporting.
 
 #### `funnel_org_performance`
-
 Organization-level performance metrics by department/branch.
 
 #### `funnel_employee_performance`
-
 Employee-level performance metrics and rankings.
 
 ## API Endpoints
@@ -179,11 +161,9 @@ Employee-level performance metrics and rankings.
 ### Record Events
 
 #### POST `/api/kpi/conversion-funnel/inbound`
-
 Record an inbound call event.
 
 **Request Body:**
-
 ```json
 {
   "contact_id": "string (required)",
@@ -201,11 +181,9 @@ Record an inbound call event.
 ```
 
 #### POST `/api/kpi/conversion-funnel/outbound`
-
 Record an outbound call event.
 
 **Request Body:**
-
 ```json
 {
   "contact_id": "string (required)",
@@ -223,11 +201,9 @@ Record an outbound call event.
 ```
 
 #### POST `/api/kpi/conversion-funnel/chat`
-
 Record a chat event.
 
 **Request Body:**
-
 ```json
 {
   "contact_id": "string (required)",
@@ -245,11 +221,9 @@ Record a chat event.
 ```
 
 #### POST `/api/kpi/conversion-funnel/email`
-
 Record an email event.
 
 **Request Body:**
-
 ```json
 {
   "contact_id": "string (required)",
@@ -269,11 +243,9 @@ Record an email event.
 ### Query Endpoints
 
 #### GET `/api/kpi/conversion-funnel/metrics/:processType?days=30`
-
 Get funnel metrics for a specific process.
 
 **Response:**
-
 ```json
 {
   "success": true,
@@ -293,11 +265,9 @@ Get funnel metrics for a specific process.
 ```
 
 #### GET `/api/kpi/conversion-funnel/report/summary`
-
 Get comprehensive conversion funnel summary.
 
 **Response:**
-
 ```json
 {
   "success": true,
@@ -323,11 +293,9 @@ Get comprehensive conversion funnel summary.
 ```
 
 #### GET `/api/kpi/conversion-funnel/report/bottlenecks`
-
 Identify bottleneck stages with highest drop-off rates.
 
 **Response:**
-
 ```json
 {
   "success": true,
@@ -354,13 +322,11 @@ Identify bottleneck stages with highest drop-off rates.
 ## Command Line Analytics
 
 ### Run Conversion Funnel Report
-
 ```bash
 npm run conversion-funnel-report
 ```
 
 This generates a comprehensive text report with:
-
 1. Overall conversion funnel by process
 2. Funnel summary by process type
 3. Detailed Inbound funnel analysis
@@ -371,7 +337,6 @@ This generates a comprehensive text report with:
 8. Overall performance summary
 
 **Sample Output:**
-
 ```
 PROCESS        | STAGE                    | COUNT    | CONVERSION_PCT | BOTTLENECK
 inbound        | call_connect             | 1000     | 100.00%        | HEALTHY
@@ -401,27 +366,23 @@ email          | sale_completed           | 480      | 40.00%         | CRITICAL
 ## Key Metrics Explained
 
 ### Conversion Percentage
-
 - Percentage of entries at each stage that result in conversion
 - Formula: (Conversions at stage / Total entries at stage) × 100
 - **Target:** Higher is better; varies by process and stage
 
 ### Drop-off Percentage
-
 - Percentage of entries lost between consecutive stages
 - Formula: (1 - Current stage entries / Previous stage entries) × 100
-- **Severity:**
+- **Severity:** 
   - CRITICAL: > 50% drop-off
   - WARNING: 30-50% drop-off
   - NORMAL: < 30% drop-off
 
 ### Stage Duration
-
 - Average time spent in each stage (in seconds)
 - Important for identifying process delays
 
 ### Bottleneck
-
 - Stages with critical drop-off or low conversion rates
 - Priority for optimization
 
@@ -472,49 +433,42 @@ curl -X POST http://localhost:3001/api/kpi/conversion-funnel/outbound \
 ## Performance Tuning
 
 ### Database Indexes
-
 All critical fields are indexed for fast queries:
-
 - `process_type` + `funnel_stage` + `stage_entered_at`
 - `employee_id`
 - `customer_id`
 - `conversion_flag`
 
 ### Query Optimization
-
 - Daily snapshots prevent expensive real-time aggregations
 - Partitioning by `process_type` for faster filtering
 - Pre-calculated drop-off metrics in reporting views
 
 ### Recommended Indexes for High-Volume Operations
-
 ```sql
-CREATE INDEX idx_funnel_process_stage_date
+CREATE INDEX idx_funnel_process_stage_date 
   ON conversion_funnel_event(process_type, funnel_stage, stage_entered_at);
 
-CREATE INDEX idx_funnel_employee_date
+CREATE INDEX idx_funnel_employee_date 
   ON conversion_funnel_event(employee_id, stage_entered_at);
 
-CREATE INDEX idx_funnel_customer_conversion
+CREATE INDEX idx_funnel_customer_conversion 
   ON conversion_funnel_event(customer_id, conversion_flag);
 ```
 
 ## Troubleshooting
 
 ### No data appearing in queries
-
 1. Verify events are being recorded via API
 2. Check that `stage_entered_at` is within the query date range
 3. Ensure roles have proper permissions
 
 ### Slow query performance
-
 1. Check if indexes are properly created
 2. Verify date range in queries (use narrow windows if possible)
 3. Consider archiving old data to separate tables
 
 ### Incorrect conversion rates
-
 1. Verify `conversion_flag` is being set correctly
 2. Check that `sale_completed_at` is populated for conversions
 3. Ensure no duplicate records exist (use UNIQUE constraints)
@@ -522,19 +476,16 @@ CREATE INDEX idx_funnel_customer_conversion
 ## Integration Points
 
 ### With KPI Module
-
 - Funnel conversions can feed into KPI metrics
 - Agent performance rankings based on funnel conversion rates
 - Department/branch KPIs influenced by process funnel health
 
 ### With Employee Performance
-
 - Individual conversion rates by process
 - Performance tiers (top 10%, median, bottom 10%)
 - Benchmarking against department averages
 
 ### With Quality Management
-
 - CSAT scores captured at conversion point
 - IQ scores linked to conversion outcomes
 - Quality coaching based on drop-off analysis
@@ -542,19 +493,16 @@ CREATE INDEX idx_funnel_customer_conversion
 ## Maintenance
 
 ### Daily Tasks
-
 - Snapshot calculations run automatically
 - Review critical bottlenecks (>50% drop-off)
 - Check for data entry errors
 
 ### Weekly Tasks
-
 - Review process-level conversion trends
 - Identify emerging bottlenecks
 - Plan intervention for underperforming stages
 
 ### Monthly Tasks
-
 - Archive old events (>90 days)
 - Recalibrate SLA targets
 - Update employee performance rankings

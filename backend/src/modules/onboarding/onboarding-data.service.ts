@@ -46,43 +46,13 @@ export const ADDRESS_PROOF_TYPES = [
 ];
 
 export const INDIAN_STATES = [
-  "Andaman and Nicobar Islands",
-  "Andhra Pradesh",
-  "Arunachal Pradesh",
-  "Assam",
-  "Bihar",
-  "Chandigarh",
-  "Chhattisgarh",
-  "Dadra and Nagar Haveli and Daman and Diu",
-  "Dadar and Nagar Haveli",
-  "Daman and Diu",
-  "Delhi",
-  "Goa",
-  "Gujarat",
-  "Haryana",
-  "Himachal Pradesh",
-  "Jharkhand",
-  "Karnataka",
-  "Kerala",
-  "Ladakh",
-  "Lakshadweep",
-  "Madhya Pradesh",
-  "Maharashtra",
-  "Manipur",
-  "Meghalaya",
-  "Mizoram",
-  "Nagaland",
-  "Odisha",
-  "Puducherry",
-  "Punjab",
-  "Rajasthan",
-  "Sikkim",
-  "Tamil Nadu",
-  "Telangana",
-  "Tripura",
-  "Uttar Pradesh",
-  "Uttarakhand",
-  "West Bengal",
+  "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam",
+  "Bihar", "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu",
+  "Dadar and Nagar Haveli", "Daman and Diu", "Delhi", "Goa", "Gujarat", "Haryana",
+  "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep",
+  "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland",
+  "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana",
+  "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal",
 ];
 
 export const QUALIFICATION_TYPES = [
@@ -143,39 +113,19 @@ export function lookupIFSC(_ifscCode: string): Promise<{
 
 // Mock cheque OCR — extract name from cheque image
 // In production, use AWS Textract, Google Vision, or Tesseract
-export async function extractNameFromCheque(
-  fileUrl: string,
-): Promise<string | null> {
+export async function extractNameFromCheque(fileUrl: string): Promise<string | null> {
   // Placeholder: would call actual OCR service
   return null;
 }
 
 export class OnboardingDataService {
-  static getBanks() {
-    return INDIAN_BANKS;
-  }
-  static getAddressProofTypes() {
-    return ADDRESS_PROOF_TYPES;
-  }
-  static getStates() {
-    return INDIAN_STATES;
-  }
-  static getQualifications() {
-    return QUALIFICATION_TYPES;
-  }
-  static getDesignations() {
-    return DESIGNATION_TYPES;
-  }
-  static getAccountTypes() {
-    return ACCOUNT_TYPES;
-  }
-  static getEmploymentTypes() {
-    return EMPLOYMENT_TYPES;
-  }
-  static async lookupIFSC(code: string) {
-    return lookupIFSC(code);
-  }
-  static async extractChequeOCR(url: string) {
-    return extractNameFromCheque(url);
-  }
+  static getBanks() { return INDIAN_BANKS; }
+  static getAddressProofTypes() { return ADDRESS_PROOF_TYPES; }
+  static getStates() { return INDIAN_STATES; }
+  static getQualifications() { return QUALIFICATION_TYPES; }
+  static getDesignations() { return DESIGNATION_TYPES; }
+  static getAccountTypes() { return ACCOUNT_TYPES; }
+  static getEmploymentTypes() { return EMPLOYMENT_TYPES; }
+  static async lookupIFSC(code: string) { return lookupIFSC(code); }
+  static async extractChequeOCR(url: string) { return extractNameFromCheque(url); }
 }

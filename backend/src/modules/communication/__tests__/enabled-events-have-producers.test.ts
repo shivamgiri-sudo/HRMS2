@@ -17,10 +17,7 @@ import { resolve, join } from "node:path";
  * out of the enable list until someone writes the call site.
  */
 
-const MIGRATION = resolve(
-  process.cwd(),
-  "sql/1620_enable_wired_notification_events.sql",
-);
+const MIGRATION = resolve(process.cwd(), "sql/1620_enable_wired_notification_events.sql");
 const SRC = resolve(process.cwd(), "src");
 
 const sql = readFileSync(MIGRATION, "utf8");
@@ -40,8 +37,7 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
-      if (entry !== "__tests__" && entry !== "node_modules")
-        sourceFiles(full, acc);
+      if (entry !== "__tests__" && entry !== "node_modules") sourceFiles(full, acc);
     } else if (entry.endsWith(".ts") && !entry.endsWith(".test.ts")) {
       acc.push(full);
     }
@@ -66,10 +62,7 @@ function notifierSources(): string {
   return sourceFiles(SRC)
     .filter((f) => {
       const src = readFileSync(f, "utf8");
-      return (
-        src.includes("notificationGateway.notify") ||
-        src.includes("gateway.notify(")
-      );
+      return src.includes("notificationGateway.notify") || src.includes("gateway.notify(");
     })
     .map((f) => readFileSync(f, "utf8"))
     .join("\n");
@@ -87,15 +80,12 @@ describe("migration 1620 — only enables events that are actually wired", () =>
   });
 
   it("every enabled event has a producer in src/", () => {
-    const orphans = codes.filter(
-      (c) => !new RegExp(`['"]${c}['"]`).test(corpus),
-    );
+    const orphans = codes.filter((c) => !new RegExp(`['"]${c}['"]`).test(corpus));
     expect(
       orphans,
       `These event codes are switched on by migration 1620 but nothing in src/ calls ` +
         `notify() with them, so the registry would claim an email is live that no code ` +
-        `path can emit:\n` +
-        orphans.map((o) => `  - ${o}`).join("\n"),
+        `path can emit:\n` + orphans.map((o) => `  - ${o}`).join("\n"),
     ).toEqual([]);
   });
 

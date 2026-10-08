@@ -29,24 +29,15 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../payroll-branch-scope.js", async () => (await import("./helpers/orgWideScopeMock.js")).orgWideScopeMock);
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (req as express.Request & { authUser: { id: string } }).authUser = {
-      id: AUTH_USER,
-    };
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: { id: string } }).authUser = { id: AUTH_USER };
     next();
   },
 }));
 // Role is not under test — these callers legitimately hold payroll rights. Whether a
 // settled run may be edited is the question.
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole:
-    () =>
-    (_q: express.Request, _s: express.Response, n: express.NextFunction) =>
-      n(),
+  requireRole: () => (_q: express.Request, _s: express.Response, n: express.NextFunction) => n(),
 }));
 
 import { payrollWindowCronRouter } from "../payroll-window.routes.js";
@@ -58,19 +49,7 @@ function buildApp() {
   return app;
 }
 
-const runRow = (status: string) => [
-  [
-    {
-      id: RUN_ID,
-      run_month: "2026-07",
-      status,
-      window_close_date: null,
-      auto_closed_at: null,
-      tds_mode: "manual",
-    },
-  ],
-  [],
-];
+const runRow = (status: string) => [[{ id: RUN_ID, run_month: "2026-07", status, window_close_date: null, auto_closed_at: null, tds_mode: "manual" }], []];
 
 beforeEach(() => execute.mockReset());
 
@@ -96,9 +75,7 @@ describe("PATCH /runs/:id/tds-mode refuses a settled run", () => {
 
   for (const status of OPEN) {
     it(`allows the change when the run is ${status}`, async () => {
-      execute
-        .mockResolvedValueOnce(runRow(status))
-        .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+      execute.mockResolvedValueOnce(runRow(status)).mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
       const res = await request(buildApp())
         .patch(`/api/payroll/runs/${RUN_ID}/tds-mode`)
@@ -126,9 +103,7 @@ describe("POST /runs/:id/manual-tds refuses a settled run", () => {
   });
 
   it("accepts entries on a draft run", async () => {
-    execute
-      .mockResolvedValueOnce(runRow("draft"))
-      .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    execute.mockResolvedValueOnce(runRow("draft")).mockResolvedValueOnce([{ affectedRows: 1 }, []]);
 
     const res = await request(buildApp())
       .post(`/api/payroll/runs/${RUN_ID}/manual-tds`)
@@ -142,9 +117,7 @@ describe("GET /runs/:id/window-status reports a settled run as closed", () => {
   it("reports is_window_open false for FINALIZED", async () => {
     execute.mockResolvedValueOnce(runRow("FINALIZED"));
 
-    const res = await request(buildApp()).get(
-      `/api/payroll/runs/${RUN_ID}/window-status`,
-    );
+    const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/window-status`);
 
     expect(res.status).toBe(200);
     // The original defect in one assertion: a FINALIZED run reported as open.
@@ -154,9 +127,7 @@ describe("GET /runs/:id/window-status reports a settled run as closed", () => {
   it("reports is_window_open true for a draft run with no close date", async () => {
     execute.mockResolvedValueOnce(runRow("draft"));
 
-    const res = await request(buildApp()).get(
-      `/api/payroll/runs/${RUN_ID}/window-status`,
-    );
+    const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/window-status`);
 
     expect(res.body.data.is_window_open).toBe(true);
   });

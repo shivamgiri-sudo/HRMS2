@@ -11,16 +11,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * `shortfall` when the branch aggregate cannot cover the request).
  */
 
-const { execute, getConnection } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  getConnection: vi.fn(),
-}));
+const { execute, getConnection } = vi.hoisted(() => ({ execute: vi.fn(), getConnection: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 
-import {
-  allocateAcrossLines,
-  getHeadSubHeadCoverage,
-} from "../budget-headroom-gate.service.js";
+import { allocateAcrossLines, getHeadSubHeadCoverage } from "../budget-headroom-gate.service.js";
 
 beforeEach(() => {
   execute.mockReset();
@@ -31,21 +25,11 @@ describe("getHeadSubHeadCoverage", () => {
   it("returns headerActive: false and never queries lines when there is no active header", async () => {
     execute.mockResolvedValueOnce([[], []]); // header lookup: no rows
 
-    const result = await getHeadSubHeadCoverage(
-      "branch-1",
-      "2026-08",
-      "Travel",
-      null,
-    );
+    const result = await getHeadSubHeadCoverage("branch-1", "2026-08", "Travel", null);
 
     // budgetId comes back too, so a caller can run the sub-head closure check without a second
     // header lookup — null here because there is no active header to name.
-    expect(result).toEqual({
-      headerActive: false,
-      budgetId: null,
-      lines: [],
-      aggregateAvailable: 0,
-    });
+    expect(result).toEqual({ headerActive: false, budgetId: null, lines: [], aggregateAvailable: 0 });
     expect(execute).toHaveBeenCalledTimes(1);
     const [sql] = execute.mock.calls[0];
     expect(String(sql)).not.toMatch(/finance_budget_line/);
@@ -55,26 +39,13 @@ describe("getHeadSubHeadCoverage", () => {
     execute.mockResolvedValueOnce([[{ id: "header-1" }], []]); // header lookup
     execute.mockResolvedValueOnce([
       [
-        {
-          id: "line-direct",
-          cost_centre_id: "cc-1",
-          available_gross_amount: 5000,
-        },
-        {
-          id: "line-pooled",
-          cost_centre_id: null,
-          available_gross_amount: 3000,
-        },
+        { id: "line-direct", cost_centre_id: "cc-1", available_gross_amount: 5000 },
+        { id: "line-pooled", cost_centre_id: null, available_gross_amount: 3000 },
       ],
       [],
     ]);
 
-    const result = await getHeadSubHeadCoverage(
-      "branch-1",
-      "2026-08",
-      "Travel",
-      "Local",
-    );
+    const result = await getHeadSubHeadCoverage("branch-1", "2026-08", "Travel", "Local");
 
     expect(result.headerActive).toBe(true);
     expect(result.lines.length).toBe(2);
@@ -85,26 +56,13 @@ describe("getHeadSubHeadCoverage", () => {
     execute.mockResolvedValueOnce([[{ id: "header-1" }], []]);
     execute.mockResolvedValueOnce([
       [
-        {
-          id: "line-over",
-          cost_centre_id: "cc-1",
-          available_gross_amount: -500,
-        },
-        {
-          id: "line-healthy",
-          cost_centre_id: "cc-2",
-          available_gross_amount: 2000,
-        },
+        { id: "line-over", cost_centre_id: "cc-1", available_gross_amount: -500 },
+        { id: "line-healthy", cost_centre_id: "cc-2", available_gross_amount: 2000 },
       ],
       [],
     ]);
 
-    const result = await getHeadSubHeadCoverage(
-      "branch-1",
-      "2026-08",
-      "Travel",
-      null,
-    );
+    const result = await getHeadSubHeadCoverage("branch-1", "2026-08", "Travel", null);
 
     expect(result.aggregateAvailable).toBe(2000);
   });
@@ -112,19 +70,8 @@ describe("getHeadSubHeadCoverage", () => {
   it("matches head/sub-head case/whitespace-insensitively", async () => {
     // Simulates what UPPER(TRIM(...)) = UPPER(TRIM(?)) would actually do in MySQL, so the test
     // proves the query normalizes both the stored value and the bound parameter, not just one.
-    const storedLines = [
-      {
-        id: "line-1",
-        head: " Travel ",
-        sub_head: null,
-        cost_centre_id: null,
-        available_gross_amount: 1000,
-      },
-    ];
-    const normalize = (value: unknown) =>
-      String(value ?? "")
-        .trim()
-        .toUpperCase();
+    const storedLines = [{ id: "line-1", head: " Travel ", sub_head: null, cost_centre_id: null, available_gross_amount: 1000 }];
+    const normalize = (value: unknown) => String(value ?? "").trim().toUpperCase();
 
     execute.mockResolvedValueOnce([[{ id: "header-1" }], []]);
     execute.mockImplementationOnce(async (sql: string, params: unknown[]) => {
@@ -133,17 +80,12 @@ describe("getHeadSubHeadCoverage", () => {
       const matched = storedLines.filter(
         (line) =>
           normalize(line.head) === normalize(queriedHead) &&
-          normalize(line.sub_head) === normalize(queriedSubHead),
+          normalize(line.sub_head) === normalize(queriedSubHead)
       );
       return [matched, []];
     });
 
-    const result = await getHeadSubHeadCoverage(
-      "branch-1",
-      "2026-08",
-      "travel",
-      null,
-    );
+    const result = await getHeadSubHeadCoverage("branch-1", "2026-08", "travel", null);
 
     expect(result.lines.length).toBe(1);
     expect(result.aggregateAvailable).toBe(1000);
@@ -151,11 +93,7 @@ describe("getHeadSubHeadCoverage", () => {
 });
 
 describe("allocateAcrossLines", () => {
-  const line = (
-    id: string,
-    availableGrossAmount: number,
-    costCentreId: string | null = "cc-x",
-  ) => ({
+  const line = (id: string, availableGrossAmount: number, costCentreId: string | null = "cc-x") => ({
     id,
     cost_centre_id: costCentreId,
     available_gross_amount: availableGrossAmount,
@@ -196,11 +134,7 @@ describe("allocateAcrossLines", () => {
       { lineId: "direct-low", amount: 500 },
     ]);
 
-    const drawsSpillingIntoPooled = allocateAcrossLines(
-      null,
-      5500,
-      lines as any,
-    );
+    const drawsSpillingIntoPooled = allocateAcrossLines(null, 5500, lines as any);
     expect(drawsSpillingIntoPooled).toEqual([
       { lineId: "direct-high", amount: 4000 },
       { lineId: "direct-low", amount: 1000 },

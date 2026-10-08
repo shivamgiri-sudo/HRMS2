@@ -29,8 +29,7 @@ import { assertNoHistoricalRosterOverlap } from "../rosterHistoricalOverlapGuard
 
 beforeEach(() => execute.mockReset());
 
-const overlap = (n: number) =>
-  execute.mockResolvedValueOnce([[{ overlapping: n }], []]);
+const overlap = (n: number) => execute.mockResolvedValueOnce([[{ overlapping: n }], []]);
 
 describe("assertNoHistoricalRosterOverlap", () => {
   it("allows a cycle whose week has no existing live assignments", async () => {
@@ -56,9 +55,8 @@ describe("assertNoHistoricalRosterOverlap", () => {
 
   it("refuses with a 409, not a 500 — this is a conflict, not a crash", async () => {
     overlap(1);
-    await expect(
-      assertNoHistoricalRosterOverlap("2026-07-13", "2026-07-19"),
-    ).rejects.toMatchObject({ statusCode: 409 });
+    await expect(assertNoHistoricalRosterOverlap("2026-07-13", "2026-07-19"))
+      .rejects.toMatchObject({ statusCode: 409 });
   });
 
   it("counts against the LIVE ops table, which is the one that gets overwritten", async () => {
@@ -74,8 +72,6 @@ describe("assertNoHistoricalRosterOverlap", () => {
     // A guard that cannot verify must not wave the write through: the cost of a false refusal
     // is a retry, the cost of a false pass is overwritten roster history.
     execute.mockRejectedValueOnce(new Error("db down"));
-    await expect(
-      assertNoHistoricalRosterOverlap("2026-09-01", "2026-09-07"),
-    ).rejects.toThrow();
+    await expect(assertNoHistoricalRosterOverlap("2026-09-01", "2026-09-07")).rejects.toThrow();
   });
 });

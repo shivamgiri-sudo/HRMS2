@@ -25,12 +25,7 @@ const liveCode = () =>
   fs
     .readFileSync(ROUTES, "utf8")
     .split("\n")
-    .filter(
-      (l) =>
-        !l.trim().startsWith("//") &&
-        !l.trim().startsWith("*") &&
-        !l.trim().startsWith("/*"),
-    )
+    .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*") && !l.trim().startsWith("/*"))
     .join("\n");
 
 describe("incentive approval auditing", () => {
@@ -40,9 +35,7 @@ describe("incentive approval auditing", () => {
 
   it("does not push incentive events into work_item_audit_log", () => {
     // that table is keyed by work_item_id and tracks work-item transitions
-    expect(liveCode()).not.toMatch(
-      /INSERT INTO work_item_audit_log[\s\S]{0,120}entity_type/,
-    );
+    expect(liveCode()).not.toMatch(/INSERT INTO work_item_audit_log[\s\S]{0,120}entity_type/);
   });
 
   it("routes through the shared enterprise audit writer", () => {

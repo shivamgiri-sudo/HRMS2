@@ -32,12 +32,7 @@ describe("only the central service writes employees.salary_start_date", () => {
   it("no other source file updates the column", () => {
     const offenders = walk(SRC)
       .filter((f) => WRITE.test(readFileSync(f, "utf8")))
-      .map((f) =>
-        f
-          .slice(SRC.length + 1)
-          .split(sep)
-          .join("/"),
-      );
+      .map((f) => f.slice(SRC.length + 1).split(sep).join("/"));
     expect(offenders).toEqual(["modules/payroll/salary-start-date.service.ts"]);
   });
 
@@ -56,9 +51,7 @@ describe("Payroll Head-owned date: the writers around it", () => {
     expect(svc).toContain("...actorAuthority(reviewerRoles)");
     expect(svc).toContain('source: "revision_request_approved"');
     const prepare = svc.indexOf("prepareSalaryStartDate(connection");
-    const firstAssignmentWrite = svc.indexOf(
-      "UPDATE employee_salary_assignment",
-    );
+    const firstAssignmentWrite = svc.indexOf("UPDATE employee_salary_assignment");
     const insert = svc.indexOf("INSERT INTO employee_salary_assignment");
     const commit = svc.indexOf("commitSalaryStartDate(connection");
     expect(prepare).toBeGreaterThan(-1);
@@ -68,9 +61,7 @@ describe("Payroll Head-owned date: the writers around it", () => {
 
   it("Joining Control Room refuses an approved employee's date change BEFORE writing, and syncs an existing employee after", () => {
     const svc = read("modules/ats/joining-control-room.service.ts");
-    const guard = svc.indexOf(
-      "assertSalaryDateNotOwnedByPayrollHead(db, candidateId, salaryStartDate)",
-    );
+    const guard = svc.indexOf("assertSalaryDateNotOwnedByPayrollHead(db, candidateId, salaryStartDate)");
     const write = svc.indexOf("UPDATE ats_payroll_hr_validation");
     const sync = svc.indexOf("syncSalaryStartDateForCandidate(");
     expect(guard).toBeGreaterThan(-1);
@@ -80,21 +71,15 @@ describe("Payroll Head-owned date: the writers around it", () => {
 
   it("Payroll HR validation refuses an approved employee's date change before writing", () => {
     const svc = read("modules/ats/payroll-hr.service.ts");
-    expect(svc).toContain(
-      "assertSalaryDateNotOwnedByPayrollHead(connection, input.candidate_id, salaryStartDate)",
+    expect(svc).toContain("assertSalaryDateNotOwnedByPayrollHead(connection, input.candidate_id, salaryStartDate)");
+    expect(svc.indexOf("assertSalaryDateNotOwnedByPayrollHead(connection")).toBeLessThan(
+      svc.indexOf("INSERT INTO ats_payroll_hr_validation"),
     );
-    expect(
-      svc.indexOf("assertSalaryDateNotOwnedByPayrollHead(connection"),
-    ).toBeLessThan(svc.indexOf("INSERT INTO ats_payroll_hr_validation"));
   });
 
   it("Payroll Head routes pass the session roles and the optional reason, and expose the mismatch report before /:employeeId", () => {
-    const routes = read(
-      "modules/payroll-head-review/payroll-head-review.routes.ts",
-    );
-    expect(
-      routes.match(/req\.authUser!\.roles, reasonOf\(reason\)/g)?.length,
-    ).toBe(4);
+    const routes = read("modules/payroll-head-review/payroll-head-review.routes.ts");
+    expect(routes.match(/req\.authUser!\.roles, reasonOf\(reason\)/g)?.length).toBe(4);
     expect(routes).toContain("req.authUser!.roles\n  );"); // assignment-effective-date
     const mismatch = routes.indexOf('router.get("/salary-date-mismatches"');
     expect(mismatch).toBeGreaterThan(-1);
@@ -104,16 +89,10 @@ describe("Payroll Head-owned date: the writers around it", () => {
 
 describe("validate first, write second: no half-done edits", () => {
   it("Payroll Head create-and-assign validates the date before it creates the catalog package", () => {
-    const svc = read(
-      "modules/payroll-head-review/payroll-head-review.service.ts",
-    );
-    const fn = svc.slice(
-      svc.indexOf("export async function createAndAssignPackage("),
-    );
+    const svc = read("modules/payroll-head-review/payroll-head-review.service.ts");
+    const fn = svc.slice(svc.indexOf("export async function createAndAssignPackage("));
     expect(fn.indexOf("checkSalaryStartDate({")).toBeGreaterThan(-1);
-    expect(fn.indexOf("checkSalaryStartDate({")).toBeLessThan(
-      fn.indexOf("await createPackage("),
-    );
+    expect(fn.indexOf("checkSalaryStartDate({")).toBeLessThan(fn.indexOf("await createPackage("));
   });
 
   it("Joining Control Room runs every date rule before it writes the validation row", () => {
@@ -144,9 +123,7 @@ describe("payroll readiness", () => {
   });
 
   it("fails closed: a check that cannot run is a blocker, never a pass", () => {
-    const block = gov.slice(
-      gov.indexOf('code: "SALARY_START_DATE_CHECK_ERROR"'),
-    );
+    const block = gov.slice(gov.indexOf('code: "SALARY_START_DATE_CHECK_ERROR"'));
     expect(block.slice(0, 200)).toContain('severity: "blocker"');
   });
 });

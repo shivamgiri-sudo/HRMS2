@@ -23,89 +23,34 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 const { billQuery } = vi.hoisted(() => ({ billQuery: vi.fn() }));
 vi.mock("../../../db/billDb.js", () => ({ billQuery }));
 
-const { env } = vi.hoisted(() => ({
-  env: { BILL_DB_HOST: "db-bill-host.internal" },
-}));
+const { env } = vi.hoisted(() => ({ env: { BILL_DB_HOST: "db-bill-host.internal" } }));
 vi.mock("../../../config/env.js", () => ({ env }));
 
-let svc: (typeof import("../salary-voucher-bill.service.js"))["billSalaryVoucherService"];
+let svc: typeof import("../salary-voucher-bill.service.js")["billSalaryVoucherService"];
 beforeAll(async () => {
-  ({ billSalaryVoucherService: svc } =
-    await import("../salary-voucher-bill.service.js"));
+  ({ billSalaryVoucherService: svc } = await import("../salary-voucher-bill.service.js"));
 }, 120_000);
 
 /** A minimal but real-shaped HEAD OFFICE IDC population (3 of the 21) that totals the reference. */
 const IDC_HEAD_OFFICE = [
-  {
-    EmpCode: "IDC00101",
-    Branch: "HEAD OFFICE",
-    Designation: "MANAGER",
-    NetSalary: 600000,
-    Gross: 660000,
-    EPF: 20000,
-    EPFCompany: 25000,
-    ESIC: 0,
-    ESICCompany: 0,
-    ProTaxDeduction: 0,
-    IncomeTax: 30000,
-    LoanDed: 0,
-    OtherDeduction: 0,
-  },
-  {
-    EmpCode: "IDC00102",
-    Branch: "HEAD OFFICE",
-    Designation: "EXECUTIVE",
-    NetSalary: 400000,
-    Gross: 440000,
-    EPF: 15000,
-    EPFCompany: 15000,
-    ESIC: 0,
-    ESICCompany: 0,
-    ProTaxDeduction: 0,
-    IncomeTax: 20000,
-    LoanDed: 0,
-    OtherDeduction: 0,
-  },
-  {
-    EmpCode: "IDC00103",
-    Branch: "HEAD OFFICE",
-    Designation: "EXECUTIVE",
-    NetSalary: 112869,
-    Gross: 130000,
-    EPF: 6978,
-    EPFCompany: 6978,
-    ESIC: 0,
-    ESICCompany: 0,
-    ProTaxDeduction: 0,
-    IncomeTax: 28860,
-    LoanDed: 0,
-    OtherDeduction: 0,
-  },
+  { EmpCode: "IDC00101", Branch: "HEAD OFFICE", Designation: "MANAGER",
+    NetSalary: 600000, Gross: 660000, EPF: 20000, EPFCompany: 25000, ESIC: 0, ESICCompany: 0,
+    ProTaxDeduction: 0, IncomeTax: 30000, LoanDed: 0, OtherDeduction: 0 },
+  { EmpCode: "IDC00102", Branch: "HEAD OFFICE", Designation: "EXECUTIVE",
+    NetSalary: 400000, Gross: 440000, EPF: 15000, EPFCompany: 15000, ESIC: 0, ESICCompany: 0,
+    ProTaxDeduction: 0, IncomeTax: 20000, LoanDed: 0, OtherDeduction: 0 },
+  { EmpCode: "IDC00103", Branch: "HEAD OFFICE", Designation: "EXECUTIVE",
+    NetSalary: 112869, Gross: 130000, EPF: 6978, EPFCompany: 6978, ESIC: 0, ESICCompany: 0,
+    ProTaxDeduction: 0, IncomeTax: 28860, LoanDed: 0, OtherDeduction: 0 },
 ];
 
 const ENTITY_RULES = [
-  {
-    company_code: "IDC",
-    employee_code_prefix: "IDC",
-    employment_type: null,
-    branch_id: null,
-    priority: 100,
-  },
-  {
-    company_code: "MAS",
-    employee_code_prefix: "MAS",
-    employment_type: null,
-    branch_id: null,
-    priority: 100,
-  },
+  { company_code: "IDC", employee_code_prefix: "IDC", employment_type: null, branch_id: null, priority: 100 },
+  { company_code: "MAS", employee_code_prefix: "MAS", employment_type: null, branch_id: null, priority: 100 },
 ];
 
 /** Scripts the mas_hrms reads: entity rules, cohort (none for IDC), branch resolution. */
-function scriptMasHrms(
-  branchRows: unknown[] = [
-    { id: "br-ho-active", branch_name: "HEAD OFFICE", active_status: 1 },
-  ],
-) {
+function scriptMasHrms(branchRows: unknown[] = [{ id: "br-ho-active", branch_name: "HEAD OFFICE", active_status: 1 }]) {
   execute.mockImplementation(async (sql: string) => {
     if (/FROM finance_payroll_entity_rule/.test(sql)) return [ENTITY_RULES, []];
     if (/FROM finance_payroll_voucher_cohort/.test(sql)) return [[], []]; // IDC: no cohort → single column
@@ -124,10 +69,7 @@ describe("it is opt-in and read-only", () => {
   it("refuses to run when db_bill is not configured", async () => {
     env.BILL_DB_HOST = "";
     await expect(
-      svc.generateForPeriod("2026-06", {
-        companyCode: "IDC",
-        entityPrefix: "IDC",
-      }),
+      svc.generateForPeriod("2026-06", { companyCode: "IDC", entityPrefix: "IDC" }),
     ).rejects.toThrow(/db_bill is not configured/i);
     expect(billQuery).not.toHaveBeenCalled();
   });
@@ -135,10 +77,7 @@ describe("it is opt-in and read-only", () => {
   it("reads salary_data with a parameterised prefix, never interpolated", async () => {
     scriptMasHrms();
     billQuery.mockResolvedValue([]);
-    await svc.generateForPeriod("2026-06", {
-      companyCode: "IDC",
-      entityPrefix: "IDC",
-    });
+    await svc.generateForPeriod("2026-06", { companyCode: "IDC", entityPrefix: "IDC" });
     const [sql, params] = billQuery.mock.calls[0];
     expect(String(sql)).toMatch(/FROM salary_data/);
     expect(String(sql)).toMatch(/EmpCode LIKE \?/);
@@ -151,45 +90,24 @@ describe("it is opt-in and read-only", () => {
     // [first of month, first of next month) — never a day-31 that does not exist in the month.
     scriptMasHrms();
     billQuery.mockResolvedValue([]);
-    await svc.generateForPeriod("2026-06", {
-      companyCode: "IDC",
-      entityPrefix: "IDC",
-    });
-    expect(billQuery.mock.calls[0][1]).toEqual([
-      "2026-06-01",
-      "2026-07-01",
-      "IDC%",
-    ]);
-    expect(String(billQuery.mock.calls[0][0])).toContain(
-      "SalDate >= ? AND SalDate < ?",
-    );
+    await svc.generateForPeriod("2026-06", { companyCode: "IDC", entityPrefix: "IDC" });
+    expect(billQuery.mock.calls[0][1]).toEqual(["2026-06-01", "2026-07-01", "IDC%"]);
+    expect(String(billQuery.mock.calls[0][0])).toContain("SalDate >= ? AND SalDate < ?");
   });
 
   it("bounds a 30-day month and February correctly, not with an invalid day 31", async () => {
     // The bug this replaces: BETWEEN '…-01' AND '…-31' passes an invalid date for these months.
     scriptMasHrms();
     billQuery.mockResolvedValue([]);
-    await svc.generateForPeriod("2026-02", {
-      companyCode: "IDC",
-      entityPrefix: "IDC",
-    });
-    expect(billQuery.mock.calls[0][1].slice(0, 2)).toEqual([
-      "2026-02-01",
-      "2026-03-01",
-    ]);
+    await svc.generateForPeriod("2026-02", { companyCode: "IDC", entityPrefix: "IDC" });
+    expect(billQuery.mock.calls[0][1].slice(0, 2)).toEqual(["2026-02-01", "2026-03-01"]);
   });
 
   it("rolls the year over for December", async () => {
     scriptMasHrms();
     billQuery.mockResolvedValue([]);
-    await svc.generateForPeriod("2026-12", {
-      companyCode: "IDC",
-      entityPrefix: "IDC",
-    });
-    expect(billQuery.mock.calls[0][1].slice(0, 2)).toEqual([
-      "2026-12-01",
-      "2027-01-01",
-    ]);
+    await svc.generateForPeriod("2026-12", { companyCode: "IDC", entityPrefix: "IDC" });
+    expect(billQuery.mock.calls[0][1].slice(0, 2)).toEqual(["2026-12-01", "2027-01-01"]);
   });
 });
 
@@ -197,17 +115,12 @@ describe("it reproduces the reference IDC voucher", () => {
   it("totals HEAD OFFICE to the reference, to the rupee", async () => {
     scriptMasHrms();
     billQuery.mockResolvedValue(IDC_HEAD_OFFICE);
-    const out = await svc.generateForPeriod("2026-06", {
-      companyCode: "IDC",
-      entityPrefix: "IDC",
-      serialFrom: 614,
-    });
+    const out = await svc.generateForPeriod("2026-06", { companyCode: "IDC", entityPrefix: "IDC", serialFrom: 614 });
     expect(out.source).toBe("db_bill");
     expect(out.vouchers).toHaveLength(1);
     const v = out.vouchers[0];
     expect(v.voucher_no).toBe("HEAD OFFICE/IDC/06/26/614");
-    const line = (n: string) =>
-      v.lines.find((l) => l.ledger_name === n)?.amount ?? 0;
+    const line = (n: string) => v.lines.find((l) => l.ledger_name === n)?.amount ?? 0;
     expect(line("Salary Payable A/C")).toBe(1_112_869);
     expect(line("Employer's Contribution to Epf")).toBe(46_978);
     expect(v.totals.balanced).toBe(true);
@@ -218,12 +131,7 @@ describe("it reproduces the reference IDC voucher", () => {
     // a company with no cohort rule must emit exactly one column.
     scriptMasHrms();
     billQuery.mockResolvedValue(IDC_HEAD_OFFICE);
-    const [v] = (
-      await svc.generateForPeriod("2026-06", {
-        companyCode: "IDC",
-        entityPrefix: "IDC",
-      })
-    ).vouchers;
+    const [v] = (await svc.generateForPeriod("2026-06", { companyCode: "IDC", entityPrefix: "IDC" })).vouchers;
     expect(v.cohort_labels).toEqual(["Staff"]);
     expect(v.lines.every((l) => l.columns.length === 1)).toBe(true);
   });
@@ -239,22 +147,14 @@ describe("branch id resolution", () => {
       { id: "br-inactive-2", branch_name: "HEAD OFFICE", active_status: 0 },
     ]);
     billQuery.mockResolvedValue(IDC_HEAD_OFFICE);
-    const [v] = (
-      await svc.generateForPeriod("2026-06", {
-        companyCode: "IDC",
-        entityPrefix: "IDC",
-      })
-    ).vouchers;
+    const [v] = (await svc.generateForPeriod("2026-06", { companyCode: "IDC", entityPrefix: "IDC" })).vouchers;
     expect(v.branch_id).toBe("br-active");
   });
 
   it("excludes a line whose branch resolves to nothing rather than posting a guess", async () => {
     scriptMasHrms([]); // no branch_master match at all
     billQuery.mockResolvedValue(IDC_HEAD_OFFICE);
-    const out = await svc.generateForPeriod("2026-06", {
-      companyCode: "IDC",
-      entityPrefix: "IDC",
-    });
+    const out = await svc.generateForPeriod("2026-06", { companyCode: "IDC", entityPrefix: "IDC" });
     expect(out.vouchers).toHaveLength(0);
     expect(out.unassigned.length).toBe(IDC_HEAD_OFFICE.length);
   });

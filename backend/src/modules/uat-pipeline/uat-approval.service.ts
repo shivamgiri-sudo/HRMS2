@@ -25,7 +25,7 @@ import type { ApprovalDecision, ApprovalType } from "./uat-pipeline.types.js";
 export class ApprovalError extends Error {
   constructor(
     message: string,
-    readonly statusCode: number = 409,
+    readonly statusCode: number = 409
   ) {
     super(message);
     this.name = "ApprovalError";
@@ -66,14 +66,14 @@ export async function requestApproval(
   approvalType: ApprovalType,
   requiredRole: string,
   capabilityKey: string | null = null,
-  conn?: PoolConnection,
+  conn?: PoolConnection
 ): Promise<void> {
   const exec = conn ?? db;
   await exec.execute(
     `INSERT INTO uat_approval (feedback_id, approval_type, capability_key, required_role)
      VALUES (?,?,?,?)
      ON DUPLICATE KEY UPDATE capability_key = VALUES(capability_key)`,
-    [feedbackId, approvalType, capabilityKey, requiredRole],
+    [feedbackId, approvalType, capabilityKey, requiredRole]
   );
 }
 
@@ -81,7 +81,7 @@ export async function requestApproval(
 export async function requestCapabilityApprovals(
   feedbackId: string,
   roles: string[],
-  conn?: PoolConnection,
+  conn?: PoolConnection
 ): Promise<void> {
   for (const role of roles) {
     await requestApproval(feedbackId, "capability", role, null, conn);
@@ -97,7 +97,7 @@ export async function activeDelegationFor(
   requiredRole: string,
   approverUserId: string,
   capabilityKey: string | null,
-  at: Date = new Date(),
+  at: Date = new Date()
 ): Promise<{ id: string } | null> {
   const [rows] = await db.execute<DelegationRow[]>(
     `SELECT id, backup_approver_id, valid_from, valid_until
@@ -109,7 +109,7 @@ export async function activeDelegationFor(
         AND valid_from <= ? AND valid_until > ?
       ORDER BY valid_from DESC
       LIMIT 1`,
-    [requiredRole, approverUserId, capabilityKey, capabilityKey, at, at],
+    [requiredRole, approverUserId, capabilityKey, capabilityKey, at, at]
   );
   return rows.length ? { id: rows[0].id } : null;
 }
@@ -141,25 +141,21 @@ export async function decideApproval(input: DecideInput): Promise<void> {
     const [fbRows] = await conn.execute<FeedbackActorRow[]>(
       `SELECT submitted_by_user_id, submitted_by_employee_id
          FROM uat_feedback WHERE id = ? FOR UPDATE`,
-      [input.feedbackId],
+      [input.feedbackId]
     );
-    if (fbRows.length === 0)
-      throw new ApprovalError("UAT feedback not found", 404);
+    if (fbRows.length === 0) throw new ApprovalError("UAT feedback not found", 404);
 
     // Rule 1: submitter != approver.
-    if (
-      fbRows[0].submitted_by_user_id &&
-      fbRows[0].submitted_by_user_id === input.approverUserId
-    ) {
+    if (fbRows[0].submitted_by_user_id && fbRows[0].submitted_by_user_id === input.approverUserId) {
       throw new ApprovalError(
-        "You cannot approve feedback you submitted yourself. A second person must sign this off.",
+        "You cannot approve feedback you submitted yourself. A second person must sign this off."
       );
     }
 
     // Rule 2: rule editor != approver.
     if ((input.ruleEditorUserIds ?? []).includes(input.approverUserId)) {
       throw new ApprovalError(
-        "You last edited the rules this item was evaluated under, so you cannot also approve it.",
+        "You last edited the rules this item was evaluated under, so you cannot also approve it."
       );
     }
 
@@ -167,12 +163,12 @@ export async function decideApproval(input: DecideInput): Promise<void> {
       `SELECT * FROM uat_approval
         WHERE feedback_id = ? AND approval_type = ? AND required_role = ?
         FOR UPDATE`,
-      [input.feedbackId, input.approvalType, input.requiredRole],
+      [input.feedbackId, input.approvalType, input.requiredRole]
     );
     if (rows.length === 0) {
       throw new ApprovalError(
         `No ${input.approvalType} approval is pending for role ${input.requiredRole}`,
-        404,
+        404
       );
     }
     const row = rows[0];
@@ -180,15 +176,12 @@ export async function decideApproval(input: DecideInput): Promise<void> {
     // Idempotent: the same decision by the same approver is a no-op, not an error. A
     // double-click must not read as tampering.
     if (row.decision !== "pending") {
-      if (
-        row.decision === input.decision &&
-        row.approver_user_id === input.approverUserId
-      ) {
+      if (row.decision === input.decision && row.approver_user_id === input.approverUserId) {
         await conn.commit();
         return;
       }
       throw new ApprovalError(
-        `This gate was already ${row.decision}${row.decided_at ? ` on ${row.decided_at.toISOString()}` : ""}.`,
+        `This gate was already ${row.decision}${row.decided_at ? ` on ${row.decided_at.toISOString()}` : ""}.`
       );
     }
 
@@ -198,13 +191,13 @@ export async function decideApproval(input: DecideInput): Promise<void> {
       const deleg = await activeDelegationFor(
         input.requiredRole,
         input.approverUserId,
-        row.capability_key,
+        row.capability_key
       );
       if (!deleg) {
         throw new ApprovalError(
           `This gate requires the ${input.requiredRole} role. You do not hold it, and no ` +
             `delegation to you is currently valid. An expired delegation does not carry over.`,
-          403,
+          403
         );
       }
       delegationId = deleg.id;
@@ -214,13 +207,7 @@ export async function decideApproval(input: DecideInput): Promise<void> {
       `UPDATE uat_approval
           SET decision = ?, approver_user_id = ?, delegation_id = ?, reason = ?, decided_at = NOW()
         WHERE id = ?`,
-      [
-        input.decision,
-        input.approverUserId,
-        delegationId,
-        input.reason ?? null,
-        row.id,
-      ],
+      [input.decision, input.approverUserId, delegationId, input.reason ?? null, row.id]
     );
 
     await recordEvent(
@@ -237,7 +224,7 @@ export async function decideApproval(input: DecideInput): Promise<void> {
           viaDelegation: Boolean(delegationId),
         },
       },
-      conn,
+      conn
     );
 
     await conn.commit();
@@ -256,11 +243,7 @@ export async function decideApproval(input: DecideInput): Promise<void> {
 export interface GateStatus {
   satisfied: boolean;
   pending: Array<{ approvalType: ApprovalType; requiredRole: string }>;
-  rejected: Array<{
-    approvalType: ApprovalType;
-    requiredRole: string;
-    reason: string | null;
-  }>;
+  rejected: Array<{ approvalType: ApprovalType; requiredRole: string; reason: string | null }>;
 }
 
 /**
@@ -274,21 +257,14 @@ export async function gateStatus(feedbackId: string): Promise<GateStatus> {
   const [rows] = await db.execute<ApprovalRowDb[]>(
     `SELECT approval_type, required_role, decision, reason
        FROM uat_approval WHERE feedback_id = ?`,
-    [feedbackId],
+    [feedbackId]
   );
   const pending = rows
     .filter((r) => r.decision === "pending")
-    .map((r) => ({
-      approvalType: r.approval_type,
-      requiredRole: r.required_role,
-    }));
+    .map((r) => ({ approvalType: r.approval_type, requiredRole: r.required_role }));
   const rejected = rows
     .filter((r) => r.decision === "rejected")
-    .map((r) => ({
-      approvalType: r.approval_type,
-      requiredRole: r.required_role,
-      reason: r.reason,
-    }));
+    .map((r) => ({ approvalType: r.approval_type, requiredRole: r.required_role, reason: r.reason }));
 
   return {
     satisfied: rows.length > 0 && pending.length === 0 && rejected.length === 0,
@@ -297,12 +273,10 @@ export async function gateStatus(feedbackId: string): Promise<GateStatus> {
   };
 }
 
-export async function listApprovals(
-  feedbackId: string,
-): Promise<ApprovalRowDb[]> {
+export async function listApprovals(feedbackId: string): Promise<ApprovalRowDb[]> {
   const [rows] = await db.execute<ApprovalRowDb[]>(
     `SELECT * FROM uat_approval WHERE feedback_id = ? ORDER BY requested_at`,
-    [feedbackId],
+    [feedbackId]
   );
   return rows;
 }
@@ -321,10 +295,7 @@ export async function createDelegation(input: {
     throw new ApprovalError("A delegation must end after it begins.", 400);
   }
   if (input.backupApproverId === input.primaryApproverId) {
-    throw new ApprovalError(
-      "A delegation must name a different person as backup.",
-      400,
-    );
+    throw new ApprovalError("A delegation must name a different person as backup.", 400);
   }
   const [res] = await db.execute<ResultSetHeader>(
     `INSERT INTO uat_approver_delegation
@@ -340,7 +311,7 @@ export async function createDelegation(input: {
       input.validUntil,
       input.delegatedBy,
       input.reason ?? null,
-    ],
+    ]
   );
   return String(res.insertId ?? "");
 }

@@ -54,10 +54,7 @@ const payrollRunLimiterRaw = rateLimit({
   standardHeaders: true,
   keyGenerator: rateLimitKey,
   legacyHeaders: false,
-  message: {
-    success: false,
-    message: "Payroll calculation rate limit exceeded, please wait and retry",
-  },
+  message: { success: false, message: "Payroll calculation rate limit exceeded, please wait and retry" },
 });
 
 /**
@@ -78,8 +75,7 @@ export const publicRegistrationLimiter = rateLimit({
   legacyHeaders: false,
   message: {
     success: false,
-    message:
-      "Too many registration attempts from this device. Please wait a few minutes and try again.",
+    message: "Too many registration attempts from this device. Please wait a few minutes and try again.",
   },
 });
 
@@ -90,10 +86,7 @@ const reportLimiterRaw = rateLimit({
   standardHeaders: true,
   keyGenerator: rateLimitKey,
   legacyHeaders: false,
-  message: {
-    success: false,
-    message: "Too many report requests, please slow down",
-  },
+  message: { success: false, message: "Too many report requests, please slow down" },
 });
 
 /**
@@ -112,8 +105,7 @@ export const kpiCaptureLimiter = rateLimit({
   legacyHeaders: false,
   message: {
     success: false,
-    message:
-      "Too many submissions from this network. Please wait a few minutes and continue.",
+    message: "Too many submissions from this network. Please wait a few minutes and continue.",
   },
 });
 
@@ -132,8 +124,7 @@ export const lmsAdminLinkLimiter = rateLimit({
   legacyHeaders: false,
   message: {
     success: false,
-    message:
-      "Too many LMS admin link attempts. Please wait a few minutes and try again.",
+    message: "Too many LMS admin link attempts. Please wait a few minutes and try again.",
   },
 });
 

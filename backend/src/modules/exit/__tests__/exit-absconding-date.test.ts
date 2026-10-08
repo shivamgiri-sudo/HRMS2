@@ -53,24 +53,12 @@ vi.mock("../exit.notifications.js", () => ({
 vi.mock("../../work-inbox/work-inbox.triggers.js", () => ({
   triggerResignationPendingReview: vi.fn(async () => undefined),
 }));
-vi.mock("../../communication/sms.helper.js", () => ({
-  sendSMS: vi.fn(async () => undefined),
-}));
-vi.mock("../../../shared/sessionRevocation.js", () => ({
-  revokeSessionsForEmployee: vi.fn(),
-}));
-vi.mock("../../../shared/employeeDeprovisioning.js", () => ({
-  deprovisionEmployeeAccess: vi.fn(),
-}));
-vi.mock("../../management/manager-attribution.service.js", () => ({
-  recordManagerChange: vi.fn(),
-}));
-vi.mock("../exit-followup-recovery.js", () => ({
-  recordExitFollowUpFailure: vi.fn(),
-}));
-vi.mock("nodemailer", () => ({
-  default: { createTransport: () => ({ sendMail: vi.fn() }) },
-}));
+vi.mock("../../communication/sms.helper.js", () => ({ sendSMS: vi.fn(async () => undefined) }));
+vi.mock("../../../shared/sessionRevocation.js", () => ({ revokeSessionsForEmployee: vi.fn() }));
+vi.mock("../../../shared/employeeDeprovisioning.js", () => ({ deprovisionEmployeeAccess: vi.fn() }));
+vi.mock("../../management/manager-attribution.service.js", () => ({ recordManagerChange: vi.fn() }));
+vi.mock("../exit-followup-recovery.js", () => ({ recordExitFollowUpFailure: vi.fn() }));
+vi.mock("nodemailer", () => ({ default: { createTransport: () => ({ sendMail: vi.fn() }) } }));
 
 type Call = { sql: string; params: unknown[] };
 let calls: Call[];
@@ -80,11 +68,10 @@ function mockDb() {
   dbExecute.mockReset();
   dbExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
     calls.push({ sql: String(sql), params });
-    if (/SELECT id FROM exit_request/.test(sql)) return [[], []]; // no open exit
-    if (/FROM exit_request er/.test(sql))
-      return [[{ id: "e1", employee_id: "emp-1" }], []];
+    if (/SELECT id FROM exit_request/.test(sql)) return [[], []];       // no open exit
+    if (/FROM exit_request er/.test(sql)) return [[{ id: "e1", employee_id: "emp-1" }], []];
     if (/INSERT INTO exit_request/.test(sql)) return [{ affectedRows: 1 }, []];
-    if (/FROM business_policy_config/.test(sql)) return [[], []]; // unseeded -> fallback
+    if (/FROM business_policy_config/.test(sql)) return [[], []];       // unseeded -> fallback
     return [[], []];
   });
 }
@@ -102,8 +89,7 @@ const insert = () => calls.find((c) => /INSERT INTO exit_request/.test(c.sql))!;
  */
 function insertedValueFor(column: string): unknown {
   const { sql, params } = insert();
-  const columnList =
-    /INSERT INTO exit_request\s*\(([\s\S]*?)\)\s*VALUES/i.exec(sql)?.[1] ?? "";
+  const columnList = /INSERT INTO exit_request\s*\(([\s\S]*?)\)\s*VALUES/i.exec(sql)?.[1] ?? "";
   const valuesList = /VALUES\s*\(([\s\S]*?)\)/i.exec(sql)?.[1] ?? "";
   const columns = columnList.split(",").map((c) => c.trim());
   const values = valuesList.split(",").map((v) => v.trim());
@@ -125,13 +111,10 @@ describe("createExitRequest — absconding date is stored", () => {
     const { exitService } = await import("../exit.service.js");
     await exitService.createExitRequest(
       {
-        employeeId: "emp-1",
-        exitDate: LAST_WORKED,
-        exitType: "involuntary",
-        exitSubType: "absconding",
-        abscondingSince: LAST_WORKED,
+        employeeId: "emp-1", exitDate: LAST_WORKED, exitType: "involuntary",
+        exitSubType: "absconding", abscondingSince: LAST_WORKED,
       },
-      "actor-hr",
+      "actor-hr"
     );
 
     expect(insert().sql).toMatch(/absconding_since/);
@@ -143,7 +126,7 @@ describe("createExitRequest — absconding date is stored", () => {
     const { exitService } = await import("../exit.service.js");
     await exitService.createExitRequest(
       { employeeId: "emp-1", exitDate: "2026-10-31", exitType: "voluntary" },
-      "actor-1",
+      "actor-1"
     );
 
     expect(insertedAbscondingSince()).toBeNull();
@@ -157,13 +140,10 @@ describe("createExitRequest — absconding is not paid through a grace period", 
     // The caller passes a +7 exitDate, exactly as the old form did. The service must override it.
     await exitService.createExitRequest(
       {
-        employeeId: "emp-1",
-        exitDate: "2026-10-08",
-        exitType: "involuntary",
-        exitSubType: "absconding",
-        abscondingSince: LAST_WORKED,
+        employeeId: "emp-1", exitDate: "2026-10-08", exitType: "involuntary",
+        exitSubType: "absconding", abscondingSince: LAST_WORKED,
       },
-      "actor-hr",
+      "actor-hr"
     );
 
     expect(insertedProposedLwd()).toBe(LAST_WORKED);
@@ -176,13 +156,10 @@ describe("createExitRequest — absconding is not paid through a grace period", 
     const { exitService } = await import("../exit.service.js");
     await exitService.createExitRequest(
       {
-        employeeId: "emp-1",
-        exitDate: "2026-10-20",
-        exitType: "involuntary",
-        exitSubType: "abandonment",
-        abscondingSince: LAST_WORKED,
+        employeeId: "emp-1", exitDate: "2026-10-20", exitType: "involuntary",
+        exitSubType: "abandonment", abscondingSince: LAST_WORKED,
       },
-      "actor-hr",
+      "actor-hr"
     );
 
     expect(insertedProposedLwd()).toBe(LAST_WORKED);
@@ -194,7 +171,7 @@ describe("createExitRequest — absconding is not paid through a grace period", 
     // A resigning employee proposes a future LWD and serves notice; nothing may rewrite it.
     await exitService.createExitRequest(
       { employeeId: "emp-1", exitDate: "2026-11-30", exitType: "voluntary" },
-      "actor-1",
+      "actor-1"
     );
 
     expect(insertedProposedLwd()).toBe("2026-11-30");
@@ -207,12 +184,10 @@ describe("createExitRequest — absconding is not paid through a grace period", 
     // undefined for a NOT-NULL-ish date column if reached another way.
     await exitService.createExitRequest(
       {
-        employeeId: "emp-1",
-        exitDate: "2026-10-09",
-        exitType: "involuntary",
+        employeeId: "emp-1", exitDate: "2026-10-09", exitType: "involuntary",
         exitSubType: "absconding",
       },
-      "actor-hr",
+      "actor-hr"
     );
 
     expect(insertedProposedLwd()).toBe("2026-10-09");
@@ -224,13 +199,10 @@ describe("createExitRequest — absconding is not paid through a grace period", 
     const { exitService } = await import("../exit.service.js");
     await exitService.createExitRequest(
       {
-        employeeId: "emp-1",
-        exitDate: LAST_WORKED,
-        exitType: "involuntary",
-        exitSubType: "absconding",
-        abscondingSince: LAST_WORKED,
+        employeeId: "emp-1", exitDate: LAST_WORKED, exitType: "involuntary",
+        exitSubType: "absconding", abscondingSince: LAST_WORKED,
       },
-      "actor-hr",
+      "actor-hr"
     );
 
     // A 30-day default here would make ff-compute derive a 30-day shortfall and recover it
@@ -264,17 +236,11 @@ describe("createExitRequestSchema — the absconding date is mandatory server-si
       lastWorkingDayProposed: LAST_WORKED,
     };
 
-    const camel = createExitRequestSchema.safeParse({
-      ...base,
-      abscondingSince: LAST_WORKED,
-    });
+    const camel = createExitRequestSchema.safeParse({ ...base, abscondingSince: LAST_WORKED });
     expect(camel.success).toBe(true);
     if (camel.success) expect(camel.data.abscondingSince).toBe(LAST_WORKED);
 
-    const snake = createExitRequestSchema.safeParse({
-      ...base,
-      absconding_since: LAST_WORKED,
-    });
+    const snake = createExitRequestSchema.safeParse({ ...base, absconding_since: LAST_WORKED });
     expect(snake.success).toBe(true);
     if (snake.success) expect(snake.data.abscondingSince).toBe(LAST_WORKED);
   });

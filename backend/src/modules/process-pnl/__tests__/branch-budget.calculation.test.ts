@@ -16,28 +16,12 @@ const base = {
 
 describe("branch budget tax calculation", () => {
   it("adds tax for an exclusive quote", () => {
-    expect(calculateBudgetLine(base)).toMatchObject({
-      baseAmount: 10000,
-      taxAmount: 1800,
-      grossAmount: 11800,
-      pnlCostAmount: 10000,
-      cgstAmount: 900,
-      sgstAmount: 900,
-    });
+    expect(calculateBudgetLine(base)).toMatchObject({ baseAmount: 10000, taxAmount: 1800, grossAmount: 11800, pnlCostAmount: 10000, cgstAmount: 900, sgstAmount: 900 });
   });
 
   it("backs tax out of an inclusive quote", () => {
-    const result = calculateBudgetLine({
-      ...base,
-      unitRate: 1180,
-      taxTreatment: "inclusive",
-    });
-    expect(result).toMatchObject({
-      baseAmount: 10000,
-      taxAmount: 1800,
-      grossAmount: 11800,
-      pnlCostAmount: 10000,
-    });
+    const result = calculateBudgetLine({ ...base, unitRate: 1180, taxTreatment: "inclusive" });
+    expect(result).toMatchObject({ baseAmount: 10000, taxAmount: 1800, grossAmount: 11800, pnlCostAmount: 10000 });
   });
 
   it("adds non-recoverable tax to P&L cost", () => {
@@ -46,17 +30,7 @@ describe("branch budget tax calculation", () => {
   });
 
   it("keeps exempt lines tax free", () => {
-    const result = calculateBudgetLine({
-      ...base,
-      taxTreatment: "exempt",
-      gstRate: 18,
-    });
-    expect(result).toMatchObject({
-      baseAmount: 10000,
-      taxAmount: 0,
-      grossAmount: 10000,
-      pnlCostAmount: 10000,
-      gstType: "none",
-    });
+    const result = calculateBudgetLine({ ...base, taxTreatment: "exempt", gstRate: 18 });
+    expect(result).toMatchObject({ baseAmount: 10000, taxAmount: 0, grossAmount: 10000, pnlCostAmount: 10000, gstType: "none" });
   });
 });

@@ -1,31 +1,9 @@
 import { z } from "zod";
 
-const meetingTypes = [
-  "team_meeting",
-  "live_broadcast",
-  "training_induction",
-  "interview",
-  "coaching_1on1",
-  "compliance_policy",
-] as const;
-const meetingStatuses = [
-  "draft",
-  "scheduled",
-  "live",
-  "completed",
-  "cancelled",
-] as const;
-const audienceTypes = [
-  "all_company",
-  "branch",
-  "department",
-  "process",
-  "lob",
-  "designation",
-  "reporting_manager_team",
-  "selected_employees",
-] as const;
-const joinedStatuses = ["not_joined", "joined", "late"] as const;
+const meetingTypes = ['team_meeting', 'live_broadcast', 'training_induction', 'interview', 'coaching_1on1', 'compliance_policy'] as const;
+const meetingStatuses = ['draft', 'scheduled', 'live', 'completed', 'cancelled'] as const;
+const audienceTypes = ['all_company', 'branch', 'department', 'process', 'lob', 'designation', 'reporting_manager_team', 'selected_employees'] as const;
+const joinedStatuses = ['not_joined', 'joined', 'late'] as const;
 
 const audienceRowSchema = z.object({
   type: z.enum(audienceTypes),
@@ -40,15 +18,12 @@ export const createMeetingSchema = z.object({
   start_at: z.string().min(1),
   end_at: z.string().optional(),
   duration_minutes: z.number().int().positive().optional(),
-  timezone: z.string().max(50).default("Asia/Kolkata"),
+  timezone: z.string().max(50).default('Asia/Kolkata'),
   host_employee_id: z.string().min(1),
   co_host_ids: z.array(z.string()).optional(),
   audience: z.array(audienceRowSchema).min(1),
-  mcnmeet_room_name: z
-    .string()
-    .regex(/^[A-Za-z0-9_-]{0,80}$/)
-    .optional(),
-  google_meet_backup_url: z.string().url().optional().or(z.literal("")),
+  mcnmeet_room_name: z.string().regex(/^[A-Za-z0-9_-]{0,80}$/).optional(),
+  google_meet_backup_url: z.string().url().optional().or(z.literal('')),
   recording_required: z.boolean().default(false),
   attendance_required: z.boolean().default(false),
   acknowledgement_required: z.boolean().default(false),
@@ -63,11 +38,11 @@ export const updateMeetingSchema = z.object({
   end_at: z.string().optional(),
   duration_minutes: z.number().int().positive().optional(),
   timezone: z.string().max(50).optional(),
-  google_meet_backup_url: z.string().url().optional().or(z.literal("")),
+  google_meet_backup_url: z.string().url().optional().or(z.literal('')),
   recording_required: z.boolean().optional(),
   attendance_required: z.boolean().optional(),
   acknowledgement_required: z.boolean().optional(),
-  recording_url: z.string().url().optional().or(z.literal("")),
+  recording_url: z.string().url().optional().or(z.literal('')),
 });
 
 export const cancelMeetingSchema = z.object({

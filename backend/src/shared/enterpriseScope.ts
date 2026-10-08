@@ -3,10 +3,7 @@ import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "../middleware/authMiddleware.js";
 import { ORG_WIDE_EXEMPT_ROLES, USER_ROLES_WITH_DEPARTMENT_HEAD_SQL } from "./scopeAccess.js";
 
-export type EnterpriseUser =
-  | string
-  | { id: string; email?: string | null }
-  | AuthenticatedRequest["authUser"];
+export type EnterpriseUser = string | { id: string; email?: string | null } | AuthenticatedRequest["authUser"];
 
 export type BusinessScopeAssignment = {
   roleKey: string;
@@ -170,9 +167,7 @@ function addAssignmentPredicates(
   return clampToOwnBranch(scope, { sql: ors.join(" OR "), params }, alias.branchId);
 }
 
-async function getEmployeeRow(
-  employeeId: string,
-): Promise<EmployeeLike | null> {
+async function getEmployeeRow(employeeId: string): Promise<EmployeeLike | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, branch_id, process_id, lob_id, department_id, reporting_manager_id
        FROM employees
@@ -183,9 +178,7 @@ async function getEmployeeRow(
   return (rows[0] as EmployeeLike | undefined) ?? null;
 }
 
-export async function resolveUserBusinessScope(
-  user: EnterpriseUser,
-): Promise<UserBusinessScope> {
+export async function resolveUserBusinessScope(user: EnterpriseUser): Promise<UserBusinessScope> {
   const userId = userIdFrom(user);
 
   const [[roleRows], [scopeRows], [employeeRows]] = await Promise.all([
@@ -208,9 +201,7 @@ export async function resolveUserBusinessScope(
     ),
   ]);
 
-  const roles = unique(
-    (roleRows as RowDataPacket[]).map((row: any) => String(row.role_key)),
-  );
+  const roles = unique((roleRows as RowDataPacket[]).map((row: any) => String(row.role_key)));
   const roleKeys = new Set(roles);
   const employee = employeeRows[0] as RowDataPacket | undefined;
 
@@ -234,15 +225,11 @@ export async function resolveUserBusinessScope(
     userId,
     roles,
     employeeId: employee ? String(employee.id) : null,
-    employeeCode: employee?.employee_code
-      ? String(employee.employee_code)
-      : null,
+    employeeCode: employee?.employee_code ? String(employee.employee_code) : null,
     branchId: employee?.branch_id ? String(employee.branch_id) : null,
     processId: employee?.process_id ? String(employee.process_id) : null,
     lobId: employee?.lob_id ? String(employee.lob_id) : null,
-    departmentId: employee?.department_id
-      ? String(employee.department_id)
-      : null,
+    departmentId: employee?.department_id ? String(employee.department_id) : null,
     isSuperAdmin: roleKeys.has("super_admin"),
     isAdmin: roleKeys.has("admin"),
     isHr: roleKeys.has("hr"),
@@ -261,14 +248,7 @@ function clampToOwnBranch(scope: UserBusinessScope, cond: ScopeCondition, branch
 
 export function buildEmployeeScopeCondition(
   scope: UserBusinessScope,
-  alias: {
-    employeeId?: string;
-    branchId?: string;
-    processId?: string;
-    lobId?: string;
-    departmentId?: string;
-    managerEmployeeId?: string;
-  },
+  alias: { employeeId?: string; branchId?: string; processId?: string; lobId?: string; departmentId?: string; managerEmployeeId?: string },
 ): ScopeCondition {
   if (canBypassEmployeeScope(scope)) return { sql: "1=1", params: [] };
 
@@ -282,15 +262,7 @@ export function buildEmployeeScopeCondition(
   const scoped = addAssignmentPredicates(
     scope,
     alias,
-    new Set([
-      "all",
-      "branch",
-      "process",
-      "branch_process",
-      "lob",
-      "department",
-      "team",
-    ]),
+    new Set(["all", "branch", "process", "branch_process", "lob", "department", "team"]),
   );
   if (scoped.sql !== "1=0") {
     ors.push(`(${scoped.sql})`);
@@ -303,44 +275,21 @@ export function buildEmployeeScopeCondition(
 
 export function buildClientScopeCondition(
   scope: UserBusinessScope,
-  alias: {
-    clientId?: string;
-    processId?: string;
-    branchId?: string;
-    lobId?: string;
-  },
+  alias: { clientId?: string; processId?: string; branchId?: string; lobId?: string },
 ): ScopeCondition {
-  if (
-    scope.isSuperAdmin ||
-    scope.isAdmin ||
-    scope.isHr ||
-    roleSet(scope).has("ceo")
-  )
-    return { sql: "1=1", params: [] };
-  return addAssignmentPredicates(
-    scope,
-    alias,
-    new Set(["all", "client", "process", "branch_process", "branch", "lob"]),
-  );
+  if (scope.isSuperAdmin || scope.isAdmin || scope.isHr || roleSet(scope).has("ceo")) return { sql: "1=1", params: [] };
+  return addAssignmentPredicates(scope, alias, new Set(["all", "client", "process", "branch_process", "branch", "lob"]));
 }
 
 export function buildProcessScopeCondition(
   scope: UserBusinessScope,
-  alias: {
-    processId?: string;
-    branchId?: string;
-    lobId?: string;
-    departmentId?: string;
-  },
+  alias: { processId?: string; branchId?: string; lobId?: string; departmentId?: string },
 ): ScopeCondition {
   if (holdsOrgWideRole(scope)) return { sql: "1=1", params: [] };
   return clampToOwnBranch(scope, addAssignmentPredicates(scope, alias, new Set(["all", "process", "branch_process", "branch", "lob", "department"])), alias.branchId);
 }
 
-export async function canViewEmployee(
-  user: EnterpriseUser,
-  employeeId: string,
-): Promise<boolean> {
+export async function canViewEmployee(user: EnterpriseUser, employeeId: string): Promise<boolean> {
   const scope = await resolveUserBusinessScope(user);
   if (canBypassEmployeeScope(scope)) return true;
   if (scope.employeeId === employeeId) return true;
@@ -351,19 +300,13 @@ export async function canViewEmployee(
   return assignmentsCoverEmployee(scope, employee);
 }
 
-export async function canViewPayroll(
-  user: EnterpriseUser,
-  employeeId: string,
-): Promise<boolean> {
+export async function canViewPayroll(user: EnterpriseUser, employeeId: string): Promise<boolean> {
   const scope = await resolveUserBusinessScope(user);
   if (canBypassPayrollScope(scope)) return true;
   return scope.employeeId === employeeId;
 }
 
-export async function canViewSensitiveEmployeeData(
-  user: EnterpriseUser,
-  employeeId: string,
-): Promise<boolean> {
+export async function canViewSensitiveEmployeeData(user: EnterpriseUser, employeeId: string): Promise<boolean> {
   const scope = await resolveUserBusinessScope(user);
   if (canBypassEmployeeScope(scope)) return true;
   if (scope.employeeId === employeeId) return true;
@@ -373,23 +316,13 @@ export async function canViewSensitiveEmployeeData(
   return employee ? assignmentsCoverEmployee(scope, employee) : false;
 }
 
-export async function canManageGrievance(
-  user: EnterpriseUser,
-): Promise<boolean> {
+export async function canManageGrievance(user: EnterpriseUser): Promise<boolean> {
   const scope = await resolveUserBusinessScope(user);
   const roles = roleSet(scope);
-  return (
-    scope.isSuperAdmin ||
-    scope.isAdmin ||
-    scope.isHr ||
-    roles.has("grievance_officer")
-  );
+  return scope.isSuperAdmin || scope.isAdmin || scope.isHr || roles.has("grievance_officer");
 }
 
-export async function canViewGrievance(
-  user: EnterpriseUser,
-  grievance: GrievanceLike,
-): Promise<boolean> {
+export async function canViewGrievance(user: EnterpriseUser, grievance: GrievanceLike): Promise<boolean> {
   const scope = await resolveUserBusinessScope(user);
   const roles = roleSet(scope);
   if (canBypassEmployeeScope(scope) || roles.has("grievance_officer")) return true;
@@ -402,25 +335,14 @@ export async function canViewGrievance(
   return !(grievance.is_anonymous === true || grievance.is_anonymous === 1);
 }
 
-export async function canViewClientPortal(
-  user: EnterpriseUser,
-  clientId: string,
-  processId?: string | null,
-): Promise<boolean> {
+export async function canViewClientPortal(user: EnterpriseUser, clientId: string, processId?: string | null): Promise<boolean> {
   const scope = await resolveUserBusinessScope(user);
-  if (
-    scope.isSuperAdmin ||
-    scope.isAdmin ||
-    scope.isHr ||
-    roleSet(scope).has("ceo")
-  )
-    return true;
+  if (scope.isSuperAdmin || scope.isAdmin || scope.isHr || roleSet(scope).has("ceo")) return true;
 
   return scope.assignments.some((assignment) => {
     if (assignment.scopeType === "all") return true;
     if (assignment.clientId && assignment.clientId === clientId) return true;
-    if (processId && assignment.processId && assignment.processId === processId)
-      return true;
+    if (processId && assignment.processId && assignment.processId === processId) return true;
     return false;
   });
 }

@@ -17,15 +17,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const financeDir = path.resolve(__dirname, "..");
-const read = (dir: string, file: string) =>
-  fs.readFileSync(path.join(dir, file), "utf8");
+const read = (dir: string, file: string) => fs.readFileSync(path.join(dir, file), "utf8");
 const SERVICE = read(financeDir, "grn-report.service.ts");
 const ROUTES = read(financeDir, "grn.routes.ts");
 const PANEL = fs.readFileSync(
-  path.resolve(
-    financeDir,
-    "../../../../src/components/finance/grn/FinanceReportsWorkspace.tsx",
-  ),
+  path.resolve(financeDir, "../../../../src/components/finance/grn/FinanceReportsWorkspace.tsx"),
   "utf8",
 );
 const PAGE = fs.readFileSync(
@@ -33,18 +29,12 @@ const PAGE = fs.readFileSync(
   "utf8",
 );
 
-const { query, execute } = vi.hoisted(() => ({
-  query: vi.fn(),
-  execute: vi.fn(),
-}));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { query, execute, getConnection: vi.fn() },
-}));
+const { query, execute } = vi.hoisted(() => ({ query: vi.fn(), execute: vi.fn() }));
+vi.mock("../../../db/mysql.js", () => ({ db: { query, execute, getConnection: vi.fn() } }));
 
 const { grnReportService } = await import("../grn-report.service.js");
 
-const lastSql = () =>
-  String(query.mock.calls.at(-1)?.[0] ?? "").replace(/\s+/g, " ");
+const lastSql = () => String(query.mock.calls.at(-1)?.[0] ?? "").replace(/\s+/g, " ");
 const lastParams = () => (query.mock.calls.at(-1)?.[1] ?? []) as unknown[];
 
 beforeEach(() => {
@@ -57,18 +47,13 @@ const ONE_BRANCH = { mode: "branches", branchIds: ["branch-A"] } as any;
 
 describe("the finance month is the accounting period", () => {
   it("filters the register on accounting_period, never on bill_date", async () => {
-    await grnReportService.register({
-      branchScope: ORG_WIDE,
-      month: "2026-07",
-    });
+    await grnReportService.register({ branchScope: ORG_WIDE, month: "2026-07" });
     const sql = lastSql();
     expect(sql).toContain("g.accounting_period = ?");
     expect(lastParams()).toContain("2026-07");
     // The trap: a month filter that reads bill_date would put a Jul-booked, Aug-dated invoice
     // in August and quietly disagree with the P&L.
-    expect(sql, "the month filter must not touch bill_date").not.toMatch(
-      /bill_date\s*(=|>=|<=|LIKE)\s*\?/,
-    );
+    expect(sql, "the month filter must not touch bill_date").not.toMatch(/bill_date\s*(=|>=|<=|LIKE)\s*\?/);
   });
 
   it("still reports bill_date as its own column, so both facts are visible", async () => {
@@ -82,10 +67,7 @@ describe("the finance month is the accounting period", () => {
   });
 
   it("uses the GRN's finance month for an audit event, not the date of the click", async () => {
-    await grnReportService.auditTrail({
-      branchScope: ORG_WIDE,
-      month: "2026-07",
-    });
+    await grnReportService.auditTrail({ branchScope: ORG_WIDE, month: "2026-07" });
     const sql = lastSql();
     // An approval done in August of a July GRN is July's business.
     expect(sql).toContain("COALESCE(g.accounting_period, h.period_code) = ?");
@@ -106,10 +88,7 @@ describe("branch scope is the server's, not the client's", () => {
   });
 
   it("lets a requested branch narrow the scope but never replace it", async () => {
-    await grnReportService.register({
-      branchScope: ONE_BRANCH,
-      branchId: "branch-B",
-    });
+    await grnReportService.register({ branchScope: ONE_BRANCH, branchId: "branch-B" });
     const params = lastParams();
     // Both predicates are in the WHERE clause together, so asking for a branch outside the
     // scope set returns nothing rather than someone else's spend.
@@ -119,9 +98,7 @@ describe("branch scope is the server's, not the client's", () => {
 
   it("drops audit events whose entity resolves to no branch, rather than showing them to all", async () => {
     await grnReportService.auditTrail({ branchScope: ONE_BRANCH });
-    expect(lastSql()).toContain(
-      "COALESCE(g.branch_id, h.branch_id) IS NOT NULL",
-    );
+    expect(lastSql()).toContain("COALESCE(g.branch_id, h.branch_id) IS NOT NULL");
   });
 
   it("scopes the top-up report through the budget header's branch", async () => {
@@ -157,17 +134,10 @@ describe("the GST split is honest about where it came from", () => {
 
 describe("the reports are reachable by the roles that were asked for", () => {
   it("gates every report route on FINANCE_REPORT_ROLES", () => {
-    for (const route of [
-      "/grn-reports/register",
-      "/grn-reports/audit-trail",
-      "/grn-reports/topups",
-      "/grn-reports/filters",
-    ]) {
+    for (const route of ["/grn-reports/register", "/grn-reports/audit-trail", "/grn-reports/topups", "/grn-reports/filters"]) {
       const idx = ROUTES.indexOf(`"${route}"`);
       expect(idx, `${route} is not mounted`).toBeGreaterThan(-1);
-      expect(ROUTES.slice(idx, idx + 200)).toContain(
-        "requireRole(...FINANCE_REPORT_ROLES)",
-      );
+      expect(ROUTES.slice(idx, idx + 200)).toContain("requireRole(...FINANCE_REPORT_ROLES)");
     }
   });
 
@@ -175,17 +145,8 @@ describe("the reports are reachable by the roles that were asked for", () => {
     const idx = ROUTES.indexOf("const FINANCE_REPORT_ROLES");
     // Slice to the closing bracket of the ARRAY, not the `[]` in the RoleKey[] annotation.
     const list = ROUTES.slice(idx, ROUTES.indexOf("];", idx));
-    for (const role of [
-      "super_admin",
-      "admin",
-      "finance_head",
-      "accounts_head",
-      "branch_head",
-      "branch_admin",
-    ]) {
-      expect(list, `${role} must be able to read the reports`).toContain(
-        `"${role}"`,
-      );
+    for (const role of ["super_admin", "admin", "finance_head", "accounts_head", "branch_head", "branch_admin"]) {
+      expect(list, `${role} must be able to read the reports`).toContain(`"${role}"`);
     }
   });
 
@@ -195,14 +156,7 @@ describe("the reports are reachable by the roles that were asked for", () => {
     const idx = PAGE.indexOf("const canViewReports = useHasRole(");
     expect(idx).toBeGreaterThan(-1);
     const gate = PAGE.slice(idx, PAGE.indexOf(");", idx));
-    for (const role of [
-      "super_admin",
-      "admin",
-      "finance_head",
-      "accounts_head",
-      "branch_head",
-      "branch_admin",
-    ]) {
+    for (const role of ["super_admin", "admin", "finance_head", "accounts_head", "branch_head", "branch_admin"]) {
       expect(gate).toContain(`"${role}"`);
     }
     // hr / finance reach this page and are NOT on the server list.
@@ -223,42 +177,16 @@ describe("the reports are reachable by the roles that were asked for", () => {
 describe("what the legacy sheet had, and what it never could", () => {
   it("carries every column of the reference report", () => {
     for (const column of [
-      "S.No.",
-      "GRN",
-      "Branch",
-      "Finance Month",
-      "Exp. Type",
-      "Year Month",
-      "Exp. Head",
-      "Exp. SubHead",
-      "Description",
-      "Amount",
-      "CGST",
-      "SGST",
-      "IGST",
-      "Total",
-      "Grn Date",
-      "Approval Date",
-      "Bill Date",
-      "Due Date",
-      "Payment Date",
-      "TDS Deduct",
-      "Status",
+      "S.No.", "GRN", "Branch", "Finance Month", "Exp. Type", "Year Month", "Exp. Head",
+      "Exp. SubHead", "Description", "Amount", "CGST", "SGST", "IGST", "Total", "Grn Date",
+      "Approval Date", "Bill Date", "Due Date", "Payment Date", "TDS Deduct", "Status",
     ]) {
-      expect(PANEL, `the legacy column '${column}' is missing`).toContain(
-        `label: "${column}"`,
-      );
+      expect(PANEL, `the legacy column '${column}' is missing`).toContain(`label: "${column}"`);
     }
   });
 
   it("adds the workflow facts a system with no approval chain could not report", () => {
-    for (const column of [
-      "Pending With",
-      "Ageing (days)",
-      "Raised By",
-      "Unbudgeted",
-      "Late Invoice",
-    ]) {
+    for (const column of ["Pending With", "Ageing (days)", "Raised By", "Unbudgeted", "Late Invoice"]) {
       expect(PANEL).toContain(`label: "${column}"`);
     }
   });
@@ -278,17 +206,8 @@ describe("what the legacy sheet had, and what it never could", () => {
   });
 
   it("never lets a truncated report read as a complete one", async () => {
-    query.mockResolvedValue([
-      Array.from({ length: 1000 }, (_, i) => ({
-        id: `g${i}`,
-        status: "approved",
-      })),
-      [],
-    ]);
-    const result = await grnReportService.register({
-      branchScope: ORG_WIDE,
-      limit: 1000,
-    });
+    query.mockResolvedValue([Array.from({ length: 1000 }, (_, i) => ({ id: `g${i}`, status: "approved" })), []]);
+    const result = await grnReportService.register({ branchScope: ORG_WIDE, limit: 1000 });
     expect(result.truncated).toBe(true);
     expect(PANEL).toContain("Showing the first");
   });
@@ -309,31 +228,10 @@ describe("what the legacy sheet had, and what it never could", () => {
 
 describe("totals", () => {
   it("are computed from the rows returned, so the footer cannot exceed the table", async () => {
-    query.mockResolvedValue([
-      [
-        {
-          id: "g1",
-          status: "approved",
-          amount_without_tax: 1000,
-          tax_amount: 180,
-          cgst_amount: 90,
-          sgst_amount: 90,
-          igst_amount: 0,
-          amount_with_tax: 1180,
-        },
-        {
-          id: "g2",
-          status: "approved",
-          amount_without_tax: 2000,
-          tax_amount: 360,
-          cgst_amount: 180,
-          sgst_amount: 180,
-          igst_amount: 0,
-          amount_with_tax: 2360,
-        },
-      ],
-      [],
-    ]);
+    query.mockResolvedValue([[
+      { id: "g1", status: "approved", amount_without_tax: 1000, tax_amount: 180, cgst_amount: 90, sgst_amount: 90, igst_amount: 0, amount_with_tax: 1180 },
+      { id: "g2", status: "approved", amount_without_tax: 2000, tax_amount: 360, cgst_amount: 180, sgst_amount: 180, igst_amount: 0, amount_with_tax: 2360 },
+    ], []]);
     const result = await grnReportService.register({ branchScope: ORG_WIDE });
     expect(result.totals.count).toBe(2);
     expect(result.totals.amountWithoutTax).toBe(3000);
@@ -342,21 +240,12 @@ describe("totals", () => {
   });
 
   it("counts only what a pendingWith filter left visible", async () => {
-    query.mockResolvedValue([
-      [
-        { id: "g1", status: "submitted", amount_with_tax: 100 },
-        { id: "g2", status: "branch_head_approved", amount_with_tax: 900 },
-      ],
-      [],
-    ]);
-    const result = await grnReportService.register({
-      branchScope: ORG_WIDE,
-      pendingWith: "branch_head",
-    });
+    query.mockResolvedValue([[
+      { id: "g1", status: "submitted", amount_with_tax: 100 },
+      { id: "g2", status: "branch_head_approved", amount_with_tax: 900 },
+    ], []]);
+    const result = await grnReportService.register({ branchScope: ORG_WIDE, pendingWith: "branch_head" });
     expect(result.rows).toHaveLength(1);
-    expect(
-      result.totals.amountWithTax,
-      "the footer must follow the filter",
-    ).toBe(100);
+    expect(result.totals.amountWithTax, "the footer must follow the filter").toBe(100);
   });
 });

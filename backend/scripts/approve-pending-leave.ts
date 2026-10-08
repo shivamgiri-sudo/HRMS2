@@ -33,17 +33,13 @@ const ACTOR_EMAIL = process.env.ACTOR_EMAIL ?? "shivam.giri@teammas.in";
 const REMARKS =
   process.env.REMARKS ??
   "Approved during the August 2026 attendance finalisation. Attendance for every day of this " +
-    "request shows missing_punch or absent (both pay zero) and no day shows present.";
+  "request shows missing_punch or absent (both pay zero) and no day shows present.";
 
 async function main() {
   const { db } = await import("../src/db/mysql.js");
-  const { leaveService } =
-    await import("../src/modules/leave/leave.service.js");
+  const { leaveService } = await import("../src/modules/leave/leave.service.js");
 
-  const [users]: any = await db.query(
-    `SELECT id FROM auth_user WHERE email = ? LIMIT 1`,
-    [ACTOR_EMAIL],
-  );
+  const [users]: any = await db.query(`SELECT id FROM auth_user WHERE email = ? LIMIT 1`, [ACTOR_EMAIL]);
   if (!users.length) throw new Error(`No auth_user for ${ACTOR_EMAIL}`);
   const reviewerId = String(users[0].id);
 
@@ -64,56 +60,36 @@ async function main() {
   );
 
   console.log(`acting as ${ACTOR_EMAIL}`);
-  console.log(
-    `${APPLY ? "APPLY" : "DRY RUN"} — ${rows.length} pending request(s) between ${FROM} and ${TO}\n`,
-  );
-  if (!rows.length) {
-    await (db as any).end?.();
-    return;
-  }
+  console.log(`${APPLY ? "APPLY" : "DRY RUN"} — ${rows.length} pending request(s) between ${FROM} and ${TO}\n`);
+  if (!rows.length) { await (db as any).end?.(); return; }
 
-  let approved = 0,
-    refused = 0,
-    skipped = 0;
+  let approved = 0, refused = 0, skipped = 0;
   for (const r of rows) {
     const label = `${r.employee_code} ${r.leave_code} ${r.frm}..${r.too} (${r.total_days}d)`;
 
     // A day already recorded as worked contradicts the request. Approving it would pay the day
     // twice over and overwrite real attendance — that needs a human, not a loop.
     if (Number(r.present_days) > 0) {
-      console.log(
-        `  SKIP    ${label} — ${r.present_days} day(s) already recorded present; needs a human`,
-      );
+      console.log(`  SKIP    ${label} — ${r.present_days} day(s) already recorded present; needs a human`);
       skipped++;
       continue;
     }
 
-    if (!APPLY) {
-      console.log(`  would approve  ${label}`);
-      continue;
-    }
+    if (!APPLY) { console.log(`  would approve  ${label}`); continue; }
 
     try {
-      await leaveService.reviewRequest(
-        r.id,
-        { status: "approved", remarks: REMARKS } as any,
-        reviewerId,
-      );
+      await leaveService.reviewRequest(r.id, { status: "approved", remarks: REMARKS } as any, reviewerId);
       console.log(`  APPROVED  ${label}`);
       approved++;
     } catch (e: any) {
       // Entitlement refusals land here, and they are the system working. Reported, not retried.
-      console.log(
-        `  REFUSED   ${label}\n              ${e?.message ?? String(e)}`,
-      );
+      console.log(`  REFUSED   ${label}\n              ${e?.message ?? String(e)}`);
       refused++;
     }
   }
 
   if (APPLY) {
-    console.log(
-      `\napproved=${approved}  refused=${refused}  skipped=${skipped}`,
-    );
+    console.log(`\napproved=${approved}  refused=${refused}  skipped=${skipped}`);
   } else {
     console.log(`\nNo changes written. Re-run with APPLY=1 to decide them.`);
   }

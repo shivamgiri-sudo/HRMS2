@@ -1,8 +1,5 @@
 import { Router } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
@@ -10,10 +7,8 @@ import type { RowDataPacket } from "mysql2";
 import { employeeScopeFor, scopeFor } from "./payroll-branch-scope.js";
 
 export const payrollAuditTrailRouter = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 payrollAuditTrailRouter.use(requireAuth);
 
@@ -29,12 +24,12 @@ payrollAuditTrailRouter.get(
       event_type,
       date_from,
       date_to,
-      source, // 'calculation' | 'action' | '' (both)
+      source,         // 'calculation' | 'action' | '' (both)
       page: rawPage,
       limit: rawLimit,
     } = req.query as Record<string, string>;
 
-    const page = Math.max(1, parseInt(rawPage ?? "1", 10));
+    const page  = Math.max(1, parseInt(rawPage ?? "1", 10));
     const limit = Math.min(200, parseInt(rawLimit ?? "50", 10));
     const offset = (page - 1) * limit;
 
@@ -42,26 +37,11 @@ payrollAuditTrailRouter.get(
     const calcConds: string[] = [];
     const calcParams: unknown[] = [];
 
-    if (run_id) {
-      calcConds.push("pca.run_id = ?");
-      calcParams.push(run_id);
-    }
-    if (employee_id) {
-      calcConds.push("pca.employee_id = ?");
-      calcParams.push(employee_id);
-    }
-    if (event_type) {
-      calcConds.push("pca.event_type LIKE ?");
-      calcParams.push(`%${event_type}%`);
-    }
-    if (date_from) {
-      calcConds.push("pca.created_at >= ?");
-      calcParams.push(date_from);
-    }
-    if (date_to) {
-      calcConds.push("pca.created_at <= ?");
-      calcParams.push(date_to + " 23:59:59");
-    }
+    if (run_id)      { calcConds.push("pca.run_id = ?");        calcParams.push(run_id); }
+    if (employee_id) { calcConds.push("pca.employee_id = ?");   calcParams.push(employee_id); }
+    if (event_type)  { calcConds.push("pca.event_type LIKE ?"); calcParams.push(`%${event_type}%`); }
+    if (date_from)   { calcConds.push("pca.created_at >= ?");   calcParams.push(date_from); }
+    if (date_to)     { calcConds.push("pca.created_at <= ?");   calcParams.push(date_to + " 23:59:59"); }
 
     // Branch scoping (owner ruling 2026-10-01): calculation events only for employees in scope.
     const auditScope = await employeeScopeFor(req, "e");
@@ -77,35 +57,14 @@ payrollAuditTrailRouter.get(
     // Live-verified counts: 41,219 'payroll' rows visible before this fix, 11 'payroll_loans'
     // and 7 'exit' rows completely absent. Holiday-work approvals still won't appear — they
     // write to their own holiday_work_approval_log table, not this one, a separate gap.
-    const salConds: string[] = [
-      "sal.module_key IN ('payroll','payroll_loans','exit')",
-    ];
+    const salConds: string[] = ["sal.module_key IN ('payroll','payroll_loans','exit')"];
     const salParams: unknown[] = [];
 
-    if (run_id) {
-      salConds.push(
-        "JSON_UNQUOTE(JSON_EXTRACT(sal.change_summary, '$.run_id')) = ?",
-      );
-      salParams.push(run_id);
-    }
-    if (employee_id) {
-      salConds.push(
-        "JSON_UNQUOTE(JSON_EXTRACT(sal.change_summary, '$.employee_id')) = ?",
-      );
-      salParams.push(employee_id);
-    }
-    if (event_type) {
-      salConds.push("sal.action_type LIKE ?");
-      salParams.push(`%${event_type}%`);
-    }
-    if (date_from) {
-      salConds.push("sal.acted_at >= ?");
-      salParams.push(date_from);
-    }
-    if (date_to) {
-      salConds.push("sal.acted_at <= ?");
-      salParams.push(date_to + " 23:59:59");
-    }
+    if (run_id)      { salConds.push("JSON_UNQUOTE(JSON_EXTRACT(sal.change_summary, '$.run_id')) = ?"); salParams.push(run_id); }
+    if (employee_id) { salConds.push("JSON_UNQUOTE(JSON_EXTRACT(sal.change_summary, '$.employee_id')) = ?"); salParams.push(employee_id); }
+    if (event_type)  { salConds.push("sal.action_type LIKE ?"); salParams.push(`%${event_type}%`); }
+    if (date_from)   { salConds.push("sal.acted_at >= ?");    salParams.push(date_from); }
+    if (date_to)     { salConds.push("sal.acted_at <= ?");    salParams.push(date_to + " 23:59:59"); }
 
     // The action log is org-wide: scoped callers only see their own actions and actions on
     // employees inside their scope.
@@ -117,9 +76,9 @@ payrollAuditTrailRouter.get(
     const salWhere = `WHERE ${salConds.join(" AND ")}`;
 
     let calcRows: any[] = [];
-    let salRows: any[] = [];
+    let salRows:  any[] = [];
     let calcTotal = 0;
-    let salTotal = 0;
+    let salTotal  = 0;
 
     if (!source || source === "calculation") {
       try {
@@ -147,7 +106,7 @@ payrollAuditTrailRouter.get(
            LEFT JOIN employees ae  ON ae.user_id = au.id
            ${calcWhere}
            ORDER BY pca.created_at DESC`,
-          calcParams,
+          calcParams
         );
         calcRows = cr as any[];
 
@@ -184,13 +143,13 @@ payrollAuditTrailRouter.get(
            LEFT JOIN employees ae ON ae.user_id = au.id
            ${salWhere}
            ORDER BY sal.acted_at DESC`,
-          salParams,
+          salParams
         );
         salRows = sr as any[];
 
         const [st] = await db.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS cnt FROM sensitive_action_log sal ${salWhere}`,
-          salParams,
+          salParams
         );
         salTotal = Number((st as any[])[0]?.cnt ?? 0);
       } catch {
@@ -200,12 +159,10 @@ payrollAuditTrailRouter.get(
 
     // Merge + sort by created_at desc, then paginate
     const merged = [...calcRows, ...salRows].sort(
-      (a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
-    const total =
-      (!source || source === "calculation" ? calcTotal : 0) +
-      (!source || source === "action" ? salTotal : 0);
+    const total = (!source || source === "calculation" ? calcTotal : 0) +
+                  (!source || source === "action" ? salTotal : 0);
 
     const paged = merged.slice(offset, offset + limit);
 
@@ -216,7 +173,7 @@ payrollAuditTrailRouter.get(
       page,
       limit,
     });
-  }),
+  })
 );
 
 // ─── GET /api/payroll/audit-trail/event-types ─────────────────────────────────
@@ -227,22 +184,22 @@ payrollAuditTrailRouter.get(
     const types: string[] = [];
     try {
       const [cr] = await db.execute<RowDataPacket[]>(
-        "SELECT DISTINCT event_type FROM payroll_calculation_audit ORDER BY event_type",
+        "SELECT DISTINCT event_type FROM payroll_calculation_audit ORDER BY event_type"
       );
-      (cr as any[]).forEach((r) => types.push(r.event_type));
+      (cr as any[]).forEach(r => types.push(r.event_type));
     } catch {}
 
     try {
       const [sr] = await db.execute<RowDataPacket[]>(
-        "SELECT DISTINCT action_type FROM sensitive_action_log WHERE module_key='payroll' ORDER BY action_type",
+        "SELECT DISTINCT action_type FROM sensitive_action_log WHERE module_key='payroll' ORDER BY action_type"
       );
-      (sr as any[]).forEach((r) => {
+      (sr as any[]).forEach(r => {
         if (!types.includes(r.action_type)) types.push(r.action_type);
       });
     } catch {}
 
     return res.json({ success: true, data: types.sort() });
-  }),
+  })
 );
 
 // ─── GET /api/payroll/audit-trail/runs ────────────────────────────────────────
@@ -261,5 +218,5 @@ payrollAuditTrailRouter.get(
       runScope.params
     );
     return res.json({ success: true, data: rows });
-  }),
+  })
 );

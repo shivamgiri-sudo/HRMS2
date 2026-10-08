@@ -1,24 +1,12 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
-import {
-  OWN_COMPANY_SQL,
-  readGrnSpend,
-  type GrnSpendRow,
-} from "./pnl-actuals.service.js";
-import {
-  getSeatBillingEstimate,
-  isEstimateWindow,
-  type CostCentreSeatBilling,
-} from "./pnl-seat-billing.service.js";
+import { OWN_COMPANY_SQL, readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
+import { getSeatBillingEstimate, isEstimateWindow, type CostCentreSeatBilling } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
-import {
-  budgetByBranchId,
-  budgetByCostCentreId,
-  readBudgetEntries,
-} from "./pnl-budget-source.js";
+import { budgetByBranchId, budgetByCostCentreId, readBudgetEntries } from "./pnl-budget-source.js";
 import { cachedPnlRead } from "./pnl-read-cache.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
 import { nonVoidRunSql } from "../payroll/run-status.js";
@@ -27,8 +15,7 @@ import { getForecastRevenueByCostCentre } from "./revenue-forecast.service.js";
 import { readOpenBudgetReserve } from "./pnl-open-budget.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
-export type PnlSourceStatus =
-  "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
+export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
 /** Where a cost centre's recognised revenue came from. ESTIMATED = seat rate x seats. */
 export type PnlRevenueBasis = "FORECAST_CLOSED" | "FORECAST_OPEN" | "INVOICE" | "ACCRUAL" | "ESTIMATED" | "NONE";
 
@@ -218,8 +205,7 @@ const n = (value: unknown) => {
 };
 // A margin needs positive revenue: on a negative base (credit notes above invoices) the ratio flips
 // sign and reads as a large positive margin — BSS/OB/Noida/974 showed +164.7% in June 2026.
-const pct = (part: number, whole: number) =>
-  whole > 0 ? (part / whole) * 100 : null;
+const pct = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : null);
 
 function addIssue(target: string[], condition: boolean, issue: string) {
   if (condition) target.push(issue);
@@ -235,10 +221,7 @@ function addIssue(target: string[], condition: boolean, issue: string) {
  * centre's real money for a period is summed — see readCostCentres().
  */
 function isCurrentlyActive(cc: CostCentreRow): boolean {
-  return (
-    Number(cc.active_status ?? 0) === 1 &&
-    Number(cc.branch_active_status ?? 1) === 1
-  );
+  return Number(cc.active_status ?? 0) === 1 && Number(cc.branch_active_status ?? 1) === 1;
 }
 
 /**
@@ -252,9 +235,7 @@ function isCurrentlyActive(cc: CostCentreRow): boolean {
  * the requested period (hasPeriodActivity), and counts "Active Cost Centres" with
  * isCurrentlyActive() only.
  */
-async function readCostCentres(
-  filters: PnlReconciliationFilters,
-): Promise<CostCentreRow[]> {
+async function readCostCentres(filters: PnlReconciliationFilters): Promise<CostCentreRow[]> {
   const where = [OWN_COMPANY_SQL];
   const params: unknown[] = [];
   if (filters.branchIds?.length) {
@@ -290,9 +271,7 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
   const hasProvision = await tableExists("billing_provision_snapshot");
   const hasCreditNote = await tableExists("billing_credit_note_snapshot");
   const [rows] = await db.execute<RevenueRow[]>(
-    `${
-      hasProvision
-        ? `
+    `${hasProvision ? `
      WITH invoice_actual AS (
        SELECT p.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code,
               ccm.id AS cost_centre_id,
@@ -333,9 +312,7 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
            LEFT JOIN invoice_actual i
                   ON i.cost_centre_code = p.cost_centre_code
                  AND COALESCE(i.cost_centre_id, '') = COALESCE(p.cost_centre_id, '')
-         ${
-           hasCreditNote
-             ? `
+         ${hasCreditNote ? `
          UNION ALL
          SELECT ccm.id, cn.cost_centre_code COLLATE utf8mb4_unicode_ci,
                 0, 0, 0, cn.total_amt
@@ -343,12 +320,9 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
            LEFT JOIN cost_centre_master ccm
                   ON ccm.cost_centre_code
                    = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
-          WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}`
-             : ""
-         }
+          WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}` : ""}
        ) revenue
-      GROUP BY cost_centre_id, cost_centre_code`
-        : `
+      GROUP BY cost_centre_id, cost_centre_code` : `
      SELECT cost_centre_id, cost_centre_code,
             SUM(invoice_amount) AS invoice_amount,
             0 AS provision_amount,
@@ -364,21 +338,16 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
                   ON ccm.cost_centre_code
                    = p.cost_centre_code COLLATE utf8mb4_unicode_ci
           WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
-         ${
-           hasCreditNote
-             ? `
+         ${hasCreditNote ? `
          UNION ALL
          SELECT ccm.id, cn.cost_centre_code COLLATE utf8mb4_unicode_ci, 0, cn.total_amt
            FROM billing_credit_note_snapshot cn
            LEFT JOIN cost_centre_master ccm
                   ON ccm.cost_centre_code
                    = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
-          WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}`
-             : ""
-         }
+          WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}` : ""}
        ) revenue
-      GROUP BY cost_centre_id, cost_centre_code`
-    }`,
+      GROUP BY cost_centre_id, cost_centre_code`}`,
     hasProvision
       ? [period, period, ...(hasCreditNote ? [period] : [])]
       : [period, ...(hasCreditNote ? [period] : [])],
@@ -455,13 +424,7 @@ async function readGrnCommitted(period: string): Promise<Map<string, number>> {
  * it is a contribution margin (revenue - payroll - GRN only). This is intentionally read into
  * totals ONLY (see truePat below), never into a row or branch rollup.
  */
-async function readBelowTheLine(
-  period: string,
-): Promise<{
-  depreciation: number;
-  financeCost: number;
-  taxProvision: number;
-}> {
+async function readBelowTheLine(period: string): Promise<{ depreciation: number; financeCost: number; taxProvision: number }> {
   const out = { depreciation: 0, financeCost: 0, taxProvision: 0 };
   if (!(await tableExists("process_pnl_cost_component"))) return out;
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -497,10 +460,7 @@ async function readBelowTheLine(
  */
 async function readBudgets(period: string) {
   const entries = await readBudgetEntries(period);
-  return {
-    byCostCentre: budgetByCostCentreId(entries),
-    byBranch: budgetByBranchId(entries),
-  };
+  return { byCostCentre: budgetByCostCentreId(entries), byBranch: budgetByBranchId(entries) };
 }
 
 /**
@@ -511,9 +471,7 @@ async function readBudgets(period: string) {
  * Since 2026-09-23 the Statement (bpo-pnl.service.ts getPayrollPeople and the running-salary
  * reader getRunningPeopleCost) follows it too, via payrollAttributionSql.
  */
-async function readPayroll(
-  period: string,
-): Promise<Map<string, { cost: number; staff: number }>> {
+async function readPayroll(period: string): Promise<Map<string, { cost: number; staff: number }>> {
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
   const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
@@ -579,10 +537,7 @@ async function readPayroll(
  * tabs; only this tab lists them separately, as "Payroll without cost centre".
  */
 /** `AND <col> IN (...)` for an optional process narrowing; an empty list matches nothing. */
-function processClause(
-  col: string,
-  processIds: string[] | undefined,
-): { sql: string; params: string[] } {
+function processClause(col: string, processIds: string[] | undefined): { sql: string; params: string[] } {
   if (!processIds) return { sql: "", params: [] };
   if (!processIds.length) return { sql: "AND 1 = 0", params: [] };
   return { sql: `AND ${col} IN (${marks(processIds)})`, params: processIds };
@@ -592,14 +547,7 @@ async function readUnallocatedPayroll(
   period: string,
   branchIds: string[] | undefined,
   processIds?: string[],
-): Promise<
-  Array<{
-    branchId: string | null;
-    branchName: string;
-    cost: number;
-    staff: number;
-  }>
-> {
+): Promise<Array<{ branchId: string | null; branchName: string; cost: number; staff: number }>> {
   if (!(await tableExists("salary_prep_line"))) return [];
   const [posted] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS line_count
@@ -646,18 +594,9 @@ async function readUnallocatedRunningPayroll(
   period: string,
   branchIds: string[] | undefined,
   processIds?: string[],
-): Promise<
-  Array<{
-    branchId: string | null;
-    branchName: string;
-    cost: number;
-    staff: number;
-  }>
-> {
+): Promise<Array<{ branchId: string | null; branchName: string; cost: number; staff: number }>> {
   if (!(await tableExists("pnl_running_salary_snapshot"))) return [];
-  const branchClause = branchIds?.length
-    ? `AND s.branch_id IN (${marks(branchIds)})`
-    : "";
+  const branchClause = branchIds?.length ? `AND s.branch_id IN (${marks(branchIds)})` : "";
   const proc = processClause("s.process_id", processIds);
   const ov = await overrideJoinSql("s.employee_id", "s.cost_centre_id");
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -672,23 +611,12 @@ async function readUnallocatedRunningPayroll(
     [period, ...(branchIds ?? []), ...proc.params],
   );
   return rows
-    .map((r) => ({
-      branchId: r.branch_id ? String(r.branch_id) : null,
-      branchName: r.branch_name ? String(r.branch_name) : "Unassigned",
-      cost: n(r.amount),
-      staff: n(r.staff),
-    }))
+    .map((r) => ({ branchId: r.branch_id ? String(r.branch_id) : null, branchName: r.branch_name ? String(r.branch_name) : "Unassigned", cost: n(r.amount), staff: n(r.staff) }))
     .filter((r) => r.cost !== 0 || r.staff > 0);
 }
 
-async function sourceFreshness(
-  source: string,
-  table: string,
-  period: string,
-  periodColumn = "period_code",
-): Promise<PnlSourceFreshness> {
-  if (!(await tableExists(table)))
-    return { source, table, rows: 0, latestSyncedAt: null, status: "MISSING" };
+async function sourceFreshness(source: string, table: string, period: string, periodColumn = "period_code"): Promise<PnlSourceFreshness> {
+  if (!(await tableExists(table))) return { source, table, rows: 0, latestSyncedAt: null, status: "MISSING" };
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS \`rows\`, MAX(synced_at) AS latest_synced_at FROM ${table} WHERE ${periodColumn} = ?`,
     [period],
@@ -699,22 +627,14 @@ async function sourceFreshness(
     source,
     table,
     rows: count,
-    latestSyncedAt: first.latest_synced_at
-      ? String(first.latest_synced_at)
-      : null,
+    latestSyncedAt: first.latest_synced_at ? String(first.latest_synced_at) : null,
     status: count > 0 ? "ACTUAL" : "MISSING",
   };
 }
 
 async function payrollFreshness(period: string): Promise<PnlSourceFreshness> {
   if (!(await tableExists("salary_prep_line"))) {
-    return {
-      source: "Payroll",
-      table: "salary_prep_line",
-      rows: 0,
-      latestSyncedAt: null,
-      status: "MISSING",
-    };
+    return { source: "Payroll", table: "salary_prep_line", rows: 0, latestSyncedAt: null, status: "MISSING" };
   }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(l.id) AS \`rows\`, MAX(r.created_at) AS latest_synced_at
@@ -729,24 +649,14 @@ async function payrollFreshness(period: string): Promise<PnlSourceFreshness> {
     source: "Payroll",
     table: "salary_prep_line",
     rows: count,
-    latestSyncedAt: first.latest_synced_at
-      ? String(first.latest_synced_at)
-      : null,
+    latestSyncedAt: first.latest_synced_at ? String(first.latest_synced_at) : null,
     status: count > 0 ? "ACTUAL" : "MISSING",
   };
 }
 
-async function runningSalaryFreshness(
-  period: string,
-): Promise<PnlSourceFreshness> {
+async function runningSalaryFreshness(period: string): Promise<PnlSourceFreshness> {
   if (!(await tableExists("pnl_running_salary_snapshot"))) {
-    return {
-      source: "Running salary",
-      table: "pnl_running_salary_snapshot",
-      rows: 0,
-      latestSyncedAt: null,
-      status: "MISSING",
-    };
+    return { source: "Running salary", table: "pnl_running_salary_snapshot", rows: 0, latestSyncedAt: null, status: "MISSING" };
   }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS \`rows\`, MAX(computed_at) AS latest_synced_at
@@ -760,16 +670,12 @@ async function runningSalaryFreshness(
     source: "Running salary",
     table: "pnl_running_salary_snapshot",
     rows: count,
-    latestSyncedAt: first.latest_synced_at
-      ? String(first.latest_synced_at)
-      : null,
+    latestSyncedAt: first.latest_synced_at ? String(first.latest_synced_at) : null,
     status: count > 0 ? "ACCRUAL" : "MISSING",
   };
 }
 
-async function exceptions(
-  period: string,
-): Promise<PnlReconciliationException[]> {
+async function exceptions(period: string): Promise<PnlReconciliationException[]> {
   const out: PnlReconciliationException[] = [];
   if (await tableExists("salary_prep_line")) {
     const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
@@ -785,32 +691,22 @@ async function exceptions(
     );
     const first = rows[0] ?? {};
     if (n(first.count) > 0 || n(first.amount) > 0) {
-      out.push({
-        code: "PAYROLL_UNMAPPED_COST_CENTRE",
-        label: "Payroll without cost centre",
-        count: n(first.count),
-        amount: n(first.amount),
-      });
+      out.push({ code: "PAYROLL_UNMAPPED_COST_CENTRE", label: "Payroll without cost centre", count: n(first.count), amount: n(first.amount) });
     }
   }
   return out;
 }
 
-function sourceStatus(
-  row: {
-    invoice: number;
-    accrual: number;
-    payroll: number;
-    grn: number;
-    budget: number;
-  },
-  payrollPosted: boolean,
-): PnlSourceStatus {
-  if (!payrollPosted && row.invoice + row.accrual + row.grn + row.budget > 0)
-    return "PARTIAL";
+function sourceStatus(row: {
+  invoice: number;
+  accrual: number;
+  payroll: number;
+  grn: number;
+  budget: number;
+}, payrollPosted: boolean): PnlSourceStatus {
+  if (!payrollPosted && (row.invoice + row.accrual + row.grn + row.budget > 0)) return "PARTIAL";
   if (row.accrual > 0 && row.invoice === 0) return "ACCRUAL";
-  if (row.invoice + row.accrual + row.payroll + row.grn + row.budget === 0)
-    return "MISSING";
+  if (row.invoice + row.accrual + row.payroll + row.grn + row.budget === 0) return "MISSING";
   return row.accrual > 0 ? "PARTIAL" : "ACTUAL";
 }
 
@@ -864,8 +760,7 @@ export function getPnlReconciliation(
     {
       period,
       branchIds: filters.branchIds ?? [],
-      processIds:
-        filters.processIds === undefined ? "none" : filters.processIds,
+      processIds: filters.processIds === undefined ? "none" : filters.processIds,
       includeInactive: Boolean(filters.includeInactive),
       asOfDate: filters.asOfDate ?? getCurrentDateIST(),
     },
@@ -878,9 +773,7 @@ async function buildPnlReconciliation(
   filters: PnlReconciliationFilters = {},
 ): Promise<PnlReconciliation> {
   if (!PERIOD_RE.test(period)) {
-    throw Object.assign(new Error("period must be YYYY-MM"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
 
   // Seat-rate estimate for cost centres the month has not invoiced yet. Only inside the open
@@ -905,8 +798,7 @@ async function buildPnlReconciliation(
   const belowTheLine = narrowed ? { depreciation: 0, financeCost: 0, taxProvision: 0 } : sources.belowTheLine;
   const exceptionsOut = narrowed ? [] : sources.exceptionsOut;
 
-  const payrollPosted =
-    (freshness.find((item) => item.source === "Payroll")?.rows ?? 0) > 0;
+  const payrollPosted = (freshness.find((item) => item.source === "Payroll")?.rows ?? 0) > 0;
   const seatByCc = new Map<string, CostCentreSeatBilling>(
     (seatBilling?.costCentres ?? []).map((item) => [item.costCentreId, item]),
   );
@@ -927,10 +819,7 @@ async function buildPnlReconciliation(
       || forecasts.has(id);
   };
   const costCentres = allCostCentres.filter(
-    (cc) =>
-      filters.includeInactive ||
-      isCurrentlyActive(cc) ||
-      hasPeriodActivity(String(cc.id)),
+    (cc) => filters.includeInactive || isCurrentlyActive(cc) || hasPeriodActivity(String(cc.id)),
   );
 
   const rows: PnlReconciliationRow[] = costCentres.map((cc) => {
@@ -959,8 +848,7 @@ async function buildPnlReconciliation(
     // window: it is real approved spend, not a projection.
     const grnEstimated = grnCommitted.get(cc.id) ?? 0;
     const allocatedBudget = budgets.byCostCentre.get(cc.id) ?? 0;
-    const branchBudget =
-      budgets.byBranch.get(cc.branch_id ? String(cc.branch_id) : "") ?? 0;
+    const branchBudget = budgets.byBranch.get(cc.branch_id ? String(cc.branch_id) : "") ?? 0;
     const pay = payroll.get(cc.id);
     const payrollCost = pay?.cost ?? 0;
     const staffPaid = pay?.staff ?? 0;
@@ -970,41 +858,13 @@ async function buildPnlReconciliation(
     const openBudgetReserve = openBudget.byCostCentre.get(String(cc.id)) ?? 0;
     const operatingProfit = recognisedRevenue - payrollCost - grnTotal - openBudgetReserve;
     const issues: string[] = [];
-    addIssue(
-      issues,
-      !payrollPosted && payrollCost > 0,
-      "PAYROLL_ACCRUED_NOT_FINAL",
-    );
-    addIssue(
-      issues,
-      !payrollPosted && payrollCost === 0,
-      "PAYROLL_NOT_POSTED_FOR_PERIOD",
-    );
-    addIssue(
-      issues,
-      recognisedRevenue > 0 && payrollCost === 0,
-      "REVENUE_WITH_NO_PAYROLL",
-    );
-    addIssue(
-      issues,
-      recognisedRevenue === 0 && (payrollCost > 0 || grnTotal > 0),
-      "COST_WITH_NO_REVENUE",
-    );
-    addIssue(
-      issues,
-      grnTotal > 0 && allocatedBudget === 0,
-      "GRN_WITHOUT_COST_CENTRE_BUDGET",
-    );
-    addIssue(
-      issues,
-      allocatedBudget > 0 && grnTotal > allocatedBudget,
-      "GRN_OVER_ALLOCATED_BUDGET",
-    );
-    addIssue(
-      issues,
-      branchBudget === 0 && (allocatedBudget > 0 || grnTotal > 0),
-      "BRANCH_BUDGET_MISSING",
-    );
+    addIssue(issues, !payrollPosted && payrollCost > 0, "PAYROLL_ACCRUED_NOT_FINAL");
+    addIssue(issues, !payrollPosted && payrollCost === 0, "PAYROLL_NOT_POSTED_FOR_PERIOD");
+    addIssue(issues, recognisedRevenue > 0 && payrollCost === 0, "REVENUE_WITH_NO_PAYROLL");
+    addIssue(issues, recognisedRevenue === 0 && (payrollCost > 0 || grnTotal > 0), "COST_WITH_NO_REVENUE");
+    addIssue(issues, grnTotal > 0 && allocatedBudget === 0, "GRN_WITHOUT_COST_CENTRE_BUDGET");
+    addIssue(issues, allocatedBudget > 0 && grnTotal > allocatedBudget, "GRN_OVER_ALLOCATED_BUDGET");
+    addIssue(issues, branchBudget === 0 && (allocatedBudget > 0 || grnTotal > 0), "BRANCH_BUDGET_MISSING");
     addIssue(issues, useEstimate, "REVENUE_ESTIMATED_FROM_SEAT_RATE");
     addIssue(issues, grnEstimated > 0, "GRN_ESTIMATED_FROM_RESERVED");
     return {
@@ -1012,9 +872,7 @@ async function buildPnlReconciliation(
       branchName: cc.branch_name ? String(cc.branch_name) : "Unassigned",
       costCentreId: String(cc.id),
       costCentreCode: String(cc.cost_centre_code ?? ""),
-      costCentreName: String(
-        cc.cost_centre_name ?? cc.cost_centre_code ?? "Unnamed cost centre",
-      ),
+      costCentreName: String(cc.cost_centre_name ?? cc.cost_centre_code ?? "Unnamed cost centre"),
       costCentreProcess: cc.process_name ? String(cc.process_name) : null,
       companyName: cc.company_name ? String(cc.company_name) : null,
       active: currentlyActive,
@@ -1040,16 +898,7 @@ async function buildPnlReconciliation(
       marginPct: pct(operatingProfit, recognisedRevenue),
       sourceStatus: useEstimate
         ? "ESTIMATED"
-        : sourceStatus(
-            {
-              invoice: revenueInvoice,
-              accrual: revenueAccrual,
-              payroll: payrollCost,
-              grn: grnTotal,
-              budget: allocatedBudget,
-            },
-            payrollPosted,
-          ),
+        : sourceStatus({ invoice: revenueInvoice, accrual: revenueAccrual, payroll: payrollCost, grn: grnTotal, budget: allocatedBudget }, payrollPosted),
       issues,
     };
   });
@@ -1084,8 +933,7 @@ async function buildPnlReconciliation(
     current.payrollCost += row.payrollCost;
     current.staffPaid += row.staffPaid;
     current.operatingProfit += row.operatingProfit;
-    for (const issue of row.issues)
-      if (!current.issues.includes(issue)) current.issues.push(issue);
+    for (const issue of row.issues) if (!current.issues.includes(issue)) current.issues.push(issue);
     current.marginPct = pct(current.operatingProfit, current.revenue);
     branchMap.set(key, current);
   }
@@ -1105,8 +953,7 @@ async function buildPnlReconciliation(
     current.payrollCost += u.cost;
     current.staffPaid += u.staff;
     current.operatingProfit -= u.cost;
-    if (!current.issues.includes("PAYROLL_WITHOUT_COST_CENTRE"))
-      current.issues.push("PAYROLL_WITHOUT_COST_CENTRE");
+    if (!current.issues.includes("PAYROLL_WITHOUT_COST_CENTRE")) current.issues.push("PAYROLL_WITHOUT_COST_CENTRE");
     current.marginPct = pct(current.operatingProfit, current.revenue);
     branchMap.set(key, current);
   }
@@ -1127,8 +974,7 @@ async function buildPnlReconciliation(
   const unallocatedCost = unallocatedPayroll.reduce((t, u) => t + u.cost, 0);
   const unallocatedStaff = unallocatedPayroll.reduce((t, u) => t + u.staff, 0);
 
-  const sum = (pick: (row: PnlReconciliationRow) => number) =>
-    rows.reduce((total, row) => total + pick(row), 0);
+  const sum = (pick: (row: PnlReconciliationRow) => number) => rows.reduce((total, row) => total + pick(row), 0);
   const totals: PnlReconciliationTotals = {
     activeCostCentres: rows.filter((row) => row.active).length,
     unallocatedPayroll: unallocatedCost,
@@ -1138,8 +984,7 @@ async function buildPnlReconciliation(
     revenueAccrual: sum((row) => row.revenueAccrual),
     creditNote: sum((row) => row.creditNote),
     revenueEstimated: sum((row) => row.revenueEstimated),
-    estimatedCostCentres: rows.filter((row) => row.revenueBasis === "ESTIMATED")
-      .length,
+    estimatedCostCentres: rows.filter((row) => row.revenueBasis === "ESTIMATED").length,
     perDayRevenue: sum((row) => row.perDayRevenue),
     grnActual: sum((row) => row.grnActual),
     grnEstimated: sum((row) => row.grnEstimated),
@@ -1147,10 +992,7 @@ async function buildPnlReconciliation(
     revenueForecast: sum((row) => row.revenueForecast ?? 0),
     forecastCostCentres: rows.filter((row) => row.revenueBasis === "FORECAST_OPEN" || row.revenueBasis === "FORECAST_CLOSED").length,
     allocatedBudget: sum((row) => row.allocatedBudget),
-    branchBudget: Array.from(branchMap.values()).reduce(
-      (total, row) => total + row.branchBudget,
-      0,
-    ),
+    branchBudget: Array.from(branchMap.values()).reduce((total, row) => total + row.branchBudget, 0),
     payrollCost: sum((row) => row.payrollCost) + unallocatedCost,
     staffPaid: sum((row) => row.staffPaid) + unallocatedStaff,
     operatingProfit: sum((row) => row.operatingProfit) - unallocatedCost - unallocatedBudgetReserve,
@@ -1158,10 +1000,7 @@ async function buildPnlReconciliation(
     depreciation: belowTheLine.depreciation,
     financeCost: belowTheLine.financeCost,
     taxProvision: belowTheLine.taxProvision,
-    belowTheLineTotal:
-      belowTheLine.depreciation +
-      belowTheLine.financeCost +
-      belowTheLine.taxProvision,
+    belowTheLineTotal: belowTheLine.depreciation + belowTheLine.financeCost + belowTheLine.taxProvision,
     truePat: 0,
     truePatPct: null,
   };
@@ -1173,8 +1012,7 @@ async function buildPnlReconciliation(
   // 40.6% with Rs 0 of indirect cost — its 406 mirror GRNs match no MAS cost centre (Feb: 367, 32.6%). A margin without any overhead is not comparable with any other
   // month, so it is NA — the same treatment as a month with no people cost. Reserved (committed,
   // not yet consumed) GRN counts as IDC data existing too, for any period (owner rule 2026-09-24).
-  const idcMissing =
-    grn.size === 0 && grnCommitted.size === 0 && totals.payrollCost > 0;
+  const idcMissing = grn.size === 0 && grnCommitted.size === 0 && totals.payrollCost > 0;
   if (idcMissing) {
     totals.marginPct = null;
     totals.truePatPct = null;
@@ -1184,60 +1022,43 @@ async function buildPnlReconciliation(
   // An estimate fills the revenue side of a month whose people cost may not exist yet (the open
   // month before its running-salary snapshot). Revenue against no people cost reads as a ~99%
   // margin, which is not a margin at all — so say NA until there is a cost to set against it.
-  const peopleCostMissing =
-    totals.payrollCost === 0 && totals.revenueEstimated > 0;
+  const peopleCostMissing = totals.payrollCost === 0 && totals.revenueEstimated > 0;
   if (peopleCostMissing) {
     totals.marginPct = null;
     totals.truePatPct = null;
-    for (const branch of branchMap.values())
-      if (branch.payrollCost === 0) branch.marginPct = null;
+    for (const branch of branchMap.values()) if (branch.payrollCost === 0) branch.marginPct = null;
   }
 
   const blockers: string[] = [];
   if (!payrollPosted) {
-    const runningRows =
-      freshness.find((item) => item.source === "Running salary")?.rows ?? 0;
+    const runningRows = freshness.find((item) => item.source === "Running salary")?.rows ?? 0;
     blockers.push(
       runningRows > 0
         ? "Payroll run is not posted; Live P&L uses accrued running salary. Uploaded incentives or deductions are reflected only after they are applied to payroll inputs/final run."
         : "Payroll run and running salary snapshot are both missing for this period, so live OP excludes people cost.",
     );
   }
-  if (
-    (freshness.find((item) => item.source === "Billing provision")?.rows ??
-      0) === 0
-  ) {
-    blockers.push(
-      "Billing provision snapshot has no rows for this period; uninvoiced revenue cannot be accrued.",
-    );
+  if ((freshness.find((item) => item.source === "Billing provision")?.rows ?? 0) === 0) {
+    blockers.push("Billing provision snapshot has no rows for this period; uninvoiced revenue cannot be accrued.");
   }
   if ((freshness.find((item) => item.source === "GRN")?.rows ?? 0) === 0) {
-    blockers.push(
-      "GRN snapshot has no rows for this period; indirect cost may be missing.",
-    );
+    blockers.push("GRN snapshot has no rows for this period; indirect cost may be missing.");
   }
   if (idcMissing) {
-    blockers.push(
-      `No indirect cost (GRN) maps to any MAS cost centre for ${period} — the month's GRNs, if any, carry cost-centre codes that match none — so OP would exclude every overhead. Margin is shown as NA rather than an inflated figure.`,
-    );
+    blockers.push(`No indirect cost (GRN) maps to any MAS cost centre for ${period} — the month's GRNs, if any, carry cost-centre codes that match none — so OP would exclude every overhead. Margin is shown as NA rather than an inflated figure.`);
   }
   if (unallocatedCost !== 0) {
-    blockers.push(
-      `Rs ${(unallocatedCost / 100000).toFixed(2)} L of payroll for ${unallocatedStaff} employee(s) with no cost centre is included in company and branch cost (it belongs to no cost-centre row). Map them to a cost centre to attribute it.`,
-    );
+    blockers.push(`Rs ${(unallocatedCost / 100000).toFixed(2)} L of payroll for ${unallocatedStaff} employee(s) with no cost centre is included in company and branch cost (it belongs to no cost-centre row). Map them to a cost centre to attribute it.`);
   }
   if (totals.estimatedCostCentres > 0) {
-    const partial =
-      seatBilling && seatBilling.daysElapsed < seatBilling.daysInMonth
-        ? `, counted for ${seatBilling.daysElapsed} of ${seatBilling.daysInMonth} days`
-        : "";
+    const partial = seatBilling && seatBilling.daysElapsed < seatBilling.daysInMonth
+      ? `, counted for ${seatBilling.daysElapsed} of ${seatBilling.daysInMonth} days`
+      : "";
     blockers.push(
       `${totals.estimatedCostCentres} cost centre(s) have no invoice or provision for ${period} yet, so their revenue is ESTIMATED as seat rate x seats (their last invoice, or lines configured under P&L Configuration > Seat billing)${partial}. It is replaced automatically once the month is invoiced.`,
     );
     if (peopleCostMissing) {
-      blockers.push(
-        `No people cost exists for ${period} yet, so margin is shown as NA — estimated revenue against zero salary cost is not a margin.`,
-      );
+      blockers.push(`No people cost exists for ${period} yet, so margin is shown as NA — estimated revenue against zero salary cost is not a margin.`);
     }
   }
   if (totals.grnEstimated > 0) {
@@ -1247,9 +1068,7 @@ async function buildPnlReconciliation(
     );
   }
   if (totals.belowTheLineTotal === 0) {
-    blockers.push(
-      `Depreciation, finance cost and tax have not been entered for ${period} (P&L Configuration > Below-the-line costs) — the True Bottom Line (PAT) figure below excludes them until they are.`,
-    );
+    blockers.push(`Depreciation, finance cost and tax have not been entered for ${period} (P&L Configuration > Below-the-line costs) — the True Bottom Line (PAT) figure below excludes them until they are.`);
   }
 
   const mode: PnlReconciliationMode = blockers.length ? "LIVE_MTD" : "FINAL";
@@ -1259,14 +1078,8 @@ async function buildPnlReconciliation(
     mode,
     generatedAt: new Date().toISOString(),
     totals,
-    branches: Array.from(branchMap.values()).sort(
-      (a, b) => b.revenue - a.revenue,
-    ),
-    rows: rows.sort(
-      (a, b) =>
-        b.recognisedRevenue - a.recognisedRevenue ||
-        a.costCentreCode.localeCompare(b.costCentreCode),
-    ),
+    branches: Array.from(branchMap.values()).sort((a, b) => b.revenue - a.revenue),
+    rows: rows.sort((a, b) => (b.recognisedRevenue - a.recognisedRevenue) || a.costCentreCode.localeCompare(b.costCentreCode)),
     freshness,
     exceptions: exceptionsOut,
     blockers,

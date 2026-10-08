@@ -19,21 +19,13 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
-import {
-  encryptPanForSync,
-  blindIndexPan,
-  encryptAadhaarForSync,
-  blindIndexAadhaar,
-} from "../../shared/syncPiiEncryption.js";
+import { encryptPanForSync, blindIndexPan, encryptAadhaarForSync, blindIndexAadhaar } from "../../shared/syncPiiEncryption.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { validateStatutoryFields } from "../../shared/statutoryFormat.js";
 import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 
 const router = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -75,10 +67,7 @@ router.get("/pending", requireRole(...REVIEWER_ROLES), h(async (req: Authenticat
 const STATUTORY_SENSITIVE_KEYS = ["pan_number", "aadhaar_id", "aadhaar_number", "uan_number", "esi_number", "esic_number", "epf_number"];
 export function maskStatutoryValues(values: Record<string, any> | undefined | null): Record<string, unknown> {
   if (!values) return {};
-  const mask = (v: unknown) =>
-    v == null || v === ""
-      ? null
-      : `${"*".repeat(Math.max(0, String(v).length - 4))}${String(v).slice(-4)}`;
+  const mask = (v: unknown) => (v == null || v === "" ? null : `${"*".repeat(Math.max(0, String(v).length - 4))}${String(v).slice(-4)}`);
   const maskLevel = (obj: Record<string, any>): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(obj)) {
@@ -96,15 +85,9 @@ export function maskStatutoryValues(values: Record<string, any> | undefined | nu
 }
 
 // PATCH /api/statutory-change-requests/:id
-router.patch(
-  "/:id",
-  requireRole(...REVIEWER_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const actorUserId = req.authUser!.id;
-    const { decision, note } = req.body as {
-      decision: "approved" | "rejected";
-      note?: string;
-    };
+router.patch("/:id", requireRole(...REVIEWER_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const actorUserId = req.authUser!.id;
+  const { decision, note } = req.body as { decision: "approved" | "rejected"; note?: string };
 
   if (!["approved", "rejected"].includes(decision)) {
     return res.status(400).json({ success: false, message: "decision must be 'approved' or 'rejected'" });
@@ -132,204 +115,129 @@ router.patch(
       return res.status(409).json({ success: false, message: `Request already ${rec.status}` });
     }
 
-    const connection = await db.getConnection();
-    try {
-      await connection.beginTransaction();
+    const newValues: Record<string, any> = typeof rec.new_values === "string" ? JSON.parse(rec.new_values || "{}") : (rec.new_values ?? {});
+    const oldValues: Record<string, any> = typeof rec.old_values === "string" ? JSON.parse(rec.old_values || "{}") : (rec.old_values ?? {});
 
-      const [rows] = await connection.execute<RowDataPacket[]>(
-        `SELECT * FROM profile_update_approval WHERE id = ? AND request_type = 'statutory_details' LIMIT 1 FOR UPDATE`,
-        [req.params.id],
-      );
-      const rec = rows[0] as any;
-      if (!rec) {
+    if (decision === "approved") {
+      // Same write shape as PUT /:employeeId/statutory-details (HR direct entry,
+      // employee.routes.ts) — same columns, same PAN dual-write (plaintext +
+      // encrypted + blind index), same employees.uan_number sync. Kept in
+      // parallel deliberately rather than sharing a helper, so this file stays
+      // readable against the route it mirrors without an extra indirection layer.
+      const {
+        epf_number, esi_number, uan_number, aadhaar_id,
+        pf_eligible, esi_eligible, epf_date,
+      } = newValues;
+      const pan_number = typeof newValues.pan_number === "string" ? newValues.pan_number.trim().toUpperCase() : newValues.pan_number;
+
+      // Neither the employee's original submission (PUT /me/statutory-details)
+      // nor this approve step validated format before this fix — an employee
+      // could submit, and HR could approve, a malformed PAN/Aadhaar/UAN/ESI that
+      // would then be silently stored. Same check as the HR-direct-entry route
+      // (employee.routes.ts PUT /:employeeId/statutory-details).
+      const formatErrors = validateStatutoryFields({ pan_number, aadhaar_id, uan_number, esi_number, epf_number });
+      if (formatErrors.length) {
         await connection.rollback();
-        return res
-          .status(404)
-          .json({ success: false, message: "Request not found" });
-      }
-      if (rec.status !== "pending") {
-        await connection.rollback();
-        return res
-          .status(409)
-          .json({ success: false, message: `Request already ${rec.status}` });
+        return res.status(400).json({ success: false, error: "Invalid format in submitted values", details: formatErrors });
       }
 
-      const newValues: Record<string, any> =
-        typeof rec.new_values === "string"
-          ? JSON.parse(rec.new_values || "{}")
-          : (rec.new_values ?? {});
-      const oldValues: Record<string, any> =
-        typeof rec.old_values === "string"
-          ? JSON.parse(rec.old_values || "{}")
-          : (rec.old_values ?? {});
+      const STAT_FIELDS: string[] = ["employee_id"];
+      const statVals: any[] = [rec.employee_id];
+      const statOnDup: string[] = [];
+      const addStat = (col: string, val: any) => {
+        if (val !== undefined) {
+          STAT_FIELDS.push(col);
+          statVals.push(val);
+          statOnDup.push(`${col} = VALUES(${col})`);
+        }
+      };
+      addStat("epf_number", epf_number);
+      addStat("esi_number", esi_number);
+      addStat("uan_number", uan_number);
+      addStat("pan_number", pan_number);
+      if (pan_number !== undefined) {
+        addStat("pan_number_encrypted", encryptPanForSync(pan_number, "statutory-approval"));
+        addStat("pan_blind_index", blindIndexPan(pan_number, "statutory-approval"));
+      }
+      addStat("aadhaar_id", aadhaar_id);
+      addStat("pf_eligible", pf_eligible);
+      addStat("esi_eligible", esi_eligible);
+      addStat("epf_date", epf_date);
 
-      if (decision === "approved") {
-        // Same write shape as PUT /:employeeId/statutory-details (HR direct entry,
-        // employee.routes.ts) — same columns, same PAN dual-write (plaintext +
-        // encrypted + blind index), same employees.uan_number sync. Kept in
-        // parallel deliberately rather than sharing a helper, so this file stays
-        // readable against the route it mirrors without an extra indirection layer.
-        const {
-          epf_number,
-          esi_number,
-          uan_number,
-          aadhaar_id,
-          pf_eligible,
-          esi_eligible,
-          epf_date,
-        } = newValues;
-        const pan_number =
-          typeof newValues.pan_number === "string"
-            ? newValues.pan_number.trim().toUpperCase()
-            : newValues.pan_number;
-
-        // Neither the employee's original submission (PUT /me/statutory-details)
-        // nor this approve step validated format before this fix — an employee
-        // could submit, and HR could approve, a malformed PAN/Aadhaar/UAN/ESI that
-        // would then be silently stored. Same check as the HR-direct-entry route
-        // (employee.routes.ts PUT /:employeeId/statutory-details).
-        const formatErrors = validateStatutoryFields({
-          pan_number,
-          aadhaar_id,
-          uan_number,
-          esi_number,
-          epf_number,
-        });
-        if (formatErrors.length) {
-          await connection.rollback();
-          return res
-            .status(400)
-            .json({
-              success: false,
-              error: "Invalid format in submitted values",
-              details: formatErrors,
-            });
-        }
-
-        const STAT_FIELDS: string[] = ["employee_id"];
-        const statVals: any[] = [rec.employee_id];
-        const statOnDup: string[] = [];
-        const addStat = (col: string, val: any) => {
-          if (val !== undefined) {
-            STAT_FIELDS.push(col);
-            statVals.push(val);
-            statOnDup.push(`${col} = VALUES(${col})`);
-          }
-        };
-        addStat("epf_number", epf_number);
-        addStat("esi_number", esi_number);
-        addStat("uan_number", uan_number);
-        addStat("pan_number", pan_number);
-        if (pan_number !== undefined) {
-          addStat(
-            "pan_number_encrypted",
-            encryptPanForSync(pan_number, "statutory-approval"),
-          );
-          addStat(
-            "pan_blind_index",
-            blindIndexPan(pan_number, "statutory-approval"),
-          );
-        }
-        addStat("aadhaar_id", aadhaar_id);
-        addStat("pf_eligible", pf_eligible);
-        addStat("esi_eligible", esi_eligible);
-        addStat("epf_date", epf_date);
-
-        if (STAT_FIELDS.length > 1) {
-          const placeholders = STAT_FIELDS.map(() => "?").join(", ");
-          const dupClause = statOnDup.length
-            ? `ON DUPLICATE KEY UPDATE ${statOnDup.join(", ")}`
-            : "";
-          await connection.execute(
-            `INSERT INTO employee_statutory_info (${STAT_FIELDS.join(", ")}) VALUES (${placeholders}) ${dupClause}`,
-            statVals,
-          );
-        }
-        if (uan_number !== undefined) {
-          await connection.execute(
-            "UPDATE employees SET uan_number = ? WHERE id = ?",
-            [uan_number, rec.employee_id],
-          );
-        }
-
-        // employee.routes.ts's own profile GET resolves PAN/Aadhaar with the
-        // `employees` table as PRIMARY source and employee_statutory_info only
-        // as a fallback when that primary is empty (resolvePii(emp.pan_number_encrypted,
-        // emp.pan_number) etc.) — confirmed by direct read of that route. Without
-        // this, an approved PAN/Aadhaar change only ever landed in
-        // employee_statutory_info above, so for anyone who already had a PAN on
-        // file the approval was invisible everywhere: the employee's own
-        // profile kept showing the old value indefinitely, silently. No read-path
-        // change needed — resolvePii already checks employees first, so this
-        // write alone makes the existing GET route pick it up.
-        if (pan_number !== undefined) {
-          await connection.execute(
-            "UPDATE employees SET pan_number = ?, pan_number_encrypted = ?, pan_blind_index = ? WHERE id = ?",
-            [
-              pan_number,
-              encryptPanForSync(
-                pan_number,
-                "statutory-approval-employees-sync",
-              ),
-              blindIndexPan(pan_number, "statutory-approval-employees-sync"),
-              rec.employee_id,
-            ],
-          );
-        }
-        if (aadhaar_id !== undefined) {
-          await connection.execute(
-            "UPDATE employees SET aadhaar_number = ?, aadhaar_number_encrypted = ?, aadhaar_blind_index = ? WHERE id = ?",
-            [
-              aadhaar_id,
-              encryptAadhaarForSync(
-                aadhaar_id,
-                "statutory-approval-employees-sync",
-              ),
-              blindIndexAadhaar(
-                aadhaar_id,
-                "statutory-approval-employees-sync",
-              ),
-              rec.employee_id,
-            ],
-          );
-        }
+      if (STAT_FIELDS.length > 1) {
+        const placeholders = STAT_FIELDS.map(() => "?").join(", ");
+        const dupClause = statOnDup.length ? `ON DUPLICATE KEY UPDATE ${statOnDup.join(", ")}` : "";
+        await connection.execute(
+          `INSERT INTO employee_statutory_info (${STAT_FIELDS.join(", ")}) VALUES (${placeholders}) ${dupClause}`,
+          statVals
+        );
+      }
+      if (uan_number !== undefined) {
+        await connection.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, rec.employee_id]);
       }
 
-      await connection.execute(
-        `UPDATE profile_update_approval
+      // employee.routes.ts's own profile GET resolves PAN/Aadhaar with the
+      // `employees` table as PRIMARY source and employee_statutory_info only
+      // as a fallback when that primary is empty (resolvePii(emp.pan_number_encrypted,
+      // emp.pan_number) etc.) — confirmed by direct read of that route. Without
+      // this, an approved PAN/Aadhaar change only ever landed in
+      // employee_statutory_info above, so for anyone who already had a PAN on
+      // file the approval was invisible everywhere: the employee's own
+      // profile kept showing the old value indefinitely, silently. No read-path
+      // change needed — resolvePii already checks employees first, so this
+      // write alone makes the existing GET route pick it up.
+      if (pan_number !== undefined) {
+        await connection.execute(
+          "UPDATE employees SET pan_number = ?, pan_number_encrypted = ?, pan_blind_index = ? WHERE id = ?",
+          [
+            pan_number,
+            encryptPanForSync(pan_number, "statutory-approval-employees-sync"),
+            blindIndexPan(pan_number, "statutory-approval-employees-sync"),
+            rec.employee_id,
+          ]
+        );
+      }
+      if (aadhaar_id !== undefined) {
+        await connection.execute(
+          "UPDATE employees SET aadhaar_number = ?, aadhaar_number_encrypted = ?, aadhaar_blind_index = ? WHERE id = ?",
+          [
+            aadhaar_id,
+            encryptAadhaarForSync(aadhaar_id, "statutory-approval-employees-sync"),
+            blindIndexAadhaar(aadhaar_id, "statutory-approval-employees-sync"),
+            rec.employee_id,
+          ]
+        );
+      }
+    }
+
+    await connection.execute(
+      `UPDATE profile_update_approval
           SET status = ?, reviewed_by = ?, reviewed_at = NOW(), reviewer_note = ?
         WHERE id = ?`,
-        [decision, actorUserId, note ?? null, req.params.id],
-      );
+      [decision, actorUserId, note ?? null, req.params.id]
+    );
 
-      await connection.commit();
+    await connection.commit();
 
-      await logSensitiveAction({
-        actor_user_id: actorUserId,
-        action_type:
-          decision === "approved"
-            ? "STATUTORY_DETAILS_APPROVED"
-            : "STATUTORY_DETAILS_REJECTED",
-        module_key: "EMPLOYEE_PROFILE",
-        entity_type: "profile_update_approval",
-        entity_id: req.params.id,
-        employee_id: rec.employee_id,
-        reason: note ?? undefined,
-        old_value_json: maskStatutoryValues(oldValues),
-        new_value_json: maskStatutoryValues(newValues),
-      });
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      action_type: decision === "approved" ? "STATUTORY_DETAILS_APPROVED" : "STATUTORY_DETAILS_REJECTED",
+      module_key: "EMPLOYEE_PROFILE",
+      entity_type: "profile_update_approval",
+      entity_id: req.params.id,
+      employee_id: rec.employee_id,
+      reason: note ?? undefined,
+      old_value_json: maskStatutoryValues(oldValues),
+      new_value_json: maskStatutoryValues(newValues),
+    });
 
-      return res.json({
-        success: true,
-        message: `Statutory details request ${decision}`,
-      });
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
-    }
-  }),
-);
+    return res.json({ success: true, message: `Statutory details request ${decision}` });
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}));
 
 export { router as statutoryApprovalRouter };

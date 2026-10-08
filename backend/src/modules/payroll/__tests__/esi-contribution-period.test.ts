@@ -59,10 +59,7 @@ describe("esiContributionPeriodStart", () => {
     for (let y = 2025; y <= 2027; y++) {
       for (let m = 1; m <= 12; m++) {
         const runMonth = `${y}-${String(m).padStart(2, "0")}`;
-        expect(
-          esiContributionPeriodStart(runMonth) <= runMonth,
-          `${runMonth} looked forward`,
-        ).toBe(true);
+        expect(esiContributionPeriodStart(runMonth) <= runMonth, `${runMonth} looked forward`).toBe(true);
       }
     }
   });

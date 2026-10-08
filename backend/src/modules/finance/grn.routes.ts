@@ -12,10 +12,7 @@ import {
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
-import {
-  listFinanceApprovalEvents,
-  recordFinanceApprovalEvent,
-} from "../../shared/financeApprovalEvent.js";
+import { listFinanceApprovalEvents, recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { budgetCoverageRouter } from "../process-pnl/budget-coverage.routes.js";
 import { vendorApprovalRouter } from "./vendor-approval.routes.js";
@@ -41,12 +38,7 @@ const GRN_WRITE_ROLES: RoleKey[] = [
   "branch_head",
   "branch_admin",
 ];
-const GRN_READ_ROLES: RoleKey[] = [
-  ...GRN_WRITE_ROLES,
-  "finance",
-  "hr",
-  "hr_admin",
-];
+const GRN_READ_ROLES: RoleKey[] = [...GRN_WRITE_ROLES, "finance", "hr", "hr_admin"];
 /*
  * Who may read the finance reports.
  *
@@ -101,12 +93,7 @@ const PNL_GOVERNANCE_READ_ROLES: RoleKey[] = [
  * SMART_REVIEW_ROLES in grn-smart.routes.ts must list the same three roles — it is the newer
  * router and handles every allocation-aware GRN, which is most of them.
  */
-const GRN_REVIEW_ROLES: RoleKey[] = [
-  "branch_head",
-  "accounts_head",
-  "finance_head",
-  "super_admin",
-];
+const GRN_REVIEW_ROLES: RoleKey[] = ["branch_head", "accounts_head", "finance_head", "super_admin"];
 const GRN_REVERSAL_ROLES: RoleKey[] = ["finance_head", "super_admin"];
 const EXPENSE_MASTER_READ_ROLES: RoleKey[] = [
   "super_admin",
@@ -135,10 +122,8 @@ function assertSuperAdminForEdit(req: AuthenticatedRequest) {
   if (!req.body?.id) return;
   if (!userHasRole(req, "super_admin")) {
     throw Object.assign(
-      new Error(
-        "Only a Super Admin can edit an existing expense head or sub-head",
-      ),
-      { statusCode: 403 },
+      new Error("Only a Super Admin can edit an existing expense head or sub-head"),
+      { statusCode: 403 }
     );
   }
 }
@@ -165,8 +150,7 @@ const upload = multer({
     const extension = path.extname(file.originalname).toLowerCase();
     callback(
       null,
-      allowedExtensions.includes(extension) &&
-        allowedMimeTypes.includes(file.mimetype),
+      allowedExtensions.includes(extension) && allowedMimeTypes.includes(file.mimetype)
     );
   },
 });
@@ -197,9 +181,9 @@ function errorStatus(error: unknown, fallback: number) {
   if (typeof explicit === "number") return explicit;
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (
-    message.includes("only access") ||
-    message.includes("cannot access") ||
-    message.includes("not mapped to an active employee branch")
+    message.includes("only access")
+    || message.includes("cannot access")
+    || message.includes("not mapped to an active employee branch")
   ) {
     return 403;
   }
@@ -209,7 +193,7 @@ function errorStatus(error: unknown, fallback: number) {
 async function authorizeGrnBranch(
   req: ScopedGrnRequest,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) {
   try {
     const user = actor(req);
@@ -291,21 +275,17 @@ function grNExpenseMasterRoutes(router: Router) {
     async (req: AuthenticatedRequest, res) => {
       try {
         const includeInactive =
-          (userHasRole(req, "finance_head") ||
-            userHasRole(req, "super_admin")) &&
-          String(req.query.includeInactive ?? "false") === "true";
+          (userHasRole(req, "finance_head") || userHasRole(req, "super_admin"))
+          && String(req.query.includeInactive ?? "false") === "true";
         const data = await financeExpenseMasterService.list(includeInactive);
         res.json({ success: true, data });
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to load expense master",
+          error: error instanceof Error ? error.message : "Unable to load expense master",
         });
       }
-    },
+    }
   );
 
   router.post(
@@ -317,19 +297,16 @@ function grNExpenseMasterRoutes(router: Router) {
         assertSuperAdminForEdit(req);
         const data = await financeExpenseMasterService.saveHead(
           req.body,
-          req.authUser.id,
+          req.authUser.id
         );
         res.status(req.body?.id ? 200 : 201).json({ success: true, data });
       } catch (error: unknown) {
         res.status(expenseMasterErrorStatus(error)).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to save expense head",
+          error: error instanceof Error ? error.message : "Unable to save expense head",
         });
       }
-    },
+    }
   );
 
   router.post(
@@ -341,19 +318,16 @@ function grNExpenseMasterRoutes(router: Router) {
         assertSuperAdminForEdit(req);
         const data = await financeExpenseMasterService.saveSubHead(
           req.body,
-          req.authUser.id,
+          req.authUser.id
         );
         res.status(req.body?.id ? 200 : 201).json({ success: true, data });
       } catch (error: unknown) {
         res.status(expenseMasterErrorStatus(error)).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to save expense sub-head",
+          error: error instanceof Error ? error.message : "Unable to save expense sub-head",
         });
       }
-    },
+    }
   );
 
   router.delete(
@@ -364,19 +338,16 @@ function grNExpenseMasterRoutes(router: Router) {
       try {
         const data = await financeExpenseMasterService.deleteHead(
           req.params.id,
-          req.authUser.id,
+          req.authUser.id
         );
         res.json({ success: true, data });
       } catch (error: unknown) {
         res.status(expenseMasterErrorStatus(error)).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to delete expense head",
+          error: error instanceof Error ? error.message : "Unable to delete expense head",
         });
       }
-    },
+    }
   );
 
   router.delete(
@@ -387,19 +358,16 @@ function grNExpenseMasterRoutes(router: Router) {
       try {
         const data = await financeExpenseMasterService.deleteSubHead(
           req.params.id,
-          req.authUser.id,
+          req.authUser.id
         );
         res.json({ success: true, data });
       } catch (error: unknown) {
         res.status(expenseMasterErrorStatus(error)).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to delete expense sub-head",
+          error: error instanceof Error ? error.message : "Unable to delete expense sub-head",
         });
       }
-    },
+    }
   );
 
   // ── Vendor → Head/Sub-head mapping (Requirement 2) ──────────────────────────
@@ -412,20 +380,15 @@ function grNExpenseMasterRoutes(router: Router) {
     requireRole(...EXPENSE_MASTER_READ_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
-        const data = await vendorExpenseMappingService.listForVendor(
-          req.params.vendorId,
-        );
+        const data = await vendorExpenseMappingService.listForVendor(req.params.vendorId);
         res.json({ success: true, data });
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to load vendor expense mappings",
+          error: error instanceof Error ? error.message : "Unable to load vendor expense mappings",
         });
       }
-    },
+    }
   );
 
   router.put(
@@ -434,25 +397,20 @@ function grNExpenseMasterRoutes(router: Router) {
     requireRole(...VENDOR_MAPPING_WRITE_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
-        const mappings = Array.isArray(req.body?.mappings)
-          ? req.body.mappings
-          : [];
+        const mappings = Array.isArray(req.body?.mappings) ? req.body.mappings : [];
         const data = await vendorExpenseMappingService.saveForVendor(
           req.params.vendorId,
           mappings,
-          req.authUser.id,
+          req.authUser.id
         );
         res.json({ success: true, data });
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to save vendor expense mappings",
+          error: error instanceof Error ? error.message : "Unable to save vendor expense mappings",
         });
       }
-    },
+    }
   );
 
   // ── finance_config: vendor_expense_mapping_enforced toggle ──────────────────
@@ -467,10 +425,7 @@ function grNExpenseMasterRoutes(router: Router) {
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to read enforcement config",
+          error: error instanceof Error ? error.message : "Unable to read enforcement config",
         });
       }
     },
@@ -498,10 +453,7 @@ function grNExpenseMasterRoutes(router: Router) {
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to update enforcement config",
+          error: error instanceof Error ? error.message : "Unable to update enforcement config",
         });
       }
     },
@@ -528,10 +480,7 @@ function grNExpenseMasterRoutes(router: Router) {
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to load vendor mapping summary",
+          error: error instanceof Error ? error.message : "Unable to load vendor mapping summary",
         });
       }
     },
@@ -554,17 +503,16 @@ function grNExpenseMasterRoutes(router: Router) {
           `SELECT company_code, company_name, grn_prefix, legacy_comp_id
              FROM finance_company
             WHERE active_status = 1
-            ORDER BY company_name`,
+            ORDER BY company_name`
         );
         res.json({ success: true, data: rows });
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error ? error.message : "Unable to load companies",
+          error: error instanceof Error ? error.message : "Unable to load companies",
         });
       }
-    },
+    }
   );
 
   /**
@@ -591,13 +539,10 @@ function grNExpenseMasterRoutes(router: Router) {
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to load the approval history",
+          error: error instanceof Error ? error.message : "Unable to load the approval history",
         });
       }
-    },
+    }
   );
 
   // ── Vendor applicability: legal entity and branch (Vendor Master, three concepts) ──────
@@ -610,20 +555,15 @@ function grNExpenseMasterRoutes(router: Router) {
     requireRole(...EXPENSE_MASTER_READ_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
-        const data = await vendorApplicabilityService.getForVendor(
-          req.params.vendorId,
-        );
+        const data = await vendorApplicabilityService.getForVendor(req.params.vendorId);
         res.json({ success: true, data });
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to load vendor applicability",
+          error: error instanceof Error ? error.message : "Unable to load vendor applicability",
         });
       }
-    },
+    }
   );
 
   router.put(
@@ -637,26 +577,19 @@ function grNExpenseMasterRoutes(router: Router) {
         const data = await vendorApplicabilityService.replaceForVendor(
           req.params.vendorId,
           {
-            companyCodes: Array.isArray(req.body?.companyCodes)
-              ? req.body.companyCodes
-              : undefined,
-            branches: Array.isArray(req.body?.branches)
-              ? req.body.branches
-              : undefined,
+            companyCodes: Array.isArray(req.body?.companyCodes) ? req.body.companyCodes : undefined,
+            branches: Array.isArray(req.body?.branches) ? req.body.branches : undefined,
           },
-          req.authUser.id,
+          req.authUser.id
         );
         res.json({ success: true, data });
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to save vendor applicability",
+          error: error instanceof Error ? error.message : "Unable to save vendor applicability",
         });
       }
-    },
+    }
   );
 
   /** The Ship-To a GRN should print: the vendor/branch override if set, else the branch's own. */
@@ -667,29 +600,18 @@ function grNExpenseMasterRoutes(router: Router) {
       try {
         const branchId = String(req.query.branchId ?? "");
         if (!branchId) {
-          return res
-            .status(400)
-            .json({ success: false, error: "branchId is required" });
+          return res.status(400).json({ success: false, error: "branchId is required" });
         }
-        const data = await vendorApplicabilityService.resolveShipTo(
-          req.params.vendorId,
-          branchId,
-        );
-        if (!data)
-          return res
-            .status(404)
-            .json({ success: false, error: "Branch not found" });
+        const data = await vendorApplicabilityService.resolveShipTo(req.params.vendorId, branchId);
+        if (!data) return res.status(404).json({ success: false, error: "Branch not found" });
         res.json({ success: true, data });
       } catch (error: unknown) {
         res.status(400).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to resolve the ship-to address",
+          error: error instanceof Error ? error.message : "Unable to resolve the ship-to address",
         });
       }
-    },
+    }
   );
 
   // The single server-side authority for what a GRN raiser may classify against:
@@ -705,60 +627,39 @@ function grNExpenseMasterRoutes(router: Router) {
           userId: user.id,
           primaryRole: user.role,
           userRoles: user.roles,
-          requestedBranchId: req.query.branchId
-            ? String(req.query.branchId)
-            : undefined,
+          requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
         });
         // Needs exactly one branch: budget headroom is per branch, so "which heads can I use"
         // is meaningless across several. Global callers must name one too.
         const branchId =
-          scope.mode === "branches" && scope.branchIds.length === 1
-            ? scope.branchIds[0]
-            : undefined;
-        if (!branchId)
-          throw new Error(
-            "Select a branch to see which expense heads are available",
-          );
+          scope.mode === "branches" && scope.branchIds.length === 1 ? scope.branchIds[0] : undefined;
+        if (!branchId) throw new Error("Select a branch to see which expense heads are available");
         // Headroom is per branch AND per period, so the same argument that rejects a
         // multi-branch scope above rejects an absent period. Without it the SUM ran over every
         // active budget of the branch and HAVING available_amount > 0 passed on the multi-month
         // total, so this endpoint — which its own header calls "the single server-side authority
         // for what a GRN raiser may classify against" — offered a head with three months' worth
         // of headroom, and createDraft then refused the GRN against the one month that mattered.
-        const periodCode = req.query.periodCode
-          ? String(req.query.periodCode)
-          : "";
+        const periodCode = req.query.periodCode ? String(req.query.periodCode) : "";
         if (!/^\d{4}-\d{2}$/.test(periodCode)) {
-          throw new Error(
-            "Select a budget period (YYYY-MM) to see which expense heads are available",
-          );
+          throw new Error("Select a budget period (YYYY-MM) to see which expense heads are available");
         }
 
-        const data =
-          await vendorExpenseMappingService.selectableClassifications({
-            vendorId: req.query.vendorId
-              ? String(req.query.vendorId)
-              : undefined,
-            branchId,
-            periodCode,
-            processId: req.query.processId
-              ? String(req.query.processId)
-              : undefined,
-            costCentreId: req.query.costCentreId
-              ? String(req.query.costCentreId)
-              : undefined,
-          });
+        const data = await vendorExpenseMappingService.selectableClassifications({
+          vendorId: req.query.vendorId ? String(req.query.vendorId) : undefined,
+          branchId,
+          periodCode,
+          processId: req.query.processId ? String(req.query.processId) : undefined,
+          costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+        });
         res.json({ success: true, data });
       } catch (error: unknown) {
         res.status(errorStatus(error, 400)).json({
           success: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to resolve selectable expense heads",
+          error: error instanceof Error ? error.message : "Unable to resolve selectable expense heads",
         });
       }
-    },
+    }
   );
 }
 
@@ -772,16 +673,12 @@ grnRouter.get(
         userId: user.id,
         primaryRole: user.role,
         userRoles: user.roles,
-        requestedBranchId: req.query.branchId
-          ? String(req.query.branchId)
-          : undefined,
+        requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
       });
 
       const source = req.query.source ? String(req.query.source) : "new";
       if (!["new", "legacy", "all"].includes(source)) {
-        return res
-          .status(400)
-          .json({ error: "source must be new, legacy, or all" });
+        return res.status(400).json({ error: "source must be new, legacy, or all" });
       }
 
       const num = (v: unknown) =>
@@ -789,66 +686,41 @@ grnRouter.get(
 
       const sharedFilters = {
         branchScope,
-        processId: req.query.processId
-          ? String(req.query.processId)
-          : undefined,
-        costCentreId: req.query.costCentreId
-          ? String(req.query.costCentreId)
-          : undefined,
-        status: req.query.status ? String(req.query.status) : undefined,
-        excludeDraft: req.query.excludeDraft === "true" ? true : undefined,
-        grnNumber: req.query.grnNumber
-          ? String(req.query.grnNumber)
-          : undefined,
-        head: req.query.head ? String(req.query.head) : undefined,
-        subHead: req.query.subHead ? String(req.query.subHead) : undefined,
-        accountingPeriod: req.query.accountingPeriod
-          ? String(req.query.accountingPeriod)
-          : undefined,
-        billDateFrom: req.query.billDateFrom
-          ? String(req.query.billDateFrom)
-          : undefined,
-        billDateTo: req.query.billDateTo
-          ? String(req.query.billDateTo)
-          : undefined,
-        amountFrom: num(req.query.amountFrom),
-        amountTo: num(req.query.amountTo),
-        search: req.query.search ? String(req.query.search) : undefined,
-        page: req.query.page ? Number(req.query.page) : undefined,
-        limit: req.query.limit ? Number(req.query.limit) : undefined,
+        processId:        req.query.processId        ? String(req.query.processId)        : undefined,
+        costCentreId:     req.query.costCentreId      ? String(req.query.costCentreId)     : undefined,
+        status:           req.query.status            ? String(req.query.status)            : undefined,
+        excludeDraft:     req.query.excludeDraft === "true" ? true : undefined,
+        grnNumber:        req.query.grnNumber         ? String(req.query.grnNumber)         : undefined,
+        head:             req.query.head              ? String(req.query.head)              : undefined,
+        subHead:          req.query.subHead           ? String(req.query.subHead)           : undefined,
+        accountingPeriod: req.query.accountingPeriod  ? String(req.query.accountingPeriod)  : undefined,
+        billDateFrom:     req.query.billDateFrom      ? String(req.query.billDateFrom)      : undefined,
+        billDateTo:       req.query.billDateTo        ? String(req.query.billDateTo)        : undefined,
+        amountFrom:       num(req.query.amountFrom),
+        amountTo:         num(req.query.amountTo),
+        search:           req.query.search            ? String(req.query.search)            : undefined,
+        page:             req.query.page              ? Number(req.query.page)              : undefined,
+        limit:            req.query.limit             ? Number(req.query.limit)             : undefined,
       };
 
       const newOnlyFilters = {
-        invoiceNumber: req.query.invoiceNumber
-          ? String(req.query.invoiceNumber)
-          : undefined,
-        vendorId: req.query.vendorId ? String(req.query.vendorId) : undefined,
-        billingCycleStatus: req.query.billingCycleStatus
-          ? String(req.query.billingCycleStatus)
-          : undefined,
-        createdBy: req.query.createdBy
-          ? String(req.query.createdBy) === "me"
-            ? String(user.id)
-            : String(req.query.createdBy)
+        invoiceNumber:      req.query.invoiceNumber      ? String(req.query.invoiceNumber)      : undefined,
+        vendorId:           req.query.vendorId           ? String(req.query.vendorId)           : undefined,
+        billingCycleStatus: req.query.billingCycleStatus ? String(req.query.billingCycleStatus) : undefined,
+        createdBy:          req.query.createdBy
+          ? (String(req.query.createdBy) === "me" ? String(user.id) : String(req.query.createdBy))
           : undefined,
         multiMonth:
           req.query.multiMonth === undefined
             ? undefined
             : String(req.query.multiMonth) === "true",
-        costClass: req.query.costClass
-          ? String(req.query.costClass)
-          : undefined,
-        financialYear: req.query.financialYear
-          ? String(req.query.financialYear)
-          : undefined,
-        grnType: req.query.grnType ? String(req.query.grnType) : undefined,
+        costClass:     req.query.costClass     ? String(req.query.costClass)     : undefined,
+        financialYear: req.query.financialYear ? String(req.query.financialYear) : undefined,
+        grnType:       req.query.grnType       ? String(req.query.grnType)       : undefined,
       };
 
       if (source === "new") {
-        const result = await grnService.listGrns({
-          ...sharedFilters,
-          ...newOnlyFilters,
-        });
+        const result = await grnService.listGrns({ ...sharedFilters, ...newOnlyFilters });
         return res.json(result);
       }
 
@@ -856,17 +728,11 @@ grnRouter.get(
       // never mirrored imprest/salary entries into grn_entry_snapshot). A grnType=imprest filter
       // must exclude legacy rows rather than silently ignore the filter and return them anyway.
       const legacyExcludedByGrnType =
-        newOnlyFilters.grnType !== undefined &&
-        newOnlyFilters.grnType !== "vendor";
+        newOnlyFilters.grnType !== undefined && newOnlyFilters.grnType !== "vendor";
 
       if (source === "legacy") {
         if (legacyExcludedByGrnType) {
-          return res.json({
-            data: [],
-            total: 0,
-            page: 1,
-            limit: sharedFilters.limit ?? 30,
-          });
+          return res.json({ data: [], total: 0, page: 1, limit: sharedFilters.limit ?? 30 });
         }
         const result = await grnService.listLegacyGrns(sharedFilters);
         return res.json(result);
@@ -874,11 +740,7 @@ grnRouter.get(
 
       // source === "all": fetch both, merge by created_at DESC, return top 100
       const [newResult, legResult] = await Promise.all([
-        grnService.listGrns({
-          ...sharedFilters,
-          ...newOnlyFilters,
-          limit: 100,
-        }),
+        grnService.listGrns({ ...sharedFilters, ...newOnlyFilters, limit: 100 }),
         legacyExcludedByGrnType
           ? Promise.resolve({ data: [], total: 0, page: 1, limit: 100 })
           : grnService.listLegacyGrns({ ...sharedFilters, limit: 100 }),
@@ -891,17 +753,16 @@ grnRouter.get(
       });
 
       return res.json({
-        data: merged.slice(0, 100),
+        data:  merged.slice(0, 100),
         total: newResult.total + legResult.total,
-        page: 1,
+        page:  1,
         limit: 100,
       });
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Failed to list GRNs";
+      const message = error instanceof Error ? error.message : "Failed to list GRNs";
       res.status(errorStatus(error, 400)).json({ error: message });
     }
-  },
+  }
 );
 
 // Must stay above /grns/:id — Express matches in declaration order, and :id would otherwise
@@ -916,23 +777,18 @@ grnRouter.get(
         userId: user.id,
         primaryRole: user.role,
         userRoles: user.roles,
-        requestedBranchId: req.query.branchId
-          ? String(req.query.branchId)
-          : undefined,
+        requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
       });
       const result = await grnService.getGrnSummary({
         branchScope,
-        financialYear: req.query.financialYear
-          ? String(req.query.financialYear)
-          : undefined,
+        financialYear: req.query.financialYear ? String(req.query.financialYear) : undefined,
       });
       res.json({ data: result });
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Failed to summarise GRNs";
+      const message = error instanceof Error ? error.message : "Failed to summarise GRNs";
       res.status(errorStatus(error, 400)).json({ error: message });
     }
-  },
+  }
 );
 
 /*
@@ -956,17 +812,12 @@ async function reportScope(req: AuthenticatedRequest) {
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId
-        ? String(req.query.branchId)
-        : undefined,
-    }),
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    })
   );
 }
 
-function grnReportFiltersFrom(
-  req: AuthenticatedRequest,
-  branchScope: Awaited<ReturnType<typeof resolveFinanceBranchScopeSet>>,
-) {
+function grnReportFiltersFrom(req: AuthenticatedRequest, branchScope: Awaited<ReturnType<typeof resolveFinanceBranchScopeSet>>) {
   const str = (value: unknown) => (value ? String(value) : undefined);
   return {
     branchScope,
@@ -999,9 +850,7 @@ grnRouter.get(
     try {
       const periodCode = String(req.query.period ?? "");
       if (!/^\d{4}-\d{2}$/.test(periodCode)) {
-        return res
-          .status(400)
-          .json({ success: false, error: "period must be in YYYY-MM format" });
+        return res.status(400).json({ success: false, error: "period must be in YYYY-MM format" });
       }
       const data = await grnService.getAllocationReadiness({
         periodCode,
@@ -1009,15 +858,10 @@ grnRouter.get(
       });
       res.json({ success: true, ...data });
     } catch (error: unknown) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to compute GRN allocation readiness";
-      res
-        .status(errorStatus(error, 400))
-        .json({ success: false, error: message });
+      const message = error instanceof Error ? error.message : "Unable to compute GRN allocation readiness";
+      res.status(errorStatus(error, 400)).json({ success: false, error: message });
     }
-  },
+  }
 );
 
 grnRouter.get(
@@ -1028,15 +872,10 @@ grnRouter.get(
       const data = await grnReportService.register(await reportScope(req));
       res.json({ success: true, ...data });
     } catch (error: unknown) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to build the GRN register";
-      res
-        .status(errorStatus(error, 400))
-        .json({ success: false, error: message });
+      const message = error instanceof Error ? error.message : "Unable to build the GRN register";
+      res.status(errorStatus(error, 400)).json({ success: false, error: message });
     }
-  },
+  }
 );
 
 grnRouter.get(
@@ -1046,24 +885,17 @@ grnRouter.get(
     try {
       const data = await grnReportService.auditTrail({
         ...(await reportScope(req)),
-        entityType: req.query.entityType
-          ? String(req.query.entityType)
-          : undefined,
+        entityType: req.query.entityType ? String(req.query.entityType) : undefined,
         action: req.query.action ? String(req.query.action) : undefined,
         from: req.query.from ? String(req.query.from) : undefined,
         to: req.query.to ? String(req.query.to) : undefined,
       });
       res.json({ success: true, ...data });
     } catch (error: unknown) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to build the audit trail";
-      res
-        .status(errorStatus(error, 400))
-        .json({ success: false, error: message });
+      const message = error instanceof Error ? error.message : "Unable to build the audit trail";
+      res.status(errorStatus(error, 400)).json({ success: false, error: message });
     }
-  },
+  }
 );
 
 grnRouter.get(
@@ -1074,15 +906,10 @@ grnRouter.get(
       const data = await grnReportService.topups(await reportScope(req));
       res.json({ success: true, ...data });
     } catch (error: unknown) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to build the top-up report";
-      res
-        .status(errorStatus(error, 400))
-        .json({ success: false, error: message });
+      const message = error instanceof Error ? error.message : "Unable to build the top-up report";
+      res.status(errorStatus(error, 400)).json({ success: false, error: message });
     }
-  },
+  }
 );
 
 grnRouter.get(
@@ -1093,15 +920,10 @@ grnRouter.get(
       const data = await grnReportService.filterOptions(await reportScope(req));
       res.json({ success: true, data });
     } catch (error: unknown) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to load report filters";
-      res
-        .status(errorStatus(error, 400))
-        .json({ success: false, error: message });
+      const message = error instanceof Error ? error.message : "Unable to load report filters";
+      res.status(errorStatus(error, 400)).json({ success: false, error: message });
     }
-  },
+  }
 );
 
 /**
@@ -1133,7 +955,7 @@ grnRouter.get(
   authorizeGrnBranchRead,
   async (req: ScopedGrnRequest, res) => {
     res.json({ data: req.financeGrn });
-  },
+  }
 );
 
 // Hard delete — creator-only (or super_admin), draft-only. See deleteDraftGrn's own comment for
@@ -1146,18 +968,13 @@ grnRouter.delete(
   async (req: ScopedGrnRequest, res) => {
     try {
       const user = actor(req);
-      const result = await grnService.deleteDraftGrn(
-        req.params.id,
-        user.id,
-        user.role,
-      );
+      const result = await grnService.deleteDraftGrn(req.params.id, user.id, user.role);
       res.json(result);
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Failed to delete GRN";
+      const message = error instanceof Error ? error.message : "Failed to delete GRN";
       res.status(errorStatus(error, 400)).json({ error: message });
     }
-  },
+  }
 );
 
 grnRouter.post(
@@ -1207,18 +1024,13 @@ grnRouter.post(
       const requestedPeriod = String(req.body?.accountingPeriod ?? "").trim();
       const billPeriod = String(req.body?.billDate ?? "").slice(0, 7);
       if (requestedPeriod && requestedPeriod !== billPeriod) {
-        const periodOverrideRoles = [
-          "finance_head",
-          "accounts_head",
-          "super_admin",
-          "branch_admin",
-        ];
+        const periodOverrideRoles = ["finance_head", "accounts_head", "super_admin", "branch_admin"];
         if (!user.roles.some((r: string) => periodOverrideRoles.includes(r))) {
           throw Object.assign(
             new Error(
-              "Only Finance Head, Accounts Head, Branch Admin or Super Admin may book an invoice into a different accounting month",
+              "Only Finance Head, Accounts Head, Branch Admin or Super Admin may book an invoice into a different accounting month"
             ),
-            { statusCode: 403 },
+            { statusCode: 403 }
           );
         }
       }
@@ -1231,11 +1043,10 @@ grnRouter.post(
       );
       res.status(201).json(result);
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Failed to create GRN";
+      const message = error instanceof Error ? error.message : "Failed to create GRN";
       res.status(errorStatus(error, 400)).json({ error: message });
     }
-  },
+  }
 );
 
 grnRouter.patch(
@@ -1253,22 +1064,15 @@ grnRouter.patch(
         raw === null || raw === "" || raw === undefined
           ? null
           : (String(raw).toUpperCase() as "OPEN" | "BOOKED" | "CLOSED");
-      const data = await grnService.setBillingCycleStatus(
-        req.params.id,
-        value,
-        user.id,
-      );
+      const data = await grnService.setBillingCycleStatus(req.params.id, value, user.id);
       res.json({ success: true, data });
     } catch (error: unknown) {
       res.status(errorStatus(error, 400)).json({
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to set billing status",
+        error: error instanceof Error ? error.message : "Unable to set billing status",
       });
     }
-  },
+  }
 );
 
 // Declared on grnRouter, not smartGrnRouter: a returned GRN must be reachable for
@@ -1281,10 +1085,7 @@ grnRouter.post(
   async (req: ScopedGrnRequest, res) => {
     try {
       const user = actor(req);
-      const target =
-        String(req.body?.target ?? "branch_head") === "raiser"
-          ? "raiser"
-          : "branch_head";
+      const target = String(req.body?.target ?? "branch_head") === "raiser" ? "raiser" : "branch_head";
       const data = await grnService.returnGrn(
         req.params.id,
         target,
@@ -1296,11 +1097,10 @@ grnRouter.post(
     } catch (error: unknown) {
       res.status(errorStatus(error, 400)).json({
         success: false,
-        error:
-          error instanceof Error ? error.message : "Unable to return this GRN",
+        error: error instanceof Error ? error.message : "Unable to return this GRN",
       });
     }
-  },
+  }
 );
 
 grnRouter.post(
@@ -1321,13 +1121,10 @@ grnRouter.post(
     } catch (error: unknown) {
       res.status(errorStatus(error, 400)).json({
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to resubmit this GRN",
+        error: error instanceof Error ? error.message : "Unable to resubmit this GRN",
       });
     }
-  },
+  }
 );
 
 grnRouter.post(
@@ -1343,15 +1140,14 @@ grnRouter.post(
         req.body,
         user.id,
         user.role,
-        user.roles, // Pass all roles for Head Office bypass detection
+        user.roles // Pass all roles for Head Office bypass detection
       );
       res.json(result);
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Failed to submit GRN";
+      const message = error instanceof Error ? error.message : "Failed to submit GRN";
       res.status(400).json({ error: message });
     }
-  },
+  }
 );
 
 grnRouter.post(
@@ -1373,7 +1169,7 @@ grnRouter.post(
         req.params.id,
         req.body,
         user.id,
-        effectiveRole,
+        effectiveRole
       );
       if (result.paymentId) {
         await vendorPaymentService
@@ -1381,17 +1177,16 @@ grnRouter.post(
           .catch((error: unknown) => {
             console.error(
               "[finance] vendor payment creation audit failed:",
-              error instanceof Error ? error.message : error,
+              error instanceof Error ? error.message : error
             );
           });
       }
       res.json(result);
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Failed to review GRN";
+      const message = error instanceof Error ? error.message : "Failed to review GRN";
       res.status(400).json({ error: message });
     }
-  },
+  }
 );
 
 grnRouter.post(
@@ -1402,18 +1197,13 @@ grnRouter.post(
   async (req: ScopedGrnRequest, res) => {
     try {
       const user = actor(req);
-      const result = await grnService.cancelGrn(
-        req.params.id,
-        user.id,
-        user.role,
-      );
+      const result = await grnService.cancelGrn(req.params.id, user.id, user.role);
       res.json(result);
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Failed to cancel GRN";
+      const message = error instanceof Error ? error.message : "Failed to cancel GRN";
       res.status(400).json({ error: message });
     }
-  },
+  }
 );
 
 grnRouter.post(
@@ -1424,23 +1214,19 @@ grnRouter.post(
   async (req: ScopedGrnRequest, res) => {
     try {
       const user = actor(req);
-      const reason =
-        typeof req.body?.reason === "string" ? req.body.reason : "";
+      const reason = typeof req.body?.reason === "string" ? req.body.reason : "";
       const result = await grnService.reverseConsumption(
         req.params.id,
         reason,
         user.id,
-        user.role,
+        user.role
       );
       res.json(result);
     } catch (error: unknown) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to reverse GRN consumption";
+      const message = error instanceof Error ? error.message : "Failed to reverse GRN consumption";
       res.status(400).json({ error: message });
     }
-  },
+  }
 );
 
 grnRouter.post(
@@ -1452,9 +1238,7 @@ grnRouter.post(
   async (req: ScopedGrnRequest, res) => {
     try {
       if (!req.file) {
-        res
-          .status(400)
-          .json({ error: "A PDF or supported image file is required" });
+        res.status(400).json({ error: "A PDF or supported image file is required" });
         return;
       }
       const user = actor(req);
@@ -1463,15 +1247,14 @@ grnRouter.post(
         req.file.path,
         req.file.originalname,
         user.id,
-        req.file.mimetype,
+        req.file.mimetype
       );
       res.json({ success: true, path: req.file.path });
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Attachment upload failed";
+      const message = error instanceof Error ? error.message : "Attachment upload failed";
       res.status(400).json({ error: message });
     }
-  },
+  }
 );
 
 grnRouter.get(
@@ -1482,41 +1265,27 @@ grnRouter.get(
     const grn = req.financeGrn;
     const filePath = grn?.attachment_path ?? grn?.attachment_file_path;
     const fileName =
-      grn?.attachment_original_name ??
-      grn?.attachment_file_name ??
-      "grn-attachment";
+      grn?.attachment_original_name
+      ?? grn?.attachment_file_name
+      ?? "grn-attachment";
     if (!filePath || !existsSync(filePath)) {
       res.status(404).json({ error: "GRN attachment not found" });
       return;
     }
     res.download(filePath, fileName);
-  },
+  }
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Vendor Debit Note — raised against an approved / paid GRN
 // ─────────────────────────────────────────────────────────────────────────────
-const DN_WRITE_ROLES: RoleKey[] = [
-  "finance_head",
-  "accounts_head",
-  "super_admin",
-];
-const DN_READ_ROLES: RoleKey[] = [
-  ...DN_WRITE_ROLES,
-  "finance",
-  "branch_admin",
-  "branch_head",
-  "admin",
-];
+const DN_WRITE_ROLES: RoleKey[] = ["finance_head", "accounts_head", "super_admin"];
+const DN_READ_ROLES: RoleKey[] = [...DN_WRITE_ROLES, "finance", "branch_admin", "branch_head", "admin"];
 
 // P1-8: Statuses that mean Finance Head has approved the GRN and a vendor payment exists
 // or is expected — the only statuses where a vendor debit note makes business sense.
 const DN_ELIGIBLE_GRN_STATUSES = [
-  "pending_accounts_payment",
-  "payment_scheduled",
-  "partially_paid",
-  "paid",
-  "approved",
+  "pending_accounts_payment", "payment_scheduled", "partially_paid", "paid", "approved",
 ];
 
 grnRouter.post(
@@ -1529,11 +1298,7 @@ grnRouter.post(
       const grn = req.financeGrn!;
       // P1-8: Debit notes are vendor-only and only valid once Finance Head has approved.
       if (String(grn.grn_type) !== "vendor") {
-        res
-          .status(400)
-          .json({
-            error: "Debit notes can only be raised against vendor GRNs",
-          });
+        res.status(400).json({ error: "Debit notes can only be raised against vendor GRNs" });
         return;
       }
       if (!DN_ELIGIBLE_GRN_STATUSES.includes(String(grn.status))) {
@@ -1552,26 +1317,18 @@ grnRouter.post(
         res.status(400).json({ error: "amount must be greater than zero" });
         return;
       }
-      const VALID_REASONS = [
-        "quality_deficiency",
-        "short_supply",
-        "price_difference",
-        "returns",
-        "other",
-      ];
-      const resolvedReason = VALID_REASONS.includes(String(reason))
-        ? String(reason)
-        : "other";
+      const VALID_REASONS = ["quality_deficiency","short_supply","price_difference","returns","other"];
+      const resolvedReason = VALID_REASONS.includes(String(reason)) ? String(reason) : "other";
 
       const user = actor(req);
       const dnId = randomUUID();
       // Sequential DN number: branch prefix + YYYYMM + sequence
       const [seqRows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS cnt FROM vendor_debit_note WHERE branch_id = ? AND LEFT(dn_date,7) = ?`,
-        [grn.branch_id, String(dnDate).slice(0, 7)],
+        [grn.branch_id, String(dnDate).slice(0, 7)]
       );
       const seq = Number((seqRows[0] as RowDataPacket).cnt ?? 0) + 1;
-      const dnNumber = `DN-${String(grn.branch_id).slice(-4).toUpperCase()}-${String(dnDate).slice(0, 7).replace("-", "")}-${String(seq).padStart(4, "0")}`;
+      const dnNumber = `DN-${String(grn.branch_id).slice(-4).toUpperCase()}-${String(dnDate).slice(0,7).replace("-","")}-${String(seq).padStart(4,"0")}`;
 
       await db.execute(
         `INSERT INTO vendor_debit_note
@@ -1579,29 +1336,18 @@ grnRouter.post(
             gst_amount, remarks, raised_by, created_by)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
-          dnId,
-          dnNumber,
-          grn.id,
-          grn.vendor_id,
-          grn.branch_id,
-          dnDate,
-          resolvedReason,
-          parsedAmount,
-          Number(gstAmount ?? 0),
-          remarks?.trim() || null,
-          user.id,
-          user.id,
-        ],
+          dnId, dnNumber, grn.id, grn.vendor_id, grn.branch_id,
+          dnDate, resolvedReason, parsedAmount,
+          Number(gstAmount ?? 0), remarks?.trim() || null,
+          user.id, user.id,
+        ]
       );
-      res
-        .status(201)
-        .json({ success: true, data: { id: dnId, dn_number: dnNumber } });
+      res.status(201).json({ success: true, data: { id: dnId, dn_number: dnNumber } });
     } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : "Failed to create debit note";
+      const message = error instanceof Error ? error.message : "Failed to create debit note";
       res.status(400).json({ error: message });
     }
-  },
+  }
 );
 
 grnRouter.get(
@@ -1612,13 +1358,13 @@ grnRouter.get(
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT * FROM vendor_debit_note WHERE grn_id = ? ORDER BY created_at DESC`,
-        [req.params.id],
+        [req.params.id]
       );
       res.json({ success: true, data: rows });
     } catch (error: unknown) {
       res.status(500).json({ error: "Failed to fetch debit notes" });
     }
-  },
+  }
 );
 
 // P1-8: Debit note lifecycle — approve (draft → approved) and cancel (draft/approved → cancelled).
@@ -1633,37 +1379,26 @@ grnRouter.post(
       const user = actor(req);
       const [dnRows] = await db.execute<RowDataPacket[]>(
         "SELECT * FROM vendor_debit_note WHERE id = ? LIMIT 1",
-        [req.params.id],
+        [req.params.id]
       );
       const dn = (dnRows as RowDataPacket[])[0];
-      if (!dn) {
-        res.status(404).json({ error: "Debit note not found" });
-        return;
-      }
+      if (!dn) { res.status(404).json({ error: "Debit note not found" }); return; }
       if (String(dn.status) !== "draft") {
-        res
-          .status(400)
-          .json({
-            error: `Debit note is already ${dn.status} and cannot be approved`,
-          });
+        res.status(400).json({ error: `Debit note is already ${dn.status} and cannot be approved` });
         return;
       }
       await assertFinanceRecordBranch({
-        userId: user.id,
-        primaryRole: user.role,
-        userRoles: user.roles,
+        userId: user.id, primaryRole: user.role, userRoles: user.roles,
         recordBranchId: String(dn.branch_id),
       });
       const [result] = await db.execute<any>(
         `UPDATE vendor_debit_note
             SET status = 'approved', approved_by = ?, approved_at = NOW(), updated_by = ?
           WHERE id = ? AND status = 'draft'`,
-        [user.id, user.id, req.params.id],
+        [user.id, user.id, req.params.id]
       );
       if ((result as any).affectedRows !== 1) {
-        res
-          .status(409)
-          .json({ error: "Debit note status changed; refresh and try again" });
+        res.status(409).json({ error: "Debit note status changed; refresh and try again" });
         return;
       }
       await recordFinanceApprovalEvent({
@@ -1678,11 +1413,10 @@ grnRouter.post(
       });
       res.json({ success: true, newStatus: "approved" });
     } catch (error: unknown) {
-      const msg =
-        error instanceof Error ? error.message : "Failed to approve debit note";
+      const msg = error instanceof Error ? error.message : "Failed to approve debit note";
       res.status(400).json({ error: msg });
     }
-  },
+  }
 );
 
 grnRouter.post(
@@ -1694,34 +1428,25 @@ grnRouter.post(
       const user = actor(req);
       const reason = String(req.body?.reason ?? "").trim();
       if (!reason) {
-        res
-          .status(400)
-          .json({ error: "A reason is required to cancel a debit note" });
+        res.status(400).json({ error: "A reason is required to cancel a debit note" });
         return;
       }
       const [dnRows] = await db.execute<RowDataPacket[]>(
         "SELECT * FROM vendor_debit_note WHERE id = ? LIMIT 1",
-        [req.params.id],
+        [req.params.id]
       );
       const dn = (dnRows as RowDataPacket[])[0];
-      if (!dn) {
-        res.status(404).json({ error: "Debit note not found" });
-        return;
-      }
+      if (!dn) { res.status(404).json({ error: "Debit note not found" }); return; }
       if (String(dn.status) === "cancelled") {
         res.status(400).json({ error: "Debit note is already cancelled" });
         return;
       }
       if (String(dn.status) === "settled") {
-        res
-          .status(400)
-          .json({ error: "Settled debit notes cannot be cancelled" });
+        res.status(400).json({ error: "Settled debit notes cannot be cancelled" });
         return;
       }
       await assertFinanceRecordBranch({
-        userId: user.id,
-        primaryRole: user.role,
-        userRoles: user.roles,
+        userId: user.id, primaryRole: user.role, userRoles: user.roles,
         recordBranchId: String(dn.branch_id),
       });
       const prevStatus = String(dn.status);
@@ -1729,12 +1454,10 @@ grnRouter.post(
         `UPDATE vendor_debit_note
             SET status = 'cancelled', updated_by = ?
           WHERE id = ? AND status NOT IN ('cancelled', 'settled')`,
-        [user.id, req.params.id],
+        [user.id, req.params.id]
       );
       if ((result as any).affectedRows !== 1) {
-        res
-          .status(409)
-          .json({ error: "Debit note status changed; refresh and try again" });
+        res.status(409).json({ error: "Debit note status changed; refresh and try again" });
         return;
       }
       await recordFinanceApprovalEvent({
@@ -1750,9 +1473,8 @@ grnRouter.post(
       });
       res.json({ success: true, newStatus: "cancelled" });
     } catch (error: unknown) {
-      const msg =
-        error instanceof Error ? error.message : "Failed to cancel debit note";
+      const msg = error instanceof Error ? error.message : "Failed to cancel debit note";
       res.status(400).json({ error: msg });
     }
-  },
+  }
 );

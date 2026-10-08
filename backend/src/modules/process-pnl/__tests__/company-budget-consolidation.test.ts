@@ -64,25 +64,10 @@ function row(overrides: Partial<FakeRow>): FakeRow {
 describe("getCompanyBudgetConsolidation", () => {
   it("groups lines sharing head/sub-head/item across branches and sums company totals exactly", async () => {
     const rows = [
-      row({
-        branch_id: "b1",
-        branch_name: "Noida",
-        quantity: 5,
-        gross_amount: 11800,
-        pnl_cost_amount: 10000,
-      }),
-      row({
-        branch_id: "b2",
-        branch_name: "Pune",
-        quantity: 3,
-        gross_amount: 7080,
-        pnl_cost_amount: 6000,
-      }),
+      row({ branch_id: "b1", branch_name: "Noida", quantity: 5, gross_amount: 11800, pnl_cost_amount: 10000 }),
+      row({ branch_id: "b2", branch_name: "Pune", quantity: 3, gross_amount: 7080, pnl_cost_amount: 6000 }),
     ];
-    const result = await getCompanyBudgetConsolidation(
-      "2026-08",
-      fakeExecutor(rows),
-    );
+    const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor(rows));
     expect(result).toHaveLength(1);
     const group = result[0];
     expect(group.head).toBe("IT");
@@ -95,23 +80,10 @@ describe("getCompanyBudgetConsolidation", () => {
 
   it("merges multiple lines from the same branch into a single branch entry within a group", async () => {
     const rows = [
-      row({
-        branch_id: "b1",
-        quantity: 5,
-        gross_amount: 11800,
-        pnl_cost_amount: 10000,
-      }),
-      row({
-        branch_id: "b1",
-        quantity: 2,
-        gross_amount: 4720,
-        pnl_cost_amount: 4000,
-      }),
+      row({ branch_id: "b1", quantity: 5, gross_amount: 11800, pnl_cost_amount: 10000 }),
+      row({ branch_id: "b1", quantity: 2, gross_amount: 4720, pnl_cost_amount: 4000 }),
     ];
-    const result = await getCompanyBudgetConsolidation(
-      "2026-08",
-      fakeExecutor(rows),
-    );
+    const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor(rows));
     expect(result).toHaveLength(1);
     expect(result[0].branchCount).toBe(1);
     expect(result[0].branches).toHaveLength(1);
@@ -122,19 +94,9 @@ describe("getCompanyBudgetConsolidation", () => {
   it("keeps separate groups for different head/sub-head/item combinations", async () => {
     const rows = [
       row({ item_name: "Process-specific software" }),
-      row({
-        item_name: "Direct travel",
-        sub_head: "Travel",
-        unit: "Trip",
-        quantity: 2,
-        gross_amount: 3540,
-        pnl_cost_amount: 3000,
-      }),
+      row({ item_name: "Direct travel", sub_head: "Travel", unit: "Trip", quantity: 2, gross_amount: 3540, pnl_cost_amount: 3000 }),
     ];
-    const result = await getCompanyBudgetConsolidation(
-      "2026-08",
-      fakeExecutor(rows),
-    );
+    const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor(rows));
     expect(result).toHaveLength(2);
   });
 
@@ -143,10 +105,7 @@ describe("getCompanyBudgetConsolidation", () => {
       row({ branch_id: "b1", unit: "Licence", quantity: 5 }),
       row({ branch_id: "b2", unit: "Seat", quantity: 3 }),
     ];
-    const result = await getCompanyBudgetConsolidation(
-      "2026-08",
-      fakeExecutor(rows),
-    );
+    const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor(rows));
     expect(result[0].unitConsistent).toBe(false);
     expect(result[0].companyUnit).toBe(8);
   });
@@ -156,52 +115,29 @@ describe("getCompanyBudgetConsolidation", () => {
       row({ branch_id: "b1", budget_status: "active" }),
       row({ branch_id: "b2", budget_status: "draft" }),
     ];
-    const result = await getCompanyBudgetConsolidation(
-      "2026-08",
-      fakeExecutor(rows),
-    );
+    const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor(rows));
     const draftBranch = result[0].branches.find((b) => b.branchId === "b2");
     expect(draftBranch?.budgetStatus).toBe("draft");
   });
 
   it("returns an empty array when no branch has budget lines for the period", async () => {
-    const result = await getCompanyBudgetConsolidation(
-      "2026-08",
-      fakeExecutor([]),
-    );
+    const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor([]));
     expect(result).toEqual([]);
   });
 
   it("rolls up reserved/consumed from the budget line and paid/booked from GRN actuals, per branch and company-wide", async () => {
     const rows = [
-      row({
-        branch_id: "b1",
-        line_id: "line-b1",
-        reserved_amount: 2000,
-        consumed_amount: 1500,
-      }),
-      row({
-        branch_id: "b2",
-        line_id: "line-b2",
-        reserved_amount: 1000,
-        consumed_amount: 800,
-      }),
+      row({ branch_id: "b1", line_id: "line-b1", reserved_amount: 2000, consumed_amount: 1500 }),
+      row({ branch_id: "b2", line_id: "line-b2", reserved_amount: 1000, consumed_amount: 800 }),
     ];
     const grnActuals = [
       { budget_line_id: "line-b1", paid_amount: 900, booked_amount: 1500 },
       { budget_line_id: "line-b2", paid_amount: 300, booked_amount: 800 },
       // A row for a budget line outside this consolidation's result set must be ignored, not
       // thrown or double-counted into whichever group happens to iterate last.
-      {
-        budget_line_id: "line-unrelated",
-        paid_amount: 5000,
-        booked_amount: 5000,
-      },
+      { budget_line_id: "line-unrelated", paid_amount: 5000, booked_amount: 5000 },
     ];
-    const result = await getCompanyBudgetConsolidation(
-      "2026-08",
-      fakeExecutor(rows, grnActuals),
-    );
+    const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor(rows, grnActuals));
     expect(result).toHaveLength(1);
     const group = result[0];
     expect(group.companyReservedAmount).toBe(3000);
@@ -214,10 +150,7 @@ describe("getCompanyBudgetConsolidation", () => {
   });
 
   it("treats a budget line with no matching GRN activity as zero paid/booked, not undefined", async () => {
-    const result = await getCompanyBudgetConsolidation(
-      "2026-08",
-      fakeExecutor([row({ line_id: "line-x" })], []),
-    );
+    const result = await getCompanyBudgetConsolidation("2026-08", fakeExecutor([row({ line_id: "line-x" })], []));
     expect(result[0].companyPaidAmount).toBe(0);
     expect(result[0].companyBookedToPnlAmount).toBe(0);
     expect(result[0].branches[0].paidAmount).toBe(0);

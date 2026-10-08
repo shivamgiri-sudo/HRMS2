@@ -1,6 +1,6 @@
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import { notifyLastWorkingDayApproaching } from "./exit.notifications.js";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { notifyLastWorkingDayApproaching } from './exit.notifications.js';
 
 /**
  * Daily scan: exits whose confirmed last working day is approaching.
@@ -28,14 +28,7 @@ const LOOKAHEAD_DAYS = 7;
  * Exits that are finished or abandoned. `draft` is excluded too: an unsubmitted
  * resignation has no agreed last working day to be approaching.
  */
-const TERMINAL_STATUSES = [
-  "draft",
-  "exited",
-  "revoked",
-  "rejected",
-  "cancelled",
-  "withdrawn",
-];
+const TERMINAL_STATUSES = ['draft', 'exited', 'revoked', 'rejected', 'cancelled', 'withdrawn'];
 
 export interface LwdScanResult {
   scanned: number;
@@ -53,16 +46,12 @@ export async function runLastWorkingDayScan(): Promise<LwdScanResult> {
       WHERE er.last_working_day_confirmed IS NOT NULL
         AND er.last_working_day_confirmed >= CURDATE()
         AND er.last_working_day_confirmed <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
-        AND er.status NOT IN (${TERMINAL_STATUSES.map(() => "?").join(",")})
+        AND er.status NOT IN (${TERMINAL_STATUSES.map(() => '?').join(',')})
       ORDER BY er.last_working_day_confirmed ASC`,
     [LOOKAHEAD_DAYS, ...TERMINAL_STATUSES],
   );
 
-  const result: LwdScanResult = {
-    scanned: rows.length,
-    notified: 0,
-    failed: 0,
-  };
+  const result: LwdScanResult = { scanned: rows.length, notified: 0, failed: 0 };
 
   // Sequential, not Promise.all: 45 workers share one pool on this deployment, and a fan-out
   // here would be competing with every other scheduled job for the same connections.

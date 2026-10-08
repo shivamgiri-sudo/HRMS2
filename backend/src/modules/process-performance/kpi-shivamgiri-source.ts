@@ -38,9 +38,7 @@ export interface ShivamgiriQualityResult {
   asOfDate: string | null;
 }
 
-export async function fetchShivamgiriQualityScore(
-  clientId: string,
-): Promise<ShivamgiriQualityResult> {
+export async function fetchShivamgiriQualityScore(clientId: string): Promise<ShivamgiriQualityResult> {
   const pool = getShivamgiriPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT AVG(quality_score) AS value, COUNT(quality_score) AS n, MAX(call_date) AS max_d FROM (
@@ -61,7 +59,6 @@ export async function fetchShivamgiriQualityScore(
   return {
     value: n > 0 && r?.value != null ? Number(r.value) : null,
     count: n,
-    asOfDate:
-      n > 0 && r?.max_d ? new Date(r.max_d).toISOString().slice(0, 10) : null,
+    asOfDate: n > 0 && r?.max_d ? new Date(r.max_d).toISOString().slice(0, 10) : null,
   };
 }

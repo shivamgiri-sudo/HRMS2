@@ -16,10 +16,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const syncSource = readFileSync(
-  resolve(process.cwd(), "src/modules/lms/lms.sync.service.ts"),
-  "utf8",
-);
+const syncSource = readFileSync(resolve(process.cwd(), "src/modules/lms/lms.sync.service.ts"), "utf8");
 const deadModuleSource = readFileSync(
   resolve(process.cwd(), "src/modules/lms-integration/lms-sync.service.ts"),
   "utf8",
@@ -27,15 +24,11 @@ const deadModuleSource = readFileSync(
 
 describe("LMS learner-progress snapshot is wired into the active sync", () => {
   it("lms.sync.service.ts imports lmsSyncService from the lms-integration module", () => {
-    expect(syncSource).toMatch(
-      /from\s+["'][^"']*lms-integration\/lms-sync\.service\.js["']/,
-    );
+    expect(syncSource).toMatch(/from\s+["'][^"']*lms-integration\/lms-sync\.service\.js["']/);
   });
 
   it("runFullSync calls syncLearnerProgressSnapshot", () => {
-    const fnMatch = syncSource.match(
-      /export async function runFullSync[\s\S]*?\n\}/,
-    );
+    const fnMatch = syncSource.match(/export async function runFullSync[\s\S]*?\n\}/);
     expect(fnMatch, "runFullSync function body not found").toBeTruthy();
     expect(
       fnMatch![0],
@@ -45,13 +38,8 @@ describe("LMS learner-progress snapshot is wired into the active sync", () => {
   });
 
   it("syncLearnerProgressSnapshot calls lmsSyncService.syncLearnerProgress", () => {
-    const fnMatch = syncSource.match(
-      /export async function syncLearnerProgressSnapshot[\s\S]*?\n\}/,
-    );
-    expect(
-      fnMatch,
-      "syncLearnerProgressSnapshot function body not found",
-    ).toBeTruthy();
+    const fnMatch = syncSource.match(/export async function syncLearnerProgressSnapshot[\s\S]*?\n\}/);
+    expect(fnMatch, "syncLearnerProgressSnapshot function body not found").toBeTruthy();
     expect(fnMatch![0]).toMatch(/lmsSyncService\.syncLearnerProgress\s*\(/);
   });
 
@@ -59,11 +47,7 @@ describe("LMS learner-progress snapshot is wired into the active sync", () => {
     // Guards against the ORIGINAL defect recurring: this module's own mapper
     // references columns (lms_employee_id, hrms_employee_id, ...) that
     // lms_employee_mapping has never had, so every lookup would throw.
-    expect(deadModuleSource).not.toMatch(
-      /from\s+["']\.\/lms-employee-mapper\.js["']/,
-    );
-    expect(deadModuleSource).toMatch(
-      /from\s+["']\.\.\/lms\/lms-employee-mapper\.js["']/,
-    );
+    expect(deadModuleSource).not.toMatch(/from\s+["']\.\/lms-employee-mapper\.js["']/);
+    expect(deadModuleSource).toMatch(/from\s+["']\.\.\/lms\/lms-employee-mapper\.js["']/);
   });
 });

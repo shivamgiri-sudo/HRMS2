@@ -41,9 +41,7 @@ const args = process.argv.slice(2);
 const apply = args.includes("--apply");
 const force = args.includes("--force");
 const includeVoice = args.includes("--include-voice");
-const requisitionCodes = args
-  .filter((a) => a.startsWith("--requisition="))
-  .map((a) => a.slice("--requisition=".length));
+const requisitionCodes = args.filter((a) => a.startsWith("--requisition=")).map((a) => a.slice("--requisition=".length));
 const numArg = (name: string, fallback: number) => {
   const i = args.indexOf(name);
   return i >= 0 && args[i + 1] ? Number(args[i + 1]) : fallback;
@@ -57,22 +55,17 @@ const csvCell = (v: unknown): string => {
   if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
-const toCsv = (rows: string[][]) =>
-  rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
+const toCsv = (rows: string[][]) => rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
 
 /** Which leads a bulk run targets — exported so this selection rule is unit-testable in isolation. */
 export function pickTargets(
   evaluations: ShortlistEvaluation[],
-  opts: { requisitionCodes?: string[]; force?: boolean } = {},
+  opts: { requisitionCodes?: string[]; force?: boolean } = {}
 ): ShortlistEvaluation[] {
   return evaluations.filter((e) => {
     if (!e.outreachEligible) return false; // qualified AND batch open — same rule the report shows
     if (e.notified && !opts.force) return false;
-    if (
-      opts.requisitionCodes?.length &&
-      !opts.requisitionCodes.includes(e.requisitionCode ?? "")
-    )
-      return false;
+    if (opts.requisitionCodes?.length && !opts.requisitionCodes.includes(e.requisitionCode ?? "")) return false;
     return true;
   });
 }
@@ -82,34 +75,23 @@ async function main(): Promise<void> {
   console.log(
     `mode: ${apply ? "APPLY (sending real WhatsApp messages)" : "DRY RUN"}` +
       `  voice: ${includeVoice ? "INCLUDED" : "skipped"}  throttle: ${throttleMs}ms` +
-      (requisitionCodes.length
-        ? `  requisitions: ${requisitionCodes.join(", ")}`
-        : "") +
-      `  db=${process.env.DB_HOST}:${process.env.DB_PORT}`,
+      (requisitionCodes.length ? `  requisitions: ${requisitionCodes.join(", ")}` : "") +
+      `  db=${process.env.DB_HOST}:${process.env.DB_PORT}`
   );
 
   const [vapi, legacyVoice] = [isVapiConfigured(), isVoicebotConfigured()];
   if (vapi || legacyVoice) {
     console.log(
       `note: a voice provider IS configured (${vapi ? "Vapi" : "legacy voicebot"}).` +
-        (includeVoice
-          ? " --include-voice is set, so each send will also place a call."
-          : " Voice calls are skipped (pass --include-voice to enable)."),
+        (includeVoice ? " --include-voice is set, so each send will also place a call." : " Voice calls are skipped (pass --include-voice to enable).")
     );
   }
 
   const { evaluations } = await evaluateAllLeads();
-  const targets = pickTargets(evaluations, { requisitionCodes, force }).slice(
-    0,
-    limit,
-  );
+  const targets = pickTargets(evaluations, { requisitionCodes, force }).slice(0, limit);
 
   const byReq = new Map<string, number>();
-  for (const t of targets)
-    byReq.set(
-      t.requisitionCode ?? "unknown",
-      (byReq.get(t.requisitionCode ?? "unknown") ?? 0) + 1,
-    );
+  for (const t of targets) byReq.set(t.requisitionCode ?? "unknown", (byReq.get(t.requisitionCode ?? "unknown") ?? 0) + 1);
   console.log(`leads to notify: ${targets.length}`);
   for (const [code, n] of byReq) console.log(`  ${code}: ${n}`);
 
@@ -121,21 +103,13 @@ async function main(): Promise<void> {
     "﻿" +
       toCsv([
         ["Lead ID", "Name", "Phone", "Requisition", "Branch"],
-        ...targets.map((t) => [
-          t.leadId,
-          t.name,
-          t.phone,
-          t.requisitionCode,
-          t.branch,
-        ]),
-      ]),
+        ...targets.map((t) => [t.leadId, t.name, t.phone, t.requisitionCode, t.branch]),
+      ])
   );
   console.log(`target list: ${targetCsv}`);
 
   if (!apply) {
-    console.log(
-      "dry run only — nothing was sent. Re-run with --apply to send.",
-    );
+    console.log("dry run only — nothing was sent. Re-run with --apply to send.");
     return;
   }
   if (!targets.length) {
@@ -143,27 +117,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const results: string[][] = [
-    [
-      "Lead ID",
-      "Name",
-      "Phone",
-      "Requisition",
-      "Succeeded channels",
-      "Failed channels",
-      "Skipped reasons",
-    ],
-  ];
+  const results: string[][] = [["Lead ID", "Name", "Phone", "Requisition", "Succeeded channels", "Failed channels", "Skipped reasons"]];
   let sent = 0;
   let noChannelSucceeded = 0;
   let errored = 0;
 
   for (const t of targets) {
     try {
-      const outcome = await notifyQualifiedLead(t.leadId, {
-        force,
-        skipVoice: !includeVoice,
-      });
+      const outcome = await notifyQualifiedLead(t.leadId, { force, skipVoice: !includeVoice });
       if (outcome.succeeded.length > 0) sent += 1;
       else noChannelSucceeded += 1;
       results.push([
@@ -177,38 +138,21 @@ async function main(): Promise<void> {
       ]);
     } catch (err) {
       errored += 1;
-      results.push([
-        t.leadId,
-        t.name,
-        t.phone,
-        t.requisitionCode,
-        "",
-        `threw: ${err instanceof Error ? err.message : String(err)}`,
-        "",
-      ]);
-      console.warn(
-        `lead ${t.leadId} threw: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      results.push([t.leadId, t.name, t.phone, t.requisitionCode, "", `threw: ${err instanceof Error ? err.message : String(err)}`, ""]);
+      console.warn(`lead ${t.leadId} threw: ${err instanceof Error ? err.message : String(err)}`);
     }
     const done = results.length - 1;
-    if (done % 50 === 0)
-      console.log(
-        `progress ${done}/${targets.length} (sent ${sent}, no channel succeeded ${noChannelSucceeded}, errored ${errored})`,
-      );
+    if (done % 50 === 0) console.log(`progress ${done}/${targets.length} (sent ${sent}, no channel succeeded ${noChannelSucceeded}, errored ${errored})`);
     await sleep(throttleMs);
   }
 
   const resultsCsv = `${dir}/bulk-notify-results-${stamp}.csv`;
   writeFileSync(resultsCsv, "﻿" + toCsv(results));
-  console.log(
-    `done: sent to ${sent}, no channel succeeded for ${noChannelSucceeded}, errored ${errored}. Full results: ${resultsCsv}`,
-  );
+  console.log(`done: sent to ${sent}, no channel succeeded for ${noChannelSucceeded}, errored ${errored}. Full results: ${resultsCsv}`);
 }
 
 // Only run as a CLI script — importing pickTargets for a test must not also fire a live send.
-const isMainModule =
-  process.argv[1] &&
-  import.meta.url === `file://${process.argv[1].replace(/\\/g, "/")}`;
+const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, "/")}`;
 if (isMainModule) {
   main()
     .catch((err) => {

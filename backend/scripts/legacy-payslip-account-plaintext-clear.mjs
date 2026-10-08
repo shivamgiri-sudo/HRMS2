@@ -41,11 +41,7 @@ import path from "node:path";
 const require = createRequire(import.meta.url);
 const mysql = require("mysql2/promise");
 const here = path.dirname(fileURLToPath(import.meta.url));
-const fe = await import(
-  pathToFileURL(
-    path.join(here, "..", "dist", "src", "shared", "fieldEncryption.js"),
-  ).href
-);
+const fe = await import(pathToFileURL(path.join(here, "..", "dist", "src", "shared", "fieldEncryption.js")).href);
 
 const APPLY = process.argv.includes("--apply");
 const BATCH = 500;
@@ -53,32 +49,21 @@ const maxArg = process.argv.find((a) => a.startsWith("--max="));
 const MAX = maxArg ? Number(maxArg.split("=")[1]) : Infinity;
 
 if (typeof fe.isUsingDevEncryptionKey !== "function") {
-  console.error(
-    "REFUSING: this dist/ build predates isUsingDevEncryptionKey().",
-  );
+  console.error("REFUSING: this dist/ build predates isUsingDevEncryptionKey().");
   process.exit(1);
 }
 if (fe.isUsingDevEncryptionKey()) {
-  console.error(
-    "REFUSING: running on the all-zeros DEV encryption key — cannot verify recoverability.",
-  );
+  console.error("REFUSING: running on the all-zeros DEV encryption key — cannot verify recoverability.");
   process.exit(1);
 }
-console.log(
-  `mode=${APPLY ? "APPLY (clears plaintext)" : "DRY-RUN (no writes)"}  dev_key=false  node_env=${process.env.NODE_ENV}`,
-);
+console.log(`mode=${APPLY ? "APPLY (clears plaintext)" : "DRY-RUN (no writes)"}  dev_key=false  node_env=${process.env.NODE_ENV}`);
 
-const strip = (v) =>
-  String(v ?? "")
-    .trim()
-    .replace(/^["']|["']$/g, "");
+const strip = (v) => String(v ?? "").trim().replace(/^["']|["']$/g, "");
 const conn = await mysql.createConnection({
   host: process.env.DB_HOST_OVERRIDE || strip(process.env.DB_HOST),
   port: Number(strip(process.env.DB_PORT) || 3306),
-  user: strip(process.env.DB_USER),
-  password: strip(process.env.DB_PASSWORD),
-  database: strip(process.env.DB_NAME),
-  connectTimeout: 20000,
+  user: strip(process.env.DB_USER), password: strip(process.env.DB_PASSWORD),
+  database: strip(process.env.DB_NAME), connectTimeout: 20000,
 });
 
 const [[pre]] = await conn.query(`
@@ -86,30 +71,18 @@ const [[pre]] = await conn.query(`
          SUM(account_number_enc IS NOT NULL)                                                         AS ciphertext,
          SUM(account_number IS NOT NULL AND TRIM(account_number) <> '' AND account_number_enc IS NULL) AS unprotected
     FROM legacy_payslip_snapshot`);
-console.log(
-  `plaintext=${pre.plaintext} ciphertext=${pre.ciphertext} plaintext_without_ciphertext=${pre.unprotected}`,
-);
+console.log(`plaintext=${pre.plaintext} ciphertext=${pre.ciphertext} plaintext_without_ciphertext=${pre.unprotected}`);
 
 if (Number(pre.unprotected) > 0) {
-  console.error(
-    `REFUSING: ${pre.unprotected} row(s) still have plaintext with no ciphertext.`,
-  );
-  console.error(
-    "Run scripts/legacy-payslip-account-encrypt-backfill.mjs to completion first.",
-  );
+  console.error(`REFUSING: ${pre.unprotected} row(s) still have plaintext with no ciphertext.`);
+  console.error("Run scripts/legacy-payslip-account-encrypt-backfill.mjs to completion first.");
   await conn.end();
   process.exit(1);
 }
 
-let cleared = 0,
-  skipped = 0,
-  scanned = 0,
-  lastId = 0;
+let cleared = 0, skipped = 0, scanned = 0, lastId = 0;
 for (;;) {
-  if (cleared + skipped >= MAX) {
-    console.log(`  reached --max=${MAX}, stopping.`);
-    break;
-  }
+  if (cleared + skipped >= MAX) { console.log(`  reached --max=${MAX}, stopping.`); break; }
   // Keyset pagination on the primary key, identical whether applying or not.
   //
   // Two earlier shapes were both wrong, and only running it showed that. A plain LIMIT with
@@ -126,9 +99,7 @@ for (;;) {
       WHERE account_number IS NOT NULL AND TRIM(account_number) <> ''
         AND id > ?
       ORDER BY id
-      LIMIT ${Math.min(BATCH, MAX - cleared - skipped)}`,
-    [lastId],
-  );
+      LIMIT ${Math.min(BATCH, MAX - cleared - skipped)}`, [lastId]);
   if (rows.length === 0) break;
   scanned += rows.length;
   lastId = rows[rows.length - 1].id;
@@ -136,19 +107,13 @@ for (;;) {
   const safe = [];
   for (const r of rows) {
     let recoverable = false;
-    try {
-      recoverable =
-        r.ct != null && fe.decryptField(r.ct) === String(r.val).trim();
-    } catch {
-      recoverable = false;
-    }
-    if (recoverable) safe.push(r.id);
-    else skipped++;
+    try { recoverable = r.ct != null && fe.decryptField(r.ct) === String(r.val).trim(); } catch { recoverable = false; }
+    if (recoverable) safe.push(r.id); else skipped++;
   }
 
   if (!APPLY) {
     cleared += safe.length;
-    if (rows.length < BATCH) break; // last page
+    if (rows.length < BATCH) break;   // last page
     continue;
   }
 
@@ -157,9 +122,7 @@ for (;;) {
     try {
       await conn.query(
         `UPDATE legacy_payslip_snapshot SET account_number = NULL
-          WHERE id IN (${safe.map(() => "?").join(",")})`,
-        safe,
-      );
+          WHERE id IN (${safe.map(() => "?").join(",")})`, safe);
       await conn.commit();
       cleared += safe.length;
     } catch (e) {
@@ -168,23 +131,18 @@ for (;;) {
       break;
     }
   }
-  if (cleared % 10000 < BATCH && cleared > 0)
-    console.log(`  cleared ${cleared}`);
-  if (!safe.length && skipped >= rows.length) break; // nothing clearable left
+  if (cleared % 10000 < BATCH && cleared > 0) console.log(`  cleared ${cleared}`);
+  if (!safe.length && skipped >= rows.length) break;   // nothing clearable left
 }
 
-console.log(
-  `\n${APPLY ? "CLEARED" : "WOULD CLEAR"}=${cleared}  left_in_place(not provably recoverable)=${skipped}`,
-);
+console.log(`\n${APPLY ? "CLEARED" : "WOULD CLEAR"}=${cleared}  left_in_place(not provably recoverable)=${skipped}`);
 
 if (APPLY) {
   const [[post]] = await conn.query(`
     SELECT SUM(account_number IS NOT NULL AND TRIM(account_number) <> '') AS plaintext_left,
            SUM(account_number_enc IS NOT NULL)                            AS ciphertext
       FROM legacy_payslip_snapshot`);
-  console.log(
-    `verification: plaintext_left=${post.plaintext_left}  ciphertext=${post.ciphertext} (must be unchanged)`,
-  );
+  console.log(`verification: plaintext_left=${post.plaintext_left}  ciphertext=${post.ciphertext} (must be unchanged)`);
 }
 
 await conn.end();

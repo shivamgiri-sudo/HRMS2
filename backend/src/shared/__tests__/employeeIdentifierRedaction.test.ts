@@ -64,10 +64,7 @@ describe("crypto plumbing never leaves the API", () => {
   );
 
   it("strips a password hash if one is ever added to the row", () => {
-    const out = redactEmployeeIdentifiers(
-      { ...ROW, password_hash: "$2b$10$abc" },
-      ["super_admin"],
-    );
+    const out = redactEmployeeIdentifiers({ ...ROW, password_hash: "$2b$10$abc" }, ["super_admin"]);
     expect(out).not.toHaveProperty("password_hash");
   });
 
@@ -78,36 +75,27 @@ describe("crypto plumbing never leaves the API", () => {
   });
 
   it("the pattern matches the storage suffixes and nothing else", () => {
-    for (const k of PLUMBING)
-      expect(CRYPTO_PLUMBING_PATTERN.test(k)).toBe(true);
-    for (const k of [
-      "aadhaar_number",
-      "pan_number",
-      "aadhaar_last4",
-      "pan_number_masked",
-    ]) {
+    for (const k of PLUMBING) expect(CRYPTO_PLUMBING_PATTERN.test(k)).toBe(true);
+    for (const k of ["aadhaar_number", "pan_number", "aadhaar_last4", "pan_number_masked"]) {
       expect(CRYPTO_PLUMBING_PATTERN.test(k)).toBe(false);
     }
   });
 });
 
 describe("roles with no business need do not receive raw identifiers", () => {
-  it.each([
-    ["wfm"],
-    ["manager"],
-    ["branch_head"],
-    ["process_manager"],
-    ["it_head"],
-  ])("%s receives masked values, not raw", (role) => {
-    const out = redactEmployeeIdentifiers(ROW, [role]);
-    for (const key of IDENTIFIERS) {
-      expect(out[key]).not.toBe(ROW[key]);
-      expect(out).toHaveProperty(key); // present but masked, so the UI still renders a field
-    }
-    expect(out.aadhaar_number).toBe("XXXXXXXX9012");
-    expect(out.pan_number).toBe("ABXXXXX34F");
-    expect(out.bank_account_number).toBe("XXXXXXXXXX7890");
-  });
+  it.each([["wfm"], ["manager"], ["branch_head"], ["process_manager"], ["it_head"]])(
+    "%s receives masked values, not raw",
+    (role) => {
+      const out = redactEmployeeIdentifiers(ROW, [role]);
+      for (const key of IDENTIFIERS) {
+        expect(out[key]).not.toBe(ROW[key]);
+        expect(out).toHaveProperty(key); // present but masked, so the UI still renders a field
+      }
+      expect(out.aadhaar_number).toBe("XXXXXXXX9012");
+      expect(out.pan_number).toBe("ABXXXXX34F");
+      expect(out.bank_account_number).toBe("XXXXXXXXXX7890");
+    },
+  );
 
   it("leaves non-sensitive fields completely untouched", () => {
     const out = redactEmployeeIdentifiers(ROW, ["wfm"]);
@@ -119,13 +107,10 @@ describe("roles with no business need do not receive raw identifiers", () => {
 });
 
 describe("roles that legitimately need raw identifiers keep today's access", () => {
-  it.each([...RAW_IDENTIFIER_ROLES].map((r) => [r]))(
-    "%s still receives raw values",
-    (role) => {
-      const out = redactEmployeeIdentifiers(ROW, [role]);
-      for (const key of IDENTIFIERS) expect(out[key]).toBe(ROW[key]);
-    },
-  );
+  it.each([...RAW_IDENTIFIER_ROLES].map((r) => [r]))("%s still receives raw values", (role) => {
+    const out = redactEmployeeIdentifiers(ROW, [role]);
+    for (const key of IDENTIFIERS) expect(out[key]).toBe(ROW[key]);
+  });
 
   it("a user holding several roles keeps the access of the strongest", () => {
     // Branch-scoped users in this system are known to also carry global role rows.
@@ -136,14 +121,9 @@ describe("roles that legitimately need raw identifiers keep today's access", () 
 
 describe("fails closed", () => {
   it.each([[[]], [null], [undefined]])("masks when roles are %s", (roles) => {
-    const out = redactEmployeeIdentifiers(
-      ROW,
-      roles as string[] | null | undefined,
-    );
+    const out = redactEmployeeIdentifiers(ROW, roles as string[] | null | undefined);
     expect(out.aadhaar_number).toBe("XXXXXXXX9012");
-    expect(maySeeRawIdentifiers(roles as string[] | null | undefined)).toBe(
-      false,
-    );
+    expect(maySeeRawIdentifiers(roles as string[] | null | undefined)).toBe(false);
   });
 
   it("masks for a role nobody has heard of, rather than defaulting to hr", () => {
@@ -162,12 +142,7 @@ describe("fails closed", () => {
 describe("does not corrupt empty or absent values", () => {
   it("leaves a null or blank identifier alone instead of masking it into 'XXXX'", () => {
     const out = redactEmployeeIdentifiers(
-      {
-        ...ROW,
-        aadhaar_number: null,
-        pan_number: "",
-        bank_account_number: "   ",
-      },
+      { ...ROW, aadhaar_number: null, pan_number: "", bank_account_number: "   " },
       ["wfm"],
     );
     expect(out.aadhaar_number).toBeNull();

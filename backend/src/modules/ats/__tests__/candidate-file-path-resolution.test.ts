@@ -1,10 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  CANDIDATE_FILES_ROOT,
-  resolveCandidateFilePath,
-} from "../candidate-file.service.js";
+import { CANDIDATE_FILES_ROOT, resolveCandidateFilePath } from "../candidate-file.service.js";
 
 /**
  * A candidate file must remain downloadable even when storage_path names a machine
@@ -38,11 +35,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  try {
-    fs.rmSync(dir, { recursive: true, force: true });
-  } catch {
-    /* best effort */
-  }
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
 });
 
 describe("resolveCandidateFilePath", () => {
@@ -94,9 +87,7 @@ describe("resolveCandidateFilePath", () => {
   });
 
   it("returns null when the identifying columns are absent", () => {
-    expect(
-      resolveCandidateFilePath({ storage_path: "C:\\nope\\x.pdf" }),
-    ).toBeNull();
+    expect(resolveCandidateFilePath({ storage_path: "C:\\nope\\x.pdf" })).toBeNull();
     expect(resolveCandidateFilePath({})).toBeNull();
   });
 

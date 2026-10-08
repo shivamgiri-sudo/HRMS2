@@ -26,10 +26,7 @@ const { getStats, getById } = vi.hoisted(() => ({
 vi.mock("../dpdp-withdrawal.service.js", () => ({ getStats, getById }));
 
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../../middleware/authMiddleware.js")
-    >();
+  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
   return {
     ...original,
     requireAuth: (req: any, _res: any, next: any) => {
@@ -73,9 +70,7 @@ describe("GET /dpdp-withdrawal/stats", () => {
   it("still resolves a real withdrawal id through the :id handler", async () => {
     getById.mockResolvedValueOnce({ id: "real-uuid-123", status: "pending" });
 
-    const res = await request(app()).get(
-      "/api/privacy/dpdp-withdrawal/real-uuid-123",
-    );
+    const res = await request(app()).get("/api/privacy/dpdp-withdrawal/real-uuid-123");
 
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual({ id: "real-uuid-123", status: "pending" });

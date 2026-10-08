@@ -15,15 +15,9 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { db } from "../src/db/mysql.js";
-import {
-  importLpLeadsRegionalBatch,
-  importLpLeadsNonRegionalBatch,
-} from "../src/modules/bulk-upload/lp-leads-bulk.service.js";
+import { importLpLeadsRegionalBatch, importLpLeadsNonRegionalBatch } from "../src/modules/bulk-upload/lp-leads-bulk.service.js";
 import { importLpAprDailyBatch } from "../src/modules/bulk-upload/lp-apr-daily-bulk.service.js";
-import {
-  importLpCrReportRegionalBatch,
-  importLpCrReportNonRegionalBatch,
-} from "../src/modules/bulk-upload/lp-cdr-cr-report-bulk.service.js";
+import { importLpCrReportRegionalBatch, importLpCrReportNonRegionalBatch } from "../src/modules/bulk-upload/lp-cdr-cr-report-bulk.service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_ID = "demo-super-admin-id";
@@ -39,10 +33,7 @@ async function runOne(
   key: string,
   jsonFile: string,
   uploadTypeCode: string,
-  importFn: (
-    batchId: string,
-    userId: string,
-  ) => Promise<{ importedRows: number; errorRows: number; errors: string[] }>,
+  importFn: (batchId: string, userId: string) => Promise<{ importedRows: number; errorRows: number; errors: string[] }>,
 ) {
   const rows = loadJson(jsonFile);
   console.log(`[${key}] real rows loaded:`, rows.length);
@@ -61,13 +52,7 @@ async function runOne(
       `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status)
        VALUES (?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), 'valid')
        ON DUPLICATE KEY UPDATE id = id`,
-      [
-        randomUUID(),
-        batchId,
-        i + 1,
-        JSON.stringify(rows[i]),
-        JSON.stringify(rows[i]),
-      ],
+      [randomUUID(), batchId, i + 1, JSON.stringify(rows[i]), JSON.stringify(rows[i])],
     );
   }
   console.log(`[${key}] batch rows staged:`, rows.length);
@@ -83,54 +68,18 @@ async function runOne(
 }
 
 async function main() {
-  const results: Record<string, { importedRows: number; errorRows: number }> =
-    {};
-  results.leads_regional = await runOne(
-    "leads_regional",
-    "_lp_regional_leads.json",
-    "LP_LEADS_REGIONAL",
-    importLpLeadsRegionalBatch,
-  );
-  results.leads_non_regional = await runOne(
-    "leads_non_regional",
-    "_lp_non_regional_leads.json",
-    "LP_LEADS_NON_REGIONAL",
-    importLpLeadsNonRegionalBatch,
-  );
-  results.apr_regional = await runOne(
-    "apr_regional",
-    "_lp_regional_apr.json",
-    "LP_APR_DAILY",
-    importLpAprDailyBatch,
-  );
-  results.apr_non_regional = await runOne(
-    "apr_non_regional",
-    "_lp_non_regional_apr.json",
-    "LP_APR_DAILY",
-    importLpAprDailyBatch,
-  );
-  results.cr_report_regional = await runOne(
-    "cr_report_regional",
-    "_lp_regional_cr_report.json",
-    "LP_CR_REPORT_REGIONAL",
-    importLpCrReportRegionalBatch,
-  );
-  results.cr_report_non_regional = await runOne(
-    "cr_report_non_regional",
-    "_lp_non_regional_cr_report.json",
-    "LP_CR_REPORT_NON_REGIONAL",
-    importLpCrReportNonRegionalBatch,
-  );
+  const results: Record<string, { importedRows: number; errorRows: number }> = {};
+  results.leads_regional = await runOne("leads_regional", "_lp_regional_leads.json", "LP_LEADS_REGIONAL", importLpLeadsRegionalBatch);
+  results.leads_non_regional = await runOne("leads_non_regional", "_lp_non_regional_leads.json", "LP_LEADS_NON_REGIONAL", importLpLeadsNonRegionalBatch);
+  results.apr_regional = await runOne("apr_regional", "_lp_regional_apr.json", "LP_APR_DAILY", importLpAprDailyBatch);
+  results.apr_non_regional = await runOne("apr_non_regional", "_lp_non_regional_apr.json", "LP_APR_DAILY", importLpAprDailyBatch);
+  results.cr_report_regional = await runOne("cr_report_regional", "_lp_regional_cr_report.json", "LP_CR_REPORT_REGIONAL", importLpCrReportRegionalBatch);
+  results.cr_report_non_regional = await runOne("cr_report_non_regional", "_lp_non_regional_cr_report.json", "LP_CR_REPORT_NON_REGIONAL", importLpCrReportNonRegionalBatch);
 
   console.log("\n=== SUMMARY ===");
   console.log(JSON.stringify(results, null, 2));
 
-  const anyFailed = Object.values(results).some(
-    (r) => r.errorRows > 0 && r.importedRows === 0,
-  );
+  const anyFailed = Object.values(results).some((r) => r.errorRows > 0 && r.importedRows === 0);
   process.exit(anyFailed ? 1 : 0);
 }
-main().catch((e) => {
-  console.error("[IMPORT] FAILED", e);
-  process.exit(1);
-});
+main().catch((e) => { console.error("[IMPORT] FAILED", e); process.exit(1); });

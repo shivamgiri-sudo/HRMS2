@@ -15,9 +15,7 @@ const BATCH_ID = process.argv[2];
 const UPLOADER_USER_ID = process.argv[3];
 
 if (!BATCH_ID || !UPLOADER_USER_ID) {
-  console.error(
-    "Usage: tsx process-stuck-reporting-manager-batch.ts <batchId> <uploaderUserId>",
-  );
+  console.error("Usage: tsx process-stuck-reporting-manager-batch.ts <batchId> <uploaderUserId>");
   process.exit(1);
 }
 
@@ -29,9 +27,7 @@ async function main() {
   console.log(JSON.stringify(outcome, null, 2));
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error("[error]", err);
-    process.exit(1);
-  });
+main().then(() => process.exit(0)).catch((err) => {
+  console.error("[error]", err);
+  process.exit(1);
+});

@@ -21,19 +21,13 @@ function sign(payload: string): string {
   return crypto.createHmac("sha256", SECRET).update(payload).digest("hex");
 }
 
-export function signPhotoAccessToken(
-  filename: string,
-  ttlSeconds: number = DEFAULT_TTL_SECONDS,
-): string {
+export function signPhotoAccessToken(filename: string, ttlSeconds: number = DEFAULT_TTL_SECONDS): string {
   const expires = Date.now() + ttlSeconds * 1000;
   const signature = sign(`${filename}.${expires}`);
   return `${expires}.${signature}`;
 }
 
-export function verifyPhotoAccessToken(
-  filename: string,
-  token: string | undefined | null,
-): boolean {
+export function verifyPhotoAccessToken(filename: string, token: string | undefined | null): boolean {
   if (!token) return false;
   const dotIndex = token.indexOf(".");
   if (dotIndex < 0) return false;

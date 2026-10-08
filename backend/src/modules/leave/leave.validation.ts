@@ -21,31 +21,19 @@ export const leaveRequestSchema = z
     totalDays: z.number().min(0.5).max(182),
     reason: z.string().trim().nullable().optional(),
   })
-  .refine((d) => d.toDate >= d.fromDate, {
-    message: "toDate must be >= fromDate",
-  })
-  .refine(
-    (d) => {
-      const from = new Date(d.fromDate).getTime();
-      const to = new Date(d.toDate).getTime();
-      const calendarDays = (to - from) / (1000 * 60 * 60 * 24) + 1;
-      return d.totalDays <= calendarDays;
-    },
-    {
-      message:
-        "totalDays cannot exceed the number of calendar days in the date range",
-      path: ["totalDays"],
-    },
-  );
+  .refine((d) => d.toDate >= d.fromDate, { message: "toDate must be >= fromDate" })
+  .refine(d => {
+    const from = new Date(d.fromDate).getTime();
+    const to   = new Date(d.toDate).getTime();
+    const calendarDays = (to - from) / (1000 * 60 * 60 * 24) + 1;
+    return d.totalDays <= calendarDays;
+  }, {
+    message: "totalDays cannot exceed the number of calendar days in the date range",
+    path: ["totalDays"],
+  });
 
 export const reviewLeaveSchema = z.object({
-  status: z.enum([
-    "approved",
-    "rejected",
-    "branch_head_approved",
-    "branch_head_rejected",
-    "cancelled",
-  ]),
+  status: z.enum(["approved", "rejected", "branch_head_approved", "branch_head_rejected", "cancelled"]),
   remarks: z.string().trim().nullable().optional(),
 });
 

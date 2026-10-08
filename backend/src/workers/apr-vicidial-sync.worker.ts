@@ -5,7 +5,7 @@ import { withWorkerLock, recordWorkerRun } from './worker-utils.js';
 import { regradeAprChanges } from '../modules/wfm/apr-sync-regrade.service.js';
 import { aprSyncDates, aprSyncDaysBack, changedAprUsers } from './apr-sync-window.js';
 
-const WORKER_NAME = "apr-vicidial-sync";
+const WORKER_NAME = 'apr-vicidial-sync';
 
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 
@@ -14,14 +14,14 @@ let lastDeepSweepDate: string | null = null;
 
 // Legacy tables from dialer_db (kept for backward compatibility)
 const LEGACY_DIALER_TABLES = [
-  "vicidial_agent_log_10_25",
-  "vicidial_agent_log_10_4",
-  "vicidial_agent_log_11_4",
-  "vicidial_agent_log_11_5",
-  "vicidial_agent_log_247",
-  "vicidial_agent_log_249",
-  "vicidial_agent_log_250",
-  "vicidial_agent_log_9",
+  'vicidial_agent_log_10_25',
+  'vicidial_agent_log_10_4',
+  'vicidial_agent_log_11_4',
+  'vicidial_agent_log_11_5',
+  'vicidial_agent_log_247',
+  'vicidial_agent_log_249',
+  'vicidial_agent_log_250',
+  'vicidial_agent_log_9',
 ];
 
 interface AprServerConfig {
@@ -41,14 +41,10 @@ function secsToTime(s: number): string {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
-function buildAggQuery(
-  tableName: string,
-  dateCol: string,
-  userCol: string,
-): string {
+function buildAggQuery(tableName: string, dateCol: string, userCol: string): string {
   return `
     SELECT
       DATE(${dateCol})                                                     AS ReportDate,
@@ -112,7 +108,7 @@ async function getServerPool(config: AprServerConfig): Promise<mysql.Pool> {
     user: config.username,
     password: config.password,
     database: config.database,
-    timezone: "+05:30",
+    timezone: '+05:30',
     connectTimeout: 30000,
     waitForConnections: true,
     connectionLimit: 5,
@@ -133,19 +129,13 @@ async function loadAprServerConfigs(): Promise<AprServerConfig[]> {
   const configs: AprServerConfig[] = [];
   for (const row of rows) {
     try {
-      const cfg =
-        typeof row.config_json === "string"
-          ? JSON.parse(row.config_json)
-          : row.config_json;
-      const creds =
-        typeof row.encrypted_credentials === "string"
-          ? JSON.parse(row.encrypted_credentials)
-          : row.encrypted_credentials;
+      const cfg = typeof row.config_json === 'string' ? JSON.parse(row.config_json) : row.config_json;
+      const creds = typeof row.encrypted_credentials === 'string'
+        ? JSON.parse(row.encrypted_credentials)
+        : row.encrypted_credentials;
 
       if (!cfg?.host || !creds?.username || !creds?.password) {
-        console.warn(
-          `[${WORKER_NAME}] Skipping ${row.integration_key}: missing host or credentials`,
-        );
+        console.warn(`[${WORKER_NAME}] Skipping ${row.integration_key}: missing host or credentials`);
         continue;
       }
 
@@ -153,17 +143,15 @@ async function loadAprServerConfigs(): Promise<AprServerConfig[]> {
         integration_key: row.integration_key,
         host: cfg.host,
         port: cfg.port || 3306,
-        database: cfg.database || "asterisk",
-        table: cfg.table || "vicidial_agent_log",
-        date_column: cfg.date_column || "event_time",
-        employee_code_column: cfg.employee_code_column || "user",
+        database: cfg.database || 'asterisk',
+        table: cfg.table || 'vicidial_agent_log',
+        date_column: cfg.date_column || 'event_time',
+        employee_code_column: cfg.employee_code_column || 'user',
         username: creds.username,
         password: creds.password,
       });
     } catch (err: any) {
-      console.warn(
-        `[${WORKER_NAME}] Error parsing config for ${row.integration_key}: ${err.message}`,
-      );
+      console.warn(`[${WORKER_NAME}] Error parsing config for ${row.integration_key}: ${err.message}`);
     }
   }
   return configs;
@@ -188,11 +176,11 @@ async function getLegacyDialerDb(): Promise<mysql.Connection | null> {
   }
 
   legacyDialerDb = await mysql.createConnection({
-    host: process.env.DIALER_DB_HOST || "192.168.10.6",
-    user: process.env.DIALER_DB_USER || process.env.DB_USER || "shivam_user",
+    host: process.env.DIALER_DB_HOST || '192.168.10.6',
+    user: process.env.DIALER_DB_USER || process.env.DB_USER || 'shivam_user',
     password: dialerPassword,
-    database: "dialer_db",
-    timezone: "+05:30",
+    database: 'dialer_db',
+    timezone: '+05:30',
     connectTimeout: 30000,
   });
   return legacyDialerDb;
@@ -204,17 +192,12 @@ function sleep(ms: number): Promise<void> {
 
 function isRetryableUpsertError(error: unknown): boolean {
   const err = error as { code?: string; errno?: number; message?: string };
-  if (err?.code === "ER_LOCK_WAIT_TIMEOUT" || err?.code === "ER_LOCK_DEADLOCK")
-    return true;
+  if (err?.code === 'ER_LOCK_WAIT_TIMEOUT' || err?.code === 'ER_LOCK_DEADLOCK') return true;
   if (err?.errno === 1205 || err?.errno === 1213) return true;
-  return /lock wait timeout|deadlock/i.test(String(err?.message ?? ""));
+  return /lock wait timeout|deadlock/i.test(String(err?.message ?? ''));
 }
 
-async function executeAprUpsertWithRetry(
-  sqlText: string,
-  params: unknown[],
-  key: string,
-): Promise<void> {
+async function executeAprUpsertWithRetry(sqlText: string, params: unknown[], key: string): Promise<void> {
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -225,27 +208,17 @@ async function executeAprUpsertWithRetry(
         throw error;
       }
       const waitMs = attempt * 500;
-      console.warn(
-        `[${WORKER_NAME}] Upsert retry ${attempt}/${maxAttempts - 1} for ${key} after lock contention (${waitMs}ms)`,
-      );
+      console.warn(`[${WORKER_NAME}] Upsert retry ${attempt}/${maxAttempts - 1} for ${key} after lock contention (${waitMs}ms)`);
       await sleep(waitMs);
     }
   }
 }
 
 // Load employee enrichment map: vicidial username → enrichment fields
-async function loadEnrichmentMap(): Promise<
-  Map<
-    string,
-    {
-      employee_name: string;
-      process_name: string;
-      branch_name: string;
-      reporting_manager: string;
-      cost_centre: string;
-    }
-  >
-> {
+async function loadEnrichmentMap(): Promise<Map<string, {
+  employee_name: string; process_name: string; branch_name: string;
+  reporting_manager: string; cost_centre: string;
+}>> {
   const m = new Map<string, any>();
 
   const [rows] = await db.execute<RowDataPacket[]>(`
@@ -292,44 +265,29 @@ async function loadEnrichmentMap(): Promise<
 }
 
 type AggRow = {
-  Calls: number;
-  wait_sec: number;
-  talk_sec: number;
-  dispo_sec: number;
-  PAUSE_sec: number;
-  LUNCH_sec: number;
-  BIO_sec: number;
-  TRAINING_sec: number;
-  DISMX_sec: number;
-  QA_sec: number;
-  LOGIN_sec: number;
-  Login_Time: string | null;
-  Logout_Time: string | null;
+  Calls: number; wait_sec: number; talk_sec: number; dispo_sec: number;
+  PAUSE_sec: number; LUNCH_sec: number; BIO_sec: number;
+  TRAINING_sec: number; DISMX_sec: number; QA_sec: number; LOGIN_sec: number;
+  Login_Time: string | null; Logout_Time: string | null;
 };
 
 async function upsertAggregatedRows(
   rowMap: Map<string, AggRow>,
   enrichMap: Map<string, any>,
-  istDate: string,
+  istDate: string
 ): Promise<{ upserted: number; skipped: number }> {
   let upserted = 0;
   let skipped = 0;
 
   for (const [key, agg] of rowMap) {
-    const [, userId, campaignId] = key.split("|");
-    const netLogin =
-      agg.wait_sec + agg.talk_sec + agg.dispo_sec + agg.PAUSE_sec;
-    const ahtSec =
-      agg.Calls > 0
-        ? Math.round((agg.talk_sec + agg.dispo_sec) / agg.Calls)
-        : 0;
+    const [, userId, campaignId] = key.split('|');
+    const netLogin = agg.wait_sec + agg.talk_sec + agg.dispo_sec + agg.PAUSE_sec;
+    const ahtSec = agg.Calls > 0
+      ? Math.round((agg.talk_sec + agg.dispo_sec) / agg.Calls) : 0;
 
     const enrich = enrichMap.get(userId.toUpperCase()) || {
-      employee_name: "",
-      process_name: "",
-      branch_name: "",
-      reporting_manager: "",
-      cost_centre: "",
+      employee_name: '', process_name: '', branch_name: '',
+      reporting_manager: '', cost_centre: '',
     };
 
     try {
@@ -365,17 +323,15 @@ async function upsertAggregatedRows(
            reporting_manager = IF(source = 'manual', reporting_manager, VALUES(reporting_manager)),
            cost_centre       = IF(source = 'manual', cost_centre, VALUES(cost_centre))`,
         [
-          istDate,
-          userId,
-          campaignId,
+          istDate, userId, campaignId,
           agg.Calls,
           secsToTime(agg.wait_sec),
           secsToTime(agg.talk_sec),
           secsToTime(agg.dispo_sec),
           secsToTime(agg.PAUSE_sec),
           secsToTime(ahtSec),
-          agg.Login_Time || "00:00:00",
-          agg.Logout_Time || "00:00:00",
+          agg.Login_Time || '00:00:00',
+          agg.Logout_Time || '00:00:00',
           secsToTime(netLogin),
           secsToTime(agg.LOGIN_sec),
           secsToTime(agg.BIO_sec),
@@ -383,11 +339,11 @@ async function upsertAggregatedRows(
           secsToTime(agg.QA_sec),
           secsToTime(agg.DISMX_sec),
           secsToTime(agg.TRAINING_sec),
-          enrich.employee_name || "",
-          enrich.process_name || "",
-          enrich.branch_name || "",
-          enrich.reporting_manager || "",
-          enrich.cost_centre || "",
+          enrich.employee_name || '',
+          enrich.process_name || '',
+          enrich.branch_name || '',
+          enrich.reporting_manager || '',
+          enrich.cost_centre || '',
         ],
         key,
       );
@@ -440,7 +396,7 @@ function mergeAggRow(rowMap: Map<string, AggRow>, key: string, r: any): void {
 
 async function syncFromConfiguredServers(
   istDate: string,
-  rowMap: Map<string, AggRow>,
+  rowMap: Map<string, AggRow>
 ): Promise<{ servers: number; rows: number }> {
   const configs = await loadAprServerConfigs();
   let totalRows = 0;
@@ -448,24 +404,13 @@ async function syncFromConfiguredServers(
   for (const cfg of configs) {
     try {
       const pool = await getServerPool(cfg);
-      const query = buildAggQuery(
-        cfg.table,
-        cfg.date_column,
-        cfg.employee_code_column,
-      );
+      const query = buildAggQuery(cfg.table, cfg.date_column, cfg.employee_code_column);
       const dateFrom = `${istDate} 00:00:00`;
-      const dateTo =
-        new Date(new Date(istDate).getTime() + 86400000)
-          .toISOString()
-          .slice(0, 10) + " 00:00:00";
+      const dateTo = new Date(new Date(istDate).getTime() + 86400000)
+        .toISOString().slice(0, 10) + ' 00:00:00';
 
-      const [rows] = (await pool.execute(query, [dateFrom, dateTo])) as [
-        any[],
-        any,
-      ];
-      console.log(
-        `[${WORKER_NAME}]   ${cfg.integration_key} (${cfg.host}): ${rows.length} rows`,
-      );
+      const [rows] = await pool.execute(query, [dateFrom, dateTo]) as [any[], any];
+      console.log(`[${WORKER_NAME}]   ${cfg.integration_key} (${cfg.host}): ${rows.length} rows`);
 
       for (const r of rows) {
         const key = `${istDate}|${r.UserID}|${r.campaign_id}`;
@@ -473,9 +418,7 @@ async function syncFromConfiguredServers(
       }
       totalRows += rows.length;
     } catch (err: any) {
-      console.error(
-        `[${WORKER_NAME}] Error syncing from ${cfg.integration_key}: ${err.message}`,
-      );
+      console.error(`[${WORKER_NAME}] Error syncing from ${cfg.integration_key}: ${err.message}`);
     }
   }
 
@@ -484,7 +427,7 @@ async function syncFromConfiguredServers(
 
 async function syncFromLegacyDialer(
   istDate: string,
-  rowMap: Map<string, AggRow>,
+  rowMap: Map<string, AggRow>
 ): Promise<number> {
   const ddb = await getLegacyDialerDb();
   if (!ddb) {
@@ -493,16 +436,14 @@ async function syncFromLegacyDialer(
   }
 
   const dateFrom = `${istDate} 00:00:00`;
-  const dateTo =
-    new Date(new Date(istDate).getTime() + 86400000)
-      .toISOString()
-      .slice(0, 10) + " 00:00:00";
+  const dateTo = new Date(new Date(istDate).getTime() + 86400000)
+    .toISOString().slice(0, 10) + ' 00:00:00';
 
   let totalRows = 0;
   for (const tbl of LEGACY_DIALER_TABLES) {
     try {
-      const q = buildAggQuery(tbl, "event_time", "user");
-      const [rows] = (await ddb.execute(q, [dateFrom, dateTo])) as [any[], any];
+      const q = buildAggQuery(tbl, 'event_time', 'user');
+      const [rows] = await ddb.execute(q, [dateFrom, dateTo]) as [any[], any];
       if (!rows.length) continue;
       console.log(`[${WORKER_NAME}]   dialer_db.${tbl}: ${rows.length} rows`);
 
@@ -534,13 +475,8 @@ async function syncForDate(istDate: string): Promise<{ upserted: number; skipped
   const rowMap = new Map<string, AggRow>();
 
   // Sync from configured apr_server_* sources
-  const { servers, rows: configRows } = await syncFromConfiguredServers(
-    istDate,
-    rowMap,
-  );
-  console.log(
-    `[${WORKER_NAME}]   Configured servers: ${servers}, rows: ${configRows}`,
-  );
+  const { servers, rows: configRows } = await syncFromConfiguredServers(istDate, rowMap);
+  console.log(`[${WORKER_NAME}]   Configured servers: ${servers}, rows: ${configRows}`);
 
   // Sync from legacy dialer_db tables
   const legacyRows = await syncFromLegacyDialer(istDate, rowMap);

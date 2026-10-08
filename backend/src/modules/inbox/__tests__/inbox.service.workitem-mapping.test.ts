@@ -5,10 +5,7 @@ vi.mock("../../../db/mysql.js", () => ({
   db: { execute: (...args: unknown[]) => mockExecute(...args) },
 }));
 vi.mock("../../../shared/roleResolver.js", () => ({
-  getUserRoleContext: async () => ({
-    roleKeys: ["manager"],
-    primaryRole: "manager",
-  }),
+  getUserRoleContext: async () => ({ roleKeys: ["manager"], primaryRole: "manager" }),
   resolvePrimaryRole: (roles: string[]) => roles[0] ?? "employee",
 }));
 vi.mock("../../work-inbox/work-inbox.service.js", () => ({

@@ -9,29 +9,29 @@ import { mobilityService } from "./mobility.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
 // ── Transfers ─────────────────────────────────────────────────────────────────
 
 // GET /transfers — admin/hr see all; employee sees own
-router.get(
-  "/transfers",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const { status } = req.query as Record<string, string>;
+router.get("/transfers", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const { status } = req.query as Record<string, string>;
 
   if (await hasRole(userId, "admin", "hr")) {
     const callerScope = await getScope(req);
     if (!callerScope) return res.status(401).json({ success: false, error: "Unauthorized" });
     const data = await mobilityService.listTransfers({ status, scope: isOrgWide(callerScope) ? undefined : callerScope });
     return res.json({ success: true, data, total: data.length });
-  }),
-);
+  }
+
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, error: "No employee record linked to your account" });
+  const data = await mobilityService.listTransfers({ employee_id: emp.id, status });
+  return res.json({ success: true, data, total: data.length });
+}));
 
 // POST /transfers — admin/hr only
 router.post("/transfers", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -83,19 +83,22 @@ router.patch("/transfers/:id", requireRole("admin", "hr"), employeeOwnerGuard("t
 // ── Promotions ────────────────────────────────────────────────────────────────
 
 // GET /promotions — admin/hr see all; employee sees own
-router.get(
-  "/promotions",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const { status } = req.query as Record<string, string>;
+router.get("/promotions", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const { status } = req.query as Record<string, string>;
 
   if (await hasRole(userId, "admin", "hr")) {
     const callerScope = await getScope(req);
     if (!callerScope) return res.status(401).json({ success: false, error: "Unauthorized" });
     const data = await mobilityService.listPromotions({ status, scope: isOrgWide(callerScope) ? undefined : callerScope });
     return res.json({ success: true, data, total: data.length });
-  }),
-);
+  }
+
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, error: "No employee record linked to your account" });
+  const data = await mobilityService.listPromotions({ employee_id: emp.id, status });
+  return res.json({ success: true, data, total: data.length });
+}));
 
 // POST /promotions — admin/hr only
 router.post("/promotions", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {

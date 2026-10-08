@@ -74,21 +74,14 @@ function isEnabled(): boolean {
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-export function parseRunTime(value: string | undefined): {
-  hour: number;
-  minute: number;
-} {
+export function parseRunTime(value: string | undefined): { hour: number; minute: number } {
   const raw = value && TIME_PATTERN.test(value) ? value : DEFAULT_TIME;
   const [hourStr, minuteStr] = raw.split(":");
   return { hour: Number(hourStr), minute: Number(minuteStr) };
 }
 
-export function millisecondsUntilNextInterventionRecommendationRun(
-  now = new Date(),
-): number {
-  const { hour, minute } = parseRunTime(
-    process.env.INTERVENTION_RECOMMENDATIONS_TIME,
-  );
+export function millisecondsUntilNextInterventionRecommendationRun(now = new Date()): number {
+  const { hour, minute } = parseRunTime(process.env.INTERVENTION_RECOMMENDATIONS_TIME);
   const next = new Date(now);
   next.setHours(hour, minute, 0, 0);
   if (next <= now) next.setDate(next.getDate() + 1);
@@ -125,7 +118,7 @@ export async function runInterventionRecommendationGeneration(): Promise<Interve
     summary.candidatesFound = allCandidates.length;
 
     const [openRows] = await pool.query<any[]>(
-      "SELECT DISTINCT employee_id FROM employee_retention_recommendation WHERE action_taken = 0",
+      "SELECT DISTINCT employee_id FROM employee_retention_recommendation WHERE action_taken = 0"
     );
     const openEmployeeIds = new Set(openRows.map((r) => r.employee_id));
 
@@ -135,16 +128,14 @@ export async function runInterventionRecommendationGeneration(): Promise<Interve
     for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
       const chunk = candidates.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
-        chunk.map((c) => generateRecommendationsForEmployee(c.id)),
+        chunk.map((c) => generateRecommendationsForEmployee(c.id))
       );
       results.forEach((result, idx) => {
         if (result.status === "rejected") {
           summary.failed += 1;
           console.error(
             `[${WORKER_NAME}] employeeId=${chunk[idx]!.id} threw:`,
-            result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason),
+            result.reason instanceof Error ? result.reason.message : String(result.reason)
           );
           return;
         }
@@ -152,10 +143,7 @@ export async function runInterventionRecommendationGeneration(): Promise<Interve
       });
     }
   } catch (error) {
-    console.error(
-      `[${WORKER_NAME}] run failed`,
-      error instanceof Error ? error.message : String(error),
-    );
+    console.error(`[${WORKER_NAME}] run failed`, error instanceof Error ? error.message : String(error));
     await recordWorkerRun(WORKER_NAME, "failed", {
       ...summary,
       error: error instanceof Error ? error.message : String(error),
@@ -167,7 +155,7 @@ export async function runInterventionRecommendationGeneration(): Promise<Interve
   const elapsedMs = Date.now() - startedAt;
   console.log(
     `[${WORKER_NAME}] run end elapsedMs=${elapsedMs} candidates=${summary.candidatesFound} ` +
-      `alreadyOpen=${summary.alreadyOpen} generated=${summary.generated} failed=${summary.failed}`,
+      `alreadyOpen=${summary.alreadyOpen} generated=${summary.generated} failed=${summary.failed}`
   );
   await recordWorkerRun(WORKER_NAME, "completed", { ...summary, elapsedMs });
   return summary;
@@ -175,9 +163,7 @@ export async function runInterventionRecommendationGeneration(): Promise<Interve
 
 export function startInterventionRecommendationScheduler(): void {
   if (!isEnabled()) {
-    console.log(
-      `[${WORKER_NAME}] disabled (set INTERVENTION_RECOMMENDATIONS_ENABLED=true to enable)`,
-    );
+    console.log(`[${WORKER_NAME}] disabled (set INTERVENTION_RECOMMENDATIONS_ENABLED=true to enable)`);
     return;
   }
   if (nextRun) return;
@@ -187,10 +173,7 @@ export function startInterventionRecommendationScheduler(): void {
       try {
         await runInterventionRecommendationGeneration();
       } catch (error) {
-        console.error(
-          `[${WORKER_NAME}] scheduled run failed`,
-          error instanceof Error ? error.message : String(error),
-        );
+        console.error(`[${WORKER_NAME}] scheduled run failed`, error instanceof Error ? error.message : String(error));
       } finally {
         nextRun = undefined;
         scheduleNext();
@@ -200,11 +183,9 @@ export function startInterventionRecommendationScheduler(): void {
   };
 
   scheduleNext();
-  const { hour, minute } = parseRunTime(
-    process.env.INTERVENTION_RECOMMENDATIONS_TIME,
-  );
+  const { hour, minute } = parseRunTime(process.env.INTERVENTION_RECOMMENDATIONS_TIME);
   console.log(
-    `[${WORKER_NAME}] scheduled daily at ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+    `[${WORKER_NAME}] scheduled daily at ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
   );
 }
 

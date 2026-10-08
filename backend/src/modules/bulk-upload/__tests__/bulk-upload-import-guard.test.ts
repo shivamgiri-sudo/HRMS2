@@ -43,21 +43,14 @@ vi.mock("../bulk-batch-visibility.js", () => ({ requireBatchVisible: () => (_q: 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: ACTOR };
-    next();
-  },
+  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: ACTOR }; next(); },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_req: any, _res: any, next: any) => next(),
 }));
 
-const { importReportingManagerBatch } = vi.hoisted(() => ({
-  importReportingManagerBatch: vi.fn(),
-}));
-vi.mock("../reporting-manager-bulk.service.js", () => ({
-  importReportingManagerBatch,
-}));
+const { importReportingManagerBatch } = vi.hoisted(() => ({ importReportingManagerBatch: vi.fn() }));
+vi.mock("../reporting-manager-bulk.service.js", () => ({ importReportingManagerBatch }));
 
 const { bulkUploadRouter } = await import("../bulk-upload.routes.js");
 const { dispatchImport } = await import("../bulk-dispatch.js");
@@ -96,9 +89,7 @@ function importBody() {
 
 beforeEach(() => {
   execute.mockReset();
-  importReportingManagerBatch
-    .mockReset()
-    .mockResolvedValue({ importedRows: 720, errorRows: 98, errors: [] });
+  importReportingManagerBatch.mockReset().mockResolvedValue({ importedRows: 720, errorRows: 98, errors: [] });
 });
 
 describe("POST /batches/:id/import — concurrency guard", () => {

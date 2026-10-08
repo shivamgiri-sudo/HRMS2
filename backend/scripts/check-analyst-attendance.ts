@@ -3,8 +3,8 @@
  * Run: npx tsx scripts/check-analyst-attendance.ts
  */
 
-import { createConnection } from "mysql2/promise";
-import type { RowDataPacket } from "mysql2";
+import { createConnection } from 'mysql2/promise';
+import type { RowDataPacket } from 'mysql2';
 
 type TableRow = RowDataPacket & Record<string, string>;
 type CountRow = RowDataPacket & { total: number };
@@ -45,39 +45,37 @@ function requiredEnv(name: string): string {
 }
 
 const DB_CONFIG = {
-  host: requiredEnv("DB_HOST"),
+  host: requiredEnv('DB_HOST'),
   port: Number(process.env.DB_PORT || 3306),
-  user: requiredEnv("DB_USER"),
-  password: requiredEnv("DB_PASSWORD"),
-  database: requiredEnv("DB_NAME"),
+  user: requiredEnv('DB_USER'),
+  password: requiredEnv('DB_PASSWORD'),
+  database: requiredEnv('DB_NAME')
 };
 
 async function main() {
   const masConn = await createConnection(DB_CONFIG);
-  console.log("✅ Connected to mas_hrms\n");
+  console.log('✅ Connected to mas_hrms\n');
 
   // ===== 1. CHECK ATTENDANCE TABLES =====
-  console.log("═══════════════════════════════════════");
-  console.log("1. ATTENDANCE TABLES IN mas_hrms");
-  console.log("═══════════════════════════════════════");
-  const [tables] = await masConn.execute<TableRow[]>(
-    "SHOW TABLES LIKE '%attendance%'",
-  );
-  tables.forEach((t) => console.log(" -", Object.values(t)[0]));
+  console.log('═══════════════════════════════════════');
+  console.log('1. ATTENDANCE TABLES IN mas_hrms');
+  console.log('═══════════════════════════════════════');
+  const [tables] = await masConn.execute<TableRow[]>("SHOW TABLES LIKE '%attendance%'");
+  tables.forEach(t => console.log(' -', Object.values(t)[0]));
 
   // ===== 2. ATTENDANCE RECORDS COUNT =====
-  console.log("\n═══════════════════════════════════════");
-  console.log("2. ATTENDANCE RECORDS COUNT");
-  console.log("═══════════════════════════════════════");
+  console.log('\n═══════════════════════════════════════');
+  console.log('2. ATTENDANCE RECORDS COUNT');
+  console.log('═══════════════════════════════════════');
   const [countResult] = await masConn.execute<CountRow[]>(
-    "SELECT COUNT(*) as total FROM wfm_attendance_record",
+    'SELECT COUNT(*) as total FROM wfm_attendance_record'
   );
-  console.log("Total attendance records:", countResult[0].total);
+  console.log('Total attendance records:', countResult[0].total);
 
   // ===== 3. ANALYST ATTENDANCE =====
-  console.log("\n═══════════════════════════════════════");
-  console.log("3. ANALYST ATTENDANCE (Last 10)");
-  console.log("═══════════════════════════════════════");
+  console.log('\n═══════════════════════════════════════');
+  console.log('3. ANALYST ATTENDANCE (Last 10)');
+  console.log('═══════════════════════════════════════');
   const [analystAttendance] = await masConn.execute<AttendanceRow[]>(`
     SELECT
       ar.id,
@@ -106,13 +104,13 @@ async function main() {
   if (analystAttendance.length > 0) {
     console.table(analystAttendance);
   } else {
-    console.log("❌ No analyst attendance records found");
+    console.log('❌ No analyst attendance records found');
   }
 
   // ===== 4. ATTENDANCE BY SOURCE =====
-  console.log("\n═══════════════════════════════════════");
-  console.log("4. ATTENDANCE RECORDS BY SOURCE");
-  console.log("═══════════════════════════════════════");
+  console.log('\n═══════════════════════════════════════');
+  console.log('4. ATTENDANCE RECORDS BY SOURCE');
+  console.log('═══════════════════════════════════════');
   const [sourceStats] = await masConn.execute<SourceStatsRow[]>(`
     SELECT
       attendance_source,
@@ -124,14 +122,14 @@ async function main() {
   console.table(sourceStats);
 
   // ===== 5. SALARY DATA COUNT =====
-  console.log("\n═══════════════════════════════════════");
-  console.log("5. EMPLOYEE SALARY DATA");
-  console.log("═══════════════════════════════════════");
+  console.log('\n═══════════════════════════════════════');
+  console.log('5. EMPLOYEE SALARY DATA');
+  console.log('═══════════════════════════════════════');
 
   const [salaryCount] = await masConn.execute<CountRow[]>(
-    "SELECT COUNT(*) as total FROM employee_salary_assignment WHERE active_status = 1",
+    'SELECT COUNT(*) as total FROM employee_salary_assignment WHERE active_status = 1'
   );
-  console.log("Active salary assignments:", salaryCount[0].total);
+  console.log('Active salary assignments:', salaryCount[0].total);
 
   const [salaryDetails] = await masConn.execute<SalaryDetailsRow[]>(`
     SELECT
@@ -145,53 +143,50 @@ async function main() {
   console.table(salaryDetails);
 
   // ===== 6. CHECK db_billl CONNECTION =====
-  console.log("\n═══════════════════════════════════════");
-  console.log("6. CHECKING db_billl.masjclrentry");
-  console.log("═══════════════════════════════════════");
+  console.log('\n═══════════════════════════════════════');
+  console.log('6. CHECKING db_billl.masjclrentry');
+  console.log('═══════════════════════════════════════');
 
   try {
     const billConn = await createConnection({
       ...DB_CONFIG,
-      database: "db_billl",
+      database: 'db_billl'
     });
 
     const [tableExists] = await billConn.execute<TableRow[]>(
-      "SHOW TABLES LIKE 'masjclrentry'",
+      "SHOW TABLES LIKE 'masjclrentry'"
     );
 
     if (tableExists.length > 0) {
       const [billCount] = await billConn.execute<BillRow[]>(
-        "SELECT COUNT(*) as total FROM masjclrentry",
+        'SELECT COUNT(*) as total FROM masjclrentry'
       );
-      console.log(
-        "Total records in db_billl.masjclrentry:",
-        billCount[0].total,
-      );
+      console.log('Total records in db_billl.masjclrentry:', billCount[0].total);
 
       const [billStructure] = await billConn.execute<BillStructureRow[]>(
-        "DESCRIBE masjclrentry",
+        'DESCRIBE masjclrentry'
       );
-      console.log("\nTable structure:");
+      console.log('\nTable structure:');
       console.table(billStructure);
 
       const [billSample] = await billConn.execute<BillStructureRow[]>(
-        "SELECT * FROM masjclrentry LIMIT 5",
+        'SELECT * FROM masjclrentry LIMIT 5'
       );
-      console.log("\nSample data (first 5 rows):");
+      console.log('\nSample data (first 5 rows):');
       console.table(billSample);
     } else {
-      console.log("❌ Table masjclrentry not found in db_billl");
+      console.log('❌ Table masjclrentry not found in db_billl');
     }
 
     await billConn.end();
   } catch (err) {
-    console.error("Error accessing db_billl:", (err as Error).message);
+    console.error('Error accessing db_billl:', (err as Error).message);
   }
 
   // ===== 7. ATTENDANCE INTEGRATION POINTS =====
-  console.log("\n═══════════════════════════════════════");
-  console.log("7. ATTENDANCE DATA SOURCES");
-  console.log("═══════════════════════════════════════");
+  console.log('\n═══════════════════════════════════════');
+  console.log('7. ATTENDANCE DATA SOURCES');
+  console.log('═══════════════════════════════════════');
 
   const [dialerSource] = await masConn.execute<SourceCountRow[]>(`
     SELECT COUNT(*) as total
@@ -199,7 +194,7 @@ async function main() {
     WHERE attendance_source = 'dialler'
       AND attendance_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
   `);
-  console.log("Dialler records (last 7 days):", dialerSource[0].total);
+  console.log('Dialler records (last 7 days):', dialerSource[0].total);
 
   const [biometricSource] = await masConn.execute<SourceCountRow[]>(`
     SELECT COUNT(*) as total
@@ -207,10 +202,10 @@ async function main() {
     WHERE attendance_source = 'biometric'
       AND attendance_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
   `);
-  console.log("Biometric records (last 7 days):", biometricSource[0].total);
+  console.log('Biometric records (last 7 days):', biometricSource[0].total);
 
   await masConn.end();
-  console.log("\n✅ Analysis complete");
+  console.log('\n✅ Analysis complete');
 }
 
 main().catch(console.error);

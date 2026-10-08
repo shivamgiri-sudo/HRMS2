@@ -18,48 +18,24 @@ import { describe, expect, it } from "vitest";
  * entirely until real mapping data exists to scope them by. Every other role that had access
  * keeps it unchanged.
  */
-const SRC = readFileSync(
-  resolve(
-    process.cwd(),
-    "src/modules/quality-dashboard/inbound-quality.routes.ts",
-  ),
-  "utf8",
-);
+const SRC = readFileSync(resolve(process.cwd(), "src/modules/quality-dashboard/inbound-quality.routes.ts"), "utf8");
 
 describe("inbound-quality router role gate", () => {
   it("no longer grants process_manager or manager access", () => {
-    const useBlock = SRC.slice(
-      SRC.indexOf("router.use("),
-      SRC.indexOf("router.use(") + 400,
-    );
+    const useBlock = SRC.slice(SRC.indexOf("router.use("), SRC.indexOf("router.use(") + 400);
     expect(useBlock).not.toMatch(/"process_manager"/);
     expect(useBlock).not.toMatch(/"manager"/);
   });
 
   it("still grants every genuinely org-wide role, unchanged", () => {
-    const useBlock = SRC.slice(
-      SRC.indexOf("router.use("),
-      SRC.indexOf("router.use(") + 400,
-    );
-    for (const role of [
-      "super_admin",
-      "admin",
-      "ceo",
-      "operations_manager",
-      "qa",
-      "quality_analyst",
-    ]) {
-      expect(useBlock, `${role} must still have access`).toMatch(
-        new RegExp(`"${role}"`),
-      );
+    const useBlock = SRC.slice(SRC.indexOf("router.use("), SRC.indexOf("router.use(") + 400);
+    for (const role of ["super_admin", "admin", "ceo", "operations_manager", "qa", "quality_analyst"]) {
+      expect(useBlock, `${role} must still have access`).toMatch(new RegExp(`"${role}"`));
     }
   });
 
   it("requires auth before the role check", () => {
-    const useBlock = SRC.slice(
-      SRC.indexOf("router.use("),
-      SRC.indexOf("router.use(") + 400,
-    );
+    const useBlock = SRC.slice(SRC.indexOf("router.use("), SRC.indexOf("router.use(") + 400);
     expect(useBlock).toMatch(/requireAuth/);
   });
 });

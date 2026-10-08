@@ -2,7 +2,7 @@
  * Test dialer API endpoints (requires valid auth token)
  */
 
-const mysql = require("mysql2/promise");
+const mysql = require('mysql2/promise');
 
 function requiredEnv(name) {
   const value = process.env[name] && process.env[name].trim();
@@ -11,25 +11,25 @@ function requiredEnv(name) {
 }
 
 const config = {
-  host: requiredEnv("DIALER_DB_HOST"),
+  host: requiredEnv('DIALER_DB_HOST'),
   port: Number(process.env.DIALER_DB_PORT || 3306),
-  user: requiredEnv("DIALER_DB_USER"),
-  password: requiredEnv("DIALER_DB_PASSWORD"),
-  database: requiredEnv("DIALER_DB_NAME"),
+  user: requiredEnv('DIALER_DB_USER'),
+  password: requiredEnv('DIALER_DB_PASSWORD'),
+  database: requiredEnv('DIALER_DB_NAME'),
 };
 
 async function testDialerAPI() {
-  console.log("=".repeat(80));
-  console.log("DIALER API INTEGRATION TEST");
-  console.log("=".repeat(80));
+  console.log('='.repeat(80));
+  console.log('DIALER API INTEGRATION TEST');
+  console.log('='.repeat(80));
 
   const conn = await mysql.createConnection(config);
 
   try {
-    await conn.query("SET SESSION TRANSACTION READ ONLY");
+    await conn.query('SET SESSION TRANSACTION READ ONLY');
 
     // Test 1: Get active agent
-    console.log("\n📊 Test 1: Finding active agent...");
+    console.log('\n📊 Test 1: Finding active agent...');
     const [activeAgents] = await conn.execute(`
       SELECT DISTINCT user as employee_code
       FROM vicidial_agent_log_11_5
@@ -38,7 +38,7 @@ async function testDialerAPI() {
     `);
 
     if (activeAgents.length === 0) {
-      console.log("❌ No recent agents found");
+      console.log('❌ No recent agents found');
       return;
     }
 
@@ -46,9 +46,8 @@ async function testDialerAPI() {
     console.log(`✅ Found test agent: ${testAgent}`);
 
     // Test 2: Agent status
-    console.log("\n📊 Test 2: Agent Status Query");
-    const [status] = await conn.execute(
-      `
+    console.log('\n📊 Test 2: Agent Status Query');
+    const [status] = await conn.execute(`
       SELECT
         user as employee_code,
         event_time as last_activity,
@@ -61,21 +60,18 @@ async function testDialerAPI() {
       WHERE user = ?
       ORDER BY event_time DESC
       LIMIT 1
-    `,
-      [testAgent],
-    );
+    `, [testAgent]);
 
-    console.log("Agent Status:");
+    console.log('Agent Status:');
     console.table(status);
 
     // Test 3: Inbound calls for yesterday
-    console.log("\n📊 Test 3: Inbound Calls (yesterday)");
+    console.log('\n📊 Test 3: Inbound Calls (yesterday)');
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const dateStr = yesterday.toISOString().split("T")[0];
+    const dateStr = yesterday.toISOString().split('T')[0];
 
-    const [inboundCalls] = await conn.execute(
-      `
+    const [inboundCalls] = await conn.execute(`
       SELECT
         AgentId as employee_code,
         AgentName as employee_name,
@@ -90,21 +86,18 @@ async function testDialerAPI() {
         AND CallDate = DATE(?)
       ORDER BY Time ASC
       LIMIT 10
-    `,
-      [testAgent, dateStr],
-    );
+    `, [testAgent, dateStr]);
 
     console.log(`Inbound Calls for ${testAgent} on ${dateStr}:`);
     if (inboundCalls.length > 0) {
       console.table(inboundCalls);
     } else {
-      console.log("No calls found for this agent/date");
+      console.log('No calls found for this agent/date');
     }
 
     // Test 4: Daily Summary
-    console.log("\n📊 Test 4: Daily Summary");
-    const [dailySummary] = await conn.execute(
-      `
+    console.log('\n📊 Test 4: Daily Summary');
+    const [dailySummary] = await conn.execute(`
       SELECT
         COUNT(*) as total_calls,
         SUM(CAST(COALESCE(CallDurationSecond, 0) AS UNSIGNED)) as total_duration_sec,
@@ -113,17 +106,14 @@ async function testDialerAPI() {
       FROM vw_inbound_cdr
       WHERE AgentId = ?
         AND CallDate = DATE(?)
-    `,
-      [testAgent, dateStr],
-    );
+    `, [testAgent, dateStr]);
 
-    console.log("Daily Summary:");
+    console.log('Daily Summary:');
     console.table(dailySummary);
 
     // Test 5: Agent Activity
-    console.log("\n📊 Test 5: Agent Activity Summary");
-    const [agentActivity] = await conn.execute(
-      `
+    console.log('\n📊 Test 5: Agent Activity Summary');
+    const [agentActivity] = await conn.execute(`
       SELECT
         user as employee_code,
         DATE(event_time) as activity_date,
@@ -138,25 +128,22 @@ async function testDialerAPI() {
       WHERE user = ?
         AND DATE(event_time) = DATE(?)
       GROUP BY user, DATE(event_time)
-    `,
-      [testAgent, dateStr],
-    );
+    `, [testAgent, dateStr]);
 
-    console.log("Agent Activity:");
+    console.log('Agent Activity:');
     if (agentActivity.length > 0) {
       console.table(agentActivity);
     } else {
-      console.log("No activity found for this agent/date");
+      console.log('No activity found for this agent/date');
     }
 
-    console.log("\n" + "=".repeat(80));
-    console.log("✅ ALL API INTEGRATION TESTS PASSED");
-    console.log(
-      "Data tunnel working correctly - agent, calls, and activity queryable",
-    );
-    console.log("=".repeat(80));
+    console.log('\n' + '='.repeat(80));
+    console.log('✅ ALL API INTEGRATION TESTS PASSED');
+    console.log('Data tunnel working correctly - agent, calls, and activity queryable');
+    console.log('='.repeat(80));
+
   } catch (error) {
-    console.error("\n❌ Test failed:", error.message);
+    console.error('\n❌ Test failed:', error.message);
     throw error;
   } finally {
     await conn.end();

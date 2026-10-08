@@ -1,6 +1,6 @@
-import type { Request, Response } from "express";
-import { AgentStatusSync } from "../../workers/domains/agent-status-sync.js";
-import { CallDataSync } from "../../workers/domains/call-data-sync.js";
+import type { Request, Response } from 'express';
+import { AgentStatusSync } from '../../workers/domains/agent-status-sync.js';
+import { CallDataSync } from '../../workers/domains/call-data-sync.js';
 
 const agentStatusSync = new AgentStatusSync();
 const callDataSync = new CallDataSync();
@@ -18,7 +18,7 @@ export async function getAgentStatus(req: Request, res: Response) {
     if (!status) {
       return res.status(404).json({
         success: false,
-        message: "No activity found for agent",
+        message: 'No activity found for agent',
       });
     }
 
@@ -27,7 +27,7 @@ export async function getAgentStatus(req: Request, res: Response) {
       data: status,
     });
   } catch (error: any) {
-    console.error("[DIALER] Error getting agent status:", error);
+    console.error('[DIALER] Error getting agent status:', error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -49,7 +49,7 @@ export async function getActiveAgents(req: Request, res: Response) {
       count: agents.length,
     });
   } catch (error: any) {
-    console.error("[DIALER] Error getting active agents:", error);
+    console.error('[DIALER] Error getting active agents:', error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -69,14 +69,14 @@ export async function getAgentActivity(req: Request, res: Response) {
     if (!start || !end) {
       return res.status(400).json({
         success: false,
-        message: "start and end dates are required",
+        message: 'start and end dates are required',
       });
     }
 
     const activity = await agentStatusSync.getAgentActivity(
       employeeCode,
       start as string,
-      end as string,
+      end as string
     );
 
     return res.json({
@@ -85,7 +85,7 @@ export async function getAgentActivity(req: Request, res: Response) {
       count: activity.length,
     });
   } catch (error: any) {
-    console.error("[DIALER] Error getting agent activity:", error);
+    console.error('[DIALER] Error getting agent activity:', error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -116,7 +116,7 @@ export async function getAgentSummary(req: Request, res: Response) {
       },
     });
   } catch (error: any) {
-    console.error("[DIALER] Error getting agent summary:", error);
+    console.error('[DIALER] Error getting agent summary:', error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -140,7 +140,7 @@ export async function getInboundCalls(req: Request, res: Response) {
       count: calls.length,
     });
   } catch (error: any) {
-    console.error("[DIALER] Error getting inbound calls:", error);
+    console.error('[DIALER] Error getting inbound calls:', error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -164,7 +164,7 @@ export async function getOutboundCalls(req: Request, res: Response) {
       count: calls.length,
     });
   } catch (error: any) {
-    console.error("[DIALER] Error getting outbound calls:", error);
+    console.error('[DIALER] Error getting outbound calls:', error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -187,7 +187,7 @@ export async function getCallVolumeByHour(req: Request, res: Response) {
       data: volume,
     });
   } catch (error: any) {
-    console.error("[DIALER] Error getting call volume:", error);
+    console.error('[DIALER] Error getting call volume:', error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -203,17 +203,14 @@ export async function getDispositionBreakdown(req: Request, res: Response) {
   try {
     const { employeeCode, date } = req.params;
 
-    const dispositions = await callDataSync.getDispositionBreakdown(
-      employeeCode,
-      date,
-    );
+    const dispositions = await callDataSync.getDispositionBreakdown(employeeCode, date);
 
     return res.json({
       success: true,
       data: dispositions,
     });
   } catch (error: any) {
-    console.error("[DIALER] Error getting dispositions:", error);
+    console.error('[DIALER] Error getting dispositions:', error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -239,7 +236,7 @@ export async function checkAgentActive(req: Request, res: Response) {
       },
     });
   } catch (error: any) {
-    console.error("[DIALER] Error checking agent active:", error);
+    console.error('[DIALER] Error checking agent active:', error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -253,18 +250,18 @@ export async function checkAgentActive(req: Request, res: Response) {
  */
 export async function healthCheck(req: Request, res: Response) {
   try {
-    const { testDialerConnection } = await import("../../db/dialerDb.js");
+    const { testDialerConnection } = await import('../../db/dialerDb.js');
     const result = await testDialerConnection();
 
     if (result.ok) {
       return res.json({
         success: true,
-        message: "Dialer DB connection healthy",
+        message: 'Dialer DB connection healthy',
       });
     } else {
       return res.status(503).json({
         success: false,
-        message: "Dialer DB connection failed",
+        message: 'Dialer DB connection failed',
         error: result.error,
       });
     }

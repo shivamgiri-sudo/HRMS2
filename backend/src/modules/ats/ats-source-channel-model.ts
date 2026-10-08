@@ -46,24 +46,23 @@ export const CANONICAL_CHANNEL_LABEL: Record<CanonicalChannel, string> = {
 };
 
 const RAW_TO_CANONICAL: Record<string, CanonicalChannel> = {
-  walkin: "walk_in",
+  "walkin": "walk_in",
   "walk-in": "walk_in",
   "walk in": "walk_in",
-  recruiter: "recruiter",
-  reference: "referral",
-  referral: "referral",
+  "recruiter": "recruiter",
+  "reference": "referral",
+  "referral": "referral",
   "employee referral": "referral",
-  linkedin: "job_portal",
-  naukri: "job_portal",
+  "linkedin": "job_portal",
+  "naukri": "job_portal",
   "job portal": "job_portal",
   "direct application": "direct",
-  codex_e2e_test: "test_data",
+  "codex_e2e_test": "test_data",
   "test demo": "test_data",
-  other: "other",
+  "other": "other",
 };
 
-const normalise = (raw: string): string =>
-  raw.trim().toLowerCase().replace(/\s+/g, " ");
+const normalise = (raw: string): string => raw.trim().toLowerCase().replace(/\s+/g, " ");
 
 /**
  * Canonical channel for a raw `sourcing_channel` value.
@@ -75,19 +74,14 @@ const normalise = (raw: string): string =>
  * An unrecognised non-blank value returns null so the caller can surface it, rather than being
  * folded into `other` where it would stop being visible as unmapped.
  */
-export function canonicalChannel(
-  raw: string | null | undefined,
-): CanonicalChannel | null {
+export function canonicalChannel(raw: string | null | undefined): CanonicalChannel | null {
   if (raw == null) return null;
   const key = normalise(String(raw));
   if (!key) return "unspecified";
   return RAW_TO_CANONICAL[key] ?? null;
 }
 
-export interface ChannelBucket {
-  channel: string;
-  count: number;
-}
+export interface ChannelBucket { channel: string; count: number }
 
 export interface NormalisedChannel {
   channel: CanonicalChannel;
@@ -104,9 +98,7 @@ export interface NormalisedChannels {
 }
 
 /** Merge raw channel buckets into canonical ones, preserving what was merged. */
-export function normaliseChannels(
-  buckets: ChannelBucket[],
-): NormalisedChannels {
+export function normaliseChannels(buckets: ChannelBucket[]): NormalisedChannels {
   const byChannel = new Map<CanonicalChannel, NormalisedChannel>();
   const unmapped: ChannelBucket[] = [];
 

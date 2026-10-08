@@ -13,9 +13,9 @@ describe("assessment portal HTML", () => {
     const page = candidateAssessmentPage();
     expect(page).toContain("Assessment attempt: 1 only");
     expect(page).toContain("Typing attempts: maximum 2");
-    expect(page).not.toContain('id="process"');
-    expect(page).not.toContain('id="role"');
-    expect(page).toContain('id="deviceBlock"');
+    expect(page).not.toContain("id=\"process\"");
+    expect(page).not.toContain("id=\"role\"");
+    expect(page).toContain("id=\"deviceBlock\"");
     expect(page).toContain("isBlockedDevice");
     expect(() => new Function(scriptFrom(page))).not.toThrow();
   });

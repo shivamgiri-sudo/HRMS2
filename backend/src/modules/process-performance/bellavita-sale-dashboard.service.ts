@@ -1,15 +1,7 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import {
-  setMonthlyTarget,
-  type MonthlyTargetChange,
-} from "./dashboard-monthly-target.shared.js";
-import {
-  MONTHLY_LOB_TARGETS,
-  getAutoLobDailyTargets,
-  sumTargets,
-  type DailyTarget,
-} from "./bellavita-auto-targets.shared.js";
+import { setMonthlyTarget, type MonthlyTargetChange } from "./dashboard-monthly-target.shared.js";
+import { MONTHLY_LOB_TARGETS, getAutoLobDailyTargets, sumTargets, type DailyTarget } from "./bellavita-auto-targets.shared.js";
 
 const SALE_DASHBOARD_CODE = "bellavita_sale";
 
@@ -24,11 +16,7 @@ const CART_TARGET_METRIC = "BB_CART_REVENUE_TARGET";
  * Shared by the loader below and by setBellavitaSaleMonthlyTarget, so a set
  * target is always read back under the exact key it was written with. */
 export function lobTargetMetricCode(lob: string): string {
-  const slug = lob
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+  const slug = lob.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return `BB_SALE_TARGET_${slug || "UNKNOWN"}`;
 }
 
@@ -40,19 +28,9 @@ export function lobTargetMetricCode(lob: string): string {
  * because there is no longer a separate value to keep in sync. Every other
  * LOB keeps its own bellavita_sale-scoped key, since it has no equivalent
  * dashboard elsewhere. */
-function targetKeyFor(lob: string): {
-  dashboardCode: string;
-  metricCode: string;
-} {
-  if (lob.trim().toLowerCase() === "abandon cart")
-    return {
-      dashboardCode: CART_DASHBOARD_CODE,
-      metricCode: CART_TARGET_METRIC,
-    };
-  return {
-    dashboardCode: SALE_DASHBOARD_CODE,
-    metricCode: lobTargetMetricCode(lob),
-  };
+function targetKeyFor(lob: string): { dashboardCode: string; metricCode: string } {
+  if (lob.trim().toLowerCase() === "abandon cart") return { dashboardCode: CART_DASHBOARD_CODE, metricCode: CART_TARGET_METRIC };
+  return { dashboardCode: SALE_DASHBOARD_CODE, metricCode: lobTargetMetricCode(lob) };
 }
 
 /**
@@ -95,13 +73,9 @@ function targetKeyFor(lob: string): {
  * "Inbound" -- note the LOB column drops "customer"/"Customer" from the
  * campaign name, e.g. bb_sale.lob="Repeat" while the target photo's row
  * label is "Repeat Customer LOB"). */
-export const LOB_TARGETS: Record<string, { target: number; note?: string }> =
-  Object.fromEntries(
-    Object.entries(MONTHLY_LOB_TARGETS).map(([lob, target]) => [
-      lob,
-      { target },
-    ]),
-  );
+export const LOB_TARGETS: Record<string, { target: number; note?: string }> = Object.fromEntries(
+  Object.entries(MONTHLY_LOB_TARGETS).map(([lob, target]) => [lob, { target }]),
+);
 
 export interface BellavitaSaleDashboardData {
   headline: {
@@ -177,12 +151,7 @@ export interface BellavitaSaleDashboardData {
     target: number;
     achievementPct: number;
   };
-  stateRevenue: Array<{
-    state: string;
-    saleCount: number;
-    turnover: number;
-    rtoCount: number;
-  }>;
+  stateRevenue: Array<{ state: string; saleCount: number; turnover: number; rtoCount: number }>;
   topPerformers: Array<{
     empId: string;
     empName: string;
@@ -246,8 +215,7 @@ const num = (v: string | number | null | undefined): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
-const pct = (part: number, whole: number): number =>
-  whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0;
+const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -299,8 +267,7 @@ export function dedupedSaleSql(): string {
 }
 
 export async function getBellavitaSaleDashboard(
-  fromInput: string,
-  toInput: string,
+  fromInput: string, toInput: string,
   /** Real value of bb_sale.lob (or unset/"All" for every LOB). Narrows every
    * query below -- headline, trend, state/top-performer breakdowns -- to that
    * one LOB. Not applied to activeAgentsRow: bb_apr (the roster/attendance
@@ -323,12 +290,9 @@ export async function getBellavitaSaleDashboard(
   const deduped = dedupedSaleSql();
   const lob = lobFilter && lobFilter !== "All" ? lobFilter : undefined;
   const lobParam = lob ? [lob] : [];
-  const empId =
-    empIdFilter && empIdFilter.trim() ? empIdFilter.trim() : undefined;
+  const empId = empIdFilter && empIdFilter.trim() ? empIdFilter.trim() : undefined;
   const empParam = empId ? [empId] : [];
-  const headlineConds = [lob ? "lob = ?" : null, empId ? "emp_id = ?" : null]
-    .filter(Boolean)
-    .join(" AND ");
+  const headlineConds = [lob ? "lob = ?" : null, empId ? "emp_id = ?" : null].filter(Boolean).join(" AND ");
   const headlineParams = [...range, ...lobParam, ...empParam];
 
   // ONE de-duplicated pass over bb_sale (a few seconds on the shared DB), aggregated here. This used to be eight separate
@@ -359,21 +323,16 @@ export async function getBellavitaSaleDashboard(
   rtoCutoffDate.setDate(rtoCutoffDate.getDate() - 7);
   const rtoCutoff = localDateStr(rtoCutoffDate);
   const rtoTo = to < rtoCutoff ? to : rtoCutoff;
-  const rtoP =
-    rtoTo >= from
-      ? db.execute<RowDataPacket[]>(
-          `SELECT COUNT(*) AS sale_count, SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
+  const rtoP = rtoTo >= from
+    ? db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS sale_count, SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
        FROM ${deduped}
        ${headlineConds ? `WHERE ${headlineConds}` : ""}`,
-          [from, rtoTo, ...lobParam, ...empParam],
-        )
-      : null;
+      [from, rtoTo, ...lobParam, ...empParam],
+    )
+    : null;
 
-  const [[saleRows], [[activeAgentsRow]], rtoRes] = await Promise.all([
-    saleRowsP,
-    activeP,
-    rtoP ?? Promise.resolve(null),
-  ]);
+  const [[saleRows], [[activeAgentsRow]], rtoRes] = await Promise.all([saleRowsP, activeP, rtoP ?? Promise.resolve(null)]);
   const rtoRow = rtoRes ? (rtoRes[0] as RowDataPacket[])[0] : undefined;
   const rtoSaleCount = num(rtoRow?.sale_count);
   const rtoOnlyCount = num(rtoRow?.rto_count);
@@ -382,33 +341,22 @@ export async function getBellavitaSaleDashboard(
   const isRto = (r: RowDataPacket): boolean => r.final_status === "RTO";
   const isPaid = (r: RowDataPacket): boolean => r.payment_status === "paid";
   const isCod = (r: RowDataPacket): boolean => r.payment_status === "cod";
-  const sumBy = (
-    rows: RowDataPacket[],
-    pick: (r: RowDataPacket) => number,
-  ): number => rows.reduce((n, r) => n + pick(r), 0);
-  const groupBy = (
-    rows: RowDataPacket[],
-    key: (r: RowDataPacket) => string,
-  ): Map<string, RowDataPacket[]> => {
+  const sumBy = (rows: RowDataPacket[], pick: (r: RowDataPacket) => number): number => rows.reduce((n, r) => n + pick(r), 0);
+  const groupBy = (rows: RowDataPacket[], key: (r: RowDataPacket) => string): Map<string, RowDataPacket[]> => {
     // MySQL's GROUP BY is case-insensitive and ignores trailing spaces (the column collation), so "MAS57105" and "mas57105 "
     // were one agent in the SQL version; group the same way, and show the first spelling seen.
     const m = new Map<string, RowDataPacket[]>();
     const shown = new Map<string, string>();
     for (const r of rows) {
-      const raw = key(r);
-      const norm = raw.trimEnd().toLowerCase();
+      const raw = key(r); const norm = raw.trimEnd().toLowerCase();
       if (!shown.has(norm)) shown.set(norm, raw);
-      const g = m.get(shown.get(norm) as string);
-      if (g) g.push(r);
-      else m.set(shown.get(norm) as string, [r]);
+      const g = m.get(shown.get(norm) as string); if (g) g.push(r); else m.set(shown.get(norm) as string, [r]);
     }
     return m;
   };
 
   // headline / trend honour the LOB and agent filters; the LOB/state/performer breakdowns honour the LOB filter only.
-  const headlineRows = saleRows.filter(
-    (r) => (!lob || r.lob === lob) && (!empId || r.emp_id === empId),
-  );
+  const headlineRows = saleRows.filter((r) => (!lob || r.lob === lob) && (!empId || r.emp_id === empId));
   const lobScoped = lob ? saleRows.filter((r) => r.lob === lob) : saleRows;
 
   const headlineRow: HeadlineRow = {
@@ -417,106 +365,42 @@ export async function getBellavitaSaleDashboard(
     paid_count: headlineRows.filter(isPaid).length,
     cod_count: headlineRows.filter(isCod).length,
     rto_count: headlineRows.filter(isRto).length,
-    net_turnover: String(
-      sumBy(
-        headlineRows.filter((r) => !isRto(r)),
-        amt,
-      ),
-    ),
+    net_turnover: String(sumBy(headlineRows.filter((r) => !isRto(r)), amt)),
     net_sale_count: headlineRows.filter((r) => !isRto(r)).length,
   } as HeadlineRow;
 
-  const trendRows: TrendRow[] = [
-    ...groupBy(headlineRows, (r) => String(r.d).slice(0, 10)).entries(),
-  ]
+  const trendRows: TrendRow[] = [...groupBy(headlineRows, (r) => String(r.d).slice(0, 10)).entries()]
     .sort(([x], [y]) => x.localeCompare(y))
     .map(([d, g]) => ({
-      d,
-      sale_count: g.length,
-      turnover: String(sumBy(g, amt)),
-      paid_count: g.filter(isPaid).length,
-      cod_count: g.filter(isCod).length,
-      rto_count: g.filter(isRto).length,
+      d, sale_count: g.length, turnover: String(sumBy(g, amt)), paid_count: g.filter(isPaid).length,
+      cod_count: g.filter(isCod).length, rto_count: g.filter(isRto).length,
     })) as TrendRow[];
 
-  const lobRows: LobRow[] = [
-    ...groupBy(
-      lobScoped.filter((r) => r.lob),
-      (r) => String(r.lob),
-    ).entries(),
-  ]
+  const lobRows: LobRow[] = [...groupBy(lobScoped.filter((r) => r.lob), (r) => String(r.lob)).entries()]
     .map(([l, g]) => ({
-      lob: l,
-      sale_count: g.length,
-      turnover: String(sumBy(g, amt)),
-      cod_count: g.filter(isCod).length,
-      paid_count: g.filter(isPaid).length,
-      rto_amount: String(sumBy(g.filter(isRto), amt)),
-      rto_count: g.filter(isRto).length,
-      net_sale_count: g.filter((r) => !isRto(r)).length,
-      net_turnover: String(
-        sumBy(
-          g.filter((r) => !isRto(r)),
-          amt,
-        ),
-      ),
+      lob: l, sale_count: g.length, turnover: String(sumBy(g, amt)), cod_count: g.filter(isCod).length, paid_count: g.filter(isPaid).length,
+      rto_amount: String(sumBy(g.filter(isRto), amt)), rto_count: g.filter(isRto).length,
+      net_sale_count: g.filter((r) => !isRto(r)).length, net_turnover: String(sumBy(g.filter((r) => !isRto(r)), amt)),
     }))
     .sort((x, y) => num(y.turnover) - num(x.turnover)) as LobRow[];
 
-  const stateGroups = [
-    ...groupBy(
-      lobScoped.filter((r) => r.state),
-      (r) => String(r.state),
-    ).entries(),
-  ];
+  const stateGroups = [...groupBy(lobScoped.filter((r) => r.state), (r) => String(r.state)).entries()];
   const stateRows: StateRow[] = stateGroups
-    .map(([st, g]) => ({
-      state: st,
-      sale_count: g.length,
-      turnover: String(sumBy(g, amt)),
-      rto_count: g.filter(isRto).length,
-    }))
-    .sort((x, y) => num(y.turnover) - num(x.turnover))
-    .slice(0, 10) as StateRow[];
+    .map(([st, g]) => ({ state: st, sale_count: g.length, turnover: String(sumBy(g, amt)), rto_count: g.filter(isRto).length }))
+    .sort((x, y) => num(y.turnover) - num(x.turnover)).slice(0, 10) as StateRow[];
 
-  const performerRows: PerformerRow[] = [
-    ...groupBy(
-      lobScoped.filter((r) => r.emp_id),
-      (r) => String(r.emp_id),
-    ).entries(),
-  ]
+  const performerRows: PerformerRow[] = [...groupBy(lobScoped.filter((r) => r.emp_id), (r) => String(r.emp_id)).entries()]
     .map(([id, g]) => ({
-      emp_id: id,
-      emp_name:
-        g
-          .map((r) => r.emp_name)
-          .filter(Boolean)
-          .sort()
-          .at(-1) ?? null,
-      sale_count: g.length,
-      turnover: String(sumBy(g, amt)),
-      rto_count: g.filter(isRto).length,
-      paid_count: g.filter(isPaid).length,
-      lob:
-        g
-          .map((r) => r.lob)
-          .filter(Boolean)
-          .sort()
-          .at(-1) ?? null,
+      emp_id: id, emp_name: g.map((r) => r.emp_name).filter(Boolean).sort().at(-1) ?? null, sale_count: g.length,
+      turnover: String(sumBy(g, amt)), rto_count: g.filter(isRto).length, paid_count: g.filter(isPaid).length,
+      lob: g.map((r) => r.lob).filter(Boolean).sort().at(-1) ?? null,
     }))
-    .sort((x, y) => num(y.turnover) - num(x.turnover))
-    .slice(0, 5) as PerformerRow[];
+    .sort((x, y) => num(y.turnover) - num(x.turnover)).slice(0, 5) as PerformerRow[];
 
   const topRtoStateRows: StateRow[] = stateGroups
     .filter(([, g]) => g.length >= 5)
-    .map(([st, g]) => ({
-      state: st,
-      sale_count: g.length,
-      turnover: null,
-      rto_count: g.filter(isRto).length,
-    }))
-    .sort((x, y) => y.rto_count / y.sale_count - x.rto_count / x.sale_count)
-    .slice(0, 5) as StateRow[];
+    .map(([st, g]) => ({ state: st, sale_count: g.length, turnover: null, rto_count: g.filter(isRto).length }))
+    .sort((x, y) => y.rto_count / y.sale_count - x.rto_count / x.sale_count).slice(0, 5) as StateRow[];
 
   const turnover = num(headlineRow?.turnover);
   const saleCount = num(headlineRow?.sale_count);
@@ -526,11 +410,7 @@ export async function getBellavitaSaleDashboard(
   // Targets are automatic (bellavita-auto-targets.shared.ts): nothing is stored or edited. Each LOB's
   // target is the sum of its daily targets over the selected days up to today ("MTD till today").
   const targetMonth = to.slice(0, 7);
-  const dailyTargets = await getAutoLobDailyTargets(
-    lobRows.map((r) => r.lob || "Unknown"),
-    from,
-    to,
-  );
+  const dailyTargets = await getAutoLobDailyTargets(lobRows.map((r) => r.lob || "Unknown"), from, to);
 
   const lobRevenue = lobRows.map((r) => {
     const lob = r.lob || "Unknown";
@@ -557,10 +437,7 @@ export async function getBellavitaSaleDashboard(
       rtoAmount: num(r.rto_amount),
       rtoCount: rtoCountVal,
       rtoPct: pct(rtoCountVal, saleCountVal),
-      aov:
-        saleCountVal > 0
-          ? Math.round((turnoverVal / saleCountVal) * 100) / 100
-          : 0,
+      aov: saleCountVal > 0 ? Math.round((turnoverVal / saleCountVal) * 100) / 100 : 0,
       netSaleCount: num(r.net_sale_count),
       netRevenue: num(r.net_turnover),
     };
@@ -578,10 +455,7 @@ export async function getBellavitaSaleDashboard(
   const lobTotalPaid = lobRevenue.reduce((s, r) => s + r.paidCount, 0);
   const lobTotalRtoAmount = lobRevenue.reduce((s, r) => s + r.rtoAmount, 0);
   const lobTotalRtoCount = lobRevenue.reduce((s, r) => s + r.rtoCount, 0);
-  const lobTotalNetSaleCount = lobRevenue.reduce(
-    (s, r) => s + r.netSaleCount,
-    0,
-  );
+  const lobTotalNetSaleCount = lobRevenue.reduce((s, r) => s + r.netSaleCount, 0);
   const lobTotalNetRevenue = lobRevenue.reduce((s, r) => s + r.netRevenue, 0);
   const lobTotalTarget = lobRevenue.reduce((s, r) => s + (r.target ?? 0), 0);
   const lobGrandTotal = {
@@ -594,10 +468,7 @@ export async function getBellavitaSaleDashboard(
     rtoAmount: lobTotalRtoAmount,
     rtoCount: lobTotalRtoCount,
     rtoPct: pct(lobTotalRtoCount, lobTotalSaleCount),
-    aov:
-      lobTotalSaleCount > 0
-        ? Math.round((lobTotalTurnover / lobTotalSaleCount) * 100) / 100
-        : 0,
+    aov: lobTotalSaleCount > 0 ? Math.round((lobTotalTurnover / lobTotalSaleCount) * 100) / 100 : 0,
     netSaleCount: lobTotalNetSaleCount,
     netRevenue: lobTotalNetRevenue,
     target: lobTotalTarget,
@@ -660,22 +531,11 @@ export async function getBellavitaSaleDashboard(
  * lobRevenue rows, so it's a closed set at the UI level even though this
  * function itself doesn't enumerate every possible LOB. See
  * dashboard-monthly-target.shared.ts's header comment for the storage model. */
-export async function setBellavitaSaleMonthlyTarget(
-  lob: string,
-  month: string,
-  value: number,
-  actorId: string,
-): Promise<MonthlyTargetChange> {
+export async function setBellavitaSaleMonthlyTarget(lob: string, month: string, value: number, actorId: string): Promise<MonthlyTargetChange> {
   const trimmed = lob.trim();
   if (!trimmed) throw new Error("lob is required");
   const { dashboardCode, metricCode } = targetKeyFor(trimmed);
-  const change = await setMonthlyTarget(
-    dashboardCode,
-    metricCode,
-    month,
-    value,
-    actorId,
-  );
+  const change = await setMonthlyTarget(dashboardCode, metricCode, month, value, actorId);
   return { ...change, metricCode: trimmed }; // report back the real LOB name, not its internal metric code
 }
 
@@ -698,27 +558,20 @@ export async function setBellavitaSaleMonthlyTarget(
  * inventing a second, non-existent bucket.
  */
 export interface DateLobBlockRow {
-  codSale: number;
-  codRevenue: number;
-  paidSale: number;
-  paidRevenue: number;
-  totalSale: number;
-  totalRevenue: number;
-  codPct: number;
-  paidPct: number;
+  codSale: number; codRevenue: number;
+  paidSale: number; paidRevenue: number;
+  totalSale: number; totalRevenue: number;
+  codPct: number; paidPct: number;
 }
 export interface DateLobMatrixRow {
   date: string;
   lobs: Record<string, DateLobBlockRow>;
   overall: DateLobBlockRow;
-  rtoCount: number;
-  rtoRevenue: number;
-  netSaleCount: number;
-  netSaleRevenue: number;
+  rtoCount: number; rtoRevenue: number;
+  netSaleCount: number; netSaleRevenue: number;
 }
 export interface BellavitaDateLobMatrixData {
-  from: string;
-  to: string;
+  from: string; to: string;
   /** Real LOBs present in this range, in the reference sheet's own display order
    * (Repeat, Chat, Abandon Cart, Inbound), with any unexpected extra LOB appended. */
   lobOrder: string[];
@@ -729,60 +582,24 @@ export interface BellavitaDateLobMatrixData {
 const LOB_DISPLAY_ORDER = ["Repeat", "Chat", "Abandon Cart", "Inbound"];
 
 function emptyBlock(): DateLobBlockRow {
-  return {
-    codSale: 0,
-    codRevenue: 0,
-    paidSale: 0,
-    paidRevenue: 0,
-    totalSale: 0,
-    totalRevenue: 0,
-    codPct: 0,
-    paidPct: 0,
-  };
+  return { codSale: 0, codRevenue: 0, paidSale: 0, paidRevenue: 0, totalSale: 0, totalRevenue: 0, codPct: 0, paidPct: 0 };
 }
 function finalizeBlock(b: DateLobBlockRow): DateLobBlockRow {
-  return {
-    ...b,
-    codPct: pct(b.codSale, b.codSale + b.paidSale),
-    paidPct: pct(b.paidSale, b.codSale + b.paidSale),
-  };
+  return { ...b, codPct: pct(b.codSale, b.codSale + b.paidSale), paidPct: pct(b.paidSale, b.codSale + b.paidSale) };
 }
-function addBlock(
-  dst: DateLobBlockRow,
-  src: {
-    codSale: number;
-    codRevenue: number;
-    paidSale: number;
-    paidRevenue: number;
-    totalSale: number;
-    totalRevenue: number;
-  },
-) {
-  dst.codSale += src.codSale;
-  dst.codRevenue += src.codRevenue;
-  dst.paidSale += src.paidSale;
-  dst.paidRevenue += src.paidRevenue;
-  dst.totalSale += src.totalSale;
-  dst.totalRevenue += src.totalRevenue;
+function addBlock(dst: DateLobBlockRow, src: { codSale: number; codRevenue: number; paidSale: number; paidRevenue: number; totalSale: number; totalRevenue: number }) {
+  dst.codSale += src.codSale; dst.codRevenue += src.codRevenue;
+  dst.paidSale += src.paidSale; dst.paidRevenue += src.paidRevenue;
+  dst.totalSale += src.totalSale; dst.totalRevenue += src.totalRevenue;
 }
 
 interface DateLobRawRow extends RowDataPacket {
-  d: string;
-  lob: string | null;
-  cod_n: number;
-  cod_rev: string | null;
-  paid_n: number;
-  paid_rev: string | null;
-  total_n: number;
-  total_rev: string | null;
-  rto_n: number;
-  rto_rev: string | null;
+  d: string; lob: string | null;
+  cod_n: number; cod_rev: string | null; paid_n: number; paid_rev: string | null;
+  total_n: number; total_rev: string | null; rto_n: number; rto_rev: string | null;
 }
 
-export async function getBellavitaSaleDateLobMatrix(
-  fromInput: string,
-  toInput: string,
-): Promise<BellavitaDateLobMatrixData> {
+export async function getBellavitaSaleDateLobMatrix(fromInput: string, toInput: string): Promise<BellavitaDateLobMatrixData> {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -805,10 +622,7 @@ export async function getBellavitaSaleDateLobMatrix(
   );
 
   const lobsSeen = new Set<string>(rows.map((r) => r.lob || "Unknown"));
-  const lobOrder = [
-    ...LOB_DISPLAY_ORDER.filter((l) => lobsSeen.has(l)),
-    ...[...lobsSeen].filter((l) => !LOB_DISPLAY_ORDER.includes(l)).sort(),
-  ];
+  const lobOrder = [...LOB_DISPLAY_ORDER.filter((l) => lobsSeen.has(l)), ...[...lobsSeen].filter((l) => !LOB_DISPLAY_ORDER.includes(l)).sort()];
 
   const byDate = new Map<string, DateLobMatrixRow>();
   for (const r of rows) {
@@ -816,26 +630,14 @@ export async function getBellavitaSaleDateLobMatrix(
     const lob = r.lob || "Unknown";
     let row = byDate.get(date);
     if (!row) {
-      row = {
-        date,
-        lobs: {},
-        overall: emptyBlock(),
-        rtoCount: 0,
-        rtoRevenue: 0,
-        netSaleCount: 0,
-        netSaleRevenue: 0,
-      };
+      row = { date, lobs: {}, overall: emptyBlock(), rtoCount: 0, rtoRevenue: 0, netSaleCount: 0, netSaleRevenue: 0 };
       byDate.set(date, row);
     }
     const block: DateLobBlockRow = {
-      codSale: num(r.cod_n),
-      codRevenue: num(r.cod_rev),
-      paidSale: num(r.paid_n),
-      paidRevenue: num(r.paid_rev),
-      totalSale: num(r.total_n),
-      totalRevenue: num(r.total_rev),
-      codPct: 0,
-      paidPct: 0,
+      codSale: num(r.cod_n), codRevenue: num(r.cod_rev),
+      paidSale: num(r.paid_n), paidRevenue: num(r.paid_rev),
+      totalSale: num(r.total_n), totalRevenue: num(r.total_rev),
+      codPct: 0, paidPct: 0,
     };
     row.lobs[lob] = finalizeBlock(block);
     addBlock(row.overall, block);
@@ -846,31 +648,17 @@ export async function getBellavitaSaleDateLobMatrix(
   }
   for (const row of byDate.values()) row.overall = finalizeBlock(row.overall);
 
-  const rowsOut = [...byDate.values()].sort((a, b) =>
-    a.date.localeCompare(b.date),
-  );
+  const rowsOut = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 
-  const grandTotal: DateLobMatrixRow = {
-    date: "Grand Total",
-    lobs: {},
-    overall: emptyBlock(),
-    rtoCount: 0,
-    rtoRevenue: 0,
-    netSaleCount: 0,
-    netSaleRevenue: 0,
-  };
+  const grandTotal: DateLobMatrixRow = { date: "Grand Total", lobs: {}, overall: emptyBlock(), rtoCount: 0, rtoRevenue: 0, netSaleCount: 0, netSaleRevenue: 0 };
   for (const lob of lobOrder) grandTotal.lobs[lob] = emptyBlock();
   for (const row of rowsOut) {
-    for (const lob of lobOrder)
-      if (row.lobs[lob]) addBlock(grandTotal.lobs[lob], row.lobs[lob]);
+    for (const lob of lobOrder) if (row.lobs[lob]) addBlock(grandTotal.lobs[lob], row.lobs[lob]);
     addBlock(grandTotal.overall, row.overall);
-    grandTotal.rtoCount += row.rtoCount;
-    grandTotal.rtoRevenue += row.rtoRevenue;
-    grandTotal.netSaleCount += row.netSaleCount;
-    grandTotal.netSaleRevenue += row.netSaleRevenue;
+    grandTotal.rtoCount += row.rtoCount; grandTotal.rtoRevenue += row.rtoRevenue;
+    grandTotal.netSaleCount += row.netSaleCount; grandTotal.netSaleRevenue += row.netSaleRevenue;
   }
-  for (const lob of lobOrder)
-    grandTotal.lobs[lob] = finalizeBlock(grandTotal.lobs[lob]);
+  for (const lob of lobOrder) grandTotal.lobs[lob] = finalizeBlock(grandTotal.lobs[lob]);
   grandTotal.overall = finalizeBlock(grandTotal.overall);
 
   return { from, to, lobOrder, rows: rowsOut, grandTotal };

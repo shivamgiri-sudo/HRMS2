@@ -56,11 +56,8 @@ async function audit(): Promise<void> {
   // Loud, and specific about what it means. "N divergences" reads as a data-quality nit; these are
   // people who were told their correction went through and whose pay is wrong.
   const bySource: Record<string, number> = {};
-  for (const d of r.confirmed)
-    bySource[d.source] = (bySource[d.source] ?? 0) + 1;
-  const detail = Object.entries(bySource)
-    .map(([k, n]) => `${k}=${n}`)
-    .join(" ");
+  for (const d of r.confirmed) bySource[d.source] = (bySource[d.source] ?? 0) + 1;
+  const detail = Object.entries(bySource).map(([k, n]) => `${k}=${n}`).join(" ");
   const employees = new Set(r.confirmed.map((d) => d.employeeId)).size;
 
   console.error(
@@ -78,11 +75,7 @@ async function audit(): Promise<void> {
     console.error(`[${WORKER_NAME}]   … and ${r.confirmed.length - 10} more`);
   }
 
-  await recordWorkerRun(WORKER_NAME, "completed", {
-    ...summary,
-    bySource,
-    employees,
-  });
+  await recordWorkerRun(WORKER_NAME, "completed", { ...summary, bySource, employees });
 }
 
 async function sweep(): Promise<void> {
@@ -102,12 +95,8 @@ export function startAttendanceCorrectionReconciliationWorker(): void {
   console.log(
     `[${WORKER_NAME}] Starting — interval: ${CHECK_INTERVAL_MS / 3600000}h, window: ${WINDOW_DAYS}d`,
   );
-  startupRef = setTimeout(() => {
-    void sweep();
-  }, STARTUP_DELAY_MS);
-  intervalRef = setInterval(() => {
-    void sweep();
-  }, CHECK_INTERVAL_MS);
+  startupRef = setTimeout(() => { void sweep(); }, STARTUP_DELAY_MS);
+  intervalRef = setInterval(() => { void sweep(); }, CHECK_INTERVAL_MS);
 }
 
 export function stopAttendanceCorrectionReconciliationWorker(): void {

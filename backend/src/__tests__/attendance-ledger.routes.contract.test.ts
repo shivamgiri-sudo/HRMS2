@@ -17,62 +17,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../db/mysql.js", () => ({
-  db: { execute, query: execute, getConnection: vi.fn() },
-}));
+vi.mock("../db/mysql.js", () => ({ db: { execute, query: execute, getConnection: vi.fn() } }));
 
-vi.mock("../logger.js", () => ({
-  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
-}));
+vi.mock("../logger.js", () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 
-const { resolveUserBusinessScope, buildEmployeeScopeCondition } = vi.hoisted(
-  () => ({
-    resolveUserBusinessScope: vi.fn(async () => ({
-      isSuperAdmin: false,
-      isAdmin: false,
-      isHr: false,
-      roles: ["wfm"],
-      assignments: [],
-    })),
-    buildEmployeeScopeCondition: vi.fn((..._args: unknown[]) => ({
-      sql: "e.branch_id IN (?)",
-      params: ["branch-scope-1"] as unknown[],
-    })),
-  }),
-);
-vi.mock("../shared/enterpriseScope.js", () => ({
-  resolveUserBusinessScope,
-  buildEmployeeScopeCondition,
+const { resolveUserBusinessScope, buildEmployeeScopeCondition } = vi.hoisted(() => ({
+  resolveUserBusinessScope: vi.fn(async () => ({ isSuperAdmin: false, isAdmin: false, isHr: false, roles: ["wfm"], assignments: [] })),
+  buildEmployeeScopeCondition: vi.fn((..._args: unknown[]) => ({ sql: "e.branch_id IN (?)", params: ["branch-scope-1"] as unknown[] })),
 }));
+vi.mock("../shared/enterpriseScope.js", () => ({ resolveUserBusinessScope, buildEmployeeScopeCondition }));
 
 let actor: { id: string; role: string; roles: string[] };
 vi.mock("../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<typeof import("../middleware/authMiddleware.js")>();
-  return {
-    ...original,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.authUser = actor;
-      next();
-    },
-  };
+  const original = await importOriginal<typeof import("../middleware/authMiddleware.js")>();
+  return { ...original, requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); } };
 });
 
 // requireRole.ts is NOT mocked — the real role gate is under test.
 import { attendanceLedgerRouter } from "../modules/wfm/attendance-ledger.routes.js";
 
-const ROUTER_SRC = readFileSync(
-  resolve(__dirname, "../modules/wfm/attendance-ledger.routes.ts"),
-  "utf8",
-);
-const MISMATCH_SRC = readFileSync(
-  resolve(__dirname, "../modules/wfm/mismatch-review.routes.ts"),
-  "utf8",
-);
-const SOURCES_SRC = readFileSync(
-  resolve(__dirname, "../modules/wfm/attendance-ledger.sources.ts"),
-  "utf8",
-);
+const ROUTER_SRC = readFileSync(resolve(__dirname, "../modules/wfm/attendance-ledger.routes.ts"), "utf8");
+const MISMATCH_SRC = readFileSync(resolve(__dirname, "../modules/wfm/mismatch-review.routes.ts"), "utf8");
+const SOURCES_SRC = readFileSync(resolve(__dirname, "../modules/wfm/attendance-ledger.sources.ts"), "utf8");
 
 function appFor(role: string) {
   actor = { id: `u-${role}`, role, roles: [role] };
@@ -84,9 +50,7 @@ function appFor(role: string) {
 
 function viewRoles(src: string): string[] {
   const m = /const VIEW_ROLES = \[([\s\S]*?)\] as const;/.exec(src);
-  return (m?.[1].match(/'([a-z_]+)'/g) ?? [])
-    .map((s) => s.replace(/'/g, ""))
-    .sort();
+  return (m?.[1].match(/'([a-z_]+)'/g) ?? []).map((s) => s.replace(/'/g, "")).sort();
 }
 
 const seen: Array<{ sql: string; params: unknown[] }> = [];
@@ -102,8 +66,7 @@ function stubDb(failOn?: RegExp) {
   });
 }
 
-const sourceQueries = () =>
-  seen.filter((q) => /JOIN employees e ON e\.id/.test(q.sql));
+const sourceQueries = () => seen.filter((q) => /JOIN employees e ON e\.id/.test(q.sql));
 
 beforeEach(() => {
   buildEmployeeScopeCondition.mockClear();
@@ -123,37 +86,27 @@ describe("role gate", () => {
     expect(routes.length).toBe(3 + 1);
     expect(gated.length).toBe(routes.length);
     expect(ROUTER_SRC).toMatch(/attendanceLedgerRouter\.use\(requireAuth\)/);
-    expect(ROUTER_SRC).not.toMatch(
-      /attendanceLedgerRouter\.(post|put|patch|delete)\(/,
-    );
+    expect(ROUTER_SRC).not.toMatch(/attendanceLedgerRouter\.(post|put|patch|delete)\(/);
   });
 
-  it.each([
-    "/summary",
-    "/branch/b1/entries",
-    "/branch/b1/people",
-    "/entries/regularization/r1",
-  ])("rejects a role outside VIEW_ROLES with 403 on %s", async (path) => {
-    const res = await request(appFor("employee")).get(
-      `/api/wfm/attendance-ledger${path}`,
-    );
-    expect(res.status).toBe(403);
-    expect(execute).not.toHaveBeenCalled();
-  });
+  it.each(["/summary", "/branch/b1/entries", "/branch/b1/people", "/entries/regularization/r1"])(
+    "rejects a role outside VIEW_ROLES with 403 on %s",
+    async (path) => {
+      const res = await request(appFor("employee")).get(`/api/wfm/attendance-ledger${path}`);
+      expect(res.status).toBe(403);
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
 
   it("admits wfm", async () => {
-    const res = await request(appFor("wfm")).get(
-      "/api/wfm/attendance-ledger/summary",
-    );
+    const res = await request(appFor("wfm")).get("/api/wfm/attendance-ledger/summary");
     expect(res.status).toBe(200);
   });
 });
 
 describe("row scope", () => {
   it("scopes against employees alias e and pushes the predicate into every source query", async () => {
-    const res = await request(appFor("branch_head")).get(
-      "/api/wfm/attendance-ledger/branch/b1/entries",
-    );
+    const res = await request(appFor("branch_head")).get("/api/wfm/attendance-ledger/branch/b1/entries");
     expect(res.status).toBe(200);
     expect(buildEmployeeScopeCondition).toHaveBeenCalledWith(
       expect.anything(),
@@ -168,9 +121,7 @@ describe("row scope", () => {
   });
 
   it("scopes the drawer detail and answers 404 (not 403) for an out-of-scope row", async () => {
-    const res = await request(appFor("branch_head")).get(
-      "/api/wfm/attendance-ledger/entries/regularization/r1",
-    );
+    const res = await request(appFor("branch_head")).get("/api/wfm/attendance-ledger/entries/regularization/r1");
     expect(res.status).toBe(404);
     const detail = sourceQueries()[0];
     expect(detail.sql).toContain("(e.branch_id IN (?))");
@@ -179,23 +130,13 @@ describe("row scope", () => {
 
   it("rejects an unknown kind and a malformed id", async () => {
     const app = appFor("wfm");
-    expect(
-      (await request(app).get("/api/wfm/attendance-ledger/entries/nope/r1"))
-        .status,
-    ).toBe(400);
-    expect(
-      (
-        await request(app).get(
-          "/api/wfm/attendance-ledger/entries/dispute/a%20b;drop",
-        )
-      ).status,
-    ).toBe(400);
+    expect((await request(app).get("/api/wfm/attendance-ledger/entries/nope/r1")).status).toBe(400);
+    expect((await request(app).get("/api/wfm/attendance-ledger/entries/dispute/a%20b;drop")).status).toBe(400);
   });
 });
 
 describe("bounded window + parameterised SQL", () => {
-  const get = (q: string) =>
-    request(appFor("wfm")).get(`/api/wfm/attendance-ledger/summary${q}`);
+  const get = (q: string) => request(appFor("wfm")).get(`/api/wfm/attendance-ledger/summary${q}`);
 
   it("accepts exactly 92 days and rejects 93", async () => {
     expect((await get("?from=2026-01-01&to=2026-04-02")).status).toBe(200);
@@ -220,17 +161,9 @@ describe("bounded window + parameterised SQL", () => {
     const evil = "x'; DROP TABLE employees; --";
     await request(appFor("wfm"))
       .get("/api/wfm/attendance-ledger/branch/b1/entries")
-      .query({
-        from: "2026-05-01",
-        to: "2026-05-31",
-        search: evil,
-        actorId: "actor'1",
-        employeeId: "emp'1",
-      });
+      .query({ from: "2026-05-01", to: "2026-05-31", search: evil, actorId: "actor'1", employeeId: "emp'1" });
     for (const q of sourceQueries()) {
-      expect(q.sql).toMatch(
-        /(session_date|record_date|issue_date) >= \? AND .* <= \?/,
-      );
+      expect(q.sql).toMatch(/(session_date|record_date|issue_date) >= \? AND .* <= \?/);
       expect(q.sql).not.toContain("DROP TABLE");
       expect(q.sql).not.toContain("actor'1");
       expect(q.params).toContain("2026-05-01");
@@ -239,9 +172,7 @@ describe("bounded window + parameterised SQL", () => {
   });
 
   it("caps the page depth so the in-memory merge stays bounded", async () => {
-    const res = await request(appFor("wfm")).get(
-      "/api/wfm/attendance-ledger/branch/b1/entries?page=20&limit=200",
-    );
+    const res = await request(appFor("wfm")).get("/api/wfm/attendance-ledger/branch/b1/entries?page=20&limit=200");
     expect(res.status).toBe(400);
   });
 });
@@ -249,9 +180,7 @@ describe("bounded window + parameterised SQL", () => {
 describe("tolerant sources", () => {
   it("summary: one failing source -> 200 with a warning, other sources still counted", async () => {
     stubDb(/FROM attendance_reconciliation_issue/);
-    const res = await request(appFor("wfm")).get(
-      "/api/wfm/attendance-ledger/summary",
-    );
+    const res = await request(appFor("wfm")).get("/api/wfm/attendance-ledger/summary");
     expect(res.status).toBe(200);
     expect(res.body.data.warnings).toHaveLength(1);
     expect(res.body.data.warnings[0]).toMatch(/Exception resolution/);
@@ -260,9 +189,7 @@ describe("tolerant sources", () => {
 
   it("entries: a failing source yields empty rows plus a warning", async () => {
     stubDb(/FROM attendance_daily_record adr[\s\S]*override_by IS NOT NULL/);
-    const res = await request(appFor("wfm")).get(
-      "/api/wfm/attendance-ledger/branch/b1/entries",
-    );
+    const res = await request(appFor("wfm")).get("/api/wfm/attendance-ledger/branch/b1/entries");
     expect(res.status).toBe(200);
     expect(res.body.warnings).toHaveLength(1);
     expect(res.body.warnings[0]).toMatch(/Manual override/);
@@ -270,9 +197,7 @@ describe("tolerant sources", () => {
 
   it("people: every source failing still answers 200", async () => {
     stubDb(/JOIN employees e ON e\.id/);
-    const res = await request(appFor("wfm")).get(
-      "/api/wfm/attendance-ledger/branch/b1/people",
-    );
+    const res = await request(appFor("wfm")).get("/api/wfm/attendance-ledger/branch/b1/people");
     expect(res.status).toBe(200);
     expect(res.body.data.warnings).toHaveLength(5);
     expect(res.body.data.rows).toEqual([]);
@@ -280,18 +205,14 @@ describe("tolerant sources", () => {
 
   it("wraps every source call in tolerant()", () => {
     expect(ROUTER_SRC).toMatch(/async function tolerant</);
-    expect(ROUTER_SRC).toMatch(
-      /tolerant\(k, warnings, \(\) => fetchAggregates\(k, filter\)/,
-    );
+    expect(ROUTER_SRC).toMatch(/tolerant\(k, warnings, \(\) => fetchAggregates\(k, filter\)/);
     expect(ROUTER_SRC).toMatch(/tolerant\(kind, warnings, async \(\) => \{/);
   });
 });
 
 describe("source definitions", () => {
   it("counts a manual override only when no regularization produced the stamp", () => {
-    expect(SOURCES_SRC).toContain(
-      "adr.override_by IS NOT NULL AND adr.regularization_id IS NULL",
-    );
+    expect(SOURCES_SRC).toContain("adr.override_by IS NOT NULL AND adr.regularization_id IS NULL");
   });
 
   it("splits plain regularizations from disputes on dispute_type", () => {

@@ -33,18 +33,12 @@ function forbidden(message: string): Error & { statusCode: number } {
 
 function scopeLabel(scope: DashboardScope): string {
   switch (scope.level) {
-    case "ORG_ALL":
-      return "All organisation";
-    case "BRANCH_ALL":
-      return "My branch";
-    case "PROCESS_ALL":
-      return "My process";
-    case "TEAM_ONLY":
-      return "My team";
-    case "SELF_ONLY":
-      return "My performance";
-    case "CUSTOM_SCOPE":
-      return "Selected scope";
+    case "ORG_ALL": return "All organisation";
+    case "BRANCH_ALL": return "My branch";
+    case "PROCESS_ALL": return "My process";
+    case "TEAM_ONLY": return "My team";
+    case "SELF_ONLY": return "My performance";
+    case "CUSTOM_SCOPE": return "Selected scope";
   }
 }
 
@@ -64,22 +58,14 @@ export function createPerformanceIntelligenceService(
     query?: Pick<PerformanceQuery, "branchId" | "processId">,
   ): Promise<DashboardScope> {
     const resolved = await resolveScope(auth.userId, "");
-    const narrowed = await narrowScope(
-      resolved,
-      query?.branchId,
-      query?.processId,
-    );
+    const narrowed = await narrowScope(resolved, query?.branchId, query?.processId);
     const requestedNarrowing = Boolean(query?.branchId || query?.processId);
     const deniedNarrowing =
       narrowed.level === "CUSTOM_SCOPE" &&
       narrowed.branchIds.length === 0 &&
       narrowed.processIds.length === 0;
 
-    if (
-      !requestedNarrowing ||
-      narrowed.level !== "CUSTOM_SCOPE" ||
-      deniedNarrowing
-    ) {
+    if (!requestedNarrowing || narrowed.level !== "CUSTOM_SCOPE" || deniedNarrowing) {
       return narrowed;
     }
 
@@ -104,9 +90,7 @@ export function createPerformanceIntelligenceService(
     requestedEmployeeId?: string,
   ): Promise<string | null> {
     if (scope.level === "SELF_ONLY") {
-      const selfEmployeeId = await repository.findSubjectEmployeeId(
-        auth.userId,
-      );
+      const selfEmployeeId = await repository.findSubjectEmployeeId(auth.userId);
       if (!selfEmployeeId) {
         throw forbidden("No active employee record is linked to this account");
       }
@@ -135,11 +119,8 @@ export function createPerformanceIntelligenceService(
         scopeLevel: scope.level,
         scopeLabel: scopeLabel(scope),
         canViewPeople: canViewPeople(scope),
-        canSelectBranch:
-          scope.level === "ORG_ALL" || scope.level === "BRANCH_ALL",
-        canSelectProcess: ["ORG_ALL", "BRANCH_ALL", "PROCESS_ALL"].includes(
-          scope.level,
-        ),
+        canSelectBranch: scope.level === "ORG_ALL" || scope.level === "BRANCH_ALL",
+        canSelectProcess: ["ORG_ALL", "BRANCH_ALL", "PROCESS_ALL"].includes(scope.level),
         effectiveBranchIds: [...scope.branchIds],
         effectiveProcessIds: [...scope.processIds],
         branchOptions: options.branches,
@@ -155,11 +136,7 @@ export function createPerformanceIntelligenceService(
         scope,
         query.employeeId,
       );
-      const facts = await repository.listMetricFacts(
-        scope,
-        query,
-        subjectEmployeeId,
-      );
+      const facts = await repository.listMetricFacts(scope, query, subjectEmployeeId);
       return aggregateMetricFacts(facts);
     },
 
@@ -173,11 +150,7 @@ export function createPerformanceIntelligenceService(
         scope,
         query.employeeId,
       );
-      const facts = await repository.listDailyTrendFacts(
-        scope,
-        query,
-        subjectEmployeeId,
-      );
+      const facts = await repository.listDailyTrendFacts(scope, query, subjectEmployeeId);
       const byDate = new Map<string, typeof facts>();
       for (const fact of facts) {
         const rows = byDate.get(fact.scoreDate) ?? [];
@@ -195,9 +168,7 @@ export function createPerformanceIntelligenceService(
     ): Promise<PaginatedPeople> {
       const scope = await effectiveScope(auth, query);
       if (!canViewPeople(scope)) {
-        throw forbidden(
-          "Team performance is not available for self-only scope",
-        );
+        throw forbidden("Team performance is not available for self-only scope");
       }
 
       const people = await repository.listPeople(scope, query);
@@ -215,30 +186,16 @@ export function createPerformanceIntelligenceService(
       }
 
       const rows: PerformancePersonRow[] = people.rows.map((person) => {
-        const metrics = aggregateMetricFacts(
-          factsByEmployee.get(person.employeeId) ?? [],
-        );
-        const weighted = metrics.filter(
-          (metric) =>
-            metric.achievementPct !== null && Number(metric.weightage) > 0,
-        );
-        const totalWeight = weighted.reduce(
-          (sum, metric) => sum + Number(metric.weightage),
-          0,
-        );
-        const overallAchievementPct =
-          totalWeight > 0
-            ? Math.round(
-                (weighted.reduce(
-                  (sum, metric) =>
-                    sum +
-                    Number(metric.achievementPct) * Number(metric.weightage),
-                  0,
-                ) /
-                  totalWeight) *
-                  100,
-              ) / 100
-            : null;
+        const metrics = aggregateMetricFacts(factsByEmployee.get(person.employeeId) ?? []);
+        const weighted = metrics.filter((metric) =>
+          metric.achievementPct !== null && Number(metric.weightage) > 0);
+        const totalWeight = weighted.reduce((sum, metric) => sum + Number(metric.weightage), 0);
+        const overallAchievementPct = totalWeight > 0
+          ? Math.round((weighted.reduce(
+              (sum, metric) => sum + Number(metric.achievementPct) * Number(metric.weightage),
+              0,
+            ) / totalWeight) * 100) / 100
+          : null;
         return {
           ...person,
           metrics,

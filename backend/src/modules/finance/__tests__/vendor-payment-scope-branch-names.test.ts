@@ -16,11 +16,8 @@ beforeEach(() => {
 
 describe("vendorPaymentService.getScopeBranchNames", () => {
   it("returns [] for organisation-wide scope without querying the database", async () => {
-    const { vendorPaymentService } =
-      await import("../vendor-payment.service.js");
-    const result = await vendorPaymentService.getScopeBranchNames({
-      mode: "all",
-    });
+    const { vendorPaymentService } = await import("../vendor-payment.service.js");
+    const result = await vendorPaymentService.getScopeBranchNames({ mode: "all" });
     expect(result).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
   });
@@ -30,8 +27,7 @@ describe("vendorPaymentService.getScopeBranchNames", () => {
       [{ branch_name: "Karnal" }, { branch_name: "Noida-2" }],
       [],
     ]);
-    const { vendorPaymentService } =
-      await import("../vendor-payment.service.js");
+    const { vendorPaymentService } = await import("../vendor-payment.service.js");
     const result = await vendorPaymentService.getScopeBranchNames({
       mode: "branches",
       branchIds: ["branch-karnal", "branch-noida2"],
@@ -44,8 +40,7 @@ describe("vendorPaymentService.getScopeBranchNames", () => {
   });
 
   it("returns [] for a branch-bound scope with an empty branchIds array, without querying", async () => {
-    const { vendorPaymentService } =
-      await import("../vendor-payment.service.js");
+    const { vendorPaymentService } = await import("../vendor-payment.service.js");
     const result = await vendorPaymentService.getScopeBranchNames({
       mode: "branches",
       branchIds: [],

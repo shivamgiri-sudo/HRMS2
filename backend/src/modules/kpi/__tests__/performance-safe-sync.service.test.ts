@@ -41,35 +41,21 @@ describe("performance-safe-sync.service", () => {
   });
 
   it("defaults to fast, production-safe sources and excludes slow dialer APR", () => {
-    expect(parseSafeSyncSources()).toEqual([
-      "quality",
-      "conversion",
-      "salesBrandMis",
-      "salesOrders",
-    ]);
+    expect(parseSafeSyncSources()).toEqual(["quality", "conversion", "salesBrandMis", "salesOrders"]);
   });
 
   it("rejects unknown source names before any sync can run", () => {
-    expect(() => parseSafeSyncSources("quality,badSource")).toThrow(
-      "Invalid source(s): badSource",
-    );
+    expect(() => parseSafeSyncSources("quality,badSource")).toThrow("Invalid source(s): badSource");
   });
 
   it("validates date input and resolves year month", () => {
-    expect(
-      resolveSafeSyncInput({
-        date: "2026-07-02",
-        sources: "quality,quality,salesOrders",
-      }),
-    ).toMatchObject({
+    expect(resolveSafeSyncInput({ date: "2026-07-02", sources: "quality,quality,salesOrders" })).toMatchObject({
       date: "2026-07-02",
       yearMonth: "2026-07",
       sources: ["quality", "salesOrders"],
       apply: false,
     });
-    expect(() => resolveSafeSyncInput({ date: "02-07-2026" })).toThrow(
-      "Invalid --date",
-    );
+    expect(() => resolveSafeSyncInput({ date: "02-07-2026" })).toThrow("Invalid --date");
   });
 
   it("dry-runs selected sources through preview without calling sync writers", async () => {
@@ -94,25 +80,14 @@ describe("performance-safe-sync.service", () => {
       note: "Dry run only. No KPI facts were written.",
     });
     expect(Object.keys(result.results)).toEqual(["quality", "salesOrders"]);
-    expect(previewPerformanceSources).toHaveBeenCalledWith({
-      date: "2026-07-02",
-      yearMonth: "2026-07",
-    });
+    expect(previewPerformanceSources).toHaveBeenCalledWith({ date: "2026-07-02", yearMonth: "2026-07" });
     expect(syncQualityMetrics).not.toHaveBeenCalled();
     expect(syncSalesOrderMetrics).not.toHaveBeenCalled();
   });
 
   it("applies only explicitly selected source syncs", async () => {
-    syncQualityMetrics.mockResolvedValueOnce({
-      synced: 43,
-      skipped: 2,
-      errors: [],
-    });
-    syncSalesOrderMetrics.mockResolvedValueOnce({
-      synced: 11,
-      skipped: 2,
-      errors: [],
-    });
+    syncQualityMetrics.mockResolvedValueOnce({ synced: 43, skipped: 2, errors: [] });
+    syncSalesOrderMetrics.mockResolvedValueOnce({ synced: 11, skipped: 2, errors: [] });
 
     const result = await runSafePerformanceSync({
       date: "2026-07-02",
@@ -134,26 +109,10 @@ describe("performance-safe-sync.service", () => {
   });
 
   it("applies date ranges daily but runs monthly quality only once", async () => {
-    syncQualityMetrics.mockResolvedValueOnce({
-      synced: 43,
-      skipped: 2,
-      errors: [],
-    });
-    syncConversionMetrics.mockResolvedValue({
-      synced: 10,
-      skipped: 0,
-      errors: [],
-    });
-    syncSalesBrandMisMetrics.mockResolvedValue({
-      synced: 8,
-      skipped: 1,
-      errors: [],
-    });
-    syncSalesOrderMetrics.mockResolvedValue({
-      synced: 11,
-      skipped: 2,
-      errors: [],
-    });
+    syncQualityMetrics.mockResolvedValueOnce({ synced: 43, skipped: 2, errors: [] });
+    syncConversionMetrics.mockResolvedValue({ synced: 10, skipped: 0, errors: [] });
+    syncSalesBrandMisMetrics.mockResolvedValue({ synced: 8, skipped: 1, errors: [] });
+    syncSalesOrderMetrics.mockResolvedValue({ synced: 11, skipped: 2, errors: [] });
 
     const result = await runSafePerformanceSyncRange({
       from: "2026-07-01",

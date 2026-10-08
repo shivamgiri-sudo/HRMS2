@@ -15,23 +15,16 @@ const EMPLOYEE_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const LOAN_1 = "11111111-1111-1111-1111-111111111111";
 const LOAN_2 = "22222222-2222-2222-2222-222222222222";
 
-const {
-  execute,
-  logSensitiveAction,
-  connExecute,
-  beginTransaction,
-  commit,
-  rollback,
-  release,
-} = vi.hoisted(() => ({
-  execute: vi.fn(),
-  logSensitiveAction: vi.fn(),
-  connExecute: vi.fn(),
-  beginTransaction: vi.fn(),
-  commit: vi.fn(),
-  rollback: vi.fn(),
-  release: vi.fn(),
-}));
+const { execute, logSensitiveAction, connExecute, beginTransaction, commit, rollback, release } =
+  vi.hoisted(() => ({
+    execute: vi.fn(),
+    logSensitiveAction: vi.fn(),
+    connExecute: vi.fn(),
+    beginTransaction: vi.fn(),
+    commit: vi.fn(),
+    rollback: vi.fn(),
+    release: vi.fn(),
+  }));
 
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 vi.mock("../../../db/mysql.js", () => ({
@@ -68,20 +61,11 @@ describe("applyPayrollDeductions", () => {
   });
 
   it("applies EMI to a single active loan: deducts, decrements pending, stays active if not exhausted", async () => {
-    execute.mockResolvedValueOnce([
-      [{ employee_id: EMPLOYEE_ID, loan_emi: 5000 }],
-    ]);
+    execute.mockResolvedValueOnce([[{ employee_id: EMPLOYEE_ID, loan_emi: 5000 }]]);
     connExecute
-      .mockResolvedValueOnce([
-        [
-          {
-            id: LOAN_1,
-            deducted_amount: 10000,
-            pending_amount: 40000,
-            status: "active",
-          },
-        ],
-      ]) // SELECT active loans
+      .mockResolvedValueOnce([[{
+        id: LOAN_1, deducted_amount: 10000, pending_amount: 40000, status: "active",
+      }]]) // SELECT active loans
       .mockResolvedValueOnce([{}]); // UPDATE
 
     await applyPayrollDeductions(RUN_ID, ACTOR_ID);
@@ -104,20 +88,11 @@ describe("applyPayrollDeductions", () => {
   });
 
   it("flips a loan to completed when the EMI exhausts its pending balance", async () => {
-    execute.mockResolvedValueOnce([
-      [{ employee_id: EMPLOYEE_ID, loan_emi: 5000 }],
-    ]);
+    execute.mockResolvedValueOnce([[{ employee_id: EMPLOYEE_ID, loan_emi: 5000 }]]);
     connExecute
-      .mockResolvedValueOnce([
-        [
-          {
-            id: LOAN_1,
-            deducted_amount: 45000,
-            pending_amount: 5000,
-            status: "active",
-          },
-        ],
-      ])
+      .mockResolvedValueOnce([[{
+        id: LOAN_1, deducted_amount: 45000, pending_amount: 5000, status: "active",
+      }]])
       .mockResolvedValueOnce([{}]);
 
     await applyPayrollDeductions(RUN_ID, ACTOR_ID);
@@ -130,26 +105,12 @@ describe("applyPayrollDeductions", () => {
   });
 
   it("apportions EMI across multiple active loans, oldest first per the SQL ORDER BY", async () => {
-    execute.mockResolvedValueOnce([
-      [{ employee_id: EMPLOYEE_ID, loan_emi: 6000 }],
-    ]);
+    execute.mockResolvedValueOnce([[{ employee_id: EMPLOYEE_ID, loan_emi: 6000 }]]);
     connExecute
-      .mockResolvedValueOnce([
-        [
-          {
-            id: LOAN_1,
-            deducted_amount: 9000,
-            pending_amount: 1000,
-            status: "active",
-          }, // oldest — exhausted first
-          {
-            id: LOAN_2,
-            deducted_amount: 0,
-            pending_amount: 20000,
-            status: "active",
-          },
-        ],
-      ])
+      .mockResolvedValueOnce([[
+        { id: LOAN_1, deducted_amount: 9000, pending_amount: 1000, status: "active" }, // oldest — exhausted first
+        { id: LOAN_2, deducted_amount: 0, pending_amount: 20000, status: "active" },
+      ]])
       .mockResolvedValueOnce([{}]) // UPDATE loan 1
       .mockResolvedValueOnce([{}]); // UPDATE loan 2
 
@@ -169,14 +130,10 @@ describe("applyPayrollDeductions", () => {
   });
 
   it("is a no-op for an employee with loan_emi but no active loan row — does not throw", async () => {
-    execute.mockResolvedValueOnce([
-      [{ employee_id: EMPLOYEE_ID, loan_emi: 5000 }],
-    ]);
+    execute.mockResolvedValueOnce([[{ employee_id: EMPLOYEE_ID, loan_emi: 5000 }]]);
     connExecute.mockResolvedValueOnce([[]]); // SELECT active loans — none
 
-    await expect(
-      applyPayrollDeductions(RUN_ID, ACTOR_ID),
-    ).resolves.toBeUndefined();
+    await expect(applyPayrollDeductions(RUN_ID, ACTOR_ID)).resolves.toBeUndefined();
 
     expect(commit).toHaveBeenCalledTimes(1);
     expect(connExecute).toHaveBeenCalledTimes(1); // only the SELECT, no UPDATE
@@ -184,25 +141,14 @@ describe("applyPayrollDeductions", () => {
   });
 
   it("rolls back the whole transaction on a mid-loop DB error, applying nothing partially", async () => {
-    execute.mockResolvedValueOnce([
-      [{ employee_id: EMPLOYEE_ID, loan_emi: 5000 }],
-    ]);
+    execute.mockResolvedValueOnce([[{ employee_id: EMPLOYEE_ID, loan_emi: 5000 }]]);
     connExecute
-      .mockResolvedValueOnce([
-        [
-          {
-            id: LOAN_1,
-            deducted_amount: 0,
-            pending_amount: 20000,
-            status: "active",
-          },
-        ],
-      ])
+      .mockResolvedValueOnce([[{
+        id: LOAN_1, deducted_amount: 0, pending_amount: 20000, status: "active",
+      }]])
       .mockRejectedValueOnce(new Error("connection lost"));
 
-    await expect(applyPayrollDeductions(RUN_ID, ACTOR_ID)).rejects.toThrow(
-      "connection lost",
-    );
+    await expect(applyPayrollDeductions(RUN_ID, ACTOR_ID)).rejects.toThrow("connection lost");
 
     expect(rollback).toHaveBeenCalledTimes(1);
     expect(commit).not.toHaveBeenCalled();

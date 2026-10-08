@@ -24,9 +24,7 @@ import { runNameMappingSeed } from "../src/modules/onfido-process/onfido-name-ma
 
 async function main() {
   try {
-    console.log(
-      "Seeding onfido_name_employee_map from onfido_db + employees...",
-    );
+    console.log("Seeding onfido_name_employee_map from onfido_db + employees...");
     const result = await runNameMappingSeed();
     console.log("\nSeed complete.");
     console.log(`  Matched (exact_name) : ${result.matched}`);

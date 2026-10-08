@@ -2,16 +2,10 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
-import {
-  checkRequiredTables,
-  REQUIRED_TABLES,
-} from "../schema-presence-check.js";
+import { checkRequiredTables, REQUIRED_TABLES } from "../schema-presence-check.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const migrationRunnerSource = readFileSync(
-  resolve(here, "../runPendingMigrations.ts"),
-  "utf8",
-);
+const migrationRunnerSource = readFileSync(resolve(here, "../runPendingMigrations.ts"), "utf8");
 
 const requiredTableCreatorMigrations: Record<string, string> = {
   employees: "002_employees.sql",
@@ -38,10 +32,10 @@ function fakeDb(existing: string[]) {
 
 describe("checkRequiredTables", () => {
   it("reports nothing when every required table exists", async () => {
-    const r = await checkRequiredTables(
-      fakeDb(["employees", "leave_request"]),
-      ["employees", "leave_request"],
-    );
+    const r = await checkRequiredTables(fakeDb(["employees", "leave_request"]), [
+      "employees",
+      "leave_request",
+    ]);
     expect(r.missing).toEqual([]);
   });
 
@@ -51,10 +45,7 @@ describe("checkRequiredTables", () => {
       "employee_geofence_alerts",
       "ats_sla_tat_rules",
     ]);
-    expect(r.missing).toEqual([
-      "ats_sla_tat_rules",
-      "employee_geofence_alerts",
-    ]);
+    expect(r.missing).toEqual(["ats_sla_tat_rules", "employee_geofence_alerts"]);
   });
 
   it("is case-insensitive, because MySQL folds table names on Windows but not Linux", async () => {
@@ -89,17 +80,12 @@ describe("REQUIRED_TABLES", () => {
   });
 
   it("only names tables whose creator migration is scheduled for fresh databases", () => {
-    expect(Object.keys(requiredTableCreatorMigrations).sort()).toEqual(
-      [...REQUIRED_TABLES].sort(),
-    );
+    expect(Object.keys(requiredTableCreatorMigrations).sort()).toEqual([...REQUIRED_TABLES].sort());
 
-    for (const [tableName, migrationFile] of Object.entries(
-      requiredTableCreatorMigrations,
-    )) {
-      expect(
-        migrationRunnerSource,
-        `${tableName} is created by ${migrationFile}`,
-      ).toContain(`"${migrationFile}"`);
+    for (const [tableName, migrationFile] of Object.entries(requiredTableCreatorMigrations)) {
+      expect(migrationRunnerSource, `${tableName} is created by ${migrationFile}`).toContain(
+        `"${migrationFile}"`,
+      );
     }
   });
 });

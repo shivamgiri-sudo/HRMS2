@@ -7,8 +7,8 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 export interface EnhancedPortalUser {
   id: string;
   email: string;
-  name?: string; // 'name' column in client_user
-  full_name?: string; // alias for name
+  name?: string;         // 'name' column in client_user
+  full_name?: string;    // alias for name
   designation?: string;
   client_id: string;
   process_ids: string[];
@@ -27,12 +27,10 @@ export interface UpdatePortalUserInput {
   process_ids?: string[];
 }
 
-export async function getEnhancedPortalUser(
-  userId: string,
-): Promise<EnhancedPortalUser | null> {
+export async function getEnhancedPortalUser(userId: string): Promise<EnhancedPortalUser | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT *, name AS full_name FROM client_user WHERE id = ?",
-    [userId],
+    [userId]
   );
   if (rows.length === 0) return null;
   const row = rows[0] as any;
@@ -66,75 +64,50 @@ export async function listEnhancedPortalUsers(filters?: {
   query += " ORDER BY created_at DESC";
 
   const [rows] = await db.execute<RowDataPacket[]>(query, params);
-  return (rows as any[]).map((r) => ({
-    ...r,
-    process_ids: tryParseJson(r.process_ids, []),
-  }));
+  return (rows as any[]).map(r => ({ ...r, process_ids: tryParseJson(r.process_ids, []) }));
 }
 
 export async function updatePortalUser(
   userId: string,
-  data: UpdatePortalUserInput,
+  data: UpdatePortalUserInput
 ): Promise<void> {
   const updates: string[] = [];
   const params: any[] = [];
 
-  if (data.full_name !== undefined) {
-    updates.push("name = ?");
-    params.push(data.full_name);
-  }
-  if (data.designation !== undefined) {
-    updates.push("designation = ?");
-    params.push(data.designation);
-  }
-  if (data.phone !== undefined) {
-    updates.push("phone = ?");
-    params.push(data.phone);
-  }
-  if (data.department !== undefined) {
-    updates.push("department = ?");
-    params.push(data.department);
-  }
-  if (data.access_level !== undefined) {
-    updates.push("access_level = ?");
-    params.push(data.access_level);
-  }
-  if (data.access_start_date !== undefined) {
-    updates.push("access_start_date = ?");
-    params.push(data.access_start_date);
-  }
-  if (data.access_end_date !== undefined) {
-    updates.push("access_end_date = ?");
-    params.push(data.access_end_date);
-  }
-  if (data.process_ids !== undefined) {
-    updates.push("process_ids = ?");
-    params.push(JSON.stringify(data.process_ids));
-  }
+  if (data.full_name      !== undefined) { updates.push("name = ?");               params.push(data.full_name); }
+  if (data.designation    !== undefined) { updates.push("designation = ?");         params.push(data.designation); }
+  if (data.phone          !== undefined) { updates.push("phone = ?");               params.push(data.phone); }
+  if (data.department     !== undefined) { updates.push("department = ?");          params.push(data.department); }
+  if (data.access_level   !== undefined) { updates.push("access_level = ?");        params.push(data.access_level); }
+  if (data.access_start_date !== undefined) { updates.push("access_start_date = ?"); params.push(data.access_start_date); }
+  if (data.access_end_date   !== undefined) { updates.push("access_end_date = ?");   params.push(data.access_end_date); }
+  if (data.process_ids    !== undefined) { updates.push("process_ids = ?");         params.push(JSON.stringify(data.process_ids)); }
 
   if (updates.length === 0) return;
 
   params.push(userId);
   await db.execute(
     `UPDATE client_user SET ${updates.join(", ")} WHERE id = ?`,
-    params,
+    params
   );
 }
 
 export async function deactivatePortalUser(
   userId: string,
   _deactivatedBy: string,
-  _reason?: string,
+  _reason?: string
 ): Promise<void> {
-  await db.execute("UPDATE client_user SET is_active = 0 WHERE id = ?", [
-    userId,
-  ]);
+  await db.execute(
+    "UPDATE client_user SET is_active = 0 WHERE id = ?",
+    [userId]
+  );
 }
 
 export async function reactivatePortalUser(userId: string): Promise<void> {
-  await db.execute("UPDATE client_user SET is_active = 1 WHERE id = ?", [
-    userId,
-  ]);
+  await db.execute(
+    "UPDATE client_user SET is_active = 1 WHERE id = ?",
+    [userId]
+  );
 }
 
 // ============================================================
@@ -143,8 +116,8 @@ export async function reactivatePortalUser(userId: string): Promise<void> {
 
 export interface ActivityLogEntry {
   id: string;
-  user_id: string; // maps to client_user_id in portal_access_log
-  action_type: string; // stored as 'page' column
+  user_id: string;      // maps to client_user_id in portal_access_log
+  action_type: string;  // stored as 'page' column
   ip_address?: string;
   created_at: Date;
 }
@@ -165,14 +138,19 @@ export async function logPortalUserActivity(data: {
   await db.execute(
     `INSERT INTO portal_access_log (id, client_user_id, page, ip_address)
      VALUES (?, ?, ?, ?)`,
-    [randomUUID(), data.user_id, data.action_type, data.ip_address || null],
+    [
+      randomUUID(),
+      data.user_id,
+      data.action_type,
+      data.ip_address || null,
+    ]
   );
 }
 
 export async function getPortalUserActivity(
   userId: string,
   limit: number = 100,
-  actionType?: string,
+  actionType?: string
 ): Promise<ActivityLogEntry[]> {
   let query = `
     SELECT id, client_user_id AS user_id, page AS action_type, ip_address, created_at
@@ -194,7 +172,7 @@ export async function getPortalUserActivity(
 
 export async function getRecentLogins(
   userId: string,
-  limit: number = 20,
+  limit: number = 20
 ): Promise<Array<{ login_time: Date; ip_address: string }>> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT created_at as login_time, ip_address
@@ -202,29 +180,21 @@ export async function getRecentLogins(
      WHERE client_user_id = ? AND page = 'LOGIN'
      ORDER BY created_at DESC
      ${sqlLimit(limit)}`,
-    [userId],
+    [userId]
   );
   return rows as Array<{ login_time: Date; ip_address: string }>;
 }
 
 export async function updateLastLogin(
   userId: string,
-  ipAddress: string,
+  ipAddress: string
 ): Promise<void> {
   await Promise.all([
-    logPortalUserActivity({
-      user_id: userId,
-      action_type: "LOGIN",
-      ip_address: ipAddress,
-    }),
-    db
-      .execute(
-        `UPDATE client_user SET last_login_at = NOW(), last_login_ip = ?, login_count = login_count + 1 WHERE id = ?`,
-        [ipAddress, userId],
-      )
-      .catch(() => {
-        /* column may not exist on older schema — non-fatal */
-      }),
+    logPortalUserActivity({ user_id: userId, action_type: 'LOGIN', ip_address: ipAddress }),
+    db.execute(
+      `UPDATE client_user SET last_login_at = NOW(), last_login_ip = ?, login_count = login_count + 1 WHERE id = ?`,
+      [ipAddress, userId]
+    ).catch(() => { /* column may not exist on older schema — non-fatal */ }),
   ]);
 }
 
@@ -235,11 +205,11 @@ export async function updateLastLogin(
 export interface PortalUserPermission {
   id: string;
   user_id: string;
-  permission_type: string; // maps to page_code
-  resource_scope: string; // stored in notes
+  permission_type: string;   // maps to page_code
+  resource_scope: string;    // stored in notes
   resource_ids?: string[];
-  granted_by: string; // assigned_by
-  granted_at: Date; // assigned_at
+  granted_by: string;        // assigned_by
+  granted_at: Date;          // assigned_at
   active_status: boolean;
 }
 
@@ -251,10 +221,7 @@ export async function grantPermission(data: {
   granted_by: string;
   expires_at?: Date;
 }): Promise<void> {
-  const notes = JSON.stringify({
-    scope: data.resource_scope,
-    resource_ids: data.resource_ids,
-  });
+  const notes = JSON.stringify({ scope: data.resource_scope, resource_ids: data.resource_ids });
   await db.execute(
     `INSERT INTO user_page_access (id, user_id, page_code, can_view, can_create, can_edit, can_delete, can_export, assigned_by, active_status, notes)
      VALUES (?, ?, ?, 1, 0, 0, 0, 0, ?, 1, ?)
@@ -263,31 +230,29 @@ export async function grantPermission(data: {
        assigned_at = NOW(),
        active_status = 1,
        notes = VALUES(notes)`,
-    [randomUUID(), data.user_id, data.permission_type, data.granted_by, notes],
+    [randomUUID(), data.user_id, data.permission_type, data.granted_by, notes]
   );
 }
 
 export async function revokePermission(
   userId: string,
-  permissionType: string,
+  permissionType: string
 ): Promise<void> {
   await db.execute(
     `UPDATE user_page_access
      SET active_status = 0, revoked_by = 'system', revoked_at = NOW()
      WHERE user_id = ? AND page_code = ?`,
-    [userId, permissionType],
+    [userId, permissionType]
   );
 }
 
-export async function getUserPermissions(
-  userId: string,
-): Promise<PortalUserPermission[]> {
+export async function getUserPermissions(userId: string): Promise<PortalUserPermission[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, user_id, page_code AS permission_type, notes AS resource_scope,
             assigned_by AS granted_by, assigned_at AS granted_at, active_status
      FROM user_page_access
      WHERE user_id = ? AND active_status = 1`,
-    [userId],
+    [userId]
   );
   return rows as PortalUserPermission[];
 }
@@ -305,7 +270,7 @@ export interface UserActivitySummary {
 
 export async function getUserActivitySummary(
   clientId?: string,
-  _days: number = 30,
+  _days: number = 30
 ): Promise<UserActivitySummary[]> {
   let query = `
     SELECT
@@ -332,10 +297,6 @@ export async function getUserActivitySummary(
 
 function tryParseJson(val: any, fallback: any): any {
   if (val === null || val === undefined) return fallback;
-  if (typeof val === "object") return val;
-  try {
-    return JSON.parse(val);
-  } catch {
-    return fallback;
-  }
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return fallback; }
 }

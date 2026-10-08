@@ -25,13 +25,7 @@ import { getNamedPool } from "../kpi/kpi-studio.pools.js";
  */
 
 export type InboundClientCode =
-  | "GNC"
-  | "BELLAVITA"
-  | "CLOVIA"
-  | "NEEMANS"
-  | "VIEGA"
-  | "EXICOM"
-  | "DU_BANGLADESH";
+  | "GNC" | "BELLAVITA" | "CLOVIA" | "NEEMANS" | "VIEGA" | "EXICOM" | "DU_BANGLADESH";
 
 interface DailyRow {
   CallDate: string;
@@ -54,42 +48,18 @@ interface MandateRow {
 }
 
 const GNC_CAMPAIGNS = [
-  "GNC_Order_Related",
-  "GNC_Product_Quality",
-  "GNC_Other_Queries",
-  "GNC_Product_Info",
-  "GNC_Offer_Order",
-  "GNC_Authentication",
+  "GNC_Order_Related", "GNC_Product_Quality", "GNC_Other_Queries",
+  "GNC_Product_Info", "GNC_Offer_Order", "GNC_Authentication",
 ];
 const BELLAVITA_CAMPAIGNS = [
-  "H_Bellavita_Luxury",
-  "E_Bellavita_Organic",
-  "E_Bellavita_Luxury",
-  "H_Bellavita_Organic",
-  "H_Bevzilla_Complaint",
-  "H_Bevzilla_CC_Agent",
-  "E_Bevzilla_CC_Agent",
-  "H_Bevzilla_Order",
-  "E_Bevzilla_Order",
-  "E_Bevzilla_Complaint",
-  "E_Emb_Existing_Order",
-  "H_Bevzilla_Product",
-  "H_Emb_New_Order",
-  "H_Emb_Existing_Order",
-  "E_Bevzilla_Product",
-  "E_Emb_New_Order",
+  "H_Bellavita_Luxury", "E_Bellavita_Organic", "E_Bellavita_Luxury", "H_Bellavita_Organic",
+  "H_Bevzilla_Complaint", "H_Bevzilla_CC_Agent", "E_Bevzilla_CC_Agent", "H_Bevzilla_Order",
+  "E_Bevzilla_Order", "E_Bevzilla_Complaint", "E_Emb_Existing_Order", "H_Bevzilla_Product",
+  "H_Emb_New_Order", "H_Emb_Existing_Order", "E_Bevzilla_Product", "E_Emb_New_Order",
 ];
 const CLOVIA_CAMPAIGNS = ["Clovia_English", "Clovia_Hindi"];
-const DU_BANGLADESH_CAMPAIGNS = [
-  "DU_Bangladesh_Bangla",
-  "DU_Bangladesh_Eng",
-  "DU_Bangladesh_Hindi",
-];
-const EXICOM_CAMPAIGNS = [
-  "Exicom_TC_Battery",
-  "Exicom_EV_Battery",
-  "EV_Charger833",
-];
+const DU_BANGLADESH_CAMPAIGNS = ["DU_Bangladesh_Bangla", "DU_Bangladesh_Eng", "DU_Bangladesh_Hindi"];
+const EXICOM_CAMPAIGNS = ["Exicom_TC_Battery", "Exicom_EV_Battery", "EV_Charger833"];
 
 function inList(vals: string[]): string {
   return vals.map((v) => `'${v.replace(/'/g, "''")}'`).join(",");
@@ -118,12 +88,7 @@ function complexQuery(table: string, campaigns: string[]): string {
     NULL AS FCR_Percent, NULL AS tagging_count
   FROM aggr ORDER BY CallDate DESC`;
 }
-function complexMandateQuery(
-  table: string,
-  campaigns: string[],
-  mandate: number,
-  requiredLogin: number,
-): string {
+function complexMandateQuery(table: string, campaigns: string[], mandate: number, requiredLogin: number): string {
   const list = inList(campaigns);
   return `SELECT CallDate, ${mandate} AS Mandate, ${requiredLogin} As Required_Login, COUNT(DISTINCT AgentId) AS Login_Count, (${requiredLogin} - COUNT(DISTINCT AgentId)) AS Deficit_Manpower
     FROM ${table} WHERE CallDate >= ? AND AgentId <> 'VDCL'
@@ -242,12 +207,7 @@ function simpleQuery(table: string, campaignClause: string): string {
     GROUP BY DATE(CallDate)
     ORDER BY CallDate DESC`;
 }
-function simpleMandateQuery(
-  table: string,
-  campaignClause: string,
-  mandate: number,
-  requiredLogin: number,
-): string {
+function simpleMandateQuery(table: string, campaignClause: string, mandate: number, requiredLogin: number): string {
   return `SELECT CallDate, ${mandate} AS Mandate, ${requiredLogin} As Required_Login, COUNT(DISTINCT AgentId) AS Login_Count, (${requiredLogin} - COUNT(DISTINCT AgentId)) AS Deficit_Manpower
     FROM ${table} WHERE CallDate >= ? AND AgentId <> 'VDCL' AND ${campaignClause}
     GROUP BY CallDate ORDER BY CallDate DESC`;
@@ -264,75 +224,17 @@ interface ClientPlan {
 /** Exported so unit tests can assert on the exact SQL text without needing a live dialer_db connection. */
 export function buildPlans(): ClientPlan[] {
   return [
-    {
-      code: "GNC",
-      processName: "GNC",
-      dailySql: complexQuery("cdr_in_4", GNC_CAMPAIGNS),
-      mandateSql: complexMandateQuery("cdr_in_4", GNC_CAMPAIGNS, 8, 6),
-    },
-    {
-      code: "BELLAVITA",
-      processName: "Bella-Vita Organic",
-      dailySql: bellavitaQuery(375),
-      mandateSql: bellavitaMandateQuery(),
-    },
-    {
-      code: "CLOVIA",
-      processName: "Clovia",
-      dailySql: cloviaQuery(),
-      mandateSql: cloviaMandateQuery(),
-    },
-    {
-      code: "NEEMANS",
-      processName: "Neemans Private Limited",
-      dailySql: neemansQuery(475),
-      mandateSql: neemansMandateQuery(),
-    },
-    {
-      code: "VIEGA",
-      processName: "Viega",
-      dailySql: simpleQuery("cdr_in_249", `CampaignName = 'Viega'`),
-      mandateSql: simpleMandateQuery(
-        "cdr_in_249",
-        `CampaignName = 'Viega'`,
-        2,
-        2,
-      ),
-    },
-    {
-      code: "EXICOM",
-      processName: "Exicom",
-      dailySql: simpleQuery(
-        "cdr_in_9",
-        `CampaignName IN (${inList(EXICOM_CAMPAIGNS)})`,
-      ),
-      mandateSql: simpleMandateQuery(
-        "cdr_in_9",
-        `CampaignName IN (${inList(EXICOM_CAMPAIGNS)})`,
-        5,
-        5,
-      ),
-    },
-    {
-      code: "DU_BANGLADESH",
-      processName: "DU Digital",
-      dailySql: simpleQuery(
-        "cdr_in_4",
-        `CampaignName IN (${inList(DU_BANGLADESH_CAMPAIGNS)})`,
-      ),
-      mandateSql: simpleMandateQuery(
-        "cdr_in_4",
-        `CampaignName IN (${inList(DU_BANGLADESH_CAMPAIGNS)})`,
-        3,
-        3,
-      ),
-    },
+    { code: "GNC", processName: "GNC", dailySql: complexQuery("cdr_in_4", GNC_CAMPAIGNS), mandateSql: complexMandateQuery("cdr_in_4", GNC_CAMPAIGNS, 8, 6) },
+    { code: "BELLAVITA", processName: "Bella-Vita Organic", dailySql: bellavitaQuery(375), mandateSql: bellavitaMandateQuery() },
+    { code: "CLOVIA", processName: "Clovia", dailySql: cloviaQuery(), mandateSql: cloviaMandateQuery() },
+    { code: "NEEMANS", processName: "Neemans Private Limited", dailySql: neemansQuery(475), mandateSql: neemansMandateQuery() },
+    { code: "VIEGA", processName: "Viega", dailySql: simpleQuery("cdr_in_249", `CampaignName = 'Viega'`), mandateSql: simpleMandateQuery("cdr_in_249", `CampaignName = 'Viega'`, 2, 2) },
+    { code: "EXICOM", processName: "Exicom", dailySql: simpleQuery("cdr_in_9", `CampaignName IN (${inList(EXICOM_CAMPAIGNS)})`), mandateSql: simpleMandateQuery("cdr_in_9", `CampaignName IN (${inList(EXICOM_CAMPAIGNS)})`, 5, 5) },
+    { code: "DU_BANGLADESH", processName: "DU Digital", dailySql: simpleQuery("cdr_in_4", `CampaignName IN (${inList(DU_BANGLADESH_CAMPAIGNS)})`), mandateSql: simpleMandateQuery("cdr_in_4", `CampaignName IN (${inList(DU_BANGLADESH_CAMPAIGNS)})`, 3, 3) },
   ];
 }
 
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 /**
  * mysql2 returns a DATE column as a JS Date object by default (no
@@ -378,54 +280,30 @@ export function paramsFor(sql: string, value: string): string[] {
 export async function syncInboundCdrDaily(
   importedByUserId: string,
   lookbackDays = 30,
-): Promise<{
-  clientResults: Record<string, { rowsUpserted: number; error?: string }>;
-}> {
+): Promise<{ clientResults: Record<string, { rowsUpserted: number; error?: string }> }> {
   const dialerPool = await getNamedPool("dialer");
-  const sinceDate = new Date(Date.now() - lookbackDays * 86400000)
-    .toISOString()
-    .slice(0, 10);
+  const sinceDate = new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10);
 
   const [procRows] = await db.execute<Ref[] & RowDataPacket[]>(
     `SELECT id, process_name FROM process_master WHERE process_name IN
       ('GNC','Viega','Exicom','Bella-Vita Organic','Clovia','Neemans Private Limited','DU Digital')
       AND active_status = 1`,
   );
-  const processIdByName = new Map(
-    (procRows as (Ref & { process_name: string })[]).map((r) => [
-      r.process_name,
-      r.id,
-    ]),
-  );
+  const processIdByName = new Map((procRows as (Ref & { process_name: string })[]).map((r) => [r.process_name, r.id]));
 
-  const clientResults: Record<
-    string,
-    { rowsUpserted: number; error?: string }
-  > = {};
+  const clientResults: Record<string, { rowsUpserted: number; error?: string }> = {};
 
   for (const plan of buildPlans()) {
     const processId = processIdByName.get(plan.processName);
     if (!processId) {
-      clientResults[plan.code] = {
-        rowsUpserted: 0,
-        error: `No active process named "${plan.processName}" found`,
-      };
+      clientResults[plan.code] = { rowsUpserted: 0, error: `No active process named "${plan.processName}" found` };
       continue;
     }
     try {
-      const [dailyRows] = await dialerPool.query(
-        plan.dailySql,
-        paramsFor(plan.dailySql, sinceDate),
-      );
-      const [mandateRows] = await dialerPool.query(
-        plan.mandateSql,
-        paramsFor(plan.mandateSql, sinceDate),
-      );
+      const [dailyRows] = await dialerPool.query(plan.dailySql, paramsFor(plan.dailySql, sinceDate));
+      const [mandateRows] = await dialerPool.query(plan.mandateSql, paramsFor(plan.mandateSql, sinceDate));
       const mandateByDate = new Map(
-        (mandateRows as MandateRow[]).map((m) => [
-          formatCallDate(m.CallDate),
-          m,
-        ]),
+        (mandateRows as MandateRow[]).map((m) => [formatCallDate(m.CallDate), m]),
       );
 
       let rowsUpserted = 0;
@@ -453,22 +331,11 @@ export async function syncInboundCdrDaily(
               deficit_manpower = VALUES(deficit_manpower),
               synced_at = NOW()`,
           [
-            randomUUID(),
-            processId,
-            plan.code,
-            callDate,
-            row.LoginCount,
-            row.Call_Offered ?? 0,
-            row.Call_Answered ?? 0,
-            row.AL,
-            row.SL,
-            row.ACHT_In_Sec,
-            row.Repeat_Percent,
-            row.FCR_Percent,
-            row.tagging_count,
-            mandate?.Mandate ?? null,
-            mandate?.Required_Login ?? null,
-            mandate?.Deficit_Manpower ?? null,
+            randomUUID(), processId, plan.code, callDate,
+            row.LoginCount, row.Call_Offered ?? 0, row.Call_Answered ?? 0,
+            row.AL, row.SL, row.ACHT_In_Sec, row.Repeat_Percent,
+            row.FCR_Percent, row.tagging_count,
+            mandate?.Mandate ?? null, mandate?.Required_Login ?? null, mandate?.Deficit_Manpower ?? null,
             importedByUserId,
           ] as never[],
         );
@@ -476,10 +343,7 @@ export async function syncInboundCdrDaily(
       }
       clientResults[plan.code] = { rowsUpserted };
     } catch (err: unknown) {
-      clientResults[plan.code] = {
-        rowsUpserted: 0,
-        error: err instanceof Error ? err.message : String(err),
-      };
+      clientResults[plan.code] = { rowsUpserted: 0, error: err instanceof Error ? err.message : String(err) };
     }
   }
 

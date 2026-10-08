@@ -30,19 +30,13 @@
  * a human reads in the triage console.
  */
 import { z } from "zod";
-import {
-  claudeProvider,
-  ClaudeRefusalError,
-} from "../ai/providers/claude.provider.js";
+import { claudeProvider, ClaudeRefusalError } from "../ai/providers/claude.provider.js";
 import { sha256 } from "./control-plane.js";
 import { loadCapabilityRegistry } from "./capability-registry.js";
 import { loadProtectedPaths } from "./protected-paths.js";
 import { checkDailyBudget, recordLlmCall } from "./uat-cost.service.js";
 import type { LoadedChecklist } from "./uat-checklist.repo.js";
-import type {
-  ChecklistItemResult,
-  SuppliedVerdict,
-} from "./uat-checklist.service.js";
+import type { ChecklistItemResult, SuppliedVerdict } from "./uat-checklist.service.js";
 import type { StaticScanResult } from "./uat-pipeline.types.js";
 
 /**
@@ -81,36 +75,13 @@ export const VALIDATOR_JSON_SCHEMA = {
   properties: {
     actionable: { type: "boolean" },
     restated_requirement: { type: "string", maxLength: 1000 },
-    change_type: {
-      type: "string",
-      enum: ["bug", "enhancement", "policy_change", "unclear"],
-    },
-    predicted_files: {
-      type: "array",
-      maxItems: 40,
-      items: { type: "string", maxLength: 300 },
-    },
-    predicted_new_files: {
-      type: "array",
-      maxItems: 20,
-      items: { type: "string", maxLength: 300 },
-    },
-    removals: {
-      type: "array",
-      maxItems: 40,
-      items: { type: "string", maxLength: 300 },
-    },
-    new_env: {
-      type: "array",
-      maxItems: 10,
-      items: { type: "string", maxLength: 100 },
-    },
+    change_type: { type: "string", enum: ["bug", "enhancement", "policy_change", "unclear"] },
+    predicted_files: { type: "array", maxItems: 40, items: { type: "string", maxLength: 300 } },
+    predicted_new_files: { type: "array", maxItems: 20, items: { type: "string", maxLength: 300 } },
+    removals: { type: "array", maxItems: 40, items: { type: "string", maxLength: 300 } },
+    new_env: { type: "array", maxItems: 10, items: { type: "string", maxLength: 100 } },
     requires_migration: { type: "boolean" },
-    touches_domains: {
-      type: "array",
-      maxItems: 20,
-      items: { type: "string", maxLength: 80 },
-    },
+    touches_domains: { type: "array", maxItems: 20, items: { type: "string", maxLength: 80 } },
     checklist: {
       type: "array",
       maxItems: 40,
@@ -120,20 +91,13 @@ export const VALIDATOR_JSON_SCHEMA = {
         required: ["item_key", "verdict", "evidence"],
         properties: {
           item_key: { type: "string", maxLength: 60 },
-          verdict: {
-            type: "string",
-            enum: ["pass", "fail", "warn", "not_applicable", "undetermined"],
-          },
+          verdict: { type: "string", enum: ["pass", "fail", "warn", "not_applicable", "undetermined"] },
           evidence: { type: "string", maxLength: 600 },
           confidence: { type: "number", minimum: 0, maximum: 1 },
         },
       },
     },
-    blocking_reasons: {
-      type: "array",
-      maxItems: 20,
-      items: { type: "string", maxLength: 400 },
-    },
+    blocking_reasons: { type: "array", maxItems: 20, items: { type: "string", maxLength: 400 } },
     rollback_plan: { type: "string", maxLength: 600 },
     overall: { type: "string", enum: ["proceed", "needs_human", "reject"] },
   },
@@ -153,16 +117,10 @@ const validatorSchema = z.object({
     .array(
       z.object({
         item_key: z.string().max(60),
-        verdict: z.enum([
-          "pass",
-          "fail",
-          "warn",
-          "not_applicable",
-          "undetermined",
-        ]),
+        verdict: z.enum(["pass", "fail", "warn", "not_applicable", "undetermined"]),
         evidence: z.string().max(600),
         confidence: z.number().min(0).max(1).optional(),
-      }),
+      })
     )
     .max(40),
   blocking_reasons: z.array(z.string().max(400)).max(20),
@@ -197,10 +155,7 @@ export interface ValidatorInput {
 export function buildSystemPrefix(checklist: LoadedChecklist): string {
   const items = [...checklist.statements.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(
-      ([key, v]) =>
-        `- ${key} (${v.category}): ${v.statement}\n  Evidence: ${v.evidenceSpec}`,
-    )
+    .map(([key, v]) => `- ${key} (${v.category}): ${v.statement}\n  Evidence: ${v.evidenceSpec}`)
     .join("\n");
 
   const registry = loadCapabilityRegistry();
@@ -255,27 +210,15 @@ export function buildUserBlock(input: ValidatorInput): string {
   const s = input.scan;
   return [
     `Feedback kind: ${input.kind}`,
-    input.pageRoute
-      ? `Page the user was on: ${input.pageRoute}`
-      : "Page: not captured",
+    input.pageRoute ? `Page the user was on: ${input.pageRoute}` : "Page: not captured",
     "",
     "STATIC SCAN (deterministic, already run — treat as fact)",
     `- Path tier: ${s.riskTier}`,
     `- Capability class: ${s.capabilityClass}`,
     `- Effective risk: ${s.effectiveRisk}`,
-    `- Candidate files (${s.impactedPaths?.length ?? 0}): ${
-      (s.impactedPaths ?? [])
-        .map((p) => p.path)
-        .slice(0, 20)
-        .join(", ") || "none resolved"
-    }`,
+    `- Candidate files (${s.impactedPaths?.length ?? 0}): ${(s.impactedPaths ?? []).map((p) => p.path).slice(0, 20).join(", ") || "none resolved"}`,
     `- Modules: ${(s.impactedModules ?? []).join(", ") || "none"}`,
-    `- Protected hits: ${
-      (s.protectedHits ?? [])
-        .map((h) => `${h.path} [${h.tier}]`)
-        .slice(0, 10)
-        .join(", ") || "none"
-    }`,
+    `- Protected hits: ${(s.protectedHits ?? []).map((h) => `${h.path} [${h.tier}]`).slice(0, 10).join(", ") || "none"}`,
     `- Capability hits: ${(s.capabilityHits ?? []).map((h) => `${h.capabilityKey}[${h.class}] via ${h.signal}`).join(", ") || "none"}`,
     `- Max reverse-dependency fan-in: ${s.reverseDepMax}`,
     "",
@@ -337,7 +280,7 @@ export function isSafeRepoPath(p: string): boolean {
 
 export async function runValidator(
   input: ValidatorInput,
-  deps: ValidatorDeps,
+  deps: ValidatorDeps
 ): Promise<ValidatorResult> {
   const started = Date.now();
 
@@ -345,8 +288,7 @@ export async function runValidator(
     return {
       ok: false,
       supplied: [],
-      failureReason:
-        "The UAT validator is switched off (UAT_VALIDATOR_ENABLED).",
+      failureReason: "The UAT validator is switched off (UAT_VALIDATOR_ENABLED).",
       terminal: true,
     };
   }
@@ -354,8 +296,7 @@ export async function runValidator(
     return {
       ok: false,
       supplied: [],
-      failureReason:
-        "No Anthropic API key is configured; the validator cannot run.",
+      failureReason: "No Anthropic API key is configured; the validator cannot run.",
       terminal: true,
     };
   }
@@ -367,20 +308,14 @@ export async function runValidator(
       supplied: [],
       failureReason:
         "Refusing to send a deny-tier item to an external model. " +
-        (input.scan.blockedReason ??
-          "The static scan classified this request as deny-tier."),
+        (input.scan.blockedReason ?? "The static scan classified this request as deny-tier."),
       terminal: true,
     };
   }
 
   const budget = await checkDailyBudget(deps.dailyCapUsd);
   if (!budget.allowed) {
-    return {
-      ok: false,
-      supplied: [],
-      failureReason: budget.reason,
-      terminal: false,
-    };
+    return { ok: false, supplied: [], failureReason: budget.reason, terminal: false };
   }
 
   const system = buildSystemPrefix(input.checklist);
@@ -472,11 +407,9 @@ export async function runValidator(
   // Property 3 in practice: a path the model invented that escapes the repo poisons the
   // whole response, so the response is rejected rather than filtered. Filtering would leave
   // a plausible-looking result whose file list quietly differs from what the model meant.
-  const badPath = [
-    ...parsed.predicted_files,
-    ...parsed.predicted_new_files,
-    ...parsed.removals,
-  ].find((p) => !isSafeRepoPath(p));
+  const badPath = [...parsed.predicted_files, ...parsed.predicted_new_files, ...parsed.removals].find(
+    (p) => !isSafeRepoPath(p)
+  );
   if (badPath) {
     await recordLlmCall({
       feedbackId: input.feedbackId,
@@ -552,15 +485,12 @@ export function toSuppliedVerdicts(output: ValidatorOutput): SuppliedVerdict[] {
 
 /** A restated requirement is only useful if a human can see what the model actually judged. */
 export function summariseForConsole(r: ValidatorResult): string {
-  if (!r.ok || !r.output)
-    return r.failureReason ?? "The validator did not produce a result.";
+  if (!r.ok || !r.output) return r.failureReason ?? "The validator did not produce a result.";
   const o = r.output;
   return [
     `${o.actionable ? "Actionable" : "Not actionable"} · ${o.change_type} · ${o.overall}`,
     o.restated_requirement,
-    o.blocking_reasons.length
-      ? `Blocking: ${o.blocking_reasons.join("; ")}`
-      : "",
+    o.blocking_reasons.length ? `Blocking: ${o.blocking_reasons.join("; ")}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -569,7 +499,7 @@ export function summariseForConsole(r: ValidatorResult): string {
 /** Items the model was asked about but did not answer. Left undetermined, which blocks. */
 export function missingVerdicts(
   checklist: LoadedChecklist,
-  results: ChecklistItemResult[],
+  results: ChecklistItemResult[]
 ): string[] {
   const answered = new Set(results.map((r) => r.itemKey));
   return checklist.rules

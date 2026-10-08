@@ -129,52 +129,18 @@ export interface LpDailyRow {
   loginCount: number;
   talkTimeSec: number;
 }
-export interface LpHourRow {
-  hour: number;
-  calls: number;
-  connected: number;
-  connectedPct: number;
-}
-export interface LpStatusRow {
-  status: string;
-  calls: number;
-  pct: number;
-}
-export interface LpDispositionRow {
-  disposition: string;
-  calls: number;
-  pct: number;
-}
-export interface LpAttemptRow {
-  attempt: string;
-  calls: number;
-  connected: number;
-  connectedPct: number;
-}
-export interface LpBucketRow {
-  label: string;
-  calls: number;
-}
+export interface LpHourRow { hour: number; calls: number; connected: number; connectedPct: number }
+export interface LpStatusRow { status: string; calls: number; pct: number }
+export interface LpDispositionRow { disposition: string; calls: number; pct: number }
+export interface LpAttemptRow { attempt: string; calls: number; connected: number; connectedPct: number }
+export interface LpBucketRow { label: string; calls: number }
 export interface LpTimeUse {
   /** Number of agent-day APR rows these sums cover -- divide by it for a
    * per-agent-per-day average. */
   agentDays: number;
-  loginSec: number;
-  netLoginSec: number;
-  talkSec: number;
-  wrapupSec: number;
-  idleSec: number;
-  holdSec: number;
-  ringSec: number;
-  breakSec: number;
-  otherSec: number;
-  breaks: {
-    tea: number;
-    lunch: number;
-    meeting: number;
-    bio: number;
-    unsolicited: number;
-  };
+  loginSec: number; netLoginSec: number;
+  talkSec: number; wrapupSec: number; idleSec: number; holdSec: number; ringSec: number; breakSec: number; otherSec: number;
+  breaks: { tea: number; lunch: number; meeting: number; bio: number; unsolicited: number };
   breakCount: number;
 }
 
@@ -196,12 +162,7 @@ export interface LpCallDashboardData {
 }
 
 export type LpDetailKind = "agent" | "service" | "week" | "day";
-export const LP_DETAIL_KINDS: LpDetailKind[] = [
-  "agent",
-  "service",
-  "week",
-  "day",
-];
+export const LP_DETAIL_KINDS: LpDetailKind[] = ["agent", "service", "week", "day"];
 
 export interface LpCallDetail {
   kind: LpDetailKind;
@@ -211,15 +172,9 @@ export interface LpCallDetail {
   from: string;
   to: string;
   kpis: {
-    calls: number;
-    uniqueLeads: number;
-    connected: number;
-    connectedPct: number;
-    uniqueConnected: number;
-    uniqueConnectivityPct: number;
-    avgTalkPerConnectedSec: number;
-    firstCallConnectedPct: number;
-    avgAttemptsPerLead: number;
+    calls: number; uniqueLeads: number; connected: number; connectedPct: number;
+    uniqueConnected: number; uniqueConnectivityPct: number;
+    avgTalkPerConnectedSec: number; firstCallConnectedPct: number; avgAttemptsPerLead: number;
   };
   daily: LpDailyRow[];
   byHour: LpHourRow[];
@@ -231,23 +186,10 @@ export interface LpCallDetail {
   shrinkagePct: number | null;
   occupancyPct: number | null;
   breakdownLabel: string;
-  breakdown: Array<{
-    name: string;
-    calls: number;
-    connected: number;
-    connectedPct: number;
-    uniqueLeads: number;
-  }>;
+  breakdown: Array<{ name: string; calls: number; connected: number; connectedPct: number; uniqueLeads: number }>;
   recentCalls: Array<{
-    reportDate: string;
-    hour: number | null;
-    leadId: string;
-    agent: string;
-    service: string;
-    disposition: string;
-    status: string;
-    attempt: number;
-    talkSec: number;
+    reportDate: string; hour: number | null; leadId: string; agent: string; service: string;
+    disposition: string; status: string; attempt: number; talkSec: number;
   }>;
 }
 
@@ -262,9 +204,7 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 function normalizeName(v: unknown): string {
-  return String(v ?? "")
-    .trim()
-    .replace(/\s+/g, " ");
+  return String(v ?? "").trim().replace(/\s+/g, " ");
 }
 /** Identity for "how many agents": the agent's name, not login_id -- login_id
  * is "GunjanTomar" in older APR files but the plain agent name in files
@@ -274,27 +214,15 @@ function personKey(agent: string): string {
 }
 
 const MONTH_MAP: Record<string, string> = {
-  jan: "01",
-  feb: "02",
-  mar: "03",
-  apr: "04",
-  may: "05",
-  jun: "06",
-  jul: "07",
-  aug: "08",
-  sep: "09",
-  oct: "10",
-  nov: "11",
-  dec: "12",
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
 };
 
 /** report_date is stored as free text "D-Mon-YY" (e.g. "1-Sep-26"), not a
  * real DATE column -- parsed to YYYY-MM-DD for range filtering and week
  * bucketing, same approach already used for Housing Owner's owner_cdr. */
 function parseRowDate(raw: unknown): string | null {
-  const m = String(raw ?? "")
-    .trim()
-    .match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
+  const m = String(raw ?? "").trim().match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
   if (!m) return null;
   const mon = MONTH_MAP[m[2].toLowerCase()];
   if (!mon) return null;
@@ -345,9 +273,7 @@ function weekLabelFor(dateStr: string): string {
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
+function pad2(n: number): string { return String(n).padStart(2, "0"); }
 
 export function currentMonthRange(): { from: string; to: string } {
   const now = new Date();
@@ -356,10 +282,7 @@ export function currentMonthRange(): { from: string; to: string } {
   return { from, to };
 }
 
-function resolveRange(
-  fromInput: string,
-  toInput: string,
-): { from: string; to: string } {
+function resolveRange(fromInput: string, toInput: string): { from: string; to: string } {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -397,19 +320,11 @@ interface AprRow {
   idleSec: number;
   holdSec: number;
   ringSec: number;
-  tea: number;
-  lunch: number;
-  meeting: number;
-  bio: number;
-  unsolicited: number;
+  tea: number; lunch: number; meeting: number; bio: number; unsolicited: number;
   breakCount: number;
 }
 
-async function loadSlices(
-  processKey: LpProcessKey,
-  from: string,
-  to: string,
-): Promise<{ calls: CallRow[]; apr: AprRow[] }> {
+async function loadSlices(processKey: LpProcessKey, from: string, to: string): Promise<{ calls: CallRow[]; apr: AprRow[] }> {
   const { apr: aprTable, cdr: cdrTable } = TABLES[processKey];
 
   const [cdrRaw] = await db.execute<any[]>(
@@ -454,11 +369,7 @@ async function loadSlices(
       firstCall: String(r.unique_flag ?? "").trim() === "1",
       hour: parseHour(r.start_time),
       talkSec: durationToSec(r.talk_duration),
-      hangupBy: /agent/i.test(String(r.hangup_by ?? ""))
-        ? "Agent"
-        : /customer/i.test(String(r.hangup_by ?? ""))
-          ? "Customer"
-          : "Unknown",
+      hangupBy: /agent/i.test(String(r.hangup_by ?? "")) ? "Agent" : /customer/i.test(String(r.hangup_by ?? "")) ? "Customer" : "Unknown",
     });
   }
 
@@ -486,11 +397,8 @@ async function loadSlices(
       idleSec: durationToSec(r.idle_duration),
       holdSec: durationToSec(r.hold_duration),
       ringSec: durationToSec(r.ring_duration),
-      tea: durationToSec(r.tea),
-      lunch: durationToSec(r.lunch),
-      meeting: durationToSec(r.meeting),
-      bio: durationToSec(r.bio_break),
-      unsolicited: durationToSec(r.unsolicited),
+      tea: durationToSec(r.tea), lunch: durationToSec(r.lunch), meeting: durationToSec(r.meeting),
+      bio: durationToSec(r.bio_break), unsolicited: durationToSec(r.unsolicited),
       breakCount: num(r.break_count),
     });
   }
@@ -500,26 +408,16 @@ async function loadSlices(
 /* ---------------------------- pure aggregations --------------------------- */
 
 interface CallKpis {
-  calls: number;
-  uniqueLeads: number;
-  connected: number;
-  connectedPct: number;
-  uniqueConnected: number;
-  uniqueConnectivityPct: number;
-  avgTalkPerConnectedSec: number;
-  firstCallConnectedPct: number;
-  avgAttemptsPerLead: number;
+  calls: number; uniqueLeads: number; connected: number; connectedPct: number;
+  uniqueConnected: number; uniqueConnectivityPct: number;
+  avgTalkPerConnectedSec: number; firstCallConnectedPct: number; avgAttemptsPerLead: number;
   callBackPct: number;
 }
 
 function callKpis(calls: CallRow[]): CallKpis {
   const uniqueLeads = calls.filter((c) => c.firstCall).length;
   const connectedCalls = calls.filter((c) => c.connected);
-  const uniqueConnected = new Set(
-    connectedCalls
-      .filter((c) => c.leadId)
-      .map((c) => `${c.reportDate}|${c.leadId}`),
-  ).size;
+  const uniqueConnected = new Set(connectedCalls.filter((c) => c.leadId).map((c) => `${c.reportDate}|${c.leadId}`)).size;
   const firstCalls = calls.filter((c) => c.firstCall);
   const talk = connectedCalls.reduce((s, c) => s + c.talkSec, 0);
   return {
@@ -529,41 +427,22 @@ function callKpis(calls: CallRow[]): CallKpis {
     connectedPct: pct(connectedCalls.length, calls.length),
     uniqueConnected,
     uniqueConnectivityPct: pct(uniqueConnected, uniqueLeads),
-    avgTalkPerConnectedSec: connectedCalls.length
-      ? Math.round(talk / connectedCalls.length)
-      : 0,
-    firstCallConnectedPct: pct(
-      firstCalls.filter((c) => c.connected).length,
-      firstCalls.length,
-    ),
+    avgTalkPerConnectedSec: connectedCalls.length ? Math.round(talk / connectedCalls.length) : 0,
+    firstCallConnectedPct: pct(firstCalls.filter((c) => c.connected).length, firstCalls.length),
     avgAttemptsPerLead: uniqueLeads ? round2(calls.length / uniqueLeads) : 0,
-    callBackPct: pct(
-      calls.filter((c) => c.status === "Call Back").length,
-      calls.length,
-    ),
+    callBackPct: pct(calls.filter((c) => c.status === "Call Back").length, calls.length),
   };
 }
 
 function buildDaily(calls: CallRow[], apr: AprRow[]): LpDailyRow[] {
-  const m = new Map<
-    string,
-    { calls: CallRow[]; logins: Set<string>; talk: number }
-  >();
+  const m = new Map<string, { calls: CallRow[]; logins: Set<string>; talk: number }>();
   for (const c of calls) {
-    const cur = m.get(c.reportDate) ?? {
-      calls: [],
-      logins: new Set<string>(),
-      talk: 0,
-    };
+    const cur = m.get(c.reportDate) ?? { calls: [], logins: new Set<string>(), talk: 0 };
     cur.calls.push(c);
     m.set(c.reportDate, cur);
   }
   for (const r of apr) {
-    const cur = m.get(r.reportDate) ?? {
-      calls: [],
-      logins: new Set<string>(),
-      talk: 0,
-    };
+    const cur = m.get(r.reportDate) ?? { calls: [], logins: new Set<string>(), talk: 0 };
     cur.logins.add(personKey(r.agent));
     cur.talk += r.talkDurationSec;
     m.set(r.reportDate, cur);
@@ -572,14 +451,8 @@ function buildDaily(calls: CallRow[], apr: AprRow[]): LpDailyRow[] {
     .map(([date, v]) => {
       const k = callKpis(v.calls);
       return {
-        date,
-        calls: k.calls,
-        uniqueLeads: k.uniqueLeads,
-        connected: k.connected,
-        connectedPct: k.connectedPct,
-        uniqueConnected: k.uniqueConnected,
-        loginCount: v.logins.size,
-        talkTimeSec: v.talk,
+        date, calls: k.calls, uniqueLeads: k.uniqueLeads, connected: k.connected, connectedPct: k.connectedPct,
+        uniqueConnected: k.uniqueConnected, loginCount: v.logins.size, talkTimeSec: v.talk,
       };
     })
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -595,12 +468,7 @@ function buildByHour(calls: CallRow[]): LpHourRow[] {
     m.set(c.hour, cur);
   }
   return [...m.entries()]
-    .map(([hour, v]) => ({
-      hour,
-      calls: v.calls,
-      connected: v.connected,
-      connectedPct: pct(v.connected, v.calls),
-    }))
+    .map(([hour, v]) => ({ hour, calls: v.calls, connected: v.connected, connectedPct: pct(v.connected, v.calls) }))
     .sort((a, b) => a.hour - b.hour);
 }
 
@@ -620,17 +488,8 @@ function buildByDisposition(calls: CallRow[]): LpDispositionRow[] {
   const sorted = [...m.entries()].sort((a, b) => b[1] - a[1]);
   const top = sorted.slice(0, TOP_DISPOSITIONS);
   const rest = sorted.slice(TOP_DISPOSITIONS).reduce((s, [, n]) => s + n, 0);
-  const rows = top.map(([disposition, n]) => ({
-    disposition,
-    calls: n,
-    pct: pct(n, calls.length),
-  }));
-  if (rest > 0)
-    rows.push({
-      disposition: `Others (${sorted.length - TOP_DISPOSITIONS} more)`,
-      calls: rest,
-      pct: pct(rest, calls.length),
-    });
+  const rows = top.map(([disposition, n]) => ({ disposition, calls: n, pct: pct(n, calls.length) }));
+  if (rest > 0) rows.push({ disposition: `Others (${sorted.length - TOP_DISPOSITIONS} more)`, calls: rest, pct: pct(rest, calls.length) });
   return rows;
 }
 
@@ -648,37 +507,25 @@ function buildByAttempt(calls: CallRow[]): LpAttemptRow[] {
   return [...m.entries()]
     .map(([a, v]) => ({
       attempt: a >= ATTEMPT_CAP ? `${ATTEMPT_CAP}+` : String(a),
-      calls: v.calls,
-      connected: v.connected,
-      connectedPct: pct(v.connected, v.calls),
+      calls: v.calls, connected: v.connected, connectedPct: pct(v.connected, v.calls),
     }))
     .sort((a, b) => parseInt(a.attempt, 10) - parseInt(b.attempt, 10));
 }
 
 function buildTalkBuckets(calls: CallRow[]): LpBucketRow[] {
   const bounds: Array<[string, number, number]> = [
-    ["< 30 sec", 0, 30],
-    ["30-60 sec", 30, 60],
-    ["1-2 min", 60, 120],
-    ["2-5 min", 120, 300],
-    ["5+ min", 300, Infinity],
+    ["< 30 sec", 0, 30], ["30-60 sec", 30, 60], ["1-2 min", 60, 120], ["2-5 min", 120, 300], ["5+ min", 300, Infinity],
   ];
   const connected = calls.filter((c) => c.connected);
   return bounds.map(([label, lo, hi]) => ({
-    label,
-    calls: connected.filter((c) => c.talkSec >= lo && c.talkSec < hi).length,
+    label, calls: connected.filter((c) => c.talkSec >= lo && c.talkSec < hi).length,
   }));
 }
 
 function buildHangup(calls: CallRow[]): LpBucketRow[] {
   const m = new Map<string, number>();
   for (const c of calls) m.set(c.hangupBy, (m.get(c.hangupBy) ?? 0) + 1);
-  return [...m.entries()]
-    .map(([label, n]) => ({
-      label: label === "Unknown" ? "Unknown" : `${label} ended call`,
-      calls: n,
-    }))
-    .sort((a, b) => b.calls - a.calls);
+  return [...m.entries()].map(([label, n]) => ({ label: label === "Unknown" ? "Unknown" : `${label} ended call`, calls: n })).sort((a, b) => b.calls - a.calls);
 }
 
 function buildTimeUse(apr: AprRow[]): LpTimeUse {
@@ -692,26 +539,14 @@ function buildTimeUse(apr: AprRow[]): LpTimeUse {
   const breakSec = sum((r) => r.totalBreakDurationSec);
   return {
     agentDays: apr.length,
-    loginSec,
-    netLoginSec: sum((r) => r.netLoginTimeSec),
-    talkSec,
-    wrapupSec,
-    idleSec,
-    holdSec,
-    ringSec,
-    breakSec,
+    loginSec, netLoginSec: sum((r) => r.netLoginTimeSec),
+    talkSec, wrapupSec, idleSec, holdSec, ringSec, breakSec,
     // Login time the APR's own buckets don't account for -- shown honestly
     // rather than forced to add up.
-    otherSec: Math.max(
-      0,
-      loginSec - (talkSec + wrapupSec + idleSec + holdSec + ringSec + breakSec),
-    ),
+    otherSec: Math.max(0, loginSec - (talkSec + wrapupSec + idleSec + holdSec + ringSec + breakSec)),
     breaks: {
-      tea: sum((r) => r.tea),
-      lunch: sum((r) => r.lunch),
-      meeting: sum((r) => r.meeting),
-      bio: sum((r) => r.bio),
-      unsolicited: sum((r) => r.unsolicited),
+      tea: sum((r) => r.tea), lunch: sum((r) => r.lunch), meeting: sum((r) => r.meeting),
+      bio: sum((r) => r.bio), unsolicited: sum((r) => r.unsolicited),
     },
     breakCount: sum((r) => r.breakCount),
   };
@@ -734,19 +569,14 @@ function groupCalls(calls: CallRow[], keyOf: (c: CallRow) => string) {
   for (const c of calls) {
     const k = keyOf(c);
     const arr = m.get(k);
-    if (arr) arr.push(c);
-    else m.set(k, [c]);
+    if (arr) arr.push(c); else m.set(k, [c]);
   }
   return m;
 }
 
 /* ------------------------------ dashboard --------------------------------- */
 
-export async function getLpCallDashboard(
-  processKey: LpProcessKey,
-  fromInput: string,
-  toInput: string,
-): Promise<LpCallDashboardData> {
+export async function getLpCallDashboard(processKey: LpProcessKey, fromInput: string, toInput: string): Promise<LpCallDashboardData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const { calls, apr } = await loadSlices(processKey, from, to);
 
@@ -773,31 +603,15 @@ export async function getLpCallDashboard(
     callBackPct: k.callBackPct,
     activeDays: new Set(calls.map((c) => c.reportDate)).size,
     distinctLeads: new Set(calls.map((c) => c.leadId)).size,
-    connectedLeads: new Set(
-      calls.filter((c) => c.connected).map((c) => c.leadId),
-    ).size,
-    advisorAllocatedLeads: new Set(
-      calls
-        .filter((c) => /^allocate to advisor/i.test(c.disposition))
-        .map((c) => c.leadId),
-    ).size,
-    callBackCalls: calls.filter(
-      (c) => c.status === "Call Back" || /call ?back/i.test(c.disposition),
-    ).length,
+    connectedLeads: new Set(calls.filter((c) => c.connected).map((c) => c.leadId)).size,
+    advisorAllocatedLeads: new Set(calls.filter((c) => /^allocate to advisor/i.test(c.disposition)).map((c) => c.leadId)).size,
+    callBackCalls: calls.filter((c) => c.status === "Call Back" || /call ?back/i.test(c.disposition)).length,
   };
 
-  const byService: LpCallServiceRow[] = [
-    ...groupCalls(calls, (c) => c.service).entries(),
-  ]
+  const byService: LpCallServiceRow[] = [...groupCalls(calls, (c) => c.service).entries()]
     .map(([service, rows]) => {
       const kk = callKpis(rows);
-      return {
-        service,
-        calls: kk.calls,
-        connected: kk.connected,
-        connectedPct: kk.connectedPct,
-        uniqueLeads: kk.uniqueLeads,
-      };
+      return { service, calls: kk.calls, connected: kk.connected, connectedPct: kk.connectedPct, uniqueLeads: kk.uniqueLeads };
     })
     .sort((a, b) => b.calls - a.calls);
 
@@ -806,83 +620,59 @@ export async function getLpCallDashboard(
   for (const r of apr) {
     const wk = weekLabelFor(r.reportDate);
     const arr = weekApr.get(wk);
-    if (arr) arr.push(r);
-    else weekApr.set(wk, [r]);
+    if (arr) arr.push(r); else weekApr.set(wk, [r]);
   }
   const weekKeys = new Set<string>([...weekCalls.keys(), ...weekApr.keys()]);
-  const byWeek: LpCallWeekRow[] = [...weekKeys]
-    .map((weekLabel) => {
-      const rows = weekCalls.get(weekLabel) ?? [];
-      const aprRows = weekApr.get(weekLabel) ?? [];
-      const kk = callKpis(rows);
-      const logins = new Set<string>([
-        ...rows.map((c) => personKey(c.agent)),
-        ...aprRows.map((r) => personKey(r.agent)),
-      ]);
-      return {
-        weekLabel,
-        loginCount: logins.size,
-        overallCalls: kk.calls,
-        uniqueLeadset: kk.uniqueLeads,
-        overallConnected: kk.connected,
-        overallConnectedPct: kk.connectedPct,
-        talkTimeSec: aprRows.reduce((s, r) => s + r.talkDurationSec, 0),
-      };
-    })
-    .sort((a, b) => a.weekLabel.localeCompare(b.weekLabel));
+  const byWeek: LpCallWeekRow[] = [...weekKeys].map((weekLabel) => {
+    const rows = weekCalls.get(weekLabel) ?? [];
+    const aprRows = weekApr.get(weekLabel) ?? [];
+    const kk = callKpis(rows);
+    const logins = new Set<string>([...rows.map((c) => personKey(c.agent)), ...aprRows.map((r) => personKey(r.agent))]);
+    return {
+      weekLabel, loginCount: logins.size, overallCalls: kk.calls, uniqueLeadset: kk.uniqueLeads,
+      overallConnected: kk.connected, overallConnectedPct: kk.connectedPct,
+      talkTimeSec: aprRows.reduce((s, r) => s + r.talkDurationSec, 0),
+    };
+  }).sort((a, b) => a.weekLabel.localeCompare(b.weekLabel));
 
   const callsByAgent = groupCalls(calls, (c) => c.agent);
   const aprByAgent = new Map<string, AprRow[]>();
   for (const r of apr) {
     const arr = aprByAgent.get(r.agent);
-    if (arr) arr.push(r);
-    else aprByAgent.set(r.agent, [r]);
+    if (arr) arr.push(r); else aprByAgent.set(r.agent, [r]);
   }
-  const agentNames = new Set<string>([
-    ...callsByAgent.keys(),
-    ...aprByAgent.keys(),
-  ]);
-  const agents: LpCallAgentRow[] = [...agentNames]
-    .map((agent) => {
-      const rows = callsByAgent.get(agent) ?? [];
-      const aprRows = aprByAgent.get(agent) ?? [];
-      const kk = callKpis(rows);
-      const loginTimeSec = aprRows.reduce((s, r) => s + r.loginTimeSec, 0);
-      const days = new Set<string>([
-        ...rows.map((c) => c.reportDate),
-        ...aprRows.map((r) => r.reportDate),
-      ]).size;
-      return {
-        agent,
-        loginId: aprRows[0]?.loginId ?? rows[0]?.loginId ?? agent,
-        totalCalls: kk.calls,
-        connectedCalls: kk.connected,
-        connectedPct: kk.connectedPct,
-        uniqueLeads: kk.uniqueLeads,
-        talkTimeSec: aprRows.reduce((s, r) => s + r.talkDurationSec, 0),
-        loginTimeSec,
-        netLoginTimeSec: aprRows.reduce((s, r) => s + r.netLoginTimeSec, 0),
-        shrinkagePct: shrinkOf(aprRows),
-        occupancyPct: occupancyOf(aprRows),
-        daysWorked: days,
-        aprDays: aprRows.length,
-        avgCallsPerDay: days ? Math.round(kk.calls / days) : 0,
-        avgTalkPerConnectedSec: kk.avgTalkPerConnectedSec,
-        idleSec: aprRows.reduce((s, r) => s + r.idleSec, 0),
-        wrapupSec: aprRows.reduce((s, r) => s + r.wrapupSec, 0),
-        breakSec: aprRows.reduce((s, r) => s + r.totalBreakDurationSec, 0),
-        firstCallConnectedPct: kk.firstCallConnectedPct,
-      };
-    })
-    .sort((a, b) => b.totalCalls - a.totalCalls);
+  const agentNames = new Set<string>([...callsByAgent.keys(), ...aprByAgent.keys()]);
+  const agents: LpCallAgentRow[] = [...agentNames].map((agent) => {
+    const rows = callsByAgent.get(agent) ?? [];
+    const aprRows = aprByAgent.get(agent) ?? [];
+    const kk = callKpis(rows);
+    const loginTimeSec = aprRows.reduce((s, r) => s + r.loginTimeSec, 0);
+    const days = new Set<string>([...rows.map((c) => c.reportDate), ...aprRows.map((r) => r.reportDate)]).size;
+    return {
+      agent,
+      loginId: aprRows[0]?.loginId ?? rows[0]?.loginId ?? agent,
+      totalCalls: kk.calls,
+      connectedCalls: kk.connected,
+      connectedPct: kk.connectedPct,
+      uniqueLeads: kk.uniqueLeads,
+      talkTimeSec: aprRows.reduce((s, r) => s + r.talkDurationSec, 0),
+      loginTimeSec,
+      netLoginTimeSec: aprRows.reduce((s, r) => s + r.netLoginTimeSec, 0),
+      shrinkagePct: shrinkOf(aprRows),
+      occupancyPct: occupancyOf(aprRows),
+      daysWorked: days,
+      aprDays: aprRows.length,
+      avgCallsPerDay: days ? Math.round(kk.calls / days) : 0,
+      avgTalkPerConnectedSec: kk.avgTalkPerConnectedSec,
+      idleSec: aprRows.reduce((s, r) => s + r.idleSec, 0),
+      wrapupSec: aprRows.reduce((s, r) => s + r.wrapupSec, 0),
+      breakSec: aprRows.reduce((s, r) => s + r.totalBreakDurationSec, 0),
+      firstCallConnectedPct: kk.firstCallConnectedPct,
+    };
+  }).sort((a, b) => b.totalCalls - a.totalCalls);
 
   return {
-    headline,
-    from,
-    to,
-    byService,
-    byWeek,
-    agents,
+    headline, from, to, byService, byWeek, agents,
     daily: buildDaily(calls, apr),
     byHour: buildByHour(calls),
     byStatus: buildByStatus(calls),
@@ -903,19 +693,11 @@ const RECENT_CALLS_LIMIT = 30;
  * instead of reusing the list payload. Returns null when the key matches
  * nothing in range. */
 export async function getLpCallDetail(
-  processKey: LpProcessKey,
-  kind: LpDetailKind,
-  keyRaw: string,
-  fromInput: string,
-  toInput: string,
+  processKey: LpProcessKey, kind: LpDetailKind, keyRaw: string, fromInput: string, toInput: string,
 ): Promise<LpCallDetail | null> {
   const { from, to } = resolveRange(fromInput, toInput);
   const key = String(keyRaw ?? "").trim();
-  const { calls: allCalls, apr: allApr } = await loadSlices(
-    processKey,
-    from,
-    to,
-  );
+  const { calls: allCalls, apr: allApr } = await loadSlices(processKey, from, to);
 
   let calls: CallRow[];
   let apr: AprRow[];
@@ -954,51 +736,24 @@ export async function getLpCallDetail(
   const breakdown = [...groupCalls(calls, breakdownKey).entries()]
     .map(([name, rows]) => {
       const kk = callKpis(rows);
-      return {
-        name,
-        calls: kk.calls,
-        connected: kk.connected,
-        connectedPct: kk.connectedPct,
-        uniqueLeads: kk.uniqueLeads,
-      };
+      return { name, calls: kk.calls, connected: kk.connected, connectedPct: kk.connectedPct, uniqueLeads: kk.uniqueLeads };
     })
     .sort((a, b) => b.calls - a.calls);
 
   const recentCalls = [...calls]
-    .sort((a, b) =>
-      a.reportDate === b.reportDate
-        ? b.id - a.id
-        : b.reportDate.localeCompare(a.reportDate),
-    )
+    .sort((a, b) => (a.reportDate === b.reportDate ? b.id - a.id : b.reportDate.localeCompare(a.reportDate)))
     .slice(0, RECENT_CALLS_LIMIT)
     .map((c) => ({
-      reportDate: c.reportDate,
-      hour: c.hour,
-      leadId: c.leadId,
-      agent: c.agent,
-      service: c.service,
-      disposition: c.disposition,
-      status: c.status,
-      attempt: c.attempt,
-      talkSec: c.talkSec,
+      reportDate: c.reportDate, hour: c.hour, leadId: c.leadId, agent: c.agent, service: c.service,
+      disposition: c.disposition, status: c.status, attempt: c.attempt, talkSec: c.talkSec,
     }));
 
   return {
-    kind,
-    key,
-    title,
-    subtitle,
-    from,
-    to,
+    kind, key, title, subtitle, from, to,
     kpis: {
-      calls: k.calls,
-      uniqueLeads: k.uniqueLeads,
-      connected: k.connected,
-      connectedPct: k.connectedPct,
-      uniqueConnected: k.uniqueConnected,
-      uniqueConnectivityPct: k.uniqueConnectivityPct,
-      avgTalkPerConnectedSec: k.avgTalkPerConnectedSec,
-      firstCallConnectedPct: k.firstCallConnectedPct,
+      calls: k.calls, uniqueLeads: k.uniqueLeads, connected: k.connected, connectedPct: k.connectedPct,
+      uniqueConnected: k.uniqueConnected, uniqueConnectivityPct: k.uniqueConnectivityPct,
+      avgTalkPerConnectedSec: k.avgTalkPerConnectedSec, firstCallConnectedPct: k.firstCallConnectedPct,
       avgAttemptsPerLead: k.avgAttemptsPerLead,
     },
     daily: buildDaily(calls, apr),

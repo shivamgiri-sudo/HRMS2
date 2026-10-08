@@ -6,11 +6,8 @@
  * for integration into employee performance reviews.
  */
 
-import type { Pool, RowDataPacket } from "mysql2/promise";
-import {
-  getCredentialsForKey,
-  getPoolForKey,
-} from "../external-db/external-db.service.js";
+import type { Pool, RowDataPacket } from 'mysql2/promise';
+import { getCredentialsForKey, getPoolForKey } from '../external-db/external-db.service.js';
 
 interface QualityMetrics {
   employee_code: string;
@@ -36,13 +33,12 @@ interface QualityTrend {
 }
 
 async function getQualityPool(): Promise<Pool> {
-  const credentials = await getCredentialsForKey("shivamgiri_quality");
-  if (!credentials)
-    throw new Error("Quality database connector is not configured");
-  if (credentials.db_type !== "mysql") {
-    throw new Error("The Shivamgiri quality queries require a MySQL connector");
+  const credentials = await getCredentialsForKey('shivamgiri_quality');
+  if (!credentials) throw new Error('Quality database connector is not configured');
+  if (credentials.db_type !== 'mysql') {
+    throw new Error('The Shivamgiri quality queries require a MySQL connector');
   }
-  return (await getPoolForKey("shivamgiri_quality")) as Pool;
+  return await getPoolForKey('shivamgiri_quality') as Pool;
 }
 
 /**
@@ -51,7 +47,7 @@ async function getQualityPool(): Promise<Pool> {
 export async function getEmployeeQualityMetrics(
   employeeCode: string,
   startDate: string,
-  endDate: string,
+  endDate: string
 ): Promise<QualityMetrics | null> {
   try {
     const pool = await getQualityPool();
@@ -75,7 +71,7 @@ export async function getEmployeeQualityMetrics(
         AND CallDate >= ?
         AND CallDate <= ?
       GROUP BY User`,
-      [employeeCode, startDate, endDate],
+      [employeeCode, startDate, endDate]
     );
 
     if (!metrics || metrics.length === 0) {
@@ -134,22 +130,12 @@ export async function getEmployeeQualityMetrics(
         AND CallDate <= ?
         AND proper_grammar IS NOT NULL`,
       [
-        employeeCode,
-        startDate,
-        endDate,
-        employeeCode,
-        startDate,
-        endDate,
-        employeeCode,
-        startDate,
-        endDate,
-        employeeCode,
-        startDate,
-        endDate,
-        employeeCode,
-        startDate,
-        endDate,
-      ],
+        employeeCode, startDate, endDate,
+        employeeCode, startDate, endDate,
+        employeeCode, startDate, endDate,
+        employeeCode, startDate, endDate,
+        employeeCode, startDate, endDate
+      ]
     );
 
     const metric = metrics[0];
@@ -158,20 +144,18 @@ export async function getEmployeeQualityMetrics(
       employee_code: metric.employee_code,
       total_calls: metric.total_calls,
       audited_calls: metric.audited_calls,
-      avg_quality_score: parseFloat(
-        metric.avg_quality_score?.toFixed(2) || "0",
-      ),
+      avg_quality_score: parseFloat(metric.avg_quality_score?.toFixed(2) || '0'),
       quality_band: metric.quality_band,
       period_start: startDate,
       period_end: endDate,
       parameter_scores: (parameters || []).map((p: any) => ({
         parameter_name: p.parameter_name,
-        pass_rate: parseFloat(p.pass_rate?.toFixed(2) || "0"),
-        total_checks: p.total_checks,
-      })),
+        pass_rate: parseFloat(p.pass_rate?.toFixed(2) || '0'),
+        total_checks: p.total_checks
+      }))
     };
   } catch (error) {
-    console.error("Error fetching quality metrics:", error);
+    console.error('Error fetching quality metrics:', error);
     return null;
   }
 }
@@ -182,7 +166,7 @@ export async function getEmployeeQualityMetrics(
 export async function getEmployeeQualityTrend(
   employeeCode: string,
   startDate: string,
-  endDate: string,
+  endDate: string
 ): Promise<QualityTrend[]> {
   try {
     const pool = await getQualityPool();
@@ -206,17 +190,17 @@ export async function getEmployeeQualityTrend(
         AND quality_score IS NOT NULL
       GROUP BY DATE(CallDate)
       ORDER BY date ASC`,
-      [employeeCode, startDate, endDate],
+      [employeeCode, startDate, endDate]
     );
 
     return (trends || []).map((t: any) => ({
       date: t.date,
       calls: t.calls,
-      avg_score: parseFloat(t.avg_score?.toFixed(2) || "0"),
-      quality_band: t.quality_band,
+      avg_score: parseFloat(t.avg_score?.toFixed(2) || '0'),
+      quality_band: t.quality_band
     }));
   } catch (error) {
-    console.error("Error fetching quality trend:", error);
+    console.error('Error fetching quality trend:', error);
     return [];
   }
 }
@@ -227,7 +211,7 @@ export async function getEmployeeQualityTrend(
 export async function getTeamQualityMetrics(
   employeeCodes: string[],
   startDate: string,
-  endDate: string,
+  endDate: string
 ): Promise<QualityMetrics[]> {
   if (!employeeCodes || employeeCodes.length === 0) {
     return [];
@@ -236,7 +220,7 @@ export async function getTeamQualityMetrics(
   try {
     const pool = await getQualityPool();
 
-    const placeholders = employeeCodes.map(() => "?").join(",");
+    const placeholders = employeeCodes.map(() => '?').join(',');
 
     const [metrics] = await pool.execute<RowDataPacket[]>(
       `SELECT
@@ -257,21 +241,21 @@ export async function getTeamQualityMetrics(
         AND CallDate <= ?
       GROUP BY User
       ORDER BY avg_quality_score DESC`,
-      [...employeeCodes, startDate, endDate],
+      [...employeeCodes, startDate, endDate]
     );
 
     return (metrics || []).map((m: any) => ({
       employee_code: m.employee_code,
       total_calls: m.total_calls,
       audited_calls: m.audited_calls,
-      avg_quality_score: parseFloat(m.avg_quality_score?.toFixed(2) || "0"),
+      avg_quality_score: parseFloat(m.avg_quality_score?.toFixed(2) || '0'),
       quality_band: m.quality_band,
       period_start: startDate,
       period_end: endDate,
-      parameter_scores: [],
+      parameter_scores: []
     }));
   } catch (error) {
-    console.error("Error fetching team quality metrics:", error);
+    console.error('Error fetching team quality metrics:', error);
     return [];
   }
 }

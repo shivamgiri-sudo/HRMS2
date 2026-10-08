@@ -37,13 +37,9 @@
 
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  employmentWindowPredicate,
-  EMPLOYMENT_END_DATE_SELECT,
-} from "./employment-end-date.js";
+import { employmentWindowPredicate, EMPLOYMENT_END_DATE_SELECT } from "./employment-end-date.js";
 
-export type CoverageGapKind =
-  "no_line" | "no_salary_structure" | "zero_paid_with_attendance";
+export type CoverageGapKind = "no_line" | "no_salary_structure" | "zero_paid_with_attendance";
 
 export type LineCoverageGap = {
   employeeId: string;
@@ -79,22 +75,19 @@ const ATTENDANCE_DAYS_SQL = `
              WHERE a.employee_id = e.id
                AND a.record_date BETWEEN CONCAT(?, '-01') AND LAST_DAY(CONCAT(?, '-01'))), 0)`;
 
-export async function getRunLineCoverage(
-  runId: string,
-): Promise<RunLineCoverage> {
+export async function getRunLineCoverage(runId: string): Promise<RunLineCoverage> {
   const [runRows] = await db.execute<RowDataPacket[]>(
     "SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1",
     [runId],
   );
   const run = runRows[0];
-  if (!run)
-    throw Object.assign(new Error("Run not found"), { statusCode: 404 });
+  if (!run) throw Object.assign(new Error("Run not found"), { statusCode: 404 });
   const month = String(run.run_month);
 
-  const [[countRow]] = (await db.execute<RowDataPacket[]>(
+  const [[countRow]] = await db.execute<RowDataPacket[]>(
     "SELECT COUNT(*) n FROM salary_prep_line WHERE run_id = ?",
     [runId],
-  )) as unknown as [RowDataPacket[]];
+  ) as unknown as [RowDataPacket[]];
   const linesInRun = Number(countRow?.n ?? 0);
 
   /*
@@ -166,11 +159,7 @@ export async function getRunLineCoverage(
     [month, month, runId, month, month],
   );
 
-  const row = (
-    r: RowDataPacket,
-    kind: CoverageGapKind,
-    detail: string,
-  ): LineCoverageGap => ({
+  const row = (r: RowDataPacket, kind: CoverageGapKind, detail: string): LineCoverageGap => ({
     employeeId: String(r.id),
     employeeCode: String(r.employee_code ?? ""),
     kind,
@@ -181,28 +170,15 @@ export async function getRunLineCoverage(
 
   const gaps: LineCoverageGap[] = [
     ...noLine.map((r) =>
-      row(
-        r,
-        "no_line",
-        r.end_date
-          ? `eligible through ${r.end_date} but the run holds no line — recalculate the run to add them`
-          : "eligible but the run holds no line — recalculate the run to add them",
-      ),
-    ),
+      row(r, "no_line", r.end_date
+        ? `eligible through ${r.end_date} but the run holds no line — recalculate the run to add them`
+        : "eligible but the run holds no line — recalculate the run to add them")),
     ...noSalary.map((r) =>
-      row(
-        r,
-        "no_salary_structure",
-        "worked, but has no salary assignment the engine can resolve — no run can include them until HR assigns one",
-      ),
-    ),
+      row(r, "no_salary_structure",
+        "worked, but has no salary assignment the engine can resolve — no run can include them until HR assigns one")),
     ...zeroPaid.map((r) =>
-      row(
-        r,
-        "zero_paid_with_attendance",
-        `line pays zero against recorded attendance (source ${r.attendance_data_source ?? "unset"}) — recalculate before the run closes`,
-      ),
-    ),
+      row(r, "zero_paid_with_attendance",
+        `line pays zero against recorded attendance (source ${r.attendance_data_source ?? "unset"}) — recalculate before the run closes`)),
   ];
 
   /*
@@ -223,13 +199,10 @@ export async function getRunLineCoverage(
   const byEmployee = new Map<string, LineCoverageGap>();
   for (const g of gaps) {
     const held = byEmployee.get(g.employeeId);
-    if (!held || precedence[g.kind] < precedence[held.kind])
-      byEmployee.set(g.employeeId, g);
+    if (!held || precedence[g.kind] < precedence[held.kind]) byEmployee.set(g.employeeId, g);
   }
   const deduped = [...byEmployee.values()].sort(
-    (a, b) =>
-      b.attendanceDays - a.attendanceDays ||
-      a.employeeCode.localeCompare(b.employeeCode),
+    (a, b) => b.attendanceDays - a.attendanceDays || a.employeeCode.localeCompare(b.employeeCode),
   );
 
   const withAttendance = deduped.filter((g) => g.attendanceDays > 0);
@@ -239,9 +212,7 @@ export async function getRunLineCoverage(
     linesInRun,
     gaps: deduped,
     gapsWithAttendance: withAttendance.length,
-    unpaidAttendanceDays: Number(
-      withAttendance.reduce((s, g) => s + g.attendanceDays, 0).toFixed(1),
-    ),
+    unpaidAttendanceDays: Number(withAttendance.reduce((s, g) => s + g.attendanceDays, 0).toFixed(1)),
     // Clean means nobody who worked is being left out. A gap with no attendance behind it is a
     // records question, and must not block a payroll that is otherwise correct.
     clean: withAttendance.length === 0,

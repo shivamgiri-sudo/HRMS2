@@ -92,9 +92,7 @@ describe("ESI mid-period continuity override", () => {
       esicOptOut: false,
       esicContinuityOverride: undefined,
     };
-    const result = payrollService.calculateNetSalary(
-      withoutField as NetSalaryParams,
-    );
+    const result = payrollService.calculateNetSalary(withoutField as NetSalaryParams);
     expect(result.esic_employee).toBe(0);
   });
 });

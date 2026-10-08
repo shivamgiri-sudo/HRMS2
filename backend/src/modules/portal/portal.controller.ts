@@ -5,12 +5,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { ClientAuthRequest } from "../../middleware/requireClientAuth.js";
 import { portalAuthService } from "./portal.auth.service.js";
-import {
-  ensureProcessSlug,
-  generateCredentialsFromSlug,
-  disambiguateLoginId,
-  portalUrlFromSlug,
-} from "./portal-credentials.js";
+import { ensureProcessSlug, generateCredentialsFromSlug, disambiguateLoginId, portalUrlFromSlug } from "./portal-credentials.js";
 import { portalOverviewService } from "./portal.overview.service.js";
 import { portalKpiService } from "./portal.kpi.service.js";
 import { portalGlideService } from "./portal.glide.service.js";
@@ -20,25 +15,13 @@ import { portalTrainingComplianceService } from "./portal.training-compliance.se
 import { portalCommentaryService } from "./portal.commentary.service.js";
 import { portalGovernanceService } from "./portal.governance.service.js";
 import { getLiveDashboardForPortal } from "./portal.live-dashboard.service.js";
+import { getProcessOperationsForPortal, getProcessBusinessHealthForPortal, getMetricDrilldownForPortal } from "../process-operations/process-operations.service.js";
 import {
-  getProcessOperationsForPortal,
-  getProcessBusinessHealthForPortal,
-  getMetricDrilldownForPortal,
-} from "../process-operations/process-operations.service.js";
-import {
-  requestOtpSchema,
-  verifyOtpSchema,
-  actionPlanFilterSchema,
-  createActionPlanSchema,
-  updateActionPlanSchema,
-  setGlideSchema,
-  createCommentarySchema,
-  replyCommentarySchema,
-  createClientUserSchema,
-  passwordLoginSchema,
-  changeClientPasswordSchema,
-  resetClientPasswordSchema,
-  updateGovernanceSchema,
+  requestOtpSchema, verifyOtpSchema, actionPlanFilterSchema,
+  createActionPlanSchema, updateActionPlanSchema, setGlideSchema,
+  createCommentarySchema, replyCommentarySchema,
+  createClientUserSchema, passwordLoginSchema, changeClientPasswordSchema,
+  resetClientPasswordSchema, updateGovernanceSchema,
 } from "./portal.validation.js";
 
 function currentPeriod() {
@@ -50,19 +33,14 @@ function currentPeriod() {
 // a 30-day rolling window by nature (daily process_metric_actual rows), not something that
 // maps onto a calendar month picker. Defaults to "trend" (rolling window).
 const VALID_REPORT_PERIODS = new Set(["trend", "today", "wtd", "mtd"]);
-function readReportPeriod(
-  req: ClientAuthRequest,
-): "trend" | "today" | "wtd" | "mtd" {
+function readReportPeriod(req: ClientAuthRequest): "trend" | "today" | "wtd" | "mtd" {
   const raw = String(req.query.period ?? "trend");
-  return (VALID_REPORT_PERIODS.has(raw) ? raw : "trend") as
-    "trend" | "today" | "wtd" | "mtd";
+  return (VALID_REPORT_PERIODS.has(raw) ? raw : "trend") as "trend" | "today" | "wtd" | "mtd";
 }
 
 function assertProcessAccess(req: ClientAuthRequest): void {
   if (!req.portalUser!.processIds.includes(req.params.id)) {
-    const err = Object.assign(new Error("Process not in your access list"), {
-      statusCode: 403,
-    });
+    const err = Object.assign(new Error("Process not in your access list"), { statusCode: 403 });
     throw err;
   }
 }
@@ -74,7 +52,7 @@ async function assertCommentaryAccess(req: ClientAuthRequest): Promise<void> {
   } else {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT process_id FROM management_commentary WHERE id = ? LIMIT 1",
-      [req.params.id],
+      [req.params.id]
     );
     processId = (rows as RowDataPacket[])[0]?.process_id as string | undefined;
   }
@@ -83,9 +61,7 @@ async function assertCommentaryAccess(req: ClientAuthRequest): Promise<void> {
     throw Object.assign(new Error("Commentary not found"), { statusCode: 404 });
   }
   if (!req.portalUser!.processIds.includes(processId)) {
-    throw Object.assign(new Error("Process not in your access list"), {
-      statusCode: 403,
-    });
+    throw Object.assign(new Error("Process not in your access list"), { statusCode: 403 });
   }
 }
 
@@ -93,7 +69,7 @@ async function logAccess(req: ClientAuthRequest, page: string): Promise<void> {
   try {
     await db.execute(
       "INSERT INTO portal_access_log (id, client_user_id, page, ip_address) VALUES (?, ?, ?, ?)",
-      [randomUUID(), req.portalUser!.clientUserId, page, req.ip ?? null],
+      [randomUUID(), req.portalUser!.clientUserId, page, req.ip ?? null]
     );
   } catch {
     // non-fatal
@@ -104,17 +80,12 @@ export const portalController = {
   // ── Auth ──────────────────────────────────────────────────────────────────
   async requestOtp(req: Request, res: Response) {
     const parsed = requestOtpSchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     try {
       await portalAuthService.requestOtp(parsed.data.email);
     } catch (err) {
       if ((err as { code?: string }).code === "DELIVERY_FAILED") {
-        return res
-          .status(503)
-          .json({
-            error: "Unable to send OTP. Please try again or contact support.",
-          });
+        return res.status(503).json({ error: "Unable to send OTP. Please try again or contact support." });
       }
       throw err;
     }
@@ -123,25 +94,19 @@ export const portalController = {
 
   async verifyOtp(req: Request, res: Response) {
     const parsed = verifyOtpSchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
-    const token = await portalAuthService.verifyOtp(
-      parsed.data.email,
-      parsed.data.otp,
-    );
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const token = await portalAuthService.verifyOtp(parsed.data.email, parsed.data.otp);
     res.json({ token });
   },
 
   async loginWithPassword(req: Request, res: Response) {
     const parsed = passwordLoginSchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     try {
-      const { token, mustChangePassword } =
-        await portalAuthService.loginWithPassword(
-          parsed.data.loginId,
-          parsed.data.password,
-        );
+      const { token, mustChangePassword } = await portalAuthService.loginWithPassword(
+        parsed.data.loginId,
+        parsed.data.password
+      );
       res.json({ token, mustChangePassword });
     } catch (err) {
       res.status(401).json({ error: (err as Error).message });
@@ -150,13 +115,12 @@ export const portalController = {
 
   async changePassword(req: ClientAuthRequest, res: Response) {
     const parsed = changeClientPasswordSchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     try {
       await portalAuthService.changePassword(
         req.portalUser!.clientUserId,
         parsed.data.currentPassword,
-        parsed.data.newPassword,
+        parsed.data.newPassword
       );
       res.json({ ok: true });
     } catch (err) {
@@ -175,13 +139,9 @@ export const portalController = {
    */
   async resetPassword(req: ClientAuthRequest, res: Response) {
     const parsed = resetClientPasswordSchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     try {
-      const { loginId } = await portalAuthService.resetPasswordAfterOtp(
-        req.portalUser!.clientUserId,
-        parsed.data.newPassword,
-      );
+      const { loginId } = await portalAuthService.resetPasswordAfterOtp(req.portalUser!.clientUserId, parsed.data.newPassword);
       // loginId is echoed back so a client who never had one (27 of 28 live accounts, see
       // resetPasswordAfterOtp's own comment) learns their new sign-in ID immediately --
       // otherwise the reset would leave them with a password but no way to discover what
@@ -217,7 +177,7 @@ export const portalController = {
        FROM process_master p
        JOIN client_master cm ON cm.id = p.client_id
        WHERE p.slug = ? AND p.active_status = 1 LIMIT 1`,
-      [slug],
+      [slug]
     );
     const row = (rows as RowDataPacket[])[0];
     if (!row) return res.status(404).json({ error: "Unknown portal URL" });
@@ -226,9 +186,7 @@ export const portalController = {
 
   // ── Overview ──────────────────────────────────────────────────────────────
   async getOverview(req: ClientAuthRequest, res: Response) {
-    const processes = await portalOverviewService.getOverview(
-      req.portalUser!.processIds,
-    );
+    const processes = await portalOverviewService.getOverview(req.portalUser!.processIds);
     await logAccess(req, "/portal/overview");
     res.json({ data: processes });
   },
@@ -243,9 +201,7 @@ export const portalController = {
     // above is still the primary boundary; this makes the second one real rather than
     // decorative, which matters the day a new handler forgets the first.
     const scorecards = await portalKpiService.getScorecards(
-      req.params.id,
-      period,
-      req.portalUser!.processIds,
+      req.params.id, period, req.portalUser!.processIds,
     );
     await logAccess(req, `/portal/processes/${req.params.id}/kpis`);
     res.json({ data: scorecards });
@@ -255,10 +211,7 @@ export const portalController = {
   async getGlidePaths(req: ClientAuthRequest, res: Response) {
     assertProcessAccess(req);
     const period = (req.query.period as string) || currentPeriod();
-    const result = await portalGlideService.getGlidePaths(
-      req.params.id,
-      period,
-    );
+    const result = await portalGlideService.getGlidePaths(req.params.id, period);
     await logAccess(req, `/portal/processes/${req.params.id}/glide-paths`);
     res.json({ data: result });
   },
@@ -267,13 +220,8 @@ export const portalController = {
   async getActionPlans(req: ClientAuthRequest, res: Response) {
     assertProcessAccess(req);
     const parsed = actionPlanFilterSchema.safeParse(req.query);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
-    const items = await portalActionsService.list(
-      req.params.id,
-      parsed.data.metricId,
-      parsed.data.status,
-    );
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const items = await portalActionsService.list(req.params.id, parsed.data.metricId, parsed.data.status);
     await logAccess(req, `/portal/processes/${req.params.id}/action-plans`);
     res.json({ data: items });
   },
@@ -290,10 +238,7 @@ export const portalController = {
   async getGovernance(req: ClientAuthRequest, res: Response) {
     assertProcessAccess(req);
     const period = (req.query.period as string) || currentPeriod();
-    const items = await portalGovernanceService.getChecklist(
-      req.params.id,
-      period,
-    );
+    const items = await portalGovernanceService.getChecklist(req.params.id, period);
     await logAccess(req, `/portal/processes/${req.params.id}/governance`);
     res.json({ data: items });
   },
@@ -308,11 +253,7 @@ export const portalController = {
   // separate, clearly-labelled tabs from the exact same underlying read.
   async getOperations(req: ClientAuthRequest, res: Response) {
     assertProcessAccess(req);
-    const result = await getProcessOperationsForPortal(
-      req.params.id,
-      30,
-      readReportPeriod(req),
-    );
+    const result = await getProcessOperationsForPortal(req.params.id, 30, readReportPeriod(req));
     await logAccess(req, `/portal/processes/${req.params.id}/operations`);
     if (!result) return res.json({ data: null });
     // "hygiene" (unresolved punches, correction load, roster ack, open attendance issues)
@@ -325,37 +266,19 @@ export const portalController = {
     // .service.ts couldn't place in one of its 6 named sections) was previously dropped
     // unconditionally too, since this handler only ever read result.sections -- surfaced
     // here as its own section so a real metric never vanishes just for being uncategorized.
-    const opsSections = result.sections.filter(
-      (s) =>
-        s.key === "operations" || s.key === "conversion" || s.key === "hygiene",
-    );
-    const sections =
-      result.ungrouped.length > 0
-        ? [
-            ...opsSections,
-            {
-              key: "ungrouped",
-              title: "Other tracked metrics",
-              blurb: null,
-              metrics: result.ungrouped,
-            },
-          ]
-        : opsSections;
+    const opsSections = result.sections.filter((s) => s.key === "operations" || s.key === "conversion" || s.key === "hygiene");
+    const sections = result.ungrouped.length > 0
+      ? [...opsSections, { key: "ungrouped", title: "Other tracked metrics", blurb: null, metrics: result.ungrouped }]
+      : opsSections;
     res.json({ data: { ...result, sections } });
   },
 
   async getQuality(req: ClientAuthRequest, res: Response) {
     assertProcessAccess(req);
-    const result = await getProcessOperationsForPortal(
-      req.params.id,
-      30,
-      readReportPeriod(req),
-    );
+    const result = await getProcessOperationsForPortal(req.params.id, 30, readReportPeriod(req));
     await logAccess(req, `/portal/processes/${req.params.id}/quality`);
     if (!result) return res.json({ data: null });
-    const qualitySections = result.sections.filter(
-      (s) => s.key === "quality" || s.key === "risk" || s.key === "conduct",
-    );
+    const qualitySections = result.sections.filter((s) => s.key === "quality" || s.key === "risk" || s.key === "conduct");
     res.json({ data: { ...result, sections: qualitySections } });
   },
 
@@ -406,23 +329,11 @@ export const portalController = {
   async getMetricDrilldown(req: ClientAuthRequest, res: Response) {
     assertProcessAccess(req);
     const metricKey = req.params.metricKey;
-    if (!metricKey)
-      return res.status(400).json({ error: "metricKey is required" });
+    if (!metricKey) return res.status(400).json({ error: "metricKey is required" });
     const period = readReportPeriod(req);
-    const result = await getMetricDrilldownForPortal(
-      req.params.id,
-      metricKey,
-      30,
-      period,
-    );
-    await logAccess(
-      req,
-      `/portal/processes/${req.params.id}/metrics/${metricKey}/drilldown`,
-    );
-    if (!result)
-      return res
-        .status(404)
-        .json({ error: "No data for this metric on this process" });
+    const result = await getMetricDrilldownForPortal(req.params.id, metricKey, 30, period);
+    await logAccess(req, `/portal/processes/${req.params.id}/metrics/${metricKey}/drilldown`);
+    if (!result) return res.status(404).json({ error: "No data for this metric on this process" });
     res.json({ data: result });
   },
 
@@ -431,9 +342,7 @@ export const portalController = {
     assertProcessAccess(req);
     const period = (req.query.period as string) || currentPeriod();
     const data = await portalAttritionService.getAttrition(
-      req.params.id,
-      period,
-      req.portalUser!.processIds,
+      req.params.id, period, req.portalUser!.processIds,
     );
     await logAccess(req, `/portal/processes/${req.params.id}/attrition`);
     res.json({ data });
@@ -444,14 +353,9 @@ export const portalController = {
     assertProcessAccess(req);
     const period = (req.query.period as string) || currentPeriod();
     const data = await portalTrainingComplianceService.getTrainingCompliance(
-      req.params.id,
-      period,
-      req.portalUser!.processIds,
+      req.params.id, period, req.portalUser!.processIds,
     );
-    await logAccess(
-      req,
-      `/portal/processes/${req.params.id}/training-compliance`,
-    );
+    await logAccess(req, `/portal/processes/${req.params.id}/training-compliance`);
     res.json({ data });
   },
 
@@ -466,10 +370,7 @@ export const portalController = {
 
   async acknowledgeCommentary(req: ClientAuthRequest, res: Response) {
     await assertCommentaryAccess(req);
-    await portalCommentaryService.acknowledge(
-      req.params.id,
-      req.portalUser!.clientUserId,
-    );
+    await portalCommentaryService.acknowledge(req.params.id, req.portalUser!.clientUserId);
     await logAccess(req, `/portal/commentary/${req.params.id}/acknowledge`);
     res.json({ ok: true });
   },
@@ -477,13 +378,8 @@ export const portalController = {
   async replyCommentary(req: ClientAuthRequest, res: Response) {
     await assertCommentaryAccess(req);
     const parsed = replyCommentarySchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
-    await portalCommentaryService.addReply(
-      req.params.id,
-      req.portalUser!.clientUserId,
-      parsed.data.text,
-    );
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    await portalCommentaryService.addReply(req.params.id, req.portalUser!.clientUserId, parsed.data.text);
     await logAccess(req, `/portal/commentary/${req.params.id}/reply`);
     res.json({ ok: true });
   },
@@ -491,31 +387,22 @@ export const portalController = {
   // ── Internal: Glide Path management ──────────────────────────────────────
   async setGlideCommitment(req: Request, res: Response) {
     const parsed = setGlideSchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
-    await portalGlideService.setCommitment(
-      parsed.data,
-      (req as any).authUser?.id ?? "system",
-    );
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    await portalGlideService.setCommitment(parsed.data, (req as any).authUser?.id ?? "system");
     res.json({ ok: true });
   },
 
   // ── Internal: Action plan management ─────────────────────────────────────
   async createActionPlan(req: Request, res: Response) {
     const parsed = createActionPlanSchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
-    const item = await portalActionsService.create(
-      parsed.data,
-      (req as any).authUser?.id ?? "system",
-    );
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const item = await portalActionsService.create(parsed.data, (req as any).authUser?.id ?? "system");
     res.status(201).json({ data: item });
   },
 
   async updateActionPlan(req: Request, res: Response) {
     const parsed = updateActionPlanSchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     await portalActionsService.update(req.params.id, parsed.data);
     res.json({ ok: true });
   },
@@ -523,32 +410,23 @@ export const portalController = {
   // ── Internal: Governance checklist logging ────────────────────────────────
   async updateGovernance(req: Request, res: Response) {
     const parsed = updateGovernanceSchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
-    await portalGovernanceService.updateLog(
-      parsed.data,
-      (req as any).authUser?.id ?? "system",
-    );
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    await portalGovernanceService.updateLog(parsed.data, (req as any).authUser?.id ?? "system");
     res.json({ ok: true });
   },
 
   // ── Internal: Commentary ──────────────────────────────────────────────────
   async createCommentary(req: Request, res: Response) {
     const parsed = createCommentarySchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await portalCommentaryService.create(
-      parsed.data,
-      (req as any).authUser?.id ?? "system",
-    );
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const data = await portalCommentaryService.create(parsed.data, (req as any).authUser?.id ?? "system");
     res.status(201).json({ data });
   },
 
   // ── Internal: Client user management ─────────────────────────────────────
   async createClientUser(req: Request, res: Response) {
     const parsed = createClientUserSchema.safeParse(req.body);
-    if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
     // Wrapped in try/catch -- confirmed missing during a later audit pass: every sibling
     // handler in this file that can hit a real DB constraint (resetPassword, changePassword,
@@ -579,23 +457,12 @@ export const portalController = {
             `INSERT INTO client_user
                (id, client_id, email, name, designation, process_ids, login_id, password_hash, must_change_password)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-            [
-              id,
-              parsed.data.clientId,
-              parsed.data.email,
-              parsed.data.name,
-              parsed.data.designation ?? null,
-              JSON.stringify(parsed.data.processIds),
-              loginId,
-              passwordHash,
-            ],
+            [id, parsed.data.clientId, parsed.data.email, parsed.data.name, parsed.data.designation ?? null,
+             JSON.stringify(parsed.data.processIds), loginId, passwordHash]
           );
           inserted = true;
         } catch (err) {
-          if (
-            (err as { code?: string }).code === "ER_DUP_ENTRY" &&
-            attempt === 0
-          ) {
+          if ((err as { code?: string }).code === "ER_DUP_ENTRY" && attempt === 0) {
             loginId = disambiguateLoginId(generated.loginId);
             continue;
           }
@@ -603,10 +470,7 @@ export const portalController = {
         }
       }
 
-      const [rows] = await db.execute<RowDataPacket[]>(
-        "SELECT * FROM client_user WHERE id = ? LIMIT 1",
-        [id],
-      );
+      const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM client_user WHERE id = ? LIMIT 1", [id]);
       const created = (rows as RowDataPacket[])[0];
       if (!created) throw new Error("Failed to fetch created client user");
       // The one-time plaintext password is returned ONLY on this create response -- it is
@@ -615,11 +479,7 @@ export const portalController = {
       // the client out-of-band right now, or reset it later via a new endpoint.
       res.status(201).json({
         data: created,
-        generatedCredentials: {
-          loginId,
-          temporaryPassword: generated.password,
-          portalUrl: portalUrlFromSlug(slug),
-        },
+        generatedCredentials: { loginId, temporaryPassword: generated.password, portalUrl: portalUrlFromSlug(slug) },
       });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -628,7 +488,7 @@ export const portalController = {
 
   async listClientUsers(_req: Request, res: Response) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, client_id, email, name, designation, is_active, created_at, login_id FROM client_user ORDER BY created_at DESC",
+      "SELECT id, client_id, email, name, designation, is_active, created_at, login_id FROM client_user ORDER BY created_at DESC"
     );
     res.json({ data: rows });
   },
@@ -654,30 +514,19 @@ export const portalController = {
     const { id } = req.params;
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id, process_ids FROM client_user WHERE id = ? AND is_active = 1 LIMIT 1",
-      [id],
+      [id]
     );
     const user = (rows as RowDataPacket[])[0];
-    if (!user)
-      return res.status(404).json({ error: "Active client user not found" });
+    if (!user) return res.status(404).json({ error: "Active client user not found" });
 
     let processIds: string[];
     try {
-      processIds =
-        typeof user.process_ids === "string"
-          ? JSON.parse(user.process_ids)
-          : (user.process_ids ?? []);
+      processIds = typeof user.process_ids === "string" ? JSON.parse(user.process_ids) : (user.process_ids ?? []);
     } catch {
-      return res
-        .status(500)
-        .json({ error: "Portal user has invalid process_ids data" });
+      return res.status(500).json({ error: "Portal user has invalid process_ids data" });
     }
     if (!processIds.length) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "This portal user has no assigned process — cannot derive a login ID",
-        });
+      return res.status(400).json({ error: "This portal user has no assigned process — cannot derive a login ID" });
     }
 
     // Wrapped in try/catch -- same fix as createClientUser above: ensureProcessSlug throws
@@ -695,17 +544,14 @@ export const portalController = {
         try {
           await db.execute(
             "UPDATE client_user SET login_id = ?, password_hash = ?, must_change_password = 1 WHERE id = ?",
-            [loginId, passwordHash, id],
+            [loginId, passwordHash, id]
           );
           updated = true;
         } catch (err) {
           // A different client_user already holds this exact login_id (e.g. it was
           // retrofitted moments earlier by someone else, or two portal users share the same
           // primary process) — retry once with a short disambiguator, same pattern as create.
-          if (
-            (err as { code?: string }).code === "ER_DUP_ENTRY" &&
-            attempt === 0
-          ) {
+          if ((err as { code?: string }).code === "ER_DUP_ENTRY" && attempt === 0) {
             loginId = disambiguateLoginId(generated.loginId);
             continue;
           }
@@ -715,11 +561,7 @@ export const portalController = {
 
       res.json({
         data: { clientUserId: id, loginId },
-        generatedCredentials: {
-          loginId,
-          temporaryPassword: generated.password,
-          portalUrl: portalUrlFromSlug(slug),
-        },
+        generatedCredentials: { loginId, temporaryPassword: generated.password, portalUrl: portalUrlFromSlug(slug) },
       });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -731,16 +573,7 @@ export const portalController = {
     assertProcessAccess(req);
     const processes = await portalOverviewService.getOverview([req.params.id]);
     const proc = processes[0];
-    if (!proc)
-      return res.json({
-        data: { process_name: null, client_name: null, rag: null },
-      });
-    res.json({
-      data: {
-        process_name: proc.process_name,
-        client_name: proc.client_name,
-        rag: proc.rag,
-      },
-    });
+    if (!proc) return res.json({ data: { process_name: null, client_name: null, rag: null } });
+    res.json({ data: { process_name: proc.process_name, client_name: proc.client_name, rag: proc.rag } });
   },
 };

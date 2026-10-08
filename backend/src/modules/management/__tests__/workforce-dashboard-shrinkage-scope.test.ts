@@ -23,14 +23,10 @@ describe("getWorkforceDashboard productiveEquivalent counts week_off_worked as p
 
   it("derives productiveEquivalent from PRESENT_STATUSES, not attendanceByStatus.present alone", () => {
     const start = source.indexOf("const productiveEquivalent");
-    expect(start, "productiveEquivalent computation not found").toBeGreaterThan(
-      -1,
-    );
+    expect(start, "productiveEquivalent computation not found").toBeGreaterThan(-1);
     const slice = source.slice(start, start + 300);
     expect(slice).toMatch(/PRESENT_STATUSES\.reduce/);
-    expect(slice).not.toMatch(
-      /numberValue\(attendanceByStatus\.present\)\s*\n\s*\+/,
-    );
+    expect(slice).not.toMatch(/numberValue\(attendanceByStatus\.present\)\s*\n\s*\+/);
   });
 
   it("derives the expected-to-work exclusion list from the shared vocabulary, not a hand-maintained copy", () => {

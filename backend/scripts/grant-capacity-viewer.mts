@@ -43,29 +43,14 @@ const GRANTOR = "a4a4902e-6222-11f1-adb1-00155d0ab410";
 
 // Roles that already reach WFM_CAPACITY_DASHBOARD via migration 1688.
 const ALREADY_REACHING = [
-  "super_admin",
-  "admin",
-  "ceo",
-  "hr",
-  "wfm",
-  "branch_wfm",
-  "branch_head",
-  "process_manager",
-  "manager",
-  "assistant_manager",
-  "team_leader",
-  "tl",
-  "tq_head",
-  "trainer",
-  "qa",
+  "super_admin", "admin", "ceo", "hr", "wfm", "branch_wfm", "branch_head",
+  "process_manager", "manager", "assistant_manager", "team_leader", "tl",
+  "tq_head", "trainer", "qa",
 ];
 
 const h = await mysql.createConnection({
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT) || 3306,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  host: process.env.DB_HOST, port: Number(process.env.DB_PORT) || 3306,
+  user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
 });
 await h.execute("SET SESSION innodb_lock_wait_timeout=20");
 await h.query("SET SESSION sql_mode=''");
@@ -74,9 +59,7 @@ const ph = ALREADY_REACHING.map(() => "?").join(",");
 const [reachRows] = (await h.execute(
   `SELECT DISTINCT e.id FROM employees e
      JOIN user_roles ur ON ur.user_id = e.user_id AND ur.active_status = 1
-    WHERE e.active_status = 1 AND ur.role_key IN (${ph})`,
-  ALREADY_REACHING,
-)) as any[];
+    WHERE e.active_status = 1 AND ur.role_key IN (${ph})`, ALREADY_REACHING)) as any[];
 const reachable = new Set((reachRows as any[]).map((r) => r.id));
 
 const [audience] = (await h.execute(
@@ -88,51 +71,28 @@ const [audience] = (await h.execute(
      LEFT JOIN designation_master dm ON dm.id = e.designation_id
     WHERE e.active_status = 1
       AND ( (d.dept_name LIKE '%PERATION%' AND COALESCE(dm.designation_name,'') <> 'EXECUTIVE')
-            OR d.dept_name LIKE '%HUMAN%' OR d.dept_name LIKE '%TRAINING%' )`,
-)) as any[];
+            OR d.dept_name LIKE '%HUMAN%' OR d.dept_name LIKE '%TRAINING%' )`)) as any[];
 
 const needing = (audience as any[]).filter((a) => !reachable.has(a.id));
 
 // db_bill confirmation.
 const b = await mysql.createConnection({
-  host: process.env.BILL_DB_HOST,
-  port: Number(process.env.BILL_DB_PORT) || 3306,
-  user: process.env.BILL_DB_USER,
-  password: process.env.BILL_DB_PASSWORD,
-  database: process.env.BILL_DB_NAME,
+  host: process.env.BILL_DB_HOST, port: Number(process.env.BILL_DB_PORT) || 3306,
+  user: process.env.BILL_DB_USER, password: process.env.BILL_DB_PASSWORD, database: process.env.BILL_DB_NAME,
 });
 const codes = needing.map((n) => n.c);
 const bph = codes.map(() => "?").join(",");
 const [billRows] = (await b.execute(
-  `SELECT EmpCode, Status FROM masjclrentry WHERE EmpCode IN (${bph})`,
-  codes,
-)) as any[];
+  `SELECT EmpCode, Status FROM masjclrentry WHERE EmpCode IN (${bph})`, codes)) as any[];
 await b.end();
-const bill = new Map(
-  (billRows as any[]).map((r) => [
-    String(r.EmpCode).trim(),
-    String(r.Status ?? "").trim(),
-  ]),
-);
+const bill = new Map((billRows as any[]).map((r) => [String(r.EmpCode).trim(), String(r.Status ?? "").trim()]));
 
-const grant: any[] = [],
-  noLogin: any[] = [],
-  notActive: any[] = [],
-  notInBill: any[] = [];
+const grant: any[] = [], noLogin: any[] = [], notActive: any[] = [], notInBill: any[] = [];
 for (const n of needing) {
   const st = bill.get(n.c);
-  if (st === undefined) {
-    notInBill.push(n);
-    continue;
-  }
-  if (st !== "1") {
-    notActive.push({ ...n, st });
-    continue;
-  }
-  if (!n.user_id) {
-    noLogin.push(n);
-    continue;
-  }
+  if (st === undefined) { notInBill.push(n); continue; }
+  if (st !== "1") { notActive.push({ ...n, st }); continue; }
+  if (!n.user_id) { noLogin.push(n); continue; }
   grant.push(n);
 }
 
@@ -142,48 +102,25 @@ if (grant.length) {
   const gph = grant.map(() => "?").join(",");
   const [ex] = (await h.execute(
     `SELECT user_id FROM user_roles WHERE role_key = ? AND active_status = 1 AND user_id IN (${gph})`,
-    [ROLE, ...grant.map((g) => g.user_id)],
-  )) as any[];
+    [ROLE, ...grant.map((g) => g.user_id)])) as any[];
   already = new Set((ex as any[]).map((r) => r.user_id));
 }
 const toWrite = grant.filter((g) => !already.has(g.user_id));
 
 console.log(`audience needing access: ${needing.length}`);
-console.log(
-  `  eligible to grant (active in db_bill + has login): ${grant.length}`,
-);
-console.log(
-  `    already hold ${ROLE}: ${already.size}   to write now: ${toWrite.length}`,
-);
-console.log(
-  `  held back - no login account : ${noLogin.length}${noLogin.length ? "  " + noLogin.map((x) => x.c).join(", ") : ""}`,
-);
-console.log(
-  `  held back - not in masjclrentry: ${notInBill.length}${notInBill.length ? "  " + notInBill.map((x) => x.c).join(", ") : ""}`,
-);
-console.log(
-  `  held back - db_bill not active : ${notActive.length}${notActive.length ? "  " + notActive.map((x) => `${x.c}(Status=${x.st || "blank"})`).join(", ") : ""}`,
-);
+console.log(`  eligible to grant (active in db_bill + has login): ${grant.length}`);
+console.log(`    already hold ${ROLE}: ${already.size}   to write now: ${toWrite.length}`);
+console.log(`  held back - no login account : ${noLogin.length}${noLogin.length ? "  " + noLogin.map((x) => x.c).join(", ") : ""}`);
+console.log(`  held back - not in masjclrentry: ${notInBill.length}${notInBill.length ? "  " + notInBill.map((x) => x.c).join(", ") : ""}`);
+console.log(`  held back - db_bill not active : ${notActive.length}${notActive.length ? "  " + notActive.map((x) => `${x.c}(Status=${x.st || "blank"})`).join(", ") : ""}`);
 
 const byD: Record<string, number> = {};
-for (const g of toWrite) {
-  const k = `${g.dept} / ${g.desig ?? "-"}`;
-  byD[k] = (byD[k] ?? 0) + 1;
-}
+for (const g of toWrite) { const k = `${g.dept} / ${g.desig ?? "-"}`; byD[k] = (byD[k] ?? 0) + 1; }
 console.log("\n  to write, by designation:");
-for (const [k, v] of Object.entries(byD).sort((a, b) => b[1] - a[1]))
-  console.log(`    ${v} x ${k}`);
+for (const [k, v] of Object.entries(byD).sort((a, b) => b[1] - a[1])) console.log(`    ${v} x ${k}`);
 
-if (!APPLY) {
-  console.log("\n(dry run - pass --apply to write)");
-  await h.end();
-  process.exit(0);
-}
-if (!toWrite.length) {
-  console.log("\nnothing to write");
-  await h.end();
-  process.exit(0);
-}
+if (!APPLY) { console.log("\n(dry run - pass --apply to write)"); await h.end(); process.exit(0); }
+if (!toWrite.length) { console.log("\nnothing to write"); await h.end(); process.exit(0); }
 
 await h.beginTransaction();
 try {
@@ -192,8 +129,7 @@ try {
       `INSERT INTO user_roles (id, user_id, role_key, active_status, granted_by, granted_at)
        VALUES (?, ?, ?, 1, ?, NOW())
        ON DUPLICATE KEY UPDATE active_status = 1`,
-      [randomUUID(), g.user_id, ROLE, GRANTOR],
-    )) as any[];
+      [randomUUID(), g.user_id, ROLE, GRANTOR])) as any[];
     if (!u.affectedRows) throw new Error(`${g.c}: insert affected 0 rows`);
   }
   await h.commit();
@@ -206,9 +142,7 @@ try {
 }
 
 const [after] = (await h.execute(
-  "SELECT COUNT(*) n FROM user_roles WHERE role_key = ? AND active_status = 1",
-  [ROLE],
-)) as any[];
+  "SELECT COUNT(*) n FROM user_roles WHERE role_key = ? AND active_status = 1", [ROLE])) as any[];
 console.log(`AFTER: ${(after as any[])[0].n} users hold ${ROLE}`);
 await h.end();
 process.exit(0);

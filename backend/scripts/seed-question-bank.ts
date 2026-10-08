@@ -7,29 +7,29 @@
  *   cd backend
  *   npx tsx scripts/seed-question-bank.ts
  */
-import { db } from "../src/db/mysql.js";
-import { ensureAssessmentSchema } from "../src/modules/ats-assessment/assessment.schema.js";
-import { seedQuestionBank } from "../src/modules/ats-assessment/question-bank-seed.js";
+import { db } from '../src/db/mysql.js';
+import { ensureAssessmentSchema } from '../src/modules/ats-assessment/assessment.schema.js';
+import { seedQuestionBank } from '../src/modules/ats-assessment/question-bank-seed.js';
 
 async function main() {
   try {
-    console.log("Ensuring assessment schema tables exist...");
+    console.log('Ensuring assessment schema tables exist...');
     await ensureAssessmentSchema();
-    console.log("Schema ready.");
+    console.log('Schema ready.');
     const result = await seedQuestionBank(null);
-    console.log("\nQuestion bank seed complete.");
+    console.log('\nQuestion bank seed complete.');
     console.log(`  Imported : ${result.imported}`);
     console.log(`  Skipped  : ${result.skipped}`);
     if (result.errors.length) {
-      console.error("\nErrors:");
-      result.errors.forEach((e) => console.error(" ", e));
+      console.error('\nErrors:');
+      result.errors.forEach(e => console.error(' ', e));
     }
   } finally {
     await db.end();
   }
 }
 
-main().catch((err) => {
+main().catch(err => {
   console.error(err);
   process.exit(1);
 });

@@ -10,9 +10,7 @@ import { db } from "../../../db/mysql.js";
 // disagreeing with leave_request.status. reviewRequest itself does its own locking,
 // transaction and balance-restore work — genuinely tested in leave.service's own suite —
 // so this file mocks it rather than re-deriving its whole internal SQL surface here.
-const { reviewRequestMock } = vi.hoisted(() => ({
-  reviewRequestMock: vi.fn(),
-}));
+const { reviewRequestMock } = vi.hoisted(() => ({ reviewRequestMock: vi.fn() }));
 vi.mock("../../leave/leave.service.js", () => ({
   leaveService: { reviewRequest: reviewRequestMock },
 }));
@@ -37,27 +35,18 @@ import { employeeService } from "../employee.service.js";
 const EXIT_SERVICE = path.resolve(__dirname, "../../exit/exit.service.ts");
 const mockExecute = db.execute as unknown as ReturnType<typeof vi.fn>;
 
-interface Captured {
-  sql: string;
-  params: unknown[];
-}
+interface Captured { sql: string; params: unknown[] }
 
 function capture(): Captured[] {
   const calls: Captured[] = [];
   mockExecute.mockImplementation((sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
-    if (sql.includes("SELECT user_id FROM employees"))
-      return Promise.resolve([[{ user_id: "user-1" }], []]);
+    if (sql.includes("SELECT user_id FROM employees")) return Promise.resolve([[{ user_id: "user-1" }], []]);
     if (sql.includes("FROM employees WHERE id = ?")) {
-      return Promise.resolve([
-        [{ id: "emp-1", employment_status: "Active", active_status: 1 }],
-        [],
-      ]);
+      return Promise.resolve([[{ id: "emp-1", employment_status: "Active", active_status: 1 }], []]);
     }
-    if (sql.includes("COUNT(*) AS n FROM asset_assignment"))
-      return Promise.resolve([[{ n: 3 }], []]);
-    if (sql.includes("SELECT id FROM leave_request"))
-      return Promise.resolve([[{ id: "leave-1" }, { id: "leave-2" }], []]);
+    if (sql.includes("COUNT(*) AS n FROM asset_assignment")) return Promise.resolve([[{ n: 3 }], []]);
+    if (sql.includes("SELECT id FROM leave_request")) return Promise.resolve([[{ id: "leave-1" }, { id: "leave-2" }], []]);
     return Promise.resolve([{ affectedRows: 2 } as never, []]);
   });
   return calls;
@@ -87,9 +76,7 @@ describe("deprovisionEmployeeAccess uses schema that actually exists", () => {
     const result = await deprovisionEmployeeAccess("emp-1", "employee_exit");
 
     // The candidate lookup: singular table, future-dated only.
-    const select = calls.find((c) =>
-      /SELECT id FROM leave_request\b/.test(c.sql),
-    );
+    const select = calls.find((c) => /SELECT id FROM leave_request\b/.test(c.sql));
     expect(select).toBeDefined();
     expect(select?.sql).not.toContain("leave_requests");
     // Leave already taken is settled history — cancelling it would diverge from
@@ -104,14 +91,10 @@ describe("deprovisionEmployeeAccess uses schema that actually exists", () => {
     // Every candidate id from the SELECT gets reviewed as cancelled, by the system actor.
     expect(reviewRequestMock).toHaveBeenCalledTimes(2);
     expect(reviewRequestMock).toHaveBeenCalledWith(
-      "leave-1",
-      { status: "cancelled", remarks: "employee_exit" },
-      "system:employeeDeprovisioning",
+      "leave-1", { status: "cancelled", remarks: "employee_exit" }, "system:employeeDeprovisioning"
     );
     expect(reviewRequestMock).toHaveBeenCalledWith(
-      "leave-2",
-      { status: "cancelled", remarks: "employee_exit" },
-      "system:employeeDeprovisioning",
+      "leave-2", { status: "cancelled", remarks: "employee_exit" }, "system:employeeDeprovisioning"
     );
     expect(result.leaveRequestsCancelled).toBe(2);
   });
@@ -119,8 +102,7 @@ describe("deprovisionEmployeeAccess uses schema that actually exists", () => {
   it("surfaces a partial reviewRequest failure without losing the rows that did cancel", async () => {
     capture();
     reviewRequestMock.mockImplementation(async (id: string) => {
-      if (id === "leave-2")
-        throw new Error("This leave request was already moved to 'cancelled'.");
+      if (id === "leave-2") throw new Error("This leave request was already moved to 'cancelled'.");
       return {};
     });
 
@@ -134,19 +116,13 @@ describe("deprovisionEmployeeAccess uses schema that actually exists", () => {
     const calls = capture();
     const result = await deprovisionEmployeeAccess("emp-1", "employee_exit");
 
-    expect(calls.some((c) => c.sql.includes("employee_asset_assignment"))).toBe(
-      false,
-    );
+    expect(calls.some((c) => c.sql.includes("employee_asset_assignment"))).toBe(false);
     expect(result.openAssetAssignments).toBe(3);
-    expect(calls.some((c) => /UPDATE asset_assignment/.test(c.sql))).toBe(
-      false,
-    );
+    expect(calls.some((c) => /UPDATE asset_assignment/.test(c.sql))).toBe(false);
   });
 
   it("reports failures instead of swallowing them", async () => {
-    mockExecute.mockRejectedValue(
-      new Error("Table 'mas_hrms.lms_employee_mapping' doesn't exist"),
-    );
+    mockExecute.mockRejectedValue(new Error("Table 'mas_hrms.lms_employee_mapping' doesn't exist"));
 
     const result = await deprovisionEmployeeAccess("emp-1", "employee_exit");
 
@@ -163,29 +139,18 @@ describe("every deactivation path deprovisions", () => {
 
   it("the DELETE path", async () => {
     const calls = capture();
-    await employeeService.deactivateEmployee(
-      "emp-1",
-      "hr-user",
-      "Absconded since 1 Aug",
-    );
-    expect(calls.some((c) => c.sql.includes("lms_employee_mapping"))).toBe(
-      true,
-    );
+    await employeeService.deactivateEmployee("emp-1", "hr-user", "Absconded since 1 Aug");
+    expect(calls.some((c) => c.sql.includes("lms_employee_mapping"))).toBe(true);
   });
 
   it("the directory path HR actually uses", async () => {
     const calls = capture();
     await employeeService.updateEmployee(
       "emp-1",
-      {
-        employmentStatus: "Inactive",
-        deactivationReason: "Resigned, LWD 15 Aug",
-      } as never,
-      "hr-user",
+      { employmentStatus: "Inactive", deactivationReason: "Resigned, LWD 15 Aug" } as never,
+      "hr-user"
     );
-    expect(calls.some((c) => c.sql.includes("lms_employee_mapping"))).toBe(
-      true,
-    );
+    expect(calls.some((c) => c.sql.includes("lms_employee_mapping"))).toBe(true);
   });
 
   it("the exit flow — and its three dead statements are gone", () => {

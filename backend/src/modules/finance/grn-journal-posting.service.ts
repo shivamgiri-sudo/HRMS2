@@ -34,11 +34,7 @@ import { journalService } from "./journal.service.js";
  * not at the moment someone is trying to approve a real GRN.
  */
 
-async function resolveExpenseSubHeadAccountId(
-  connection: PoolConnection,
-  head: string,
-  subHead: string,
-): Promise<string> {
+async function resolveExpenseSubHeadAccountId(connection: PoolConnection, head: string, subHead: string): Promise<string> {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT sh.id
        FROM finance_expense_sub_head_master sh
@@ -60,19 +56,13 @@ async function resolveExpenseSubHeadAccountId(
   return String(row.id);
 }
 
-async function resolveImprestFloatAccountId(
-  connection: PoolConnection,
-): Promise<string> {
+async function resolveImprestFloatAccountId(connection: PoolConnection): Promise<string> {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT id FROM payable_account_master WHERE account_name = 'Imprest Float' AND active_status = 1 LIMIT 1`,
   );
   const row = (rows as RowDataPacket[])[0];
   if (!row) {
-    throw refuse(
-      422,
-      "IMPREST_FLOAT_ACCOUNT_NOT_FOUND",
-      `The "Imprest Float" ledger head is missing or inactive.`,
-    );
+    throw refuse(422, "IMPREST_FLOAT_ACCOUNT_NOT_FOUND", `The "Imprest Float" ledger head is missing or inactive.`);
   }
   return String(row.id);
 }
@@ -106,28 +96,17 @@ export async function postGrnApprovalJournalEntry(
   entryDate: string = new Date().toISOString().slice(0, 10),
 ): Promise<{ journalEntryId: string }> {
   const grossAmount = Number(grn.amount_with_tax || grn.amount);
-  const expenseAccountId = await resolveExpenseSubHeadAccountId(
-    connection,
-    grn.head,
-    grn.sub_head,
-  );
+  const expenseAccountId = await resolveExpenseSubHeadAccountId(connection, grn.head, grn.sub_head);
 
   const creditLine =
     grn.grn_type === "vendor"
       ? (() => {
           if (!grn.vendor_id) {
-            throw refuse(
-              422,
-              "GRN_VENDOR_MISSING",
-              `Vendor GRN ${grn.grn_number ?? grn.id} has no vendor_id — cannot determine the creditor.`,
-            );
+            throw refuse(422, "GRN_VENDOR_MISSING", `Vendor GRN ${grn.grn_number ?? grn.id} has no vendor_id — cannot determine the creditor.`);
           }
           return { accountType: "vendor" as const, accountId: grn.vendor_id };
         })()
-      : {
-          accountType: "payable_account" as const,
-          accountId: await resolveImprestFloatAccountId(connection),
-        };
+      : { accountType: "payable_account" as const, accountId: await resolveImprestFloatAccountId(connection) };
 
   return journalService.post(connection, {
     entryDate,
@@ -139,16 +118,8 @@ export async function postGrnApprovalJournalEntry(
     costCentreId: grn.cost_centre_id ?? null,
     processId: grn.process_id ?? null,
     lines: [
-      {
-        accountType: "expense_sub_head",
-        accountId: expenseAccountId,
-        debitAmount: grossAmount,
-      },
-      {
-        accountType: creditLine.accountType,
-        accountId: creditLine.accountId,
-        creditAmount: grossAmount,
-      },
+      { accountType: "expense_sub_head", accountId: expenseAccountId, debitAmount: grossAmount },
+      { accountType: creditLine.accountType, accountId: creditLine.accountId, creditAmount: grossAmount },
     ],
   });
 }

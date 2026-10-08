@@ -113,16 +113,11 @@ describe("employeeService.createEmployee", () => {
 
   it("throws on duplicate employee_code", async () => {
     exec.mockResolvedValueOnce([[fakeEmployee], []]); // duplicate found
-    await expect(
-      employeeService.createEmployee(
-        {
-          employeeCode: "MCN001",
-          firstName: "Test",
-          dateOfJoining: "2026-01-01",
-        },
-        "user-1",
-      ),
-    ).rejects.toThrow("Employee code already exists");
+    await expect(employeeService.createEmployee({
+      employeeCode: "MCN001",
+      firstName: "Test",
+      dateOfJoining: "2026-01-01",
+    }, "user-1")).rejects.toThrow("Employee code already exists");
   });
 });
 
@@ -137,9 +132,7 @@ describe("employeeService.getEmployee", () => {
 
   it("throws when not found", async () => {
     exec.mockResolvedValueOnce([[], []]);
-    await expect(employeeService.getEmployee("nope")).rejects.toThrow(
-      "Employee not found",
-    );
+    await expect(employeeService.getEmployee("nope")).rejects.toThrow("Employee not found");
   });
 });
 
@@ -157,11 +150,7 @@ describe("employeeService.listEmployees", () => {
   it("filters by employment_status", async () => {
     exec.mockResolvedValueOnce([[fakeEmployee], []]);
     exec.mockResolvedValueOnce([[{ total: 1 }], []]);
-    await employeeService.listEmployees({
-      page: 1,
-      limit: 50,
-      status: "Active",
-    });
+    await employeeService.listEmployees({ page: 1, limit: 50, status: "Active" });
     const query = exec.mock.calls[0][0] as string;
     expect(query).toContain("employment_status");
   });
@@ -169,11 +158,7 @@ describe("employeeService.listEmployees", () => {
   it("filters by process_id", async () => {
     exec.mockResolvedValueOnce([[fakeEmployee], []]);
     exec.mockResolvedValueOnce([[{ total: 1 }], []]);
-    await employeeService.listEmployees({
-      page: 1,
-      limit: 50,
-      processId: "proc-1",
-    });
+    await employeeService.listEmployees({ page: 1, limit: 50, processId: "proc-1" });
     const query = exec.mock.calls[0][0] as string;
     expect(query).toContain("process_id");
   });
@@ -183,22 +168,15 @@ describe("employeeService.listEmployees", () => {
 
 describe("employeeService.updateEmployee", () => {
   it("updates allowed fields", async () => {
-    exec.mockResolvedValueOnce([[fakeEmployee], []]); // getEmployee
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
+    exec.mockResolvedValueOnce([[fakeEmployee], []]);        // getEmployee
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);  // UPDATE
     // mobile is now in SENSITIVE_FIELDS (previously only Employment fields were), so
     // changing it fires an audit-log write. void logSensitiveAction(...) invokes its
     // async body synchronously up to its own first await, so its db.execute() call
     // consumes a queued mock value before the re-fetch below does.
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // audit log INSERT
-    exec.mockResolvedValueOnce([
-      [{ ...fakeEmployee, mobile: "8888888888" }],
-      [],
-    ]); // re-fetch
-    const r = await employeeService.updateEmployee(
-      "emp-1",
-      { mobile: "8888888888" },
-      "user-1",
-    );
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);  // audit log INSERT
+    exec.mockResolvedValueOnce([[{ ...fakeEmployee, mobile: "8888888888" }], []]); // re-fetch
+    const r = await employeeService.updateEmployee("emp-1", { mobile: "8888888888" }, "user-1");
     expect(r.mobile).toBe("8888888888");
   });
 
@@ -235,11 +213,7 @@ describe("employeeService.updateEmployee", () => {
     exec.mockResolvedValueOnce([[fakeEmployee], []]); // re-fetch (no UPDATE call)
     const r = await employeeService.updateEmployee("emp-1", {}, "user-1");
     expect(r.employee_code).toBe("MCN001");
-    expect(
-      exec.mock.calls.some(([sql]) =>
-        /^\s*UPDATE employees/i.test(sql as string),
-      ),
-    ).toBe(false);
+    expect(exec.mock.calls.some(([sql]) => /^\s*UPDATE employees/i.test(sql as string))).toBe(false);
   });
 
   // Previously only Employment fields (branch/department/process/designation/reporting
@@ -253,40 +227,22 @@ describe("employeeService.updateEmployee", () => {
     ["dateOfBirth", "1995-03-15", "date_of_birth", "1990-01-01"],
     ["address1", "221B Baker Street", "address1", "Old Address"],
     ["city", "Bengaluru", "city", "Mumbai"],
-  ])(
-    "audits a %s change with before/after values",
-    async (inputKey, newValue, dbCol, oldValue) => {
-      exec.mockResolvedValueOnce([
-        [{ ...fakeEmployee, [dbCol]: oldValue }],
-        [],
-      ]); // snapshot
-      exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
-      exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // audit log INSERT
-      exec.mockResolvedValueOnce([
-        [{ ...fakeEmployee, [dbCol]: newValue }],
-        [],
-      ]); // re-fetch
+  ])("audits a %s change with before/after values", async (inputKey, newValue, dbCol, oldValue) => {
+    exec.mockResolvedValueOnce([[{ ...fakeEmployee, [dbCol]: oldValue }], []]); // snapshot
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);                      // UPDATE
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);                      // audit log INSERT
+    exec.mockResolvedValueOnce([[{ ...fakeEmployee, [dbCol]: newValue }], []]); // re-fetch
 
-      await employeeService.updateEmployee(
-        "emp-1",
-        { [inputKey]: newValue } as any,
-        "user-1",
-      );
+    await employeeService.updateEmployee("emp-1", { [inputKey]: newValue } as any, "user-1");
 
-      const auditCall = exec.mock.calls.find(([sql]) =>
-        /INSERT INTO sensitive_action_log/i.test(sql as string),
-      );
-      expect(
-        auditCall,
-        `expected an audit log write for ${inputKey}`,
-      ).toBeTruthy();
-      const params = auditCall![1] as unknown[];
-      expect(params).toContain("EMPLOYEE_PROFILE_UPDATED");
-      const paramsStr = JSON.stringify(params);
-      expect(paramsStr).toContain(newValue);
-      expect(paramsStr).toContain(oldValue);
-    },
-  );
+    const auditCall = exec.mock.calls.find(([sql]) => /INSERT INTO sensitive_action_log/i.test(sql as string));
+    expect(auditCall, `expected an audit log write for ${inputKey}`).toBeTruthy();
+    const params = auditCall![1] as unknown[];
+    expect(params).toContain("EMPLOYEE_PROFILE_UPDATED");
+    const paramsStr = JSON.stringify(params);
+    expect(paramsStr).toContain(newValue);
+    expect(paramsStr).toContain(oldValue);
+  });
 
   it("refuses a dateOfJoining after the stored salary_start_date, with no UPDATE and no audit row", async () => {
     exec.mockResolvedValueOnce([[fakeEmployee], []]); // snapshot: salary_start_date 2026-01-01
@@ -297,29 +253,17 @@ describe("employeeService.updateEmployee", () => {
   });
 
   it("audits an officialEmail change, on top of its separate auth_user.email sync", async () => {
-    exec.mockResolvedValueOnce([
-      [{ ...fakeEmployee, official_email: "ravi.old@mcn.com" }],
-      [],
-    ]); // snapshot
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE employees
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // audit log INSERT
-    exec.mockResolvedValueOnce([[{ user_id: "user-1" }], []]); // SELECT employees.user_id (auth_user sync)
-    exec.mockResolvedValueOnce([[], []]); // SELECT auth_user email conflict — none
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE auth_user
-    exec.mockResolvedValueOnce([
-      [{ ...fakeEmployee, official_email: "suresh@mcn.com" }],
-      [],
-    ]); // re-fetch
+    exec.mockResolvedValueOnce([[{ ...fakeEmployee, official_email: "ravi.old@mcn.com" }], []]); // snapshot
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);                                          // UPDATE employees
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);                                          // audit log INSERT
+    exec.mockResolvedValueOnce([[{ user_id: "user-1" }], []]);                                      // SELECT employees.user_id (auth_user sync)
+    exec.mockResolvedValueOnce([[], []]);                                                            // SELECT auth_user email conflict — none
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);                                          // UPDATE auth_user
+    exec.mockResolvedValueOnce([[{ ...fakeEmployee, official_email: "suresh@mcn.com" }], []]);      // re-fetch
 
-    await employeeService.updateEmployee(
-      "emp-1",
-      { officialEmail: "suresh@mcn.com" },
-      "user-1",
-    );
+    await employeeService.updateEmployee("emp-1", { officialEmail: "suresh@mcn.com" }, "user-1");
 
-    const auditCall = exec.mock.calls.find(([sql]) =>
-      /INSERT INTO sensitive_action_log/i.test(sql as string),
-    );
+    const auditCall = exec.mock.calls.find(([sql]) => /INSERT INTO sensitive_action_log/i.test(sql as string));
     expect(auditCall).toBeTruthy();
     const paramsStr = JSON.stringify(auditCall![1]);
     expect(paramsStr).toContain("suresh@mcn.com");
@@ -327,21 +271,13 @@ describe("employeeService.updateEmployee", () => {
   });
 
   it("does not audit an unchanged sensitive field re-sent with the same value", async () => {
-    exec.mockResolvedValueOnce([[fakeEmployee], []]); // snapshot: mobile = "9999999999"
-    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
-    exec.mockResolvedValueOnce([[fakeEmployee], []]); // re-fetch (no audit INSERT in between)
+    exec.mockResolvedValueOnce([[fakeEmployee], []]);        // snapshot: mobile = "9999999999"
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);  // UPDATE
+    exec.mockResolvedValueOnce([[fakeEmployee], []]);        // re-fetch (no audit INSERT in between)
 
-    await employeeService.updateEmployee(
-      "emp-1",
-      { mobile: "9999999999" },
-      "user-1",
-    );
+    await employeeService.updateEmployee("emp-1", { mobile: "9999999999" }, "user-1");
 
-    expect(
-      exec.mock.calls.some(([sql]) =>
-        /INSERT INTO sensitive_action_log/i.test(sql as string),
-      ),
-    ).toBe(false);
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO sensitive_action_log/i.test(sql as string))).toBe(false);
   });
 });
 
@@ -349,13 +285,9 @@ describe("employeeService.updateEmployee", () => {
 
 describe("employeeService.deactivateEmployee", () => {
   it("soft-deletes by setting active_status = 0", async () => {
-    exec.mockResolvedValueOnce([[fakeEmployee], []]); // getEmployee
+    exec.mockResolvedValueOnce([[fakeEmployee], []]);       // getEmployee
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
-    await employeeService.deactivateEmployee(
-      "emp-1",
-      "user-1",
-      "Role ended by HR",
-    );
+    await employeeService.deactivateEmployee("emp-1", "user-1", "Role ended by HR");
     const updateCall = exec.mock.calls[1][0] as string;
     expect(updateCall).toContain("active_status");
   });
@@ -383,11 +315,7 @@ describe("employeeService.createEmployee with structureId + ctcAnnual", () => {
     // calls on the ATS candidate-conversion path. employeeService.createEmployee
     // is the direct-API path and does not log one, so asserting it here tested a
     // responsibility this unit no longer has.
-    expect(
-      exec.mock.calls.some(([sql]) =>
-        /INSERT INTO employee_journey_log/i.test(sql as string),
-      ),
-    ).toBe(false);
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_journey_log/i.test(sql as string))).toBe(false);
   });
 
   it("skips salary assignment when structureId not provided", async () => {
@@ -403,10 +331,6 @@ describe("employeeService.createEmployee with structureId + ctcAnnual", () => {
     // calls on the ATS candidate-conversion path. employeeService.createEmployee
     // is the direct-API path and does not log one, so asserting it here tested a
     // responsibility this unit no longer has.
-    expect(
-      exec.mock.calls.some(([sql]) =>
-        /INSERT INTO employee_journey_log/i.test(sql as string),
-      ),
-    ).toBe(false);
+    expect(exec.mock.calls.some(([sql]) => /INSERT INTO employee_journey_log/i.test(sql as string))).toBe(false);
   });
 });

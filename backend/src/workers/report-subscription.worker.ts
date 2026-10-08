@@ -19,25 +19,17 @@
  *
  * Registered in BOTH all-workers.ts and server.ts.
  */
-import { randomUUID } from "crypto";
-import type { RowDataPacket, ResultSetHeader } from "mysql2";
-import { db } from "../db/mysql.js";
-import { resolveRecipients } from "../shared/recipient-resolver.js";
-import { RecipientResolutionError } from "../shared/recipient-resolver.types.js";
-import type { RecipientSpec } from "../shared/recipient-resolver.types.js";
-import {
-  getReportDefinition,
-  canExportReport,
-} from "../modules/reporting/report-catalog.js";
-import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
-import {
-  withWorkerLock,
-  registerTimer,
-  unregisterTimer,
-  recordWorkerRun,
-} from "./worker-utils.js";
+import { randomUUID } from 'crypto';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { db } from '../db/mysql.js';
+import { resolveRecipients } from '../shared/recipient-resolver.js';
+import { RecipientResolutionError } from '../shared/recipient-resolver.types.js';
+import type { RecipientSpec } from '../shared/recipient-resolver.types.js';
+import { getReportDefinition, canExportReport } from '../modules/reporting/report-catalog.js';
+import { isWorkerEnabled, markWorkerRun } from '../shared/worker-config.js';
+import { withWorkerLock, registerTimer, unregisterTimer, recordWorkerRun } from './worker-utils.js';
 
-const WORKER_NAME = "report-subscription";
+const WORKER_NAME = 'report-subscription';
 const POLL_MS = 10 * 60 * 1000;
 const STARTUP_DELAY_MS = 120_000;
 const MAX_SUBSCRIPTIONS_PER_RUN = 20;
@@ -47,13 +39,13 @@ interface SubscriptionRow extends RowDataPacket {
   subscription_name: string;
   report_code: string;
   filters_json: unknown;
-  frequency: "daily" | "weekly" | "monthly";
+  frequency: 'daily' | 'weekly' | 'monthly';
   day_of_week: number | null;
   day_of_month: number | null;
   hour_of_day: number;
   recipient_spec: string | Record<string, unknown>;
-  requested_format: "xlsx" | "csv" | "pdf";
-  dispatch_mode: "shadow" | "live";
+  requested_format: 'xlsx' | 'csv' | 'pdf';
+  dispatch_mode: 'shadow' | 'live';
   owner_user_id: string;
 }
 
@@ -62,48 +54,32 @@ interface SubscriptionRow extends RowDataPacket {
  * Derived from the date rather than from NOW(), so retrying inside the same slot is a
  * no-op instead of a second report.
  */
-export function slotKeyFor(
-  freq: SubscriptionRow["frequency"],
-  now: Date,
-): string {
+export function slotKeyFor(freq: SubscriptionRow['frequency'], now: Date): string {
   const y = now.getUTCFullYear();
-  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(now.getUTCDate()).padStart(2, "0");
-  if (freq === "daily") return `${y}-${m}-${d}`;
-  if (freq === "monthly") return `${y}-${m}`;
+  const m = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(now.getUTCDate()).padStart(2, '0');
+  if (freq === 'daily') return `${y}-${m}-${d}`;
+  if (freq === 'monthly') return `${y}-${m}`;
   // ISO week number.
   const t = new Date(Date.UTC(y, now.getUTCMonth(), now.getUTCDate()));
-  const dayNum = (t.getUTCDay() + 6) % 7; // Mon=0
-  t.setUTCDate(t.getUTCDate() - dayNum + 3); // nearest Thursday
+  const dayNum = (t.getUTCDay() + 6) % 7;          // Mon=0
+  t.setUTCDate(t.getUTCDate() - dayNum + 3);        // nearest Thursday
   const firstThu = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
-  const week =
-    1 +
-    Math.round(
-      ((t.getTime() - firstThu.getTime()) / 86400000 -
-        3 +
-        ((firstThu.getUTCDay() + 6) % 7)) /
-        7,
-    );
-  return `${t.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+  const week = 1 + Math.round(((t.getTime() - firstThu.getTime()) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
 /** Next occurrence after `from`, honouring frequency and the configured hour. */
-export function computeNextRun(
-  sub: Pick<
-    SubscriptionRow,
-    "frequency" | "day_of_week" | "day_of_month" | "hour_of_day"
-  >,
-  from: Date,
-): Date {
+export function computeNextRun(sub: Pick<SubscriptionRow, 'frequency' | 'day_of_week' | 'day_of_month' | 'hour_of_day'>, from: Date): Date {
   const next = new Date(from);
   next.setUTCMinutes(0, 0, 0);
   next.setUTCHours(sub.hour_of_day);
-  if (sub.frequency === "daily") {
+  if (sub.frequency === 'daily') {
     if (next <= from) next.setUTCDate(next.getUTCDate() + 1);
     return next;
   }
-  if (sub.frequency === "weekly") {
-    const target = sub.day_of_week ?? 0; // 0=Monday
+  if (sub.frequency === 'weekly') {
+    const target = sub.day_of_week ?? 0;                 // 0=Monday
     const cur = (next.getUTCDay() + 6) % 7;
     let delta = (target - cur + 7) % 7;
     if (delta === 0 && next <= from) delta = 7;
@@ -112,10 +88,7 @@ export function computeNextRun(
   }
   const dom = Math.min(sub.day_of_month ?? 1, 28);
   next.setUTCDate(dom);
-  if (next <= from) {
-    next.setUTCMonth(next.getUTCMonth() + 1);
-    next.setUTCDate(dom);
-  }
+  if (next <= from) { next.setUTCMonth(next.getUTCMonth() + 1); next.setUTCDate(dom); }
   return next;
 }
 
@@ -131,9 +104,7 @@ async function rolesFor(userId: string): Promise<string[]> {
 }
 
 export async function runSubscriptionSweep(now = new Date()): Promise<{
-  due: number;
-  requested: number;
-  skipped: number;
+  due: number; requested: number; skipped: number;
 }> {
   const [subs] = await db.execute<SubscriptionRow[]>(
     `SELECT * FROM report_subscription
@@ -160,32 +131,21 @@ export async function runSubscriptionSweep(now = new Date()): Promise<{
           [runId, sub.id, slot, sub.dispatch_mode],
         );
       } catch (err) {
-        if ((err as { code?: string }).code === "ER_DUP_ENTRY") {
-          skipped++;
-          continue;
-        }
+        if ((err as { code?: string }).code === 'ER_DUP_ENTRY') { skipped++; continue; }
         throw err;
       }
 
       const definition = getReportDefinition(sub.report_code);
       if (!definition) {
-        await failRun(
-          runId,
-          sub.id,
-          `report_code '${sub.report_code}' is not in the catalog`,
-        );
-        skipped++;
-        continue;
+        await failRun(runId, sub.id, `report_code '${sub.report_code}' is not in the catalog`);
+        skipped++; continue;
       }
 
       const resolution = await resolveRecipients(
         normaliseSpec(sub.recipient_spec),
         // Reports carry PII and financial data; treat them as confidential so the
         // client-portal deny-list applies and personal addresses are refused.
-        {
-          sensitivity: definition.containsFinancialData ? "fin" : "conf",
-          context: {},
-        },
+        { sensitivity: definition.containsFinancialData ? 'fin' : 'conf', context: {} },
       );
 
       const created: string[] = [];
@@ -196,10 +156,7 @@ export async function runSubscriptionSweep(now = new Date()): Promise<{
         const roles = await rolesFor(r.userId);
         if (!canExportReport(sub.report_code, roles)) continue;
 
-        if (sub.dispatch_mode === "shadow") {
-          created.push("shadow");
-          continue;
-        }
+        if (sub.dispatch_mode === 'shadow') { created.push('shadow'); continue; }
 
         const reqId = randomUUID();
         const ref = `RPT-SUB-${slot}-${reqId.slice(0, 8).toUpperCase()}`;
@@ -211,16 +168,10 @@ export async function runSubscriptionSweep(now = new Date()): Promise<{
               request_source, correlation_id, status, requested_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'employees.official_email', ?, ?, 'subscription', ?, 'REQUESTED', NOW())`,
           [
-            reqId,
-            ref,
-            sub.report_code,
-            definition.name,
-            r.userId,
-            r.employeeId,
-            r.email,
+            reqId, ref, sub.report_code, definition.name,
+            r.userId, r.employeeId, r.email,
             sub.filters_json ? JSON.stringify(sub.filters_json) : null,
-            sub.requested_format,
-            runId,
+            sub.requested_format, runId,
           ],
         );
         created.push(reqId);
@@ -230,68 +181,47 @@ export async function runSubscriptionSweep(now = new Date()): Promise<{
         `UPDATE report_subscription_run
             SET status = ?, recipient_count = ?, report_request_ids = ?, completed_at = NOW()
           WHERE id = ?`,
-        [
-          created.length ? "requested" : "skipped",
-          created.length,
-          JSON.stringify(created),
-          runId,
-        ],
+        [created.length ? 'requested' : 'skipped', created.length, JSON.stringify(created), runId],
       );
       await db.execute(
         `UPDATE report_subscription
             SET last_run_at = NOW(), next_run_at = ?, last_status = ?, last_error = NULL,
                 consecutive_failures = 0
           WHERE id = ?`,
-        [
-          computeNextRun(sub, now),
-          created.length ? "requested" : "no_eligible_recipients",
-          sub.id,
-        ],
+        [computeNextRun(sub, now), created.length ? 'requested' : 'no_eligible_recipients', sub.id],
       );
       requested += created.length;
     } catch (err) {
-      const msg =
-        err instanceof RecipientResolutionError
-          ? `${err.code}: ${err.message}`
-          : (err as Error).message;
+      const msg = err instanceof RecipientResolutionError
+        ? `${err.code}: ${err.message}`
+        : (err as Error).message;
       if (runId) await failRun(runId, sub.id, msg);
       skipped++;
-      console.error(
-        `[${WORKER_NAME}] subscription ${sub.subscription_name}:`,
-        msg,
-      );
+      console.error(`[${WORKER_NAME}] subscription ${sub.subscription_name}:`, msg);
     }
   }
 
   return { due: subs.length, requested, skipped };
 }
 
-async function failRun(
-  runId: string,
-  subscriptionId: string,
-  message: string,
-): Promise<void> {
-  await db
-    .execute(
-      `UPDATE report_subscription_run SET status='failed', error_message=?, completed_at=NOW() WHERE id=?`,
-      [message.slice(0, 1000), runId],
-    )
-    .catch(() => {});
+async function failRun(runId: string, subscriptionId: string, message: string): Promise<void> {
+  await db.execute(
+    `UPDATE report_subscription_run SET status='failed', error_message=?, completed_at=NOW() WHERE id=?`,
+    [message.slice(0, 1000), runId],
+  ).catch(() => {});
   // Count failures so the UI can surface a subscription that has quietly stopped working
   // rather than leaving it looking healthy.
-  await db
-    .execute(
-      `UPDATE report_subscription
+  await db.execute(
+    `UPDATE report_subscription
         SET last_status='failed', last_error=?, consecutive_failures = consecutive_failures + 1,
             last_run_at = NOW()
       WHERE id = ?`,
-      [message.slice(0, 1000), subscriptionId],
-    )
-    .catch(() => {});
+    [message.slice(0, 1000), subscriptionId],
+  ).catch(() => {});
 }
 
 function normaliseSpec(raw: string | Record<string, unknown>): RecipientSpec {
-  return (typeof raw === "string" ? JSON.parse(raw) : raw) as RecipientSpec;
+  return (typeof raw === 'string' ? JSON.parse(raw) : raw) as RecipientSpec;
 }
 
 async function tick(): Promise<void> {
@@ -300,10 +230,7 @@ async function tick(): Promise<void> {
     const started = Date.now();
     const stats = await runSubscriptionSweep();
     await markWorkerRun(WORKER_NAME);
-    await recordWorkerRun(WORKER_NAME, "completed", {
-      ...stats,
-      duration_ms: Date.now() - started,
-    });
+    await recordWorkerRun(WORKER_NAME, 'completed', { ...stats, duration_ms: Date.now() - started });
   });
 }
 
@@ -317,21 +244,11 @@ export function startReportSubscriptionWorker(): void {
     registerTimer(`${WORKER_NAME}-interval`, intervalTimer);
   }, STARTUP_DELAY_MS);
   registerTimer(`${WORKER_NAME}-startup`, startupTimer);
-  console.log(
-    `[${WORKER_NAME}] scheduled — every ${POLL_MS / 60000}m (disabled by default via worker_config)`,
-  );
+  console.log(`[${WORKER_NAME}] scheduled — every ${POLL_MS / 60000}m (disabled by default via worker_config)`);
 }
 
 export function stopReportSubscriptionWorker(): void {
-  if (startupTimer) {
-    clearTimeout(startupTimer);
-    unregisterTimer(`${WORKER_NAME}-startup`);
-    startupTimer = null;
-  }
-  if (intervalTimer) {
-    clearInterval(intervalTimer);
-    unregisterTimer(`${WORKER_NAME}-interval`);
-    intervalTimer = null;
-  }
+  if (startupTimer) { clearTimeout(startupTimer); unregisterTimer(`${WORKER_NAME}-startup`); startupTimer = null; }
+  if (intervalTimer) { clearInterval(intervalTimer); unregisterTimer(`${WORKER_NAME}-interval`); intervalTimer = null; }
   console.log(`[${WORKER_NAME}] stopped`);
 }

@@ -92,15 +92,10 @@ describe("P0-A — resolveAccountNumberWithConflict", () => {
   });
 
   it("resolveAccountNumber (original) still works for single-source rows", () => {
-    expect(
-      resolveAccountNumber({
-        account_number_enc: null,
-        account_number: Buffer.from("444555666"),
-      }),
-    ).toBe("444555666");
-    expect(
-      resolveAccountNumber({ account_number_enc: null, account_number: null }),
-    ).toBeNull();
+    expect(resolveAccountNumber({ account_number_enc: null, account_number: Buffer.from("444555666") }))
+      .toBe("444555666");
+    expect(resolveAccountNumber({ account_number_enc: null, account_number: null }))
+      .toBeNull();
   });
 });
 
@@ -298,10 +293,7 @@ describe("TDS — INVALID_PAN_FORMAT governance check", () => {
 describe("P2-A — unique constraint migration 1126 exists", () => {
   it("migration file exists", () => {
     const src = readFileSync(
-      resolve(
-        process.cwd(),
-        "sql/1126_salary_prep_line_component_unique_key.sql",
-      ),
+      resolve(process.cwd(), "sql/1126_salary_prep_line_component_unique_key.sql"),
       "utf8",
     );
     expect(src).toContain("uq_splc_run_line_code_type");
@@ -314,9 +306,7 @@ describe("P2-A — unique constraint migration 1126 exists", () => {
       "utf8",
     );
     expect(src).toContain("salary_prep_line_component");
-    expect(src).toContain(
-      "GROUP BY run_id, line_id, component_code, component_type",
-    );
+    expect(src).toContain("GROUP BY run_id, line_id, component_code, component_type");
   });
 });
 

@@ -74,30 +74,12 @@ function stripComments(sql) {
  * never runs and a migration whose statements are rejected look identical from production.
  */
 const MARIADB_ONLY = [
-  {
-    re: /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS/gi,
-    fix: "drop IF NOT EXISTS; errno 1060 is treated as idempotent per statement",
-  },
-  {
-    re: /DROP\s+COLUMN\s+IF\s+EXISTS/gi,
-    fix: "drop IF EXISTS; errno 1091 is treated as idempotent per statement",
-  },
-  {
-    re: /ADD\s+(?:INDEX|KEY)\s+IF\s+NOT\s+EXISTS/gi,
-    fix: "drop IF NOT EXISTS; errno 1061 is treated as idempotent per statement",
-  },
-  {
-    re: /DROP\s+INDEX\s+IF\s+EXISTS/gi,
-    fix: "drop IF EXISTS; errno 1091 is treated as idempotent per statement",
-  },
-  {
-    re: /CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS/gi,
-    fix: "use a guarded PREPARE against INFORMATION_SCHEMA.STATISTICS",
-  },
-  {
-    re: /CHANGE\s+COLUMN\s+IF\s+EXISTS/gi,
-    fix: "guard on the source column existing — a missing column is errno 1054, which is NOT idempotent",
-  },
+  { re: /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS/gi, fix: "drop IF NOT EXISTS; errno 1060 is treated as idempotent per statement" },
+  { re: /DROP\s+COLUMN\s+IF\s+EXISTS/gi, fix: "drop IF EXISTS; errno 1091 is treated as idempotent per statement" },
+  { re: /ADD\s+(?:INDEX|KEY)\s+IF\s+NOT\s+EXISTS/gi, fix: "drop IF NOT EXISTS; errno 1061 is treated as idempotent per statement" },
+  { re: /DROP\s+INDEX\s+IF\s+EXISTS/gi, fix: "drop IF EXISTS; errno 1091 is treated as idempotent per statement" },
+  { re: /CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS/gi, fix: "use a guarded PREPARE against INFORMATION_SCHEMA.STATISTICS" },
+  { re: /CHANGE\s+COLUMN\s+IF\s+EXISTS/gi, fix: "guard on the source column existing — a missing column is errno 1054, which is NOT idempotent" },
 ];
 
 const findings = [];
@@ -136,9 +118,7 @@ for (const file of readdirSync(SQL_DIR).filter((f) => f.endsWith(".sql"))) {
 }
 
 console.log(`Scanned ${scanned} migration files.`);
-console.log(
-  `Declarations that will not match the database collation: ${findings.length}\n`,
-);
+console.log(`Declarations that will not match the database collation: ${findings.length}\n`);
 for (const f of findings) {
   console.log(`  ${f.file}:${f.line}  ${f.problem}`);
 }

@@ -1,9 +1,6 @@
 import { Router } from "express";
 import type { Response, NextFunction } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { MANAGEMENT_ROLES } from "../../platform/policy/roles.js";
 import { hasRole } from "../../shared/accessGuard.js";
@@ -50,119 +47,45 @@ businessActionsRouter.get("/summary", requireRead, h(async (req, res) => {
   res.json({ success: true, data: owner ? await businessActionsService.summary(req.query as Record<string, unknown>, owner) : await businessActionsService.summary(req.query as Record<string, unknown>) });
 }));
 
-businessActionsRouter.post(
-  "/sync-signals",
-  requireWrite,
-  h(async (req, res) => {
-    const data = await businessActionSignalSync.syncAll(req.authUser!.id);
-    res.json({ success: true, data });
-  }),
-);
+businessActionsRouter.post("/sync-signals", requireWrite, h(async (req, res) => {
+  const data = await businessActionSignalSync.syncAll(req.authUser!.id);
+  res.json({ success: true, data });
+}));
 
-businessActionsRouter.post(
-  "/sync-signals/people-experience",
-  requireWrite,
-  h(async (req, res) => {
-    const data = await businessActionSignalSync.syncPeopleExperience(
-      req.authUser!.id,
-    );
-    res.json({ success: true, data });
-  }),
-);
+businessActionsRouter.post("/sync-signals/people-experience", requireWrite, h(async (req, res) => {
+  const data = await businessActionSignalSync.syncPeopleExperience(req.authUser!.id);
+  res.json({ success: true, data });
+}));
 
-businessActionsRouter.post(
-  "/sync-signals/support",
-  requireWrite,
-  h(async (req, res) => {
-    const data = await businessActionSignalSync.syncSupportSla(
-      req.authUser!.id,
-    );
-    res.json({ success: true, data });
-  }),
-);
+businessActionsRouter.post("/sync-signals/support", requireWrite, h(async (req, res) => {
+  const data = await businessActionSignalSync.syncSupportSla(req.authUser!.id);
+  res.json({ success: true, data });
+}));
 
-businessActionsRouter.post(
-  "/sync-signals/grievance",
-  requireWrite,
-  h(async (req, res) => {
-    const data = await businessActionSignalSync.syncGrievances(
-      req.authUser!.id,
-    );
-    res.json({ success: true, data });
-  }),
-);
+businessActionsRouter.post("/sync-signals/grievance", requireWrite, h(async (req, res) => {
+  const data = await businessActionSignalSync.syncGrievances(req.authUser!.id);
+  res.json({ success: true, data });
+}));
 
-businessActionsRouter.post(
-  "/sync-signals/payroll",
-  requireWrite,
-  h(async (req, res) => {
-    const data = await businessActionSignalSync.syncPayrollReadiness(
-      req.authUser!.id,
-    );
-    res.json({
-      success: true,
-      data: {
-        count: data.created,
-        message: `${data.created} payroll actions synced`,
-        details: data,
-      },
-    });
-  }),
-);
+businessActionsRouter.post("/sync-signals/payroll", requireWrite, h(async (req, res) => {
+  const data = await businessActionSignalSync.syncPayrollReadiness(req.authUser!.id);
+  res.json({ success: true, data: { count: data.created, message: `${data.created} payroll actions synced`, details: data } });
+}));
 
-businessActionsRouter.post(
-  "/sync-signals/attendance",
-  requireWrite,
-  h(async (req, res) => {
-    const data = await businessActionSignalSync.syncAttendanceGaps(
-      req.authUser!.id,
-    );
-    res.json({
-      success: true,
-      data: {
-        count: data.created,
-        message: `${data.created} attendance actions synced`,
-        details: data,
-      },
-    });
-  }),
-);
+businessActionsRouter.post("/sync-signals/attendance", requireWrite, h(async (req, res) => {
+  const data = await businessActionSignalSync.syncAttendanceGaps(req.authUser!.id);
+  res.json({ success: true, data: { count: data.created, message: `${data.created} attendance actions synced`, details: data } });
+}));
 
-businessActionsRouter.post(
-  "/sync-signals/onboarding",
-  requireWrite,
-  h(async (req, res) => {
-    const data = await businessActionSignalSync.syncOnboardingStuck(
-      req.authUser!.id,
-    );
-    res.json({
-      success: true,
-      data: {
-        count: data.created,
-        message: `${data.created} onboarding actions synced`,
-        details: data,
-      },
-    });
-  }),
-);
+businessActionsRouter.post("/sync-signals/onboarding", requireWrite, h(async (req, res) => {
+  const data = await businessActionSignalSync.syncOnboardingStuck(req.authUser!.id);
+  res.json({ success: true, data: { count: data.created, message: `${data.created} onboarding actions synced`, details: data } });
+}));
 
-businessActionsRouter.post(
-  "/sync-signals/roster",
-  requireWrite,
-  h(async (req, res) => {
-    const data = await businessActionSignalSync.syncRosterShortages(
-      req.authUser!.id,
-    );
-    res.json({
-      success: true,
-      data: {
-        count: data.created,
-        message: `${data.created} roster actions synced`,
-        details: data,
-      },
-    });
-  }),
-);
+businessActionsRouter.post("/sync-signals/roster", requireWrite, h(async (req, res) => {
+  const data = await businessActionSignalSync.syncRosterShortages(req.authUser!.id);
+  res.json({ success: true, data: { count: data.created, message: `${data.created} roster actions synced`, details: data } });
+}));
 
 businessActionsRouter.get("/", requireRead, h(async (req, res) => {
   const owner = await ownerScope(req);
@@ -176,93 +99,34 @@ businessActionsRouter.get("/:id", requireRead, h(async (req, res) => {
   res.json({ success: true, data });
 }));
 
-businessActionsRouter.post(
-  "/",
-  requireWrite,
-  h(async (req, res) => {
-    res
-      .status(201)
-      .json({
-        success: true,
-        data: await businessActionsService.create(req.body, req.authUser!.id),
-      });
-  }),
-);
+businessActionsRouter.post("/", requireWrite, h(async (req, res) => {
+  res.status(201).json({ success: true, data: await businessActionsService.create(req.body, req.authUser!.id) });
+}));
 
-businessActionsRouter.patch(
-  "/:id",
-  requireWrite,
-  h(async (req, res) => {
-    res.json({
-      success: true,
-      data: await businessActionsService.update(
-        req.params.id,
-        req.body,
-        req.authUser!.id,
-      ),
-    });
-  }),
-);
+businessActionsRouter.patch("/:id", requireWrite, h(async (req, res) => {
+  res.json({ success: true, data: await businessActionsService.update(req.params.id, req.body, req.authUser!.id) });
+}));
 
-businessActionsRouter.post(
-  "/:id/assign",
-  requireWrite,
-  h(async (req, res) => {
-    res.json({
-      success: true,
-      data: await businessActionsService.assign(
-        req.params.id,
-        req.body?.owner_user_id ?? null,
-        req.body?.owner_role ?? null,
-        req.authUser!.id,
-      ),
-    });
-  }),
-);
+businessActionsRouter.post("/:id/assign", requireWrite, h(async (req, res) => {
+  res.json({
+    success: true,
+    data: await businessActionsService.assign(
+      req.params.id,
+      req.body?.owner_user_id ?? null,
+      req.body?.owner_role ?? null,
+      req.authUser!.id
+    ),
+  });
+}));
 
-businessActionsRouter.post(
-  "/:id/escalate",
-  requireWrite,
-  h(async (req, res) => {
-    res.json({
-      success: true,
-      data: await businessActionsService.escalate(
-        req.params.id,
-        req.body?.reason ?? null,
-        req.authUser!.id,
-      ),
-    });
-  }),
-);
+businessActionsRouter.post("/:id/escalate", requireWrite, h(async (req, res) => {
+  res.json({ success: true, data: await businessActionsService.escalate(req.params.id, req.body?.reason ?? null, req.authUser!.id) });
+}));
 
-businessActionsRouter.post(
-  "/:id/complete",
-  requireWrite,
-  h(async (req, res) => {
-    res.json({
-      success: true,
-      data: await businessActionsService.complete(
-        req.params.id,
-        req.body?.closure_note ?? null,
-        req.authUser!.id,
-      ),
-    });
-  }),
-);
+businessActionsRouter.post("/:id/complete", requireWrite, h(async (req, res) => {
+  res.json({ success: true, data: await businessActionsService.complete(req.params.id, req.body?.closure_note ?? null, req.authUser!.id) });
+}));
 
-businessActionsRouter.post(
-  "/:id/comments",
-  requireWrite,
-  h(async (req, res) => {
-    res
-      .status(201)
-      .json({
-        success: true,
-        data: await businessActionsService.comment(
-          req.params.id,
-          req.authUser!.id,
-          req.body,
-        ),
-      });
-  }),
-);
+businessActionsRouter.post("/:id/comments", requireWrite, h(async (req, res) => {
+  res.status(201).json({ success: true, data: await businessActionsService.comment(req.params.id, req.authUser!.id, req.body) });
+}));

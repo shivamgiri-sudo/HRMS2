@@ -31,40 +31,21 @@ const ROW = {
 vi.mock("../employee.service.js", () => ({
   employeeService: { getEmployee: vi.fn(async () => ({ ...ROW })) },
 }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: vi.fn(), query: vi.fn() },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn(), query: vi.fn() } }));
 
 const { employeeController } = await import("../employee.controller.js");
 
 function invoke(roles: string[] | undefined) {
-  const req = {
-    params: { id: "emp-1" },
-    authUser: roles ? { id: "u1", roles } : { id: "u1" },
-  };
+  const req = { params: { id: "emp-1" }, authUser: roles ? { id: "u1", roles } : { id: "u1" } };
   let payload: any;
-  const res = {
-    json: (b: any) => {
-      payload = b;
-      return res;
-    },
-    status: () => res,
-  };
-  return employeeController
-    .getEmployee(req as any, res as any)
-    .then(() => payload.data);
+  const res = { json: (b: any) => { payload = b; return res; }, status: () => res };
+  return employeeController.getEmployee(req as any, res as any).then(() => payload.data);
 }
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("GET /api/employees/:id response", () => {
-  it.each([
-    ["wfm"],
-    ["manager"],
-    ["branch_head"],
-    ["process_manager"],
-    ["it_head"],
-  ])(
+  it.each([["wfm"], ["manager"], ["branch_head"], ["process_manager"], ["it_head"]])(
     "does not return a raw statutory or bank identifier to %s",
     async (role) => {
       const data = await invoke([role]);

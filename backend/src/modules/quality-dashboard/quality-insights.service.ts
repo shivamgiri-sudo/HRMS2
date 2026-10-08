@@ -3,8 +3,8 @@
  * AI-powered analytics and predictions for quality metrics
  */
 
-import type { RowDataPacket } from "mysql2";
-import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
+import type { RowDataPacket } from 'mysql2';
+import { getShivamgiriPool } from '../../db/shivamgiriDb.js';
 
 function getCiPool() {
   return getShivamgiriPool();
@@ -41,16 +41,13 @@ export async function getQualityHeatmap(from: string, to: string, codes?: string
   `, [from, to, ...sc.params]);
 
   // Transform to heatmap structure
-  const heatmap: Record<
-    string,
-    Record<number, { score: number; calls: number; critical: number }>
-  > = {};
+  const heatmap: Record<string, Record<number, { score: number; calls: number; critical: number }>> = {};
   for (const row of rows) {
     if (!heatmap[row.day_name]) heatmap[row.day_name] = {};
     heatmap[row.day_name][row.hour] = {
       score: row.avg_score,
       calls: row.call_count,
-      critical: row.critical_calls,
+      critical: row.critical_calls
     };
   }
   return heatmap;
@@ -61,8 +58,7 @@ export async function getQualityHeatmap(from: string, to: string, codes?: string
  */
 export async function predictAgentRisk(from: string, to: string) {
   const pool = getCiPool();
-  const [rows] = await pool.execute<RowDataPacket[]>(
-    `
+  const [rows] = await pool.execute<RowDataPacket[]>(`
     WITH agent_metrics AS (
       SELECT
         User as agent_code,
@@ -120,9 +116,7 @@ export async function predictAgentRisk(from: string, to: string) {
         ELSE 4
       END,
       week_avg ASC
-  `,
-    [to, to, from, to],
-  );
+  `, [to, to, from, to]);
 
   return rows;
 }
@@ -135,7 +129,7 @@ export async function generateInsights(from: string, to: string, codes?: string[
   const sc = agentScope("User", codes);
   const scQ = agentScope("cqa.User", codes);
   const insights: Array<{
-    type: "success" | "warning" | "critical" | "opportunity";
+    type: 'success' | 'warning' | 'critical' | 'opportunity';
     title: string;
     message: string;
     metric?: number;
@@ -145,15 +139,8 @@ export async function generateInsights(from: string, to: string, codes?: string[
   // The five source queries are mutually independent, so they run concurrently
   // (was five sequential round trips). Insights are still assembled in the
   // original order below, so the output is identical.
-  const [
-    [trendData],
-    [criticalAgents],
-    [topPerformers],
-    [bottomPerformers],
-    [peakHours],
-  ] = await Promise.all([
-    pool.execute<RowDataPacket[]>(
-      `
+  const [[trendData], [criticalAgents], [topPerformers], [bottomPerformers], [peakHours]] = await Promise.all([
+    pool.execute<RowDataPacket[]>(`
         SELECT
           AVG(CASE WHEN DATE(CallDate) = CURDATE() THEN quality_percentage END) as today_avg,
           AVG(CASE WHEN DATE(CallDate) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) THEN quality_percentage END) as yesterday_avg,
@@ -210,19 +197,19 @@ export async function generateInsights(from: string, to: string, codes?: string[
     const delta = trend.today_avg - trend.yesterday_avg;
     if (delta > 5) {
       insights.push({
-        type: "success",
-        title: "Quality Improving",
+        type: 'success',
+        title: 'Quality Improving',
         message: `Today's quality is ${delta.toFixed(1)}% higher than yesterday`,
         metric: trend.today_avg,
-        action: "Identify and replicate successful practices",
+        action: 'Identify and replicate successful practices'
       });
     } else if (delta < -5) {
       insights.push({
-        type: "warning",
-        title: "Quality Declining",
+        type: 'warning',
+        title: 'Quality Declining',
         message: `Today's quality dropped ${Math.abs(delta).toFixed(1)}% from yesterday`,
         metric: trend.today_avg,
-        action: "Investigate root cause immediately",
+        action: 'Investigate root cause immediately'
       });
     }
   }
@@ -231,22 +218,23 @@ export async function generateInsights(from: string, to: string, codes?: string[
 
   if (criticalAgents.length > 0) {
     insights.push({
-      type: "critical",
-      title: "Agents Need Immediate Support",
+      type: 'critical',
+      title: 'Agents Need Immediate Support',
       message: `${criticalAgents.length} agents have 3+ critical calls in last 24 hours`,
-      action: `Priority coaching for: ${criticalAgents.map((a: any) => a.display_name).join(", ")}`,
+      action: `Priority coaching for: ${criticalAgents.map((a: any) => a.display_name).join(', ')}`
     });
   }
 
   // Insight 3: Best practices opportunity
 
+
   if (topPerformers[0].top_count > 0 && bottomPerformers[0].bottom_count > 0) {
     const gap = topPerformers[0].top_avg - bottomPerformers[0].bottom_avg;
     insights.push({
-      type: "opportunity",
-      title: "Performance Gap Opportunity",
+      type: 'opportunity',
+      title: 'Performance Gap Opportunity',
       message: `${gap.toFixed(1)}% quality gap between top and bottom performers`,
-      action: "Implement peer mentoring program to close the gap",
+      action: 'Implement peer mentoring program to close the gap'
     });
   }
 
@@ -254,11 +242,11 @@ export async function generateInsights(from: string, to: string, codes?: string[
 
   if (peakHours[0]) {
     insights.push({
-      type: "warning",
-      title: "Weakest Hour Identified",
+      type: 'warning',
+      title: 'Weakest Hour Identified',
       message: `Quality drops to ${parseFloat(peakHours[0].avg_score).toFixed(1)}% at ${peakHours[0].hour}:00 hrs`,
       metric: peakHours[0].call_volume,
-      action: "Consider additional staffing or breaks during this hour",
+      action: 'Consider additional staffing or breaks during this hour'
     });
   }
 
@@ -273,8 +261,7 @@ export async function calculateQualityROI(from: string, to: string, codes?: stri
   const sc = agentScope("qc.User", codes);
 
   // Get quality and sales correlation
-  const [data] = await pool.execute<RowDataPacket[]>(
-    `
+  const [data] = await pool.execute<RowDataPacket[]>(`
     SELECT
       AVG(qc.quality_percentage) as avg_quality,
       COUNT(DISTINCT qc.User) as agent_count,
@@ -313,15 +300,12 @@ export async function calculateQualityROI(from: string, to: string, codes?: stri
 
   // Projections based on quality improvements
   const projections = [
-    { improvement: 5, label: "+5% Quality" },
-    { improvement: 10, label: "+10% Quality" },
-    { improvement: 15, label: "+15% Quality" },
-  ].map((proj) => {
-    const newConversion =
-      conversionRate *
-      (1 + proj.improvement * ASSUMED_CONVERSION_LIFT_PER_QUALITY_PCT);
-    const additionalSales =
-      (current.total_calls * (newConversion - conversionRate)) / 100;
+    { improvement: 5, label: '+5% Quality' },
+    { improvement: 10, label: '+10% Quality' },
+    { improvement: 15, label: '+15% Quality' }
+  ].map(proj => {
+    const newConversion = conversionRate * (1 + (proj.improvement * ASSUMED_CONVERSION_LIFT_PER_QUALITY_PCT));
+    const additionalSales = (current.total_calls * (newConversion - conversionRate) / 100);
     const additionalRevenue = additionalSales * ASSUMED_AVG_DEAL_VALUE_INR;
 
     return {
@@ -332,10 +316,7 @@ export async function calculateQualityROI(from: string, to: string, codes?: stri
       projected_conversion: newConversion.toFixed(2),
       additional_sales: Math.round(additionalSales),
       additional_revenue: Math.round(additionalRevenue),
-      roi_multiple: (
-        additionalRevenue /
-        (proj.improvement * ASSUMED_COST_PER_QUALITY_PCT_INR)
-      ).toFixed(1),
+      roi_multiple: (additionalRevenue / (proj.improvement * ASSUMED_COST_PER_QUALITY_PCT_INR)).toFixed(1)
     };
   });
 
@@ -346,9 +327,9 @@ export async function calculateQualityROI(from: string, to: string, codes?: stri
       quality: avgQuality,
       conversion: conversionRate,
       total_calls: current.total_calls,
-      total_sales: current.sales_count,
+      total_sales: current.sales_count
     },
-    projections,
+    projections
   };
 }
 
@@ -356,5 +337,5 @@ export const qualityInsightsService = {
   getQualityHeatmap,
   predictAgentRisk,
   generateInsights,
-  calculateQualityROI,
+  calculateQualityROI
 };

@@ -23,9 +23,7 @@ vi.mock("../../../shared/scopeAccess.js", () => ({ buildScopeWhereClause }));
 const svc = await import("../process-data-source.service.js");
 
 const insertCall = () =>
-  execute.mock.calls.find(([sql]) =>
-    String(sql).includes("INSERT INTO process_metric_actual"),
-  );
+  execute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO process_metric_actual"));
 
 describe("saveManualMetricValue", () => {
   beforeEach(() => {
@@ -42,11 +40,8 @@ describe("saveManualMetricValue", () => {
       .mockResolvedValueOnce([[], []]);
     await expect(
       svc.saveManualMetricValue({
-        userId: "u1",
-        processId: "p1",
-        metricKey: "not_a_real_metric",
-        scoreDate: "2026-08-01",
-        value: 10,
+        userId: "u1", processId: "p1", metricKey: "not_a_real_metric",
+        scoreDate: "2026-08-01", value: 10,
       }),
     ).rejects.toThrow(/not a registered metric/i);
     expect(insertCall()).toBeUndefined();
@@ -61,11 +56,8 @@ describe("saveManualMetricValue", () => {
       .mockResolvedValueOnce([[], []]);
     await expect(
       svc.saveManualMetricValue({
-        userId: "u1",
-        processId: "p1",
-        metricKey: "gs1_email_tat_sec",
-        scoreDate: "2026-08-01",
-        value: 10,
+        userId: "u1", processId: "p1", metricKey: "gs1_email_tat_sec",
+        scoreDate: "2026-08-01", value: 10,
       }),
     ).rejects.toThrow(/not a registered metric/i);
   });
@@ -75,18 +67,12 @@ describe("saveManualMetricValue", () => {
     // at all can still take a manual reading for any real, already-defined
     // metric -- reusing an existing concept, never inventing a new one.
     execute
-      .mockResolvedValueOnce([
-        [{ process_code: "SOME_UNREGISTERED_PROCESS" }],
-        [],
-      ])
+      .mockResolvedValueOnce([[{ process_code: "SOME_UNREGISTERED_PROCESS" }], []])
       .mockResolvedValueOnce([[{ 1: 1 }], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     const out = await svc.saveManualMetricValue({
-      userId: "u1",
-      processId: "p1",
-      metricKey: "ACCURACY_RATE",
-      scoreDate: "2026-08-01",
-      value: 91.5,
+      userId: "u1", processId: "p1", metricKey: "ACCURACY_RATE",
+      scoreDate: "2026-08-01", value: 91.5,
     });
     expect(out).toEqual({ ok: true });
     expect(insertCall()).toBeTruthy();
@@ -95,11 +81,8 @@ describe("saveManualMetricValue", () => {
   it("refuses a date that is not YYYY-MM-DD", async () => {
     await expect(
       svc.saveManualMetricValue({
-        userId: "u1",
-        processId: "p1",
-        metricKey: "gs1_email_tat_sec",
-        scoreDate: "01/08/2026",
-        value: 10,
+        userId: "u1", processId: "p1", metricKey: "gs1_email_tat_sec",
+        scoreDate: "01/08/2026", value: 10,
       }),
     ).rejects.toThrow(/YYYY-MM-DD/);
   });
@@ -109,12 +92,8 @@ describe("saveManualMetricValue", () => {
       .mockResolvedValueOnce([[{ process_code: "GS1" }], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     const out = await svc.saveManualMetricValue({
-      userId: "u1",
-      processId: "p1",
-      metricKey: "gs1_email_tat_sec",
-      scoreDate: "2026-08-01",
-      value: 3200,
-      note: "from client MIS",
+      userId: "u1", processId: "p1", metricKey: "gs1_email_tat_sec",
+      scoreDate: "2026-08-01", value: 3200, note: "from client MIS",
     });
     expect(out).toEqual({ ok: true });
     const call = insertCall();
@@ -128,11 +107,8 @@ describe("saveManualMetricValue", () => {
       .mockResolvedValueOnce([[{ process_code: "GS1" }], []])
       .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     await svc.saveManualMetricValue({
-      userId: "u1",
-      processId: "p1",
-      metricKey: "gs1_email_tat_sec",
-      scoreDate: "2026-08-01",
-      value: null,
+      userId: "u1", processId: "p1", metricKey: "gs1_email_tat_sec",
+      scoreDate: "2026-08-01", value: null,
     });
     const params = insertCall()![1] as unknown[];
     expect(params).toContain(null);
@@ -143,11 +119,8 @@ describe("saveManualMetricValue", () => {
     execute.mockResolvedValueOnce([[], []]);
     await expect(
       svc.saveManualMetricValue({
-        userId: "u1",
-        processId: "nope",
-        metricKey: "gs1_email_tat_sec",
-        scoreDate: "2026-08-01",
-        value: 1,
+        userId: "u1", processId: "nope", metricKey: "gs1_email_tat_sec",
+        scoreDate: "2026-08-01", value: 1,
       }),
     ).rejects.toThrow(/Unknown process/);
   });
@@ -162,9 +135,7 @@ describe("assertProcessWritable", () => {
   it("is false when the caller's scope predicate matches no row", async () => {
     buildScopeWhereClause.mockResolvedValue({ sql: "1=0", params: [] });
     execute.mockResolvedValueOnce([[], []]);
-    await expect(svc.assertProcessWritable("u1", "p-outside")).resolves.toBe(
-      false,
-    );
+    await expect(svc.assertProcessWritable("u1", "p-outside")).resolves.toBe(false);
   });
 
   it("is true when the scope predicate matches the process", async () => {
@@ -174,10 +145,7 @@ describe("assertProcessWritable", () => {
   });
 
   it("applies the scope predicate in SQL, not after the fact", async () => {
-    buildScopeWhereClause.mockResolvedValue({
-      sql: "p.id IN (?)",
-      params: ["p1"],
-    });
+    buildScopeWhereClause.mockResolvedValue({ sql: "p.id IN (?)", params: ["p1"] });
     execute.mockResolvedValueOnce([[{ id: "p1" }], []]);
     await svc.assertProcessWritable("u1", "p1");
     const [sql, params] = execute.mock.calls[0];
@@ -203,19 +171,11 @@ describe("importMetricRows dry run", () => {
   });
 
   /** process lookup, then the existing-values read the preview uses for hints. */
-  function gs1(
-    existing: Array<{
-      metric_key: string;
-      d: string;
-      actual_value: number | null;
-    }> = [],
-  ) {
+  function gs1(existing: Array<{ metric_key: string; d: string; actual_value: number | null }> = []) {
     execute.mockImplementation((sql: string) => {
       const text = String(sql);
-      if (text.includes("process_master"))
-        return Promise.resolve([[{ process_code: "GS1" }], []]);
-      if (text.includes("FROM process_metric_actual"))
-        return Promise.resolve([existing, []]);
+      if (text.includes("process_master")) return Promise.resolve([[{ process_code: "GS1" }], []]);
+      if (text.includes("FROM process_metric_actual")) return Promise.resolve([existing, []]);
       return Promise.resolve([[], []]);
     });
   }
@@ -226,13 +186,7 @@ describe("importMetricRows dry run", () => {
       userId: "u1",
       processId: "p1",
       dryRun: true,
-      rows: [
-        {
-          metricKey: "gs1_email_tat_sec",
-          scoreDate: "2026-08-15",
-          value: "2900",
-        },
-      ],
+      rows: [{ metricKey: "gs1_email_tat_sec", scoreDate: "2026-08-15", value: "2900" }],
     });
     expect(result.dryRun).toBe(true);
     expect(result.imported).toBe(0);
@@ -246,11 +200,7 @@ describe("importMetricRows dry run", () => {
       processId: "p1",
       dryRun: true,
       rows: [
-        {
-          metricKey: "gs1_email_tat_sec",
-          scoreDate: "2026-08-20",
-          value: "3100",
-        },
+        { metricKey: "gs1_email_tat_sec", scoreDate: "2026-08-20", value: "3100" },
         { metricKey: "gs1_not_a_metric", scoreDate: "2026-08-20", value: "5" },
         // The Excel default. It has silently destroyed bulk uploads elsewhere in
         // this system, so the preview has to surface it before the write.
@@ -266,24 +216,14 @@ describe("importMetricRows dry run", () => {
   });
 
   it("says which rows would OVERWRITE a figure already stored", async () => {
-    gs1([
-      { metric_key: "gs1_email_tat_sec", d: "2026-08-15", actual_value: 3200 },
-    ]);
+    gs1([{ metric_key: "gs1_email_tat_sec", d: "2026-08-15", actual_value: 3200 }]);
     const result = await svc.importMetricRows({
       userId: "u1",
       processId: "p1",
       dryRun: true,
       rows: [
-        {
-          metricKey: "gs1_email_tat_sec",
-          scoreDate: "2026-08-15",
-          value: "2900",
-        },
-        {
-          metricKey: "gs1_email_tat_sec",
-          scoreDate: "2026-08-16",
-          value: "2800",
-        },
+        { metricKey: "gs1_email_tat_sec", scoreDate: "2026-08-15", value: "2900" },
+        { metricKey: "gs1_email_tat_sec", scoreDate: "2026-08-16", value: "2800" },
       ],
     });
     expect(result.outcomes[0].replaces).toBe(3200);
@@ -297,13 +237,7 @@ describe("importMetricRows dry run", () => {
       userId: "u1",
       processId: "p1",
       dryRun: true,
-      rows: [
-        {
-          metricKey: "gs1_datacart_tat_sec",
-          scoreDate: "2026-08-21",
-          value: "",
-        },
-      ],
+      rows: [{ metricKey: "gs1_datacart_tat_sec", scoreDate: "2026-08-21", value: "" }],
     });
     expect(result.outcomes[0].value).toBeNull();
     expect(result.outcomes[0].ok).toBe(true);
@@ -314,13 +248,7 @@ describe("importMetricRows dry run", () => {
     const result = await svc.importMetricRows({
       userId: "u1",
       processId: "p1",
-      rows: [
-        {
-          metricKey: "gs1_email_tat_sec",
-          scoreDate: "2026-08-15",
-          value: "2900",
-        },
-      ],
+      rows: [{ metricKey: "gs1_email_tat_sec", scoreDate: "2026-08-15", value: "2900" }],
     });
     expect(result.dryRun).toBe(false);
     expect(result.imported).toBe(1);

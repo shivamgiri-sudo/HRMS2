@@ -1,14 +1,9 @@
-import {
-  Router,
-  type NextFunction,
-  type Request,
-  type Response,
-} from "express";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { Router, type NextFunction, type Request, type Response } from 'express';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import {
   getLiveQueue,
   getQueueMetrics,
@@ -33,18 +28,17 @@ export const queuePublicRouter = Router();
 
 type AsyncHandler = (req: Request, res: Response) => Promise<unknown>;
 
-const h =
-  (fn: AsyncHandler) => (req: Request, res: Response, next: NextFunction) => {
-    void fn(req, res).catch(next);
-  };
+const h = (fn: AsyncHandler) => (req: Request, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unexpected error";
+  return error instanceof Error ? error.message : 'Unexpected error';
 }
 
 type PublicQueueEntry = {
   token_number: string;
-  queue_status: "waiting" | "called" | "in_interview" | "completed" | "no_show";
+  queue_status: 'waiting' | 'called' | 'in_interview' | 'completed' | 'no_show';
   estimated_wait_time: number | null;
   position_in_queue: number;
   applied_role: string | null;
@@ -56,9 +50,7 @@ type PublicQueueEntry = {
   recruiter_name: string | null;
 };
 
-function mapPublicQueueEntry(
-  entry: Awaited<ReturnType<typeof getLiveQueue>>[number],
-): PublicQueueEntry {
+function mapPublicQueueEntry(entry: Awaited<ReturnType<typeof getLiveQueue>>[number]): PublicQueueEntry {
   return {
     token_number: entry.token_number,
     queue_status: entry.queue_status,
@@ -70,7 +62,7 @@ function mapPublicQueueEntry(
     called_at: entry.called_at,
     interview_started_at: entry.interview_started_at,
     candidate_name: (entry as any).candidate_name ?? null,
-    recruiter_name: entry.recruiter_name ?? "Unassigned",
+    recruiter_name: entry.recruiter_name ?? 'Unassigned',
   };
 }
 
@@ -96,145 +88,115 @@ async function loadBranchNames(): Promise<string[]> {
       WHERE active_status = 1
         AND branch_name IS NOT NULL
         AND branch_name != ''
-      ORDER BY branch_name ASC`,
+      ORDER BY branch_name ASC`
   );
   return rows.filter((r) => r.branch_name).map((r) => String(r.branch_name));
 }
 
-queuePublicRouter.get(
-  "/branches",
-  h(async (_req: Request, res: Response) => {
-    try {
-      const data = await loadBranchNames();
-      return res.json({ success: true, data });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
-    }
-  }),
-);
+queuePublicRouter.get('/branches', h(async (_req: Request, res: Response) => {
+  try {
+    const data = await loadBranchNames();
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+  }
+}));
 
-queuePublicRouter.get(
-  "/public-display",
-  h(async (req: Request, res: Response) => {
-    try {
-      const branch = req.query.branch as string | undefined;
-      const date = req.query.date as string | undefined;
-      const data = await loadPublicDisplay(branch, date);
-      return res.json({ success: true, data });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
-    }
-  }),
-);
-
-// Public ops board — no auth; returns today's walk-in candidates with scores (no PII beyond name+code)
-queuePublicRouter.get(
-  "/ops-board",
-  h(async (req: Request, res: Response) => {
-    try {
-      const branch = req.query.branch as string | undefined;
-      const date = req.query.date as string | undefined;
-      const data = await getOpsBoard(branch, date);
-      return res.json({ success: true, data });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
-    }
-  }),
-);
-
-queuePublicRouter.get(
-  "/display-stream",
-  async (req: Request, res: Response) => {
+queuePublicRouter.get('/public-display', h(async (req: Request, res: Response) => {
+  try {
     const branch = req.query.branch as string | undefined;
     const date = req.query.date as string | undefined;
+    const data = await loadPublicDisplay(branch, date);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+  }
+}));
 
-    res.status(200);
-    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders?.();
+// Public ops board — no auth; returns today's walk-in candidates with scores (no PII beyond name+code)
+queuePublicRouter.get('/ops-board', h(async (req: Request, res: Response) => {
+  try {
+    const branch = req.query.branch as string | undefined;
+    const date = req.query.date as string | undefined;
+    const data = await getOpsBoard(branch, date);
+    return res.json({ success: true, data });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+  }
+}));
 
-    let closed = false;
-    const pushSnapshot = async () => {
-      if (closed) return;
-      try {
-        const data = await loadPublicDisplay(branch, date);
-        res.write(
-          `data: ${JSON.stringify({ success: true, data, ts: Date.now() })}\n\n`,
-        );
-      } catch (error: unknown) {
-        res.write(
-          `event: error\ndata: ${JSON.stringify({ success: false, message: getErrorMessage(error) })}\n\n`,
-        );
-      }
-    };
+queuePublicRouter.get('/display-stream', async (req: Request, res: Response) => {
+  const branch = req.query.branch as string | undefined;
+  const date = req.query.date as string | undefined;
 
-    const heartbeat = setInterval(() => {
-      if (!closed) res.write(`: keep-alive ${Date.now()}\n\n`);
-    }, 25_000);
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
 
-    // Cleanup stale in_interview tokens on connection start
-    await cleanupStaleInterviews().catch((err) => {
-      console.error("[queue] Stale interview cleanup failed:", err);
-    });
+  let closed = false;
+  const pushSnapshot = async () => {
+    if (closed) return;
+    try {
+      const data = await loadPublicDisplay(branch, date);
+      res.write(`data: ${JSON.stringify({ success: true, data, ts: Date.now() })}\n\n`);
+    } catch (error: unknown) {
+      res.write(`event: error\ndata: ${JSON.stringify({ success: false, message: getErrorMessage(error) })}\n\n`);
+    }
+  };
 
-    await pushSnapshot();
-    const poll = setInterval(() => {
-      void pushSnapshot();
-    }, 5_000);
+  const heartbeat = setInterval(() => {
+    if (!closed) res.write(`: keep-alive ${Date.now()}\n\n`);
+  }, 25_000);
 
-    req.on("close", () => {
-      closed = true;
-      clearInterval(heartbeat);
-      clearInterval(poll);
-      res.end();
-    });
-  },
-);
+  // Cleanup stale in_interview tokens on connection start
+  await cleanupStaleInterviews().catch((err) => {
+    console.error('[queue] Stale interview cleanup failed:', err);
+  });
+
+  await pushSnapshot();
+  const poll = setInterval(() => {
+    void pushSnapshot();
+  }, 5_000);
+
+  req.on('close', () => {
+    closed = true;
+    clearInterval(heartbeat);
+    clearInterval(poll);
+    res.end();
+  });
+});
 
 // All routes require authentication
 queueRouter.use(requireAuth);
 
 // Ops round queue — read-only, registered before the recruiter-only middleware
 queueRouter.get(
-  "/ops-round",
-  requireRole("operations_manager", "admin", "hr", "super_admin"),
+  '/ops-round',
+  requireRole('operations_manager', 'admin', 'hr', 'super_admin'),
   h(async (req: Request, res: Response) => {
     try {
       const authReq = req as AuthenticatedRequest;
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-        [authReq.authUser!.id],
+        [authReq.authUser!.id]
       );
-      const opsEmployeeId = (empRows as RowDataPacket[])[0]?.id as
-        string | undefined;
+      const opsEmployeeId = (empRows as RowDataPacket[])[0]?.id as string | undefined;
       if (!opsEmployeeId) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "No employee record linked to this account",
-          });
+        return res.status(400).json({ success: false, message: 'No employee record linked to this account' });
       }
       const date = req.query.date as string | undefined;
       const data = await getOpsRoundQueue(opsEmployeeId, date);
       return res.json({ success: true, data });
     } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
+      return res.status(500).json({ success: false, message: getErrorMessage(error) });
     }
-  }),
+  })
 );
 
-queueRouter.use(requireRole("admin", "hr", "recruiter", "manager"));
+queueRouter.use(requireRole('admin', 'hr', 'recruiter', 'manager'));
 
 // Branch scoping (owner ruling 2026-10-01): a ?branch= from the browser may only NARROW the caller's own
 // branch scope. Every queue_id mutation is checked against the owning candidate's branch first.
@@ -269,15 +231,12 @@ queueRouter.get('/live', h(async (req: Request, res: Response) => {
     };
     if (!(await branchFilterAllowed(req, res, filters.branch))) return;
 
-      const queue = await getLiveQueue(filters);
-      return res.json({ success: true, data: queue });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
-    }
-  }),
-);
+    const queue = await getLiveQueue(filters);
+    return res.json({ success: true, data: queue });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+  }
+}));
 
 // ── 2. Get queue metrics ───────────────────────────────────────────────────────
 queueRouter.get('/metrics', h(async (req: Request, res: Response) => {
@@ -294,35 +253,16 @@ queueRouter.get('/metrics', h(async (req: Request, res: Response) => {
 }));
 
 // ── 3. Get next candidate for recruiter ───────────────────────────────────────
-queueRouter.get(
-  "/next-candidate",
-  h(async (req: Request, res: Response) => {
-    try {
-      const recruiterId = (req as AuthenticatedRequest).authUser!.id;
-      const branch = req.query.branch as string;
+queueRouter.get('/next-candidate', h(async (req: Request, res: Response) => {
+  try {
+    const recruiterId = (req as AuthenticatedRequest).authUser!.id;
+    const branch = req.query.branch as string;
 
-      if (!branch) {
-        return res.status(400).json({
-          success: false,
-          message: "Branch parameter is required",
-        });
-      }
-
-      const nextCandidate = await getNextCandidate(recruiterId, branch);
-
-      if (!nextCandidate) {
-        return res.json({
-          success: true,
-          data: null,
-          message: "No candidates waiting in queue",
-        });
-      }
-
-      return res.json({ success: true, data: nextCandidate });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
+    if (!branch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Branch parameter is required',
+      });
     }
 
     if (!(await branchFilterAllowed(req, res, branch))) return;
@@ -343,43 +283,15 @@ queueRouter.get(
 }));
 
 // ── 4. Update queue status ─────────────────────────────────────────────────────
-queueRouter.post(
-  "/update-status",
-  h(async (req: Request, res: Response) => {
-    try {
-      const { queue_id, status } = req.body;
+queueRouter.post('/update-status', h(async (req: Request, res: Response) => {
+  try {
+    const { queue_id, status } = req.body;
 
-      if (!queue_id || !status) {
-        return res.status(400).json({
-          success: false,
-          message: "queue_id and status are required",
-        });
-      }
-
-      const validStatuses = [
-        "waiting",
-        "called",
-        "in_interview",
-        "completed",
-        "no_show",
-      ];
-      if (!validStatuses.includes(status)) {
-        return res.status(400).json({
-          success: false,
-          message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
-        });
-      }
-
-      await updateQueueStatus(queue_id, status);
-
-      return res.json({
-        success: true,
-        message: `Queue status updated to ${status}`,
+    if (!queue_id || !status) {
+      return res.status(400).json({
+        success: false,
+        message: 'queue_id and status are required',
       });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
     }
 
     const validStatuses = ['waiting', 'called', 'in_interview', 'completed', 'no_show'];
@@ -403,45 +315,26 @@ queueRouter.post(
 }));
 
 // ── 5. Get recruiter's queue ───────────────────────────────────────────────────
-queueRouter.get(
-  "/my-queue",
-  h(async (req: Request, res: Response) => {
-    try {
-      const recruiterId = (req as AuthenticatedRequest).authUser!.id;
-      const queue = await getRecruiterQueue(recruiterId);
-      return res.json({ success: true, data: queue });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
-    }
-  }),
-);
+queueRouter.get('/my-queue', h(async (req: Request, res: Response) => {
+  try {
+    const recruiterId = (req as AuthenticatedRequest).authUser!.id;
+    const queue = await getRecruiterQueue(recruiterId);
+    return res.json({ success: true, data: queue });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+  }
+}));
 
 // ── 6. Call next candidate ─────────────────────────────────────────────────────
-queueRouter.post(
-  "/call-next",
-  h(async (req: Request, res: Response) => {
-    try {
-      const { queue_id } = req.body;
+queueRouter.post('/call-next', h(async (req: Request, res: Response) => {
+  try {
+    const { queue_id } = req.body;
 
-      if (!queue_id) {
-        return res.status(400).json({
-          success: false,
-          message: "queue_id is required",
-        });
-      }
-
-      await callNextCandidate(queue_id);
-
-      return res.json({
-        success: true,
-        message: "Candidate called successfully",
+    if (!queue_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'queue_id is required',
       });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
     }
 
     if (!(await queueIdInScope(req, res, queue_id))) return;
@@ -457,97 +350,88 @@ queueRouter.post(
 }));
 
 // ── 7. Mark as no-show ─────────────────────────────────────────────────────────
-queueRouter.post(
-  "/mark-no-show",
-  h(async (req: Request, res: Response) => {
-    try {
-      const { queue_id } = req.body;
+queueRouter.post('/mark-no-show', h(async (req: Request, res: Response) => {
+  try {
+    const { queue_id } = req.body;
 
-      if (!queue_id) {
-        return res.status(400).json({
-          success: false,
-          message: "queue_id is required",
-        });
-      }
+    if (!queue_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'queue_id is required',
+      });
+    }
 
     if (!(await queueIdInScope(req, res, queue_id))) return;
     await markNoShow(queue_id);
 
-      // Fire re-engagement email + recruiter inbox notification — non-blocking
-      void (async () => {
-        try {
-          const [rows] = await db.execute<RowDataPacket[]>(
-            `SELECT qt.recruiter_id, c.id AS candidate_id, c.full_name, c.email,
+    // Fire re-engagement email + recruiter inbox notification — non-blocking
+    void (async () => {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT qt.recruiter_id, c.id AS candidate_id, c.full_name, c.email,
                   c.applied_for_process, c.applied_for_branch, c.branch_display_name,
                   COALESCE(c.candidate_code, c.id) AS application_ref
            FROM ats_queue_token qt
            JOIN ats_candidate c ON c.id = qt.candidate_id
            WHERE qt.id = ? LIMIT 1`,
-            [queue_id],
+          [queue_id]
+        );
+        const row = rows[0];
+        if (!row) return;
+
+        // Re-engagement email to candidate if they have an email
+        if (row.email) {
+          sendRejectedEmailProfessional({
+            candidateId: row.candidate_id as string,
+            to: row.email as string,
+            candidateName: (row.full_name as string) ?? 'Candidate',
+            branchDisplayName: (row.branch_display_name ?? row.applied_for_branch ?? '') as string,
+            processName: row.applied_for_process as string | null,
+            applicationRef: row.application_ref as string | null,
+          }).catch((e: unknown) => console.warn('[no-show email]', e));
+        }
+
+        // Recruiter inbox nudge
+        if (row.recruiter_id) {
+          // Resolve recruiter's user account id from roster
+          const [recRows] = await db.execute<RowDataPacket[]>(
+            `SELECT employee_id FROM ats_recruiter_roster WHERE id = ? LIMIT 1`,
+            [row.recruiter_id]
           );
-          const row = rows[0];
-          if (!row) return;
-
-          // Re-engagement email to candidate if they have an email
-          if (row.email) {
-            sendRejectedEmailProfessional({
-              candidateId: row.candidate_id as string,
-              to: row.email as string,
-              candidateName: (row.full_name as string) ?? "Candidate",
-              branchDisplayName: (row.branch_display_name ??
-                row.applied_for_branch ??
-                "") as string,
-              processName: row.applied_for_process as string | null,
-              applicationRef: row.application_ref as string | null,
-            }).catch((e: unknown) => console.warn("[no-show email]", e));
-          }
-
-          // Recruiter inbox nudge
-          if (row.recruiter_id) {
-            // Resolve recruiter's user account id from roster
-            const [recRows] = await db.execute<RowDataPacket[]>(
-              `SELECT employee_id FROM ats_recruiter_roster WHERE id = ? LIMIT 1`,
-              [row.recruiter_id],
+          const employeeId = recRows[0]?.employee_id as string | null;
+          if (employeeId) {
+            const [userRows] = await db.execute<RowDataPacket[]>(
+              `SELECT user_id AS id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
+              [employeeId]
             );
-            const employeeId = recRows[0]?.employee_id as string | null;
-            if (employeeId) {
-              const [userRows] = await db.execute<RowDataPacket[]>(
-                `SELECT user_id AS id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
-                [employeeId],
-              );
-              const userId = userRows[0]?.id as string | null;
-              if (userId) {
-                inboxService
-                  .createItem({
-                    user_id: userId,
-                    type: "candidate_no_show",
-                    title: `No-Show: ${row.full_name ?? "Candidate"}`,
-                    description: `${row.full_name ?? "Candidate"} did not attend their interview. Consider scheduling a follow-up call.`,
-                    entity_type: "ats_candidate",
-                    entity_id: row.candidate_id as string,
-                    action_url: "/ats/recruiter/workspace",
-                    priority: "normal",
-                  })
-                  .catch((e: unknown) => console.warn("[no-show inbox]", e));
-              }
+            const userId = userRows[0]?.id as string | null;
+            if (userId) {
+              inboxService.createItem({
+                user_id: userId,
+                type: 'candidate_no_show',
+                title: `No-Show: ${row.full_name ?? 'Candidate'}`,
+                description: `${row.full_name ?? 'Candidate'} did not attend their interview. Consider scheduling a follow-up call.`,
+                entity_type: 'ats_candidate',
+                entity_id: row.candidate_id as string,
+                action_url: '/ats/recruiter/workspace',
+                priority: 'normal',
+              }).catch((e: unknown) => console.warn('[no-show inbox]', e));
             }
           }
-        } catch (e) {
-          console.warn("[no-show side-effects]", e);
         }
-      })();
+      } catch (e) {
+        console.warn('[no-show side-effects]', e);
+      }
+    })();
 
-      return res.json({
-        success: true,
-        message: "Candidate marked as no-show",
-      });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
-    }
-  }),
-);
+    return res.json({
+      success: true,
+      message: 'Candidate marked as no-show',
+    });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+  }
+}));
 
 // ── 8. Get queue position for candidate ───────────────────────────────────────
 queueRouter.get('/position/:candidateId', h(async (req: Request, res: Response) => {
@@ -558,14 +442,11 @@ queueRouter.get('/position/:candidateId', h(async (req: Request, res: Response) 
     }
     const position = await getQueuePosition(candidateId);
 
-      return res.json({
-        success: true,
-        data: { position },
-      });
-    } catch (error: unknown) {
-      return res
-        .status(500)
-        .json({ success: false, message: getErrorMessage(error) });
-    }
-  }),
-);
+    return res.json({
+      success: true,
+      data: { position },
+    });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+  }
+}));

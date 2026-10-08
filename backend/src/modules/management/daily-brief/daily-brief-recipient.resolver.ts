@@ -108,10 +108,7 @@ import {
   resolveDashboardScope,
   type DashboardScope,
 } from "../../../shared/dashboardScope.js";
-import type {
-  RecipientInfo,
-  UnresolvedRecipient,
-} from "./daily-brief.types.js";
+import type { RecipientInfo, UnresolvedRecipient } from "./daily-brief.types.js";
 import { resolveEmailContact } from "../../communication/dispatch.service.js";
 import { DAILY_BRIEF_ROLE_MODULES } from "./daily-brief-role-modules.js";
 import { EXECUTIVE_ORG_WIDE_EMPLOYEE_ID_CAP } from "./daily-brief-editorial-constants.js";
@@ -122,9 +119,7 @@ import { EXECUTIVE_ORG_WIDE_EMPLOYEE_ID_CAP } from "./daily-brief-editorial-cons
  * retyped) so the eligibility gate and the module-composition matrix can never drift
  * apart. `tl` is an alias of `team_leader` (see platform/policy/roles.ts ROLE_ALIASES).
  */
-export const DAILY_BRIEF_ELIGIBLE_ROLES = Object.keys(
-  DAILY_BRIEF_ROLE_MODULES,
-) as readonly string[];
+export const DAILY_BRIEF_ELIGIBLE_ROLES = Object.keys(DAILY_BRIEF_ROLE_MODULES) as readonly string[];
 
 // ---------------------------------------------------------------------------
 // Role families (this resolver's own classification, for team-resolution strategy
@@ -132,35 +127,11 @@ export const DAILY_BRIEF_ELIGIBLE_ROLES = Object.keys(
 // own bucket sets in KNOWN_DASHBOARD_SCOPE_ROLES below).
 // ---------------------------------------------------------------------------
 
-const DIRECT_REPORT_ROLES = new Set([
-  "team_leader",
-  "tl",
-  "manager",
-  "assistant_manager",
-  "branch_head",
-]);
-const PROCESS_FUNCTIONAL_ROLES = new Set([
-  "process_manager",
-  "wfm",
-  "qa",
-  "trainer",
-]);
-const HR_RECRUITMENT_ROLES = new Set([
-  "hr",
-  "recruiter",
-  "branch_admin",
-  "branch_it",
-  "it",
-  "it_head",
-]);
+const DIRECT_REPORT_ROLES = new Set(["team_leader", "tl", "manager", "assistant_manager", "branch_head"]);
+const PROCESS_FUNCTIONAL_ROLES = new Set(["process_manager", "wfm", "qa", "trainer"]);
+const HR_RECRUITMENT_ROLES = new Set(["hr", "recruiter", "branch_admin", "branch_it", "it", "it_head"]);
 const PAYROLL_FINANCE_ROLES = new Set([
-  "payroll",
-  "payroll_admin",
-  "payroll_head",
-  "payroll_hr",
-  "finance",
-  "finance_head",
-  "accounts_head",
+  "payroll", "payroll_admin", "payroll_head", "payroll_hr", "finance", "finance_head", "accounts_head",
 ]);
 const EXECUTIVE_ROLES = new Set(["ceo", "admin", "super_admin"]);
 
@@ -196,62 +167,23 @@ function classifyFamily(role: string): RecipientFamily {
  */
 const KNOWN_DASHBOARD_SCOPE_ROLES = new Set([
   // SYSTEM_WIDE_ROLES
-  "super_admin",
-  "admin",
+  "super_admin", "admin",
   // HEAD_OFFICE_ROLES
-  "ceo",
-  "coo",
-  "management",
-  "ho_hr",
-  "ho_payroll",
-  "ho_operations",
-  "ho_wfm",
-  "ho_rta",
-  "ho_it",
-  "compliance_head",
-  "payroll_head",
-  "finance_head",
-  "accounts_head",
-  "operations_head",
+  "ceo", "coo", "management",
+  "ho_hr", "ho_payroll", "ho_operations", "ho_wfm", "ho_rta", "ho_it",
+  "compliance_head", "payroll_head", "finance_head", "accounts_head", "operations_head",
   // ORG_ALL_ROLES (superset of HEAD_OFFICE_ROLES plus these)
-  "hr_admin",
-  "hr",
-  "payroll_admin",
-  "payroll_hr",
-  "payroll",
-  "finance",
+  "hr_admin", "hr", "payroll_admin", "payroll_hr", "payroll", "finance",
   // BRANCH_ALL_ROLES
-  "branch_head",
-  "bm",
-  "branch_manager",
-  "branch_hr",
-  "hr_branch",
-  "branch_finance",
-  "payroll_branch",
-  "branch_it",
-  "it",
+  "branch_head", "bm", "branch_manager", "branch_hr", "hr_branch", "branch_finance",
+  "payroll_branch", "branch_it", "it",
   // PROCESS_OR_TEAM_ROLES
-  "process_manager",
-  "wfm_spoc",
-  "rta",
-  "process_hr",
-  "qa_manager",
-  "quality_analyst",
-  "quality_lead",
-  "qa",
-  "operations_manager",
-  "recruiter",
-  "wfm",
+  "process_manager", "wfm_spoc", "rta", "process_hr", "qa_manager", "quality_analyst",
+  "quality_lead", "qa", "operations_manager", "recruiter", "wfm",
   // TEAM_ROLES
-  "manager",
-  "assistant_manager",
-  "team_leader",
-  "team_lead",
-  "tl",
+  "manager", "assistant_manager", "team_leader", "team_lead", "tl",
   // SELF_ONLY_ROLES
-  "employee",
-  "agent",
-  "trainee",
+  "employee", "agent", "trainee",
 ]);
 
 interface RecipientEmployeeRow extends RowDataPacket {
@@ -263,9 +195,7 @@ interface RecipientEmployeeRow extends RowDataPacket {
   active_status: number;
 }
 
-async function loadEmployee(
-  employeeId: string,
-): Promise<RecipientEmployeeRow | null> {
+async function loadEmployee(employeeId: string): Promise<RecipientEmployeeRow | null> {
   const [rows] = await db.execute<RecipientEmployeeRow[]>(
     `SELECT id, user_id, full_name, email, official_email, active_status
        FROM employees WHERE id = ? LIMIT 1`,
@@ -357,56 +287,30 @@ export type RecipientResolution =
  * Resolve a single employee into a daily-brief recipient, or a documented reason why
  * they cannot receive one. Never silently drops a candidate recipient.
  */
-export async function resolveDailyBriefRecipient(
-  employeeId: string,
-): Promise<RecipientResolution> {
+export async function resolveDailyBriefRecipient(employeeId: string): Promise<RecipientResolution> {
   const emp = await loadEmployee(employeeId);
   if (!emp) {
     return {
       ok: false,
-      unresolved: {
-        employeeId,
-        userId: null,
-        fullName: null,
-        role: "unknown",
-        reason: "No employee record found",
-      },
+      unresolved: { employeeId, userId: null, fullName: null, role: "unknown", reason: "No employee record found" },
     };
   }
   if (Number(emp.active_status) !== 1) {
     return {
       ok: false,
-      unresolved: {
-        employeeId,
-        userId: emp.user_id,
-        fullName: emp.full_name,
-        role: "unknown",
-        reason: "Employee is not active",
-      },
+      unresolved: { employeeId, userId: emp.user_id, fullName: emp.full_name, role: "unknown", reason: "Employee is not active" },
     };
   }
   if (!emp.user_id) {
     return {
       ok: false,
-      unresolved: {
-        employeeId,
-        userId: null,
-        fullName: emp.full_name,
-        role: "unknown",
-        reason: "Employee has no linked login account",
-      },
+      unresolved: { employeeId, userId: null, fullName: emp.full_name, role: "unknown", reason: "Employee has no linked login account" },
     };
   }
   if (!(await userIsActive(emp.user_id))) {
     return {
       ok: false,
-      unresolved: {
-        employeeId,
-        userId: emp.user_id,
-        fullName: emp.full_name,
-        role: "unknown",
-        reason: "Login account is blocked/inactive",
-      },
+      unresolved: { employeeId, userId: emp.user_id, fullName: emp.full_name, role: "unknown", reason: "Login account is blocked/inactive" },
     };
   }
 
@@ -473,25 +377,17 @@ export async function resolveDailyBriefRecipient(
   } catch (err) {
     // DashboardScopeConfigurationError is the fail-closed signal this resolver must
     // respect — an unconfigured scope is never widened to "everyone" or silently skipped.
-    const reason =
-      err instanceof DashboardScopeConfigurationError
-        ? err.message
-        : `Scope resolution failed: ${err instanceof Error ? err.message : String(err)}`;
+    const reason = err instanceof DashboardScopeConfigurationError
+      ? err.message
+      : `Scope resolution failed: ${err instanceof Error ? err.message : String(err)}`;
     return {
       ok: false,
-      unresolved: {
-        employeeId,
-        userId: emp.user_id,
-        fullName: emp.full_name,
-        role: context.primaryRole,
-        reason,
-      },
+      unresolved: { employeeId, userId: emp.user_id, fullName: emp.full_name, role: context.primaryRole, reason },
     };
   }
 
   let teamEmployeeIds: string[];
-  let scopeDescriptor:
-    { branchIds: string[]; processIds: string[] } | undefined;
+  let scopeDescriptor: { branchIds: string[]; processIds: string[] } | undefined;
   let scopeLabel: string;
 
   switch (family) {
@@ -499,13 +395,10 @@ export async function resolveDailyBriefRecipient(
     case "process_functional":
       teamEmployeeIds = await loadTeamEmployeeIds(scope);
       scopeLabel =
-        scope.level === "TEAM_ONLY"
-          ? "Your direct/indirect reports"
-          : scope.level === "BRANCH_ALL"
-            ? "Your branch"
-            : scope.level === "PROCESS_ALL"
-              ? "Your process"
-              : scope.level;
+        scope.level === "TEAM_ONLY" ? "Your direct/indirect reports"
+        : scope.level === "BRANCH_ALL" ? "Your branch"
+        : scope.level === "PROCESS_ALL" ? "Your process"
+        : scope.level;
       break;
 
     case "hr_recruitment":
@@ -515,13 +408,10 @@ export async function resolveDailyBriefRecipient(
       // for that rare account, same limitation loadTeamEmployeeIds already logs).
       teamEmployeeIds = await loadTeamEmployeeIds(scope);
       scopeLabel =
-        scope.level === "ORG_ALL"
-          ? "Organization-wide (HR)"
-          : scope.level === "BRANCH_ALL"
-            ? "Your branch"
-            : scope.level === "PROCESS_ALL"
-              ? "Your process"
-              : scope.level;
+        scope.level === "ORG_ALL" ? "Organization-wide (HR)"
+        : scope.level === "BRANCH_ALL" ? "Your branch"
+        : scope.level === "PROCESS_ALL" ? "Your process"
+        : scope.level;
       break;
 
     case "payroll_finance":
@@ -538,18 +428,12 @@ export async function resolveDailyBriefRecipient(
       // documented scope rule already treats as "no branch/process scope at all ->
       // sees every in-flight run" — the correct behavior for an org-wide payroll role.
       teamEmployeeIds = [];
-      scopeDescriptor = {
-        branchIds: scope.branchIds,
-        processIds: scope.processIds,
-      };
+      scopeDescriptor = { branchIds: scope.branchIds, processIds: scope.processIds };
       scopeLabel =
-        scope.level === "ORG_ALL"
-          ? "Organization-wide (payroll/finance)"
-          : scope.level === "BRANCH_ALL"
-            ? "Your branch (payroll/finance)"
-            : scope.level === "PROCESS_ALL"
-              ? "Your process (payroll/finance)"
-              : scope.level;
+        scope.level === "ORG_ALL" ? "Organization-wide (payroll/finance)"
+        : scope.level === "BRANCH_ALL" ? "Your branch (payroll/finance)"
+        : scope.level === "PROCESS_ALL" ? "Your process (payroll/finance)"
+        : scope.level;
       break;
 
     case "executive":
@@ -563,10 +447,7 @@ export async function resolveDailyBriefRecipient(
       break;
   }
 
-  const email = resolveEmailContact(
-    { email: emp.email, official_email: emp.official_email },
-    true,
-  );
+  const email = resolveEmailContact({ email: emp.email, official_email: emp.official_email }, true);
 
   return {
     ok: true,

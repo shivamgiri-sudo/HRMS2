@@ -23,11 +23,8 @@ import { fileURLToPath } from "url";
 import path from "path";
 
 const SOURCE = readFileSync(
-  path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../auto-roster-synced.service.ts",
-  ),
-  "utf-8",
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "../auto-roster-synced.service.ts"),
+  "utf-8"
 );
 
 describe("getWeekOffPreferences source shape (Area 1 fallback)", () => {
@@ -41,24 +38,18 @@ describe("getWeekOffPreferences source shape (Area 1 fallback)", () => {
   it("skips an employee already resolved by week_off_preference (documented precedence: week_off_preference wins)", () => {
     const fnStart = SOURCE.indexOf("async function getWeekOffPreferences");
     const fnBody = SOURCE.slice(fnStart, fnStart + 3000);
-    expect(fnBody).toMatch(
-      /if \(map\.has\(empId\) \|\| seen\.has\(empId\)\) continue;/,
-    );
+    expect(fnBody).toMatch(/if \(map\.has\(empId\) \|\| seen\.has\(empId\)\) continue;/);
   });
 
   it("degrades to no fallback (not a thrown error) if employee_roster_preference lookup fails", () => {
     const fnStart = SOURCE.indexOf("async function getWeekOffPreferences");
     const fnBody = SOURCE.slice(fnStart, fnStart + 3000);
     expect(fnBody).toMatch(/catch \(error\)/);
-    expect(fnBody).toMatch(
-      /employee_roster_preference fallback lookup unavailable/,
-    );
+    expect(fnBody).toMatch(/employee_roster_preference fallback lookup unavailable/);
   });
 
   it("maps preferred_week_off day-name strings to day-of-week integers, case-insensitively", () => {
-    expect(SOURCE).toMatch(
-      /EMP_PREF_DAY_TO_INT[\s\S]{0,200}sunday: 0[\s\S]{0,20}monday: 1/,
-    );
+    expect(SOURCE).toMatch(/EMP_PREF_DAY_TO_INT[\s\S]{0,200}sunday: 0[\s\S]{0,20}monday: 1/);
     const fnStart = SOURCE.indexOf("async function getWeekOffPreferences");
     const fnBody = SOURCE.slice(fnStart, fnStart + 3000);
     expect(fnBody).toMatch(/\.toLowerCase\(\)/);
@@ -78,17 +69,9 @@ describe("getWeekOffPreferences functional behavior", () => {
     // Functional coverage for the merge logic itself (independent of the
     // exact SQL this file issues) — same precedence rule, exercised directly.
     const weekOffPref = new Map([["emp-1", 2]]); // Tuesday, from week_off_preference
-    const empRosterPrefRows = [
-      { employee_id: "emp-1", preferred_week_off: "Friday" },
-    ]; // would be Friday if it won
+    const empRosterPrefRows = [{ employee_id: "emp-1", preferred_week_off: "Friday" }]; // would be Friday if it won
     const EMP_PREF_DAY_TO_INT: Record<string, number> = {
-      sunday: 0,
-      monday: 1,
-      tuesday: 2,
-      wednesday: 3,
-      thursday: 4,
-      friday: 5,
-      saturday: 6,
+      sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
     };
     const map = new Map(weekOffPref);
     const seen = new Set<string>();
@@ -105,17 +88,9 @@ describe("getWeekOffPreferences functional behavior", () => {
 
   it("fills in from employee_roster_preference only when week_off_preference has nothing for that employee", async () => {
     const map = new Map<string, number>(); // emp-2 not in week_off_preference at all
-    const empRosterPrefRows = [
-      { employee_id: "emp-2", preferred_week_off: "Friday" },
-    ];
+    const empRosterPrefRows = [{ employee_id: "emp-2", preferred_week_off: "Friday" }];
     const EMP_PREF_DAY_TO_INT: Record<string, number> = {
-      sunday: 0,
-      monday: 1,
-      tuesday: 2,
-      wednesday: 3,
-      thursday: 4,
-      friday: 5,
-      saturday: 6,
+      sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
     };
     const seen = new Set<string>();
     for (const r of empRosterPrefRows) {

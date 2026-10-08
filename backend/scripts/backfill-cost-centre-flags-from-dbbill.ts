@@ -32,117 +32,62 @@ const APPLY = process.argv.includes("--apply");
 
 async function main() {
   const hrms = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
   });
   const bill = await mysql.createConnection({
-    host: process.env.BILL_DB_HOST,
-    port: Number(process.env.BILL_DB_PORT),
-    user: process.env.BILL_DB_USER,
-    password: process.env.BILL_DB_PASSWORD,
-    database: process.env.BILL_DB_NAME,
+    host: process.env.BILL_DB_HOST, port: Number(process.env.BILL_DB_PORT),
+    user: process.env.BILL_DB_USER, password: process.env.BILL_DB_PASSWORD, database: process.env.BILL_DB_NAME,
   });
 
   try {
     const [hrmsRows] = await hrms.query<any[]>(
       `SELECT id, cost_centre_code, bill_source_id, active_status, revenue_flag, billing_flag, sac_code
-         FROM cost_centre_master`,
+         FROM cost_centre_master`
     );
-    const [billRows] = await bill.query<any[]>(
-      `SELECT id, Revenue, Billing FROM cost_master`,
-    );
+    const [billRows] = await bill.query<any[]>(`SELECT id, Revenue, Billing FROM cost_master`);
     const source = new Map(billRows.map((r) => [String(r.id), r]));
 
-    const updates: Array<{
-      id: string;
-      revenue: number;
-      billing: number;
-      code: string;
-    }> = [];
-    let noKey = 0,
-      unchanged = 0;
+    const updates: Array<{ id: string; revenue: number; billing: number; code: string }> = [];
+    let noKey = 0, unchanged = 0;
     const activeBilling = { total: 0, withSac: 0, needsSac: 0 };
 
     for (const row of hrmsRows) {
-      if (row.bill_source_id == null) {
-        noKey += 1;
-        continue;
-      }
+      if (row.bill_source_id == null) { noKey += 1; continue; }
       const src = source.get(String(row.bill_source_id));
-      if (!src) {
-        noKey += 1;
-        continue;
-      }
+      if (!src) { noKey += 1; continue; }
 
       const revenue = Number(src.Revenue) === 1 ? 1 : 0;
       const billing = Number(src.Billing) === 1 ? 1 : 0;
 
       if (row.active_status === 1 && billing === 1) {
         activeBilling.total += 1;
-        if (/^[0-9]{4,8}$/.test(String(row.sac_code ?? "")))
-          activeBilling.withSac += 1;
+        if (/^[0-9]{4,8}$/.test(String(row.sac_code ?? ""))) activeBilling.withSac += 1;
         else activeBilling.needsSac += 1;
       }
 
-      if (
-        Number(row.revenue_flag) === revenue &&
-        Number(row.billing_flag) === billing
-      ) {
-        unchanged += 1;
-        continue;
-      }
-      updates.push({
-        id: String(row.id),
-        revenue,
-        billing,
-        code: String(row.cost_centre_code),
-      });
+      if (Number(row.revenue_flag) === revenue && Number(row.billing_flag) === billing) { unchanged += 1; continue; }
+      updates.push({ id: String(row.id), revenue, billing, code: String(row.cost_centre_code) });
     }
 
     console.log(`\nHRMS cost centres            : ${hrmsRows.length}`);
-    console.log(
-      `No usable bill_source_id     : ${noKey}  (HRMS2-native, nothing upstream)`,
-    );
+    console.log(`No usable bill_source_id     : ${noKey}  (HRMS2-native, nothing upstream)`);
     console.log(`Already correct              : ${unchanged}`);
     console.log(`Would change                 : ${updates.length}\n`);
     console.table([
-      {
-        flag: "revenue_flag -> 1",
-        rows: updates.filter((u) => u.revenue === 1).length,
-      },
-      {
-        flag: "billing_flag -> 1",
-        rows: updates.filter((u) => u.billing === 1).length,
-      },
-      {
-        flag: "billing_flag -> 0",
-        rows: updates.filter((u) => u.billing === 0).length,
-      },
+      { flag: "revenue_flag -> 1", rows: updates.filter((u) => u.revenue === 1).length },
+      { flag: "billing_flag -> 1", rows: updates.filter((u) => u.billing === 1).length },
+      { flag: "billing_flag -> 0", rows: updates.filter((u) => u.billing === 0).length },
     ]);
 
-    console.log(
-      "\n── What this unlocks: the outward SAC question, finally scoped ──",
-    );
-    console.log(
-      `ACTIVE cost centres that actually bill a client : ${activeBilling.total}`,
-    );
-    console.log(
-      `  of those, already carry a SAC                : ${activeBilling.withSac}`,
-    );
-    console.log(
-      `  of those, genuinely missing one              : ${activeBilling.needsSac}`,
-    );
-    console.log(
-      "(Previously unanswerable — every active cost centre read as non-billing.)",
-    );
+    console.log("\n── What this unlocks: the outward SAC question, finally scoped ──");
+    console.log(`ACTIVE cost centres that actually bill a client : ${activeBilling.total}`);
+    console.log(`  of those, already carry a SAC                : ${activeBilling.withSac}`);
+    console.log(`  of those, genuinely missing one              : ${activeBilling.needsSac}`);
+    console.log("(Previously unanswerable — every active cost centre read as non-billing.)");
 
     if (!APPLY) {
-      console.log(
-        "\nDRY RUN — nothing written. Re-run with --apply to commit.",
-      );
+      console.log("\nDRY RUN — nothing written. Re-run with --apply to commit.");
       return;
     }
 
@@ -150,7 +95,7 @@ async function main() {
     for (const update of updates) {
       await hrms.execute(
         `UPDATE cost_centre_master SET revenue_flag = ?, billing_flag = ? WHERE id = ?`,
-        [update.revenue, update.billing, update.id],
+        [update.revenue, update.billing, update.id]
       );
       written += 1;
     }
@@ -161,7 +106,4 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error("FAILED:", error);
-  process.exit(1);
-});
+main().catch((error) => { console.error("FAILED:", error); process.exit(1); });

@@ -16,16 +16,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../payroll-targeted-recalculation.service.js", () => ({
-  recalculateOpenPayrollForEmployee: vi
-    .fn()
-    .mockResolvedValue({ status: "recalculated", message: "ok" }),
+  recalculateOpenPayrollForEmployee: vi.fn().mockResolvedValue({ status: "recalculated", message: "ok" }),
 }));
-vi.mock("../../../lib/logger.js", () => ({
-  logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() },
-}));
+vi.mock("../../../lib/logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 
-const { drainPayrollRecalcQueue } =
-  await import("../payroll-recalc-drainer.service.js");
+const { drainPayrollRecalcQueue } = await import("../payroll-recalc-drainer.service.js");
 
 /**
  * Default: reclaim touches nothing, no pending work found.
@@ -46,9 +41,7 @@ describe("abandoned-claim reclamation", () => {
   it("reclaims stale 'processing' rows BEFORE selecting work", async () => {
     await drainPayrollRecalcQueue("2026-08");
     const sqls = execute.mock.calls.map(([s]) => String(s));
-    const reclaimIdx = sqls.findIndex(
-      (s) => /SET status = 'pending'/.test(s) && /'processing'/.test(s),
-    );
+    const reclaimIdx = sqls.findIndex((s) => /SET status = 'pending'/.test(s) && /'processing'/.test(s));
     const selectIdx = sqls.findIndex((s) => /SELECT id, employee_id/.test(s));
     expect(reclaimIdx, "no reclaim statement was issued").toBeGreaterThan(-1);
     expect(selectIdx).toBeGreaterThan(-1);
@@ -58,9 +51,7 @@ describe("abandoned-claim reclamation", () => {
 
   it("only reclaims a claim that is genuinely abandoned, never a live one", async () => {
     await drainPayrollRecalcQueue("2026-08");
-    const reclaim = execute.mock.calls
-      .map(([s]) => String(s))
-      .find((s) => /SET status = 'pending'/.test(s))!;
+    const reclaim = execute.mock.calls.map(([s]) => String(s)).find((s) => /SET status = 'pending'/.test(s))!;
     // processed_at IS NULL — a finished row must never be dragged back to pending.
     expect(reclaim).toContain("processed_at IS NULL");
     // A time bound, so a claim taken seconds ago is not stolen from a working drainer. Reclaiming
@@ -74,9 +65,7 @@ describe("abandoned-claim reclamation", () => {
 
   it("uses a window far longer than a real recalculation", async () => {
     await drainPayrollRecalcQueue("2026-08");
-    const reclaim = execute.mock.calls
-      .map(([s]) => String(s))
-      .find((s) => /SET status = 'pending'/.test(s))!;
+    const reclaim = execute.mock.calls.map(([s]) => String(s)).find((s) => /SET status = 'pending'/.test(s))!;
     const minutes = Number(/INTERVAL (\d+) MINUTE/.exec(reclaim)![1]);
     // A single employee-month recalculation is seconds. Too short a window steals live claims.
     expect(minutes).toBeGreaterThanOrEqual(15);
@@ -84,9 +73,7 @@ describe("abandoned-claim reclamation", () => {
 
   it("records WHY the row came back, so it is not mistaken for a fresh request", async () => {
     await drainPayrollRecalcQueue("2026-08");
-    const reclaim = execute.mock.calls
-      .map(([s]) => String(s))
-      .find((s) => /SET status = 'pending'/.test(s))!;
+    const reclaim = execute.mock.calls.map(([s]) => String(s)).find((s) => /SET status = 'pending'/.test(s))!;
     expect(reclaim).toMatch(/error_message/);
     expect(reclaim).toMatch(/abandoned claim/i);
   });
@@ -101,19 +88,14 @@ describe("a resurrected worker cannot overwrite a newer claim", () => {
    */
   it("guards every terminal write with status = 'processing'", async () => {
     const src = (await import("node:fs")).readFileSync(
-      (await import("node:path")).resolve(
-        process.cwd(),
-        "src/modules/payroll/payroll-recalc-drainer.service.ts",
-      ),
+      (await import("node:path")).resolve(process.cwd(), "src/modules/payroll/payroll-recalc-drainer.service.ts"),
       "utf8",
     );
     for (const terminal of ["'completed'", "'skipped_locked'", "'failed'"]) {
       const idx = src.indexOf(`SET status = ${terminal}`);
       expect(idx, `no terminal write for ${terminal}`).toBeGreaterThan(-1);
       const stmt = src.slice(idx, idx + 400);
-      expect(stmt, `${terminal} write is not guarded`).toContain(
-        "AND status = 'processing'",
-      );
+      expect(stmt, `${terminal} write is not guarded`).toContain("AND status = 'processing'");
     }
   });
 });
@@ -124,10 +106,7 @@ describe("a tick never drains more than its starting backlog", () => {
     // employee-month, so an unbounded loop would spin on its own output. The bound is the
     // pending count measured before any work, not rows-seen.
     const src = (await import("node:fs")).readFileSync(
-      (await import("node:path")).resolve(
-        process.cwd(),
-        "src/workers/payroll-recalc-drainer.worker.ts",
-      ),
+      (await import("node:path")).resolve(process.cwd(), "src/workers/payroll-recalc-drainer.worker.ts"),
       "utf8",
     );
     expect(src).toMatch(/startingBacklog/);

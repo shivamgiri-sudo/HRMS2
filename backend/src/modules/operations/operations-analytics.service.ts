@@ -6,36 +6,12 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
 interface OperationsAnalyticsSummary {
-  process_health: Array<{
-    process_id: number;
-    process_name: string;
-    health_score: number;
-    attendance_pct: number;
-    quality_pct: number;
-    kpi_pct: number;
-  }>;
-  sla_breach_analysis: Array<{
-    process_name: string;
-    breach_count: number;
-    root_cause: string;
-  }>;
-  client_escalations: {
-    open: number;
-    closed: number;
-    avg_resolution_hours: number;
-  };
+  process_health: Array<{ process_id: number; process_name: string; health_score: number; attendance_pct: number; quality_pct: number; kpi_pct: number }>;
+  sla_breach_analysis: Array<{ process_name: string; breach_count: number; root_cause: string }>;
+  client_escalations: { open: number; closed: number; avg_resolution_hours: number };
   productivity_metrics: { calls_per_agent: number; aht_seconds: number };
-  capacity_utilization: {
-    seats_occupied: number;
-    seats_total: number;
-    utilization_pct: number;
-  };
-  incident_log: Array<{
-    incident_id: number;
-    priority: string;
-    status: string;
-    age_hours: number;
-  }>;
+  capacity_utilization: { seats_occupied: number; seats_total: number; utilization_pct: number };
+  incident_log: Array<{ incident_id: number; priority: string; status: string; age_hours: number }>;
 }
 
 export async function getOperationsAnalyticsSummary(): Promise<OperationsAnalyticsSummary> {
@@ -53,7 +29,7 @@ export async function getOperationsAnalyticsSummary(): Promise<OperationsAnalyti
      LEFT JOIN quality_audits q ON e.id = q.employee_id AND q.audit_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
      LEFT JOIN kpi_scores k ON e.id = k.employee_id AND DATE_FORMAT(k.period, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
      WHERE p.is_active = 1
-     GROUP BY p.id, p.name`,
+     GROUP BY p.id, p.name`
   );
 
   // SLA breach analysis
@@ -63,7 +39,7 @@ export async function getOperationsAnalyticsSummary(): Promise<OperationsAnalyti
      WHERE breach_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
      GROUP BY process_name, root_cause
      ORDER BY breach_count DESC
-     LIMIT 10`,
+     LIMIT 10`
   );
 
   // Client escalations
@@ -72,7 +48,7 @@ export async function getOperationsAnalyticsSummary(): Promise<OperationsAnalyti
        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
        SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as closed_count,
        AVG(CASE WHEN status = 'closed' THEN TIMESTAMPDIFF(HOUR, created_at, resolved_at) END) as avg_resolution_hours
-     FROM client_escalations`,
+     FROM client_escalations`
   );
 
   // Productivity metrics
@@ -81,7 +57,7 @@ export async function getOperationsAnalyticsSummary(): Promise<OperationsAnalyti
        COUNT(c.id) / COUNT(DISTINCT c.agent_id) as calls_per_agent,
        AVG(c.aht_seconds) as avg_aht
      FROM calls c
-     WHERE c.call_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`,
+     WHERE c.call_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`
   );
 
   // Capacity utilization
@@ -90,7 +66,7 @@ export async function getOperationsAnalyticsSummary(): Promise<OperationsAnalyti
        COUNT(DISTINCT e.id) as seats_occupied,
        (SELECT SUM(capacity) FROM branches WHERE is_active = 1) as seats_total
      FROM employees e
-     WHERE e.status = 'active'`,
+     WHERE e.status = 'active'`
   );
 
   const seatsOccupied = capacity[0]?.seats_occupied ?? 0;
@@ -104,7 +80,7 @@ export async function getOperationsAnalyticsSummary(): Promise<OperationsAnalyti
      ORDER BY
        CASE priority WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END,
        age_hours DESC
-     LIMIT 10`,
+     LIMIT 10`
   );
 
   return {
@@ -112,7 +88,7 @@ export async function getOperationsAnalyticsSummary(): Promise<OperationsAnalyti
       const att = Number(r.attendance_pct ?? 0);
       const qual = Number(r.quality_pct ?? 0);
       const kpi = Number(r.kpi_pct ?? 0);
-      const health = Math.round(att * 0.3 + qual * 0.4 + kpi * 0.3);
+      const health = Math.round((att * 0.3 + qual * 0.4 + kpi * 0.3));
       return {
         process_id: r.process_id,
         process_name: r.process_name,
@@ -130,14 +106,10 @@ export async function getOperationsAnalyticsSummary(): Promise<OperationsAnalyti
     client_escalations: {
       open: escalations[0]?.open_count ?? 0,
       closed: escalations[0]?.closed_count ?? 0,
-      avg_resolution_hours: Math.round(
-        Number(escalations[0]?.avg_resolution_hours ?? 0),
-      ),
+      avg_resolution_hours: Math.round(Number(escalations[0]?.avg_resolution_hours ?? 0)),
     },
     productivity_metrics: {
-      calls_per_agent: Math.round(
-        Number(productivity[0]?.calls_per_agent ?? 0),
-      ),
+      calls_per_agent: Math.round(Number(productivity[0]?.calls_per_agent ?? 0)),
       aht_seconds: Math.round(Number(productivity[0]?.avg_aht ?? 0)),
     },
     capacity_utilization: {

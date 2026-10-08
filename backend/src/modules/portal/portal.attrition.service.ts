@@ -3,27 +3,14 @@ import { db } from "../../db/mysql.js";
 import type { AttritionData } from "./portal.types.js";
 
 export const portalAttritionService = {
-  async getAttrition(
-    processId: string,
-    period: string,
-    allowedProcessIds?: string[],
-  ): Promise<AttritionData> {
+  async getAttrition(processId: string, period: string, allowedProcessIds?: string[]): Promise<AttritionData> {
     // Defence-in-depth: verify the caller is allowed to access this processId.
     // The controller already calls assertProcessAccess but this layer adds a second check.
-    if (!processId)
-      throw Object.assign(new Error("processId is required"), {
-        statusCode: 400,
-      });
-    if (
-      allowedProcessIds !== undefined &&
-      !allowedProcessIds.includes(processId)
-    ) {
-      throw Object.assign(new Error("Process not in your access list"), {
-        statusCode: 403,
-      });
+    if (!processId) throw Object.assign(new Error("processId is required"), { statusCode: 400 });
+    if (allowedProcessIds !== undefined && !allowedProcessIds.includes(processId)) {
+      throw Object.assign(new Error("Process not in your access list"), { statusCode: 403 });
     }
-    if (!/^\d{4}-\d{2}$/.test(period))
-      throw new Error(`Invalid period format: ${period}`);
+    if (!/^\d{4}-\d{2}$/.test(period)) throw new Error(`Invalid period format: ${period}`);
 
     if (processId === "p-demo-1") {
       return {
@@ -38,8 +25,8 @@ export const portalAttritionService = {
         top_exit_reasons: [
           { reason: "Higher Education", count: 2 },
           { reason: "Better Career Opportunity", count: 1 },
-          { reason: "Performance", count: 1 },
-        ],
+          { reason: "Performance", count: 1 }
+        ]
       };
     }
 
@@ -47,7 +34,7 @@ export const portalAttritionService = {
       `SELECT COUNT(*) AS headcount,
               AVG(TIMESTAMPDIFF(MONTH, date_of_joining, CURDATE())) AS avg_tenure
        FROM employees WHERE process_id = ? AND LOWER(employment_status) = 'active'`,
-      [processId],
+      [processId]
     );
     const hc = (hcRows as RowDataPacket[])[0];
 
@@ -70,7 +57,7 @@ export const portalAttritionService = {
        WHERE e.process_id = ?
          AND er.exit_confirmed_at IS NOT NULL
          AND DATE_FORMAT(er.last_working_day_confirmed, '%Y-%m') = ?`,
-      [processId, period],
+      [processId, period]
     );
     const exits = (exitRows as RowDataPacket[])[0];
 
@@ -82,7 +69,7 @@ export const portalAttritionService = {
          AND er.exit_confirmed_at IS NOT NULL
          AND DATE_FORMAT(er.last_working_day_confirmed, '%Y-%m') = ?
        GROUP BY reason ORDER BY cnt DESC LIMIT 3`,
-      [processId, period],
+      [processId, period]
     );
 
     // Sanctioned strength is the mandated headcount for this process, not a copy of
@@ -97,7 +84,7 @@ export const portalAttritionService = {
        WHERE process_id = ? AND active_status = 1
          AND effective_from <= CURDATE()
          AND (effective_to IS NULL OR effective_to >= CURDATE())`,
-      [processId],
+      [processId]
     );
     const mandatedHc = (mandateRows as RowDataPacket[])[0]?.mandated_hc;
 
@@ -109,15 +96,11 @@ export const portalAttritionService = {
     // follows -- and clamped at 0 (never negative) when a mandate exists but headcount
     // already exceeds it, since "negative open positions" isn't a real staffing state.
     const sanctionedForGap = mandatedHc != null ? Number(mandatedHc) : null;
-    const open_positions =
-      sanctionedForGap != null
-        ? Math.max(0, sanctionedForGap - headcount)
-        : null;
+    const open_positions = sanctionedForGap != null ? Math.max(0, sanctionedForGap - headcount) : null;
     const totalExits = Number(exits.total_exits) || 0;
-    const attrition_pct =
-      headcount > 0
-        ? Math.round((totalExits / headcount) * 100 * 100) / 100
-        : 0;
+    const attrition_pct = headcount > 0
+      ? Math.round((totalExits / headcount) * 100 * 100) / 100
+      : 0;
 
     return {
       period,
@@ -131,10 +114,7 @@ export const portalAttritionService = {
       sanctioned_strength: mandatedHc != null ? Number(mandatedHc) : null,
       open_positions,
       avg_tenure_months: Math.round(Number(hc.avg_tenure) || 0),
-      top_exit_reasons: (reasonRows as RowDataPacket[]).map((r) => ({
-        reason: r.reason,
-        count: Number(r.cnt),
-      })),
+      top_exit_reasons: (reasonRows as RowDataPacket[]).map(r => ({ reason: r.reason, count: Number(r.cnt) })),
     };
   },
 };

@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  parseRosterCsv,
-  type RosterCsvRow,
-} from "../src/modules/wfm/rosterCsvParser.js";
+import { parseRosterCsv, type RosterCsvRow } from "../src/modules/wfm/rosterCsvParser.js";
 
 const validCsv = `employee_code,roster_date,shift_start_time,shift_end_time,process_name,branch_name
 EMP001,2026-05-20,09:00,18:00,Inbound,Mumbai
@@ -68,9 +65,7 @@ EMP001,2026-05-20,9:00,6pm`;
   });
 
   it("returns empty arrays for empty CSV", () => {
-    const { rows, errors } = parseRosterCsv(
-      "employee_code,roster_date,shift_start_time,shift_end_time\n",
-    );
+    const { rows, errors } = parseRosterCsv("employee_code,roster_date,shift_start_time,shift_end_time\n");
     expect(rows).toHaveLength(0);
     expect(errors).toHaveLength(0);
   });

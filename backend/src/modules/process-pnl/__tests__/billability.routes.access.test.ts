@@ -18,22 +18,12 @@ vi.mock("../../../db/mysql.js", () => ({
 
 // Only requireAuth is stood in for; spreading the real module keeps requireWriteAccess, which
 // the write routes mount and which is undefined under a wholesale mock.
-let actor: { id: string; role: string; roles: string[] } = {
-  id: "u1",
-  role: "finance",
-  roles: ["finance"],
-};
+let actor: { id: string; role: string; roles: string[] } = { id: "u1", role: "finance", roles: ["finance"] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../../middleware/authMiddleware.js")
-    >();
+  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.authUser = actor;
-      next();
-    },
+    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
   };
 });
 
@@ -55,10 +45,7 @@ function appFor(role: string) {
   actor = { id: `u-${role}`, role, roles: [role] };
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => {
-    req.authUser = actor;
-    next();
-  });
+  app.use((req: any, _res, next) => { req.authUser = actor; next(); });
   app.use("/api/finance/billability", billabilityRouter);
   return app;
 }
@@ -77,25 +64,15 @@ beforeEach(() => {
 describe("billability API — role access", () => {
   for (const role of GRANTED) {
     it(`allows ${role} to read the cost-centre activity`, async () => {
-      const res = await request(appFor(role)).get(
-        "/api/finance/billability/cost-centre-activity",
-      );
-      expect(
-        res.status,
-        `${role} was granted this page in 1066 and must not be refused by the API`,
-      ).toBe(200);
+      const res = await request(appFor(role)).get("/api/finance/billability/cost-centre-activity");
+      expect(res.status, `${role} was granted this page in 1066 and must not be refused by the API`).toBe(200);
     });
   }
 
   for (const role of DENIED) {
     it(`refuses ${role}`, async () => {
-      const res = await request(appFor(role)).get(
-        "/api/finance/billability/cost-centre-activity",
-      );
-      expect(
-        res.status,
-        `${role} holds no grant and must not reach billability data`,
-      ).toBe(403);
+      const res = await request(appFor(role)).get("/api/finance/billability/cost-centre-activity");
+      expect(res.status, `${role} holds no grant and must not reach billability data`).toBe(403);
     });
   }
 
@@ -103,9 +80,7 @@ describe("billability API — role access", () => {
     const app = express();
     app.use(express.json());
     app.use("/api/finance/billability", billabilityRouter);
-    const res = await request(app).get(
-      "/api/finance/billability/cost-centre-activity",
-    );
+    const res = await request(app).get("/api/finance/billability/cost-centre-activity");
     // requireRole answers 401 when there is no identity at all, not 403.
     expect(res.status).toBe(401);
   });
@@ -115,13 +90,7 @@ describe("billability API — role access", () => {
     // that opens and then 403s on save is the worst of both.
     const res = await request(appFor("hr"))
       .post("/api/finance/billability/matrix")
-      .send({
-        processId: "p1",
-        designationId: "d1",
-        isBillable: true,
-        effectiveFrom: "2026-08-01",
-        changeReason: "x",
-      });
+      .send({ processId: "p1", designationId: "d1", isBillable: true, effectiveFrom: "2026-08-01", changeReason: "x" });
     expect(res.status).toBe(403);
   });
 });

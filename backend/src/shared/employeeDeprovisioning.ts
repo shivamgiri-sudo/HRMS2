@@ -37,7 +37,7 @@ export interface DeprovisionResult {
  */
 export async function deprovisionEmployeeAccess(
   employeeId: string,
-  reason: string,
+  reason: string
 ): Promise<DeprovisionResult> {
   const result: DeprovisionResult = {
     lmsMappingsRevoked: 0,
@@ -62,7 +62,7 @@ export async function deprovisionEmployeeAccess(
           reason,
           error: message,
           timestamp: new Date().toISOString(),
-        }) + "\n",
+        }) + "\n"
       );
     }
   };
@@ -73,7 +73,7 @@ export async function deprovisionEmployeeAccess(
   await step("lms", async () => {
     const [res] = await db.execute<ResultSetHeader>(
       "UPDATE lms_employee_mapping SET is_active = 0 WHERE employee_id = ? AND is_active = 1",
-      [employeeId],
+      [employeeId]
     );
     result.lmsMappingsRevoked = res?.affectedRows ?? 0;
   });
@@ -104,7 +104,7 @@ export async function deprovisionEmployeeAccess(
         WHERE employee_id = ?
           AND status IN ('pending', 'approved', 'pending_branch_head', 'branch_head_approved')
           AND COALESCE(start_date, from_date) > CURDATE()`,
-      [employeeId],
+      [employeeId]
     );
     const ids = (rows as RowDataPacket[]).map((r) => String((r as any).id));
     let cancelled = 0;
@@ -114,7 +114,7 @@ export async function deprovisionEmployeeAccess(
         await leaveService.reviewRequest(
           requestId,
           { status: "cancelled", remarks: reason },
-          "system:employeeDeprovisioning",
+          "system:employeeDeprovisioning"
         );
         cancelled++;
       } catch (err) {
@@ -127,9 +127,7 @@ export async function deprovisionEmployeeAccess(
       // Surface partial failures without throwing — this step must not roll
       // back the already-committed deactivation, and one bad row must not
       // stop the rest from being cancelled.
-      throw new Error(
-        `${rowFailures.length} of ${ids.length} leave request(s) could not be cancelled: ${rowFailures.join("; ")}`,
-      );
+      throw new Error(`${rowFailures.length} of ${ids.length} leave request(s) could not be cancelled: ${rowFailures.join("; ")}`);
     }
   });
 
@@ -143,11 +141,9 @@ export async function deprovisionEmployeeAccess(
   await step("assets", async () => {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS n FROM asset_assignment WHERE employee_id = ? AND returned_date IS NULL",
-      [employeeId],
+      [employeeId]
     );
-    result.openAssetAssignments = Number(
-      (rows[0] as { n: unknown } | undefined)?.n ?? 0,
-    );
+    result.openAssetAssignments = Number((rows[0] as { n: unknown } | undefined)?.n ?? 0);
   });
 
   return result;

@@ -23,21 +23,13 @@ describe("getWorkforceDashboard pending_leave_approvals stays scoped", () => {
 
   function extractLeaveApprovalsQuery(): string {
     const start = source.indexOf("pending_leave_approvals");
-    expect(
-      start,
-      "pending_leave_approvals query not found in management.service.ts",
-    ).toBeGreaterThan(-1);
+    expect(start, "pending_leave_approvals query not found in management.service.ts").toBeGreaterThan(-1);
     // Anchored on the subquery's own opening rather than a fixed character lookback.
     // A 260-char window was enough when the WHERE had two predicates; the 25-Aug cutoff
     // clause pushed the JOIN out of range and the test failed on a query that was still
     // correct. Anchoring cannot drift as predicates are added.
-    const open = source.lastIndexOf(
-      "(SELECT COUNT(*) FROM leave_request lr",
-      start,
-    );
-    expect(open, "leave_request subquery opening not found").toBeGreaterThan(
-      -1,
-    );
+    const open = source.lastIndexOf("(SELECT COUNT(*) FROM leave_request lr", start);
+    expect(open, "leave_request subquery opening not found").toBeGreaterThan(-1);
     return source.slice(open, start + 40);
   }
 
@@ -60,14 +52,10 @@ describe("getWorkforceDashboard pending_leave_approvals stays scoped", () => {
     // and passing scopeParams once there would shift every binding — the branch filter
     // would silently read the process id, both being char(36). What matters is that the
     // number of param spreads matches the number of interpolations, not the exact text.
-    const callStart = source.lastIndexOf(
-      "db.execute",
-      source.indexOf("pending_leave_approvals"),
-    );
+    const callStart = source.lastIndexOf("db.execute", source.indexOf("pending_leave_approvals"));
     const callEnd = source.indexOf("critical_performance_alerts") + 400;
     const callSlice = source.slice(callStart, callEnd);
-    const interpolations = (callSlice.match(/\$\{empScopeJoinWhere\}/g) ?? [])
-      .length;
+    const interpolations = (callSlice.match(/\$\{empScopeJoinWhere\}/g) ?? []).length;
     expect(interpolations).toBeGreaterThan(0);
     const spreads = (callSlice.match(/\.\.\.scopeParams/g) ?? []).length;
     // One interpolation may still be bound by passing `scopeParams` bare.

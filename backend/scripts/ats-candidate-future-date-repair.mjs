@@ -43,10 +43,7 @@ const require = createRequire(import.meta.url);
 const mysql = require("mysql2/promise");
 
 const APPLY = process.argv.includes("--apply");
-const strip = (v) =>
-  String(v ?? "")
-    .trim()
-    .replace(/^["']|["']$/g, "");
+const strip = (v) => String(v ?? "").trim().replace(/^["']|["']$/g, "");
 
 const conn = await mysql.createConnection({
   host: process.env.DB_HOST_OVERRIDE || strip(process.env.DB_HOST),
@@ -57,9 +54,7 @@ const conn = await mysql.createConnection({
   connectTimeout: 20000,
 });
 
-console.log(
-  `mode=${APPLY ? "APPLY (writes)" : "DRY-RUN (no writes)"}  table=ats_candidate`,
-);
+console.log(`mode=${APPLY ? "APPLY (writes)" : "DRY-RUN (no writes)"}  table=ats_candidate`);
 
 /** Exchange month and day, preserving the time component. */
 const SWAP = (col) =>
@@ -74,10 +69,8 @@ const [[scope]] = await conn.query(`
     FROM ats_candidate WHERE created_at > NOW()`);
 
 const target = Number(scope.target);
-console.log(
-  `target=${target} swappable=${scope.swappable} lands_in_past=${scope.lands_in_past} ` +
-    `walkin_matches=${scope.walkin_matches} updated_repairable=${scope.updated_repairable}`,
-);
+console.log(`target=${target} swappable=${scope.swappable} lands_in_past=${scope.lands_in_past} ` +
+            `walkin_matches=${scope.walkin_matches} updated_repairable=${scope.updated_repairable}`);
 
 const [[extra]] = await conn.query(`
   SELECT COUNT(*) AS n FROM ats_candidate
@@ -86,9 +79,7 @@ const [[extra]] = await conn.query(`
 console.log(`updated_at-only rows repairable in the second pass: ${extra.n}`);
 
 if (target === 0 && Number(extra.n) === 0) {
-  console.log(
-    "Nothing to repair — no row has a future created_at or a repairable future updated_at.",
-  );
+  console.log("Nothing to repair — no row has a future created_at or a repairable future updated_at.");
   await conn.end();
   process.exit(0);
 }
@@ -96,23 +87,14 @@ if (target === 0 && Number(extra.n) === 0) {
 // Every targeted row must be provably repairable. A row that cannot swap, or that stays in the
 // future after swapping, is not the defect this script understands, and guessing at it would be
 // worse than leaving it.
-if (
-  Number(scope.swappable) !== target ||
-  Number(scope.lands_in_past) !== target
-) {
-  console.error(
-    `REFUSING: only ${scope.swappable} of ${target} are swappable and ${scope.lands_in_past} land in the past.`,
-  );
-  console.error(
-    "Some future-dated rows come from a different cause. Nothing written.",
-  );
+if (Number(scope.swappable) !== target || Number(scope.lands_in_past) !== target) {
+  console.error(`REFUSING: only ${scope.swappable} of ${target} are swappable and ${scope.lands_in_past} land in the past.`);
+  console.error("Some future-dated rows come from a different cause. Nothing written.");
   await conn.end();
   process.exit(1);
 }
 if (target > 2000) {
-  console.error(
-    `REFUSING: ${target} rows is far beyond the measured 453 — the scope has changed. Nothing written.`,
-  );
+  console.error(`REFUSING: ${target} rows is far beyond the measured 453 — the scope has changed. Nothing written.`);
   await conn.end();
   process.exit(1);
 }
@@ -134,13 +116,9 @@ if (!APPLY) {
       FROM ats_candidate WHERE created_at > NOW() ORDER BY created_at LIMIT 5`);
   console.log("\n[DRY RUN] sample of the change:");
   for (const s of sample) {
-    console.log(
-      `  ${s.id}  created ${s.created_before} -> ${s.created_after}   walk_in ${s.walkin_before ?? "null"} -> ${s.walkin_after}`,
-    );
+    console.log(`  ${s.id}  created ${s.created_before} -> ${s.created_after}   walk_in ${s.walkin_before ?? "null"} -> ${s.walkin_after}`);
   }
-  console.log(
-    `\n[DRY RUN] would repair ${target} row(s). Nothing was written.`,
-  );
+  console.log(`\n[DRY RUN] would repair ${target} row(s). Nothing was written.`);
   await conn.end();
   process.exit(0);
 }
@@ -175,9 +153,7 @@ const [res2] = await conn.execute(`
      AND DAY(updated_at) <= 12
      AND ${SWAP("updated_at")} <= NOW()
      AND ${SWAP("updated_at")} >= created_at`);
-console.log(
-  `repaired ${res2.affectedRows} row(s) whose updated_at alone was in the future`,
-);
+console.log(`repaired ${res2.affectedRows} row(s) whose updated_at alone was in the future`);
 
 const [[after]] = await conn.query(`
   SELECT SUM(created_at > NOW()) AS created_future,
@@ -188,9 +164,7 @@ const [[after]] = await conn.query(`
 console.log(`\n=== verification ===`);
 console.log(`created_at in the future: ${after.created_future}  (must be 0)`);
 console.log(`updated_at in the future: ${after.updated_future}  (must be 0)`);
-console.log(
-  `updated_at before created_at: ${after.updated_before_created}  (pre-existing, not touched here)`,
-);
+console.log(`updated_at before created_at: ${after.updated_before_created}  (pre-existing, not touched here)`);
 console.log(`total rows: ${after.total}  (must be unchanged)`);
 
 await conn.end();

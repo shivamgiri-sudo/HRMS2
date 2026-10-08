@@ -34,9 +34,7 @@ describe("recruiter pending-candidate queues exclude legacy employee records", (
   const src = read(SERVICE);
 
   it("imports the shared exclusion helper", () => {
-    expect(src).toMatch(
-      /import\s*\{[^}]*excludeEmployeeShapedCandidatesSql[^}]*\}/,
-    );
+    expect(src).toMatch(/import\s*\{[^}]*excludeEmployeeShapedCandidatesSql[^}]*\}/);
   });
 
   it("getMyPendingCandidates applies the exclusion", () => {
@@ -51,10 +49,7 @@ describe("recruiter pending-candidate queues exclude legacy employee records", (
 
   it("getOtherRecruitersPendingCandidates applies the exclusion", () => {
     const body = functionBody(src, "getOtherRecruitersPendingCandidates");
-    expect(
-      body,
-      "getOtherRecruitersPendingCandidates() must exist",
-    ).toBeTruthy();
+    expect(body, "getOtherRecruitersPendingCandidates() must exist").toBeTruthy();
     expect(body).toContain("excludeEmployeeShapedCandidatesSql");
   });
 
@@ -63,12 +58,8 @@ describe("recruiter pending-candidate queues exclude legacy employee records", (
     // be an ER_BAD_FIELD_ERROR at runtime, not a silent no-op.
     const myBody = functionBody(src, "getMyPendingCandidates");
     const otherBody = functionBody(src, "getOtherRecruitersPendingCandidates");
-    expect(myBody).toMatch(
-      /excludeEmployeeShapedCandidatesSql\(\s*["']ats_candidate["']\s*\)/,
-    );
-    expect(otherBody).toMatch(
-      /excludeEmployeeShapedCandidatesSql\(\s*["']ats_candidate["']\s*\)/,
-    );
+    expect(myBody).toMatch(/excludeEmployeeShapedCandidatesSql\(\s*["']ats_candidate["']\s*\)/);
+    expect(otherBody).toMatch(/excludeEmployeeShapedCandidatesSql\(\s*["']ats_candidate["']\s*\)/);
   });
 });
 
@@ -85,9 +76,7 @@ describe("recruiter pending-candidate queues exclude candidates already resolved
   const src = read(SERVICE);
 
   it("imports the shared exclusion helper", () => {
-    expect(src).toMatch(
-      /import\s*\{[^}]*excludeResolvedInterviewCandidatesSql[^}]*\}/,
-    );
+    expect(src).toMatch(/import\s*\{[^}]*excludeResolvedInterviewCandidatesSql[^}]*\}/);
   });
 
   it("getMyPendingCandidates applies the exclusion", () => {
@@ -103,11 +92,7 @@ describe("recruiter pending-candidate queues exclude candidates already resolved
   it("uses the alias the queries actually declare", () => {
     const myBody = functionBody(src, "getMyPendingCandidates");
     const otherBody = functionBody(src, "getOtherRecruitersPendingCandidates");
-    expect(myBody).toMatch(
-      /excludeResolvedInterviewCandidatesSql\(\s*["']ats_candidate["']\s*\)/,
-    );
-    expect(otherBody).toMatch(
-      /excludeResolvedInterviewCandidatesSql\(\s*["']ats_candidate["']\s*\)/,
-    );
+    expect(myBody).toMatch(/excludeResolvedInterviewCandidatesSql\(\s*["']ats_candidate["']\s*\)/);
+    expect(otherBody).toMatch(/excludeResolvedInterviewCandidatesSql\(\s*["']ats_candidate["']\s*\)/);
   });
 });

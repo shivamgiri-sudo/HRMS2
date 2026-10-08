@@ -28,19 +28,12 @@ function slice(startMarker: string, endMarker: string): string {
   return CODE.slice(start, end > start ? end : start + 4000);
 }
 
-const NEFT_TRANSFER_FILE = slice(
-  "export async function neftTransferFile(",
-  "export async function payslipStatus(",
-);
+const NEFT_TRANSFER_FILE = slice("export async function neftTransferFile(", "export async function payslipStatus(");
 
 describe("neftTransferFile requires a usable, real-looking account and a routable IFSC", () => {
   it("requires either a plaintext or encrypted account number to be present", () => {
-    expect(NEFT_TRANSFER_FILE).toMatch(
-      /ebd\.account_number IS NOT NULL AND TRIM\(ebd\.account_number\) <> ''/,
-    );
-    expect(NEFT_TRANSFER_FILE).toMatch(
-      /ebd\.account_number_enc IS NOT NULL AND TRIM\(ebd\.account_number_enc\) <> ''/,
-    );
+    expect(NEFT_TRANSFER_FILE).toMatch(/ebd\.account_number IS NOT NULL AND TRIM\(ebd\.account_number\) <> ''/);
+    expect(NEFT_TRANSFER_FILE).toMatch(/ebd\.account_number_enc IS NOT NULL AND TRIM\(ebd\.account_number_enc\) <> ''/);
   });
 
   it("rejects a scientific-notation-mangled plaintext account number", () => {

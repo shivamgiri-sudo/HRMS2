@@ -12,9 +12,7 @@ vi.mock("../../employees/awol-detection.service.js", () => ({
 
 const mockCreateExitRequest = vi.fn();
 vi.mock("../../exit/exit.service.js", () => ({
-  exitService: {
-    createExitRequest: (...args: unknown[]) => mockCreateExitRequest(...args),
-  },
+  exitService: { createExitRequest: (...args: unknown[]) => mockCreateExitRequest(...args) },
 }));
 
 const mockCompleteWorkItem = vi.fn();
@@ -36,34 +34,22 @@ describe("getAwolContext", () => {
 
   it("throws 404 when the work item does not exist", async () => {
     mockExecute.mockResolvedValueOnce([[]]);
-    await expect(getAwolContext("wi-missing")).rejects.toMatchObject({
-      statusCode: 404,
-    });
+    await expect(getAwolContext("wi-missing")).rejects.toMatchObject({ statusCode: 404 });
   });
 
   it("throws 400 when the work item is not an AWOL_SUSPECTED item", async () => {
     mockExecute.mockResolvedValueOnce([
       [{ item_type: "OTHER_TYPE", entity_id: "emp-1", title: "x" }],
     ]);
-    await expect(getAwolContext("wi-1")).rejects.toMatchObject({
-      statusCode: 400,
-    });
+    await expect(getAwolContext("wi-1")).rejects.toMatchObject({ statusCode: 400 });
   });
 
   it("returns the employee id, name and a freshly derived last worked date", async () => {
     mockExecute
       .mockResolvedValueOnce([
-        [
-          {
-            item_type: "AWOL_SUSPECTED",
-            entity_id: "emp-1",
-            title: "Confirm absconding: Jane Doe",
-          },
-        ],
+        [{ item_type: "AWOL_SUSPECTED", entity_id: "emp-1", title: "Confirm absconding: Jane Doe" }],
       ])
-      .mockResolvedValueOnce([
-        [{ full_name: "Jane Doe", employee_code: "MAS001" }],
-      ]);
+      .mockResolvedValueOnce([[{ full_name: "Jane Doe", employee_code: "MAS001" }]]);
     mockGetLastWorkedDate.mockResolvedValueOnce("2026-09-10");
 
     const result = await getAwolContext("wi-1");
@@ -87,13 +73,7 @@ describe("confirmAwolAbsconding", () => {
   it("creates an absconding exit request and resolves both AWOL work items", async () => {
     mockExecute
       .mockResolvedValueOnce([
-        [
-          {
-            item_type: "AWOL_SUSPECTED",
-            entity_id: "emp-1",
-            title: "Confirm absconding: Jane Doe",
-          },
-        ],
+        [{ item_type: "AWOL_SUSPECTED", entity_id: "emp-1", title: "Confirm absconding: Jane Doe" }],
       ]) // work item lookup
       .mockResolvedValueOnce([[{ id: "wi-payroll" }]]); // sibling AWOL_PAYROLL_NOTICE lookup
     mockCreateExitRequest.mockResolvedValueOnce({ id: "exit-1" });
@@ -115,22 +95,12 @@ describe("confirmAwolAbsconding", () => {
       }),
       "user-1",
     );
-    expect(mockCompleteWorkItem).toHaveBeenCalledWith(
-      "wi-1",
-      "user-1",
-      "Confirmed with team lead",
-    );
-    expect(mockCompleteWorkItem).toHaveBeenCalledWith(
-      "wi-payroll",
-      "user-1",
-      expect.any(String),
-    );
+    expect(mockCompleteWorkItem).toHaveBeenCalledWith("wi-1", "user-1", "Confirmed with team lead");
+    expect(mockCompleteWorkItem).toHaveBeenCalledWith("wi-payroll", "user-1", expect.any(String));
   });
 
   it("throws 400 when the work item is not AWOL_SUSPECTED", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [{ item_type: "OTHER", entity_id: "emp-1", title: "x" }],
-    ]);
+    mockExecute.mockResolvedValueOnce([[{ item_type: "OTHER", entity_id: "emp-1", title: "x" }]]);
     await expect(
       confirmAwolAbsconding("wi-1", "user-1", { lastWorkedDate: "2026-09-10" }),
     ).rejects.toMatchObject({ statusCode: 400 });
@@ -146,32 +116,20 @@ describe("rejectAwolSuspected", () => {
 
   it("completes both AWOL work items with the rejection reason, without creating an exit", async () => {
     mockExecute
-      .mockResolvedValueOnce([
-        [{ item_type: "AWOL_SUSPECTED", entity_id: "emp-1", title: "x" }],
-      ])
+      .mockResolvedValueOnce([[{ item_type: "AWOL_SUSPECTED", entity_id: "emp-1", title: "x" }]])
       .mockResolvedValueOnce([[{ id: "wi-payroll" }]]);
 
-    await rejectAwolSuspected(
-      "wi-1",
-      "user-1",
-      "Employee is on unrecorded field duty",
-    );
+    await rejectAwolSuspected("wi-1", "user-1", "Employee is on unrecorded field duty");
 
     expect(mockCompleteWorkItem).toHaveBeenCalledWith(
       "wi-1",
       "user-1",
       "Employee is on unrecorded field duty",
     );
-    expect(mockCompleteWorkItem).toHaveBeenCalledWith(
-      "wi-payroll",
-      "user-1",
-      expect.any(String),
-    );
+    expect(mockCompleteWorkItem).toHaveBeenCalledWith("wi-payroll", "user-1", expect.any(String));
   });
 
   it("throws 400 when remarks is blank", async () => {
-    await expect(
-      rejectAwolSuspected("wi-1", "user-1", "  "),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    await expect(rejectAwolSuspected("wi-1", "user-1", "  ")).rejects.toMatchObject({ statusCode: 400 });
   });
 });

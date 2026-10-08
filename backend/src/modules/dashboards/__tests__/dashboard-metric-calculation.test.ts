@@ -48,15 +48,8 @@ describe("dashboard metric calculations", () => {
 
   it("does not mix live biometric present count with processed attendance denominator", async () => {
     mockAttendance({
-      present: 5,
-      halfDay: 0,
-      absent: 5,
-      late: 0,
-      missedPunch: 0,
-      onLeave: 0,
-      attended_days: 5,
-      expected_to_work: 10,
-      total: 10,
+      present: 5, halfDay: 0, absent: 5, late: 0, missedPunch: 0, onLeave: 0,
+      attended_days: 5, expected_to_work: 10, total: 10,
     });
 
     const metric = await getAttendanceMetrics(scope);
@@ -71,15 +64,8 @@ describe("dashboard metric calculations", () => {
     // 5 full + 2 half = 6 attended of 10 expected. Half days were previously ignored
     // entirely by the org-wide metric, so the same employee saw two different figures.
     mockAttendance({
-      present: 5,
-      halfDay: 2,
-      absent: 3,
-      late: 1,
-      missedPunch: 0,
-      onLeave: 0,
-      attended_days: 6,
-      expected_to_work: 10,
-      total: 10,
+      present: 5, halfDay: 2, absent: 3, late: 1, missedPunch: 0, onLeave: 0,
+      attended_days: 6, expected_to_work: 10, total: 10,
     });
 
     const metric = await getAttendanceMetrics(scope);
@@ -90,15 +76,8 @@ describe("dashboard metric calculations", () => {
 
   it("reports lateness from late_mark rather than a non-existent status", async () => {
     mockAttendance({
-      present: 8,
-      halfDay: 0,
-      absent: 2,
-      late: 4,
-      missedPunch: 0,
-      onLeave: 0,
-      attended_days: 8,
-      expected_to_work: 10,
-      total: 10,
+      present: 8, halfDay: 0, absent: 2, late: 4, missedPunch: 0, onLeave: 0,
+      attended_days: 8, expected_to_work: 10, total: 10,
     });
 
     const metric = await getAttendanceMetrics(scope);

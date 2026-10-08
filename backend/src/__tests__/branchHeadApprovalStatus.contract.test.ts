@@ -37,14 +37,8 @@ function enumMembers(sql: string, column: string): string[] | null {
 }
 
 describe("ats_branch_head_approval.approval_status", () => {
-  const m138 = enumMembers(
-    read(path.join(SQL, "138_ats_complete_journey.sql")),
-    "approval_status",
-  );
-  const m141 = enumMembers(
-    read(path.join(SQL, "141_branch_head_approval.sql")),
-    "approval_status",
-  );
+  const m138 = enumMembers(read(path.join(SQL, "138_ats_complete_journey.sql")), "approval_status");
+  const m141 = enumMembers(read(path.join(SQL, "141_branch_head_approval.sql")), "approval_status");
 
   it("both migrations that create the table declare the same values", () => {
     expect(m138).not.toBeNull();
@@ -60,9 +54,7 @@ describe("ats_branch_head_approval.approval_status", () => {
   it("a migration exists to widen an already-narrow production column", () => {
     // Fixing the CREATE statements alone changes nothing for a database that
     // already has the narrow column, which is the situation in production.
-    const fix = read(
-      path.join(SQL, "1054_branch_head_approval_pending_status.sql"),
-    );
+    const fix = read(path.join(SQL, "1054_branch_head_approval_pending_status.sql"));
     expect(fix).toMatch(/MODIFY COLUMN\s+approval_status/i);
     expect(fix).toMatch(/ENUM\(''pending''/);
     // Must be conditional: re-running it on a fixed database has to be a no-op.
@@ -72,12 +64,8 @@ describe("ats_branch_head_approval.approval_status", () => {
   it("every status the service writes is in the enum", () => {
     const svc = read(path.join(SRC, "modules", "ats", "payroll-hr.service.ts"));
     const written = new Set<string>();
-    for (const m of svc.matchAll(/approval_status\s*=\s*'([a-z_]+)'/gi))
-      written.add(m[1]);
-    for (const m of svc.matchAll(
-      /,\s*'(pending|approved|rejected|sent_back)',\s*NOW\(\)/gi,
-    ))
-      written.add(m[1]);
+    for (const m of svc.matchAll(/approval_status\s*=\s*'([a-z_]+)'/gi)) written.add(m[1]);
+    for (const m of svc.matchAll(/,\s*'(pending|approved|rejected|sent_back)',\s*NOW\(\)/gi)) written.add(m[1]);
     expect(written.size).toBeGreaterThan(0);
     for (const v of written) expect(m138).toContain(v);
   });
@@ -85,9 +73,7 @@ describe("ats_branch_head_approval.approval_status", () => {
   it("the branch head queue still filters on the status it was built for", () => {
     // If this filter is ever changed, the enum requirement above changes with
     // it — they are one decision, not two.
-    const q = read(
-      path.join(SRC, "modules", "ats", "branch-head-approval.service.ts"),
-    );
+    const q = read(path.join(SRC, "modules", "ats", "branch-head-approval.service.ts"));
     expect(q).toMatch(/approval_status\s*=\s*'pending'/);
   });
 });

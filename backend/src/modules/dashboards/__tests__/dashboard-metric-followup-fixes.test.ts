@@ -27,13 +27,9 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 describe("targetScopeId", () => {
   it("returns the single id for a scope naming exactly one branch/process", async () => {
-    const { getHeadcountMetrics } =
-      await import("../dashboard-metric.service.js");
+    const { getHeadcountMetrics } = await import("../dashboard-metric.service.js");
     execute.mockReset();
-    execute.mockResolvedValue([
-      [{ active: 5, required_hc: null, available_hc: 0 }],
-      [],
-    ]);
+    execute.mockResolvedValue([[{ active: 5, required_hc: null, available_hc: 0 }], []]);
 
     await getHeadcountMetrics({
       level: "BRANCH_ALL",
@@ -64,21 +60,13 @@ describe("targetScopeId", () => {
     // comment explaining why, not a real argument.
     const rawIndexLines = source
       .split("\n")
-      .filter((line) =>
-        /scope\.branchIds\[0\]|scope\.processIds\[0\]/.test(line),
-      );
+      .filter((line) => /scope\.branchIds\[0\]|scope\.processIds\[0\]/.test(line));
     for (const line of rawIndexLines) {
-      expect(line.trim().startsWith("*") || line.trim().startsWith("//")).toBe(
-        true,
-      );
+      expect(line.trim().startsWith("*") || line.trim().startsWith("//")).toBe(true);
     }
-    const targetScopeIdCallCount = (
-      source.match(/targetScopeId\(scope\.branchIds\)/g) ?? []
-    ).length;
+    const targetScopeIdCallCount = (source.match(/targetScopeId\(scope\.branchIds\)/g) ?? []).length;
     // Every metric builder passes through targetScopeId for both dimensions equally.
-    const processCallCount = (
-      source.match(/targetScopeId\(scope\.processIds\)/g) ?? []
-    ).length;
+    const processCallCount = (source.match(/targetScopeId\(scope\.processIds\)/g) ?? []).length;
     expect(targetScopeIdCallCount).toBeGreaterThan(0);
     expect(targetScopeIdCallCount).toBe(processCallCount);
   });
@@ -88,9 +76,7 @@ describe("HEADCOUNT definition stays aligned with management.service.ts", () => 
   it("getHeadcountMetrics requires date_of_joining <= CURDATE(), matching the three management.service.ts headcount queries", () => {
     const start = source.indexOf("export async function getHeadcountMetrics");
     const fnSlice = source.slice(start, start + 2000);
-    expect(fnSlice).toMatch(
-      /e\.active_status = 1 AND e\.date_of_joining <= CURDATE\(\)/,
-    );
+    expect(fnSlice).toMatch(/e\.active_status = 1 AND e\.date_of_joining <= CURDATE\(\)/);
   });
 
   it("drillHeadcount matches the same definition, so the drilldown reconciles to the tile", () => {
@@ -111,16 +97,9 @@ describe("BGV drilldown matches the tile's pending bucket exactly", () => {
     // The list itself is what has to stay in step with the drilldown.
     // The list lives in OUTSTANDING_STATUS; OUTSTANDING is that AND the 25-Aug cutoff.
     // The drilldown has to match the STATUS half — it applies the cutoff separately.
-    const pendingMatch = metricSlice.match(
-      /const OUTSTANDING_STATUS = `\(bgv\.status IS NULL OR bgv\.status IN \(([^)]+)\)\)`/,
-    );
-    expect(
-      pendingMatch,
-      "could not find getBgvMetrics' outstanding bucket definition",
-    ).not.toBeNull();
-    expect(pendingMatch![1]).toBe(
-      "'pending','not_started','queued','manual_review','in_progress'",
-    );
+    const pendingMatch = metricSlice.match(/const OUTSTANDING_STATUS = `\(bgv\.status IS NULL OR bgv\.status IN \(([^)]+)\)\)`/);
+    expect(pendingMatch, "could not find getBgvMetrics' outstanding bucket definition").not.toBeNull();
+    expect(pendingMatch![1]).toBe("'pending','not_started','queued','manual_review','in_progress'");
 
     const drillStart = drilldownSource.indexOf("async function drillBgv");
     // 2500, not 1200: drillBgv now groups per candidate and carries the explanatory
@@ -132,9 +111,7 @@ describe("BGV drilldown matches the tile's pending bucket exactly", () => {
     expect(drillSlice).toMatch(
       /WHERE COALESCE\(bgv\.status,'pending'\) IN \('pending','not_started','queued','manual_review','in_progress'\)/,
     );
-    expect(drillSlice).not.toMatch(
-      /WHERE COALESCE\(bgv\.status,'pending'\) NOT IN/,
-    );
+    expect(drillSlice).not.toMatch(/WHERE COALESCE\(bgv\.status,'pending'\) NOT IN/);
   });
 });
 
@@ -163,13 +140,7 @@ describe("ONBOARDING drilldown accepts a bucket filter", () => {
   it("returns every status when no bucket filter is given (unchanged default behavior)", async () => {
     const { getDrilldown } = await import("../dashboard-drilldown.service.js");
     execute.mockReset();
-    execute.mockResolvedValueOnce([
-      [
-        { status: "pending", count: 3 },
-        { status: "stuck", count: 2 },
-      ],
-      [],
-    ]);
+    execute.mockResolvedValueOnce([[{ status: "pending", count: 3 }, { status: "stuck", count: 2 }], []]);
     execute.mockResolvedValueOnce([[], []]);
 
     const scope = {

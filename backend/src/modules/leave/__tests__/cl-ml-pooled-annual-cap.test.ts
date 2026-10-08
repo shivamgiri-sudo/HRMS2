@@ -26,16 +26,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const src = fs.readFileSync(
-  path.resolve(DIR, "..", "leave.service.ts"),
-  "utf8",
-);
+const src = fs.readFileSync(path.resolve(DIR, "..", "leave.service.ts"), "utf8");
 
 /** The balance/cap block inside reviewRequest. */
 function capBlock(): string {
-  const start = src.indexOf(
-    "const partner: BalanceSnapshot | null = partnerTypeId",
-  );
+  const start = src.indexOf("const partner: BalanceSnapshot | null = partnerTypeId");
   expect(start, "pooled balance block not found").toBeGreaterThan(-1);
   return src.slice(start, start + 3000);
 }
@@ -57,19 +52,13 @@ describe("the cap is the pool's", () => {
   it("reads the partner's cap from the same row as its id", () => {
     // Two lookups could disagree — a cap read for one type and a balance for another is how a
     // pool silently enforces the wrong ceiling.
-    expect(src).toContain(
-      "COALESCE(max_days_per_year, 0) AS cap FROM leave_type_master WHERE id = ?",
-    );
+    expect(src).toContain("COALESCE(max_days_per_year, 0) AS cap FROM leave_type_master WHERE id = ?");
   });
 
   it("leaves an unpooled type on its own cap", () => {
     // EL has no partner. Its behaviour must be exactly what it was.
-    expect(capBlock()).toMatch(
-      /pooled \? maxDaysPerYear \+ partnerMaxDaysPerYear : maxDaysPerYear/,
-    );
-    expect(capBlock()).toMatch(
-      /pooled \? primary\.usedDays \+ partner!\.usedDays : primary\.usedDays/,
-    );
+    expect(capBlock()).toMatch(/pooled \? maxDaysPerYear \+ partnerMaxDaysPerYear : maxDaysPerYear/);
+    expect(capBlock()).toMatch(/pooled \? primary\.usedDays \+ partner!\.usedDays : primary\.usedDays/);
   });
 });
 
@@ -82,9 +71,8 @@ describe("the cap is checked before the buckets are chosen", () => {
      * matter which bucket supplies it.
      */
     const block = capBlock();
-    expect(block.indexOf("usedTotal + daysNeeded > capTotal")).toBeLessThan(
-      block.indexOf("const fromPrimary ="),
-    );
+    expect(block.indexOf("usedTotal + daysNeeded > capTotal"))
+      .toBeLessThan(block.indexOf("const fromPrimary ="));
   });
 
   it("still overflows to the partner once the cap allows it", () => {
@@ -114,9 +102,7 @@ describe("the refusal explains itself", () => {
   });
 
   it("shows the split, so the reader can see where the days went", () => {
-    expect(capBlock()).toMatch(
-      /\$\{primary\.usedDays\} \$\{leaveCode\} \+ \$\{partner!\.usedDays\} \$\{partnerCode\}/,
-    );
+    expect(capBlock()).toMatch(/\$\{primary\.usedDays\} \$\{leaveCode\} \+ \$\{partner!\.usedDays\} \$\{partnerCode\}/);
   });
 
   it("states what was asked for alongside what was used", () => {

@@ -25,13 +25,7 @@ export async function syncCostCentreRelatedTables(opts: {
   client_id: string | null | undefined;
   process_id: string | null | undefined;
 }): Promise<void> {
-  const {
-    cost_centre_code,
-    cost_centre_name,
-    branch_id,
-    client_id,
-    process_id,
-  } = opts;
+  const { cost_centre_code, cost_centre_name, branch_id, client_id, process_id } = opts;
 
   // A process that now has a cost centre gets an (unconfigured, disabled) Process Dashboard row. Never throws.
   if (process_id) await ensureProcessDashboardConfig(process_id);
@@ -41,7 +35,7 @@ export async function syncCostCentreRelatedTables(opts: {
   if (branch_id) {
     const [[row]] = await db.execute<RowDataPacket[]>(
       `SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1`,
-      [branch_id],
+      [branch_id]
     );
     branchName = (row as any)?.branch_name ?? null;
   }
@@ -50,7 +44,7 @@ export async function syncCostCentreRelatedTables(opts: {
   if (client_id) {
     const [[row]] = await db.execute<RowDataPacket[]>(
       `SELECT client_name FROM client_master WHERE id = ? LIMIT 1`,
-      [client_id],
+      [client_id]
     );
     clientName = (row as any)?.client_name ?? null;
   }
@@ -59,7 +53,7 @@ export async function syncCostCentreRelatedTables(opts: {
   if (process_id) {
     const [[row]] = await db.execute<RowDataPacket[]>(
       `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`,
-      [process_id],
+      [process_id]
     );
     processName = (row as any)?.process_name ?? null;
   }
@@ -77,7 +71,7 @@ export async function syncCostCentreRelatedTables(opts: {
          display_name  = VALUES(display_name),
          client_name   = VALUES(client_name),
          process_name  = VALUES(process_name)`,
-      [cost_centre_code, cost_centre_name, branchName, clientName, processName],
+      [cost_centre_code, cost_centre_name, branchName, clientName, processName]
     );
   }
 
@@ -103,7 +97,7 @@ export async function syncCostCentreRelatedTables(opts: {
           SET client_id = ?,
               client_name = COALESCE(client_name, ?)
         WHERE id = ? AND client_id IS NULL`,
-      [client_id, clientName, process_id],
+      [client_id, clientName, process_id]
     );
   }
 
@@ -120,44 +114,32 @@ export async function syncCostCentreRelatedTables(opts: {
       `INSERT IGNORE INTO process_master
          (process_code, process_name, branch_id, client_id, client_name, active_status)
        VALUES (?, ?, ?, ?, ?, 1)`,
-      [derivedCode, cost_centre_name, branch_id, client_id ?? null, clientName],
+      [derivedCode, cost_centre_name, branch_id, client_id ?? null, clientName]
     );
   }
 }
 
 function ccTypeToWorkload(ccType: string | null | undefined): string {
   switch ((ccType ?? "").toLowerCase().trim()) {
-    case "inbound":
-      return "inbound_voice";
-    case "blended":
-      return "blended";
+    case "inbound":     return "inbound_voice";
+    case "blended":     return "blended";
     case "backoffice":
-    case "back office":
-      return "backoffice";
-    case "chat":
-      return "chat";
-    case "email":
-      return "email";
-    default:
-      return "outbound_voice";
+    case "back office": return "backoffice";
+    case "chat":        return "chat";
+    case "email":       return "email";
+    default:            return "outbound_voice";
   }
 }
 
 function ccTypeToProcessType(ccType: string | null | undefined): string {
   switch ((ccType ?? "").toLowerCase().trim()) {
-    case "inbound":
-      return "INBOUND";
-    case "blended":
-      return "OUTBOUND";
+    case "inbound":     return "INBOUND";
+    case "blended":     return "OUTBOUND";
     case "backoffice":
-    case "back office":
-      return "BACK_OFFICE";
-    case "chat":
-      return "CHAT";
-    case "email":
-      return "EMAIL";
-    default:
-      return "OUTBOUND";
+    case "back office": return "BACK_OFFICE";
+    case "chat":        return "CHAT";
+    case "email":       return "EMAIL";
+    default:            return "OUTBOUND";
   }
 }
 
@@ -212,7 +194,7 @@ export async function backfillProcessMasterForOrphanedCostCentres(): Promise<num
         ccTypeToWorkload(row.cc_type),
         ccTypeToProcessType(row.cc_type),
         row.billing_client_name ?? null,
-      ],
+      ]
     );
     if (result.affectedRows > 0) created++;
   }
@@ -253,10 +235,7 @@ const PROCESS_COST_CENTRE_LINKS_SQL = `
  *
  * Called nightly by cost-centre-process-resolver.worker.
  */
-export async function syncProcessActiveStatusWithCostCentres(): Promise<{
-  deactivated: number;
-  reactivated: number;
-}> {
+export async function syncProcessActiveStatusWithCostCentres(): Promise<{ deactivated: number; reactivated: number }> {
   const [toDeactivate] = await db.execute<RowDataPacket[]>(`
     ${PROCESS_COST_CENTRE_LINKS_SQL},
     all_closed AS (SELECT pid FROM links GROUP BY pid HAVING MIN(is_closed) = 1)
@@ -274,11 +253,7 @@ export async function syncProcessActiveStatusWithCostCentres(): Promise<{
        )
   `);
 
-  for (const row of toDeactivate as Array<{
-    id: string;
-    process_code: string;
-    process_name: string;
-  }>) {
+  for (const row of toDeactivate as Array<{ id: string; process_code: string; process_name: string }>) {
     await db.execute(
       `INSERT INTO process_master_auto_deactivation (process_id, process_code, process_name, deactivated_at, reactivated_at)
        VALUES (?, ?, ?, NOW(), NULL)

@@ -3,6 +3,8 @@
   // Root `npm run typecheck` is a no-op (see tsconfig.finance-check.json's own note) —
   // this is the real gate. Run: npx tsc -p backend/tsconfig.clientbilling-check.json
   "extends": "./tsconfig.json",
-  "include": ["src/modules/client-billing"],
+  "include": [
+    "src/modules/client-billing"
+  ],
   "compilerOptions": { "noEmit": true }
 }

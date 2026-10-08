@@ -104,9 +104,7 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
   // re-read the same user_roles rows. Memoised for ONE request only (see requestContext.ts:
   // no TTL, so a role change applies on the next request); a copy is returned so a caller that
   // mutates the array cannot poison the memo. Outside a request this is a direct query.
-  const roles = await memoizeForRequest(`scope-roles:${userId}`, () =>
-    fetchUserRoleKeys(userId),
-  );
+  const roles = await memoizeForRequest(`scope-roles:${userId}`, () => fetchUserRoleKeys(userId));
   return [...roles];
 }
 
@@ -123,15 +121,10 @@ async function fetchUserRoleKeys(userId: string): Promise<string[]> {
   // bug. demoRoleForUserId() returns null unless the demo bypass gate is on, so this cannot
   // change behaviour for a real, non-demo user or in production.
   const demoRole = demoRoleForUserId(userId);
-  return demoRole && !dbRoles.includes(demoRole)
-    ? [...dbRoles, demoRole]
-    : dbRoles;
+  return demoRole && !dbRoles.includes(demoRole) ? [...dbRoles, demoRole] : dbRoles;
 }
 
-export async function hasAnyRole(
-  userId: string,
-  ...roles: string[]
-): Promise<boolean> {
+export async function hasAnyRole(userId: string, ...roles: string[]): Promise<boolean> {
   if (roles.length === 0) return false;
   const userRoles = await getUserRoleKeys(userId);
   if (userRoles.includes("super_admin")) return true;
@@ -140,7 +133,7 @@ export async function hasAnyRole(
 
 export async function getUserAssignmentScopes(
   userId: string,
-  roles: string[] = [],
+  roles: string[] = []
 ): Promise<AssignmentScope[]> {
   const params: unknown[] = [userId];
   let roleFilter = "";
@@ -155,7 +148,7 @@ export async function getUserAssignmentScopes(
       WHERE user_id = ?
         AND active_status = 1
         ${roleFilter}`,
-    params,
+    params
   );
 
   return rows as AssignmentScope[];
@@ -186,10 +179,7 @@ export async function hasScopedAccess(
   userId: string,
   allowedRoles: string[],
   target: ScopeTarget,
-  options: {
-    allowAdminBypass?: boolean;
-    requireScopeForNonAdmin?: boolean;
-  } = {},
+  options: { allowAdminBypass?: boolean; requireScopeForNonAdmin?: boolean } = {}
 ): Promise<boolean> {
   if (!(await hasScopedAccessUnclamped(userId, allowedRoles, target, options))) return false;
   if (!target.branchId || !(await isBranchClamped(userId))) return true;
@@ -236,19 +226,15 @@ async function hasScopedAccessUnclamped(
       scope.branch_id &&
       target.branchId &&
       scope.branch_id === target.branchId
-    )
-      return true;
+    ) return true;
 
     if (
       scope.scope_type === "process" &&
       scope.process_id &&
       target.processId &&
       scope.process_id === target.processId &&
-      (!scope.branch_id ||
-        !target.branchId ||
-        scope.branch_id === target.branchId)
-    )
-      return true;
+      (!scope.branch_id || !target.branchId || scope.branch_id === target.branchId)
+    ) return true;
 
     if (
       scope.scope_type === "branch_process" &&
@@ -258,43 +244,38 @@ async function hasScopedAccessUnclamped(
       target.processId &&
       scope.branch_id === target.branchId &&
       scope.process_id === target.processId
-    )
-      return true;
+    ) return true;
 
     if (
       scope.scope_type === "lob" &&
       scope.lob_id &&
       target.lobId &&
       scope.lob_id === target.lobId &&
-      (!scope.branch_id ||
-        !target.branchId ||
-        scope.branch_id === target.branchId) &&
-      (!scope.process_id ||
-        !target.processId ||
-        scope.process_id === target.processId)
-    )
-      return true;
+      (!scope.branch_id || !target.branchId || scope.branch_id === target.branchId) &&
+      (!scope.process_id || !target.processId || scope.process_id === target.processId)
+    ) return true;
 
     if (
       scope.scope_type === "department" &&
       scope.department_id &&
       target.departmentId &&
       scope.department_id === target.departmentId
-    )
-      return true;
+    ) return true;
 
     if (
       scope.scope_type === "team" &&
       scope.manager_employee_id &&
       target.managerEmployeeId &&
       scope.manager_employee_id === target.managerEmployeeId
-    )
-      return true;
+    ) return true;
 
-    if (scope.scope_type === "self" && target.employeeId) {
+    if (
+      scope.scope_type === "self" &&
+      target.employeeId
+    ) {
       const [empRows] = await db.execute<RowDataPacket[]>(
         "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
-        [userId],
+        [userId]
       );
       const emp = (empRows as RowDataPacket[])[0] as any;
       if (emp?.id === target.employeeId) return true;
@@ -335,10 +316,7 @@ async function hasScopedAccessUnclamped(
  * buildScopeWhereClause() below already grants the unconditional bypass to
  * super_admin alone, so the two are now consistent.
  */
-export async function hasOrgWideScope(
-  userId: string,
-  allowedRoles: string[],
-): Promise<boolean> {
+export async function hasOrgWideScope(userId: string, allowedRoles: string[]): Promise<boolean> {
   if (await hasAnyRole(userId, "super_admin")) return true;
   if (!(await hasAnyRole(userId, ...allowedRoles))) return false;
   const scopes = await getUserAssignmentScopes(userId, allowedRoles);
@@ -413,7 +391,7 @@ async function buildScopeWhereClauseUnclamped(
     return branchId && aliases.branchId ? { sql: `${aliases.branchId} = ?`, params: [branchId] } : { sql: "1=0", params: [] };
   }
 
-  if (allowCeoAllRead && (await hasAnyRole(userId, "ceo"))) {
+  if (allowCeoAllRead && await hasAnyRole(userId, "ceo")) {
     return { sql: "1=1", params: [] };
   }
 
@@ -468,13 +446,7 @@ async function buildScopeWhereClauseUnclamped(
       continue;
     }
 
-    if (
-      s.scope_type === "branch_process" &&
-      s.branch_id &&
-      s.process_id &&
-      aliases.branchId &&
-      aliases.processId
-    ) {
+    if (s.scope_type === "branch_process" && s.branch_id && s.process_id && aliases.branchId && aliases.processId) {
       ors.push(`(${aliases.branchId} = ? AND ${aliases.processId} = ?)`);
       params.push(s.branch_id, s.process_id);
       continue;
@@ -495,21 +467,13 @@ async function buildScopeWhereClauseUnclamped(
       continue;
     }
 
-    if (
-      s.scope_type === "department" &&
-      s.department_id &&
-      aliases.departmentId
-    ) {
+    if (s.scope_type === "department" && s.department_id && aliases.departmentId) {
       ors.push(`${aliases.departmentId} = ?`);
       params.push(s.department_id);
       continue;
     }
 
-    if (
-      s.scope_type === "team" &&
-      s.manager_employee_id &&
-      aliases.managerEmployeeId
-    ) {
+    if (s.scope_type === "team" && s.manager_employee_id && aliases.managerEmployeeId) {
       ors.push(`${aliases.managerEmployeeId} = ?`);
       params.push(s.manager_employee_id);
       continue;
@@ -536,7 +500,7 @@ export async function assertScopedAccessOrThrow(
   userId: string,
   allowedRoles: string[],
   target: ScopeTarget,
-  message = "Forbidden: outside assigned scope",
+  message = "Forbidden: outside assigned scope"
 ): Promise<void> {
   const ok = await hasScopedAccess(userId, allowedRoles, target);
   if (!ok) {
@@ -564,15 +528,13 @@ export class BadRequestAccessError extends Error {
 
 // ─── Roster-Specific Scope Helpers ────────────────────────────────────────────
 
-export async function getRosterPlanScope(
-  planId: string,
-): Promise<(ScopeTarget & { planStatus: string | null }) | null> {
+export async function getRosterPlanScope(planId: string): Promise<ScopeTarget & { planStatus: string | null } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT process_id, branch_id, plan_status
        FROM wfm_roster_plan
       WHERE id = ?
       LIMIT 1`,
-    [planId],
+    [planId]
   );
   const row = (rows as RowDataPacket[])[0] as Record<string, unknown>;
   if (!row) return null;
@@ -583,16 +545,14 @@ export async function getRosterPlanScope(
   };
 }
 
-export async function getRosterAssignmentScope(
-  assignmentId: string,
-): Promise<(ScopeTarget & { planStatus: string | null }) | null> {
+export async function getRosterAssignmentScope(assignmentId: string): Promise<(ScopeTarget & { planStatus: string | null }) | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rp.process_id, rp.branch_id, rp.plan_status
        FROM wfm_roster_assignment ra
        LEFT JOIN wfm_roster_plan rp ON rp.id = ra.plan_id
       WHERE ra.id = ?
       LIMIT 1`,
-    [assignmentId],
+    [assignmentId]
   );
   const row = (rows as RowDataPacket[])[0] as Record<string, unknown>;
   if (!row) return null;

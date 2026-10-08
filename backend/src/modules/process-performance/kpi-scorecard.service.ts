@@ -2,32 +2,13 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import {
-  PROCESS_KPI_REGISTRY,
-  findProcessKpiSet,
-  findMetricDef,
-  type KpiFamily,
-  type KpiUnit,
-  type KpiDirection,
-  type ProcessKpiSet,
+  PROCESS_KPI_REGISTRY, findProcessKpiSet, findMetricDef,
+  type KpiFamily, type KpiUnit, type KpiDirection, type ProcessKpiSet,
 } from "./kpi-metric-registry.js";
-import {
-  resolveCdrScorecard,
-  getCdrAgentBreakdown,
-  getCdrAgentCalls,
-} from "./kpi-cdr-source.js";
-import {
-  fetchActiveHc,
-  fetchRolling30dAttritionRate,
-  fetchRolling60dShrinkagePct,
-} from "../workforce-mandate/hc-formula.service.js";
-import {
-  SHIVAMGIRI_CLIENT_ID,
-  fetchShivamgiriQualityScore,
-} from "./kpi-shivamgiri-source.js";
-import {
-  fetchProcessMetricValues,
-  type ProcessMetricReading,
-} from "./process-metric-source.js";
+import { resolveCdrScorecard, getCdrAgentBreakdown, getCdrAgentCalls } from "./kpi-cdr-source.js";
+import { fetchActiveHc, fetchRolling30dAttritionRate, fetchRolling60dShrinkagePct } from "../workforce-mandate/hc-formula.service.js";
+import { SHIVAMGIRI_CLIENT_ID, fetchShivamgiriQualityScore } from "./kpi-shivamgiri-source.js";
+import { fetchProcessMetricValues, type ProcessMetricReading } from "./process-metric-source.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
 
 /**
@@ -45,11 +26,7 @@ import { logSourceFailure } from "../../shared/apiResponse.js";
  * rather than swallowed, so an unreachable source is diagnosable instead of
  * looking indistinguishable from a client who simply supplied nothing.
  */
-async function fromSource<T>(
-  scope: string,
-  fallback: T,
-  load: () => Promise<T>,
-): Promise<T> {
+async function fromSource<T>(scope: string, fallback: T, load: () => Promise<T>): Promise<T> {
   try {
     return await load();
   } catch (err) {
@@ -81,17 +58,8 @@ async function fromSource<T>(
 // kept identical -- see that file's comment on why the route list, the service
 // list and the page_catalog grants must all agree.
 const VIEWER_ROLES = [
-  "super_admin",
-  "admin",
-  "ceo",
-  "coo",
-  "manager",
-  "process_manager",
-  "operations_manager",
-  "branch_head",
-  "qa",
-  "quality_analyst",
-  "tq_head",
+  "super_admin", "admin", "ceo", "coo", "manager", "process_manager",
+  "operations_manager", "branch_head", "qa", "quality_analyst", "tq_head",
 ];
 
 export interface KpiFilters {
@@ -111,36 +79,22 @@ export interface KpiFilters {
  * 100% of rows, so the join never drops a row.
  */
 async function kpiScope(userId: string) {
-  return buildScopeWhereClause(
-    userId,
-    VIEWER_ROLES,
-    {
-      processId: "k.process_id_at_event",
-      branchId: "k.branch_id_at_event",
-      managerEmployeeId: "e.reporting_manager_id",
-      employeeId: "k.employee_id",
-    },
-    { allowAdminBypass: true, allowCeoAllRead: true },
-  );
+  return buildScopeWhereClause(userId, VIEWER_ROLES, {
+    processId: "k.process_id_at_event",
+    branchId: "k.branch_id_at_event",
+    managerEmployeeId: "e.reporting_manager_id",
+    employeeId: "k.employee_id",
+  }, { allowAdminBypass: true, allowCeoAllRead: true });
 }
 
 /** Resolve the sheet's processCode to the real process_master.id, respecting scope. */
-async function resolveProcessId(
-  userId: string,
-  processCode: string,
-): Promise<string | null> {
+async function resolveProcessId(userId: string, processCode: string): Promise<string | null> {
   // A process id is exposed to the caller only if it is also inside their scope
   // via the employee-scope predicate process-performance.service.ts already
   // uses -- guessing a processCode in the URL must not reveal an id outside scope.
-  const scope = await buildScopeWhereClause(
-    userId,
-    VIEWER_ROLES,
-    {
-      processId: "p.id",
-      branchId: "p.branch_id",
-    },
-    { allowAdminBypass: true, allowCeoAllRead: true },
-  );
+  const scope = await buildScopeWhereClause(userId, VIEWER_ROLES, {
+    processId: "p.id", branchId: "p.branch_id",
+  }, { allowAdminBypass: true, allowCeoAllRead: true });
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT p.id FROM process_master p WHERE p.process_code = ? AND (${scope.sql}) LIMIT 1`,
     [processCode, ...scope.params],
@@ -181,15 +135,12 @@ export interface KpiScorecardRow {
  * the numerator needs undoing, and only for a percentage.
  */
 export function supportFrom(
-  reading:
-    | { ratioNumerator?: number | null; ratioDenominator?: number | null }
-    | undefined,
+  reading: { ratioNumerator?: number | null; ratioDenominator?: number | null } | undefined,
   unit: KpiUnit,
 ): { numerator: number; denominator: number } | null {
   const numerator = reading?.ratioNumerator;
   const denominator = reading?.ratioDenominator;
-  if (numerator == null || denominator == null || denominator === 0)
-    return null;
+  if (numerator == null || denominator == null || denominator === 0) return null;
   const isPercent = String(unit).startsWith("percent");
   return {
     numerator: Math.round(isPercent ? numerator / 100 : numerator),
@@ -241,8 +192,7 @@ export interface ProcessKpiHeader {
  * exactly that reason, reused here rather than re-derived.
  */
 async function fetchProcessQualityScore(
-  processId: string,
-  processCode: string,
+  processId: string, processCode: string,
 ): Promise<{ value: number | null; count: number; asOf: string | null }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT AVG(k.actual_value) AS value, COUNT(*) AS n
@@ -255,8 +205,7 @@ async function fetchProcessQualityScore(
   );
   const r = rows[0];
   const n = Number(r?.n ?? 0);
-  if (n > 0 && r?.value != null)
-    return { value: Number(r.value), count: n, asOf: null };
+  if (n > 0 && r?.value != null) return { value: Number(r.value), count: n, asOf: null };
 
   // Fall back to Shivamgiri's call-audit pilot -- real for only 2 of the 4
   // registered processes (see kpi-shivamgiri-source.ts's header comment for
@@ -274,11 +223,7 @@ async function fetchProcessQualityScore(
     { value: null, count: 0, asOfDate: null },
     () => fetchShivamgiriQualityScore(clientId),
   );
-  return {
-    value: auditPilot.value,
-    count: auditPilot.count,
-    asOf: auditPilot.asOfDate,
-  };
+  return { value: auditPilot.value, count: auditPilot.count, asOf: auditPilot.asOfDate };
 }
 
 /**
@@ -290,10 +235,7 @@ async function fetchProcessQualityScore(
  * "no attendance/headcount data exists for this process". These two checks
  * exist only to tell those two states apart honestly.
  */
-async function hasAttendanceRows(
-  processId: string,
-  days: number,
-): Promise<boolean> {
+async function hasAttendanceRows(processId: string, days: number): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM attendance_daily_record adr
        JOIN employees e ON e.id = adr.employee_id
@@ -304,10 +246,7 @@ async function hasAttendanceRows(
   return rows.length > 0;
 }
 
-export async function getProcessKpiHeader(
-  userId: string,
-  processCode: string,
-): Promise<ProcessKpiHeader | null> {
+export async function getProcessKpiHeader(userId: string, processCode: string): Promise<ProcessKpiHeader | null> {
   const set = findProcessKpiSet(processCode);
   if (!set) return null;
   const processId = await resolveProcessId(userId, processCode);
@@ -339,33 +278,16 @@ export async function getProcessKpiHeader(
     qualityScoreAsOf: quality.asOf,
   };
 
-  return {
-    processCode,
-    processId,
-    billingName: set.billingName,
-    projectName: set.projectName,
-    note: set.note ?? null,
-    health,
-  };
+  return { processCode, processId, billingName: set.billingName, projectName: set.projectName, note: set.note ?? null, health };
 }
 
 /** Every registered process, for the picker -- listing only what the sheet defines, not the whole org. */
-export function listRegisteredProcesses(): Array<{
-  processCode: string;
-  billingName: string;
-  projectName: string;
-}> {
-  return PROCESS_KPI_REGISTRY.map((p) => ({
-    processCode: p.processCode,
-    billingName: p.billingName,
-    projectName: p.projectName,
-  }));
+export function listRegisteredProcesses(): Array<{ processCode: string; billingName: string; projectName: string }> {
+  return PROCESS_KPI_REGISTRY.map((p) => ({ processCode: p.processCode, billingName: p.billingName, projectName: p.projectName }));
 }
 
 export async function getKpiScorecards(
-  userId: string,
-  processCode: string,
-  filters: KpiFilters,
+  userId: string, processCode: string, filters: KpiFilters,
 ): Promise<KpiScorecardRow[]> {
   const set = findProcessKpiSet(processCode);
   if (!set) return [];
@@ -376,12 +298,9 @@ export async function getKpiScorecards(
 
 /** Resolve a raw process_master.id back to its sheet processCode, for callers (the
  *  Client Portal) that only ever hold a process_master.id, never the sheet's own code. */
-export async function resolveProcessCodeById(
-  processId: string,
-): Promise<string | null> {
+export async function resolveProcessCodeById(processId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT process_code FROM process_master WHERE id = ? LIMIT 1`,
-    [processId],
+    `SELECT process_code FROM process_master WHERE id = ? LIMIT 1`, [processId],
   );
   return rows.length ? String(rows[0].process_code) : null;
 }
@@ -400,8 +319,7 @@ export async function resolveProcessCodeById(
  * existing kpi_template/kpi_score path for every other process untouched.
  */
 export async function getKpiScorecardsForProcessId(
-  processId: string,
-  filters: KpiFilters,
+  processId: string, filters: KpiFilters,
 ): Promise<KpiScorecardRow[] | null> {
   const processCode = await resolveProcessCodeById(processId);
   if (!processCode) return null;
@@ -411,29 +329,15 @@ export async function getKpiScorecardsForProcessId(
 }
 
 async function computeScorecards(
-  set: ProcessKpiSet,
-  processId: string | null,
-  filters: KpiFilters,
-  scope: { sql: string; params: unknown[] },
+  set: ProcessKpiSet, processId: string | null,
+  filters: KpiFilters, scope: { sql: string; params: unknown[] },
 ): Promise<KpiScorecardRow[]> {
   // One batched query per distinct metric_code actually referenced by this
   // process's registry, rather than one query per sheet row -- several sheet
   // rows (e.g. ABC and Upgrade's Conversion %) share the same metric_code.
-  const codes = [
-    ...new Set(
-      set.metrics
-        .map((m) => m.kpiMetricCode)
-        .filter((c): c is string => c !== null),
-    ),
-  ];
-  const actualByCode = new Map<
-    string,
-    { value: number | null; count: number }
-  >();
-  const trendByCode = new Map<
-    string,
-    Array<{ period: string; value: number | null }>
-  >();
+  const codes = [...new Set(set.metrics.map((m) => m.kpiMetricCode).filter((c): c is string => c !== null))];
+  const actualByCode = new Map<string, { value: number | null; count: number }>();
+  const trendByCode = new Map<string, Array<{ period: string; value: number | null }>>();
 
   if (processId && codes.length) {
     // actual_value's aggregate depends on family, but every code here happens to
@@ -445,13 +349,9 @@ async function computeScorecards(
     // identical.
     const familyResults = await Promise.all(
       (["rate", "volume", "duration", "roi"] as const).map(async (family) => {
-        const codesInFamily = [
-          ...new Set(
-            set.metrics
-              .filter((m) => m.family === family && m.kpiMetricCode)
-              .map((m) => m.kpiMetricCode as string),
-          ),
-        ];
+        const codesInFamily = [...new Set(
+          set.metrics.filter((m) => m.family === family && m.kpiMetricCode).map((m) => m.kpiMetricCode as string),
+        )];
         if (!codesInFamily.length) return null;
         const agg = aggExprFor(family);
         const [[rows], [trendRows]] = await Promise.all([
@@ -465,13 +365,7 @@ async function computeScorecards(
                 AND k.score_date BETWEEN ? AND ?
                 AND (${scope.sql})
               GROUP BY m.metric_code`,
-            [
-              ...codesInFamily,
-              processId,
-              filters.from,
-              filters.to,
-              ...scope.params,
-            ],
+            [...codesInFamily, processId, filters.from, filters.to, ...scope.params],
           ),
           db.execute<RowDataPacket[]>(
             `SELECT m.metric_code, DATE_FORMAT(k.score_date, '%Y-%m') AS period, ${agg} AS value
@@ -483,13 +377,7 @@ async function computeScorecards(
                 AND k.score_date BETWEEN ? AND ?
                 AND (${scope.sql})
               GROUP BY m.metric_code, period ORDER BY period ASC`,
-            [
-              ...codesInFamily,
-              processId,
-              filters.from,
-              filters.to,
-              ...scope.params,
-            ],
+            [...codesInFamily, processId, filters.from, filters.to, ...scope.params],
           ),
         ]);
         return { rows, trendRows };
@@ -498,18 +386,12 @@ async function computeScorecards(
     for (const res of familyResults) {
       if (!res) continue;
       for (const r of res.rows) {
-        actualByCode.set(String(r.metric_code), {
-          value: r.value == null ? null : Number(r.value),
-          count: Number(r.n),
-        });
+        actualByCode.set(String(r.metric_code), { value: r.value == null ? null : Number(r.value), count: Number(r.n) });
       }
       for (const r of res.trendRows) {
         const code = String(r.metric_code);
         const list = trendByCode.get(code) ?? [];
-        list.push({
-          period: String(r.period),
-          value: r.value == null ? null : Number(r.value),
-        });
+        list.push({ period: String(r.period), value: r.value == null ? null : Number(r.value) });
         trendByCode.set(code, list);
       }
     }
@@ -519,10 +401,7 @@ async function computeScorecards(
   // have no kpi_daily_actual code but do have a real call-center feed. Fetched
   // in parallel, one dialer_db round trip per distinct metric.
   const cdrMetrics = set.metrics.filter((m) => !m.kpiMetricCode && m.cdrSource);
-  const cdrByMetricKey = new Map<
-    string,
-    Awaited<ReturnType<typeof resolveCdrScorecard>>
-  >();
+  const cdrByMetricKey = new Map<string, Awaited<ReturnType<typeof resolveCdrScorecard>>>();
   // Gated on processId exactly like the kpi_daily_actual path above: a null
   // processId means this process is unresolved or outside the caller's scope,
   // and a real campaign feed must not leak data past that boundary either.
@@ -532,12 +411,7 @@ async function computeScorecards(
     const results = await Promise.all(
       cdrMetrics.map((m) =>
         fromSource(`dialer_db:${m.metricKey}`, null, () =>
-          resolveCdrScorecard(
-            m.cdrSource!,
-            m.cdrSource!.field,
-            filters.from,
-            filters.to,
-          ),
+          resolveCdrScorecard(m.cdrSource!, m.cdrSource!.field, filters.from, filters.to),
         ),
       ),
     );
@@ -550,127 +424,73 @@ async function computeScorecards(
   // Gated on processId for the same reason the block above is: a null processId
   // means the process is unresolved or outside the caller's scope, and a
   // supplied figure must not leak past that boundary either.
-  const processMetrics = set.metrics.filter(
-    (m) => !m.kpiMetricCode && !m.cdrSource && m.processSource,
-  );
+  const processMetrics = set.metrics.filter((m) => !m.kpiMetricCode && !m.cdrSource && m.processSource);
   let processReadings = new Map<string, ProcessMetricReading>();
   if (processId && processMetrics.length) {
-    processReadings = await fromSource(
-      "process_metric_actual",
-      processReadings,
-      () =>
-        fetchProcessMetricValues(
-          processId,
-          processMetrics.map((m) => m.metricKey),
-          filters.from,
-          filters.to,
+    processReadings = await fromSource("process_metric_actual", processReadings, () =>
+      fetchProcessMetricValues(
+        processId,
+        processMetrics.map((m) => m.metricKey),
+        filters.from,
+        filters.to,
+        processMetrics.filter((m) => m.family === "volume").map((m) => m.metricKey),
+        // Where a KPI Studio definition feeds this metric, it stores under the
+        // metric_code rather than the registry key; the resolver matches either.
+        Object.fromEntries(
           processMetrics
-            .filter((m) => m.family === "volume")
-            .map((m) => m.metricKey),
-          // Where a KPI Studio definition feeds this metric, it stores under the
-          // metric_code rather than the registry key; the resolver matches either.
-          Object.fromEntries(
-            processMetrics
-              .filter((m) => m.processSource?.metricCode)
-              .map((m) => [m.metricKey, m.processSource!.metricCode as string]),
-          ),
+            .filter((m) => m.processSource?.metricCode)
+            .map((m) => [m.metricKey, m.processSource!.metricCode as string]),
         ),
+      ),
     );
   }
 
   return set.metrics.map((m): KpiScorecardRow => {
     if (!m.kpiMetricCode && m.processSource) {
       const reading = processReadings.get(m.metricKey);
-      const availability: Availability =
-        reading && reading.count > 0 ? "ok" : "no_data";
+      const availability: Availability = reading && reading.count > 0 ? "ok" : "no_data";
       return {
-        metricKey: m.metricKey,
-        label: m.label,
-        family: m.family,
-        unit: m.unit,
-        lobLabel: m.lobLabel,
-        target: m.target,
-        direction: m.direction,
-        availability,
+        metricKey: m.metricKey, label: m.label, family: m.family, unit: m.unit, lobLabel: m.lobLabel,
+        target: m.target, direction: m.direction, availability,
         actual: availability === "ok" ? reading!.value : null,
-        rag:
-          availability === "ok" && reading!.value != null
-            ? ragFor(reading!.value, m.target, m.direction)
-            : null,
+        rag: availability === "ok" && reading!.value != null ? ragFor(reading!.value, m.target, m.direction) : null,
         trend: reading?.trend ?? [],
         support: availability === "ok" ? supportFrom(reading, m.unit) : null,
-        note:
-          availability === "no_data"
-            ? "No figure supplied for this window yet — this metric is filled in from the process's own upload or database connection."
-            : undefined,
+        note: availability === "no_data"
+          ? "No figure supplied for this window yet — this metric is filled in from the process's own upload or database connection."
+          : undefined,
       };
     }
     if (m.cdrSource) {
       const cdr = cdrByMetricKey.get(m.metricKey);
-      const availability: Availability =
-        cdr && cdr.count > 0 ? "ok" : "no_data";
+      const availability: Availability = cdr && cdr.count > 0 ? "ok" : "no_data";
       return {
-        metricKey: m.metricKey,
-        label: m.label,
-        family: m.family,
-        unit: m.unit,
-        lobLabel: m.lobLabel,
-        target: m.target,
-        direction: m.direction,
-        availability,
+        metricKey: m.metricKey, label: m.label, family: m.family, unit: m.unit, lobLabel: m.lobLabel,
+        target: m.target, direction: m.direction, availability,
         actual: availability === "ok" ? cdr!.value : null,
-        rag:
-          availability === "ok" && cdr!.value != null
-            ? ragFor(cdr!.value, m.target, m.direction)
-            : null,
+        rag: availability === "ok" && cdr!.value != null ? ragFor(cdr!.value, m.target, m.direction) : null,
         trend: cdr?.trend ?? [],
-        note:
-          availability === "no_data"
-            ? "No calls recorded on this campaign for this window."
-            : undefined,
+        note: availability === "no_data" ? "No calls recorded on this campaign for this window." : undefined,
       };
     }
     if (!m.kpiMetricCode) {
       return {
-        metricKey: m.metricKey,
-        label: m.label,
-        family: m.family,
-        unit: m.unit,
-        lobLabel: m.lobLabel,
-        target: m.target,
-        direction: m.direction,
-        availability: "not_tracked",
-        actual: null,
-        rag: null,
-        trend: [],
-        note: m.notTrackedNote,
+        metricKey: m.metricKey, label: m.label, family: m.family, unit: m.unit, lobLabel: m.lobLabel,
+        target: m.target, direction: m.direction, availability: "not_tracked",
+        actual: null, rag: null, trend: [], note: m.notTrackedNote,
       };
     }
     const found = actualByCode.get(m.kpiMetricCode);
-    const availability: Availability = !processId
-      ? "no_data"
-      : found && found.count > 0
-        ? "ok"
-        : "no_data";
+    const availability: Availability = !processId ? "no_data" : found && found.count > 0 ? "ok" : "no_data";
     return {
-      metricKey: m.metricKey,
-      label: m.label,
-      family: m.family,
-      unit: m.unit,
-      lobLabel: m.lobLabel,
-      target: m.target,
-      direction: m.direction,
-      availability,
+      metricKey: m.metricKey, label: m.label, family: m.family, unit: m.unit, lobLabel: m.lobLabel,
+      target: m.target, direction: m.direction, availability,
       actual: availability === "ok" ? found!.value : null,
-      rag:
-        availability === "ok" && found!.value != null
-          ? ragFor(found!.value, m.target, m.direction)
-          : null,
+      rag: availability === "ok" && found!.value != null ? ragFor(found!.value, m.target, m.direction) : null,
       trend: trendByCode.get(m.kpiMetricCode) ?? [],
-      note:
-        availability === "no_data"
-          ? "kpi_daily_actual has no rows for this process/window yet -- the pipeline exists, nothing has landed here."
-          : undefined,
+      note: availability === "no_data"
+        ? "kpi_daily_actual has no rows for this process/window yet -- the pipeline exists, nothing has landed here."
+        : undefined,
     };
   });
 }
@@ -702,56 +522,29 @@ export interface KpiMetricDetail {
  * KpiCellDetail.tsx and expects the same shape.
  */
 export async function getKpiMetricDetail(
-  userId: string,
-  processCode: string,
-  metricKey: string,
-  filters: KpiFilters,
-  teamLeaderId: string | null,
-  employeeId: string | null,
+  userId: string, processCode: string, metricKey: string, filters: KpiFilters,
+  teamLeaderId: string | null, employeeId: string | null,
 ): Promise<KpiMetricDetail | null> {
   const def = findMetricDef(processCode, metricKey);
   if (!def) return null;
   const label = def.label;
   const base: KpiMetricDetail = {
-    metricKey,
-    label,
-    availability: "not_tracked",
-    unit: def.unit,
-    trend: [],
-    recordsLabel: "Team leaders",
-    records: [],
-    note: def.notTrackedNote,
+    metricKey, label, availability: "not_tracked", unit: def.unit,
+    trend: [], recordsLabel: "Team leaders", records: [], note: def.notTrackedNote,
   };
 
   if (def.cdrSource) {
     // Scope check first -- same boundary the kpi_daily_actual path enforces,
     // even though the campaign query itself doesn't need a processId.
     const scopedProcessId = await resolveProcessId(userId, processCode);
-    if (!scopedProcessId)
-      return {
-        ...base,
-        availability: "no_data",
-        note: "This process is outside your scope or has no id on file.",
-      };
-    return getCdrMetricDetail(
-      def.cdrSource,
-      metricKey,
-      label,
-      def.unit,
-      filters,
-      employeeId,
-    );
+    if (!scopedProcessId) return { ...base, availability: "no_data", note: "This process is outside your scope or has no id on file." };
+    return getCdrMetricDetail(def.cdrSource, metricKey, label, def.unit, filters, employeeId);
   }
 
   if (!def.kpiMetricCode) return base;
 
   const processId = await resolveProcessId(userId, processCode);
-  if (!processId)
-    return {
-      ...base,
-      availability: "no_data",
-      note: "This process is outside your scope or has no id on file.",
-    };
+  if (!processId) return { ...base, availability: "no_data", note: "This process is outside your scope or has no id on file." };
 
   const scope = await kpiScope(userId);
   const agg = aggExprFor(def.family);
@@ -761,26 +554,14 @@ export async function getKpiMetricDetail(
   // kpiScope's comment), so team-pod narrowing filters e.reporting_manager_id.
   const narrowSql: string[] = ["k.process_id_at_event = ?"];
   const narrowParams: unknown[] = [processId];
-  if (teamLeaderId) {
-    narrowSql.push("e.reporting_manager_id = ?");
-    narrowParams.push(teamLeaderId);
-  }
-  if (employeeId) {
-    narrowSql.push("k.employee_id = ?");
-    narrowParams.push(employeeId);
-  }
+  if (teamLeaderId) { narrowSql.push("e.reporting_manager_id = ?"); narrowParams.push(teamLeaderId); }
+  if (employeeId) { narrowSql.push("k.employee_id = ?"); narrowParams.push(employeeId); }
 
   const joinSql = `FROM kpi_daily_actual k
      JOIN kpi_metric_master m ON m.id = k.metric_id AND m.metric_code = ?
      JOIN employees e ON e.id = k.employee_id
     WHERE k.score_date BETWEEN ? AND ? AND ${narrowSql.join(" AND ")} AND (${scope.sql})`;
-  const joinParams = [
-    def.kpiMetricCode,
-    filters.from,
-    filters.to,
-    ...narrowParams,
-    ...scope.params,
-  ];
+  const joinParams = [def.kpiMetricCode, filters.from, filters.to, ...narrowParams, ...scope.params];
 
   const [tr] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(k.score_date, '%Y-%m') AS period, ${agg} AS value ${joinSql}
@@ -796,14 +577,9 @@ export async function getKpiMetricDetail(
       joinParams,
     );
     return {
-      metricKey,
-      label,
-      unit: def.unit,
+      metricKey, label, unit: def.unit,
       availability: tr.length || recs.length ? "ok" : "no_data",
-      trend: tr.map((r) => ({
-        period: String(r.period),
-        value: r.value == null ? null : Number(r.value),
-      })),
+      trend: tr.map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) })),
       recordsLabel: "Recorded entries",
       records: recs.map((r) => ({
         id: String(r.id),
@@ -812,10 +588,7 @@ export async function getKpiMetricDetail(
         value: r.actual_value == null ? null : Number(r.actual_value),
         drillAs: null,
       })),
-      note:
-        tr.length || recs.length
-          ? undefined
-          : "No records in this window for this employee.",
+      note: tr.length || recs.length ? undefined : "No records in this window for this employee.",
     };
   }
 
@@ -827,9 +600,7 @@ export async function getKpiMetricDetail(
   const groupCol = teamLeaderId ? "e.id" : "e.reporting_manager_id";
   const nameCol = teamLeaderId ? "e.full_name" : "tl.full_name";
   const subCol = teamLeaderId ? "e.employee_code" : "tl.employee_code";
-  const managerJoin = teamLeaderId
-    ? ""
-    : "LEFT JOIN employees tl ON tl.id = e.reporting_manager_id";
+  const managerJoin = teamLeaderId ? "" : "LEFT JOIN employees tl ON tl.id = e.reporting_manager_id";
   const [recs] = await db.execute<RowDataPacket[]>(
     `SELECT ${groupCol} AS id, ${nameCol} AS name, ${subCol} AS subtitle, ${agg} AS value
        ${joinSql.replace("JOIN employees e ON e.id = k.employee_id", `JOIN employees e ON e.id = k.employee_id ${managerJoin}`)}
@@ -841,17 +612,10 @@ export async function getKpiMetricDetail(
   );
 
   return {
-    metricKey,
-    label,
-    unit: def.unit,
+    metricKey, label, unit: def.unit,
     availability: tr.length || recs.length ? "ok" : "no_data",
-    trend: tr.map((r) => ({
-      period: String(r.period),
-      value: r.value == null ? null : Number(r.value),
-    })),
-    recordsLabel: teamLeaderId
-      ? "Agents (worst first)"
-      : "TL pods (worst first)",
+    trend: tr.map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) })),
+    recordsLabel: teamLeaderId ? "Agents (worst first)" : "TL pods (worst first)",
     records: recs.map((r) => ({
       id: String(r.id),
       name: String(r.name ?? "Unassigned"),
@@ -859,10 +623,7 @@ export async function getKpiMetricDetail(
       value: r.value == null ? null : Number(r.value),
       drillAs: teamLeaderId ? "employee" : "team_leader",
     })),
-    note:
-      tr.length || recs.length
-        ? undefined
-        : "No rows in this window at this level.",
+    note: tr.length || recs.length ? undefined : "No rows in this window at this level.",
   };
 }
 
@@ -876,30 +637,14 @@ export async function getKpiMetricDetail(
  */
 async function getCdrMetricDetail(
   source: import("./kpi-metric-registry.js").KpiCdrSource,
-  metricKey: string,
-  label: string,
-  unit: KpiUnit,
-  filters: KpiFilters,
-  agentId: string | null,
+  metricKey: string, label: string, unit: KpiUnit, filters: KpiFilters, agentId: string | null,
 ): Promise<KpiMetricDetail> {
-  const overall = await resolveCdrScorecard(
-    source,
-    source.field,
-    filters.from,
-    filters.to,
-  );
+  const overall = await resolveCdrScorecard(source, source.field, filters.from, filters.to);
 
   if (agentId) {
-    const calls = await getCdrAgentCalls(
-      source,
-      agentId,
-      filters.from,
-      filters.to,
-    );
+    const calls = await getCdrAgentCalls(source, agentId, filters.from, filters.to);
     return {
-      metricKey,
-      label,
-      unit,
+      metricKey, label, unit,
       availability: calls.length ? "ok" : "no_data",
       trend: overall.trend,
       recordsLabel: "Calls",
@@ -907,26 +652,16 @@ async function getCdrMetricDetail(
         id: String(c.id),
         name: new Date(c.CallDate).toLocaleString("en-IN"),
         subtitle: `${c.Disposition ?? "—"} · ${c.DisconnBy ?? "—"} · queue ${c.QueueDuration ?? "0"}`,
-        value:
-          c.CallDurationSecond == null ? null : Number(c.CallDurationSecond),
+        value: c.CallDurationSecond == null ? null : Number(c.CallDurationSecond),
         drillAs: null,
       })),
-      note: calls.length
-        ? undefined
-        : "No calls recorded for this agent in this window.",
+      note: calls.length ? undefined : "No calls recorded for this agent in this window.",
     };
   }
 
-  const agents = await getCdrAgentBreakdown(
-    source,
-    source.field,
-    filters.from,
-    filters.to,
-  );
+  const agents = await getCdrAgentBreakdown(source, source.field, filters.from, filters.to);
   return {
-    metricKey,
-    label,
-    unit,
+    metricKey, label, unit,
     availability: agents.length ? "ok" : "no_data",
     trend: overall.trend,
     recordsLabel: "Agents",
@@ -937,8 +672,6 @@ async function getCdrMetricDetail(
       value: a.value,
       drillAs: "employee",
     })),
-    note: agents.length
-      ? undefined
-      : "No calls recorded on this campaign for this window.",
+    note: agents.length ? undefined : "No calls recorded on this campaign for this window.",
   };
 }

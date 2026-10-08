@@ -61,7 +61,7 @@ router.get('/employee/:employeeId/progress', guardEmployeeParam, taskController.
 router.get('/department/:dept', attachRowScope, taskController.getDepartmentTasks);
 
 // My tasks
-router.get("/my-tasks", taskController.getMyTasks);
+router.get('/my-tasks', taskController.getMyTasks);
 
 // Task actions
 router.put('/:taskId/start', guardTaskParam, taskController.startTask);

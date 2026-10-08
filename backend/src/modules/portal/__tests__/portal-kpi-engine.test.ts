@@ -67,10 +67,7 @@ describe("shiftPeriod", () => {
 
 describe("computeAchievement", () => {
   it("scores a higher-is-better metric against its target", () => {
-    expect(computeAchievement(91, 95, "higher_is_better")).toBeCloseTo(
-      95.79,
-      1,
-    );
+    expect(computeAchievement(91, 95, "higher_is_better")).toBeCloseTo(95.79, 1);
     expect(computeAchievement(95, 95, "higher_is_better")).toBe(100);
   });
 
@@ -150,52 +147,26 @@ describe("computeRag", () => {
 
 describe("rollUpRag", () => {
   it("takes the worst state across scored metrics", () => {
-    expect(
-      portalKpiEngine.rollUpRag([
-        metric({ rag: "green" }),
-        metric({ rag: "amber" }),
-      ]),
-    ).toBe("amber");
-    expect(
-      portalKpiEngine.rollUpRag([
-        metric({ rag: "amber" }),
-        metric({ rag: "red" }),
-      ]),
-    ).toBe("red");
-    expect(
-      portalKpiEngine.rollUpRag([
-        metric({ rag: "green" }),
-        metric({ rag: "green" }),
-      ]),
-    ).toBe("green");
+    expect(portalKpiEngine.rollUpRag([metric({ rag: "green" }), metric({ rag: "amber" })])).toBe("amber");
+    expect(portalKpiEngine.rollUpRag([metric({ rag: "amber" }), metric({ rag: "red" })])).toBe("red");
+    expect(portalKpiEngine.rollUpRag([metric({ rag: "green" }), metric({ rag: "green" })])).toBe("green");
   });
 
   it("ignores no_data metrics when something else is scored", () => {
     // A process with one unmeasurable metric and five green ones is green, not unknown.
     expect(
-      portalKpiEngine.rollUpRag([
-        metric({ rag: "no_data" }),
-        metric({ rag: "green" }),
-      ]),
+      portalKpiEngine.rollUpRag([metric({ rag: "no_data" }), metric({ rag: "green" })]),
     ).toBe("green");
   });
 
   it("is no_data only when nothing at all could be scored", () => {
-    expect(
-      portalKpiEngine.rollUpRag([
-        metric({ rag: "no_data" }),
-        metric({ rag: "no_data" }),
-      ]),
-    ).toBe("no_data");
+    expect(portalKpiEngine.rollUpRag([metric({ rag: "no_data" }), metric({ rag: "no_data" })])).toBe("no_data");
     expect(portalKpiEngine.rollUpRag([])).toBe("no_data");
   });
 
   it("does not let a no_data metric mask a red one", () => {
     expect(
-      portalKpiEngine.rollUpRag([
-        metric({ rag: "no_data" }),
-        metric({ rag: "red" }),
-      ]),
+      portalKpiEngine.rollUpRag([metric({ rag: "no_data" }), metric({ rag: "red" })]),
     ).toBe("red");
   });
 });
@@ -224,9 +195,7 @@ describe("real production figures", () => {
     const overConfirmed = computeAchievement(68.0, 95, "higher_is_better");
     const overAllExpected = computeAchievement(48.65, 95, "higher_is_better");
     expect(overConfirmed).toBeGreaterThan(overAllExpected as number);
-    expect(
-      (overConfirmed as number) - (overAllExpected as number),
-    ).toBeGreaterThan(19);
+    expect((overConfirmed as number) - (overAllExpected as number)).toBeGreaterThan(19);
   });
 
   it("flags the reconciliation backlog through DQ rather than hiding it in attendance", () => {
@@ -243,12 +212,8 @@ describe("real production figures", () => {
 
   it("scores a healthy earlier month as green", () => {
     // 2026-03: 91.16% attendance, DQ 100%.
-    expect(
-      computeRag(computeAchievement(91.16, 95, "higher_is_better"), 85),
-    ).toBe("amber");
-    expect(
-      computeRag(computeAchievement(100, 98, "higher_is_better"), 90),
-    ).toBe("green");
+    expect(computeRag(computeAchievement(91.16, 95, "higher_is_better"), 85)).toBe("amber");
+    expect(computeRag(computeAchievement(100, 98, "higher_is_better"), 90)).toBe("green");
   });
 });
 
@@ -267,12 +232,7 @@ describe("headline metric selection", () => {
       metric({ metric_code: "E", rag: "red", achievement_pct: 20 }),
     ];
 
-    const rank: Record<string, number> = {
-      red: 0,
-      amber: 1,
-      green: 2,
-      no_data: 3,
-    };
+    const rank: Record<string, number> = { red: 0, amber: 1, green: 2, no_data: 3 };
     const sorted = [...metrics].sort((left, right) => {
       const byRag = rank[left.rag] - rank[right.rag];
       if (byRag !== 0) return byRag;

@@ -36,7 +36,7 @@ export async function isAccountRevoked(userId: string): Promise<boolean> {
          FROM auth_user au
         WHERE au.id = ?
         LIMIT 1`,
-      [userId],
+      [userId]
     );
 
     const row = rows[0];
@@ -47,8 +47,7 @@ export async function isAccountRevoked(userId: string): Promise<boolean> {
 
     if (Number(row.is_blocked) === 1) return true;
 
-    const employeeActive = (row as { employee_active: unknown })
-      .employee_active;
+    const employeeActive = (row as { employee_active: unknown }).employee_active;
     return employeeActive != null && Number(employeeActive) === 0;
   } catch (err) {
     // Fail OPEN on infrastructure failure, and loudly. This runs on every
@@ -64,7 +63,7 @@ export async function isAccountRevoked(userId: string): Promise<boolean> {
         user_id: userId,
         error: err instanceof Error ? err.message : String(err),
         timestamp: new Date().toISOString(),
-      }) + "\n",
+      }) + "\n"
     );
     return false;
   }

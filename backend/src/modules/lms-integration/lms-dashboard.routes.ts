@@ -15,12 +15,9 @@ router.all("/batch-progress/:batch_no", (req: Request, res: Response) => {
   res.redirect(308, `/api/lms/batch-progress/${req.params.batch_no}`);
 });
 
-router.all(
-  "/assessment-history/:employee_id",
-  (req: Request, res: Response) => {
-    res.redirect(308, `/api/lms/assessment-history/${req.params.employee_id}`);
-  },
-);
+router.all("/assessment-history/:employee_id", (req: Request, res: Response) => {
+  res.redirect(308, `/api/lms/assessment-history/${req.params.employee_id}`);
+});
 
 router.all("/sync-status", (_req: Request, res: Response) => {
   res.redirect(308, "/api/lms/sync-status");

@@ -18,18 +18,9 @@ export async function auditAppointmentLetter(
     await db.execute(
       `INSERT INTO appointment_letter_issue_audit (id, issue_id, action, actor_user_id, detail_json)
        VALUES (?, ?, ?, ?, CAST(? AS JSON))`,
-      [
-        randomUUID(),
-        issueId,
-        action,
-        actorUserId,
-        JSON.stringify(detail ?? {}),
-      ],
+      [randomUUID(), issueId, action, actorUserId, JSON.stringify(detail ?? {})],
     );
   } catch (error) {
-    console.warn(
-      `[appointment-letter] audit ${action} failed:`,
-      error instanceof Error ? error.message : error,
-    );
+    console.warn(`[appointment-letter] audit ${action} failed:`, error instanceof Error ? error.message : error);
   }
 }

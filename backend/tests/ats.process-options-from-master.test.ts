@@ -41,44 +41,36 @@ describe("process options come from process_master", () => {
   });
 
   it("returns the master's own names, untouched", async () => {
-    execute.mockResolvedValueOnce([
-      [
-        { process_name: "Housing.com" },
-        { process_name: "Neemans Private Limited" },
-        { process_name: "Godfrey Philips India Ltd" },
-      ],
-      [],
-    ]);
+    execute.mockResolvedValueOnce([[
+      { process_name: "Housing.com" },
+      { process_name: "Neemans Private Limited" },
+      { process_name: "Godfrey Philips India Ltd" },
+    ], []]);
 
     // Full names, not the "Housing" / "Neeman's" / "GPI" the old list carried.
     expect(await listActiveProcessNames()).toEqual([
-      "Housing.com",
-      "Neemans Private Limited",
-      "Godfrey Philips India Ltd",
+      "Housing.com", "Neemans Private Limited", "Godfrey Philips India Ltd",
     ]);
   });
 
   it("collapses names that differ only by case or padding", async () => {
     // The master carries near-duplicates; two visually identical dropdown entries are a
     // support call, and the second would resolve to a different row.
-    execute.mockResolvedValueOnce([
-      [
-        { process_name: "Onfido" },
-        { process_name: " Onfido " },
-        { process_name: "ONFIDO" },
-        { process_name: "Clovia" },
-      ],
-      [],
-    ]);
+    execute.mockResolvedValueOnce([[
+      { process_name: "Onfido" },
+      { process_name: " Onfido " },
+      { process_name: "ONFIDO" },
+      { process_name: "Clovia" },
+    ], []]);
 
     expect(await listActiveProcessNames()).toEqual(["Onfido", "Clovia"]);
   });
 
   it("drops blank names rather than offering an empty option", async () => {
-    execute.mockResolvedValueOnce([
-      [{ process_name: "Onfido" }, { process_name: "   " }],
-      [],
-    ]);
+    execute.mockResolvedValueOnce([[
+      { process_name: "Onfido" },
+      { process_name: "   " },
+    ], []]);
 
     expect(await listActiveProcessNames()).toEqual(["Onfido"]);
   });
@@ -96,9 +88,7 @@ describe("the hand-maintained config list is no longer a source of process names
     const source = read("src/modules/ats/ats-form-config.service.ts");
     expect(source).toContain("listActiveProcessNames");
     // The old expression read the stored config list straight through.
-    expect(source).not.toMatch(
-      /hiringProcessOptions:\s*Array\.isArray\(configMap\['hiringProcessOptions'\]\)/,
-    );
+    expect(source).not.toMatch(/hiringProcessOptions:\s*Array\.isArray\(configMap\['hiringProcessOptions'\]\)/);
   });
 
   it("the recruiter workspace bootstrap serves process names from the master", () => {

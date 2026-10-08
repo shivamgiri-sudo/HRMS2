@@ -35,29 +35,20 @@ import {
   escalateToManager,
   escalationHistory,
   recordManagerResponse,
-} from "./mismatch-escalation.service.js";
+} from './mismatch-escalation.service.js';
 
 export const mismatchReviewRouter = Router();
 
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 const VIEW_ROLES = [
-  "wfm",
-  "branch_wfm",
-  "hr",
-  "admin",
-  "super_admin",
-  "ceo",
-  "payroll",
-  "manager",
-  "process_manager",
-  "branch_head",
+  'wfm', 'branch_wfm', 'hr', 'admin', 'super_admin', 'ceo', 'payroll',
+  'manager', 'process_manager', 'branch_head',
 ] as const;
 
 mismatchReviewRouter.use(requireAuth);
+
 
 // ── Payroll-closed months ─────────────────────────────────────────────────────
 // Once a company-wide payroll run for a month is finalized/locked/disbursed, that month's
@@ -67,10 +58,7 @@ mismatchReviewRouter.use(requireAuth);
 // one branch must not hide every other branch's open items.
 const CLOSED_RUN_STATUSES_SQL = "('FINALIZED','LOCKED','DISBURSED')";
 const CLOSED_MONTHS_CACHE_MS = 60_000;
-let closedMonthsCache: {
-  at: number;
-  value: { start: string; end: string }[];
-} | null = null;
+let closedMonthsCache: { at: number; value: { start: string; end: string }[] } | null = null;
 
 function monthBounds(runMonth: string): { start: string; end: string } | null {
   const m = /^(\d{4})-(\d{2})$/.exec(runMonth);
@@ -79,19 +67,11 @@ function monthBounds(runMonth: string): { start: string; end: string } | null {
   const month = Number(m[2]);
   if (month < 1 || month > 12) return null;
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return {
-    start: `${m[1]}-${m[2]}-01`,
-    end: `${m[1]}-${m[2]}-${String(lastDay).padStart(2, "0")}`,
-  };
+  return { start: `${m[1]}-${m[2]}-01`, end: `${m[1]}-${m[2]}-${String(lastDay).padStart(2, '0')}` };
 }
 
-async function closedPayrollMonths(): Promise<
-  { start: string; end: string }[]
-> {
-  if (
-    closedMonthsCache &&
-    Date.now() - closedMonthsCache.at < CLOSED_MONTHS_CACHE_MS
-  ) {
+async function closedPayrollMonths(): Promise<{ start: string; end: string }[]> {
+  if (closedMonthsCache && Date.now() - closedMonthsCache.at < CLOSED_MONTHS_CACHE_MS) {
     return closedMonthsCache.value;
   }
   let value: { start: string; end: string }[] = [];
@@ -110,10 +90,7 @@ async function closedPayrollMonths(): Promise<
       .filter((b): b is { start: string; end: string } => b !== null);
   } catch (err) {
     // A failed lookup must not take the whole queue down; per-row is_locked still applies.
-    logger.warn(
-      { err: (err as Error).message },
-      "[mismatch-review] closed-month lookup failed",
-    );
+    logger.warn({ err: (err as Error).message }, '[mismatch-review] closed-month lookup failed');
   }
   closedMonthsCache = { at: Date.now(), value };
   return value;
@@ -123,11 +100,11 @@ async function closedPayrollMonths(): Promise<
 async function scopeConditionFor(req: any) {
   const scope = await resolveUserBusinessScope(req.authUser);
   return buildEmployeeScopeCondition(scope, {
-    employeeId: "e.id",
-    branchId: "e.branch_id",
-    processId: "e.process_id",
-    departmentId: "e.department_id",
-    managerEmployeeId: "e.reporting_manager_id",
+    employeeId: 'e.id',
+    branchId: 'e.branch_id',
+    processId: 'e.process_id',
+    departmentId: 'e.department_id',
+    managerEmployeeId: 'e.reporting_manager_id',
   });
 }
 
@@ -150,14 +127,10 @@ type QueueQuery = {
 };
 
 /** All bound params for a query built as `${q.from} ${q.sql}`, in placeholder order. */
-const queueParams = (q: QueueQuery): unknown[] => [
-  ...q.fromParams,
-  ...q.params,
-];
+const queueParams = (q: QueueQuery): unknown[] => [...q.fromParams, ...q.params];
 
 async function buildWhere(req: any): Promise<QueueQuery> {
-  const { fromDate, toDate, employeeId, branchId, processId, search } =
-    req.query;
+  const { fromDate, toDate, employeeId, branchId, processId, search } = req.query;
 
   const scopeCondition = await scopeConditionFor(req);
 
@@ -181,18 +154,15 @@ async function buildWhere(req: any): Promise<QueueQuery> {
   const dateConds: string[] = [];
   const dateParams: unknown[] = [];
   if (fromDate) {
-    dateConds.push("adr.record_date >= ?");
+    dateConds.push('adr.record_date >= ?');
     dateParams.push(fromDate);
   } else {
     // record_date leads idx_adr_date / idx_adr_record_date_status; an unbounded query scans the
     // whole table, so default to the same 30-day window the dashboard-style pages use.
-    dateConds.push("adr.record_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
+    dateConds.push('adr.record_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)');
   }
-  if (toDate) {
-    dateConds.push("adr.record_date <= ?");
-    dateParams.push(toDate);
-  }
-  const dateSql = dateConds.join(" AND ");
+  if (toDate) { dateConds.push('adr.record_date <= ?'); dateParams.push(toDate); }
+  const dateSql = dateConds.join(' AND ');
 
   const from = `FROM (
       SELECT adr.id FROM attendance_daily_record adr
@@ -218,18 +188,9 @@ async function buildWhere(req: any): Promise<QueueQuery> {
   const conds: string[] = [];
   const params: unknown[] = [];
 
-  if (employeeId) {
-    conds.push("adr.employee_id = ?");
-    params.push(employeeId);
-  }
-  if (branchId) {
-    conds.push("adr.branch_id = ?");
-    params.push(branchId);
-  }
-  if (processId) {
-    conds.push("adr.process_id = ?");
-    params.push(processId);
-  }
+  if (employeeId) { conds.push('adr.employee_id = ?'); params.push(employeeId); }
+  if (branchId)   { conds.push('adr.branch_id = ?'); params.push(branchId); }
+  if (processId)  { conds.push('adr.process_id = ?'); params.push(processId); }
   if (search) {
     // Server-side on purpose: client-side filtering only ever sees the rows already on
     // the current page, which silently misses matches on every other page.
@@ -242,19 +203,14 @@ async function buildWhere(req: any): Promise<QueueQuery> {
   }
 
   for (const { start, end } of await closedPayrollMonths()) {
-    conds.push("(adr.record_date < ? OR adr.record_date > ?)");
+    conds.push('(adr.record_date < ? OR adr.record_date > ?)');
     params.push(start, end);
   }
 
   conds.push(`(${scopeCondition.sql})`);
   params.push(...scopeCondition.params);
 
-  return {
-    from,
-    fromParams,
-    sql: conds.length ? `WHERE ${conds.join(" AND ")}` : "",
-    params,
-  };
+  return { from, fromParams, sql: conds.length ? `WHERE ${conds.join(' AND ')}` : '', params };
 }
 
 /** Plain join for single-record loaders (not the queue). */
@@ -265,10 +221,10 @@ const FROM_JOIN = `
 // ── List unresolved mismatches and week_off_worked records ────────────────────
 
 mismatchReviewRouter.get(
-  "/",
+  '/',
   requireRole(...VIEW_ROLES),
   h(async (req, res) => {
-    const { page = "1", limit = "50" } = req.query;
+    const { page = '1', limit = '50' } = req.query;
     const pg = Math.max(1, Number(page) || 1);
     const lim = Math.min(200, Math.max(1, Number(limit) || 50));
     const offset = (pg - 1) * lim;
@@ -300,25 +256,19 @@ mismatchReviewRouter.get(
       ${where.sql}
       ORDER BY adr.record_date DESC, adr.employee_id
       LIMIT ${lim} OFFSET ${offset}`;
-    const [rows] = await db.execute<RowDataPacket[]>(
-      dataSql,
-      queueParams(where),
-    );
+    const [rows] = await db.execute<RowDataPacket[]>(dataSql, queueParams(where));
     const total = Number((rows as any[])[0]?.total_count ?? 0);
-    const data = await attachEscalations(
-      rows as RowDataPacket[],
-      req.authUser?.id,
-    );
+    const data = await attachEscalations(rows as RowDataPacket[], req.authUser?.id);
 
     res.json({ success: true, data, total, page: pg, limit: lim });
-  }),
+  })
 );
 
 // ── Resolve a mismatch or missing_punch or week_off_worked record ─────────────
 
 mismatchReviewRouter.patch(
-  "/:id/resolve",
-  requireRole("wfm", "hr", "admin", "super_admin"),
+  '/:id/resolve',
+  requireRole('wfm', 'hr', 'admin', 'super_admin'),
   h(async (req, res) => {
     const { id } = req.params;
     const { final_status, lwp_value, reason } = req.body as {
@@ -328,41 +278,21 @@ mismatchReviewRouter.patch(
     };
 
     if (!final_status || !reason) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "final_status and reason are required",
-        });
+      return res.status(400).json({ success: false, message: 'final_status and reason are required' });
     }
 
-    const validStatuses = [
-      "present",
-      "half_day",
-      "absent",
-      "leave_approved",
-      "holiday",
-      "week_off",
-      "week_off_worked",
-    ];
+    const validStatuses = ['present', 'half_day', 'absent', 'leave_approved', 'holiday', 'week_off', 'week_off_worked'];
     if (!validStatuses.includes(final_status)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: `Invalid final_status: ${final_status}`,
-        });
+      return res.status(400).json({ success: false, message: `Invalid final_status: ${final_status}` });
     }
 
     const [check] = await db.execute<RowDataPacket[]>(
       `SELECT id, attendance_status, lwp_value, mismatch_flag, employee_id, record_date, is_locked
        FROM attendance_daily_record WHERE id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     if (!(check as RowDataPacket[]).length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Record not found" });
+      return res.status(404).json({ success: false, message: 'Record not found' });
     }
     const rec = check[0] as any;
 
@@ -373,18 +303,11 @@ mismatchReviewRouter.patch(
     }
 
     if (rec.is_locked) {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message:
-            "Record is locked by payroll. Use manual override for locked months.",
-        });
+      return res.status(409).json({ success: false, message: 'Record is locked by payroll. Use manual override for locked months.' });
     }
 
     const resolvedBy = req.authUser?.id as string;
-    const newLwp =
-      lwp_value !== undefined ? Number(lwp_value) : Number(rec.lwp_value);
+    const newLwp = lwp_value !== undefined ? Number(lwp_value) : Number(rec.lwp_value);
 
     await db.execute(
       `UPDATE attendance_daily_record
@@ -396,15 +319,15 @@ mismatchReviewRouter.patch(
            mismatch_flag             = 0,
            processed_at              = NOW()
        WHERE id = ?`,
-      [final_status, newLwp, resolvedBy, reason, id],
+      [final_status, newLwp, resolvedBy, reason, id]
     );
 
     await logSensitiveAction({
       actor_user_id: resolvedBy,
-      actor_role: req.authUser?.role ?? "unknown",
-      action_type: "ATTENDANCE_MISMATCH_RESOLVED",
-      module_key: "attendance",
-      entity_type: "attendance_daily_record",
+      actor_role: req.authUser?.role ?? 'unknown',
+      action_type: 'ATTENDANCE_MISMATCH_RESOLVED',
+      module_key: 'attendance',
+      entity_type: 'attendance_daily_record',
       entity_id: id,
       employee_id: rec.employee_id,
       old_value_json: {
@@ -423,17 +346,16 @@ mismatchReviewRouter.patch(
     await closeEscalations(id, rec.employee_id);
 
     const [updated] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM attendance_daily_record WHERE id = ? LIMIT 1`,
-      [id],
+      `SELECT * FROM attendance_daily_record WHERE id = ? LIMIT 1`, [id]
     );
     res.json({ success: true, data: (updated as RowDataPacket[])[0] });
-  }),
+  })
 );
 
 // ── Summary counts for WFM dashboard ─────────────────────────────────────────
 
 mismatchReviewRouter.get(
-  "/summary",
+  '/summary',
   requireRole(...VIEW_ROLES),
   h(async (req, res) => {
     const where = await buildWhere(req);
@@ -445,15 +367,15 @@ mismatchReviewRouter.get(
          COUNT(*) AS total_open
        ${where.from}
        ${where.sql}`,
-      queueParams(where),
+      queueParams(where)
     );
     res.json({ success: true, data: rows[0] });
-  }),
+  })
 );
 
 // ── Escalation to the reporting manager ──────────────────────────────────────
 
-const ESCALATE_ROLES = ["wfm", "hr", "admin", "super_admin"] as const;
+const ESCALATE_ROLES = ['wfm', 'hr', 'admin', 'super_admin'] as const;
 
 /** One queue row, visible to the caller under the same scope predicate as the list. */
 async function loadScopedRecord(req: any, id: string) {
@@ -473,31 +395,21 @@ async function loadScopedRecord(req: any, id: string) {
 
 function sendEscalationError(res: any, err: unknown) {
   if (err instanceof EscalationError) {
-    return res
-      .status(err.status)
-      .json({ success: false, message: err.message });
+    return res.status(err.status).json({ success: false, message: err.message });
   }
   throw err;
 }
 
 mismatchReviewRouter.post(
-  "/:id/escalate",
+  '/:id/escalate',
   requireRole(...ESCALATE_ROLES),
   h(async (req, res) => {
     const rec = await loadScopedRecord(req, req.params.id);
-    if (!rec)
-      return res
-        .status(404)
-        .json({ success: false, message: "Record not found" });
+    if (!rec) return res.status(404).json({ success: false, message: 'Record not found' });
     if (rec.is_locked || rec.mismatch_resolved_at) {
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message: "Record is already resolved or locked by payroll.",
-        });
+      return res.status(409).json({ success: false, message: 'Record is already resolved or locked by payroll.' });
     }
-    const note = typeof req.body?.note === "string" ? req.body.note : null;
+    const note = typeof req.body?.note === 'string' ? req.body.note : null;
     try {
       const result = await escalateToManager({
         adrId: rec.id,
@@ -505,51 +417,36 @@ mismatchReviewRouter.post(
         employeeLabel: `${String(rec.employee_name).trim()} (${rec.employee_code})`,
         recordDate: rec.record_date,
         actorUserId: req.authUser?.id as string,
-        actorRole: req.authUser?.role ?? "unknown",
+        actorRole: req.authUser?.role ?? 'unknown',
         note,
       });
       await logSensitiveAction({
         actor_user_id: req.authUser?.id as string,
-        actor_role: req.authUser?.role ?? "unknown",
-        action_type: "ATTENDANCE_MISMATCH_ESCALATED",
-        module_key: "attendance",
-        entity_type: "attendance_daily_record",
+        actor_role: req.authUser?.role ?? 'unknown',
+        action_type: 'ATTENDANCE_MISMATCH_ESCALATED',
+        module_key: 'attendance',
+        entity_type: 'attendance_daily_record',
         entity_id: rec.id,
         employee_id: rec.employee_id,
-        new_value_json: {
-          level: result.level,
-          escalated_to_employee_id: result.escalated_to_employee_id,
-          note,
-        },
+        new_value_json: { level: result.level, escalated_to_employee_id: result.escalated_to_employee_id, note },
       });
       return res.status(201).json({ success: true, data: result });
     } catch (err) {
       return sendEscalationError(res, err);
     }
-  }),
+  })
 );
 
 mismatchReviewRouter.post(
-  "/:id/manager-response",
+  '/:id/manager-response',
   requireRole(...VIEW_ROLES),
   h(async (req, res) => {
-    const { recommended_status, note } = (req.body ?? {}) as {
-      recommended_status?: string;
-      note?: string;
-    };
+    const { recommended_status, note } = (req.body ?? {}) as { recommended_status?: string; note?: string };
     if (!recommended_status || !note || !String(note).trim()) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "recommended_status and note are required",
-        });
+      return res.status(400).json({ success: false, message: 'recommended_status and note are required' });
     }
     const rec = await loadScopedRecord(req, req.params.id);
-    if (!rec)
-      return res
-        .status(404)
-        .json({ success: false, message: "Record not found" });
+    if (!rec) return res.status(404).json({ success: false, message: 'Record not found' });
     try {
       const result = await recordManagerResponse({
         adrId: rec.id,
@@ -562,10 +459,10 @@ mismatchReviewRouter.post(
       });
       await logSensitiveAction({
         actor_user_id: req.authUser?.id as string,
-        actor_role: req.authUser?.role ?? "unknown",
-        action_type: "ATTENDANCE_MISMATCH_MANAGER_RECOMMENDED",
-        module_key: "attendance",
-        entity_type: "attendance_daily_record",
+        actor_role: req.authUser?.role ?? 'unknown',
+        action_type: 'ATTENDANCE_MISMATCH_MANAGER_RECOMMENDED',
+        module_key: 'attendance',
+        entity_type: 'attendance_daily_record',
         entity_id: rec.id,
         employee_id: rec.employee_id,
         new_value_json: { recommended_status, note: String(note) },
@@ -574,34 +471,26 @@ mismatchReviewRouter.post(
     } catch (err) {
       return sendEscalationError(res, err);
     }
-  }),
+  })
 );
 
 // ── Bulk escalate up to 100 records at once ───────────────────────────────────
 
 mismatchReviewRouter.post(
-  "/bulk-escalate",
+  '/bulk-escalate',
   requireRole(...ESCALATE_ROLES),
   h(async (req, res) => {
     const ids: string[] = Array.isArray(req.body?.ids)
       ? req.body.ids.map(String).filter(Boolean)
       : [];
     if (!ids.length || ids.length > 100) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "ids must be an array of 1–100 items",
-        });
+      return res.status(400).json({ success: false, message: 'ids must be an array of 1–100 items' });
     }
-    const note =
-      typeof req.body?.note === "string" && req.body.note.trim()
-        ? req.body.note.trim()
-        : null;
+    const note = typeof req.body?.note === 'string' && req.body.note.trim() ? req.body.note.trim() : null;
 
     // Load all requested records in one query (scope-filtered).
     const scope = await scopeConditionFor(req);
-    const placeholders = ids.map(() => "?").join(",");
+    const placeholders = ids.map(() => '?').join(',');
     const [recs] = await db.execute<RowDataPacket[]>(
       `SELECT adr.id, adr.employee_id, adr.is_locked, adr.mismatch_resolved_at,
               DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
@@ -620,14 +509,8 @@ mismatchReviewRouter.post(
 
     for (const id of ids) {
       const rec = recMap.get(id);
-      if (!rec) {
-        skipped++;
-        continue;
-      }
-      if (rec.is_locked || rec.mismatch_resolved_at) {
-        skipped++;
-        continue;
-      }
+      if (!rec) { skipped++; continue; }
+      if (rec.is_locked || rec.mismatch_resolved_at) { skipped++; continue; }
       try {
         await escalateToManager({
           adrId: rec.id,
@@ -635,44 +518,37 @@ mismatchReviewRouter.post(
           employeeLabel: `${String(rec.employee_name).trim()} (${rec.employee_code})`,
           recordDate: rec.record_date,
           actorUserId: req.authUser?.id as string,
-          actorRole: req.authUser?.role ?? "unknown",
+          actorRole: req.authUser?.role ?? 'unknown',
           note,
         });
         succeeded++;
       } catch (err) {
-        if (err instanceof EscalationError) {
-          skipped++;
-        } else {
-          failed++;
-          errors.push(String((err as Error).message));
-        }
+        if (err instanceof EscalationError) { skipped++; }
+        else { failed++; errors.push(String((err as Error).message)); }
       }
     }
 
     if (succeeded > 0) {
       void logSensitiveAction({
         actor_user_id: req.authUser?.id as string,
-        actor_role: req.authUser?.role ?? "unknown",
-        action_type: "ATTENDANCE_MISMATCH_BULK_ESCALATED",
-        module_key: "attendance",
-        entity_type: "attendance_daily_record",
+        actor_role: req.authUser?.role ?? 'unknown',
+        action_type: 'ATTENDANCE_MISMATCH_BULK_ESCALATED',
+        module_key: 'attendance',
+        entity_type: 'attendance_daily_record',
         entity_id: `bulk_${Date.now()}`,
         new_value_json: { succeeded, skipped, failed, ids },
       });
     }
 
-    return res.json({
-      success: true,
-      data: { succeeded, skipped, failed, errors },
-    });
-  }),
+    return res.json({ success: true, data: { succeeded, skipped, failed, errors } });
+  })
 );
 
 // ── Drill-down: one record in full, with its escalation history ──────────────
 // Declared last so it cannot shadow GET /summary.
 
 mismatchReviewRouter.get(
-  "/:id",
+  '/:id',
   requireRole(...VIEW_ROLES),
   h(async (req, res) => {
     const scope = await scopeConditionFor(req);
@@ -692,11 +568,9 @@ mismatchReviewRouter.get(
       [req.params.id, ...scope.params],
     );
     const record = (rows as RowDataPacket[])[0];
-    if (!record)
-      return res
-        .status(404)
-        .json({ success: false, message: "Record not found" });
+    if (!record) return res.status(404).json({ success: false, message: 'Record not found' });
     const escalations = await escalationHistory(String(record.id));
     res.json({ success: true, data: { record, escalations } });
-  }),
+  })
 );
+

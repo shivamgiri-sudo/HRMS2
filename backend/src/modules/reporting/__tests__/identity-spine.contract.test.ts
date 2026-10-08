@@ -26,17 +26,12 @@ const isEmployeeGrain = (r: (typeof REPORT_CATALOG)[number]): boolean => {
   // "One row per employee per month" is still employee-grain. "One row per branch per
   // employee count" is not — but no such grain exists; the guard below is for aggregates
   // that merely mention employees in passing.
-  if (
-    /^one row per (branch|cost cent|process|department|month|day|shift|course|asset)/.test(
-      grain,
-    )
-  )
-    return false;
+  if (/^one row per (branch|cost cent|process|department|month|day|shift|course|asset)/.test(grain)) return false;
   return true;
 };
 
 const columnKeys = (r: (typeof REPORT_CATALOG)[number]): string[] =>
-  (r.columns ?? []).map((c) => c.key);
+  (r.columns ?? []).map(c => c.key);
 
 describe("identity spine helper", () => {
   it("emits every column it declares", () => {
@@ -46,7 +41,7 @@ describe("identity spine helper", () => {
       // bare off the employees alias (`e.date_of_joining`), or selected bare off one of
       // the spine's own join aliases (`spine_b.branch_name`).
       const selected = new RegExp(
-        `(AS\\s+${col}\\b)|(\\be\\.${col}\\b)|(\\bspine_[a-z]+\\.${col}\\b)`,
+        `(AS\\s+${col}\\b)|(\\be\\.${col}\\b)|(\\bspine_[a-z]+\\.${col}\\b)`
       ).test(sql);
       expect(selected, `spine SELECT does not emit ${col}`).toBe(true);
     }
@@ -74,22 +69,18 @@ describe("identity spine helper", () => {
       "cost_centre_master",
     ];
     for (const t of tables) {
-      expect(joins, `${t} must be LEFT JOINed`).toMatch(
-        new RegExp(`LEFT JOIN\\s+${t}\\b`),
-      );
+      expect(joins, `${t} must be LEFT JOINed`).toMatch(new RegExp(`LEFT JOIN\\s+${t}\\b`));
     }
     // An INNER JOIN anywhere here would drop the 64 employees with no cost centre and the
     // 143 with no process, shrinking headcount from 1,125 without saying so.
-    expect(joins).not.toMatch(
-      /(?<!LEFT )\bJOIN\s+(branch|department|designation|process|cost_centre)_master/,
-    );
+    expect(joins).not.toMatch(/(?<!LEFT )\bJOIN\s+(branch|department|designation|process|cost_centre)_master/);
   });
 
   it("resolves the reporting manager through both manager columns", () => {
     // reporting_manager_id and manager_id disagree on real rows; 9 employees are mapped
     // only via manager_id, and manager-mapping exists to report that disagreement.
     expect(identitySpineJoins("e")).toMatch(
-      /COALESCE\(e\.reporting_manager_id,\s*e\.manager_id\)/,
+      /COALESCE\(e\.reporting_manager_id,\s*e\.manager_id\)/
     );
   });
 
@@ -97,14 +88,7 @@ describe("identity spine helper", () => {
     // Callers already join branch_master as `b` and process_master as `p`. A second join
     // under the same alias is a SQL error, so the spine prefixes its own.
     const joins = identitySpineJoins("e");
-    for (const alias of [
-      "spine_b",
-      "spine_d",
-      "spine_des",
-      "spine_p",
-      "spine_cc",
-      "spine_mgr",
-    ]) {
+    for (const alias of ["spine_b", "spine_d", "spine_des", "spine_p", "spine_cc", "spine_mgr"]) {
       expect(joins).toContain(alias);
     }
   });
@@ -114,19 +98,14 @@ describe("the two exception reports backing the conventions", () => {
   it.each(["org-mapping-gaps", "employee-status-conflicts"])(
     "%s is registered, catalogued and reachable",
     (code) => {
-      expect(Object.keys(EXECUTOR_MAP), `${code} has no executor`).toContain(
-        code,
-      );
-      const entry = REPORT_CATALOG.find((r) => r.code === code);
-      expect(
-        entry,
-        `${code} has no catalog entry, so nothing can list it`,
-      ).toBeDefined();
-    },
+      expect(Object.keys(EXECUTOR_MAP), `${code} has no executor`).toContain(code);
+      const entry = REPORT_CATALOG.find(r => r.code === code);
+      expect(entry, `${code} has no catalog entry, so nothing can list it`).toBeDefined();
+    }
   );
 
   it("org-mapping-gaps names which attribute is missing", () => {
-    const entry = REPORT_CATALOG.find((r) => r.code === "org-mapping-gaps");
+    const entry = REPORT_CATALOG.find(r => r.code === "org-mapping-gaps");
     expect(columnKeys(entry!)).toContain("missing_attributes");
   });
 });
@@ -175,23 +154,13 @@ describe("mandatory identity columns on employee-grain reports", () => {
    */
   const SYNONYMS: Record<string, readonly string[]> = {
     employee_code: ["employee_code", "emp_code", "candidate_code"],
-    cost_centre_code: [
-      "cost_centre_code",
-      "cost_center_code",
-      "cost_center",
-      "cost_centre",
-    ],
-    cost_centre_name: [
-      "cost_centre_name",
-      "cost_center_name",
-      "cost_center",
-      "cost_centre",
-    ],
+    cost_centre_code: ["cost_centre_code", "cost_center_code", "cost_center", "cost_centre"],
+    cost_centre_name: ["cost_centre_name", "cost_center_name", "cost_center", "cost_centre"],
     process_name: ["process_name", "process"],
   };
 
   const hasFact = (keys: string[], fact: string): boolean =>
-    (SYNONYMS[fact] ?? [fact]).some((k) => keys.includes(k));
+    (SYNONYMS[fact] ?? [fact]).some(k => keys.includes(k));
 
   /**
    * Reports not yet migrated to the spine. This list may only ever shrink — it is the
@@ -220,18 +189,15 @@ describe("mandatory identity columns on employee-grain reports", () => {
       if (NOT_YET_MIGRATED.has(report.code)) continue;
       if (report.code in EXEMPT_WITH_REASON) continue;
       const keys = columnKeys(report);
-      const missing = MANDATORY_IDENTITY_COLUMNS.filter(
-        (c) => !hasFact(keys, c),
-      );
-      if (missing.length > 0)
-        offenders.push(`${report.code}: missing ${missing.join(", ")}`);
+      const missing = MANDATORY_IDENTITY_COLUMNS.filter(c => !hasFact(keys, c));
+      if (missing.length > 0) offenders.push(`${report.code}: missing ${missing.join(", ")}`);
     }
 
     // Reported in full rather than as a count, so the next person sees the work list.
     expect(
       offenders.sort(),
       `employee-grain reports missing mandatory identity columns ` +
-        `(add the spine to the executor, then the columns here):\n${offenders.sort().join("\n")}`,
+        `(add the spine to the executor, then the columns here):\n${offenders.sort().join("\n")}`
     ).toEqual([]);
   });
 });

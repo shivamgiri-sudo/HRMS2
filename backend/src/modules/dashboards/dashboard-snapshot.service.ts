@@ -3,10 +3,7 @@ import type { RowDataPacket } from "mysql2";
 
 import { logSourceFailure } from "../../shared/apiResponse.js";
 import type { DashboardScope } from "../../shared/dashboardScope.js";
-import {
-  executeMetricByCode,
-  getAllMetricCodes,
-} from "./dashboard-definition.service.js";
+import { executeMetricByCode, getAllMetricCodes } from "./dashboard-definition.service.js";
 
 /**
  * Writes dashboard_metric_snapshot, the table every trend arrow reads from.
@@ -52,12 +49,8 @@ async function databaseToday(): Promise<string> {
 
 function orgScope(): DashboardScope {
   return {
-    level: "ORG_ALL",
-    branchIds: [],
-    processIds: [],
-    employeeIds: [],
-    userId: "snapshot-writer",
-    role: "super_admin",
+    level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [],
+    userId: "snapshot-writer", role: "super_admin",
   };
 }
 
@@ -75,12 +68,7 @@ export async function resolveSnapshotTargets(
   const targets: SnapshotTarget[] = [];
 
   if (kinds.includes("ORG")) {
-    targets.push({
-      scopeType: "ORG",
-      scopeId: null,
-      label: "ORG",
-      scope: orgScope(),
-    });
+    targets.push({ scopeType: "ORG", scopeId: null, label: "ORG", scope: orgScope() });
   }
 
   if (kinds.includes("BRANCH")) {
@@ -98,12 +86,8 @@ export async function resolveSnapshotTargets(
         scopeId: String(row.id),
         label: `BRANCH ${row.branch_name}`,
         scope: {
-          level: "BRANCH_ALL",
-          branchIds: [String(row.id)],
-          processIds: [],
-          employeeIds: [],
-          userId: "snapshot-writer",
-          role: "branch_head",
+          level: "BRANCH_ALL", branchIds: [String(row.id)], processIds: [], employeeIds: [],
+          userId: "snapshot-writer", role: "branch_head",
         },
       });
     }
@@ -124,12 +108,8 @@ export async function resolveSnapshotTargets(
         scopeId: String(row.id),
         label: `PROCESS ${row.process_name}`,
         scope: {
-          level: "PROCESS_ALL",
-          branchIds: [],
-          processIds: [String(row.id)],
-          employeeIds: [],
-          userId: "snapshot-writer",
-          role: "process_manager",
+          level: "PROCESS_ALL", branchIds: [], processIds: [String(row.id)], employeeIds: [],
+          userId: "snapshot-writer", role: "process_manager",
         },
       });
     }
@@ -159,9 +139,7 @@ async function previousSnapshot(
         AND snapshot_date < ?
       ORDER BY snapshot_date DESC
       LIMIT 1`,
-    scopeId === null
-      ? [metricCode, scopeType, snapshotDate]
-      : [metricCode, scopeType, scopeId, snapshotDate],
+    scopeId === null ? [metricCode, scopeType, snapshotDate] : [metricCode, scopeType, scopeId, snapshotDate],
   );
   const raw = (rows as RowDataPacket[])[0]?.value;
   if (raw === undefined || raw === null) return null;
@@ -169,10 +147,7 @@ async function previousSnapshot(
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function trendFrom(
-  current: number,
-  previous: number | null,
-): "up" | "down" | "stable" | null {
+function trendFrom(current: number, previous: number | null): "up" | "down" | "stable" | null {
   if (previous === null || previous === 0) return null;
   const changePct = ((current - previous) / Math.abs(previous)) * 100;
   // Same 0.5% deadband getMetricTrend applies, so a stored trend and a computed one agree.
@@ -186,13 +161,11 @@ function trendFrom(
  * written as 0. Writing 0 for a broken query would look identical to a genuine zero and
  * would poison the next day's comparison.
  */
-export async function writeDashboardSnapshots(
-  options: {
-    kinds?: readonly SnapshotScopeKind[];
-    metricCodes?: readonly string[];
-    onProgress?: (done: number, total: number, label: string) => void;
-  } = {},
-): Promise<SnapshotRunResult> {
+export async function writeDashboardSnapshots(options: {
+  kinds?: readonly SnapshotScopeKind[];
+  metricCodes?: readonly string[];
+  onProgress?: (done: number, total: number, label: string) => void;
+} = {}): Promise<SnapshotRunResult> {
   const snapshotDate = await databaseToday();
   const targets = await resolveSnapshotTargets(options.kinds);
   const metricCodes = options.metricCodes?.length
@@ -200,12 +173,7 @@ export async function writeDashboardSnapshots(
     : getAllMetricCodes();
 
   const result: SnapshotRunResult = {
-    snapshotDate,
-    targets: targets.length,
-    written: 0,
-    skippedNoValue: 0,
-    failed: 0,
-    failures: [],
+    snapshotDate, targets: targets.length, written: 0, skippedNoValue: 0, failed: 0, failures: [],
   };
 
   const total = targets.length * metricCodes.length;
@@ -218,23 +186,14 @@ export async function writeDashboardSnapshots(
       try {
         const metric = await executeMetricByCode(metricCode, target.scope);
         const value = metric?.value;
-        if (
-          value === null ||
-          value === undefined ||
-          !Number.isFinite(Number(value))
-        ) {
+        if (value === null || value === undefined || !Number.isFinite(Number(value))) {
           // No value is a legitimate outcome (empty source, or a failed query already
           // reported through errorCode). Either way there is nothing truthful to store.
           result.skippedNoValue += 1;
           continue;
         }
         const numeric = Number(value);
-        const previous = await previousSnapshot(
-          metricCode,
-          target.scopeType,
-          target.scopeId,
-          snapshotDate,
-        );
+        const previous = await previousSnapshot(metricCode, target.scopeType, target.scopeId, snapshotDate);
 
         // scope_id NULL does not participate in the unique key (MySQL treats NULLs as
         // distinct), so ORG rows are replaced explicitly.
@@ -255,28 +214,15 @@ export async function writeDashboardSnapshots(
              previous_value = VALUES(previous_value),
              trend          = VALUES(trend),
              computed_at    = CURRENT_TIMESTAMP`,
-          [
-            metricCode,
-            target.scopeType,
-            target.scopeId,
-            snapshotDate,
-            numeric,
-            previous,
-            trendFrom(numeric, previous),
-          ],
+          [metricCode, target.scopeType, target.scopeId, snapshotDate, numeric, previous, trendFrom(numeric, previous)],
         );
         result.written += 1;
       } catch (err) {
         result.failed += 1;
         result.failures.push({
-          metricCode,
-          scope: target.label,
-          reason: (err as Error).message.slice(0, 160),
+          metricCode, scope: target.label, reason: (err as Error).message.slice(0, 160),
         });
-        logSourceFailure("dashboard-snapshot", err, {
-          metricCode,
-          scope: target.label,
-        });
+        logSourceFailure("dashboard-snapshot", err, { metricCode, scope: target.label });
       }
     }
   }

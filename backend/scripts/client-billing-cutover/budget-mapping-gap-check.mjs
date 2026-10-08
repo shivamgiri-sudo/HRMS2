@@ -1,16 +1,12 @@
 import "dotenv/config";
 import mysql from "mysql2/promise";
 
-function sq(v) {
-  return (v ?? "").replace(/^["']|["']$/g, "");
-}
+function sq(v) { return (v ?? "").replace(/^["']|["']$/g, ""); }
 
 async function main() {
   const hrms = await mysql.createConnection({
-    host: "192.168.10.6",
-    user: sq(process.env.DB_USER),
-    password: sq(process.env.DB_PASSWORD),
-    database: sq(process.env.DB_NAME),
+    host: "192.168.10.6", user: sq(process.env.DB_USER),
+    password: sq(process.env.DB_PASSWORD), database: sq(process.env.DB_NAME),
   });
 
   const [[noHeaderAtAll]] = await hrms.query(`
@@ -20,10 +16,7 @@ async function main() {
       AND g.bill_source_id IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation gca WHERE gca.grn_request_id = g.id)
       AND NOT EXISTS (SELECT 1 FROM finance_budget_header h WHERE h.branch_id = g.branch_id AND h.financial_year = g.financial_year)`);
-  console.log(
-    "In-scope GRNs whose branch has NO FY2026-27 budget header at all:",
-    noHeaderAtAll,
-  );
+  console.log("In-scope GRNs whose branch has NO FY2026-27 budget header at all:", noHeaderAtAll);
 
   const [[ccOnlyMatchFixed]] = await hrms.query(`
     SELECT COUNT(*) n, COALESCE(SUM(g.amount_with_tax),0) total
@@ -36,10 +29,7 @@ async function main() {
         JOIN finance_budget_header h ON h.id = l.budget_id
         WHERE l.cost_centre_id = g.cost_centre_id AND h.branch_id = g.branch_id AND h.financial_year = g.financial_year
       )`);
-  console.log(
-    "In-scope GRNs whose own cost centre has at least one budget line (any head) this FY:",
-    ccOnlyMatchFixed,
-  );
+  console.log("In-scope GRNs whose own cost centre has at least one budget line (any head) this FY:", ccOnlyMatchFixed);
 
   const [byBranch] = await hrms.query(`
     SELECT b.branch_name, COUNT(*) n, COALESCE(SUM(g.amount_with_tax),0) total
@@ -57,7 +47,4 @@ async function main() {
   await hrms.end();
 }
 
-main().catch((e) => {
-  console.error(e.message);
-  process.exit(1);
-});
+main().catch((e) => { console.error(e.message); process.exit(1); });

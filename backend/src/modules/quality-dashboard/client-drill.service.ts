@@ -30,8 +30,7 @@ export interface ClientDrillFilters {
 const SCOPE = `q.ClientId = ? AND q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL`;
 const scopeParams = (f: ClientDrillFilters) => [f.clientId, f.from, f.to];
 
-const num = (value: unknown) =>
-  value === null || value === undefined ? 0 : Number(value);
+const num = (value: unknown) => (value === null || value === undefined ? 0 : Number(value));
 const pct = (part: unknown, whole: unknown) => {
   const total = Number(whole ?? 0);
   return total > 0 ? Math.round((Number(part ?? 0) / total) * 1000) / 10 : 0;
@@ -53,23 +52,16 @@ export async function getClientKpis(f: ClientDrillFilters) {
        FROM db_audit.call_quality_assessment q
       WHERE ${SCOPE}
       GROUP BY q.ClientId`,
-    scopeParams(f),
+    scopeParams(f)
   );
   const row = rows[0];
   // A client with no audits in range is an empty period, not an error. Zeros here are
   // genuine — they are counted from rows that exist — unlike an absent feed.
   if (!row) {
     return {
-      client_id: f.clientId,
-      client_name: `Client ${f.clientId}`,
-      audit_count: 0,
-      cq_score: 0,
-      without_fatal_cq: 0,
-      excellent_pct: 0,
-      good_pct: 0,
-      below_avg_pct: 0,
-      fatal_count: 0,
-      avg_parameters: 0,
+      client_id: f.clientId, client_name: `Client ${f.clientId}`, audit_count: 0,
+      cq_score: 0, without_fatal_cq: 0, excellent_pct: 0, good_pct: 0,
+      below_avg_pct: 0, fatal_count: 0, avg_parameters: 0,
     };
   }
   return {
@@ -100,7 +92,7 @@ export async function getClientDaily(f: ClientDrillFilters) {
       WHERE ${SCOPE}
       GROUP BY DATE_FORMAT(q.CallDate,'%Y-%m-%d')
       ORDER BY date ASC`,
-    scopeParams(f),
+    scopeParams(f)
   );
   return rows.map((r) => ({
     date: String(r.date),
@@ -129,7 +121,7 @@ export async function getClientAgents(f: ClientDrillFilters) {
       GROUP BY q.User
       ORDER BY audit_count DESC
       LIMIT 200`,
-    scopeParams(f),
+    scopeParams(f)
   );
   return rows.map((r) => ({
     agent_name: String(r.agent_name ?? r.agent_code ?? "Unknown"),
@@ -167,10 +159,7 @@ const FATAL_PARAMETERS: ReadonlyArray<{ column: string; label: string }> = [
   { column: "financial_fraud", label: "Financial fraud" },
   { column: "escalation_failure", label: "Escalation failure" },
   { column: "collusion", label: "Collusion" },
-  {
-    column: "policy_communication_failure",
-    label: "Policy communication failure",
-  },
+  { column: "policy_communication_failure", label: "Policy communication failure" },
 ];
 
 export async function getClientFatal(f: ClientDrillFilters) {
@@ -178,26 +167,25 @@ export async function getClientFatal(f: ClientDrillFilters) {
   const selects = FATAL_PARAMETERS.map(
     ({ column }, i) =>
       `SUM(CASE WHEN LOWER(TRIM(COALESCE(q.${column},''))) = 'yes' THEN 1 ELSE 0 END) AS c${i},
-       COUNT(DISTINCT CASE WHEN LOWER(TRIM(COALESCE(q.${column},''))) = 'yes' THEN q.User END) AS a${i}`,
+       COUNT(DISTINCT CASE WHEN LOWER(TRIM(COALESCE(q.${column},''))) = 'yes' THEN q.User END) AS a${i}`
   ).join(",\n            ");
 
   const rows = await querySource<Record<string, unknown>>(
     `SELECT ${selects}
        FROM db_audit.call_quality_assessment q
       WHERE ${SCOPE} AND q.quality_percentage = 0`,
-    scopeParams(f),
+    scopeParams(f)
   );
   const row = rows[0] ?? {};
-  return (
-    FATAL_PARAMETERS.map(({ label }, i) => ({
+  return FATAL_PARAMETERS
+    .map(({ label }, i) => ({
       fatal_parameter: label,
       count: num(row[`c${i}`]),
       agents_affected: num(row[`a${i}`]),
     }))
-      // A breach nobody committed is noise in a table meant to show what went wrong.
-      .filter((r) => r.count > 0)
-      .sort((a, b) => b.count - a.count)
-  );
+    // A breach nobody committed is noise in a table meant to show what went wrong.
+    .filter((r) => r.count > 0)
+    .sort((a, b) => b.count - a.count);
 }
 
 /** Call scenarios. scenario1 is the sub-scenario the modal shows beside it. */
@@ -212,7 +200,7 @@ export async function getClientScenarios(f: ClientDrillFilters) {
       GROUP BY scenario, sub_scenario
       ORDER BY count DESC
       LIMIT 100`,
-    scopeParams(f),
+    scopeParams(f)
   );
   return rows.map((r) => ({
     scenario: String(r.scenario),
@@ -241,7 +229,7 @@ export async function getClientRepeat(f: ClientDrillFilters) {
      HAVING repeat_count > 1
       ORDER BY repeat_count DESC
       LIMIT 200`,
-    scopeParams(f),
+    scopeParams(f)
   );
   return rows.map((r) => ({
     mobile: String(r.mobile),
@@ -275,19 +263,17 @@ export async function getClientTranscript(leadId: string, clientId: string) {
        LEFT JOIN mas_hrms.employees e ON e.employee_code = q.User
       WHERE q.lead_id = ? AND q.ClientId = ?
       LIMIT 1`,
-    [leadId, clientId],
+    [leadId, clientId]
   );
   const row = rows[0];
   if (!row) return null;
 
   // Which breaches this specific call recorded, named rather than raw column values.
-  const breached = FATAL_PARAMETERS.filter(({ column }) => {
-    return (
-      String(row[column] ?? "")
-        .trim()
-        .toLowerCase() === "yes"
-    );
-  }).map(({ label }) => label);
+  const breached = FATAL_PARAMETERS
+    .filter(({ column }) => {
+      return String(row[column] ?? "").trim().toLowerCase() === "yes";
+    })
+    .map(({ label }) => label);
 
   return {
     lead_id: String(row.lead_id),

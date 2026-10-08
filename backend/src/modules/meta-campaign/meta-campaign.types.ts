@@ -7,9 +7,8 @@
  * in `*Row` interfaces and the mappers are the only place the two meet.
  */
 
-export type MetaCampaignStatus =
-  "draft" | "active" | "paused" | "completed" | "archived";
-export type MetaScreeningResult = "pending" | "qualified" | "disqualified";
+export type MetaCampaignStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived';
+export type MetaScreeningResult = 'pending' | 'qualified' | 'disqualified';
 
 /** Row shape of `meta_campaign`. */
 export interface MetaCampaignRow {
@@ -219,6 +218,4 @@ export interface CreateMetaCampaignInput {
   notes?: string | null;
 }
 
-export type UpdateMetaCampaignInput = Partial<
-  Omit<CreateMetaCampaignInput, "requisitionId">
->;
+export type UpdateMetaCampaignInput = Partial<Omit<CreateMetaCampaignInput, 'requisitionId'>>;

@@ -16,13 +16,9 @@ import fs from "fs";
 import path from "path";
 
 const ASSEMBLY = fs.readFileSync(
-  path.resolve(__dirname, "..", "joiningKitAssembly.service.ts"),
-  "utf8",
-);
+  path.resolve(__dirname, "..", "joiningKitAssembly.service.ts"), "utf8");
 const DISPATCH = fs.readFileSync(
-  path.resolve(__dirname, "..", "joiningKitDispatch.service.ts"),
-  "utf8",
-);
+  path.resolve(__dirname, "..", "joiningKitDispatch.service.ts"), "utf8");
 
 describe("a kit never re-signs an already-signed document", () => {
   it("eligibility excludes documents holding a signed artefact", () => {
@@ -49,13 +45,7 @@ describe("a kit never re-signs an already-signed document", () => {
   });
 
   it("the terminal set matches the checklist helper", () => {
-    for (const s of [
-      "verified",
-      "completed",
-      "esign_completed",
-      "signed_verified",
-      "wet_signed_uploaded",
-    ]) {
+    for (const s of ["verified", "completed", "esign_completed", "signed_verified", "wet_signed_uploaded"]) {
       expect(ASSEMBLY).toContain(`"${s}"`);
     }
   });
@@ -63,9 +53,7 @@ describe("a kit never re-signs an already-signed document", () => {
   it("the hr_fill guard checks kit members, not a parallel document-code query", () => {
     // The parallel query caused this bug class twice: EPF forms blocking kits
     // they were not in, then already-signed documents doing the same.
-    expect(DISPATCH).toContain(
-      "const members = await kitEligibleDocuments(employeeId);",
-    );
+    expect(DISPATCH).toContain("const members = await kitEligibleDocuments(employeeId);");
     expect(DISPATCH).toMatch(/WHERE id IN \(\$\{memberIds\.map/);
   });
 

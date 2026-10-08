@@ -36,42 +36,21 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 // and destination-cost-centre logic in isolation — not role-name matching, which the alias-
 // collapse companion test covers against the real code path.
 let authUser: { id: string; role: string; roles: string[] } = {
-  id: USER_ID,
-  role: "payroll",
-  roles: ["hr", "payroll"],
+  id: USER_ID, role: "payroll", roles: ["hr", "payroll"],
 };
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (req as express.Request & { authUser: typeof authUser }).authUser =
-      authUser;
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: typeof authUser }).authUser = authUser;
     next();
   },
 }));
 // requireRole and requireScopedRole are exercised by their own tests; here they pass through
 // so the assertions land on the transfer gate itself rather than on the layers above it.
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole:
-    () =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 vi.mock("../../../middleware/scopeMiddleware.js", () => ({
-  requireScopedRole:
-    () =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  requireScopedRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
 const { hasScopedAccess } = vi.hoisted(() => ({ hasScopedAccess: vi.fn() }));
@@ -81,9 +60,7 @@ vi.mock("../../../shared/scopeAccess.js", () => ({
 }));
 
 vi.mock("../../../shared/accessGuard.js", () => ({
-  getEmployeeForUser: vi
-    .fn()
-    .mockResolvedValue({ id: EMP_ID, employee_code: "MAS0001" }),
+  getEmployeeForUser: vi.fn().mockResolvedValue({ id: EMP_ID, employee_code: "MAS0001" }),
   hasRole: vi.fn().mockResolvedValue(true),
 }));
 
@@ -93,12 +70,8 @@ vi.mock("../../../shared/accessGuard.js", () => ({
 // its own zod validation then answers 400 where the test expects the gate's verdict.
 const { updateEmployee } = vi.hoisted(() => ({ updateEmployee: vi.fn() }));
 vi.mock("../employee.controller.js", async (importOriginal) => {
-  const actual = await importOriginal<{
-    employeeController: Record<string, unknown>;
-  }>();
-  return {
-    employeeController: { ...actual.employeeController, updateEmployee },
-  };
+  const actual = await importOriginal<{ employeeController: Record<string, unknown> }>();
+  return { employeeController: { ...actual.employeeController, updateEmployee } };
 });
 
 const { employeeRouter } = await import("../employee.routes.js");
@@ -114,19 +87,15 @@ beforeEach(() => {
   dbExecute.mockReset();
   hasScopedAccess.mockReset();
   updateEmployee.mockReset();
-  updateEmployee.mockImplementation(
-    async (_req: express.Request, res: express.Response) => {
-      res.json({ success: true });
-    },
-  );
+  updateEmployee.mockImplementation(async (_req: express.Request, res: express.Response) => {
+    res.json({ success: true });
+  });
   authUser = { id: USER_ID, role: "payroll", roles: ["hr", "payroll"] };
 
   // The employee sits in the Payroll HR's own branch; the actor's scope covers that branch
   // and nothing else.
-  hasScopedAccess.mockImplementation(
-    async (_u: string, _r: string[], target: { branchId?: string }) =>
-      target?.branchId === OWN_BRANCH,
-  );
+  hasScopedAccess.mockImplementation(async (_u: string, _r: string[], target: { branchId?: string }) =>
+    target?.branchId === OWN_BRANCH);
 
   dbExecute.mockImplementation(async (sql: unknown, params: unknown[]) => {
     const text = String(sql);
@@ -149,10 +118,7 @@ const patch = (body: Record<string, unknown>) =>
 
 describe("branch Payroll HR may change a cost centre inside their own branch", () => {
   it("allows a cost centre that belongs to their branch", async () => {
-    const res = await patch({
-      costCentreId: CC_IN_BRANCH,
-      transferEffectiveMonth: "2026-09",
-    });
+    const res = await patch({ costCentreId: CC_IN_BRANCH, transferEffectiveMonth: "2026-09" });
     expect(res.status).toBe(200);
     expect(updateEmployee).toHaveBeenCalled();
   });
@@ -179,10 +145,7 @@ describe("branch Payroll HR may change a cost centre inside their own branch", (
   });
 
   it("allows a branch transfer within their own scope", async () => {
-    const res = await patch({
-      branchId: OWN_BRANCH,
-      costCentreId: CC_IN_BRANCH,
-    });
+    const res = await patch({ branchId: OWN_BRANCH, costCentreId: CC_IN_BRANCH });
     expect(res.status).toBe(200);
   });
 
@@ -195,10 +158,7 @@ describe("branch Payroll HR may change a cost centre inside their own branch", (
 describe("the gate leaves the other roles where they were", () => {
   it("still lets payroll_head transfer anywhere, with no scope lookup", async () => {
     authUser = { id: USER_ID, role: "payroll_head", roles: ["payroll_head"] };
-    const res = await patch({
-      branchId: OTHER_BRANCH,
-      costCentreId: CC_OTHER_BRANCH,
-    });
+    const res = await patch({ branchId: OTHER_BRANCH, costCentreId: CC_OTHER_BRANCH });
     expect(res.status).toBe(200);
     expect(hasScopedAccess).not.toHaveBeenCalled();
   });

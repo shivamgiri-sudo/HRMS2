@@ -1,6 +1,6 @@
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import { randomUUID } from "node:crypto";
+import { db } from '../../db/mysql.js'
+import type { RowDataPacket } from 'mysql2'
+import { randomUUID } from "node:crypto"
 
 /**
  * Get performance goals for a user
@@ -11,33 +11,29 @@ export async function getUserGoals(userId: string): Promise<RowDataPacket[]> {
      JOIN employees e ON g.employee_id = e.id
      WHERE e.user_id = ?
      LIMIT 20`,
-    [userId],
-  );
-  return rows as RowDataPacket[];
+    [userId]
+  )
+  return rows as RowDataPacket[]
 }
 
 /**
  * Get performance feedback requests for a user
  */
-export async function getUserFeedbackRequests(
-  userId: string,
-): Promise<RowDataPacket[]> {
+export async function getUserFeedbackRequests(userId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT pfr.* FROM performance_feedback_request pfr
      JOIN employees e ON pfr.reviewer_id = e.id OR pfr.employee_id = e.id
      WHERE e.user_id = ? AND pfr.status IN ('pending', 'completed')
      LIMIT 50`,
-    [userId],
-  );
-  return rows as RowDataPacket[];
+    [userId]
+  )
+  return rows as RowDataPacket[]
 }
 
 /**
  * Get performance summary for dashboards
  */
-export async function getPerformanceSummary(): Promise<
-  Record<string, unknown>
-> {
+export async function getPerformanceSummary(): Promise<Record<string, unknown>> {
   const [summary] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(DISTINCT e.id) AS total_employees,
@@ -49,9 +45,9 @@ export async function getPerformanceSummary(): Promise<
      FROM employees e
      LEFT JOIN goal g ON e.id = g.employee_id AND g.status = 'active'
      LEFT JOIN appraisal_rating ar ON e.id = ar.employee_id
-     WHERE e.active_status = 1`,
-  );
-  return summary[0] as Record<string, unknown>;
+     WHERE e.active_status = 1`
+  )
+  return summary[0] as Record<string, unknown>
 }
 
 /**
@@ -62,9 +58,9 @@ export async function getCompetencies(): Promise<RowDataPacket[]> {
     `SELECT competency_id, competency_name, description, category, is_active
      FROM competency_master
      WHERE is_active = 1
-     ORDER BY category, competency_name`,
-  );
-  return rows as RowDataPacket[];
+     ORDER BY category, competency_name`
+  )
+  return rows as RowDataPacket[]
 }
 
 /**
@@ -77,9 +73,9 @@ export async function getActiveCycles(): Promise<RowDataPacket[]> {
      FROM performance_feedback_cycle
      WHERE status IN ('draft', 'active')
      ORDER BY start_date DESC
-     LIMIT 50`,
-  );
-  return rows as RowDataPacket[];
+     LIMIT 50`
+  )
+  return rows as RowDataPacket[]
 }
 
 /**
@@ -89,22 +85,22 @@ export async function submitFeedbackResponse(
   requestId: string,
   competencyId: number,
   rating: number,
-  comments?: string,
+  comments?: string
 ): Promise<{ responseId: string }> {
-  const responseId = randomUUID();
+  const responseId = randomUUID()
   await db.execute(
     `INSERT INTO performance_feedback_response
      (response_id, request_id, competency_id, rating, comments, submitted_at)
      VALUES (?, ?, ?, ?, ?, NOW())`,
-    [responseId, requestId, competencyId, rating, comments || null],
-  );
+    [responseId, requestId, competencyId, rating, comments || null]
+  )
 
   // Update the feedback request status
   await db.execute(
     `UPDATE performance_feedback_request SET status = 'completed', completed_at = NOW()
      WHERE request_id = ?`,
-    [requestId],
-  );
+    [requestId]
+  )
 
-  return { responseId };
+  return { responseId }
 }

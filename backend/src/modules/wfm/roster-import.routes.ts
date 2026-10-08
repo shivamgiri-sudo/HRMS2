@@ -16,14 +16,14 @@ import {
   commitImportBatch,
   updateImportRow,
   getMissingEmployees,
-} from "./roster-import.service.js";
+} from './roster-import.service.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });
 
-const WFM_ROLES = ["wfm", "admin", "super_admin"];
+const WFM_ROLES = ['wfm', 'admin', 'super_admin'];
 
 // Read-only viewing endpoints (view/table, adherence-trend, status-summary) are reachable from
 // /wfm/roster-view, which rbacPageMatrix.ts grants WFM_ROSTER page access to manager,
@@ -32,13 +32,7 @@ const WFM_ROLES = ["wfm", "admin", "super_admin"];
 // guarding these pure-read routes, so every one of those page-granted roles hit a page they could
 // navigate to and immediately got a 403 "Access denied" banner the moment the table query fired.
 // Confirmed live 2026-09-11. Keep WFM_ROLES itself unchanged for the write endpoints below.
-const WFM_VIEW_ROLES = [
-  ...WFM_ROLES,
-  "manager",
-  "process_manager",
-  "team_leader",
-  "tl",
-];
+const WFM_VIEW_ROLES = [...WFM_ROLES, 'manager', 'process_manager', 'team_leader', 'tl'];
 
 export const rosterImportRouter = Router();
 
@@ -70,7 +64,7 @@ rosterImportRouter.param('employeeId', employeeParamGuard());
 // ── POST /api/wfm/roster-imports ──────────────────────────────────────────
 // Upload a roster spreadsheet and produce a PREVIEW batch
 rosterImportRouter.post(
-  "/",
+  '/',
   requireRole(...WFM_ROLES),
   upload.single('file'),
   branchScopeGuard({ inject: false }),
@@ -81,23 +75,21 @@ rosterImportRouter.post(
         return;
       }
 
-      const { processId, branchId, importMode, cycleId, sheetName } =
-        req.body as {
-          processId?: string;
-          branchId?: string;
-          importMode?: string;
-          cycleId?: string;
-          sheetName?: string;
-        };
+      const { processId, branchId, importMode, cycleId, sheetName } = req.body as {
+        processId?: string;
+        branchId?: string;
+        importMode?: string;
+        cycleId?: string;
+        sheetName?: string;
+      };
 
       // processId is deliberately NOT required: the file identifies people by employee code and
       // each employee carries their own process. It is still accepted, for the Roster Builder
       // deep link which already knows the process. branchId is the whole-branch alternative —
       // one upload covering every process in a branch (migration 1536).
 
-      const mode = (importMode === "UPDATE" ? "UPDATE" : "NEW") as
-        "NEW" | "UPDATE";
-      const createdBy = (req as any).authUser?.id ?? "system";
+      const mode = (importMode === 'UPDATE' ? 'UPDATE' : 'NEW') as 'NEW' | 'UPDATE';
+      const createdBy = (req as any).authUser?.id ?? 'system';
 
       const result = await createImportBatch({
         processId,
@@ -112,7 +104,7 @@ rosterImportRouter.post(
 
       res.status(201).json({
         batchId: result.batchId,
-        status: "PREVIEW",
+        status: 'PREVIEW',
         summary: result.summary,
       });
     } catch (err: any) {
@@ -127,15 +119,15 @@ rosterImportRouter.post(
         });
         return;
       }
-      console.error("[roster-import] POST error:", err);
+      console.error('[roster-import] POST error:', err);
       // The cause used to go into `detail`, which nothing displays: hrmsApi reads `error` first
       // (hrmsApi.ts:110), so the uploader saw a bare "Import failed" and the actual reason was
       // dropped on the floor. Two files were reported as simply "failed" for exactly this
       // reason. `detail` is kept for programmatic callers; the message now carries the cause.
-      const cause = err?.message ? String(err.message) : "unknown error";
+      const cause = err?.message ? String(err.message) : 'unknown error';
       res.status(500).json({ error: `Import failed: ${cause}`, detail: cause });
     }
-  },
+  }
 );
 
 // ── GET /api/wfm/roster-imports/branches ─────────────────────────────────
@@ -143,7 +135,7 @@ rosterImportRouter.post(
 // /api/access/branches already does this but is gated admin/hr only — a plain
 // 'wfm' role (WFM_ROLES) can't reach it, and that's exactly who uploads rosters.
 rosterImportRouter.get(
-  "/branches",
+  '/branches',
   requireRole(...WFM_ROLES),
   async (req, res) => {
     try {
@@ -161,10 +153,10 @@ rosterImportRouter.get(
             );
       res.json({ branches: rows });
     } catch (err: any) {
-      console.error("[roster-import] GET branches error:", err);
-      res.status(500).json({ error: "Failed to load branches" });
+      console.error('[roster-import] GET branches error:', err);
+      res.status(500).json({ error: 'Failed to load branches' });
     }
-  },
+  }
 );
 
 // ── GET /api/wfm/roster-imports ───────────────────────────────────────────
@@ -190,17 +182,17 @@ rosterImportRouter.get(
       res.status(500).json({ error: 'Failed to list import batches' });
     }
   }
-});
+);
 
 // ── GET /api/wfm/roster-imports/:batchId ─────────────────────────────────
 rosterImportRouter.get(
-  "/:batchId(\\d+)", // numeric only: a bare /:batchId shadowed GET /status-summary (400 Invalid batchId)
+  '/:batchId(\\d+)',  // numeric only: a bare /:batchId shadowed GET /status-summary (400 Invalid batchId)
   requireRole(...WFM_ROLES),
   async (req, res) => {
     try {
       const batchId = parseInt(req.params.batchId, 10);
       if (isNaN(batchId)) {
-        res.status(400).json({ error: "Invalid batchId" });
+        res.status(400).json({ error: 'Invalid batchId' });
         return;
       }
       const result = await getImportBatch(batchId);
@@ -210,38 +202,35 @@ rosterImportRouter.get(
         res.status(404).json({ error: err.message });
         return;
       }
-      console.error("[roster-import] GET batch error:", err);
-      res.status(500).json({ error: "Failed to retrieve batch" });
+      console.error('[roster-import] GET batch error:', err);
+      res.status(500).json({ error: 'Failed to retrieve batch' });
     }
-  },
+  }
 );
 
 // ── GET /api/wfm/roster-imports/:batchId/rows ────────────────────────────
 rosterImportRouter.get(
-  "/:batchId/rows",
+  '/:batchId/rows',
   requireRole(...WFM_ROLES),
   async (req, res) => {
     try {
       const batchId = parseInt(req.params.batchId, 10);
       if (isNaN(batchId)) {
-        res.status(400).json({ error: "Invalid batchId" });
+        res.status(400).json({ error: 'Invalid batchId' });
         return;
       }
 
-      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
+      const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10));
       // Was capped at 200 here while the service layer (getImportRows -> sqlLimitOffset) and the
       // grid's own fetch (`?limit=5000`, RosterImportPage.tsx) both already expected up to 5000.
       // A batch with more than ~200 cell-rows — the normal case; a single branch's two-week
       // upload is routinely 4,000+ — silently never returned its later rows to the correction
       // grid at all. Errors sitting past row #200 in spreadsheet order were invisible: nothing
       // to click, nothing to fix, and commit kept refusing for reasons the page couldn't show.
-      const limit = Math.min(
-        5000,
-        Math.max(1, parseInt(String(req.query.limit ?? "50"), 10)),
-      );
+      const limit = Math.min(5000, Math.max(1, parseInt(String(req.query.limit ?? '50'), 10)));
       const rawState = req.query.state as string | undefined;
       const state =
-        rawState === "VALID" || rawState === "WARNING" || rawState === "ERROR"
+        rawState === 'VALID' || rawState === 'WARNING' || rawState === 'ERROR'
           ? rawState
           : undefined;
 
@@ -253,21 +242,21 @@ rosterImportRouter.get(
         limit,
       });
     } catch (err: any) {
-      console.error("[roster-import] GET rows error:", err);
-      res.status(500).json({ error: "Failed to retrieve rows" });
+      console.error('[roster-import] GET rows error:', err);
+      res.status(500).json({ error: 'Failed to retrieve rows' });
     }
-  },
+  }
 );
 
 // ── POST /api/wfm/roster-imports/:batchId/commit ─────────────────────────
 rosterImportRouter.post(
-  "/:batchId/commit",
+  '/:batchId/commit',
   requireRole(...WFM_ROLES),
   async (req, res) => {
     try {
       const batchId = parseInt(req.params.batchId, 10);
       if (isNaN(batchId)) {
-        res.status(400).json({ success: false, error: "Invalid batchId" });
+        res.status(400).json({ success: false, error: 'Invalid batchId' });
         return;
       }
       const authUser = (req as any).authUser;
@@ -276,8 +265,8 @@ rosterImportRouter.post(
       // now commit their own batch. committerIsSuperAdmin is still computed and passed through
       // since commitImportBatch's signature still accepts it as a (now no-op) option.
       const committerIsSuperAdmin = Array.isArray(authUser?.roles)
-        ? authUser.roles.includes("super_admin")
-        : authUser?.role === "super_admin";
+        ? authUser.roles.includes('super_admin')
+        : authUser?.role === 'super_admin';
       const { overrideWarnings, cycleId } = req.body;
       const callerScope = await getScope(req as any);
       if (!callerScope) { res.status(401).json({ success: false, error: 'Unauthorized' }); return; }
@@ -289,32 +278,30 @@ rosterImportRouter.post(
     } catch (err) {
       res.status((err as any)?.statusCode === 403 ? 403 : 400).json({ success: false, error: err instanceof Error ? err.message : 'Commit failed' });
     }
-  },
+  }
 );
 
 // ── PATCH /api/wfm/roster-imports/:batchId/header-mapping ────────────────
 rosterImportRouter.patch(
-  "/:batchId/header-mapping",
+  '/:batchId/header-mapping',
   requireRole(...WFM_ROLES),
   async (req, res) => {
     try {
       const batchId = parseInt(req.params.batchId, 10);
       if (isNaN(batchId)) {
-        res.status(400).json({ error: "Invalid batchId" });
+        res.status(400).json({ error: 'Invalid batchId' });
         return;
       }
 
-      const { columnMappings } = req.body as {
-        columnMappings?: Record<string, string>;
-      };
-      if (!columnMappings || typeof columnMappings !== "object") {
-        res.status(400).json({ error: "columnMappings object is required" });
+      const { columnMappings } = req.body as { columnMappings?: Record<string, string> };
+      if (!columnMappings || typeof columnMappings !== 'object') {
+        res.status(400).json({ error: 'columnMappings object is required' });
         return;
       }
 
       // Store the mapping override in validation_summary_json or a dedicated column.
       // For now persist as an update to the batch's mapping_profile metadata.
-      const { db } = await import("../../db/mysql.js");
+      const { db } = await import('../../db/mysql.js');
       await db.execute(
         `UPDATE wfm_roster_import_batch
          SET validation_summary_json = JSON_SET(
@@ -322,69 +309,60 @@ rosterImportRouter.patch(
            '$.columnMappings', CAST(? AS JSON)
          )
          WHERE id = ?`,
-        [JSON.stringify(columnMappings), batchId],
+        [JSON.stringify(columnMappings), batchId]
       );
 
       res.json({ success: true });
     } catch (err: any) {
-      console.error("[roster-import] PATCH header-mapping error:", err);
-      res.status(500).json({ error: "Failed to save header mapping" });
+      console.error('[roster-import] PATCH header-mapping error:', err);
+      res.status(500).json({ error: 'Failed to save header mapping' });
     }
-  },
+  }
 );
 
 // ── PATCH /api/wfm/roster-imports/:batchId/rows/:rowId ───────────────────
 rosterImportRouter.patch(
-  "/:batchId/rows/:rowId",
+  '/:batchId/rows/:rowId',
   requireRole(...WFM_ROLES),
   async (req, res) => {
     try {
       const batchId = parseInt(req.params.batchId, 10);
       const rowId = parseInt(req.params.rowId, 10);
       if (isNaN(batchId) || isNaN(rowId)) {
-        res.status(400).json({ error: "Invalid batchId or rowId" });
+        res.status(400).json({ error: 'Invalid batchId or rowId' });
         return;
       }
       const { rawValue } = req.body as { rawValue?: string };
       if (rawValue === undefined || rawValue === null) {
-        res.status(400).json({ error: "rawValue is required" });
+        res.status(400).json({ error: 'rawValue is required' });
         return;
       }
       const result = await updateImportRow(batchId, rowId, rawValue);
       res.json(result);
     } catch (err: any) {
-      if (err?.statusCode === 404) {
-        res.status(404).json({ error: err.message });
-        return;
-      }
-      console.error("[roster-import] PATCH row error:", err);
-      res.status(500).json({ error: "Failed to update row" });
+      if (err?.statusCode === 404) { res.status(404).json({ error: err.message }); return; }
+      console.error('[roster-import] PATCH row error:', err);
+      res.status(500).json({ error: 'Failed to update row' });
     }
-  },
+  }
 );
 
 // ── GET /api/wfm/roster-imports/:batchId/missing-employees ───────────────
 rosterImportRouter.get(
-  "/:batchId/missing-employees",
+  '/:batchId/missing-employees',
   requireRole(...WFM_ROLES),
   async (req, res) => {
     try {
       const batchId = parseInt(req.params.batchId, 10);
-      if (isNaN(batchId)) {
-        res.status(400).json({ error: "Invalid batchId" });
-        return;
-      }
+      if (isNaN(batchId)) { res.status(400).json({ error: 'Invalid batchId' }); return; }
       const result = await getMissingEmployees(batchId);
       res.json(result);
     } catch (err: any) {
-      if (err?.statusCode === 404) {
-        res.status(404).json({ error: err.message });
-        return;
-      }
-      console.error("[roster-import] GET missing-employees error:", err);
-      res.status(500).json({ error: "Failed to get missing employees" });
+      if (err?.statusCode === 404) { res.status(404).json({ error: err.message }); return; }
+      console.error('[roster-import] GET missing-employees error:', err);
+      res.status(500).json({ error: 'Failed to get missing employees' });
     }
-  },
+  }
 );
 
 // ── GET /api/wfm/roster-imports/view ──────────────────────────────────────
@@ -399,37 +377,41 @@ rosterImportRouter.get('/view/table', requireRole(...WFM_VIEW_ROLES), branchScop
       res.status(400).json({ error: 'fromDate and toDate are required (YYYY-MM-DD)' });
       return;
     }
-  },
-);
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const result = await getRosterView({
+      fromDate: q.fromDate,
+      toDate: q.toDate,
+      branchId: q.branchId || undefined,
+      processId: q.processId || undefined,
+      costCentreId: q.costCentreId || undefined,
+      lob,
+      search: q.search || undefined,
+      limit: q.limit ? parseInt(q.limit, 10) : undefined,
+      offset: q.offset ? parseInt(q.offset, 10) : undefined,
+      includeAdherence: q.includeAdherence === 'true',
+    });
+    res.json(result);
+  } catch (err: any) {
+    console.error('[roster-view] error:', err);
+    res.status(500).json({ error: `Roster view failed: ${err?.message ?? 'unknown error'}` });
+  }
+});
 
 // ── GET /api/wfm/roster-imports/adherence-trend/:employeeId ───────────────
 // Historical adherence trend for a single employee over past N months.
-rosterImportRouter.get(
-  "/adherence-trend/:employeeId",
-  requireRole(...WFM_VIEW_ROLES),
-  async (req, res) => {
-    try {
-      const { getEmployeeAdherenceTrend } =
-        await import("./roster-view.service.js");
-      const { employeeId } = req.params;
-      const months = req.query.months
-        ? parseInt(String(req.query.months), 10)
-        : 6;
-      const result = await getEmployeeAdherenceTrend(
-        employeeId,
-        Math.min(Math.max(months, 1), 12),
-      );
-      res.json(result);
-    } catch (err: any) {
-      console.error("[adherence-trend] error:", err);
-      res
-        .status(500)
-        .json({
-          error: `Adherence trend failed: ${err?.message ?? "unknown error"}`,
-        });
-    }
-  },
-);
+rosterImportRouter.get('/adherence-trend/:employeeId', requireRole(...WFM_VIEW_ROLES), async (req, res) => {
+  try {
+    const { getEmployeeAdherenceTrend } = await import('./roster-view.service.js');
+    const { employeeId } = req.params;
+    const months = req.query.months ? parseInt(String(req.query.months), 10) : 6;
+    const result = await getEmployeeAdherenceTrend(employeeId, Math.min(Math.max(months, 1), 12));
+    res.json(result);
+  } catch (err: any) {
+    console.error('[adherence-trend] error:', err);
+    res.status(500).json({ error: `Adherence trend failed: ${err?.message ?? 'unknown error'}` });
+  }
+});
 
 // ── GET /api/wfm/roster-imports/status-summary ────────────────────────────
 // "Has the roster actually been published, and has anyone acknowledged it" — for a branch/process/
@@ -442,5 +424,18 @@ rosterImportRouter.get('/status-summary', requireRole(...WFM_VIEW_ROLES), branch
       res.status(400).json({ error: 'fromDate and toDate are required (YYYY-MM-DD)' });
       return;
     }
-  },
-);
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const result = await getRosterStatusSummary({
+      fromDate: q.fromDate,
+      toDate: q.toDate,
+      branchId: q.branchId || undefined,
+      processId: q.processId || undefined,
+      lob,
+    });
+    res.json(result);
+  } catch (err: any) {
+    console.error('[roster-status-summary] error:', err);
+    res.status(500).json({ error: `Roster status summary failed: ${err?.message ?? 'unknown error'}` });
+  }
+});

@@ -31,9 +31,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC = readFileSync(
-  resolve(process.cwd(), "src/modules/portal/portal.routes.ts"),
-  "utf8",
-);
+  resolve(process.cwd(), "src/modules/portal/portal.routes.ts"), "utf8");
 
 /**
  * Routes that are unauthenticated on purpose.
@@ -41,18 +39,12 @@ const SRC = readFileSync(
  *   /auth/request-otp, /auth/verify-otp — the login handshake itself; requiring a session
  *                      to obtain a session is impossible.
  */
-const PUBLIC_BY_DESIGN = new Set([
-  "/health",
-  "/auth/request-otp",
-  "/auth/verify-otp",
-]);
+const PUBLIC_BY_DESIGN = new Set(["/health", "/auth/request-otp", "/auth/verify-otp"]);
 
 /** `router.use("<prefix>", <guard>)` — the prefix-level boundaries. */
 function guardedPrefixes(guard: string): string[] {
   const out: string[] = [];
-  for (const m of SRC.matchAll(
-    /router\.use\(\s*"([^"]+)"\s*,\s*([A-Za-z_][A-Za-z0-9_]*)/g,
-  )) {
+  for (const m of SRC.matchAll(/router\.use\(\s*"([^"]+)"\s*,\s*([A-Za-z_][A-Za-z0-9_]*)/g)) {
     if (m[2] === guard) out.push(m[1]);
   }
   return out;
@@ -77,14 +69,10 @@ function declaredRoutes(): Array<{ path: string; inlineGuards: string[] }> {
   // multi-line declaration's later arguments (the guard, the handler) are visible too.
   // Non-greedy up to the first `);` at the start of a line keeps this from swallowing
   // past the end of one route declaration into the next.
-  for (const m of SRC.matchAll(
-    /router\.(?:get|post|put|patch|delete)\s*\(\s*"([^"]+)"([\s\S]*?)\n\);/g,
-  )) {
+  for (const m of SRC.matchAll(/router\.(?:get|post|put|patch|delete)\s*\(\s*"([^"]+)"([\s\S]*?)\n\);/g)) {
     const path = m[1];
     const rest = m[2];
-    const inlineGuards = [
-      ...rest.matchAll(/\b(requireClientAuth|requireAuth)\b/g),
-    ].map((g) => g[1]);
+    const inlineGuards = [...rest.matchAll(/\b(requireClientAuth|requireAuth)\b/g)].map((g) => g[1]);
     out.push({ path, inlineGuards });
   }
   return out;
@@ -96,19 +84,11 @@ const ROUTES_DETAILED = declaredRoutes();
 const ROUTES = ROUTES_DETAILED.map((r) => r.path);
 
 const coveredByPrefix = (path: string, prefixes: string[]): boolean =>
-  prefixes.some(
-    (p) => path === p || path.startsWith(p.endsWith("/") ? p : `${p}/`),
-  );
+  prefixes.some((p) => path === p || path.startsWith(p.endsWith("/") ? p : `${p}/`));
 
-const coveredBy = (
-  path: string,
-  prefixes: string[],
-  guardName: "requireClientAuth" | "requireAuth",
-): boolean =>
+const coveredBy = (path: string, prefixes: string[], guardName: "requireClientAuth" | "requireAuth"): boolean =>
   coveredByPrefix(path, prefixes) ||
-  ROUTES_DETAILED.some(
-    (r) => r.path === path && r.inlineGuards.includes(guardName),
-  );
+  ROUTES_DETAILED.some((r) => r.path === path && r.inlineGuards.includes(guardName));
 
 describe("client portal — every route sits behind an auth boundary", () => {
   it("parses the router (guards the guard)", () => {
@@ -121,10 +101,7 @@ describe("client portal — every route sits behind an auth boundary", () => {
 
   it("keeps requireClientAuth on the client-facing prefixes", () => {
     for (const p of ["/overview", "/processes", "/commentary"]) {
-      expect(
-        CLIENT_PREFIXES,
-        `${p} lost its requireClientAuth boundary`,
-      ).toContain(p);
+      expect(CLIENT_PREFIXES, `${p} lost its requireClientAuth boundary`).toContain(p);
     }
   });
 
@@ -138,7 +115,7 @@ describe("client portal — every route sits behind an auth boundary", () => {
     expect(
       [...new Set(unguarded)].sort(),
       "portal routes with neither requireClientAuth nor requireAuth covering them — the " +
-        "portal serves per-client process data, so an unguarded route here leaks across clients",
+      "portal serves per-client process data, so an unguarded route here leaks across clients",
     ).toEqual([]);
   });
 

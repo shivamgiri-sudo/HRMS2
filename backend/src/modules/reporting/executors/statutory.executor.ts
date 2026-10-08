@@ -12,12 +12,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type {
-  ExecFilters,
-  ExecScope,
-  ExecOptions,
-  ExecResult,
-} from "./types.js";
+import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
 import { resolvePayrollMonth } from "../payroll-month.js";
 import {
   appendScopeConditions,
@@ -40,7 +35,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params,
+    params
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -58,10 +53,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  * mixed-case values like "Uttar Pradesh", and 15 branches carry no state at all.
  */
 async function gujaratBranchIds(): Promise<string[]> {
-  const rows = await query(
-    "SELECT id FROM branch_master WHERE UPPER(TRIM(state)) = 'GUJARAT'",
-    [],
-  );
+  const rows = await query("SELECT id FROM branch_master WHERE UPPER(TRIM(state)) = 'GUJARAT'", []);
   return (rows as Array<{ id: string }>).map((r) => r.id);
 }
 
@@ -97,7 +89,7 @@ function currentFinancialYear(): string {
 export async function uanMasterRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -109,8 +101,7 @@ export async function uanMasterRegister(
   );
 
   if (options.mode === "worker" && options.cursor != null) {
-    clauses.push("e.id > ?");
-    params.push(options.cursor);
+    clauses.push("e.id > ?"); params.push(options.cursor);
   }
 
   const base = `    SELECT
@@ -138,24 +129,17 @@ export async function uanMasterRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 export async function pfContributionRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
   // employees has no `uan` column — it is `uan_number`. The unmasked branch therefore threw
@@ -182,6 +166,7 @@ export async function pfContributionRegister(
    * Full Time (14); only ONROLL counts here, per the payroll team's ruling.
    */
   clauses.push("e.employment_type = 'ONROLL'");
+
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("spl.id > ?");
@@ -213,22 +198,16 @@ export async function pfContributionRegister(
      ORDER BY spl.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql =
-    options.mode === "worker"
-      ? `${base} LIMIT ${options.limit}`
-      : applyPagination(base, options);
-  const rows = (await query(sql, params)) as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number)
+    : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal
-      ? total > out.length
-      : rows.length === options.limit,
+    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -239,7 +218,7 @@ export async function pfContributionRegister(
 export async function pfEcrFormat(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
   // employees has no `uan` column — it is `uan_number`. The unmasked branch therefore threw
@@ -316,30 +295,21 @@ export async function pfEcrFormat(
 
   try {
     const total = options.includeTotal ? await count(base, params) : 0;
-    const sql =
-      options.mode === "worker"
-        ? `${base} LIMIT ${options.limit}`
-        : applyPagination(base, options);
-    const rows = (await query(sql, params)) as Record<string, unknown>[];
-    const nextCursor =
-      options.mode === "worker" && rows.length > 0
-        ? (rows[rows.length - 1]._cursor as number)
-        : null;
+    const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+    const rows = await query(sql, params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
     return {
       rows: out,
       rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: options.includeTotal
-        ? total > out.length
-        : rows.length === options.limit,
+      isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
       nextCursor,
     };
   } catch (err: unknown) {
     const mysqlCode = (err as Record<string, unknown>)?.["code"];
-    if (
-      mysqlCode === "ER_BAD_FIELD_ERROR" ||
-      mysqlCode === "ER_NO_SUCH_TABLE"
-    ) {
+    if (mysqlCode === "ER_BAD_FIELD_ERROR" || mysqlCode === "ER_NO_SUCH_TABLE") {
       return { rows: [], rowCount: 0, isTruncated: false };
     }
     throw err;
@@ -352,7 +322,7 @@ export async function pfEcrFormat(
 export async function esicContributionRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
   const esicCol = scope.canViewSensitiveFields
@@ -375,6 +345,7 @@ export async function esicContributionRegister(
    * Full Time (14); only ONROLL counts here, per the payroll team's ruling.
    */
   clauses.push("e.employment_type = 'ONROLL'");
+
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("spl.id > ?");
@@ -406,22 +377,16 @@ export async function esicContributionRegister(
      ORDER BY spl.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql =
-    options.mode === "worker"
-      ? `${base} LIMIT ${options.limit}`
-      : applyPagination(base, options);
-  const rows = (await query(sql, params)) as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number)
+    : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal
-      ? total > out.length
-      : rows.length === options.limit,
+    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -472,7 +437,7 @@ const PT_STATE_JURISDICTION = `COALESCE(
 export async function ptRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -517,11 +482,10 @@ export async function ptRegister(
     // for the wrong state is worse than an empty one.
     clauses.push("1 = 0");
   } else {
-    clauses.push(
-      `e.branch_id IN (${gujaratBranches.map(() => "?").join(",")})`,
-    );
+    clauses.push(`e.branch_id IN (${gujaratBranches.map(() => "?").join(",")})`);
     params.push(...gujaratBranches);
   }
+
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("spl.id > ?");
@@ -555,22 +519,16 @@ export async function ptRegister(
      ORDER BY spl.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql =
-    options.mode === "worker"
-      ? `${base} LIMIT ${options.limit}`
-      : applyPagination(base, options);
-  const rows = (await query(sql, params)) as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number)
+    : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal
-      ? total > out.length
-      : rows.length === options.limit,
+    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -595,10 +553,10 @@ interface TaxParams {
 }
 
 async function taxParams(): Promise<TaxParams | null> {
-  const rows = (await query(
+  const rows = await query(
     "SELECT config_key, CAST(config_value AS DECIMAL(14,4)) AS v FROM statutory_config WHERE config_key REGEXP 'tds_'",
     [],
-  )) as Array<{ config_key: string; v: string }>;
+  ) as Array<{ config_key: string; v: string }>;
   const map = new Map(rows.map((r) => [r.config_key, Number(r.v)]));
 
   // Slab keys encode their own bounds: tds_slab_<from>_<to|above>.
@@ -606,23 +564,14 @@ async function taxParams(): Promise<TaxParams | null> {
   for (const [k, v] of map) {
     const m = /^tds_slab_(\d+)_(\d+|above)$/.exec(k);
     if (!m) continue;
-    slabs.push({
-      upTo: m[2] === "above" ? Number.MAX_SAFE_INTEGER : Number(m[2]),
-      pct: v,
-    });
+    slabs.push({ upTo: m[2] === "above" ? Number.MAX_SAFE_INTEGER : Number(m[2]), pct: v });
   }
   slabs.sort((a, b) => a.upTo - b.upTo);
 
   const standardDeduction = map.get("tds_standard_deduction");
   const rebateLimit = map.get("tds_rebate_87a_limit");
   const cessPct = map.get("tds_cess_pct");
-  if (
-    !slabs.length ||
-    standardDeduction == null ||
-    rebateLimit == null ||
-    cessPct == null
-  )
-    return null;
+  if (!slabs.length || standardDeduction == null || rebateLimit == null || cessPct == null) return null;
   return { slabs, standardDeduction, rebateLimit, cessPct };
 }
 
@@ -639,8 +588,7 @@ function annualTaxSql(taxableExpr: string, p: TaxParams): string {
   for (const slab of p.slabs) {
     const upper = slab.upTo === Number.MAX_SAFE_INTEGER ? null : slab.upTo;
     if (slab.pct > 0) {
-      const capped =
-        upper == null ? taxableExpr : `LEAST(${taxableExpr}, ${upper})`;
+      const capped = upper == null ? taxableExpr : `LEAST(${taxableExpr}, ${upper})`;
       parts.push(`GREATEST(0, ${capped} - ${lower}) * ${slab.pct / 100}`);
     }
     if (upper == null) break;
@@ -655,7 +603,7 @@ function annualTaxSql(taxableExpr: string, p: TaxParams): string {
 export async function tdsComputationRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -686,9 +634,7 @@ export async function tdsComputationRegister(
   }
 
   const PROJECTED = "COALESCE(spl.gross_salary,0) * 12";
-  const TAXABLE = tax
-    ? `GREATEST(0, (${PROJECTED}) - ${tax.standardDeduction})`
-    : "0";
+  const TAXABLE = tax ? `GREATEST(0, (${PROJECTED}) - ${tax.standardDeduction})` : "0";
   const ANNUAL = tax ? annualTaxSql(TAXABLE, tax) : "0";
 
   const base = `
@@ -719,22 +665,16 @@ export async function tdsComputationRegister(
      ORDER BY spl.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql =
-    options.mode === "worker"
-      ? `${base} LIMIT ${options.limit}`
-      : applyPagination(base, options);
-  const rows = (await query(sql, params)) as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number)
+    : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal
-      ? total > out.length
-      : rows.length === options.limit,
+    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -747,12 +687,11 @@ export async function tdsComputationRegister(
 export async function form16Status(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
-  const fy =
-    typeof filters.financialYear === "string" && filters.financialYear
-      ? filters.financialYear
-      : currentFinancialYear();
+  const fy = (typeof filters.financialYear === "string" && filters.financialYear)
+    ? filters.financialYear
+    : currentFinancialYear();
   const panCol = scope.canViewSensitiveFields
     ? "e.pan_number"
     : "'***MASKED***' AS pan_number";
@@ -794,29 +733,22 @@ export async function form16Status(
 
   try {
     const total = options.includeTotal ? await count(f16Base, f16Params) : 0;
-    const sql =
-      options.mode === "worker"
-        ? `${f16Base} LIMIT ${options.limit}`
-        : applyPagination(f16Base, options);
-    const rows = (await query(sql, f16Params)) as Record<string, unknown>[];
-    const nextCursor =
-      options.mode === "worker" && rows.length > 0
-        ? (rows[rows.length - 1]._cursor as number)
-        : null;
+    const sql = options.mode === "worker" ? `${f16Base} LIMIT ${options.limit}` : applyPagination(f16Base, options);
+    const rows = await query(sql, f16Params) as Record<string, unknown>[];
+    const nextCursor = (options.mode === "worker" && rows.length > 0)
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
     const out = rows.map(({ _cursor: _, ...rest }) => rest);
     return {
       rows: out,
       rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: options.includeTotal
-        ? total > out.length
-        : rows.length === options.limit,
+      isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
       nextCursor,
     };
   } catch (err: unknown) {
     // Only swallow missing-table errors; re-throw everything else
     const mysqlCode = (err as Record<string, unknown>)?.["code"];
-    if (mysqlCode !== "ER_NO_SUCH_TABLE" && mysqlCode !== "ER_BAD_TABLE_ERROR")
-      throw err;
+    if (mysqlCode !== "ER_NO_SUCH_TABLE" && mysqlCode !== "ER_BAD_TABLE_ERROR") throw err;
   }
 
   // --- Fallback: simulate from employees ---
@@ -849,22 +781,16 @@ export async function form16Status(
 
   const simParams = [fy, ...whereParams];
   const total = options.includeTotal ? await count(simBase, simParams) : 0;
-  const sql =
-    options.mode === "worker"
-      ? `${simBase} LIMIT ${options.limit}`
-      : applyPagination(simBase, options);
-  const rows = (await query(sql, simParams)) as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const sql = options.mode === "worker" ? `${simBase} LIMIT ${options.limit}` : applyPagination(simBase, options);
+  const rows = await query(sql, simParams) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number)
+    : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal
-      ? total > out.length
-      : rows.length === options.limit,
+    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -886,12 +812,11 @@ export async function form16Status(
 export async function investmentDeclarationStatus(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
-  const fy =
-    typeof filters.financialYear === "string" && filters.financialYear
-      ? filters.financialYear
-      : currentFinancialYear();
+  const fy = (typeof filters.financialYear === "string" && filters.financialYear)
+    ? filters.financialYear
+    : currentFinancialYear();
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -940,22 +865,16 @@ export async function investmentDeclarationStatus(
      ORDER BY id_decl.id ASC`;
 
   const total = options.includeTotal ? await count(base, params) : 0;
-  const sql =
-    options.mode === "worker"
-      ? `${base} LIMIT ${options.limit}`
-      : applyPagination(base, options);
-  const rows = (await query(sql, params)) as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const sql = options.mode === "worker" ? `${base} LIMIT ${options.limit}` : applyPagination(base, options);
+  const rows = await query(sql, params) as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number)
+    : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal
-      ? total > out.length
-      : rows.length === options.limit,
+    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -974,7 +893,7 @@ export async function investmentDeclarationStatus(
 export async function gratuityLiabilityRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1059,13 +978,8 @@ export async function gratuityLiabilityRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-    nextCursor: null,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -1083,7 +997,7 @@ export async function gratuityLiabilityRegister(
 export async function ptMonthlyRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -1137,12 +1051,8 @@ export async function ptMonthlyRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -1157,7 +1067,7 @@ export async function ptMonthlyRegister(
 export async function pfEsicSalaryRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const runMonth = await resolvePayrollMonth(filters.month);
 
@@ -1211,12 +1121,8 @@ export async function pfEsicSalaryRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -1229,7 +1135,7 @@ export async function pfEsicSalaryRegister(
 export async function pfEsiOptOutRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1261,10 +1167,6 @@ export async function pfEsiOptOutRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }

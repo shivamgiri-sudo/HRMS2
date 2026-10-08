@@ -1,21 +1,21 @@
 export type ExitStatus =
   // New FSM states
-  | "submitted"
-  | "returned"
-  | "notice_active"
-  | "exited"
-  | "closed"
-  | "revoked"
-  | "terminated"
+  | 'submitted'
+  | 'returned'
+  | 'notice_active'
+  | 'exited'
+  | 'closed'
+  | 'revoked'
+  | 'terminated'
   // Legacy states kept for backward compat with existing DB rows
-  | "draft"
-  | "manager_review"
-  | "hr_review"
-  | "admin_review"
-  | "accepted"
-  | "rejected"
-  | "notice_serving"
-  | "withdrawn";
+  | 'draft'
+  | 'manager_review'
+  | 'hr_review'
+  | 'admin_review'
+  | 'accepted'
+  | 'rejected'
+  | 'notice_serving'
+  | 'withdrawn';
 
 export interface ExitRequest {
   id: string;

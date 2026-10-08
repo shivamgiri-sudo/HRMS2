@@ -24,18 +24,18 @@
  * months. This log is what the drill-down reads.
  */
 
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import { evaluateFormula } from "./kpi-formula.engine.js";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { evaluateFormula } from './kpi-formula.engine.js';
 // Already matches both 1213 (deadlock) and 1205 (lock wait). This module simply
 // was not using it.
-import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
+import { withDeadlockRetry } from '../../shared/deadlockRetry.js';
 import {
   getStudioCapability,
   getDefinitionSourceIds,
   pickWinningDefinitions,
   type EmployeeOrgContext,
-} from "./kpi-studio.service.js";
+} from './kpi-studio.service.js';
 import {
   readMergedSourceValues,
   readSourceValues,
@@ -43,7 +43,7 @@ import {
   type DataSourceConfig,
   type SourceField,
   type DailyFieldValues,
-} from "./kpi-studio.sources.js";
+} from './kpi-studio.sources.js';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -98,24 +98,18 @@ interface DefinitionRow {
  * Every employee a set of definitions could apply to, with the org context needed to decide which
  * definition wins for each of them.
  */
-async function loadCandidateEmployees(
-  options: ComputeOptions,
-): Promise<Array<EmployeeOrgContext & { employee_code: string }>> {
-  const where: string[] = ["e.active_status = 1"];
+async function loadCandidateEmployees(options: ComputeOptions): Promise<
+  Array<EmployeeOrgContext & { employee_code: string }>
+> {
+  const where: string[] = ['e.active_status = 1'];
   const params: unknown[] = [];
 
   if (options.employeeIds?.length) {
-    where.push(`e.id IN (${options.employeeIds.map(() => "?").join(",")})`);
+    where.push(`e.id IN (${options.employeeIds.map(() => '?').join(',')})`);
     params.push(...options.employeeIds);
   }
-  if (options.processId) {
-    where.push("e.process_id = ?");
-    params.push(options.processId);
-  }
-  if (options.branchId) {
-    where.push("e.branch_id = ?");
-    params.push(options.branchId);
-  }
+  if (options.processId) { where.push('e.process_id = ?'); params.push(options.processId); }
+  if (options.branchId) { where.push('e.branch_id = ?'); params.push(options.branchId); }
 
   // Synthetic test employees would otherwise receive computed KPIs and appear on leaderboards.
   // The same exclusion getLiveKpiPerformance's peer query already applies.
@@ -126,7 +120,7 @@ async function loadCandidateEmployees(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code, e.branch_id, e.process_id, e.designation_id
        FROM employees e
-      WHERE ${where.join(" AND ")}
+      WHERE ${where.join(' AND ')}
       ORDER BY e.employee_code
       LIMIT ${limit}`,
     params,
@@ -154,10 +148,7 @@ async function loadFormulaDefinitions(date: string): Promise<DefinitionRow[]> {
 async function loadSourcesWithFields(
   sourceIds: readonly string[],
 ): Promise<Map<string, { source: DataSourceConfig; fields: SourceField[] }>> {
-  const result = new Map<
-    string,
-    { source: DataSourceConfig; fields: SourceField[] }
-  >();
+  const result = new Map<string, { source: DataSourceConfig; fields: SourceField[] }>();
   if (!sourceIds.length) return result;
 
   // Ask before selecting. This branch is shared and a migration may not have
@@ -182,13 +173,13 @@ async function loadSourcesWithFields(
     `SELECT id, source_code, source_name, source_type, integration_key, source_object,
             employee_key_column, employee_key_kind, date_column, date_format, config_json${processCols}
        FROM kpi_studio_data_source
-      WHERE id IN (${sourceIds.map(() => "?").join(",")}) AND active_status = 1`,
+      WHERE id IN (${sourceIds.map(() => '?').join(',')}) AND active_status = 1`,
     [...sourceIds],
   );
   const [fieldRows] = await db.execute<RowDataPacket[]>(
     `SELECT data_source_id, field_name, source_column, aggregate_fn, source_expression${filterCol}
        FROM kpi_studio_source_field
-      WHERE data_source_id IN (${sourceIds.map(() => "?").join(",")}) AND active_status = 1`,
+      WHERE data_source_id IN (${sourceIds.map(() => '?').join(',')}) AND active_status = 1`,
     [...sourceIds],
   );
 
@@ -208,10 +199,8 @@ async function loadSourcesWithFields(
  * dialer data for 300 agents across four metrics is one query rather than 1,200 — the difference
  * between a nightly job and a job that never finishes.
  */
-export async function computeStudioKpis(
-  options: ComputeOptions,
-): Promise<ComputeOutcome> {
-  if (!ISO_DATE.test(options.date)) throw new Error("Date must be YYYY-MM-DD");
+export async function computeStudioKpis(options: ComputeOptions): Promise<ComputeOutcome> {
+  if (!ISO_DATE.test(options.date)) throw new Error('Date must be YYYY-MM-DD');
 
   const capability = await getStudioCapability();
   const empty: ComputeOutcome = {
@@ -233,22 +222,12 @@ export async function computeStudioKpis(
   // have no employee dimension at all (a client's own database has no MAS
   // employee IDs), so they must not be filtered by the employee candidate list
   // and must survive the "no employees" early return below.
-  const processDefinitions = allDefinitions.filter(
-    (d) => String((d as any).grain) === "process",
-  );
-  const definitions = allDefinitions.filter(
-    (d) => String((d as any).grain) !== "process",
-  );
+  const processDefinitions = allDefinitions.filter((d) => String((d as any).grain) === 'process');
+  const definitions = allDefinitions.filter((d) => String((d as any).grain) !== 'process');
 
   const processOutcome = processDefinitions.length
     ? await computeProcessGrainDefinitions(processDefinitions, options)
-    : {
-        written: 0,
-        no_data: 0,
-        errors: 0,
-        source_failures: [] as ComputeOutcome["source_failures"],
-        sample: [] as ComputeOutcome["sample"],
-      };
+    : { written: 0, no_data: 0, errors: 0, source_failures: [] as ComputeOutcome['source_failures'], sample: [] as ComputeOutcome['sample'] };
 
   const withProcess = (o: ComputeOutcome): ComputeOutcome => ({
     ...o,
@@ -263,11 +242,7 @@ export async function computeStudioKpis(
   if (!definitions.length) return withProcess(empty);
 
   const employees = await loadCandidateEmployees(options);
-  if (!employees.length)
-    return withProcess({
-      ...empty,
-      definitions_considered: definitions.length,
-    });
+  if (!employees.length) return withProcess({ ...empty, definitions_considered: definitions.length });
 
   // Which definition wins for whom. Reuses the same pure function the resolver uses, so a
   // computed value can never be produced by a definition that would not have been resolved.
@@ -275,27 +250,16 @@ export async function computeStudioKpis(
   // Grouped by DEFINITION, not by source: a definition may read several sources (a QA sheet plus the
   // dialer database), so the unit of work is "this definition's whole source set for these
   // employees", and the reads are merged before the formula sees them.
-  const assignments = new Map<
-    string,
-    Array<{
-      definition: DefinitionRow;
-      employee: EmployeeOrgContext & { employee_code: string };
-    }>
-  >();
+  const assignments = new Map<string, Array<{ definition: DefinitionRow; employee: EmployeeOrgContext & { employee_code: string } }>>();
   for (const employee of employees) {
-    for (const { definition } of pickWinningDefinitions(
-      definitions,
-      employee,
-    )) {
+    for (const { definition } of pickWinningDefinitions(definitions, employee)) {
       if (!definition.data_source_id) continue;
       if (!assignments.has(definition.id)) assignments.set(definition.id, []);
       assignments.get(definition.id)!.push({ definition, employee });
     }
   }
 
-  const activeDefinitions = definitions.filter((definition) =>
-    assignments.has(definition.id),
-  );
+  const activeDefinitions = definitions.filter((definition) => assignments.has(definition.id));
   const sourceIdsByDefinition = await getDefinitionSourceIds(activeDefinitions);
   const allSourceIds = [...new Set([...sourceIdsByDefinition.values()].flat())];
   const sources = await loadSourcesWithFields(allSourceIds);
@@ -320,20 +284,10 @@ export async function computeStudioKpis(
     const sourceIds = sourceIdsByDefinition.get(definitionId) ?? [];
     const entries = sourceIds
       .map((sourceId) => ({ sourceId, entry: sources.get(sourceId) }))
-      .filter(
-        (
-          candidate,
-        ): candidate is {
-          sourceId: string;
-          entry: NonNullable<typeof candidate.entry>;
-        } => Boolean(candidate.entry),
-      );
+      .filter((candidate): candidate is { sourceId: string; entry: NonNullable<typeof candidate.entry> } => Boolean(candidate.entry));
 
     if (!entries.length) {
-      noteFailure(
-        sourceIds[0] ?? definitionId,
-        "Data source is missing or inactive",
-      );
+      noteFailure(sourceIds[0] ?? definitionId, 'Data source is missing or inactive');
       continue;
     }
 
@@ -356,18 +310,10 @@ export async function computeStudioKpis(
     // single-source definition whose only source failed produces no values anyway, because its
     // fields all read null.
     const fieldNames = (
-      await Promise.all(
-        entries.map((candidate) => fieldNamesFor(candidate.sourceId)),
-      )
+      await Promise.all(entries.map((candidate) => fieldNamesFor(candidate.sourceId)))
     ).flat();
 
-    await evaluateAndWrite(
-      pairs,
-      merged.values,
-      [...new Set(fieldNames)],
-      options,
-      outcome,
-    );
+    await evaluateAndWrite(pairs, merged.values, [...new Set(fieldNames)], options, outcome);
   }
 
   return withProcess(outcome);
@@ -436,9 +382,9 @@ export function ratioParts(
   formula: string,
   inputs: Record<string, number | null>,
 ): { numerator: number; denominator: number } | null {
-  const text = String(formula ?? "").trim();
+  const text = String(formula ?? '').trim();
   const opened = /^(PCT|SAFE_DIV)\s*\(/i.exec(text);
-  if (!opened || !text.endsWith(")")) return null;
+  if (!opened || !text.endsWith(')')) return null;
   const fn = opened[1];
 
   // The two arguments of the top-level call, split at the comma that is not
@@ -450,9 +396,9 @@ export function ratioParts(
   let split = -1;
   for (let i = 0; i < inner.length; i++) {
     const ch = inner[i];
-    if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    else if (ch === "," && depth === 0) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (ch === ',' && depth === 0) {
       if (split !== -1) return null; // three arguments: not a ratio
       split = i;
     }
@@ -467,10 +413,8 @@ export function ratioParts(
   // (a CLAMP, a threshold) would not survive being summed.
   const numeratorExpr = inner.slice(0, split);
   const denominatorExpr = inner.slice(split + 1);
-  const additive =
-    /^[\s()]*[A-Za-z_][A-Za-z0-9_]*(\s*\+\s*[A-Za-z_][A-Za-z0-9_]*)*[\s()]*$/;
-  if (!additive.test(numeratorExpr) || !additive.test(denominatorExpr))
-    return null;
+  const additive = /^[\s()]*[A-Za-z_][A-Za-z0-9_]*(\s*\+\s*[A-Za-z_][A-Za-z0-9_]*)*[\s()]*$/;
+  if (!additive.test(numeratorExpr) || !additive.test(denominatorExpr)) return null;
 
   const numeratorResult = evaluateFormula(numeratorExpr, inputs);
   const denominatorResult = evaluateFormula(denominatorExpr, inputs);
@@ -478,20 +422,14 @@ export function ratioParts(
 
   const numerator = numeratorResult.value;
   const denominator = denominatorResult.value;
-  if (typeof numerator !== "number" || typeof denominator !== "number")
-    return null;
+  if (typeof numerator !== 'number' || typeof denominator !== 'number') return null;
   // A zero denominator has no ratio to contribute. Storing it would make a later
   // SUM/SUM correct anyway, but storing the pair for a day that produced no value
   // is misleading, and SAFE_DIV already resolved that day to null.
-  if (
-    !Number.isFinite(numerator) ||
-    !Number.isFinite(denominator) ||
-    denominator === 0
-  )
-    return null;
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return null;
 
   return {
-    numerator: fn.toUpperCase() === "PCT" ? numerator * 100 : numerator,
+    numerator: fn.toUpperCase() === 'PCT' ? numerator * 100 : numerator,
     denominator,
   };
 }
@@ -503,15 +441,15 @@ async function computeProcessGrainDefinitions(
   written: number;
   no_data: number;
   errors: number;
-  source_failures: ComputeOutcome["source_failures"];
-  sample: ComputeOutcome["sample"];
+  source_failures: ComputeOutcome['source_failures'];
+  sample: ComputeOutcome['sample'];
 }> {
   const result = {
     written: 0,
     no_data: 0,
     errors: 0,
-    source_failures: [] as ComputeOutcome["source_failures"],
-    sample: [] as ComputeOutcome["sample"],
+    source_failures: [] as ComputeOutcome['source_failures'],
+    sample: [] as ComputeOutcome['sample'],
   };
 
   const sourceIdsByDefinition = await getDefinitionSourceIds(definitions);
@@ -525,10 +463,7 @@ async function computeProcessGrainDefinitions(
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
     if (!entries.length) {
-      result.source_failures.push({
-        source_code: definition.id,
-        error: "Data source is missing or inactive",
-      });
+      result.source_failures.push({ source_code: definition.id, error: 'Data source is missing or inactive' });
       result.errors++;
       continue;
     }
@@ -547,41 +482,24 @@ async function computeProcessGrainDefinitions(
     // the process on the source itself.
     let processId: string | null = null;
     for (const entry of entries) {
-      const src = entry.source as {
-        process_id?: string | null;
-        process_key_kind?: string | null;
-      };
-      const mapped =
-        src.process_key_kind === "employee"
-          ? (definition.process_id ?? src.process_id ?? null)
-          : (src.process_id ?? null);
-      if (mapped) {
-        processId = mapped;
-        break;
-      }
+      const src = entry.source as { process_id?: string | null; process_key_kind?: string | null };
+      const mapped = src.process_key_kind === 'employee'
+        ? (definition.process_id ?? src.process_id ?? null)
+        : (src.process_id ?? null);
+      if (mapped) { processId = mapped; break; }
     }
 
     // Asking to compute one process must not silently recompute every other one.
     // Beyond the wasted scan, a targeted rerun would rewrite another client's
     // figures from whatever their source happens to return at that moment — so a
     // source that is briefly unreadable would replace good numbers with none.
-    if (options.processId && processId && processId !== options.processId)
-      continue;
+    if (options.processId && processId && processId !== options.processId) continue;
 
     for (const entry of entries) {
       const source = entry.source as any;
-      const read = await readProcessGrainValues(
-        source,
-        entry.fields,
-        options.date,
-        options.date,
-        processId,
-      );
+      const read = await readProcessGrainValues(source, entry.fields, options.date, options.date, processId);
       if (read.error) {
-        result.source_failures.push({
-          source_code: source.source_code,
-          error: read.error,
-        });
+        result.source_failures.push({ source_code: source.source_code, error: read.error });
         continue;
       }
       for (const [date, bucket] of read.values) {
@@ -595,7 +513,7 @@ async function computeProcessGrainDefinitions(
     if (!processId) {
       result.source_failures.push({
         source_code: definition.metric_code,
-        error: "No source for this definition is mapped to a process",
+        error: 'No source for this definition is mapped to a process',
       });
       result.errors++;
       continue;
@@ -603,13 +521,9 @@ async function computeProcessGrainDefinitions(
 
     for (const [date, bucket] of merged) {
       const inputs: Record<string, number | null> = {};
-      for (const name of [...new Set(fieldNames)])
-        inputs[name] = bucket.get(name) ?? null;
+      for (const name of [...new Set(fieldNames)]) inputs[name] = bucket.get(name) ?? null;
 
-      const evaluated = evaluateFormula(
-        definition.formula_expression as string,
-        inputs,
-      );
+      const evaluated = evaluateFormula(definition.formula_expression as string, inputs);
 
       // A broken formula and a formula that legitimately has nothing to say are
       // different outcomes, counted separately — the same distinction the
@@ -622,9 +536,9 @@ async function computeProcessGrainDefinitions(
             employee_code: `process:${processId.slice(0, 8)}`,
             metric_code: definition.metric_code,
             value: null,
-            status: "error",
+            status: 'error',
             reason: evaluated.error,
-          } as ComputeOutcome["sample"][number]);
+          } as ComputeOutcome['sample'][number]);
         }
         continue;
       }
@@ -648,8 +562,8 @@ async function computeProcessGrainDefinitions(
         // numbers.
         if (!options.dryRun) {
           const nulls = (await processMetricRollupSupported())
-            ? ", rollup_numerator = NULL, rollup_denominator = NULL"
-            : "";
+            ? ', rollup_numerator = NULL, rollup_denominator = NULL'
+            : '';
           await withDeadlockRetry(() =>
             db.execute(
               `UPDATE process_metric_actual
@@ -670,11 +584,9 @@ async function computeProcessGrainDefinitions(
             employee_code: `process:${processId.slice(0, 8)}`,
             metric_code: definition.metric_code,
             value: null,
-            status: "no_data",
-            reason:
-              evaluated.nullReason ??
-              "formula produced no value for this period",
-          } as ComputeOutcome["sample"][number]);
+            status: 'no_data',
+            reason: evaluated.nullReason ?? 'formula produced no value for this period',
+          } as ComputeOutcome['sample'][number]);
         }
         continue;
       }
@@ -687,16 +599,16 @@ async function computeProcessGrainDefinitions(
           ? ratioParts(definition.formula_expression as string, inputs)
           : null;
         const rollupCols = (await processMetricRollupSupported())
-          ? ", rollup_numerator, rollup_denominator"
-          : "";
+          ? ', rollup_numerator, rollup_denominator'
+          : '';
         const rollupValues = (await processMetricRollupSupported())
-          ? ", ?, ?"
-          : "";
+          ? ', ?, ?'
+          : '';
         const rollupUpdate = (await processMetricRollupSupported())
           ? `
              rollup_numerator   = VALUES(rollup_numerator),
              rollup_denominator = VALUES(rollup_denominator),`
-          : "";
+          : '';
         // Retried, because a bulk run contends with itself and with whatever else
         // is writing. A single lock-wait timeout was leaving one process-day with
         // no reading at all during a 52-process sweep — recorded in
@@ -718,9 +630,7 @@ async function computeProcessGrainDefinitions(
                 date,
                 evaluated.value,
                 `KPI Studio definition ${definition.id}`,
-                ...(rollupCols
-                  ? [parts?.numerator ?? null, parts?.denominator ?? null]
-                  : []),
+                ...(rollupCols ? [parts?.numerator ?? null, parts?.denominator ?? null] : []),
               ],
             ),
           {
@@ -738,8 +648,8 @@ async function computeProcessGrainDefinitions(
           employee_code: `process:${processId.slice(0, 8)}`,
           metric_code: definition.metric_code,
           value: evaluated.value,
-          status: "computed",
-        } as ComputeOutcome["sample"][number]);
+          status: 'computed',
+        } as ComputeOutcome['sample'][number]);
       }
     }
   }
@@ -748,10 +658,7 @@ async function computeProcessGrainDefinitions(
 }
 
 async function evaluateAndWrite(
-  pairs: ReadonlyArray<{
-    definition: DefinitionRow;
-    employee: EmployeeOrgContext & { employee_code: string };
-  }>,
+  pairs: ReadonlyArray<{ definition: DefinitionRow; employee: EmployeeOrgContext & { employee_code: string } }>,
   values: DailyFieldValues,
   /**
    * Every field name the definition's sources declare, across all of them. Passed in rather than
@@ -806,7 +713,7 @@ async function evaluateAndWrite(
         formula,
         inputs,
         value: null,
-        status: "error",
+        status: 'error',
         nullReason: null,
         error: evaluated.error,
       });
@@ -815,7 +722,7 @@ async function evaluateAndWrite(
           employee_code: employee.employee_code,
           metric_code: definition.metric_code,
           value: null,
-          status: "error",
+          status: 'error',
           reason: evaluated.error,
         });
       }
@@ -831,8 +738,8 @@ async function evaluateAndWrite(
         formula,
         inputs,
         value: null,
-        status: "no_data",
-        nullReason: evaluated.nullReason ?? "No value for this period",
+        status: 'no_data',
+        nullReason: evaluated.nullReason ?? 'No value for this period',
         error: null,
       });
       if (outcome.sample.length < 20) {
@@ -840,7 +747,7 @@ async function evaluateAndWrite(
           employee_code: employee.employee_code,
           metric_code: definition.metric_code,
           value: null,
-          status: "no_data",
+          status: 'no_data',
           reason: evaluated.nullReason,
         });
       }
@@ -863,7 +770,7 @@ async function evaluateAndWrite(
       formula,
       inputs,
       value: evaluated.value,
-      status: "computed",
+      status: 'computed',
       nullReason: null,
       error: null,
     });
@@ -872,7 +779,7 @@ async function evaluateAndWrite(
         employee_code: employee.employee_code,
         metric_code: definition.metric_code,
         value: evaluated.value,
-        status: "computed",
+        status: 'computed',
       });
     }
   }
@@ -897,17 +804,12 @@ async function evaluateAndWrite(
   const CHUNK = 200;
   for (let index = 0; index < writes.length; index += CHUNK) {
     const chunk = writes.slice(index, index + CHUNK);
-    const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ");
+    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ');
     const params: unknown[] = [];
     for (const write of chunk) {
       params.push(
-        write.employeeId,
-        write.metricId,
-        options.date,
-        write.value,
-        "calculated",
-        write.processId,
-        write.branchId,
+        write.employeeId, write.metricId, options.date, write.value, 'calculated',
+        write.processId, write.branchId,
       );
     }
     await db.execute(
@@ -928,9 +830,7 @@ async function evaluateAndWrite(
   // ── Write the log ──
   for (let index = 0; index < logs.length; index += CHUNK) {
     const chunk = logs.slice(index, index + CHUNK);
-    const placeholders = chunk
-      .map(() => "(UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .join(", ");
+    const placeholders = chunk.map(() => '(UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
     const params: unknown[] = [];
     for (const log of chunk) {
       params.push(
@@ -993,13 +893,13 @@ export function resetFieldNameCache(): void {
 // ─── Preview ─────────────────────────────────────────────────────────────────────────────────
 
 export interface PreviewResult {
-  ok: boolean;
+  ok: boolean
   message?: string;
   formula: string;
   /** The real values read from the source, so a wrong result is explainable at a glance. */
   inputs: Record<string, number | null>;
   value: number | null;
-  status: "computed" | "no_data" | "error";
+  status: 'computed' | 'no_data' | 'error';
   reason?: string;
   employee?: { id: string; employee_code: string; full_name?: string | null };
   date: string;
@@ -1022,24 +922,19 @@ export async function previewFormula(input: {
   employeeId: string;
   date: string;
 }): Promise<PreviewResult> {
-  const date = ISO_DATE.test(input.date)
-    ? input.date
-    : new Date().toISOString().slice(0, 10);
+  const date = ISO_DATE.test(input.date) ? input.date : new Date().toISOString().slice(0, 10);
 
   const base: PreviewResult = {
     ok: false,
     formula: input.formula,
     inputs: {},
     value: null,
-    status: "error",
+    status: 'error',
     date,
   };
 
   if (!(await getStudioCapability()).tables) {
-    return {
-      ...base,
-      message: "KPI Studio schema is not installed on this database",
-    };
+    return { ...base, message: 'KPI Studio schema is not installed on this database' };
   }
 
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -1047,27 +942,18 @@ export async function previewFormula(input: {
     [input.employeeId],
   );
   const employee = (empRows as any[])[0];
-  if (!employee) return { ...base, message: "Employee not found" };
+  if (!employee) return { ...base, message: 'Employee not found' };
 
-  const sourceIds = [
-    ...new Set(
-      [input.dataSourceId, ...(input.extraSourceIds ?? [])].filter(Boolean),
-    ),
-  ];
+  const sourceIds = [...new Set([input.dataSourceId, ...(input.extraSourceIds ?? [])].filter(Boolean))];
   const sources = await loadSourcesWithFields(sourceIds);
   const entries = sourceIds
     .map((sourceId) => sources.get(sourceId))
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
-  if (!entries.length)
-    return { ...base, message: "Data source not found or inactive", employee };
+  if (!entries.length) return { ...base, message: 'Data source not found or inactive', employee };
   const allFields = entries.flatMap((entry) => entry.fields);
   if (!allFields.length) {
-    return {
-      ...base,
-      message: "This data source has no fields configured yet",
-      employee,
-    };
+    return { ...base, message: 'This data source has no fields configured yet', employee };
   }
 
   // Read through the same merge path the real computation uses, so a preview cannot succeed on a
@@ -1084,9 +970,7 @@ export async function previewFormula(input: {
   // unreachable while the others answered still lets the author see real values and a real result,
   // which is more useful than an error — and the warning is carried alongside.
   const readError = read.failures.length
-    ? read.failures
-        .map((failure) => `${failure.source_code}: ${failure.error}`)
-        .join(" · ")
+    ? read.failures.map((failure) => `${failure.source_code}: ${failure.error}`).join(' · ')
     : undefined;
 
   if (readError && !bucket) {
@@ -1094,7 +978,7 @@ export async function previewFormula(input: {
       ...base,
       employee,
       inputs,
-      message: "The data source could not be read",
+      message: 'The data source could not be read',
       source_error: readError,
     };
   }
@@ -1103,13 +987,7 @@ export async function previewFormula(input: {
   if (readError) base.source_error = readError;
 
   if (evaluated.error) {
-    return {
-      ...base,
-      employee,
-      inputs,
-      status: "error",
-      message: evaluated.error,
-    };
+    return { ...base, employee, inputs, status: 'error', message: evaluated.error };
   }
   if (evaluated.value === null) {
     return {
@@ -1118,7 +996,7 @@ export async function previewFormula(input: {
       employee,
       inputs,
       value: null,
-      status: "no_data",
+      status: 'no_data',
       reason: evaluated.nullReason,
       date,
       source_error: readError,
@@ -1130,7 +1008,7 @@ export async function previewFormula(input: {
     employee,
     inputs,
     value: evaluated.value,
-    status: "computed",
+    status: 'computed',
     date,
     source_error: readError,
   };
@@ -1167,8 +1045,7 @@ export async function explainMetricForEmployee(
   dateTo: string,
 ): Promise<MetricExplanation | null> {
   if (!(await getStudioCapability()).tables) return null;
-  if (!ISO_DATE.test(dateFrom) || !ISO_DATE.test(dateTo))
-    throw new Error("Dates must be YYYY-MM-DD");
+  if (!ISO_DATE.test(dateFrom) || !ISO_DATE.test(dateTo)) throw new Error('Dates must be YYYY-MM-DD');
 
   const [metricRows] = await db.execute<RowDataPacket[]>(
     `SELECT metric_code, metric_name FROM kpi_metric_master WHERE id = ? LIMIT 1`,
@@ -1194,20 +1071,16 @@ export async function explainMetricForEmployee(
     if (row.inputs_json) {
       try {
         // mysql2 returns a JSON column already parsed; a string only appears on older drivers.
-        inputs =
-          typeof row.inputs_json === "string"
-            ? JSON.parse(row.inputs_json)
-            : row.inputs_json;
+        inputs = typeof row.inputs_json === 'string' ? JSON.parse(row.inputs_json) : row.inputs_json;
       } catch {
         inputs = null;
       }
     }
 
     return {
-      date:
-        row.score_date instanceof Date
-          ? row.score_date.toISOString().split("T")[0]
-          : String(row.score_date).split("T")[0],
+      date: row.score_date instanceof Date
+        ? row.score_date.toISOString().split('T')[0]
+        : String(row.score_date).split('T')[0],
       value: row.computed_value === null ? null : Number(row.computed_value),
       status: String(row.status),
       reason,
@@ -1232,7 +1105,7 @@ export interface ProcessPreviewDay {
   date: string;
   inputs: Record<string, number | null>;
   value: number | null;
-  status: "computed" | "no_data" | "error";
+  status: 'computed' | 'no_data' | 'error';
   reason?: string;
 }
 
@@ -1287,15 +1160,11 @@ export async function previewProcessFormula(input: {
     rows_read: 0,
   };
 
-  if (from > to)
-    return { ...base, message: "The start date is after the end date" };
+  if (from > to) return { ...base, message: 'The start date is after the end date' };
 
   const capability = await getStudioCapability();
   if (!capability.tables) {
-    return {
-      ...base,
-      message: "KPI Studio schema is not installed on this database",
-    };
+    return { ...base, message: 'KPI Studio schema is not installed on this database' };
   }
   // Without 1680 a source carries no process mapping, so there is nothing to read
   // a process metric from. Saying so beats returning an empty result that reads
@@ -1304,29 +1173,20 @@ export async function previewProcessFormula(input: {
     return {
       ...base,
       message:
-        "Process-level metrics need migration 1680_kpi_studio_process_grain.sql, which this " +
-        "database does not have yet. Until it is applied, a source cannot be mapped to a process.",
+        'Process-level metrics need migration 1680_kpi_studio_process_grain.sql, which this ' +
+        'database does not have yet. Until it is applied, a source cannot be mapped to a process.',
     };
   }
 
-  const sourceIds = [
-    ...new Set(
-      [input.dataSourceId, ...(input.extraSourceIds ?? [])].filter(Boolean),
-    ),
-  ];
+  const sourceIds = [...new Set([input.dataSourceId, ...(input.extraSourceIds ?? [])].filter(Boolean))];
   const sources = await loadSourcesWithFields(sourceIds);
   const entries = sourceIds
     .map((sourceId) => sources.get(sourceId))
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
-  if (!entries.length)
-    return { ...base, message: "Data source not found or inactive" };
+  if (!entries.length) return { ...base, message: 'Data source not found or inactive' };
   const allFields = entries.flatMap((entry) => entry.fields);
-  if (!allFields.length)
-    return {
-      ...base,
-      message: "This data source has no fields configured yet",
-    };
+  if (!allFields.length) return { ...base, message: 'This data source has no fields configured yet' };
 
   // Merged exactly the way computeProcessGrainDefinitions merges, so a formula that
   // previews cannot then fail at compute time for a reason the preview never showed.
@@ -1337,19 +1197,10 @@ export async function previewProcessFormula(input: {
 
   for (const entry of entries) {
     const source = entry.source as any;
-    processId =
-      processId ??
-      (source.process_key_kind === "employee"
-        ? (input.processId ?? source.process_id)
-        : source.process_id) ??
-      null;
-    const read = await readProcessGrainValues(
-      source,
-      entry.fields,
-      from,
-      to,
-      processId,
-    );
+    processId = processId
+      ?? (source.process_key_kind === 'employee' ? (input.processId ?? source.process_id) : source.process_id)
+      ?? null;
+    const read = await readProcessGrainValues(source, entry.fields, from, to, processId);
     if (read.error) {
       failures.push(`${source.source_code}: ${read.error}`);
       continue;
@@ -1362,7 +1213,7 @@ export async function previewProcessFormula(input: {
     }
   }
 
-  const sourceError = failures.length ? failures.join(" · ") : undefined;
+  const sourceError = failures.length ? failures.join(' · ') : undefined;
 
   if (!processId) {
     return {
@@ -1371,7 +1222,7 @@ export async function previewProcessFormula(input: {
       source_error: sourceError,
       message:
         'None of these sources is mapped to a process. Set "This source belongs to" on the ' +
-        "source before a process-level KPI can read it.",
+        'source before a process-level KPI can read it.',
     };
   }
 
@@ -1382,8 +1233,8 @@ export async function previewProcessFormula(input: {
       rows_read: rowsRead,
       source_error: sourceError,
       message: sourceError
-        ? "The data source could not be read"
-        : "The source returned no rows for these dates. Try a range the data actually covers.",
+        ? 'The data source could not be read'
+        : 'The source returned no rows for these dates. Try a range the data actually covers.',
     };
   }
 
@@ -1397,35 +1248,20 @@ export async function previewProcessFormula(input: {
 
     const evaluated = evaluateFormula(input.formula, inputs);
     if (evaluated.error) {
-      days.push({
-        date,
-        inputs,
-        value: null,
-        status: "error",
-        reason: evaluated.error,
-      });
+      days.push({ date, inputs, value: null, status: 'error', reason: evaluated.error });
     } else if (evaluated.value === null || evaluated.value === undefined) {
-      days.push({
-        date,
-        inputs,
-        value: null,
-        status: "no_data",
-        reason: evaluated.nullReason,
-      });
+      days.push({ date, inputs, value: null, status: 'no_data', reason: evaluated.nullReason });
     } else {
-      days.push({ date, inputs, value: evaluated.value, status: "computed" });
+      days.push({ date, inputs, value: evaluated.value, status: 'computed' });
     }
   }
 
   // The headline is the mean of the days that produced a number — NOT of every day
   // in the range. A day the source was silent is absent, not a zero, and averaging
   // a zero in would quietly understate every metric this previews.
-  const computed = days.filter(
-    (day) => day.status === "computed" && day.value !== null,
-  );
+  const computed = days.filter((day) => day.status === 'computed' && day.value !== null);
   const value = computed.length
-    ? computed.reduce((total, day) => total + (day.value as number), 0) /
-      computed.length
+    ? computed.reduce((total, day) => total + (day.value as number), 0) / computed.length
     : null;
 
   return {
@@ -1438,8 +1274,6 @@ export async function previewProcessFormula(input: {
     value,
     rows_read: rowsRead,
     source_error: sourceError,
-    message: computed.length
-      ? undefined
-      : "No day in this range produced a number",
+    message: computed.length ? undefined : 'No day in this range produced a number',
   };
 }

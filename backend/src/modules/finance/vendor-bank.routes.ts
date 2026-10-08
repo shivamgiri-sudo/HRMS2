@@ -34,9 +34,7 @@ const BANK_ROLES = ["finance_head", "accounts_head"] as const;
 
 function fail(res: Response, err: unknown): Response {
   if (err instanceof VendorBankError) {
-    return res
-      .status(err.statusCode)
-      .json({ success: false, message: err.message });
+    return res.status(err.statusCode).json({ success: false, message: err.message });
   }
   throw err;
 }
@@ -98,9 +96,7 @@ vendorBankRouter.get(
   "/vendor-bank/requests",
   requireRole(...BANK_ROLES),
   h(async (req, res) => {
-    const vendorId = req.query.vendorId
-      ? String(req.query.vendorId)
-      : undefined;
+    const vendorId = req.query.vendorId ? String(req.query.vendorId) : undefined;
     const rows = await listPendingRequests(vendorId);
     return res.json({ success: true, data: rows });
   }),
@@ -130,11 +126,7 @@ vendorBankRouter.post(
   requireRole(...BANK_ROLES),
   h(async (req, res) => {
     try {
-      await rejectBankChange(
-        String(req.params.id),
-        actorOf(req),
-        (req.body ?? {}).reason,
-      );
+      await rejectBankChange(String(req.params.id), actorOf(req), (req.body ?? {}).reason);
       return res.json({ success: true });
     } catch (err) {
       return fail(res, err);

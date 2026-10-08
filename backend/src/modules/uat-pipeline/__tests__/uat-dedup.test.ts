@@ -19,9 +19,7 @@ describe("tokenize", () => {
   });
 
   it("is case- and punctuation-insensitive", () => {
-    expect([...tokenize("Leave-Balance, WRONG!")]).toEqual([
-      ...tokenize("leave balance wrong"),
-    ]);
+    expect([...tokenize("Leave-Balance, WRONG!")]).toEqual([...tokenize("leave balance wrong")]);
   });
 
   it("returns an empty set for text with no signal", () => {
@@ -36,7 +34,7 @@ describe("similarity", () => {
     // report and a thorough one describing the SAME defect must match.
     const short = tokenize("Leave carry forward wrong");
     const long = tokenize(
-      "Leave balance carry forward from last year is incorrect for employees who joined mid year",
+      "Leave balance carry forward from last year is incorrect for employees who joined mid year"
     );
     expect(similarity(short, long)).toBeGreaterThanOrEqual(0.6);
   });
@@ -44,7 +42,7 @@ describe("similarity", () => {
   it("would have scored that pair poorly under Jaccard — the reason for the design", () => {
     const short = tokenize("Leave carry forward wrong");
     const long = tokenize(
-      "Leave balance carry forward from last year is incorrect for employees who joined mid year",
+      "Leave balance carry forward from last year is incorrect for employees who joined mid year"
     );
     let shared = 0;
     for (const t of short) if (long.has(t)) shared++;
@@ -55,10 +53,7 @@ describe("similarity", () => {
 
   it("does not match unrelated reports", () => {
     expect(
-      similarity(
-        tokenize("Leave balance carry forward wrong"),
-        tokenize("Roster publish button does nothing"),
-      ),
+      similarity(tokenize("Leave balance carry forward wrong"), tokenize("Roster publish button does nothing"))
     ).toBe(0);
   });
 
@@ -74,9 +69,7 @@ describe("similarity", () => {
   });
 
   it("returns 0 when either side has no usable tokens", () => {
-    expect(similarity(tokenize("the is a"), tokenize("roster publish"))).toBe(
-      0,
-    );
+    expect(similarity(tokenize("the is a"), tokenize("roster publish"))).toBe(0);
     expect(similarity(new Set<string>(), tokenize("roster"))).toBe(0);
   });
 
@@ -91,10 +84,7 @@ describe("similarity", () => {
       expect(similarity(canonical, tokenize(d)), d).toBeGreaterThanOrEqual(0.4);
     }
     // Same module, different defect — must NOT be offered as a duplicate.
-    for (const other of [
-      "Leave application approval email not received",
-      "Cannot apply for leave",
-    ]) {
+    for (const other of ["Leave application approval email not received", "Cannot apply for leave"]) {
       expect(similarity(canonical, tokenize(other)), other).toBeLessThan(0.4);
     }
   });

@@ -26,18 +26,12 @@ async function run(): Promise<void> {
 export function startHelpdeskSlaCron(): void {
   if (_timer) return;
 
-  void run().catch((e: unknown) =>
-    console.error("[helpdesk-sla] initial run error:", e),
-  );
+  void run().catch((e: unknown) => console.error("[helpdesk-sla] initial run error:", e));
   _timer = setInterval(() => {
-    void run().catch((e: unknown) =>
-      console.error("[helpdesk-sla] tick error:", e),
-    );
+    void run().catch((e: unknown) => console.error("[helpdesk-sla] tick error:", e));
   }, CHECK_INTERVAL_MS);
 
-  console.log(
-    `[helpdesk-sla] scheduler started (every ${CHECK_INTERVAL_MS / 60000} min)`,
-  );
+  console.log(`[helpdesk-sla] scheduler started (every ${CHECK_INTERVAL_MS / 60000} min)`);
 }
 
 export function stopHelpdeskSlaCron(): void {

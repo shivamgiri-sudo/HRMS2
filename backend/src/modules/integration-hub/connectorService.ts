@@ -21,11 +21,7 @@ export async function runConnector(
   userId: string | null,
   triggeredBy = "manual",
 ): Promise<ConnectorRunSummary> {
-  const run = await integrationService.createRun(
-    integrationKey,
-    triggeredBy,
-    userId,
-  );
+  const run = await integrationService.createRun(integrationKey, triggeredBy, userId);
   const runId = run.id;
   const startedAt = Date.now();
 
@@ -37,14 +33,7 @@ export async function runConnector(
     await db.execute(
       `INSERT INTO integration_raw_payload (id, run_id, integration_key, payload, payload_hash, row_count)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        randomUUID(),
-        runId,
-        integrationKey,
-        encryptedPayload,
-        hash,
-        rawRows.length,
-      ],
+      [randomUUID(), runId, integrationKey, encryptedPayload, hash, rawRows.length]
     );
 
     // 2. Analyze schema
@@ -52,7 +41,7 @@ export async function runConnector(
     await db.execute(
       `INSERT INTO integration_schema_snapshot (id, integration_key, run_id, detected_fields)
        VALUES (?, ?, ?, ?)`,
-      [randomUUID(), integrationKey, runId, JSON.stringify(detectedFields)],
+      [randomUUID(), integrationKey, runId, JSON.stringify(detectedFields)]
     );
 
     // 3. Get confirmed field maps
@@ -60,25 +49,18 @@ export async function runConnector(
     const mappedFieldNames = new Set(fieldMaps.map((m) => m.source_field));
 
     // 4. Generate suggestions for unmapped detected fields
-    const unmapped = detectedFields.filter(
-      (f) => !mappedFieldNames.has(f.name),
-    );
+    const unmapped = detectedFields.filter((f) => !mappedFieldNames.has(f.name));
     for (const field of unmapped) {
       await db.execute(
         `INSERT IGNORE INTO integration_field_map_suggestion
            (id, integration_key, source_field, status)
          VALUES (?, ?, ?, 'pending')`,
-        [randomUUID(), integrationKey, field.name],
+        [randomUUID(), integrationKey, field.name]
       );
     }
 
     // 5. Promote rows using confirmed maps
-    const { promoted, failed } = await promoteRows(
-      integrationKey,
-      rawRows,
-      fieldMaps,
-      runId,
-    );
+    const { promoted, failed } = await promoteRows(integrationKey, rawRows, fieldMaps, runId);
 
     // 6. Mark run complete
     const durationMs = Date.now() - startedAt;
@@ -87,16 +69,10 @@ export async function runConnector(
           SET status = 'complete', rows_fetched = ?, rows_promoted = ?, rows_failed = ?,
               duration_ms = ?, completed_at = NOW()
         WHERE id = ?`,
-      [rawRows.length, promoted, failed, durationMs, runId],
+      [rawRows.length, promoted, failed, durationMs, runId]
     );
 
-    return {
-      run_id: runId,
-      rows_fetched: rawRows.length,
-      rows_promoted: promoted,
-      rows_failed: failed,
-      status: "complete",
-    };
+    return { run_id: runId, rows_fetched: rawRows.length, rows_promoted: promoted, rows_failed: failed, status: "complete" };
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     const msg = err instanceof Error ? err.message : String(err);
@@ -104,17 +80,11 @@ export async function runConnector(
       `UPDATE integration_connector_run
           SET status = 'failed', duration_ms = ?, error_message = ?, completed_at = NOW()
         WHERE id = ?`,
-      [durationMs, msg, runId],
+      [durationMs, msg, runId]
     );
     // Count the streak now that the failure row exists, so a long-running
     // breakage announces itself instead of accumulating in a table nobody reads.
     await reportConnectorFailure(integrationKey, msg);
-    return {
-      run_id: runId,
-      rows_fetched: rawRows.length,
-      rows_promoted: 0,
-      rows_failed: rawRows.length,
-      status: "failed",
-    };
+    return { run_id: runId, rows_fetched: rawRows.length, rows_promoted: 0, rows_failed: rawRows.length, status: "failed" };
   }
 }

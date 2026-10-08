@@ -10,7 +10,7 @@ Automatic synchronization of call center metrics from ViciDial dialer database t
 
 ## Architecture
 
-````
+```
 ┌──────────────┐         ┌─────────────────────┐         ┌──────────────┐
 │  Dialer DB   │ ──READ──> │ Dialer KPI Sync    │ ──WRITE──> │  HRMS DB     │
 │ (vicidial)   │         │ Worker              │         │ (kpi_score)  │
@@ -71,7 +71,7 @@ Response:
     "callbacks": 3
   }
 }
-````
+```
 
 ---
 
@@ -82,7 +82,6 @@ Response:
 Get metrics for all agents in a process.
 
 Response:
-
 ```json
 {
   "success": true,
@@ -108,7 +107,6 @@ Response:
 Ranked agents with scores vs targets.
 
 Response:
-
 ```json
 {
   "success": true,
@@ -136,7 +134,6 @@ Response:
 Get configured targets for a process.
 
 Response:
-
 ```json
 {
   "success": true,
@@ -165,7 +162,6 @@ Response:
 Sync metrics for single employee to KPI scores table.
 
 Request:
-
 ```json
 {
   "employeeCode": "MAS62686",
@@ -174,7 +170,6 @@ Request:
 ```
 
 Response:
-
 ```json
 {
   "success": true,
@@ -188,7 +183,6 @@ Response:
 Bulk sync all agents in a process.
 
 Request:
-
 ```json
 {
   "processId": "uuid",
@@ -197,7 +191,6 @@ Request:
 ```
 
 Response:
-
 ```json
 {
   "success": true,
@@ -253,40 +246,37 @@ WHERE source = 'dialer'
 Page already configured for AHT, ACW, TALK_TIME, HOLD_TIME metrics.
 
 **Fetch Process Leaderboard:**
-
 ```typescript
 const { data: leaderboard } = useQuery({
-  queryKey: ["dialer-kpi-leaderboard", processId, date],
+  queryKey: ['dialer-kpi-leaderboard', processId, date],
   queryFn: async () => {
     const res = await hrmsApi.get(
-      `/api/dialer/kpi/leaderboard/${processId}/${date}`,
+      `/api/dialer/kpi/leaderboard/${processId}/${date}`
     );
     return res.data.data;
-  },
+  }
 });
 ```
 
 **Fetch Employee Metrics:**
-
 ```typescript
 const { data: metrics } = useQuery({
-  queryKey: ["dialer-kpi-employee", employeeCode, date],
+  queryKey: ['dialer-kpi-employee', employeeCode, date],
   queryFn: async () => {
     const res = await hrmsApi.get(
-      `/api/dialer/kpi/employee/${employeeCode}/${date}`,
+      `/api/dialer/kpi/employee/${employeeCode}/${date}`
     );
     return res.data.data;
-  },
+  }
 });
 ```
 
 **Sync Process KPIs (Admin Action):**
-
 ```typescript
 const syncKpis = async () => {
-  await hrmsApi.post("/api/dialer/kpi/sync/process", {
+  await hrmsApi.post('/api/dialer/kpi/sync/process', {
     processId,
-    date: format(new Date(), "yyyy-MM-dd"),
+    date: format(new Date(), 'yyyy-MM-dd')
   });
   // Refetch leaderboard
 };
@@ -301,19 +291,19 @@ Create scheduled task to sync daily:
 **backend/src/workers/cron/dialer-kpi-daily-sync.ts:**
 
 ```typescript
-import { DialerKpiSync } from "../domains/dialer-kpi-sync.js";
-import { db } from "../../db/mysql.js";
+import { DialerKpiSync } from '../domains/dialer-kpi-sync.js';
+import { db } from '../../db/mysql.js';
 
 export async function dialerKpiDailySync() {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  const date = yesterday.toISOString().split("T")[0];
+  const date = yesterday.toISOString().split('T')[0];
 
   console.log(`[DialerKpiSync] Starting daily sync for ${date}`);
 
   // Get all active processes
   const [processes] = await db.execute<any[]>(
-    `SELECT id FROM process_master WHERE active_status = 1`,
+    `SELECT id FROM process_master WHERE active_status = 1`
   );
 
   const sync = new DialerKpiSync();
@@ -322,19 +312,14 @@ export async function dialerKpiDailySync() {
   for (const process of processes) {
     const result = await sync.syncProcessKpis(process.id, date);
     totalSynced += result.synced;
-    console.log(
-      `  Process ${process.id}: ${result.synced} synced, ${result.skipped} skipped`,
-    );
+    console.log(`  Process ${process.id}: ${result.synced} synced, ${result.skipped} skipped`);
   }
 
-  console.log(
-    `[DialerKpiSync] Daily sync complete: ${totalSynced} total metrics`,
-  );
+  console.log(`[DialerKpiSync] Daily sync complete: ${totalSynced} total metrics`);
 }
 ```
 
 **Schedule in cron:**
-
 ```bash
 # Run daily at 2 AM
 0 2 * * * node -e "require('./dist/workers/cron/dialer-kpi-daily-sync.js').dialerKpiDailySync()"
@@ -355,7 +340,6 @@ if (actual <= target) {
 ```
 
 **Example:**
-
 - Target AHT: 300 seconds (5 min)
 - Actual AHT: 330 seconds (5.5 min)
 - Score: (300 / 330) * 100 = 90.9%

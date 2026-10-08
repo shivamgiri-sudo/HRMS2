@@ -39,11 +39,8 @@ function money(v: number) {
 
 async function main() {
   const conn = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
   });
 
   const [lines] = await conn.query<any[]>(
@@ -51,7 +48,7 @@ async function main() {
             bm.branch_name, bh.period_code, bl.head, bl.sub_head
        FROM finance_budget_line bl
        JOIN finance_budget_header bh ON bh.id = bl.budget_id
-       JOIN branch_master bm ON bm.id = bh.branch_id`,
+       JOIN branch_master bm ON bm.id = bh.branch_id`
   );
 
   const [sums] = await conn.query<any[]>(
@@ -60,7 +57,7 @@ async function main() {
             SUM(CASE WHEN lifecycle_status='consumed' THEN COALESCE(NULLIF(amount_without_tax, 0), amount_with_tax - COALESCE(tax_amount, 0), pnl_cost_amount) ELSE 0 END) AS real_consumed
        FROM grn_cost_allocation
       WHERE budget_line_id IS NOT NULL
-      GROUP BY budget_line_id`,
+      GROUP BY budget_line_id`
   );
   const backingMap = new Map(sums.map((r) => [r.budget_line_id, r]));
 
@@ -70,57 +67,37 @@ async function main() {
   let overGross = 0;
 
   for (const line of lines) {
-    const backing = backingMap.get(line.id) ?? {
-      real_reserved: 0,
-      real_consumed: 0,
-    };
+    const backing = backingMap.get(line.id) ?? { real_reserved: 0, real_consumed: 0 };
     const realReserved = Number(backing.real_reserved);
     const realConsumed = Number(backing.real_consumed);
-    const rDiff =
-      Math.round((Number(line.reserved_amount) - realReserved) * 100) / 100;
-    const cDiff =
-      Math.round((Number(line.consumed_amount) - realConsumed) * 100) / 100;
+    const rDiff = Math.round((Number(line.reserved_amount) - realReserved) * 100) / 100;
+    const cDiff = Math.round((Number(line.consumed_amount) - realConsumed) * 100) / 100;
     if (Math.abs(rDiff) < 0.01 && Math.abs(cDiff) < 0.01) continue;
 
     drifted++;
     const label = `${line.branch_name} / ${line.period_code} / ${line.head}${line.sub_head ? "/" + line.sub_head : ""}`;
-    const availableAfter =
-      Number(line.gross_amount) - realReserved - realConsumed;
-    const flag =
-      availableAfter < -0.01
-        ? "  ⚠ would show NEGATIVE available — Finance review needed, gross_amount not raised"
-        : "";
+    const availableAfter = Number(line.gross_amount) - realReserved - realConsumed;
+    const flag = availableAfter < -0.01 ? "  ⚠ would show NEGATIVE available — Finance review needed, gross_amount not raised" : "";
     if (availableAfter < -0.01) overGross++;
 
     console.log(`${APPLY ? "FIXING " : "DRIFTED"}  ${label}`);
-    console.log(
-      `  reserved: stored=${money(Number(line.reserved_amount))} real=${money(realReserved)} (diff ${money(rDiff)})`,
-    );
-    console.log(
-      `  consumed: stored=${money(Number(line.consumed_amount))} real=${money(realConsumed)} (diff ${money(cDiff)})${flag}`,
-    );
+    console.log(`  reserved: stored=${money(Number(line.reserved_amount))} real=${money(realReserved)} (diff ${money(rDiff)})`);
+    console.log(`  consumed: stored=${money(Number(line.consumed_amount))} real=${money(realConsumed)} (diff ${money(cDiff)})${flag}`);
 
     if (APPLY) {
       await conn.execute(
         `UPDATE finance_budget_line SET reserved_amount = ?, consumed_amount = ? WHERE id = ?`,
-        [realReserved, realConsumed, line.id],
+        [realReserved, realConsumed, line.id]
       );
     }
   }
 
   console.log(`\n=== Summary ===`);
-  console.log(
-    `  ${drifted} line(s) drifted${APPLY ? ", reconciled to real backing rows" : ""}.`,
-  );
-  console.log(
-    `  ${overGross} line(s) now show real spend exceeding their own gross_amount — flagged for Finance, not auto-corrected.`,
-  );
+  console.log(`  ${drifted} line(s) drifted${APPLY ? ", reconciled to real backing rows" : ""}.`);
+  console.log(`  ${overGross} line(s) now show real spend exceeding their own gross_amount — flagged for Finance, not auto-corrected.`);
   console.log(APPLY ? "\nAPPLIED." : "\nDRY RUN — pass --apply to write.");
 
   await conn.end();
 }
 
-main().catch((e) => {
-  console.error("FATAL", e);
-  process.exit(1);
-});
+main().catch((e) => { console.error("FATAL", e); process.exit(1); });

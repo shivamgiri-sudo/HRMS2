@@ -11,53 +11,29 @@ import mysql from "mysql2/promise";
 import "dotenv/config";
 
 const conn = await mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT || 3306,
-  database: process.env.DB_NAME,
+  host: process.env.DB_HOST, user: process.env.DB_USER, password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT || 3306, database: process.env.DB_NAME,
 });
 
 const CQ_PARAM_COLS = [
-  "call_answered_within_5_seconds",
-  "customer_concern_acknowledged",
-  "professionalism_maintained",
-  "assurance_or_appreciation_provided",
-  "pronunciation_and_clarity",
-  "enthusiasm_and_no_fumbling",
-  "active_listening",
-  "politeness_and_no_sarcasm",
-  "proper_grammar",
-  "accurate_issue_probing",
-  "proper_hold_procedure",
-  "proper_transfer_and_language",
-  "dead_air_under_10_seconds",
-  "case_escalated_correctly",
-  "address_recorded_completely",
-  "correct_and_complete_information",
-  "upselling_or_offers_suggested",
-  "further_assistance_offered",
-  "proper_call_closure",
+  "call_answered_within_5_seconds", "customer_concern_acknowledged", "professionalism_maintained",
+  "assurance_or_appreciation_provided", "pronunciation_and_clarity", "enthusiasm_and_no_fumbling",
+  "active_listening", "politeness_and_no_sarcasm", "proper_grammar", "accurate_issue_probing",
+  "proper_hold_procedure", "proper_transfer_and_language", "dead_air_under_10_seconds",
+  "case_escalated_correctly", "address_recorded_completely", "correct_and_complete_information",
+  "upselling_or_offers_suggested", "further_assistance_offered", "proper_call_closure",
 ];
 const CLOVIA_CLIENT_ID = "468";
 const CQ_PARAM_COLS_CLOVIA = [...CQ_PARAM_COLS, "express_empathy"];
 const LOW_QUALITY_GATE_CLIENT_IDS = new Set(["375", "409", "475"]);
 const FATAL_PARAM_COLS = [
-  "address_recorded_completely",
-  "correct_and_complete_information",
-  "case_escalated_correctly",
-  "customer_concern_acknowledged",
-  "proper_hold_procedure",
-  "proper_transfer_and_language",
+  "address_recorded_completely", "correct_and_complete_information", "case_escalated_correctly",
+  "customer_concern_acknowledged", "proper_hold_procedure", "proper_transfer_and_language",
 ];
 
 function scoreSqlFor(cols) {
-  const num = cols
-    .map((c) => `(CASE WHEN ${c} IS NOT NULL THEN IF(${c}=1,1,0) ELSE 0 END)`)
-    .join(" + ");
-  const den = cols
-    .map((c) => `(CASE WHEN ${c} IS NOT NULL THEN 1 ELSE 0 END)`)
-    .join(" + ");
+  const num = cols.map((c) => `(CASE WHEN ${c} IS NOT NULL THEN IF(${c}=1,1,0) ELSE 0 END)`).join(" + ");
+  const den = cols.map((c) => `(CASE WHEN ${c} IS NOT NULL THEN 1 ELSE 0 END)`).join(" + ");
   return `((${num}) / NULLIF((${den}), 0))`;
 }
 const fatalSql = `(${FATAL_PARAM_COLS.map((c) => `${c} = 0`).join(" AND ")})`;
@@ -67,24 +43,18 @@ const [procs] = await conn.query(
      FROM kpi_studio_definition d
      JOIN kpi_metric_master m ON m.id = d.metric_id
      JOIN process_master p ON p.id = d.process_id
-    WHERE m.metric_code = 'QA_QUALITY_PCT' AND d.active_status = 1`,
+    WHERE m.metric_code = 'QA_QUALITY_PCT' AND d.active_status = 1`
 );
 
-console.log(
-  `Computing corrected QA_QUALITY_PCT (each process's own latest audited date, no historical rewrite) across ${procs.length} processes...`,
-);
+console.log(`Computing corrected QA_QUALITY_PCT (each process's own latest audited date, no historical rewrite) across ${procs.length} processes...`);
 const results = [];
 
 for (const proc of procs) {
   const [emps] = await conn.query(
-    "SELECT employee_code FROM employees WHERE process_id = ?",
-    [proc.process_id],
+    "SELECT employee_code FROM employees WHERE process_id = ?", [proc.process_id]
   );
   const codes = emps.map((e) => e.employee_code);
-  if (!codes.length) {
-    results.push({ ...proc, skipped: "no employees" });
-    continue;
-  }
+  if (!codes.length) { results.push({ ...proc, skipped: "no employees" }); continue; }
   const inList = codes.map(() => "?").join(",");
 
   // The audit pipeline lags hours behind the actual call -- "today" genuinely
@@ -103,10 +73,7 @@ for (const proc of procs) {
     codes,
   );
   const todayIso = latestRows[0]?.latest;
-  if (!todayIso) {
-    results.push({ ...proc, skipped: "no audited calls in the last 7 days" });
-    continue;
-  }
+  if (!todayIso) { results.push({ ...proc, skipped: "no audited calls in the last 7 days" }); continue; }
 
   // CallDate is DATETIME, not DATE -- exact equality against a bare date
   // string only matches exact midnight. Use a same-day range instead.
@@ -116,16 +83,9 @@ for (const proc of procs) {
       GROUP BY ClientId ORDER BY n DESC LIMIT 1`,
     [...codes, todayIso, todayIso],
   );
-  if (!cidRows.length) {
-    results.push({
-      ...proc,
-      skipped: "no audited calls on its own latest date (race)",
-    });
-    continue;
-  }
+  if (!cidRows.length) { results.push({ ...proc, skipped: "no audited calls on its own latest date (race)" }); continue; }
   const clientId = String(cidRows[0].ClientId);
-  const cols =
-    clientId === CLOVIA_CLIENT_ID ? CQ_PARAM_COLS_CLOVIA : CQ_PARAM_COLS;
+  const cols = clientId === CLOVIA_CLIENT_ID ? CQ_PARAM_COLS_CLOVIA : CQ_PARAM_COLS;
   const gateApplies = LOW_QUALITY_GATE_CLIENT_IDS.has(clientId);
   const gateClause = gateApplies ? "AND quality_percentage > 35" : "";
 
@@ -139,14 +99,7 @@ for (const proc of procs) {
   );
   const score = scoreRows[0].score;
   const n = scoreRows[0].n;
-  if (score === null || n === 0) {
-    results.push({
-      ...proc,
-      clientId,
-      skipped: "no scoreable calls after gates",
-    });
-    continue;
-  }
+  if (score === null || n === 0) { results.push({ ...proc, clientId, skipped: "no scoreable calls after gates" }); continue; }
 
   await conn.query(
     `INSERT INTO process_metric_actual (id, process_id, metric_key, score_date, actual_value, source, note, created_at, updated_at)

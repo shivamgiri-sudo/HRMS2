@@ -42,18 +42,15 @@ const cc = (over: Record<string, unknown> = {}) => ({
 
 /** First query is the cost-centre rollup, second is the uncovered-employee list. */
 const respond = (costCentres: unknown[], uncovered: unknown[]) =>
-  execute
-    .mockResolvedValueOnce([costCentres, []])
-    .mockResolvedValueOnce([uncovered, []]);
+  execute.mockResolvedValueOnce([costCentres, []]).mockResolvedValueOnce([uncovered, []]);
 
 beforeEach(() => execute.mockReset());
 
 describe("completeness is judged on employees, not cost centres", () => {
   it("is incomplete while any active employee sits outside every run", async () => {
-    respond(
-      [cc({ run_id: "r1", run_status: "finalized" })],
-      [{ id: "e-9", employee_code: "MAS9", reason: "no cost centre assigned" }],
-    );
+    respond([cc({ run_id: "r1", run_status: "finalized" })], [
+      { id: "e-9", employee_code: "MAS9", reason: "no cost centre assigned" },
+    ]);
     const cov = await getMonthCoverage("2026-08");
     expect(cov.complete).toBe(false);
     expect(cov.uncoveredEmployees).toHaveLength(1);
@@ -61,17 +58,14 @@ describe("completeness is judged on employees, not cost centres", () => {
 
   it("is complete only when nothing is uncovered", async () => {
     respond([cc({ run_id: "r1", run_status: "finalized" })], []);
-    await expect(getMonthCoverage("2026-08")).resolves.toMatchObject({
-      complete: true,
-    });
+    await expect(getMonthCoverage("2026-08")).resolves.toMatchObject({ complete: true });
   });
 
   it("stays incomplete even when every cost centre has a run", async () => {
     // The exact case a cost-centre-shaped check would call finished.
-    respond(
-      [cc({ run_id: "r1", run_status: "finalized" })],
-      [{ id: "e-9", employee_code: "MAS9", reason: "no cost centre assigned" }],
-    );
+    respond([cc({ run_id: "r1", run_status: "finalized" })], [
+      { id: "e-9", employee_code: "MAS9", reason: "no cost centre assigned" },
+    ]);
     const cov = await getMonthCoverage("2026-08");
     expect(cov.totals.notStarted).toBe(0);
     expect(cov.complete).toBe(false);
@@ -81,17 +75,10 @@ describe("completeness is judged on employees, not cost centres", () => {
 describe("uncovered employees are named, with why", () => {
   it("distinguishes 'no cost centre' from 'cost centre not run'", async () => {
     // Different fixes: one needs a posting corrected, the other needs a run.
-    respond(
-      [],
-      [
-        { id: "e-1", employee_code: "MAS1", reason: "no cost centre assigned" },
-        {
-          id: "e-2",
-          employee_code: "MAS2",
-          reason: "cost centre not included in any run this month",
-        },
-      ],
-    );
+    respond([], [
+      { id: "e-1", employee_code: "MAS1", reason: "no cost centre assigned" },
+      { id: "e-2", employee_code: "MAS2", reason: "cost centre not included in any run this month" },
+    ]);
     const cov = await getMonthCoverage("2026-08");
     expect(cov.uncoveredEmployees.map((e) => e.reason)).toEqual([
       "no cost centre assigned",
@@ -147,9 +134,7 @@ describe("run status drives the cost-centre state", () => {
   it("reports no run as not_started", async () => {
     respond([cc()], []);
     await expect(getMonthCoverage("2026-08")).resolves.toMatchObject({
-      costCentres: [
-        expect.objectContaining({ status: "not_started", runId: null }),
-      ],
+      costCentres: [expect.objectContaining({ status: "not_started", runId: null })],
     });
   });
 
@@ -170,9 +155,8 @@ describe("the route", () => {
   it("is registered before /runs/:id so 'coverage' is not read as a run id", () => {
     // Express matches in order. Behind the parameterised route this would 404 through a lookup for
     // a run called "coverage".
-    expect(routes.indexOf('router.get("/runs/coverage"')).toBeLessThan(
-      routes.indexOf('router.get("/runs/:id"'),
-    );
+    expect(routes.indexOf('router.get("/runs/coverage"'))
+      .toBeLessThan(routes.indexOf('router.get("/runs/:id"'));
   });
 
   it("rejects a malformed month instead of querying with it", () => {
@@ -199,30 +183,12 @@ describe("row scope — a branch user does not see the whole company", () => {
    * its rows.
    */
   const twoBranches = [
-    cc({
-      cost_centre_id: "cc-ho",
-      branch_id: "br-ho",
-      branch_name: "HEAD OFFICE",
-    }),
-    cc({
-      cost_centre_id: "cc-noida",
-      branch_id: "br-noida",
-      branch_name: "NOIDA",
-    }),
+    cc({ cost_centre_id: "cc-ho", branch_id: "br-ho", branch_name: "HEAD OFFICE" }),
+    cc({ cost_centre_id: "cc-noida", branch_id: "br-noida", branch_name: "NOIDA" }),
   ];
   const twoUncovered = [
-    {
-      id: "e1",
-      employee_code: "MAS1",
-      branch_id: "br-ho",
-      reason: "no cost centre assigned",
-    },
-    {
-      id: "e2",
-      employee_code: "MAS2",
-      branch_id: "br-noida",
-      reason: "no cost centre assigned",
-    },
+    { id: "e1", employee_code: "MAS1", branch_id: "br-ho", reason: "no cost centre assigned" },
+    { id: "e2", employee_code: "MAS2", branch_id: "br-noida", reason: "no cost centre assigned" },
   ];
 
   it("returns only the caller's branches when scoped", async () => {
@@ -272,12 +238,7 @@ describe("row scope — a branch user does not see the whole company", () => {
      * branch — without that, scoping would hide exactly the people it exists to surface.
      */
     respond(twoBranches, [
-      {
-        id: "e3",
-        employee_code: "MAS3",
-        branch_id: "br-ho",
-        reason: "cost centre no longer exists",
-      },
+      { id: "e3", employee_code: "MAS3", branch_id: "br-ho", reason: "cost centre no longer exists" },
     ]);
     const r = await getMonthCoverage("2026-08", new Set(["br-ho"]));
     expect(r.uncoveredEmployees.map((e) => e.employeeCode)).toEqual(["MAS3"]);
@@ -297,9 +258,7 @@ describe("the route resolves scope itself", () => {
   it("leaves HO roles unrestricted", () => {
     // payroll_head and finance_head run the whole company's payroll; scoping them to a branch
     // would break the view this picker exists for.
-    const idx = routes.indexOf(
-      "async function resolveVisibleBranchIdsForCoverage",
-    );
+    const idx = routes.indexOf("async function resolveVisibleBranchIdsForCoverage");
     const fn = routes.slice(idx, idx + 700);
     // Now delegates to the shared ORG_WIDE_EXEMPT_ROLES resolution (owner ruling 2026-10-01), which
     // keeps super_admin/admin/payroll_head/finance_head (and the other org-wide roles) unrestricted.

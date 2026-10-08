@@ -4,10 +4,7 @@
  * same code without a circular dependency.
  */
 
-export async function assertGatedUploader(
-  rpc_name: string,
-  userId: string,
-): Promise<void> {
+export async function assertGatedUploader(rpc_name: string, userId: string): Promise<void> {
   const gated = new Set([
     "import_attendance_regularization_batch",
     "import_leave_application_batch",
@@ -19,25 +16,18 @@ export async function assertGatedUploader(
   const { UPLOADER_ROLES } = await import("./bulk-approval.service.js");
   if (!(await hasAnyRole(userId, ...UPLOADER_ROLES))) {
     throw Object.assign(
-      new Error(
-        "Only a Super Admin or branch WFM can upload leave, regularization, incentive or deduction batches.",
-      ),
+      new Error("Only a Super Admin or branch WFM can upload leave, regularization, incentive or deduction batches."),
       { statusCode: 403 },
     );
   }
 }
 
-export async function assertDepartmentStructureUploader(
-  rpc_name: string,
-  userId: string,
-): Promise<void> {
+export async function assertDepartmentStructureUploader(rpc_name: string, userId: string): Promise<void> {
   if (rpc_name !== "import_department_upload_batch") return;
   const { hasAnyRole } = await import("../../shared/scopeAccess.js");
   if (!(await hasAnyRole(userId, "super_admin"))) {
     throw Object.assign(
-      new Error(
-        "Only a Super Admin can create or rename departments, including by upload.",
-      ),
+      new Error("Only a Super Admin can create or rename departments, including by upload."),
       { statusCode: 403 },
     );
   }
@@ -48,18 +38,13 @@ export async function assertDepartmentStructureUploader(
  * use the Process LOB Mapping screen (super_admin passes hasAnyRole). Row scope is enforced in
  * the importer itself.
  */
-export async function assertEmployeeLobUploader(
-  rpc_name: string,
-  userId: string,
-): Promise<void> {
+export async function assertEmployeeLobUploader(rpc_name: string, userId: string): Promise<void> {
   if (rpc_name !== "import_employee_lob_batch") return;
   const { hasAnyRole } = await import("../../shared/scopeAccess.js");
   const { WFM_LOB_ROLES } = await import("../wfm/process-lob-map.service.js");
   if (!(await hasAnyRole(userId, ...WFM_LOB_ROLES))) {
     throw Object.assign(
-      new Error(
-        "Only WFM, HR, Admin or a Super Admin can upload employee LOB mappings.",
-      ),
+      new Error("Only WFM, HR, Admin or a Super Admin can upload employee LOB mappings."),
       { statusCode: 403 },
     );
   }
@@ -75,36 +60,31 @@ export async function dispatchImport(
   await assertEmployeeLobUploader(rpc_name, userId);
 
   if (rpc_name === "import_attendance_regularization_batch") {
-    const { importRegularizationBatch } =
-      await import("./attendance-regularization-bulk.service.js");
+    const { importRegularizationBatch } = await import("./attendance-regularization-bulk.service.js");
     const data = await importRegularizationBatch(id, userId);
     return { success: true, requires_approval: true, data };
   }
 
   if (rpc_name === "import_leave_application_batch") {
-    const { importLeaveBatch } =
-      await import("./leave-application-bulk.service.js");
+    const { importLeaveBatch } = await import("./leave-application-bulk.service.js");
     const data = await importLeaveBatch(id, userId);
     return { success: true, requires_approval: true, data };
   }
 
   if (rpc_name === "import_incentive_bulk_batch") {
-    const { importIncentiveBatch } =
-      await import("./incentive-bulk.service.js");
+    const { importIncentiveBatch } = await import("./incentive-bulk.service.js");
     const data = await importIncentiveBatch(id, userId);
     return { success: true, requires_approval: true, data };
   }
 
   if (rpc_name === "import_deduction_bulk_batch") {
-    const { importDeductionBatch } =
-      await import("./deduction-bulk.service.js");
+    const { importDeductionBatch } = await import("./deduction-bulk.service.js");
     const data = await importDeductionBatch(id, userId);
     return { success: true, requires_approval: true, data };
   }
 
   if (rpc_name === "import_official_email_update_batch") {
-    const { importOfficialEmailBatch } =
-      await import("../it-provisioning/it-provisioning.bulk.service.js");
+    const { importOfficialEmailBatch } = await import("../it-provisioning/it-provisioning.bulk.service.js");
     const data = await importOfficialEmailBatch(id, userId);
     return { success: true, data };
   }
@@ -116,266 +96,227 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_reporting_manager_update_batch") {
-    const { importReportingManagerBatch } =
-      await import("./reporting-manager-bulk.service.js");
+    const { importReportingManagerBatch } = await import("./reporting-manager-bulk.service.js");
     const data = await importReportingManagerBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_roster_assignment_batch") {
-    const { importRosterAssignmentBatch } =
-      await import("./roster-assignment-bulk.service.js");
+    const { importRosterAssignmentBatch } = await import("./roster-assignment-bulk.service.js");
     const data = await importRosterAssignmentBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_weekoff_preference_batch") {
-    const { importWeekOffPreferenceBatch } =
-      await import("./weekoff-preference-bulk.service.js");
+    const { importWeekOffPreferenceBatch } = await import("./weekoff-preference-bulk.service.js");
     const data = await importWeekOffPreferenceBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_shift_rotation_type_batch") {
-    const { importShiftRotationTypeBatch } =
-      await import("./shift-rotation-type-bulk.service.js");
+    const { importShiftRotationTypeBatch } = await import("./shift-rotation-type-bulk.service.js");
     const data = await importShiftRotationTypeBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_shift_roster_batch") {
-    const { importShiftRosterBatch } =
-      await import("./shift-roster-bulk.service.js");
+    const { importShiftRosterBatch } = await import("./shift-roster-bulk.service.js");
     const data = await importShiftRosterBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_upload_batch") {
-    const { importEmployeeMasterBatch } =
-      await import("./employee-master-bulk.service.js");
+    const { importEmployeeMasterBatch } = await import("./employee-master-bulk.service.js");
     const data = await importEmployeeMasterBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_process_upload_batch") {
-    const { importProcessMasterBatch } =
-      await import("./process-master-bulk.service.js");
+    const { importProcessMasterBatch } = await import("./process-master-bulk.service.js");
     const data = await importProcessMasterBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_department_upload_batch") {
-    const { importDepartmentMasterBatch } =
-      await import("./department-master-bulk.service.js");
+    const { importDepartmentMasterBatch } = await import("./department-master-bulk.service.js");
     const data = await importDepartmentMasterBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_asset_upload_batch") {
-    const { importAssetMasterBatch } =
-      await import("./asset-master-bulk.service.js");
+    const { importAssetMasterBatch } = await import("./asset-master-bulk.service.js");
     const data = await importAssetMasterBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_branch_upload_batch") {
-    const { importBranchMasterBatch } =
-      await import("./branch-master-bulk.service.js");
+    const { importBranchMasterBatch } = await import("./branch-master-bulk.service.js");
     const data = await importBranchMasterBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_lob_upload_batch") {
-    const { importLobMasterBatch } =
-      await import("./lob-master-bulk.service.js");
+    const { importLobMasterBatch } = await import("./lob-master-bulk.service.js");
     const data = await importLobMasterBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_employee_lob_batch") {
-    const { importEmployeeLobBatch } =
-      await import("./employee-lob-bulk.service.js");
+    const { importEmployeeLobBatch } = await import("./employee-lob-bulk.service.js");
     const data = await importEmployeeLobBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_designation_upload_batch") {
-    const { importDesignationMasterBatch } =
-      await import("./designation-master-bulk.service.js");
+    const { importDesignationMasterBatch } = await import("./designation-master-bulk.service.js");
     const data = await importDesignationMasterBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name.startsWith("import_onfido_")) {
-    const { importOnfidoRawBatch, findOnfidoConfig } =
-      await import("./onfido-raw-bulk.service.js");
+    const { importOnfidoRawBatch, findOnfidoConfig } = await import("./onfido-raw-bulk.service.js");
     const config = findOnfidoConfig(rpc_name);
     if (!config) {
-      throw new Error(
-        `No Onfido report config registered for rpc_name '${rpc_name}'.`,
-      );
+      throw new Error(`No Onfido report config registered for rpc_name '${rpc_name}'.`);
     }
     const data = await importOnfidoRawBatch(config, id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_email_ticket_daily_batch") {
-    const { importEmailTicketDailyBatch } =
-      await import("./email-ticket-daily-bulk.service.js");
+    const { importEmailTicketDailyBatch } = await import("./email-ticket-daily-bulk.service.js");
     const data = await importEmailTicketDailyBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_lp_apr_daily_batch") {
-    const { importLpAprDailyBatch } =
-      await import("./lp-apr-daily-bulk.service.js");
+    const { importLpAprDailyBatch } = await import("./lp-apr-daily-bulk.service.js");
     const data = await importLpAprDailyBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_clovia_crm_disposition_batch") {
-    const { importCloviaCrmDispositionBatch } =
-      await import("./clovia-crm-disposition-bulk.service.js");
+    const { importCloviaCrmDispositionBatch } = await import("./clovia-crm-disposition-bulk.service.js");
     const data = await importCloviaCrmDispositionBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_clovia_feedback_batch") {
-    const { importCloviaFeedbackBatch } =
-      await import("./clovia-feedback-bulk.service.js");
+    const { importCloviaFeedbackBatch } = await import("./clovia-feedback-bulk.service.js");
     const data = await importCloviaFeedbackBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_housing_premium_sale_raw_batch") {
-    const { importHousingPremiumSaleRawBatch } =
-      await import("./housing-premium-sale-raw-bulk.service.js");
+    const { importHousingPremiumSaleRawBatch } = await import("./housing-premium-sale-raw-bulk.service.js");
     const data = await importHousingPremiumSaleRawBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_lp_leads_regional_batch") {
-    const { importLpLeadsRegionalBatch } =
-      await import("./lp-leads-bulk.service.js");
+    const { importLpLeadsRegionalBatch } = await import("./lp-leads-bulk.service.js");
     const data = await importLpLeadsRegionalBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_lp_leads_non_regional_batch") {
-    const { importLpLeadsNonRegionalBatch } =
-      await import("./lp-leads-bulk.service.js");
+    const { importLpLeadsNonRegionalBatch } = await import("./lp-leads-bulk.service.js");
     const data = await importLpLeadsNonRegionalBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_gnc_apr_batch") {
-    const { importGncAprMasmisBatch } =
-      await import("./gnc-apr-masmis-bulk.service.js");
+    const { importGncAprMasmisBatch } = await import("./gnc-apr-masmis-bulk.service.js");
     const data = await importGncAprMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_lp_cr_report_regional_batch") {
-    const { importLpCrReportRegionalBatch } =
-      await import("./lp-cdr-cr-report-bulk.service.js");
+    const { importLpCrReportRegionalBatch } = await import("./lp-cdr-cr-report-bulk.service.js");
     const data = await importLpCrReportRegionalBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_lp_cr_report_non_regional_batch") {
-    const { importLpCrReportNonRegionalBatch } =
-      await import("./lp-cdr-cr-report-bulk.service.js");
+    const { importLpCrReportNonRegionalBatch } = await import("./lp-cdr-cr-report-bulk.service.js");
     const data = await importLpCrReportNonRegionalBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_housing_premium_agent_target_batch") {
-    const { importHousingPremiumAgentTargetBatch } =
-      await import("./housing-premium-agent-target-bulk.service.js");
+    const { importHousingPremiumAgentTargetBatch } = await import("./housing-premium-agent-target-bulk.service.js");
     const data = await importHousingPremiumAgentTargetBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_housing_owner_incentive_batch") {
-    const { importHousingOwnerIncentiveBatch } =
-      await import("./housing-owner-incentive-bulk.service.js");
+    const { importHousingOwnerIncentiveBatch } = await import("./housing-owner-incentive-bulk.service.js");
     const data = await importHousingOwnerIncentiveBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_housing_owner_lead_pipeline_batch") {
-    const { importHousingOwnerLeadPipelineBatch } =
-      await import("./housing-owner-lead-pipeline-bulk.service.js");
+    const { importHousingOwnerLeadPipelineBatch } = await import("./housing-owner-lead-pipeline-bulk.service.js");
     const data = await importHousingOwnerLeadPipelineBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bla_bli_blu_dd_tagging_batch") {
-    const { importBlaBliBluDdTaggingBatch } =
-      await import("./bla-bli-blu-dd-tagging-bulk.service.js");
+    const { importBlaBliBluDdTaggingBatch } = await import("./bla-bli-blu-dd-tagging-bulk.service.js");
     const data = await importBlaBliBluDdTaggingBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_gnc_sale_masmis_batch") {
-    const { importGncSaleMasmisBatch } =
-      await import("./gnc-sale-masmis-bulk.service.js");
+    const { importGncSaleMasmisBatch } = await import("./gnc-sale-masmis-bulk.service.js");
     const data = await importGncSaleMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_reginald_abandoned_cart_sales_batch") {
-    const { importReginaldAbandonedCartSalesBatch } =
-      await import("./reginald-abandoned-cart-sales-bulk.service.js");
+    const { importReginaldAbandonedCartSalesBatch } = await import("./reginald-abandoned-cart-sales-bulk.service.js");
     const data = await importReginaldAbandonedCartSalesBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bla_bli_blu_auto_callback_batch") {
-    const { importBlaBliBluAutoCallbackBatch } =
-      await import("./bla-bli-blu-auto-callback-bulk.service.js");
+    const { importBlaBliBluAutoCallbackBatch } = await import("./bla-bli-blu-auto-callback-bulk.service.js");
     const data = await importBlaBliBluAutoCallbackBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bla_bli_blu_after_hour_batch") {
-    const { importBlaBliBluAfterHourBatch } =
-      await import("./bla-bli-blu-after-hour-bulk.service.js");
+    const { importBlaBliBluAfterHourBatch } = await import("./bla-bli-blu-after-hour-bulk.service.js");
     const data = await importBlaBliBluAfterHourBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bla_bli_blu_call_disposition_batch") {
-    const { importBlaBliBluCallDispositionBatch } =
-      await import("./bla-bli-blu-call-disposition-bulk.service.js");
+    const { importBlaBliBluCallDispositionBatch } = await import("./bla-bli-blu-call-disposition-bulk.service.js");
     const data = await importBlaBliBluCallDispositionBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bla_bli_blu_shopify_sales_batch") {
-    const { importBlaBliBluShopifySalesBatch } =
-      await import("./bla-bli-blu-shopify-sales-bulk.service.js");
+    const { importBlaBliBluShopifySalesBatch } = await import("./bla-bli-blu-shopify-sales-bulk.service.js");
     const data = await importBlaBliBluShopifySalesBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bb_sale_masmis_batch") {
-    const { importBbSaleMasmisBatch } =
-      await import("./bb-sale-masmis-bulk.service.js");
+    const { importBbSaleMasmisBatch } = await import("./bb-sale-masmis-bulk.service.js");
     const data = await importBbSaleMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bb_apr_masmis_batch") {
-    const { importBbAprMasmisBatch } =
-      await import("./bb-apr-masmis-bulk.service.js");
+    const { importBbAprMasmisBatch } = await import("./bb-apr-masmis-bulk.service.js");
     const data = await importBbAprMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bb_cart_masmis_batch") {
-    const { importBbCartMasmisBatch } =
-      await import("./bb-cart-masmis-bulk.service.js");
+    const { importBbCartMasmisBatch } = await import("./bb-cart-masmis-bulk.service.js");
     const data = await importBbCartMasmisBatch(id, userId);
     return { success: true, data };
   }
@@ -387,15 +328,13 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_bb_chat_masmis_batch") {
-    const { importBbChatMasmisBatch } =
-      await import("./bb-chat-masmis-bulk.service.js");
+    const { importBbChatMasmisBatch } = await import("./bb-chat-masmis-bulk.service.js");
     const data = await importBbChatMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_process_manual_kpi_batch") {
-    const { importProcessManualKpiBatch } =
-      await import("./process-manual-kpi-bulk.service.js");
+    const { importProcessManualKpiBatch } = await import("./process-manual-kpi-bulk.service.js");
     const data = await importProcessManualKpiBatch(id, userId);
     return { success: true, data };
   }
@@ -407,29 +346,25 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_bla_bli_blu_overall_sales_batch") {
-    const { importBlaBliBluOverallSalesBatch } =
-      await import("./bla-bli-blu-overall-sales-bulk.service.js");
+    const { importBlaBliBluOverallSalesBatch } = await import("./bla-bli-blu-overall-sales-bulk.service.js");
     const data = await importBlaBliBluOverallSalesBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_clovia_team_alignment_batch") {
-    const { importCloviaTeamAlignmentBatch } =
-      await import("./clovia-team-alignment-bulk.service.js");
+    const { importCloviaTeamAlignmentBatch } = await import("./clovia-team-alignment-bulk.service.js");
     const data = await importCloviaTeamAlignmentBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_dalmia_after_hour_batch") {
-    const { importDalmiaAfterHourBatch } =
-      await import("./dalmia-after-hour-bulk.service.js");
+    const { importDalmiaAfterHourBatch } = await import("./dalmia-after-hour-bulk.service.js");
     const data = await importDalmiaAfterHourBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_dalmia_apr_batch") {
-    const { importDalmiaAprBatch } =
-      await import("./dalmia-apr-bulk.service.js");
+    const { importDalmiaAprBatch } = await import("./dalmia-apr-bulk.service.js");
     const data = await importDalmiaAprBatch(id, userId);
     return { success: true, data };
   }
@@ -441,8 +376,7 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_dalmia_outbound_batch") {
-    const { importDalmiaOutboundBatch } =
-      await import("./dalmia-outbound-bulk.service.js");
+    const { importDalmiaOutboundBatch } = await import("./dalmia-outbound-bulk.service.js");
     const data = await importDalmiaOutboundBatch(id, userId);
     return { success: true, data };
   }
@@ -496,41 +430,34 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_domestic_billing_approved_hc_batch") {
-    const { importDomesticBillingApprovedHcBatch } =
-      await import("./domestic-billing-approved-hc-bulk.service.js");
+    const { importDomesticBillingApprovedHcBatch } = await import("./domestic-billing-approved-hc-bulk.service.js");
     const data = await importDomesticBillingApprovedHcBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_gs1_email_daily_batch") {
-    const { importGs1EmailDailyBatch } =
-      await import("./gs1-email-daily-bulk.service.js");
+    const { importGs1EmailDailyBatch } = await import("./gs1-email-daily-bulk.service.js");
     const data = await importGs1EmailDailyBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_gs1_datakart_daily_batch") {
-    const { importGs1DatakartDailyBatch } =
-      await import("./gs1-datakart-daily-bulk.service.js");
+    const { importGs1DatakartDailyBatch } = await import("./gs1-datakart-daily-bulk.service.js");
     const data = await importGs1DatakartDailyBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_gs1_approval_audit_batch") {
-    const { importGs1ApprovalAuditBatch } =
-      await import("./gs1-approval-audit-bulk.service.js");
+    const { importGs1ApprovalAuditBatch } = await import("./gs1-approval-audit-bulk.service.js");
     const data = await importGs1ApprovalAuditBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name.startsWith("import_bella_")) {
-    const { importBellaRawBatch, findBellaConfig } =
-      await import("./bella-raw-bulk.service.js");
+    const { importBellaRawBatch, findBellaConfig } = await import("./bella-raw-bulk.service.js");
     const config = findBellaConfig(rpc_name);
     if (!config) {
-      throw new Error(
-        `No Bella Vita report config registered for rpc_name '${rpc_name}'.`,
-      );
+      throw new Error(`No Bella Vita report config registered for rpc_name '${rpc_name}'.`);
     }
     const data = await importBellaRawBatch(config, id, userId);
     return { success: true, data };
@@ -541,8 +468,7 @@ export async function dispatchImport(
   // every one of these 24 types 501'd on Process Performance V2 despite having a real,
   // already-tested importer sitting right here unreachable.
   if (rpc_name === "import_owner_sale_batch") {
-    const { importOwnerSaleBatch } =
-      await import("./owner-sale-bulk.service.js");
+    const { importOwnerSaleBatch } = await import("./owner-sale-bulk.service.js");
     const data = await importOwnerSaleBatch(id, userId);
     return { success: true, data };
   }
@@ -554,8 +480,7 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_owner_agent_details_batch") {
-    const { importOwnerAgentDetailsBatch } =
-      await import("./owner-agent-details-bulk.service.js");
+    const { importOwnerAgentDetailsBatch } = await import("./owner-agent-details-bulk.service.js");
     const data = await importOwnerAgentDetailsBatch(id, userId);
     return { success: true, data };
   }
@@ -573,8 +498,7 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_pre_agent_details_batch") {
-    const { importPreAgentDetailsBatch } =
-      await import("./pre-agent-details-bulk.service.js");
+    const { importPreAgentDetailsBatch } = await import("./pre-agent-details-bulk.service.js");
     const data = await importPreAgentDetailsBatch(id, userId);
     return { success: true, data };
   }
@@ -598,15 +522,13 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_cl_email_raw_batch") {
-    const { importClEmailRawBatch } =
-      await import("./cl-email-raw-bulk.service.js");
+    const { importClEmailRawBatch } = await import("./cl-email-raw-bulk.service.js");
     const data = await importClEmailRawBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_cl_feedback_batch") {
-    const { importClFeedbackBatch } =
-      await import("./cl-feedback-bulk.service.js");
+    const { importClFeedbackBatch } = await import("./cl-feedback-bulk.service.js");
     const data = await importClFeedbackBatch(id, userId);
     return { success: true, data };
   }
@@ -618,43 +540,37 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_cl_outbound_batch") {
-    const { importClOutboundBatch } =
-      await import("./cl-outbound-bulk.service.js");
+    const { importClOutboundBatch } = await import("./cl-outbound-bulk.service.js");
     const data = await importClOutboundBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_cl_quality_batch") {
-    const { importClQualityBatch } =
-      await import("./cl-quality-bulk.service.js");
+    const { importClQualityBatch } = await import("./cl-quality-bulk.service.js");
     const data = await importClQualityBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_cl_rechurn_call_batch") {
-    const { importClRechurnCallBatch } =
-      await import("./cl-rechurn-call-bulk.service.js");
+    const { importClRechurnCallBatch } = await import("./cl-rechurn-call-bulk.service.js");
     const data = await importClRechurnCallBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_birlanu_sale_batch") {
-    const { importBirlanuSaleBatch } =
-      await import("./birlanu-sale-bulk.service.js");
+    const { importBirlanuSaleBatch } = await import("./birlanu-sale-bulk.service.js");
     const data = await importBirlanuSaleBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_birlanu_apr_batch") {
-    const { importBirlanuAprBatch } =
-      await import("./birlanu-apr-bulk.service.js");
+    const { importBirlanuAprBatch } = await import("./birlanu-apr-bulk.service.js");
     const data = await importBirlanuAprBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_satya_allocation_batch") {
-    const { importSatyaAllocationBatch } =
-      await import("./satya-allocation-bulk.service.js");
+    const { importSatyaAllocationBatch } = await import("./satya-allocation-bulk.service.js");
     const data = await importSatyaAllocationBatch(id, userId);
     return { success: true, data };
   }
@@ -666,29 +582,25 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_lp_feedback_apr_batch") {
-    const { importLpFeedbackAprBatch } =
-      await import("./lp-feedback-apr-bulk.service.js");
+    const { importLpFeedbackAprBatch } = await import("./lp-feedback-apr-bulk.service.js");
     const data = await importLpFeedbackAprBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_lp_feedback_cdr_batch") {
-    const { importLpFeedbackCdrBatch } =
-      await import("./lp-feedback-cdr-bulk.service.js");
+    const { importLpFeedbackCdrBatch } = await import("./lp-feedback-cdr-bulk.service.js");
     const data = await importLpFeedbackCdrBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_lp_onboarding_apr_batch") {
-    const { importLpOnboardingAprBatch } =
-      await import("./lp-onboarding-apr-bulk.service.js");
+    const { importLpOnboardingAprBatch } = await import("./lp-onboarding-apr-bulk.service.js");
     const data = await importLpOnboardingAprBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_lp_onboarding_cdr_batch") {
-    const { importLpOnboardingCdrBatch } =
-      await import("./lp-onboarding-cdr-bulk.service.js");
+    const { importLpOnboardingCdrBatch } = await import("./lp-onboarding-cdr-bulk.service.js");
     const data = await importLpOnboardingCdrBatch(id, userId);
     return { success: true, data };
   }
@@ -700,199 +612,157 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_neemans_chat_batch") {
-    const { importNeemansChatBatch } =
-      await import("./neemans-chat-bulk.service.js");
+    const { importNeemansChatBatch } = await import("./neemans-chat-bulk.service.js");
     const data = await importNeemansChatBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_gnc_allocation_masmis_batch") {
-    const { importGncAllocationMasmisBatch } =
-      await import("./gnc-allocation-masmis-bulk.service.js");
+    const { importGncAllocationMasmisBatch } = await import("./gnc-allocation-masmis-bulk.service.js");
     const data = await importGncAllocationMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_neemans_sale_raw_masmis_batch") {
-    const { importNeemansSaleRawMasmisBatch } =
-      await import("./neemans-sale-raw-masmis-bulk.service.js");
+    const { importNeemansSaleRawMasmisBatch } = await import("./neemans-sale-raw-masmis-bulk.service.js");
     const data = await importNeemansSaleRawMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_neemans_allocation_masmis_batch") {
-    const { importNeemansAllocationMasmisBatch } =
-      await import("./neemans-allocation-masmis-bulk.service.js");
+    const { importNeemansAllocationMasmisBatch } = await import("./neemans-allocation-masmis-bulk.service.js");
     const data = await importNeemansAllocationMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_neemans_apr_masmis_batch") {
-    const { importNeemansAprMasmisBatch } =
-      await import("./neemans-apr-masmis-bulk.service.js");
+    const { importNeemansAprMasmisBatch } = await import("./neemans-apr-masmis-bulk.service.js");
     const data = await importNeemansAprMasmisBatch(id, userId);
     return { success: true, data };
   }
 
-  if (
-    rpc_name === "import_aw_chat_batch" ||
-    rpc_name === "import_aw_chat_masmis_batch"
-  ) {
+  if (rpc_name === "import_aw_chat_batch" || rpc_name === "import_aw_chat_masmis_batch") {
     const { importAwChatBatch } = await import("./aw-chat-bulk.service.js");
     const data = await importAwChatBatch(id, userId);
     return { success: true, data };
   }
 
-  if (
-    rpc_name === "import_aw_out_batch" ||
-    rpc_name === "import_aw_out_masmis_batch"
-  ) {
+  if (rpc_name === "import_aw_out_batch" || rpc_name === "import_aw_out_masmis_batch") {
     const { importAwOutBatch } = await import("./aw-out-bulk.service.js");
     const data = await importAwOutBatch(id, userId);
     return { success: true, data };
   }
 
-  if (
-    rpc_name === "import_aw_billing_batch" ||
-    rpc_name === "import_aw_billing_masmis_batch"
-  ) {
-    const { importAwBillingBatch } =
-      await import("./aw-billing-bulk.service.js");
+  if (rpc_name === "import_aw_billing_batch" || rpc_name === "import_aw_billing_masmis_batch") {
+    const { importAwBillingBatch } = await import("./aw-billing-bulk.service.js");
     const data = await importAwBillingBatch(id, userId);
     return { success: true, data };
   }
 
-  if (
-    rpc_name === "import_aw_mandate_batch" ||
-    rpc_name === "import_aw_mandate_masmis_batch"
-  ) {
-    const { importAwMandateBatch } =
-      await import("./aw-mandate-bulk.service.js");
+  if (rpc_name === "import_aw_mandate_batch" || rpc_name === "import_aw_mandate_masmis_batch") {
+    const { importAwMandateBatch } = await import("./aw-mandate-bulk.service.js");
     const data = await importAwMandateBatch(id, userId);
     return { success: true, data };
   }
 
-  if (
-    rpc_name === "import_aw_inbound_batch" ||
-    rpc_name === "import_aw_inbound_masmis_batch"
-  ) {
-    const { importAwInboundBatch } =
-      await import("./aw-inbound-bulk.service.js");
+  if (rpc_name === "import_aw_inbound_batch" || rpc_name === "import_aw_inbound_masmis_batch") {
+    const { importAwInboundBatch } = await import("./aw-inbound-bulk.service.js");
     const data = await importAwInboundBatch(id, userId);
     return { success: true, data };
   }
 
-  if (
-    rpc_name === "import_aw_new_cdr_batch" ||
-    rpc_name === "import_aw_new_cdr_masmis_batch"
-  ) {
-    const { importAwNewCdrBatch } =
-      await import("./aw-new-cdr-bulk.service.js");
+  if (rpc_name === "import_aw_new_cdr_batch" || rpc_name === "import_aw_new_cdr_masmis_batch") {
+    const { importAwNewCdrBatch } = await import("./aw-new-cdr-bulk.service.js");
     const data = await importAwNewCdrBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_neemans_month_target_batch") {
-    const { importNeemansMonthTargetBatch } =
-      await import("./neemans-month-target-bulk.service.js");
+    const { importNeemansMonthTargetBatch } = await import("./neemans-month-target-bulk.service.js");
     const data = await importNeemansMonthTargetBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_neemans_agent_details_batch") {
-    const { importNeemansAgentDetailsBatch } =
-      await import("./neemans-agent-details-bulk.service.js");
+    const { importNeemansAgentDetailsBatch } = await import("./neemans-agent-details-bulk.service.js");
     const data = await importNeemansAgentDetailsBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_neemans_cart_masmis_batch") {
-    const { importNeemansCartMasmisBatch } =
-      await import("./neemans-cart-masmis-bulk.service.js");
+    const { importNeemansCartMasmisBatch } = await import("./neemans-cart-masmis-bulk.service.js");
     const data = await importNeemansCartMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bvo_repeat_cdr_masmis_batch") {
-    const { importBvoRepeatCdrMasmisBatch } =
-      await import("./bvo-repeat-cdr-masmis-bulk.service.js");
+    const { importBvoRepeatCdrMasmisBatch } = await import("./bvo-repeat-cdr-masmis-bulk.service.js");
     const data = await importBvoRepeatCdrMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bvo_repeat_allocation_masmis_batch") {
-    const { importBvoRepeatAllocationMasmisBatch } =
-      await import("./bvo-repeat-allocation-masmis-bulk.service.js");
+    const { importBvoRepeatAllocationMasmisBatch } = await import("./bvo-repeat-allocation-masmis-bulk.service.js");
     const data = await importBvoRepeatAllocationMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bvo_order_export_masmis_batch") {
-    const { importBvoOrderExportMasmisBatch } =
-      await import("./bvo-order-export-masmis-bulk.service.js");
+    const { importBvoOrderExportMasmisBatch } = await import("./bvo-order-export-masmis-bulk.service.js");
     const data = await importBvoOrderExportMasmisBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_clovia_email_daily_batch") {
-    const { importCloviaEmailDailyBatch } =
-      await import("./clovia-email-daily-bulk.service.js");
+    const { importCloviaEmailDailyBatch } = await import("./clovia-email-daily-bulk.service.js");
     const data = await importCloviaEmailDailyBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_clovia_chat_daily_batch") {
-    const { importCloviaChatDailyBatch } =
-      await import("./clovia-chat-daily-bulk.service.js");
+    const { importCloviaChatDailyBatch } = await import("./clovia-chat-daily-bulk.service.js");
     const data = await importCloviaChatDailyBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_clovia_quality_audit_batch") {
-    const { importCloviaQualityAuditBatch } =
-      await import("./clovia-quality-audit-bulk.service.js");
+    const { importCloviaQualityAuditBatch } = await import("./clovia-quality-audit-bulk.service.js");
     const data = await importCloviaQualityAuditBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_clovia_rechurn_calls_batch") {
-    const { importCloviaRechurnCallsBatch } =
-      await import("./clovia-rechurn-calls-bulk.service.js");
+    const { importCloviaRechurnCallsBatch } = await import("./clovia-rechurn-calls-bulk.service.js");
     const data = await importCloviaRechurnCallsBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_compliance_audit_batch") {
-    const { importComplianceAuditBatch } =
-      await import("./compliance-audit-bulk.service.js");
+    const { importComplianceAuditBatch } = await import("./compliance-audit-bulk.service.js");
     const data = await importComplianceAuditBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_process_delivery_batch") {
-    const { importProcessDeliveryBatch } =
-      await import("./process-delivery-bulk.service.js");
+    const { importProcessDeliveryBatch } = await import("./process-delivery-bulk.service.js");
     const data = await importProcessDeliveryBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_housing_owner_sale_raw_batch") {
-    const { importHousingOwnerSaleRawBatch } =
-      await import("./housing-owner-sale-raw-bulk.service.js");
+    const { importHousingOwnerSaleRawBatch } = await import("./housing-owner-sale-raw-bulk.service.js");
     const data = await importHousingOwnerSaleRawBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_du_apr_korea_batch") {
-    const { importDuAprKoreaBatch } =
-      await import("./du-apr-daily-bulk.service.js");
+    const { importDuAprKoreaBatch } = await import("./du-apr-daily-bulk.service.js");
     const data = await importDuAprKoreaBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_du_apr_thailand_batch") {
-    const { importDuAprThailandBatch } =
-      await import("./du-apr-daily-bulk.service.js");
+    const { importDuAprThailandBatch } = await import("./du-apr-daily-bulk.service.js");
     const data = await importDuAprThailandBatch(id, userId);
     return { success: true, data };
   }
@@ -922,40 +792,32 @@ export async function dispatchImport(
   }
 
   if (rpc_name === "import_du_team_mapping_korea_batch") {
-    const { importDuTeamMappingKoreaBatch } =
-      await import("./du-team-mapping-bulk.service.js");
+    const { importDuTeamMappingKoreaBatch } = await import("./du-team-mapping-bulk.service.js");
     const data = await importDuTeamMappingKoreaBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_du_team_mapping_thailand_batch") {
-    const { importDuTeamMappingThailandBatch } =
-      await import("./du-team-mapping-bulk.service.js");
+    const { importDuTeamMappingThailandBatch } = await import("./du-team-mapping-bulk.service.js");
     const data = await importDuTeamMappingThailandBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name === "import_bella_repeat_alignment_batch") {
-    const { importBellaRepeatAlignmentBatch } =
-      await import("./bella-repeat-alignment-bulk.service.js");
+    const { importBellaRepeatAlignmentBatch } = await import("./bella-repeat-alignment-bulk.service.js");
     const data = await importBellaRepeatAlignmentBatch(id, userId);
     return { success: true, data };
   }
 
   if (rpc_name.startsWith("import_bella_")) {
-    const { importBellaRawBatch, findBellaConfig } =
-      await import("./bella-raw-bulk.service.js");
+    const { importBellaRawBatch, findBellaConfig } = await import("./bella-raw-bulk.service.js");
     const config = findBellaConfig(rpc_name);
     if (!config) {
-      throw new Error(
-        `No Bella report config registered for rpc_name '${rpc_name}'.`,
-      );
+      throw new Error(`No Bella report config registered for rpc_name '${rpc_name}'.`);
     }
     const data = await importBellaRawBatch(config, id, userId);
     return { success: true, data };
   }
 
-  throw new Error(
-    `Import function '${rpc_name}' for batch ${id} is not yet implemented in the MySQL backend.`,
-  );
+  throw new Error(`Import function '${rpc_name}' for batch ${id} is not yet implemented in the MySQL backend.`);
 }

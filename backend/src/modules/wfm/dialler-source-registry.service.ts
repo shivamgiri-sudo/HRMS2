@@ -4,31 +4,30 @@
 // Column_Mapping — criteria 16.12-16.14) is a later UI/admin-screen phase; this service only
 // resolves an already-registered source and validates a declared Metric_Availability list.
 
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
 
 // E14's vocabulary, the complete set of metrics any Dialler_Source may declare.
 export const PRODUCTIVITY_METRICS = [
-  "calls",
-  "wait_time",
-  "talk_time",
-  "dispo_time",
-  "pause_time",
-  "aht",
-  "login_time",
-  "logout_time",
-  "net_login",
-  "bio",
-  "lunch",
-  "qa",
-  "dismx",
-  "training",
+  'calls',
+  'wait_time',
+  'talk_time',
+  'dispo_time',
+  'pause_time',
+  'aht',
+  'login_time',
+  'logout_time',
+  'net_login',
+  'bio',
+  'lunch',
+  'qa',
+  'dismx',
+  'training',
 ] as const;
 
-export function validateMetricAvailability(declared: string[]): {
-  valid: boolean;
-  invalidMetrics: string[];
-} {
+export function validateMetricAvailability(
+  declared: string[],
+): { valid: boolean; invalidMetrics: string[] } {
   const invalidMetrics = declared.filter(
     (m) => !(PRODUCTIVITY_METRICS as readonly string[]).includes(m),
   );
@@ -38,7 +37,7 @@ export function validateMetricAvailability(declared: string[]): {
 interface DiallerSourceRow extends RowDataPacket {
   id: string;
   source_key: string;
-  ingestion_mode: "integrated_pull" | "manual_upload";
+  ingestion_mode: 'integrated_pull' | 'manual_upload';
   metric_availability: string;
 }
 
@@ -53,7 +52,7 @@ export async function resolveActiveDiallerSource(
 ): Promise<{
   id: string;
   sourceKey: string;
-  ingestionMode: "integrated_pull" | "manual_upload";
+  ingestionMode: 'integrated_pull' | 'manual_upload';
   metricAvailability: string[];
 } | null> {
   const [rows] = await db.execute<DiallerSourceRow[]>(
@@ -71,7 +70,7 @@ export async function resolveActiveDiallerSource(
 
   const row = rows[0];
   const metricAvailability =
-    typeof row.metric_availability === "string"
+    typeof row.metric_availability === 'string'
       ? JSON.parse(row.metric_availability)
       : row.metric_availability;
 

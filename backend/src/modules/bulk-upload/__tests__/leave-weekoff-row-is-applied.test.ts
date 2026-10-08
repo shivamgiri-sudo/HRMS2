@@ -23,24 +23,14 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const execute = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: (...a: unknown[]) => execute(...a) },
-}));
-vi.mock("../lock-retry.js", () => ({
-  withBulkLockRetry: (fn: () => Promise<unknown>) => fn(),
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
+vi.mock("../lock-retry.js", () => ({ withBulkLockRetry: (fn: () => Promise<unknown>) => fn() }));
 
 const { markRowFailed } = await import("../bulk-approval.service.js");
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const leaveBulkSrc = fs.readFileSync(
-  path.resolve(DIR, "..", "leave-application-bulk.service.ts"),
-  "utf8",
-);
-const leaveSrc = fs.readFileSync(
-  path.resolve(DIR, "../../leave/leave.service.ts"),
-  "utf8",
-);
+const leaveBulkSrc = fs.readFileSync(path.resolve(DIR, "..", "leave-application-bulk.service.ts"), "utf8");
+const leaveSrc = fs.readFileSync(path.resolve(DIR, "../../leave/leave.service.ts"), "utf8");
 
 beforeEach(() => execute.mockReset());
 
@@ -57,9 +47,7 @@ describe("submitting a leave is not roster-validated", () => {
     expect(leaveSrc).toContain(
       "const effectiveDayCount = chargeableCount > 0 ? chargeableCount : submitClassification.size;",
     );
-    expect(leaveSrc).toContain(
-      "const storedDays = isHalfDay ? 0.5 : effectiveDayCount;",
-    );
+    expect(leaveSrc).toContain("const storedDays = isHalfDay ? 0.5 : effectiveDayCount;");
   });
 
   it("measures policy caps against the same count it stores", () => {

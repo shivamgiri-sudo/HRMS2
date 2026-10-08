@@ -19,29 +19,13 @@ const { hasRoleForRequest, getEmployeeForUser } = vi.hoisted(() => ({
   hasRoleForRequest: vi.fn(async () => false),
   getEmployeeForUser: vi.fn(async () => ({ id: "emp-caller-1" })),
 }));
-vi.mock("../../../shared/accessGuard.js", () => ({
-  hasRoleForRequest,
-  getEmployeeForUser,
-}));
+vi.mock("../../../shared/accessGuard.js", () => ({ hasRoleForRequest, getEmployeeForUser }));
 
-const { resolveUserBusinessScope, buildProcessScopeCondition } = vi.hoisted(
-  () => ({
-    resolveUserBusinessScope: vi.fn(async () => ({
-      isSuperAdmin: false,
-      isAdmin: false,
-      isHr: false,
-      roles: ["branch_it"],
-    })),
-    buildProcessScopeCondition: vi.fn(() => ({
-      sql: "e.branch_id = ?",
-      params: ["branch-1"],
-    })),
-  }),
-);
-vi.mock("../../../shared/enterpriseScope.js", () => ({
-  resolveUserBusinessScope,
-  buildProcessScopeCondition,
+const { resolveUserBusinessScope, buildProcessScopeCondition } = vi.hoisted(() => ({
+  resolveUserBusinessScope: vi.fn(async () => ({ isSuperAdmin: false, isAdmin: false, isHr: false, roles: ["branch_it"] })),
+  buildProcessScopeCondition: vi.fn(() => ({ sql: "e.branch_id = ?", params: ["branch-1"] })),
 }));
+vi.mock("../../../shared/enterpriseScope.js", () => ({ resolveUserBusinessScope, buildProcessScopeCondition }));
 
 // 2026-08-24: resolveHelpdeskTicketScope now also reads the caller's real held roles (not
 // hasRoleForRequest, which has "admin/super_admin passes any role check" baked in elsewhere on
@@ -53,21 +37,9 @@ const { getUserRoleKeys } = vi.hoisted(() => ({
 }));
 vi.mock("../../../shared/scopeAccess.js", () => ({ getUserRoleKeys }));
 
-const {
-  listTickets,
-  getTicket,
-  updateTicket,
-  reopenTicket,
-  takeTicket,
-  holdTicket,
-  addComment,
-} = vi.hoisted(() => ({
+const { listTickets, getTicket, updateTicket, reopenTicket, takeTicket, holdTicket, addComment } = vi.hoisted(() => ({
   listTickets: vi.fn(async () => [{ id: "t-1" }]),
-  getTicket: vi.fn(async () => ({
-    id: "t-1",
-    employee_id: "emp-owner",
-    comments: [],
-  })),
+  getTicket: vi.fn(async () => ({ id: "t-1", employee_id: "emp-owner", comments: [] })),
   updateTicket: vi.fn(async () => ({ id: "t-1", updated: true })),
   reopenTicket: vi.fn(async () => ({ id: "t-1", status: "reopened" })),
   takeTicket: vi.fn(async () => ({ id: "t-1", assigned_to: "u-it-1" })),
@@ -75,29 +47,14 @@ const {
   addComment: vi.fn(async () => "comment-1"),
 }));
 vi.mock("../helpdesk.service.js", () => ({
-  helpdeskService: {
-    listTickets,
-    getTicket,
-    updateTicket,
-    reopenTicket,
-    takeTicket,
-    holdTicket,
-    addComment,
-    rateTicket: vi.fn(),
-  },
+  helpdeskService: { listTickets, getTicket, updateTicket, reopenTicket, takeTicket, holdTicket, addComment, rateTicket: vi.fn() },
   writeSensitiveAuditLog: vi.fn(async () => undefined),
   // Real mapping, not a stub — this IS the thing under test in the category-RBAC describe
   // block below, and routes.ts derives ROLE_OWNED_CATEGORIES from it at module load.
   CATEGORY_OWNER_ROLES: {
     it: ["it", "branch_it", "it_admin"],
-    hr: ["hr"],
-    leave: ["hr"],
-    payroll: ["hr"],
-    attendance: ["admin"],
-    admin: ["admin"],
-    asset: ["admin"],
-    general: ["admin"],
-    other: ["admin"],
+    hr: ["hr"], leave: ["hr"], payroll: ["hr"],
+    attendance: ["admin"], admin: ["admin"], asset: ["admin"], general: ["admin"], other: ["admin"],
   },
 }));
 
@@ -119,16 +76,10 @@ vi.mock("../helpdesk-sla.service.js", () => ({
 
 const actor = { id: "u-it-1", role: "branch_it" };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../../middleware/authMiddleware.js")
-    >();
+  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.authUser = actor;
-      next();
-    },
+    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
   };
 });
 vi.mock("../../../middleware/requireRole.js", () => ({
@@ -147,43 +98,23 @@ function app() {
 beforeEach(() => {
   hasRoleForRequest.mockClear().mockResolvedValue(false);
   getEmployeeForUser.mockClear().mockResolvedValue({ id: "emp-caller-1" });
-  resolveUserBusinessScope
-    .mockClear()
-    .mockResolvedValue({
-      isSuperAdmin: false,
-      isAdmin: false,
-      isHr: false,
-      roles: ["branch_it"],
-    });
-  buildProcessScopeCondition
-    .mockClear()
-    .mockReturnValue({ sql: "e.branch_id = ?", params: ["branch-1"] });
+  resolveUserBusinessScope.mockClear().mockResolvedValue({ isSuperAdmin: false, isAdmin: false, isHr: false, roles: ["branch_it"] });
+  buildProcessScopeCondition.mockClear().mockReturnValue({ sql: "e.branch_id = ?", params: ["branch-1"] });
   getUserRoleKeys.mockClear().mockResolvedValue(["branch_it"]);
   listTickets.mockClear().mockResolvedValue([{ id: "t-1" }]);
-  getTicket
-    .mockClear()
-    .mockResolvedValue({ id: "t-1", employee_id: "emp-owner", comments: [] });
+  getTicket.mockClear().mockResolvedValue({ id: "t-1", employee_id: "emp-owner", comments: [] });
   updateTicket.mockClear().mockResolvedValue({ id: "t-1", updated: true });
-  takeTicket
-    .mockClear()
-    .mockResolvedValue({ id: "t-1", assigned_to: "u-it-1" });
+  takeTicket.mockClear().mockResolvedValue({ id: "t-1", assigned_to: "u-it-1" });
   holdTicket.mockClear().mockResolvedValue({ id: "t-1", status: "on_hold" });
   addComment.mockClear().mockResolvedValue("comment-1");
-  getSupportCommandCenter
-    .mockClear()
-    .mockResolvedValue({ stats: { total_tickets: 0 } });
+  getSupportCommandCenter.mockClear().mockResolvedValue({ stats: { total_tickets: 0 } });
 });
 
 describe("GET /api/helpdesk/tickets — row scope for branch_it/it/it_admin", () => {
   it("super_admin still gets 1=1 (fully unrestricted, unchanged)", async () => {
-    hasRoleForRequest.mockImplementation(async (_user, ...roles: string[]) =>
-      roles.includes("super_admin"),
-    );
+    hasRoleForRequest.mockImplementation(async (_user, ...roles: string[]) => roles.includes("super_admin"));
     await request(app()).get("/api/helpdesk/tickets");
-    expect(listTickets).toHaveBeenCalledWith(expect.anything(), {
-      sql: "1=1",
-      params: [],
-    });
+    expect(listTickets).toHaveBeenCalledWith(expect.anything(), { sql: "1=1", params: [] });
     expect(resolveUserBusinessScope).not.toHaveBeenCalled();
     expect(getUserRoleKeys).not.toHaveBeenCalled();
   });
@@ -197,9 +128,7 @@ describe("GET /api/helpdesk/tickets — row scope for branch_it/it/it_admin", ()
     await request(app()).get("/api/helpdesk/tickets");
     const [, scope] = listTickets.mock.calls[0];
     expect(scope.sql).toBe("t.category IN (?,?,?,?,?)");
-    expect(scope.params.sort()).toEqual(
-      ["admin", "asset", "attendance", "general", "other"].sort(),
-    );
+    expect(scope.params.sort()).toEqual(["admin", "asset", "attendance", "general", "other"].sort());
   });
 
   it("branch_it gets a real scope condition AND a category restriction, not unrestricted access", async () => {
@@ -225,16 +154,7 @@ describe("GET /api/helpdesk/tickets — row scope for branch_it/it/it_admin", ()
     await request(app()).get("/api/helpdesk/tickets");
     const [, scope] = listTickets.mock.calls[0];
     expect(scope.params.sort()).toEqual(
-      [
-        "hr",
-        "leave",
-        "payroll",
-        "admin",
-        "asset",
-        "attendance",
-        "general",
-        "other",
-      ].sort(),
+      ["hr", "leave", "payroll", "admin", "asset", "attendance", "general", "other"].sort(),
     );
   });
 
@@ -246,10 +166,7 @@ describe("GET /api/helpdesk/tickets — row scope for branch_it/it/it_admin", ()
     });
     buildProcessScopeCondition.mockReturnValue({ sql: "1=0", params: [] });
     await request(app()).get("/api/helpdesk/tickets");
-    expect(listTickets).toHaveBeenCalledWith(expect.anything(), {
-      sql: "1=0",
-      params: [],
-    });
+    expect(listTickets).toHaveBeenCalledWith(expect.anything(), { sql: "1=0", params: [] });
   });
 });
 
@@ -283,55 +200,43 @@ describe("mutation routes — out-of-scope ticket is refused before any write", 
 
   it("PATCH /tickets/:id 404s and never calls updateTicket when the scoped fetch returns null", async () => {
     getTicket.mockResolvedValueOnce(null); // out of scope
-    const res = await request(app())
-      .patch("/api/helpdesk/tickets/t-1")
-      .send({ status: "in_progress" });
+    const res = await request(app()).patch("/api/helpdesk/tickets/t-1").send({ status: "in_progress" });
     expect(res.status).toBe(404);
     expect(updateTicket).not.toHaveBeenCalled();
   });
 
   it("POST /tickets/:id/assign 404s and never calls updateTicket for an out-of-scope ticket", async () => {
     getTicket.mockResolvedValueOnce(null);
-    const res = await request(app())
-      .post("/api/helpdesk/tickets/t-1/assign")
-      .send({ assigned_to: "u-2" });
+    const res = await request(app()).post("/api/helpdesk/tickets/t-1/assign").send({ assigned_to: "u-2" });
     expect(res.status).toBe(404);
     expect(updateTicket).not.toHaveBeenCalled();
   });
 
   it("PATCH /tickets/:id proceeds when the ticket is in scope", async () => {
-    const res = await request(app())
-      .patch("/api/helpdesk/tickets/t-1")
-      .send({ status: "in_progress" });
+    const res = await request(app()).patch("/api/helpdesk/tickets/t-1").send({ status: "in_progress" });
     expect(res.status).toBe(200);
     expect(updateTicket).toHaveBeenCalled();
   });
 
   it("POST /tickets/:id/take 404s and never calls takeTicket when the scoped fetch returns null", async () => {
-    getTicket.mockImplementation(
-      async (_id: string, scope?: { sql: string; params: unknown[] }) =>
-        scope ? null : { id: "t-1", employee_id: "emp-owner", comments: [] },
+    getTicket.mockImplementation(async (_id: string, scope?: { sql: string; params: unknown[] }) =>
+      scope ? null : ({ id: "t-1", employee_id: "emp-owner", comments: [] })
     );
-    const res = await request(app())
-      .post("/api/helpdesk/tickets/t-1/take")
-      .send({});
+    const res = await request(app()).post("/api/helpdesk/tickets/t-1/take").send({});
     expect(res.status).toBe(404);
     expect(takeTicket).not.toHaveBeenCalled();
   });
 
   it("POST /tickets/:id/hold 404s and never calls holdTicket when the scoped fetch returns null", async () => {
     getTicket.mockResolvedValueOnce(null);
-    const res = await request(app())
-      .post("/api/helpdesk/tickets/t-1/hold")
-      .send({ reason: "Waiting for vendor" });
+    const res = await request(app()).post("/api/helpdesk/tickets/t-1/hold").send({ reason: "Waiting for vendor" });
     expect(res.status).toBe(404);
     expect(holdTicket).not.toHaveBeenCalled();
   });
 
   it("POST /tickets/:id/comments 404s and never adds an internal comment outside the scoped ticket", async () => {
-    getTicket.mockImplementation(
-      async (_id: string, scope?: { sql: string; params: unknown[] }) =>
-        scope ? null : { id: "t-1", employee_id: "emp-owner", comments: [] },
+    getTicket.mockImplementation(async (_id: string, scope?: { sql: string; params: unknown[] }) =>
+      scope ? null : ({ id: "t-1", employee_id: "emp-owner", comments: [] })
     );
     const res = await request(app())
       .post("/api/helpdesk/tickets/t-1/comments")

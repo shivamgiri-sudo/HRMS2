@@ -41,10 +41,7 @@ const REQUIRED_TABLES = [
   "work_item",
 ] as const;
 
-async function query(
-  sql: string,
-  params: unknown[] = [],
-): Promise<RowDataPacket[]> {
+async function query(sql: string, params: unknown[] = []): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;
 }
@@ -76,10 +73,7 @@ async function safeAggregate(name: string, sql: string): Promise<void> {
     console.log(`\n[${name}]`);
     console.table(rows);
   } catch (error) {
-    console.error(
-      `\n[${name}] FAILED`,
-      error instanceof Error ? error.message : error,
-    );
+    console.error(`\n[${name}] FAILED`, error instanceof Error ? error.message : error);
   }
 }
 
@@ -110,35 +104,21 @@ async function auditDashboardUser(employeeCode: string): Promise<void> {
 
   console.table([employee]);
   if (!employee.userId) {
-    console.error(
-      "Dashboard cannot load role-scoped data because employees.user_id is NULL.",
-    );
+    console.error("Dashboard cannot load role-scoped data because employees.user_id is NULL.");
     return;
   }
 
   const context = await getUserRoleContext(String(employee.userId));
-  const scope = await resolveDashboardScope(
-    String(employee.userId),
-    context.primaryRole,
-  );
+  const scope = await resolveDashboardScope(String(employee.userId), context.primaryRole);
   console.log("\nResolved role context");
-  console.table([
-    {
-      primaryRole: context.primaryRole,
-      roleKeys: context.roleKeys.join(", "),
-      isSuperAdmin: context.isSuperAdmin,
-      isHO: context.isHO,
-    },
-  ]);
+  console.table([{ primaryRole: context.primaryRole, roleKeys: context.roleKeys.join(", "), isSuperAdmin: context.isSuperAdmin, isHO: context.isHO }]);
   console.log("\nResolved dashboard scope");
-  console.table([
-    {
-      level: scope.level,
-      branchIds: scope.branchIds.join(", ") || "—",
-      processIds: scope.processIds.join(", ") || "—",
-      role: scope.role,
-    },
-  ]);
+  console.table([{
+    level: scope.level,
+    branchIds: scope.branchIds.join(", ") || "—",
+    processIds: scope.processIds.join(", ") || "—",
+    role: scope.role,
+  }]);
 
   const metrics = {
     hc: await getHeadcountMetrics(scope),
@@ -156,35 +136,25 @@ async function auditDashboardUser(employeeCode: string): Promise<void> {
   };
 
   console.log("\nDashboard summary API metric shape");
-  console.table(
-    Object.entries(metrics).map(([key, metric]) => ({
-      key,
-      available: metric.available,
-      value: metric.value,
-      status: metric.status,
-      errorCode: metric.errorCode ?? "—",
-      detail: JSON.stringify(metric.detail),
-    })),
-  );
+  console.table(Object.entries(metrics).map(([key, metric]) => ({
+    key,
+    available: metric.available,
+    value: metric.value,
+    status: metric.status,
+    errorCode: metric.errorCode ?? "—",
+    detail: JSON.stringify(metric.detail),
+  })));
 
-  const unavailable = Object.entries(metrics).filter(
-    ([, metric]) => !metric.available,
-  );
+  const unavailable = Object.entries(metrics).filter(([, metric]) => !metric.available);
   if (unavailable.length > 0) {
-    console.error(
-      `\n${unavailable.length} dashboard source(s) are unavailable for ${employeeCode}.`,
-    );
+    console.error(`\n${unavailable.length} dashboard source(s) are unavailable for ${employeeCode}.`);
   } else {
-    console.log(
-      `\nAll core dashboard metric queries returned successfully for ${employeeCode}.`,
-    );
+    console.log(`\nAll core dashboard metric queries returned successfully for ${employeeCode}.`);
   }
 }
 
 async function main(): Promise<void> {
-  const databaseRows = await query(
-    "SELECT DATABASE() AS databaseName, VERSION() AS mysqlVersion, CURRENT_USER() AS currentUser",
-  );
+  const databaseRows = await query("SELECT DATABASE() AS databaseName, VERSION() AS mysqlVersion, CURRENT_USER() AS currentUser");
   console.log("Dashboard MySQL audit — read only");
   console.table(databaseRows);
 
@@ -192,18 +162,12 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const flags = new Set(argv.filter((a) => a.startsWith("--")));
   const positional = argv.filter((a) => !a.startsWith("--"));
-  const subject = String(
-    positional[0] ?? process.env.DASHBOARD_TEST_EMPLOYEE_CODE ?? "mas47814",
-  ).trim();
+  const subject = String(positional[0] ?? process.env.DASHBOARD_TEST_EMPLOYEE_CODE ?? "mas47814").trim();
 
   if (flags.size > 0) {
     const {
-      runSchemaMode,
-      runDataAvailabilityMode,
-      runScopeReportMode,
-      runDashboardsMode,
-      runValidateMode,
-      runDrilldownMode,
+      runSchemaMode, runDataAvailabilityMode, runScopeReportMode,
+      runDashboardsMode, runValidateMode, runDrilldownMode,
     } = await import("./dashboard-audit-modes.js");
 
     let problems = 0;
@@ -214,27 +178,19 @@ async function main(): Promise<void> {
     if (flags.has("--validate")) problems += await runValidateMode(subject);
     if (flags.has("--drilldown")) problems += await runDrilldownMode(subject);
 
-    console.log(
-      `\nAudit completed (read only). ${problems} blocking problem(s) found.`,
-    );
+    console.log(`\nAudit completed (read only). ${problems} blocking problem(s) found.`);
     process.exit(problems > 0 ? 1 : 0);
   }
 
   const checks: Array<{ table: string; exists: boolean; columns: string }> = [];
   for (const table of REQUIRED_TABLES) {
     const exists = await tableExists(table);
-    checks.push({
-      table,
-      exists,
-      columns: exists ? (await columnNames(table)).join(", ") : "",
-    });
+    checks.push({ table, exists, columns: exists ? (await columnNames(table)).join(", ") : "" });
   }
   console.log("\nRequired table and column check");
   console.table(checks);
 
-  await safeAggregate(
-    "Active employee population",
-    `
+  await safeAggregate("Active employee population", `
     SELECT COUNT(*) AS activeEmployees,
            SUM(CASE WHEN COALESCE(TRIM(bank_account_number),'') = '' THEN 1 ELSE 0 END) AS missingBank,
            SUM(CASE WHEN COALESCE(TRIM(pan_number),'') = '' THEN 1 ELSE 0 END) AS missingPan,
@@ -242,12 +198,9 @@ async function main(): Promise<void> {
       FROM employees
      WHERE active_status = 1
        AND LOWER(COALESCE(employment_status,'active')) NOT IN ('inactive','terminated','resigned','exited','absconded')
-  `,
-  );
+  `);
 
-  await safeAggregate(
-    "Today's finalized attendance",
-    `
+  await safeAggregate("Today's finalized attendance", `
     SELECT attendance_status,
            COUNT(DISTINCT employee_id) AS employees,
            SUM(CASE WHEN late_mark = 1 THEN 1 ELSE 0 END) AS lateMarks
@@ -255,52 +208,37 @@ async function main(): Promise<void> {
      WHERE record_date = DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))
      GROUP BY attendance_status
      ORDER BY employees DESC
-  `,
-  );
+  `);
 
-  await safeAggregate(
-    "Today's WFM requirement",
-    `
+  await safeAggregate("Today's WFM requirement", `
     SELECT COALESCE(SUM(required_planned_hc),0) AS requiredPlannedHc
       FROM wfm_slot_requirement
      WHERE requirement_date = DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))
-  `,
-  );
+  `);
 
-  await safeAggregate(
-    "Onboarding pipeline",
-    `
+  await safeAggregate("Onboarding pipeline", `
     SELECT status, COUNT(*) AS records
       FROM ats_onboarding_bridge
      GROUP BY status
      ORDER BY records DESC
-  `,
-  );
+  `);
 
-  await safeAggregate(
-    "BGV pipeline",
-    `
+  await safeAggregate("BGV pipeline", `
     SELECT COALESCE(status,'not_started') AS status, COUNT(*) AS records
       FROM candidate_bgv_check
      GROUP BY COALESCE(status,'not_started')
      ORDER BY records DESC
-  `,
-  );
+  `);
 
-  await safeAggregate(
-    "Payroll runs",
-    `
+  await safeAggregate("Payroll runs", `
     SELECT run_month, status, COUNT(*) AS runs
       FROM salary_prep_run
      GROUP BY run_month, status
      ORDER BY run_month DESC
      LIMIT 12
-  `,
-  );
+  `);
 
-  await safeAggregate(
-    "Branch and process mapping completeness",
-    `
+  await safeAggregate("Branch and process mapping completeness", `
     SELECT
       SUM(CASE WHEN branch_id IS NULL THEN 1 ELSE 0 END) AS missingBranch,
       SUM(CASE WHEN process_id IS NULL THEN 1 ELSE 0 END) AS missingProcess,
@@ -308,21 +246,15 @@ async function main(): Promise<void> {
       COUNT(*) AS activeEmployees
     FROM employees
     WHERE active_status = 1
-  `,
-  );
+  `);
 
   if (subject) await auditDashboardUser(subject);
 
-  console.log(
-    "\nAudit completed. No INSERT, UPDATE, DELETE, ALTER or DROP statement was executed.",
-  );
+  console.log("\nAudit completed. No INSERT, UPDATE, DELETE, ALTER or DROP statement was executed.");
   process.exit(0);
 }
 
 main().catch((error) => {
-  console.error(
-    "Dashboard data audit failed:",
-    error instanceof Error ? error.message : error,
-  );
+  console.error("Dashboard data audit failed:", error instanceof Error ? error.message : error);
   process.exit(1);
 });

@@ -52,11 +52,7 @@
 //     satisfied structurally: this module accepts only Requirement 18 Contributions and has no
 //     access to that column. Proving no caller reads it is a contract test on the callers.
 
-import {
-  deriveCanonical,
-  type CanonicalResult,
-  type Contribution,
-} from "./canonical-productivity.js";
+import { deriveCanonical, type CanonicalResult, type Contribution } from './canonical-productivity.js';
 
 // criterion 10.4: applied when no Floor_Absence_Pattern_Ceiling is configured for the employee
 // and date. Must stay equal to DEFAULT_THRESHOLD_MINUTES.floor_absence_ceiling in
@@ -76,19 +72,22 @@ export const DIALLER_ACTIVITY_LOOKBACK_DAYS = 30;
 // attendance-engine.service.ts). Declared locally, not imported, because that module is
 // DB-backed; the three values criterion 6.7 names are the only ones this detector branches on.
 export type FloorAbsenceDayClassification =
-  | "present"
-  | "half_day"
-  | "absent"
-  | "leave_approved"
-  | "holiday"
-  | "week_off"
-  | "week_off_worked"
-  | "unreconciled"
-  | "missing_punch";
+  | 'present'
+  | 'half_day'
+  | 'absent'
+  | 'leave_approved'
+  | 'holiday'
+  | 'week_off'
+  | 'week_off_worked'
+  | 'unreconciled'
+  | 'missing_punch';
 
 // criterion 6.7: no Variance_Record on these dates, therefore (with 10.6) no occurrence.
-const NON_WORKING_CLASSIFICATIONS: ReadonlySet<FloorAbsenceDayClassification> =
-  new Set(["leave_approved", "holiday", "week_off"]);
+const NON_WORKING_CLASSIFICATIONS: ReadonlySet<FloorAbsenceDayClassification> = new Set([
+  'leave_approved',
+  'holiday',
+  'week_off',
+]);
 
 export interface FloorAbsenceDayInput {
   /** Calendar date, 'YYYY-MM-DD'. */
@@ -139,9 +138,9 @@ export interface FloorAbsenceDetectionInput {
 
 export type FloorAbsenceReason =
   /** criterion 10.1: full biometric day, evidence present, canonical minutes below the ceiling. */
-  | "productive_minutes_below_ceiling"
+  | 'productive_minutes_below_ceiling'
   /** criterion 10.5: exactly two punches a full day apart, every reporting source below the ceiling. */
-  | "two_punch_full_span";
+  | 'two_punch_full_span';
 
 export interface FloorAbsenceSourceContribution {
   diallerSourceId: string;
@@ -157,7 +156,7 @@ export interface FloorAbsenceOccurrence {
   /** lastPunchMinute - firstPunchMinute when both are known, else null. */
   punchSpanMinutes: number | null;
   canonicalProductiveMinutes: number;
-  canonicalRule: CanonicalResult["rule"];
+  canonicalRule: CanonicalResult['rule'];
   /** Sorted by diallerSourceId, so two runs over the same day are byte-identical. */
   contributingSources: FloorAbsenceSourceContribution[];
   appliedCeilingMinutes: number;
@@ -166,27 +165,26 @@ export interface FloorAbsenceOccurrence {
 
 export type FloorAbsenceSuppressionReason =
   /** criterion 6.7 with 10.6: approved leave, holiday or week off. */
-  | "non_working_classification"
+  | 'non_working_classification'
   /** criteria 10.3, 10.11: no productive evidence, or none that is genuinely positive. */
-  | "no_productivity_evidence"
+  | 'no_productivity_evidence'
   /** criterion 10.1: Biometric_Minutes do not reach the full-day threshold, and 10.5 does not apply. */
-  | "biometric_below_full_day"
+  | 'biometric_below_full_day'
   /** criteria 10.1, 10.5: productive minutes are at or above the ceiling. */
-  | "productive_minutes_at_or_above_ceiling"
+  | 'productive_minutes_at_or_above_ceiling'
   /** criterion 10.10: no registered Dialler_Source carried a record in the preceding 30 days. */
-  | "no_dialler_activity_in_lookback"
+  | 'no_dialler_activity_in_lookback'
   /** Two or more rows for one date disagree - the date is ambiguous, not an occurrence. */
-  | "conflicting_duplicate_date"
+  | 'conflicting_duplicate_date'
   /** The date is not a parseable 'YYYY-MM-DD' calendar date. */
-  | "invalid_date";
+  | 'invalid_date';
 
 export interface FloorAbsenceSuppression {
   date: string;
   reason: FloorAbsenceSuppressionReason;
 }
 
-export type DuplicateDateResolution =
-  "collapsed_identical" | "suppressed_conflicting";
+export type DuplicateDateResolution = 'collapsed_identical' | 'suppressed_conflicting';
 
 export interface DuplicateDateReport {
   date: string;
@@ -205,10 +203,10 @@ export interface FloorAbsenceVarianceRequest {
   date: string;
   reason: FloorAbsenceReason;
   isFloorAbsence: true;
-  dispositionHint: "queued_for_dual_review";
+  dispositionHint: 'queued_for_dual_review';
 }
 
-export type FloorAbsenceNotifyRole = "branch_head" | "wfm_head";
+export type FloorAbsenceNotifyRole = 'branch_head' | 'wfm_head';
 
 export interface RepeatOccurrenceAssessment {
   /** criterion 10.7: the count reached the repeat threshold inside the rolling window. */
@@ -216,11 +214,7 @@ export interface RepeatOccurrenceAssessment {
   appliedThresholdCount: number;
   appliedRollingWindowDays: number;
   /** The earliest window that reached the threshold, or null. Inclusive of both bounds. */
-  triggeringWindow: {
-    startDate: string;
-    endDate: string;
-    occurrenceDates: string[];
-  } | null;
+  triggeringWindow: { startDate: string; endDate: string; occurrenceDates: string[] } | null;
   /** criterion 10.7's recipients. Empty unless isRepeatSubject. Dispatch is the caller's. */
   notifyRoles: FloorAbsenceNotifyRole[];
 }
@@ -256,13 +250,8 @@ function toDayNumber(date: string): number | null {
   const shiftedYear = year - (month <= 2 ? 1 : 0);
   const era = Math.floor(shiftedYear / 400);
   const yearOfEra = shiftedYear - era * 400;
-  const dayOfYear =
-    Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1;
-  const dayOfEra =
-    yearOfEra * 365 +
-    Math.floor(yearOfEra / 4) -
-    Math.floor(yearOfEra / 100) +
-    dayOfYear;
+  const dayOfYear = Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1;
+  const dayOfEra = yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear;
   const dayNumber = era * 146097 + dayOfEra - 719468;
 
   // Round-trip guard: rejects 2026-02-30 / 2025-02-29, which the arithmetic above would
@@ -275,20 +264,14 @@ function fromDayNumber(dayNumber: number): string {
   const era = Math.floor(shifted / 146097);
   const dayOfEra = shifted - era * 146097;
   const yearOfEra = Math.floor(
-    (dayOfEra -
-      Math.floor(dayOfEra / 1460) +
-      Math.floor(dayOfEra / 36524) -
-      Math.floor(dayOfEra / 146096)) /
-      365,
+    (dayOfEra - Math.floor(dayOfEra / 1460) + Math.floor(dayOfEra / 36524) - Math.floor(dayOfEra / 146096)) / 365,
   );
-  const dayOfYear =
-    dayOfEra -
-    (365 * yearOfEra + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100));
+  const dayOfYear = dayOfEra - (365 * yearOfEra + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100));
   const mp = Math.floor((5 * dayOfYear + 2) / 153);
   const day = dayOfYear - Math.floor((153 * mp + 2) / 5) + 1;
   const month = mp + (mp < 10 ? 3 : -9);
   const year = yearOfEra + era * 400 + (month <= 2 ? 1 : 0);
-  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 function sortedContributions(contributions: Contribution[]): Contribution[] {
@@ -320,21 +303,14 @@ function dayFingerprint(day: FloorAbsenceDayInput): string {
     day.lastPunchMinute ?? null,
     sortedContributions(day.contributions).map((c) => [
       c.diallerSourceId,
-      c.interval === null
-        ? null
-        : [c.interval.startMinute, c.interval.endMinute],
+      c.interval === null ? null : [c.interval.startMinute, c.interval.endMinute],
       c.magnitudeMinutes,
     ]),
   ]);
 }
 
-function positiveIntOr(
-  value: number | null | undefined,
-  fallback: number,
-): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : fallback;
+function positiveIntOr(value: number | null | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 /** Per-source productive minutes: the Requirement 18 rules applied to that source alone. */
@@ -359,14 +335,8 @@ export function detectFloorAbsencePattern(
     DEFAULT_FLOOR_ABSENCE_CEILING_MINUTES,
   );
   // criterion 10.8.
-  const appliedThresholdCount = positiveIntOr(
-    input.repeatThresholdCount,
-    DEFAULT_REPEAT_THRESHOLD_COUNT,
-  );
-  const appliedRollingWindowDays = positiveIntOr(
-    input.rollingWindowDays,
-    DEFAULT_ROLLING_WINDOW_DAYS,
-  );
+  const appliedThresholdCount = positiveIntOr(input.repeatThresholdCount, DEFAULT_REPEAT_THRESHOLD_COUNT);
+  const appliedRollingWindowDays = positiveIntOr(input.rollingWindowDays, DEFAULT_ROLLING_WINDOW_DAYS);
 
   const suppressions: FloorAbsenceSuppression[] = [];
   const duplicateDates: DuplicateDateReport[] = [];
@@ -382,37 +352,29 @@ export function detectFloorAbsencePattern(
     else byDate.set(day.date, [day]);
   }
 
-  const evaluable: {
-    date: string;
-    dayNumber: number;
-    day: FloorAbsenceDayInput;
-  }[] = [];
+  const evaluable: { date: string; dayNumber: number; day: FloorAbsenceDayInput }[] = [];
   for (const [date, entries] of byDate) {
     if (entries.length > 1) {
       const fingerprints = new Set(entries.map(dayFingerprint));
       const resolution: DuplicateDateResolution =
-        fingerprints.size === 1
-          ? "collapsed_identical"
-          : "suppressed_conflicting";
+        fingerprints.size === 1 ? 'collapsed_identical' : 'suppressed_conflicting';
       duplicateDates.push({ date, entryCount: entries.length, resolution });
-      if (resolution === "suppressed_conflicting") {
-        suppressions.push({ date, reason: "conflicting_duplicate_date" });
+      if (resolution === 'suppressed_conflicting') {
+        suppressions.push({ date, reason: 'conflicting_duplicate_date' });
         continue;
       }
     }
 
     const dayNumber = toDayNumber(date);
     if (dayNumber === null) {
-      suppressions.push({ date, reason: "invalid_date" });
+      suppressions.push({ date, reason: 'invalid_date' });
       continue;
     }
     evaluable.push({ date, dayNumber, day: entries[0] });
   }
 
   evaluable.sort((a, b) => a.dayNumber - b.dayNumber);
-  duplicateDates.sort((a, b) =>
-    a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
-  );
+  duplicateDates.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
   // criterion 10.10: the dates on which any registered Dialler_Source carried a record. Dates
   // inside the month contribute, as do the caller-supplied prior dates.
@@ -431,7 +393,7 @@ export function detectFloorAbsencePattern(
     // criterion 6.7 with 10.6: an occurrence here could not carry the Variance_Record that
     // criterion 10.6 demands, so it is not recorded.
     if (NON_WORKING_CLASSIFICATIONS.has(day.classification)) {
-      suppressions.push({ date, reason: "non_working_classification" });
+      suppressions.push({ date, reason: 'non_working_classification' });
       continue;
     }
 
@@ -443,7 +405,7 @@ export function detectFloorAbsencePattern(
     // rather than flags - the under-flagging reading, and the only one that keeps the 3,056
     // filler-zero days out of the finding set.
     if (canonical.minutes === null || canonical.minutes <= 0) {
-      suppressions.push({ date, reason: "no_productivity_evidence" });
+      suppressions.push({ date, reason: 'no_productivity_evidence' });
       continue;
     }
 
@@ -458,14 +420,14 @@ export function detectFloorAbsencePattern(
       }
     }
     if (!hasLookbackActivity) {
-      suppressions.push({ date, reason: "no_dialler_activity_in_lookback" });
+      suppressions.push({ date, reason: 'no_dialler_activity_in_lookback' });
       continue;
     }
 
     const fullDayMinutes = day.fullDayMinutes;
     const punchSpanMinutes =
-      typeof day.firstPunchMinute === "number" &&
-      typeof day.lastPunchMinute === "number" &&
+      typeof day.firstPunchMinute === 'number' &&
+      typeof day.lastPunchMinute === 'number' &&
       Number.isFinite(day.firstPunchMinute) &&
       Number.isFinite(day.lastPunchMinute)
         ? day.lastPunchMinute - day.firstPunchMinute
@@ -487,7 +449,7 @@ export function detectFloorAbsencePattern(
     // Minutes fall below the ceiling. "Fall below" is strict: exactly at the ceiling is not an
     // occurrence.
     const biometricReachesFullDay =
-      typeof day.biometricMinutes === "number" &&
+      typeof day.biometricMinutes === 'number' &&
       Number.isFinite(day.biometricMinutes) &&
       Number.isFinite(fullDayMinutes) &&
       day.biometricMinutes >= fullDayMinutes;
@@ -495,9 +457,9 @@ export function detectFloorAbsencePattern(
 
     let reason: FloorAbsenceReason | null = null;
     if (twoPunchShape && everySourceBelowCeiling) {
-      reason = "two_punch_full_span";
+      reason = 'two_punch_full_span';
     } else if (biometricReachesFullDay && canonicalBelowCeiling) {
-      reason = "productive_minutes_below_ceiling";
+      reason = 'productive_minutes_below_ceiling';
     }
 
     if (reason === null) {
@@ -506,8 +468,8 @@ export function detectFloorAbsencePattern(
       suppressions.push({
         date,
         reason: biometricReachesFullDay
-          ? "productive_minutes_at_or_above_ceiling"
-          : "biometric_below_full_day",
+          ? 'productive_minutes_at_or_above_ceiling'
+          : 'biometric_below_full_day',
       });
       continue;
     }
@@ -536,15 +498,13 @@ export function detectFloorAbsencePattern(
 
   // criterion 10.6 with criterion 6.8: one Variance_Record request per occurrence, flagged
   // is_floor_absence so the queue pass queues it irrespective of the Dual_Review_Ceiling.
-  const varianceRequests: FloorAbsenceVarianceRequest[] = occurrences.map(
-    (o) => ({
-      employeeId: o.employeeId,
-      date: o.date,
-      reason: o.reason,
-      isFloorAbsence: true,
-      dispositionHint: "queued_for_dual_review",
-    }),
-  );
+  const varianceRequests: FloorAbsenceVarianceRequest[] = occurrences.map((o) => ({
+    employeeId: o.employeeId,
+    date: o.date,
+    reason: o.reason,
+    isFloorAbsence: true,
+    dispositionHint: 'queued_for_dual_review',
+  }));
 
   return {
     employeeId: input.employeeId,
@@ -612,7 +572,7 @@ function assessRepeat(
         },
         // criterion 10.7: the employee's branch head and the WFM head. Delivery is the
         // caller's - this module dispatches nothing.
-        notifyRoles: ["branch_head", "wfm_head"],
+        notifyRoles: ['branch_head', 'wfm_head'],
       };
     }
   }

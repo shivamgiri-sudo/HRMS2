@@ -22,19 +22,11 @@ async function main() {
   const invoice = (invoiceRows as any[])[0];
   console.log("Rendering invoice:", invoice);
 
-  const withLetterhead = await clientBillingPdfService.generateInvoicePdf(
-    invoice.id,
-    true,
-  );
+  const withLetterhead = await clientBillingPdfService.generateInvoicePdf(invoice.id, true);
   fs.writeFileSync(`${OUT_DIR}/sample-invoice-letterhead.pdf`, withLetterhead);
-  const withoutLetterhead = await clientBillingPdfService.generateInvoicePdf(
-    invoice.id,
-    false,
-  );
+  const withoutLetterhead = await clientBillingPdfService.generateInvoicePdf(invoice.id, false);
   fs.writeFileSync(`${OUT_DIR}/sample-invoice-plain.pdf`, withoutLetterhead);
-  console.log(
-    "Wrote sample-invoice-letterhead.pdf and sample-invoice-plain.pdf",
-  );
+  console.log("Wrote sample-invoice-letterhead.pdf and sample-invoice-plain.pdf");
 
   const [cnRows] = await db.query(`
     SELECT cn.id, cn.credit_no FROM client_credit_note cn
@@ -45,16 +37,11 @@ async function main() {
   const cn = (cnRows as any[])[0];
   if (cn) {
     console.log("Rendering credit note:", cn);
-    const cnPdf = await clientBillingPdfService.generateCreditNotePdf(
-      cn.id,
-      true,
-    );
+    const cnPdf = await clientBillingPdfService.generateCreditNotePdf(cn.id, true);
     fs.writeFileSync(`${OUT_DIR}/sample-credit-note-letterhead.pdf`, cnPdf);
     console.log("Wrote sample-credit-note-letterhead.pdf");
   } else {
-    console.log(
-      "No credit note found with a populated-GSTIN cost centre — skipping.",
-    );
+    console.log("No credit note found with a populated-GSTIN cost centre — skipping.");
   }
 
   process.exit(0);

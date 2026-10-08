@@ -29,10 +29,7 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
-  pingDb: vi.fn(),
-}));
+vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
 vi.mock("../src/shared/auditLog.js", () => ({
   logSensitiveAction: vi.fn().mockResolvedValue(undefined),
 }));
@@ -65,14 +62,9 @@ const mockLogSensitiveAction = logSensitiveAction as ReturnType<typeof vi.fn>;
  * tests exist to prove DB-driven role checks, so the token has to go down the
  * real JWT path. Signed with the same secret tests/setup.ts verifies against.
  */
-const JWT_SECRET =
-  process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
+const JWT_SECRET = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
 const empJwt = jwt.sign(
-  {
-    sub: "user-emp",
-    email: "employee@mcn.com",
-    iat: Math.floor(Date.now() / 1000),
-  },
+  { sub: "user-emp", email: "employee@mcn.com", iat: Math.floor(Date.now() / 1000) },
   JWT_SECRET,
   { expiresIn: "1h" },
 );
@@ -90,11 +82,7 @@ const EMP_TOKEN = { Authorization: `Bearer ${empJwt}` };
  */
 const AUDIT_TOKEN = {
   Authorization: `Bearer ${jwt.sign(
-    {
-      sub: "user-1",
-      email: "employee@mcn.com",
-      iat: Math.floor(Date.now() / 1000),
-    },
+    { sub: "user-1", email: "employee@mcn.com", iat: Math.floor(Date.now() / 1000) },
     JWT_SECRET,
     { expiresIn: "1h" },
   )}`,
@@ -204,10 +192,7 @@ describe("d) Employee A cannot view Employee B payslip", () => {
     // hasRole check — no privileged role
     mockExecute.mockResolvedValueOnce([[], []]);
     // getEmployeeForUser — resolves to emp-A
-    mockExecute.mockResolvedValueOnce([
-      [{ id: "emp-A", employee_code: "MCN001" }],
-      [],
-    ]);
+    mockExecute.mockResolvedValueOnce([[{ id: "emp-A", employee_code: "MCN001" }], []]);
 
     const r = await request(app)
       .get("/api/payroll/payslip/run-1/emp-B")
@@ -228,19 +213,11 @@ describe("e) Employee can view own payslip", () => {
       // getEmployeeForUser — resolves the caller to emp-A, same as the URL param
       [/FROM employees/i, [{ id: "emp-A", employee_code: "MCN001" }]],
       // payslipService.getPayslip
-      [
-        /FROM salary_prep_line/i,
-        [
-          {
-            id: "ps-1",
-            run_id: "run-1",
-            employee_id: "emp-A",
-            payslip_ref: "PS-2026-05-MCN001",
-            gross_salary: 25000,
-            net_salary: 22600,
-          },
-        ],
-      ],
+      [/FROM salary_prep_line/i, [{
+        id: "ps-1", run_id: "run-1", employee_id: "emp-A",
+        payslip_ref: "PS-2026-05-MCN001",
+        gross_salary: 25000, net_salary: 22600,
+      }]],
       // Role lookups fall through to [] — the point of this test is that an
       // employee with no privileged role can still read their OWN payslip.
     ]);
@@ -259,10 +236,7 @@ describe("e2) Employee payslip history", () => {
       data: { user: { id: "user-emp-a", email: "empA@mcn.com" } },
       error: null,
     });
-    mockExecute.mockResolvedValueOnce([
-      [{ id: "emp-A", employee_code: "MCN001" }],
-      [],
-    ]);
+    mockExecute.mockResolvedValueOnce([[{ id: "emp-A", employee_code: "MCN001" }], []]);
 
     const r = await request(app)
       .get("/api/payroll/payslip/my?year=%25")
@@ -281,32 +255,22 @@ describe("e2) Employee payslip history", () => {
     mockQueries([
       [/FROM employees/i, [{ id: "emp-A", employee_code: "MCN001" }]],
       // More specific table first — salary_prep_line is a prefix of this one.
-      [
-        /salary_prep_line_component/i,
-        [
-          {
-            line_id: "line-1", // the batched component query returns line_id and the route groups by it
-            component_code: "BASIC",
-            component_name: "Basic Salary",
-            component_type: "earning",
-            amount: 15000,
-            taxable: 1,
-          },
-        ],
-      ],
-      [
-        /salary_prep_line/i,
-        [
-          {
-            id: "line-1",
-            employee_id: "emp-A",
-            run_month: "2026-05",
-            gross_salary: 25000,
-            total_deductions: 2400,
-            net_salary: 22600,
-          },
-        ],
-      ],
+      [/salary_prep_line_component/i, [{
+        line_id: "line-1", // the batched component query returns line_id and the route groups by it
+        component_code: "BASIC",
+        component_name: "Basic Salary",
+        component_type: "earning",
+        amount: 15000,
+        taxable: 1,
+      }]],
+      [/salary_prep_line/i, [{
+        id: "line-1",
+        employee_id: "emp-A",
+        run_month: "2026-05",
+        gross_salary: 25000,
+        total_deductions: 2400,
+        net_salary: 22600,
+      }]],
     ]);
 
     const r = await request(app)
@@ -316,14 +280,12 @@ describe("e2) Employee payslip history", () => {
     expect(r.status).toBe(200);
     expect(r.body.data).toHaveLength(1);
     expect(r.body.data[0].earnings).toHaveLength(1);
-    expect(mockLogSensitiveAction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        actor_user_id: "user-1",
-        action_type: "PAYSLIP_HISTORY_VIEWED",
-        entity_id: "emp-A",
-        change_summary: { year: "2026", statement_count: 1 },
-      }),
-    );
+    expect(mockLogSensitiveAction).toHaveBeenCalledWith(expect.objectContaining({
+      actor_user_id: "user-1",
+      action_type: "PAYSLIP_HISTORY_VIEWED",
+      entity_id: "emp-A",
+      change_summary: { year: "2026", statement_count: 1 },
+    }));
   });
 });
 
@@ -362,10 +324,7 @@ describe("g) Employee A cannot view Employee B tax declaration", () => {
     // hasRole check — no privileged role
     mockExecute.mockResolvedValueOnce([[], []]);
     // getEmployeeForUser — resolves to emp-A, but URL param is emp-B
-    mockExecute.mockResolvedValueOnce([
-      [{ id: "emp-A", employee_code: "MCN001" }],
-      [],
-    ]);
+    mockExecute.mockResolvedValueOnce([[{ id: "emp-A", employee_code: "MCN001" }], []]);
 
     const r = await request(app)
       .get("/api/payroll/tax-declaration/emp-B/2026-2027")
@@ -426,7 +385,9 @@ describe("j) Employee cannot POST /api/exit/ff/:id/approve", () => {
 describe("k) Employee cannot GET /api/exit/ff/:exitRequestId", () => {
   it("returns 403 when user has employee role only", async () => {
     mockEmployee();
-    const r = await request(app).get("/api/exit/ff/exit-1").set(EMP_TOKEN);
+    const r = await request(app)
+      .get("/api/exit/ff/exit-1")
+      .set(EMP_TOKEN);
     expect(r.status).toBe(403);
   });
 });
@@ -436,22 +397,17 @@ describe("k) Employee cannot GET /api/exit/ff/:exitRequestId", () => {
 describe("l) ffService.approveFF blocked when is_ff_provisional=1", () => {
   it("throws error when is_ff_provisional is 1", async () => {
     mockQueries([
-      [
-        /FROM full_final_calculation/i,
-        [
-          {
-            id: "ff-1",
-            exit_request_id: "exit-1",
-            employee_id: "emp-1",
-            status: "draft",
-            is_ff_provisional: 1,
-          },
-        ],
-      ],
+      [/FROM full_final_calculation/i, [{
+        id: "ff-1",
+        exit_request_id: "exit-1",
+        employee_id: "emp-1",
+        status: "draft",
+        is_ff_provisional: 1,
+      }]],
     ]);
 
     await expect(ffService.approveFF("ff-1", "admin-1")).rejects.toThrow(
-      /provisional/i,
+      /provisional/i
     );
   });
 });
@@ -483,33 +439,18 @@ describe("m) payrollGapsService.computeBasicTds — pending_configuration with n
 
 describe("n) payrollGapsService.calculateLwpDeduction — pending_configuration", () => {
   it("returns pending_configuration when lwpBasis is undefined", () => {
-    const result = payrollGapsService.calculateLwpDeduction(
-      2,
-      300000,
-      26,
-      undefined,
-    );
+    const result = payrollGapsService.calculateLwpDeduction(2, 300000, 26, undefined);
     expect(result.status).toBe("pending_configuration");
     expect(result.amount).toBe(0);
   });
 
   it("returns pending_configuration note mentioning lwp_deduction_basis", () => {
-    const result = payrollGapsService.calculateLwpDeduction(
-      3,
-      400000,
-      26,
-      undefined,
-    );
+    const result = payrollGapsService.calculateLwpDeduction(3, 400000, 26, undefined);
     expect(result.note).toMatch(/lwp_deduction_basis/i);
   });
 
   it("returns configured status when basis is ctc_annual", () => {
-    const result = payrollGapsService.calculateLwpDeduction(
-      2,
-      300000,
-      26,
-      "ctc_annual",
-    );
+    const result = payrollGapsService.calculateLwpDeduction(2, 300000, 26, "ctc_annual");
     expect(result.status).toBe("configured");
     expect(result.amount).toBeGreaterThan(0);
   });
@@ -519,40 +460,24 @@ describe("n) payrollGapsService.calculateLwpDeduction — pending_configuration"
 
 describe("o) ffService.calculateGratuity — pending_configuration", () => {
   it("returns pending_configuration when gratuityWageBase is undefined", () => {
-    const result = ffService.calculateGratuity(
-      "2020-01-01",
-      "2026-01-01",
-      undefined,
-    );
+    const result = ffService.calculateGratuity("2020-01-01", "2026-01-01", undefined);
     expect(result.status).toBe("pending_configuration");
     expect(result.amount).toBe(0);
   });
 
   it("returns pending_configuration note mentioning wage base configuration", () => {
-    const result = ffService.calculateGratuity(
-      "2018-01-01",
-      "2026-01-01",
-      undefined,
-    );
+    const result = ffService.calculateGratuity("2018-01-01", "2026-01-01", undefined);
     expect(result.note).toMatch(/wage base/i);
   });
 
   it("returns draft status when wage base is provided and tenure >= 5 years", () => {
-    const result = ffService.calculateGratuity(
-      "2020-01-01",
-      "2026-01-01",
-      25000,
-    );
+    const result = ffService.calculateGratuity("2020-01-01", "2026-01-01", 25000);
     expect(result.status).toBe("draft");
     expect(result.amount).toBeGreaterThan(0);
   });
 
   it("returns not_eligible when tenure < minYears", () => {
-    const result = ffService.calculateGratuity(
-      "2023-01-01",
-      "2026-01-01",
-      25000,
-    );
+    const result = ffService.calculateGratuity("2023-01-01", "2026-01-01", 25000);
     expect(result.status).toBe("not_eligible");
     expect(result.amount).toBe(0);
   });
@@ -563,7 +488,9 @@ describe("o) ffService.calculateGratuity — pending_configuration", () => {
 describe("p) Employee cannot GET /api/exit/ (list all)", () => {
   it("returns 403 when user has employee role only", async () => {
     mockEmployee();
-    const r = await request(app).get("/api/exit/").set(EMP_TOKEN);
+    const r = await request(app)
+      .get("/api/exit/")
+      .set(EMP_TOKEN);
     expect(r.status).toBe(403);
   });
 });

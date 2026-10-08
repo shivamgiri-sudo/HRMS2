@@ -5,9 +5,7 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 import { ledgerReportsService } from "../ledger-reports.service.js";
 
-beforeEach(() => {
-  execute.mockReset();
-});
+beforeEach(() => { execute.mockReset(); });
 
 describe("ledgerReportsService.trialBalance", () => {
   it("vendors come from bills and payments, and two balancing rows keep the report adding up", async () => {
@@ -98,21 +96,12 @@ describe("ledgerReportsService.vendorLedger", () => {
 
   it("scopes the query to the requested vendor and only 'vendor' account_type lines", async () => {
     execute.mockResolvedValue([[]]);
-    await ledgerReportsService.vendorLedger(
-      "vendor-acme",
-      "2026-09-01",
-      "2026-09-30",
-    );
+    await ledgerReportsService.vendorLedger("vendor-acme", "2026-09-01", "2026-09-30");
     const [sql, params] = execute.mock.calls[0];
     // vendorLedger() is now a thin wrapper over the generalized accountLedger("vendor", ...) —
     // account_type is parameterized, not a literal, so both report drill-downs share one query.
     expect(sql).toMatch(/jel\.account_type = \?/);
-    expect(params).toEqual([
-      "vendor",
-      "vendor-acme",
-      "2026-09-01",
-      "2026-09-30",
-    ]);
+    expect(params).toEqual(["vendor", "vendor-acme", "2026-09-01", "2026-09-30"]);
   });
 });
 
@@ -121,32 +110,17 @@ describe("ledgerReportsService.headSubHeadLedger", () => {
     execute.mockImplementation(async (sql: string) => {
       if (/FROM grn_request g/.test(sql)) return [[]]; // no unposted purchases
       if (/GROUP BY jel.account_id/.test(sql)) {
-        return [
-          [{ account_id: "sh-1", total_spent: "12345.67", grn_count: "3" }],
-        ];
+        return [[{ account_id: "sh-1", total_spent: "12345.67", grn_count: "3" }]];
       }
       if (/finance_expense_sub_head_master/.test(sql)) {
-        return [
-          [
-            {
-              id: "sh-1",
-              head_name: "Repairs & Maintenance",
-              sub_head_name: "AC Servicing",
-            },
-          ],
-        ];
+        return [[{ id: "sh-1", head_name: "Repairs & Maintenance", sub_head_name: "AC Servicing" }]];
       }
       return [[]];
     });
 
     const result = await ledgerReportsService.headSubHeadLedger();
     expect(result).toEqual([
-      {
-        accountId: "sh-1",
-        headSubHead: "Repairs & Maintenance / AC Servicing",
-        totalSpent: 12345.67,
-        grnCount: 3,
-      },
+      { accountId: "sh-1", headSubHead: "Repairs & Maintenance / AC Servicing", totalSpent: 12345.67, grnCount: 3 },
     ]);
   });
 });

@@ -22,18 +22,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const repoRoot = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "..",
-  "..",
-  "..",
-);
-const raw = readFileSync(
-  join(repoRoot, ".github", "workflows", "uat-build.yml"),
-  "utf8",
-);
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "..");
+const raw = readFileSync(join(repoRoot, ".github", "workflows", "uat-build.yml"), "utf8");
 
 const src = raw
   .split("\n")
@@ -50,10 +40,7 @@ function jobBlocks(): Record<string, string> {
   }
   const out: Record<string, string> = {};
   starts.forEach((s, k) => {
-    out[s.n] = src.slice(
-      s.i,
-      k + 1 < starts.length ? starts[k + 1].i : src.length,
-    );
+    out[s.n] = src.slice(s.i, k + 1 < starts.length ? starts[k + 1].i : src.length);
   });
   return out;
 }
@@ -65,9 +52,7 @@ describe("the workflow cannot be triggered by an attacker", () => {
     // A pull_request trigger would let a fork run this workflow. push would run it on every
     // commit. Neither is recoverable by any later check.
     expect(/on:\s*\n\s*workflow_dispatch:/.test(src)).toBe(true);
-    expect(
-      /\n\s{2}(push|pull_request|pull_request_target|schedule):/.test(src),
-    ).toBe(false);
+    expect(/\n\s{2}(push|pull_request|pull_request_target|schedule):/.test(src)).toBe(false);
   });
 
   it("takes exactly one input, a UUID — no token, no prompt, no free text", () => {
@@ -87,8 +72,7 @@ describe("the workflow cannot be triggered by an attacker", () => {
     // at once, and a compromised action in Job B holds contents: write.
     const uses = [...src.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
     expect(uses.length).toBeGreaterThan(0);
-    for (const u of uses)
-      expect(u, `${u} is not SHA-pinned`).toMatch(/@[0-9a-f]{40}$/);
+    for (const u of uses) expect(u, `${u} is not SHA-pinned`).toMatch(/@[0-9a-f]{40}$/);
   });
 });
 
@@ -110,18 +94,13 @@ describe("Job A — executes generated code, therefore holds no write authority"
     const claude = A.indexOf("claude-code");
     expect(block).toBeGreaterThan(-1);
     expect(claude).toBeGreaterThan(-1);
-    expect(
-      block,
-      "egress must be blocked before the sandbox starts",
-    ).toBeLessThan(claude);
+    expect(block, "egress must be blocked before the sandbox starts").toBeLessThan(claude);
   });
 
   it("runs the guards from the trusted origin/main checkout, not the patched tree", () => {
     // The single most important line in the file. A guard run from the patched tree is a
     // guard a patch could have modified.
-    expect(A).toMatch(
-      /\/tmp\/trusted-base\/backend\/scripts\/uat-check-diff\.mjs/,
-    );
+    expect(A).toMatch(/\/tmp\/trusted-base\/backend\/scripts\/uat-check-diff\.mjs/);
   });
 
   it("redirects the session log to a file rather than tee-ing it to the console", () => {
@@ -226,8 +205,7 @@ describe("nothing employee-derived leaves the backend", () => {
 
   it("installs with --ignore-scripts on every install", () => {
     const installs = src.match(/npm (--prefix backend )?ci( |$)/gm) ?? [];
-    const guarded =
-      src.match(/npm (--prefix backend )?ci --ignore-scripts/g) ?? [];
+    const guarded = src.match(/npm (--prefix backend )?ci --ignore-scripts/g) ?? [];
     expect(guarded.length).toBe(installs.length);
     expect(guarded.length).toBeGreaterThanOrEqual(4);
   });

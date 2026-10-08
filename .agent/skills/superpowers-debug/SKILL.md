@@ -6,13 +6,11 @@ description: Systematic debugging: reproduce, isolate, form hypotheses, instrume
 # Debug Skill
 
 ## When to use this skill
-
 - runtime errors, flaky tests, wrong outputs
 - “it used to work” regressions
 - performance or timeout problems (initial triage)
 
 ## Debug workflow (do not skip steps)
-
 1. **Reproduce**
    - Capture exact error, inputs, environment, command.
 2. **Minimize**
@@ -29,7 +27,6 @@ description: Systematic debugging: reproduce, isolate, form hypotheses, instrume
    - Run the failing case + relevant suites.
 
 ## Reporting format
-
 - Symptom
 - Repro steps
 - Root cause

@@ -16,44 +16,30 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { execute, verifyBank } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  verifyBank: vi.fn(),
-}));
+const { execute, verifyBank } = vi.hoisted(() => ({ execute: vi.fn(), verifyBank: vi.fn() }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../bgv-provider.adapter.js", async (importOriginal) => ({
   // resolveBankVerificationOutcome stays real: the replay is only correct if it grades the
   // stored bank name exactly as a fresh call would have done.
   ...(await importOriginal<typeof import("../bgv-provider.adapter.js")>()),
-  getConfiguredBgvProviderAdapter: async () => ({
-    providerKey: "befisc_luckpay",
-    verifyBank,
-  }),
+  getConfiguredBgvProviderAdapter: async () => ({ providerKey: "befisc_luckpay", verifyBank }),
 }));
 vi.mock("../onboarding-full.service.js", () => ({
   validateOnboardingToken: async () => ({ candidate_id: CANDIDATE_ID }),
   loadAsyncBgvTriggerContext: async () => ({ bank: {} }),
   decryptPanForProvider: async () => null,
 }));
-vi.mock("../onboarding-bridge-status.js", () => ({
-  syncBridgePennyDropStatus: async () => undefined,
-}));
-vi.mock("../../../shared/identityVerificationPropagation.js", () => ({
-  propagateIdentityVerification: async () => undefined,
-}));
-vi.mock("../../../utils/encryption.js", () => ({
-  encrypt: (v: string) => `enc(${v})`,
-  decrypt: (v: string) => v,
-}));
+vi.mock("../onboarding-bridge-status.js", () => ({ syncBridgePennyDropStatus: async () => undefined }));
+vi.mock("../../../shared/identityVerificationPropagation.js", () => ({ propagateIdentityVerification: async () => undefined }));
+vi.mock("../../../utils/encryption.js", () => ({ encrypt: (v: string) => `enc(${v})`, decrypt: (v: string) => v }));
 
 const CANDIDATE_ID = "4e619083-5eea-43b5-b640-bd546918f367";
 const ACCOUNT_NO = "20461206664";
 const IFSC = "SBIN0003044";
 const BANK_NAME = "Mr. RAHUL  CHHAPANE";
 
-const { verifyBankForCandidate } =
-  await import("../bgv-verification.service.js");
+const { verifyBankForCandidate } = await import("../bgv-verification.service.js");
 
 /** Records every INSERT into candidate_bank_verification, in order. */
 const savedVerifications: unknown[][] = [];
@@ -66,43 +52,25 @@ function installMock(options: { candidateName: string; priorAnswer: boolean }) {
       savedVerifications.push(params);
       return [{ affectedRows: 1 }, undefined];
     }
-    if (
-      s.startsWith("INSERT") ||
-      s.startsWith("UPDATE") ||
-      s.startsWith("REPLACE")
-    ) {
+    if (s.startsWith("INSERT") || s.startsWith("UPDATE") || s.startsWith("REPLACE")) {
       return [{ affectedRows: 1 }, undefined];
     }
     if (s.includes("candidate_bgv_consent")) return [[{ id: "consent-1" }], []];
     if (s.includes("FROM ats_candidate c")) {
-      return [
-        [
-          {
-            id: CANDIDATE_ID,
-            full_name: options.candidateName,
-            employee_name: options.candidateName,
-          },
-        ],
-        [],
-      ];
+      return [[{ id: CANDIDATE_ID, full_name: options.candidateName, employee_name: options.candidateName }], []];
     }
     // The reusable-answer lookup.
     if (s.includes("FROM candidate_bank_verification")) {
-      return [
-        options.priorAnswer
-          ? [
-              {
-                id: "prior-attempt",
-                provider_key: "befisc_luckpay",
-                provider_reference_id: "PDMTL5GN4A00ZJ",
-                provider_account_holder_name: BANK_NAME,
-                result_json: { details: { verified: true } },
-                created_at: new Date().toISOString(),
-              },
-            ]
-          : [],
-        [],
-      ];
+      return [options.priorAnswer
+        ? [{
+            id: "prior-attempt",
+            provider_key: "befisc_luckpay",
+            provider_reference_id: "PDMTL5GN4A00ZJ",
+            provider_account_holder_name: BANK_NAME,
+            result_json: { details: { verified: true } },
+            created_at: new Date().toISOString(),
+          }]
+        : [], []];
     }
     return [[], []];
   });
@@ -128,29 +96,17 @@ describe("verifyBankForCandidate — an answer already paid for is not bought ag
   });
 
   it("calls the provider when nothing is held for this account", async () => {
-    installMock({
-      candidateName: "RAHUL GAUTAM RAO CHHAPANEY",
-      priorAnswer: false,
-    });
+    installMock({ candidateName: "RAHUL GAUTAM RAO CHHAPANEY", priorAnswer: false });
 
-    await verifyBankForCandidate(CANDIDATE_ID, {
-      accountNo: ACCOUNT_NO,
-      ifscCode: IFSC,
-    });
+    await verifyBankForCandidate(CANDIDATE_ID, { accountNo: ACCOUNT_NO, ifscCode: IFSC });
 
     expect(verifyBank).toHaveBeenCalledTimes(1);
   });
 
   it("does not call the provider again for the same account and IFSC", async () => {
-    installMock({
-      candidateName: "RAHUL GAUTAM RAO CHHAPANEY",
-      priorAnswer: true,
-    });
+    installMock({ candidateName: "RAHUL GAUTAM RAO CHHAPANEY", priorAnswer: true });
 
-    await verifyBankForCandidate(CANDIDATE_ID, {
-      accountNo: ACCOUNT_NO,
-      ifscCode: IFSC,
-    });
+    await verifyBankForCandidate(CANDIDATE_ID, { accountNo: ACCOUNT_NO, ifscCode: IFSC });
 
     expect(verifyBank).not.toHaveBeenCalled();
     // Still recorded, so the save gate and Payroll HR see this attempt.
@@ -162,15 +118,9 @@ describe("verifyBankForCandidate — an answer already paid for is not bought ag
 
   it("re-judges the stored answer against the corrected record, without a new charge", async () => {
     // What HR fixing the surname looks like: same account, same bank name, new record name.
-    installMock({
-      candidateName: "RAHUL GAUTAMBHAI CHHAPANE",
-      priorAnswer: true,
-    });
+    installMock({ candidateName: "RAHUL GAUTAMBHAI CHHAPANE", priorAnswer: true });
 
-    await verifyBankForCandidate(CANDIDATE_ID, {
-      accountNo: ACCOUNT_NO,
-      ifscCode: IFSC,
-    });
+    await verifyBankForCandidate(CANDIDATE_ID, { accountNo: ACCOUNT_NO, ifscCode: IFSC });
 
     expect(verifyBank).not.toHaveBeenCalled();
     expect(statusOf(savedVerifications[0])).toBe("verified");
@@ -179,42 +129,24 @@ describe("verifyBankForCandidate — an answer already paid for is not bought ag
   it("keeps a genuine divergence at manual_review when the record is unchanged", async () => {
     installMock({ candidateName: "SANDEEP PATEL", priorAnswer: true });
 
-    await verifyBankForCandidate(CANDIDATE_ID, {
-      accountNo: ACCOUNT_NO,
-      ifscCode: IFSC,
-    });
+    await verifyBankForCandidate(CANDIDATE_ID, { accountNo: ACCOUNT_NO, ifscCode: IFSC });
 
     expect(statusOf(savedVerifications[0])).toBe("manual_review");
   });
 
   it("logs no API request for a replay, so the cost report is not inflated", async () => {
-    installMock({
-      candidateName: "RAHUL GAUTAM RAO CHHAPANEY",
-      priorAnswer: true,
-    });
+    installMock({ candidateName: "RAHUL GAUTAM RAO CHHAPANEY", priorAnswer: true });
 
-    await verifyBankForCandidate(CANDIDATE_ID, {
-      accountNo: ACCOUNT_NO,
-      ifscCode: IFSC,
-    });
+    await verifyBankForCandidate(CANDIDATE_ID, { accountNo: ACCOUNT_NO, ifscCode: IFSC });
 
-    const logged = execute.mock.calls.filter(([sql]) =>
-      String(sql).includes("candidate_bgv_api_request_log"),
-    );
+    const logged = execute.mock.calls.filter(([sql]) => String(sql).includes("candidate_bgv_api_request_log"));
     expect(logged).toHaveLength(0);
   });
 
   it("buys a fresh drop when HR explicitly asks for one", async () => {
-    installMock({
-      candidateName: "RAHUL GAUTAM RAO CHHAPANEY",
-      priorAnswer: true,
-    });
+    installMock({ candidateName: "RAHUL GAUTAM RAO CHHAPANEY", priorAnswer: true });
 
-    await verifyBankForCandidate(CANDIDATE_ID, {
-      accountNo: ACCOUNT_NO,
-      ifscCode: IFSC,
-      forceProvider: true,
-    });
+    await verifyBankForCandidate(CANDIDATE_ID, { accountNo: ACCOUNT_NO, ifscCode: IFSC, forceProvider: true });
 
     expect(verifyBank).toHaveBeenCalledTimes(1);
   });

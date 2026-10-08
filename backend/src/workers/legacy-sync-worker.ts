@@ -1,5 +1,5 @@
-import { env } from "../config/env.js";
-import { employeeSyncHandler } from "./domains/employee-sync-handler.js";
+import { env } from '../config/env.js';
+import { employeeSyncHandler } from './domains/employee-sync-handler.js';
 
 /**
  * Legacy Sync Worker - MySQL Timestamp-Based
@@ -14,23 +14,21 @@ export class LegacySyncWorker {
    */
   start(): void {
     if (!env.LEGACY_SYNC_ENABLED) {
-      console.log("[LegacySync] Worker disabled (LEGACY_SYNC_ENABLED=false)");
+      console.log('[LegacySync] Worker disabled (LEGACY_SYNC_ENABLED=false)');
       return;
     }
 
-    console.log(
-      `[LegacySync] Worker starting (interval: ${env.LEGACY_SYNC_INTERVAL_MS}ms, batch: ${env.LEGACY_SYNC_BATCH_SIZE})`,
-    );
+    console.log(`[LegacySync] Worker starting (interval: ${env.LEGACY_SYNC_INTERVAL_MS}ms, batch: ${env.LEGACY_SYNC_BATCH_SIZE})`);
 
     // Run immediately
-    this.runSyncCycle().catch((err) => {
-      console.error("[LegacySync] Initial sync failed:", err);
+    this.runSyncCycle().catch(err => {
+      console.error('[LegacySync] Initial sync failed:', err);
     });
 
     // Then run on interval
     this.intervalId = setInterval(() => {
-      this.runSyncCycle().catch((err) => {
-        console.error("[LegacySync] Sync cycle failed:", err);
+      this.runSyncCycle().catch(err => {
+        console.error('[LegacySync] Sync cycle failed:', err);
       });
     }, env.LEGACY_SYNC_INTERVAL_MS);
   }
@@ -42,7 +40,7 @@ export class LegacySyncWorker {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      console.log("[LegacySync] Worker stopped");
+      console.log('[LegacySync] Worker stopped');
     }
   }
 
@@ -51,7 +49,7 @@ export class LegacySyncWorker {
    */
   private async runSyncCycle(): Promise<void> {
     if (this.isRunning) {
-      console.log("[LegacySync] Skipping cycle (previous cycle still running)");
+      console.log('[LegacySync] Skipping cycle (previous cycle still running)');
       return;
     }
 
@@ -59,44 +57,34 @@ export class LegacySyncWorker {
     const startTime = Date.now();
 
     try {
-      console.log("[LegacySync] === Sync cycle starting ===");
+      console.log('[LegacySync] === Sync cycle starting ===');
 
       // Get last sync checkpoint
       const lastSyncTime = await employeeSyncHandler.getLastSyncTime();
       console.log(`[LegacySync] Last sync: ${lastSyncTime.toISOString()}`);
 
       // Fetch changed employees from legacy
-      const legacyRecords = await employeeSyncHandler.fetchChanges(
-        lastSyncTime,
-        env.LEGACY_SYNC_BATCH_SIZE,
-      );
+      const legacyRecords = await employeeSyncHandler.fetchChanges(lastSyncTime, env.LEGACY_SYNC_BATCH_SIZE);
 
       if (legacyRecords.length === 0) {
-        console.log("[LegacySync] No changes detected");
-        await employeeSyncHandler.logSyncRun("success", 0, 0);
+        console.log('[LegacySync] No changes detected');
+        await employeeSyncHandler.logSyncRun('success', 0, 0);
         return;
       }
 
-      console.log(
-        `[LegacySync] Found ${legacyRecords.length} changed employees`,
-      );
+      console.log(`[LegacySync] Found ${legacyRecords.length} changed employees`);
 
       // Transform legacy records to HRMS format
-      const transformedRecords = legacyRecords.map((record) =>
-        employeeSyncHandler.transform(record),
-      );
+      const transformedRecords = legacyRecords.map(record => employeeSyncHandler.transform(record));
 
       // Sync to HRMS database
       const result = await employeeSyncHandler.syncToHRMS(transformedRecords);
 
-      console.log(
-        `[LegacySync] Sync complete: inserted=${result.inserted}, updated=${result.updated}, errors=${result.errors}`,
-      );
+      console.log(`[LegacySync] Sync complete: inserted=${result.inserted}, updated=${result.updated}, errors=${result.errors}`);
 
       // Update checkpoint (use latest timestamp from batch)
       const latestTimestamp = legacyRecords.reduce((latest, record) => {
-        const recordTime =
-          record.lastUpdated || record.EntryDate || record.CreateDate;
+        const recordTime = record.lastUpdated || record.EntryDate || record.CreateDate;
         if (!recordTime) return latest;
         const recordDate = new Date(recordTime);
         return recordDate > latest ? recordDate : latest;
@@ -106,16 +94,17 @@ export class LegacySyncWorker {
 
       // Log sync run
       await employeeSyncHandler.logSyncRun(
-        result.errors === 0 ? "success" : "failure",
+        result.errors === 0 ? 'success' : 'failure',
         result.inserted + result.updated,
-        result.errors,
+        result.errors
       );
 
       const duration = Date.now() - startTime;
       console.log(`[LegacySync] === Cycle complete (${duration}ms) ===`);
+
     } catch (error: any) {
-      console.error("[LegacySync] Sync cycle failed:", error);
-      await employeeSyncHandler.logSyncRun("failure", 0, 0, error.message);
+      console.error('[LegacySync] Sync cycle failed:', error);
+      await employeeSyncHandler.logSyncRun('failure', 0, 0, error.message);
     } finally {
       this.isRunning = false;
     }
@@ -132,20 +121,16 @@ export class LegacySyncWorker {
    */
   async triggerManualSync(): Promise<{ success: boolean; message: string }> {
     if (!env.LEGACY_SYNC_ENABLED) {
-      return {
-        success: false,
-        message:
-          "Legacy sync is disabled (LEGACY_SYNC_ENABLED=false) — manual trigger refused",
-      };
+      return { success: false, message: 'Legacy sync is disabled (LEGACY_SYNC_ENABLED=false) — manual trigger refused' };
     }
 
     if (this.isRunning) {
-      return { success: false, message: "Sync already running" };
+      return { success: false, message: 'Sync already running' };
     }
 
     try {
       await this.runSyncCycle();
-      return { success: true, message: "Manual sync completed" };
+      return { success: true, message: 'Manual sync completed' };
     } catch (error: any) {
       return { success: false, message: error.message };
     }

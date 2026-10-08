@@ -199,9 +199,7 @@ describe("Migration Isolation Tests", () => {
       const runnerSource = fs.readFileSync(runnerPath, "utf-8");
 
       // After the fix, there should be a comment about NEVER marking as success=1 on error
-      expect(runnerSource).toContain(
-        "GOVERNANCE: Never mark a migration as success=1 on ANY error",
-      );
+      expect(runnerSource).toContain("GOVERNANCE: Never mark a migration as success=1 on ANY error");
     });
   });
 
@@ -219,13 +217,7 @@ describe("Migration Isolation Tests", () => {
       const state = module.getSchemaVerificationState();
 
       // State should be one of the defined values
-      const validStates = [
-        "unverified",
-        "verifying",
-        "verified",
-        "incompatible",
-        "error",
-      ];
+      const validStates = ["unverified", "verifying", "verified", "incompatible", "error"];
       expect(validStates).toContain(state.state);
     });
 

@@ -28,15 +28,11 @@ const validRegistration = {
 
 describe("visitor input validation", () => {
   it("accepts a valid self-registration and requires explicit consent", () => {
-    expect(publicRegistrationSchema.safeParse(validRegistration).success).toBe(
-      true,
-    );
-    expect(
-      publicRegistrationSchema.safeParse({
-        ...validRegistration,
-        consent: { ...validRegistration.consent, accepted: false },
-      }).success,
-    ).toBe(false);
+    expect(publicRegistrationSchema.safeParse(validRegistration).success).toBe(true);
+    expect(publicRegistrationSchema.safeParse({
+      ...validRegistration,
+      consent: { ...validRegistration.consent, accepted: false },
+    }).success).toBe(false);
   });
 
   it("rejects an inverted visit schedule", () => {
@@ -53,19 +49,9 @@ describe("visitor input validation", () => {
   });
 
   it("caps internal list pagination and validates dates", () => {
-    expect(
-      visitListQuerySchema.safeParse({
-        limit: "200",
-        offset: "0",
-        date_from: "2026-07-01",
-      }).success,
-    ).toBe(true);
-    expect(
-      visitListQuerySchema.safeParse({ limit: "201", offset: "0" }).success,
-    ).toBe(false);
-    expect(
-      visitListQuerySchema.safeParse({ date_from: "07/01/2026" }).success,
-    ).toBe(false);
+    expect(visitListQuerySchema.safeParse({ limit: "200", offset: "0", date_from: "2026-07-01" }).success).toBe(true);
+    expect(visitListQuerySchema.safeParse({ limit: "201", offset: "0" }).success).toBe(false);
+    expect(visitListQuerySchema.safeParse({ date_from: "07/01/2026" }).success).toBe(false);
   });
 });
 

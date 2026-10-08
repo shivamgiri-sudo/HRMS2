@@ -1,10 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../src/db/mysql.js", () => ({
-  db: {
-    execute: vi.fn().mockResolvedValue([[], []]),
-    getConnection: vi.fn().mockResolvedValue([[], []]),
-  },
+  db: { execute: vi.fn().mockResolvedValue([[], []]), getConnection: vi.fn().mockResolvedValue([[], []]) },
   pingDb: vi.fn(),
 }));
 
@@ -88,7 +85,7 @@ describe("integrationService.getByKey", () => {
   it("throws when not found", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
     await expect(integrationService.getByKey("no_such_key")).rejects.toThrow(
-      "Integration not found",
+      "Integration not found"
     );
   });
 });
@@ -100,13 +97,9 @@ describe("integrationService.create", () => {
     mockExecute.mockResolvedValueOnce([[fakeConfig], []]); // duplicate check
     await expect(
       integrationService.create(
-        {
-          integrationKey: "dialer_1",
-          integrationName: "Dup",
-          integrationType: "rest_pull",
-        },
-        "user-1",
-      ),
+        { integrationKey: "dialer_1", integrationName: "Dup", integrationType: "rest_pull" },
+        "user-1"
+      )
     ).rejects.toThrow("Integration key already exists");
   });
 
@@ -115,12 +108,8 @@ describe("integrationService.create", () => {
     mockExecute.mockResolvedValueOnce([{ insertId: 0 }, []]); // INSERT
     mockExecute.mockResolvedValueOnce([[fakeConfig], []]); // re-fetch
     const result = await integrationService.create(
-      {
-        integrationKey: "dialer_3",
-        integrationName: "Dialer 3",
-        integrationType: "rest_pull",
-      },
-      "user-1",
+      { integrationKey: "dialer_3", integrationName: "Dialer 3", integrationType: "rest_pull" },
+      "user-1"
     );
     expect(result.integration_key).toBe("dialer_1"); // returned from re-fetch mock
   });
@@ -132,26 +121,15 @@ describe("integrationService.update", () => {
   it("throws when integration not found", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
     await expect(
-      integrationService.update(
-        "missing_key",
-        { integrationName: "X" },
-        "user-1",
-      ),
+      integrationService.update("missing_key", { integrationName: "X" }, "user-1")
     ).rejects.toThrow("Integration not found");
   });
 
   it("updates and returns integration", async () => {
     mockExecute.mockResolvedValueOnce([[fakeConfig], []]); // getByKey
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // UPDATE
-    mockExecute.mockResolvedValueOnce([
-      [{ ...fakeConfig, integration_name: "Updated" }],
-      [],
-    ]); // re-fetch
-    const result = await integrationService.update(
-      "dialer_1",
-      { integrationName: "Updated" },
-      "user-1",
-    );
+    mockExecute.mockResolvedValueOnce([[{ ...fakeConfig, integration_name: "Updated" }], []]); // re-fetch
+    const result = await integrationService.update("dialer_1", { integrationName: "Updated" }, "user-1");
     expect(result.integration_name).toBe("Updated");
   });
 });
@@ -171,11 +149,7 @@ describe("integrationService.listRuns", () => {
   it("filters runs by integrationKey", async () => {
     mockExecute.mockResolvedValueOnce([[fakeRun], []]);
     mockExecute.mockResolvedValueOnce([[{ total: 1 }], []]);
-    await integrationService.listRuns({
-      integrationKey: "dialer_1",
-      page: 1,
-      limit: 20,
-    });
+    await integrationService.listRuns({ integrationKey: "dialer_1", page: 1, limit: 20 });
     const [sql] = mockExecute.mock.calls[0];
     expect(sql).toMatch(/integration_key/i);
   });
@@ -206,7 +180,7 @@ describe("integrationService.confirmFieldMap", () => {
         targetTable: "employees",
         targetColumn: "employee_code",
       },
-      "user-1",
+      "user-1"
     );
     expect(result.source_field).toBe("emp_id");
   });
@@ -240,11 +214,7 @@ describe("integrationService.createRun", () => {
     mockExecute.mockResolvedValueOnce([[fakeConfig], []]); // getByKey (createRun checks active_status)
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // INSERT
     mockExecute.mockResolvedValueOnce([[fakeRun], []]); // re-fetch by id
-    const result = await integrationService.createRun(
-      "dialer_1",
-      "manual",
-      "user-1",
-    );
+    const result = await integrationService.createRun("dialer_1", "manual", "user-1");
     expect(result.integration_key).toBe("dialer_1");
     expect(result.triggered_by).toBe("manual");
   });

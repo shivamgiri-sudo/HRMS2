@@ -575,12 +575,7 @@ export async function getSalaryStartDateConsistency(
     );
   }
   const first = state.assignmentRows.find((a) => a.active);
-  if (
-    expected &&
-    first &&
-    !state.hasSalaryChange &&
-    first.effectiveFrom !== expected
-  ) {
+  if (expected && first && !state.hasSalaryChange && first.effectiveFrom !== expected) {
     problems.push(
       `salary assignment date ${first.effectiveFrom} differs from employee date ${expected}`,
     );
@@ -638,9 +633,7 @@ export async function assertSalaryDateNotOwnedByPayrollHead(
   }
 }
 
-async function findEmployeeIdForCandidate(
-  candidateId: string,
-): Promise<string | null> {
+async function findEmployeeIdForCandidate(candidateId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id FROM employee_payroll_head_review WHERE candidate_id = ? LIMIT 1`,
     [candidateId],
@@ -660,9 +653,7 @@ async function findEmployeeIdForCandidate(
  * catalog package first; the Joining Control Room writes the HR validation row; the employee edit
  * writes the profile) call this first, so a refusal cannot leave those writes half-done.
  */
-export async function checkSalaryStartDate(
-  args: ApplySalaryStartDateArgs,
-): Promise<void> {
+export async function checkSalaryStartDate(args: ApplySalaryStartDateArgs): Promise<void> {
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
@@ -712,3 +703,4 @@ export async function syncSalaryStartDateForCandidate(args: {
     authority: "standard",
   });
 }
+

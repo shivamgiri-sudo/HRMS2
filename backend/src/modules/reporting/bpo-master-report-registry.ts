@@ -20,8 +20,7 @@ export function getBpoMasterReport(code: string) {
 export function assertBpoMasterReportRegistry() {
   const codes = new Set<string>();
   for (const report of BPO_MASTER_REPORTS) {
-    if (codes.has(report.code))
-      throw new Error(`Duplicate BPO master report code: ${report.code}`);
+    if (codes.has(report.code)) throw new Error(`Duplicate BPO master report code: ${report.code}`);
     codes.add(report.code);
     if (!report.columns.some((column) => column.key === "EMPLOYEE_CODE")) {
       throw new Error(`${report.code} is missing mandatory EMPLOYEE_CODE`);
@@ -30,29 +29,17 @@ export function assertBpoMasterReportRegistry() {
       throw new Error(`${report.code} is missing mandatory REPORT_DATE`);
     }
     if (report.columns.length < 45) {
-      throw new Error(
-        `${report.code} is too shallow: ${report.columns.length} columns`,
-      );
+      throw new Error(`${report.code} is too shallow: ${report.columns.length} columns`);
     }
     if (report.sourceDomains.length < 7) {
-      throw new Error(
-        `${report.code} must cover at least seven source domains`,
-      );
+      throw new Error(`${report.code} must cover at least seven source domains`);
     }
     const keys = new Set<string>();
     for (const column of report.columns) {
-      if (keys.has(column.key))
-        throw new Error(
-          `${report.code} contains duplicate header ${column.key}`,
-        );
+      if (keys.has(column.key)) throw new Error(`${report.code} contains duplicate header ${column.key}`);
       keys.add(column.key);
-      if (
-        column.key !== column.key.toUpperCase() ||
-        column.label !== column.label.toUpperCase()
-      ) {
-        throw new Error(
-          `${report.code} contains non-uppercase header ${column.key}`,
-        );
+      if (column.key !== column.key.toUpperCase() || column.label !== column.label.toUpperCase()) {
+        throw new Error(`${report.code} contains non-uppercase header ${column.key}`);
       }
     }
   }

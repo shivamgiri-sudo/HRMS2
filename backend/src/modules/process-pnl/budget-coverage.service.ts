@@ -15,7 +15,7 @@ export interface BudgetCoverageInput {
 async function getBudgetOrThrow(budgetId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM finance_budget_header WHERE id = ? LIMIT 1",
-    [budgetId],
+    [budgetId]
   );
   if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
   return rows[0] as any;
@@ -75,7 +75,7 @@ async function getCoverage(budgetId: string) {
                s.pnl_treatment, s.display_order, c.planning_status, c.reason,
                c.reviewed_by, c.reviewed_at, rb.first_name, rb.last_name
       ORDER BY h.display_order, h.head_name, s.display_order, s.sub_head_name`,
-    [budgetId, budgetId],
+    [budgetId, budgetId]
   );
 
   const items = rows.map((row) => ({
@@ -89,15 +89,9 @@ async function getCoverage(budgetId: string) {
   }));
   const total = items.length;
   const reviewed = items.filter((item) => item.planning_status).length;
-  const planned = items.filter(
-    (item) => item.planning_status === "planned",
-  ).length;
-  const notPlanned = items.filter(
-    (item) => item.planning_status === "not_planned",
-  ).length;
-  const notApplicable = items.filter(
-    (item) => item.planning_status === "not_applicable",
-  ).length;
+  const planned = items.filter((item) => item.planning_status === "planned").length;
+  const notPlanned = items.filter((item) => item.planning_status === "not_planned").length;
+  const notApplicable = items.filter((item) => item.planning_status === "not_applicable").length;
   const stalePlanned = items.filter((item) => isStalePlannedMarker(item));
   // Counted straight from the table rather than by summing budget_line_count: those
   // counts come from a join on head/sub-head NAME, so a line whose text does not match
@@ -105,7 +99,7 @@ async function getCoverage(budgetId: string) {
   // reported as having none.
   const [lineRows] = await db.execute<RowDataPacket[]>(
     "SELECT COUNT(*) AS total FROM finance_budget_line WHERE budget_id = ?",
-    [budgetId],
+    [budgetId]
   );
   const lineCount = Number(lineRows[0]?.total ?? 0);
 
@@ -133,67 +127,38 @@ export const budgetCoverageService = {
   async saveCoverage(
     budgetId: string,
     entries: BudgetCoverageInput[],
-    actorUserId: string,
+    actorUserId: string
   ) {
     if (!Array.isArray(entries) || !entries.length) {
-      throw refuse(
-        400,
-        "COVERAGE_DECISIONS_REQUIRED",
-        "At least one Head/Sub-head coverage decision is required",
-      );
+      throw refuse(400, "COVERAGE_DECISIONS_REQUIRED", "At least one Head/Sub-head coverage decision is required");
     }
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
       const [budgetRows] = await connection.execute<RowDataPacket[]>(
         "SELECT status FROM finance_budget_header WHERE id = ? FOR UPDATE",
-        [budgetId],
+        [budgetId]
       );
-      if (!budgetRows[0])
-        throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
-      if (
-        !["draft", "revision_required"].includes(String(budgetRows[0].status))
-      ) {
-        throw refuse(
-          409,
-          "BUDGET_NOT_EDITABLE",
-          "Head/Sub-head coverage can only be changed on an editable budget",
-        );
+      if (!budgetRows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
+      if (!["draft", "revision_required"].includes(String(budgetRows[0].status))) {
+        throw refuse(409, "BUDGET_NOT_EDITABLE", "Head/Sub-head coverage can only be changed on an editable budget");
       }
 
       const seen = new Set<string>();
       for (const [index, entry] of entries.entries()) {
         if (!entry.expenseHeadId || !entry.expenseSubHeadId) {
-          throw refuse(
-            400,
-            "COVERAGE_ROW_INVALID",
-            `Coverage row ${index + 1}: Head and Sub-head are required`,
-          );
+          throw refuse(400, "COVERAGE_ROW_INVALID", `Coverage row ${index + 1}: Head and Sub-head are required`);
         }
-        if (
-          !"planned,not_planned,not_applicable"
-            .split(",")
-            .includes(entry.planningStatus)
-        ) {
-          throw refuse(
-            400,
-            "COVERAGE_ROW_INVALID",
-            `Coverage row ${index + 1}: invalid planning status`,
-          );
+        if (!("planned,not_planned,not_applicable".split(",")).includes(entry.planningStatus)) {
+          throw refuse(400, "COVERAGE_ROW_INVALID", `Coverage row ${index + 1}: invalid planning status`);
         }
         if (seen.has(entry.expenseSubHeadId)) {
-          throw refuse(
-            400,
-            "COVERAGE_ROW_DUPLICATE",
-            `Coverage row ${index + 1}: duplicate Sub-head decision`,
-          );
+          throw refuse(400, "COVERAGE_ROW_DUPLICATE", `Coverage row ${index + 1}: duplicate Sub-head decision`);
         }
         seen.add(entry.expenseSubHeadId);
         if (entry.planningStatus !== "planned" && !entry.reason?.trim()) {
-          throw refuse(
-            400,
-            "COVERAGE_REASON_REQUIRED",
-            `Coverage row ${index + 1}: reason is mandatory for ${entry.planningStatus.replace("_", " ")}`,
+          throw refuse(400, "COVERAGE_REASON_REQUIRED", 
+            `Coverage row ${index + 1}: reason is mandatory for ${entry.planningStatus.replace("_", " ")}`
           );
         }
         const [masterRows] = await connection.execute<RowDataPacket[]>(
@@ -202,14 +167,10 @@ export const budgetCoverageService = {
              JOIN finance_expense_head_master h ON h.id = s.head_id
             WHERE s.id = ? AND h.id = ? AND s.active_status = 1 AND h.active_status = 1
             LIMIT 1`,
-          [entry.expenseSubHeadId, entry.expenseHeadId],
+          [entry.expenseSubHeadId, entry.expenseHeadId]
         );
         if (!masterRows[0]) {
-          throw refuse(
-            400,
-            "COVERAGE_MAPPING_NOT_FOUND",
-            `Coverage row ${index + 1}: active Head/Sub-head mapping was not found`,
-          );
+          throw refuse(400, "COVERAGE_MAPPING_NOT_FOUND", `Coverage row ${index + 1}: active Head/Sub-head mapping was not found`);
         }
         if (entry.planningStatus !== "planned") {
           const [lineRows] = await connection.execute<RowDataPacket[]>(
@@ -219,13 +180,11 @@ export const budgetCoverageService = {
                JOIN finance_expense_sub_head_master s ON s.id = ? AND s.head_id = h.id
               WHERE l.budget_id = ? AND l.head = h.head_name
                 AND COALESCE(l.sub_head,'') = s.sub_head_name`,
-            [entry.expenseHeadId, entry.expenseSubHeadId, budgetId],
+            [entry.expenseHeadId, entry.expenseSubHeadId, budgetId]
           );
           if (Number(lineRows[0]?.total ?? 0) > 0) {
-            throw refuse(
-              409,
-              "COVERAGE_LINE_EXISTS",
-              `Coverage row ${index + 1}: remove the detailed budget line before marking this Sub-head ${entry.planningStatus.replace("_", " ")}`,
+            throw refuse(409, "COVERAGE_LINE_EXISTS", 
+              `Coverage row ${index + 1}: remove the detailed budget line before marking this Sub-head ${entry.planningStatus.replace("_", " ")}`
             );
           }
         }
@@ -241,14 +200,9 @@ export const budgetCoverageService = {
              reviewed_by = VALUES(reviewed_by),
              reviewed_at = NOW()`,
           [
-            randomUUID(),
-            budgetId,
-            entry.expenseHeadId,
-            entry.expenseSubHeadId,
-            entry.planningStatus,
-            entry.reason?.trim() || null,
-            actorUserId,
-          ],
+            randomUUID(), budgetId, entry.expenseHeadId, entry.expenseSubHeadId,
+            entry.planningStatus, entry.reason?.trim() || null, actorUserId,
+          ]
         );
       }
       await connection.commit();
@@ -274,7 +228,7 @@ export const budgetCoverageService = {
              ON s.head_id = h.id AND s.sub_head_name = COALESCE(l.sub_head,'')
             AND s.active_status = 1
           WHERE l.budget_id = ?`,
-        [budgetId],
+        [budgetId]
       );
       for (const row of rows) {
         await connection.execute(
@@ -285,7 +239,7 @@ export const budgetCoverageService = {
            ON DUPLICATE KEY UPDATE
              planning_status = 'planned', reason = NULL,
              reviewed_by = VALUES(reviewed_by), reviewed_at = NOW()`,
-          [randomUUID(), budgetId, row.head_id, row.sub_head_id, actorUserId],
+          [randomUUID(), budgetId, row.head_id, row.sub_head_id, actorUserId]
         );
       }
       await connection.commit();
@@ -298,22 +252,21 @@ export const budgetCoverageService = {
     return getCoverage(budgetId);
   },
 
-  async submitBudget(budgetId: string, actorUserId: string, actorRole: string) {
+  async submitBudget(
+    budgetId: string,
+    actorUserId: string,
+    actorRole: string
+  ) {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
       const [budgetRows] = await connection.execute<RowDataPacket[]>(
         "SELECT status FROM finance_budget_header WHERE id = ? FOR UPDATE",
-        [budgetId],
+        [budgetId]
       );
-      if (!budgetRows[0])
-        throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
+      if (!budgetRows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       if (String(budgetRows[0].status) !== "draft") {
-        throw refuse(
-          409,
-          "BUDGET_WRONG_STATUS",
-          "Only a draft budget can be submitted",
-        );
+        throw refuse(409, "BUDGET_WRONG_STATUS", "Only a draft budget can be submitted");
       }
 
       // Head/Sub-head coverage does NOT gate submission. There is deliberately no
@@ -327,14 +280,10 @@ export const budgetCoverageService = {
       // lines were removed by another route or session between save and submit.
       const [lineCountRows] = await connection.execute<RowDataPacket[]>(
         "SELECT COUNT(*) AS total FROM finance_budget_line WHERE budget_id = ?",
-        [budgetId],
+        [budgetId]
       );
       if (Number(lineCountRows[0]?.total ?? 0) <= 0) {
-        throw refuse(
-          409,
-          "BUDGET_LINES_REQUIRED",
-          "Add at least one budget line before submitting",
-        );
+        throw refuse(409, "BUDGET_LINES_REQUIRED", "Add at least one budget line before submitting");
       }
 
       const [coverageRows] = await connection.execute<RowDataPacket[]>(
@@ -351,21 +300,17 @@ export const budgetCoverageService = {
           WHERE h.active_status = 1
           GROUP BY h.id, h.head_name, s.id, s.sub_head_name, c.planning_status
           ORDER BY h.display_order, s.display_order`,
-        [budgetId, budgetId],
+        [budgetId, budgetId]
       );
 
       const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE finance_budget_header
             SET status = 'submitted', submitted_by = ?, submitted_at = NOW()
           WHERE id = ? AND status = 'draft'`,
-        [actorUserId, budgetId],
+        [actorUserId, budgetId]
       );
       if (result.affectedRows !== 1) {
-        throw refuse(
-          409,
-          "BUDGET_STATUS_CHANGED",
-          "Budget status changed before submission; refresh and retry",
-        );
+        throw refuse(409, "BUDGET_STATUS_CHANGED", "Budget status changed before submission; refresh and retry");
       }
       // Close any correction notes a reviewer raised against this budget's heads/sub-heads. They
       // stay open — and visible on their line — for as long as the branch admin is editing, and
@@ -375,7 +320,7 @@ export const budgetCoverageService = {
         `UPDATE finance_budget_line_correction
             SET resolved_at = NOW(), resolved_by = ?
           WHERE budget_id = ? AND resolved_at IS NULL`,
-        [actorUserId, budgetId],
+        [actorUserId, budgetId]
       );
       await connection.execute(
         `INSERT INTO finance_budget_approval_log
@@ -383,36 +328,23 @@ export const budgetCoverageService = {
           actor_user_id, actor_role, remarks)
          VALUES (?,?,'SUBMIT','draft','submitted',?,?,?)`,
         [
-          randomUUID(),
-          budgetId,
-          actorUserId,
-          actorRole,
+          randomUUID(), budgetId, actorUserId, actorRole,
           // Was "completeness 100%", which is meaningless now that coverage does not
           // gate submission. The reviewer needs to know how much of the catalogue this
           // budget actually covers, and whether any "planned" marker is stale.
           `${coverageRows.filter((row) => Number(row.budget_line_count ?? 0) > 0).length}` +
             ` of ${coverageRows.length} active Sub-heads budgeted` +
             `; ${coverageRows.filter((row) => !row.planning_status).length} left undeclared` +
-            (coverageRows.some((row) =>
-              isStalePlannedMarker({
-                planning_status: row.planning_status
-                  ? String(row.planning_status)
-                  : null,
-                budget_line_count: Number(row.budget_line_count ?? 0),
-              }),
-            )
-              ? `; ${
-                  coverageRows.filter((row) =>
-                    isStalePlannedMarker({
-                      planning_status: row.planning_status
-                        ? String(row.planning_status)
-                        : null,
-                      budget_line_count: Number(row.budget_line_count ?? 0),
-                    }),
-                  ).length
-                } marked planned with no line`
+            (coverageRows.some((row) => isStalePlannedMarker({
+              planning_status: row.planning_status ? String(row.planning_status) : null,
+              budget_line_count: Number(row.budget_line_count ?? 0),
+            }))
+              ? `; ${coverageRows.filter((row) => isStalePlannedMarker({
+                  planning_status: row.planning_status ? String(row.planning_status) : null,
+                  budget_line_count: Number(row.budget_line_count ?? 0),
+                })).length} marked planned with no line`
               : ""),
-        ],
+        ]
       );
       await connection.commit();
     } catch (error) {

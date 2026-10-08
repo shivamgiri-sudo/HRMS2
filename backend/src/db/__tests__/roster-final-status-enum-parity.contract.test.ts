@@ -30,10 +30,7 @@ const WFM_ROUTES = read("src/modules/wfm/wfm.routes.ts") + "\n" + read("src/modu
 /** The enum members as declared by the newest migration that redefines the column. */
 function declaredMembers(): string[] {
   const m = ENUM_MIGRATION.match(/final_roster_status enum\(([^)]*)\)/i);
-  if (!m)
-    throw new Error(
-      "could not find the final_roster_status enum in migration 1222",
-    );
+  if (!m) throw new Error("could not find the final_roster_status enum in migration 1222");
   return m[1].split(",").map((s) => s.trim().replace(/^'|'$/g, ""));
 }
 
@@ -66,9 +63,7 @@ describe("final_roster_status enum parity", () => {
       "approved_final",
       "published_to_rta",
     ]);
-    expect(members[members.length - 1]).toBe(
-      "manager_rejected_employee_request",
-    );
+    expect(members[members.length - 1]).toBe("manager_rejected_employee_request");
   });
 
   it("writes no literal the enum does not contain", () => {
@@ -86,9 +81,7 @@ describe("final_roster_status enum parity", () => {
     expect(ENUM_MIGRATION).toMatch(/PREPARE stmt FROM @ddl/);
     expect(ENUM_MIGRATION).not.toMatch(/ADD COLUMN IF NOT EXISTS/i);
     // The guard must key on the member being absent, not on the column existing.
-    expect(ENUM_MIGRATION).toMatch(
-      /COLUMN_TYPE NOT LIKE '%manager_rejected_employee_request%'/,
-    );
+    expect(ENUM_MIGRATION).toMatch(/COLUMN_TYPE NOT LIKE '%manager_rejected_employee_request%'/);
   });
 
   it("is registered in the migration manifest", () => {

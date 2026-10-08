@@ -1,44 +1,28 @@
 import { Router, type NextFunction, type Response } from "express";
 import multer from "multer";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireTpzCompanyInScope } from "../dashboards/process-scope-guards.js";
 import * as svc from "./sales-upload.service.js";
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
-});
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 export const salesUploadRouter = Router();
 
 type Handler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 
-const h =
-  (fn: Handler) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    void fn(req, res).catch(next);
-  };
+const h = (fn: Handler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 salesUploadRouter.use(requireAuth);
 // Read-only dashboard endpoints open to all ops/management roles.
 // Upload/delete endpoints keep the tighter guard enforced per-route.
 salesUploadRouter.use(
   requireRole(
-    "super_admin",
-    "admin",
-    "ceo",
-    "coo",
-    "sales",
-    "hr",
-    "manager",
-    "process_manager",
-    "operations_manager",
-    "branch_head",
-  ),
+    "super_admin", "admin", "ceo", "coo", "sales", "hr",
+    "manager", "process_manager", "operations_manager", "branch_head"
+  )
 );
 
 // Owner ruling 2026-10-01: each company dashboard needs that company's process inside the caller's scope.
@@ -63,167 +47,90 @@ salesUploadRouter.get("/health", h(async (_req, res) => {
 
 // ── Dashboard endpoints (read-only) ───────────────────────────────────────────
 
-salesUploadRouter.get(
-  "/bellavita-dashboard",
-  h(async (req, res) => {
-    try {
-      const month =
-        String(req.query.month ?? "").slice(0, 7) ||
-        new Date().toISOString().slice(0, 7);
-      const data = await svc.getBellavitaDashboard(month);
-      return res.json({ success: true, data });
-    } catch (err) {
-      return res.json({
-        success: true,
-        _unavailable: true,
-        data: { overall: {}, by_campaign: [] },
-      });
-    }
-  }),
-);
+salesUploadRouter.get("/bellavita-dashboard", h(async (req, res) => {
+  try {
+    const month = String(req.query.month ?? "").slice(0, 7) ||
+      new Date().toISOString().slice(0, 7);
+    const data = await svc.getBellavitaDashboard(month);
+    return res.json({ success: true, data });
+  } catch (err) {
+    return res.json({ success: true, _unavailable: true, data: { overall: {}, by_campaign: [] } });
+  }
+}));
 
-salesUploadRouter.get(
-  "/gnc-dashboard",
-  h(async (req, res) => {
-    try {
-      const month =
-        String(req.query.month ?? "").slice(0, 7) ||
-        new Date().toISOString().slice(0, 7);
-      const data = await svc.getGncDashboard(month);
-      return res.json({ success: true, data });
-    } catch (err) {
-      return res.json({
-        success: true,
-        _unavailable: true,
-        data: { summary: {}, by_product: [], apr_summary: {} },
-      });
-    }
-  }),
-);
+salesUploadRouter.get("/gnc-dashboard", h(async (req, res) => {
+  try {
+    const month = String(req.query.month ?? "").slice(0, 7) ||
+      new Date().toISOString().slice(0, 7);
+    const data = await svc.getGncDashboard(month);
+    return res.json({ success: true, data });
+  } catch (err) {
+    return res.json({ success: true, _unavailable: true, data: { summary: {}, by_product: [], apr_summary: {} } });
+  }
+}));
 
-salesUploadRouter.get(
-  "/logs",
-  h(async (req, res) => {
-    try {
-      const limit = Math.min(Number(req.query.limit ?? 50), 200);
-      const data = await svc.getUploadLogs(limit);
-      return res.json({ success: true, data });
-    } catch {
-      return res.json({ success: true, data: [] });
-    }
-  }),
-);
+salesUploadRouter.get("/logs", h(async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const data = await svc.getUploadLogs(limit);
+    return res.json({ success: true, data });
+  } catch {
+    return res.json({ success: true, data: [] });
+  }
+}));
 
 // ── Neemans Dashboard (read-only) ─────────────────────────────────────────────
 
-salesUploadRouter.get(
-  "/neemans-dashboard",
-  h(async (req, res) => {
-    const month =
-      String(req.query.month ?? "").slice(0, 7) ||
-      new Date().toISOString().slice(0, 7);
-    try {
-      return res.json({
-        success: true,
-        data: await svc.getNeemansDashboard(month),
-      });
-    } catch {
-      return res.json({
-        success: true,
-        _unavailable: true,
-        data: { kpis: {}, daily_trend: [], agents: [] },
-      });
-    }
-  }),
-);
+salesUploadRouter.get("/neemans-dashboard", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
+  try {
+    return res.json({ success: true, data: await svc.getNeemansDashboard(month) });
+  } catch {
+    return res.json({ success: true, _unavailable: true, data: { kpis: {}, daily_trend: [], agents: [] } });
+  }
+}));
 
-salesUploadRouter.get(
-  "/neemans-apr-dashboard",
-  h(async (req, res) => {
-    const month =
-      String(req.query.month ?? "").slice(0, 7) ||
-      new Date().toISOString().slice(0, 7);
-    try {
-      return res.json({
-        success: true,
-        data: await svc.getNeemansAprDashboard(month),
-      });
-    } catch {
-      return res.json({
-        success: true,
-        _unavailable: true,
-        data: { kpis: {}, agents: [] },
-      });
-    }
-  }),
-);
+salesUploadRouter.get("/neemans-apr-dashboard", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
+  try {
+    return res.json({ success: true, data: await svc.getNeemansAprDashboard(month) });
+  } catch {
+    return res.json({ success: true, _unavailable: true, data: { kpis: {}, agents: [] } });
+  }
+}));
 
-salesUploadRouter.get(
-  "/neemans-abc-cart-snap",
-  h(async (req, res) => {
-    const month =
-      String(req.query.month ?? "").slice(0, 7) ||
-      new Date().toISOString().slice(0, 7);
-    try {
-      return res.json({
-        success: true,
-        data: await svc.getNeemansAbcCartSnap(month),
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("[neemans-abc-cart-snap] error:", msg);
-      return res.json({
-        success: true,
-        _unavailable: true,
-        data: [],
-        _error: msg,
-      });
-    }
-  }),
-);
+salesUploadRouter.get("/neemans-abc-cart-snap", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
+  try {
+    return res.json({ success: true, data: await svc.getNeemansAbcCartSnap(month) });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[neemans-abc-cart-snap] error:", msg);
+    return res.json({ success: true, _unavailable: true, data: [], _error: msg });
+  }
+}));
 
-salesUploadRouter.get(
-  "/neemans-targets",
-  h(async (req, res) => {
-    const month = String(req.query.month ?? "");
-    return res.json({
-      success: true,
-      data: await svc.getNeemansTargets(month),
-    });
-  }),
-);
+salesUploadRouter.get("/neemans-targets", h(async (req, res) => {
+  const month = String(req.query.month ?? "");
+  return res.json({ success: true, data: await svc.getNeemansTargets(month) });
+}));
 
 salesUploadRouter.post(
   "/neemans-targets",
   requireRole("super_admin", "admin", "operations_manager"),
   h(async (req, res) => {
-    const { month, daily_target, total_target } = req.body as {
-      month: string;
-      daily_target: number;
-      total_target: number;
-    };
-    if (!month)
-      return res.status(400).json({ success: false, error: "month required" });
-    await svc.setNeemansTarget(
-      month,
-      Number(daily_target),
-      Number(total_target),
-    );
+    const { month, daily_target, total_target } = req.body as { month: string; daily_target: number; total_target: number };
+    if (!month) return res.status(400).json({ success: false, error: "month required" });
+    await svc.setNeemansTarget(month, Number(daily_target), Number(total_target));
     return res.json({ success: true });
-  }),
+  })
 );
 
 // ── Neemans Agent Detail Master ────────────────────────────────────────────────
 
-salesUploadRouter.get(
-  "/nms-agent-details",
-  h(async (_req, res) => {
-    return res.json({
-      success: true,
-      data: await svc.getNeemansAgentDetails(),
-    });
-  }),
-);
+salesUploadRouter.get("/nms-agent-details", h(async (_req, res) => {
+  return res.json({ success: true, data: await svc.getNeemansAgentDetails() });
+}));
 
 salesUploadRouter.post(
   "/nms-agent-details",
@@ -231,19 +138,16 @@ salesUploadRouter.post(
   h(async (req, res) => {
     await svc.addNeemansAgentDetail(req.body as Record<string, unknown>);
     return res.json({ success: true });
-  }),
+  })
 );
 
 salesUploadRouter.put(
   "/nms-agent-details/:id",
   requireRole("super_admin", "admin", "operations_manager"),
   h(async (req, res) => {
-    await svc.updateNeemansAgentDetail(
-      Number(req.params.id),
-      req.body as Record<string, unknown>,
-    );
+    await svc.updateNeemansAgentDetail(Number(req.params.id), req.body as Record<string, unknown>);
     return res.json({ success: true });
-  }),
+  })
 );
 
 salesUploadRouter.delete(
@@ -252,7 +156,7 @@ salesUploadRouter.delete(
   h(async (req, res) => {
     await svc.deleteNeemansAgentDetail(Number(req.params.id));
     return res.json({ success: true });
-  }),
+  })
 );
 
 // ── Bellavita / GNC upload + batch delete ────────────────────────────────────
@@ -264,17 +168,14 @@ salesUploadRouter.delete(
 //
 // A Map, not an object literal: the key comes straight from the URL, and an object lookup
 // would happily resolve "constructor" or "__proto__" to something callable.
-const UPLOAD_HANDLERS = new Map<
-  string,
-  (buffer: Buffer, uploadedBy: string) => Promise<{ rowsInserted: number }>
->([
+const UPLOAD_HANDLERS = new Map<string, (buffer: Buffer, uploadedBy: string) => Promise<{ rowsInserted: number }>>([
   ["bellavita-sales", svc.uploadBellavitaSales],
-  ["bellavita-apr", svc.uploadBellavitaApr],
-  ["bellavita-chat", svc.uploadBellavitaChat],
-  ["bellavita-cart", svc.uploadBellavitaCart],
-  ["gnc-sales", svc.uploadGncSales],
-  ["gnc-apr", svc.uploadGncApr],
-  ["gnc-allocation", svc.uploadGncAllocation],
+  ["bellavita-apr",   svc.uploadBellavitaApr],
+  ["bellavita-chat",  svc.uploadBellavitaChat],
+  ["bellavita-cart",  svc.uploadBellavitaCart],
+  ["gnc-sales",       svc.uploadGncSales],
+  ["gnc-apr",         svc.uploadGncApr],
+  ["gnc-allocation",  svc.uploadGncAllocation],
 ]);
 
 salesUploadRouter.post(
@@ -291,24 +192,14 @@ salesUploadRouter.post(
         error: `Unknown upload type "${req.params.type}". Expected one of: ${[...UPLOAD_HANDLERS.keys()].join(", ")}`,
       });
     }
-    if (!req.file)
-      return res
-        .status(400)
-        .json({ success: false, error: "No file uploaded" });
+    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded" });
 
-    const result = await handler(
-      req.file.buffer,
-      req.authUser?.email ?? "system",
-    );
+    const result = await handler(req.file.buffer, req.authUser?.email ?? "system");
     // rowsInserted is repeated at the top level because hrmsApi.requestForm returns the raw
     // payload — it does not unwrap `data` — and the page reads res.rowsInserted. `data` stays
     // for consistency with every other route in this module.
-    return res.json({
-      success: true,
-      rowsInserted: result.rowsInserted,
-      data: result,
-    });
-  }),
+    return res.json({ success: true, rowsInserted: result.rowsInserted, data: result });
+  })
 );
 
 // One batch for the Recent Uploads drill-down. Same roles as uploading: the
@@ -318,17 +209,11 @@ salesUploadRouter.get(
   requireRole("super_admin", "admin", "sales", "operations_manager"),
   h(async (req, res) => {
     const batchId = String(req.params.batchId ?? "").trim();
-    if (!batchId)
-      return res
-        .status(400)
-        .json({ success: false, error: "batchId is required" });
+    if (!batchId) return res.status(400).json({ success: false, error: "batchId is required" });
     const data = await svc.getUploadBatch(batchId);
-    if (!data)
-      return res
-        .status(404)
-        .json({ success: false, error: "No such upload batch" });
+    if (!data) return res.status(404).json({ success: false, error: "No such upload batch" });
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 salesUploadRouter.delete(
@@ -338,13 +223,10 @@ salesUploadRouter.delete(
   requireRole("super_admin", "admin", "operations_manager"),
   h(async (req, res) => {
     const batchId = String(req.params.batchId ?? "").trim();
-    if (!batchId)
-      return res
-        .status(400)
-        .json({ success: false, error: "batchId is required" });
+    if (!batchId) return res.status(400).json({ success: false, error: "batchId is required" });
     await svc.deleteUploadBatch(batchId);
     return res.json({ success: true });
-  }),
+  })
 );
 
 // ── Neemans Upload Routes ─────────────────────────────────────────────────────
@@ -354,16 +236,10 @@ salesUploadRouter.post(
   requireRole("super_admin", "admin", "sales", "operations_manager"),
   upload.single("file"),
   h(async (req, res) => {
-    if (!req.file)
-      return res
-        .status(400)
-        .json({ success: false, error: "No file uploaded" });
-    const result = await svc.uploadNeemansSaleRaw(
-      req.file.buffer,
-      req.authUser?.email ?? "system",
-    );
+    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded" });
+    const result = await svc.uploadNeemansSaleRaw(req.file.buffer, req.authUser?.email ?? "system");
     return res.json({ success: true, data: result });
-  }),
+  })
 );
 
 salesUploadRouter.post(
@@ -371,16 +247,10 @@ salesUploadRouter.post(
   requireRole("super_admin", "admin", "sales", "operations_manager"),
   upload.single("file"),
   h(async (req, res) => {
-    if (!req.file)
-      return res
-        .status(400)
-        .json({ success: false, error: "No file uploaded" });
-    const result = await svc.uploadNeemansAllocation(
-      req.file.buffer,
-      req.authUser?.email ?? "system",
-    );
+    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded" });
+    const result = await svc.uploadNeemansAllocation(req.file.buffer, req.authUser?.email ?? "system");
     return res.json({ success: true, data: result });
-  }),
+  })
 );
 
 salesUploadRouter.post(
@@ -388,72 +258,42 @@ salesUploadRouter.post(
   requireRole("super_admin", "admin", "sales", "operations_manager"),
   upload.single("file"),
   h(async (req, res) => {
-    if (!req.file)
-      return res
-        .status(400)
-        .json({ success: false, error: "No file uploaded" });
-    const result = await svc.uploadNeemansApr(
-      req.file.buffer,
-      req.authUser?.email ?? "system",
-    );
+    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded" });
+    const result = await svc.uploadNeemansApr(req.file.buffer, req.authUser?.email ?? "system");
     return res.json({ success: true, data: result });
-  }),
+  })
 );
 
 // ── Neemans Weekly Stack Ranking ──────────────────────────────────────────────
 
-salesUploadRouter.get(
-  "/neemans-weekly-ranking",
-  h(async (req, res) => {
-    const month =
-      String(req.query.month ?? "").slice(0, 7) ||
-      new Date().toISOString().slice(0, 7);
-    try {
-      return res.json({
-        success: true,
-        data: await svc.getNeemansWeeklyRanking(month),
-      });
-    } catch {
-      return res.json({
-        success: true,
-        _unavailable: true,
-        data: { weeks: [], rows: [], monthlyTarget: null },
-      });
-    }
-  }),
-);
+salesUploadRouter.get("/neemans-weekly-ranking", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
+  try {
+    return res.json({ success: true, data: await svc.getNeemansWeeklyRanking(month) });
+  } catch {
+    return res.json({ success: true, _unavailable: true, data: { weeks: [], rows: [], monthlyTarget: null } });
+  }
+}));
 
 // ── AW Dashboard (read-only) ──────────────────────────────────────────────────
 
-salesUploadRouter.get(
-  "/aw-dashboard",
-  h(async (req, res) => {
-    const month =
-      String(req.query.month ?? "").slice(0, 7) ||
-      new Date().toISOString().slice(0, 7);
-    try {
-      return res.json({ success: true, data: await svc.getAwDashboard(month) });
-    } catch {
-      return res.json({
-        success: true,
-        _unavailable: true,
-        data: { kpis: {}, agents: [], mandate: [], months: [] },
-      });
-    }
-  }),
-);
+salesUploadRouter.get("/aw-dashboard", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
+  try {
+    return res.json({ success: true, data: await svc.getAwDashboard(month) });
+  } catch {
+    return res.json({ success: true, _unavailable: true, data: { kpis: {}, agents: [], mandate: [], months: [] } });
+  }
+}));
 
 // ── AW Upload Routes ──────────────────────────────────────────────────────────
 
-const AW_UPLOAD_HANDLERS = new Map<
-  string,
-  (buf: Buffer, by: string) => Promise<{ rowsInserted: number }>
->([
-  ["aw-out", svc.uploadAwOut],
-  ["aw-billing", svc.uploadAwBilling],
-  ["aw-mandate", svc.uploadAwMandate],
-  ["aw-inbound", svc.uploadAwInbound],
-  ["aw-new-cdr", svc.uploadAwNewCdr],
+const AW_UPLOAD_HANDLERS = new Map<string, (buf: Buffer, by: string) => Promise<{ rowsInserted: number }>>([
+  ["aw-out",      svc.uploadAwOut],
+  ["aw-billing",  svc.uploadAwBilling],
+  ["aw-mandate",  svc.uploadAwMandate],
+  ["aw-inbound",  svc.uploadAwInbound],
+  ["aw-new-cdr",  svc.uploadAwNewCdr],
 ]);
 
 salesUploadRouter.post(
@@ -462,72 +302,36 @@ salesUploadRouter.post(
   upload.single("file"),
   h(async (req, res) => {
     const handler = AW_UPLOAD_HANDLERS.get(String(req.params.type));
-    if (!handler)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: `Unknown AW upload type "${req.params.type}". Expected: ${[...AW_UPLOAD_HANDLERS.keys()].join(", ")}`,
-        });
-    if (!req.file)
-      return res
-        .status(400)
-        .json({ success: false, error: "No file uploaded" });
-    const result = await handler(
-      req.file.buffer,
-      req.authUser?.email ?? "system",
-    );
-    return res.json({
-      success: true,
-      rowsInserted: result.rowsInserted,
-      data: result,
-    });
-  }),
+    if (!handler) return res.status(400).json({ success: false, error: `Unknown AW upload type "${req.params.type}". Expected: ${[...AW_UPLOAD_HANDLERS.keys()].join(", ")}` });
+    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded" });
+    const result = await handler(req.file.buffer, req.authUser?.email ?? "system");
+    return res.json({ success: true, rowsInserted: result.rowsInserted, data: result });
+  })
 );
 
 // ── BVO / Bellavita Repeat Dashboard ─────────────────────────────────────────
 
-salesUploadRouter.get(
-  "/bvo-dashboard",
-  h(async (req, res) => {
-    const month =
-      String(req.query.month ?? "").slice(0, 7) ||
-      (() => {
-        const d = new Date();
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      })();
-    try {
-      return res.json({
-        success: true,
-        data: await svc.getBvoDashboard(month),
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("[bvo-dashboard] error:", msg);
-      return res.json({
-        success: true,
-        _unavailable: true,
-        data: { kpis: {}, daily: [], products: [], paymentMix: [], months: [] },
-      });
-    }
-  }),
-);
+salesUploadRouter.get("/bvo-dashboard", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || (() => {
+    const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  })();
+  try {
+    return res.json({ success: true, data: await svc.getBvoDashboard(month) });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[bvo-dashboard] error:", msg);
+    return res.json({ success: true, _unavailable: true, data: { kpis: {}, daily: [], products: [], paymentMix: [], months: [] } });
+  }
+}));
 
 // ── LP Dashboard ──────────────────────────────────────────────────────────────
 
-salesUploadRouter.get(
-  "/lp-dashboard",
-  h(async (req, res) => {
-    try {
-      return res.json({ success: true, data: await svc.getLpDashboard() });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("[lp-dashboard] error:", msg);
-      return res.json({
-        success: true,
-        _unavailable: true,
-        data: { summary: [], agents: [], dispositions: [], trend: [] },
-      });
-    }
-  }),
-);
+salesUploadRouter.get("/lp-dashboard", h(async (req, res) => {
+  try {
+    return res.json({ success: true, data: await svc.getLpDashboard() });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[lp-dashboard] error:", msg);
+    return res.json({ success: true, _unavailable: true, data: { summary: [], agents: [], dispositions: [], trend: [] } });
+  }
+}));

@@ -64,7 +64,12 @@ import { resolveAccountNumberWithConflict } from "../../shared/fieldEncryption.j
 // ─── Taxonomy ────────────────────────────────────────────────────────────────
 
 export type BankReadinessClass =
-  "READY" | "MISSING" | "INVALID" | "CONFLICT" | "PENDING_APPROVAL" | "BLOCKED";
+  | "READY"
+  | "MISSING"
+  | "INVALID"
+  | "CONFLICT"
+  | "PENDING_APPROVAL"
+  | "BLOCKED";
 
 export const BANK_READINESS_CLASSES: readonly BankReadinessClass[] = [
   "READY",
@@ -110,9 +115,7 @@ const PLAUSIBLE_ACCOUNT_RE = /^[0-9]{6,20}$/;
 const SCIENTIFIC_NOTATION_RE = /[Ee][+-]?\d/;
 
 export function normaliseAccount(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .replace(/\s+/g, "");
+  return String(value ?? "").trim().replace(/\s+/g, "");
 }
 
 export function isCorruptAccount(value: unknown): boolean {
@@ -124,11 +127,7 @@ export function isCorruptAccount(value: unknown): boolean {
 }
 
 export function isValidIfsc(value: unknown): boolean {
-  return IFSC_RE.test(
-    String(value ?? "")
-      .trim()
-      .toUpperCase(),
-  );
+  return IFSC_RE.test(String(value ?? "").trim().toUpperCase());
 }
 
 /**
@@ -201,11 +200,9 @@ function resolveBeneficiary(input: BankReadinessInput): {
   unconfirmed: boolean;
 } {
   const onRecord = String(input.account_holder_name ?? "").trim();
-  if (onRecord)
-    return { name: onRecord, source: "bank_record", unconfirmed: false };
+  if (onRecord) return { name: onRecord, source: "bank_record", unconfirmed: false };
   const fallback = String(input.employee_name ?? "").trim();
-  if (fallback)
-    return { name: fallback, source: "employee_record", unconfirmed: true };
+  if (fallback) return { name: fallback, source: "employee_record", unconfirmed: true };
   return { name: null, source: "none", unconfirmed: true };
 }
 
@@ -223,17 +220,13 @@ function resolveBeneficiary(input: BankReadinessInput): {
  *   5. BLOCKED is last before READY: everything about the record is fine, but nothing
  *      independent confirms it belongs to this employee.
  */
-export function classifyBankReadiness(
-  input: BankReadinessInput,
-): BankReadinessResult {
+export function classifyBankReadiness(input: BankReadinessInput): BankReadinessResult {
   const bene = resolveBeneficiary(input);
   const base = {
     employee_id: input.employee_id,
     employee_code: input.employee_code,
     employee_name: input.employee_name,
-    account_masked: input.account_number
-      ? maskAccount(input.account_number)
-      : null,
+    account_masked: input.account_number ? maskAccount(input.account_number) : null,
     ifsc_code: input.ifsc_code ?? null,
     bank_name: input.bank_name ?? null,
     beneficiary_name: bene.name,
@@ -268,10 +261,9 @@ export function classifyBankReadiness(
   const account = normaliseAccount(input.account_number);
   if (!account) {
     const recoverable = !!normaliseAccount(input.credited_account);
-    const reason: BankReadinessReason =
-      input.active_primary_count === 0
-        ? "no_primary_bank_record"
-        : "account_number_empty";
+    const reason: BankReadinessReason = input.active_primary_count === 0
+      ? "no_primary_bank_record"
+      : "account_number_empty";
     if (input.has_open_change_request) {
       return out(
         "PENDING_APPROVAL",
@@ -382,14 +374,8 @@ export function classifyBankReadiness(
 }
 
 /** Applied when db_bill cannot be reached — see the degradation note in the file header. */
-export function degradeUnverifiable(
-  result: BankReadinessResult,
-): BankReadinessResult {
-  if (
-    result.readiness_class !== "READY" &&
-    result.readiness_class !== "BLOCKED"
-  )
-    return result;
+export function degradeUnverifiable(result: BankReadinessResult): BankReadinessResult {
+  if (result.readiness_class !== "READY" && result.readiness_class !== "BLOCKED") return result;
   return {
     ...result,
     readiness_class: "BLOCKED",
@@ -438,9 +424,7 @@ export async function resolveVerificationMonth(): Promise<string | null> {
   const row = rows[0];
   if (!row?.SalDate) return null;
   // mysql2 hands DATE back as a Date on some driver settings and a string on others.
-  return typeof row.SalDate === "string"
-    ? row.SalDate
-    : new Date(row.SalDate).toISOString().slice(0, 10);
+  return typeof row.SalDate === "string" ? row.SalDate : new Date(row.SalDate).toISOString().slice(0, 10);
 }
 
 /**
@@ -490,9 +474,7 @@ export async function loadCreditedAccounts(): Promise<{
     // account", and one confirmed credit answers it permanently. An employee who CHANGES
     // bank is unaffected: their new account matches no confirmed credit, so they stay
     // unverified and go through penny-drop, which is the intended route for a change.
-    const confirmedRows = await billQuery<
-      RowDataPacket & { EmpCode: string; AcNo: string }
-    >(
+    const confirmedRows = await billQuery<RowDataPacket & { EmpCode: string; AcNo: string }>(
       `SELECT DISTINCT EmpCode, AcNo
          FROM salary_data
         WHERE SalaryReceiveStatus = 'YES'
@@ -500,17 +482,13 @@ export async function loadCreditedAccounts(): Promise<{
     );
     const everConfirmed = new Set<string>();
     for (const r of confirmedRows) {
-      const k = String(r.EmpCode ?? "")
-        .trim()
-        .toUpperCase();
+      const k = String(r.EmpCode ?? "").trim().toUpperCase();
       if (!k) continue;
       everConfirmed.add(`${k}|${normaliseAccount(r.AcNo)}`);
     }
 
     for (const r of rows) {
-      const key = String(r.EmpCode ?? "")
-        .trim()
-        .toUpperCase();
+      const key = String(r.EmpCode ?? "").trim().toUpperCase();
       if (!key) continue;
       const account = normaliseAccount(r.AcNo);
       credits.set(key, {
@@ -534,8 +512,7 @@ export async function loadCreditedAccounts(): Promise<{
       source: {
         available: true,
         month,
-        confirmed_credits: [...credits.values()].filter((c) => c.confirmed)
-          .length,
+        confirmed_credits: [...credits.values()].filter((c) => c.confirmed).length,
         error: null,
       },
       credits,
@@ -545,16 +522,9 @@ export async function loadCreditedAccounts(): Promise<{
     // A pool failure arrives as an AggregateError whose message is the EMPTY STRING, so the
     // obvious err.message alone renders as "db_bill unavailable: " and reads like a bug in
     // this line rather than a dead link. Same trap documented in scripts/bank-exception-report.ts.
-    const detail = [e?.name, e?.code, e?.message]
-      .filter((p) => p && String(p).trim())
-      .join(" | ");
+    const detail = [e?.name, e?.code, e?.message].filter((p) => p && String(p).trim()).join(" | ");
     return {
-      source: {
-        available: false,
-        month: null,
-        confirmed_credits: 0,
-        error: detail || String(err),
-      },
+      source: { available: false, month: null, confirmed_credits: 0, error: detail || String(err) },
       credits,
     };
   }
@@ -609,9 +579,7 @@ interface EmployeeBankRow extends RowDataPacket {
  * rather than by run_month, because two runs can share a month (2026-03 has twins) and joining
  * on the month alone doubles every row.
  */
-async function loadEmployeeBankRows(
-  runId?: string | null,
-): Promise<EmployeeBankRow[]> {
+async function loadEmployeeBankRows(runId?: string | null): Promise<EmployeeBankRow[]> {
   if (runId) {
     const [runRows] = await db.query<EmployeeBankRow[]>(
       `SELECT
@@ -767,13 +735,7 @@ export interface BankReadinessReport {
   payable_count: number;
   unresolved_count: number;
   gate_clear: boolean;
-  rows: Array<
-    BankReadinessResult & {
-      branch_id: string | null;
-      branch_name: string | null;
-      has_email: boolean;
-    }
-  >;
+  rows: Array<BankReadinessResult & { branch_id: string | null; branch_name: string | null; has_email: boolean }>;
 }
 
 /**
@@ -782,9 +744,7 @@ export interface BankReadinessReport {
  * as_of is stamped once, here, and carried onto the response. A page that recomputes it per
  * section can show two different answers on one screen.
  */
-export async function buildBankReadinessReport(
-  runId?: string | null,
-): Promise<BankReadinessReport> {
+export async function buildBankReadinessReport(runId?: string | null): Promise<BankReadinessReport> {
   const as_of = new Date().toISOString();
   const [employeeRows, { source, credits }] = await Promise.all([
     loadEmployeeBankRows(runId),

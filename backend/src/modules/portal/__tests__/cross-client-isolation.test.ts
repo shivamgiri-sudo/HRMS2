@@ -22,32 +22,20 @@ import jwt from "jsonwebtoken";
  */
 
 const dbExecute = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: (...a: unknown[]) => dbExecute(...a) },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => dbExecute(...a) } }));
 
 const SECRET = "test-portal-secret-at-least-32-characters-long";
-vi.mock("../../../config/env.js", () => ({
-  env: { PORTAL_JWT_SECRET: SECRET },
-}));
+vi.mock("../../../config/env.js", () => ({ env: { PORTAL_JWT_SECRET: SECRET } }));
 
-const { requireClientAuth } =
-  await import("../../../middleware/requireClientAuth.js");
+const { requireClientAuth } = await import("../../../middleware/requireClientAuth.js");
 
 /** A client_user row as the middleware's single query returns it. */
-function row(
-  processIds: string[] | null,
-  opts: { active?: number; revoked?: number } = {},
-) {
-  return [
-    [
-      {
-        is_active: opts.active ?? 1,
-        process_ids: processIds === null ? null : JSON.stringify(processIds),
-        session_revoked: opts.revoked ?? 0,
-      },
-    ],
-  ];
+function row(processIds: string[] | null, opts: { active?: number; revoked?: number } = {}) {
+  return [[{
+    is_active: opts.active ?? 1,
+    process_ids: processIds === null ? null : JSON.stringify(processIds),
+    session_revoked: opts.revoked ?? 0,
+  }]];
 }
 
 function app() {
@@ -55,8 +43,7 @@ function app() {
   a.use("/processes", requireClientAuth);
   // Stands in for the real handlers: same guard, same source of truth.
   a.get("/processes/:id/kpis", (req, res) => {
-    const scope = (req as unknown as { portalUser: { processIds: string[] } })
-      .portalUser;
+    const scope = (req as unknown as { portalUser: { processIds: string[] } }).portalUser;
     if (!scope.processIds.includes(req.params.id)) {
       return res.status(403).json({ error: "Process not in your access list" });
     }
@@ -66,22 +53,9 @@ function app() {
 }
 
 const tokenFor = (processIds: string[]) =>
-  jwt.sign(
-    {
-      clientUserId: "u-1",
-      clientId: "c-a",
-      processIds,
-      role: "client",
-      jti: "j-1",
-    },
-    SECRET,
-    { expiresIn: "7d" },
-  );
+  jwt.sign({ clientUserId: "u-1", clientId: "c-a", processIds, role: "client", jti: "j-1" }, SECRET, { expiresIn: "7d" });
 
-beforeEach(() => {
-  dbExecute.mockReset();
-  delete process.env.PORTAL_DEMO_BYPASS;
-});
+beforeEach(() => { dbExecute.mockReset(); delete process.env.PORTAL_DEMO_BYPASS; });
 
 describe("client portal cross-client isolation (live request)", () => {
   it("refuses another client's process id even though the token is valid", async () => {
@@ -120,9 +94,7 @@ describe("client portal cross-client isolation (live request)", () => {
 
   it("fails closed when the scope column is unreadable, rather than trusting the token", async () => {
     // Falling back to payload.processIds here would silently restore the bug.
-    dbExecute.mockResolvedValue([
-      [{ is_active: 1, process_ids: "{not json", session_revoked: 0 }],
-    ]);
+    dbExecute.mockResolvedValue([[{ is_active: 1, process_ids: "{not json", session_revoked: 0 }]]);
     const res = await request(app())
       .get("/processes/p-a/kpis")
       .set("Authorization", `Bearer ${tokenFor(["p-a"])}`);
@@ -154,13 +126,8 @@ describe("client portal cross-client isolation (live request)", () => {
   });
 
   it("rejects an internal (non-client) token on a portal route", async () => {
-    const internal = jwt.sign(
-      { clientUserId: "u-1", processIds: ["p-a"], role: "admin" },
-      SECRET,
-    );
-    const res = await request(app())
-      .get("/processes/p-a/kpis")
-      .set("Authorization", `Bearer ${internal}`);
+    const internal = jwt.sign({ clientUserId: "u-1", processIds: ["p-a"], role: "admin" }, SECRET);
+    const res = await request(app()).get("/processes/p-a/kpis").set("Authorization", `Bearer ${internal}`);
     expect(res.status).toBe(403);
     expect(dbExecute).not.toHaveBeenCalled();
   });

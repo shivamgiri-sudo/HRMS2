@@ -23,10 +23,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: "u1" };
-    next();
-  },
+  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1" }; next(); },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_req: any, _res: any, next: any) => next(),
@@ -37,8 +34,7 @@ vi.mock("../attendance-engine.service.js", () => ({
   resolveHalfDayFloorMinutes: async () => 240,
 }));
 
-const { attendanceAprBulkRouter } =
-  await import("../attendance-apr-bulk.routes.js");
+const { attendanceAprBulkRouter } = await import("../attendance-apr-bulk.routes.js");
 
 function app() {
   const a = express();
@@ -74,12 +70,9 @@ function empRowsFor(n: number) {
   const rows = [];
   for (let i = 1; i <= n; i++) {
     rows.push({
-      employee_id: `emp-${i}`,
-      employee_code: `MAS${String(i).padStart(4, "0")}`,
-      dept_name: "operations",
-      designation_name: "operations executive",
-      branch_id: "branch-1",
-      process_id: "process-1",
+      employee_id: `emp-${i}`, employee_code: `MAS${String(i).padStart(4, "0")}`,
+      dept_name: "operations", designation_name: "operations executive",
+      branch_id: "branch-1", process_id: "process-1",
     });
   }
   return rows;
@@ -95,32 +88,23 @@ describe("APR bulk upload batches writes instead of one row per round trip", () 
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM employees")) return [empRowsFor(n)];
       if (sql.includes("FROM attendance_daily_record adr")) return [[]];
-      if (sql.includes("FROM apr") && sql.includes("campaign_id <>"))
-        return [[]];
+      if (sql.includes("FROM apr") && sql.includes("campaign_id <>")) return [[]];
       // Phase 3's evidence write is attributed (criterion 17.10): a registered Dialler_Source and
       // its campaign, then one productivity_upload_batch row per (branch, process). Answered as
       // already registered so these batching assertions keep measuring the chunking behaviour they
       // were written for.
-      if (sql.includes("FROM dialler_source WHERE source_key"))
-        return [[{ id: "ds-apr-bulk" }]];
-      if (sql.includes("FROM campaign_master WHERE campaign_code"))
-        return [[{ id: "camp-apr-bulk" }]];
-      if (sql.startsWith("INSERT INTO productivity_upload_batch"))
-        return [{ affectedRows: 1 }];
-      if (sql.startsWith("UPDATE productivity_upload_batch"))
-        return [{ affectedRows: 1 }];
-      if (sql.startsWith("INSERT INTO attendance_daily_record"))
-        return [{ affectedRows: 1 }];
+      if (sql.includes("FROM dialler_source WHERE source_key")) return [[{ id: "ds-apr-bulk" }]];
+      if (sql.includes("FROM campaign_master WHERE campaign_code")) return [[{ id: "camp-apr-bulk" }]];
+      if (sql.startsWith("INSERT INTO productivity_upload_batch")) return [{ affectedRows: 1 }];
+      if (sql.startsWith("UPDATE productivity_upload_batch")) return [{ affectedRows: 1 }];
+      if (sql.startsWith("INSERT INTO attendance_daily_record")) return [{ affectedRows: 1 }];
       if (sql.startsWith("INSERT INTO apr")) return [{ affectedRows: 1 }];
       return [[]];
     });
 
     const res = await request(app())
       .post("/api/wfm/attendance/apr-bulk-upload")
-      .attach("file", Buffer.from(csvWithRows(n)), {
-        filename: "apr.csv",
-        contentType: "text/csv",
-      });
+      .attach("file", Buffer.from(csvWithRows(n)), { filename: "apr.csv", contentType: "text/csv" });
 
     expect(res.status).toBe(200);
     expect(res.body.uploaded).toBe(n);
@@ -128,18 +112,14 @@ describe("APR bulk upload batches writes instead of one row per round trip", () 
 
     // 500 rows at INSERT_CHUNK_SIZE=300 is 2 chunks, not 500 individual statements.
     const adrInserts = execute.mock.calls.filter(
-      ([sql]) =>
-        typeof sql === "string" &&
-        sql.startsWith("INSERT INTO attendance_daily_record"),
+      ([sql]) => typeof sql === "string" && sql.startsWith("INSERT INTO attendance_daily_record"),
     );
     expect(adrInserts.length).toBe(2);
     // Each chunk's SQL text carries multiple VALUES tuples, proving it is a
     // multi-row statement and not a loop of single-row inserts reusing this mock.
-    const firstChunkValueTuples =
-      (adrInserts[0]![0] as string).match(/\(UUID\(\)/g)?.length ?? 0;
+    const firstChunkValueTuples = (adrInserts[0]![0] as string).match(/\(UUID\(\)/g)?.length ?? 0;
     expect(firstChunkValueTuples).toBe(300);
-    const secondChunkValueTuples =
-      (adrInserts[1]![0] as string).match(/\(UUID\(\)/g)?.length ?? 0;
+    const secondChunkValueTuples = (adrInserts[1]![0] as string).match(/\(UUID\(\)/g)?.length ?? 0;
     expect(secondChunkValueTuples).toBe(200);
   });
 
@@ -149,26 +129,18 @@ describe("APR bulk upload batches writes instead of one row per round trip", () 
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM employees")) return [empRowsFor(n)];
       if (sql.includes("FROM attendance_daily_record adr")) return [[]];
-      if (sql.includes("FROM apr") && sql.includes("campaign_id <>"))
-        return [[]];
-      if (sql.includes("FROM dialler_source WHERE source_key"))
-        return [[{ id: "ds-apr-bulk" }]];
-      if (sql.includes("FROM campaign_master WHERE campaign_code"))
-        return [[{ id: "camp-apr-bulk" }]];
-      if (sql.startsWith("INSERT INTO productivity_upload_batch"))
-        return [{ affectedRows: 1 }];
-      if (sql.startsWith("UPDATE productivity_upload_batch"))
-        return [{ affectedRows: 1 }];
+      if (sql.includes("FROM apr") && sql.includes("campaign_id <>")) return [[]];
+      if (sql.includes("FROM dialler_source WHERE source_key")) return [[{ id: "ds-apr-bulk" }]];
+      if (sql.includes("FROM campaign_master WHERE campaign_code")) return [[{ id: "camp-apr-bulk" }]];
+      if (sql.startsWith("INSERT INTO productivity_upload_batch")) return [{ affectedRows: 1 }];
+      if (sql.startsWith("UPDATE productivity_upload_batch")) return [{ affectedRows: 1 }];
       if (sql.startsWith("INSERT INTO attendance_daily_record")) {
         adrInsertCallCount++;
         if (adrInsertCallCount === 1) {
           // Simulate exactly the live failure mode this fix targets.
-          throw Object.assign(
-            new Error("Lock wait timeout exceeded; try restarting transaction"),
-            {
-              code: "ER_LOCK_WAIT_TIMEOUT",
-            },
-          );
+          throw Object.assign(new Error("Lock wait timeout exceeded; try restarting transaction"), {
+            code: "ER_LOCK_WAIT_TIMEOUT",
+          });
         }
         return [{ affectedRows: 1 }];
       }
@@ -178,10 +150,7 @@ describe("APR bulk upload batches writes instead of one row per round trip", () 
 
     const res = await request(app())
       .post("/api/wfm/attendance/apr-bulk-upload")
-      .attach("file", Buffer.from(csvWithRows(n)), {
-        filename: "apr.csv",
-        contentType: "text/csv",
-      });
+      .attach("file", Buffer.from(csvWithRows(n)), { filename: "apr.csv", contentType: "text/csv" });
 
     // The whole point of the fix: a chunk DB failure answers 200 with the failure
     // named, it does not throw past the route and get masked as a 500.
@@ -199,9 +168,7 @@ describe("APR bulk upload batches writes instead of one row per round trip", () 
     expect(firstError.reason).toMatch(/Lock wait timeout/i);
 
     // The row that made it into the successful chunk must NOT be reported failed.
-    const lastRowError = res.body.errors.find(
-      (e: any) => e.employee_code === "MAS0400",
-    );
+    const lastRowError = res.body.errors.find((e: any) => e.employee_code === "MAS0400");
     expect(lastRowError).toBeUndefined();
   });
 });

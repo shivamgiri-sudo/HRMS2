@@ -24,22 +24,11 @@ const workDir = mkdtempSync(join(tmpdir(), "face-crop-test-"));
 afterAll(() => rmSync(workDir, { recursive: true, force: true }));
 
 /** Write a plain synthetic JPEG to disk and return its path — content doesn't matter, only dimensions. */
-async function makeTestImage(
-  name: string,
-  width: number,
-  height: number,
-): Promise<string> {
+async function makeTestImage(name: string, width: number, height: number): Promise<string> {
   const filePath = join(workDir, name);
   const buf = await sharp({
-    create: {
-      width,
-      height,
-      channels: 3,
-      background: { r: 200, g: 180, b: 160 },
-    },
-  })
-    .jpeg()
-    .toBuffer();
+    create: { width, height, channels: 3, background: { r: 200, g: 180, b: 160 } },
+  }).jpeg().toBuffer();
   writeFileSync(filePath, buf);
   return filePath;
 }
@@ -52,12 +41,7 @@ describe("cropFaceForProfilePhoto", () => {
   it("produces a 480x480 JPEG when a face is detected", async () => {
     const path = await makeTestImage("wide.jpg", 800, 600);
     mockDetectFaceBbox.mockResolvedValue({
-      x: 300,
-      y: 150,
-      width: 200,
-      height: 200,
-      imageWidth: 800,
-      imageHeight: 600,
+      x: 300, y: 150, width: 200, height: 200, imageWidth: 800, imageHeight: 600,
     });
 
     const out = await cropFaceForProfilePhoto(path);
@@ -82,12 +66,7 @@ describe("cropFaceForProfilePhoto", () => {
     // Face bbox near the top-left corner — a naive centered crop would compute
     // negative left/top, which sharp's extract() rejects outright.
     mockDetectFaceBbox.mockResolvedValue({
-      x: 5,
-      y: 5,
-      width: 100,
-      height: 100,
-      imageWidth: 400,
-      imageHeight: 400,
+      x: 5, y: 5, width: 100, height: 100, imageWidth: 400, imageHeight: 400,
     });
 
     await expect(cropFaceForProfilePhoto(path)).resolves.toBeInstanceOf(Buffer);

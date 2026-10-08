@@ -1,10 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import {
-  getRosterGrid,
-  getShiftTemplateTimes,
-} from "./roster-builder.service.js";
+import { getRosterGrid, getShiftTemplateTimes } from "./roster-builder.service.js";
 import { rosterService } from "./roster.service.js";
 import { branchScopeGuard, rosterOwnerGuard, employeeFieldGuard } from "./branch-scope.js";
 import { readLobFilter } from "../../shared/lobFilter.js";
@@ -20,10 +17,7 @@ rosterBuilderRouter.use(rosterOwnerGuard("weekly_roster_cycle", "cycleId"));
 rosterBuilderRouter.use(employeeFieldGuard("employeeId"));
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 rosterBuilderRouter.get(
   "/grid",
@@ -34,22 +28,13 @@ rosterBuilderRouter.get(
       res.status(400).json({ error: "cycleId is required" });
       return;
     }
-    const branchId = req.query.branchId
-      ? String(req.query.branchId)
-      : undefined;
-    const employeeSearch = req.query.employeeSearch
-      ? String(req.query.employeeSearch)
-      : undefined;
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const employeeSearch = req.query.employeeSearch ? String(req.query.employeeSearch) : undefined;
     const lob = readLobFilter(req, res);
     if (!lob) return;
-    const rows = await getRosterGrid({
-      cycleId,
-      branchId,
-      employeeSearch,
-      lob,
-    });
+    const rows = await getRosterGrid({ cycleId, branchId, employeeSearch, lob });
     res.json({ rows });
-  }),
+  })
 );
 
 // Note on shift-id resolution (2026-08-20): the request body's `shiftTemplateId`
@@ -66,15 +51,10 @@ rosterBuilderRouter.post(
   requireRole(...WFM_ROLES),
   h(async (req, res) => {
     const { employeeId, rosterDate, cycleId, shiftTemplateId } = req.body as {
-      employeeId?: string;
-      rosterDate?: string;
-      cycleId?: string;
-      shiftTemplateId?: string | null;
+      employeeId?: string; rosterDate?: string; cycleId?: string; shiftTemplateId?: string | null;
     };
     if (!employeeId || !rosterDate || !cycleId) {
-      res
-        .status(400)
-        .json({ error: "employeeId, rosterDate, and cycleId are required" });
+      res.status(400).json({ error: "employeeId, rosterDate, and cycleId are required" });
       return;
     }
 
@@ -93,12 +73,7 @@ rosterBuilderRouter.post(
       // template's night_shift flag happens to be set.
       if (shiftTimes) shiftIsNight = shiftTimes.endTime <= shiftTimes.startTime;
       if (!shiftTimes) {
-        res
-          .status(400)
-          .json({
-            error:
-              "Unknown shift template, or that template has no start/end time",
-          });
+        res.status(400).json({ error: "Unknown shift template, or that template has no start/end time" });
         return;
       }
     }
@@ -108,19 +83,13 @@ rosterBuilderRouter.post(
     // straight over someone's approved leave from the grid. isNightShift makes the guard also
     // consult the day the shift ENDS: a shift finishing 06:00 on a leave day means the employee is
     // off from the night before.
-    const { loadApprovedLeave, checkLeaveConflict } =
-      await import("./roster-leave-guard.service.js");
+    const { loadApprovedLeave, checkLeaveConflict } = await import("./roster-leave-guard.service.js");
     const leave = await loadApprovedLeave([employeeId], rosterDate, rosterDate);
     const verdict = checkLeaveConflict(leave, employeeId, rosterDate, {
       isNightShift: Boolean(shiftIsNight),
     });
     if (verdict.blocked) {
-      res
-        .status(409)
-        .json({
-          error: verdict.reason,
-          code: "ROSTER_BLOCKED_BY_APPROVED_LEAVE",
-        });
+      res.status(409).json({ error: verdict.reason, code: "ROSTER_BLOCKED_BY_APPROVED_LEAVE" });
       return;
     }
 
@@ -133,8 +102,8 @@ rosterBuilderRouter.post(
         shiftStartTime: shiftTimes?.startTime ?? null,
         shiftEndTime: shiftTimes?.endTime ?? null,
       },
-      req.authUser!.id,
+      req.authUser!.id
     );
     res.status(201).json({ success: true, data });
-  }),
+  })
 );

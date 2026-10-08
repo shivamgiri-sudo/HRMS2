@@ -1,9 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Premium's "Premium CDR" export -- writes into db_masmis.Pre_cdr
@@ -23,40 +20,23 @@ import {
 function normalizeKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
-function getByColumn(
-  data: Record<string, unknown>,
-  ...columnNames: string[]
-): string {
+function getByColumn(data: Record<string, unknown>, ...columnNames: string[]): string {
   const normalized: Record<string, unknown> = {};
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const col of columnNames) {
     const v = normalized[normalizeKey(col)];
-    if (v !== undefined && v !== null && String(v).trim() !== "")
-      return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
   }
   return "";
 }
-function n(
-  data: Record<string, unknown>,
-  ...columnNames: string[]
-): string | null {
+function n(data: Record<string, unknown>, ...columnNames: string[]): string | null {
   const v = getByColumn(data, ...columnNames);
   return v || null;
 }
 
 const MONTH_ABBR: Record<string, string> = {
-  jan: "01",
-  feb: "02",
-  mar: "03",
-  apr: "04",
-  may: "05",
-  jun: "06",
-  jul: "07",
-  aug: "08",
-  sep: "09",
-  oct: "10",
-  nov: "11",
-  dec: "12",
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
 };
 /** report_date_iso (migration 448): a real indexed DATE column, backfilled from the existing
  * text report_date so date-range dashboard queries (housing-premium-dashboard.service.ts) stop
@@ -69,9 +49,7 @@ const MONTH_ABBR: Record<string, string> = {
 function parseDateIso(raw: string): string | null {
   if (!raw) return null;
   if (/^\d+(\.\d+)?$/.test(raw)) {
-    const d = new Date(
-      Date.UTC(1899, 11, 30) + Math.round(Number(raw)) * 86400000,
-    );
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(raw)) * 86400000);
     return d.toISOString().slice(0, 10);
   }
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
@@ -141,17 +119,14 @@ export async function importPreCdrBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0)
-    return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
   const insertRows: ChunkInsertRow[] = [];
   const isoDatesSeen = new Set<string>();
 
-  const uploadedByInt = /^\d+$/.test(importedByUserId)
-    ? Number(importedByUserId)
-    : null;
+  const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
   for (const row of batchRows) {
     const data =
@@ -162,9 +137,7 @@ export async function importPreCdrBatch(
     const caller = getByColumn(data, "CALLER");
     if (!caller) {
       const msg = `Row ${row.row_no}: "CALLER" is required`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const rawDate = n(data, "Date");
@@ -175,28 +148,13 @@ export async function importPreCdrBatch(
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        caller,
-        n(data, "MEMBER"),
-        n(data, "End Time"),
-        n(data, "DURATION"),
-        n(data, "STATUS"),
-        n(data, "Routing Numbers"),
-        n(data, "Routing Status"),
-        n(data, "Talk Duration"),
-        n(data, "Ringing Duration"),
-        n(data, "Start Time"),
-        n(data, "Time"),
-        rawDate,
+        caller, n(data, "MEMBER"), n(data, "End Time"), n(data, "DURATION"), n(data, "STATUS"),
+        n(data, "Routing Numbers"), n(data, "Routing Status"), n(data, "Talk Duration"),
+        n(data, "Ringing Duration"), n(data, "Start Time"), n(data, "Time"), rawDate,
         parseDateIso(rawDate ?? ""),
-        n(data, "TL Name"),
-        n(data, "Count"),
-        n(data, "Unique Count"),
-        n(data, "Date row Count"),
-        n(data, "V+W"),
-        n(data, "Talk Time"),
-        n(data, "TL"),
-        uploadedByInt,
-        batchId,
+        n(data, "TL Name"), n(data, "Count"), n(data, "Unique Count"), n(data, "Date row Count"),
+        n(data, "V+W"), n(data, "Talk Time"), n(data, "TL"),
+        uploadedByInt, batchId,
       ],
     });
   }
@@ -207,8 +165,7 @@ export async function importPreCdrBatch(
         talk_duration, ringing_duration, start_time, time_value, report_date, report_date_iso, tl_name,
         call_count, unique_count, date_row_count, v_plus_w, talk_time, tl,
         uploaded_by, upload_batch_id)`,
-    placeholderGroup:
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     rows: insertRows,
   });
   const importedRows = inserted.importedRows;
@@ -232,26 +189,17 @@ export async function importPreCdrBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

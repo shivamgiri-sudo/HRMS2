@@ -11,9 +11,7 @@ const { create, update, generateNextCode } = vi.hoisted(() => ({
   update: vi.fn(),
   generateNextCode: vi.fn(),
 }));
-vi.mock("../../erp/erp.service.js", () => ({
-  vendorService: { create, update, generateNextCode },
-}));
+vi.mock("../../erp/erp.service.js", () => ({ vendorService: { create, update, generateNextCode } }));
 
 import { vendorApprovalService } from "../vendor-approval.service.js";
 
@@ -41,23 +39,14 @@ describe("vendorApprovalService.raise", () => {
     const [sql, params] = execute.mock.calls[0];
     expect(String(sql)).toContain("INSERT INTO vendor_approval_request");
     expect(params).toEqual([
-      result.id,
-      "create",
-      null,
-      JSON.stringify({ vendor_name: "Acme Supplies" }),
-      "user-1",
-      "branch-9",
+      result.id, "create", null, JSON.stringify({ vendor_name: "Acme Supplies" }), "user-1", "branch-9",
     ]);
   });
 
   it("rejects a create/update request with no vendor_name", async () => {
     await expect(
       vendorApprovalService.raise({
-        requestType: "create",
-        vendorId: null,
-        payload: {},
-        raisedBy: "user-1",
-        branchId: "branch-9",
+        requestType: "create", vendorId: null, payload: {}, raisedBy: "user-1", branchId: "branch-9",
       }),
     ).rejects.toThrow(/vendor_name/);
     expect(execute).not.toHaveBeenCalled();
@@ -66,11 +55,7 @@ describe("vendorApprovalService.raise", () => {
   it("rejects an update request with no vendorId", async () => {
     await expect(
       vendorApprovalService.raise({
-        requestType: "update",
-        vendorId: null,
-        payload: { vendor_name: "Acme" },
-        raisedBy: "user-1",
-        branchId: "branch-9",
+        requestType: "update", vendorId: null, payload: { vendor_name: "Acme" }, raisedBy: "user-1", branchId: "branch-9",
       }),
     ).rejects.toThrow(/vendorId/);
   });
@@ -78,10 +63,7 @@ describe("vendorApprovalService.raise", () => {
 
 describe("vendorApprovalService.approve", () => {
   const PENDING_ROW = {
-    id: "req-1",
-    status: "pending",
-    request_type: "create",
-    vendor_id: null,
+    id: "req-1", status: "pending", request_type: "create", vendor_id: null,
     raised_by: "user-branch-admin",
     payload: JSON.stringify({ vendor_name: "Acme Supplies" }),
   };
@@ -101,18 +83,10 @@ describe("vendorApprovalService.approve", () => {
     create.mockResolvedValueOnce({ id: "vendor-1" });
     execute.mockResolvedValueOnce([{}]); // the UPDATE ... SET status='approved'
 
-    const result = await vendorApprovalService.approve(
-      "req-1",
-      "user-finance-head",
-      null,
-      "ok",
-    );
+    const result = await vendorApprovalService.approve("req-1", "user-finance-head", null, "ok");
 
     expect(result).toEqual({ vendorId: "vendor-1" });
-    expect(create).toHaveBeenCalledWith({
-      vendor_name: "Acme Supplies",
-      vendor_code: "V00099",
-    });
+    expect(create).toHaveBeenCalledWith({ vendor_name: "Acme Supplies", vendor_code: "V00099" });
     const updateCall = execute.mock.calls[1];
     expect(String(updateCall[0])).toContain("status = 'approved'");
     expect(updateCall[1]).toEqual(["user-finance-head", "ok", "req-1"]);
@@ -124,14 +98,10 @@ describe("vendorApprovalService.approve", () => {
     create.mockResolvedValueOnce({ id: "vendor-2" });
     execute.mockResolvedValueOnce([{}]);
 
-    await vendorApprovalService.approve("req-1", "user-finance-head", {
-      gst_number: "22AAAAA0000A1Z5",
-    });
+    await vendorApprovalService.approve("req-1", "user-finance-head", { gst_number: "22AAAAA0000A1Z5" });
 
     expect(create).toHaveBeenCalledWith({
-      vendor_name: "Acme Supplies",
-      gst_number: "22AAAAA0000A1Z5",
-      vendor_code: "V00100",
+      vendor_name: "Acme Supplies", gst_number: "22AAAAA0000A1Z5", vendor_code: "V00100",
     });
   });
 
@@ -157,19 +127,11 @@ describe("vendorApprovalService.reject", () => {
     execute.mockResolvedValueOnce([[{ id: "req-1", status: "pending" }]]);
     execute.mockResolvedValueOnce([{}]);
 
-    await vendorApprovalService.reject(
-      "req-1",
-      "user-finance-head",
-      "missing GST",
-    );
+    await vendorApprovalService.reject("req-1", "user-finance-head", "missing GST");
 
     const updateCall = execute.mock.calls[1];
     expect(String(updateCall[0])).toContain("status = 'rejected'");
-    expect(updateCall[1]).toEqual([
-      "user-finance-head",
-      "missing GST",
-      "req-1",
-    ]);
+    expect(updateCall[1]).toEqual(["user-finance-head", "missing GST", "req-1"]);
   });
 
   it("refuses to reject an already-decided request", async () => {

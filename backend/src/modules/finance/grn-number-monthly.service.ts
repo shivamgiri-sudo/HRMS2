@@ -23,9 +23,7 @@ const DEFAULT_COMPANY = "MAS";
 /** `YYYY-MM`. Anything else is a bug upstream, not something to coerce. */
 function assertPeriodCode(periodCode: string): void {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodCode)) {
-    throw new Error(
-      `Accounting period must be YYYY-MM, received "${periodCode}"`,
-    );
+    throw new Error(`Accounting period must be YYYY-MM, received "${periodCode}"`);
   }
 }
 
@@ -36,9 +34,7 @@ async function readConfig(key: string, fallback: string): Promise<string> {
       [key],
     );
     const value = rows[0]?.config_value;
-    return value === undefined || value === null || value === ""
-      ? fallback
-      : String(value);
+    return value === undefined || value === null || value === "" ? fallback : String(value);
   } catch {
     // finance_config arrives with migration 1088. Before it exists, or if the row was never
     // seeded, fall back rather than failing GRN creation — the fallback is the legacy format,
@@ -75,10 +71,7 @@ export async function allocateMonthlyGrnNumber(input: {
   connection?: PoolConnection;
 }): Promise<string> {
   assertPeriodCode(input.periodCode);
-  const companyCode = (
-    input.companyCode?.trim() ||
-    (await readConfig("grn_default_company_code", DEFAULT_COMPANY))
-  ).toUpperCase();
+  const companyCode = (input.companyCode?.trim() || (await readConfig("grn_default_company_code", DEFAULT_COMPANY))).toUpperCase();
 
   const owned = !input.connection;
   const connection = input.connection ?? (await db.getConnection());
@@ -90,9 +83,7 @@ export async function allocateMonthlyGrnNumber(input: {
       [companyCode],
     );
     if (!companyRows[0]) {
-      throw new Error(
-        `No active company is configured for code "${companyCode}"`,
-      );
+      throw new Error(`No active company is configured for code "${companyCode}"`);
     }
     const prefix = String(companyRows[0].grn_prefix);
 
@@ -110,8 +101,7 @@ export async function allocateMonthlyGrnNumber(input: {
         FOR UPDATE`,
       [companyCode, input.periodCode],
     );
-    if (!sequenceRows[0])
-      throw new Error("GRN sequence could not be initialized");
+    if (!sequenceRows[0]) throw new Error("GRN sequence could not be initialized");
 
     const sequence = Number(sequenceRows[0].next_sequence);
     if (!Number.isSafeInteger(sequence) || sequence < 1) {
@@ -158,7 +148,5 @@ export function resolveAccountingPeriod(input: {
   }
   const billDate = input.billDate?.trim();
   if (billDate && /^\d{4}-\d{2}/.test(billDate)) return billDate.slice(0, 7);
-  throw new Error(
-    "An accounting period or bill date is required to number a GRN",
-  );
+  throw new Error("An accounting period or bill date is required to number a GRN");
 }

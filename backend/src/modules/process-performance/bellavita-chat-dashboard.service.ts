@@ -46,28 +46,14 @@ export interface BellavitaChatHeadline {
   activeTls: number;
 }
 
-export interface BellavitaChatTrendRow {
-  date: string;
-  tickets: number;
-  uniqueCount: number;
-  resolvedPct: number;
-}
-export interface BellavitaChatDispositionRow {
-  disposition: string;
-  count: number;
-  pct: number;
-}
+export interface BellavitaChatTrendRow { date: string; tickets: number; uniqueCount: number; resolvedPct: number }
+export interface BellavitaChatDispositionRow { disposition: string; count: number; pct: number }
 export interface BellavitaChatTlRow {
-  tlName: string;
-  tickets: number;
-  uniqueCount: number;
-  frtPct: number;
-  inTatPct: number;
-  repeatPct: number;
+  tlName: string; tickets: number; uniqueCount: number;
+  frtPct: number; inTatPct: number; repeatPct: number;
   /** disposition = 'Saleschat' (see BellavitaChatAgentRow's own note on why
    * 'Inactive sale chat' is excluded). */
-  saleCount: number;
-  conversionPct: number;
+  saleCount: number; conversionPct: number;
   /** SUM(db_masmis.bb_sale.amount) for this TL, WHERE campaign = 'Chat',
    * over the same date range -- bb_sale has its own real `tl` column
    * (confirmed live: Bidesh/OJT/Saurabh/Shamsher appear in both bb_chat's
@@ -82,19 +68,14 @@ export interface BellavitaChatTlRow {
 export interface BellavitaChatAgentRow {
   /** Every LOB this agent handled chats in within the range (e.g. "Chat, Kenaz"). */
   lobs: string;
-  agent: string;
-  empId: string;
-  tickets: number;
-  uniqueCount: number;
+  agent: string; empId: string; tickets: number; uniqueCount: number;
   /** disposition = 'Saleschat' specifically -- the real, distinct
    * "Inactive sale chat" disposition (22,782 rows live) is NOT counted
    * here since "inactive" means it didn't convert; only the completed
    * 'Saleschat' disposition (8,860 rows live) represents an actual sale
    * chat, confirmed against real distinct disposition values. */
-  saleChatCount: number;
-  conversionPct: number;
-  resolvedPct: number;
-  avgWaitTimeMin: number;
+  saleChatCount: number; conversionPct: number;
+  resolvedPct: number; avgWaitTimeMin: number;
   /** SUM(bb_sale.amount) for this agent's own emp_id, campaign = 'Chat',
    * same dedup-by-order-id convention as BellavitaChatTlRow.amount. null
    * (not 0) when this agent row has no real emp_id to join by. */
@@ -133,16 +114,10 @@ export interface BellavitaChatDashboardData {
   chatDataThrough: string | null;
 }
 
-const num = (v: unknown): number => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-};
-const pct = (part: number, whole: number): number =>
-  whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0;
+const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
+function pad2(n: number): string { return String(n).padStart(2, "0"); }
 
 /** bb_chat has no index on chat_date/tl_name/agent_name/disposition and
  * this app's DB user has no ALTER privilege to add one (same boundary
@@ -154,15 +129,11 @@ function last7DaysRange(): { from: string; to: string } {
   const now = new Date();
   const from = new Date(now);
   from.setDate(from.getDate() - 6);
-  const f = (d: Date) =>
-    `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const f = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   return { from: f(from), to: f(now) };
 }
 
-function resolveRange(
-  fromInput: string,
-  toInput: string,
-): { from: string; to: string } {
+function resolveRange(fromInput: string, toInput: string): { from: string; to: string } {
   const fallback = last7DaysRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -176,8 +147,7 @@ const RESOLVED_EXPR = "ticket_status IN ('resolved','closed')";
  * switch paid 7s before any figure could render. */
 let lobOptionsCache: { at: number; values: string[] } | null = null;
 async function loadLobOptions(): Promise<string[]> {
-  if (lobOptionsCache && Date.now() - lobOptionsCache.at < 30 * 60_000)
-    return lobOptionsCache.values;
+  if (lobOptionsCache && Date.now() - lobOptionsCache.at < 30 * 60_000) return lobOptionsCache.values;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT lob FROM db_masmis.bb_chat WHERE lob IS NOT NULL AND lob != '' ORDER BY lob`,
   );
@@ -187,9 +157,7 @@ async function loadLobOptions(): Promise<string[]> {
 }
 
 export async function getBellavitaChatDashboard(
-  fromInput: string,
-  toInput: string,
-  lobInput?: string,
+  fromInput: string, toInput: string, lobInput?: string,
 ): Promise<BellavitaChatDashboardData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const lob = lobInput && lobInput.trim() ? lobInput.trim() : null;
@@ -303,29 +271,12 @@ export async function getBellavitaChatDashboard(
   // running them back-to-back made a LOB switch take 40s+ (and hit the request
   // timeout with a 500). Together they now cost roughly the slowest one.
   const [
-    [[headlineRow]],
-    [trendRows],
-    [dispositionRows],
-    [tlRows],
-    [salesByTlRows],
-    [salesByAgentRows],
-    [agentRows],
-    lobOptionRows,
-  ] = await Promise.all([
-    headlineP,
-    trendP,
-    dispositionP,
-    tlP,
-    salesByTlP,
-    salesByAgentP,
-    agentP,
-    lobP,
-  ]);
+    [[headlineRow]], [trendRows], [dispositionRows], [tlRows], [salesByTlRows], [salesByAgentRows], [agentRows], lobOptionRows,
+  ] = await Promise.all([headlineP, trendP, dispositionP, tlP, salesByTlP, salesByAgentP, agentP, lobP]);
   const revenueByTl = new Map<string, number>();
   for (const r of salesByTlRows) revenueByTl.set(String(r.tl), num(r.revenue));
   const revenueByAgent = new Map<string, number>();
-  for (const r of salesByAgentRows)
-    revenueByAgent.set(String(r.emp_id).toUpperCase(), num(r.revenue));
+  for (const r of salesByAgentRows) revenueByAgent.set(String(r.emp_id).toUpperCase(), num(r.revenue));
 
   const total = num(headlineRow?.total);
 
@@ -364,52 +315,36 @@ export async function getBellavitaChatDashboard(
       uniqueCount: num(headlineRow?.unique_count),
       repeatCount: num(headlineRow?.repeat_count),
       avgFrtMin: Math.round(num(headlineRow?.avg_frt) * 100) / 100,
-      avgResolutionMin:
-        Math.round(num(headlineRow?.avg_resolution) * 100) / 100,
+      avgResolutionMin: Math.round(num(headlineRow?.avg_resolution) * 100) / 100,
       avgWaitTimeMin: Math.round(num(headlineRow?.avg_wait) * 100) / 100,
       activeAgents: num(headlineRow?.active_agents),
       activeTls: num(headlineRow?.active_tls),
     },
-    from,
-    to,
+    from, to,
     dateWiseTrend: trendRows.map((r) => ({
-      date: String(r.d),
-      tickets: num(r.tickets),
-      uniqueCount: num(r.unique_count),
-      resolvedPct: pct(num(r.resolved), num(r.tickets)),
+      date: String(r.d), tickets: num(r.tickets), uniqueCount: num(r.unique_count), resolvedPct: pct(num(r.resolved), num(r.tickets)),
     })),
     dispositionBreakdown: dispositionRows.map((r) => ({
-      disposition: String(r.disposition),
-      count: num(r.n),
-      pct: pct(num(r.n), total),
+      disposition: String(r.disposition), count: num(r.n), pct: pct(num(r.n), total),
     })),
     byTl: tlRows.map((r) => {
       const tlName = String(r.tl_name);
       const n = num(r.n);
       return {
-        tlName,
-        tickets: n,
-        uniqueCount: num(r.unique_count),
-        frtPct: pct(num(r.frt_in_tat), n),
-        inTatPct: pct(num(r.res_in_tat), n),
+        tlName, tickets: n, uniqueCount: num(r.unique_count),
+        frtPct: pct(num(r.frt_in_tat), n), inTatPct: pct(num(r.res_in_tat), n),
         repeatPct: pct(num(r.repeat_count), n),
-        saleCount: num(r.sale_count),
-        conversionPct: pct(num(r.sale_count), n),
+        saleCount: num(r.sale_count), conversionPct: pct(num(r.sale_count), n),
         amount: revenueByTl.get(tlName) ?? 0,
       };
     }),
     agents: agentRows.map((r) => {
       const empId = String(r.emp_id || "");
       return {
-        agent: String(r.agent),
-        empId,
-        lobs: String(r.lobs ?? ""),
-        tickets: num(r.n),
-        uniqueCount: num(r.unique_count),
-        saleChatCount: num(r.sale_chat_count),
+        agent: String(r.agent), empId, lobs: String(r.lobs ?? ""), tickets: num(r.n),
+        uniqueCount: num(r.unique_count), saleChatCount: num(r.sale_chat_count),
         conversionPct: pct(num(r.sale_chat_count), num(r.n)),
-        resolvedPct: pct(num(r.resolved), num(r.n)),
-        avgWaitTimeMin: Math.round(num(r.avg_wait) * 100) / 100,
+        resolvedPct: pct(num(r.resolved), num(r.n)), avgWaitTimeMin: Math.round(num(r.avg_wait) * 100) / 100,
         // null (not 0) when this agent has no real emp_id to join bb_sale by --
         // "no data to join" is different from "joined and found zero sales".
         revenue: empId ? (revenueByAgent.get(empId.toUpperCase()) ?? 0) : null,
@@ -422,12 +357,7 @@ export async function getBellavitaChatDashboard(
 }
 
 export interface BellavitaChatTlTrendRow {
-  date: string;
-  tickets: number;
-  uniqueCount: number;
-  saleCount: number;
-  conversionPct: number;
-  amount: number;
+  date: string; tickets: number; uniqueCount: number; saleCount: number; conversionPct: number; amount: number;
 }
 
 /** Day-wise trend for one TL -- the "TL-wise" table's own row click drill-down
@@ -437,10 +367,7 @@ export interface BellavitaChatTlTrendRow {
  * above, just grouped by day and narrowed to one tl_name/s.tl instead of
  * grouped by TL -- so this never disagrees with that table's own row. */
 export async function getBellavitaChatTlTrend(
-  fromInput: string,
-  toInput: string,
-  tlName: string,
-  lobInput?: string,
+  fromInput: string, toInput: string, tlName: string, lobInput?: string,
 ): Promise<BellavitaChatTlTrendRow[]> {
   const { from, to } = resolveRange(fromInput, toInput);
   const lob = lobInput && lobInput.trim() ? lobInput.trim() : null;
@@ -478,39 +405,27 @@ export async function getBellavitaChatTlTrend(
      GROUP BY s.\`Date\``,
     [from, to, tlName],
   );
-  const revenueByDate = new Map<string, number>(
-    revRows.map((r) => [String(r.d), num(r.revenue)]),
-  );
+  const revenueByDate = new Map<string, number>(revRows.map((r) => [String(r.d), num(r.revenue)]));
 
   return chatRows.map((r) => {
     const d = String(r.d);
     const n = num(r.n);
     const saleCount = num(r.sale_count);
     return {
-      date: d,
-      tickets: n,
-      uniqueCount: num(r.unique_count),
-      saleCount,
-      conversionPct: pct(saleCount, n),
-      amount: revenueByDate.get(d) ?? 0,
+      date: d, tickets: n, uniqueCount: num(r.unique_count), saleCount,
+      conversionPct: pct(saleCount, n), amount: revenueByDate.get(d) ?? 0,
     };
   });
 }
 
 export interface BellavitaChatAgentTrendRow {
-  date: string;
-  tickets: number;
-  uniqueCount: number;
-  saleChatCount: number;
-  conversionPct: number;
-  resolvedPct: number;
+  date: string; tickets: number; uniqueCount: number; saleChatCount: number; conversionPct: number; resolvedPct: number;
   /** null when this agent has no real emp_id to join bb_sale by (see
    * BellavitaChatAgentRow.revenue) -- not fetched at all in that case. */
   revenue: number | null;
 }
 
-const AGENT_EXPR =
-  "COALESCE(NULLIF(agent_name, ''), NULLIF(current_agent, ''), 'Unassigned')";
+const AGENT_EXPR = "COALESCE(NULLIF(agent_name, ''), NULLIF(current_agent, ''), 'Unassigned')";
 
 /** Day-wise trend for one agent -- the "Agent-wise" table's own row click
  * drill-down (date-wise + week-wise, week-wise summed client-side from
@@ -521,11 +436,7 @@ const AGENT_EXPR =
  * (bb_sale has no agent-name column, only emp_id) -- omitted entirely (not
  * queried) when the row being drilled into has no real emp_id. */
 export async function getBellavitaChatAgentTrend(
-  fromInput: string,
-  toInput: string,
-  agent: string,
-  lobInput?: string,
-  empId?: string,
+  fromInput: string, toInput: string, agent: string, lobInput?: string, empId?: string,
 ): Promise<BellavitaChatAgentTrendRow[]> {
   const { from, to } = resolveRange(fromInput, toInput);
   const lob = lobInput && lobInput.trim() ? lobInput.trim() : null;
@@ -571,12 +482,8 @@ export async function getBellavitaChatAgentTrend(
     const saleChatCount = num(r.sale_chat_count);
     const d = String(r.d);
     return {
-      date: d,
-      tickets: n,
-      uniqueCount: num(r.unique_count),
-      saleChatCount,
-      conversionPct: pct(saleChatCount, n),
-      resolvedPct: pct(num(r.resolved), n),
+      date: d, tickets: n, uniqueCount: num(r.unique_count), saleChatCount,
+      conversionPct: pct(saleChatCount, n), resolvedPct: pct(num(r.resolved), n),
       revenue: revenueByDate ? (revenueByDate.get(d) ?? 0) : null,
     };
   });
@@ -613,12 +520,9 @@ export async function getBellavitaChatAgentTrend(
  */
 
 const SNAPSHOT_LOBS = ["Chat", "Bevzilla", "Kenaz"] as const;
-export type SnapshotLob = (typeof SNAPSHOT_LOBS)[number];
+export type SnapshotLob = typeof SNAPSHOT_LOBS[number];
 
-export interface LobSnapshotPeriod {
-  key: string;
-  label: string;
-}
+export interface LobSnapshotPeriod { key: string; label: string }
 export interface LobSnapshotMetricRow {
   metric: string;
   /** Values keyed by period.key; number for a real figure, null when this
@@ -627,30 +531,11 @@ export interface LobSnapshotMetricRow {
   /** '%' | 'currency' | 'count' -- purely a formatting hint for the frontend. */
   format: "count" | "pct" | "currency";
 }
-export interface LobSnapshot {
-  lob: SnapshotLob;
-  rows: LobSnapshotMetricRow[];
-}
-export interface LobSnapshotData {
-  periods: LobSnapshotPeriod[];
-  snapshots: LobSnapshot[];
-}
+export interface LobSnapshot { lob: SnapshotLob; rows: LobSnapshotMetricRow[] }
+export interface LobSnapshotData { periods: LobSnapshotPeriod[]; snapshots: LobSnapshot[] }
 
 function formatDMonYY(d: Date): string {
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${d.getDate()}-${months[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
 }
 function isoDate(d: Date): string {
@@ -706,32 +591,20 @@ export async function getBellavitaChatLobSnapshot(): Promise<LobSnapshotData> {
   }
 
   type DayAgg = {
-    total: number;
-    unique: number;
-    frtInTat: number;
-    rep24: number;
-    rep48: number;
-    rep48plus: number;
-    saleMade: number;
+    total: number; unique: number; frtInTat: number;
+    rep24: number; rep48: number; rep48plus: number; saleMade: number;
   };
   const byLobByDate = new Map<string, Map<string, DayAgg>>();
   for (const lobName of SNAPSHOT_LOBS) byLobByDate.set(lobName, new Map());
   for (const r of rows) {
     // bb_chat stores the Kenaz LOB as lowercase "kenaz" -- match case-insensitively
     // (MySQL's IN () already does), or the whole Kenaz snapshot stays zero.
-    const lobName = SNAPSHOT_LOBS.find(
-      (l) => l.toLowerCase() === String(r.lob).toLowerCase(),
-    );
+    const lobName = SNAPSHOT_LOBS.find((l) => l.toLowerCase() === String(r.lob).toLowerCase());
     const map = lobName ? byLobByDate.get(lobName) : undefined;
     if (!map) continue;
     map.set(String(r.d), {
-      total: num(r.total),
-      unique: num(r.unique_count),
-      frtInTat: num(r.frt_in_tat),
-      rep24: num(r.rep_24),
-      rep48: num(r.rep_48),
-      rep48plus: num(r.rep_48plus),
-      saleMade: num(r.sale_made),
+      total: num(r.total), unique: num(r.unique_count), frtInTat: num(r.frt_in_tat),
+      rep24: num(r.rep_24), rep48: num(r.rep_48), rep48plus: num(r.rep_48plus), saleMade: num(r.sale_made),
     });
   }
 
@@ -740,8 +613,7 @@ export async function getBellavitaChatLobSnapshot(): Promise<LobSnapshotData> {
   // individual day from the 1st through today.
   const periods: LobSnapshotPeriod[] = [{ key: "mtd", label: "MTD" }];
   const weekCount = Math.ceil(daysSoFar / 7);
-  for (let w = 1; w <= weekCount; w++)
-    periods.push({ key: `w${w}`, label: `W-${w}` });
+  for (let w = 1; w <= weekCount; w++) periods.push({ key: `w${w}`, label: `W-${w}` });
   const dayDates: Date[] = [];
   for (let day = 1; day <= daysSoFar; day++) {
     const d = new Date(now.getFullYear(), now.getMonth(), day);
@@ -751,43 +623,23 @@ export async function getBellavitaChatLobSnapshot(): Promise<LobSnapshotData> {
 
   const snapshots: LobSnapshot[] = SNAPSHOT_LOBS.map((lobName) => {
     const dateMap = byLobByDate.get(lobName)!;
-    const zero: DayAgg = {
-      total: 0,
-      unique: 0,
-      frtInTat: 0,
-      rep24: 0,
-      rep48: 0,
-      rep48plus: 0,
-      saleMade: 0,
-    };
+    const zero: DayAgg = { total: 0, unique: 0, frtInTat: 0, rep24: 0, rep48: 0, rep48plus: 0, saleMade: 0 };
     const dayAggFor = (d: Date) => dateMap.get(isoDate(d)) ?? zero;
-    const revenueFor = (d: Date) =>
-      lobName === "Chat" ? (revenueByDate.get(isoDate(d)) ?? 0) : null;
+    const revenueFor = (d: Date) => (lobName === "Chat" ? revenueByDate.get(isoDate(d)) ?? 0 : null);
 
-    const sumRange = (dates: Date[]): DayAgg =>
-      dates.reduce(
-        (acc, d) => {
-          const a = dayAggFor(d);
-          return {
-            total: acc.total + a.total,
-            unique: acc.unique + a.unique,
-            frtInTat: acc.frtInTat + a.frtInTat,
-            rep24: acc.rep24 + a.rep24,
-            rep48: acc.rep48 + a.rep48,
-            rep48plus: acc.rep48plus + a.rep48plus,
-            saleMade: acc.saleMade + a.saleMade,
-          };
-        },
-        { ...zero },
-      );
+    const sumRange = (dates: Date[]): DayAgg => dates.reduce((acc, d) => {
+      const a = dayAggFor(d);
+      return {
+        total: acc.total + a.total, unique: acc.unique + a.unique, frtInTat: acc.frtInTat + a.frtInTat,
+        rep24: acc.rep24 + a.rep24, rep48: acc.rep48 + a.rep48, rep48plus: acc.rep48plus + a.rep48plus,
+        saleMade: acc.saleMade + a.saleMade,
+      };
+    }, { ...zero });
     const revenueForRange = (dates: Date[]): number | null =>
-      lobName === "Chat"
-        ? dates.reduce((s, d) => s + (revenueFor(d) ?? 0), 0)
-        : null;
+      lobName === "Chat" ? dates.reduce((s, d) => s + (revenueFor(d) ?? 0), 0) : null;
 
     const weekDates: Date[][] = [];
-    for (let w = 0; w < weekCount; w++)
-      weekDates.push(dayDates.slice(w * 7, w * 7 + 7));
+    for (let w = 0; w < weekCount; w++) weekDates.push(dayDates.slice(w * 7, w * 7 + 7));
 
     const values = {
       total: {} as Record<string, number | null>,
@@ -816,16 +668,8 @@ export async function getBellavitaChatLobSnapshot(): Promise<LobSnapshotData> {
       values.revenue[key] = revenue;
       // AOV = revenue / number of Sale Made ORDERS (same source as revenue),
       // not / Saleschat chat dispositions (a different table and grain).
-      const orders = dates.reduce(
-        (s, d) => s + (ordersByDate.get(isoDate(d)) ?? 0),
-        0,
-      );
-      values.aov[key] =
-        revenue != null && orders > 0
-          ? Math.round((revenue / orders) * 100) / 100
-          : revenue != null
-            ? 0
-            : null;
+      const orders = dates.reduce((s, d) => s + (ordersByDate.get(isoDate(d)) ?? 0), 0);
+      values.aov[key] = revenue != null && orders > 0 ? Math.round((revenue / orders) * 100) / 100 : (revenue != null ? 0 : null);
       values.convOverall[key] = pct(agg.saleMade, agg.total);
       values.convUnique[key] = pct(agg.saleMade, agg.unique);
     };
@@ -838,34 +682,14 @@ export async function getBellavitaChatLobSnapshot(): Promise<LobSnapshotData> {
       { metric: "Overall Chat Volume", values: values.total, format: "count" },
       { metric: "Unique Chat Volume", values: values.unique, format: "count" },
       { metric: "FRT %", values: values.frtPct, format: "pct" },
-      {
-        metric: "Repeat — Within 24hrs",
-        values: values.rep24,
-        format: "count",
-      },
-      {
-        metric: "Repeat — Within 48hrs",
-        values: values.rep48,
-        format: "count",
-      },
-      {
-        metric: "Repeat — More than 48hrs",
-        values: values.rep48plus,
-        format: "count",
-      },
+      { metric: "Repeat — Within 24hrs", values: values.rep24, format: "count" },
+      { metric: "Repeat — Within 48hrs", values: values.rep48, format: "count" },
+      { metric: "Repeat — More than 48hrs", values: values.rep48plus, format: "count" },
       { metric: "Sale Made", values: values.saleMade, format: "count" },
       { metric: "Revenue", values: values.revenue, format: "currency" },
       { metric: "AOV", values: values.aov, format: "currency" },
-      {
-        metric: "Conversion % On Overall",
-        values: values.convOverall,
-        format: "pct",
-      },
-      {
-        metric: "Conversion % On Unique",
-        values: values.convUnique,
-        format: "pct",
-      },
+      { metric: "Conversion % On Overall", values: values.convOverall, format: "pct" },
+      { metric: "Conversion % On Unique", values: values.convUnique, format: "pct" },
     ];
     return { lob: lobName, rows: rowsOut };
   });
@@ -883,48 +707,20 @@ export async function getBellavitaChatLobSnapshot(): Promise<LobSnapshotData> {
  * same for every export.
  * ------------------------------------------------------------------------ */
 
-export interface PeriodColumn {
-  key: string;
-  label: string;
-  kind: "week" | "day";
-  from: string;
-  to: string;
-}
+export interface PeriodColumn { key: string; label: string; kind: "week" | "day"; from: string; to: string }
 export interface PeriodMetrics {
-  totalTickets: number;
-  uniqueCount: number;
-  repeatCount: number;
-  resolvedPct: number;
-  repeatPct: number;
-  avgFrtMin: number;
-  avgResolutionMin: number;
-  avgWaitTimeMin: number;
-  activeAgents: number;
-  activeTls: number;
+  totalTickets: number; uniqueCount: number; repeatCount: number; resolvedPct: number; repeatPct: number;
+  avgFrtMin: number; avgResolutionMin: number; avgWaitTimeMin: number; activeAgents: number; activeTls: number;
 }
 export interface BellavitaChatPeriodBreakdown {
-  from: string;
-  to: string;
+  from: string; to: string;
   columns: PeriodColumn[];
   metrics: Record<string, PeriodMetrics>;
   dispositions: Record<string, Record<string, number>>;
   dailyColumnsOmitted: boolean;
 }
 
-const MON_ABBR = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
+const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MAX_PERIOD_DAYS = 366;
 const MAX_PERIOD_DAILY_COLUMNS = 62;
 
@@ -934,22 +730,12 @@ function isoAddDays(iso: string, n: number): string {
 }
 
 const EMPTY_METRICS: PeriodMetrics = {
-  totalTickets: 0,
-  uniqueCount: 0,
-  repeatCount: 0,
-  resolvedPct: 0,
-  repeatPct: 0,
-  avgFrtMin: 0,
-  avgResolutionMin: 0,
-  avgWaitTimeMin: 0,
-  activeAgents: 0,
-  activeTls: 0,
+  totalTickets: 0, uniqueCount: 0, repeatCount: 0, resolvedPct: 0, repeatPct: 0,
+  avgFrtMin: 0, avgResolutionMin: 0, avgWaitTimeMin: 0, activeAgents: 0, activeTls: 0,
 };
 
 export async function getBellavitaChatPeriodBreakdown(
-  fromInput: string,
-  toInput: string,
-  lobInput?: string,
+  fromInput: string, toInput: string, lobInput?: string,
 ): Promise<BellavitaChatPeriodBreakdown> {
   const { from, to } = resolveRange(fromInput, toInput);
   const lob = lobInput && lobInput.trim() ? lobInput.trim() : null;
@@ -957,17 +743,10 @@ export async function getBellavitaChatPeriodBreakdown(
   const range = lob ? [from, to, lob] : [from, to];
 
   const days: string[] = [];
-  for (
-    let d = from;
-    d <= to && days.length <= MAX_PERIOD_DAYS;
-    d = isoAddDays(d, 1)
-  )
-    days.push(d);
-  if (days.length > MAX_PERIOD_DAYS)
-    throw new Error(`Date range is limited to ${MAX_PERIOD_DAYS} days`);
+  for (let d = from; d <= to && days.length <= MAX_PERIOD_DAYS; d = isoAddDays(d, 1)) days.push(d);
+  if (days.length > MAX_PERIOD_DAYS) throw new Error(`Date range is limited to ${MAX_PERIOD_DAYS} days`);
 
-  const weekOf = (d: string) =>
-    Math.floor((Number(d.slice(8, 10)) - 1) / 7) + 1;
+  const weekOf = (d: string) => Math.floor((Number(d.slice(8, 10)) - 1) / 7) + 1;
   const multiMonth = new Set(days.map((d) => d.slice(0, 7))).size > 1;
 
   const columns: PeriodColumn[] = [];
@@ -976,9 +755,7 @@ export async function getBellavitaChatPeriodBreakdown(
     const key = `${d.slice(0, 7)}-W${weekOf(d)}`;
     const w = weeks.get(key);
     if (!w) {
-      const label = multiMonth
-        ? `${MON_ABBR[Number(d.slice(5, 7)) - 1]} W-${weekOf(d)}`
-        : `W-${weekOf(d)}`;
+      const label = multiMonth ? `${MON_ABBR[Number(d.slice(5, 7)) - 1]} W-${weekOf(d)}` : `W-${weekOf(d)}`;
       weeks.set(key, { key, label, kind: "week", from: d, to: d });
     } else w.to = d;
   }
@@ -986,13 +763,7 @@ export async function getBellavitaChatPeriodBreakdown(
   const dailyColumnsOmitted = days.length > MAX_PERIOD_DAILY_COLUMNS;
   if (!dailyColumnsOmitted) {
     for (const d of days) {
-      columns.push({
-        key: d,
-        label: `${Number(d.slice(8, 10))}-${MON_ABBR[Number(d.slice(5, 7)) - 1]}`,
-        kind: "day",
-        from: d,
-        to: d,
-      });
+      columns.push({ key: d, label: `${Number(d.slice(8, 10))}-${MON_ABBR[Number(d.slice(5, 7)) - 1]}`, kind: "day", from: d, to: d });
     }
   }
 
@@ -1007,28 +778,17 @@ export async function getBellavitaChatPeriodBreakdown(
        COUNT(DISTINCT NULLIF(emp_id, '')) AS active_agents,
        COUNT(DISTINCT NULLIF(tl_name, '')) AS active_tls`;
   const dayExpr = "DATE_FORMAT(chat_date, '%Y-%m-%d')";
-  const weekExpr =
-    "CONCAT(DATE_FORMAT(chat_date, '%Y-%m'), '-W', FLOOR((DAYOFMONTH(chat_date) - 1) / 7) + 1)";
+  const weekExpr = "CONCAT(DATE_FORMAT(chat_date, '%Y-%m'), '-W', FLOOR((DAYOFMONTH(chat_date) - 1) / 7) + 1)";
 
   const [[dayRows], [weekRows], [dayDisp], [weekDisp]] = await Promise.all([
-    db.execute<RowDataPacket[]>(
-      `SELECT ${dayExpr} AS k, ${metricSelect} FROM db_masmis.bb_chat WHERE ${where} GROUP BY ${dayExpr}`,
-      range,
-    ),
-    db.execute<RowDataPacket[]>(
-      `SELECT ${weekExpr} AS k, ${metricSelect} FROM db_masmis.bb_chat WHERE ${where} GROUP BY ${weekExpr}`,
-      range,
-    ),
+    db.execute<RowDataPacket[]>(`SELECT ${dayExpr} AS k, ${metricSelect} FROM db_masmis.bb_chat WHERE ${where} GROUP BY ${dayExpr}`, range),
+    db.execute<RowDataPacket[]>(`SELECT ${weekExpr} AS k, ${metricSelect} FROM db_masmis.bb_chat WHERE ${where} GROUP BY ${weekExpr}`, range),
     db.execute<RowDataPacket[]>(
       `SELECT ${dayExpr} AS k, disposition, COUNT(*) AS n FROM db_masmis.bb_chat
-        WHERE ${where} AND disposition IS NOT NULL AND disposition != '' GROUP BY ${dayExpr}, disposition`,
-      range,
-    ),
+        WHERE ${where} AND disposition IS NOT NULL AND disposition != '' GROUP BY ${dayExpr}, disposition`, range),
     db.execute<RowDataPacket[]>(
       `SELECT ${weekExpr} AS k, disposition, COUNT(*) AS n FROM db_masmis.bb_chat
-        WHERE ${where} AND disposition IS NOT NULL AND disposition != '' GROUP BY ${weekExpr}, disposition`,
-      range,
-    ),
+        WHERE ${where} AND disposition IS NOT NULL AND disposition != '' GROUP BY ${weekExpr}, disposition`, range),
   ]);
 
   const metrics: Record<string, PeriodMetrics> = {};
@@ -1038,16 +798,12 @@ export async function getBellavitaChatPeriodBreakdown(
     if (!metrics[key]) continue;
     const total = num(r.total);
     metrics[key] = {
-      totalTickets: total,
-      uniqueCount: num(r.unique_count),
-      repeatCount: num(r.repeat_count),
-      resolvedPct: pct(num(r.resolved), total),
-      repeatPct: pct(num(r.repeat_count), total),
+      totalTickets: total, uniqueCount: num(r.unique_count), repeatCount: num(r.repeat_count),
+      resolvedPct: pct(num(r.resolved), total), repeatPct: pct(num(r.repeat_count), total),
       avgFrtMin: Math.round(num(r.avg_frt) * 100) / 100,
       avgResolutionMin: Math.round(num(r.avg_resolution) * 100) / 100,
       avgWaitTimeMin: Math.round(num(r.avg_wait) * 100) / 100,
-      activeAgents: num(r.active_agents),
-      activeTls: num(r.active_tls),
+      activeAgents: num(r.active_agents), activeTls: num(r.active_tls),
     };
   }
   const dispositions: Record<string, Record<string, number>> = {};

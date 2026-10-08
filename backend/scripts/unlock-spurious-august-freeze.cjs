@@ -53,10 +53,8 @@ const PARAMS = [MONTH_START, MONTH_END, RUN_ID];
 
 async function main() {
   const c = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
     port: +(process.env.DB_PORT || 3306),
   });
 
@@ -64,55 +62,33 @@ async function main() {
   // its freeze is legitimate and none of this applies.
   const [[run]] = await c.query(
     `SELECT status, total_employees, (SELECT COUNT(*) FROM salary_prep_line WHERE run_id = ?) lines_n
-       FROM salary_prep_run WHERE id = ?`,
-    [RUN_ID, RUN_ID],
-  );
-  console.log(
-    `run 2026-08: status=${run.status} total_employees=${run.total_employees} lines=${run.lines_n}`,
-  );
+       FROM salary_prep_run WHERE id = ?`, [RUN_ID, RUN_ID]);
+  console.log(`run 2026-08: status=${run.status} total_employees=${run.total_employees} lines=${run.lines_n}`);
   if (Number(run.lines_n) > 10) {
-    console.error(
-      `REFUSING: that run now has ${run.lines_n} salary lines. It is no longer a stub, ` +
-        `so its freeze may be protecting real figures. Re-check before unlocking anything.`,
-    );
+    console.error(`REFUSING: that run now has ${run.lines_n} salary lines. It is no longer a stub, ` +
+      `so its freeze may be protecting real figures. Re-check before unlocking anything.`);
     await c.end();
     process.exitCode = 1;
     return;
   }
 
   const [[t]] = await c.query(
-    `SELECT COUNT(*) days, COUNT(DISTINCT d.employee_id) emps ${SCOPE}`,
-    PARAMS,
-  );
+    `SELECT COUNT(*) days, COUNT(DISTINCT d.employee_id) emps ${SCOPE}`, PARAMS);
   const [byStatus] = await c.query(
-    `SELECT d.attendance_status s, COUNT(*) n ${SCOPE} GROUP BY 1 ORDER BY n DESC`,
-    PARAMS,
-  );
+    `SELECT d.attendance_status s, COUNT(*) n ${SCOPE} GROUP BY 1 ORDER BY n DESC`, PARAMS);
 
-  console.log(
-    `\n${APPLY ? "APPLY" : "DRY RUN"} — unlocking ${t.days} day(s) across ${t.emps} employee(s)`,
-  );
+  console.log(`\n${APPLY ? "APPLY" : "DRY RUN"} — unlocking ${t.days} day(s) across ${t.emps} employee(s)`);
   console.table(byStatus);
 
   // Stated explicitly, because "what it will NOT touch" is the safety property here.
   const [[kept]] = await c.query(
     `SELECT COUNT(*) n FROM attendance_daily_record
       WHERE record_date BETWEEN ? AND ? AND is_locked = 1
-        AND (override_by IS NOT NULL OR regularization_id IS NOT NULL)`,
-    [MONTH_START, MONTH_END],
-  );
+        AND (override_by IS NOT NULL OR regularization_id IS NOT NULL)`, [MONTH_START, MONTH_END]);
   console.log(`  staying locked — carry a correction: ${kept.n}`);
 
-  if (!t.days) {
-    console.log("\nNothing to unlock.");
-    await c.end();
-    return;
-  }
-  if (!APPLY) {
-    console.log("\nNo changes written. Re-run with APPLY=1 to write.");
-    await c.end();
-    return;
-  }
+  if (!t.days) { console.log("\nNothing to unlock."); await c.end(); return; }
+  if (!APPLY) { console.log("\nNo changes written. Re-run with APPLY=1 to write."); await c.end(); return; }
 
   await c.beginTransaction();
   try {
@@ -144,18 +120,10 @@ async function main() {
       `INSERT INTO sensitive_action_log
          (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, acted_at, reason)
        VALUES (UUID(), ?, 'ATTENDANCE_RECORD_UNLOCKED', 'wfm', 'salary_prep_run', ?, ?, NOW(), ?)`,
-      [
-        ACTOR,
-        RUN_ID,
-        JSON.stringify({
-          month: "2026-08",
-          days_unlocked: res.affectedRows,
-          employees: t.emps,
-          kept_locked_corrections: kept.n,
-          run_id: RUN_ID,
-        }),
-        REASON,
-      ],
+      [ACTOR, RUN_ID,
+       JSON.stringify({ month: "2026-08", days_unlocked: res.affectedRows, employees: t.emps,
+                        kept_locked_corrections: kept.n, run_id: RUN_ID }),
+       REASON],
     );
     await c.commit();
     console.log(`\nCommitted. days unlocked = ${res.affectedRows}`);
@@ -167,7 +135,4 @@ async function main() {
   await c.end();
 }
 
-main().catch((e) => {
-  console.error("ERR", e.message);
-  process.exit(1);
-});
+main().catch((e) => { console.error("ERR", e.message); process.exit(1); });

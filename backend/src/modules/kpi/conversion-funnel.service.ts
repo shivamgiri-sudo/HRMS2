@@ -69,7 +69,7 @@ export class ConversionFunnelService {
 
       const stageDuration = data.call_connected_at
         ? Math.floor(
-            (Date.now() - new Date(data.call_connected_at).getTime()) / 1000,
+            (Date.now() - new Date(data.call_connected_at).getTime()) / 1000
           )
         : 0;
 
@@ -91,7 +91,7 @@ export class ConversionFunnelService {
           stageDuration,
           data.sale_completed_at ? "completed" : "pending",
           conversionFlag,
-        ],
+        ]
       );
 
       // Insert inbound detail
@@ -111,7 +111,7 @@ export class ConversionFunnelService {
           data.offer_presented_at,
           data.sale_completed_at,
           data.sale_amount,
-        ],
+        ]
       );
 
       await connection.commit();
@@ -154,7 +154,10 @@ export class ConversionFunnelService {
       if (data.sale_completed_at) {
         currentStage = "sale_completed";
         conversionFlag = 1;
-      } else if (data.talk_duration_secs && data.talk_duration_secs > 30) {
+      } else if (
+        data.talk_duration_secs &&
+        data.talk_duration_secs > 30
+      ) {
         currentStage = "talk_30s";
       } else if (data.connection_established_at) {
         currentStage = "call_connected";
@@ -162,7 +165,7 @@ export class ConversionFunnelService {
 
       const stageDuration = data.dial_initiated_at
         ? Math.floor(
-            (Date.now() - new Date(data.dial_initiated_at).getTime()) / 1000,
+            (Date.now() - new Date(data.dial_initiated_at).getTime()) / 1000
           )
         : 0;
 
@@ -184,7 +187,7 @@ export class ConversionFunnelService {
           stageDuration,
           data.sale_completed_at ? "completed" : "pending",
           conversionFlag,
-        ],
+        ]
       );
 
       // Insert outbound detail
@@ -206,7 +209,7 @@ export class ConversionFunnelService {
           data.sale_completed_at,
           data.sale_amount,
           data.attempt_number || 1,
-        ],
+        ]
       );
 
       await connection.commit();
@@ -258,7 +261,7 @@ export class ConversionFunnelService {
 
       const stageDuration = data.chat_initiated_at
         ? Math.floor(
-            (Date.now() - new Date(data.chat_initiated_at).getTime()) / 1000,
+            (Date.now() - new Date(data.chat_initiated_at).getTime()) / 1000
           )
         : 0;
 
@@ -279,14 +282,14 @@ export class ConversionFunnelService {
           stageDuration,
           data.sale_completed_at ? "completed" : "pending",
           conversionFlag,
-        ],
+        ]
       );
 
       const firstResponseTime = data.first_response_at
         ? Math.floor(
             (new Date(data.first_response_at).getTime() -
               new Date(data.chat_initiated_at).getTime()) /
-              1000,
+              1000
           )
         : null;
 
@@ -310,7 +313,7 @@ export class ConversionFunnelService {
           data.sale_amount,
           data.message_count,
           data.csat_score,
-        ],
+        ]
       );
 
       await connection.commit();
@@ -362,7 +365,7 @@ export class ConversionFunnelService {
 
       const stageDuration = data.email_received_at
         ? Math.floor(
-            (Date.now() - new Date(data.email_received_at).getTime()) / 1000,
+            (Date.now() - new Date(data.email_received_at).getTime()) / 1000
           )
         : 0;
 
@@ -383,14 +386,14 @@ export class ConversionFunnelService {
           stageDuration,
           data.sale_completed_at ? "completed" : "pending",
           conversionFlag,
-        ],
+        ]
       );
 
       const responseTime = data.first_response_at
         ? Math.floor(
             (new Date(data.first_response_at).getTime() -
               new Date(data.email_received_at).getTime()) /
-              3600000,
+              3600000
           )
         : null;
 
@@ -414,7 +417,7 @@ export class ConversionFunnelService {
           data.sale_completed_at,
           data.sale_amount,
           data.email_exchange_count,
-        ],
+        ]
       );
 
       await connection.commit();
@@ -432,7 +435,7 @@ export class ConversionFunnelService {
    */
   static async getFunnelMetrics(
     processType: "inbound" | "outbound" | "chat" | "email",
-    daysBack: number = 30,
+    daysBack: number = 30
   ): Promise<any> {
     const connection = await pool.getConnection();
 
@@ -452,7 +455,7 @@ export class ConversionFunnelService {
         GROUP BY cfe.funnel_stage
         ORDER BY fsc.stage_sequence ASC
         `,
-        [processType, daysBack],
+        [processType, daysBack]
       );
 
       return rows;
@@ -494,7 +497,7 @@ export class ConversionFunnelService {
           conversion_pct = VALUES(conversion_pct),
           avg_stage_duration_secs = VALUES(avg_stage_duration_secs)
         `,
-        [processType],
+        [processType]
       );
     } finally {
       connection.release();

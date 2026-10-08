@@ -2,32 +2,10 @@ import { insertNeemansSaleRawRows } from "../sales-upload/sales-upload.service.j
 import { importViaSharedInsert } from "./bridge-insert-helper.js";
 
 export const NEEMANS_SALE_RAW_HEADERS = [
-  "week",
-  "date",
-  "empId",
-  "name",
-  "tl",
-  "lob",
-  "tenure",
-  "orderId",
-  "customerNumber",
-  "emailId",
-  "paymentStatus",
-  "amount",
-  "discountCode",
-  "lineItemName",
-  "callingLob",
-  "callingStatus",
-  "status",
-  "count",
-  "neemansOrderId",
-  "currentStatus",
-  "finalStatus",
-  "lineItemQty",
-  "target",
-  "callDateTime",
-  "duration",
-  "createdAt",
+  "week", "date", "empId", "name", "tl", "lob", "tenure", "orderId", "customerNumber",
+  "emailId", "paymentStatus", "amount", "discountCode", "lineItemName", "callingLob",
+  "callingStatus", "status", "count", "neemansOrderId", "currentStatus", "finalStatus",
+  "lineItemQty", "target", "callDateTime", "duration", "createdAt",
 ] as const;
 
 /**
@@ -48,10 +26,5 @@ export async function importNeemansSaleRawMasmisBatch(
   batchId: string,
   importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
-  return importViaSharedInsert(
-    batchId,
-    insertNeemansSaleRawRows,
-    importedByUserId,
-    "orderId",
-  );
+  return importViaSharedInsert(batchId, insertNeemansSaleRawRows, importedByUserId, "orderId");
 }

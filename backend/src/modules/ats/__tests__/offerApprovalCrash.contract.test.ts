@@ -45,28 +45,19 @@ const codeOnly = (src: string) =>
     .replace(/^\s*--.*$/gm, "");
 
 const readiness = codeOnly(read("src/modules/ats/bgv-readiness.service.ts"));
-const orchestratorCode = codeOnly(
-  read("src/modules/employees/employee-creation-orchestrator.service.ts"),
-);
-const orchestrator = read(
-  "src/modules/employees/employee-creation-orchestrator.service.ts",
-);
+const orchestratorCode = codeOnly(read("src/modules/employees/employee-creation-orchestrator.service.ts"));
+const orchestrator = read("src/modules/employees/employee-creation-orchestrator.service.ts");
 const onboarding = read("src/modules/ats/ats.onboarding.service.ts");
 
 /** Columns that do not exist anywhere in mas_hrms. Selecting any of them throws. */
-const PHANTOM_COLUMNS = [
-  "fresher",
-  "total_experience_years",
-  "previous_company",
-];
+const PHANTOM_COLUMNS = ["fresher", "total_experience_years", "previous_company"];
 
 describe("BGV readiness reads columns that exist", () => {
   it("selects none of the phantom columns", () => {
     for (const column of PHANTOM_COLUMNS) {
-      expect(
-        readiness,
-        `bgv-readiness.service.ts still selects ${column}`,
-      ).not.toMatch(new RegExp(`\\b${column}\\b`));
+      expect(readiness, `bgv-readiness.service.ts still selects ${column}`).not.toMatch(
+        new RegExp(`\\b${column}\\b`),
+      );
     }
   });
 
@@ -95,20 +86,12 @@ describe("the rest of the approval path reads columns that exist", () => {
     // because it passes the format check and cannot be filed.
     expect(orchestratorCode).not.toMatch(/p\.pan_number/);
     expect(orchestratorCode).not.toMatch(/p\.aadhar_number/);
-    expect(orchestratorCode).toMatch(
-      /SELECT c\.pan_number,\s*c\.aadhar_number/,
-    );
+    expect(orchestratorCode).toMatch(/SELECT c\.pan_number,\s*c\.aadhar_number/);
   });
 
   it("never reads a masked identifier as if it were the real one", () => {
-    for (const masked of [
-      "pan_number_masked",
-      "aadhaar_number_masked",
-      "pan_number_hash",
-    ]) {
-      expect(orchestratorCode, `orchestrator reads ${masked}`).not.toMatch(
-        new RegExp(masked),
-      );
+    for (const masked of ["pan_number_masked", "aadhaar_number_masked", "pan_number_hash"]) {
+      expect(orchestratorCode, `orchestrator reads ${masked}`).not.toMatch(new RegExp(masked));
     }
   });
 
@@ -123,32 +106,18 @@ describe("the rest of the approval path reads columns that exist", () => {
 describe("experience label -> lateral hire", () => {
   // Values taken from production: 'Fresher' 16,967 rows, NULL 15,424,
   // 'Experience' 2,838, then ranges.
-  it.each([
-    "Fresher",
-    "fresher",
-    "  FRESHER  ",
-    "",
-    "NA",
-    "none",
-    "0",
-    "0 years",
-  ])("%j is not a lateral hire", (label) =>
-    expect(isLateralFromExperienceLabel(label)).toBe(false),
+  it.each(["Fresher", "fresher", "  FRESHER  ", "", "NA", "none", "0", "0 years"])(
+    "%j is not a lateral hire",
+    (label) => expect(isLateralFromExperienceLabel(label)).toBe(false),
   );
 
   it.each([null, undefined])("%j (unrecorded) is not a lateral hire", (label) =>
     expect(isLateralFromExperienceLabel(label)).toBe(false),
   );
 
-  it.each([
-    "Experience",
-    "1-2 Years",
-    "0-6 months",
-    "2+ years",
-    "3+ Years",
-    "6-12 months",
-  ])("%j is a lateral hire", (label) =>
-    expect(isLateralFromExperienceLabel(label)).toBe(true),
+  it.each(["Experience", "1-2 Years", "0-6 months", "2+ years", "3+ Years", "6-12 months"])(
+    "%j is a lateral hire",
+    (label) => expect(isLateralFromExperienceLabel(label)).toBe(true),
   );
 });
 
@@ -159,10 +128,7 @@ describe("a readiness failure cannot fail the hire", () => {
     const preceding = orchestrator.slice(Math.max(0, at - 300), at);
     const opens = (preceding.match(/\btry\s*\{/g) ?? []).length;
     const closes = (preceding.match(/\}\s*catch\b/g) ?? []).length;
-    expect(
-      opens - closes,
-      "readiness is not guarded — a throw here fails the approval",
-    ).toBe(1);
+    expect(opens - closes, "readiness is not guarded — a throw here fails the approval").toBe(1);
   });
 
   it("degrades to a warning rather than a blocker", () => {
@@ -191,10 +157,7 @@ describe("a throw undoes the branch head decision it wrote", () => {
     const preceding = onboarding.slice(Math.max(0, at - 400), at);
     const opens = (preceding.match(/\btry\s*\{/g) ?? []).length;
     const closes = (preceding.match(/\}\s*catch\b/g) ?? []).length;
-    expect(
-      opens - closes,
-      "a throw would leave the decision row 'approved'",
-    ).toBe(1);
+    expect(opens - closes, "a throw would leave the decision row 'approved'").toBe(1);
   });
 
   it("reverts on the throw path as well as the blocker path", () => {

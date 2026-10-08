@@ -52,9 +52,7 @@ describe("COSEC sync lock", () => {
     // The property that actually matters: no elapsed time leaves the sync
     // refusing forever, which is what produced 5,593 failures.
     for (const ageHours of [2, 24, 24 * 7, 24 * 36]) {
-      expect(decideCosecLock(NOW - ageHours * HOUR, NOW, HOUR).action).toBe(
-        "takeover",
-      );
+      expect(decideCosecLock(NOW - ageHours * HOUR, NOW, HOUR).action).toBe("takeover");
     }
   });
 });

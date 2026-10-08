@@ -17,14 +17,7 @@ import { describe, expect, it } from "vitest";
  * expression whose only symptom is a stray digit on screen.
  */
 const QUEUE = readFileSync(
-  resolve(
-    process.cwd(),
-    "..",
-    "src",
-    "pages",
-    "payroll",
-    "PayrollHeadSalaryReviewQueue.tsx",
-  ),
+  resolve(process.cwd(), "..", "src", "pages", "payroll", "PayrollHeadSalaryReviewQueue.tsx"),
   "utf8",
 );
 
@@ -34,27 +27,19 @@ describe("Queue row — no stray 0 from a tinyint flag", () => {
   });
 
   it("does not end the canQuickApprove chain on a raw numeric field", () => {
-    const line = QUEUE.split("\n").find((l) =>
-      l.includes("const canQuickApprove ="),
-    )!;
+    const line = QUEUE.split("\n").find((l) => l.includes("const canQuickApprove ="))!;
     expect(line).toContain("!!(");
     // The tell-tale shape: `&& row.package_accepted;` with nothing coercing it.
     expect(line).not.toMatch(/&& row\.package_accepted;\s*$/);
   });
 
   it("coerces the drawer's approve-button guard too", () => {
-    expect(QUEUE).toMatch(
-      /\{!!\(status === 'pending_review' && isReviewer && review\?\.package_accepted\) && \(/,
-    );
+    expect(QUEUE).toMatch(/\{!!\(status === 'pending_review' && isReviewer && review\?\.package_accepted\) && \(/);
   });
 
   it("leaves no bare `package_accepted &&` render guard anywhere in the file", () => {
     // Negated forms (!review?.package_accepted) are already booleans and are fine.
-    const bare = [
-      ...QUEUE.matchAll(
-        /\{[^{}\n]{0,80}[^!(]\breview\?\.package_accepted && \(/g,
-      ),
-    ];
+    const bare = [...QUEUE.matchAll(/\{[^{}\n]{0,80}[^!(]\breview\?\.package_accepted && \(/g)];
     expect(bare.map((m) => m[0])).toEqual([]);
   });
 });

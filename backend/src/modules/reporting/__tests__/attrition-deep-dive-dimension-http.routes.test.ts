@@ -39,10 +39,7 @@ vi.mock("../reporting.scope.js", async (importOriginal) => {
   const allDim = { mode: "all" as const, ids: [] as string[] };
   return {
     ...actual,
-    resolveBranchScope: vi.fn(async () => ({
-      isSuperAdmin: true,
-      branchIds: [],
-    })),
+    resolveBranchScope: vi.fn(async () => ({ isSuperAdmin: true, branchIds: [] })),
     resolveFullScope: vi.fn(async () => ({
       companyId: "company-1",
       isSuperAdmin: true,
@@ -65,47 +62,36 @@ app.use(express.json());
 app.use("/api/reports/suite", reportSuiteRouter);
 
 describe("GET /api/reports/suite/attrition-deep-dive -- dimension query param over real HTTP route", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it("threads ?dimension=reporting_manager through to the executor's SQL and response", async () => {
     // attritionDeepDive's single query() call (fetchPageWithTotal's probe run) -- one row
     // whose `dimension`/`dimension_id` reflect what a real reporting_manager-dimension query
     // would return, proving the executor actually grouped by manager and not "source".
-    mockExecute.mockResolvedValueOnce([
-      [
-        {
-          dimension: "reporting_manager",
-          dimension_label: "Reporting Manager",
-          dimension_value: "KAMAL SINGH",
-          dimension_id: "11111111-1111-1111-1111-111111111111",
-          aon_bucket: "0-30",
-          exits: 46,
-          avg_tenure_days: 21.4,
-          share_pct: 100,
-          early_quit_rate: 100,
-          reason_captured_pct: 50,
-        },
-      ],
-      [],
-    ]);
+    mockExecute.mockResolvedValueOnce([[
+      {
+        dimension: "reporting_manager",
+        dimension_label: "Reporting Manager",
+        dimension_value: "KAMAL SINGH",
+        dimension_id: "11111111-1111-1111-1111-111111111111",
+        aon_bucket: "0-30",
+        exits: 46,
+        avg_tenure_days: 21.4,
+        share_pct: 100,
+        early_quit_rate: 100,
+        reason_captured_pct: 50,
+      },
+    ], []]);
 
     const res = await request(app)
       .get("/api/reports/suite/attrition-deep-dive")
-      .query({
-        dimension: "reporting_manager",
-        from: "2026-01-01",
-        to: "2026-08-25",
-      });
+      .query({ dimension: "reporting_manager", from: "2026-01-01", to: "2026-08-25" });
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data).toHaveLength(1);
     expect(res.body.data[0].dimension).toBe("reporting_manager");
-    expect(res.body.data[0].dimension_id).toBe(
-      "11111111-1111-1111-1111-111111111111",
-    );
+    expect(res.body.data[0].dimension_id).toBe("11111111-1111-1111-1111-111111111111");
 
     // The SQL actually sent to the DB must carry the reporting_manager grouping expression,
     // not the "source" default -- confirms the query string value drove the executor's own
@@ -116,23 +102,20 @@ describe("GET /api/reports/suite/attrition-deep-dive -- dimension query param ov
   });
 
   it("falls back to 'source' when dimension is omitted (baseline, unchanged behaviour)", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [
-        {
-          dimension: "source",
-          dimension_label: "Source of Hire",
-          dimension_value: "Referral",
-          dimension_id: null,
-          aon_bucket: "0-30",
-          exits: 5,
-          avg_tenure_days: 10,
-          share_pct: 100,
-          early_quit_rate: 100,
-          reason_captured_pct: 0,
-        },
-      ],
-      [],
-    ]);
+    mockExecute.mockResolvedValueOnce([[
+      {
+        dimension: "source",
+        dimension_label: "Source of Hire",
+        dimension_value: "Referral",
+        dimension_id: null,
+        aon_bucket: "0-30",
+        exits: 5,
+        avg_tenure_days: 10,
+        share_pct: 100,
+        early_quit_rate: 100,
+        reason_captured_pct: 0,
+      },
+    ], []]);
 
     const res = await request(app)
       .get("/api/reports/suite/attrition-deep-dive")

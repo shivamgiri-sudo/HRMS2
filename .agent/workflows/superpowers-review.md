@@ -7,7 +7,6 @@ description: Runs a Superpowers-style review pass with severity levels.
 Read and apply the `superpowers-review` skill.
 
 Output:
-
 - Blockers
 - Majors
 - Minors
@@ -15,11 +14,10 @@ Output:
 - Summary + next actions
 
 ## Persist (mandatory)
-
 After generating the review content above, you MUST write it to disk:
 
-1. Copy the full review markdown output.
-2. Run:
+1) Copy the full review markdown output.
+2) Run:
 
 ```bash
 python .agent/skills/superpowers-workflow/scripts/write_artifact.py --path artifacts/superpowers/review.md

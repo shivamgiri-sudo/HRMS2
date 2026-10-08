@@ -143,58 +143,31 @@ const pct = (numerator: number, denominator: number): number | null =>
  * recognize revenue off accepted units or mandated seats instead. A zero delivery is a real
  * financial fact and must end the fallback chain, not be skipped over it.
  */
-const firstPresent = (
-  ...values: Array<number | null | undefined>
-): number | undefined =>
+const firstPresent = (...values: Array<number | null | undefined>): number | undefined =>
   values.find((value) => value !== null && value !== undefined);
 
-function metricUnits(
-  rule: RevenueRuleInput,
-  delivery: DeliveryMetricInput | undefined,
-): number {
+function metricUnits(rule: RevenueRuleInput, delivery: DeliveryMetricInput | undefined): number {
   if (rule.billingModel === "fixed_monthly") return 1;
-  if (rule.billingModel === "per_productive_hour")
-    return n(firstPresent(delivery?.productiveHours, delivery?.billableUnits));
-  if (rule.billingModel === "per_login_hour")
-    return n(firstPresent(delivery?.loginHours, delivery?.billableUnits));
-  if (rule.billingModel === "per_talk_minute")
-    return n(firstPresent(delivery?.talkMinutes, delivery?.billableUnits));
+  if (rule.billingModel === "per_productive_hour") return n(firstPresent(delivery?.productiveHours, delivery?.billableUnits));
+  if (rule.billingModel === "per_login_hour") return n(firstPresent(delivery?.loginHours, delivery?.billableUnits));
+  if (rule.billingModel === "per_talk_minute") return n(firstPresent(delivery?.talkMinutes, delivery?.billableUnits));
   if (rule.billingModel === "per_seat" || rule.billingModel === "per_fte") {
-    return n(
-      firstPresent(
-        delivery?.billableUnits,
-        delivery?.acceptedUnits,
-        rule.mandatedSeats,
-      ),
-    );
+    return n(firstPresent(delivery?.billableUnits, delivery?.acceptedUnits, rule.mandatedSeats));
   }
-  return n(
-    firstPresent(
-      delivery?.billableUnits,
-      delivery?.acceptedUnits,
-      delivery?.deliveredUnits,
-    ),
-  );
+  return n(firstPresent(delivery?.billableUnits, delivery?.acceptedUnits, delivery?.deliveredUnits));
 }
 
-function tieredAmount(
-  units: number,
-  rule: RevenueRuleInput,
-  rateInr: number,
-): number {
+function tieredAmount(units: number, rule: RevenueRuleInput, rateInr: number): number {
   const included = n(rule.includedUnits);
   if (included <= 0 || units <= included) return units * rateInr;
-  const overageRate =
-    n(rule.overageRate) > 0
-      ? n(rule.overageRate) * n(rule.fxToInr || 1)
-      : rateInr;
+  const overageRate = n(rule.overageRate) > 0 ? n(rule.overageRate) * n(rule.fxToInr || 1) : rateInr;
   return included * rateInr + (units - included) * overageRate;
 }
 
 export function calculateRevenue(
   rules: RevenueRuleInput[],
   deliveries: DeliveryMetricInput[],
-  components: RevenueComponentInput[] = [],
+  components: RevenueComponentInput[] = []
 ): RevenueCalculationResult {
   const deliveryMap = new Map(deliveries.map((item) => [item.metricKey, item]));
   const ruleResults = rules.map<RevenueRuleResult>((rule) => {
@@ -202,10 +175,9 @@ export function calculateRevenue(
     const fxToInr = n(rule.fxToInr) > 0 ? n(rule.fxToInr) : 1;
     const rateInr = n(rule.rateAmount) * fxToInr;
     const units = metricUnits(rule, delivery);
-    const rawAmount =
-      rule.billingModel === "fixed_monthly"
-        ? rateInr
-        : tieredAmount(units, rule, rateInr);
+    const rawAmount = rule.billingModel === "fixed_monthly"
+      ? rateInr
+      : tieredAmount(units, rule, rateInr);
     const minimumCommitment = n(rule.monthlyMinimumCommitment) * fxToInr;
     const topUp = Math.max(0, minimumCommitment - rawAmount);
     const plannedUnits = n(delivery?.plannedUnits);
@@ -236,34 +208,13 @@ export function calculateRevenue(
   const negativeAdjustments = components
     .filter((item) => item.direction === "decrease")
     .reduce((sum, item) => sum + Math.abs(n(item.amountInr)), 0);
-  const baseRevenue = ruleResults.reduce(
-    (sum, item) => sum + item.calculatedAmount,
-    0,
-  );
-  const minimumCommitmentTopUp = ruleResults.reduce(
-    (sum, item) => sum + item.minimumCommitmentTopUp,
-    0,
-  );
-  const plannedUnits = deliveries.reduce(
-    (sum, item) => sum + n(item.plannedUnits),
-    0,
-  );
-  const deliveredUnits = deliveries.reduce(
-    (sum, item) => sum + n(item.deliveredUnits),
-    0,
-  );
-  const acceptedUnits = deliveries.reduce(
-    (sum, item) => sum + n(item.acceptedUnits),
-    0,
-  );
-  const rejectedUnits = deliveries.reduce(
-    (sum, item) => sum + n(item.rejectedUnits),
-    0,
-  );
-  const billableUnits = ruleResults.reduce(
-    (sum, item) => sum + item.billableUnits,
-    0,
-  );
+  const baseRevenue = ruleResults.reduce((sum, item) => sum + item.calculatedAmount, 0);
+  const minimumCommitmentTopUp = ruleResults.reduce((sum, item) => sum + item.minimumCommitmentTopUp, 0);
+  const plannedUnits = deliveries.reduce((sum, item) => sum + n(item.plannedUnits), 0);
+  const deliveredUnits = deliveries.reduce((sum, item) => sum + n(item.deliveredUnits), 0);
+  const acceptedUnits = deliveries.reduce((sum, item) => sum + n(item.acceptedUnits), 0);
+  const rejectedUnits = deliveries.reduce((sum, item) => sum + n(item.rejectedUnits), 0);
+  const billableUnits = ruleResults.reduce((sum, item) => sum + item.billableUnits, 0);
 
   return {
     rules: ruleResults,
@@ -271,11 +222,7 @@ export function calculateRevenue(
     minimumCommitmentTopUp,
     positiveAdjustments,
     negativeAdjustments,
-    earnedRevenue:
-      baseRevenue +
-      minimumCommitmentTopUp +
-      positiveAdjustments -
-      negativeAdjustments,
+    earnedRevenue: baseRevenue + minimumCommitmentTopUp + positiveAdjustments - negativeAdjustments,
     plannedUnits,
     deliveredUnits,
     acceptedUnits,
@@ -332,35 +279,25 @@ export function allocatePoolAmount(
    * ignored unless the pool really is a whole number of rupees, because otherwise the shares could
    * not sum back to it, and reconciling exactly matters more than round numbers.
    */
-  granularity: "paise" | "rupee" = "paise",
+  granularity: "paise" | "rupee" = "paise"
 ): AllocationOutcome {
-  const unitsPerRupee =
-    granularity === "rupee" && Number.isInteger(n(poolAmount)) ? 1 : 100;
+  const unitsPerRupee = granularity === "rupee" && Number.isInteger(n(poolAmount)) ? 1 : 100;
   const amounts = new Map<string, number>();
   if (shares.length === 0) {
     return { amounts, balanced: true, percentTotal: null };
   }
 
   if (mode === "manual_percentage") {
-    const percentTotal = shares.reduce(
-      (sum, share) => sum + n(share.weight),
-      0,
-    );
+    const percentTotal = shares.reduce((sum, share) => sum + n(share.weight), 0);
     const balanced = Math.abs(percentTotal - 100) <= 0.01;
     for (const share of shares) {
-      amounts.set(
-        share.key,
-        Math.round(poolAmount * (n(share.weight) / 100) * 100) / 100,
-      );
+      amounts.set(share.key, Math.round(poolAmount * (n(share.weight) / 100) * 100) / 100);
     }
     return { amounts, balanced, percentTotal };
   }
 
   const totalUnits = Math.round(n(poolAmount) * unitsPerRupee);
-  const weights =
-    mode === "equal"
-      ? shares.map(() => 1)
-      : shares.map((share) => Math.max(0, n(share.weight)));
+  const weights = mode === "equal" ? shares.map(() => 1) : shares.map((share) => Math.max(0, n(share.weight)));
   const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
 
   if (totalWeight <= 0) {
@@ -368,10 +305,7 @@ export function allocatePoolAmount(
     const evenUnits = Math.floor(totalUnits / shares.length);
     const remainder = totalUnits - evenUnits * shares.length;
     shares.forEach((share, index) => {
-      amounts.set(
-        share.key,
-        (evenUnits + (index < remainder ? 1 : 0)) / unitsPerRupee,
-      );
+      amounts.set(share.key, (evenUnits + (index < remainder ? 1 : 0)) / unitsPerRupee);
     });
     return { amounts, balanced: true, percentTotal: null };
   }
@@ -408,19 +342,13 @@ export function calculateBpoCostWaterfall(input: BpoCostInput): BpoCostResult {
   const directServiceCost = agentSalary + dsc;
   const totalPeopleCost = agentSalary + dscPeople + bmcPeople;
   const totalOperatingCostBeforeDa =
-    directServiceCost +
-    bmc +
-    n(input.otherOperatingCost) -
-    n(input.otherOperatingIncome);
+    directServiceCost + bmc + n(input.otherOperatingCost) - n(input.otherOperatingIncome);
   const contribution = revenue - directServiceCost;
   const ebitda = revenue - totalOperatingCostBeforeDa;
   const ebit = ebitda - n(input.depreciation) - n(input.amortization);
   const pbt =
-    ebit -
-    n(input.financeCost) +
-    n(input.nonOperatingIncome) -
-    n(input.exceptionalCost) +
-    n(input.exceptionalIncome);
+    ebit - n(input.financeCost) + n(input.nonOperatingIncome)
+    - n(input.exceptionalCost) + n(input.exceptionalIncome);
   const pat = pbt - n(input.tax);
   const agentHeadcount = n(input.agentHeadcount);
   const activeHeadcount = n(input.activeHeadcount);
@@ -451,20 +379,11 @@ export function calculateBpoCostWaterfall(input: BpoCostInput): BpoCostResult {
     dscPctRevenue: pct(dsc, revenue),
     bmcPctRevenue: pct(bmc, revenue),
     peopleCostPctRevenue: pct(totalPeopleCost, revenue),
-    totalCostPctRevenue: pct(
-      totalOperatingCostBeforeDa +
-        n(input.depreciation) +
-        n(input.amortization),
-      revenue,
-    ),
-    averageAgentSalary:
-      agentHeadcount > 0 ? agentSalary / agentHeadcount : null,
+    totalCostPctRevenue: pct(totalOperatingCostBeforeDa + n(input.depreciation) + n(input.amortization), revenue),
+    averageAgentSalary: agentHeadcount > 0 ? agentSalary / agentHeadcount : null,
     revenuePerAgent: agentHeadcount > 0 ? revenue / agentHeadcount : null,
-    revenuePerActiveEmployee:
-      activeHeadcount > 0 ? revenue / activeHeadcount : null,
-    revenuePerContractedSeat:
-      contractedSeats > 0 ? revenue / contractedSeats : null,
-    loadedCostPerBillableSeat:
-      billableSeats > 0 ? totalOperatingCostBeforeDa / billableSeats : null,
+    revenuePerActiveEmployee: activeHeadcount > 0 ? revenue / activeHeadcount : null,
+    revenuePerContractedSeat: contractedSeats > 0 ? revenue / contractedSeats : null,
+    loadedCostPerBillableSeat: billableSeats > 0 ? totalOperatingCostBeforeDa / billableSeats : null,
   };
 }

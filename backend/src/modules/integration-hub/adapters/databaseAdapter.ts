@@ -23,10 +23,7 @@ export interface DbFetchResult {
 const IDENTIFIER_PART = /^[A-Za-z_][A-Za-z0-9_$]*$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-export function assertSafeIdentifier(
-  identifier: string,
-  label = "identifier",
-): string {
+export function assertSafeIdentifier(identifier: string, label = "identifier"): string {
   const value = String(identifier ?? "").trim();
   const parts = value.split(".");
   if (!value || parts.some((part) => !IDENTIFIER_PART.test(part))) {
@@ -35,20 +32,14 @@ export function assertSafeIdentifier(
   return value;
 }
 
-export function quoteIdentifier(
-  identifier: string,
-  dialect: DbDialect,
-): string {
+export function quoteIdentifier(identifier: string, dialect: DbDialect): string {
   return assertSafeIdentifier(identifier)
     .split(".")
-    .map((part) => (dialect === "mssql" ? `[${part}]` : `\`${part}\``))
+    .map((part) => dialect === "mssql" ? `[${part}]` : `\`${part}\``)
     .join(".");
 }
 
-function safeDate(
-  value: string | undefined,
-  label: string,
-): string | undefined {
+function safeDate(value: string | undefined, label: string): string | undefined {
   if (value === undefined || value === "") return undefined;
   if (!ISO_DATE.test(value)) throw new Error(`${label} must be YYYY-MM-DD`);
   return value;
@@ -82,9 +73,7 @@ export async function fetchFromDatabase(
 
     try {
       const request = pool.request();
-      params.forEach((value, index) =>
-        request.input(`p${index}`, value as any),
-      );
+      params.forEach((value, index) => request.input(`p${index}`, value as any));
       const result = await request.query(query);
       const rows = (result.recordset ?? []) as Record<string, unknown>[];
       return { rows, rowCount: rows.length, durationMs: Date.now() - start };
@@ -107,11 +96,7 @@ export async function fetchFromDatabase(
   try {
     const [rows] = await pool.execute(query, params as any);
     const resultRows = rows as Record<string, unknown>[];
-    return {
-      rows: resultRows,
-      rowCount: resultRows.length,
-      durationMs: Date.now() - start,
-    };
+    return { rows: resultRows, rowCount: resultRows.length, durationMs: Date.now() - start };
   } finally {
     await pool.end().catch(() => undefined);
   }
@@ -147,16 +132,14 @@ export function buildDialerAggregateQuery(
     : `COALESCE(${talk}, 0)`;
   const fromDate = safeDate(opts.fromDate, "fromDate");
   const toDate = safeDate(opts.toDate, "toDate");
-  const dayExpr =
-    dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
+  const dayExpr = dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
 
   let where = "WHERE 1=1";
   if (fromDate) where += ` AND ${dayExpr} >= '${fromDate}'`;
   if (toDate) where += ` AND ${dayExpr} <= '${toDate}'`;
-  where +=
-    dialect === "mssql"
-      ? ` AND ${agent} LIKE '[A-Z][A-Z]%[0-9]'`
-      : ` AND ${agent} REGEXP '^[A-Z]{2,4}[0-9]{4,6}$'`;
+  where += dialect === "mssql"
+    ? ` AND ${agent} LIKE '[A-Z][A-Z]%[0-9]'`
+    : ` AND ${agent} REGEXP '^[A-Z]{2,4}[0-9]{4,6}$'`;
 
   const top = dialect === "mssql" ? "TOP (10000) " : "";
   const limit = dialect === "mysql" ? "LIMIT 10000" : "";
@@ -198,14 +181,10 @@ export function buildCdrAggregateQuery(
   const date = quoteIdentifier(opts.dateCol ?? "CallDate", dialect);
   const talk = quoteIdentifier(opts.talkCol ?? "CallDurationSecond", dialect);
   const campaign = quoteIdentifier(opts.campaignCol ?? "CampaignName", dialect);
-  const disposition = quoteIdentifier(
-    opts.dispositionCol ?? "Disposition",
-    dialect,
-  );
+  const disposition = quoteIdentifier(opts.dispositionCol ?? "Disposition", dialect);
   const fromDate = safeDate(opts.fromDate, "fromDate");
   const toDate = safeDate(opts.toDate, "toDate");
-  const dayExpr =
-    dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
+  const dayExpr = dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
 
   let where = "WHERE 1=1";
   if (fromDate) where += ` AND ${dayExpr} >= '${fromDate}'`;
@@ -246,20 +225,13 @@ export function buildDailySnapshotAggregateQuery(
 ): string {
   const dialect = opts.dialect ?? "mysql";
   const table = quoteIdentifier(tableName, dialect);
-  const employeeCode = quoteIdentifier(
-    opts.employeeCodeCol ?? "agent_employee_code",
-    dialect,
-  );
+  const employeeCode = quoteIdentifier(opts.employeeCodeCol ?? "agent_employee_code", dialect);
   const date = quoteIdentifier(opts.dateCol ?? "snapshot_date", dialect);
   const process = quoteIdentifier(opts.processCol ?? "process_name", dialect);
-  const totalCalls = quoteIdentifier(
-    opts.totalCallsCol ?? "total_calls",
-    dialect,
-  );
+  const totalCalls = quoteIdentifier(opts.totalCallsCol ?? "total_calls", dialect);
   const fromDate = safeDate(opts.fromDate, "fromDate");
   const toDate = safeDate(opts.toDate, "toDate");
-  const dayExpr =
-    dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
+  const dayExpr = dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
   const talkExpr = opts.talkMinutesCol
     ? `SUM(COALESCE(${quoteIdentifier(opts.talkMinutesCol, dialect)}, 0))`
     : "0";
@@ -306,28 +278,17 @@ export function buildBiometricAggregateQuery(
   const table = quoteIdentifier(tableName, dialect);
   const employeeCode = quoteIdentifier(opts.employeeCodeCol, dialect);
   const date = quoteIdentifier(opts.dateCol, dialect);
-  const punchTime = opts.punchTimeCol
-    ? quoteIdentifier(opts.punchTimeCol, dialect)
-    : null;
-  const firstPunch = opts.firstPunchCol
-    ? quoteIdentifier(opts.firstPunchCol, dialect)
-    : punchTime;
-  const lastPunch = opts.lastPunchCol
-    ? quoteIdentifier(opts.lastPunchCol, dialect)
-    : punchTime;
-  const minutes = opts.minutesCol
-    ? quoteIdentifier(opts.minutesCol, dialect)
-    : null;
+  const punchTime = opts.punchTimeCol ? quoteIdentifier(opts.punchTimeCol, dialect) : null;
+  const firstPunch = opts.firstPunchCol ? quoteIdentifier(opts.firstPunchCol, dialect) : punchTime;
+  const lastPunch = opts.lastPunchCol ? quoteIdentifier(opts.lastPunchCol, dialect) : punchTime;
+  const minutes = opts.minutesCol ? quoteIdentifier(opts.minutesCol, dialect) : null;
   if (!firstPunch || !lastPunch) {
-    throw new Error(
-      "Map punch_time, or both first_punch and last_punch, for the biometric source",
-    );
+    throw new Error("Map punch_time, or both first_punch and last_punch, for the biometric source");
   }
 
   const fromDate = safeDate(opts.fromDate, "fromDate");
   const toDate = safeDate(opts.toDate, "toDate");
-  const dayExpr =
-    dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
+  const dayExpr = dialect === "mssql" ? `CAST(${date} AS date)` : `DATE(${date})`;
   const minuteExpr = minutes
     ? `MAX(COALESCE(${minutes}, 0))`
     : dialect === "mssql"

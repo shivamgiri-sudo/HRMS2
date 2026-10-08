@@ -41,7 +41,7 @@ const DEPOSIT_BANK_HINT = {
   "Stata Bank of India-IDC CC": "IDC CC",
   "ICICI Sim Aanan Vihar": "Aanan Vihar",
   "Stata Bank of India-IDC Current": "IDC Current",
-  RTGS: "RTGS",
+  "RTGS": "RTGS",
   "ICICI Sim A/c": "ICICI Sim A",
   "ICICI Sim Credit Max": "Credit Max",
   "Stata Bank of India-Dial Desk": "Dial Desk",
@@ -50,48 +50,36 @@ const DEPOSIT_BANK_HINT = {
 async function main() {
   const conn = await mysql.createConnection(cfg);
   console.log(`[backfill] Connected to ${cfg.host}/${cfg.database}`);
-  console.log(
-    `[backfill] Mode: ${EXECUTE ? "EXECUTE (will write rows)" : "DRY-RUN (no writes)"}`,
-  );
+  console.log(`[backfill] Mode: ${EXECUTE ? "EXECUTE (will write rows)" : "DRY-RUN (no writes)"}`);
 
   // 1. Load company_bank_account list to build deposit_bank → id map
-  const [accounts] = await conn.query(
-    "SELECT id, account_name FROM company_bank_account WHERE active_status = 1",
-  );
+  const [accounts] = await conn.query("SELECT id, account_name FROM company_bank_account WHERE active_status = 1");
   console.log(`[backfill] ${accounts.length} active company_bank_account rows`);
 
   // Resolve deposit_bank → company_bank_account.id
   const bankMap = new Map(); // deposit_bank_name → company_bank_account.id
   for (const [depositBankName, hint] of Object.entries(DEPOSIT_BANK_HINT)) {
     const match = accounts.find((a) =>
-      a.account_name.toLowerCase().includes(hint.toLowerCase()),
+      a.account_name.toLowerCase().includes(hint.toLowerCase())
     );
     if (match) {
       bankMap.set(depositBankName, match.id);
-      console.log(
-        `  ✓ "${depositBankName}" → "${match.account_name}" (${match.id.slice(0, 8)})`,
-      );
+      console.log(`  ✓ "${depositBankName}" → "${match.account_name}" (${match.id.slice(0, 8)})`);
     } else {
-      console.warn(
-        `  ✗ "${depositBankName}" → NO MATCH — rows with this deposit_bank will be SKIPPED`,
-      );
+      console.warn(`  ✗ "${depositBankName}" → NO MATCH — rows with this deposit_bank will be SKIPPED`);
     }
   }
 
   // 2. Load a receivable payable_account_master row for receipts
   const [[receivableAccount]] = await conn.query(
-    `SELECT id FROM payable_account_master WHERE account_type = 'receivable' AND active_status = 1 LIMIT 1`,
+    `SELECT id FROM payable_account_master WHERE account_type = 'receivable' AND active_status = 1 LIMIT 1`
   );
   if (!receivableAccount) {
-    console.error(
-      "[backfill] No active receivable payable_account_master row found. Add one (e.g. 'Sundry Debtors') before running this script.",
-    );
+    console.error("[backfill] No active receivable payable_account_master row found. Add one (e.g. 'Sundry Debtors') before running this script.");
     process.exit(1);
   }
   const receivableAccountId = receivableAccount.id;
-  console.log(
-    `[backfill] Using payable_account_master id=${receivableAccountId.slice(0, 8)} for all receipt ledger heads`,
-  );
+  console.log(`[backfill] Using payable_account_master id=${receivableAccountId.slice(0, 8)} for all receipt ledger heads`);
 
   // 3. Load snapshot rows ordered by pay_date ASC (so running balance accumulates correctly)
   const limitClause = LIMIT ? `LIMIT ${LIMIT}` : "";
@@ -101,18 +89,16 @@ async function main() {
             raised_by, payment_file, is_approved, source_created_at
        FROM client_bill_collection_run_snapshot
       ORDER BY pay_date ASC, id ASC
-      ${limitClause}`,
+      ${limitClause}`
   );
   console.log(`[backfill] ${snapshotRows.length} snapshot rows to process`);
 
   // 4. Check existing backfilled rows (idempotent — use bill_source_id as external ref in narration)
   const [existingRows] = await conn.query(
-    `SELECT narration FROM bank_account_ledger_entry WHERE source_type = 'backfill_receipt'`,
+    `SELECT narration FROM bank_account_ledger_entry WHERE source_type = 'backfill_receipt'`
   );
   const existingRefs = new Set(existingRows.map((r) => r.narration));
-  console.log(
-    `[backfill] ${existingRefs.size} rows already backfilled (will skip duplicates)`,
-  );
+  console.log(`[backfill] ${existingRefs.size} rows already backfilled (will skip duplicates)`);
 
   // 5. Track running balance per bank account
   const runningBalances = new Map(); // company_bank_account.id → number
@@ -121,55 +107,31 @@ async function main() {
   for (const [, accountId] of bankMap) {
     const [[last]] = await conn.query(
       `SELECT running_balance FROM bank_account_ledger_entry WHERE bank_account_id = ? ORDER BY entry_date ASC, id ASC LIMIT 1`,
-      [accountId],
+      [accountId]
     );
     // Start from 0 if no prior entries (opening balance is handled separately via company_bank_account.opening_balance)
-    const [[acct]] = await conn.query(
-      `SELECT opening_balance FROM company_bank_account WHERE id = ? LIMIT 1`,
-      [accountId],
-    );
-    runningBalances.set(
-      accountId,
-      last
-        ? Number(last.running_balance) - Number(acct?.opening_balance ?? 0)
-        : 0,
-    );
+    const [[acct]] = await conn.query(`SELECT opening_balance FROM company_bank_account WHERE id = ? LIMIT 1`, [accountId]);
+    runningBalances.set(accountId, last ? Number(last.running_balance) - Number(acct?.opening_balance ?? 0) : 0);
   }
   // Reset to opening_balance as starting point for backfill (backfill goes first chronologically)
   for (const [, accountId] of bankMap) {
-    const [[acct]] = await conn.query(
-      `SELECT opening_balance FROM company_bank_account WHERE id = ? LIMIT 1`,
-      [accountId],
-    );
+    const [[acct]] = await conn.query(`SELECT opening_balance FROM company_bank_account WHERE id = ? LIMIT 1`, [accountId]);
     runningBalances.set(accountId, Number(acct?.opening_balance ?? 0));
   }
 
-  let inserted = 0,
-    skipped = 0,
-    unmapped = 0;
+  let inserted = 0, skipped = 0, unmapped = 0;
 
   for (const row of snapshotRows) {
     const accountId = bankMap.get(row.deposit_bank);
-    if (!accountId) {
-      unmapped++;
-      continue;
-    }
+    if (!accountId) { unmapped++; continue; }
 
     const narrationRef = `BACKFILL:snapshot_id=${row.id}`;
-    if (existingRefs.has(narrationRef)) {
-      skipped++;
-      continue;
-    }
+    if (existingRefs.has(narrationRef)) { skipped++; continue; }
 
     const amount = Math.round(Number(row.pay_amount ?? 0) * 100) / 100;
-    if (amount <= 0) {
-      skipped++;
-      continue;
-    }
+    if (amount <= 0) { skipped++; continue; }
 
-    const payDate = row.pay_date
-      ? new Date(row.pay_date).toISOString().slice(0, 10)
-      : new Date(row.source_created_at).toISOString().slice(0, 10);
+    const payDate = row.pay_date ? new Date(row.pay_date).toISOString().slice(0, 10) : new Date(row.source_created_at).toISOString().slice(0, 10);
     const prior = runningBalances.get(accountId) ?? 0;
     const newBalance = Math.round((prior + amount) * 100) / 100;
     runningBalances.set(accountId, newBalance);
@@ -193,17 +155,12 @@ async function main() {
                    'system_backfill', 'system_backfill', 'system_backfill',
                    ?, ?, ?)`,
           [
-            voucherId,
-            voucherNumber,
-            accountId,
-            receivableAccountId,
+            voucherId, voucherNumber, accountId, receivableAccountId,
             amount,
             row.company_name ?? row.branch_name ?? "Client receipt (migrated)",
             `${row.pay_type ?? ""} ${row.pay_no ?? ""} — ${row.deposit_bank}`.trim(),
-            payDate,
-            payDate,
-            payDate,
-          ],
+            payDate, payDate, payDate,
+          ]
         );
 
         await conn.execute(
@@ -212,16 +169,12 @@ async function main() {
               payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
            VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'backfill_receipt', 'system_backfill')`,
           [
-            ledgerId,
-            accountId,
-            payDate,
-            voucherId,
-            amount,
-            receivableAccountId,
+            ledgerId, accountId, payDate, voucherId,
+            amount, receivableAccountId,
             narrationRef,
             row.pay_type ?? null,
             newBalance,
-          ],
+          ]
         );
 
         await conn.commit();
@@ -234,25 +187,15 @@ async function main() {
       // Dry run — just count
       inserted++;
       if (inserted <= 5) {
-        console.log(
-          `  [DRY-RUN] Would insert: voucher=${voucherNumber} amount=₹${amount} date=${payDate} bank=${row.deposit_bank} balance_after=₹${newBalance}`,
-        );
+        console.log(`  [DRY-RUN] Would insert: voucher=${voucherNumber} amount=₹${amount} date=${payDate} bank=${row.deposit_bank} balance_after=₹${newBalance}`);
       }
     }
   }
 
-  console.log(
-    `\n[backfill] Done. inserted=${inserted} skipped=${skipped} unmapped=${unmapped}`,
-  );
-  if (!EXECUTE)
-    console.log(
-      "[backfill] DRY RUN complete — re-run with --execute to commit rows",
-    );
+  console.log(`\n[backfill] Done. inserted=${inserted} skipped=${skipped} unmapped=${unmapped}`);
+  if (!EXECUTE) console.log("[backfill] DRY RUN complete — re-run with --execute to commit rows");
 
   await conn.end();
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().catch((e) => { console.error(e); process.exit(1); });

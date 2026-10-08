@@ -25,21 +25,13 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(
-  path.resolve(__dirname, "../syncStatutoryDataFromDbBill.ts"),
-  "utf8",
-);
-const code = source
-  .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/^\s*\/\/.*$/gm, "");
+const source = fs.readFileSync(path.resolve(__dirname, "../syncStatutoryDataFromDbBill.ts"), "utf8");
+const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 /** The block that decides and writes the PAN, isolated from the other statutory fields. */
 function panBlock(): string {
   const at = code.indexOf("updateData.pan_number = pan");
-  expect(
-    at,
-    "PAN write not found — has the sync been restructured?",
-  ).toBeGreaterThan(-1);
+  expect(at, "PAN write not found — has the sync been restructured?").toBeGreaterThan(-1);
   // Back up to the enclosing `if`, forward far enough to cover the ciphertext writes.
   const start = code.lastIndexOf("if (", at);
   return code.slice(start, at + 500);
@@ -71,12 +63,8 @@ describe("db_bill statutory sync — PAN ciphertext dual-write", () => {
     // row written here would sit in a different index space from the same row written by
     // scripts/statutory-identifier-encrypt-backfill.ts.
     const block = panBlock();
-    expect(block).toMatch(
-      /updateData\.pan_number_encrypted\s*=\s*encryptPanForSync\(\s*pan\b/,
-    );
-    expect(block).toMatch(
-      /updateData\.pan_blind_index\s*=\s*blindIndexPan\(\s*pan\b/,
-    );
+    expect(block).toMatch(/updateData\.pan_number_encrypted\s*=\s*encryptPanForSync\(\s*pan\b/);
+    expect(block).toMatch(/updateData\.pan_blind_index\s*=\s*blindIndexPan\(\s*pan\b/);
     expect(block).not.toMatch(/encryptPanForSync\(\s*legacy\./);
     expect(block).not.toMatch(/blindIndexPan\(\s*legacy\./);
   });

@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { Request } from "express";
-import { getIstDateString } from "../../utils/dateUtils.js";
+import { getIstDateString } from '../../utils/dateUtils.js';
 import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
 import { buildCanonicalFunnel } from "../ats/ats-stage-model.js";
 import { buildCandidateScopeSql, type AtsBranchScope } from "./ats-ext-scope.js";
@@ -28,27 +28,19 @@ function reqDbStatus(status?: string) {
 function bgvUiStatus(overall: string | null | undefined) {
   if (overall === "clear") return { status: "completed", result: "clear" };
   if (overall === "adverse") return { status: "failed", result: "discrepancy" };
-  if (overall === "pending_review")
-    return { status: "on_hold", result: "pending" };
-  if (overall === "in_progress")
-    return { status: "in_progress", result: "pending" };
+  if (overall === "pending_review") return { status: "on_hold", result: "pending" };
+  if (overall === "in_progress") return { status: "in_progress", result: "pending" };
   return { status: "initiated", result: "pending" };
 }
 
 function bgvDbStatus(data: Record<string, unknown>) {
   const status = String(data.overall_status ?? data.status ?? "");
   const result = String(data.result ?? "");
-  if (status === "completed")
-    return result === "discrepancy" ? "adverse" : "clear";
+  if (status === "completed") return result === "discrepancy" ? "adverse" : "clear";
   if (status === "failed") return "adverse";
   if (status === "on_hold") return "pending_review";
   if (status === "initiated") return "pending";
-  if (
-    ["pending", "in_progress", "clear", "adverse", "pending_review"].includes(
-      status,
-    )
-  )
-    return status;
+  if (["pending", "in_progress", "clear", "adverse", "pending_review"].includes(status)) return status;
   return null;
 }
 
@@ -67,16 +59,9 @@ function normalizeDate(value: unknown) {
   return String(value).slice(0, 10);
 }
 
-type RequisitionRow = RowDataPacket &
-  Record<string, unknown> & { id: string; status: string };
+type RequisitionRow = RowDataPacket & Record<string, unknown> & { id: string; status: string };
 type BgvRow = RowDataPacket & Record<string, unknown>;
-type OfferRow = RowDataPacket &
-  Record<string, unknown> & {
-    id: string;
-    status: string;
-    candidate_id: string;
-    email?: string | null;
-  };
+type OfferRow = RowDataPacket & Record<string, unknown> & { id: string; status: string; candidate_id: string; email?: string | null };
 type DuplicateRow = RowDataPacket & {
   id: string;
   match_score: number | string | null;
@@ -91,10 +76,7 @@ type DuplicateRow = RowDataPacket & {
   matched_email: string | null;
   matched_mobile_masked: string;
 };
-type FunnelRow = RowDataPacket & {
-  stage: string;
-  count: number | string | null;
-};
+type FunnelRow = RowDataPacket & { stage: string; count: number | string | null };
 
 // ── Manpower Requisition ──────────────────────────────────────────────────────
 export const requisitionService = {
@@ -108,18 +90,9 @@ export const requisitionService = {
       params.push(...scope.branchIds);
     }
     const dbStatus = reqDbStatus(filters.status);
-    if (dbStatus) {
-      conds.push("r.status = ?");
-      params.push(dbStatus);
-    }
-    if (filters.process_id) {
-      conds.push("r.process_id = ?");
-      params.push(filters.process_id);
-    }
-    if (filters.branch_id) {
-      conds.push("r.branch_id = ?");
-      params.push(filters.branch_id);
-    }
+    if (dbStatus) { conds.push("r.status = ?"); params.push(dbStatus); }
+    if (filters.process_id) { conds.push("r.process_id = ?"); params.push(filters.process_id); }
+    if (filters.branch_id) { conds.push("r.branch_id = ?"); params.push(filters.branch_id); }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT r.*, p.process_name, b.branch_name, d.designation_name
          FROM manpower_requisition r
@@ -131,10 +104,7 @@ export const requisitionService = {
         LIMIT 200`,
       params,
     );
-    return (rows as RequisitionRow[]).map((row) => ({
-      ...row,
-      status: reqUiStatus(String(row.status)),
-    }));
+    return (rows as RequisitionRow[]).map((row) => ({ ...row, status: reqUiStatus(String(row.status)) }));
   },
 
   async create(data: Record<string, unknown>, raisedBy: string, req?: Request) {
@@ -144,28 +114,9 @@ export const requisitionService = {
       `INSERT INTO manpower_requisition
          (id, req_code, process_id, branch_id, department_id, designation_id, requested_count, priority, reason, expected_joining, raised_by, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
-      [
-        id,
-        code,
-        data.process_id ?? null,
-        data.branch_id ?? null,
-        data.department_id ?? null,
-        data.designation_id ?? null,
-        data.requested_count ?? 1,
-        data.priority ?? "medium",
-        data.reason ?? null,
-        data.expected_joining ?? null,
-        raisedBy,
-      ],
+      [id, code, data.process_id ?? null, data.branch_id ?? null, data.department_id ?? null, data.designation_id ?? null, data.requested_count ?? 1, data.priority ?? "medium", data.reason ?? null, data.expected_joining ?? null, raisedBy],
     );
-    await logSensitiveAction({
-      actor_user_id: raisedBy,
-      action_type: "REQUISITION_CREATED",
-      module_key: "ATS",
-      entity_type: "manpower_requisition",
-      entity_id: id,
-      req,
-    });
+    await logSensitiveAction({ actor_user_id: raisedBy, action_type: "REQUISITION_CREATED", module_key: "ATS", entity_type: "manpower_requisition", entity_id: id, req });
     const list = await this.list({});
     return list.find((row: RequisitionRow) => row.id === id) ?? { id };
   },
@@ -182,16 +133,7 @@ export const requisitionService = {
       "UPDATE manpower_requisition SET status = ?, approved_by = ?, approved_at = NOW(), reason = COALESCE(CONCAT(COALESCE(reason, ''), ?), reason), updated_at = NOW() WHERE id = ?",
       [dbStatus, approvedBy, remarks ? `\nReview: ${remarks}` : null, id],
     );
-    await logSensitiveAction({
-      actor_user_id: approvedBy,
-      action_type:
-        action === "approved" ? "REQUISITION_APPROVED" : "REQUISITION_REJECTED",
-      module_key: "ATS",
-      entity_type: "manpower_requisition",
-      entity_id: id,
-      change_summary: { action, remarks },
-      req,
-    });
+    await logSensitiveAction({ actor_user_id: approvedBy, action_type: action === "approved" ? "REQUISITION_APPROVED" : "REQUISITION_REJECTED", module_key: "ATS", entity_type: "manpower_requisition", entity_id: id, change_summary: { action, remarks }, req });
   },
 };
 
@@ -224,46 +166,20 @@ export const bgvService = {
     };
   },
 
-  async initiate(
-    candidateId: string,
-    data: Record<string, unknown>,
-    initiatedBy: string,
-    req?: Request,
-  ) {
+  async initiate(candidateId: string, data: Record<string, unknown>, initiatedBy: string, req?: Request) {
     const id = randomUUID();
     await db.execute(
       `INSERT INTO ats_bgv_record (id, candidate_id, bgv_vendor, initiated_date, initiated_by, overall_status)
        VALUES (?, ?, ?, ?, ?, 'in_progress')
        ON DUPLICATE KEY UPDATE bgv_vendor = VALUES(bgv_vendor), initiated_date = VALUES(initiated_date), overall_status = 'in_progress', updated_at = NOW()`,
-      [
-        id,
-        candidateId,
-        data.bgv_vendor ?? data.vendor_name ?? null,
-        data.initiated_date ?? getIstDateString(),
-        initiatedBy,
-      ],
+      [id, candidateId, data.bgv_vendor ?? data.vendor_name ?? null, data.initiated_date ?? getIstDateString(), initiatedBy],
     );
-    await db.execute(
-      "UPDATE ats_candidate SET bgv_status = 'in_progress' WHERE id = ?",
-      [candidateId],
-    );
-    await logSensitiveAction({
-      actor_user_id: initiatedBy,
-      action_type: "BGV_INITIATED",
-      module_key: "ATS",
-      entity_type: "candidate",
-      entity_id: candidateId,
-      req,
-    });
+    await db.execute("UPDATE ats_candidate SET bgv_status = 'in_progress' WHERE id = ?", [candidateId]);
+    await logSensitiveAction({ actor_user_id: initiatedBy, action_type: "BGV_INITIATED", module_key: "ATS", entity_type: "candidate", entity_id: candidateId, req });
     return this.get(candidateId);
   },
 
-  async updateStatus(
-    candidateId: string,
-    data: Record<string, unknown>,
-    updatedBy: string,
-    req?: Request,
-  ) {
+  async updateStatus(candidateId: string, data: Record<string, unknown>, updatedBy: string, req?: Request) {
     const overall = bgvDbStatus(data);
     await db.execute(
       `UPDATE ats_bgv_record SET
@@ -276,36 +192,10 @@ export const bgvService = {
           completed_date = CASE WHEN ? IN ('clear','adverse') THEN COALESCE(?, CURDATE()) ELSE completed_date END,
           updated_at = NOW()
         WHERE candidate_id = ?`,
-      [
-        overall,
-        data.address_check ?? null,
-        data.education_check ?? null,
-        data.employment_check ?? null,
-        data.criminal_check ?? null,
-        data.remarks ?? null,
-        overall,
-        data.completed_date ?? null,
-        candidateId,
-      ],
+      [overall, data.address_check ?? null, data.education_check ?? null, data.employment_check ?? null, data.criminal_check ?? null, data.remarks ?? null, overall, data.completed_date ?? null, candidateId],
     );
-    if (overall)
-      await db.execute("UPDATE ats_candidate SET bgv_status = ? WHERE id = ?", [
-        overall,
-        candidateId,
-      ]);
-    await logSensitiveAction({
-      actor_user_id: updatedBy,
-      action_type: "BGV_UPDATED",
-      module_key: "ATS",
-      entity_type: "candidate",
-      entity_id: candidateId,
-      change_summary: {
-        overall_status: overall,
-        ui_status: data.status,
-        result: data.result,
-      },
-      req,
-    });
+    if (overall) await db.execute("UPDATE ats_candidate SET bgv_status = ? WHERE id = ?", [overall, candidateId]);
+    await logSensitiveAction({ actor_user_id: updatedBy, action_type: "BGV_UPDATED", module_key: "ATS", entity_type: "candidate", entity_id: candidateId, change_summary: { overall_status: overall, ui_status: data.status, result: data.result }, req });
     return this.get(candidateId);
   },
 };
@@ -344,65 +234,28 @@ export const offerService = {
   },
 
   generateToken(offerId: string, candidateEmail: string): string {
-    return createHash("sha256")
-      .update(`${offerId}${candidateEmail}${OFFER_TOKEN_SALT}`)
-      .digest("hex");
+    return createHash("sha256").update(`${offerId}${candidateEmail}${OFFER_TOKEN_SALT}`).digest("hex");
   },
 
-  async create(
-    data: Record<string, unknown>,
-    preparedBy: string,
-    req?: Request,
-  ) {
+  async create(data: Record<string, unknown>, preparedBy: string, req?: Request) {
     const id = randomUUID();
     const [candRows] = await db.execute<RowDataPacket[]>(
       "SELECT email, applied_for_process, applied_for_branch FROM ats_candidate WHERE id = ? LIMIT 1",
       [data.candidate_id],
     );
-    if (!candRows[0])
-      throw Object.assign(new Error("Candidate not found"), {
-        statusCode: 404,
-      });
+    if (!candRows[0]) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
     await db.execute(
       `INSERT INTO ats_offer (id, candidate_id, requisition_id, offered_ctc, offered_designation, offered_process, offered_branch, offer_date, offer_expiry_date, joining_date, prepared_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        data.candidate_id,
-        data.requisition_id ?? null,
-        data.offered_ctc ?? data.ctc_annual ?? null,
-        data.offered_designation ?? data.role_title ?? null,
-        data.offered_process ?? candRows[0].applied_for_process ?? null,
-        data.offered_branch ?? candRows[0].applied_for_branch ?? null,
-        data.offer_date ?? getIstDateString(),
-        data.offer_expiry_date ?? data.offer_expiry ?? null,
-        data.joining_date ?? null,
-        preparedBy,
-      ],
+      [id, data.candidate_id, data.requisition_id ?? null, data.offered_ctc ?? data.ctc_annual ?? null, data.offered_designation ?? data.role_title ?? null, data.offered_process ?? candRows[0].applied_for_process ?? null, data.offered_branch ?? candRows[0].applied_for_branch ?? null, data.offer_date ?? getIstDateString(), data.offer_expiry_date ?? data.offer_expiry ?? null, data.joining_date ?? null, preparedBy],
     );
-    await db.execute(
-      "UPDATE ats_candidate SET offer_status = 'draft' WHERE id = ?",
-      [data.candidate_id],
-    );
-    await logSensitiveAction({
-      actor_user_id: preparedBy,
-      action_type: "OFFER_CREATED",
-      module_key: "ATS",
-      entity_type: "candidate",
-      entity_id: data.candidate_id as string,
-      req,
-    });
+    await db.execute("UPDATE ats_candidate SET offer_status = 'draft' WHERE id = ?", [data.candidate_id]);
+    await logSensitiveAction({ actor_user_id: preparedBy, action_type: "OFFER_CREATED", module_key: "ATS", entity_type: "candidate", entity_id: data.candidate_id as string, req });
     const rows = await this.list(data.candidate_id as string);
     return rows.find((row: OfferRow) => row.id === id) ?? { id };
   },
 
-  async respondToOffer(
-    offerId: string,
-    action: "accepted" | "declined",
-    token: string,
-    candidateName: string,
-    remarks?: string,
-  ): Promise<void> {
+  async respondToOffer(offerId: string, action: "accepted" | "declined", token: string, candidateName: string, remarks?: string): Promise<void> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT o.id, o.status, o.candidate_id, c.email
          FROM ats_offer o
@@ -412,26 +265,12 @@ export const offerService = {
     );
     const offer = rows[0] as OfferRow | undefined;
     if (!offer) throw new Error("Offer not found");
-    if (!["draft", "sent"].includes(String(offer.status)))
-      throw new Error("Offer is no longer pending response");
-    const expectedToken = offerService.generateToken(
-      offerId,
-      offer.email ?? "",
-    );
+    if (!["draft", "sent"].includes(String(offer.status))) throw new Error("Offer is no longer pending response");
+    const expectedToken = offerService.generateToken(offerId, offer.email ?? "");
     if (token !== expectedToken) throw new Error("Invalid or expired token");
     const nextStatus = action === "accepted" ? "accepted" : "rejected";
-    await db.execute(
-      "UPDATE ats_offer SET status = ?, rejection_reason = COALESCE(?, rejection_reason), updated_at = NOW() WHERE id = ?",
-      [nextStatus, remarks ?? null, offerId],
-    );
-    await db.execute(
-      "UPDATE ats_candidate SET current_stage = ?, offer_status = ?, updated_at = NOW() WHERE id = ?",
-      [
-        action === "accepted" ? "offer_accepted" : "offer_declined",
-        nextStatus,
-        offer.candidate_id,
-      ],
-    );
+    await db.execute("UPDATE ats_offer SET status = ?, rejection_reason = COALESCE(?, rejection_reason), updated_at = NOW() WHERE id = ?", [nextStatus, remarks ?? null, offerId]);
+    await db.execute("UPDATE ats_candidate SET current_stage = ?, offer_status = ?, updated_at = NOW() WHERE id = ?", [action === "accepted" ? "offer_accepted" : "offer_declined", nextStatus, offer.candidate_id]);
     void candidateName;
   },
 
@@ -443,62 +282,27 @@ export const offerService = {
 
   async updateStatus(offerId: string, status: string, reason: string | undefined, actorId: string, req?: Request) {
     const dbStatus = status === "expired" ? "lapsed" : status;
-    await db.execute(
-      "UPDATE ats_offer SET status = ?, rejection_reason = COALESCE(?, rejection_reason), updated_at = NOW() WHERE id = ?",
-      [dbStatus, reason ?? null, offerId],
-    );
-    await db.execute(
-      "UPDATE ats_candidate c JOIN ats_offer o ON o.candidate_id = c.id SET c.offer_status = ? WHERE o.id = ?",
-      [status, offerId],
-    );
-    await logSensitiveAction({
-      actor_user_id: actorId,
-      action_type: "OFFER_STATUS_CHANGED",
-      module_key: "ATS",
-      entity_type: "offer",
-      entity_id: offerId,
-      change_summary: { status },
-      req,
-    });
+    await db.execute("UPDATE ats_offer SET status = ?, rejection_reason = COALESCE(?, rejection_reason), updated_at = NOW() WHERE id = ?", [dbStatus, reason ?? null, offerId]);
+    await db.execute("UPDATE ats_candidate c JOIN ats_offer o ON o.candidate_id = c.id SET c.offer_status = ? WHERE o.id = ?", [status, offerId]);
+    await logSensitiveAction({ actor_user_id: actorId, action_type: "OFFER_STATUS_CHANGED", module_key: "ATS", entity_type: "offer", entity_id: offerId, change_summary: { status }, req });
   },
 };
 
 // ── Duplicate Detection ───────────────────────────────────────────────────────
 export const duplicateService = {
-  async checkDuplicates(
-    candidateId: string,
-    mobile: string,
-    email?: string,
-  ): Promise<RowDataPacket[]> {
+  async checkDuplicates(candidateId: string, mobile: string, email?: string): Promise<RowDataPacket[]> {
     const conds = ["id != ? AND active_status = 1 AND (mobile = ?"];
     const params: unknown[] = [candidateId, mobile];
-    if (email) {
-      conds[0] += " OR email = ?";
-      params.push(email);
-    }
+    if (email) { conds[0] += " OR email = ?"; params.push(email); }
     conds[0] += ")";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, candidate_code, full_name, mobile, email, current_stage, created_at FROM ats_candidate WHERE ${conds[0]} LIMIT 10`,
-      params,
-    );
+    const [rows] = await db.execute<RowDataPacket[]>(`SELECT id, candidate_code, full_name, mobile, email, current_stage, created_at FROM ats_candidate WHERE ${conds[0]} LIMIT 10`, params);
     return rows;
   },
 
-  async logDuplicate(
-    candidateId: string,
-    matchedWithId: string,
-    reason: string,
-    score?: number,
-  ) {
-    const [existing] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM ats_duplicate_log WHERE candidate_id = ? AND matched_with_id = ? AND resolved = 0 LIMIT 1",
-      [candidateId, matchedWithId],
-    );
+  async logDuplicate(candidateId: string, matchedWithId: string, reason: string, score?: number) {
+    const [existing] = await db.execute<RowDataPacket[]>("SELECT id FROM ats_duplicate_log WHERE candidate_id = ? AND matched_with_id = ? AND resolved = 0 LIMIT 1", [candidateId, matchedWithId]);
     if (existing.length > 0) return;
-    await db.execute(
-      "INSERT INTO ats_duplicate_log (id, candidate_id, matched_with_id, match_reason, match_score) VALUES (?, ?, ?, ?, ?)",
-      [randomUUID(), candidateId, matchedWithId, reason, score ?? null],
-    );
+    await db.execute("INSERT INTO ats_duplicate_log (id, candidate_id, matched_with_id, match_reason, match_score) VALUES (?, ?, ?, ?, ?)", [randomUUID(), candidateId, matchedWithId, reason, score ?? null]);
   },
 
   async listUnresolved(scope?: AtsBranchScope) {
@@ -519,27 +323,14 @@ export const duplicateService = {
     );
     return (rows as DuplicateRow[]).map((row) => ({
       id: row.id,
-      match_score:
-        row.match_score != null ? Number(row.match_score) / 100 : undefined,
+      match_score: row.match_score != null ? Number(row.match_score) / 100 : undefined,
       created_at: row.detected_at,
       resolved: Boolean(row.resolved),
       candidate_mobile_masked: row.candidate_mobile_masked,
       matched_mobile_masked: row.matched_mobile_masked,
       candidates: [
-        {
-          id: row.candidate_id,
-          name: row.candidate_name,
-          email: row.candidate_email,
-          phone: row.candidate_mobile_masked,
-          is_primary: true,
-        },
-        {
-          id: row.matched_with_id,
-          name: row.matched_name,
-          email: row.matched_email,
-          phone: row.matched_mobile_masked,
-          is_primary: false,
-        },
+        { id: row.candidate_id, name: row.candidate_name, email: row.candidate_email, phone: row.candidate_mobile_masked, is_primary: true },
+        { id: row.matched_with_id, name: row.matched_name, email: row.matched_email, phone: row.matched_mobile_masked, is_primary: false },
       ],
     }));
   },
@@ -551,19 +342,8 @@ export const duplicateService = {
   },
 
   async resolve(id: string, note: string, resolvedBy: string, req?: Request) {
-    await db.execute(
-      "UPDATE ats_duplicate_log SET resolved = 1, resolution_note = ? WHERE id = ?",
-      [note, id],
-    );
-    await logSensitiveAction({
-      actor_user_id: resolvedBy,
-      action_type: "DUPLICATE_RESOLVED",
-      module_key: "ATS",
-      entity_type: "ats_duplicate_log",
-      entity_id: id,
-      change_summary: { note },
-      req,
-    });
+    await db.execute("UPDATE ats_duplicate_log SET resolved = 1, resolution_note = ? WHERE id = ?", [note, id]);
+    await logSensitiveAction({ actor_user_id: resolvedBy, action_type: "DUPLICATE_RESOLVED", module_key: "ATS", entity_type: "ats_duplicate_log", entity_id: id, change_summary: { note }, req });
   },
 };
 
@@ -574,10 +354,7 @@ export const sourcingAnalyticsService = {
     // in ats_candidate — 37,686, of which 29,926 are legacy employee records. The default
     // bucket below (`COALESCE(NULLIF(current_stage,''),'Applied')`) is where most of them
     // landed, so this endpoint reported roughly 30,000 phantom "Applied" candidates.
-    const conds = [
-      "active_status = 1",
-      excludeEmployeeShapedCandidatesSql("ats_candidate"),
-    ];
+    const conds = ["active_status = 1", excludeEmployeeShapedCandidatesSql("ats_candidate")];
     const params: unknown[] = [];
     if (scope) {
       const sc = buildCandidateScopeSql(scope);
@@ -589,30 +366,20 @@ export const sourcingAnalyticsService = {
     // created_at >= DATE(...) rather than DATE(created_at) >= ...: the latter is non-sargable
     // and cannot use the index. The upper bound is exclusive-next-day so that rows recorded
     // later on the end date are included — `DATE(x) <= 'today'` silently dropped today's rows.
-    if (from) {
-      conds.push("created_at >= ?");
-      params.push(`${from} 00:00:00`);
-    }
-    if (to) {
-      conds.push("created_at < DATE_ADD(?, INTERVAL 1 DAY)");
-      params.push(to);
-    }
+    if (from) { conds.push("created_at >= ?"); params.push(`${from} 00:00:00`); }
+    if (to) { conds.push("created_at < DATE_ADD(?, INTERVAL 1 DAY)"); params.push(to); }
     // applied_for_branch / applied_for_process hold NAMES, not ids — verified on production:
     // of the 361 onboarding-bridge candidates, 347 of their applied_for_branch values match
     // branch_master.branch_name and only 8 match an id. Callers pass either (the parameter is
     // literally named branch_id), so accept both rather than silently matching nothing.
     const process = filters.process ?? filters.process_id;
     if (process) {
-      conds.push(
-        "(applied_for_process = ? OR applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1))",
-      );
+      conds.push("(applied_for_process = ? OR applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1))");
       params.push(process, process);
     }
     const branch = filters.branch ?? filters.branch_id;
     if (branch) {
-      conds.push(
-        "(applied_for_branch = ? OR applied_for_branch = (SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1))",
-      );
+      conds.push("(applied_for_branch = ? OR applied_for_branch = (SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1))");
       params.push(branch, branch);
     }
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -623,10 +390,7 @@ export const sourcingAnalyticsService = {
         ORDER BY count DESC`,
       params,
     );
-    return (rows as FunnelRow[]).map((row) => ({
-      stage: row.stage,
-      count: Number(row.count ?? 0),
-    }));
+    return (rows as FunnelRow[]).map((row) => ({ stage: row.stage, count: Number(row.count ?? 0) }));
   },
 
   async getStageWise(filters: { from_date?: string; to_date?: string; start_date?: string; end_date?: string; process_id?: string }, scope?: AtsBranchScope) {

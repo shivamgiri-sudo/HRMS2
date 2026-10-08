@@ -16,42 +16,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * hundreds of employees into that state at once, was not.
  */
 
-const {
-  execute,
-  getConnection,
-  connExecute,
-  beginTransaction,
-  commit,
-  rollback,
-  release,
-} = vi.hoisted(() => ({
-  execute: vi.fn(),
-  getConnection: vi.fn(),
-  connExecute: vi.fn(),
-  beginTransaction: vi.fn(),
-  commit: vi.fn(),
-  rollback: vi.fn(),
-  release: vi.fn(),
-}));
+const { execute, getConnection, connExecute, beginTransaction, commit, rollback, release } =
+  vi.hoisted(() => ({
+    execute: vi.fn(),
+    getConnection: vi.fn(),
+    connExecute: vi.fn(),
+    beginTransaction: vi.fn(),
+    commit: vi.fn(),
+    rollback: vi.fn(),
+    release: vi.fn(),
+  }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 vi.mock("../salary-governance.guard.js", () => ({
   assertSalaryAssignmentAllowed: vi.fn().mockResolvedValue({
-    allowed: true,
-    mode: "slab",
-    salarySlabId: "slab-1",
-    salaryProposalId: null,
+    allowed: true, mode: "slab", salarySlabId: "slab-1", salaryProposalId: null,
   }),
 }));
-vi.mock("../../customization/customization-engine.js", () => ({
-  getEffectiveConfig: vi.fn(),
-}));
-vi.mock("../../leave/leave.service.js", () => ({
-  leaveService: { lapseUnresolvedLeaves: vi.fn() },
-}));
+vi.mock("../../customization/customization-engine.js", () => ({ getEffectiveConfig: vi.fn() }));
+vi.mock("../../leave/leave.service.js", () => ({ leaveService: { lapseUnresolvedLeaves: vi.fn() } }));
 vi.mock("../payroll.notifications.js", () => ({
-  notifyPayrollRunStatus: vi.fn(),
-  notifyPayslipsReady: vi.fn(),
+  notifyPayrollRunStatus: vi.fn(), notifyPayslipsReady: vi.fn(),
 }));
 
 import { payrollService } from "../payroll.service.js";
@@ -65,21 +50,9 @@ const INPUT = {
 const TWO_EMPLOYEES = [[{ id: "emp-1" }, { id: "emp-2" }]];
 
 beforeEach(() => {
-  [
-    execute,
-    getConnection,
-    connExecute,
-    beginTransaction,
-    commit,
-    rollback,
-    release,
-  ].forEach((m) => m.mockReset());
+  [execute, getConnection, connExecute, beginTransaction, commit, rollback, release].forEach((m) => m.mockReset());
   getConnection.mockResolvedValue({
-    execute: connExecute,
-    beginTransaction,
-    commit,
-    rollback,
-    release,
+    execute: connExecute, beginTransaction, commit, rollback, release,
   });
   // getStructure, then the eligible-employee lookup.
   execute
@@ -91,11 +64,7 @@ describe("bulkAssignSalary is atomic", () => {
   it("runs the deactivate and every insert inside one transaction", async () => {
     connExecute.mockResolvedValue([{ affectedRows: 1 }]);
 
-    const res = await payrollService.bulkAssignSalary(
-      INPUT as never,
-      "user-1",
-      ["payroll"],
-    );
+    const res = await payrollService.bulkAssignSalary(INPUT as never, "user-1", ["payroll"]);
 
     expect(beginTransaction).toHaveBeenCalledTimes(1);
     expect(commit).toHaveBeenCalledTimes(1);
@@ -107,8 +76,8 @@ describe("bulkAssignSalary is atomic", () => {
 
   it("rolls back when an insert fails partway, rather than leaving employees with no assignment", async () => {
     connExecute
-      .mockResolvedValueOnce([{ affectedRows: 2 }]) // deactivate both
-      .mockResolvedValueOnce([{ affectedRows: 1 }]) // first insert ok
+      .mockResolvedValueOnce([{ affectedRows: 2 }])            // deactivate both
+      .mockResolvedValueOnce([{ affectedRows: 1 }])            // first insert ok
       .mockRejectedValueOnce(new Error("governance_mode rejected")); // second fails
 
     await expect(
@@ -124,16 +93,12 @@ describe("bulkAssignSalary is atomic", () => {
 
   it("releases the connection whether it commits or rolls back", async () => {
     connExecute.mockResolvedValue([{ affectedRows: 1 }]);
-    await payrollService.bulkAssignSalary(INPUT as never, "user-1", [
-      "payroll",
-    ]);
+    await payrollService.bulkAssignSalary(INPUT as never, "user-1", ["payroll"]);
     expect(release).toHaveBeenCalledTimes(1);
 
     release.mockClear();
     execute
-      .mockResolvedValueOnce([
-        [{ id: INPUT.structureId, structure_name: "Std" }],
-      ])
+      .mockResolvedValueOnce([[{ id: INPUT.structureId, structure_name: "Std" }]])
       .mockResolvedValueOnce(TWO_EMPLOYEES);
     connExecute.mockReset();
     connExecute.mockRejectedValueOnce(new Error("boom"));
@@ -141,25 +106,16 @@ describe("bulkAssignSalary is atomic", () => {
     await expect(
       payrollService.bulkAssignSalary(INPUT as never, "user-1", ["payroll"]),
     ).rejects.toThrow();
-    expect(
-      release,
-      "a leaked connection on the failure path exhausts the pool",
-    ).toHaveBeenCalledTimes(1);
+    expect(release, "a leaked connection on the failure path exhausts the pool").toHaveBeenCalledTimes(1);
   });
 
   it("does no write at all when no employee matches the filters", async () => {
     execute.mockReset();
     execute
-      .mockResolvedValueOnce([
-        [{ id: INPUT.structureId, structure_name: "Std" }],
-      ])
+      .mockResolvedValueOnce([[{ id: INPUT.structureId, structure_name: "Std" }]])
       .mockResolvedValueOnce([[]]); // no eligible employees
 
-    const res = await payrollService.bulkAssignSalary(
-      INPUT as never,
-      "user-1",
-      ["payroll"],
-    );
+    const res = await payrollService.bulkAssignSalary(INPUT as never, "user-1", ["payroll"]);
 
     expect(res).toEqual({ assigned: 0, skipped: 0 });
     // Returning before opening a transaction matters: an empty batch should not

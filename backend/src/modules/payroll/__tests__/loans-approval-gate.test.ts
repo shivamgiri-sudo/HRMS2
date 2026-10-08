@@ -49,14 +49,8 @@ vi.mock("../payroll-branch-scope.js", () => ({
 /** Mutable so each test can act as a different authenticated user. */
 let currentActorId = CREATOR_ID;
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (
-      req as express.Request & { authUser: { id: string; role: string } }
-    ).authUser = {
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: { id: string; role: string } }).authUser = {
       id: currentActorId,
       role: "finance_head",
     };
@@ -84,40 +78,33 @@ describe("POST /api/payroll/loans — create no longer self-activates or self-ap
   it("inserts status='pending_approval', records created_by, and does not stamp approved_by/approved_at", async () => {
     hasAnyRole.mockResolvedValue(true);
     execute
-      .mockResolvedValueOnce([
-        [{ id: EMPLOYEE_ID, employee_code: "MAS00001", branch_name: "HQ" }],
-      ]) // employee lookup
+      .mockResolvedValueOnce([[{ id: EMPLOYEE_ID, employee_code: "MAS00001", branch_name: "HQ" }]]) // employee lookup
       .mockResolvedValueOnce([{}]) // INSERT employee_loans
-      .mockResolvedValueOnce([
-        [
-          {
-            // SELECT * (return row)
-            id: LOAN_ID,
-            status: "pending_approval",
-            created_by: CREATOR_ID,
-            approved_by: null,
-            approved_at: null,
-          },
-        ],
-      ]);
+      .mockResolvedValueOnce([[{ // SELECT * (return row)
+        id: LOAN_ID,
+        status: "pending_approval",
+        created_by: CREATOR_ID,
+        approved_by: null,
+        approved_at: null,
+      }]]);
 
-    const res = await request(app()).post("/api/payroll/loans").send({
-      employee_id: EMPLOYEE_ID,
-      loan_type: "Personal Loan",
-      amount: 50000,
-      start_date: "2026-09-01",
-      installments: 10,
-      deduction_per_month: 5000,
-    });
+    const res = await request(app())
+      .post("/api/payroll/loans")
+      .send({
+        employee_id: EMPLOYEE_ID,
+        loan_type: "Personal Loan",
+        amount: 50000,
+        start_date: "2026-09-01",
+        installments: 10,
+        deduction_per_month: 5000,
+      });
 
     expect(res.status).toBe(201);
     expect(res.body.data.status).toBe("pending_approval");
     expect(res.body.data.approved_by).toBeNull();
     expect(res.body.data.approved_at).toBeNull();
 
-    const insertCall = execute.mock.calls.find((c) =>
-      String(c[0]).includes("INSERT INTO employee_loans"),
-    );
+    const insertCall = execute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO employee_loans"));
     expect(insertCall).toBeTruthy();
     expect(String(insertCall![0])).toContain("'pending_approval'");
     expect(String(insertCall![0])).not.toContain("'active'");
@@ -134,19 +121,13 @@ describe("POST /api/payroll/loans/:id/approve", () => {
   it("blocks the loan's own creator with 403 LOAN_SELF_APPROVAL", async () => {
     hasAnyRole.mockResolvedValue(true); // approver role tier check passes
     currentActorId = CREATOR_ID; // the same person who created it is now trying to approve it
-    execute.mockResolvedValueOnce([
-      [
-        {
-          id: LOAN_ID,
-          status: "pending_approval",
-          created_by: CREATOR_ID,
-        },
-      ],
-    ]);
+    execute.mockResolvedValueOnce([[{
+      id: LOAN_ID,
+      status: "pending_approval",
+      created_by: CREATOR_ID,
+    }]]);
 
-    const res = await request(app()).post(
-      `/api/payroll/loans/${LOAN_ID}/approve`,
-    );
+    const res = await request(app()).post(`/api/payroll/loans/${LOAN_ID}/approve`);
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe("LOAN_SELF_APPROVAL");
@@ -159,59 +140,40 @@ describe("POST /api/payroll/loans/:id/approve", () => {
     hasAnyRole.mockResolvedValue(true);
     currentActorId = APPROVER_ID; // different from created_by
     execute
-      .mockResolvedValueOnce([
-        [{ id: LOAN_ID, status: "pending_approval", created_by: CREATOR_ID }],
-      ]) // SELECT existing
+      .mockResolvedValueOnce([[{ id: LOAN_ID, status: "pending_approval", created_by: CREATOR_ID }]]) // SELECT existing
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE ... WHERE status='pending_approval'
-      .mockResolvedValueOnce([
-        [
-          {
-            // SELECT updated
-            id: LOAN_ID,
-            status: "active",
-            approved_by: APPROVER_ID,
-            approved_at: "2026-08-19T10:00:00.000Z",
-          },
-        ],
-      ]);
+      .mockResolvedValueOnce([[{ // SELECT updated
+        id: LOAN_ID,
+        status: "active",
+        approved_by: APPROVER_ID,
+        approved_at: "2026-08-19T10:00:00.000Z",
+      }]]);
 
-    const res = await request(app()).post(
-      `/api/payroll/loans/${LOAN_ID}/approve`,
-    );
+    const res = await request(app()).post(`/api/payroll/loans/${LOAN_ID}/approve`);
 
     expect(res.status).toBe(200);
     expect(res.body.data.status).toBe("active");
     expect(res.body.data.approved_by).toBe(APPROVER_ID);
     expect(res.body.data.approved_at).toBeTruthy();
 
-    const updateCall = execute.mock.calls.find((c) =>
-      String(c[0]).includes("UPDATE employee_loans"),
-    );
+    const updateCall = execute.mock.calls.find((c) => String(c[0]).includes("UPDATE employee_loans"));
     expect(updateCall).toBeTruthy();
     expect(String(updateCall![0])).toContain("status = 'active'");
-    expect(String(updateCall![0])).toContain(
-      "WHERE id = ? AND status = 'pending_approval'",
-    );
+    expect(String(updateCall![0])).toContain("WHERE id = ? AND status = 'pending_approval'");
     expect(updateCall![1]).toEqual([APPROVER_ID, LOAN_ID]);
 
     expect(logSensitiveAction).toHaveBeenCalledTimes(1);
-    expect(logSensitiveAction.mock.calls[0][0].action_type).toBe(
-      "loan_approved",
-    );
+    expect(logSensitiveAction.mock.calls[0][0].action_type).toBe("loan_approved");
   });
 
   it("returns 409 on a double-approve race (optimistic lock, zero affected rows)", async () => {
     hasAnyRole.mockResolvedValue(true);
     currentActorId = APPROVER_ID;
     execute
-      .mockResolvedValueOnce([
-        [{ id: LOAN_ID, status: "pending_approval", created_by: CREATOR_ID }],
-      ]) // SELECT still shows pending
+      .mockResolvedValueOnce([[{ id: LOAN_ID, status: "pending_approval", created_by: CREATOR_ID }]]) // SELECT still shows pending
       .mockResolvedValueOnce([{ affectedRows: 0 }]); // but another approver already flipped it — 0 rows matched
 
-    const res = await request(app()).post(
-      `/api/payroll/loans/${LOAN_ID}/approve`,
-    );
+    const res = await request(app()).post(`/api/payroll/loans/${LOAN_ID}/approve`);
 
     expect(res.status).toBe(409);
     expect(logSensitiveAction).not.toHaveBeenCalled();
@@ -219,9 +181,7 @@ describe("POST /api/payroll/loans/:id/approve", () => {
 
   it("refuses with 403 when the caller lacks the head-level role tier", async () => {
     hasAnyRole.mockResolvedValue(false);
-    const res = await request(app()).post(
-      `/api/payroll/loans/${LOAN_ID}/approve`,
-    );
+    const res = await request(app()).post(`/api/payroll/loans/${LOAN_ID}/approve`);
     expect(res.status).toBe(403);
     expect(execute).not.toHaveBeenCalled();
   });
@@ -231,9 +191,7 @@ describe("POST /api/payroll/loans/:id/reject", () => {
   it("rejects with rejected_by/rejected_at/rejection_reason and blocks self-review", async () => {
     hasAnyRole.mockResolvedValue(true);
     currentActorId = CREATOR_ID;
-    execute.mockResolvedValueOnce([
-      [{ id: LOAN_ID, status: "pending_approval", created_by: CREATOR_ID }],
-    ]);
+    execute.mockResolvedValueOnce([[{ id: LOAN_ID, status: "pending_approval", created_by: CREATOR_ID }]]);
 
     const selfRes = await request(app())
       .post(`/api/payroll/loans/${LOAN_ID}/reject`)
@@ -244,21 +202,15 @@ describe("POST /api/payroll/loans/:id/reject", () => {
     execute.mockReset();
     currentActorId = APPROVER_ID;
     execute
-      .mockResolvedValueOnce([
-        [{ id: LOAN_ID, status: "pending_approval", created_by: CREATOR_ID }],
-      ])
+      .mockResolvedValueOnce([[{ id: LOAN_ID, status: "pending_approval", created_by: CREATOR_ID }]])
       .mockResolvedValueOnce([{ affectedRows: 1 }])
-      .mockResolvedValueOnce([
-        [
-          {
-            id: LOAN_ID,
-            status: "rejected",
-            rejected_by: APPROVER_ID,
-            rejected_at: "2026-08-19T10:05:00.000Z",
-            rejection_reason: "budget exceeded",
-          },
-        ],
-      ]);
+      .mockResolvedValueOnce([[{
+        id: LOAN_ID,
+        status: "rejected",
+        rejected_by: APPROVER_ID,
+        rejected_at: "2026-08-19T10:05:00.000Z",
+        rejection_reason: "budget exceeded",
+      }]]);
 
     const res = await request(app())
       .post(`/api/payroll/loans/${LOAN_ID}/reject`)
@@ -274,9 +226,7 @@ describe("POST /api/payroll/loans/:id/reject", () => {
 describe("PATCH /api/payroll/loans/:id — no backdoor around the approval gate", () => {
   it("refuses to move status pending_approval -> active directly (409)", async () => {
     hasAnyRole.mockResolvedValue(true);
-    execute.mockResolvedValueOnce([
-      [{ id: LOAN_ID, status: "pending_approval" }],
-    ]); // SELECT existing
+    execute.mockResolvedValueOnce([[{ id: LOAN_ID, status: "pending_approval" }]]); // SELECT existing
 
     const res = await request(app())
       .patch(`/api/payroll/loans/${LOAN_ID}`)
@@ -289,9 +239,7 @@ describe("PATCH /api/payroll/loans/:id — no backdoor around the approval gate"
 
   it("refuses to move status pending_approval -> rejected directly (409)", async () => {
     hasAnyRole.mockResolvedValue(true);
-    execute.mockResolvedValueOnce([
-      [{ id: LOAN_ID, status: "pending_approval" }],
-    ]); // SELECT existing
+    execute.mockResolvedValueOnce([[{ id: LOAN_ID, status: "pending_approval" }]]); // SELECT existing
 
     const res = await request(app())
       .patch(`/api/payroll/loans/${LOAN_ID}`)
@@ -330,10 +278,7 @@ describe("payroll deduction reads already exclude pending_approval (read-only, n
 
   it("payrollCalculate.service.ts's loan EMI query filters status='active' only", () => {
     const idx = CALC_SRC.indexOf("FROM employee_loans");
-    expect(
-      idx,
-      "employee_loans query not found in payrollCalculate.service.ts",
-    ).toBeGreaterThan(-1);
+    expect(idx, "employee_loans query not found in payrollCalculate.service.ts").toBeGreaterThan(-1);
     const clause = CALC_SRC.slice(idx, idx + 200);
     expect(clause).toContain("status = 'active'");
     expect(clause).not.toContain("pending_approval");
@@ -341,10 +286,7 @@ describe("payroll deduction reads already exclude pending_approval (read-only, n
 
   it("running-salary.service.ts's loan EMI query filters status='active' only", () => {
     const idx = RUNNING_SRC.indexOf("FROM employee_loans");
-    expect(
-      idx,
-      "employee_loans query not found in running-salary.service.ts",
-    ).toBeGreaterThan(-1);
+    expect(idx, "employee_loans query not found in running-salary.service.ts").toBeGreaterThan(-1);
     const clause = RUNNING_SRC.slice(idx, idx + 200);
     expect(clause).toContain("status = 'active'");
     expect(clause).not.toContain("pending_approval");

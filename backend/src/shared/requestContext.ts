@@ -28,10 +28,7 @@ export function runWithRequestContext<T>(fn: () => T): T {
  * Memoise `compute` under `key` for the current request.
  * With no active request context this simply calls `compute`.
  */
-export async function memoizeForRequest<T>(
-  key: string,
-  compute: () => Promise<T>,
-): Promise<T> {
+export async function memoizeForRequest<T>(key: string, compute: () => Promise<T>): Promise<T> {
   const store = storage.getStore();
   if (!store) return compute();
 

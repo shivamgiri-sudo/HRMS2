@@ -35,15 +35,11 @@ const RESOLVER = SOURCE.slice(
 
 describe("LMS identity never falls back to another user", () => {
   it("has no unqualified first-active coordinator lookup", () => {
-    expect(RESOLVER).not.toMatch(
-      /FROM role_access_matrix\s+WHERE active = 1\s+ORDER BY created_at ASC/,
-    );
+    expect(RESOLVER).not.toMatch(/FROM role_access_matrix\s+WHERE active = 1\s+ORDER BY created_at ASC/);
   });
 
   it("has no unqualified first-active trainee lookup", () => {
-    expect(RESOLVER).not.toMatch(
-      /FROM user_master\s+WHERE active = 1\s+ORDER BY created_at ASC/,
-    );
+    expect(RESOLVER).not.toMatch(/FROM user_master\s+WHERE active = 1\s+ORDER BY created_at ASC/);
   });
 
   it("does not mint a session from the raw employee code or email as a last resort", () => {
@@ -74,9 +70,7 @@ describe("an unmapped user is refused, explicitly and actionably", () => {
   });
 
   it("does not auto-create a mapping as a side effect of a launch", () => {
-    expect(RESOLVER).not.toMatch(
-      /INSERT INTO (role_access_matrix|user_master|lms_employee_mapping)/i,
-    );
+    expect(RESOLVER).not.toMatch(/INSERT INTO (role_access_matrix|user_master|lms_employee_mapping)/i);
   });
 });
 
@@ -104,10 +98,7 @@ describe("LMS admin identity is per person, not one shared account", () => {
   // Comments stripped for the absence assertions. The branch documents the query it replaced, and
   // a bare source-text search cannot tell "this is the bug" from "this is why the bug was fixed" —
   // which is exactly how this test first failed against the corrected code.
-  const ADMIN_BRANCH = ADMIN_BRANCH_RAW.replace(/\/\/.*$/gm, "").replace(
-    /\/\*[\s\S]*?\*\//g,
-    "",
-  );
+  const ADMIN_BRANCH = ADMIN_BRANCH_RAW.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 
   it("has an admin branch to test — the slice above is not empty", () => {
     // Guards the assertions below: a renamed branch would make every `not.toMatch` pass vacuously.
@@ -132,9 +123,7 @@ describe("LMS admin identity is per person, not one shared account", () => {
   it("re-checks the mapped account against the LMS, so a stale row cannot mint a session", () => {
     // The mapping is HRMS-side; the LMS deactivates its own accounts. A row here must never be
     // sufficient on its own.
-    expect(ADMIN_BRANCH).toMatch(
-      /FROM admin_user_master\s+WHERE active = 1 AND admin_id = \?/,
-    );
+    expect(ADMIN_BRANCH).toMatch(/FROM admin_user_master\s+WHERE active = 1 AND admin_id = \?/);
   });
 
   it("refuses rather than guessing when the caller has no mapping", () => {
@@ -142,9 +131,7 @@ describe("LMS admin identity is per person, not one shared account", () => {
   });
 
   it("refuses when the caller has no employee code to map on", () => {
-    expect(ADMIN_BRANCH).toMatch(
-      /if \(!employeeCode\) throw lmsIdentityNotMapped\("admin"\)/,
-    );
+    expect(ADMIN_BRANCH).toMatch(/if \(!employeeCode\) throw lmsIdentityNotMapped\("admin"\)/);
   });
 
   it("does not create the mapping as a side effect of a launch", () => {
@@ -154,8 +141,6 @@ describe("LMS admin identity is per person, not one shared account", () => {
   });
 
   it("points the administrator at HRMS, where the mapping actually lives", () => {
-    expect(SOURCE).toMatch(
-      /lms_admin_identity_map\), so your actions in the LMS are recorded as yours/,
-    );
+    expect(SOURCE).toMatch(/lms_admin_identity_map\), so your actions in the LMS are recorded as yours/);
   });
 });

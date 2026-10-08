@@ -32,11 +32,7 @@ const TTL_MS = 5 * 60 * 1000;
 
 const cache = new Map<string, { exists: boolean; at: number }>();
 
-async function lookup(
-  key: string,
-  sql: string,
-  params: unknown[],
-): Promise<boolean> {
+async function lookup(key: string, sql: string, params: unknown[]): Promise<boolean> {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.exists;
 

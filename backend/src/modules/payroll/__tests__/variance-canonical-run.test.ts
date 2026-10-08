@@ -41,39 +41,28 @@ describe("variance resolves a single canonical run per month", () => {
 
   it("pins both the current and previous month queries to one run id", () => {
     const anchored = VARIANCE.match(/WHERE spr\.id = \(/g) ?? [];
-    expect(
-      anchored,
-      "both month queries must resolve a canonical run",
-    ).toHaveLength(2);
+    expect(anchored, "both month queries must resolve a canonical run").toHaveLength(2);
   });
 
   it("uses the shared ranking rather than a local copy", () => {
     // A second copy of this ordering is exactly how variance and cost summary
     // drifted apart to begin with.
-    expect(VARIANCE).toMatch(
-      /import \{ runRankSql \} from "\.\/run-status\.js"/,
-    );
-    expect(VARIANCE).toMatch(
-      /ORDER BY \$\{runRankSql\("r"\)\}, r\.created_at DESC/,
-    );
+    expect(VARIANCE).toMatch(/import \{ runRankSql \} from "\.\/run-status\.js"/);
+    expect(VARIANCE).toMatch(/ORDER BY \$\{runRankSql\("r"\)\}, r\.created_at DESC/);
     expect(VARIANCE.match(/WHEN 'DISBURSED'/g) ?? []).toHaveLength(0);
   });
 
   it("breaks ties on recency, so the pick is deterministic", () => {
     // Rank alone is not enough: two runs can share a status. Without a tiebreak
     // the database may return either, and the report changes between refreshes.
-    const picks =
-      VARIANCE.match(
-        /ORDER BY \$\{runRankSql\("r"\)\}, r\.created_at DESC\s+LIMIT 1/g,
-      ) ?? [];
+    const picks = VARIANCE.match(/ORDER BY \$\{runRankSql\("r"\)\}, r\.created_at DESC\s+LIMIT 1/g) ?? [];
     expect(picks).toHaveLength(2);
   });
 
   it("excludes cancelled runs case-insensitively", () => {
     // Statuses are not stored in a consistent case; a lowercase-only exclusion
     // would admit a 'CANCELLED' run as the canonical pick for the month.
-    const excludes =
-      VARIANCE.match(/UPPER\(r\.status\) NOT IN \('CANCELLED'\)/g) ?? [];
+    const excludes = VARIANCE.match(/UPPER\(r\.status\) NOT IN \('CANCELLED'\)/g) ?? [];
     expect(excludes).toHaveLength(2);
   });
 });

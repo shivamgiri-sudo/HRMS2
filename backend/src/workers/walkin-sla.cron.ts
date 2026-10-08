@@ -17,21 +17,17 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import { inboxService } from "../modules/inbox/inbox.service.js";
 
-const CHECK_INTERVAL_MS = 5 * 60 * 1000; // poll every 5 min
-const SUBMISSION_SLA_MINS = 90; // 90 min from arrival → must submit
-const FEEDBACK_COOLDOWN_MS = 30 * 60 * 1000; // re-alert every 30 min
+const CHECK_INTERVAL_MS     = 5  * 60 * 1000;  // poll every 5 min
+const SUBMISSION_SLA_MINS   = 90;               // 90 min from arrival → must submit
+const FEEDBACK_COOLDOWN_MS  = 30 * 60 * 1000;  // re-alert every 30 min
 
 // In-memory cooldown maps: entityId → lastAlertTimestamp
 const submissionAlerted = new Map<string, number>();
-const feedbackAlerted = new Map<string, number>();
+const feedbackAlerted   = new Map<string, number>();
 
-function shouldAlert(
-  map: Map<string, number>,
-  id: string,
-  cooldownMs: number,
-): boolean {
+function shouldAlert(map: Map<string, number>, id: string, cooldownMs: number): boolean {
   const last = map.get(id);
-  return !last || Date.now() - last >= cooldownMs;
+  return !last || (Date.now() - last) >= cooldownMs;
 }
 
 function cleanupMap(map: Map<string, number>, ttlMs: number): void {
@@ -44,9 +40,8 @@ function cleanupMap(map: Map<string, number>, ttlMs: number): void {
 // ── Check 1: 90-min submission SLA ───────────────────────────────────────────
 
 async function checkSubmissionSla(): Promise<void> {
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
        qt.id                                              AS token_id,
        COALESCE(qt.token_number, qt.token)                AS token_number,
        c.id                                               AS candidate_id,
@@ -66,42 +61,31 @@ async function checkSubmissionSla(): Promise<void> {
        AND DATE(COALESCE(qt.arrival_time, qt.created_at)) = CURDATE()
      ORDER BY mins_since_arrival DESC
      LIMIT 50`,
-      [SUBMISSION_SLA_MINS],
-    )
-    .catch(() => [[]] as [RowDataPacket[]]);
+    [SUBMISSION_SLA_MINS]
+  ).catch(() => [[]] as [RowDataPacket[]]);
 
   for (const row of rows as RowDataPacket[]) {
     const tokenId = String(row.token_id ?? "");
-    if (
-      !row.recruiter_user_id ||
-      !shouldAlert(submissionAlerted, tokenId, FEEDBACK_COOLDOWN_MS)
-    )
-      continue;
+    if (!row.recruiter_user_id || !shouldAlert(submissionAlerted, tokenId, FEEDBACK_COOLDOWN_MS)) continue;
 
     const elapsed = Number(row.mins_since_arrival ?? SUBMISSION_SLA_MINS);
-    const hours = Math.floor(elapsed / 60);
-    const mins = elapsed % 60;
-    const label = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+    const hours   = Math.floor(elapsed / 60);
+    const mins    = elapsed % 60;
+    const label   = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
-    await inboxService
-      .createItem({
-        user_id: String(row.recruiter_user_id),
-        type: "walkin_submission_sla",
-        title: `Interview not submitted — ${String(row.candidate_name ?? "Candidate")}`,
-        description: `Token ${String(row.token_number ?? "N/A")} (${String(row.applied_role ?? "Role")}) arrived ${label} ago. Interview result must be submitted within ${SUBMISSION_SLA_MINS} min of arrival. Please submit now.`,
-        entity_type: "ats_candidate",
-        entity_id: String(row.candidate_id),
-        action_url: "/ats/walkin-queue",
-        priority: "urgent",
-      })
-      .catch((e: unknown) =>
-        console.warn("[walkin-sla] submission SLA inbox write failed:", e),
-      );
+    await inboxService.createItem({
+      user_id:     String(row.recruiter_user_id),
+      type:        "walkin_submission_sla",
+      title:       `Interview not submitted — ${String(row.candidate_name ?? "Candidate")}`,
+      description: `Token ${String(row.token_number ?? "N/A")} (${String(row.applied_role ?? "Role")}) arrived ${label} ago. Interview result must be submitted within ${SUBMISSION_SLA_MINS} min of arrival. Please submit now.`,
+      entity_type: "ats_candidate",
+      entity_id:   String(row.candidate_id),
+      action_url:  "/ats/walkin-queue",
+      priority:    "urgent",
+    }).catch((e: unknown) => console.warn("[walkin-sla] submission SLA inbox write failed:", e));
 
     submissionAlerted.set(tokenId, Date.now());
-    console.log(
-      `[walkin-sla] submission SLA breach — ${String(row.candidate_name ?? "")} (${elapsed}min)`,
-    );
+    console.log(`[walkin-sla] submission SLA breach — ${String(row.candidate_name ?? "")} (${elapsed}min)`);
   }
 }
 
@@ -111,9 +95,8 @@ async function checkPendingFeedback(): Promise<void> {
   // Completed today: queue_status = 'completed' but candidate_status has not been
   // updated to a terminal stage (Selected / Rejected / On Hold etc).
   // We treat anything still in 'registered' or 'in_process' as feedback-pending.
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
        qt.id                                              AS token_id,
        COALESCE(qt.token_number, qt.token)                AS token_number,
        c.id                                               AS candidate_id,
@@ -143,42 +126,31 @@ async function checkPendingFeedback(): Promise<void> {
        AND TIMESTAMPDIFF(MINUTE, qt.interview_completed_at, NOW()) >= 10
      ORDER BY mins_since_complete DESC
      LIMIT 100`,
-      [],
-    )
-    .catch(() => [[]] as [RowDataPacket[]]);
+    []
+  ).catch(() => [[]] as [RowDataPacket[]]);
 
   for (const row of rows as RowDataPacket[]) {
     const tokenId = String(row.token_id ?? "");
-    if (
-      !row.recruiter_user_id ||
-      !shouldAlert(feedbackAlerted, tokenId, FEEDBACK_COOLDOWN_MS)
-    )
-      continue;
+    if (!row.recruiter_user_id || !shouldAlert(feedbackAlerted, tokenId, FEEDBACK_COOLDOWN_MS)) continue;
 
     const elapsed = Number(row.mins_since_complete ?? 10);
-    const hours = Math.floor(elapsed / 60);
-    const mins = elapsed % 60;
-    const label = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+    const hours   = Math.floor(elapsed / 60);
+    const mins    = elapsed % 60;
+    const label   = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
-    await inboxService
-      .createItem({
-        user_id: String(row.recruiter_user_id),
-        type: "walkin_feedback_pending",
-        title: `Interview feedback pending — ${String(row.candidate_name ?? "Candidate")}`,
-        description: `Token ${String(row.token_number ?? "N/A")} (${String(row.applied_role ?? "Role")}) interview completed ${label} ago but no selection/rejection decision has been recorded. Please submit your feedback.`,
-        entity_type: "ats_candidate",
-        entity_id: String(row.candidate_id),
-        action_url: "/ats/walkin-queue",
-        priority: "high",
-      })
-      .catch((e: unknown) =>
-        console.warn("[walkin-sla] feedback pending inbox write failed:", e),
-      );
+    await inboxService.createItem({
+      user_id:     String(row.recruiter_user_id),
+      type:        "walkin_feedback_pending",
+      title:       `Interview feedback pending — ${String(row.candidate_name ?? "Candidate")}`,
+      description: `Token ${String(row.token_number ?? "N/A")} (${String(row.applied_role ?? "Role")}) interview completed ${label} ago but no selection/rejection decision has been recorded. Please submit your feedback.`,
+      entity_type: "ats_candidate",
+      entity_id:   String(row.candidate_id),
+      action_url:  "/ats/walkin-queue",
+      priority:    "high",
+    }).catch((e: unknown) => console.warn("[walkin-sla] feedback pending inbox write failed:", e));
 
     feedbackAlerted.set(tokenId, Date.now());
-    console.log(
-      `[walkin-sla] feedback pending — ${String(row.candidate_name ?? "")} (${elapsed}min since completion)`,
-    );
+    console.log(`[walkin-sla] feedback pending — ${String(row.candidate_name ?? "")} (${elapsed}min since completion)`);
   }
 }
 
@@ -187,24 +159,16 @@ async function checkPendingFeedback(): Promise<void> {
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 
 async function run(): Promise<void> {
-  await checkSubmissionSla().catch((e: unknown) =>
-    console.error("[walkin-sla] submission check error:", e),
-  );
-  await checkPendingFeedback().catch((e: unknown) =>
-    console.error("[walkin-sla] feedback check error:", e),
-  );
+  await checkSubmissionSla().catch((e: unknown) => console.error("[walkin-sla] submission check error:", e));
+  await checkPendingFeedback().catch((e: unknown) => console.error("[walkin-sla] feedback check error:", e));
   cleanupMap(submissionAlerted, 4 * 60 * 60 * 1000);
-  cleanupMap(feedbackAlerted, 4 * 60 * 60 * 1000);
+  cleanupMap(feedbackAlerted,   4 * 60 * 60 * 1000);
 }
 
 export function startWalkinSlaCron(): void {
-  console.log(
-    `[walkin-sla] Starting — submission SLA: ${SUBMISSION_SLA_MINS}min, interval: ${CHECK_INTERVAL_MS / 60000}min`,
-  );
+  console.log(`[walkin-sla] Starting — submission SLA: ${SUBMISSION_SLA_MINS}min, interval: ${CHECK_INTERVAL_MS / 60000}min`);
   void run();
-  intervalRef = setInterval(() => {
-    void run();
-  }, CHECK_INTERVAL_MS);
+  intervalRef = setInterval(() => { void run(); }, CHECK_INTERVAL_MS);
 }
 
 export function stopWalkinSlaCron(): void {

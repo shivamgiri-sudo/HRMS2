@@ -8,13 +8,7 @@
  * dispatchReport() routes across all three report families (suite, BPO master,
  * identity builder). Use this in the worker and any cross-family call sites.
  */
-import type {
-  ExecFilters,
-  ExecScope,
-  ExecOptions,
-  ExecResult,
-  ExecutorFn,
-} from "./types.js";
+import type { ExecFilters, ExecScope, ExecOptions, ExecResult, ExecutorFn } from "./types.js";
 import { ReportExecutorNotFoundError } from "./types.js";
 
 // ─── Employee / HR & Workforce ──────────────────────────────────────────────
@@ -94,7 +88,7 @@ import {
 import {
   payrollRegister,
   payrollVariance,
-  bankAdvice,
+    bankAdvice,
   payrollReconciliation,
   arrearPaymentRegister,
   payrollCostSummary,
@@ -192,7 +186,9 @@ import {
 } from "./assets.executor.js";
 
 // ─── LMS / Training ──────────────────────────────────────────────────────────
-import { trainingCompletionStatus } from "./lms.executor.js";
+import {
+  trainingCompletionStatus,
+} from "./lms.executor.js";
 
 // ─── Identity ────────────────────────────────────────────────────────────────
 import {
@@ -227,185 +223,184 @@ import {
 // ---------------------------------------------------------------------------
 export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   // HR & Workforce
-  headcount: headcount,
-  "employee-master": employeeMaster,
-  "manager-mapping": managerMapping,
-  "org-structure-snapshot": orgStructureSnapshot,
-  "cost-centre-headcount": costCentreHeadcount,
-  "employee-movement": employeeMovement,
-  "new-join-export": newJoinExport,
-  "left-employee-export": leftEmployeeExport,
-  "increment-requests": incrementRequests,
-  "uan-master-register": uanMasterRegister,
-  "ff-settlement-register": ffSettlementRegister,
+  "headcount":                 headcount,
+  "employee-master":           employeeMaster,
+  "manager-mapping":           managerMapping,
+  "org-structure-snapshot":    orgStructureSnapshot,
+  "cost-centre-headcount":     costCentreHeadcount,
+  "employee-movement":         employeeMovement,
+  "new-join-export":            newJoinExport,
+  "left-employee-export":       leftEmployeeExport,
+  "increment-requests":        incrementRequests,
+  "uan-master-register":       uanMasterRegister,
+  "ff-settlement-register":    ffSettlementRegister,
   "employee-document-compliance": employeeDocumentCompliance,
-  "missing-documents-report": missingDocumentsReport,
+  "missing-documents-report":     missingDocumentsReport,
   "attendance-register-monthly": attendanceRegisterMonthly,
-  "bank-missing": bankMissing,
-  "confirmation-due-list": confirmationDueList,
-  "contract-expiry-list": contractExpiryList,
-  "lifecycle-events": lifecycleEvents,
+  "bank-missing":              bankMissing,
+  "confirmation-due-list":     confirmationDueList,
+  "contract-expiry-list":      contractExpiryList,
+  "lifecycle-events":          lifecycleEvents,
   "increment-promotion-history": incrementPromotionHistory,
-  "birthday-list": birthdayList,
-  "anniversary-list": anniversaryList,
+  "birthday-list":             birthdayList,
+  "anniversary-list":          anniversaryList,
   // Exception reports backing the UNASSIGNED convention and the active_status ruling.
-  "org-mapping-gaps": orgMappingGaps,
+  "org-mapping-gaps":          orgMappingGaps,
   "employee-status-conflicts": employeeStatusConflicts,
 
   // Organisation masters — cost centre and process were unreported until 2026-08-07.
-  "cost-centre-master-report": costCentreMasterReport,
-  "process-master-report": processMasterReport,
+  "cost-centre-master-report":            costCentreMasterReport,
+  "process-master-report":                processMasterReport,
   "headcount-by-cost-centre-and-process": headcountByCostCentreAndProcess,
 
   // Reconciliations. Each exposes a discrepancy the audit could only find by hand-writing
   // SQL: three headcounts for one month, a leave ledger 40x its own request history, a
   // billing name that disagrees with the operational one, and missing attendance that is
   // actually an unenrolled biometric. All quantify; none recompute.
-  "payroll-population-reconciliation": payrollPopulationReconciliation,
-  "leave-ledger-vs-requests-reconciliation":
-    leaveLedgerVsRequestsReconciliation,
-  "cost-centre-vs-billing-reconciliation": costCentreVsBillingReconciliation,
-  "attendance-enrollment-gap": attendanceEnrollmentGap,
+  "payroll-population-reconciliation":       payrollPopulationReconciliation,
+  "leave-ledger-vs-requests-reconciliation": leaveLedgerVsRequestsReconciliation,
+  "cost-centre-vs-billing-reconciliation":   costCentreVsBillingReconciliation,
+  "attendance-enrollment-gap":               attendanceEnrollmentGap,
 
   // Attendance
-  "attendance-daily": attendanceDaily,
-  "attendance-source-sheet": attendanceSourceSheet,
-  "daily-hc-shift": dailyHcShift,
-  "shift-adherence-detail": shiftAdherenceDetail,
-  "attendance-summary": attendanceSummary,
-  "attendance-register-grid": attendanceRegisterGrid,
-  "late-arrival-summary": lateArrivalSummary,
-  "overtime-summary": overtimeSummary,
-  "biometric-reconciliation": biometricReconciliation,
-  "regularization-summary": regularizationSummary,
+  "attendance-daily":          attendanceDaily,
+  "attendance-source-sheet":   attendanceSourceSheet,
+  "daily-hc-shift":            dailyHcShift,
+  "shift-adherence-detail":    shiftAdherenceDetail,
+  "attendance-summary":        attendanceSummary,
+  "attendance-register-grid":  attendanceRegisterGrid,
+  "late-arrival-summary":      lateArrivalSummary,
+  "overtime-summary":          overtimeSummary,
+  "biometric-reconciliation":  biometricReconciliation,
+  "regularization-summary":    regularizationSummary,
   "attendance-dispute-summary": attendanceDisputeSummary,
-  "regularization-audit": regularizationAuditReport,
+  "regularization-audit":      regularizationAuditReport,
   "attendance-direct-edit-log": attendanceDirectEditLog,
-  "habitual-absentee-list": habitualAbsenteeList,
-  "daily-shrinkage-report": dailyShrinkageReport,
-  "monthly-shrinkage-trend": monthlyShrinkageTrend,
-  "punch-raw-export": punchRawExport,
-  "break-daily-summary": breakDailySummary,
-  "break-session-log": breakSessionLog,
+  "habitual-absentee-list":    habitualAbsenteeList,
+  "daily-shrinkage-report":    dailyShrinkageReport,
+  "monthly-shrinkage-trend":   monthlyShrinkageTrend,
+  "punch-raw-export":          punchRawExport,
+  "break-daily-summary":       breakDailySummary,
+  "break-session-log":         breakSessionLog,
 
   // Leave
-  "leave-balance": leaveBalance,
+  "leave-balance":             leaveBalance,
   // Backward-compatible alias: the old wide-pivot "leave-balance-export" report was
   // consolidated into the canonical "leave-balance" report. Existing saved requests,
   // favourites and deep-links that still carry the old code keep working and resolve
   // to the same implementation. It is no longer listed separately in the catalog.
-  "leave-balance-export": leaveBalance,
+  "leave-balance-export":      leaveBalance,
   "leave-allocation-register": leaveAllocationRegister,
-  "leave-utilization": leaveUtilization,
-  "leave-trend-monthly": leaveTrendMonthly,
-  "leave-lwp-reconciliation": leaveLwpReconciliation,
+  "leave-utilization":         leaveUtilization,
+  "leave-trend-monthly":       leaveTrendMonthly,
+  "leave-lwp-reconciliation":  leaveLwpReconciliation,
   "maternity-paternity-register": maternityPaternityRegister,
   "leave-encashment-register": leaveEncashmentRegister,
-  "leave-lapse-summary": leaveLapseSummary,
-  "holiday-master-list": holidayMasterList,
+  "leave-lapse-summary":       leaveLapseSummary,
+  "holiday-master-list":       holidayMasterList,
 
   // Payroll
-  "payroll-register": payrollRegister,
-  "payroll-variance": payrollVariance,
-  "bank-advice": bankAdvice,
-  "payroll-reconciliation": payrollReconciliation,
-  "arrear-payment-register": arrearPaymentRegister,
-  "payroll-cost-summary": payrollCostSummary,
-  "ytd-salary-summary": ytdSalarySummary,
-  "lwp-deduction-register": lwpDeductionRegister,
-  "neft-transfer-file": neftTransferFile,
-  "payslip-status": payslipStatus,
-  "salary-sheet-export": salarySheetExport,
-  "pt-monthly-register": ptMonthlyRegister,
-  "pf-esic-salary-register": pfEsicSalaryRegister,
-  "pf-esi-optout-register": pfEsiOptOutRegister,
-  "roster-adherence": rosterAdherence,
+  "payroll-register":          payrollRegister,
+  "payroll-variance":          payrollVariance,
+  "bank-advice":               bankAdvice,
+  "payroll-reconciliation":    payrollReconciliation,
+  "arrear-payment-register":   arrearPaymentRegister,
+  "payroll-cost-summary":      payrollCostSummary,
+  "ytd-salary-summary":       ytdSalarySummary,
+  "lwp-deduction-register":   lwpDeductionRegister,
+  "neft-transfer-file":       neftTransferFile,
+  "payslip-status":           payslipStatus,
+  "salary-sheet-export":      salarySheetExport,
+  "pt-monthly-register":      ptMonthlyRegister,
+  "pf-esic-salary-register":  pfEsicSalaryRegister,
+  "pf-esi-optout-register":   pfEsiOptOutRegister,
+  "roster-adherence":         rosterAdherence,
   "productivity-individual-scorecard": productivityIndividualScorecard,
 
   // Statutory
-  "pf-contribution-register": pfContributionRegister,
-  "pf-ecr-format": pfEcrFormat,
+  "pf-contribution-register":  pfContributionRegister,
+  "pf-ecr-format":             pfEcrFormat,
   "esic-contribution-register": esicContributionRegister,
-  "pt-register": ptRegister,
-  "tds-computation-register": tdsComputationRegister,
-  "form-16-status": form16Status,
+  "pt-register":               ptRegister,
+  "tds-computation-register":  tdsComputationRegister,
+  "form-16-status":            form16Status,
   "investment-declaration-status": investmentDeclarationStatus,
   "gratuity-liability-register": gratuityLiabilityRegister,
 
   // Exit & Attrition
-  "resignation-register": resignationRegister,
-  "fnf-pending-register": fnfPendingRegister,
-  "fnf-settlement-register": fnfSettlementRegister,
+  "resignation-register":      resignationRegister,
+  "fnf-pending-register":      fnfPendingRegister,
+  "fnf-settlement-register":   fnfSettlementRegister,
   "clearance-status-register": clearanceStatusRegister,
   "monthly-attrition-summary": monthlyAttritionSummary,
-  "exit-reason-analysis": exitReasonAnalysis,
-  "tenure-distribution": tenureDistribution,
-  "early-attrition-report": earlyAttritionReport,
+  "exit-reason-analysis":      exitReasonAnalysis,
+  "tenure-distribution":       tenureDistribution,
+  "early-attrition-report":    earlyAttritionReport,
 
   // AON (Age on Network) & Attrition Analytics — tenure buckets 0-30/31-60/61-90/90+
   // derived from date_of_joining at read time. No inline block claims these codes, so the
   // executor is what serves both the screen and the download.
-  "aon-bucket-headcount": aonBucketHeadcount,
-  "aon-bucket-attrition": aonBucketAttrition,
-  "aon-bucket-shrinkage": aonBucketShrinkage,
-  "aon-cohort-survival": aonCohortSurvival,
-  "attrition-deep-dive": attritionDeepDive,
+  "aon-bucket-headcount":      aonBucketHeadcount,
+  "aon-bucket-attrition":      aonBucketAttrition,
+  "aon-bucket-shrinkage":      aonBucketShrinkage,
+  "aon-cohort-survival":       aonCohortSurvival,
+  "attrition-deep-dive":       attritionDeepDive,
   "aon-overall-attrition-rate": overallAttritionRate,
-  "aon-drilldown-employees": aonDrilldownEmployees,
-  "attrition-risk-score": attritionRiskScore,
+  "aon-drilldown-employees":   aonDrilldownEmployees,
+  "attrition-risk-score":      attritionRiskScore,
   "leave-attendance-reconciliation": leaveAttendanceReconciliation,
 
   // Recruitment
-  "recruitment-pipeline": recruitmentPipeline,
-  "candidate-tracker": candidateTracker,
-  "source-effectiveness": sourceEffectiveness,
-  "recruiter-productivity": recruiterProductivity,
-  "offer-tracker": offerTracker,
-  "joining-pending": joiningPending,
+  "recruitment-pipeline":      recruitmentPipeline,
+  "candidate-tracker":         candidateTracker,
+  "source-effectiveness":      sourceEffectiveness,
+  "recruiter-productivity":    recruiterProductivity,
+  "offer-tracker":             offerTracker,
+  "joining-pending":           joiningPending,
 
   // Operations & Quality
   "agent-performance-summary": agentPerformanceSummary,
-  "team-performance-summary": teamPerformanceSummary,
-  "quality-audit-log": qualityAuditLog,
-  "fatal-error-register": fatalErrorRegister,
+  "team-performance-summary":  teamPerformanceSummary,
+  "quality-audit-log":         qualityAuditLog,
+  "fatal-error-register":      fatalErrorRegister,
   "reginald-abandoned-cart-sales-report": reginaldAbandonedCartSalesReport,
 
   // WFM & Roster
-  "roster-published": rosterPublished,
-  "roster-variance": rosterVariance,
-  "shift-swap-register": shiftSwapRegister,
-  "week-off-calendar": weekOffCalendar,
+  "roster-published":          rosterPublished,
+  "roster-variance":           rosterVariance,
+  "shift-swap-register":       shiftSwapRegister,
+  "week-off-calendar":         weekOffCalendar,
 
   // Assets & Documents
-  "asset-inventory": assetInventory,
+  "asset-inventory":           assetInventory,
   "asset-allocation-register": assetAllocationRegister,
-  "asset-movement-log": assetMovementLog,
-  "document-expiry-tracker": documentExpiryTracker,
+  "asset-movement-log":        assetMovementLog,
+  "document-expiry-tracker":   documentExpiryTracker,
   "document-verification-status": documentVerificationStatus,
-  "certification-status": certificationStatus,
+  "certification-status":        certificationStatus,
 
   // LMS / Training
   "training-completion-status": trainingCompletionStatus,
 
   // Identity
-  "uan-status-report": uanStatusReport,
-  "esic-status-report": esicStatusReport,
-  "pan-verification-status": panVerificationStatus,
+  "uan-status-report":         uanStatusReport,
+  "esic-status-report":        esicStatusReport,
+  "pan-verification-status":   panVerificationStatus,
   "bank-account-verification": bankAccountVerification,
-  "identity-source-snapshot": identitySourceSnapshot,
+  "identity-source-snapshot":  identitySourceSnapshot,
 
   // Governance (placeholders — availabilityStatus: 'draft')
-  "compliance-audit-summary": complianceAuditSummary,
-  "helpdesk-summary": helpDeskSummary,
-  "grievance-register": grievanceRegister,
+  "compliance-audit-summary":  complianceAuditSummary,
+  "helpdesk-summary":          helpDeskSummary,
+  "grievance-register":        grievanceRegister,
   "audit-observation-register": auditObservationRegister,
 
   // Legacy HR (migrated from Legacy HRMS Reports tab)
   "attendance-issues-register": attendanceIssuesRegister,
-  "loan-register": loanRegister,
-  "doj-change-register": dojChangeRegister,
-  "bank-account-register": bankAccountRegister,
-  "nominee-register": nomineeRegister,
+  "loan-register":              loanRegister,
+  "doj-change-register":        dojChangeRegister,
+  "bank-account-register":      bankAccountRegister,
+  "nominee-register":           nomineeRegister,
 };
 
 // ---------------------------------------------------------------------------
@@ -415,7 +410,7 @@ export async function executeReport(
   code: string,
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const executor = EXECUTOR_MAP[code];
   if (!executor) {

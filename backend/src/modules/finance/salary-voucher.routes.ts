@@ -48,8 +48,7 @@ export function parseSerial(raw: unknown): number | undefined {
   const text = String(raw ?? "").trim();
   if (!text) return undefined;
   const value = Number(text);
-  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1)
-    return undefined;
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) return undefined;
   return value;
 }
 
@@ -123,17 +122,12 @@ salaryVoucherRouter.get(
 );
 
 /** Filters vouchers to the caller's branch entitlement. */
-export async function scopeVouchers(
-  req: AuthenticatedRequest,
-  vouchers: Voucher[],
-): Promise<Voucher[]> {
+export async function scopeVouchers(req: AuthenticatedRequest, vouchers: Voucher[]): Promise<Voucher[]> {
   const scope = await resolveFinanceBranchScopeSet({
     userId: String(req.authUser?.id ?? ""),
     primaryRole: String(req.authUser?.role ?? ""),
     userRoles: req.userRoles ?? [],
-    requestedBranchId: req.query.branchId
-      ? String(req.query.branchId)
-      : undefined,
+    requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
   });
   if (scope.mode === "all") return vouchers;
   const allowed = new Set(scope.branchIds);
@@ -146,9 +140,7 @@ salaryVoucherRouter.get(
   h(async (req, res) => {
     try {
       const generated = await salaryVoucherService.generate(req.params.runId, {
-        companyCode: req.query.companyCode
-          ? String(req.query.companyCode)
-          : undefined,
+        companyCode: req.query.companyCode ? String(req.query.companyCode) : undefined,
         serialFrom: parseSerial(req.query.serialFrom),
       });
       const scoped = await scopeVouchers(req, generated.vouchers);
@@ -163,10 +155,7 @@ salaryVoucherRouter.get(
     } catch (error) {
       res.status(400).json({
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to generate the salary voucher",
+        error: error instanceof Error ? error.message : "Unable to generate the salary voucher",
       });
     }
   }),
@@ -354,30 +343,19 @@ salaryVoucherRouter.get(
   requireRole(...VOUCHER_ROLES),
   h(async (req, res) => {
     try {
-      const generated = await billSalaryVoucherService.generateForPeriod(
-        req.params.period,
-        {
-          companyCode: String(req.query.companyCode ?? "IDC"),
-          entityPrefix: String(
-            req.query.entityPrefix ?? req.query.companyCode ?? "IDC",
-          ),
-          serialFrom: parseSerial(req.query.serialFrom),
-        },
-      );
+      const generated = await billSalaryVoucherService.generateForPeriod(req.params.period, {
+        companyCode: String(req.query.companyCode ?? "IDC"),
+        entityPrefix: String(req.query.entityPrefix ?? req.query.companyCode ?? "IDC"),
+        serialFrom: parseSerial(req.query.serialFrom),
+      });
       res.json({
         success: true,
-        data: {
-          ...generated,
-          vouchers: await scopeVouchers(req, generated.vouchers),
-        },
+        data: { ...generated, vouchers: await scopeVouchers(req, generated.vouchers) },
       });
     } catch (error) {
       res.status(400).json({
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to generate the db_bill salary voucher",
+        error: error instanceof Error ? error.message : "Unable to generate the db_bill salary voucher",
       });
     }
   }),

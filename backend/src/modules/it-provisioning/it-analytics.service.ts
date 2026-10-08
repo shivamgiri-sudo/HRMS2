@@ -6,38 +6,12 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
 interface ItAnalyticsSummary {
-  asset_lifecycle: {
-    total_assets: number;
-    in_use: number;
-    idle: number;
-    faulty: number;
-    depreciation_value: number;
-  };
-  provisioning_tat: {
-    avg_request_to_approval_days: number;
-    avg_approval_to_delivery_days: number;
-  };
-  license_compliance: {
-    active_licenses: number;
-    expiring_soon: number;
-    over_allocated: number;
-  };
-  incident_resolution: {
-    open_tickets: number;
-    p1_count: number;
-    p2_count: number;
-    avg_resolution_hours: number;
-  };
-  vendor_sla: Array<{
-    vendor_name: string;
-    avg_response_hours: number;
-    sla_breaches: number;
-  }>;
-  security_posture: {
-    devices_pending_updates: number;
-    antivirus_inactive: number;
-    vulnerabilities: number;
-  };
+  asset_lifecycle: { total_assets: number; in_use: number; idle: number; faulty: number; depreciation_value: number };
+  provisioning_tat: { avg_request_to_approval_days: number; avg_approval_to_delivery_days: number };
+  license_compliance: { active_licenses: number; expiring_soon: number; over_allocated: number };
+  incident_resolution: { open_tickets: number; p1_count: number; p2_count: number; avg_resolution_hours: number };
+  vendor_sla: Array<{ vendor_name: string; avg_response_hours: number; sla_breaches: number }>;
+  security_posture: { devices_pending_updates: number; antivirus_inactive: number; vulnerabilities: number };
 }
 
 export async function getItAnalyticsSummary(): Promise<ItAnalyticsSummary> {
@@ -48,7 +22,7 @@ export async function getItAnalyticsSummary(): Promise<ItAnalyticsSummary> {
        SUM(CASE WHEN status = 'idle' THEN 1 ELSE 0 END) as idle,
        SUM(CASE WHEN status = 'faulty' THEN 1 ELSE 0 END) as faulty,
        SUM(current_value) as depreciation_value
-     FROM assets`,
+     FROM assets`
   );
 
   const [tat] = await db.query<RowDataPacket[]>(
@@ -57,7 +31,7 @@ export async function getItAnalyticsSummary(): Promise<ItAnalyticsSummary> {
        AVG(DATEDIFF(delivered_at, approved_at)) as approval_to_delivery
      FROM provisioning_requests
      WHERE status = 'delivered'
-       AND delivered_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`,
+       AND delivered_at >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)`
   );
 
   const [licenses] = await db.query<RowDataPacket[]>(
@@ -66,7 +40,7 @@ export async function getItAnalyticsSummary(): Promise<ItAnalyticsSummary> {
        SUM(CASE WHEN expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as expiring_soon,
        SUM(CASE WHEN allocated > total_count THEN 1 ELSE 0 END) as over_allocated
      FROM software_licenses
-     WHERE status = 'active'`,
+     WHERE status = 'active'`
   );
 
   const [incidents] = await db.query<RowDataPacket[]>(
@@ -75,7 +49,7 @@ export async function getItAnalyticsSummary(): Promise<ItAnalyticsSummary> {
        SUM(CASE WHEN priority = 'P1' AND status IN ('open', 'in_progress') THEN 1 ELSE 0 END) as p1_count,
        SUM(CASE WHEN priority = 'P2' AND status IN ('open', 'in_progress') THEN 1 ELSE 0 END) as p2_count,
        AVG(CASE WHEN status = 'resolved' THEN TIMESTAMPDIFF(HOUR, created_at, resolved_at) END) as avg_resolution_hours
-     FROM it_tickets`,
+     FROM it_tickets`
   );
 
   const [vendors] = await db.query<RowDataPacket[]>(
@@ -87,7 +61,7 @@ export async function getItAnalyticsSummary(): Promise<ItAnalyticsSummary> {
      LEFT JOIN it_tickets t ON v.id = t.vendor_id AND t.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
      GROUP BY v.id, v.name
      ORDER BY sla_breaches DESC
-     LIMIT 5`,
+     LIMIT 5`
   );
 
   const [security] = await db.query<RowDataPacket[]>(
@@ -95,7 +69,7 @@ export async function getItAnalyticsSummary(): Promise<ItAnalyticsSummary> {
        SUM(CASE WHEN updates_pending = 1 THEN 1 ELSE 0 END) as pending_updates,
        SUM(CASE WHEN antivirus_active = 0 THEN 1 ELSE 0 END) as av_inactive,
        SUM(vulnerability_count) as total_vulnerabilities
-     FROM device_security_status`,
+     FROM device_security_status`
   );
 
   return {
@@ -107,12 +81,8 @@ export async function getItAnalyticsSummary(): Promise<ItAnalyticsSummary> {
       depreciation_value: Number(assets[0]?.depreciation_value ?? 0),
     },
     provisioning_tat: {
-      avg_request_to_approval_days: Math.round(
-        Number(tat[0]?.req_to_approval ?? 0),
-      ),
-      avg_approval_to_delivery_days: Math.round(
-        Number(tat[0]?.approval_to_delivery ?? 0),
-      ),
+      avg_request_to_approval_days: Math.round(Number(tat[0]?.req_to_approval ?? 0)),
+      avg_approval_to_delivery_days: Math.round(Number(tat[0]?.approval_to_delivery ?? 0)),
     },
     license_compliance: {
       active_licenses: licenses[0]?.active ?? 0,
@@ -123,9 +93,7 @@ export async function getItAnalyticsSummary(): Promise<ItAnalyticsSummary> {
       open_tickets: incidents[0]?.open_tickets ?? 0,
       p1_count: incidents[0]?.p1_count ?? 0,
       p2_count: incidents[0]?.p2_count ?? 0,
-      avg_resolution_hours: Math.round(
-        Number(incidents[0]?.avg_resolution_hours ?? 0),
-      ),
+      avg_resolution_hours: Math.round(Number(incidents[0]?.avg_resolution_hours ?? 0)),
     },
     vendor_sla: vendors.map((r) => ({
       vendor_name: r.vendor_name,

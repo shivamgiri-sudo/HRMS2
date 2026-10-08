@@ -40,10 +40,7 @@
 import { Router, type Request, type Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import type { ScopeTarget } from "../../shared/scopeAccess.js";
@@ -52,10 +49,7 @@ import { resolvePrimaryRole } from "../../shared/roleResolver.js";
 
 export const aonRetentionFlagRouter = Router();
 
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 // Same roles that can view the AON Analytics page itself (REPORTS_CENTER — see
 // backend/sql/529_reports_center_page_access.sql), narrowed to the roles that actually run an
@@ -77,19 +71,14 @@ const RETENTION_FLAG_ROLES = [
 // confirm the caller (a Branch Head, Process Manager, etc.) is scoped to that employee before
 // the work item is created — mirrors the resolver PATCH /:id uses in employee.routes.ts, just
 // reading employeeId from the POST body instead of req.params.id.
-async function resolveFlagTargetScope(
-  req: AuthenticatedRequest,
-): Promise<ScopeTarget> {
-  const employeeId = String(
-    (req.body as { employeeId?: unknown })?.employeeId ?? "",
-  ).trim();
+async function resolveFlagTargetScope(req: AuthenticatedRequest): Promise<ScopeTarget> {
+  const employeeId = String((req.body as { employeeId?: unknown })?.employeeId ?? "").trim();
   if (!employeeId) return {};
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1",
     [employeeId],
   );
-  const emp = rows[0] as
-    { branch_id?: string; process_id?: string } | undefined;
+  const emp = rows[0] as { branch_id?: string; process_id?: string } | undefined;
   if (!emp) return {};
   return { branchId: emp.branch_id, processId: emp.process_id };
 }
@@ -133,25 +122,16 @@ aonRetentionFlagRouter.post(
   "/flag-retention",
   requireAuth,
   requireRole(...RETENTION_FLAG_ROLES),
-  requireScopedRole(RETENTION_FLAG_ROLES, resolveFlagTargetScope, {
-    allowAdminBypass: true,
-  }),
+  requireScopedRole(RETENTION_FLAG_ROLES, resolveFlagTargetScope, { allowAdminBypass: true }),
   h(async (req: Request, res: Response) => {
-    const employeeId = String(
-      (req.body as { employeeId?: unknown })?.employeeId ?? "",
-    ).trim();
+    const employeeId = String((req.body as { employeeId?: unknown })?.employeeId ?? "").trim();
     if (!employeeId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "employeeId is required" });
+      return res.status(400).json({ success: false, message: "employeeId is required" });
     }
 
     const assignedToRole = await resolveAssignedRole(employeeId);
-    const riskBand = String(
-      (req.body as { riskBand?: unknown })?.riskBand ?? "",
-    ).trim();
-    const priority =
-      riskBand === "High" ? "high" : riskBand === "Medium" ? "normal" : "low";
+    const riskBand = String((req.body as { riskBand?: unknown })?.riskBand ?? "").trim();
+    const priority = riskBand === "High" ? "high" : riskBand === "Medium" ? "normal" : "low";
 
     const outcome = await upsertOpenWorkItem({
       itemType: "RETENTION_REVIEW",

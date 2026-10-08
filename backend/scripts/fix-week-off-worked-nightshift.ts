@@ -35,7 +35,7 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
 
 (async () => {
   const startDate = `${monthArg}-01`;
-  const endDate = `${monthArg}-31`;
+  const endDate   = `${monthArg}-31`;
 
   // Category 1: week_off_worked — may be night-shift carryover
   const [wowRows] = await db.execute<any[]>(
@@ -45,7 +45,7 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
        AND adr.attendance_status = 'week_off_worked'
        AND adr.is_locked = 0
      ORDER BY adr.record_date, adr.employee_id`,
-    [startDate, endDate],
+    [startDate, endDate]
   );
 
   // Category 2: roster=week_off but status is something else (half_day/present/absent/missing_punch)
@@ -59,7 +59,7 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
        AND adr.attendance_status NOT IN ('week_off','week_off_worked')
        AND adr.is_locked = 0
      ORDER BY adr.record_date, adr.employee_id`,
-    [startDate, endDate],
+    [startDate, endDate]
   );
 
   // Deduplicate in case a row appears in both (shouldn't, but safe)
@@ -67,24 +67,16 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
   const allRows: any[] = [];
   for (const r of [...wowRows, ...rosterMismatch]) {
     const key = `${r.employee_id}|${r.record_date}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      allRows.push(r);
-    }
+    if (!seen.has(key)) { seen.add(key); allRows.push(r); }
   }
 
   console.log(`Category 1 (week_off_worked):           ${wowRows.length}`);
-  console.log(
-    `Category 2 (roster=week_off, wrong status): ${rosterMismatch.length}`,
-  );
+  console.log(`Category 2 (roster=week_off, wrong status): ${rosterMismatch.length}`);
   console.log(`Total unique rows to reprocess:         ${allRows.length}`);
 
   if (isDryRun) {
     console.log("\nDRY RUN — not writing to DB.");
-    for (const r of allRows)
-      console.log(
-        `  ${r.record_date}  ${r.employee_id}  was=${r.attendance_status}`,
-      );
+    for (const r of allRows) console.log(`  ${r.record_date}  ${r.employee_id}  was=${r.attendance_status}`);
     await db.end();
     return;
   }
@@ -93,34 +85,20 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
 
   await runConcurrent(allRows, async (row) => {
     try {
-      const result = await attendanceEngineService.processEmployee(
-        row.employee_id,
-        row.record_date,
-      );
-      await attendanceEngineService.upsertDailyRecord(
-        result,
-        "system:nightshift-fix",
-      );
+      const result = await attendanceEngineService.processEmployee(row.employee_id, row.record_date);
+      await attendanceEngineService.upsertDailyRecord(result, 'system:nightshift-fix');
       const wasSame = result.status === row.attendance_status;
       if (!wasSame) {
         results.fixed++;
-        console.log(
-          `  FIXED  ${row.record_date}  ${row.employee_id}  ${row.attendance_status} → ${result.status}`,
-        );
+        console.log(`  FIXED  ${row.record_date}  ${row.employee_id}  ${row.attendance_status} → ${result.status}`);
       } else {
         results.unchanged++;
-        console.log(
-          `  KEPT   ${row.record_date}  ${row.employee_id}  → ${result.status}`,
-        );
+        console.log(`  KEPT   ${row.record_date}  ${row.employee_id}  → ${result.status}`);
       }
     } catch (e: any) {
       results.failed++;
-      results.errors.push(
-        `${row.record_date}/${row.employee_id}: ${e?.message}`,
-      );
-      console.error(
-        `  FAIL   ${row.record_date}  ${row.employee_id}  ${e?.message}`,
-      );
+      results.errors.push(`${row.record_date}/${row.employee_id}: ${e?.message}`);
+      console.error(`  FAIL   ${row.record_date}  ${row.employee_id}  ${e?.message}`);
     }
   });
 
@@ -128,14 +106,11 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
   console.log(`  Fixed:     ${results.fixed}`);
   console.log(`  Unchanged: ${results.unchanged}`);
   console.log(`  Failed:    ${results.failed}`);
-  if (results.errors.length)
-    console.log("  Errors:", results.errors.slice(0, 5).join("\n  "));
+  if (results.errors.length) console.log("  Errors:", results.errors.slice(0, 5).join("\n  "));
 
   await db.end();
 })().catch(async (e) => {
   console.error("FATAL", e?.message ?? e);
-  try {
-    await db.end();
-  } catch {}
+  try { await db.end(); } catch { }
   process.exit(1);
 });

@@ -23,15 +23,11 @@ import fs from "fs";
 import path from "path";
 
 const CONVERT = fs.readFileSync(
-  path.resolve(__dirname, "..", "ats.convert.service.ts"),
-  "utf8",
-);
+  path.resolve(__dirname, "..", "ats.convert.service.ts"), "utf8");
 
 describe("convertCandidateToEmployee dispatches the joining kit", () => {
   it("queues and dispatches a kit", () => {
-    expect(CONVERT).toMatch(
-      /import \{[^}]*queueJoiningKit[^}]*dispatchJoiningKit[^}]*\}/,
-    );
+    expect(CONVERT).toMatch(/import \{[^}]*queueJoiningKit[^}]*dispatchJoiningKit[^}]*\}/);
     expect(CONVERT).toMatch(/queueJoiningKit\(\{/);
     expect(CONVERT).toMatch(/dispatchJoiningKit\(kitId/);
   });
@@ -55,18 +51,14 @@ describe("convertCandidateToEmployee dispatches the joining kit", () => {
     const at = CONVERT.indexOf("queueJoiningKit({");
     expect(at).toBeGreaterThan(-1);
     const preceding = CONVERT.slice(Math.max(0, at - 200), at);
-    expect(preceding, "the dispatch must be fire-and-forget").toMatch(
-      /void\s+$|void\s*queueJoiningKit/,
-    );
+    expect(preceding, "the dispatch must be fire-and-forget").toMatch(/void\s+$|void\s*queueJoiningKit/);
     const block = CONVERT.slice(at, at + 1600);
     expect(block).toContain(".catch(");
   });
 
   it("returns the employee code regardless of what the kit did", () => {
     const kitAt = CONVERT.indexOf("queueJoiningKit({");
-    const returnAt = CONVERT.indexOf(
-      "employee_code: String(bridge.employee_code)",
-    );
+    const returnAt = CONVERT.indexOf("employee_code: String(bridge.employee_code)");
     expect(returnAt).toBeGreaterThan(kitAt);
   });
 });

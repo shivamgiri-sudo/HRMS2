@@ -81,15 +81,12 @@ describe("bulk-upload services no longer write to nonexistent columns", () => {
     "roster-assignment-bulk.service.ts",
     "shift-roster-bulk.service.ts",
     "weekoff-preference-bulk.service.ts",
-  ])(
-    "%s writes created_entity_type/created_entity_id, not target_record_id",
-    (file) => {
-      const code = stripComments(read(file));
-      expect(code).not.toMatch(/target_record_id/);
-      expect(code).toMatch(/created_entity_type/);
-      expect(code).toMatch(/created_entity_id/);
-    },
-  );
+  ])("%s writes created_entity_type/created_entity_id, not target_record_id", (file) => {
+    const code = stripComments(read(file));
+    expect(code).not.toMatch(/target_record_id/);
+    expect(code).toMatch(/created_entity_type/);
+    expect(code).toMatch(/created_entity_id/);
+  });
 });
 
 describe("template-declared optional columns are no longer silently discarded", () => {
@@ -136,16 +133,7 @@ describe("template-declared optional columns are no longer silently discarded", 
 describe("EMAIL_TEMPLATE_IMPORT is excluded from the generic Bulk Upload Hub", () => {
   it("BulkUploadHub.tsx filters it out of the templates it renders", () => {
     const src = fs.readFileSync(
-      path.resolve(
-        DIR,
-        "..",
-        "..",
-        "..",
-        "..",
-        "src",
-        "pages",
-        "BulkUploadHub.tsx",
-      ),
+      path.resolve(DIR, "..", "..", "..", "..", "src", "pages", "BulkUploadHub.tsx"),
       "utf8",
     );
     expect(src).toMatch(/EMAIL_TEMPLATE_IMPORT/);

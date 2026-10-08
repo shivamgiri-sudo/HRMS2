@@ -34,29 +34,26 @@
 // Dates: the main DB pool runs with dateStrings: true (db/mysql.ts), so DATE/DATETIME columns
 // arrive as 'YYYY-MM-DD' / 'YYYY-MM-DD HH:mm:ss' strings in IST — never JS Dates.
 
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
 
 export type LedgerKind =
-  | "regularization"
-  | "mismatch_resolution"
-  | "exception_resolution"
-  | "dispute"
-  | "manual_override";
+  | 'regularization'
+  | 'mismatch_resolution'
+  | 'exception_resolution'
+  | 'dispute'
+  | 'manual_override';
 
 export const LEDGER_KINDS: readonly LedgerKind[] = [
-  "regularization",
-  "mismatch_resolution",
-  "exception_resolution",
-  "dispute",
-  "manual_override",
+  'regularization',
+  'mismatch_resolution',
+  'exception_resolution',
+  'dispute',
+  'manual_override',
 ] as const;
 
 export function isLedgerKind(value: unknown): value is LedgerKind {
-  return (
-    typeof value === "string" &&
-    (LEDGER_KINDS as readonly string[]).includes(value)
-  );
+  return typeof value === 'string' && (LEDGER_KINDS as readonly string[]).includes(value);
 }
 
 export interface SourceFilter {
@@ -109,128 +106,110 @@ const ARI_FROM = `
   LEFT JOIN branch_master bm ON bm.id = e.branch_id`;
 
 const REG_ACTOR_FIELDS = [
-  "reviewed_by",
-  "manager_reviewer_user_id",
-  "assigned_wfm_spoc_user_id",
-  "final_wfm_reviewer_user_id",
-  "payroll_head_approved_by",
-  "escalated_by",
+  'reviewed_by', 'manager_reviewer_user_id', 'assigned_wfm_spoc_user_id',
+  'final_wfm_reviewer_user_id', 'payroll_head_approved_by', 'escalated_by',
 ];
 
-const REG_BASE: Omit<SourceDef, "kind" | "label" | "baseWhere" | "metaCols"> = {
-  alias: "ar",
+const REG_BASE: Omit<SourceDef, 'kind' | 'label' | 'baseWhere' | 'metaCols'> = {
+  alias: 'ar',
   from: REG_FROM,
-  dateCol: "ar.session_date",
-  actorCol: "ar.reviewed_by",
+  dateCol: 'ar.session_date',
+  actorCol: 'ar.reviewed_by',
   bucketExpr:
     "CASE WHEN ar.status = 'approved' THEN 'approved' WHEN ar.status = 'rejected' THEN 'rejected' " +
     "WHEN ar.status IN ('discarded', 'cancelled') THEN 'other' ELSE 'pending' END",
-  decisionExpr: "ar.status",
-  reasonExpr: "ar.reason",
-  noteExpr: "ar.reviewer_note",
-  actedAtExpr: "COALESCE(ar.reviewed_at, ar.created_at)",
+  decisionExpr: 'ar.status',
+  reasonExpr: 'ar.reason',
+  noteExpr: 'ar.reviewer_note',
+  actedAtExpr: 'COALESCE(ar.reviewed_at, ar.created_at)',
   actorFields: REG_ACTOR_FIELDS,
 };
 
 export const SOURCES: Record<LedgerKind, SourceDef> = {
   regularization: {
     ...REG_BASE,
-    kind: "regularization",
-    label: "Regularization",
-    baseWhere: "ar.dispute_type IS NULL",
+    kind: 'regularization',
+    label: 'Regularization',
+    baseWhere: 'ar.dispute_type IS NULL',
     metaCols:
-      "ar.requested_status AS meta_requested_status, ar.reason_code AS meta_reason_code, " +
-      "arm.label AS meta_reason_label, ar.requested_by_type AS meta_requested_by_type",
+      'ar.requested_status AS meta_requested_status, ar.reason_code AS meta_reason_code, ' +
+      'arm.label AS meta_reason_label, ar.requested_by_type AS meta_requested_by_type',
   },
   dispute: {
     ...REG_BASE,
-    kind: "dispute",
-    label: "Dispute",
-    baseWhere: "ar.dispute_type IS NOT NULL",
+    kind: 'dispute',
+    label: 'Dispute',
+    baseWhere: 'ar.dispute_type IS NOT NULL',
     metaCols:
-      "ar.dispute_type AS meta_dispute_type, ar.payroll_impact AS meta_payroll_impact, " +
-      "ar.payroll_head_approval_required AS meta_payroll_head_approval_required, " +
-      "ar.escalated_to AS meta_escalated_to",
+      'ar.dispute_type AS meta_dispute_type, ar.payroll_impact AS meta_payroll_impact, ' +
+      'ar.payroll_head_approval_required AS meta_payroll_head_approval_required, ' +
+      'ar.escalated_to AS meta_escalated_to',
   },
   mismatch_resolution: {
-    kind: "mismatch_resolution",
-    label: "Mismatch resolution",
-    alias: "adr",
+    kind: 'mismatch_resolution',
+    label: 'Mismatch resolution',
+    alias: 'adr',
     from: ADR_FROM,
-    dateCol: "adr.record_date",
-    baseWhere: "adr.mismatch_resolved_at IS NOT NULL",
-    actorCol: "adr.mismatch_resolved_by",
+    dateCol: 'adr.record_date',
+    baseWhere: 'adr.mismatch_resolved_at IS NOT NULL',
+    actorCol: 'adr.mismatch_resolved_by',
     bucketExpr: "'resolved'",
-    decisionExpr: "adr.attendance_status",
-    reasonExpr: "adr.mismatch_resolution_reason",
-    noteExpr: "NULL",
-    actedAtExpr: "adr.mismatch_resolved_at",
+    decisionExpr: 'adr.attendance_status',
+    reasonExpr: 'adr.mismatch_resolution_reason',
+    noteExpr: 'NULL',
+    actedAtExpr: 'adr.mismatch_resolved_at',
     metaCols:
-      "adr.lwp_value AS meta_lwp_value, adr.biometric_status AS meta_biometric_status, " +
-      "adr.apr_status AS meta_apr_status, adr.attendance_source AS meta_attendance_source",
-    actorFields: ["mismatch_resolved_by", "status_changed_by"],
+      'adr.lwp_value AS meta_lwp_value, adr.biometric_status AS meta_biometric_status, ' +
+      'adr.apr_status AS meta_apr_status, adr.attendance_source AS meta_attendance_source',
+    actorFields: ['mismatch_resolved_by', 'status_changed_by'],
   },
   exception_resolution: {
-    kind: "exception_resolution",
-    label: "Exception resolution",
-    alias: "ari",
+    kind: 'exception_resolution',
+    label: 'Exception resolution',
+    alias: 'ari',
     from: ARI_FROM,
-    dateCol: "ari.issue_date",
-    baseWhere: "ari.resolved_at IS NOT NULL",
-    actorCol: "ari.reviewed_by",
-    bucketExpr:
-      "CASE WHEN ari.reviewed_by IS NULL THEN 'system' ELSE 'manual' END",
+    dateCol: 'ari.issue_date',
+    baseWhere: 'ari.resolved_at IS NOT NULL',
+    actorCol: 'ari.reviewed_by',
+    bucketExpr: "CASE WHEN ari.reviewed_by IS NULL THEN 'system' ELSE 'manual' END",
     decisionExpr: "'resolved'",
-    reasonExpr:
-      "COALESCE(NULLIF(TRIM(ari.review_notes), ''), ari.auto_fix_reason)",
-    noteExpr: "NULL",
-    actedAtExpr: "COALESCE(ari.reviewed_at, ari.resolved_at)",
+    reasonExpr: 'COALESCE(NULLIF(TRIM(ari.review_notes), \'\'), ari.auto_fix_reason)',
+    noteExpr: 'NULL',
+    actedAtExpr: 'COALESCE(ari.reviewed_at, ari.resolved_at)',
     metaCols:
-      "ari.issue_type AS meta_issue_type, ari.severity AS meta_severity, " +
-      "ari.auto_fix_status AS meta_auto_fix_status",
-    actorFields: ["reviewed_by"],
+      'ari.issue_type AS meta_issue_type, ari.severity AS meta_severity, ' +
+      'ari.auto_fix_status AS meta_auto_fix_status',
+    actorFields: ['reviewed_by'],
   },
   manual_override: {
-    kind: "manual_override",
-    label: "Manual override",
-    alias: "adr",
+    kind: 'manual_override',
+    label: 'Manual override',
+    alias: 'adr',
     from: ADR_FROM,
-    dateCol: "adr.record_date",
-    baseWhere: "adr.override_by IS NOT NULL AND adr.regularization_id IS NULL",
-    actorCol: "adr.override_by",
+    dateCol: 'adr.record_date',
+    baseWhere: 'adr.override_by IS NOT NULL AND adr.regularization_id IS NULL',
+    actorCol: 'adr.override_by',
     bucketExpr: "'overridden'",
-    decisionExpr: "adr.attendance_status",
-    reasonExpr: "adr.override_reason",
-    noteExpr: "adr.status_change_reason",
-    actedAtExpr: "COALESCE(adr.status_changed_at, adr.processed_at)",
+    decisionExpr: 'adr.attendance_status',
+    reasonExpr: 'adr.override_reason',
+    noteExpr: 'adr.status_change_reason',
+    actedAtExpr: 'COALESCE(adr.status_changed_at, adr.processed_at)',
     metaCols:
-      "adr.old_attendance_status AS meta_old_attendance_status, adr.old_lwp_value AS meta_old_lwp_value, " +
-      "adr.lwp_value AS meta_lwp_value, adr.is_locked AS meta_is_locked",
-    actorFields: ["override_by", "status_changed_by"],
+      'adr.old_attendance_status AS meta_old_attendance_status, adr.old_lwp_value AS meta_old_lwp_value, ' +
+      'adr.lwp_value AS meta_lwp_value, adr.is_locked AS meta_is_locked',
+    actorFields: ['override_by', 'status_changed_by'],
   },
 };
 
 // ── WHERE builder ─────────────────────────────────────────────────────────────
 
-export function buildSourceWhere(
-  def: SourceDef,
-  f: SourceFilter,
-): { sql: string; params: unknown[] } {
+export function buildSourceWhere(def: SourceDef, f: SourceFilter): { sql: string; params: unknown[] } {
   // Bounded window (validated to <= 92 days by the router) on the source's date-index column.
   const conds = [def.baseWhere, `${def.dateCol} >= ?`, `${def.dateCol} <= ?`];
   const params: unknown[] = [f.from, f.to];
-  if (f.branchId) {
-    conds.push("e.branch_id = ?");
-    params.push(f.branchId);
-  }
-  if (f.employeeId) {
-    conds.push(`${def.alias}.employee_id = ?`);
-    params.push(f.employeeId);
-  }
-  if (f.actorId) {
-    conds.push(`${def.actorCol} = ?`);
-    params.push(f.actorId);
-  }
+  if (f.branchId) { conds.push('e.branch_id = ?'); params.push(f.branchId); }
+  if (f.employeeId) { conds.push(`${def.alias}.employee_id = ?`); params.push(f.employeeId); }
+  if (f.actorId) { conds.push(`${def.actorCol} = ?`); params.push(f.actorId); }
   if (f.search) {
     const like = `%${f.search}%`;
     conds.push(`(e.employee_code LIKE ? OR ${EMPLOYEE_NAME_EXPR} LIKE ?)`);
@@ -238,7 +217,7 @@ export function buildSourceWhere(
   }
   conds.push(`(${f.scopeSql})`);
   params.push(...f.scopeParams);
-  return { sql: `WHERE ${conds.join(" AND ")}`, params };
+  return { sql: `WHERE ${conds.join(' AND ')}`, params };
 }
 
 // ── Aggregates (summary + people matrix) ─────────────────────────────────────
@@ -253,10 +232,7 @@ export interface AggregateRow {
 }
 
 /** One grouped query per source; the same rows feed /summary and /people. */
-export async function fetchAggregates(
-  kind: LedgerKind,
-  f: SourceFilter,
-): Promise<AggregateRow[]> {
+export async function fetchAggregates(kind: LedgerKind, f: SourceFilter): Promise<AggregateRow[]> {
   const def = SOURCES[kind];
   const where = buildSourceWhere(def, f);
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -298,7 +274,7 @@ export interface EntryRow {
 function toEntry(kind: LedgerKind, r: RowDataPacket): EntryRow {
   const meta: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(r)) {
-    if (key.startsWith("meta_")) meta[key.slice(5)] = value;
+    if (key.startsWith('meta_')) meta[key.slice(5)] = value;
   }
   return {
     kind,
@@ -319,11 +295,7 @@ function toEntry(kind: LedgerKind, r: RowDataPacket): EntryRow {
 }
 
 /** `take` rows, newest decision first; `take` is an already-validated positive integer. */
-export async function fetchEntries(
-  kind: LedgerKind,
-  f: SourceFilter,
-  take: number,
-): Promise<EntryRow[]> {
+export async function fetchEntries(kind: LedgerKind, f: SourceFilter, take: number): Promise<EntryRow[]> {
   const def = SOURCES[kind];
   const where = buildSourceWhere(def, f);
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -341,10 +313,7 @@ export async function fetchEntries(
   return (rows as RowDataPacket[]).map((r) => toEntry(kind, r));
 }
 
-export async function countEntries(
-  kind: LedgerKind,
-  f: SourceFilter,
-): Promise<number> {
+export async function countEntries(kind: LedgerKind, f: SourceFilter): Promise<number> {
   const def = SOURCES[kind];
   const where = buildSourceWhere(def, f);
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -356,16 +325,11 @@ export async function countEntries(
 
 // ── Detail (drawer) ───────────────────────────────────────────────────────────
 
-export interface DetailScope {
-  scopeSql: string;
-  scopeParams: unknown[];
-}
+export interface DetailScope { scopeSql: string; scopeParams: unknown[] }
 
 /** Full source row (every stored column) + the employee/branch labels, scope-checked. */
 export async function fetchDetailRecord(
-  kind: LedgerKind,
-  id: string,
-  s: DetailScope,
+  kind: LedgerKind, id: string, s: DetailScope,
 ): Promise<Record<string, unknown> | null> {
   const def = SOURCES[kind];
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -376,10 +340,7 @@ export async function fetchDetailRecord(
       LIMIT 1`,
     [id, ...s.scopeParams],
   );
-  return (
-    ((rows as RowDataPacket[])[0] as Record<string, unknown> | undefined) ??
-    null
-  );
+  return ((rows as RowDataPacket[])[0] as Record<string, unknown> | undefined) ?? null;
 }
 
 export function actorFieldsFor(kind: LedgerKind): string[] {

@@ -28,22 +28,15 @@ describe("pf-ecr-format eps_employer derives the EPS-only share, not the full em
   const source = read("src/modules/reporting/executors/statutory.executor.ts");
   const pfEcrBlock = source.slice(
     source.indexOf("export async function pfEcrFormat"),
-    source.indexOf(
-      "try {",
-      source.indexOf("export async function pfEcrFormat"),
-    ),
+    source.indexOf("try {", source.indexOf("export async function pfEcrFormat"))
   );
 
   it("no longer passes spl.pf_employer straight through as eps_employer", () => {
-    expect(pfEcrBlock).not.toMatch(
-      /COALESCE\(spl\.pf_employer,\s*0\)\s+AS\s+eps_employer/i,
-    );
+    expect(pfEcrBlock).not.toMatch(/COALESCE\(spl\.pf_employer,\s*0\)\s+AS\s+eps_employer/i);
   });
 
   it("derives eps_employer as 8.33/12 of the combined employer PF total, matching pf-esic-salary-register's existing formula", () => {
-    expect(pfEcrBlock).toMatch(
-      /spl\.pf_employer,\s*0\)\s*\*\s*8\.33\s*\/\s*12.*AS\s+eps_employer/is,
-    );
+    expect(pfEcrBlock).toMatch(/spl\.pf_employer,\s*0\)\s*\*\s*8\.33\s*\/\s*12.*AS\s+eps_employer/is);
   });
 
   it("does not add any new column to the query — EPFO upload format is fixed", () => {
@@ -60,9 +53,7 @@ describe("pf-ecr-format eps_employer derives the EPS-only share, not the full em
       "run_month",
     ];
     for (const col of expectedColumns) {
-      expect(pfEcrBlock, `missing expected column: ${col}`).toMatch(
-        new RegExp(`AS\\s+${col}\\b|\\.${col}\\b|e\\.${col}\\b`, "i"),
-      );
+      expect(pfEcrBlock, `missing expected column: ${col}`).toMatch(new RegExp(`AS\\s+${col}\\b|\\.${col}\\b|e\\.${col}\\b`, "i"));
     }
     // No stray "AS epf_employer" (the reverted, over-scoped addition).
     expect(pfEcrBlock).not.toMatch(/AS\s+epf_employer\b/i);

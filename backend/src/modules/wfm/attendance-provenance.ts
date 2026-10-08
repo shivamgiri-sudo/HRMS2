@@ -48,11 +48,8 @@
 //     argument; only payrollCalculate.service can produce them.
 //
 
-import type {
-  DayClassification,
-  ResolvedAttendanceSource,
-} from "./attendance-variance.js";
-import type { ProducingRule } from "./canonical-productivity.js";
+import type { DayClassification, ResolvedAttendanceSource } from './attendance-variance.js';
+import type { ProducingRule } from './canonical-productivity.js';
 
 // ---------------------------------------------------------------------------------------------
 // Shared refusal shape (mirrors ReviewRejection in variance-review.ts)
@@ -60,31 +57,31 @@ import type { ProducingRule } from "./canonical-productivity.js";
 
 export type ProvenanceRefusalCode =
   /** criterion 11.1 / 11.2 / 11.4: a required member is absent, null where null is not a value, or blank. */
-  | "required_field_missing"
+  | 'required_field_missing'
   /** The member is present but not a usable value (unparseable date, negative minutes, junk number). */
-  | "field_value_invalid"
+  | 'field_value_invalid'
   /** criteria 11.1, 18.9: two contributions claim the same Dialler_Source. */
-  | "duplicate_dialler_source_contribution"
+  | 'duplicate_dialler_source_contribution'
   /** criteria 18.2, 18.11: Canonical_Productive_Minutes above the daily bound. */
-  | "canonical_minutes_exceed_daily_bound"
+  | 'canonical_minutes_exceed_daily_bound'
   /** criterion 18.10: absent Canonical_Productive_Minutes alongside contributions that exist. */
-  | "absent_canonical_with_contributions"
+  | 'absent_canonical_with_contributions'
   /** criteria 18.1, 18.10: a Canonical_Productive_Minutes value with no attributed contribution. */
-  | "present_canonical_without_contributions"
+  | 'present_canonical_without_contributions'
   /** criterion 18.7: the recorded producing rule and the recorded canonical state disagree. */
-  | "producing_rule_disagrees_with_canonical_state"
+  | 'producing_rule_disagrees_with_canonical_state'
   /** criterion 11.2: the stated change reason is blank after whitespace normalisation. */
-  | "change_reason_blank"
+  | 'change_reason_blank'
   /** criterion 11.2: an amendment must carry a real before/after field-level delta. */
-  | "amendment_records_no_field_change"
+  | 'amendment_records_no_field_change'
   /** criterion 11.2: an amendment or deactivation must carry the prior field values. */
-  | "prior_field_values_required"
+  | 'prior_field_values_required'
   /** criterion 11.2: a creation, amendment or deactivation must carry the new field values. */
-  | "new_field_values_required"
+  | 'new_field_values_required'
   /** criterion 11.3: the Rule_Audit_Log is append-only. */
-  | "audit_log_entry_is_immutable"
+  | 'audit_log_entry_is_immutable'
   /** criterion 11.4: an Upload_Batch submission names no affected employee-date. */
-  | "no_affected_employee_dates";
+  | 'no_affected_employee_dates';
 
 export interface ProvenanceRefusal {
   /** The first refusal that applied. */
@@ -98,10 +95,7 @@ export interface ProvenanceRefusal {
   readonly fields: readonly string[];
 }
 
-export type Refused = {
-  readonly ok: false;
-  readonly refusal: ProvenanceRefusal;
-};
+export type Refused = { readonly ok: false; readonly refusal: ProvenanceRefusal };
 
 interface Problem {
   readonly code: ProvenanceRefusalCode;
@@ -122,7 +116,7 @@ function refuseWith(problems: readonly Problem[]): Refused {
     refusal: Object.freeze({
       code: problems[0].code,
       codes: Object.freeze(problems.map((p) => p.code)),
-      message: problems.map((p) => p.message).join(" "),
+      message: problems.map((p) => p.message).join(' '),
       criteria: Object.freeze(criteria),
       fields: Object.freeze(problems.map((p) => p.field)),
     }),
@@ -159,15 +153,12 @@ const PAY_MONTH_EXACT = /^(\d{4})-(\d{2})$/;
  * refuse a perfectly good "Client renegotiated APR" and is not this module's policy to make.
  */
 export function normalizeChangeReason(raw: string | null | undefined): string {
-  if (typeof raw !== "string") return "";
-  return raw
-    .replace(INVISIBLE_CHARACTERS, "")
-    .replace(WHITESPACE_RUN, " ")
-    .trim();
+  if (typeof raw !== 'string') return '';
+  return raw.replace(INVISIBLE_CHARACTERS, '').replace(WHITESPACE_RUN, ' ').trim();
 }
 
 function isNonBlankString(value: unknown): value is string {
-  return typeof value === "string" && normalizeChangeReason(value).length > 0;
+  return typeof value === 'string' && normalizeChangeReason(value).length > 0;
 }
 
 function isRealDate(year: number, month: number, day: number): boolean {
@@ -187,7 +178,7 @@ function isRealDate(year: number, month: number, day: number): boolean {
  * which parses arithmetically and would silently become 2026-03-03.
  */
 export function isCalendarDate(value: unknown): value is string {
-  if (typeof value !== "string") return false;
+  if (typeof value !== 'string') return false;
   const match = CALENDAR_DATE_EXACT.exec(value);
   if (match === null) return false;
   return isRealDate(Number(match[1]), Number(match[2]), Number(match[3]));
@@ -195,7 +186,7 @@ export function isCalendarDate(value: unknown): value is string {
 
 /** 'YYYY-MM', matching `salary_prep_run.run_month`. */
 export function isPayMonth(value: unknown): value is string {
-  if (typeof value !== "string") return false;
+  if (typeof value !== 'string') return false;
   const match = PAY_MONTH_EXACT.exec(value);
   if (match === null) return false;
   const month = Number(match[2]);
@@ -208,7 +199,7 @@ export function isPayMonth(value: unknown): value is string {
  * carry is a timestamp that names no real day.
  */
 export function isTimestamp(value: unknown): value is string {
-  if (typeof value !== "string") return false;
+  if (typeof value !== 'string') return false;
   const match = CALENDAR_DATE_PREFIX.exec(value);
   if (match === null) return false;
   return isRealDate(Number(match[1]), Number(match[2]), Number(match[3]));
@@ -222,7 +213,7 @@ export function isTimestamp(value: unknown): value is string {
  * provenance record is a statement of record, not a decision that has to reach an answer.
  */
 function isUsableMinutes(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -293,28 +284,29 @@ export interface AttendanceProvenanceRecord {
 export type AttendanceProvenanceDraft = AttendanceProvenanceRecord;
 
 export type BuildProvenanceResult =
-  { readonly ok: true; readonly record: AttendanceProvenanceRecord } | Refused;
+  | { readonly ok: true; readonly record: AttendanceProvenanceRecord }
+  | Refused;
 
 const PROVENANCE_SOURCES: readonly ResolvedAttendanceSource[] = Object.freeze([
-  "dialler",
-  "biometric",
+  'dialler',
+  'biometric',
 ]);
 
 const DAY_CLASSIFICATIONS: readonly DayClassification[] = Object.freeze([
-  "present",
-  "half_day",
-  "absent",
-  "leave_approved",
-  "holiday",
-  "week_off",
-  "unreconciled",
-  "missing_punch",
-  "week_off_worked",
+  'present',
+  'half_day',
+  'absent',
+  'leave_approved',
+  'holiday',
+  'week_off',
+  'unreconciled',
+  'missing_punch',
+  'week_off_worked',
 ]);
 
 const PRODUCING_RULES: readonly ProducingRule[] = Object.freeze([
-  "interval_union",
-  "max_contribution",
+  'interval_union',
+  'max_contribution',
 ]);
 
 /**
@@ -338,127 +330,97 @@ export function buildAttendanceProvenanceRecord(
   draft: AttendanceProvenanceDraft,
 ): BuildProvenanceResult {
   const problems: Problem[] = [];
-  const missing = (
-    field: string,
-    why: string,
-    criteria: readonly string[] = ["11.1"],
-  ): void => {
+  const missing = (field: string, why: string, criteria: readonly string[] = ['11.1']): void => {
     problems.push({
-      code: "required_field_missing",
+      code: 'required_field_missing',
       message: `${field} is required on an Attendance_Provenance_Record: ${why}`,
       criteria,
       field,
     });
   };
-  const invalid = (
-    field: string,
-    why: string,
-    criteria: readonly string[] = ["11.1"],
-  ): void => {
-    problems.push({
-      code: "field_value_invalid",
-      message: `${field} ${why}`,
-      criteria,
-      field,
-    });
+  const invalid = (field: string, why: string, criteria: readonly string[] = ['11.1']): void => {
+    problems.push({ code: 'field_value_invalid', message: `${field} ${why}`, criteria, field });
   };
 
   if (draft === null || draft === undefined) {
     return refuseWith([
       {
-        code: "required_field_missing",
-        message: "No Attendance_Provenance_Record draft was supplied.",
-        criteria: ["11.1"],
-        field: "draft",
+        code: 'required_field_missing',
+        message: 'No Attendance_Provenance_Record draft was supplied.',
+        criteria: ['11.1'],
+        field: 'draft',
       },
     ]);
   }
 
-  if (!isNonBlankString(draft.employeeId))
-    missing("employeeId", "the record identifies one employee.");
+  if (!isNonBlankString(draft.employeeId)) missing('employeeId', 'the record identifies one employee.');
   if (!isCalendarDate(draft.workDate)) {
-    invalid(
-      "workDate",
-      `must be an existing 'YYYY-MM-DD' date; received ${JSON.stringify(draft.workDate)}.`,
-    );
+    invalid('workDate', `must be an existing 'YYYY-MM-DD' date; received ${JSON.stringify(draft.workDate)}.`);
   }
   if (!isPayMonth(draft.payMonth)) {
-    invalid(
-      "payMonth",
-      `must be a 'YYYY-MM' Pay_Month; received ${JSON.stringify(draft.payMonth)}.`,
-      ["11.1", "11.6"],
-    );
+    invalid('payMonth', `must be a 'YYYY-MM' Pay_Month; received ${JSON.stringify(draft.payMonth)}.`, ['11.1', '11.6']);
   }
   if (!PROVENANCE_SOURCES.includes(draft.resolvedAttendanceSource)) {
     invalid(
-      "resolvedAttendanceSource",
+      'resolvedAttendanceSource',
       `must be 'dialler' or 'biometric'; received ${JSON.stringify(draft.resolvedAttendanceSource)}.`,
     );
   }
   if (!isNonBlankString(draft.decidingRuleId)) {
     missing(
-      "decidingRuleId",
-      "criterion 11.1 requires the identifier of the Attendance_Source_Rule that decided the date, " +
-        "so a record cannot be written before resolution has named one.",
+      'decidingRuleId',
+      'criterion 11.1 requires the identifier of the Attendance_Source_Rule that decided the date, ' +
+        'so a record cannot be written before resolution has named one.',
     );
   }
-  if (
-    draft.biometricMinutes !== null &&
-    !isUsableMinutes(draft.biometricMinutes)
-  ) {
+  if (draft.biometricMinutes !== null && !isUsableMinutes(draft.biometricMinutes)) {
     invalid(
-      "biometricMinutes",
+      'biometricMinutes',
       `must be a finite non-negative number of minutes, or null for "the biometric feed held no ` +
         `record"; received ${String(draft.biometricMinutes)}.`,
-      ["11.1", "5.3"],
+      ['11.1', '5.3'],
     );
   }
-  if (
-    draft.canonicalProductiveMinutes !== null &&
-    !isUsableMinutes(draft.canonicalProductiveMinutes)
-  ) {
+  if (draft.canonicalProductiveMinutes !== null && !isUsableMinutes(draft.canonicalProductiveMinutes)) {
     invalid(
-      "canonicalProductiveMinutes",
+      'canonicalProductiveMinutes',
       `must be a finite non-negative number of minutes, or null for "no attributed contribution ` +
         `exists"; received ${String(draft.canonicalProductiveMinutes)}.`,
-      ["11.1", "18.10"],
+      ['11.1', '18.10'],
     );
   } else if (
     draft.canonicalProductiveMinutes !== null &&
     draft.canonicalProductiveMinutes > MAX_DAILY_MINUTES
   ) {
     problems.push({
-      code: "canonical_minutes_exceed_daily_bound",
+      code: 'canonical_minutes_exceed_daily_bound',
       message:
         `canonicalProductiveMinutes of ${String(draft.canonicalProductiveMinutes)} exceeds the ` +
         `daily bound of ${MAX_DAILY_MINUTES} minutes.`,
-      criteria: ["18.2", "18.11"],
-      field: "canonicalProductiveMinutes",
+      criteria: ['18.2', '18.11'],
+      field: 'canonicalProductiveMinutes',
     });
   }
-  if (
-    !isUsableMinutes(draft.appliedCorroborationThresholdMinutes) ||
-    draft.appliedCorroborationThresholdMinutes <= 0
-  ) {
+  if (!isUsableMinutes(draft.appliedCorroborationThresholdMinutes) || draft.appliedCorroborationThresholdMinutes <= 0) {
     // criterion 5.5's 480 is applied by attendance-variance.ts at decision time. This record
     // states what WAS applied, so it is not re-derived here.
     invalid(
-      "appliedCorroborationThresholdMinutes",
+      'appliedCorroborationThresholdMinutes',
       `must be the finite, greater-than-zero APR_Corroboration_Threshold that was actually ` +
         `applied; received ${String(draft.appliedCorroborationThresholdMinutes)}. It is not ` +
         `defaulted here, because the record states what was applied rather than what would be.`,
-      ["11.1", "5.5"],
+      ['11.1', '5.5'],
     );
   }
   if (!DAY_CLASSIFICATIONS.includes(draft.classification)) {
     invalid(
-      "classification",
+      'classification',
       `must be one of the recorded attendance classifications; received ${JSON.stringify(draft.classification)}.`,
     );
   }
   if (!isTimestamp(draft.processedAt)) {
     invalid(
-      "processedAt",
+      'processedAt',
       `must be a timestamp beginning with an existing 'YYYY-MM-DD' date; received ${JSON.stringify(draft.processedAt)}.`,
     );
   }
@@ -468,7 +430,7 @@ export function buildAttendanceProvenanceRecord(
     : null;
   if (contributions === null) {
     missing(
-      "diallerSourceContributions",
+      'diallerSourceContributions',
       'criterion 11.1 requires the per-Dialler_Source breakdown; an empty array states "no source ' +
         'participated" and is a different statement from a missing one.',
     );
@@ -477,25 +439,19 @@ export function buildAttendanceProvenanceRecord(
     contributions.forEach((contribution, index) => {
       const field = `diallerSourceContributions[${String(index)}]`;
       if (contribution === null || contribution === undefined) {
-        missing(
-          field,
-          "a contribution entry is required to carry a source identifier and its minutes.",
-        );
+        missing(field, 'a contribution entry is required to carry a source identifier and its minutes.');
         return;
       }
       if (!isNonBlankString(contribution.diallerSourceId)) {
-        missing(
-          `${field}.diallerSourceId`,
-          "criterion 11.1 requires the identifier of each participating Dialler_Source.",
-        );
+        missing(`${field}.diallerSourceId`, 'criterion 11.1 requires the identifier of each participating Dialler_Source.');
       } else if (seen.has(contribution.diallerSourceId)) {
         problems.push({
-          code: "duplicate_dialler_source_contribution",
+          code: 'duplicate_dialler_source_contribution',
           message:
             `Dialler_Source ${contribution.diallerSourceId} appears more than once; criterion 11.1 ` +
             `records one contributed-minutes figure per participating source, and criterion 11.7 ` +
             `sums those figures.`,
-          criteria: ["11.1", "11.7", "18.9"],
+          criteria: ['11.1', '11.7', '18.9'],
           field: `${field}.diallerSourceId`,
         });
       } else {
@@ -517,49 +473,46 @@ export function buildAttendanceProvenanceRecord(
   const contributionCount = contributions === null ? 0 : contributions.length;
   if (canonicalAbsent && contributionCount > 0) {
     problems.push({
-      code: "absent_canonical_with_contributions",
+      code: 'absent_canonical_with_contributions',
       message:
         `canonicalProductiveMinutes is absent while ${String(contributionCount)} Dialler_Source ` +
         `contribution(s) are recorded; an employee-date with contributions has a derived figure ` +
         `(criterion 18.1) and absence is not the same as zero (criterion 18.10).`,
-      criteria: ["18.1", "18.10"],
-      field: "canonicalProductiveMinutes",
+      criteria: ['18.1', '18.10'],
+      field: 'canonicalProductiveMinutes',
     });
   }
   if (!canonicalAbsent && contributions !== null && contributionCount === 0) {
     problems.push({
-      code: "present_canonical_without_contributions",
+      code: 'present_canonical_without_contributions',
       message:
-        "canonicalProductiveMinutes is present while no Dialler_Source contribution is recorded; " +
-        "the figure is derived from attributed contributions (criterion 18.1) and criterion 11.7 " +
-        "must be able to reconcile it against them.",
-      criteria: ["18.1", "11.7"],
-      field: "diallerSourceContributions",
+        'canonicalProductiveMinutes is present while no Dialler_Source contribution is recorded; ' +
+        'the figure is derived from attributed contributions (criterion 18.1) and criterion 11.7 ' +
+        'must be able to reconcile it against them.',
+      criteria: ['18.1', '11.7'],
+      field: 'diallerSourceContributions',
     });
   }
   const producingRule = draft.canonicalProducingRule;
   if (canonicalAbsent) {
     if (producingRule !== null) {
       problems.push({
-        code: "producing_rule_disagrees_with_canonical_state",
+        code: 'producing_rule_disagrees_with_canonical_state',
         message:
           `canonicalProducingRule is ${JSON.stringify(producingRule)} while ` +
           `canonicalProductiveMinutes is absent; no rule produced a figure that does not exist.`,
-        criteria: ["18.7", "18.10"],
-        field: "canonicalProducingRule",
+        criteria: ['18.7', '18.10'],
+        field: 'canonicalProducingRule',
       });
     }
-  } else if (
-    producingRule === null ||
-    !PRODUCING_RULES.includes(producingRule)
-  ) {
+  } else if (producingRule === null || !PRODUCING_RULES.includes(producingRule)) {
     problems.push({
-      code: "producing_rule_disagrees_with_canonical_state",
+      code: 'producing_rule_disagrees_with_canonical_state',
       message:
         `canonicalProducingRule must name which of criteria 18.4 and 18.6 produced the recorded ` +
         `Canonical_Productive_Minutes; received ${JSON.stringify(producingRule)}.`,
-      criteria: ["18.7", "11.7"],
-      field: "canonicalProducingRule",
+      criteria: ['18.7', '11.7'],
+      field: 'canonicalProducingRule',
     });
   }
 
@@ -584,8 +537,7 @@ export function buildAttendanceProvenanceRecord(
           }),
         ),
       ),
-      appliedCorroborationThresholdMinutes:
-        draft.appliedCorroborationThresholdMinutes,
+      appliedCorroborationThresholdMinutes: draft.appliedCorroborationThresholdMinutes,
       classification: draft.classification,
       processedAt: draft.processedAt,
     }),
@@ -602,17 +554,9 @@ export function buildAttendanceProvenanceRecord(
  * equality against a baseline captured by the same code, not tamper-proofing against an attacker
  * who can rewrite the baseline too.
  */
-export function provenanceRecordDigest(
-  record: AttendanceProvenanceRecord,
-): string {
+export function provenanceRecordDigest(record: AttendanceProvenanceRecord): string {
   const contributions = [...record.diallerSourceContributions]
-    .map(
-      (contribution) =>
-        [
-          contribution.diallerSourceId,
-          contribution.contributedMinutes,
-        ] as const,
-    )
+    .map((contribution) => [contribution.diallerSourceId, contribution.contributedMinutes] as const)
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]));
   return JSON.stringify([
     record.employeeId,
@@ -635,10 +579,10 @@ export function provenanceRecordDigest(
 // ---------------------------------------------------------------------------------------------
 
 /** criterion 11.2: the two administered objects. */
-export type RuleAuditSubject = "attendance_source_rule" | "dialler_source";
+export type RuleAuditSubject = 'attendance_source_rule' | 'dialler_source';
 
 /** criterion 11.2: the three administrative actions. */
-export type RuleAuditAction = "create" | "amend" | "deactivate";
+export type RuleAuditAction = 'create' | 'amend' | 'deactivate';
 
 /**
  * A recorded field value. Deliberately narrow: an audit row stores what a column held, and
@@ -676,18 +620,9 @@ interface RuleAuditLogEntryBase {
  * never returns empty.
  */
 export type RuleAuditLogEntry =
-  | (RuleAuditLogEntryBase & {
-      readonly action: "create";
-      readonly fieldDeltas: readonly AuditFieldDelta[];
-    })
-  | (RuleAuditLogEntryBase & {
-      readonly action: "amend";
-      readonly fieldDeltas: readonly AuditFieldDelta[];
-    })
-  | (RuleAuditLogEntryBase & {
-      readonly action: "deactivate";
-      readonly fieldDeltas: readonly AuditFieldDelta[];
-    });
+  | (RuleAuditLogEntryBase & { readonly action: 'create'; readonly fieldDeltas: readonly AuditFieldDelta[] })
+  | (RuleAuditLogEntryBase & { readonly action: 'amend'; readonly fieldDeltas: readonly AuditFieldDelta[] })
+  | (RuleAuditLogEntryBase & { readonly action: 'deactivate'; readonly fieldDeltas: readonly AuditFieldDelta[] });
 
 export interface RuleAuditDraft {
   readonly subject: RuleAuditSubject;
@@ -702,31 +637,31 @@ export interface RuleAuditDraft {
 }
 
 export type BuildRuleAuditResult =
-  { readonly ok: true; readonly entry: RuleAuditLogEntry } | Refused;
+  | { readonly ok: true; readonly entry: RuleAuditLogEntry }
+  | Refused;
 
 const RULE_AUDIT_SUBJECTS: readonly RuleAuditSubject[] = Object.freeze([
-  "attendance_source_rule",
-  "dialler_source",
+  'attendance_source_rule',
+  'dialler_source',
 ]);
 
 const RULE_AUDIT_ACTIONS: readonly RuleAuditAction[] = Object.freeze([
-  "create",
-  "amend",
-  "deactivate",
+  'create',
+  'amend',
+  'deactivate',
 ]);
 
 function isRecordedValue(value: unknown): value is AuditFieldValue {
   return (
     value === null ||
-    typeof value === "string" ||
-    typeof value === "boolean" ||
-    (typeof value === "number" && Number.isFinite(value))
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value))
   );
 }
 
 function isFieldValueMap(value: unknown): value is AuditFieldValues {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    return false;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   return Object.values(value as Record<string, unknown>).every(isRecordedValue);
 }
 
@@ -739,9 +674,7 @@ export function computeFieldDeltas(
   prior: AuditFieldValues,
   next: AuditFieldValues,
 ): readonly AuditFieldDelta[] {
-  const fields = [
-    ...new Set([...Object.keys(prior), ...Object.keys(next)]),
-  ].sort();
+  const fields = [...new Set([...Object.keys(prior), ...Object.keys(next)])].sort();
   const deltas: AuditFieldDelta[] = [];
   for (const field of fields) {
     const priorPresent = Object.prototype.hasOwnProperty.call(prior, field);
@@ -749,9 +682,7 @@ export function computeFieldDeltas(
     const priorValue = priorPresent ? prior[field] : null;
     const newValue = newPresent ? next[field] : null;
     if (priorPresent === newPresent && priorValue === newValue) continue;
-    deltas.push(
-      Object.freeze({ field, priorValue, newValue, priorPresent, newPresent }),
-    );
+    deltas.push(Object.freeze({ field, priorValue, newValue, priorPresent, newPresent }));
   }
   return Object.freeze(deltas);
 }
@@ -769,16 +700,14 @@ export function computeFieldDeltas(
  * A `create` carries no prior values by nature, so its delta is every new field with
  * `priorPresent: false` -- which is the honest before/after for a row that did not exist.
  */
-export function buildRuleAuditEntry(
-  draft: RuleAuditDraft,
-): BuildRuleAuditResult {
+export function buildRuleAuditEntry(draft: RuleAuditDraft): BuildRuleAuditResult {
   const problems: Problem[] = [];
   const demand = (
     ok: boolean,
     field: string,
     message: string,
-    code: ProvenanceRefusalCode = "required_field_missing",
-    criteria: readonly string[] = ["11.2"],
+    code: ProvenanceRefusalCode = 'required_field_missing',
+    criteria: readonly string[] = ['11.2'],
   ): void => {
     if (!ok) problems.push({ code, message, criteria, field });
   };
@@ -786,104 +715,96 @@ export function buildRuleAuditEntry(
   if (draft === null || draft === undefined) {
     return refuseWith([
       {
-        code: "required_field_missing",
-        message: "No Rule_Audit_Log draft was supplied.",
-        criteria: ["11.2"],
-        field: "draft",
+        code: 'required_field_missing',
+        message: 'No Rule_Audit_Log draft was supplied.',
+        criteria: ['11.2'],
+        field: 'draft',
       },
     ]);
   }
 
   demand(
     RULE_AUDIT_SUBJECTS.includes(draft.subject),
-    "subject",
+    'subject',
     `subject must be 'attendance_source_rule' or 'dialler_source'; received ${JSON.stringify(draft.subject)}.`,
-    "field_value_invalid",
+    'field_value_invalid',
   );
-  demand(
-    isNonBlankString(draft.subjectId),
-    "subjectId",
-    "subjectId is required: the entry names the object that changed.",
-  );
+  demand(isNonBlankString(draft.subjectId), 'subjectId', 'subjectId is required: the entry names the object that changed.');
   demand(
     RULE_AUDIT_ACTIONS.includes(draft.action),
-    "action",
+    'action',
     `action must be 'create', 'amend' or 'deactivate'; received ${JSON.stringify(draft.action)}.`,
-    "field_value_invalid",
+    'field_value_invalid',
   );
   demand(
     isNonBlankString(draft.actingUserId),
-    "actingUserId",
-    "actingUserId is required: criterion 11.2 records the acting user.",
+    'actingUserId',
+    'actingUserId is required: criterion 11.2 records the acting user.',
   );
   demand(
     isTimestamp(draft.recordedAt),
-    "recordedAt",
+    'recordedAt',
     `recordedAt must be a timestamp beginning with an existing 'YYYY-MM-DD' date; received ${JSON.stringify(draft.recordedAt)}.`,
-    "field_value_invalid",
+    'field_value_invalid',
   );
   demand(
     isFieldValueMap(draft.priorFieldValues),
-    "priorFieldValues",
-    "priorFieldValues must be a map of field name to a string, finite number, boolean or null.",
-    "field_value_invalid",
+    'priorFieldValues',
+    'priorFieldValues must be a map of field name to a string, finite number, boolean or null.',
+    'field_value_invalid',
   );
   demand(
     isFieldValueMap(draft.newFieldValues),
-    "newFieldValues",
-    "newFieldValues must be a map of field name to a string, finite number, boolean or null.",
-    "field_value_invalid",
+    'newFieldValues',
+    'newFieldValues must be a map of field name to a string, finite number, boolean or null.',
+    'field_value_invalid',
   );
 
   const changeReason = normalizeChangeReason(draft.changeReason);
   if (changeReason.length === 0) {
     problems.push({
-      code: "change_reason_blank",
+      code: 'change_reason_blank',
       message:
-        "A stated change reason is required and this one is blank after whitespace normalisation; " +
-        "whitespace, a no-break space and a zero-width character state nothing.",
-      criteria: ["11.2"],
-      field: "changeReason",
+        'A stated change reason is required and this one is blank after whitespace normalisation; ' +
+        'whitespace, a no-break space and a zero-width character state nothing.',
+      criteria: ['11.2'],
+      field: 'changeReason',
     });
   }
 
-  const prior = isFieldValueMap(draft.priorFieldValues)
-    ? draft.priorFieldValues
-    : {};
-  const next = isFieldValueMap(draft.newFieldValues)
-    ? draft.newFieldValues
-    : {};
+  const prior = isFieldValueMap(draft.priorFieldValues) ? draft.priorFieldValues : {};
+  const next = isFieldValueMap(draft.newFieldValues) ? draft.newFieldValues : {};
 
-  if (draft.action === "amend" || draft.action === "deactivate") {
+  if (draft.action === 'amend' || draft.action === 'deactivate') {
     if (Object.keys(prior).length === 0) {
       problems.push({
-        code: "prior_field_values_required",
+        code: 'prior_field_values_required',
         message:
           `A ${draft.action} entry must carry the prior field values: criterion 11.2 records what ` +
           `the values were, and the object existed before the change.`,
-        criteria: ["11.2"],
-        field: "priorFieldValues",
+        criteria: ['11.2'],
+        field: 'priorFieldValues',
       });
     }
   }
   if (Object.keys(next).length === 0) {
     problems.push({
-      code: "new_field_values_required",
+      code: 'new_field_values_required',
       message: `A ${String(draft.action)} entry must carry the new field values.`,
-      criteria: ["11.2"],
-      field: "newFieldValues",
+      criteria: ['11.2'],
+      field: 'newFieldValues',
     });
   }
 
   const fieldDeltas = computeFieldDeltas(prior, next);
-  if (draft.action === "amend" && fieldDeltas.length === 0) {
+  if (draft.action === 'amend' && fieldDeltas.length === 0) {
     problems.push({
-      code: "amendment_records_no_field_change",
+      code: 'amendment_records_no_field_change',
       message:
-        "An amend entry must carry a real field-level before/after difference; the prior and new " +
-        "field values are identical, so this entry would record no change.",
-      criteria: ["11.2"],
-      field: "newFieldValues",
+        'An amend entry must carry a real field-level before/after difference; the prior and new ' +
+        'field values are identical, so this entry would record no change.',
+      criteria: ['11.2'],
+      field: 'newFieldValues',
     });
   }
 
@@ -910,7 +831,7 @@ export function buildRuleAuditEntry(
 // ---------------------------------------------------------------------------------------------
 
 /** The operations a caller can ask of a log that already holds an entry. */
-export type RuleAuditLogOperation = "append" | "amend_in_place" | "delete";
+export type RuleAuditLogOperation = 'append' | 'amend_in_place' | 'delete';
 
 /**
  * An entry as it already stands in the log. Only its identity is needed: criterion 11.3 refuses
@@ -924,16 +845,16 @@ export interface PersistedAuditLogEntry {
 export type AuditLogOperationVerdict =
   | {
       readonly permitted: true;
-      readonly operation: "append";
+      readonly operation: 'append';
       /** The existing entry is untouched by an append; stated so a caller can assert it. */
       readonly existingEntryId: string;
     }
   | {
       readonly permitted: false;
-      readonly operation: "amend_in_place" | "delete";
+      readonly operation: 'amend_in_place' | 'delete';
       readonly refusal: ProvenanceRefusal;
       /** The only correction the log supports: state the correction as a NEW entry. */
-      readonly remedy: "append_a_new_entry";
+      readonly remedy: 'append_a_new_entry';
     };
 
 /**
@@ -951,39 +872,32 @@ export function guardRuleAuditLogOperation(
   existing: PersistedAuditLogEntry,
   request: { readonly operation: RuleAuditLogOperation },
 ): AuditLogOperationVerdict {
-  const entryId =
-    existing !== null && existing !== undefined
-      ? existing.entryId
-      : "(unknown)";
-  if (
-    request !== null &&
-    request !== undefined &&
-    request.operation === "append"
-  ) {
+  const entryId = existing !== null && existing !== undefined ? existing.entryId : '(unknown)';
+  if (request !== null && request !== undefined && request.operation === 'append') {
     return Object.freeze({
       permitted: true as const,
-      operation: "append" as const,
+      operation: 'append' as const,
       existingEntryId: entryId,
     });
   }
-  const operation: "amend_in_place" | "delete" =
-    request !== null && request !== undefined && request.operation === "delete"
-      ? "delete"
-      : "amend_in_place";
-  const verb = operation === "delete" ? "delete" : "modify";
+  const operation: 'amend_in_place' | 'delete' =
+    request !== null && request !== undefined && request.operation === 'delete'
+      ? 'delete'
+      : 'amend_in_place';
+  const verb = operation === 'delete' ? 'delete' : 'modify';
   return Object.freeze({
     permitted: false as const,
     operation,
     refusal: Object.freeze({
-      code: "audit_log_entry_is_immutable" as const,
-      codes: Object.freeze(["audit_log_entry_is_immutable" as const]),
+      code: 'audit_log_entry_is_immutable' as const,
+      codes: Object.freeze(['audit_log_entry_is_immutable' as const]),
       message:
         `The Rule_Audit_Log is append-only and rejects any request to ${verb} existing entry ` +
         `${entryId}. Record the correction as a new entry instead.`,
-      criteria: Object.freeze(["11.3"]),
-      fields: Object.freeze(["entryId"]),
+      criteria: Object.freeze(['11.3']),
+      fields: Object.freeze(['entryId']),
     }),
-    remedy: "append_a_new_entry" as const,
+    remedy: 'append_a_new_entry' as const,
   });
 }
 
@@ -993,11 +907,11 @@ export function guardRuleAuditLogOperation(
 
 /** criterion 11.4's five recorded events. */
 export type OperationalAuditEvent =
-  | "review_outcome_recorded"
-  | "adjustment_requested"
-  | "adjustment_approved"
-  | "adjustment_rejected"
-  | "upload_batch_submitted";
+  | 'review_outcome_recorded'
+  | 'adjustment_requested'
+  | 'adjustment_approved'
+  | 'adjustment_rejected'
+  | 'upload_batch_submitted';
 
 /**
  * criterion 11.4 requires the acting ROLE as well as the acting user, which is why this is a
@@ -1025,16 +939,16 @@ export interface OperationalAuditLogEntry {
 export type OperationalAuditDraft = OperationalAuditLogEntry;
 
 export type BuildOperationalAuditResult =
-  { readonly ok: true; readonly entry: OperationalAuditLogEntry } | Refused;
+  | { readonly ok: true; readonly entry: OperationalAuditLogEntry }
+  | Refused;
 
-const OPERATIONAL_AUDIT_EVENTS: readonly OperationalAuditEvent[] =
-  Object.freeze([
-    "review_outcome_recorded",
-    "adjustment_requested",
-    "adjustment_approved",
-    "adjustment_rejected",
-    "upload_batch_submitted",
-  ]);
+const OPERATIONAL_AUDIT_EVENTS: readonly OperationalAuditEvent[] = Object.freeze([
+  'review_outcome_recorded',
+  'adjustment_requested',
+  'adjustment_approved',
+  'adjustment_rejected',
+  'upload_batch_submitted',
+]);
 
 /**
  * criterion 11.4. Builds the audit entry for a Review_Outcome, an adjustment request, an
@@ -1054,67 +968,57 @@ export function buildOperationalAuditEntry(
   const fail = (
     field: string,
     message: string,
-    code: ProvenanceRefusalCode = "required_field_missing",
+    code: ProvenanceRefusalCode = 'required_field_missing',
   ): void => {
-    problems.push({ code, message, criteria: ["11.4"], field });
+    problems.push({ code, message, criteria: ['11.4'], field });
   };
 
   if (draft === null || draft === undefined) {
     return refuseWith([
       {
-        code: "required_field_missing",
-        message: "No audit entry draft was supplied.",
-        criteria: ["11.4"],
-        field: "draft",
+        code: 'required_field_missing',
+        message: 'No audit entry draft was supplied.',
+        criteria: ['11.4'],
+        field: 'draft',
       },
     ]);
   }
 
   if (!OPERATIONAL_AUDIT_EVENTS.includes(draft.event)) {
-    fail(
-      "event",
-      `event must be one of the five events criterion 11.4 names; received ${JSON.stringify(draft.event)}.`,
-      "field_value_invalid",
-    );
+    fail('event', `event must be one of the five events criterion 11.4 names; received ${JSON.stringify(draft.event)}.`, 'field_value_invalid');
   }
   if (!isNonBlankString(draft.actingUserId)) {
-    fail(
-      "actingUserId",
-      "actingUserId is required: criterion 11.4 records the acting user.",
-    );
+    fail('actingUserId', 'actingUserId is required: criterion 11.4 records the acting user.');
   }
   if (!isNonBlankString(draft.actingRole)) {
     fail(
-      "actingRole",
-      "actingRole is required: criterion 11.4 records the acting ROLE as well as the acting user, " +
-        "and it is not inferable from the user id because one user can hold several grants.",
+      'actingRole',
+      'actingRole is required: criterion 11.4 records the acting ROLE as well as the acting user, ' +
+        'and it is not inferable from the user id because one user can hold several grants.',
     );
   }
   if (!isTimestamp(draft.recordedAt)) {
     fail(
-      "recordedAt",
+      'recordedAt',
       `recordedAt must be a timestamp beginning with an existing 'YYYY-MM-DD' date; received ${JSON.stringify(draft.recordedAt)}.`,
-      "field_value_invalid",
+      'field_value_invalid',
     );
   }
   if (!isNonBlankString(draft.employeeId)) {
-    fail(
-      "employeeId",
-      "employeeId is required: criterion 11.4 records the affected employee.",
-    );
+    fail('employeeId', 'employeeId is required: criterion 11.4 records the affected employee.');
   }
   if (!isCalendarDate(draft.workDate)) {
     fail(
-      "workDate",
+      'workDate',
       `workDate must be an existing 'YYYY-MM-DD' date: criterion 11.4 records the affected date; received ${JSON.stringify(draft.workDate)}.`,
-      "field_value_invalid",
+      'field_value_invalid',
     );
   }
   if (draft.subjectId !== null && !isNonBlankString(draft.subjectId)) {
     fail(
-      "subjectId",
+      'subjectId',
       `subjectId must be a non-blank identifier or explicitly null; received ${JSON.stringify(draft.subjectId)}.`,
-      "field_value_invalid",
+      'field_value_invalid',
     );
   }
 
@@ -1164,22 +1068,22 @@ export function buildUploadBatchAuditEntries(
   if (submission === null || submission === undefined) {
     return refuseWith([
       {
-        code: "required_field_missing",
-        message: "No Upload_Batch submission was supplied.",
-        criteria: ["11.4"],
-        field: "submission",
+        code: 'required_field_missing',
+        message: 'No Upload_Batch submission was supplied.',
+        criteria: ['11.4'],
+        field: 'submission',
       },
     ]);
   }
   if (!Array.isArray(affected) || affected.length === 0) {
     return refuseWith([
       {
-        code: "no_affected_employee_dates",
+        code: 'no_affected_employee_dates',
         message:
-          "An Upload_Batch submission must name at least one affected employee and date: " +
-          "criterion 11.4 records the affected employee and date for every recorded event.",
-        criteria: ["11.4"],
-        field: "affected",
+          'An Upload_Batch submission must name at least one affected employee and date: ' +
+          'criterion 11.4 records the affected employee and date for every recorded event.',
+        criteria: ['11.4'],
+        field: 'affected',
       },
     ]);
   }
@@ -1191,10 +1095,10 @@ export function buildUploadBatchAuditEntries(
     // empty target and is refused field by field like any other incomplete draft.
     const target: AffectedEmployeeDate =
       rawTarget === null || rawTarget === undefined
-        ? ({ employeeId: "", workDate: "" } as AffectedEmployeeDate)
+        ? ({ employeeId: '', workDate: '' } as AffectedEmployeeDate)
         : rawTarget;
     const result = buildOperationalAuditEntry({
-      event: "upload_batch_submitted",
+      event: 'upload_batch_submitted',
       actingUserId: submission.actingUserId,
       actingRole: submission.actingRole,
       recordedAt: submission.recordedAt,
@@ -1211,7 +1115,7 @@ export function buildUploadBatchAuditEntries(
         code,
         message: `affected[${String(index)}]: ${result.refusal.message}`,
         criteria: result.refusal.criteria,
-        field: `affected[${String(index)}].${result.refusal.fields[position] ?? "unknown"}`,
+        field: `affected[${String(index)}].${result.refusal.fields[position] ?? 'unknown'}`,
       });
     });
   });
@@ -1273,9 +1177,7 @@ export function verifyFinalisedRunProvenance(
   const records = input.retrievedRecords ?? [];
   const digests = input.digestsAtFinalisation ?? {};
 
-  const mine = records.filter(
-    (record) => record.employeeId === input.employeeId,
-  );
+  const mine = records.filter((record) => record.employeeId === input.employeeId);
   const unrelatedRecordCount = records.length - mine.length;
   const byDate = new Map<string, AttendanceProvenanceRecord>();
   for (const record of mine) byDate.set(record.workDate, record);
@@ -1289,9 +1191,7 @@ export function verifyFinalisedRunProvenance(
       missingDates.push(date);
       continue;
     }
-    const baseline = Object.prototype.hasOwnProperty.call(digests, date)
-      ? digests[date]
-      : undefined;
+    const baseline = Object.prototype.hasOwnProperty.call(digests, date) ? digests[date] : undefined;
     if (baseline === undefined) {
       withoutBaseline.push(date);
       continue;
@@ -1301,17 +1201,14 @@ export function verifyFinalisedRunProvenance(
 
   return Object.freeze({
     holds:
-      missingDates.length === 0 &&
-      alteredDates.length === 0 &&
-      withoutBaseline.length === 0,
+      missingDates.length === 0 && alteredDates.length === 0 && withoutBaseline.length === 0,
     contributingDateCount: contributingDates.length,
-    retrievableDateCount: contributingDates.filter((date) => byDate.has(date))
-      .length,
+    retrievableDateCount: contributingDates.filter((date) => byDate.has(date)).length,
     missingDates: Object.freeze(missingDates),
     alteredDates: Object.freeze(alteredDates),
     datesWithoutFinalisationDigest: Object.freeze(withoutBaseline),
     unrelatedRecordCount,
-    criteria: Object.freeze(["11.5"]),
+    criteria: Object.freeze(['11.5']),
   });
 }
 
@@ -1359,26 +1256,21 @@ export function verifyProvenanceCompleteness(
   const provenanceDates = new Set(
     (input.provenanceRecords ?? [])
       .filter(
-        (record) =>
-          record.employeeId === input.employeeId &&
-          record.payMonth === input.payMonth,
+        (record) => record.employeeId === input.employeeId && record.payMonth === input.payMonth,
       )
       .map((record) => record.workDate),
   );
 
-  const missing = [...contributing].filter(
-    (date) => !provenanceDates.has(date),
-  );
+  const missing = [...contributing].filter((date) => !provenanceDates.has(date));
   const extra = [...provenanceDates].filter((date) => !contributing.has(date));
 
   return Object.freeze({
-    complete:
-      provenanceDates.size === contributing.size && missing.length === 0,
+    complete: provenanceDates.size === contributing.size && missing.length === 0,
     payableDayDateCount: contributing.size,
     provenanceDateCount: provenanceDates.size,
     datesMissingProvenance: Object.freeze(missing),
     provenanceDatesNotContributing: Object.freeze(extra),
-    criteria: Object.freeze(["11.6"]),
+    criteria: Object.freeze(['11.6']),
   });
 }
 
@@ -1388,25 +1280,25 @@ export function verifyProvenanceCompleteness(
 
 export type AggregationReconciliationCode =
   /** No contribution and no figure: criterion 18.10's absent state, which reconciles trivially. */
-  | "reconciled_absent"
+  | 'reconciled_absent'
   /** criteria 18.4, 18.11, 18.12, 18.14: the figure sits inside the bounds the union rule guarantees. */
-  | "reconciled_within_union_bounds"
+  | 'reconciled_within_union_bounds'
   /** criterion 18.6: the figure equals the largest single contribution, capped at the daily bound. */
-  | "reconciled_max_contribution"
+  | 'reconciled_max_contribution'
   /** criteria 18.1, 18.10. */
-  | "contradiction_absent_canonical_with_contributions"
+  | 'contradiction_absent_canonical_with_contributions'
   /** criteria 18.1, 11.7. */
-  | "contradiction_present_canonical_without_contributions"
+  | 'contradiction_present_canonical_without_contributions'
   /** criterion 18.7: no producing rule recorded, so there is no rule to reconcile under. */
-  | "producing_rule_missing"
+  | 'producing_rule_missing'
   /** criteria 18.2, 18.11. */
-  | "violates_daily_bound"
+  | 'violates_daily_bound'
   /** criterion 18.14: the figure exceeds the sum of the contributions it was derived from. */
-  | "violates_no_inflation"
+  | 'violates_no_inflation'
   /** criterion 18.12: the figure is below the largest single contribution. */
-  | "violates_no_shrinkage"
+  | 'violates_no_shrinkage'
   /** criterion 18.6: the secondary rule is recorded but the figure is not the maximum contribution. */
-  | "violates_max_contribution_rule";
+  | 'violates_max_contribution_rule';
 
 export interface AggregationTraceability {
   readonly reconciles: boolean;
@@ -1472,21 +1364,13 @@ export interface AggregationTraceability {
  * not in the record, and inventing them would make this function agree with itself rather than
  * with the data. canonical-productivity.ts owns the derivation; this owns the reconciliation.
  */
-export function reconcileAggregation(
-  record: AttendanceProvenanceRecord,
-): AggregationTraceability {
+export function reconcileAggregation(record: AttendanceProvenanceRecord): AggregationTraceability {
   const contributions = record.diallerSourceContributions ?? [];
   const minutes = contributions.map((contribution) =>
-    isUsableMinutes(contribution.contributedMinutes)
-      ? contribution.contributedMinutes
-      : 0,
+    isUsableMinutes(contribution.contributedMinutes) ? contribution.contributedMinutes : 0,
   );
-  const contributionSumMinutes = minutes.reduce(
-    (total, value) => total + value,
-    0,
-  );
-  const largestContributionMinutes =
-    minutes.length === 0 ? null : Math.max(...minutes);
+  const contributionSumMinutes = minutes.reduce((total, value) => total + value, 0);
+  const largestContributionMinutes = minutes.length === 0 ? null : Math.max(...minutes);
   const upperBoundMinutes = Math.min(contributionSumMinutes, MAX_DAILY_MINUTES);
   const lowerBoundMinutes =
     largestContributionMinutes === null
@@ -1518,68 +1402,68 @@ export function reconcileAggregation(
     if (contributions.length > 0) {
       return settle(
         false,
-        "contradiction_absent_canonical_with_contributions",
+        'contradiction_absent_canonical_with_contributions',
         `Canonical_Productive_Minutes is absent while ${String(contributions.length)} contribution(s) ` +
           `totalling ${String(contributionSumMinutes)} minutes are recorded.`,
-        ["11.7", "18.1", "18.10"],
+        ['11.7', '18.1', '18.10'],
       );
     }
     return settle(
       true,
-      "reconciled_absent",
-      "No attributed contribution and no Canonical_Productive_Minutes: the absent state of criterion 18.10.",
-      ["11.7", "18.10"],
+      'reconciled_absent',
+      'No attributed contribution and no Canonical_Productive_Minutes: the absent state of criterion 18.10.',
+      ['11.7', '18.10'],
     );
   }
 
   if (contributions.length === 0) {
     return settle(
       false,
-      "contradiction_present_canonical_without_contributions",
+      'contradiction_present_canonical_without_contributions',
       `Canonical_Productive_Minutes of ${String(canonical)} is recorded with no per-Dialler_Source ` +
         `contribution to reconcile it against.`,
-      ["11.7", "18.1"],
+      ['11.7', '18.1'],
     );
   }
 
   if (canonical > MAX_DAILY_MINUTES) {
     return settle(
       false,
-      "violates_daily_bound",
+      'violates_daily_bound',
       `Canonical_Productive_Minutes of ${String(canonical)} exceeds the daily bound of ` +
         `${String(MAX_DAILY_MINUTES)} minutes.`,
-      ["11.7", "18.2", "18.11"],
+      ['11.7', '18.2', '18.11'],
     );
   }
 
   // criterion 18.6, the mandatory secondary rule: an exact equality, not a bound.
-  if (record.canonicalProducingRule === "max_contribution") {
+  if (record.canonicalProducingRule === 'max_contribution') {
     const expected = lowerBoundMinutes;
     if (canonical !== expected) {
       return settle(
         false,
-        "violates_max_contribution_rule",
+        'violates_max_contribution_rule',
         `The secondary rule of criterion 18.6 is recorded, so Canonical_Productive_Minutes must ` +
           `equal the largest single contribution (${String(expected)} minutes after the daily bound); ` +
           `${String(canonical)} minutes is recorded.`,
-        ["11.7", "18.6"],
+        ['11.7', '18.6'],
       );
     }
     return settle(
       true,
-      "reconciled_max_contribution",
+      'reconciled_max_contribution',
       `Canonical_Productive_Minutes equals the largest single contribution, as criterion 18.6 requires.`,
-      ["11.7", "18.6"],
+      ['11.7', '18.6'],
     );
   }
 
-  if (record.canonicalProducingRule !== "interval_union") {
+  if (record.canonicalProducingRule !== 'interval_union') {
     return settle(
       false,
-      "producing_rule_missing",
+      'producing_rule_missing',
       `No producing rule is recorded, so there is no aggregation rule to reconcile ` +
         `${String(canonical)} minutes under; criterion 18.7 requires it to be recorded.`,
-      ["11.7", "18.7"],
+      ['11.7', '18.7'],
     );
   }
 
@@ -1587,29 +1471,29 @@ export function reconcileAggregation(
   if (canonical > upperBoundMinutes) {
     return settle(
       false,
-      "violates_no_inflation",
+      'violates_no_inflation',
       `Canonical_Productive_Minutes of ${String(canonical)} exceeds the ${String(upperBoundMinutes)} ` +
         `minute upper bound set by the sum of its contributions; the union of intervals cannot be ` +
         `longer than the intervals it unions.`,
-      ["11.7", "18.14"],
+      ['11.7', '18.14'],
     );
   }
   // criterion 18.12, no shrinkage.
   if (canonical < lowerBoundMinutes) {
     return settle(
       false,
-      "violates_no_shrinkage",
+      'violates_no_shrinkage',
       `Canonical_Productive_Minutes of ${String(canonical)} is below the largest single contribution ` +
         `of ${String(lowerBoundMinutes)} minutes; the union of intervals contains each interval.`,
-      ["11.7", "18.12"],
+      ['11.7', '18.12'],
     );
   }
   return settle(
     true,
-    "reconciled_within_union_bounds",
+    'reconciled_within_union_bounds',
     `Canonical_Productive_Minutes of ${String(canonical)} reconciles under the interval-union rule ` +
       `of criterion 18.4: at least the largest single contribution (${String(lowerBoundMinutes)}) and ` +
       `at most the bounded sum (${String(upperBoundMinutes)}).`,
-    ["11.7", "18.4", "18.11", "18.12", "18.14"],
+    ['11.7', '18.4', '18.11', '18.12', '18.14'],
   );
 }

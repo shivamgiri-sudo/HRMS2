@@ -33,10 +33,7 @@ import { describe, expect, it } from "vitest";
  * Source-text assertions, matching the convention used for large inline Express
  * handlers elsewhere in this repo.
  */
-const SRC = readFileSync(
-  resolve(__dirname, "../auth-launch.routes.ts"),
-  "utf8",
-);
+const SRC = readFileSync(resolve(__dirname, "../auth-launch.routes.ts"), "utf8");
 
 describe("launch bootstrap — a dangling employees.user_id must not be trusted", () => {
   it("verifies the referenced auth_user exists before reusing the id", () => {
@@ -47,9 +44,7 @@ describe("launch bootstrap — a dangling employees.user_id must not be trusted"
 
   it("no longer assigns userId straight from the employee column", () => {
     // The exact shape of the bug. If this reappears, the silent no-op is back.
-    expect(SRC).not.toMatch(
-      /let userId\s*=\s*emp\.user_id\s*\?\s*String\(emp\.user_id\)\s*:\s*null/,
-    );
+    expect(SRC).not.toMatch(/let userId\s*=\s*emp\.user_id\s*\?\s*String\(emp\.user_id\)\s*:\s*null/);
   });
 
   it("starts from null so an unverified id falls through to creation", () => {
@@ -57,18 +52,14 @@ describe("launch bootstrap — a dangling employees.user_id must not be trusted"
   });
 
   it("only adopts the employee's user_id when the row was actually found", () => {
-    expect(SRC).toMatch(
-      /if \(linked\[0\]\?\.id\) userId = String\(emp\.user_id\)/,
-    );
+    expect(SRC).toMatch(/if \(linked\[0\]\?\.id\) userId = String\(emp\.user_id\)/);
   });
 
   it("still falls back to matching an existing account by email", () => {
     // The pre-existing behaviour must survive the fix: an employee whose account
     // exists under their email, but whose user_id was never linked, is adopted
     // rather than duplicated.
-    expect(SRC).toMatch(
-      /if \(!userId && existing\[0\]\?\.id\) userId = String\(existing\[0\]\.id\)/,
-    );
+    expect(SRC).toMatch(/if \(!userId && existing\[0\]\?\.id\) userId = String\(existing\[0\]\.id\)/);
   });
 
   it("still repoints employees.user_id after resolving the account", () => {

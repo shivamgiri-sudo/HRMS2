@@ -43,13 +43,11 @@ function isZip(buffer: Buffer): boolean {
 }
 
 function isOleCompoundFile(buffer: Buffer): boolean {
-  return (
-    buffer.length >= 8 &&
-    buffer[0] === 0xd0 &&
-    buffer[1] === 0xcf &&
-    buffer[2] === 0x11 &&
-    buffer[3] === 0xe0
-  );
+  return buffer.length >= 8
+    && buffer[0] === 0xd0
+    && buffer[1] === 0xcf
+    && buffer[2] === 0x11
+    && buffer[3] === 0xe0;
 }
 
 function containsBinaryNull(buffer: Buffer): boolean {
@@ -57,9 +55,7 @@ function containsBinaryNull(buffer: Buffer): boolean {
 }
 
 export function performanceDatasetMaxRows(dataset: PerformanceDataset): number {
-  const configured = Number(
-    (dataset.config as { maxRows?: number }).maxRows ?? 10_000,
-  );
+  const configured = Number((dataset.config as { maxRows?: number }).maxRows ?? 10_000);
   if (!Number.isFinite(configured)) return 10_000;
   return Math.max(1, Math.min(100_000, Math.trunc(configured)));
 }
@@ -104,55 +100,37 @@ function assertFileKind(
 
   if (dataset.sourceType === "csv") {
     if (ext && !CSV_EXTENSIONS.has(ext)) {
-      throw Object.assign(new Error("CSV datasets only accept .csv files"), {
-        statusCode: 400,
-      });
+      throw Object.assign(new Error("CSV datasets only accept .csv files"), { statusCode: 400 });
     }
     if (zip || ole || containsBinaryNull(buffer)) {
-      throw Object.assign(
-        new Error("The selected file is not a plain-text CSV file"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("The selected file is not a plain-text CSV file"), { statusCode: 400 });
     }
     return;
   }
 
   if (dataset.sourceType === "excel") {
     if (ext && !EXCEL_EXTENSIONS.has(ext)) {
-      throw Object.assign(
-        new Error("Excel datasets only accept .xlsx or .xls files"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("Excel datasets only accept .xlsx or .xls files"), { statusCode: 400 });
     }
     if (!zip && !ole) {
-      throw Object.assign(
-        new Error("The selected file is not a valid Excel workbook"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("The selected file is not a valid Excel workbook"), { statusCode: 400 });
     }
     return;
   }
 
   throw Object.assign(
-    new Error(
-      "Manual upload inspection is only available for Excel and CSV datasets",
-    ),
+    new Error("Manual upload inspection is only available for Excel and CSV datasets"),
     { statusCode: 409 },
   );
 }
 
-function workbookSheetName(
-  dataset: PerformanceDataset,
-  workbook: XLSX.WorkBook,
-): string {
+function workbookSheetName(dataset: PerformanceDataset, workbook: XLSX.WorkBook): string {
   const configured = text((dataset.config as { sheetName?: string }).sheetName);
   if (configured) {
     const exact = workbook.SheetNames.find((name) => name === configured);
     if (!exact) {
       throw Object.assign(
-        new Error(
-          `Configured worksheet ${configured} was not found in the workbook`,
-        ),
+        new Error(`Configured worksheet ${configured} was not found in the workbook`),
         { statusCode: 400 },
       );
     }
@@ -161,9 +139,7 @@ function workbookSheetName(
 
   const first = workbook.SheetNames[0];
   if (!first) {
-    throw Object.assign(new Error("The uploaded workbook has no worksheets"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error("The uploaded workbook has no worksheets"), { statusCode: 400 });
   }
   return first;
 }
@@ -180,15 +156,11 @@ function workbookColumns(sheet: XLSX.WorkSheet): string[] {
   while (lastPopulated >= 0 && !header[lastPopulated]) lastPopulated -= 1;
   const columns = header.slice(0, lastPopulated + 1);
   if (!columns.length) {
-    throw Object.assign(new Error("The uploaded file has no header row"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error("The uploaded file has no header row"), { statusCode: 400 });
   }
   if (columns.some((column) => !column)) {
     throw Object.assign(
-      new Error(
-        "The header row contains a blank column name between populated columns",
-      ),
+      new Error("The header row contains a blank column name between populated columns"),
       { statusCode: 400 },
     );
   }
@@ -212,35 +184,22 @@ function duplicateColumns(columns: string[]): string[] {
 export function assertRequiredColumns(
   dataset: Pick<PerformanceDataset, "mapping">,
   columns: string[],
-): {
-  requiredColumns: string[];
-  missingColumns: string[];
-  duplicateColumns: string[];
-} {
+): { requiredColumns: string[]; missingColumns: string[]; duplicateColumns: string[] } {
   const requiredColumns = requiredColumnsForMapping(dataset.mapping);
   const available = new Set(columns.map(normaliseColumn));
-  const missingColumns = requiredColumns.filter(
-    (column) => !available.has(normaliseColumn(column)),
-  );
+  const missingColumns = requiredColumns.filter((column) => !available.has(normaliseColumn(column)));
   const duplicates = duplicateColumns(columns);
 
   if (duplicates.length) {
     throw Object.assign(
-      new Error(
-        `Duplicate header columns are not allowed: ${duplicates.join(", ")}`,
-      ),
+      new Error(`Duplicate header columns are not allowed: ${duplicates.join(", ")}`),
       { statusCode: 400, details: { duplicateColumns: duplicates } },
     );
   }
   if (missingColumns.length) {
     throw Object.assign(
-      new Error(
-        `Required upload columns are missing: ${missingColumns.join(", ")}`,
-      ),
-      {
-        statusCode: 400,
-        details: { missingColumns, requiredColumns, columns },
-      },
+      new Error(`Required upload columns are missing: ${missingColumns.join(", ")}`),
+      { statusCode: 400, details: { missingColumns, requiredColumns, columns } },
     );
   }
 
@@ -259,9 +218,7 @@ export function assertSourceRowColumns(
 export function assertSourceRowLimit(rowCount: number, maxRows: number): void {
   if (rowCount > maxRows) {
     throw Object.assign(
-      new Error(
-        `Source returned ${rowCount} rows, exceeding the configured maximum of ${maxRows}`,
-      ),
+      new Error(`Source returned ${rowCount} rows, exceeding the configured maximum of ${maxRows}`),
       { statusCode: 413, details: { rowCount, maxRows } },
     );
   }
@@ -273,34 +230,23 @@ export function inspectManualUploadFile(
   fileName?: string | null,
 ): ManualUploadInspection {
   if (!buffer.length) {
-    throw Object.assign(new Error("The uploaded file is empty"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error("The uploaded file is empty"), { statusCode: 400 });
   }
   assertFileKind(dataset, buffer, fileName);
 
   let workbook: XLSX.WorkBook;
   try {
-    workbook = XLSX.read(buffer, {
-      type: "buffer",
-      cellDates: true,
-      raw: false,
-    });
+    workbook = XLSX.read(buffer, { type: "buffer", cellDates: true, raw: false });
   } catch {
-    throw Object.assign(
-      new Error("The uploaded file could not be parsed as a workbook or CSV"),
-      {
-        statusCode: 400,
-      },
-    );
+    throw Object.assign(new Error("The uploaded file could not be parsed as a workbook or CSV"), {
+      statusCode: 400,
+    });
   }
 
   const sheetName = workbookSheetName(dataset, workbook);
   const sheet = workbook.Sheets[sheetName];
   if (!sheet) {
-    throw Object.assign(new Error(`Worksheet ${sheetName} could not be read`), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error(`Worksheet ${sheetName} could not be read`), { statusCode: 400 });
   }
 
   const columns = workbookColumns(sheet);
@@ -337,11 +283,9 @@ function safeCsvCell(value: unknown): string {
 }
 
 export function buildCsv(headers: string[], rows: unknown[][]): string {
-  return (
-    [headers, ...rows]
-      .map((row) => row.map(safeCsvCell).join(","))
-      .join("\r\n") + "\r\n"
-  );
+  return [headers, ...rows]
+    .map((row) => row.map(safeCsvCell).join(","))
+    .join("\r\n") + "\r\n";
 }
 
 export function buildManualUploadTemplate(dataset: PerformanceDataset): string {

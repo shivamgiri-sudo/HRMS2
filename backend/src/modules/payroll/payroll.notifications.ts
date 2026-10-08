@@ -15,19 +15,19 @@
  * is down. Nothing sends today — every payroll event ships enabled=0,
  * dispatch_mode='shadow' (migration 1022).
  */
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { notificationGateway } from "../communication/notification.gateway.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { notificationGateway } from '../communication/notification.gateway.js';
 
 /** Run status -> catalogue event. Statuses with no notification return null. */
 const RUN_EVENT: Record<string, string | null> = {
   draft: null,
   calculating: null,
-  calculated: "payroll_run_calculated",
-  under_review: "payroll_run_under_review",
-  approved: "payroll_run_approved",
-  locked: "payroll_run_locked",
-  disbursed: null, // disbursed fans out to payslip_ready per employee instead
+  calculated: 'payroll_run_calculated',
+  under_review: 'payroll_run_under_review',
+  approved: 'payroll_run_approved',
+  locked: 'payroll_run_locked',
+  disbursed: null,   // disbursed fans out to payslip_ready per employee instead
   cancelled: null,
 };
 
@@ -56,9 +56,7 @@ async function loadRun(runId: string): Promise<RunRow | null> {
  * Returns null when there is no comparable prior run — a first run for a new branch has
  * no variance, and inventing 0% or 100% would be worse than showing nothing.
  */
-async function priorRunTotals(
-  run: RunRow,
-): Promise<{ net: number | null; month: string | null }> {
+async function priorRunTotals(run: RunRow): Promise<{ net: number | null; month: string | null }> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT run_month, total_net
@@ -70,8 +68,7 @@ async function priorRunTotals(
         LIMIT 1`,
       [run.run_month, run.branch_id],
     );
-    if (!rows.length || rows[0].total_net == null)
-      return { net: null, month: null };
+    if (!rows.length || rows[0].total_net == null) return { net: null, month: null };
     return { net: Number(rows[0].total_net), month: String(rows[0].run_month) };
   } catch {
     return { net: null, month: null };
@@ -86,10 +83,7 @@ async function priorRunTotals(
  * resolver against `vars.amount`, so it stays a recipient rule rather than being
  * hard-coded into a notification body.
  */
-export async function notifyPayrollRunStatus(
-  runId: string,
-  newStatus: string,
-): Promise<void> {
+export async function notifyPayrollRunStatus(runId: string, newStatus: string): Promise<void> {
   const eventCode = RUN_EVENT[newStatus] ?? null;
   if (!eventCode) return;
   try {
@@ -106,32 +100,24 @@ export async function notifyPayrollRunStatus(
         // Drives the conditional CEO copy on payroll_run_approved.
         vars: { amount: net ?? 0 },
       },
-      entityType: "salary_prep_run",
+      entityType: 'salary_prep_run',
       entityId: runId,
       correlationId: `payroll_run:${runId}`,
       data: {
         run_month: run.run_month,
         status: newStatus,
         // analytics strip (catalogue 6.4): headcount · gross · variance vs prior run
-        headcount:
-          run.total_employees == null ? null : Number(run.total_employees),
+        headcount: run.total_employees == null ? null : Number(run.total_employees),
         total_gross: run.total_gross == null ? null : Number(run.total_gross),
-        total_deductions:
-          run.total_deductions == null ? null : Number(run.total_deductions),
+        total_deductions: run.total_deductions == null ? null : Number(run.total_deductions),
         total_net: net,
         prior_month: prior.month,
         // Null, not 0, when there is no comparable prior run.
-        variance_vs_prior:
-          prior.net == null || net == null
-            ? null
-            : Math.round((net - prior.net) * 100) / 100,
+        variance_vs_prior: prior.net == null || net == null ? null : Math.round((net - prior.net) * 100) / 100,
       },
     });
   } catch (err) {
-    console.error(
-      `[payroll-notify] run ${runId} -> ${newStatus}:`,
-      (err as Error).message,
-    );
+    console.error(`[payroll-notify] run ${runId} -> ${newStatus}:`, (err as Error).message);
   }
 }
 
@@ -162,9 +148,7 @@ interface PayslipRow extends RowDataPacket {
  * Those drops are recorded with a reason on the claim, and the undeliverable-recipients
  * report is what turns them into an HR data task.
  */
-export async function notifyPayslipsReady(
-  runId: string,
-): Promise<{ employees: number; notified: number; skipped: number }> {
+export async function notifyPayslipsReady(runId: string): Promise<{ employees: number; notified: number; skipped: number }> {
   const result = { employees: 0, notified: 0, skipped: 0 };
   try {
     const run = await loadRun(runId);
@@ -189,10 +173,10 @@ export async function notifyPayslipsReady(
     for (const line of lines) {
       try {
         const outcome = await notificationGateway.notify({
-          eventCode: "payslip_ready",
+          eventCode: 'payslip_ready',
           dedupeKey: `salary_prep_run:${runId}:payslip:${line.employee_id}`,
           context: { employeeId: line.employee_id, branchId: line.branch_id },
-          entityType: "salary_prep_run",
+          entityType: 'salary_prep_run',
           entityId: runId,
           correlationId: `payroll_run:${runId}`,
           data: {
@@ -203,21 +187,16 @@ export async function notifyPayslipsReady(
             reporting_manager_name: line.reporting_manager_name,
             // analytics strip (catalogue 6.4): net · LOP days
             net_pay: line.net_salary == null ? null : Number(line.net_salary),
-            gross_pay:
-              line.gross_salary == null ? null : Number(line.gross_salary),
+            gross_pay: line.gross_salary == null ? null : Number(line.gross_salary),
             lop_days: line.lwp_days == null ? null : Number(line.lwp_days),
           },
         });
-        if (outcome.outcome === "sent" || outcome.outcome === "shadow")
-          result.notified++;
+        if (outcome.outcome === 'sent' || outcome.outcome === 'shadow') result.notified++;
         else result.skipped++;
       } catch (err) {
         // One employee failing must not stop the rest of the payroll being notified.
         result.skipped++;
-        console.error(
-          `[payroll-notify] payslip ${runId}/${line.employee_id}:`,
-          (err as Error).message,
-        );
+        console.error(`[payroll-notify] payslip ${runId}/${line.employee_id}:`, (err as Error).message);
       }
 
       // salary_advance_recovery is a separate event from payslip_ready, kept in its own
@@ -226,10 +205,10 @@ export async function notifyPayslipsReady(
       if (Number(line.advance_recovery) > 0) {
         try {
           await notificationGateway.notify({
-            eventCode: "salary_advance_recovery",
+            eventCode: 'salary_advance_recovery',
             dedupeKey: `salary_prep_run:${runId}:advance_recovery:${line.employee_id}`,
             context: { employeeId: line.employee_id, branchId: line.branch_id },
-            entityType: "salary_prep_run",
+            entityType: 'salary_prep_run',
             entityId: runId,
             correlationId: `payroll_run:${runId}`,
             data: {
@@ -243,18 +222,12 @@ export async function notifyPayslipsReady(
             },
           });
         } catch (err) {
-          console.error(
-            `[payroll-notify] advance_recovery ${runId}/${line.employee_id}:`,
-            (err as Error).message,
-          );
+          console.error(`[payroll-notify] advance_recovery ${runId}/${line.employee_id}:`, (err as Error).message);
         }
       }
     }
   } catch (err) {
-    console.error(
-      `[payroll-notify] payslips ${runId}:`,
-      (err as Error).message,
-    );
+    console.error(`[payroll-notify] payslips ${runId}:`, (err as Error).message);
   }
   return result;
 }
@@ -264,26 +237,20 @@ export async function notifyPayslipsReady(
  * employee-facing. dedupeKey includes window_close_date so a run whose close date is
  * later pushed out gets a fresh warning rather than being permanently deduped.
  */
-export async function notifyPayrollWindowClosing(
-  runId: string,
-  windowCloseDate: string,
-): Promise<void> {
+export async function notifyPayrollWindowClosing(runId: string, windowCloseDate: string): Promise<void> {
   try {
     const run = await loadRun(runId);
     if (!run) return;
     await notificationGateway.notify({
-      eventCode: "payroll_window_closing",
+      eventCode: 'payroll_window_closing',
       dedupeKey: `salary_prep_run:${runId}:window_closing:${windowCloseDate}`,
       context: { branchId: run.branch_id },
-      entityType: "salary_prep_run",
+      entityType: 'salary_prep_run',
       entityId: runId,
       correlationId: `payroll_run:${runId}`,
       data: { run_month: run.run_month, window_close_date: windowCloseDate },
     });
   } catch (err) {
-    console.error(
-      `[payroll-notify] window_closing ${runId}:`,
-      (err as Error).message,
-    );
+    console.error(`[payroll-notify] window_closing ${runId}:`, (err as Error).message);
   }
 }

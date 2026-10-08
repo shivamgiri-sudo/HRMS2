@@ -32,10 +32,7 @@ import { processRepositoryMySQL } from "../process.repository.mysql.js";
  */
 const mockExecute = db.execute as unknown as ReturnType<typeof vi.fn>;
 
-interface Captured {
-  sql: string;
-  params: unknown[];
-}
+interface Captured { sql: string; params: unknown[] }
 
 const PHANTOM_COLUMNS = [
   "department_id",
@@ -53,14 +50,8 @@ function capture(): Captured[] {
   const calls: Captured[] = [];
   mockExecute.mockImplementation((sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
-    if (
-      /SELECT \* FROM process_master/i.test(sql) ||
-      /FROM process_master WHERE id/i.test(sql)
-    ) {
-      return Promise.resolve([
-        [{ id: "p-1", process_code: "OPS", process_name: "Ops" }],
-        [],
-      ]);
+    if (/SELECT \* FROM process_master/i.test(sql) || /FROM process_master WHERE id/i.test(sql)) {
+      return Promise.resolve([[{ id: "p-1", process_code: "OPS", process_name: "Ops" }], []]);
     }
     return Promise.resolve([{ affectedRows: 1 } as never, []]);
   });
@@ -76,22 +67,13 @@ describe("process_master writes name columns that exist", () => {
   it("create names no column the table lacks", async () => {
     const calls = capture();
     await processRepositoryMySQL.create(
-      {
-        processCode: "OPS",
-        processName: "Operations",
-        processType: "INBOUND",
-      } as never,
-      "user-1",
+      { processCode: "OPS", processName: "Operations", processType: "INBOUND" } as never,
+      "user-1"
     );
     const insert = calls.find((c) => /INSERT INTO process_master/i.test(c.sql));
     expect(insert).toBeDefined();
     for (const col of PHANTOM_COLUMNS) expect(insert!.sql).not.toContain(col);
-    for (const col of [
-      "process_code",
-      "process_name",
-      "process_type",
-      "active_status",
-    ]) {
+    for (const col of ["process_code", "process_name", "process_type", "active_status"]) {
       expect(insert!.sql).toContain(col);
     }
   });
@@ -105,29 +87,20 @@ describe("process_master writes name columns that exist", () => {
           processName: "Operations",
           description: "a description with nowhere to go",
         } as never,
-        "user-1",
-      ),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      code: "PROCESS_FIELDS_UNSUPPORTED",
-    });
+        "user-1"
+      )
+    ).rejects.toMatchObject({ statusCode: 400, code: "PROCESS_FIELDS_UNSUPPORTED" });
 
-    expect(calls.some((c) => /INSERT INTO process_master/i.test(c.sql))).toBe(
-      false,
-    );
+    expect(calls.some((c) => /INSERT INTO process_master/i.test(c.sql))).toBe(false);
   });
 
   it("names the offending field so the caller knows which one", async () => {
     capture();
     await expect(
       processRepositoryMySQL.create(
-        {
-          processCode: "OPS",
-          processName: "Ops",
-          locationName: "Sector 62",
-        } as never,
-        "user-1",
-      ),
+        { processCode: "OPS", processName: "Ops", locationName: "Sector 62" } as never,
+        "user-1"
+      )
     ).rejects.toThrow(/locationName/);
   });
 
@@ -152,12 +125,10 @@ describe("process_master writes name columns that exist", () => {
         branchName: "Noida",
         processOwnerEmployeeId: "emp-1",
       } as never,
-      "user-1",
+      "user-1"
     );
 
-    const insert = calls.find((c) =>
-      /INSERT INTO process_master/i.test(c.sql),
-    )!;
+    const insert = calls.find((c) => /INSERT INTO process_master/i.test(c.sql))!;
     expect(insert.sql).toContain("branch_id");
     expect(insert.sql).toContain("process_owner_name");
     expect(insert.params).toContain("branch-9");
@@ -166,30 +137,21 @@ describe("process_master writes name columns that exist", () => {
 
   it("rejects an unknown branch rather than writing NULL over it", async () => {
     mockExecute.mockImplementation((sql: string) => {
-      if (/FROM branch_master WHERE branch_name/i.test(sql))
-        return Promise.resolve([[], []]);
+      if (/FROM branch_master WHERE branch_name/i.test(sql)) return Promise.resolve([[], []]);
       return Promise.resolve([[{ id: "p-1" }], []]);
     });
 
     await expect(
       processRepositoryMySQL.create(
-        {
-          processCode: "OPS",
-          processName: "Ops",
-          branchName: "Nowhere",
-        } as never,
-        "user-1",
-      ),
+        { processCode: "OPS", processName: "Ops", branchName: "Nowhere" } as never,
+        "user-1"
+      )
     ).rejects.toMatchObject({ statusCode: 400, code: "BRANCH_NOT_FOUND" });
   });
 
   it("update no longer appends updated_by, which failed every update", async () => {
     const calls = capture();
-    await processRepositoryMySQL.update(
-      "p-1",
-      { processName: "Renamed" } as never,
-      "user-1",
-    );
+    await processRepositoryMySQL.update("p-1", { processName: "Renamed" } as never, "user-1");
     const update = calls.find((c) => /UPDATE process_master SET/i.test(c.sql));
     expect(update).toBeDefined();
     expect(update!.sql).not.toContain("updated_by");
@@ -199,31 +161,20 @@ describe("process_master writes name columns that exist", () => {
   it("update rejects unstorable fields too", async () => {
     capture();
     await expect(
-      processRepositoryMySQL.update(
-        "p-1",
-        { description: "nowhere to go" } as never,
-        "user-1",
-      ),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      code: "PROCESS_FIELDS_UNSUPPORTED",
-    });
+      processRepositoryMySQL.update("p-1", { description: "nowhere to go" } as never, "user-1")
+    ).rejects.toMatchObject({ statusCode: 400, code: "PROCESS_FIELDS_UNSUPPORTED" });
   });
 
   it("an update with nothing storable re-fetches rather than writing", async () => {
     const calls = capture();
     await processRepositoryMySQL.update("p-1", {} as never, "user-1");
-    expect(calls.some((c) => /UPDATE process_master SET/i.test(c.sql))).toBe(
-      false,
-    );
+    expect(calls.some((c) => /UPDATE process_master SET/i.test(c.sql))).toBe(false);
   });
 
   it("updateStatus writes active_status alone", async () => {
     const calls = capture();
     await processRepositoryMySQL.updateStatus("p-1", false, "user-1");
-    const update = calls.find((c) =>
-      /UPDATE process_master SET active_status/i.test(c.sql),
-    );
+    const update = calls.find((c) => /UPDATE process_master SET active_status/i.test(c.sql));
     expect(update).toBeDefined();
     expect(update!.sql).not.toContain("updated_by");
     expect(update!.params).toEqual([0, "p-1"]);
@@ -245,11 +196,7 @@ function orgProcessStatements(): string {
     .filter((l) => !l.trim().startsWith("//"))
     .join("\n");
   // just the two statements that touch process_master
-  return (
-    src.match(
-      /(INSERT INTO process_master|UPDATE process_master SET)[\s\S]{0,600}/g,
-    ) ?? []
-  ).join("\n");
+  return (src.match(/(INSERT INTO process_master|UPDATE process_master SET)[\s\S]{0,600}/g) ?? []).join("\n");
 }
 
 describe("org.service process writes", () => {
@@ -260,15 +207,7 @@ describe("org.service process writes", () => {
 
   it("still write the columns that do exist", () => {
     const statements = orgProcessStatements();
-    for (const col of [
-      "process_code",
-      "process_name",
-      "branch_id",
-      "business_lob",
-      "client_id",
-      "client_name",
-      "workload_type",
-    ]) {
+    for (const col of ["process_code", "process_name", "branch_id", "business_lob", "client_id", "client_name", "workload_type"]) {
       expect(statements).toContain(col);
     }
   });

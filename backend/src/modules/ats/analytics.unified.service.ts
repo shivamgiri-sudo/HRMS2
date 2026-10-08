@@ -16,8 +16,7 @@ function channelLabel(raw: unknown): string {
 }
 
 
-const EXCLUDE_EMPLOYEE_SHAPED =
-  excludeEmployeeShapedCandidatesSql("ats_candidate");
+const EXCLUDE_EMPLOYEE_SHAPED = excludeEmployeeShapedCandidatesSql('ats_candidate');
 
 /**
  * The stages that mean "this candidate became an employee".
@@ -38,12 +37,8 @@ const EXCLUDE_EMPLOYEE_SHAPED =
  * ('Onboarded' vs 'converted'). Kept as one constant so a future stage rename breaks in
  * one place instead of silently zeroing every one of these again.
  */
-export const JOINED_STAGES = [
-  "onboarded",
-  "converted",
-  "payroll_validated",
-] as const;
-const JOINED_STAGE_LIST = JOINED_STAGES.map((s) => `'${s}'`).join(", ");
+export const JOINED_STAGES = ['onboarded', 'converted', 'payroll_validated'] as const;
+const JOINED_STAGE_LIST = JOINED_STAGES.map(s => `'${s}'`).join(', ');
 /**
  * Boolean form, for a WHERE clause. Exported so other "did this candidate become an
  * employee" queries — e.g. ats.service.ts's getDashboardStats, which is the query the
@@ -81,8 +76,7 @@ const JOINED_STAGE_SQL = `CASE WHEN ${JOINED_STAGE_PREDICATE} THEN 1 ELSE 0 END`
  * of a column that still misses over half the roster.
  */
 const MOBILE_JOIN_MAP_TTL_MS = 15 * 60 * 1000;
-let _mobileJoinMapCache: { value: Map<string, string>; at: number } | null =
-  null;
+let _mobileJoinMapCache: { value: Map<string, string>; at: number } | null = null;
 let _mobileJoinMapInFlight: Promise<Map<string, string>> | null = null;
 
 /**
@@ -97,15 +91,9 @@ let _mobileJoinMapInFlight: Promise<Map<string, string>> | null = null;
  * its own — that endpoint is hit on every load of a real, frequently-visited page, so a
  * second independent 6.4s query would defeat the point of caching this at all.
  */
-export async function getEmployeeMobileJoinMap(opts?: {
-  force?: boolean;
-}): Promise<Map<string, string>> {
+export async function getEmployeeMobileJoinMap(opts?: { force?: boolean }): Promise<Map<string, string>> {
   const now = Date.now();
-  if (
-    !opts?.force &&
-    _mobileJoinMapCache &&
-    now - _mobileJoinMapCache.at < MOBILE_JOIN_MAP_TTL_MS
-  ) {
+  if (!opts?.force && _mobileJoinMapCache && now - _mobileJoinMapCache.at < MOBILE_JOIN_MAP_TTL_MS) {
     return _mobileJoinMapCache.value;
   }
   // In-flight de-duplication. When the 15-minute entry expired (or on a cold start), every
@@ -119,7 +107,7 @@ export async function getEmployeeMobileJoinMap(opts?: {
       `SELECT mobile, MAX(date_of_joining) as doj
          FROM employees
         WHERE mobile IS NOT NULL AND mobile <> ''
-        GROUP BY mobile`,
+        GROUP BY mobile`
     );
     const value = new Map<string, string>();
     for (const row of rows as RowDataPacket[]) {
@@ -147,26 +135,17 @@ export function resetEmployeeMobileJoinMapCacheForTest(): void {
  * without a database: did this one candidate become an employee, by stage OR identity?
  */
 export function candidateBecameEmployee(
-  candidate: {
-    current_stage: string | null;
-    mobile: string | null;
-    created_at: string | Date;
-  },
+  candidate: { current_stage: string | null; mobile: string | null; created_at: string | Date },
   mobileJoinMap: Map<string, string>,
 ): boolean {
-  const stage = String(candidate.current_stage ?? "")
-    .trim()
-    .toLowerCase();
+  const stage = String(candidate.current_stage ?? '').trim().toLowerCase();
   if ((JOINED_STAGES as readonly string[]).includes(stage)) return true;
 
   if (!candidate.mobile) return false;
   const doj = mobileJoinMap.get(candidate.mobile);
   if (!doj) return false;
 
-  const createdAt =
-    candidate.created_at instanceof Date
-      ? candidate.created_at
-      : new Date(candidate.created_at);
+  const createdAt = candidate.created_at instanceof Date ? candidate.created_at : new Date(candidate.created_at);
   return new Date(doj) >= createdAt;
 }
 
@@ -253,7 +232,7 @@ export async function getUnifiedCandidateCount(): Promise<{
   date_range: { earliest: string; latest: string };
 }> {
   const [rows] = await db.execute<CountRow[]>(
-    `SELECT COUNT(*) as count, MIN(created_at) as earliest, MAX(created_at) as latest FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
+    `SELECT COUNT(*) as count, MIN(created_at) as earliest, MAX(created_at) as latest FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`
   );
   return {
     total: rows[0]?.count || 0,
@@ -267,18 +246,16 @@ export async function getUnifiedCandidateCount(): Promise<{
 /**
  * Get hiring trends over time (monthly aggregation)
  */
-export async function getHiringTrends(months: number = 12): Promise<
-  {
-    month: string;
-    year: number;
-    registrations: number;
-    interviews: number;
-    selections: number;
-  }[]
-> {
+export async function getHiringTrends(months: number = 12): Promise<{
+  month: string;
+  year: number;
+  registrations: number;
+  interviews: number;
+  selections: number;
+}[]> {
   const startDate = new Date();
   startDate.setMonth(startDate.getMonth() - months);
-  const startDateStr = startDate.toISOString().split("T")[0];
+  const startDateStr = startDate.toISOString().split('T')[0];
 
   // New system data
   const [newData] = await db.execute<TrendRow[]>(
@@ -293,10 +270,10 @@ export async function getHiringTrends(months: number = 12): Promise<
     WHERE created_at >= ? AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY month_year, year, month
     ORDER BY month_year`,
-    [startDateStr],
+    [startDateStr]
   );
 
-  return newData.map((row) => ({
+  return newData.map(row => ({
     month: row.month_year,
     year: row.year,
     registrations: row.registrations,
@@ -308,16 +285,14 @@ export async function getHiringTrends(months: number = 12): Promise<
 /**
  * Get source channel performance (lifetime)
  */
-export async function getSourceChannelROI(): Promise<
-  {
-    source_channel: string;
-    total_candidates: number;
-    total_hired: number;
-    conversion_rate: number;
-    avg_time_to_hire_days: number;
-    cost_per_hire?: number; // TODO: Add when cost data available
-  }[]
-> {
+export async function getSourceChannelROI(): Promise<{
+  source_channel: string;
+  total_candidates: number;
+  total_hired: number;
+  conversion_rate: number;
+  avg_time_to_hire_days: number;
+  cost_per_hire?: number; // TODO: Add when cost data available
+}[]> {
   // Per-channel totals and avg_time_to_hire_days — unchanged from before this fix, and
   // deliberately left as AVG(DATEDIFF) over every candidate in the channel, not just the
   // hired ones (that was already this metric's definition; not this change's concern).
@@ -341,8 +316,8 @@ export async function getSourceChannelROI(): Promise<
     `SELECT sourcing_channel as source_channel,
             current_stage, mobile, created_at
        FROM ats_candidate
-      WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
-    ),
+      WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+  ),
   ]);
   const [newData] = newDataResult;
   const [candidateRows] = candidateRowsResult;
@@ -389,15 +364,13 @@ export async function getSourceChannelROI(): Promise<
 /**
  * Get recruiter performance trends
  */
-export async function getRecruiterTrends(recruiterId?: string): Promise<
-  {
-    month: string;
-    interviews_conducted: number;
-    selections_made: number;
-    selection_rate: number;
-    avg_rating: number;
-  }[]
-> {
+export async function getRecruiterTrends(recruiterId?: string): Promise<{
+  month: string;
+  interviews_conducted: number;
+  selections_made: number;
+  selection_rate: number;
+  avg_rating: number;
+}[]> {
   const [results] = await db.execute<RecruiterTrendRow[]>(
     `SELECT
       DATE_FORMAT(interviewed_at, '%Y-%m') as month,
@@ -407,10 +380,10 @@ export async function getRecruiterTrends(recruiterId?: string): Promise<
       ROUND(AVG((communication_rating + stability_rating) / 2), 2) as avg_rating
     FROM ats_interview_result
     WHERE interviewed_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-    ${recruiterId ? "AND recruiter_id = ?" : ""}
+    ${recruiterId ? 'AND recruiter_id = ?' : ''}
     GROUP BY month
     ORDER BY month`,
-    recruiterId ? [recruiterId] : [],
+    recruiterId ? [recruiterId] : []
   );
 
   return results;
@@ -428,10 +401,9 @@ export async function getPredictiveAnalytics(): Promise<{
 }> {
   // Historical pattern analysis
   // The four reads are independent — issued together; the average below is computed after.
-  const [[monthlyHires], [bottleneck], [journeyTime], [peakMonths]] =
-    await Promise.all([
-      db.execute<MonthlyHireRow[]>(
-        `SELECT
+  const [[monthlyHires], [bottleneck], [journeyTime], [peakMonths]] = await Promise.all([
+  db.execute<MonthlyHireRow[]>(
+    `SELECT
       DATE_FORMAT(created_at, '%Y-%m') as month,
       COUNT(*) as hires
     FROM ats_candidate
@@ -439,11 +411,11 @@ export async function getPredictiveAnalytics(): Promise<{
     AND created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
     AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY month
-    ORDER BY month`,
-      ),
-      // Find bottleneck
-      db.execute<StageRow[]>(
-        `SELECT
+    ORDER BY month`
+  ),
+  // Find bottleneck
+  db.execute<StageRow[]>(
+    `SELECT
       current_stage,
       COUNT(*) as stuck_count,
       AVG(DATEDIFF(CURDATE(), updated_at)) as avg_days_stuck
@@ -454,43 +426,38 @@ export async function getPredictiveAnalytics(): Promise<{
     AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY current_stage
     ORDER BY avg_days_stuck DESC
-    LIMIT 1`,
-      ),
-      // Average journey time
-      db.execute<AvgRow[]>(
-        `SELECT AVG(DATEDIFF(updated_at, created_at)) as avg_days
+    LIMIT 1`
+  ),
+  // Average journey time
+  db.execute<AvgRow[]>(
+    `SELECT AVG(DATEDIFF(updated_at, created_at)) as avg_days
     FROM ats_candidate
-    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
-      ),
-      // Calculate actual peak months from data (top 3 months by hire volume)
-      db.execute<RowDataPacket[]>(
-        `SELECT DATE_FORMAT(created_at, '%M') AS month_name, COUNT(*) AS cnt
+    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+  ),
+  // Calculate actual peak months from data (top 3 months by hire volume)
+  db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(created_at, '%M') AS month_name, COUNT(*) AS cnt
      FROM ats_candidate
      WHERE profile_status IN ('onboarded', 'selected')
        AND created_at >= DATE_SUB(CURDATE(), INTERVAL 24 MONTH)
        AND ${EXCLUDE_EMPLOYEE_SHAPED}
      GROUP BY DATE_FORMAT(created_at, '%M')
      ORDER BY cnt DESC
-     LIMIT 3`,
-      ),
-    ]);
+     LIMIT 3`
+  ),
+  ]);
 
   // Calculate average
-  const avgHires =
-    monthlyHires.length > 0
-      ? monthlyHires.reduce((sum, row) => sum + Number(row.hires || 0), 0) /
-        monthlyHires.length
-      : 0;
-  const peakMonthNames = (peakMonths as any[]).map(
-    (r) => r.month_name as string,
-  );
+  const avgHires = monthlyHires.length > 0
+    ? monthlyHires.reduce((sum, row) => sum + Number(row.hires || 0), 0) / monthlyHires.length
+    : 0;
+  const peakMonthNames = (peakMonths as any[]).map(r => r.month_name as string);
 
   return {
     forecasted_hires_next_month: Math.round(avgHires * 1.1),
     recommended_recruiters_needed: Math.max(1, Math.ceil(avgHires / 20)),
-    peak_hiring_months:
-      peakMonthNames.length > 0 ? peakMonthNames : ["Data insufficient"],
-    bottleneck_stage: bottleneck[0]?.current_stage || "None",
+    peak_hiring_months: peakMonthNames.length > 0 ? peakMonthNames : ['Data insufficient'],
+    bottleneck_stage: bottleneck[0]?.current_stage || 'None',
     avg_candidate_journey_days: Math.round(journeyTime[0]?.avg_days || 0),
   };
 }
@@ -524,24 +491,23 @@ export async function getTimeToHireMetrics(): Promise<{
 }> {
   // Overall average
   // Five independent reads over the same joined set — issued together.
-  const [[overall], [byRole], [bySource], [byBranch], [minMax]] =
-    await Promise.all([
-      db.execute<AvgRow[]>(
-        `SELECT AVG(DATEDIFF(updated_at, created_at)) as avg_days
+  const [[overall], [byRole], [bySource], [byBranch], [minMax]] = await Promise.all([
+  db.execute<AvgRow[]>(
+    `SELECT AVG(DATEDIFF(updated_at, created_at)) as avg_days
     FROM ats_candidate
-    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
-      ),
+    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+  ),
 
-      // By role
-      db.execute<RoleDayRow[]>(
-        `SELECT
+  // By role
+  db.execute<RoleDayRow[]>(
+    `SELECT
       COALESCE(role_applied, applied_for_process) as role,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
     FROM ats_candidate
     WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY COALESCE(role_applied, applied_for_process)
-    ORDER BY avg_days`,
-      ),
+    ORDER BY avg_days`
+  ),
 
   // By source
   db.execute<SourceDayRow[]>(
@@ -552,29 +518,29 @@ export async function getTimeToHireMetrics(): Promise<{
     FROM ats_candidate
     WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY sourcing_channel
-    ORDER BY avg_days`,
-      ),
+    ORDER BY avg_days`
+  ),
 
-      // By branch
-      db.execute<BranchDayRow[]>(
-        `SELECT
+  // By branch
+  db.execute<BranchDayRow[]>(
+    `SELECT
       branch_display_name as branch,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
     FROM ats_candidate
     WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY branch_display_name
-    ORDER BY avg_days`,
-      ),
+    ORDER BY avg_days`
+  ),
 
-      // Min/Max
-      db.execute<MinMaxRow[]>(
-        `SELECT
+  // Min/Max
+  db.execute<MinMaxRow[]>(
+    `SELECT
       MIN(DATEDIFF(updated_at, created_at)) as fastest,
       MAX(DATEDIFF(updated_at, created_at)) as slowest
     FROM ats_candidate
-    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
-      ),
-    ]);
+    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+  ),
+  ]);
 
   return {
     overall_avg_days: Math.round(overall[0]?.avg_days || 0),
@@ -588,25 +554,14 @@ export async function getTimeToHireMetrics(): Promise<{
 
 // Whitelist: only these column names may appear in filter keys or groupBy
 const ALLOWED_FILTER_COLUMNS = new Set([
-  "applied_for_branch",
-  "current_stage",
-  "sourcing_channel",
-  "experience",
-  "gender",
-  "branch_display_name",
-  "active_status",
+  'applied_for_branch', 'current_stage', 'sourcing_channel',
+  'experience', 'gender', 'branch_display_name', 'active_status',
 ]);
 
 const ALLOWED_GROUP_BY = new Set([
-  "applied_for_branch",
-  "current_stage",
-  "sourcing_channel",
-  "experience",
-  "gender",
-  "branch_display_name",
-  "MONTH(created_at)",
-  "YEAR(created_at)",
-  "DATE(created_at)",
+  'applied_for_branch', 'current_stage', 'sourcing_channel',
+  'experience', 'gender', 'branch_display_name',
+  'MONTH(created_at)', 'YEAR(created_at)', 'DATE(created_at)',
 ]);
 
 /**
@@ -628,17 +583,15 @@ export async function getCustomReport(params: {
 
   // Build metric SELECT clauses (hardcoded — never interpolated from user input)
   const metricClauses: string[] = [groupBy];
-  metrics.forEach((metric) => {
+  metrics.forEach(metric => {
     switch (metric) {
-      case "count":
-        metricClauses.push("COUNT(*) as total_count");
+      case 'count':
+        metricClauses.push('COUNT(*) as total_count');
         break;
-      case "avg_time_to_hire":
-        metricClauses.push(
-          "AVG(DATEDIFF(updated_at, created_at)) as avg_time_to_hire",
-        );
+      case 'avg_time_to_hire':
+        metricClauses.push('AVG(DATEDIFF(updated_at, created_at)) as avg_time_to_hire');
         break;
-      case "conversion_rate":
+      case 'conversion_rate':
         // Same dead literal as getSourceChannelROI had (double-quoted here, which is why
         // the guard test for that one — a single-quote regex — didn't already catch this
         // site). Routed through JOINED_STAGE_SQL, not candidateBecameEmployee()'s identity
@@ -647,9 +600,7 @@ export async function getCustomReport(params: {
         // doesn't compose with a dynamic SQL string built from a metrics/groupBy whitelist.
         // So this metric is stage-only — consistent and no longer arithmetically zero, but
         // narrower than the source-channel ROI figure above.
-        metricClauses.push(
-          `ROUND((SUM(${JOINED_STAGE_SQL}) / COUNT(*)) * 100, 2) as conversion_rate`,
-        );
+        metricClauses.push(`ROUND((SUM(${JOINED_STAGE_SQL}) / COUNT(*)) * 100, 2) as conversion_rate`);
         break;
     }
   });
@@ -659,20 +610,12 @@ export async function getCustomReport(params: {
     return [];
   }
 
-  const queryParts: string[] = [
-    `SELECT ${metricClauses.join(", ")} FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`,
-  ];
+  const queryParts: string[] = [`SELECT ${metricClauses.join(', ')} FROM ats_candidate WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`];
   const queryParams: unknown[] = [];
 
   // Date filters — values go through parameterized placeholders
-  if (dateFrom) {
-    queryParts.push("AND created_at >= ?");
-    queryParams.push(dateFrom);
-  }
-  if (dateTo) {
-    queryParts.push("AND created_at <= ?");
-    queryParams.push(dateTo);
-  }
+  if (dateFrom) { queryParts.push('AND created_at >= ?'); queryParams.push(dateFrom); }
+  if (dateTo)   { queryParts.push('AND created_at <= ?'); queryParams.push(dateTo); }
 
   // Custom filters — keys validated against whitelist, values parameterized
   if (filters) {
@@ -687,9 +630,6 @@ export async function getCustomReport(params: {
 
   queryParts.push(`GROUP BY ${groupBy}`);
 
-  const [results] = await db.execute<RowDataPacket[]>(
-    queryParts.join(" "),
-    queryParams,
-  );
+  const [results] = await db.execute<RowDataPacket[]>(queryParts.join(' '), queryParams);
   return results as Record<string, unknown>[];
 }

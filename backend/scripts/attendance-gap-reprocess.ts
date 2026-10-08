@@ -38,32 +38,18 @@
  */
 import sql from "mssql";
 import { db } from "../src/db/mysql.js";
-import {
-  migratePunchGroup,
-  assessmentModeForPunchDate,
-} from "../src/modules/wfm/cosec-sync.service.js";
+import { migratePunchGroup, assessmentModeForPunchDate } from "../src/modules/wfm/cosec-sync.service.js";
 
 const APPLY = process.argv.includes("--apply");
-const FROM =
-  process.argv.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) ?? "2026-07-01";
-const TO =
-  process.argv.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a))[1] ?? "2026-08-11";
+const FROM = process.argv.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) ?? "2026-07-01";
+const TO = process.argv.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a))[1] ?? "2026-08-11";
 
 type PunchGroup = {
-  cosecUserId: string;
-  punchDate: string;
-  firstPunch: string;
-  lastPunch: string;
-  totalPunches: number;
-  workingMinutes: number;
-  sourceSystem: string;
-  sourceTable: string;
+  cosecUserId: string; punchDate: string; firstPunch: string; lastPunch: string;
+  totalPunches: number; workingMinutes: number; sourceSystem: string; sourceTable: string;
 };
 
-async function pullCosecPunches(
-  from: string,
-  to: string,
-): Promise<PunchGroup[]> {
+async function pullCosecPunches(from: string, to: string): Promise<PunchGroup[]> {
   const pool = await sql.connect({
     server: process.env.NCOSEC_DB_HOST!,
     port: Number(process.env.NCOSEC_DB_PORT ?? 1433),
@@ -74,10 +60,7 @@ async function pullCosecPunches(
     connectionTimeout: 45_000,
     requestTimeout: 180_000,
   });
-  const r = await pool
-    .request()
-    .input("fromDate", sql.Date, from)
-    .input("toDate", sql.Date, to).query(`
+  const r = await pool.request().input("fromDate", sql.Date, from).input("toDate", sql.Date, to).query(`
     SELECT
       CAST([UserID] AS NVARCHAR(100)) AS user_id,
       CONVERT(CHAR(10), CAST([Edatetime] AS DATE), 23) AS punch_date,
@@ -120,10 +103,7 @@ async function detectGaps() {
   );
   const empIdByCode = new Map(employees.map((e) => [e.employee_code, e.id]));
   const existingKeys = new Set(
-    existingAdr.map(
-      (r) =>
-        `${r.employee_id}__${r.record_date.toISOString?.().slice(0, 10) ?? r.record_date}`,
-    ),
+    existingAdr.map((r) => `${r.employee_id}__${r.record_date.toISOString?.().slice(0, 10) ?? r.record_date}`),
   );
   const gaps = cohortPunches.filter((p) => {
     const empId = empIdByCode.get(p.cosecUserId);
@@ -141,97 +121,55 @@ async function detectGaps() {
 
   const byEmp: Record<string, number> = {};
   for (const g of gaps) byEmp[g.cosecUserId] = (byEmp[g.cosecUserId] ?? 0) + 1;
-  console.log(
-    `distinct employees with at least one gap: ${Object.keys(byEmp).length}`,
-  );
+  console.log(`distinct employees with at least one gap: ${Object.keys(byEmp).length}`);
 
-  if (!gaps.length) {
-    console.log("nothing to do");
-    await db.end();
-    return;
-  }
+  if (!gaps.length) { console.log("nothing to do"); await db.end(); return; }
 
   if (!APPLY) {
-    console.log(
-      `\nDRY RUN — nothing written. Re-run with --apply to migrate these ${gaps.length} rows`,
-    );
-    console.log(
-      `through the real production write path (migratePunchGroup), scoped to only`,
-    );
-    console.log(
-      `this cohort. Final status/LWP will reflect real overrides (leave/holiday/`,
-    );
-    console.log(
-      `week-off), unlike the ceiling estimate in attendance-gap-reprocess-dry-run.ts.`,
-    );
+    console.log(`\nDRY RUN — nothing written. Re-run with --apply to migrate these ${gaps.length} rows`);
+    console.log(`through the real production write path (migratePunchGroup), scoped to only`);
+    console.log(`this cohort. Final status/LWP will reflect real overrides (leave/holiday/`);
+    console.log(`week-off), unlike the ceiling estimate in attendance-gap-reprocess-dry-run.ts.`);
     await db.end();
     return;
   }
 
-  console.log(
-    `\n*** APPLYING — writing through migratePunchGroup for ${gaps.length} rows ***`,
-  );
-  let migrated = 0,
-    unmapped = 0,
-    failed = 0;
-  const failures: Array<{
-    cosecUserId: string;
-    punchDate: string;
-    error: string;
-  }> = [];
+  console.log(`\n*** APPLYING — writing through migratePunchGroup for ${gaps.length} rows ***`);
+  let migrated = 0, unmapped = 0, failed = 0;
+  const failures: Array<{ cosecUserId: string; punchDate: string; error: string }> = [];
   let i = 0;
   for (const g of gaps) {
     i++;
     const mode = assessmentModeForPunchDate(g.punchDate, TO);
     try {
       const result = await migratePunchGroup(g, mode);
-      if (result === "migrated") migrated++;
-      else unmapped++;
+      if (result === "migrated") migrated++; else unmapped++;
     } catch (e: any) {
       failed++;
-      failures.push({
-        cosecUserId: g.cosecUserId,
-        punchDate: g.punchDate,
-        error: e?.message ?? String(e),
-      });
+      failures.push({ cosecUserId: g.cosecUserId, punchDate: g.punchDate, error: e?.message ?? String(e) });
     }
     if (i % 200 === 0) console.log(`  ...${i}/${gaps.length}`);
   }
 
   console.log(`\nmigrated=${migrated} unmapped=${unmapped} failed=${failed}`);
   if (failures.length) {
-    console.log(
-      "failures (first 20):",
-      JSON.stringify(failures.slice(0, 20), null, 2),
-    );
+    console.log("failures (first 20):", JSON.stringify(failures.slice(0, 20), null, 2));
   }
 
   const after = await detectGaps();
-  console.log(
-    `\nADR rows for cohort AFTER: ${after.adrCountBefore} (was ${adrCountBefore}, +${after.adrCountBefore - adrCountBefore})`,
-  );
+  console.log(`\nADR rows for cohort AFTER: ${after.adrCountBefore} (was ${adrCountBefore}, +${after.adrCountBefore - adrCountBefore})`);
   console.log(`remaining gap rows: ${after.gaps.length}`);
   if (after.gaps.length > 0) {
-    console.log(
-      `NOT reconciled — ${after.gaps.length} rows still missing. Re-run this script`,
-    );
+    console.log(`NOT reconciled — ${after.gaps.length} rows still missing. Re-run this script`);
     console.log(`(idempotent) to retry, or inspect the failures above.`);
   } else {
-    console.log(
-      `*** RECONCILED — zero remaining gaps for this cohort in this window ***`,
-    );
-    console.log(
-      `Next: recompute July payroll impact for these employees before the run closes.`,
-    );
+    console.log(`*** RECONCILED — zero remaining gaps for this cohort in this window ***`);
+    console.log(`Next: recompute July payroll impact for these employees before the run closes.`);
   }
 
   await db.end();
 })().catch(async (e) => {
   console.error("ERR", e?.message ?? e);
-  try {
-    await db.end();
-  } catch {
-    /* ignore */
-  }
+  try { await db.end(); } catch { /* ignore */ }
   process.exit(1);
 });

@@ -13,10 +13,7 @@ import {
  * in-memory SQLite database (node:sqlite) when available; the string-level checks always run.
  */
 
-type Sqlite = {
-  exec(sql: string): void;
-  prepare(sql: string): { all(...p: unknown[]): unknown[] };
-};
+type Sqlite = { exec(sql: string): void; prepare(sql: string): { all(...p: unknown[]): unknown[] } };
 let sqlite: Sqlite | null = null;
 try {
   const mod = await import("node:sqlite" as string);
@@ -31,9 +28,7 @@ const ALL_COLUMNS = new Set([
 ]);
 
 function evalLine(expr: string): number {
-  const row = sqlite!
-    .prepare(`SELECT ${expr} AS v FROM salary_prep_line l`)
-    .all()[0] as { v: number };
+  const row = sqlite!.prepare(`SELECT ${expr} AS v FROM salary_prep_line l`).all()[0] as { v: number };
   return Number(row.v);
 }
 
@@ -44,12 +39,7 @@ describe("peopleCostSql — string level", () => {
       "other_deductions", "loan_emi", "advance_recovery", "lwp_deduction"]) {
       expect(sql).toContain(`COALESCE(l.${c}, 0)`);
     }
-    for (const c of [
-      "pf_employee",
-      "esic_employee",
-      "professional_tax",
-      "tds",
-    ]) {
+    for (const c of ["pf_employee", "esic_employee", "professional_tax", "tds"]) {
       expect(sql).not.toContain(c);
     }
   });
@@ -59,10 +49,7 @@ describe("peopleCostSql — string level", () => {
   });
 
   it("column-aware variant drops missing columns to 0 and keeps the basic × 4.81% gratuity fallback", () => {
-    const exprs = peopleCostExprsForColumns(
-      "spl",
-      new Set(["gross_salary", "basic", "loan_emi"]),
-    );
+    const exprs = peopleCostExprsForColumns("spl", new Set(["gross_salary", "basic", "loan_emi"]));
     expect(exprs.pfEmployer).toBe("0");
     expect(exprs.esicEmployer).toBe("0");
     expect(exprs.gratuity).toBe("COALESCE(spl.basic, 0) * 0.0481");

@@ -9,19 +9,13 @@ import { memoizeForRequest } from "./requestContext.js";
  * Returns employee if active OR inactive with valid grace period.
  * Returns null if no employee mapped to this user or grace period expired.
  */
-export async function getEmployeeForUser(
-  userId: string,
-): Promise<{ id: string; employee_code: string } | null> {
+export async function getEmployeeForUser(userId: string): Promise<{ id: string; employee_code: string } | null> {
   // Memoised per request — several routes resolve the caller's employee record
   // more than once while serving a single call.
-  return memoizeForRequest(`emp:${userId}`, () =>
-    resolveEmployeeForUser(userId),
-  );
+  return memoizeForRequest(`emp:${userId}`, () => resolveEmployeeForUser(userId));
 }
 
-async function resolveEmployeeForUser(
-  userId: string,
-): Promise<{ id: string; employee_code: string } | null> {
+async function resolveEmployeeForUser(userId: string): Promise<{ id: string; employee_code: string } | null> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id, e.employee_code
@@ -37,12 +31,9 @@ async function resolveEmployeeForUser(
           CASE WHEN e.employee_code LIKE 'ADMIN%' THEN 1 ELSE 0 END,
           e.updated_at DESC
         LIMIT 1`,
-      [userId],
+      [userId]
     );
-    return (
-      ((rows as RowDataPacket[])[0] as { id: string; employee_code: string }) ??
-      null
-    );
+    return (rows as RowDataPacket[])[0] as { id: string; employee_code: string } ?? null;
   } catch {
     // Fallback for when migration 215 (access_end_date column) hasn't run yet
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -58,12 +49,9 @@ async function resolveEmployeeForUser(
           CASE WHEN e.employee_code LIKE 'ADMIN%' THEN 1 ELSE 0 END,
           e.updated_at DESC
         LIMIT 1`,
-      [userId],
+      [userId]
     );
-    return (
-      ((rows as RowDataPacket[])[0] as { id: string; employee_code: string }) ??
-      null
-    );
+    return (rows as RowDataPacket[])[0] as { id: string; employee_code: string } ?? null;
   }
 }
 
@@ -72,23 +60,15 @@ async function resolveEmployeeForUser(
  * from user_roles or from an active scoped assignment; both are authoritative
  * MySQL access records and must be evaluated together.
  */
-export async function hasRole(
-  userId: string,
-  ...roles: string[]
-): Promise<boolean> {
-  const normalizedRequested = new Set(
-    roles.map((role) => String(role).trim().toLowerCase()),
-  );
+export async function hasRole(userId: string, ...roles: string[]): Promise<boolean> {
+  const normalizedRequested = new Set(roles.map((role) => String(role).trim().toLowerCase()));
   if (normalizedRequested.size === 0) return false;
 
   // Memoise the ROLE SET, not the boolean answer: a single request asks about
   // different role combinations, and they can all be served from one query.
-  const userRoles = await memoizeForRequest(`roles:${userId}`, () =>
-    fetchUserRoles(userId),
-  );
+  const userRoles = await memoizeForRequest(`roles:${userId}`, () => fetchUserRoles(userId));
 
-  if (userRoles.includes("super_admin") || userRoles.includes("admin"))
-    return true;
+  if (userRoles.includes("super_admin") || userRoles.includes("admin")) return true;
   return userRoles.some((role) => normalizedRequested.has(role));
 }
 
@@ -118,18 +98,10 @@ export async function hasRoleForRequest(
 ): Promise<boolean> {
   if (!user?.id) return false;
 
-  if (
-    user.isDemo === true &&
-    process.env.INTERNAL_DEMO_BYPASS === "true" &&
-    process.env.NODE_ENV !== "production"
-  ) {
-    const demoRole = String(user.role ?? "employee")
-      .trim()
-      .toLowerCase();
+  if (user.isDemo === true && process.env.INTERNAL_DEMO_BYPASS === "true" && process.env.NODE_ENV !== "production") {
+    const demoRole = String(user.role ?? "employee").trim().toLowerCase();
     if (demoRole === "super_admin" || demoRole === "admin") return true;
-    return roles
-      .map((role) => String(role).trim().toLowerCase())
-      .includes(demoRole);
+    return roles.map((role) => String(role).trim().toLowerCase()).includes(demoRole);
   }
 
   return hasRole(user.id, ...roles);
@@ -149,25 +121,17 @@ export async function hasRoleForRequest(
  * this codebase remains open — see the fuller note in roleResolver.ts.
  */
 async function fetchUserRoles(userId: string): Promise<string[]> {
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1
      UNION
      SELECT role_key FROM user_assignment_scope WHERE user_id = ? AND active_status = 1`,
-      [userId, userId],
-    )
-    .catch(async () =>
-      db.execute<RowDataPacket[]>(
-        "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
-        [userId],
-      ),
-    );
+    [userId, userId],
+  ).catch(async () => db.execute<RowDataPacket[]>(
+    "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+    [userId],
+  ));
   const roles = (rows as { role_key: string }[])
-    .map((row) =>
-      String(row.role_key ?? "")
-        .trim()
-        .toLowerCase(),
-    )
+    .map((row) => String(row.role_key ?? "").trim().toLowerCase())
     .filter(Boolean);
   if (roles.length > 0) return roles;
 
@@ -185,6 +149,7 @@ async function fetchUserRoles(userId: string): Promise<string[]> {
   }
   return [];
 }
+
 
 /**
  * MySQL-authoritative scope check for process-owned workflows.
@@ -228,7 +193,7 @@ export async function hasProcessScope(
           )
         )
       LIMIT 1`,
-    [userId, ...roles, processId, branchId ?? null, branchId ?? null],
+    [userId, ...roles, processId, branchId ?? null, branchId ?? null]
   );
 
   return rows.length > 0;
@@ -240,11 +205,7 @@ export async function hasProcessScope(
  * 403 otherwise.
  */
 export function selfOrAdminHr(employeeIdParam = "id") {
-  return async (
-    req: AuthenticatedRequest & Request,
-    res: Response,
-    next: NextFunction,
-  ) => {
+  return async (req: AuthenticatedRequest & Request, res: Response, next: NextFunction) => {
     try {
       const userId = req.authUser!.id;
       const targetEmployeeId = (req as Request).params[employeeIdParam];

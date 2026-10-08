@@ -42,10 +42,7 @@ export async function resolveCandidateScope(userId: string, alias?: string): Pro
  * accidentally fetch the row first and check afterwards — the shape that leaks data through
  * error messages and timing.
  */
-export async function canAccessCandidate(
-  userId: string,
-  candidateId: string,
-): Promise<boolean> {
+export async function canAccessCandidate(userId: string, candidateId: string): Promise<boolean> {
   const scope = await resolveCandidateScope(userId);
   if (scope.sql === "1=0") return false;
 

@@ -27,11 +27,7 @@ export interface BuildInfo {
   builtAt: string;
 }
 
-export const UNKNOWN_BUILD: BuildInfo = {
-  commit: "unknown",
-  branch: "unknown",
-  builtAt: "unknown",
-};
+export const UNKNOWN_BUILD: BuildInfo = { commit: "unknown", branch: "unknown", builtAt: "unknown" };
 
 /**
  * Cached after the first read: the file cannot change without a redeploy, and a redeploy
@@ -45,9 +41,7 @@ let cached: BuildInfo | null = null;
 export function readBuildInfo(): BuildInfo {
   if (cached) return cached;
   try {
-    const path = fileURLToPath(
-      new URL("../../build-info.json", import.meta.url),
-    );
+    const path = fileURLToPath(new URL("../../build-info.json", import.meta.url));
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<BuildInfo>;
     cached = {
       commit: parsed.commit || "unknown",

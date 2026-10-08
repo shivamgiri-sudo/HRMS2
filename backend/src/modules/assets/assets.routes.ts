@@ -11,16 +11,11 @@ import { assetParamGuard, assetScopeSql, canAssignToEmployee, canUseBranch } fro
 import { resolveCallerBranchScope } from "../org/branchScope.js";
 
 const router = Router();
-type AsyncHandler = (
-  req: AuthenticatedRequest,
-  res: Response,
-) => Promise<unknown>;
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 
-const h =
-  (fn: AsyncHandler) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    void fn(req, res).catch(next);
-  };
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 router.use(requireAuth);
 
@@ -50,11 +45,9 @@ router.post("/", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest,
 }));
 
 // Employee self-service: own assignments only; admin/hr can query any employee
-router.get(
-  "/employee/:employeeId",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    const targetId = req.params.employeeId;
+router.get("/employee/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const targetId = req.params.employeeId;
 
   if (await hasRole(userId, "admin", "hr")) {
     if (!(await canAssignToEmployee(req.authUser!, targetId))) {
@@ -63,35 +56,26 @@ router.get(
     return res.json({ data: await assetsService.listByEmployee(targetId) });
   }
 
-    const callerEmp = await getEmployeeForUser(userId);
-    if (!callerEmp || callerEmp.id !== targetId) {
-      return res.status(403).json({ success: false, message: "Forbidden" });
-    }
+  const callerEmp = await getEmployeeForUser(userId);
+  if (!callerEmp || callerEmp.id !== targetId) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
 
-    res.json({ data: await assetsService.listByEmployee(targetId) });
-  }),
-);
+  res.json({ data: await assetsService.listByEmployee(targetId) });
+}));
 
-router.get(
-  "/:id/history",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const asset = await assetsService.getById(req.params.id);
-    if (!asset) return res.status(404).json({ error: "Asset not found" });
-    res.json({ data: await assetsService.getHistory(req.params.id) });
-  }),
-);
+router.get("/:id/history", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const asset = await assetsService.getById(req.params.id);
+  if (!asset) return res.status(404).json({ error: "Asset not found" });
+  res.json({ data: await assetsService.getHistory(req.params.id) });
+}));
 
 // Asset detail: admin/hr only
-router.get(
-  "/:id",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const asset = await assetsService.getById(req.params.id);
-    if (!asset) return res.status(404).json({ error: "Not found" });
-    res.json({ data: asset });
-  }),
-);
+router.get("/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const asset = await assetsService.getById(req.params.id);
+  if (!asset) return res.status(404).json({ error: "Not found" });
+  res.json({ data: asset });
+}));
 
 router.put("/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   // Moving an asset to another branch is only allowed into a branch the caller may act for.
@@ -111,51 +95,28 @@ router.post("/:id/assign", requireRole("admin", "hr"), h(async (req: Authenticat
   res.status(201).json({ data: assignment });
 }));
 
-router.post(
-  "/:id/return",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { condition } = req.body;
-    await assetsService.returnAsset(
-      req.params.id,
-      condition ?? "good",
-      req.authUser!.id,
-      req,
-    );
-    res.json({ ok: true });
-  }),
-);
+router.post("/:id/return", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { condition } = req.body;
+  await assetsService.returnAsset(req.params.id, condition ?? "good", req.authUser!.id, req);
+  res.json({ ok: true });
+}));
 
-router.post(
-  "/:id/service",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const id = await assetsService.addServiceLog(req.params.id, req.body);
-    res.status(201).json({ data: { id } });
-  }),
-);
+router.post("/:id/service", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const id = await assetsService.addServiceLog(req.params.id, req.body);
+  res.status(201).json({ data: { id } });
+}));
 
-router.delete(
-  "/:id",
-  requireRole("admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const asset = await assetsService.getById(req.params.id);
-    if (!asset) return res.status(404).json({ error: "Asset not found" });
-    await db.execute(
-      "UPDATE asset_master SET active_status = 0, updated_at = NOW() WHERE id = ?",
-      [req.params.id],
-    );
-    await logSensitiveAction({
-      actor_user_id: req.authUser!.id,
-      action_type: "ASSET_DELETED",
-      module_key: "ASSETS",
-      entity_type: "asset",
-      entity_id: req.params.id,
-      change_summary: { asset_code: asset.asset_code },
-      req,
-    });
-    res.json({ ok: true });
-  }),
-);
+router.delete("/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const asset = await assetsService.getById(req.params.id);
+  if (!asset) return res.status(404).json({ error: "Asset not found" });
+  await db.execute("UPDATE asset_master SET active_status = 0, updated_at = NOW() WHERE id = ?", [req.params.id]);
+  await logSensitiveAction({
+    actor_user_id: req.authUser!.id, action_type: "ASSET_DELETED", module_key: "ASSETS",
+    entity_type: "asset", entity_id: req.params.id,
+    change_summary: { asset_code: asset.asset_code },
+    req,
+  });
+  res.json({ ok: true });
+}));
 
 export { router as assetsRouter };

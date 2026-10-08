@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { resolvePrimaryRole } from "../roleResolver.js";
-import {
-  DASHBOARD_ACCESS_REGISTRY,
-  normalizeDashboardRole,
-} from "../dashboardAccessRegistry.js";
+import { DASHBOARD_ACCESS_REGISTRY, normalizeDashboardRole } from "../dashboardAccessRegistry.js";
 import { SCOPE_BEARING_ROLES } from "../dashboardScope.js";
 
 /**
@@ -41,21 +38,14 @@ const operationalRoles = registryRoles.filter((role) =>
   Object.values(DASHBOARD_ACCESS_REGISTRY).some(
     (definition) =>
       definition.code !== "EMPLOYEE_SELF_DASHBOARD" &&
-      definition.allowedRoleKeys.some(
-        (allowed) => normalizeDashboardRole(allowed) === role,
-      ),
+      definition.allowedRoleKeys.some((allowed) => normalizeDashboardRole(allowed) === role),
   ),
 );
 
 describe("dashboard scope role coverage", () => {
   it("every role admitted to an operational dashboard carries a scope tier", () => {
-    const missing = operationalRoles.filter(
-      (role) => !SCOPE_BEARING_ROLES.has(role),
-    );
-    expect(
-      missing,
-      `roles with no tier in dashboardScope.ts — these resolve to SELF_ONLY`,
-    ).toEqual([]);
+    const missing = operationalRoles.filter((role) => !SCOPE_BEARING_ROLES.has(role));
+    expect(missing, `roles with no tier in dashboardScope.ts — these resolve to SELF_ONLY`).toEqual([]);
   });
 
   it("no scope-bearing role loses primaryRole to plain employee", () => {
@@ -71,10 +61,7 @@ describe("dashboard scope role coverage", () => {
         !["employee", "agent", "trainee"].includes(role) &&
         resolvePrimaryRole([role, "employee"]) === "employee",
     );
-    expect(
-      demoted,
-      "roles missing from ROLE_PRIORITY in roleResolver.ts",
-    ).toEqual([]);
+    expect(demoted, "roles missing from ROLE_PRIORITY in roleResolver.ts").toEqual([]);
   });
 
   it("a role never loses primaryRole to a role of its own tier or lower", () => {
@@ -82,17 +69,9 @@ describe("dashboard scope role coverage", () => {
     // importantly a head-office role must beat the process-tier role it commonly co-holds.
     expect(resolvePrimaryRole(["it_head", "employee"])).toBe("it_head");
     expect(resolvePrimaryRole(["it", "employee"])).toBe("it");
-    expect(resolvePrimaryRole(["tq_head", "qa_manager", "employee"])).toBe(
-      "tq_head",
-    );
-    expect(resolvePrimaryRole(["tq_head", "quality_analyst", "employee"])).toBe(
-      "tq_head",
-    );
-    expect(resolvePrimaryRole(["branch_admin", "employee"])).toBe(
-      "branch_admin",
-    );
-    expect(resolvePrimaryRole(["operations_manager", "employee"])).toBe(
-      "operations_manager",
-    );
+    expect(resolvePrimaryRole(["tq_head", "qa_manager", "employee"])).toBe("tq_head");
+    expect(resolvePrimaryRole(["tq_head", "quality_analyst", "employee"])).toBe("tq_head");
+    expect(resolvePrimaryRole(["branch_admin", "employee"])).toBe("branch_admin");
+    expect(resolvePrimaryRole(["operations_manager", "employee"])).toBe("operations_manager");
   });
 });

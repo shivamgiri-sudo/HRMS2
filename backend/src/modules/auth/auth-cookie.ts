@@ -18,9 +18,7 @@ const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseco
  * Secure cookies require HTTPS
  */
 function isSecureContext(): boolean {
-  return (
-    env.NODE_ENV === "production" || process.env.FORCE_SECURE_COOKIES === "true"
-  );
+  return env.NODE_ENV === "production" || process.env.FORCE_SECURE_COOKIES === "true";
 }
 
 /**
@@ -42,15 +40,10 @@ function getCookieDomain(): string | undefined {
 
   // Validate the domain format
   // Must be a valid domain without protocol, path, or port
-  const domainPattern =
-    /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
+  const domainPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
   if (!domainPattern.test(explicitDomain)) {
-    console.error(
-      `[auth-cookie] Invalid COOKIE_DOMAIN format: ${explicitDomain}`,
-    );
-    console.error(
-      "[auth-cookie] COOKIE_DOMAIN must be a valid domain (e.g., 'example.com' or '.example.com')",
-    );
+    console.error(`[auth-cookie] Invalid COOKIE_DOMAIN format: ${explicitDomain}`);
+    console.error("[auth-cookie] COOKIE_DOMAIN must be a valid domain (e.g., 'example.com' or '.example.com')");
     return undefined;
   }
 
@@ -74,7 +67,7 @@ export interface RefreshTokenCookieOptions {
 export function setRefreshTokenCookie(
   res: Response,
   refreshToken: string,
-  options?: RefreshTokenCookieOptions,
+  options?: RefreshTokenCookieOptions
 ): void {
   const maxAge = options?.maxAgeMs ?? REFRESH_TOKEN_MAX_AGE_MS;
   const secure = isSecureContext();
@@ -117,8 +110,7 @@ export function clearRefreshTokenCookie(res: Response): void {
  * during migration period only. This should be removed once all clients
  * have migrated to cookie-based refresh.
  */
-const ALLOW_LEGACY_TRANSPORT =
-  process.env.AUTH_ALLOW_LEGACY_REFRESH_TRANSPORT === "true";
+const ALLOW_LEGACY_TRANSPORT = process.env.AUTH_ALLOW_LEGACY_REFRESH_TRANSPORT === "true";
 
 /**
  * Extract refresh token from httpOnly cookie.
@@ -128,9 +120,7 @@ const ALLOW_LEGACY_TRANSPORT =
  */
 export function getRefreshTokenFromRequest(req: Request): string | null {
   // Primary: httpOnly cookie (secure)
-  const cookieToken =
-    req.cookies?.[REFRESH_TOKEN_COOKIE_NAME] ??
-    getRefreshTokenFromCookieHeader(req);
+  const cookieToken = req.cookies?.[REFRESH_TOKEN_COOKIE_NAME] ?? getRefreshTokenFromCookieHeader(req);
   if (cookieToken && typeof cookieToken === "string") {
     return cookieToken;
   }
@@ -139,9 +129,7 @@ export function getRefreshTokenFromRequest(req: Request): string | null {
   if (ALLOW_LEGACY_TRANSPORT) {
     const bodyToken = req.body?.refreshToken;
     if (bodyToken && typeof bodyToken === "string") {
-      console.warn(
-        "[auth-cookie] LEGACY: refresh token in body - migrate to cookies",
-      );
+      console.warn("[auth-cookie] LEGACY: refresh token in body - migrate to cookies");
       return bodyToken;
     }
   }
@@ -158,11 +146,9 @@ export function isLegacyRefreshTokenTransport(req: Request): boolean {
     return false;
   }
 
-  const hasBodyToken =
-    req.body?.refreshToken && typeof req.body.refreshToken === "string";
+  const hasBodyToken = req.body?.refreshToken && typeof req.body.refreshToken === "string";
   const hasCookieToken =
-    (req.cookies?.[REFRESH_TOKEN_COOKIE_NAME] &&
-      typeof req.cookies[REFRESH_TOKEN_COOKIE_NAME] === "string") ||
+    (req.cookies?.[REFRESH_TOKEN_COOKIE_NAME] && typeof req.cookies[REFRESH_TOKEN_COOKIE_NAME] === "string") ||
     !!getRefreshTokenFromCookieHeader(req);
 
   return hasBodyToken && !hasCookieToken;

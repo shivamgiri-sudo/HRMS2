@@ -54,10 +54,7 @@ describe("payroll-run employee selection gates on payroll-head review", () => {
     const flagIdx = body.indexOf("payroll_head_review_gate_enabled");
     const pushIdx = body.indexOf("empConds.push", flagIdx);
     const ifIdx = body.lastIndexOf("if (", pushIdx);
-    expect(
-      ifIdx,
-      "the empConds.push for the gate must be inside an if-block",
-    ).toBeGreaterThan(flagIdx);
+    expect(ifIdx, "the empConds.push for the gate must be inside an if-block").toBeGreaterThan(flagIdx);
     expect(pushIdx).toBeGreaterThan(ifIdx);
   });
 
@@ -65,27 +62,21 @@ describe("payroll-run employee selection gates on payroll-head review", () => {
     // The gate clause is a fixed string with no `?` — introducing one here
     // without a matching empParams.push would silently misalign every
     // parameter bound after it in the surrounding query.
-    const gateClauseMatch = body.match(
-      /NOT EXISTS \(SELECT 1 FROM employee_payroll_head_review[\s\S]*?\)\)/,
-    );
+    const gateClauseMatch = body.match(/NOT EXISTS \(SELECT 1 FROM employee_payroll_head_review[\s\S]*?\)\)/);
     expect(gateClauseMatch, "gate clause must be found").toBeTruthy();
     expect(gateClauseMatch![0]).not.toContain("?");
   });
 });
 
 describe("employee creation seeds a pending_review row in the same transaction", () => {
-  const orchestratorSrc = read(
-    "src/modules/employees/employee-creation-orchestrator.service.ts",
-  );
+  const orchestratorSrc = read("src/modules/employees/employee-creation-orchestrator.service.ts");
 
   it("inserts into employee_payroll_head_review", () => {
     expect(orchestratorSrc).toContain("employee_payroll_head_review");
   });
 
   it("starts every new employee at pending_review, never pre-approved", () => {
-    const idx = orchestratorSrc.indexOf(
-      "INSERT IGNORE INTO employee_payroll_head_review",
-    );
+    const idx = orchestratorSrc.indexOf("INSERT IGNORE INTO employee_payroll_head_review");
     expect(idx).toBeGreaterThan(-1);
     const stmt = orchestratorSrc.slice(idx, idx + 400);
     expect(stmt).toContain("'pending_review'");
@@ -93,25 +84,15 @@ describe("employee creation seeds a pending_review row in the same transaction",
   });
 
   it("uses INSERT IGNORE, matching this function's existing idempotency pattern", () => {
-    expect(orchestratorSrc).toContain(
-      "INSERT IGNORE INTO employee_payroll_head_review",
-    );
+    expect(orchestratorSrc).toContain("INSERT IGNORE INTO employee_payroll_head_review");
   });
 
   it("runs inside createRelatedEmployeeRecords, on the same conn as employee_salary_assignment", () => {
-    const fnStart = orchestratorSrc.indexOf(
-      "async function createRelatedEmployeeRecords",
-    );
+    const fnStart = orchestratorSrc.indexOf("async function createRelatedEmployeeRecords");
     const fnBody = orchestratorSrc.slice(fnStart, fnStart + 20000);
     const salaryIdx = fnBody.indexOf("employee_salary_assignment");
     const reviewIdx = fnBody.indexOf("employee_payroll_head_review");
-    expect(
-      salaryIdx,
-      "employee_salary_assignment insert must exist in this function",
-    ).toBeGreaterThan(-1);
-    expect(
-      reviewIdx,
-      "employee_payroll_head_review insert must exist in this function",
-    ).toBeGreaterThan(-1);
+    expect(salaryIdx, "employee_salary_assignment insert must exist in this function").toBeGreaterThan(-1);
+    expect(reviewIdx, "employee_payroll_head_review insert must exist in this function").toBeGreaterThan(-1);
   });
 });

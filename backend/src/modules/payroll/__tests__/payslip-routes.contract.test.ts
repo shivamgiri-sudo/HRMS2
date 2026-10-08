@@ -16,9 +16,7 @@ describe("payslip display routes", () => {
     // The query over-fetches (`limit * 3`) and dedupes runs in JS, so accept any
     // integer multiple rather than pinning the exact expression.
     expect(routeSource).toMatch(/LIMIT \$\{limit(\s*\*\s*\d+)?\}/);
-    expect(routeSource).not.toContain(
-      "ORDER BY spr.run_month DESC\n      LIMIT ?",
-    );
+    expect(routeSource).not.toContain("ORDER BY spr.run_month DESC\n      LIMIT ?");
   });
 
   it("allows established payroll administration roles to expand details", () => {
@@ -29,9 +27,7 @@ describe("payslip display routes", () => {
   });
 
   it("stores tax proofs using the live employee_documents schema and scopes them by year", () => {
-    expect(routeSource).toContain(
-      "const documentType = `tax_declaration_${year}`",
-    );
+    expect(routeSource).toContain("const documentType = `tax_declaration_${year}`");
     expect(routeSource).toContain("doc_type, doc_category, doc_name");
     expect(routeSource).toContain("WHERE employee_id = ? AND doc_type = ?");
     expect(routeSource).not.toContain("uploaded_by, metadata_json");

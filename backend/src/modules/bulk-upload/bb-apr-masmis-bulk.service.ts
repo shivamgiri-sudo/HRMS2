@@ -1,9 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's real Agent Productivity Report (APR) -- writes into the
@@ -20,45 +17,13 @@ import {
  */
 
 export const BB_APR_HEADERS = [
-  "unique_id",
-  "week",
-  "report_date",
-  "emp_name",
-  "noiid",
-  "num_calls_chat",
-  "lob",
-  "login_time",
-  "wait_time",
-  "talk_time",
-  "dispo_time",
-  "pause_time",
-  "acht",
-  "lunch",
-  "tea",
-  "tea1",
-  "washr",
-  "team_briefing_aux",
-  "net_pause",
-  "avg_dispo",
-  "total_break",
-  "actual_login_hrs",
-  "downtime",
-  "login_duration",
-  "logout_time",
-  "net_login_hrs",
-  "utilization",
-  "attendance_1",
-  "week_1",
-  "mtd",
-  "team_leader",
-  "fhd",
-  "tenure",
-  "tenurity_week",
-  "sub_lob",
-  "unique_count",
-  "attendance_2",
-  "capping",
-  "attendance_3",
+  "unique_id", "week", "report_date", "emp_name", "noiid", "num_calls_chat", "lob",
+  "login_time", "wait_time", "talk_time", "dispo_time", "pause_time", "acht",
+  "lunch", "tea", "tea1", "washr", "team_briefing_aux", "net_pause", "avg_dispo",
+  "total_break", "actual_login_hrs", "downtime", "login_duration", "logout_time",
+  "net_login_hrs", "utilization", "attendance_1", "week_1", "mtd", "team_leader",
+  "fhd", "tenure", "tenurity_week", "sub_lob", "unique_count", "attendance_2",
+  "capping", "attendance_3",
 ] as const;
 
 /** Lowercase, strip everything but letters/digits -- same convention as every other importer
@@ -75,16 +40,12 @@ function get(data: Record<string, unknown>, ...keys: string[]): string {
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
     const v = normalized[normalizeKey(k)];
-    if (v !== undefined && v !== null && String(v).trim() !== "")
-      return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
   }
   return "";
 }
 
-function getOrNull(
-  data: Record<string, unknown>,
-  ...keys: string[]
-): string | null {
+function getOrNull(data: Record<string, unknown>, ...keys: string[]): string | null {
   const v = get(data, ...keys);
   return v || null;
 }
@@ -110,27 +71,12 @@ export function parseReportDate(raw: unknown): string | null {
   m = /^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/.exec(v);
   if (m) {
     const months: Record<string, string> = {
-      jan: "01",
-      feb: "02",
-      mar: "03",
-      apr: "04",
-      may: "05",
-      jun: "06",
-      jul: "07",
-      aug: "08",
-      sep: "09",
-      oct: "10",
-      nov: "11",
-      dec: "12",
+      jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+      jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
     };
     const mon = months[m[2].toLowerCase()];
     if (mon) {
-      const year =
-        m[3].length === 2
-          ? parseInt(m[3], 10) < 50
-            ? `20${m[3]}`
-            : `19${m[3]}`
-          : m[3];
+      const year = m[3].length === 2 ? (parseInt(m[3], 10) < 50 ? `20${m[3]}` : `19${m[3]}`) : m[3];
       return `${year}-${mon}-${m[1].padStart(2, "0")}`;
     }
   }
@@ -200,9 +146,7 @@ export async function importBbAprMasmisBatch(
     const reportDate = parseReportDate(get(data, "report_date", "Date"));
     if (!empName || !reportDate) {
       const msg = `Row ${row.row_no}: "emp_name" and "report_date" are both required`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     toInsert.push({
@@ -264,8 +208,7 @@ export async function importBbAprMasmisBatch(
         login_duration, logout_time, net_login_hrs, utilization, attendance_1, week_1, mtd,
         team_leader, fhd, tenure, tenurity_week, sub_lob, unique_count, attendance_2,
         capping, attendance_3, uploaded_by, upload_batch_id)`,
-    placeholderGroup:
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     rows: toInsert,
   });
   errorUpdates.push(...inserted.errorUpdates);
@@ -274,9 +217,7 @@ export async function importBbAprMasmisBatch(
   const errorRows = errorUpdates.length;
 
   const failedIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
-  const importedIds = toInsert
-    .filter((r) => !failedIds.has(r.rowId))
-    .map((r) => r.rowId);
+  const importedIds = toInsert.filter((r) => !failedIds.has(r.rowId)).map((r) => r.rowId);
   for (let i = 0; i < importedIds.length; i += 1000) {
     const slice = importedIds.slice(i, i + 1000);
     await db.execute(
@@ -294,17 +235,12 @@ export async function importBbAprMasmisBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
@@ -312,11 +248,7 @@ export async function importBbAprMasmisBatch(
   // -- this was missing here, which is why a completed batch stayed stuck at 'importing' forever
   // regardless of outcome instead of ever reaching a terminal status.
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

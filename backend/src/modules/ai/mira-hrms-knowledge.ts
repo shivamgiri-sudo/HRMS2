@@ -37,17 +37,12 @@ export interface KnowledgeEntry {
 
 export const KNOWLEDGE_CATALOG: KnowledgeEntry[] = [
   {
-    code: "payroll_pf_esic",
-    title: "PF and ESIC computation rules",
+    code: 'payroll_pf_esic',
+    title: 'PF and ESIC computation rules',
     aliases: [
-      /\bpf\b/i,
-      /\bprovident\s*fund\b/i,
-      /\besic\b/i,
-      /\bemployee\s*state\s*insurance\b/i,
-      /\bepf\b/i,
-      /\beps\b/i,
-      /\bpf\s*deducti/i,
-      /\besic\s*deducti/i,
+      /\bpf\b/i, /\bprovident\s*fund\b/i, /\besic\b/i,
+      /\bemployee\s*state\s*insurance\b/i, /\bepf\b/i, /\beps\b/i,
+      /\bpf\s*deducti/i, /\besic\s*deducti/i,
     ],
     knowledge: `
 PF (Provident Fund) is computed on "structure gross" — the sum of fixed salary components (basic, HRA, DA, special allowance) defined in the employee's assigned salary structure, NOT on attendance-prorated gross. Incentives, performance bonuses, and one-time payments are excluded from the PF base.
@@ -62,21 +57,17 @@ UAN (Universal Account Number) is required before PF can be filed. Employees wit
 
 On the payslip, "PF" = employee deduction; "Employer PF" is shown separately as a CTC component but not deducted from net pay.
 `.trim(),
-    relatedHowTo: ["payroll_view_payslip"],
+    relatedHowTo: ['payroll_view_payslip'],
   },
 
   {
-    code: "payroll_gross_net",
-    title: "Gross vs net salary and component breakdown",
+    code: 'payroll_gross_net',
+    title: 'Gross vs net salary and component breakdown',
     aliases: [
-      /\bgross\s*salary\b/i,
-      /\bnet\s*(salary|pay|take.?home)\b/i,
+      /\bgross\s*salary\b/i, /\bnet\s*(salary|pay|take.?home)\b/i,
       /\bsalary\s*(structure|component|breakdown|split)\b/i,
-      /\bctc\b/i,
-      /\bcost\s*to\s*company\b/i,
-      /\bbasic\s*(salary|pay)\b/i,
-      /\bhra\b/i,
-      /\bspecial\s*allowance\b/i,
+      /\bctc\b/i, /\bcost\s*to\s*company\b/i,
+      /\bbasic\s*(salary|pay)\b/i, /\bhra\b/i, /\bspecial\s*allowance\b/i,
       /\bsalary\s*slip\s*(field|column|mean)\b/i,
     ],
     knowledge: `
@@ -96,21 +87,16 @@ Professional Tax (PT): REMOVED from active payroll company-wide, effective 2026-
 
 On the payslip PDF: "Earnings" section shows all positive components. "Deductions" section shows PF, ESIC, TDS, LWP, loan EMI. "Net Pay" is the amount credited to the bank.
 `.trim(),
-    relatedHowTo: ["payroll_view_payslip", "payroll_salary_structure"],
+    relatedHowTo: ['payroll_view_payslip', 'payroll_salary_structure'],
   },
 
   {
-    code: "attendance_apr_rules",
-    title: "APR attendance, biometric vs APR, absent-when-no-record",
+    code: 'attendance_apr_rules',
+    title: 'APR attendance, biometric vs APR, absent-when-no-record',
     aliases: [
-      /\bapr\b/i,
-      /\bbiometric\b/i,
-      /\battendance\s*source\b/i,
-      /\battendance\s*rule\b/i,
-      /\bpunch\b/i,
-      /\bmissing\s*punch\b/i,
-      /\bno\s*(attendance|record)\b/i,
-      /\babsent\s*(without|with\s*no)\b/i,
+      /\bapr\b/i, /\bbiometric\b/i, /\battendance\s*source\b/i,
+      /\battendance\s*rule\b/i, /\bpunch\b/i, /\bmissing\s*punch\b/i,
+      /\bno\s*(attendance|record)\b/i, /\babsent\s*(without|with\s*no)\b/i,
       /\boperations?\s*executive\b/i,
     ],
     knowledge: `
@@ -128,25 +114,20 @@ attendance_daily_record.source_type records whether a given day's status came fr
 
 Regularizations: employees and managers can raise a regularization for any day within the last 90 days. A regularization does not change the source_type — it creates an attendance_regularization row with status 'pending' that the branch head must approve. Only after approval does the attendance_daily_record get updated (is_locked = 1 post-approval).
 `.trim(),
-    relatedHowTo: ["attendance_regularize", "attendance_view"],
+    relatedHowTo: ['attendance_regularize', 'attendance_view'],
   },
 
   {
-    code: "leave_balance_types",
-    title: "Leave types, balances, carry-forward, encashment",
+    code: 'leave_balance_types',
+    title: 'Leave types, balances, carry-forward, encashment',
     aliases: [
       /\bleave\s*(balance|quota|credit|entitlement)\b/i,
       /\bcl\b.*\bleave\b|\bleave\b.*\bcl\b/i,
       /\bel\b.*\bleave\b|\bleave\b.*\bel\b/i,
-      /\bearned\s*leave\b/i,
-      /\bcasual\s*leave\b/i,
-      /\bsick\s*leave\b/i,
-      /\bmaternity\b/i,
-      /\bpl\b.*\bleave\b/i,
-      /\bleave\s*carry.?forward\b/i,
-      /\bleave\s*encash\b/i,
-      /\bleave\s*laps\b/i,
-      /\bleave\s*expire\b/i,
+      /\bearned\s*leave\b/i, /\bcasual\s*leave\b/i,
+      /\bsick\s*leave\b/i, /\bmaternity\b/i, /\bpl\b.*\bleave\b/i,
+      /\bleave\s*carry.?forward\b/i, /\bleave\s*encash\b/i,
+      /\bleave\s*laps\b/i, /\bleave\s*expire\b/i,
     ],
     knowledge: `
 PeopleOS tracks leave balances in leave_balance per employee per leave type. The leave_balance_ledger records every credit and debit with a reason.
@@ -167,18 +148,16 @@ Carry-forward: controlled by leave_type_master.carry_forward_limit and carry_for
 
 Overlap check: two leave requests for the same employee cannot overlap dates. The system rejects a new application if dates conflict with an already-approved leave.
 `.trim(),
-    relatedHowTo: ["leave_apply", "leave_balance_view"],
+    relatedHowTo: ['leave_apply', 'leave_balance_view'],
   },
 
   {
-    code: "wfm_roster_lifecycle",
-    title: "Roster lifecycle: draft, publish, acknowledge, lock, payroll-ready",
+    code: 'wfm_roster_lifecycle',
+    title: 'Roster lifecycle: draft, publish, acknowledge, lock, payroll-ready',
     aliases: [
-      /\broster\b/i,
-      /\bshift\s*(roster|schedule|plan)\b/i,
+      /\broster\b/i, /\bshift\s*(roster|schedule|plan)\b/i,
       /\broster\s*(status|lifecycle|stage|lock|publish|approve)\b/i,
-      /\bweekly\s*roster\b/i,
-      /\bshift\s*assign\b/i,
+      /\bweekly\s*roster\b/i, /\bshift\s*assign\b/i,
       /\broster\s*payroll\b/i,
     ],
     knowledge: `
@@ -203,16 +182,14 @@ Payroll integration: the payroll engine reads roster_assignment.shift_id to dete
 
 shift_code in a roster must be a valid code from shift_master (e.g. "GEN", "NIGHT", "MID") — NOT a time string like "10:00am-07:00pm". Entering a time string in the shift_code column is a common upload error that causes "Data too long" errors.
 `.trim(),
-    relatedHowTo: ["roster_view", "roster_publish"],
+    relatedHowTo: ['roster_view', 'roster_publish'],
   },
 
   {
-    code: "bulk_upload_guide",
-    title: "Bulk upload types, common errors, and field rules",
+    code: 'bulk_upload_guide',
+    title: 'Bulk upload types, common errors, and field rules',
     aliases: [
-      /\bbulk\s*upload\b/i,
-      /\bcsv\s*upload\b/i,
-      /\btemplate\s*(upload|download)\b/i,
+      /\bbulk\s*upload\b/i, /\bcsv\s*upload\b/i, /\btemplate\s*(upload|download)\b/i,
       /\bupload\s*(error|fail|stuck|slow|pending|status)\b/i,
       /\bbatch\s*(upload|import|status)\b/i,
       /\bimport\s*(employee|leave|attendance|roster|deduction)\b/i,
@@ -238,22 +215,17 @@ Common errors:
 
 Progress bar: visible while import is running. If you close and reopen the page, the progress bar automatically reconnects to any active import you started.
 `.trim(),
-    relatedHowTo: ["bulk_upload_att_reg", "bulk_upload_leave"],
+    relatedHowTo: ['bulk_upload_att_reg', 'bulk_upload_leave'],
   },
 
   {
-    code: "exit_fnf_stages",
-    title: "Resignation, exit clearance, and full & final settlement",
+    code: 'exit_fnf_stages',
+    title: 'Resignation, exit clearance, and full & final settlement',
     aliases: [
-      /\bresign/i,
-      /\bfull\s*[&and]*\s*final\b/i,
-      /\bf\s*[&]\s*f\b/i,
-      /\bfnf\b/i,
+      /\bresign/i, /\bfull\s*[&and]*\s*final\b/i, /\bf\s*[&]\s*f\b/i, /\bfnf\b/i,
       /\bexit\s*(clearance|process|formality|stage)\b/i,
-      /\blast\s*(day|working|salary)\b/i,
-      /\bnotice\s*(period|pay)\b/i,
-      /\bgratuity\b/i,
-      /\bsettlement\b/i,
+      /\blast\s*(day|working|salary)\b/i, /\bnotice\s*(period|pay)\b/i,
+      /\bgratuity\b/i, /\bsettlement\b/i,
     ],
     knowledge: `
 Exit process in PeopleOS:
@@ -273,23 +245,18 @@ Notice period recovery: if notice_period_days − days_actually_served > 0, the 
 
 Gratuity is always tax-exempt up to ₹20 lakh under Income Tax Act Section 10(10) — shown separately on the settlement sheet, not included in taxable income.
 `.trim(),
-    relatedHowTo: ["exit_raise_resignation", "exit_view_clearance"],
+    relatedHowTo: ['exit_raise_resignation', 'exit_view_clearance'],
   },
 
   {
-    code: "rbac_roles",
-    title: "What each role can see and do in PeopleOS",
+    code: 'rbac_roles',
+    title: 'What each role can see and do in PeopleOS',
     aliases: [
       /\brole\b.*\b(access|permission|can\s*see|can\s*do|allowed)\b/i,
       /\b(access|permission)\b.*\brole\b/i,
-      /\bwho\s*can\b/i,
-      /\bwhat\s*can\b.*\bsee\b/i,
-      /\bbranch\s*head\b/i,
-      /\bprocess\s*manager\b/i,
-      /\bwfm\b.*\brole\b/i,
-      /\bhr\s*admin\b/i,
-      /\bsuper\s*admin\b/i,
-      /\bemployee\s*role\b/i,
+      /\bwho\s*can\b/i, /\bwhat\s*can\b.*\bsee\b/i,
+      /\bbranch\s*head\b/i, /\bprocess\s*manager\b/i, /\bwfm\b.*\brole\b/i,
+      /\bhr\s*admin\b/i, /\bsuper\s*admin\b/i, /\bemployee\s*role\b/i,
       /\bpayroll\s*(hr|branch)\b/i,
     ],
     knowledge: `
@@ -324,11 +291,10 @@ Role scoping: roles other than super_admin and admin are scoped to branch_id and
   },
 
   {
-    code: "payroll_lwp",
-    title: "LWP deduction and attendance linkage",
+    code: 'payroll_lwp',
+    title: 'LWP deduction and attendance linkage',
     aliases: [
-      /\blwp\b/i,
-      /\bleave\s*without\s*pay\b/i,
+      /\blwp\b/i, /\bleave\s*without\s*pay\b/i,
       /\blwp\s*(deducti|calculat|value|day)\b/i,
       /\babsent\s*(deducti|salary|pay)\b/i,
       /\bunauthorised\s*(absent|leave)\b/i,
@@ -349,22 +315,16 @@ LWP does NOT apply to: public holidays (in branch holiday calendar), declared we
 
 On the payslip: "LWP Days" shows the count. "LWP Deduction" shows the rupee amount deducted. If an employee disputes an LWP, they raise an attendance regularization request — after approval, the attendance_daily_record is updated and the LWP reverses in the next payroll run.
 `.trim(),
-    relatedHowTo: ["attendance_regularize", "payroll_view_payslip"],
+    relatedHowTo: ['attendance_regularize', 'payroll_view_payslip'],
   },
 
   {
-    code: "ats_lifecycle",
-    title: "ATS candidate pipeline and recruitment lifecycle",
+    code: 'ats_lifecycle',
+    title: 'ATS candidate pipeline and recruitment lifecycle',
     aliases: [
-      /\bats\b/i,
-      /\bcandidate\b/i,
-      /\brecruitment\b/i,
-      /\bhiring\b/i,
-      /\binterview\b/i,
-      /\boffer\s*letter\b/i,
-      /\bonboarding\b/i,
-      /\bcandidate\s*to\s*employee\b/i,
-      /\brecruitment\s*(stage|pipeline|status)\b/i,
+      /\bats\b/i, /\bcandidate\b/i, /\brecruitment\b/i, /\bhiring\b/i,
+      /\binterview\b/i, /\boffer\s*letter\b/i, /\bonboarding\b/i,
+      /\bcandidate\s*to\s*employee\b/i, /\brecruitment\s*(stage|pipeline|status)\b/i,
     ],
     knowledge: `
 ATS (Applicant Tracking System) pipeline stages in PeopleOS:
@@ -390,17 +350,15 @@ SLA breach alerts: if a candidate stays in one stage beyond the configured SLA (
 
 ATS reports available: daily pipeline funnel, stage-wise conversion rates, source-wise yield (how many from referral vs. walk-in vs. portal), time-to-hire by branch and process.
 `.trim(),
-    relatedHowTo: ["ats_pipeline_view", "ats_offer_letter"],
+    relatedHowTo: ['ats_pipeline_view', 'ats_offer_letter'],
   },
 
   {
-    code: "client_portal_scope",
-    title: "Client Portal — what clients can and cannot see",
+    code: 'client_portal_scope',
+    title: 'Client Portal — what clients can and cannot see',
     aliases: [
-      /\bclient\s*portal\b/i,
-      /\bclient\s*(access|view|login|dashboard)\b/i,
-      /\bwhat\s*can\s*client\b/i,
-      /\bclient\s*(data|report|visibility)\b/i,
+      /\bclient\s*portal\b/i, /\bclient\s*(access|view|login|dashboard)\b/i,
+      /\bwhat\s*can\s*client\b/i, /\bclient\s*(data|report|visibility)\b/i,
     ],
     knowledge: `
 The Client Portal gives external clients read-only visibility into performance metrics for their contracted process/LOB only. Access is strictly scoped.
@@ -429,8 +387,8 @@ Client Portal URL: /portal/<client-slug> — each client gets their own URL afte
   },
 
   {
-    code: "attendance_regularization_deep",
-    title: "Attendance regularization — rules, window, approval chain",
+    code: 'attendance_regularization_deep',
+    title: 'Attendance regularization — rules, window, approval chain',
     aliases: [
       /\bregulariz/i,
       /\bcorrect\s*(attendance|punch|absent)\b/i,
@@ -457,22 +415,21 @@ Status field on attendance_regularization: 'pending' → 'approved' / 'rejected'
 
 Bulk regularization: use ATTENDANCE_REGULARIZATION_BULK upload type. The importer calls the same wfmService.submitRegularization() function as the UI form — all the same validation rules apply.
 `.trim(),
-    relatedHowTo: ["attendance_regularize"],
+    relatedHowTo: ['attendance_regularize'],
   },
 
   {
     // Deliberately ahead of payroll_payslip_fields: "where can I find my payslip"
     // is a navigation question, and payslip_fields' broad /\bpayslip\b/ alias
     // would otherwise answer it with field semantics instead of a location.
-    code: "pages_overview",
-    title: "What information is available on each HRMS page",
+    code: 'pages_overview',
+    title: 'What information is available on each HRMS page',
     aliases: [
       /\bwhat\s*(is|information|data|available)\s*(on|at|in)\s*(the\s+)?(page|screen|dashboard|module)\b/i,
       /\bwhere\s*(can|do)\s*i\s*(find|see|view|check|get)\b/i,
       /\bwhich\s*(page|section|module|menu)\b/i,
       /\bhrms\s*(page|module|feature|section)\b/i,
-      /\bnavigation\b/i,
-      /\bmenu\b.*\b(item|option|list)\b/i,
+      /\bnavigation\b/i, /\bmenu\b.*\b(item|option|list)\b/i,
     ],
     knowledge: `
 PeopleOS module and page map:
@@ -510,11 +467,10 @@ ADMIN (/admin): User management, role assignment, system configuration, migratio
   },
 
   {
-    code: "payroll_payslip_fields",
-    title: "Payslip field meanings and layout",
+    code: 'payroll_payslip_fields',
+    title: 'Payslip field meanings and layout',
     aliases: [
-      /\bpayslip\b/i,
-      /\bsalary\s*slip\b/i,
+      /\bpayslip\b/i, /\bsalary\s*slip\b/i,
       /\bpayslip\s*(field|column|section|mean|explain)\b/i,
       /\bwhat\s*(does|is)\s*\w+\s*(on|in)\s*(the\s*)?(payslip|salary\s*slip)\b/i,
       /\bearning\s*(section|column)\b/i,
@@ -553,6 +509,6 @@ CTC SECTION (informational, not paid):
 
 Days Worked = calendar days in month − LWP days − days before DOJ − days after LWD.
 `.trim(),
-    relatedHowTo: ["payroll_view_payslip", "payroll_download_payslip"],
+    relatedHowTo: ['payroll_view_payslip', 'payroll_download_payslip'],
   },
 ];

@@ -27,8 +27,7 @@ vi.mock("../../../db/mysql.js", () => ({
   },
 }));
 
-const { buildSourceContext } =
-  await import("../universalDigitalFormFill.service.js");
+const { buildSourceContext } = await import("../universalDigitalFormFill.service.js");
 
 /** MAS63085's real snapshot row: unapproved figures that must never reach the contract. */
 const MAS63085_SNAPSHOT = {
@@ -85,18 +84,14 @@ describe("s/o | d/o on the employment contract", () => {
     state.salary = { ...MAS63085_SNAPSHOT };
     state.employee = { full_name: "Harsh Thakur", gender: "Male" };
     const ctx = await buildSourceContext("emp-5");
-    expect(
-      (ctx as Record<string, Record<string, unknown>>).employee.relation_prefix,
-    ).toBe("s/o");
+    expect((ctx as Record<string, Record<string, unknown>>).employee.relation_prefix).toBe("s/o");
   });
 
   it("resolves to d/o for a female employee", async () => {
     state.salary = { ...MAS63085_SNAPSHOT };
     state.employee = { full_name: "Priya Sharma", gender: "Female" };
     const ctx = await buildSourceContext("emp-6");
-    expect(
-      (ctx as Record<string, Record<string, unknown>>).employee.relation_prefix,
-    ).toBe("d/o");
+    expect((ctx as Record<string, Record<string, unknown>>).employee.relation_prefix).toBe("d/o");
   });
 
   it("keeps both forms when gender is unknown, rather than guessing", async () => {
@@ -105,8 +100,6 @@ describe("s/o | d/o on the employment contract", () => {
     const ctx = await buildSourceContext("emp-7");
     // 63 employees have no usable gender. Printing "s/o" for them would assert
     // something about a real person that the record does not support.
-    expect(
-      (ctx as Record<string, Record<string, unknown>>).employee.relation_prefix,
-    ).toBe("s/o | d/o");
+    expect((ctx as Record<string, Record<string, unknown>>).employee.relation_prefix).toBe("s/o | d/o");
   });
 });

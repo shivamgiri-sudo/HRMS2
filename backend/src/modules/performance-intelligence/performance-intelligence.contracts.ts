@@ -3,11 +3,9 @@ import type { DashboardScope } from "../../shared/dashboardScope.js";
 export type PerformanceMetricCode = string;
 export type PerformanceDirection = "higher_is_better" | "lower_is_better";
 export type CalculationStatus = "verified" | "legacy_unverified" | "missing";
-export type MetricStatus =
-  "on_track" | "watch" | "off_track" | "no_target" | "missing";
+export type MetricStatus = "on_track" | "watch" | "off_track" | "no_target" | "missing";
 export type MetricUnit = "count" | "seconds" | "percent" | "currency" | string;
-export type AggregationMethod =
-  "sum" | "average" | "weighted_average" | "ratio" | "latest" | string;
+export type AggregationMethod = "sum" | "average" | "weighted_average" | "ratio" | "latest" | string;
 
 export interface PerformanceQuery {
   from: string;
@@ -101,10 +99,7 @@ export interface PaginatedPeople {
 
 export interface PerformanceRepository {
   findSubjectEmployeeId(userId: string): Promise<string | null>;
-  canAccessEmployee(
-    scope: DashboardScope,
-    employeeId: string,
-  ): Promise<boolean>;
+  canAccessEmployee(scope: DashboardScope, employeeId: string): Promise<boolean>;
   listFilterOptions(scope: DashboardScope): Promise<{
     branches: PerformanceFilterOption[];
     processes: PerformanceFilterOption[];
@@ -122,10 +117,7 @@ export interface PerformanceRepository {
   listPeople(
     scope: DashboardScope,
     query: PerformanceQuery,
-  ): Promise<{
-    rows: Omit<PerformancePersonRow, "metrics" | "overallAchievementPct">[];
-    total: number;
-  }>;
+  ): Promise<{ rows: Omit<PerformancePersonRow, "metrics" | "overallAchievementPct">[]; total: number }>;
   listMetricFactsForEmployees(
     scope: DashboardScope,
     query: PerformanceQuery,

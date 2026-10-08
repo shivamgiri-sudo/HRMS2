@@ -27,40 +27,14 @@ const mockQuery = db.query as unknown as ReturnType<typeof vi.fn>;
 function checklist(): LoadedChecklist {
   return {
     rules: [
-      {
-        itemKey: "CG-01",
-        failureMode: "block",
-        isFloor: false,
-        ruleVersion: 1,
-        evaluator: "llm",
-      },
-      {
-        itemKey: "OP-04",
-        failureMode: "block",
-        isFloor: false,
-        ruleVersion: 1,
-        evaluator: "llm",
-      },
+      { itemKey: "CG-01", failureMode: "block", isFloor: false, ruleVersion: 1, evaluator: "llm" },
+      { itemKey: "OP-04", failureMode: "block", isFloor: false, ruleVersion: 1, evaluator: "llm" },
     ],
     blockingItemKeys: new Set(["CG-01", "OP-04"]),
     snapshotSha: "s".repeat(64),
     statements: new Map([
-      [
-        "CG-01",
-        {
-          statement: "Classify the change type.",
-          category: "change_governance",
-          evidenceSpec: "LLM classification",
-        },
-      ],
-      [
-        "OP-04",
-        {
-          statement: "Revertible by one commit.",
-          category: "operational",
-          evidenceSpec: "Rollback plan",
-        },
-      ],
+      ["CG-01", { statement: "Classify the change type.", category: "change_governance", evidenceSpec: "LLM classification" }],
+      ["OP-04", { statement: "Revertible by one commit.", category: "operational", evidenceSpec: "Rollback plan" }],
     ]),
   };
 }
@@ -115,8 +89,7 @@ function deps(overrides: Partial<ValidatorDeps> = {}): ValidatorDeps {
 
 const goodOutput: ValidatorOutput = {
   actionable: true,
-  restated_requirement:
-    "Correct the spelling of 'Visitor' in the visitor form tooltip.",
+  restated_requirement: "Correct the spelling of 'Visitor' in the visitor form tooltip.",
   change_type: "bug",
   predicted_files: ["src/pages/NativeVisitorForm.tsx"],
   predicted_new_files: [],
@@ -125,17 +98,8 @@ const goodOutput: ValidatorOutput = {
   requires_migration: false,
   touches_domains: ["visitor management"],
   checklist: [
-    {
-      item_key: "CG-01",
-      verdict: "pass",
-      evidence: "A spelling correction is a bug fix.",
-      confidence: 0.95,
-    },
-    {
-      item_key: "OP-04",
-      verdict: "pass",
-      evidence: "One-line string change; revert the commit.",
-    },
+    { item_key: "CG-01", verdict: "pass", evidence: "A spelling correction is a bug fix.", confidence: 0.95 },
+    { item_key: "OP-04", verdict: "pass", evidence: "One-line string change; revert the commit." },
   ],
   blocking_reasons: [],
   rollback_plan: "Revert the single commit.",
@@ -175,7 +139,7 @@ describe("conditions under which no call is made", () => {
           blockedReason: "Touches backend/src/modules/payroll/**",
         }),
       }),
-      deps({ call }),
+      deps({ call })
     );
 
     expect(call).not.toHaveBeenCalled();
@@ -229,7 +193,7 @@ describe("handling of a bad or hostile response", () => {
   it("fails closed on a response that does not match the schema", async () => {
     const result = await runValidator(
       input(),
-      deps({ call: stubCall({ actionable: "yes please" }) }),
+      deps({ call: stubCall({ actionable: "yes please" }) })
     );
     expect(result.ok).toBe(false);
     expect(result.supplied).toEqual([]);
@@ -240,9 +204,7 @@ describe("handling of a bad or hostile response", () => {
   it("names truncation specifically, so the fix is raising max_tokens", async () => {
     const result = await runValidator(
       input(),
-      deps({
-        call: stubCall('{"actionable": tru', { stopReason: "max_tokens" }),
-      }),
+      deps({ call: stubCall('{"actionable": tru', { stopReason: "max_tokens" }) })
     );
     expect(result.ok).toBe(false);
     expect(result.failureReason).toMatch(/truncated/i);
@@ -258,7 +220,7 @@ describe("handling of a bad or hostile response", () => {
           ...goodOutput,
           predicted_files: ["src/pages/Fine.tsx", "../../../etc/passwd"],
         }),
-      }),
+      })
     );
     expect(result.ok).toBe(false);
     expect(result.supplied).toEqual([]);
@@ -266,24 +228,17 @@ describe("handling of a bad or hostile response", () => {
   });
 
   it("rejects an absolute or drive-letter path", async () => {
-    for (const bad of [
-      "/etc/shadow",
-      "C:\\Windows\\System32\\x.ts",
-      "\\\\server\\share",
-    ]) {
+    for (const bad of ["/etc/shadow", "C:\\Windows\\System32\\x.ts", "\\\\server\\share"]) {
       const result = await runValidator(
         input(),
-        deps({ call: stubCall({ ...goodOutput, predicted_new_files: [bad] }) }),
+        deps({ call: stubCall({ ...goodOutput, predicted_new_files: [bad] }) })
       );
       expect(result.ok, `${bad} should have been rejected`).toBe(false);
     }
   });
 
   it("accepts a well-formed response and returns its verdicts unfiltered", async () => {
-    const result = await runValidator(
-      input(),
-      deps({ call: stubCall(goodOutput) }),
-    );
+    const result = await runValidator(input(), deps({ call: stubCall(goodOutput) }));
     expect(result.ok).toBe(true);
     expect(result.output?.change_type).toBe("bug");
     expect(result.supplied.map((s) => s.itemKey)).toEqual(["CG-01", "OP-04"]);
@@ -331,7 +286,7 @@ describe("prompt construction", () => {
 
     const fenced = block.slice(
       block.indexOf("<untrusted-user-report>"),
-      block.indexOf("</untrusted-user-report>"),
+      block.indexOf("</untrusted-user-report>")
     );
     expect(fenced).toContain(hostile);
     // The text appears exactly once — not echoed into any summary or instruction line.
@@ -356,16 +311,8 @@ describe("prompt construction", () => {
   it("declares every field it depends on as required in the schema", () => {
     // A field the model may omit becomes `undefined` downstream, and `undefined` reads as
     // "no finding" — the silent-pass shape this pipeline exists to prevent.
-    const required = new Set(
-      VALIDATOR_JSON_SCHEMA.required as readonly string[],
-    );
-    for (const key of [
-      "actionable",
-      "change_type",
-      "checklist",
-      "removals",
-      "overall",
-    ]) {
+    const required = new Set(VALIDATOR_JSON_SCHEMA.required as readonly string[]);
+    for (const key of ["actionable", "change_type", "checklist", "removals", "overall"]) {
       expect(required.has(key), `${key} must be required`).toBe(true);
     }
     expect(VALIDATOR_JSON_SCHEMA.additionalProperties).toBe(false);
@@ -382,11 +329,7 @@ describe("toSuppliedVerdicts", () => {
         { item_key: "C", verdict: "undetermined", evidence: "cannot tell" },
       ],
     });
-    expect(supplied.map((s) => s.verdict)).toEqual([
-      "fail",
-      "pass",
-      "undetermined",
-    ]);
+    expect(supplied.map((s) => s.verdict)).toEqual(["fail", "pass", "undetermined"]);
     // A low-confidence pass is NOT downgraded here — the merge layer decides, and doing it
     // in two places would make the stored evidence disagree with the verdict.
     expect(supplied[1].confidence).toBe(0.2);

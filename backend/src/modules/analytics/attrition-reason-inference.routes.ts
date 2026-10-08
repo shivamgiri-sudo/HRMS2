@@ -13,8 +13,8 @@ import type { RowDataPacket } from 'mysql2';
 import { requireRole } from '../../middleware/requireRole.js';
 import {
   inferAttritionReason,
-  getInferredReasonBreakdown,
-} from "./attrition-reason-inference.service.js";
+  getInferredReasonBreakdown
+} from './attrition-reason-inference.service.js';
 
 const router = Router();
 
@@ -39,7 +39,7 @@ async function guardEmployeeQuery(req: Request, res: Response, next: NextFunctio
 
 // GET /api/analytics/attrition-reason-inference?employeeId=&mode=realtime|historical
 router.get(
-  "/",
+  '/',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager', 'wfm'),
   guardEmployeeQuery,
@@ -48,7 +48,7 @@ router.get(
 
 // GET /api/analytics/attrition-reason-inference/breakdown?period=YYYY-MM&branchId=
 router.get(
-  "/breakdown",
+  '/breakdown',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager', 'wfm'),
   attachEmployeeScope('e'),

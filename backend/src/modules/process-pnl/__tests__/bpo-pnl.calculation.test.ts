@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  allocatePoolAmount,
-  calculateBpoCostWaterfall,
-  calculateRevenue,
-} from "../bpo-pnl.calculation.js";
+import { allocatePoolAmount, calculateBpoCostWaterfall, calculateRevenue } from "../bpo-pnl.calculation.js";
 
 describe("BPO revenue calculation", () => {
   it("calculates a hybrid seat and transaction contract", () => {
@@ -24,25 +20,13 @@ describe("BPO revenue calculation", () => {
         },
       ],
       [
-        {
-          metricKey: "billable_seats",
-          plannedUnits: 50,
-          deliveredUnits: 48,
-          acceptedUnits: 48,
-          billableUnits: 48,
-        },
-        {
-          metricKey: "transactions",
-          plannedUnits: 15000,
-          deliveredUnits: 14000,
-          acceptedUnits: 13500,
-          billableUnits: 13500,
-        },
+        { metricKey: "billable_seats", plannedUnits: 50, deliveredUnits: 48, acceptedUnits: 48, billableUnits: 48 },
+        { metricKey: "transactions", plannedUnits: 15000, deliveredUnits: 14000, acceptedUnits: 13500, billableUnits: 13500 },
       ],
       [
         { type: "incentive", direction: "increase", amountInr: 50000 },
         { type: "sla_deduction", direction: "decrease", amountInr: 20000 },
-      ],
+      ]
     );
 
     expect(result.baseRevenue).toBe(1595000);
@@ -52,22 +36,13 @@ describe("BPO revenue calculation", () => {
 
   it("tops up revenue to the monthly minimum commitment", () => {
     const result = calculateRevenue(
-      [
-        {
-          billingModel: "per_productive_hour",
-          metricKey: "productive_hours",
-          rateAmount: 500,
-          monthlyMinimumCommitment: 1000000,
-        },
-      ],
-      [
-        {
-          metricKey: "productive_hours",
-          plannedUnits: 2200,
-          productiveHours: 1600,
-          billableUnits: 1600,
-        },
-      ],
+      [{
+        billingModel: "per_productive_hour",
+        metricKey: "productive_hours",
+        rateAmount: 500,
+        monthlyMinimumCommitment: 1000000,
+      }],
+      [{ metricKey: "productive_hours", plannedUnits: 2200, productiveHours: 1600, billableUnits: 1600 }]
     );
 
     expect(result.baseRevenue).toBe(800000);
@@ -80,21 +55,12 @@ describe("BPO revenue calculation", () => {
   // "not reported" and billed off billableUnits instead).
   it("does not fall back past an explicit zero delivery", () => {
     const result = calculateRevenue(
-      [
-        {
-          billingModel: "per_productive_hour",
-          metricKey: "productive_hours",
-          rateAmount: 500,
-        },
-      ],
-      [
-        {
-          metricKey: "productive_hours",
-          plannedUnits: 2200,
-          productiveHours: 0,
-          billableUnits: 1600,
-        },
-      ],
+      [{
+        billingModel: "per_productive_hour",
+        metricKey: "productive_hours",
+        rateAmount: 500,
+      }],
+      [{ metricKey: "productive_hours", plannedUnits: 2200, productiveHours: 0, billableUnits: 1600 }]
     );
 
     expect(result.baseRevenue).toBe(0);
@@ -103,20 +69,12 @@ describe("BPO revenue calculation", () => {
 
   it("still falls back to the next metric when the primary one is genuinely unreported", () => {
     const result = calculateRevenue(
-      [
-        {
-          billingModel: "per_productive_hour",
-          metricKey: "productive_hours",
-          rateAmount: 500,
-        },
-      ],
-      [
-        {
-          metricKey: "productive_hours",
-          plannedUnits: 2200,
-          billableUnits: 1600,
-        },
-      ],
+      [{
+        billingModel: "per_productive_hour",
+        metricKey: "productive_hours",
+        rateAmount: 500,
+      }],
+      [{ metricKey: "productive_hours", plannedUnits: 2200, billableUnits: 1600 }]
     );
 
     expect(result.baseRevenue).toBe(800000);
@@ -124,15 +82,13 @@ describe("BPO revenue calculation", () => {
 
   it("does not fall back past zero billable seats to mandated seats", () => {
     const result = calculateRevenue(
-      [
-        {
-          billingModel: "per_seat",
-          metricKey: "billable_seats",
-          rateAmount: 30000,
-          mandatedSeats: 50,
-        },
-      ],
-      [{ metricKey: "billable_seats", plannedUnits: 50, billableUnits: 0 }],
+      [{
+        billingModel: "per_seat",
+        metricKey: "billable_seats",
+        rateAmount: 30000,
+        mandatedSeats: 50,
+      }],
+      [{ metricKey: "billable_seats", plannedUnits: 50, billableUnits: 0 }]
     );
 
     expect(result.baseRevenue).toBe(0);
@@ -181,16 +137,13 @@ describe("shared allocation primitive (allocatePoolAmount)", () => {
         { key: "cc2", weight: 5000 },
         { key: "cc3", weight: 4000 },
       ],
-      "weighted",
+      "weighted"
     );
 
     expect(outcome.amounts.get("cc1")).toBe(75000);
     expect(outcome.amounts.get("cc2")).toBe(50000);
     expect(outcome.amounts.get("cc3")).toBe(40000);
-    const sum = [...outcome.amounts.values()].reduce(
-      (total, value) => total + value,
-      0,
-    );
+    const sum = [...outcome.amounts.values()].reduce((total, value) => total + value, 0);
     expect(sum).toBe(165000);
     expect(outcome.balanced).toBe(true);
   });
@@ -205,12 +158,9 @@ describe("shared allocation primitive (allocatePoolAmount)", () => {
         { key: "b", weight: 1 },
         { key: "c", weight: 1 },
       ],
-      "weighted",
+      "weighted"
     );
-    const sum = [...outcome.amounts.values()].reduce(
-      (total, value) => total + value,
-      0,
-    );
+    const sum = [...outcome.amounts.values()].reduce((total, value) => total + value, 0);
     expect(sum).toBe(100000);
     // Each share should be within 1 paisa of the naive even split.
     for (const value of outcome.amounts.values()) {
@@ -221,17 +171,10 @@ describe("shared allocation primitive (allocatePoolAmount)", () => {
   it("splits an equal-mode pool evenly with an exact reconciling sum", () => {
     const outcome = allocatePoolAmount(
       10000,
-      [
-        { key: "a", weight: 0 },
-        { key: "b", weight: 0 },
-        { key: "c", weight: 0 },
-      ],
-      "equal",
+      [{ key: "a", weight: 0 }, { key: "b", weight: 0 }, { key: "c", weight: 0 }],
+      "equal"
     );
-    const sum = [...outcome.amounts.values()].reduce(
-      (total, value) => total + value,
-      0,
-    );
+    const sum = [...outcome.amounts.values()].reduce((total, value) => total + value, 0);
     expect(sum).toBe(10000);
     expect(outcome.amounts.get("a")).toBeCloseTo(3333.34, 2);
   });
@@ -239,17 +182,10 @@ describe("shared allocation primitive (allocatePoolAmount)", () => {
   it("falls back to an equal split when all weighted driver values are zero, still reconciling exactly", () => {
     const outcome = allocatePoolAmount(
       9999,
-      [
-        { key: "a", weight: 0 },
-        { key: "b", weight: 0 },
-        { key: "c", weight: 0 },
-      ],
-      "weighted",
+      [{ key: "a", weight: 0 }, { key: "b", weight: 0 }, { key: "c", weight: 0 }],
+      "weighted"
     );
-    const sum = [...outcome.amounts.values()].reduce(
-      (total, value) => total + value,
-      0,
-    );
+    const sum = [...outcome.amounts.values()].reduce((total, value) => total + value, 0);
     expect(sum).toBe(9999);
   });
 
@@ -260,7 +196,7 @@ describe("shared allocation primitive (allocatePoolAmount)", () => {
         { key: "a", weight: 40 },
         { key: "b", weight: 30 },
       ],
-      "manual_percentage",
+      "manual_percentage"
     );
     // Percentages sum to 70, not 100 — amounts must reflect that (under-allocated), not be
     // silently rebalanced to sum to the pool amount.
@@ -277,7 +213,7 @@ describe("shared allocation primitive (allocatePoolAmount)", () => {
         { key: "a", weight: 60 },
         { key: "b", weight: 40 },
       ],
-      "manual_percentage",
+      "manual_percentage"
     );
     expect(outcome.balanced).toBe(true);
     expect(outcome.percentTotal).toBe(100);
@@ -288,10 +224,7 @@ describe("shared allocation primitive (allocatePoolAmount)", () => {
 // 1428.57, each of which displays as 1,429 in a whole-rupee grid, so a column of seven reads
 // 10,003 against a 10,000 total — a finance sheet whose column visibly does not add up.
 describe("allocatePoolAmount — rupee granularity", () => {
-  const seven = Array.from({ length: 7 }, (_, i) => ({
-    key: `cc${i}`,
-    weight: 1,
-  }));
+  const seven = Array.from({ length: 7 }, (_, i) => ({ key: `cc${i}`, weight: 1 }));
 
   it("splits a whole-rupee pool into whole rupees that still sum exactly", () => {
     const out = allocatePoolAmount(10000, seven, "equal", "rupee");
@@ -307,10 +240,7 @@ describe("allocatePoolAmount — rupee granularity", () => {
     // Reconciling exactly matters more than round numbers: with rupee units the shares could not
     // add back to 10,000.50, so the finer unit has to win.
     const out = allocatePoolAmount(10000.5, seven, "equal", "rupee");
-    expect([...out.amounts.values()].reduce((a, b) => a + b, 0)).toBeCloseTo(
-      10000.5,
-      2,
-    );
+    expect([...out.amounts.values()].reduce((a, b) => a + b, 0)).toBeCloseTo(10000.5, 2);
   });
 
   it("still defaults to paise, so actuals are unaffected", () => {

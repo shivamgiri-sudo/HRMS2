@@ -7,7 +7,7 @@
 export interface ColumnMapping {
   sourceHeader: string;
   mappedTo: string | null; // canonical field name, null = goes to extra_metadata_json
-  confidence: "HIGH" | "MEDIUM" | "LOW" | "NONE";
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
 }
 
 export interface DateColumn {
@@ -47,44 +47,27 @@ const MONTH_MAP: Record<string, number> = {
 
 // Identity alias map — canonical field → list of header aliases (all lowercase)
 const IDENTITY_ALIASES: Record<string, string[]> = {
-  employeeId: [
-    "mas id",
-    "masid",
-    "emp code",
-    "employee id",
-    "emp id",
-    "empl number",
-    "employee number",
-    "agent id",
-    "employee code",
-    "empid",
-  ],
-  employeeName: [
-    "analyst name",
-    "name",
-    "employee name",
-    "agent name",
-    "emp name",
-  ],
-  teammatesId: ["teammates id", "teammate id", "teammates"],
-  domainId: ["domain id", "doman id", "domainid"],
-  domainEmail: ["domain", "domain email", "email"],
-  gender: ["gender", "sex"],
-  batchNumber: ["batch #", "batch", "batch number", "batch no", "batch_no"],
-  contactNumber: ["contact no", "phone", "mobile", "contact", "contact number"],
-  doj: ["doj", "date of joining", "join date", "joining date", "date of join"],
-  dol: ["dol", "date of leaving", "exit date", "leaving date", "date of exit"],
-  aor: ["aor", "aor date"],
-  aorStatus: ["aor current status", "aor status", "current status"],
-  tlName: ["tl name", "team leader", "tl"],
-  qualityAuditor: ["quality auditor", "qa", "auditor", "quality"],
-  amName: ["am", "assistant manager", "am name"],
-  designation: ["designation", "role", "title", "position"],
-  department: ["dept", "department"],
-  process: ["process", "campaign", "account", "project"],
-  lob: ["lob", "line of business"],
-  subLob: ["sub lob", "sub-lob", "queue", "sublob", "sub_lob"],
-  site: ["site", "location", "branch", "office"],
+  employeeId: ['mas id', 'masid', 'emp code', 'employee id', 'emp id', 'empl number', 'employee number', 'agent id', 'employee code', 'empid'],
+  employeeName: ['analyst name', 'name', 'employee name', 'agent name', 'emp name'],
+  teammatesId: ['teammates id', 'teammate id', 'teammates'],
+  domainId: ['domain id', 'doman id', 'domainid'],
+  domainEmail: ['domain', 'domain email', 'email'],
+  gender: ['gender', 'sex'],
+  batchNumber: ['batch #', 'batch', 'batch number', 'batch no', 'batch_no'],
+  contactNumber: ['contact no', 'phone', 'mobile', 'contact', 'contact number'],
+  doj: ['doj', 'date of joining', 'join date', 'joining date', 'date of join'],
+  dol: ['dol', 'date of leaving', 'exit date', 'leaving date', 'date of exit'],
+  aor: ['aor', 'aor date'],
+  aorStatus: ['aor current status', 'aor status', 'current status'],
+  tlName: ['tl name', 'team leader', 'tl'],
+  qualityAuditor: ['quality auditor', 'qa', 'auditor', 'quality'],
+  amName: ['am', 'assistant manager', 'am name'],
+  designation: ['designation', 'role', 'title', 'position'],
+  department: ['dept', 'department'],
+  process: ['process', 'campaign', 'account', 'project'],
+  lob: ['lob', 'line of business'],
+  subLob: ['sub lob', 'sub-lob', 'queue', 'sublob', 'sub_lob'],
+  site: ['site', 'location', 'branch', 'office'],
 };
 
 // Reverse lookup: lowercase alias → canonical field name (built once at module load)
@@ -109,19 +92,19 @@ for (const [canonical, aliases] of Object.entries(IDENTITY_ALIASES)) {
  * 500 rather than anything an uploader could act on.
  */
 function toHeaderString(value: unknown): string {
-  if (value === null || value === undefined) return "";
+  if (value === null || value === undefined) return '';
   if (value instanceof Date) {
     // ISO, which parseColumnDate understands below. Local getters, not toISOString: a date-only
     // cell read as local midnight shifts to the previous day under UTC in IST.
     const y = value.getFullYear();
-    const m = String(value.getMonth() + 1).padStart(2, "0");
-    const d = String(value.getDate()).padStart(2, "0");
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }
-  if (typeof value === "number") {
+  if (typeof value === 'number') {
     // An Excel serial for a date-only cell is an integer; a serial carrying a time is not, and
     // rounding it here keeps the column's calendar day.
-    return Number.isFinite(value) ? String(Math.round(value)) : "";
+    return Number.isFinite(value) ? String(Math.round(value)) : '';
   }
   return String(value);
 }
@@ -143,8 +126,7 @@ export function parseColumnDate(header: unknown): Date | null {
     const year = parseInt(iso[1], 10);
     const month = parseInt(iso[2], 10) - 1;
     const day = parseInt(iso[3], 10);
-    if (month >= 0 && month <= 11 && day >= 1 && day <= 31)
-      return new Date(year, month, day);
+    if (month >= 0 && month <= 11 && day >= 1 && day <= 31) return new Date(year, month, day);
     return null;
   }
 
@@ -178,8 +160,7 @@ export function parseColumnDate(header: unknown): Date | null {
     const month = MONTH_MAP[ddMmmYy[2].toLowerCase()];
     const yy = parseInt(ddMmmYy[3], 10);
     if (month !== undefined && day >= 1 && day <= 31) {
-      const year =
-        yy >= 0 && yy <= 99 ? (yy >= 50 ? 1900 + yy : 2000 + yy) : yy;
+      const year = yy >= 0 && yy <= 99 ? (yy >= 50 ? 1900 + yy : 2000 + yy) : yy;
       return new Date(year, month, day);
     }
     return null;
@@ -235,11 +216,7 @@ export function parseColumnDate(header: unknown): Date | null {
  */
 /** Lowercase, strip punctuation, collapse whitespace — so 'Emp.Code' == 'emp code'. */
 function normalizeAliasKey(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[._\-\/]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return value.toLowerCase().replace(/[._\-\/]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 export function mapIdentityColumn(header: unknown): ColumnMapping {
@@ -252,9 +229,9 @@ export function mapIdentityColumn(header: unknown): ColumnMapping {
   // 1,421 of them then collided as "conflicting assignments for same employee+date".
   const canonical = ALIAS_TO_CANONICAL.get(normalizeAliasKey(sourceHeader));
   if (canonical) {
-    return { sourceHeader, mappedTo: canonical, confidence: "HIGH" };
+    return { sourceHeader, mappedTo: canonical, confidence: 'HIGH' };
   }
-  return { sourceHeader, mappedTo: null, confidence: "NONE" };
+  return { sourceHeader, mappedTo: null, confidence: 'NONE' };
 }
 
 /**

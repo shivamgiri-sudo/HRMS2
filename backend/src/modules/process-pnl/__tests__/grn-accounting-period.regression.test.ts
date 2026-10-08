@@ -13,15 +13,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * matching the bound period against whichever column the query filters on.
  */
 
-const { execute, tableExists } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  tableExists: vi.fn(),
-}));
+const { execute, tableExists } = vi.hoisted(() => ({ execute: vi.fn(), tableExists: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../../shared/dbHelpers.js", () => ({
-  tableExists,
-  queryRows: vi.fn(),
-}));
+vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists, queryRows: vi.fn() }));
 
 const BRANCH_ID = "branch-1";
 const GRN_BILL_DATE_MONTH = "2026-06";
@@ -38,10 +32,7 @@ beforeEach(() => {
     const q = String(sql);
 
     if (q.includes("FROM branch_master") && !q.includes("JOIN")) {
-      return [
-        [{ id: BRANCH_ID, branch_name: "TEST BRANCH", active_status: 1 }],
-        [],
-      ];
+      return [[{ id: BRANCH_ID, branch_name: "TEST BRANCH", active_status: 1 }], []];
     }
 
     // spendByBranch's app-side query: grn_cost_allocation joined to grn_request. Answer as a real
@@ -49,21 +40,14 @@ beforeEach(() => {
     // Keyed on amount_without_tax: the shared reader is ex-GST since the 2026-09-24 owner rule.
     // Consumed leg only: the GRN is consumed. (Reserved is read for every period since the
     // 2026-09-24 owner rule, so an unscoped match here would count this one GRN twice.)
-    if (
-      q.includes("FROM grn_cost_allocation") &&
-      q.includes("amount_without_tax") &&
-      q.includes("'consumed'")
-    ) {
+    if (q.includes("FROM grn_cost_allocation") && q.includes("amount_without_tax") && q.includes("'consumed'")) {
       const period = params[0];
       const matches = q.includes("gr.accounting_period = ?")
         ? period === GRN_ACCOUNTING_PERIOD
         : q.includes("DATE_FORMAT(gr.bill_date")
-          ? period === GRN_BILL_DATE_MONTH
-          : false;
-      return [
-        matches ? [{ branch_id: BRANCH_ID, amount: GRN_AMOUNT }] : [],
-        [],
-      ];
+        ? period === GRN_BILL_DATE_MONTH
+        : false;
+      return [matches ? [{ branch_id: BRANCH_ID, amount: GRN_AMOUNT }] : [], []];
     }
 
     // Everything else spendByBranch/getCeoOverview touches: no data, no crash.
@@ -86,9 +70,6 @@ describe("GRN Finance Month attribution (accounting_period, not bill_date)", () 
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview(GRN_BILL_DATE_MONTH);
     const branch = out.branches.find((b) => b.branchId === BRANCH_ID);
-    expect(
-      branch,
-      "no spend happened in the bill_date month per the accounting_period rule",
-    ).toBeUndefined();
+    expect(branch, "no spend happened in the bill_date month per the accounting_period rule").toBeUndefined();
   });
 });

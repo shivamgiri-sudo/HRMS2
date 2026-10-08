@@ -1,20 +1,20 @@
 export enum ExpenseStatus {
-  DRAFT = "DRAFT",
-  SUBMITTED = "SUBMITTED",
-  MANAGER_APPROVED = "MANAGER_APPROVED",
-  FINANCE_APPROVED = "FINANCE_APPROVED",
-  PAID = "PAID",
-  REJECTED = "REJECTED",
+  DRAFT = 'DRAFT',
+  SUBMITTED = 'SUBMITTED',
+  MANAGER_APPROVED = 'MANAGER_APPROVED',
+  FINANCE_APPROVED = 'FINANCE_APPROVED',
+  PAID = 'PAID',
+  REJECTED = 'REJECTED'
 }
 
 export enum ApprovalType {
-  MANAGER = "MANAGER",
-  FINANCE = "FINANCE",
+  MANAGER = 'MANAGER',
+  FINANCE = 'FINANCE'
 }
 
 export enum ApprovalAction {
-  APPROVED = "APPROVED",
-  REJECTED = "REJECTED",
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED'
 }
 
 export interface ExpenseCategory {
@@ -112,7 +112,7 @@ export interface ExpenseReportQuery {
   branch_id?: string;
   start_date?: string;
   end_date?: string;
-  group_by?: "category" | "employee" | "branch" | "process";
+  group_by?: 'category' | 'employee' | 'branch' | 'process';
 }
 
 export interface ExpenseClaimWithDetails extends ExpenseClaim {

@@ -2,8 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const read = (path: string) =>
-  readFileSync(resolve(process.cwd(), path), "utf8");
+const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
 /**
  * Screen (`GET /:code`) vs export (`GET /:code/export`) scoping parity.
@@ -60,9 +59,7 @@ describe("screen route matches export executor scoping for previously-mismatched
   /** Slice one `case "<code>"` block out of the switch (up to the next `case` at the same indent). */
   const screenBlock = (code: string): string => {
     const start = routes.indexOf(`case "${code}"`);
-    expect(start, `${code}: no screen-route case block found`).toBeGreaterThan(
-      -1,
-    );
+    expect(start, `${code}: no screen-route case block found`).toBeGreaterThan(-1);
     const next = routes.indexOf('\n    case "', start + 1);
     const defaultIdx = routes.indexOf("\n    default:", start + 1);
     let end = routes.length;
@@ -94,9 +91,7 @@ describe("screen route matches export executor scoping for previously-mismatched
         `${code}: must call addFullScopedEmployeeFilters(req, clauses, params) — the same ` +
           `branch AND process AND department AND cost-centre scope the export executor for ` +
           `this code enforces via appendScopeConditions. See reporting-access.ts.`,
-      ).toMatch(
-        /addFullScopedEmployeeFilters\s*\(\s*req\s*,\s*clauses\s*,\s*params/,
-      );
+      ).toMatch(/addFullScopedEmployeeFilters\s*\(\s*req\s*,\s*clauses\s*,\s*params/);
 
       // The weaker helper must not ALSO be called on top of the full one — its presence here,
       // as a live (non-comment) call, is exactly the bug this guard exists to catch. Note
@@ -122,9 +117,7 @@ describe("screen route matches export executor scoping for previously-mismatched
     // purely to scope on, even though no employee column reaches its SELECT — the screen
     // route must do the same.
     const body = screenBlock("leave-trend-monthly");
-    expect(body).toMatch(
-      /JOIN\s+employees\s+e\s+ON\s+e\.id\s*=\s*lr\.employee_id/i,
-    );
+    expect(body).toMatch(/JOIN\s+employees\s+e\s+ON\s+e\.id\s*=\s*lr\.employee_id/i);
   });
 
   it("every code in this guard actually has a registered export executor calling appendScopeConditions", () => {
@@ -143,31 +136,21 @@ describe("screen route matches export executor scoping for previously-mismatched
     };
     const executorFiles: Record<string, string> = {
       employeeMaster: "src/modules/reporting/executors/employee.executor.ts",
-      costCentreHeadcount:
-        "src/modules/reporting/executors/employee.executor.ts",
+      costCentreHeadcount: "src/modules/reporting/executors/employee.executor.ts",
       lifecycleEvents: "src/modules/reporting/executors/employee.executor.ts",
-      confirmationDueList:
-        "src/modules/reporting/executors/employee.executor.ts",
-      contractExpiryList:
-        "src/modules/reporting/executors/employee.executor.ts",
-      leaveAllocationRegister:
-        "src/modules/reporting/executors/leave.executor.ts",
+      confirmationDueList: "src/modules/reporting/executors/employee.executor.ts",
+      contractExpiryList: "src/modules/reporting/executors/employee.executor.ts",
+      leaveAllocationRegister: "src/modules/reporting/executors/leave.executor.ts",
       leaveTrendMonthly: "src/modules/reporting/executors/leave.executor.ts",
-      clearanceStatusRegister:
-        "src/modules/reporting/executors/exit.executor.ts",
+      clearanceStatusRegister: "src/modules/reporting/executors/exit.executor.ts",
     };
 
     for (const code of CODES_REQUIRING_FULL_SCOPE) {
       const fnName = fnNames[code];
-      expect(index, `${code}: not registered in executors/index.ts`).toContain(
-        `"${code}"`,
-      );
+      expect(index, `${code}: not registered in executors/index.ts`).toContain(`"${code}"`);
       const fileSrc = read(executorFiles[fnName]);
       const start = fileSrc.indexOf(`export async function ${fnName}`);
-      expect(
-        start,
-        `${fnName} (export executor for ${code}) not found`,
-      ).toBeGreaterThan(-1);
+      expect(start, `${fnName} (export executor for ${code}) not found`).toBeGreaterThan(-1);
       const nextFn = fileSrc.indexOf("\nexport async function", start + 1);
       const fn = fileSrc.slice(start, nextFn === -1 ? fileSrc.length : nextFn);
       expect(

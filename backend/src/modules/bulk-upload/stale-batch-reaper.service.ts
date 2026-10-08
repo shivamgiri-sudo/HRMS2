@@ -31,12 +31,7 @@ import { db } from "../../db/mysql.js";
  * progress is, by definition, a batch whose worker is gone — there is no legitimate way to sit
  * here idle.
  */
-export const TRANSIENT_BATCH_STATUSES = [
-  "importing",
-  "approving",
-  "validating",
-  "rejecting",
-] as const;
+export const TRANSIENT_BATCH_STATUSES = ["importing", "approving", "validating", "rejecting"] as const;
 
 /**
  * How long with no progress before a batch is declared stalled.
@@ -88,9 +83,7 @@ interface StalledRow extends RowDataPacket {
 }
 
 /** Batches sitting in a working state with no progress for longer than `stallMinutes`. */
-export async function findStalledBatches(
-  stallMinutes = STALL_MINUTES,
-): Promise<StalledBatch[]> {
+export async function findStalledBatches(stallMinutes = STALL_MINUTES): Promise<StalledBatch[]> {
   const placeholders = TRANSIENT_BATCH_STATUSES.map(() => "?").join(",");
   const [rows] = await db.query<StalledRow[]>(
     `SELECT b.id, b.upload_batch_no, b.upload_type_code, b.batch_status,
@@ -165,9 +158,7 @@ export interface ReapResult {
   batches: StalledBatch[];
 }
 
-export async function reapStalledBatches(
-  stallMinutes = STALL_MINUTES,
-): Promise<ReapResult> {
+export async function reapStalledBatches(stallMinutes = STALL_MINUTES): Promise<ReapResult> {
   const stalled = await findStalledBatches(stallMinutes);
   let marked = 0;
   for (const b of stalled) {

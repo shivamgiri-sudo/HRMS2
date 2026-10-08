@@ -30,32 +30,16 @@ export function vendorGrnLines(input: {
   tdsPayableAccountId: string | null;
 }): JournalLineInput[] {
   const lines: JournalLineInput[] = [];
-  const grossCleared =
-    Math.round((input.netAmount + input.tdsAmount) * 100) / 100;
+  const grossCleared = Math.round((input.netAmount + input.tdsAmount) * 100) / 100;
   // Vendor's payable cleared in FULL (net paid + tax withheld) — the vendor is owed nothing
   // further for this GRN either way, whether the money left as cash or as tax withholding.
-  lines.push({
-    accountType: "vendor",
-    accountId: input.vendorId,
-    debitAmount: grossCleared,
-  });
-  lines.push({
-    accountType: "bank_account",
-    accountId: input.bankAccountId,
-    creditAmount: input.netAmount,
-  });
+  lines.push({ accountType: "vendor", accountId: input.vendorId, debitAmount: grossCleared });
+  lines.push({ accountType: "bank_account", accountId: input.bankAccountId, creditAmount: input.netAmount });
   if (input.tdsAmount > 0) {
     if (!input.tdsPayableAccountId) {
-      throw new Error(
-        "TDS was withheld but no 'TDS Payable' ledger head is configured in payable_account_master.",
-      );
+      throw new Error("TDS was withheld but no 'TDS Payable' ledger head is configured in payable_account_master.");
     }
-    lines.push({
-      accountType: "payable_account",
-      accountId: input.tdsPayableAccountId,
-      creditAmount: input.tdsAmount,
-      narration: "TDS withheld",
-    });
+    lines.push({ accountType: "payable_account", accountId: input.tdsPayableAccountId, creditAmount: input.tdsAmount, narration: "TDS withheld" });
   }
   return lines;
 }
@@ -67,16 +51,8 @@ export function imprestAllocationLines(input: {
   amount: number;
 }): JournalLineInput[] {
   return [
-    {
-      accountType: "payable_account",
-      accountId: input.imprestFloatAccountId,
-      debitAmount: input.amount,
-    },
-    {
-      accountType: "bank_account",
-      accountId: input.bankAccountId,
-      creditAmount: input.amount,
-    },
+    { accountType: "payable_account", accountId: input.imprestFloatAccountId, debitAmount: input.amount },
+    { accountType: "bank_account", accountId: input.bankAccountId, creditAmount: input.amount },
   ];
 }
 
@@ -90,16 +66,8 @@ export function vendorAdvanceLines(input: {
   amount: number;
 }): JournalLineInput[] {
   return [
-    {
-      accountType: "vendor",
-      accountId: input.vendorId,
-      debitAmount: input.amount,
-    },
-    {
-      accountType: "bank_account",
-      accountId: input.bankAccountId,
-      creditAmount: input.amount,
-    },
+    { accountType: "vendor", accountId: input.vendorId, debitAmount: input.amount },
+    { accountType: "bank_account", accountId: input.bankAccountId, creditAmount: input.amount },
   ];
 }
 
@@ -117,23 +85,11 @@ export function vendorAdvanceApplicationLines(input: {
 }): JournalLineInput[] {
   if (input.tdsAmount <= 0) return [];
   if (!input.tdsPayableAccountId) {
-    throw new Error(
-      "TDS was withheld but no 'TDS Payable' ledger head is configured in payable_account_master.",
-    );
+    throw new Error("TDS was withheld but no 'TDS Payable' ledger head is configured in payable_account_master.");
   }
   return [
-    {
-      accountType: "vendor",
-      accountId: input.vendorId,
-      debitAmount: input.tdsAmount,
-      narration: "TDS withheld on advance application",
-    },
-    {
-      accountType: "payable_account",
-      accountId: input.tdsPayableAccountId,
-      creditAmount: input.tdsAmount,
-      narration: "TDS withheld",
-    },
+    { accountType: "vendor", accountId: input.vendorId, debitAmount: input.tdsAmount, narration: "TDS withheld on advance application" },
+    { accountType: "payable_account", accountId: input.tdsPayableAccountId, creditAmount: input.tdsAmount, narration: "TDS withheld" },
   ];
 }
 
@@ -145,15 +101,7 @@ export function generalLines(input: {
   amount: number;
 }): JournalLineInput[] {
   return [
-    {
-      accountType: "payable_account",
-      accountId: input.payableAccountId,
-      debitAmount: input.amount,
-    },
-    {
-      accountType: "bank_account",
-      accountId: input.bankAccountId,
-      creditAmount: input.amount,
-    },
+    { accountType: "payable_account", accountId: input.payableAccountId, debitAmount: input.amount },
+    { accountType: "bank_account", accountId: input.bankAccountId, creditAmount: input.amount },
   ];
 }

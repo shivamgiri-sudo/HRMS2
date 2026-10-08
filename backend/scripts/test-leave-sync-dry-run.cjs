@@ -10,39 +10,39 @@
  * SAFE: READ-ONLY, NO WRITES
  */
 
-const mysql = require("mysql2/promise");
-require("dotenv").config();
+const mysql = require('mysql2/promise');
+require('dotenv').config();
 
 // Legacy MySQL (db_bill - READ ONLY)
 const legacyConfig = {
   host: process.env.BILL_DB_HOST,
   port: 3306,
-  user: "shivam_user",
+  user: 'shivam_user',
   password: process.env.DB_PASSWORD,
-  database: "db_bill",
+  database: 'db_bill',
 };
 
 // HRMS MySQL (mas_hrms - READ ONLY for this test)
 const hrmsConfig = {
   host: process.env.DB_HOST,
   port: 3306,
-  user: "shivam_user",
+  user: 'shivam_user',
   password: process.env.DB_PASSWORD,
-  database: "mas_hrms",
+  database: 'mas_hrms',
 };
 
 async function dryRunLeaveSyn() {
   const legacyConn = await mysql.createConnection(legacyConfig);
   const hrmsConn = await mysql.createConnection(hrmsConfig);
 
-  console.log("=".repeat(80));
-  console.log("LEAVE SYNC DRY RUN - READ ONLY TEST");
-  console.log("=".repeat(80));
+  console.log('='.repeat(80));
+  console.log('LEAVE SYNC DRY RUN - READ ONLY TEST');
+  console.log('='.repeat(80));
 
   try {
     // Step 1: Count total leave records in legacy
     const [legacyCount] = await legacyConn.execute(
-      "SELECT COUNT(*) as total FROM leave_management",
+      'SELECT COUNT(*) as total FROM leave_management'
     );
     console.log(`\n📊 Total legacy leave records: ${legacyCount[0].total}`);
 
@@ -72,28 +72,26 @@ async function dryRunLeaveSyn() {
     console.table(uniqueEmps);
 
     // Step 4: Check which employees exist in HRMS
-    const empCodes = uniqueEmps.map((e) => e.EmpCode);
-    const placeholders = empCodes.map(() => "?").join(",");
+    const empCodes = uniqueEmps.map(e => e.EmpCode);
+    const placeholders = empCodes.map(() => '?').join(',');
 
     const [hrmsEmps] = await hrmsConn.execute(
       `SELECT id, employee_code, first_name, last_name, active_status
        FROM employees
        WHERE employee_code IN (${placeholders})`,
-      empCodes,
+      empCodes
     );
 
-    console.log(
-      `\n✅ Employees found in HRMS: ${hrmsEmps.length}/${empCodes.length}`,
-    );
+    console.log(`\n✅ Employees found in HRMS: ${hrmsEmps.length}/${empCodes.length}`);
     console.table(hrmsEmps);
 
     // Step 5: Check missing employees
-    const hrmsEmpCodes = new Set(hrmsEmps.map((e) => e.employee_code));
-    const missingEmps = empCodes.filter((code) => !hrmsEmpCodes.has(code));
+    const hrmsEmpCodes = new Set(hrmsEmps.map(e => e.employee_code));
+    const missingEmps = empCodes.filter(code => !hrmsEmpCodes.has(code));
 
     if (missingEmps.length > 0) {
       console.log(`\n⚠️  Employees NOT found in HRMS (${missingEmps.length}):`);
-      console.log(missingEmps.slice(0, 10).join(", "));
+      console.log(missingEmps.slice(0, 10).join(', '));
       if (missingEmps.length > 10) {
         console.log(`... and ${missingEmps.length - 10} more`);
       }
@@ -158,30 +156,24 @@ async function dryRunLeaveSyn() {
     const totalLeaves = legacyCount[0].total;
     const validEmps = hrmsEmps.length;
     const missingEmpCount = missingEmps.length;
-    const dataIssues =
-      dataQuality[0].missing_from_date + dataQuality[0].missing_to_date;
+    const dataIssues = dataQuality[0].missing_from_date + dataQuality[0].missing_to_date;
 
-    console.log(`\n${"=".repeat(80)}`);
-    console.log("SYNC READINESS REPORT");
-    console.log("=".repeat(80));
+    console.log(`\n${'='.repeat(80)}`);
+    console.log('SYNC READINESS REPORT');
+    console.log('='.repeat(80));
     console.log(`Total legacy leave records: ${totalLeaves}`);
-    console.log(
-      `Employees validated in HRMS: ${validEmps}/${empCodes.length} (${Math.round((validEmps / empCodes.length) * 100)}%)`,
-    );
+    console.log(`Employees validated in HRMS: ${validEmps}/${empCodes.length} (${Math.round((validEmps / empCodes.length) * 100)}%)`);
     console.log(`Missing employees: ${missingEmpCount}`);
     console.log(`Records with date issues: ${dataIssues}`);
-    console.log(
-      `\n✅ Estimated syncable records: ~${Math.round((validEmps / empCodes.length) * totalLeaves)}`,
-    );
-    console.log(
-      `⚠️  Estimated skipped records: ~${Math.round((missingEmpCount / empCodes.length) * totalLeaves)}`,
-    );
+    console.log(`\n✅ Estimated syncable records: ~${Math.round((validEmps / empCodes.length) * totalLeaves)}`);
+    console.log(`⚠️  Estimated skipped records: ~${Math.round((missingEmpCount / empCodes.length) * totalLeaves)}`);
 
-    console.log(`\n${"=".repeat(80)}`);
-    console.log("✅ DRY RUN COMPLETE - NO DATA WAS MODIFIED");
-    console.log("=".repeat(80));
+    console.log(`\n${'='.repeat(80)}`);
+    console.log('✅ DRY RUN COMPLETE - NO DATA WAS MODIFIED');
+    console.log('='.repeat(80));
+
   } catch (error) {
-    console.error("\n❌ Error during dry run:", error.message);
+    console.error('\n❌ Error during dry run:', error.message);
     throw error;
   } finally {
     await legacyConn.end();

@@ -17,7 +17,7 @@ export interface IncentiveUploadBatch {
   id: string;
   incentive_id: string;
   pay_month: string;
-  status: "draft" | "pending_approval" | "approved" | "rejected" | "applied";
+  status: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'applied';
   total_employees: number;
   total_amount: number;
   uploaded_by: string | null;
@@ -37,7 +37,7 @@ export interface IncentiveUploadLine {
   employee_code: string;
   amount: number;
   remarks: string | null;
-  validation_status: "ok" | "error";
+  validation_status: 'ok' | 'error';
   validation_msg: string | null;
   created_at: string;
   // joins
@@ -48,7 +48,7 @@ export interface IncentiveApprovalLog {
   id: string;
   batch_id: string;
   actor_user_id: string;
-  action: "submitted" | "approved" | "rejected" | "applied";
+  action: 'submitted' | 'approved' | 'rejected' | 'applied';
   remarks: string | null;
   acted_at: string;
 }

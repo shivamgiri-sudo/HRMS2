@@ -26,35 +26,29 @@ import { validateFormula, listFormulaFunctions } from './kpi-formula.engine.js';
 import { validateSheetCsvUrl } from './kpi-studio.gsheet.js';
 // The allowed date formats live with the query builder that interpolates them, so
 // there is one list rather than two that can drift apart.
-import { DATE_FORMATS, isSupportedDateFormat } from "./kpi-studio.sources.js";
-import { isNamedPool, listNamedPools } from "./kpi-studio.pools.js";
+import { DATE_FORMATS, isSupportedDateFormat } from './kpi-studio.sources.js';
+import { isNamedPool, listNamedPools } from './kpi-studio.pools.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────────────────────
 
 export type StudioSourceType =
-  | "local_query"
-  | "integration_connector"
-  | "upload"
-  | "manual"
+  | 'local_query'
+  | 'integration_connector'
+  | 'upload'
+  | 'manual'
   /** A Google Sheet published to the web as CSV. Live, and needs no stored credential. */
-  | "google_sheet_csv"
+  | 'google_sheet_csv'
   /**
    * One of the upstream databases this codebase already connects to, named in
    * integration_key. The credential stays in that pool's own module rather than
    * being copied into integration_config, where it would become a second record
    * of one secret that can disagree.
    */
-  | "named_pool";
+  | 'named_pool';
 
-export type AggregationMethod = "average" | "sum" | "last" | "min" | "max";
+export type AggregationMethod = 'average' | 'sum' | 'last' | 'min' | 'max';
 
-export const AGGREGATION_METHODS: readonly AggregationMethod[] = [
-  "average",
-  "sum",
-  "last",
-  "min",
-  "max",
-];
+export const AGGREGATION_METHODS: readonly AggregationMethod[] = ['average', 'sum', 'last', 'min', 'max'];
 
 /**
  * Scope of a definition. Every non-null field must match the employee for the definition to
@@ -130,26 +124,14 @@ const SCOPE_TIERS: ReadonlyArray<{
   label: string;
   needs: ReadonlyArray<keyof StudioScope>;
 }> = [
-  { tier: 0, label: "employee", needs: ["employee_id"] },
-  {
-    tier: 1,
-    label: "branch+process+designation",
-    needs: ["branch_id", "process_id", "designation_id"],
-  },
-  {
-    tier: 2,
-    label: "process+designation",
-    needs: ["process_id", "designation_id"],
-  },
-  { tier: 3, label: "branch+process", needs: ["branch_id", "process_id"] },
-  { tier: 4, label: "process", needs: ["process_id"] },
-  {
-    tier: 5,
-    label: "branch+designation",
-    needs: ["branch_id", "designation_id"],
-  },
-  { tier: 6, label: "designation", needs: ["designation_id"] },
-  { tier: 7, label: "branch", needs: ["branch_id"] },
+  { tier: 0, label: 'employee', needs: ['employee_id'] },
+  { tier: 1, label: 'branch+process+designation', needs: ['branch_id', 'process_id', 'designation_id'] },
+  { tier: 2, label: 'process+designation', needs: ['process_id', 'designation_id'] },
+  { tier: 3, label: 'branch+process', needs: ['branch_id', 'process_id'] },
+  { tier: 4, label: 'process', needs: ['process_id'] },
+  { tier: 5, label: 'branch+designation', needs: ['branch_id', 'designation_id'] },
+  { tier: 6, label: 'designation', needs: ['designation_id'] },
+  { tier: 7, label: 'branch', needs: ['branch_id'] },
 ];
 
 /**
@@ -161,21 +143,17 @@ const SCOPE_TIERS: ReadonlyArray<{
  * only cause the row to stop applying if they transferred. Which is exactly the surprise this
  * avoids.
  */
-export function classifyScope(
-  scope: StudioScope,
-): { tier: number; label: string } | null {
-  if (scope.employee_id) return { tier: 0, label: "employee" };
+export function classifyScope(scope: StudioScope): { tier: number; label: string } | null {
+  if (scope.employee_id) return { tier: 0, label: 'employee' };
 
   const set = (key: keyof StudioScope) => Boolean(scope[key]);
   for (const candidate of SCOPE_TIERS) {
     if (candidate.tier === 0) continue;
     const exactMatch =
       candidate.needs.every(set) &&
-      (
-        ["branch_id", "process_id", "designation_id"] as Array<
-          keyof StudioScope
-        >
-      ).every((key) => candidate.needs.includes(key) === set(key));
+      (['branch_id', 'process_id', 'designation_id'] as Array<keyof StudioScope>).every(
+        (key) => candidate.needs.includes(key) === set(key),
+      );
     if (exactMatch) return { tier: candidate.tier, label: candidate.label };
   }
   return null;
@@ -196,16 +174,11 @@ export interface EmployeeOrgContext {
  * process applies only if BOTH match. Absent means "any", never "none" — the opposite reading
  * would make a process-wide target apply to nobody.
  */
-export function scopeMatchesEmployee(
-  scope: StudioScope,
-  employee: EmployeeOrgContext,
-): boolean {
+export function scopeMatchesEmployee(scope: StudioScope, employee: EmployeeOrgContext): boolean {
   if (scope.employee_id) return scope.employee_id === employee.id;
   if (scope.branch_id && scope.branch_id !== employee.branch_id) return false;
-  if (scope.process_id && scope.process_id !== employee.process_id)
-    return false;
-  if (scope.designation_id && scope.designation_id !== employee.designation_id)
-    return false;
+  if (scope.process_id && scope.process_id !== employee.process_id) return false;
+  if (scope.designation_id && scope.designation_id !== employee.designation_id) return false;
   // All-null was rejected at write time; reaching here with nothing set would mean a row that
   // applies to the whole company, so refuse it defensively too.
   return Boolean(scope.branch_id || scope.process_id || scope.designation_id);
@@ -219,19 +192,11 @@ export function scopeMatchesEmployee(
  * same metric can only differ by when they start, and the more recent decision is the current
  * one. The unique index on (metric_id, scope_key, effective_from) makes a true tie impossible.
  */
-export function pickWinningDefinitions<
-  T extends StudioScope & {
-    metric_id: string;
-    effective_from?: string | Date | null;
-  },
->(
+export function pickWinningDefinitions<T extends StudioScope & { metric_id: string; effective_from?: string | Date | null }>(
   definitions: readonly T[],
   employee: EmployeeOrgContext,
 ): Array<{ definition: T; tier: number; label: string }> {
-  const best = new Map<
-    string,
-    { definition: T; tier: number; label: string }
-  >();
+  const best = new Map<string, { definition: T; tier: number; label: string }>();
 
   for (const definition of definitions) {
     if (!scopeMatchesEmployee(definition, employee)) continue;
@@ -240,30 +205,18 @@ export function pickWinningDefinitions<
 
     const existing = best.get(definition.metric_id);
     if (!existing) {
-      best.set(definition.metric_id, {
-        definition,
-        tier: classified.tier,
-        label: classified.label,
-      });
+      best.set(definition.metric_id, { definition, tier: classified.tier, label: classified.label });
       continue;
     }
     if (classified.tier < existing.tier) {
-      best.set(definition.metric_id, {
-        definition,
-        tier: classified.tier,
-        label: classified.label,
-      });
+      best.set(definition.metric_id, { definition, tier: classified.tier, label: classified.label });
       continue;
     }
     if (classified.tier === existing.tier) {
-      const incoming = String(definition.effective_from ?? "");
-      const current = String(existing.definition.effective_from ?? "");
+      const incoming = String(definition.effective_from ?? '');
+      const current = String(existing.definition.effective_from ?? '');
       if (incoming > current) {
-        best.set(definition.metric_id, {
-          definition,
-          tier: classified.tier,
-          label: classified.label,
-        });
+        best.set(definition.metric_id, { definition, tier: classified.tier, label: classified.label });
       }
     }
   }
@@ -296,8 +249,8 @@ export function validateDefinition(
     metric?: { unit?: string | null; direction?: string | null } | null;
   } = {},
 ): ValidationOutcome {
-  if (!input.metric_id || typeof input.metric_id !== "string") {
-    return { ok: false, message: "Choose which KPI this applies to" };
+  if (!input.metric_id || typeof input.metric_id !== 'string') {
+    return { ok: false, message: 'Choose which KPI this applies to' };
   }
 
   const classified = classifyScope(input);
@@ -307,28 +260,19 @@ export function validateDefinition(
     // outrank nothing while being outranked by nothing.
     return {
       ok: false,
-      message:
-        "Choose at least a branch, process, designation or employee — a KPI with no scope would apply to everyone",
+      message: 'Choose at least a branch, process, designation or employee — a KPI with no scope would apply to everyone',
     };
   }
 
   if (input.effective_from && !ISO_DATE.test(input.effective_from)) {
-    return { ok: false, message: "Start date must be YYYY-MM-DD" };
+    return { ok: false, message: 'Start date must be YYYY-MM-DD' };
   }
 
   // ── Formula ──
   let variables: string[] = [];
   if (input.formula_expression && input.formula_expression.trim()) {
-    const validated = validateFormula(
-      input.formula_expression,
-      context.availableFields,
-    );
-    if (!validated.ok)
-      return {
-        ok: false,
-        message: validated.error,
-        variables: validated.variables,
-      };
+    const validated = validateFormula(input.formula_expression, context.availableFields);
+    if (!validated.ok) return { ok: false, message: validated.error, variables: validated.variables };
     variables = validated.variables;
 
     // A formula with no source is a formula whose inputs can never be fetched. It would
@@ -337,8 +281,7 @@ export function validateDefinition(
     if (!input.data_source_id) {
       return {
         ok: false,
-        message:
-          "A calculation needs a data source, otherwise its inputs can never be read",
+        message: 'A calculation needs a data source, otherwise its inputs can never be read',
         variables,
       };
     }
@@ -350,19 +293,13 @@ export function validateDefinition(
   // make sense.
   if (input.target_value !== null && input.target_value !== undefined) {
     if (!Number.isFinite(Number(input.target_value))) {
-      return { ok: false, message: "Target must be a number" };
+      return { ok: false, message: 'Target must be a number' };
     }
     if (Number(input.target_value) < 0) {
-      return { ok: false, message: "Target cannot be negative" };
+      return { ok: false, message: 'Target cannot be negative' };
     }
-    if (
-      context.metric?.unit === "percent" &&
-      Number(input.target_value) > 100
-    ) {
-      return {
-        ok: false,
-        message: `Target ${input.target_value} is above 100 for a percentage KPI`,
-      };
+    if (context.metric?.unit === 'percent' && Number(input.target_value) > 100) {
+      return { ok: false, message: `Target ${input.target_value} is above 100 for a percentage KPI` };
     }
   }
 
@@ -372,46 +309,32 @@ export function validateDefinition(
   // is better (a 360s ceiling under a 240s goal). Reversed, the floor gate fires on the wrong
   // side and zeroes everyone who is performing well.
   if (
-    input.min_threshold !== null &&
-    input.min_threshold !== undefined &&
-    input.target_value !== null &&
-    input.target_value !== undefined
+    input.min_threshold !== null && input.min_threshold !== undefined &&
+    input.target_value !== null && input.target_value !== undefined
   ) {
     const threshold = Number(input.min_threshold);
     const target = Number(input.target_value);
     if (!Number.isFinite(threshold)) {
-      return { ok: false, message: "Threshold must be a number or left blank" };
+      return { ok: false, message: 'Threshold must be a number or left blank' };
     }
-    const lowerIsBetter = context.metric?.direction === "lower_is_better";
+    const lowerIsBetter = context.metric?.direction === 'lower_is_better';
     if (lowerIsBetter && threshold < target) {
-      return {
-        ok: false,
-        message: `Threshold ${threshold} must be above the target ${target} when lower is better`,
-      };
+      return { ok: false, message: `Threshold ${threshold} must be above the target ${target} when lower is better` };
     }
     if (!lowerIsBetter && context.metric?.direction && threshold > target) {
-      return {
-        ok: false,
-        message: `Threshold ${threshold} must be below the target ${target} when higher is better`,
-      };
+      return { ok: false, message: `Threshold ${threshold} must be below the target ${target} when higher is better` };
     }
   }
 
   if (input.weightage !== null && input.weightage !== undefined) {
     const weight = Number(input.weightage);
     if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
-      return { ok: false, message: "Weight must be between 0 and 100" };
+      return { ok: false, message: 'Weight must be between 0 and 100' };
     }
   }
 
-  if (
-    input.aggregation_method &&
-    !AGGREGATION_METHODS.includes(input.aggregation_method as AggregationMethod)
-  ) {
-    return {
-      ok: false,
-      message: `Roll-up must be one of: ${AGGREGATION_METHODS.join(", ")}`,
-    };
+  if (input.aggregation_method && !AGGREGATION_METHODS.includes(input.aggregation_method as AggregationMethod)) {
+    return { ok: false, message: `Roll-up must be one of: ${AGGREGATION_METHODS.join(', ')}` };
   }
 
   return { ok: true, variables };
@@ -481,20 +404,14 @@ export async function getStudioCapability(): Promise<StudioCapability> {
     capabilityCache = {
       tables: Number((tableRows as any[])[0]?.n ?? 0) === 6,
       resolution: Number((columnRows as any[])[0]?.n ?? 0) === 6,
-      processGrain:
-        Number(grain[0]?.source_cols ?? 0) === 4 &&
-        Number(grain[0]?.grain_col ?? 0) === 1,
+      processGrain: Number(grain[0]?.source_cols ?? 0) === 4 && Number(grain[0]?.grain_col ?? 0) === 1,
       fieldFilters: Number(grain[0]?.filter_col ?? 0) === 1,
       dateFormat: Number(grain[0]?.date_format_col ?? 0) === 1,
     };
   } catch {
     // A failed probe is not a reason to take the KPI pages down. Treat it as "not installed".
     capabilityCache = {
-      tables: false,
-      resolution: false,
-      processGrain: false,
-      fieldFilters: false,
-      dateFormat: false,
+      tables: false, resolution: false, processGrain: false, fieldFilters: false, dateFormat: false,
     };
   }
 
@@ -510,10 +427,10 @@ export class StudioNotInstalledError extends Error {
   readonly statusCode = 503;
   constructor() {
     super(
-      "KPI Studio schema is not installed on this database. Apply migrations " +
-        "1644_kpi_studio_foundation.sql and 1645_kpi_studio_resolution.sql.",
+      'KPI Studio schema is not installed on this database. Apply migrations ' +
+        '1644_kpi_studio_foundation.sql and 1645_kpi_studio_resolution.sql.',
     );
-    this.name = "StudioNotInstalledError";
+    this.name = 'StudioNotInstalledError';
   }
 }
 
@@ -524,19 +441,17 @@ async function requireStudioTables(): Promise<void> {
 
 // ─── Data sources ────────────────────────────────────────────────────────────────────────────
 
-export async function listDataSources(
-  includeRetired = false,
-): Promise<RowDataPacket[]> {
+export async function listDataSources(includeRetired = false): Promise<RowDataPacket[]> {
   const cap = await getStudioCapability();
   if (!cap.tables) return [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT s.id, s.source_code, s.source_name, s.source_type, s.integration_key, s.source_object,
-            s.employee_key_column, s.employee_key_kind, s.date_column, s.description, s.active_status,${cap.dateFormat ? " s.date_format," : ""}
-            s.config_json,${cap.processGrain ? " s.process_key_kind, s.process_key_column, s.process_key_value, s.process_id," : ""}
+            s.employee_key_column, s.employee_key_kind, s.date_column, s.description, s.active_status,${cap.dateFormat ? ' s.date_format,' : ''}
+            s.config_json,${cap.processGrain ? ' s.process_key_kind, s.process_key_column, s.process_key_value, s.process_id,' : ''}
             COUNT(f.id) AS field_count
        FROM kpi_studio_data_source s
        LEFT JOIN kpi_studio_source_field f ON f.data_source_id = s.id AND f.active_status = 1
-      ${includeRetired ? "" : "WHERE s.active_status = 1"}
+      ${includeRetired ? '' : 'WHERE s.active_status = 1'}
       GROUP BY s.id
       ORDER BY s.active_status DESC, s.source_name`,
   );
@@ -554,7 +469,7 @@ export async function getDataSourceWithFields(id: string) {
   if (!source) return null;
 
   const [fieldRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, field_name, display_name, source_column, aggregate_fn, source_expression${cap.fieldFilters ? ", filter_json" : ""}, unit, description
+    `SELECT id, field_name, display_name, source_column, aggregate_fn, source_expression${cap.fieldFilters ? ', filter_json' : ''}, unit, description
        FROM kpi_studio_source_field
       WHERE data_source_id = ? AND active_status = 1
       ORDER BY field_name`,
@@ -586,46 +501,35 @@ export async function saveDataSource(
 ) {
   await requireStudioTables();
 
-  const code = String(input.source_code ?? "")
-    .trim()
-    .toUpperCase();
+  const code = String(input.source_code ?? '').trim().toUpperCase();
   if (!/^[A-Z][A-Z0-9_]*$/.test(code)) {
-    throw new Error(
-      "Source code must start with a letter and contain only letters, numbers and underscores",
-    );
+    throw new Error('Source code must start with a letter and contain only letters, numbers and underscores');
   }
-  if (!input.source_name?.trim()) throw new Error("Source needs a name");
+  if (!input.source_name?.trim()) throw new Error('Source needs a name');
 
   const validTypes: StudioSourceType[] = [
-    "local_query",
-    "integration_connector",
-    "upload",
-    "manual",
-    "google_sheet_csv",
-    "named_pool",
+    'local_query',
+    'integration_connector',
+    'upload',
+    'manual',
+    'google_sheet_csv',
+    'named_pool',
   ];
   if (!validTypes.includes(input.source_type as StudioSourceType)) {
-    throw new Error(`Source type must be one of: ${validTypes.join(", ")}`);
+    throw new Error(`Source type must be one of: ${validTypes.join(', ')}`);
   }
-  if (
-    input.source_type === "integration_connector" &&
-    !input.integration_key?.trim()
-  ) {
-    throw new Error(
-      "A connector source needs the integration key of a configured external system",
-    );
+  if (input.source_type === 'integration_connector' && !input.integration_key?.trim()) {
+    throw new Error('A connector source needs the integration key of a configured external system');
   }
   // Checked on save. A source naming a database that does not exist would
   // otherwise look configured and fail only when something read it.
-  if (input.source_type === "named_pool") {
-    const named = String(input.integration_key ?? "").trim();
-    if (!named) throw new Error("Pick which database this source reads");
+  if (input.source_type === 'named_pool') {
+    const named = String(input.integration_key ?? '').trim();
+    if (!named) throw new Error('Pick which database this source reads');
     if (!isNamedPool(named)) {
       throw new Error(
         `"${named}" is not a database this system knows. Choose one of: ` +
-          `${listNamedPools()
-            .map((pool) => pool.key)
-            .join(", ")}`,
+          `${listNamedPools().map((pool) => pool.key).join(', ')}`,
       );
     }
   }
@@ -635,54 +539,44 @@ export async function saveDataSource(
   // (https, Google host, actually published) are exactly the kind of mistake made once and then
   // never revisited.
   let configJson: string | null = null;
-  if (input.source_type === "google_sheet_csv") {
-    const url = validateSheetCsvUrl(String(input.csv_url ?? ""));
+  if (input.source_type === 'google_sheet_csv') {
+    const url = validateSheetCsvUrl(String(input.csv_url ?? ''));
     if (!input.employee_key_column?.trim()) {
-      throw new Error(
-        "Say which column heading in the sheet holds the employee code",
-      );
+      throw new Error('Say which column heading in the sheet holds the employee code');
     }
     if (!input.date_column?.trim()) {
-      throw new Error("Say which column heading in the sheet holds the date");
+      throw new Error('Say which column heading in the sheet holds the date');
     }
-    configJson = JSON.stringify({
-      csv_url: url,
-      tab: input.sheet_tab?.trim() || null,
-    });
+    configJson = JSON.stringify({ csv_url: url, tab: input.sheet_tab?.trim() || null });
   }
 
   // Process mapping. Written only when the schema carries it, so this code runs
   // unchanged on a database that has not had 1680 applied yet.
   const cap = await getStudioCapability();
-  const processKind = String((input as any).process_key_kind ?? "none");
-  if (cap.processGrain && processKind !== "none") {
-    if (!["constant", "column", "employee"].includes(processKind)) {
+  const processKind = String((input as any).process_key_kind ?? 'none');
+  if (cap.processGrain && processKind !== 'none') {
+    if (!['constant', 'column', 'employee'].includes(processKind)) {
       throw new Error(`Unknown process mapping "${processKind}"`);
     }
     if (!(input as any).process_id) {
-      throw new Error("Pick the process this source belongs to");
+      throw new Error('Pick the process this source belongs to');
     }
-    if (
-      processKind === "column" &&
-      !String((input as any).process_key_column ?? "").trim()
-    ) {
-      throw new Error("Name the column that identifies the client");
+    if (processKind === 'column' && !String((input as any).process_key_column ?? '').trim()) {
+      throw new Error('Name the column that identifies the client');
     }
     // Refused on save rather than at read time. The join reaches the employees
     // table in THIS database; a connector pool points at somebody else's server,
     // where it would simply not resolve — and a source that only reveals that
     // when a nightly job runs is one nobody can debug.
-    if (processKind === "employee") {
-      if (input.source_type === "integration_connector") {
+    if (processKind === 'employee') {
+      if (input.source_type === 'integration_connector') {
         throw new Error(
-          "Looking the process up from the employee only works for a table inside this " +
-            "application database. Map this source by a constant or a column instead.",
+          'Looking the process up from the employee only works for a table inside this ' +
+            'application database. Map this source by a constant or a column instead.',
         );
       }
       if (!input.employee_key_column?.trim()) {
-        throw new Error(
-          "Name the column that holds the employee, so the process can be looked up from it",
-        );
+        throw new Error('Name the column that holds the employee, so the process can be looked up from it');
       }
     }
   }
@@ -690,26 +584,23 @@ export async function saveDataSource(
   // refused rather than stored, because storing one the builder will later reject
   // produces a source that looks configured and fails only when something reads
   // it — the failure mode this module keeps having to design against.
-  const dateFormat =
-    String(
-      (input as { date_format?: string | null }).date_format ?? "",
-    ).trim() || null;
+  const dateFormat = String((input as { date_format?: string | null }).date_format ?? '').trim() || null;
   if (dateFormat && !isSupportedDateFormat(dateFormat)) {
     throw new Error(
-      `"${dateFormat}" is not a date format this can parse. Choose one of: ${DATE_FORMATS.join(", ")}`,
+      `"${dateFormat}" is not a date format this can parse. Choose one of: ${DATE_FORMATS.join(', ')}`,
     );
   }
-  const dateFormatSet = cap.dateFormat ? ", date_format = ?" : "";
+  const dateFormatSet = cap.dateFormat ? ', date_format = ?' : '';
   const dateFormatValues = cap.dateFormat ? [dateFormat] : [];
 
   const processCols = cap.processGrain
-    ? ", process_key_kind = ?, process_key_column = ?, process_key_value = ?, process_id = ?"
-    : "";
+    ? ', process_key_kind = ?, process_key_column = ?, process_key_value = ?, process_id = ?'
+    : '';
   const processValues = cap.processGrain
     ? [
         processKind,
-        String((input as any).process_key_column ?? "").trim() || null,
-        String((input as any).process_key_value ?? "").trim() || null,
+        String((input as any).process_key_column ?? '').trim() || null,
+        String((input as any).process_key_value ?? '').trim() || null,
         (input as any).process_id || null,
       ]
     : [];
@@ -729,7 +620,7 @@ export async function saveDataSource(
         input.integration_key?.trim() || null,
         input.source_object?.trim() || null,
         input.employee_key_column?.trim() || null,
-        input.employee_key_kind?.trim() || "employee_code",
+        input.employee_key_kind?.trim() || 'employee_code',
         input.date_column?.trim() || null,
         input.description?.trim() || null,
         configJson,
@@ -738,7 +629,7 @@ export async function saveDataSource(
         input.id,
       ],
     );
-    if (!result.affectedRows) throw new Error("Data source not found");
+    if (!result.affectedRows) throw new Error('Data source not found');
     return { id: input.id };
   }
 
@@ -748,13 +639,11 @@ export async function saveDataSource(
     `INSERT INTO kpi_studio_data_source
        (id, source_code, source_name, source_type, integration_key, source_object,
         employee_key_column, employee_key_kind, date_column, description, config_json, created_by${
-          cap.dateFormat ? ", date_format" : ""
+          cap.dateFormat ? ', date_format' : ''
         }${
-          cap.processGrain
-            ? ", process_key_kind, process_key_column, process_key_value, process_id"
-            : ""
+          cap.processGrain ? ', process_key_kind, process_key_column, process_key_value, process_id' : ''
         })
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${cap.dateFormat ? ", ?" : ""}${cap.processGrain ? ", ?, ?, ?, ?" : ""})`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${cap.dateFormat ? ', ?' : ''}${cap.processGrain ? ', ?, ?, ?, ?' : ''})`,
     [
       id,
       code,
@@ -763,7 +652,7 @@ export async function saveDataSource(
       input.integration_key?.trim() || null,
       input.source_object?.trim() || null,
       input.employee_key_column?.trim() || null,
-      input.employee_key_kind?.trim() || "employee_code",
+      input.employee_key_kind?.trim() || 'employee_code',
       input.date_column?.trim() || null,
       input.description?.trim() || null,
       configJson,
@@ -775,14 +664,7 @@ export async function saveDataSource(
   return { id };
 }
 
-const AGGREGATE_FUNCTIONS = [
-  "SUM",
-  "AVG",
-  "COUNT",
-  "MIN",
-  "MAX",
-  "NONE",
-] as const;
+const AGGREGATE_FUNCTIONS = ['SUM', 'AVG', 'COUNT', 'MIN', 'MAX', 'NONE'] as const;
 
 export async function saveSourceField(input: {
   id?: string;
@@ -798,25 +680,19 @@ export async function saveSourceField(input: {
 }) {
   await requireStudioTables();
 
-  const fieldName = String(input.field_name ?? "").trim();
+  const fieldName = String(input.field_name ?? '').trim();
   // The field name becomes a formula variable, so it has to be a legal identifier. Allowing
   // "talk time (sec)" here would let somebody create a field no formula can ever reference.
   if (!IDENTIFIER.test(fieldName)) {
     throw new Error(
-      "Field name must start with a letter or underscore and contain only letters, numbers and underscores, " +
-        "because it is what you type in a formula",
+      'Field name must start with a letter or underscore and contain only letters, numbers and underscores, ' +
+        'because it is what you type in a formula',
     );
   }
 
-  const aggregate = String(input.aggregate_fn ?? "SUM").toUpperCase();
-  if (
-    !AGGREGATE_FUNCTIONS.includes(
-      aggregate as (typeof AGGREGATE_FUNCTIONS)[number],
-    )
-  ) {
-    throw new Error(
-      `Aggregate must be one of: ${AGGREGATE_FUNCTIONS.join(", ")}`,
-    );
+  const aggregate = String(input.aggregate_fn ?? 'SUM').toUpperCase();
+  if (!AGGREGATE_FUNCTIONS.includes(aggregate as (typeof AGGREGATE_FUNCTIONS)[number])) {
+    throw new Error(`Aggregate must be one of: ${AGGREGATE_FUNCTIONS.join(', ')}`);
   }
 
   // A column name cannot be a bound parameter, so it is identifier-validated instead. Same guard
@@ -837,11 +713,10 @@ export async function saveSourceField(input: {
   // source of truth; the expression is a derived shorthand for the unfiltered case.
   const hasFilters =
     Array.isArray((input as { filter_json?: unknown[] }).filter_json) &&
-    ((input as { filter_json?: unknown[] }).filter_json as unknown[]).length >
-      0;
+    ((input as { filter_json?: unknown[] }).filter_json as unknown[]).length > 0;
   const expression =
     column && !hasFilters
-      ? aggregate === "NONE"
+      ? aggregate === 'NONE'
         ? `\`${column}\``
         : `${aggregate}(\`${column}\`)`
       : null;
@@ -850,53 +725,20 @@ export async function saveSourceField(input: {
   // the builder will later refuse produces a field that looks configured and
   // silently never yields a value — the failure mode this module keeps hitting.
   const cap = await getStudioCapability();
-  const FILTER_OPS = [
-    "eq",
-    "ne",
-    "gt",
-    "gte",
-    "lt",
-    "lte",
-    "in",
-    "is_null",
-    "is_not_null",
-    "is_blank",
-    "is_not_blank",
-  ];
+  const FILTER_OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'is_null', 'is_not_null', 'is_blank', 'is_not_blank'];
   let filterJson: string | null = null;
-  if (
-    cap.fieldFilters &&
-    Array.isArray(input.filter_json) &&
-    input.filter_json.length
-  ) {
-    if (!column)
-      throw new Error("A filter needs a column to aggregate — pick one first");
-    if (aggregate === "NONE")
-      throw new Error("A filter needs an aggregate to apply it inside");
+  if (cap.fieldFilters && Array.isArray(input.filter_json) && input.filter_json.length) {
+    if (!column) throw new Error('A filter needs a column to aggregate — pick one first');
+    if (aggregate === 'NONE') throw new Error('A filter needs an aggregate to apply it inside');
     for (const filter of input.filter_json) {
-      const filterColumn = String(filter?.column ?? "").trim();
-      if (!IDENTIFIER.test(filterColumn))
-        throw new Error(`"${filterColumn}" is not a valid column name`);
+      const filterColumn = String(filter?.column ?? '').trim();
+      if (!IDENTIFIER.test(filterColumn)) throw new Error(`"${filterColumn}" is not a valid column name`);
       if (!FILTER_OPS.includes(String(filter?.op))) {
-        throw new Error(
-          `Unsupported condition "${String(filter?.op)}". Use one of ${FILTER_OPS.join(", ")}.`,
-        );
+        throw new Error(`Unsupported condition "${String(filter?.op)}". Use one of ${FILTER_OPS.join(', ')}.`);
       }
-      const needsValue = ![
-        "is_null",
-        "is_not_null",
-        "is_blank",
-        "is_not_blank",
-      ].includes(String(filter.op));
-      if (
-        needsValue &&
-        (filter.value === undefined ||
-          filter.value === null ||
-          String(filter.value).trim() === "")
-      ) {
-        throw new Error(
-          `The "${String(filter.op)}" condition on ${filterColumn} needs a value`,
-        );
+      const needsValue = !['is_null', 'is_not_null', 'is_blank', 'is_not_blank'].includes(String(filter.op));
+      if (needsValue && (filter.value === undefined || filter.value === null || String(filter.value).trim() === '')) {
+        throw new Error(`The "${String(filter.op)}" condition on ${filterColumn} needs a value`);
       }
     }
     filterJson = JSON.stringify(
@@ -905,22 +747,17 @@ export async function saveSourceField(input: {
         op: String(filter.op),
         // "is one of" is typed as a comma list; everything else is a single value.
         value:
-          filter.op === "in"
-            ? String(filter.value ?? "")
-                .split(",")
-                .map((part) => part.trim())
-                .filter(Boolean)
-            : ["is_null", "is_not_null", "is_blank", "is_not_blank"].includes(
-                  String(filter.op),
-                )
-              ? // Stored as null so a value can never be mistaken for part of the
-                // condition; the operator carries the whole meaning.
-                null
+          filter.op === 'in'
+            ? String(filter.value ?? '').split(',').map((part) => part.trim()).filter(Boolean)
+            : ['is_null', 'is_not_null', 'is_blank', 'is_not_blank'].includes(String(filter.op))
+              // Stored as null so a value can never be mistaken for part of the
+              // condition; the operator carries the whole meaning.
+              ? null
               : String(filter.value),
       })),
     );
   }
-  const filterSet = cap.fieldFilters ? ", filter_json = ?" : "";
+  const filterSet = cap.fieldFilters ? ', filter_json = ?' : '';
   const filterValues = cap.fieldFilters ? [filterJson] : [];
 
   if (input.id) {
@@ -949,10 +786,10 @@ export async function saveSourceField(input: {
   await db.execute(
     `INSERT INTO kpi_studio_source_field
        (id, data_source_id, field_name, display_name, source_column, aggregate_fn,
-        source_expression, unit, description${cap.fieldFilters ? ", filter_json" : ""})
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${cap.fieldFilters ? ", ?" : ""})
+        source_expression, unit, description${cap.fieldFilters ? ', filter_json' : ''})
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${cap.fieldFilters ? ', ?' : ''})
      ON DUPLICATE KEY UPDATE
-       ${cap.fieldFilters ? "filter_json       = VALUES(filter_json)," : ""}
+       ${cap.fieldFilters ? 'filter_json       = VALUES(filter_json),' : ''}
        display_name      = VALUES(display_name),
        source_column     = VALUES(source_column),
        aggregate_fn      = VALUES(aggregate_fn),
@@ -1075,16 +912,12 @@ export async function restoreDataSource(id: string) {
  * several systems and validating it against only the primary source would reject a perfectly good
  * formula for using the sheet-side field.
  */
-async function availableFieldsFor(
-  dataSourceIds: ReadonlyArray<string | null | undefined>,
-): Promise<string[]> {
-  const ids = [
-    ...new Set(dataSourceIds.filter((id): id is string => Boolean(id))),
-  ];
+async function availableFieldsFor(dataSourceIds: ReadonlyArray<string | null | undefined>): Promise<string[]> {
+  const ids = [...new Set(dataSourceIds.filter((id): id is string => Boolean(id)))];
   if (!ids.length) return [];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT field_name FROM kpi_studio_source_field
-      WHERE data_source_id IN (${ids.map(() => "?").join(",")}) AND active_status = 1`,
+      WHERE data_source_id IN (${ids.map(() => '?').join(',')}) AND active_status = 1`,
     ids,
   );
   return (rows as any[]).map((row) => String(row.field_name));
@@ -1101,16 +934,14 @@ async function availableFieldsFor(
 async function findFieldCollisions(
   dataSourceIds: ReadonlyArray<string | null | undefined>,
 ): Promise<Array<{ field_name: string; sources: string[] }>> {
-  const ids = [
-    ...new Set(dataSourceIds.filter((id): id is string => Boolean(id))),
-  ];
+  const ids = [...new Set(dataSourceIds.filter((id): id is string => Boolean(id)))];
   if (ids.length < 2) return [];
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT f.field_name, s.source_name
        FROM kpi_studio_source_field f
        JOIN kpi_studio_data_source s ON s.id = f.data_source_id
-      WHERE f.data_source_id IN (${ids.map(() => "?").join(",")}) AND f.active_status = 1`,
+      WHERE f.data_source_id IN (${ids.map(() => '?').join(',')}) AND f.active_status = 1`,
     ids,
   );
 
@@ -1131,13 +962,7 @@ export function allSourceIdsFor(input: {
   data_source_id?: string | null;
   extra_source_ids?: string[] | null;
 }): string[] {
-  return [
-    ...new Set(
-      [input.data_source_id, ...(input.extra_source_ids ?? [])].filter(
-        (id): id is string => Boolean(id),
-      ),
-    ),
-  ];
+  return [...new Set([input.data_source_id, ...(input.extra_source_ids ?? [])].filter((id): id is string => Boolean(id)))];
 }
 
 // ─── Definitions ─────────────────────────────────────────────────────────────────────────────
@@ -1160,39 +985,22 @@ export async function listDefinitions(filters: DefinitionFilters = {}) {
   // Whether the KPI is measured per person or per process. Selected only where the column exists (migration 1684).
   const grainSelect = listCap.processGrain ? "COALESCE(d.grain, 'employee')" : "'employee'";
 
-  const where: string[] = ["d.active_status = 1"];
+  const where: string[] = ['d.active_status = 1'];
   const params: unknown[] = [];
 
-  if (filters.metric_id) {
-    where.push("d.metric_id = ?");
-    params.push(filters.metric_id);
-  }
-  if (filters.branch_id) {
-    where.push("d.branch_id = ?");
-    params.push(filters.branch_id);
-  }
-  if (filters.process_id) {
-    where.push("d.process_id = ?");
-    params.push(filters.process_id);
-  }
-  if (filters.designation_id) {
-    where.push("d.designation_id = ?");
-    params.push(filters.designation_id);
-  }
-  if (filters.employee_id) {
-    where.push("d.employee_id = ?");
-    params.push(filters.employee_id);
-  }
+  if (filters.metric_id) { where.push('d.metric_id = ?'); params.push(filters.metric_id); }
+  if (filters.branch_id) { where.push('d.branch_id = ?'); params.push(filters.branch_id); }
+  if (filters.process_id) { where.push('d.process_id = ?'); params.push(filters.process_id); }
+  if (filters.designation_id) { where.push('d.designation_id = ?'); params.push(filters.designation_id); }
+  if (filters.employee_id) { where.push('d.employee_id = ?'); params.push(filters.employee_id); }
   if (filters.as_of) {
     // NULL on either bound means "no bound", not "excluded". Written the other way round, a
     // definition with no end date would vanish — the exact bug effectiveDatingPredicate()
     // documents having shipped once already.
-    where.push(
-      "d.effective_from <= ? AND (d.effective_to IS NULL OR d.effective_to >= ?)",
-    );
+    where.push('d.effective_from <= ? AND (d.effective_to IS NULL OR d.effective_to >= ?)');
     params.push(filters.as_of, filters.as_of);
   }
-  if (filters.scopeSql && filters.scopeSql.sql !== "1=1") {
+  if (filters.scopeSql && filters.scopeSql.sql !== '1=1') {
     where.push(`(${filters.scopeSql.sql})`);
     params.push(...filters.scopeSql.params);
   }
@@ -1218,24 +1026,21 @@ export async function listDefinitions(filters: DefinitionFilters = {}) {
      LEFT JOIN designation_master g  ON g.id = d.designation_id
      LEFT JOIN employees e           ON e.id = d.employee_id
      LEFT JOIN kpi_studio_data_source s ON s.id = d.data_source_id
-     WHERE ${where.join(" AND ")}
+     WHERE ${where.join(' AND ')}
      ORDER BY m.metric_name, d.effective_from DESC`,
     params,
   );
 
   // Extra sources attached in one batched query rather than per row: the list view shows every
   // source a KPI reads, and a per-definition round trip would be one query per row.
-  const extraByDefinition = new Map<
-    string,
-    Array<{ id: string; source_name: string; source_type: string }>
-  >();
+  const extraByDefinition = new Map<string, Array<{ id: string; source_name: string; source_type: string }>>();
   if ((rows as any[]).length && (await multiSourceSupported())) {
     const definitionIds = (rows as any[]).map((row) => String(row.id));
     const [extraRows] = await db.execute<RowDataPacket[]>(
       `SELECT ds.definition_id, s.id, s.source_name, s.source_type
          FROM kpi_studio_definition_source ds
          JOIN kpi_studio_data_source s ON s.id = ds.data_source_id
-        WHERE ds.definition_id IN (${definitionIds.map(() => "?").join(",")})
+        WHERE ds.definition_id IN (${definitionIds.map(() => '?').join(',')})
           AND ds.active_status = 1
         ORDER BY ds.read_order, ds.created_at`,
       definitionIds,
@@ -1273,22 +1078,14 @@ export async function listDefinitions(filters: DefinitionFilters = {}) {
  * and a performance conversation cannot separate "they got worse" from "we raised the bar".
  * A change closes the current row at the day before the new start date and inserts a new one.
  */
-export async function saveDefinition(
-  input: StudioDefinitionInput,
-  userId?: string,
-) {
+export async function saveDefinition(input: StudioDefinitionInput, userId?: string) {
   // Grain decides which table the computed value lands in, so it is validated
   // here rather than trusted: an unknown value would silently fall back to
   // employee grain and the process dashboard would stay empty with no error.
   const defCap = await getStudioCapability();
-  const definitionGrain = String((input as any).grain ?? "employee");
-  if (
-    defCap.processGrain &&
-    !["employee", "process"].includes(definitionGrain)
-  ) {
-    throw new Error(
-      `Unknown grain "${definitionGrain}" — use employee or process`,
-    );
+  const definitionGrain = String((input as any).grain ?? 'employee');
+  if (defCap.processGrain && !['employee', 'process'].includes(definitionGrain)) {
+    throw new Error(`Unknown grain "${definitionGrain}" — use employee or process`);
   }
 
   // A process-grain definition with no formula is inert and cannot say so.
@@ -1298,13 +1095,10 @@ export async function saveDefinition(
   // list, and silently never produces a number. An employee-grain definition
   // may legitimately carry only a target and scoring, which is why this is
   // narrowed to process grain rather than applied to both.
-  if (
-    definitionGrain === "process" &&
-    !String(input.formula_expression ?? "").trim()
-  ) {
+  if (definitionGrain === 'process' && !String(input.formula_expression ?? '').trim()) {
     throw new Error(
-      "A process-level KPI needs a calculation — without one it would never produce a number. " +
-        "Send it as formula_expression.",
+      'A process-level KPI needs a calculation — without one it would never produce a number. ' +
+        'Send it as formula_expression.',
     );
   }
   await requireStudioTables();
@@ -1314,36 +1108,30 @@ export async function saveDefinition(
     [input.metric_id],
   );
   const metric = (metricRows as any[])[0];
-  if (!metric) throw new Error("That KPI does not exist or is inactive");
+  if (!metric) throw new Error('That KPI does not exist or is inactive');
 
   const sourceIds = allSourceIdsFor(input);
   const availableFields = await availableFieldsFor(sourceIds);
   const validated = validateDefinition(input, { availableFields, metric });
-  if (!validated.ok)
-    throw new Error(validated.message ?? "Definition is not valid");
+  if (!validated.ok) throw new Error(validated.message ?? 'Definition is not valid');
 
   // Checked only when the formula actually spans sources. A collision between two sources whose
   // fields this formula never touches is not this definition's problem.
   if (sourceIds.length > 1) {
     const collisions = await findFieldCollisions(sourceIds);
-    const referenced = new Set(
-      (validated.variables ?? []).map((name) => name.toLowerCase()),
-    );
-    const blocking = collisions.filter((collision) =>
-      referenced.has(collision.field_name.toLowerCase()),
-    );
+    const referenced = new Set((validated.variables ?? []).map((name) => name.toLowerCase()));
+    const blocking = collisions.filter((collision) => referenced.has(collision.field_name.toLowerCase()));
     if (blocking.length) {
       const first = blocking[0];
       throw new Error(
         `"${first.field_name}" is supplied by more than one of the chosen sources ` +
-          `(${first.sources.join(" and ")}), so the calculation would be ambiguous. ` +
+          `(${first.sources.join(' and ')}), so the calculation would be ambiguous. ` +
           `Rename it in one of them.`,
       );
     }
   }
 
-  const effectiveFrom =
-    input.effective_from || new Date().toISOString().slice(0, 10);
+  const effectiveFrom = input.effective_from || new Date().toISOString().slice(0, 10);
 
   const scope: StudioScope = {
     branch_id: input.employee_id ? null : input.branch_id || null,
@@ -1371,18 +1159,12 @@ export async function saveDefinition(
           AND COALESCE(designation_id, '~') = COALESCE(?, '~')
           AND COALESCE(employee_id, '~')    = COALESCE(?, '~')`,
       [
-        effectiveFrom,
-        input.metric_id,
-        effectiveFrom,
-        scope.branch_id,
-        scope.process_id,
-        scope.designation_id,
-        scope.employee_id,
+        effectiveFrom, input.metric_id, effectiveFrom,
+        scope.branch_id, scope.process_id, scope.designation_id, scope.employee_id,
       ],
     );
 
-    const [idRows] =
-      await connection.execute<RowDataPacket[]>(`SELECT UUID() AS id`);
+    const [idRows] = await connection.execute<RowDataPacket[]>(`SELECT UUID() AS id`);
     const id = String((idRows as any[])[0].id);
 
     // ON DUPLICATE KEY covers re-saving the same scope on the same start date, which is an edit
@@ -1392,10 +1174,10 @@ export async function saveDefinition(
          (id, metric_id, branch_id, process_id, designation_id, employee_id,
           data_source_id, formula_expression, aggregation_method, scoring_type,
           target_value, min_threshold, max_achievement, weightage, target_source,
-          effective_from, notes, created_by${defCap.processGrain ? ", grain" : ""})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${defCap.processGrain ? ", ?" : ""})
+          effective_from, notes, created_by${defCap.processGrain ? ', grain' : ''})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${defCap.processGrain ? ', ?' : ''})
        ON DUPLICATE KEY UPDATE
-         ${defCap.processGrain ? "grain              = VALUES(grain)," : ""}
+         ${defCap.processGrain ? 'grain              = VALUES(grain),' : ''}
          data_source_id     = VALUES(data_source_id),
          formula_expression = VALUES(formula_expression),
          aggregation_method = VALUES(aggregation_method),
@@ -1418,13 +1200,13 @@ export async function saveDefinition(
         scope.employee_id,
         input.data_source_id || null,
         input.formula_expression?.trim() || null,
-        input.aggregation_method || "average",
+        input.aggregation_method || 'average',
         input.scoring_type || null,
         input.target_value ?? null,
         input.min_threshold ?? null,
         input.max_achievement ?? 120,
         input.weightage ?? 100,
-        input.target_source || "manager",
+        input.target_source || 'manager',
         effectiveFrom,
         input.notes?.trim() || null,
         userId ?? null,
@@ -1490,8 +1272,8 @@ export async function saveDefinition(
       }
     } else if (extras.length) {
       throw new Error(
-        "Reading more than one data source for a single KPI needs migration " +
-          "1646_kpi_studio_multi_source.sql to be applied first.",
+        'Reading more than one data source for a single KPI needs migration ' +
+          '1646_kpi_studio_multi_source.sql to be applied first.',
       );
     }
 
@@ -1550,10 +1332,7 @@ export async function getDefinitionSourceIds(
 ): Promise<Map<string, string[]>> {
   const result = new Map<string, string[]>();
   for (const definition of definitions) {
-    result.set(
-      definition.id,
-      definition.data_source_id ? [definition.data_source_id] : [],
-    );
+    result.set(definition.id, definition.data_source_id ? [definition.data_source_id] : []);
   }
   if (!definitions.length || !(await multiSourceSupported())) return result;
 
@@ -1561,7 +1340,7 @@ export async function getDefinitionSourceIds(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT definition_id, data_source_id
        FROM kpi_studio_definition_source
-      WHERE definition_id IN (${ids.map(() => "?").join(",")}) AND active_status = 1
+      WHERE definition_id IN (${ids.map(() => '?').join(',')}) AND active_status = 1
       ORDER BY read_order, created_at`,
     ids,
   );
@@ -1581,7 +1360,7 @@ export async function getDefinitionSourceIds(
 export async function retireDefinition(id: string, effectiveTo?: string) {
   await requireStudioTables();
   const endDate = effectiveTo || new Date().toISOString().slice(0, 10);
-  if (!ISO_DATE.test(endDate)) throw new Error("End date must be YYYY-MM-DD");
+  if (!ISO_DATE.test(endDate)) throw new Error('End date must be YYYY-MM-DD');
 
   const [result] = await db.execute<ResultSetHeader>(
     // Ends the definition on a date; it is NOT switched off. active_status = 0 made compute skip it for every
@@ -1592,7 +1371,7 @@ export async function retireDefinition(id: string, effectiveTo?: string) {
       WHERE id = ? AND active_status = 1`,
     [endDate, id],
   );
-  if (!result.affectedRows) throw new Error("Definition not found");
+  if (!result.affectedRows) throw new Error('Definition not found');
   return { id, effective_to: endDate };
 }
 
@@ -1604,8 +1383,7 @@ export async function retireDefinition(id: string, effectiveTo?: string) {
  * tells the person clicking Save what they are about to do.
  */
 export async function getDefinitionCoverage(id: string) {
-  if (!(await getStudioCapability()).tables)
-    return { employee_count: 0, sample: [] };
+  if (!(await getStudioCapability()).tables) return { employee_count: 0, sample: [] };
 
   const [defRows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, process_id, designation_id, employee_id FROM kpi_studio_definition WHERE id = ? LIMIT 1`,
@@ -1614,40 +1392,25 @@ export async function getDefinitionCoverage(id: string) {
   const definition = (defRows as any[])[0];
   if (!definition) return { employee_count: 0, sample: [] };
 
-  const where: string[] = ["e.active_status = 1"];
+  const where: string[] = ['e.active_status = 1'];
   const params: unknown[] = [];
-  if (definition.employee_id) {
-    where.push("e.id = ?");
-    params.push(definition.employee_id);
-  }
-  if (definition.branch_id) {
-    where.push("e.branch_id = ?");
-    params.push(definition.branch_id);
-  }
-  if (definition.process_id) {
-    where.push("e.process_id = ?");
-    params.push(definition.process_id);
-  }
-  if (definition.designation_id) {
-    where.push("e.designation_id = ?");
-    params.push(definition.designation_id);
-  }
+  if (definition.employee_id) { where.push('e.id = ?'); params.push(definition.employee_id); }
+  if (definition.branch_id) { where.push('e.branch_id = ?'); params.push(definition.branch_id); }
+  if (definition.process_id) { where.push('e.process_id = ?'); params.push(definition.process_id); }
+  if (definition.designation_id) { where.push('e.designation_id = ?'); params.push(definition.designation_id); }
 
   const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS n FROM employees e WHERE ${where.join(" AND ")}`,
+    `SELECT COUNT(*) AS n FROM employees e WHERE ${where.join(' AND ')}`,
     params,
   );
   const [sampleRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code, e.full_name
-       FROM employees e WHERE ${where.join(" AND ")}
+       FROM employees e WHERE ${where.join(' AND ')}
       ORDER BY e.employee_code LIMIT 10`,
     params,
   );
 
-  return {
-    employee_count: Number((countRows as any[])[0]?.n ?? 0),
-    sample: sampleRows,
-  };
+  return { employee_count: Number((countRows as any[])[0]?.n ?? 0), sample: sampleRows };
 }
 
 /**
@@ -1676,8 +1439,7 @@ export async function resolveStudioForEmployee(
   const employee = (empRows as any[])[0] as EmployeeOrgContext | undefined;
   if (!employee) return [];
 
-  const onDate =
-    asOf && ISO_DATE.test(asOf) ? asOf : new Date().toISOString().slice(0, 10);
+  const onDate = asOf && ISO_DATE.test(asOf) ? asOf : new Date().toISOString().slice(0, 10);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, metric_id, branch_id, process_id, designation_id, employee_id,
@@ -1685,7 +1447,7 @@ export async function resolveStudioForEmployee(
             target_value, min_threshold, max_achievement, weightage, effective_from
        FROM kpi_studio_definition
       WHERE active_status = 1
-        ${resolveCap.processGrain ? "AND COALESCE(grain, 'employee') = 'employee'" : ""}
+        ${resolveCap.processGrain ? "AND COALESCE(grain, 'employee') = 'employee'" : ''}
         AND effective_from <= ?
         AND (effective_to IS NULL OR effective_to >= ?)
         AND (employee_id = ?
@@ -1694,56 +1456,35 @@ export async function resolveStudioForEmployee(
                  AND (process_id IS NULL     OR process_id = ?)
                  AND (designation_id IS NULL OR designation_id = ?)))`,
     [
-      onDate,
-      onDate,
-      employeeId,
-      employee.branch_id,
-      employee.process_id,
-      employee.designation_id,
+      onDate, onDate, employeeId,
+      employee.branch_id, employee.process_id, employee.designation_id,
     ],
   );
 
-  return pickWinningDefinitions(rows as any[], employee).map(
-    ({ definition, tier, label }) => ({
-      definition_id: String(definition.id),
-      metric_id: String(definition.metric_id),
-      data_source_id: definition.data_source_id ?? null,
-      formula_expression: definition.formula_expression ?? null,
-      aggregation_method: definition.aggregation_method ?? null,
-      scoring_type: definition.scoring_type ?? null,
-      target_value:
-        definition.target_value === null ||
-        definition.target_value === undefined
-          ? null
-          : Number(definition.target_value),
-      min_threshold:
-        definition.min_threshold === null ||
-        definition.min_threshold === undefined
-          ? null
-          : Number(definition.min_threshold),
-      max_achievement: Number(definition.max_achievement ?? 120),
-      weightage: Number(definition.weightage ?? 100),
-      resolved_scope: label,
-      tier,
-    }),
-  );
+  return pickWinningDefinitions(rows as any[], employee).map(({ definition, tier, label }) => ({
+    definition_id: String(definition.id),
+    metric_id: String(definition.metric_id),
+    data_source_id: definition.data_source_id ?? null,
+    formula_expression: definition.formula_expression ?? null,
+    aggregation_method: definition.aggregation_method ?? null,
+    scoring_type: definition.scoring_type ?? null,
+    target_value: definition.target_value === null || definition.target_value === undefined
+      ? null
+      : Number(definition.target_value),
+    min_threshold: definition.min_threshold === null || definition.min_threshold === undefined
+      ? null
+      : Number(definition.min_threshold),
+    max_achievement: Number(definition.max_achievement ?? 120),
+    weightage: Number(definition.weightage ?? 100),
+    resolved_scope: label,
+    tier,
+  }));
 }
 
 // ─── Building a new KPI ──────────────────────────────────────────────────────────────────────
 
-const METRIC_CATEGORIES = [
-  "operations",
-  "quality",
-  "sales",
-  "hr",
-  "custom",
-] as const;
-const METRIC_FAMILIES = [
-  "operations",
-  "quality",
-  "performance",
-  "custom",
-] as const;
+const METRIC_CATEGORIES = ['operations', 'quality', 'sales', 'hr', 'custom'] as const;
+const METRIC_FAMILIES = ['operations', 'quality', 'performance', 'custom'] as const;
 
 /**
  * Creates a KPI that does not exist yet — the "build a new KPI" half of the request.
@@ -1752,41 +1493,29 @@ const METRIC_FAMILIES = [
  * Studio-created KPI is not a second-class citizen: it appears in the leaderboard, the target
  * matrix and the metric pickers immediately, with no code change.
  */
-export async function createMetric(input: {
-  metric_code: string;
-  metric_name: string;
-  category?: string;
-  family?: string;
-  unit?: string;
-  direction?: string;
-  scoring_type?: string | null;
-  aggregation_method?: string | null;
-  description?: string | null;
-}) {
-  const code = String(input.metric_code ?? "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, "_");
+export async function createMetric(
+  input: {
+    metric_code: string;
+    metric_name: string;
+    category?: string;
+    family?: string;
+    unit?: string;
+    direction?: string;
+    scoring_type?: string | null;
+    aggregation_method?: string | null;
+    description?: string | null;
+  },
+) {
+  const code = String(input.metric_code ?? '').trim().toUpperCase().replace(/\s+/g, '_');
   if (!/^[A-Z][A-Z0-9_]{1,49}$/.test(code)) {
-    throw new Error(
-      "KPI code must start with a letter, be 2-50 characters, and use only letters, numbers and underscores",
-    );
+    throw new Error('KPI code must start with a letter, be 2-50 characters, and use only letters, numbers and underscores');
   }
-  if (!input.metric_name?.trim()) throw new Error("KPI needs a name");
+  if (!input.metric_name?.trim()) throw new Error('KPI needs a name');
 
-  const category =
-    input.category && METRIC_CATEGORIES.includes(input.category as any)
-      ? input.category
-      : "custom";
-  const family =
-    input.family && METRIC_FAMILIES.includes(input.family as any)
-      ? input.family
-      : "custom";
-  const direction =
-    input.direction === "lower_is_better"
-      ? "lower_is_better"
-      : "higher_is_better";
-  const unit = String(input.unit ?? "count").trim() || "count";
+  const category = input.category && METRIC_CATEGORIES.includes(input.category as any) ? input.category : 'custom';
+  const family = input.family && METRIC_FAMILIES.includes(input.family as any) ? input.family : 'custom';
+  const direction = input.direction === 'lower_is_better' ? 'lower_is_better' : 'higher_is_better';
+  const unit = String(input.unit ?? 'count').trim() || 'count';
 
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id, active_status FROM kpi_metric_master WHERE metric_code = ? LIMIT 1`,
@@ -1824,7 +1553,7 @@ export async function createMetric(input: {
       unit,
       direction,
       input.scoring_type?.trim() || null,
-      input.aggregation_method?.trim() || "average",
+      input.aggregation_method?.trim() || 'average',
     ],
   );
 
@@ -1886,16 +1615,11 @@ export async function findEmployeesForScope(filters: {
 
   const search = filters.search?.trim();
   if (search) {
-    where.push("(e.employee_code LIKE ? OR e.full_name LIKE ?)");
+    where.push('(e.employee_code LIKE ? OR e.full_name LIKE ?)');
     params.push(`%${search}%`, `%${search}%`);
   }
 
-  if (
-    !search &&
-    !filters.branch_id &&
-    !filters.process_id &&
-    !filters.designation_id
-  ) {
+  if (!search && !filters.branch_id && !filters.process_id && !filters.designation_id) {
     return [];
   }
 
@@ -1905,7 +1629,7 @@ export async function findEmployeesForScope(filters: {
        FROM employees e
        LEFT JOIN process_master p     ON p.id = e.process_id
        LEFT JOIN designation_master g ON g.id = e.designation_id
-      WHERE ${where.join(" AND ")}
+      WHERE ${where.join(' AND ')}
       ORDER BY e.employee_code
       LIMIT 50`,
     params,
@@ -1919,9 +1643,9 @@ export function getFormulaHelp() {
     functions: listFormulaFunctions(),
     aggregations: AGGREGATION_METHODS,
     notes: [
-      "A field with no value for the day produces no result, rather than zero. Use COALESCE(field, 0) if a missing value really should count as zero.",
-      "Division by zero produces no result rather than an error. SAFE_DIV(a, b) makes that intent explicit.",
-      "Percentages are easiest with PCT(part, whole).",
+      'A field with no value for the day produces no result, rather than zero. Use COALESCE(field, 0) if a missing value really should count as zero.',
+      'Division by zero produces no result rather than an error. SAFE_DIV(a, b) makes that intent explicit.',
+      'Percentages are easiest with PCT(part, whole).',
     ],
   };
 }

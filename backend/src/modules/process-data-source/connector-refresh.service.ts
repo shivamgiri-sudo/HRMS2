@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool as MysqlPool } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
-import {
-  getPoolForKey,
-  getCredentialsForKey,
-} from "../external-db/external-db.service.js";
+import { getPoolForKey, getCredentialsForKey } from "../external-db/external-db.service.js";
 import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
 
 /**
@@ -55,16 +52,11 @@ export async function refreshConnectorMetric(input: {
   assertSafeIdentifier(input.valueColumn);
   assertSafeIdentifier(input.dateColumn);
   if (!AGGREGATES.includes(input.aggregate)) {
-    throw new Error(
-      `Unsupported aggregate: ${String(input.aggregate)}. Use one of ${AGGREGATES.join(", ")}.`,
-    );
+    throw new Error(`Unsupported aggregate: ${String(input.aggregate)}. Use one of ${AGGREGATES.join(", ")}.`);
   }
 
   const creds = await getCredentialsForKey(input.connectorKey);
-  if (!creds)
-    throw new Error(
-      `No credentials configured for connector: ${input.connectorKey}`,
-    );
+  if (!creds) throw new Error(`No credentials configured for connector: ${input.connectorKey}`);
   if (creds.db_type === "mssql") {
     throw new Error(
       "SQL Server connectors are not supported for metric refresh yet — the query builder is MySQL dialect. Use a MySQL connector, or supply this metric by upload.",
@@ -91,16 +83,11 @@ export async function refreshConnectorMetric(input: {
   const list = (rows as Array<{ d: string; v: string | number | null }>) ?? [];
   if (!list.length) return { written: 0 };
 
-  const placeholders = list
-    .map(() => "(?, ?, ?, ?, ?, 'connector', ?, NULL)")
-    .join(", ");
+  const placeholders = list.map(() => "(?, ?, ?, ?, ?, 'connector', ?, NULL)").join(", ");
   const params: unknown[] = [];
   for (const row of list) {
     params.push(
-      randomUUID(),
-      input.processId,
-      input.metricKey,
-      row.d,
+      randomUUID(), input.processId, input.metricKey, row.d,
       row.v == null ? null : Number(row.v),
       input.connectorKey,
     );

@@ -26,7 +26,7 @@
  *   - employee code is a text cell so leading zeros survive
  */
 
-import ExcelJS from "exceljs";
+import ExcelJS from 'exceljs';
 
 // ── Column definitions ─────────────────────────────────────────────────────────
 
@@ -34,10 +34,10 @@ export interface LeaveBalanceColumn {
   key: string;
   /** Header text for worksheet row 2 / table header row 2 */
   label: string;
-  format: "text" | "number";
+  format: 'text' | 'number';
   /** Exact column width read from the authority workbook */
   width: number;
-  align?: "left" | "center" | "right";
+  align?: 'left' | 'center' | 'right';
 }
 
 /**
@@ -54,169 +54,54 @@ export interface LeaveBalanceColumn {
  * module exists to prevent.
  */
 export const LEAVE_BALANCE_COLUMNS: LeaveBalanceColumn[] = [
-  {
-    key: "emp_code",
-    label: "EmpCode",
-    format: "text",
-    width: 10,
-    align: "center",
-  },
-  {
-    key: "emp_name",
-    label: "EmpName",
-    format: "text",
-    width: 32,
-    align: "left",
-  },
-  {
-    key: "branch_name",
-    label: "BranchName",
-    format: "text",
-    width: 12.28515625,
-    align: "left",
-  },
-  {
-    key: "cost_center",
-    label: "Cost Center",
-    format: "text",
-    width: 22,
-    align: "left",
-  },
-  {
-    key: "process_name",
-    label: "Process Name",
-    format: "text",
-    width: 22,
-    align: "left",
-  },
+  { key: 'emp_code',        label: 'EmpCode',      format: 'text',   width: 10,             align: 'center' },
+  { key: 'emp_name',        label: 'EmpName',      format: 'text',   width: 32,             align: 'left'   },
+  { key: 'branch_name',     label: 'BranchName',   format: 'text',   width: 12.28515625,    align: 'left'   },
+  { key: 'cost_center',     label: 'Cost Center',  format: 'text',   width: 22,             align: 'left'   },
+  { key: 'process_name',    label: 'Process Name', format: 'text',   width: 22,             align: 'left'   },
 
-  {
-    key: "cl_current",
-    label: "CL",
-    format: "number",
-    width: 3,
-    align: "center",
-  },
-  {
-    key: "ml_current",
-    label: "ML",
-    format: "number",
-    width: 3.7109375,
-    align: "center",
-  },
-  {
-    key: "el_current",
-    label: "EL",
-    format: "number",
-    width: 3,
-    align: "center",
-  },
-  {
-    key: "ptl_mtl_current",
-    label: "PTL/MTL",
-    format: "number",
-    width: 8.5703125,
-    align: "center",
-  },
+  { key: 'cl_current',      label: 'CL',           format: 'number', width: 3,              align: 'center' },
+  { key: 'ml_current',      label: 'ML',           format: 'number', width: 3.7109375,      align: 'center' },
+  { key: 'el_current',      label: 'EL',           format: 'number', width: 3,              align: 'center' },
+  { key: 'ptl_mtl_current', label: 'PTL/MTL',      format: 'number', width: 8.5703125,      align: 'center' },
 
-  {
-    key: "cl_taken",
-    label: "CL",
-    format: "number",
-    width: 3.5703125,
-    align: "center",
-  },
-  {
-    key: "ml_taken",
-    label: "ML",
-    format: "number",
-    width: 3.7109375,
-    align: "center",
-  },
-  { key: "el_taken", label: "EL", format: "number", width: 3, align: "center" },
-  {
-    key: "ptl_mtl_taken",
-    label: "PTL/MTL",
-    format: "number",
-    width: 8.5703125,
-    align: "center",
-  },
+  { key: 'cl_taken',        label: 'CL',           format: 'number', width: 3.5703125,      align: 'center' },
+  { key: 'ml_taken',        label: 'ML',           format: 'number', width: 3.7109375,      align: 'center' },
+  { key: 'el_taken',        label: 'EL',           format: 'number', width: 3,              align: 'center' },
+  { key: 'ptl_mtl_taken',   label: 'PTL/MTL',      format: 'number', width: 8.5703125,      align: 'center' },
 
-  {
-    key: "cl_remain",
-    label: "CL",
-    format: "number",
-    width: 4.28515625,
-    align: "center",
-  },
-  {
-    key: "ml_remain",
-    label: "ML",
-    format: "number",
-    width: 3.7109375,
-    align: "center",
-  },
-  {
-    key: "el_remain",
-    label: "EL",
-    format: "number",
-    width: 3,
-    align: "center",
-  },
-  {
-    key: "ptl_mtl_remain",
-    label: "PTL/MTL",
-    format: "number",
-    width: 8.5703125,
-    align: "center",
-  },
+  { key: 'cl_remain',       label: 'CL',           format: 'number', width: 4.28515625,     align: 'center' },
+  { key: 'ml_remain',       label: 'ML',           format: 'number', width: 3.7109375,      align: 'center' },
+  { key: 'el_remain',       label: 'EL',           format: 'number', width: 3,              align: 'center' },
+  { key: 'ptl_mtl_remain',  label: 'PTL/MTL',      format: 'number', width: 8.5703125,      align: 'center' },
 
-  {
-    key: "employee_status",
-    label: "Employee Status",
-    format: "text",
-    width: 14,
-    align: "center",
-  },
+  { key: 'employee_status', label: 'Employee Status', format: 'text', width: 14,            align: 'center' },
 ];
 
 /** Worksheet row 1 / table header row 1 — grouped spans. Must sum to LEAVE_BALANCE_COLUMNS.length. */
 export const LEAVE_BALANCE_HEADER_GROUPS = [
-  { label: "Emp Details", colSpan: 4 },
-  { label: "", colSpan: 1 }, // E1 stays blank and unmerged
-  { label: "Current Leave", colSpan: 4 },
-  { label: "Leave Taken", colSpan: 4 },
-  { label: "Leave Remain", colSpan: 4 },
-  { label: "", colSpan: 1 }, // R1 blank and unmerged, above Employee Status
+  { label: 'Emp Details',   colSpan: 4 },
+  { label: '',              colSpan: 1 }, // E1 stays blank and unmerged
+  { label: 'Current Leave', colSpan: 4 },
+  { label: 'Leave Taken',   colSpan: 4 },
+  { label: 'Leave Remain',  colSpan: 4 },
+  { label: '',              colSpan: 1 }, // R1 blank and unmerged, above Employee Status
 ];
 
 /** Keys whose zero value must render as a blank cell (Leave Taken group only). */
 export const LEAVE_BALANCE_BLANK_WHEN_ZERO = new Set([
-  "cl_taken",
-  "ml_taken",
-  "el_taken",
-  "ptl_mtl_taken",
+  'cl_taken', 'ml_taken', 'el_taken', 'ptl_mtl_taken',
 ]);
 
-export const LEAVE_BALANCE_NUMERIC_KEYS = LEAVE_BALANCE_COLUMNS.filter(
-  (c) => c.format === "number",
-).map((c) => c.key);
+export const LEAVE_BALANCE_NUMERIC_KEYS = LEAVE_BALANCE_COLUMNS
+  .filter(c => c.format === 'number')
+  .map(c => c.key);
 
 // ── Naming helpers ─────────────────────────────────────────────────────────────
 
 const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
 function splitMonth(month: string): { year: number; monthIndex: number } {
@@ -237,10 +122,10 @@ function splitMonth(month: string): { year: number; monthIndex: number } {
  * 5.5 hours of every month — silently producing a report for the wrong period.
  */
 export function businessMonth(value: unknown): string {
-  const text = String(value ?? "").trim();
+  const text = String(value ?? '').trim();
   if (/^\d{4}-\d{2}$/.test(text)) return text;
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
 /**
@@ -249,7 +134,7 @@ export function businessMonth(value: unknown): string {
  */
 export function leaveBalanceSheetName(month: string): string {
   const { year, monthIndex } = splitMonth(month);
-  const yy = String(year % 100).padStart(2, "0");
+  const yy = String(year % 100).padStart(2, '0');
   return `Leave Balance ${MONTH_NAMES[monthIndex]}'${yy} month`;
 }
 
@@ -262,13 +147,13 @@ export function leaveBalanceFileName(month: string): string {
 // ── Workbook builder ───────────────────────────────────────────────────────────
 
 const THIN_BORDER: Partial<ExcelJS.Borders> = {
-  top: { style: "thin", color: { argb: "FF000000" } },
-  left: { style: "thin", color: { argb: "FF000000" } },
-  bottom: { style: "thin", color: { argb: "FF000000" } },
-  right: { style: "thin", color: { argb: "FF000000" } },
+  top:    { style: 'thin', color: { argb: 'FF000000' } },
+  left:   { style: 'thin', color: { argb: 'FF000000' } },
+  bottom: { style: 'thin', color: { argb: 'FF000000' } },
+  right:  { style: 'thin', color: { argb: 'FF000000' } },
 };
 
-const BASE_FONT = { name: "Calibri", size: 11 };
+const BASE_FONT = { name: 'Calibri', size: 11 };
 
 /** Leave values use at most two decimals; never round half-days to integers. */
 export function roundLeaveValue(value: unknown): number {
@@ -291,27 +176,24 @@ export interface LeaveBalanceWorkbookParams {
  * timestamp row, grand-total row, styled Excel table and any fill colour.
  */
 export async function buildLeaveBalanceWorkbook(
-  params: LeaveBalanceWorkbookParams,
+  params: LeaveBalanceWorkbookParams
 ): Promise<Buffer> {
   const { rows, month } = params;
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = "MAS PeopleOS";
+  wb.creator = 'MAS PeopleOS';
 
   const ws = wb.addWorksheet(leaveBalanceSheetName(month), {
     views: [{ showGridLines: false }],
   });
 
-  ws.columns = LEAVE_BALANCE_COLUMNS.map((c) => ({
-    key: c.key,
-    width: c.width,
-  }));
+  ws.columns = LEAVE_BALANCE_COLUMNS.map(c => ({ key: c.key, width: c.width }));
 
   // ── Row 1: grouped headers ───────────────────────────────────────────────────
   const groupRow = ws.getRow(1);
   let col = 1;
   for (const group of LEAVE_BALANCE_HEADER_GROUPS) {
-    if (group.label !== "") {
+    if (group.label !== '') {
       groupRow.getCell(col).value = group.label;
       if (group.colSpan > 1) {
         ws.mergeCells(1, col, 1, col + group.colSpan - 1);
@@ -333,7 +215,7 @@ export async function buildLeaveBalanceWorkbook(
     for (let i = 1; i <= LEAVE_BALANCE_COLUMNS.length; i++) {
       const cell = row.getCell(i);
       cell.font = { ...BASE_FONT, bold: true };
-      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
       cell.border = { ...THIN_BORDER };
     }
     row.commit?.();
@@ -347,24 +229,24 @@ export async function buildLeaveBalanceWorkbook(
       const cell = excelRow.getCell(i + 1);
       const raw = source[c.key];
 
-      if (c.format === "number") {
+      if (c.format === 'number') {
         const n = roundLeaveValue(raw);
         // Leave Taken zeros must be genuinely blank, matching the attachment.
         if (n === 0 && LEAVE_BALANCE_BLANK_WHEN_ZERO.has(c.key)) {
           cell.value = null;
         } else {
           cell.value = n;
-          cell.numFmt = "0.##";
+          cell.numFmt = '0.##';
         }
       } else {
-        const text = raw === null || raw === undefined ? "" : String(raw);
+        const text = raw === null || raw === undefined ? '' : String(raw);
         cell.value = text;
         // Employee code stored as text so leading zeros are preserved.
-        if (c.key === "emp_code") cell.numFmt = "@";
+        if (c.key === 'emp_code') cell.numFmt = '@';
       }
 
       cell.font = { ...BASE_FONT };
-      cell.alignment = { horizontal: "center" };
+      cell.alignment = { horizontal: 'center' };
       cell.border = { ...THIN_BORDER };
     });
 

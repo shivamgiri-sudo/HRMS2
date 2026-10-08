@@ -19,11 +19,7 @@ import { transitionExitStatus } from "../modules/exit/exit.service.js";
 let scheduler: NodeJS.Timeout | undefined;
 let runInFlight = false;
 
-function millisecondsUntilNextRun(
-  hour: number,
-  minute: number,
-  now = new Date(),
-): number {
+function millisecondsUntilNextRun(hour: number, minute: number, now = new Date()): number {
   const next = new Date(now);
   next.setHours(hour, minute, 0, 0);
   if (next <= now) next.setDate(next.getDate() + 1);
@@ -38,9 +34,7 @@ function scheduleNext(): void {
 
 async function runExitAutoAdvance(): Promise<void> {
   if (runInFlight) {
-    console.warn(
-      "[CRON] Exit auto-advance already in flight, skipping this tick",
-    );
+    console.warn("[CRON] Exit auto-advance already in flight, skipping this tick");
     scheduler = undefined;
     scheduleNext();
     return;
@@ -52,7 +46,7 @@ async function runExitAutoAdvance(): Promise<void> {
   try {
     const result = await executeAutoAdvance();
     console.log(
-      `[CRON] Exit auto-advance complete: ${result.advanced} exits advanced to exited, ${result.errors} errors`,
+      `[CRON] Exit auto-advance complete: ${result.advanced} exits advanced to exited, ${result.errors} errors`
     );
   } catch (error) {
     console.error("[CRON] Exit auto-advance error:", error);
@@ -63,10 +57,7 @@ async function runExitAutoAdvance(): Promise<void> {
   }
 }
 
-export async function executeAutoAdvance(): Promise<{
-  advanced: number;
-  errors: number;
-}> {
+export async function executeAutoAdvance(): Promise<{ advanced: number; errors: number }> {
   // Find exits eligible for auto-advance:
   // 1. Status is notice_active OR terminated
   // 2. LWD confirmed is today or earlier
@@ -80,28 +71,22 @@ export async function executeAutoAdvance(): Promise<{
           SELECT 1 FROM exit_clearance_task ect
            WHERE ect.exit_request_id = er.id
              AND ect.status NOT IN ('cleared', 'waived', 'not_applicable')
-        )`,
+        )`
   );
 
-  const actor = {
-    userId: "system",
-    userRole: "system",
-    name: "Auto-Advance Cron",
-  };
+  const actor = { userId: "system", userRole: "system", name: "Auto-Advance Cron" };
   let advanced = 0;
   let errors = 0;
 
   for (const row of rows as any[]) {
     try {
       await transitionExitStatus(row.id, "exited", actor);
-      console.log(
-        `[CRON] Auto-advanced exit ${row.id} (employee ${row.employee_id}) to exited`,
-      );
+      console.log(`[CRON] Auto-advanced exit ${row.id} (employee ${row.employee_id}) to exited`);
       advanced++;
     } catch (err: any) {
       console.error(
         `[CRON] Failed to auto-advance exit ${row.id} (employee ${row.employee_id}):`,
-        err.message,
+        err.message
       );
       errors++;
     }
@@ -112,9 +97,7 @@ export async function executeAutoAdvance(): Promise<{
 
 export function startExitAutoAdvanceScheduler(): void {
   if (scheduler) return;
-  console.log(
-    "[CRON] Exit auto-advance scheduler starting (daily at 00:30 IST)",
-  );
+  console.log("[CRON] Exit auto-advance scheduler starting (daily at 00:30 IST)");
   scheduleNext();
 }
 

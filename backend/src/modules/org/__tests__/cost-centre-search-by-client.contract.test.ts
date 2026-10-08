@@ -20,20 +20,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: dbExecute, query: dbExecute },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute, query: dbExecute } }));
 
 const { costCentreService } = await import("../org.service.js");
 
 function listQuery() {
-  const call = dbExecute.mock.calls.find(([sql]) =>
-    /FROM cost_centre_master cc/i.test(String(sql)),
-  );
-  return {
-    sql: String(call?.[0] ?? ""),
-    params: (call?.[1] ?? []) as unknown[],
-  };
+  const call = dbExecute.mock.calls.find(([sql]) => /FROM cost_centre_master cc/i.test(String(sql)));
+  return { sql: String(call?.[0] ?? ""), params: (call?.[1] ?? []) as unknown[] };
 }
 
 beforeEach(() => {
@@ -65,12 +58,8 @@ describe("cost centre free-text search", () => {
     const { sql } = listQuery();
     // Without the parentheses `active_status = 1 AND a OR b` binds as
     // `(active_status = 1 AND a) OR b` and quietly returns inactive cost centres.
-    expect(sql).toMatch(
-      /\(cc\.cost_centre_name LIKE \?[\s\S]*cc\.process_name_bill LIKE \?\)/,
-    );
-    expect(sql).toMatch(
-      /cc\.active_status = 1 AND [\s\S]*AND \(cc\.cost_centre_name LIKE/,
-    );
+    expect(sql).toMatch(/\(cc\.cost_centre_name LIKE \?[\s\S]*cc\.process_name_bill LIKE \?\)/);
+    expect(sql).toMatch(/cc\.active_status = 1 AND [\s\S]*AND \(cc\.cost_centre_name LIKE/);
   });
 
   it("passes the branch filter through alongside the search, in the right order", async () => {

@@ -1,9 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * GNC's daily Agent Productivity Report (APR) — writes into db_masmis.gnc_apr,
@@ -28,15 +25,11 @@ function get(data: Record<string, unknown>, ...keys: string[]): string {
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
     const v = normalized[normalizeKey(k)];
-    if (v !== undefined && v !== null && String(v).trim() !== "")
-      return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
   }
   return "";
 }
-function getOrNull(
-  data: Record<string, unknown>,
-  ...keys: string[]
-): string | null {
+function getOrNull(data: Record<string, unknown>, ...keys: string[]): string | null {
   const v = get(data, ...keys);
   return v || null;
 }
@@ -76,8 +69,7 @@ export async function importGncAprMasmisBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0)
-    return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
@@ -95,15 +87,15 @@ export async function importGncAprMasmisBatch(
     const reportDate = parseReportDate(get(data, "Date", "report_date"));
     if (!userName || !reportDate) {
       const msg = `Row ${row.row_no}: "USER" (agent name) and "Date" (report date) are both required`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     // UID: if not supplied, synthesise from emp_id + date serial (matches existing rows)
     const empId = getOrNull(data, "ID", "emp_id");
     const rawDate = get(data, "Date", "report_date");
-    const syntheticUid = empId ? `${empId}${rawDate}` : null;
+    const syntheticUid = empId
+      ? `${empId}${rawDate}`
+      : null;
     const uid = getOrNull(data, "UID", "uid") ?? syntheticUid;
 
     toInsert.push({
@@ -156,8 +148,7 @@ export async function importGncAprMasmisBatch(
         logout_time, acht, aoc, bio, bre, briefing, down_time, lunch, meet, qa, sb,
         tea_break, training_break, wash, net_login, break_time, tra_qa, downtime,
         atten, capping, uploaded_by, upload_batch_id)`,
-    placeholderGroup:
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     rows: toInsert,
   });
   errorUpdates.push(...inserted.errorUpdates);
@@ -178,26 +169,17 @@ export async function importGncAprMasmisBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
 
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,

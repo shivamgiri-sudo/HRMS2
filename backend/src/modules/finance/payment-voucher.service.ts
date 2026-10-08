@@ -5,10 +5,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import {
-  recordFinanceApprovalEvent,
-  listFinanceApprovalEvents,
-} from "../../shared/financeApprovalEvent.js";
+import { recordFinanceApprovalEvent, listFinanceApprovalEvents } from "../../shared/financeApprovalEvent.js";
 import { vendorPaymentLedgerService } from "./vendor-payment-ledger.service.js";
 import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
@@ -71,24 +68,9 @@ export class PaymentVoucherError extends Error {
  *  both ENUMs were declared identically on purpose (1703_payment_voucher.sql) so a released
  *  voucher's mode is always a value the existing vendor-payment report already understands. */
 const PAYMENT_MODES = [
-  "Cheque",
-  "NEFT",
-  "RTGS",
-  "IMPS",
-  "UPI",
-  "Cash",
-  "Bank Transfer",
-  "Adjustment",
-  "Other",
+  "Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Cash", "Bank Transfer", "Adjustment", "Other",
 ] as const;
-const BANK_MODES = new Set([
-  "Cheque",
-  "NEFT",
-  "RTGS",
-  "IMPS",
-  "UPI",
-  "Bank Transfer",
-]);
+const BANK_MODES = new Set(["Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Bank Transfer"]);
 
 function roundMoney(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -106,14 +88,7 @@ async function writeVoucherAudit(
     `INSERT INTO finance_action_audit_log
        (id, action_type, entity_type, entity_id, actor_user_id, actor_role, change_summary)
      VALUES (?, ?, 'PAYMENT_VOUCHER', ?, ?, ?, ?)`,
-    [
-      randomUUID(),
-      actionType,
-      voucherId,
-      actorUserId,
-      actorRole ?? null,
-      JSON.stringify(changeSummary),
-    ],
+    [randomUUID(), actionType, voucherId, actorUserId, actorRole ?? null, JSON.stringify(changeSummary)],
   );
 }
 
@@ -121,11 +96,7 @@ async function writeVoucherAudit(
  *  Sequence is a simple per-branch-per-month count; low-frequency path (vouchers, not
  *  attendance punches), so a UNIQUE-key collision is an acceptable, rare failure the caller
  *  simply retries rather than something this needs its own lock/loop for. */
-async function nextVoucherNumber(
-  connection: PoolConnection,
-  bankAccountId: string,
-  voucherPrefix: "PV" | "RV" = "PV",
-): Promise<string> {
+async function nextVoucherNumber(connection: PoolConnection, bankAccountId: string, voucherPrefix: "PV" | "RV" = "PV"): Promise<string> {
   const [[account]] = await connection.execute<RowDataPacket[]>(
     `SELECT b.branch_code
        FROM company_bank_account cba
@@ -133,10 +104,7 @@ async function nextVoucherNumber(
       WHERE cba.id = ?`,
     [bankAccountId],
   );
-  const branchCode =
-    String((account as any)?.branch_code ?? "HQ")
-      .replace(/[^A-Za-z0-9]/g, "")
-      .toUpperCase() || "HQ";
+  const branchCode = String((account as any)?.branch_code ?? "HQ").replace(/[^A-Za-z0-9]/g, "").toUpperCase() || "HQ";
   const yyyymm = new Date().toISOString().slice(0, 7).replace("-", "");
   const prefix = `${voucherPrefix}/${branchCode}/${yyyymm}/`;
   const [[count]] = await connection.execute<RowDataPacket[]>(
@@ -159,10 +127,7 @@ async function nextVoucherNumber(
  */
 async function validateGrnAllocations(
   connection: PoolConnection,
-  input: {
-    grnAllocations?: Array<{ vendorPaymentTrackingId: string; amount: number }>;
-    linkedVendorPaymentId?: string | null;
-  },
+  input: { grnAllocations?: Array<{ vendorPaymentTrackingId: string; amount: number }>; linkedVendorPaymentId?: string | null },
   amount: number,
   notSelectedMessage: string,
   guard: { allow?: boolean; actorRole?: string } = {},
@@ -174,20 +139,14 @@ async function validateGrnAllocations(
       amount: roundMoney(Number(a.amount)),
     }));
   } else if (input.linkedVendorPaymentId) {
-    allocations = [
-      { vendorPaymentTrackingId: input.linkedVendorPaymentId, amount },
-    ];
+    allocations = [{ vendorPaymentTrackingId: input.linkedVendorPaymentId, amount }];
   } else {
     throw new PaymentVoucherError(notSelectedMessage);
   }
   if (allocations.some((a) => !a.vendorPaymentTrackingId || !(a.amount > 0))) {
-    throw new PaymentVoucherError(
-      "Every selected GRN needs a positive allocated amount",
-    );
+    throw new PaymentVoucherError("Every selected GRN needs a positive allocated amount");
   }
-  const allocatedTotal = roundMoney(
-    allocations.reduce((sum, a) => sum + a.amount, 0),
-  );
+  const allocatedTotal = roundMoney(allocations.reduce((sum, a) => sum + a.amount, 0));
   if (Math.abs(allocatedTotal - amount) > 0.01) {
     throw new PaymentVoucherError(
       `Allocated amounts (${allocatedTotal}) must add up to the voucher amount (${amount})`,
@@ -201,19 +160,14 @@ async function validateGrnAllocations(
          FROM vendor_payment_tracking WHERE id = ? FOR UPDATE`,
       [alloc.vendorPaymentTrackingId],
     );
-    if (!vpt)
-      throw new PaymentVoucherError("Vendor payment record not found", 404);
+    if (!vpt) throw new PaymentVoucherError("Vendor payment record not found", 404);
     const row = vpt as any;
     if (vendorIdSeen === null) vendorIdSeen = row.vendor_id;
     else if (row.vendor_id !== vendorIdSeen) {
-      throw new PaymentVoucherError(
-        "All selected GRNs must belong to the same vendor",
-      );
+      throw new PaymentVoucherError("All selected GRNs must belong to the same vendor");
     }
     const remaining = roundMoney(
-      Number(row.due_amount) -
-        Number(row.tds_deducted_amount ?? 0) -
-        Number(row.paid_amount ?? 0),
+      Number(row.due_amount) - Number(row.tds_deducted_amount ?? 0) - Number(row.paid_amount ?? 0),
     );
     if (alloc.amount > remaining + 0.01) {
       throw new PaymentVoucherError(
@@ -250,42 +204,20 @@ async function getVendorAdvanceBalance(
 async function resolveExpenseClassification(
   connection: PoolConnection,
   vendorId: string,
-  input: {
-    expenseHeadCode?: string | null;
-    expenseSubHeadCode?: string | null;
-  },
-): Promise<{
-  headCode: string;
-  headName: string;
-  subHeadCode: string;
-  subHeadName: string;
-} | null> {
-  const options = await vendorExpenseMappingService.activeOptionsForVendor(
-    vendorId,
-    connection,
-  );
+  input: { expenseHeadCode?: string | null; expenseSubHeadCode?: string | null },
+): Promise<{ headCode: string; headName: string; subHeadCode: string; subHeadName: string } | null> {
+  const options = await vendorExpenseMappingService.activeOptionsForVendor(vendorId, connection);
   if (!options.length) return null;
   const headCode = input.expenseHeadCode?.trim();
   const subHeadCode = input.expenseSubHeadCode?.trim();
   if (!headCode || !subHeadCode) {
-    throw new PaymentVoucherError(
-      "Select the Head and Sub-head this vendor payment is against",
-    );
+    throw new PaymentVoucherError("Select the Head and Sub-head this vendor payment is against");
   }
-  const match = options.find(
-    (o) => o.head_code === headCode && o.sub_head_code === subHeadCode,
-  );
+  const match = options.find((o) => o.head_code === headCode && o.sub_head_code === subHeadCode);
   if (!match) {
-    throw new PaymentVoucherError(
-      "That Head / Sub-head is not mapped to this vendor",
-    );
+    throw new PaymentVoucherError("That Head / Sub-head is not mapped to this vendor");
   }
-  return {
-    headCode: match.head_code,
-    headName: match.head_name,
-    subHeadCode: match.sub_head_code,
-    subHeadName: match.sub_head_name,
-  };
+  return { headCode: match.head_code, headName: match.head_name, subHeadCode: match.sub_head_code, subHeadName: match.sub_head_name };
 }
 
 export interface RaiseVoucherInput {
@@ -345,9 +277,7 @@ function maskVoucherRow(row: any) {
  * COALESCE(employee full_name, email) fallback access.routes.ts's own /users listing uses, so a
  * name here always matches what the User Management screen would show for the same person.
  */
-async function resolveActorNames(
-  userIds: (string | null | undefined)[],
-): Promise<Map<string, string>> {
+async function resolveActorNames(userIds: (string | null | undefined)[]): Promise<Map<string, string>> {
   const ids = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
   if (ids.length === 0) return new Map();
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -423,29 +353,14 @@ export const paymentVoucherService = {
   async toCsv(filters: { status?: string; sourceType?: string; bankAccountId?: string; branchScope?: FinanceBranchScope }) {
     const rows = await this.list({ ...filters, limit: 5000 });
     const columns = [
-      "Voucher No.",
-      "Type",
-      "Bank Account",
-      "Payable Account",
-      "Purpose",
-      "Head",
-      "Sub Head",
-      "Amount",
-      "Status",
-      "Raised At",
-      "CEO Approved At",
-      "Released At",
-      "Remarks",
+      "Voucher No.", "Type", "Bank Account", "Payable Account", "Purpose",
+      "Head", "Sub Head", "Amount", "Status", "Raised At", "CEO Approved At", "Released At", "Remarks",
     ];
     const purposeOf = (r: any) =>
-      r.source_type === "vendor_grn"
-        ? (r.vendor_name ?? r.grn_number ?? "")
-        : r.source_type === "imprest_allocation"
-          ? (r.imprest_manager_name ?? "")
-          : r.source_type === "vendor_advance" ||
-              r.source_type === "vendor_advance_application"
-            ? (r.linked_vendor_name ?? "")
-            : (r.particulars ?? "");
+      r.source_type === "vendor_grn" ? (r.vendor_name ?? r.grn_number ?? "")
+      : r.source_type === "imprest_allocation" ? (r.imprest_manager_name ?? "")
+      : r.source_type === "vendor_advance" || r.source_type === "vendor_advance_application" ? (r.linked_vendor_name ?? "")
+      : (r.particulars ?? "");
     const typeLabel: Record<string, string> = {
       vendor_grn: "Vendor GRN Payment",
       imprest_allocation: "Imprest Float Replenishment",
@@ -457,9 +372,7 @@ export const paymentVoucherService = {
     const escape = (value: unknown) => {
       const text = String(value ?? "");
       const guarded = /^[=+\-@]/.test(text) ? `'${text}` : text;
-      return /[",\r\n]/.test(guarded)
-        ? `"${guarded.replace(/"/g, '""')}"`
-        : guarded;
+      return /[",\r\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
     };
     const body = rows.map((r: any) => [
       r.voucher_number ?? "",
@@ -476,9 +389,7 @@ export const paymentVoucherService = {
       r.released_at ?? "",
       r.remarks ?? "",
     ]);
-    return [columns, ...body]
-      .map((row) => row.map(escape).join(","))
-      .join("\n");
+    return [columns, ...body].map((row) => row.map(escape).join(",")).join("\n");
   },
 
   async get(id: string) {
@@ -516,13 +427,9 @@ export const paymentVoucherService = {
     // PRD §6.6's CA-grade detail: the CEO approving a float replenishment should see what the
     // float was actually spent on since it was last topped up, not just a number the manager
     // asked for. Only fetched for the lane it applies to.
-    const consumptionSinceReplenishment =
-      (row as any).source_type === "imprest_allocation" &&
-      (row as any).linked_imprest_manager_id
-        ? await imprestService.getConsumptionSinceLastReplenishment(
-            String((row as any).linked_imprest_manager_id),
-          )
-        : null;
+    const consumptionSinceReplenishment = (row as any).source_type === "imprest_allocation" && (row as any).linked_imprest_manager_id
+      ? await imprestService.getConsumptionSinceLastReplenishment(String((row as any).linked_imprest_manager_id))
+      : null;
 
     // Full multi-GRN allocation set (Requirement: "multiple selection of GRN of same vendor" +
     // "complete GRN Data" visible) — not just the single primary GRN the row-level join above
@@ -546,10 +453,7 @@ export const paymentVoucherService = {
       ? await getVendorAdvanceBalance(db, String((row as any).linked_vendor_id))
       : null;
 
-    const approvalEvents = (await listFinanceApprovalEvents(
-      "payment_voucher",
-      id,
-    )) as any[];
+    const approvalEvents = (await listFinanceApprovalEvents("payment_voucher", id)) as any[];
 
     // Live balance of the account this voucher would debit (found 2026-09-17 CEO/CA compliance
     // review — neither the CEO approving nor the Finance Head releasing could see, anywhere in
@@ -567,10 +471,7 @@ export const paymentVoucherService = {
         )
       : [[undefined]];
     const [[bankAccountRow]] = (row as any).bank_account_id
-      ? await db.execute<RowDataPacket[]>(
-          `SELECT opening_balance FROM company_bank_account WHERE id = ?`,
-          [(row as any).bank_account_id],
-        )
+      ? await db.execute<RowDataPacket[]>(`SELECT opening_balance FROM company_bank_account WHERE id = ?`, [(row as any).bank_account_id])
       : [[undefined]];
     const currentBankBalance = lastLedgerEntry
       ? Number((lastLedgerEntry as any).running_balance)
@@ -582,18 +483,13 @@ export const paymentVoucherService = {
     // own raised_by/ceo_approved_by/released_by/accounts_reviewed_by/changes_requested_by, plus
     // every approval_events and audit_log actor_user_id).
     const actorNames = await resolveActorNames([
-      (row as any).raised_by,
-      (row as any).ceo_approved_by,
-      (row as any).released_by,
-      (row as any).accounts_reviewed_by,
-      (row as any).changes_requested_by,
-      (row as any).withdrawn_by,
+      (row as any).raised_by, (row as any).ceo_approved_by, (row as any).released_by,
+      (row as any).accounts_reviewed_by, (row as any).changes_requested_by, (row as any).withdrawn_by,
       (row as any).attachment_uploaded_by,
       ...approvalEvents.map((e) => e.actor_user_id),
       ...(auditRows as any[]).map((e) => e.actor_user_id),
     ]);
-    const nameOf = (userId: string | null | undefined) =>
-      userId ? (actorNames.get(String(userId)) ?? null) : null;
+    const nameOf = (userId: string | null | undefined) => (userId ? actorNames.get(String(userId)) ?? null : null);
 
     return {
       ...maskVoucherRow(row),
@@ -608,14 +504,8 @@ export const paymentVoucherService = {
       grn_allocations: grnAllocationRows,
       // The raise -> CEO-approve -> release timeline (drill-down mandate's "Approval / workflow
       // timeline" section) — same generic reader every other finance entity type uses.
-      approval_events: approvalEvents.map((e) => ({
-        ...e,
-        actor_name: nameOf(e.actor_user_id),
-      })),
-      audit_log: (auditRows as any[]).map((e) => ({
-        ...e,
-        actor_name: nameOf(e.actor_user_id),
-      })),
+      approval_events: approvalEvents.map((e) => ({ ...e, actor_name: nameOf(e.actor_user_id) })),
+      audit_log: (auditRows as any[]).map((e) => ({ ...e, actor_name: nameOf(e.actor_user_id) })),
       consumption_since_replenishment: consumptionSinceReplenishment,
       vendor_advance_balance: advanceBalance,
     };
@@ -627,28 +517,16 @@ export const paymentVoucherService = {
     return vendorExpenseMappingService.activeOptionsForVendor(vendorId);
   },
 
-  async raise(
-    input: RaiseVoucherInput,
-    actorUserId: string,
-    actorRole?: string,
-  ) {
+  async raise(input: RaiseVoucherInput, actorUserId: string, actorRole?: string) {
     const isSalesReceipt = input.sourceType === "sales_receipt";
     if (!["vendor_grn", "imprest_allocation", "general", "salary", "vendor_advance", "vendor_advance_application", "sales_receipt", "internal_transfer"].includes(input.sourceType)) {
       throw new PaymentVoucherError("Invalid source type");
     }
     if (input.sourceType === "general" && !input.particulars?.trim()) {
-      throw new PaymentVoucherError(
-        "Particulars are required for a general payment (what this payment is for)",
-      );
+      throw new PaymentVoucherError("Particulars are required for a general payment (what this payment is for)");
     }
-    if (
-      isSalesReceipt &&
-      !input.clientName?.trim() &&
-      !input.particulars?.trim()
-    ) {
-      throw new PaymentVoucherError(
-        "Client name is required for a receipt voucher",
-      );
+    if (isSalesReceipt && !input.clientName?.trim() && !input.particulars?.trim()) {
+      throw new PaymentVoucherError("Client name is required for a receipt voucher");
     }
     const amount = roundMoney(Number(input.amount));
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -679,94 +557,57 @@ export const paymentVoucherService = {
         `SELECT id, active_status FROM company_bank_account WHERE id = ? FOR UPDATE`,
         [input.bankAccountId],
       );
-      if (!bankAccount)
-        throw new PaymentVoucherError("Bank account not found", 404);
-      if (!(bankAccount as any).active_status)
-        throw new PaymentVoucherError("This bank account is closed");
+      if (!bankAccount) throw new PaymentVoucherError("Bank account not found", 404);
+      if (!(bankAccount as any).active_status) throw new PaymentVoucherError("This bank account is closed");
 
       const [[payableAccount]] = await connection.execute<RowDataPacket[]>(
         `SELECT id, active_status FROM payable_account_master WHERE id = ?`,
         [input.payableAccountId],
       );
-      if (!payableAccount)
-        throw new PaymentVoucherError("Payable account not found", 404);
-      if (!(payableAccount as any).active_status)
-        throw new PaymentVoucherError("This payable account is inactive");
+      if (!payableAccount) throw new PaymentVoucherError("Payable account not found", 404);
+      if (!(payableAccount as any).active_status) throw new PaymentVoucherError("This payable account is inactive");
 
       // Normalise both input shapes into one allocation list: the legacy single-GRN field
       // becomes a one-row allocation of the full amount, so the rest of raise() and every
       // downstream reader (release()) only ever has to handle "N allocations", never a
       // singular/plural special case.
-      let grnAllocations: Array<{
-        vendorPaymentTrackingId: string;
-        amount: number;
-      }> = [];
+      let grnAllocations: Array<{ vendorPaymentTrackingId: string; amount: number }> = [];
       let linkedVendorId: string | null = null;
-      let expenseClassification: {
-        headCode: string;
-        headName: string;
-        subHeadCode: string;
-        subHeadName: string;
-      } | null = null;
+      let expenseClassification: { headCode: string; headName: string; subHeadCode: string; subHeadName: string } | null = null;
       if (input.sourceType === "vendor_grn") {
         const result = await validateGrnAllocations(
           connection, input, amount, "At least one vendor GRN payment record must be selected",
           { allow: input.allowPossibleDuplicate === true, actorRole },
         );
         grnAllocations = result.allocations;
-        expenseClassification = await resolveExpenseClassification(
-          connection,
-          result.vendorId,
-          input,
-        );
+        expenseClassification = await resolveExpenseClassification(connection, result.vendorId, input);
       } else if (input.sourceType === "imprest_allocation") {
-        if (!input.linkedImprestManagerId)
-          throw new PaymentVoucherError("An imprest manager must be selected");
+        if (!input.linkedImprestManagerId) throw new PaymentVoucherError("An imprest manager must be selected");
         const [[manager]] = await connection.execute<RowDataPacket[]>(
           `SELECT id, active_status FROM imprest_manager WHERE id = ? FOR UPDATE`,
           [input.linkedImprestManagerId],
         );
-        if (!manager)
-          throw new PaymentVoucherError("Imprest manager not found", 404);
-        if (!(manager as any).active_status)
-          throw new PaymentVoucherError("This imprest manager is not active");
+        if (!manager) throw new PaymentVoucherError("Imprest manager not found", 404);
+        if (!(manager as any).active_status) throw new PaymentVoucherError("This imprest manager is not active");
       } else if (input.sourceType === "vendor_advance") {
-        if (!input.linkedVendorId)
-          throw new PaymentVoucherError("A vendor must be selected");
+        if (!input.linkedVendorId) throw new PaymentVoucherError("A vendor must be selected");
         linkedVendorId = input.linkedVendorId;
-        expenseClassification = await resolveExpenseClassification(
-          connection,
-          linkedVendorId,
-          input,
-        );
+        expenseClassification = await resolveExpenseClassification(connection, linkedVendorId, input);
       } else if (input.sourceType === "vendor_advance_application") {
-        if (!input.linkedVendorId)
-          throw new PaymentVoucherError("A vendor must be selected");
+        if (!input.linkedVendorId) throw new PaymentVoucherError("A vendor must be selected");
         const result = await validateGrnAllocations(
-          connection,
-          input,
-          amount,
-          "At least one of this vendor's GRN dues must be selected to apply the advance against",
+          connection, input, amount, "At least one of this vendor's GRN dues must be selected to apply the advance against",
         );
         grnAllocations = result.allocations;
         if (result.vendorId !== input.linkedVendorId) {
-          throw new PaymentVoucherError(
-            "The selected GRN dues do not belong to the chosen vendor",
-          );
+          throw new PaymentVoucherError("The selected GRN dues do not belong to the chosen vendor");
         }
         linkedVendorId = input.linkedVendorId;
-        expenseClassification = await resolveExpenseClassification(
-          connection,
-          linkedVendorId,
-          input,
-        );
+        expenseClassification = await resolveExpenseClassification(connection, linkedVendorId, input);
         // Friendly check now; release() re-checks under a row lock, since the balance can move
         // between raise and a later release (e.g. a second application raised against the same
         // balance in the meantime).
-        const available = await getVendorAdvanceBalance(
-          connection,
-          linkedVendorId,
-        );
+        const available = await getVendorAdvanceBalance(connection, linkedVendorId);
         if (amount > available + 0.01) {
           throw new PaymentVoucherError(
             `This vendor's available advance balance (${available}) is less than the amount being applied (${amount})`,
@@ -774,28 +615,17 @@ export const paymentVoucherService = {
         }
       } else if (input.sourceType === "internal_transfer") {
         if (!input.destinationBankAccountId) {
-          throw new PaymentVoucherError(
-            "A destination bank account is required for an internal transfer",
-          );
+          throw new PaymentVoucherError("A destination bank account is required for an internal transfer");
         }
         if (input.destinationBankAccountId === input.bankAccountId) {
-          throw new PaymentVoucherError(
-            "The destination account cannot be the same as the source account",
-          );
+          throw new PaymentVoucherError("The destination account cannot be the same as the source account");
         }
         const [[destAccount]] = await connection.execute<RowDataPacket[]>(
           `SELECT id, active_status FROM company_bank_account WHERE id = ? FOR UPDATE`,
           [input.destinationBankAccountId],
         );
-        if (!destAccount)
-          throw new PaymentVoucherError(
-            "Destination bank account not found",
-            404,
-          );
-        if (!(destAccount as any).active_status)
-          throw new PaymentVoucherError(
-            "The destination bank account is closed",
-          );
+        if (!destAccount) throw new PaymentVoucherError("Destination bank account not found", 404);
+        if (!(destAccount as any).active_status) throw new PaymentVoucherError("The destination bank account is closed");
       }
       // 'general' and 'salary' have no linkage to validate — Payable Account (already validated above) is the
       // category, and input.particulars (already required-checked above) is the description.
@@ -804,11 +634,7 @@ export const paymentVoucherService = {
       // The payable account (receivable type) is the Sundry Debtors ledger head for this receipt.
 
       id = randomUUID();
-      voucherNumber = await nextVoucherNumber(
-        connection,
-        input.bankAccountId,
-        isSalesReceipt ? "RV" : "PV",
-      );
+      voucherNumber = await nextVoucherNumber(connection, input.bankAccountId, isSalesReceipt ? "RV" : "PV");
 
       await connection.execute(
         `INSERT INTO payment_voucher
@@ -824,9 +650,7 @@ export const paymentVoucherService = {
           isSalesReceipt ? "receipt" : (input.voucherType ?? "payment"),
           input.sourceType,
           input.bankAccountId,
-          input.sourceType === "internal_transfer"
-            ? input.destinationBankAccountId
-            : null,
+          input.sourceType === "internal_transfer" ? input.destinationBankAccountId : null,
           input.payableAccountId,
           grnAllocations[0]?.vendorPaymentTrackingId ?? null,
           input.linkedImprestManagerId ?? null,
@@ -834,15 +658,13 @@ export const paymentVoucherService = {
           amount,
           input.remarks?.trim() || null,
           input.reason?.trim() || null,
-          input.sourceType === "sales_receipt"
-            ? (input.clientName?.trim() ?? input.particulars?.trim() ?? null)
-            : input.particulars?.trim() || null,
+          input.sourceType === "sales_receipt" ? (input.clientName?.trim() ?? input.particulars?.trim() ?? null) : (input.particulars?.trim() || null),
           expenseClassification?.headCode ?? null,
           expenseClassification?.headName ?? null,
           expenseClassification?.subHeadCode ?? null,
           expenseClassification?.subHeadName ?? null,
-          isSalesReceipt ? input.paymentMode?.trim() || null : null,
-          isSalesReceipt ? input.transactionRef?.trim() || null : null,
+          isSalesReceipt ? (input.paymentMode?.trim() || null) : null,
+          isSalesReceipt ? (input.transactionRef?.trim() || null) : null,
           actorUserId,
         ],
       );
@@ -868,20 +690,13 @@ export const paymentVoucherService = {
         },
         connection,
       );
-      await writeVoucherAudit(
-        connection,
-        "PAYMENT_VOUCHER_RAISED",
-        id,
-        actorUserId,
-        actorRole,
-        {
-          source_type: input.sourceType,
-          amount,
-          bank_account_id: input.bankAccountId,
-          expense_head: expenseClassification?.headName ?? null,
-          expense_sub_head: expenseClassification?.subHeadName ?? null,
-        },
-      );
+      await writeVoucherAudit(connection, "PAYMENT_VOUCHER_RAISED", id, actorUserId, actorRole, {
+        source_type: input.sourceType,
+        amount,
+        bank_account_id: input.bankAccountId,
+        expense_head: expenseClassification?.headName ?? null,
+        expense_sub_head: expenseClassification?.subHeadName ?? null,
+      });
 
       await connection.commit();
     } catch (error) {
@@ -898,27 +713,21 @@ export const paymentVoucherService = {
       module_key: "FINANCE",
       entity_type: "payment_voucher",
       entity_id: id,
-      change_summary: {
-        voucher_number: voucherNumber,
-        amount,
-        source_type: input.sourceType,
-      },
+      change_summary: { voucher_number: voucherNumber, amount, source_type: input.sourceType },
     }).catch(() => undefined);
 
     const ceoRecipients = await resolveRoleHolderUserIds("ceo", null);
     for (const userId of ceoRecipients) {
-      await inboxService
-        .createItem({
-          user_id: userId,
-          type: "payment_voucher_pending_approval",
-          title: `[ACTION REQUIRED] Payment Voucher ${voucherNumber} — ₹${amount}`,
-          description: input.remarks?.trim() || "Awaiting your approval.",
-          entity_type: "payment_voucher",
-          entity_id: id,
-          action_url: "/finance/payment-vouchers",
-          priority: "high",
-        })
-        .catch(() => undefined);
+      await inboxService.createItem({
+        user_id: userId,
+        type: "payment_voucher_pending_approval",
+        title: `[ACTION REQUIRED] Payment Voucher ${voucherNumber} — ₹${amount}`,
+        description: input.remarks?.trim() || "Awaiting your approval.",
+        entity_type: "payment_voucher",
+        entity_id: id,
+        action_url: "/finance/payment-vouchers",
+        priority: "high",
+      }).catch(() => undefined);
     }
 
     return this.get(id);
@@ -932,9 +741,7 @@ export const paymentVoucherService = {
     note?: string | null,
   ) {
     if (decision === "request_changes" && !note?.trim()) {
-      throw new PaymentVoucherError(
-        "A note explaining what needs to change is required.",
-      );
+      throw new PaymentVoucherError("A note explaining what needs to change is required.");
     }
     const connection = await db.getConnection();
     try {
@@ -943,13 +750,9 @@ export const paymentVoucherService = {
         `SELECT * FROM payment_voucher WHERE id = ? FOR UPDATE`,
         [id],
       );
-      if (!voucher)
-        throw new PaymentVoucherError("Payment voucher not found", 404);
+      if (!voucher) throw new PaymentVoucherError("Payment voucher not found", 404);
       if ((voucher as any).status !== "raised") {
-        throw new PaymentVoucherError(
-          `Voucher is already ${(voucher as any).status}`,
-          409,
-        );
+        throw new PaymentVoucherError(`Voucher is already ${(voucher as any).status}`, 409);
       }
       // Maker-checker: the CEO must not be the person who raised this voucher.
       if (String((voucher as any).raised_by) === String(actorUserId)) {
@@ -959,39 +762,23 @@ export const paymentVoucherService = {
         );
       }
 
-      const newStatus =
-        decision === "approve"
-          ? "ceo_approved"
-          : decision === "reject"
-            ? "rejected"
-            : "changes_requested";
-      const [result] =
-        decision === "request_changes"
-          ? await connection.execute<ResultSetHeader>(
-              `UPDATE payment_voucher
+      const newStatus = decision === "approve" ? "ceo_approved" : decision === "reject" ? "rejected" : "changes_requested";
+      const [result] = decision === "request_changes"
+        ? await connection.execute<ResultSetHeader>(
+            `UPDATE payment_voucher
                 SET status = ?, changes_requested_by = ?, changes_requested_at = NOW(), changes_requested_note = ?
               WHERE id = ? AND status = 'raised'`,
-              [newStatus, actorUserId, note!.trim(), id],
-            )
-          : await connection.execute<ResultSetHeader>(
-              `UPDATE payment_voucher
+            [newStatus, actorUserId, note!.trim(), id],
+          )
+        : await connection.execute<ResultSetHeader>(
+            `UPDATE payment_voucher
                 SET status = ?, ceo_approved_by = ?, ceo_approved_at = NOW(),
                     rejection_reason = ?
               WHERE id = ? AND status = 'raised'`,
-              [
-                newStatus,
-                actorUserId,
-                decision === "reject"
-                  ? note?.trim() || "Rejected by CEO"
-                  : null,
-                id,
-              ],
-            );
+            [newStatus, actorUserId, decision === "reject" ? (note?.trim() || "Rejected by CEO") : null, id],
+          );
       if (result.affectedRows !== 1) {
-        throw new PaymentVoucherError(
-          "Voucher was already decided by someone else",
-          409,
-        );
+        throw new PaymentVoucherError("Voucher was already decided by someone else", 409);
       }
 
       await recordFinanceApprovalEvent(
@@ -1008,23 +795,13 @@ export const paymentVoucherService = {
         },
         connection,
       );
-      const actionLabel =
-        decision === "approve"
-          ? "PAYMENT_VOUCHER_APPROVED"
-          : decision === "reject"
-            ? "PAYMENT_VOUCHER_REJECTED"
-            : "PAYMENT_VOUCHER_CHANGES_REQUESTED";
-      await writeVoucherAudit(
-        connection,
-        actionLabel,
-        id,
-        actorUserId,
-        actorRole,
-        {
-          decision,
-          note: note ?? null,
-        },
-      );
+      const actionLabel = decision === "approve" ? "PAYMENT_VOUCHER_APPROVED"
+        : decision === "reject" ? "PAYMENT_VOUCHER_REJECTED"
+        : "PAYMENT_VOUCHER_CHANGES_REQUESTED";
+      await writeVoucherAudit(connection, actionLabel, id, actorUserId, actorRole, {
+        decision,
+        note: note ?? null,
+      });
 
       await connection.commit();
     } catch (error) {
@@ -1034,12 +811,9 @@ export const paymentVoucherService = {
       connection.release();
     }
 
-    const actionLabel =
-      decision === "approve"
-        ? "PAYMENT_VOUCHER_APPROVED"
-        : decision === "reject"
-          ? "PAYMENT_VOUCHER_REJECTED"
-          : "PAYMENT_VOUCHER_CHANGES_REQUESTED";
+    const actionLabel = decision === "approve" ? "PAYMENT_VOUCHER_APPROVED"
+      : decision === "reject" ? "PAYMENT_VOUCHER_REJECTED"
+      : "PAYMENT_VOUCHER_CHANGES_REQUESTED";
     await logSensitiveAction({
       actor_user_id: actorUserId,
       actor_role: actorRole,
@@ -1056,34 +830,30 @@ export const paymentVoucherService = {
       // and amount, they're the one expected to actually make the payment.
       const raisedBy = String((await this.get(id))?.raised_by ?? "");
       if (raisedBy) {
-        await inboxService
-          .createItem({
-            user_id: raisedBy,
-            type: "payment_voucher_ready_for_release",
-            title: `[ACTION REQUIRED] Payment Voucher ready to release`,
-            description: `CEO-approved and awaiting release.`,
-            entity_type: "payment_voucher",
-            entity_id: id,
-            action_url: "/finance/payment-vouchers",
-            priority: "high",
-          })
-          .catch(() => undefined);
+        await inboxService.createItem({
+          user_id: raisedBy,
+          type: "payment_voucher_ready_for_release",
+          title: `[ACTION REQUIRED] Payment Voucher ready to release`,
+          description: `CEO-approved and awaiting release.`,
+          entity_type: "payment_voucher",
+          entity_id: id,
+          action_url: "/finance/payment-vouchers",
+          priority: "high",
+        }).catch(() => undefined);
       }
     } else if (decision === "request_changes") {
       const raisedBy = String((await this.get(id))?.raised_by ?? "");
       if (raisedBy) {
-        await inboxService
-          .createItem({
-            user_id: raisedBy,
-            type: "payment_voucher_changes_requested",
-            title: `[ACTION REQUIRED] CEO requested changes to a voucher`,
-            description: note!.trim(),
-            entity_type: "payment_voucher",
-            entity_id: id,
-            action_url: "/finance/payment-vouchers",
-            priority: "high",
-          })
-          .catch(() => undefined);
+        await inboxService.createItem({
+          user_id: raisedBy,
+          type: "payment_voucher_changes_requested",
+          title: `[ACTION REQUIRED] CEO requested changes to a voucher`,
+          description: note!.trim(),
+          entity_type: "payment_voucher",
+          entity_id: id,
+          action_url: "/finance/payment-vouchers",
+          priority: "high",
+        }).catch(() => undefined);
       }
     } else if (decision === "reject") {
       // Was silently un-notified (found 2026-09-17 CEO/CA compliance review) — approve and
@@ -1092,18 +862,16 @@ export const paymentVoucherService = {
       // nothing at all. Same pattern as request_changes above.
       const raisedBy = String((await this.get(id))?.raised_by ?? "");
       if (raisedBy) {
-        await inboxService
-          .createItem({
-            user_id: raisedBy,
-            type: "payment_voucher_rejected",
-            title: `Payment Voucher rejected by CEO`,
-            description: note?.trim() || "No reason given.",
-            entity_type: "payment_voucher",
-            entity_id: id,
-            action_url: "/finance/payment-vouchers",
-            priority: "high",
-          })
-          .catch(() => undefined);
+        await inboxService.createItem({
+          user_id: raisedBy,
+          type: "payment_voucher_rejected",
+          title: `Payment Voucher rejected by CEO`,
+          description: note?.trim() || "No reason given.",
+          entity_type: "payment_voucher",
+          entity_id: id,
+          action_url: "/finance/payment-vouchers",
+          priority: "high",
+        }).catch(() => undefined);
       }
     }
 
@@ -1124,16 +892,8 @@ export const paymentVoucherService = {
    * Never used on 'released' — once money has moved, the only correction is journalService.
    * reverse(), a different and much heavier operation than "we changed our mind before paying".
    */
-  async withdraw(
-    id: string,
-    actorUserId: string,
-    actorRole: string | undefined,
-    reason: string,
-  ) {
-    if (!reason?.trim())
-      throw new PaymentVoucherError(
-        "A reason is required to withdraw a voucher.",
-      );
+  async withdraw(id: string, actorUserId: string, actorRole: string | undefined, reason: string) {
+    if (!reason?.trim()) throw new PaymentVoucherError("A reason is required to withdraw a voucher.");
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
@@ -1141,32 +901,20 @@ export const paymentVoucherService = {
         `SELECT * FROM payment_voucher WHERE id = ? FOR UPDATE`,
         [id],
       );
-      if (!voucher)
-        throw new PaymentVoucherError("Payment voucher not found", 404);
+      if (!voucher) throw new PaymentVoucherError("Payment voucher not found", 404);
       const v = voucher as any;
 
       if (v.status === "raised") {
         if (String(v.raised_by) !== String(actorUserId)) {
-          throw new PaymentVoucherError(
-            "Only the person who raised this voucher can withdraw it.",
-            403,
-          );
+          throw new PaymentVoucherError("Only the person who raised this voucher can withdraw it.", 403);
         }
       } else if (v.status === "ceo_approved") {
-        const canRecall =
-          ["finance_head", "super_admin"].includes(String(actorRole)) ||
-          String(v.ceo_approved_by) === String(actorUserId);
+        const canRecall = ["finance_head", "super_admin"].includes(String(actorRole)) || String(v.ceo_approved_by) === String(actorUserId);
         if (!canRecall) {
-          throw new PaymentVoucherError(
-            "Only Finance Head, or the CEO who approved it, can recall an approved voucher before release.",
-            403,
-          );
+          throw new PaymentVoucherError("Only Finance Head, or the CEO who approved it, can recall an approved voucher before release.", 403);
         }
       } else {
-        throw new PaymentVoucherError(
-          `A voucher can only be withdrawn while raised or awaiting release (current status: ${v.status})`,
-          409,
-        );
+        throw new PaymentVoucherError(`A voucher can only be withdrawn while raised or awaiting release (current status: ${v.status})`, 409);
       }
 
       const [result] = await connection.execute<ResultSetHeader>(
@@ -1176,10 +924,7 @@ export const paymentVoucherService = {
         [actorUserId, reason.trim(), id, v.status],
       );
       if (result.affectedRows !== 1) {
-        throw new PaymentVoucherError(
-          "Voucher status changed under you — reload and try again",
-          409,
-        );
+        throw new PaymentVoucherError("Voucher status changed under you — reload and try again", 409);
       }
 
       await recordFinanceApprovalEvent(
@@ -1196,36 +941,24 @@ export const paymentVoucherService = {
         },
         connection,
       );
-      await writeVoucherAudit(
-        connection,
-        "PAYMENT_VOUCHER_WITHDRAWN",
-        id,
-        actorUserId,
-        actorRole,
-        { reason: reason.trim(), fromStatus: v.status },
-      );
+      await writeVoucherAudit(connection, "PAYMENT_VOUCHER_WITHDRAWN", id, actorUserId, actorRole, { reason: reason.trim(), fromStatus: v.status });
 
       await connection.commit();
 
       // Whoever didn't do the withdrawing should hear about it — the raiser if someone else
       // recalled it, or nobody (silent) if the raiser withdrew their own still-unapproved request,
       // since there's no one downstream waiting on it yet.
-      if (
-        v.status === "ceo_approved" &&
-        String(v.raised_by) !== String(actorUserId)
-      ) {
-        await inboxService
-          .createItem({
-            user_id: v.raised_by,
-            type: "payment_voucher_withdrawn",
-            title: `Payment Voucher recalled before release`,
-            description: reason.trim(),
-            entity_type: "payment_voucher",
-            entity_id: id,
-            action_url: "/finance/payment-vouchers",
-            priority: "high",
-          })
-          .catch(() => undefined);
+      if (v.status === "ceo_approved" && String(v.raised_by) !== String(actorUserId)) {
+        await inboxService.createItem({
+          user_id: v.raised_by,
+          type: "payment_voucher_withdrawn",
+          title: `Payment Voucher recalled before release`,
+          description: reason.trim(),
+          entity_type: "payment_voucher",
+          entity_id: id,
+          action_url: "/finance/payment-vouchers",
+          priority: "high",
+        }).catch(() => undefined);
       }
     } catch (error) {
       await connection.rollback();
@@ -1246,13 +979,7 @@ export const paymentVoucherService = {
     return this.get(id);
   },
 
-  async saveAttachment(
-    id: string,
-    filePath: string,
-    originalName: string,
-    actorUserId: string,
-    mimeType?: string,
-  ) {
+  async saveAttachment(id: string, filePath: string, originalName: string, actorUserId: string, mimeType?: string) {
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE payment_voucher
           SET attachment_path = ?, attachment_original_name = ?, attachment_mime = ?,
@@ -1261,10 +988,7 @@ export const paymentVoucherService = {
       [filePath, originalName, mimeType ?? null, actorUserId, id],
     );
     if (result.affectedRows !== 1) {
-      throw new PaymentVoucherError(
-        "Attachment can only be added or changed before a voucher is released — once released it is part of the historical record.",
-        409,
-      );
+      throw new PaymentVoucherError("Attachment can only be added or changed before a voucher is released — once released it is part of the historical record.", 409);
     }
     await logSensitiveAction({
       actor_user_id: actorUserId,
@@ -1277,16 +1001,12 @@ export const paymentVoucherService = {
     return this.get(id);
   },
 
+
   async resubmit(
     id: string,
     actorUserId: string,
     actorRole: string | undefined,
-    updates: {
-      bankAccountId?: string;
-      payableAccountId?: string;
-      amount?: number;
-      remarks?: string | null;
-    },
+    updates: { bankAccountId?: string; payableAccountId?: string; amount?: number; remarks?: string | null },
   ) {
     const connection = await db.getConnection();
     try {
@@ -1295,20 +1015,13 @@ export const paymentVoucherService = {
         `SELECT * FROM payment_voucher WHERE id = ? FOR UPDATE`,
         [id],
       );
-      if (!voucher)
-        throw new PaymentVoucherError("Payment voucher not found", 404);
+      if (!voucher) throw new PaymentVoucherError("Payment voucher not found", 404);
       const v = voucher as any;
       if (v.status !== "changes_requested") {
-        throw new PaymentVoucherError(
-          `Voucher is not awaiting resubmission (status: ${v.status})`,
-          409,
-        );
+        throw new PaymentVoucherError(`Voucher is not awaiting resubmission (status: ${v.status})`, 409);
       }
       if (String(v.raised_by) !== String(actorUserId)) {
-        throw new PaymentVoucherError(
-          "Only the person who raised this voucher may resubmit it.",
-          403,
-        );
+        throw new PaymentVoucherError("Only the person who raised this voucher may resubmit it.", 403);
       }
 
       const bankAccountId = updates.bankAccountId ?? v.bank_account_id;
@@ -1317,17 +1030,11 @@ export const paymentVoucherService = {
           `SELECT id, active_status FROM company_bank_account WHERE id = ?`,
           [bankAccountId],
         );
-        if (!bankAccount)
-          throw new PaymentVoucherError("Bank account not found", 404);
-        if (!(bankAccount as any).active_status)
-          throw new PaymentVoucherError("This bank account is closed");
+        if (!bankAccount) throw new PaymentVoucherError("Bank account not found", 404);
+        if (!(bankAccount as any).active_status) throw new PaymentVoucherError("This bank account is closed");
       }
-      const amount =
-        updates.amount != null
-          ? roundMoney(Number(updates.amount))
-          : Number(v.amount);
-      if (!Number.isFinite(amount) || amount <= 0)
-        throw new PaymentVoucherError("Amount must be a positive number");
+      const amount = updates.amount != null ? roundMoney(Number(updates.amount)) : Number(v.amount);
+      if (!Number.isFinite(amount) || amount <= 0) throw new PaymentVoucherError("Amount must be a positive number");
 
       const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE payment_voucher
@@ -1340,38 +1047,17 @@ export const paymentVoucherService = {
           bankAccountId,
           updates.payableAccountId ?? v.payable_account_id,
           amount,
-          updates.remarks !== undefined
-            ? updates.remarks?.trim() || null
-            : v.remarks,
+          updates.remarks !== undefined ? (updates.remarks?.trim() || null) : v.remarks,
           id,
         ],
       );
-      if (result.affectedRows !== 1)
-        throw new PaymentVoucherError(
-          "Voucher state changed before resubmission",
-          409,
-        );
+      if (result.affectedRows !== 1) throw new PaymentVoucherError("Voucher state changed before resubmission", 409);
 
       await recordFinanceApprovalEvent(
-        {
-          entityType: "payment_voucher",
-          entityId: id,
-          action: "resubmit",
-          toStatus: "raised",
-          actorUserId,
-          actorRole: actorRole ?? "finance_head",
-          remarks: updates.remarks ?? null,
-        },
+        { entityType: "payment_voucher", entityId: id, action: "resubmit", toStatus: "raised", actorUserId, actorRole: actorRole ?? "finance_head", remarks: updates.remarks ?? null },
         connection,
       );
-      await writeVoucherAudit(
-        connection,
-        "PAYMENT_VOUCHER_RESUBMITTED",
-        id,
-        actorUserId,
-        actorRole,
-        { bank_account_id: bankAccountId, amount },
-      );
+      await writeVoucherAudit(connection, "PAYMENT_VOUCHER_RESUBMITTED", id, actorUserId, actorRole, { bank_account_id: bankAccountId, amount });
 
       await connection.commit();
     } catch (error) {
@@ -1382,28 +1068,18 @@ export const paymentVoucherService = {
     }
 
     await logSensitiveAction({
-      actor_user_id: actorUserId,
-      actor_role: actorRole,
-      action_type: "PAYMENT_VOUCHER_RESUBMITTED",
-      module_key: "FINANCE",
-      entity_type: "payment_voucher",
-      entity_id: id,
+      actor_user_id: actorUserId, actor_role: actorRole, action_type: "PAYMENT_VOUCHER_RESUBMITTED",
+      module_key: "FINANCE", entity_type: "payment_voucher", entity_id: id,
     }).catch(() => undefined);
 
     const ceoRecipients = await resolveRoleHolderUserIds("ceo", null);
     for (const userId of ceoRecipients) {
-      await inboxService
-        .createItem({
-          user_id: userId,
-          type: "payment_voucher_pending_approval",
-          title: `[ACTION REQUIRED] Payment Voucher resubmitted for approval`,
-          description: "Resubmitted after requested changes.",
-          entity_type: "payment_voucher",
-          entity_id: id,
-          action_url: "/finance/payment-vouchers",
-          priority: "high",
-        })
-        .catch(() => undefined);
+      await inboxService.createItem({
+        user_id: userId, type: "payment_voucher_pending_approval",
+        title: `[ACTION REQUIRED] Payment Voucher resubmitted for approval`,
+        description: "Resubmitted after requested changes.",
+        entity_type: "payment_voucher", entity_id: id, action_url: "/finance/payment-vouchers", priority: "high",
+      }).catch(() => undefined);
     }
 
     return this.get(id);
@@ -1413,20 +1089,13 @@ export const paymentVoucherService = {
     id: string,
     actorUserId: string,
     actorRole: string | undefined,
-    input: {
-      paymentMode: string;
-      paymentDate: string;
-      transactionRef?: string | null;
-    },
+    input: { paymentMode: string; paymentDate: string; transactionRef?: string | null },
   ) {
     const paymentMode = input.paymentMode;
-    if (!PAYMENT_MODES.includes(paymentMode as any))
-      throw new PaymentVoucherError("Invalid payment mode");
+    if (!PAYMENT_MODES.includes(paymentMode as any)) throw new PaymentVoucherError("Invalid payment mode");
     const paymentDate = String(input.paymentDate ?? "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate))
-      throw new PaymentVoucherError("Payment date is required");
-    if (paymentDate > new Date().toISOString().slice(0, 10))
-      throw new PaymentVoucherError("Payment date cannot be in the future");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) throw new PaymentVoucherError("Payment date is required");
+    if (paymentDate > new Date().toISOString().slice(0, 10)) throw new PaymentVoucherError("Payment date cannot be in the future");
     // Optional for every mode, not just Cash: reconciliation's own matching logic (see
     // bank-reconciliation-match.service.ts's autoMatch) works purely off amount + date, never
     // off this reference, so requiring it bought nothing but friction — Finance often doesn't
@@ -1443,31 +1112,21 @@ export const paymentVoucherService = {
         `SELECT * FROM payment_voucher WHERE id = ? FOR UPDATE`,
         [id],
       );
-      if (!voucher)
-        throw new PaymentVoucherError("Payment voucher not found", 404);
+      if (!voucher) throw new PaymentVoucherError("Payment voucher not found", 404);
       const v = voucher as any;
       sourceType = v.source_type;
       linkedVendorPaymentId = v.linked_vendor_payment_id;
-      if (v.status !== "ceo_approved")
-        throw new PaymentVoucherError(
-          `Voucher is not ready for release (status: ${v.status})`,
-          409,
-        );
+      if (v.status !== "ceo_approved") throw new PaymentVoucherError(`Voucher is not ready for release (status: ${v.status})`, 409);
       // Finance Head both raises and releases under the current role model (2026-09-10) — CEO
       // approval is the one blocking gate between the two, so release no longer requires a
       // different person than raised_by. The CEO themselves still cannot release their own
       // approval, since ceo is not in VOUCHER_RELEASE_ROLES at all — this check is defence in
       // depth for a super_admin acting as both.
       if (String(v.ceo_approved_by) === String(actorUserId)) {
-        throw new PaymentVoucherError(
-          "A payment voucher must be released by someone other than the CEO who approved it.",
-          403,
-        );
+        throw new PaymentVoucherError("A payment voucher must be released by someone other than the CEO who approved it.", 403);
       }
       if (BANK_MODES.has(paymentMode) && !v.bank_account_id) {
-        throw new PaymentVoucherError(
-          "This voucher has no bank account to release from",
-        );
+        throw new PaymentVoucherError("This voucher has no bank account to release from");
       }
 
       // Lock the paying account. Every release against the same account serialises here, which
@@ -1478,10 +1137,8 @@ export const paymentVoucherService = {
            FROM company_bank_account WHERE id = ? FOR UPDATE`,
         [v.bank_account_id],
       );
-      if (!bankAccount)
-        throw new PaymentVoucherError("Bank account not found", 404);
-      if (!(bankAccount as any).active_status)
-        throw new PaymentVoucherError("This bank account is closed");
+      if (!bankAccount) throw new PaymentVoucherError("Bank account not found", 404);
+      if (!(bankAccount as any).active_status) throw new PaymentVoucherError("This bank account is closed");
       // Every bank_account_ledger_entry insert below (vendor_grn/TDS-memo/imprest/general lanes,
       // all sharing this one paymentDate) needs the same guard — one call here covers all of them.
       await assertNotInClosedPeriod(connection, v.bank_account_id, paymentDate);
@@ -1491,9 +1148,7 @@ export const paymentVoucherService = {
           WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
         [v.bank_account_id],
       );
-      let runningBalance = lastEntry
-        ? Number((lastEntry as any).running_balance)
-        : Number((bankAccount as any).opening_balance);
+      let runningBalance = lastEntry ? Number((lastEntry as any).running_balance) : Number((bankAccount as any).opening_balance);
 
       const amount = roundMoney(Number(v.amount));
 
@@ -1515,10 +1170,7 @@ export const paymentVoucherService = {
       let branchCandidate: string | null | undefined;
       let costCentreCandidate: string | null | undefined;
       let processCandidate: string | null | undefined;
-      const narrow = (
-        current: string | null | undefined,
-        next: string | null | undefined,
-      ): string | null | undefined => {
+      const narrow = (current: string | null | undefined, next: string | null | undefined): string | null | undefined => {
         if (next == null) return current;
         if (current === undefined) return next;
         return current === next ? current : null;
@@ -1543,13 +1195,9 @@ export const paymentVoucherService = {
              FROM payment_voucher_grn_allocation WHERE payment_voucher_id = ? ORDER BY created_at ASC`,
           [id],
         );
-        const allocations =
-          (allocRows as any[]).length > 0
-            ? (allocRows as any[]).map((r) => ({
-                vendorPaymentTrackingId: r.vendor_payment_tracking_id,
-                amount: roundMoney(Number(r.allocated_amount)),
-              }))
-            : [{ vendorPaymentTrackingId: v.linked_vendor_payment_id, amount }];
+        const allocations = (allocRows as any[]).length > 0
+          ? (allocRows as any[]).map((r) => ({ vendorPaymentTrackingId: r.vendor_payment_tracking_id, amount: roundMoney(Number(r.allocated_amount)) }))
+          : [{ vendorPaymentTrackingId: v.linked_vendor_payment_id, amount }];
 
         for (const alloc of allocations) {
           // Reuses the exact same write path the Vendor Payment page's own "Pay" button uses
@@ -1579,10 +1227,8 @@ export const paymentVoucherService = {
             // active-voucher guard so a release does not block itself.
             v.id,
           );
-          const lastTransaction =
-            dispatchResult.transactions[dispatchResult.transactions.length - 1];
-          const grnNumberForNarration =
-            (dispatchResult.payment as any)?.grn_number ?? "";
+          const lastTransaction = dispatchResult.transactions[dispatchResult.transactions.length - 1];
+          const grnNumberForNarration = (dispatchResult.payment as any)?.grn_number ?? "";
 
           runningBalance = roundMoney(runningBalance - alloc.amount);
           await connection.execute(
@@ -1643,18 +1289,9 @@ export const paymentVoucherService = {
             `SELECT vendor_id, branch_id, cost_centre_id, process_id FROM vendor_payment_tracking WHERE id = ?`,
             [alloc.vendorPaymentTrackingId],
           );
-          branchCandidate = narrow(
-            branchCandidate,
-            (vptRow as any)?.branch_id ?? null,
-          );
-          costCentreCandidate = narrow(
-            costCentreCandidate,
-            (vptRow as any)?.cost_centre_id ?? null,
-          );
-          processCandidate = narrow(
-            processCandidate,
-            (vptRow as any)?.process_id ?? null,
-          );
+          branchCandidate = narrow(branchCandidate, (vptRow as any)?.branch_id ?? null);
+          costCentreCandidate = narrow(costCentreCandidate, (vptRow as any)?.cost_centre_id ?? null);
+          processCandidate = narrow(processCandidate, (vptRow as any)?.process_id ?? null);
           if ((vptRow as any)?.vendor_id) {
             journalLines.push(
               ...vendorGrnLines({
@@ -1662,8 +1299,7 @@ export const paymentVoucherService = {
                 bankAccountId: v.bank_account_id,
                 netAmount: alloc.amount,
                 tdsAmount: tds,
-                tdsPayableAccountId:
-                  tds > 0 ? await resolveTdsPayableAccountId() : null,
+                tdsPayableAccountId: tds > 0 ? await resolveTdsPayableAccountId() : null,
               }),
             );
           }
@@ -1673,15 +1309,8 @@ export const paymentVoucherService = {
           `SELECT id, branch_id FROM imprest_manager WHERE id = ? FOR UPDATE`,
           [v.linked_imprest_manager_id],
         );
-        if (!manager)
-          throw new PaymentVoucherError(
-            "Linked imprest manager no longer exists",
-            404,
-          );
-        branchCandidate = narrow(
-          branchCandidate,
-          (manager as any).branch_id ?? null,
-        );
+        if (!manager) throw new PaymentVoucherError("Linked imprest manager no longer exists", 404);
+        branchCandidate = narrow(branchCandidate, (manager as any).branch_id ?? null);
 
         await imprestLedgerService.post(
           {
@@ -1732,10 +1361,7 @@ export const paymentVoucherService = {
         // Real money out to the vendor, no GRN behind it — same bank-debit shape as the
         // 'general' lane, plus crediting this vendor's advance balance so it's available to
         // draw down later via a 'vendor_advance_application' voucher.
-        branchCandidate = narrow(
-          branchCandidate,
-          (bankAccount as any).branch_id ?? null,
-        );
+        branchCandidate = narrow(branchCandidate, (bankAccount as any).branch_id ?? null);
         runningBalance = roundMoney(runningBalance - amount);
         await connection.execute(
           `INSERT INTO bank_account_ledger_entry
@@ -1765,24 +1391,15 @@ export const paymentVoucherService = {
           [v.linked_vendor_id],
         );
         if (!vendorLock) throw new PaymentVoucherError("Vendor not found", 404);
-        const priorAdvanceBalance = await getVendorAdvanceBalance(
-          connection,
-          v.linked_vendor_id,
-        );
+        const priorAdvanceBalance = await getVendorAdvanceBalance(connection, v.linked_vendor_id);
         const newAdvanceBalance = roundMoney(priorAdvanceBalance + amount);
         await connection.execute(
           `INSERT INTO vendor_advance_ledger
              (id, vendor_id, branch_id, direction, amount, balance_after, payment_voucher_id, narration, created_by)
            VALUES (?, ?, ?, 'credit', ?, ?, ?, ?, ?)`,
           [
-            randomUUID(),
-            v.linked_vendor_id,
-            (bankAccount as any).branch_id,
-            amount,
-            newAdvanceBalance,
-            id,
-            `Advance paid — voucher ${v.voucher_number}`,
-            actorUserId,
+            randomUUID(), v.linked_vendor_id, (bankAccount as any).branch_id, amount, newAdvanceBalance,
+            id, `Advance paid — voucher ${v.voucher_number}`, actorUserId,
           ],
         );
 
@@ -1809,10 +1426,7 @@ export const paymentVoucherService = {
         );
         if (!vendorLock) throw new PaymentVoucherError("Vendor not found", 404);
 
-        const available = await getVendorAdvanceBalance(
-          connection,
-          v.linked_vendor_id,
-        );
+        const available = await getVendorAdvanceBalance(connection, v.linked_vendor_id);
         if (amount > available + 0.01) {
           throw new PaymentVoucherError(
             `This vendor's available advance balance (${available}) is now less than the amount being applied (${amount}) — another application likely drew it down since this voucher was raised.`,
@@ -1820,39 +1434,24 @@ export const paymentVoucherService = {
           );
         }
 
-        const [applicationAllocRows] = await connection.execute<
-          RowDataPacket[]
-        >(
+        const [applicationAllocRows] = await connection.execute<RowDataPacket[]>(
           `SELECT vendor_payment_tracking_id, allocated_amount
              FROM payment_voucher_grn_allocation WHERE payment_voucher_id = ? ORDER BY created_at ASC`,
           [id],
         );
-        const applicationAllocations = (applicationAllocRows as any[]).map(
-          (r) => ({
-            vendorPaymentTrackingId: r.vendor_payment_tracking_id,
-            amount: roundMoney(Number(r.allocated_amount)),
-          }),
-        );
+        const applicationAllocations = (applicationAllocRows as any[]).map((r) => ({
+          vendorPaymentTrackingId: r.vendor_payment_tracking_id,
+          amount: roundMoney(Number(r.allocated_amount)),
+        }));
 
         for (const alloc of applicationAllocations) {
-          const [[applicationVptRow]] = await connection.execute<
-            RowDataPacket[]
-          >(
+          const [[applicationVptRow]] = await connection.execute<RowDataPacket[]>(
             `SELECT branch_id, cost_centre_id, process_id FROM vendor_payment_tracking WHERE id = ?`,
             [alloc.vendorPaymentTrackingId],
           );
-          branchCandidate = narrow(
-            branchCandidate,
-            (applicationVptRow as any)?.branch_id ?? null,
-          );
-          costCentreCandidate = narrow(
-            costCentreCandidate,
-            (applicationVptRow as any)?.cost_centre_id ?? null,
-          );
-          processCandidate = narrow(
-            processCandidate,
-            (applicationVptRow as any)?.process_id ?? null,
-          );
+          branchCandidate = narrow(branchCandidate, (applicationVptRow as any)?.branch_id ?? null);
+          costCentreCandidate = narrow(costCentreCandidate, (applicationVptRow as any)?.cost_centre_id ?? null);
+          processCandidate = narrow(processCandidate, (applicationVptRow as any)?.process_id ?? null);
 
           const applicationDispatch = await vendorPaymentLedgerService.dispatch(
             alloc.vendorPaymentTrackingId,
@@ -1873,11 +1472,7 @@ export const paymentVoucherService = {
           // Vendor already net on the vendor's own ledger); only TDS, if this installment
           // withholds any, needs a line — see vendorAdvanceApplicationLines' own header.
           const applicationTds = roundMoney(
-            Number(
-              applicationDispatch.transactions[
-                applicationDispatch.transactions.length - 1
-              ]?.tds_amount ?? 0,
-            ),
+            Number(applicationDispatch.transactions[applicationDispatch.transactions.length - 1]?.tds_amount ?? 0),
           );
           if (applicationTds > 0) {
             journalLines.push(
@@ -1896,24 +1491,15 @@ export const paymentVoucherService = {
              (id, vendor_id, branch_id, direction, amount, balance_after, payment_voucher_id, narration, created_by)
            VALUES (?, ?, ?, 'debit', ?, ?, ?, ?, ?)`,
           [
-            randomUUID(),
-            v.linked_vendor_id,
-            (bankAccount as any).branch_id,
-            amount,
-            newAdvanceBalance,
-            id,
-            `Applied against ${applicationAllocations.length} GRN due(s) — voucher ${v.voucher_number}`,
-            actorUserId,
+            randomUUID(), v.linked_vendor_id, (bankAccount as any).branch_id, amount, newAdvanceBalance,
+            id, `Applied against ${applicationAllocations.length} GRN due(s) — voucher ${v.voucher_number}`, actorUserId,
           ],
         );
       } else if (v.source_type === "sales_receipt") {
         // Receipt lane — money coming IN. credit_amount = amount, debit_amount = 0.
         // Running balance INCREASES (opposite of every payment lane above).
         // No vendor GRN or imprest link to update. particulars carries the client/party name.
-        branchCandidate = narrow(
-          branchCandidate,
-          (bankAccount as any).branch_id ?? null,
-        );
+        branchCandidate = narrow(branchCandidate, (bankAccount as any).branch_id ?? null);
         runningBalance = roundMoney(runningBalance + amount);
         await connection.execute(
           `INSERT INTO bank_account_ledger_entry
@@ -1921,18 +1507,18 @@ export const paymentVoucherService = {
               payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            randomUUID(), // [0] id
-            v.bank_account_id, // [1] bank_account_id
-            paymentDate, // [2] entry_date
-            id, // [3] voucher_id
-            0, // [4] debit_amount — receipts have no debit
-            amount, // [5] credit_amount — money coming IN
-            v.payable_account_id, // [6] payable_account_id
+            randomUUID(),          // [0] id
+            v.bank_account_id,     // [1] bank_account_id
+            paymentDate,           // [2] entry_date
+            id,                    // [3] voucher_id
+            0,                     // [4] debit_amount — receipts have no debit
+            amount,                // [5] credit_amount — money coming IN
+            v.payable_account_id,  // [6] payable_account_id
             `${v.particulars ?? "Client receipt"} — voucher ${v.voucher_number}`, // [7] narration
-            transactionRef, // [8] instrument_ref
-            runningBalance, // [9] running_balance
-            "voucher", // [10] source_type
-            actorUserId, // [11] created_by
+            transactionRef,        // [8] instrument_ref
+            runningBalance,        // [9] running_balance
+            "voucher",             // [10] source_type
+            actorUserId,           // [11] created_by
           ],
         );
         // No journal lines required for the receipt lane — journalLines stays empty.
@@ -1941,10 +1527,7 @@ export const paymentVoucherService = {
         // journal lines: the two bank_account_ledger_entry rows below are the authoritative
         // record of this movement (same reasoning as the sales_receipt lane just above —
         // nothing external to reconcile against).
-        branchCandidate = narrow(
-          branchCandidate,
-          (bankAccount as any).branch_id ?? null,
-        );
+        branchCandidate = narrow(branchCandidate, (bankAccount as any).branch_id ?? null);
 
         // Debit leg — source account (already locked above as `bankAccount`).
         runningBalance = roundMoney(runningBalance - amount);
@@ -1954,16 +1537,8 @@ export const paymentVoucherService = {
               payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
            VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'voucher', ?)`,
           [
-            randomUUID(),
-            v.bank_account_id,
-            paymentDate,
-            id,
-            amount,
-            v.payable_account_id,
-            `Internal transfer out — voucher ${v.voucher_number}`,
-            transactionRef,
-            runningBalance,
-            actorUserId,
+            randomUUID(), v.bank_account_id, paymentDate, id, amount, v.payable_account_id,
+            `Internal transfer out — voucher ${v.voucher_number}`, transactionRef, runningBalance, actorUserId,
           ],
         );
 
@@ -1975,24 +1550,15 @@ export const paymentVoucherService = {
           `SELECT opening_balance, active_status FROM company_bank_account WHERE id = ? FOR UPDATE`,
           [v.destination_bank_account_id],
         );
-        if (!destAccount)
-          throw new PaymentVoucherError(
-            "Destination bank account not found",
-            404,
-          );
-        if (!(destAccount as any).active_status)
-          throw new PaymentVoucherError(
-            "The destination bank account is closed",
-          );
+        if (!destAccount) throw new PaymentVoucherError("Destination bank account not found", 404);
+        if (!(destAccount as any).active_status) throw new PaymentVoucherError("The destination bank account is closed");
         const [[destLastEntry]] = await connection.execute<RowDataPacket[]>(
           `SELECT running_balance FROM bank_account_ledger_entry
              WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
           [v.destination_bank_account_id],
         );
         const destRunningBalance = roundMoney(
-          (destLastEntry
-            ? Number((destLastEntry as any).running_balance)
-            : Number((destAccount as any).opening_balance)) + amount,
+          (destLastEntry ? Number((destLastEntry as any).running_balance) : Number((destAccount as any).opening_balance)) + amount,
         );
         await connection.execute(
           `INSERT INTO bank_account_ledger_entry
@@ -2000,16 +1566,8 @@ export const paymentVoucherService = {
               payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
            VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'voucher', ?)`,
           [
-            randomUUID(),
-            v.destination_bank_account_id,
-            paymentDate,
-            id,
-            amount,
-            v.payable_account_id,
-            `Internal transfer in — voucher ${v.voucher_number}`,
-            transactionRef,
-            destRunningBalance,
-            actorUserId,
+            randomUUID(), v.destination_bank_account_id, paymentDate, id, amount, v.payable_account_id,
+            `Internal transfer in — voucher ${v.voucher_number}`, transactionRef, destRunningBalance, actorUserId,
           ],
         );
       } else {
@@ -2017,10 +1575,7 @@ export const paymentVoucherService = {
         // against whatever Payable Account (Salary Payable / Statutory Dues / Bank Charges /
         // TDS Payable / Other) the voucher was raised under. particulars carries the "what this
         // is for" a GRN number or imprest manager name would otherwise supply.
-        branchCandidate = narrow(
-          branchCandidate,
-          (bankAccount as any).branch_id ?? null,
-        );
+        branchCandidate = narrow(branchCandidate, (bankAccount as any).branch_id ?? null);
         runningBalance = roundMoney(runningBalance - amount);
         await connection.execute(
           `INSERT INTO bank_account_ledger_entry
@@ -2062,11 +1617,7 @@ export const paymentVoucherService = {
       // convention; a real shortfall is never that small. Checked here, before ANY row commits
       // (still inside this transaction — connection.rollback() in the catch below undoes
       // everything above on throw).
-      if (
-        v.source_type !== "vendor_advance_application" &&
-        v.source_type !== "sales_receipt" &&
-        runningBalance < -0.01
-      ) {
+      if (v.source_type !== "vendor_advance_application" && v.source_type !== "sales_receipt" && runningBalance < -0.01) {
         throw new PaymentVoucherError(
           `This release would take the account's recorded balance to ₹${roundMoney(runningBalance)} — below zero. Refusing to release rather than silently overdraw the account.`,
           409,
@@ -2099,10 +1650,7 @@ export const paymentVoucherService = {
         [actorUserId, paymentMode, paymentDate, transactionRef, id],
       );
       if (result.affectedRows !== 1) {
-        throw new PaymentVoucherError(
-          "Voucher was already released or its state changed",
-          409,
-        );
+        throw new PaymentVoucherError("Voucher was already released or its state changed", 409);
       }
 
       await recordFinanceApprovalEvent(
@@ -2119,19 +1667,12 @@ export const paymentVoucherService = {
         },
         connection,
       );
-      await writeVoucherAudit(
-        connection,
-        "PAYMENT_VOUCHER_RELEASED",
-        id,
-        actorUserId,
-        actorRole,
-        {
-          payment_mode: paymentMode,
-          payment_date: paymentDate,
-          transaction_ref: transactionRef,
-          amount,
-        },
-      );
+      await writeVoucherAudit(connection, "PAYMENT_VOUCHER_RELEASED", id, actorUserId, actorRole, {
+        payment_mode: paymentMode,
+        payment_date: paymentDate,
+        transaction_ref: transactionRef,
+        amount,
+      });
 
       await connection.commit();
     } catch (error) {
@@ -2148,11 +1689,7 @@ export const paymentVoucherService = {
       module_key: "FINANCE",
       entity_type: "payment_voucher",
       entity_id: id,
-      change_summary: {
-        payment_mode: paymentMode,
-        payment_date: paymentDate,
-        transaction_ref: transactionRef,
-      },
+      change_summary: { payment_mode: paymentMode, payment_date: paymentDate, transaction_ref: transactionRef },
     }).catch(() => undefined);
     if (sourceType === "vendor_grn" && linkedVendorPaymentId) {
       await logSensitiveAction({
@@ -2166,33 +1703,26 @@ export const paymentVoucherService = {
       }).catch(() => undefined);
     }
 
-    await inboxService
-      .resolveItems({
-        entity_type: "payment_voucher",
-        entity_id: id,
-        types: ["payment_voucher_ready_for_release"],
-      })
-      .catch(() => undefined);
+    await inboxService.resolveItems({
+      entity_type: "payment_voucher",
+      entity_id: id,
+      types: ["payment_voucher_ready_for_release"],
+    }).catch(() => undefined);
 
     // Accounts Head reviews the payment AFTER it lands, not before — tell them it's ready to
     // look at now that money has actually moved.
-    const accountsRecipients = await resolveRoleHolderUserIds(
-      "accounts_head",
-      null,
-    );
+    const accountsRecipients = await resolveRoleHolderUserIds("accounts_head", null);
     for (const userId of accountsRecipients) {
-      await inboxService
-        .createItem({
-          user_id: userId,
-          type: "payment_voucher_awaiting_review",
-          title: `Payment Voucher released — review when convenient`,
-          description: `Released and awaiting your sign-off review.`,
-          entity_type: "payment_voucher",
-          entity_id: id,
-          action_url: "/finance/payment-vouchers",
-          priority: "normal",
-        })
-        .catch(() => undefined);
+      await inboxService.createItem({
+        user_id: userId,
+        type: "payment_voucher_awaiting_review",
+        title: `Payment Voucher released — review when convenient`,
+        description: `Released and awaiting your sign-off review.`,
+        entity_type: "payment_voucher",
+        entity_id: id,
+        action_url: "/finance/payment-vouchers",
+        priority: "normal",
+      }).catch(() => undefined);
     }
 
     return this.get(id);
@@ -2202,12 +1732,7 @@ export const paymentVoucherService = {
    * Accounts Head's post-release review — non-blocking. The voucher is already released; this
    * only records who checked it, when, and any note. Never touches status or reverses anything.
    */
-  async reviewRelease(
-    id: string,
-    actorUserId: string,
-    actorRole: string | undefined,
-    note?: string | null,
-  ) {
+  async reviewRelease(id: string, actorUserId: string, actorRole: string | undefined, note?: string | null) {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
@@ -2215,13 +1740,9 @@ export const paymentVoucherService = {
         `SELECT status FROM payment_voucher WHERE id = ? FOR UPDATE`,
         [id],
       );
-      if (!voucher)
-        throw new PaymentVoucherError("Payment voucher not found", 404);
+      if (!voucher) throw new PaymentVoucherError("Payment voucher not found", 404);
       if ((voucher as any).status !== "released") {
-        throw new PaymentVoucherError(
-          "Only a released voucher can be reviewed.",
-          409,
-        );
+        throw new PaymentVoucherError("Only a released voucher can be reviewed.", 409);
       }
       const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE payment_voucher
@@ -2230,10 +1751,7 @@ export const paymentVoucherService = {
         [actorUserId, note?.trim() || null, id],
       );
       if (result.affectedRows !== 1) {
-        throw new PaymentVoucherError(
-          "Voucher state changed — please retry.",
-          409,
-        );
+        throw new PaymentVoucherError("Voucher state changed — please retry.", 409);
       }
       await recordFinanceApprovalEvent(
         {
@@ -2248,14 +1766,7 @@ export const paymentVoucherService = {
         },
         connection,
       );
-      await writeVoucherAudit(
-        connection,
-        "PAYMENT_VOUCHER_REVIEWED",
-        id,
-        actorUserId,
-        actorRole,
-        { note: note ?? null },
-      );
+      await writeVoucherAudit(connection, "PAYMENT_VOUCHER_REVIEWED", id, actorUserId, actorRole, { note: note ?? null });
       await connection.commit();
     } catch (error) {
       await connection.rollback();
@@ -2264,13 +1775,11 @@ export const paymentVoucherService = {
       connection.release();
     }
 
-    await inboxService
-      .resolveItems({
-        entity_type: "payment_voucher",
-        entity_id: id,
-        types: ["payment_voucher_awaiting_review"],
-      })
-      .catch(() => undefined);
+    await inboxService.resolveItems({
+      entity_type: "payment_voucher",
+      entity_id: id,
+      types: ["payment_voucher_awaiting_review"],
+    }).catch(() => undefined);
 
     await logSensitiveAction({
       actor_user_id: actorUserId,

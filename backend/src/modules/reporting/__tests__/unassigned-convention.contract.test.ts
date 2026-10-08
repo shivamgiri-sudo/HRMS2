@@ -37,8 +37,8 @@ const files = [
   `${R}/report-suite.routes.ts`,
   `${R}/report-suite-highrisk.routes.ts`,
   ...readdirSync(resolve(ROOT, `${R}/executors`))
-    .filter((f) => f.endsWith(".executor.ts"))
-    .map((f) => `${R}/executors/${f}`),
+    .filter(f => f.endsWith(".executor.ts"))
+    .map(f => `${R}/executors/${f}`),
 ];
 
 describe("UNASSIGNED convention", () => {
@@ -55,13 +55,11 @@ describe("UNASSIGNED convention", () => {
    * a real offender in exit.executor.ts.
    */
   const inSelectList = (lines: string[], i: number): boolean => {
-    const CLAUSE =
-      /\b(SELECT|FROM|GROUP\s+BY|ORDER\s+BY|WHERE|HAVING|JOIN|ON)\b/gi;
+    const CLAUSE = /\b(SELECT|FROM|GROUP\s+BY|ORDER\s+BY|WHERE|HAVING|JOIN|ON)\b/gi;
     for (let j = i - 1; j >= 0 && j > i - 60; j--) {
       if (/^\s*(\/\/|\*|--)/.test(lines[j])) continue;
       const found = [...lines[j].matchAll(CLAUSE)];
-      if (found.length)
-        return found[found.length - 1][1].toUpperCase().startsWith("SELECT");
+      if (found.length) return found[found.length - 1][1].toUpperCase().startsWith("SELECT");
     }
     return false;
   };
@@ -76,15 +74,10 @@ describe("UNASSIGNED convention", () => {
         if (!inSelectList(lines, i)) return;
         for (const [col, re] of GOVERNED) {
           // A line combining two bare columns, e.g. `b.branch_name, p.process_name,`
-          const combined =
-            /^\s*b\.branch_name\s*,\s*p\.process_name\s*,?\s*$/.test(line) ||
-            /^\s*b\.branch_name\s*,\s*d\.dept_name\s+AS\s+department_name\s*,?\s*$/i.test(
-              line,
-            );
+          const combined = /^\s*b\.branch_name\s*,\s*p\.process_name\s*,?\s*$/.test(line)
+            || /^\s*b\.branch_name\s*,\s*d\.dept_name\s+AS\s+department_name\s*,?\s*$/i.test(line);
           if (re.test(line) || combined) {
-            offenders.push(
-              `${path.split("/").pop()}:${i + 1}  ${col}  ${line.trim()}`,
-            );
+            offenders.push(`${path.split("/").pop()}:${i + 1}  ${col}  ${line.trim()}`);
             break;
           }
         }
@@ -93,8 +86,7 @@ describe("UNASSIGNED convention", () => {
     expect(
       offenders,
       "these select a governed column bare, so an unmapped employee renders as an empty cell " +
-        "instead of UNASSIGNED:\n" +
-        offenders.join("\n"),
+        "instead of UNASSIGNED:\n" + offenders.join("\n"),
     ).toEqual([]);
   });
 
@@ -105,18 +97,11 @@ describe("UNASSIGNED convention", () => {
     // reconcile to 1,125 before and after.
     const offenders: string[] = [];
     for (const path of files) {
-      read(path)
-        .split("\n")
-        .forEach((line, i) => {
-          if (
-            /GROUP\s+BY/i.test(line) &&
-            /COALESCE\s*\(\s*(b\.branch_name|d\.dept_name|p\.process_name|cc\.cost_centre)/i.test(
-              line,
-            )
-          ) {
-            offenders.push(`${path.split("/").pop()}:${i + 1}  ${line.trim()}`);
-          }
-        });
+      read(path).split("\n").forEach((line, i) => {
+        if (/GROUP\s+BY/i.test(line) && /COALESCE\s*\(\s*(b\.branch_name|d\.dept_name|p\.process_name|cc\.cost_centre)/i.test(line)) {
+          offenders.push(`${path.split("/").pop()}:${i + 1}  ${line.trim()}`);
+        }
+      });
     }
     expect(
       offenders,

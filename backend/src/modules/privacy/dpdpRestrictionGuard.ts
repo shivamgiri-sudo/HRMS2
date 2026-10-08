@@ -22,12 +22,11 @@ import { insertAuditLog } from "./dpdp-withdrawal.service.js";
  */
 
 /** employees.id / auth_user.id are CHAR(36) UUIDs. */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export async function checkDpdpRestriction(
   req: Request,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ): Promise<void> {
   try {
     const targetId =
@@ -76,7 +75,7 @@ export async function checkDpdpRestriction(
            )
          )
        LIMIT 1`,
-      [targetId, targetId],
+      [targetId, targetId]
     );
 
     if (rows.length > 0) {
@@ -89,17 +88,10 @@ export async function checkDpdpRestriction(
        * Fire-and-forget: an audit-write failure must never convert this 403 into a 500,
        * because the guard's whole contract is to fail closed.
        */
-      const actor =
-        (req as Request & { authUser?: { id?: string } }).authUser?.id ??
-        "anonymous";
-      void insertAuditLog(
-        String(rows[0].id),
-        "DPDP_PROCESSING_HOLD_ENFORCED",
-        actor,
-        {
-          remarks: `Access to ${req.method} ${req.originalUrl ?? req.path} blocked by active restriction`,
-        },
-      ).catch(() => undefined);
+      const actor = (req as Request & { authUser?: { id?: string } }).authUser?.id ?? "anonymous";
+      void insertAuditLog(String(rows[0].id), "DPDP_PROCESSING_HOLD_ENFORCED", actor, {
+        remarks: `Access to ${req.method} ${req.originalUrl ?? req.path} blocked by active restriction`,
+      }).catch(() => undefined);
 
       res.status(403).json({
         success: false,
@@ -121,12 +113,11 @@ export async function checkDpdpRestriction(
         event: "DPDP_RESTRICTION_CHECK_FAILED",
         error: err instanceof Error ? err.message : String(err),
         timestamp: new Date().toISOString(),
-      }) + "\n",
+      }) + "\n"
     );
     res.status(503).json({
       success: false,
-      message:
-        "Privacy restriction check temporarily unavailable. Please retry.",
+      message: "Privacy restriction check temporarily unavailable. Please retry.",
       code: "DPDP_RESTRICTION_CHECK_FAILED",
     });
   }

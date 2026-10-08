@@ -61,9 +61,7 @@ describe("branch vocabulary", () => {
      * Jaldarshan row is a data-entry error: it has 0 employees, AHMEDABAD-JALDARSHAN has 266.
      */
     expect(canonicalBranch("Jaldarshan")).toBe("AHMEDABAD-JALDARSHAN");
-    expect(canonicalBranch("AHMEDABAD-JALDARSHAN")).toBe(
-      "AHMEDABAD-JALDARSHAN",
-    );
+    expect(canonicalBranch("AHMEDABAD-JALDARSHAN")).toBe("AHMEDABAD-JALDARSHAN");
     expect(branchRegion("Jaldarshan")).toBe("Gujarat");
   });
 
@@ -90,20 +88,18 @@ describe("branch vocabulary", () => {
 describe("recruiter identity", () => {
   it("merges the case-variant pairs", () => {
     // MySQL's collation sees one name; a JavaScript Map does not. Five people were split.
-    expect(recruiterKey(null, "SOFIYA SULTAN")).toBe(
-      recruiterKey(null, "Sofiya Sultan"),
-    );
+    expect(recruiterKey(null, "SOFIYA SULTAN")).toBe(recruiterKey(null, "Sofiya Sultan"));
     expect(recruiterKey(null, "RAKHI")).toBe(recruiterKey(null, "Rakhi"));
   });
 
   it("merges the pairs confirmed by roster email", () => {
     const pairs: Array<[string, string]> = [
-      ["MEHAR", "Mehar Sheikh"], // mehar.sheikh@teammas.in
-      ["SHEELU VERMA", "Sheelu"], // sheelu.verma@teammas.in
-      ["MONIKA SANJAY SHARMA", "Monika Sharma"], // monika.sharma@teammas.in
-      ["GAJJAR JAGRUTIBEN AKASHBHAI", "Jagruti Patel"], // patel.jagrutiben@teammas.co.in
-      ["SRASHTI CHAUHAN", "Shristi"], // srashti.chauhan@teammas.co.in
-      ["SANDEEP BABULAL PATEL", "Sandeep Patel"], // hr.masahm@, both AHMEDABAD only
+      ["MEHAR", "Mehar Sheikh"],                              // mehar.sheikh@teammas.in
+      ["SHEELU VERMA", "Sheelu"],                             // sheelu.verma@teammas.in
+      ["MONIKA SANJAY SHARMA", "Monika Sharma"],              // monika.sharma@teammas.in
+      ["GAJJAR JAGRUTIBEN AKASHBHAI", "Jagruti Patel"],       // patel.jagrutiben@teammas.co.in
+      ["SRASHTI CHAUHAN", "Shristi"],                         // srashti.chauhan@teammas.co.in
+      ["SANDEEP BABULAL PATEL", "Sandeep Patel"],             // hr.masahm@, both AHMEDABAD only
     ];
     for (const [a, b] of pairs) {
       expect(recruiterKey(null, a), `${a} vs ${b}`).toBe(recruiterKey(null, b));
@@ -120,29 +116,19 @@ describe("recruiter identity", () => {
      * is the strongest signal available and it is not infallible, so a merge it rejects is a
      * question for a human rather than a settled answer.
      */
-    expect(recruiterKey(null, "KHUSHI")).toBe(
-      recruiterKey(null, "Khushi Mishra"),
-    );
-    expect(suspectedDuplicateRecruiters(["KHUSHI", "Khushi Mishra"])).toEqual(
-      [],
-    );
+    expect(recruiterKey(null, "KHUSHI")).toBe(recruiterKey(null, "Khushi Mishra"));
+    expect(suspectedDuplicateRecruiters(["KHUSHI", "Khushi Mishra"])).toEqual([]);
   });
 
   it("strips the employee-code suffix some callers append", () => {
     // recruiter_name is written as "SRASHTI CHAUHAN · MAS61660" by one caller, which produced a
     // second leaderboard row for the same person.
-    expect(normalizeRecruiterName("SRASHTI CHAUHAN · MAS61660")).toBe(
-      "SRASHTI CHAUHAN",
-    );
-    expect(recruiterKey(null, "SRASHTI CHAUHAN · MAS61660")).toBe(
-      recruiterKey(null, "Shristi"),
-    );
+    expect(normalizeRecruiterName("SRASHTI CHAUHAN · MAS61660")).toBe("SRASHTI CHAUHAN");
+    expect(recruiterKey(null, "SRASHTI CHAUHAN · MAS61660")).toBe(recruiterKey(null, "Shristi"));
   });
 
   it("does not merge two genuinely different names", () => {
-    expect(recruiterKey(null, "Aditi")).not.toBe(
-      recruiterKey(null, "Aanya Sharma"),
-    );
+    expect(recruiterKey(null, "Aditi")).not.toBe(recruiterKey(null, "Aanya Sharma"));
     expect(recruiterKey(null, "")).toBe("unassigned");
   });
 
@@ -165,9 +151,7 @@ describe("job role vocabulary", () => {
   });
 
   it("keeps genuinely different roles apart", () => {
-    expect(canonicalRole("Inbound Agent")).not.toBe(
-      canonicalRole("Outbound Agent"),
-    );
+    expect(canonicalRole("Inbound Agent")).not.toBe(canonicalRole("Outbound Agent"));
     expect(canonicalRole("Sales")).not.toBe(canonicalRole("Support"));
   });
 
@@ -187,17 +171,7 @@ describe("region coverage", () => {
 
   it("covers every branch the aliases can produce", () => {
     // A branch with no region silently becomes an "Unspecified" row in the region table.
-    const branches = [
-      "Okaya Centre",
-      "Trapezoid",
-      "Jaldarshan",
-      "Neelkanth",
-      "NOIDA",
-      "NOIDA-2",
-      "Delhi",
-      "Mumbai",
-      "Pune",
-    ];
+    const branches = ["Okaya Centre", "Trapezoid", "Jaldarshan", "Neelkanth", "NOIDA", "NOIDA-2", "Delhi", "Mumbai", "Pune"];
     for (const b of branches) {
       expect(branchRegion(b), b).not.toBe("Unspecified");
     }

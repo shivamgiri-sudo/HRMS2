@@ -22,24 +22,13 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "scripts",
-  "bank-exception-report.ts",
-);
+const SCRIPT = path.resolve(__dirname, "..", "..", "..", "scripts", "bank-exception-report.ts");
 const source = fs.readFileSync(SCRIPT, "utf8");
-const code = source
-  .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/^\s*\/\/.*$/gm, "");
+const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("bank-exception-report is read-only", () => {
   it("issues no INSERT, UPDATE, DELETE or DDL", () => {
-    expect(code).not.toMatch(
-      /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|DROP\s+|ALTER\s+|TRUNCATE)/i,
-    );
+    expect(code).not.toMatch(/\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|DROP\s+|ALTER\s+|TRUNCATE)/i);
   });
 });
 
@@ -52,9 +41,7 @@ describe("bank-exception-report never leaks an account number", () => {
 
   it("does not log a resolved or raw account value directly", () => {
     // Catches console.log(...resolved...) / console.log(...legacyValue...) style leaks.
-    expect(code).not.toMatch(
-      /console\.\w+\([^)]*\b(resolved|encValue|legacyValue|account_number)\b[^)]*\)/,
-    );
+    expect(code).not.toMatch(/console\.\w+\([^)]*\b(resolved|encValue|legacyValue|account_number)\b[^)]*\)/);
   });
 });
 

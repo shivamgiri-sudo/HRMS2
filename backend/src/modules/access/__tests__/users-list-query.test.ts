@@ -8,26 +8,16 @@ import { describe, expect, it, vi } from "vitest";
  * returned page and the count skips that join. Response shape must not change.
  */
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: "u1", roles: ["admin"] };
-    next();
-  },
+  requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1", roles: ["admin"] }; next(); },
 }));
 const execute = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: (...a: unknown[]) => execute(...a) },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
 vi.mock("../access.service.js", () => ({}));
 vi.mock("../role-page-access.service.js", () => ({}));
 vi.mock("../user-page-access.service.js", () => ({}));
 
 const { accessRouter } = await import("../access.routes.js");
-const app = () => {
-  const a = express();
-  a.use(express.json());
-  a.use("/api/access", accessRouter);
-  return a;
-};
+const app = () => { const a = express(); a.use(express.json()); a.use("/api/access", accessRouter); return a; };
 
 describe("GET /api/access/users", () => {
   it("pages first, aggregates roles per page row, and counts without the roles join", async () => {
@@ -37,21 +27,7 @@ describe("GET /api/access/users", () => {
       : /FROM user_assignment_scope/.test(sql) || /FROM employees\s+WHERE user_id/.test(sql) ? [[], []]
       : /COUNT\(\*\) AS total/.test(sql)
         ? [[{ total: 7 }], []]
-        : [
-            [
-              {
-                id: "a",
-                email: "a@x.com",
-                is_blocked: 0,
-                full_name: "A",
-                employee_id: "e1",
-                roles: "hr,employee",
-                no_account: 0,
-              },
-            ],
-            [],
-          ],
-    );
+        : [[{ id: "a", email: "a@x.com", is_blocked: 0, full_name: "A", employee_id: "e1", roles: "hr,employee", no_account: 0 }], []]);
     const res = await request(app()).get("/api/access/users?limit=10");
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(7);

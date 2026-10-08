@@ -7,18 +7,11 @@ import { vendorApprovalService } from "./vendor-approval.service.js";
 
 export const vendorApprovalRouter = Router();
 
-const h =
-  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 const APPROVAL_WRITE_ROLES = ["finance_head", "super_admin"] as const;
-const RAISE_ROLES = [
-  "branch_admin",
-  "finance_head",
-  "super_admin",
-  "admin",
-] as const;
+const RAISE_ROLES = ["branch_admin", "finance_head", "super_admin", "admin"] as const;
 
 vendorApprovalRouter.use(requireAuth);
 
@@ -33,9 +26,7 @@ vendorApprovalRouter.post(
       payload: Record<string, unknown>;
     };
     if (!requestType || !payload) {
-      return res
-        .status(400)
-        .json({ error: "requestType and payload are required" });
+      return res.status(400).json({ error: "requestType and payload are required" });
     }
     const branchId = await getUserBranchId(req.authUser!.id);
     const result = await vendorApprovalService.raise({
@@ -46,7 +37,7 @@ vendorApprovalRouter.post(
       branchId: branchId ?? "",
     });
     res.status(202).json({ success: true, data: result });
-  }),
+  })
 );
 
 // ── List all requests (finance head / super admin) ────────────────────────────
@@ -55,9 +46,7 @@ vendorApprovalRouter.get(
   requireRole(...APPROVAL_WRITE_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { status, branchId, limit } = req.query as {
-      status?: string;
-      branchId?: string;
-      limit?: string;
+      status?: string; branchId?: string; limit?: string;
     };
     const data = await vendorApprovalService.list({
       status: status || undefined,
@@ -65,19 +54,16 @@ vendorApprovalRouter.get(
       limit: limit ? Number(limit) : undefined,
     });
     res.json({ success: true, data });
-  }),
+  })
 );
 
 // ── List own requests (any authenticated user) ────────────────────────────────
 vendorApprovalRouter.get(
   "/vendor-approval/my-requests",
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const data = await vendorApprovalService.list({
-      raisedBy: req.authUser!.id,
-      limit: 50,
-    });
+    const data = await vendorApprovalService.list({ raisedBy: req.authUser!.id, limit: 50 });
     res.json({ success: true, data });
-  }),
+  })
 );
 
 // ── Approve ───────────────────────────────────────────────────────────────────
@@ -93,10 +79,10 @@ vendorApprovalRouter.patch(
       req.params.id,
       req.authUser!.id,
       editedPayload ?? null,
-      reviewNotes,
+      reviewNotes
     );
     res.json({ success: true, data: result });
-  }),
+  })
 );
 
 // ── Reject ────────────────────────────────────────────────────────────────────
@@ -106,15 +92,9 @@ vendorApprovalRouter.patch(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { reviewNotes } = req.body as { reviewNotes?: string };
     if (!reviewNotes?.trim()) {
-      return res
-        .status(400)
-        .json({ error: "reviewNotes is required when rejecting a request" });
+      return res.status(400).json({ error: "reviewNotes is required when rejecting a request" });
     }
-    await vendorApprovalService.reject(
-      req.params.id,
-      req.authUser!.id,
-      reviewNotes,
-    );
+    await vendorApprovalService.reject(req.params.id, req.authUser!.id, reviewNotes);
     res.json({ success: true });
-  }),
+  })
 );

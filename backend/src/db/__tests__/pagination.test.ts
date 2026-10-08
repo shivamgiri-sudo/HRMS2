@@ -16,21 +16,10 @@ describe("sqlLimitOffset", () => {
       "10; DROP TABLE employees",
       "1 UNION SELECT password FROM auth_user",
       "'; --",
-      NaN,
-      Infinity,
-      -Infinity,
-      null,
-      undefined,
-      "",
-      {},
-      [],
-      () => 1,
+      NaN, Infinity, -Infinity, null, undefined, "", {}, [], () => 1,
     ];
     for (const value of hostile) {
-      for (const clause of [
-        sqlLimitOffset(value, 0),
-        sqlLimitOffset(10, value),
-      ]) {
+      for (const clause of [sqlLimitOffset(value, 0), sqlLimitOffset(10, value)]) {
         expect(clause).toMatch(/^LIMIT \d+ OFFSET \d+$/);
       }
     }
@@ -57,9 +46,7 @@ describe("sqlLimitOffset", () => {
   });
 
   it("honours a per-call default when the value is absent", () => {
-    expect(sqlLimitOffset(undefined, 0, { defaultLimit: 100 })).toBe(
-      "LIMIT 100 OFFSET 0",
-    );
+    expect(sqlLimitOffset(undefined, 0, { defaultLimit: 100 })).toBe("LIMIT 100 OFFSET 0");
   });
 });
 
@@ -70,18 +57,8 @@ describe("sqlLimit", () => {
 
   it("never emits anything but digits, whatever it is handed", () => {
     const hostile: unknown[] = [
-      "10; DROP TABLE employees",
-      "1 UNION SELECT password FROM auth_user",
-      "'; --",
-      NaN,
-      Infinity,
-      -Infinity,
-      null,
-      undefined,
-      "",
-      {},
-      [],
-      () => 1,
+      "10; DROP TABLE employees", "1 UNION SELECT password FROM auth_user", "'; --",
+      NaN, Infinity, -Infinity, null, undefined, "", {}, [], () => 1,
     ];
     for (const value of hostile) {
       expect(sqlLimit(value)).toMatch(/^LIMIT \d+$/);

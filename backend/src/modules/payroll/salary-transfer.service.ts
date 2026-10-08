@@ -43,11 +43,7 @@ import { randomUUID, createHash } from "crypto";
 import * as XLSX from "xlsx";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  buildBankReadinessReport,
-  maskAccount,
-  IFSC_RE,
-} from "./bank-payment-readiness.service.js";
+import { buildBankReadinessReport, maskAccount, IFSC_RE } from "./bank-payment-readiness.service.js";
 import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 import { getDebitAccountNumber } from "./payroll-debit-account-config.service.js";
 // nocBlockedEmployeesForRuns already checks the kill switch (isNocReleaseGateEnabled) itself and
@@ -56,27 +52,10 @@ import { nocBlockedEmployeesForRuns } from "./noc-release-gate.service.js";
 
 // ─── The exact 21-column header, in order ────────────────────────────────────
 export const SALARY_TRANSFER_HEADER = [
-  "Debit Ac No",
-  "Beneficiary Ac No",
-  "Beneficiary Name",
-  "Amt",
-  "Pay Mod",
-  "Date",
-  "IFSC",
-  "Payable Location name",
-  "Print Location",
-  "Bene Mobile no",
-  "Bene email id",
-  "Ben add1",
-  "Ben add2",
-  "Ben add3",
-  "Ben add4",
-  "Add details 1",
-  "Add details 2",
-  "Add details 3",
-  "Add details 4",
-  "Add details 5",
-  "Remarks",
+  "Debit Ac No", "Beneficiary Ac No", "Beneficiary Name", "Amt", "Pay Mod", "Date", "IFSC",
+  "Payable Location name", "Print Location", "Bene Mobile no", "Bene email id",
+  "Ben add1", "Ben add2", "Ben add3", "Ben add4",
+  "Add details 1", "Add details 2", "Add details 3", "Add details 4", "Add details 5", "Remarks",
 ] as const;
 
 /**
@@ -105,8 +84,7 @@ export type RejectionReason = (typeof REJECTION_REASONS)[number];
 const REJECTION_REASON_LABELS: Record<RejectionReason, string> = {
   incorrect_ifsc_code: "Incorrect IFSC Code",
   incorrect_bank_account_number: "Incorrect Bank Account Number",
-  system_generated_transfer_date_crossed:
-    "System Generated Transfer Date Crossed",
+  system_generated_transfer_date_crossed: "System Generated Transfer Date Crossed",
   account_closed: "Account closed",
   account_frozen_or_dormant: "Account frozen or dormant",
   beneficiary_name_mismatch: "Beneficiary/name mismatch",
@@ -118,13 +96,7 @@ const REJECTION_REASON_LABELS: Record<RejectionReason, string> = {
 };
 
 function payMod(ifsc: string | null): "I" | "N" {
-  return /^ICIC/.test(
-    String(ifsc ?? "")
-      .trim()
-      .toUpperCase(),
-  )
-    ? "I"
-    : "N";
+  return /^ICIC/.test(String(ifsc ?? "").trim().toUpperCase()) ? "I" : "N";
 }
 
 /**
@@ -203,18 +175,9 @@ export interface EligibleFilters {
  */
 export async function getEligibleTransferRowsWithNocExclusions(
   runId: string,
-): Promise<{
-  rows: TransferRow[];
-  excludedByNoc: Array<{
-    employee_id: string;
-    employee_code: string | null;
-    reason: string;
-  }>;
-}> {
+): Promise<{ rows: TransferRow[]; excludedByNoc: Array<{ employee_id: string; employee_code: string | null; reason: string }> }> {
   const report = await buildBankReadinessReport(runId);
-  const readyIds = new Set(
-    report.rows.filter((r) => r.payable).map((r) => r.employee_id),
-  );
+  const readyIds = new Set(report.rows.filter((r) => r.payable).map((r) => r.employee_id));
   if (readyIds.size === 0) return { rows: [], excludedByNoc: [] };
 
   const [openRows] = await db.execute<RowDataPacket[]>(
@@ -248,18 +211,11 @@ export async function getEligibleTransferRowsWithNocExclusions(
   );
 
   const rows: TransferRow[] = [];
-  const excludedByNoc: Array<{
-    employee_id: string;
-    employee_code: string | null;
-    reason: string;
-  }> = [];
+  const excludedByNoc: Array<{ employee_id: string; employee_code: string | null; reason: string }> = [];
   for (const line of lineRows as any[]) {
-    if (!readyIds.has(line.employee_id) || alreadyOpen.has(line.employee_id))
-      continue;
+    if (!readyIds.has(line.employee_id) || alreadyOpen.has(line.employee_id)) continue;
     if (nocBlockedIds.has(line.employee_id)) {
-      const blocked = nocBlocked.find(
-        (b) => b.employee_id === line.employee_id,
-      );
+      const blocked = nocBlocked.find((b) => b.employee_id === line.employee_id);
       excludedByNoc.push({
         employee_id: line.employee_id,
         employee_code: line.employee_code ?? null,
@@ -273,8 +229,7 @@ export async function getEligibleTransferRowsWithNocExclusions(
       account_number_enc: line.account_number_enc,
       account_number: line.account_number_legacy,
     });
-    if (!account || !IFSC_RE.test(String(line.ifsc_code ?? "").toUpperCase()))
-      continue; // defence in depth, mirrors classifyBankReadiness
+    if (!account || !IFSC_RE.test(String(line.ifsc_code ?? "").toUpperCase())) continue; // defence in depth, mirrors classifyBankReadiness
     rows.push({
       employee_id: line.employee_id,
       employee_code: line.employee_code,
@@ -305,17 +260,12 @@ export async function getEligibleTransferRowsWithNocExclusions(
  * bank-payment-readiness.routes.ts's listing endpoint needs the excluded reasons surfaced, and
  * it calls getFilteredEligibleTransferRowsWithNocExclusions directly instead.
  */
-export async function getEligibleTransferRows(
-  runId: string,
-): Promise<TransferRow[]> {
+export async function getEligibleTransferRows(runId: string): Promise<TransferRow[]> {
   return (await getEligibleTransferRowsWithNocExclusions(runId)).rows;
 }
 
 /** getEligibleTransferRows, narrowed by the selection filters — branch/process/cost-centre/status. */
-export async function getFilteredEligibleTransferRows(
-  runId: string,
-  filters: EligibleFilters,
-): Promise<TransferRow[]> {
+export async function getFilteredEligibleTransferRows(runId: string, filters: EligibleFilters): Promise<TransferRow[]> {
   const rows = await getEligibleTransferRows(runId);
   return applyEligibleFilters(rows, filters);
 }
@@ -324,29 +274,17 @@ export async function getFilteredEligibleTransferRows(
 export async function getFilteredEligibleTransferRowsWithNocExclusions(
   runId: string,
   filters: EligibleFilters,
-): Promise<{
-  rows: TransferRow[];
-  excludedByNoc: Array<{
-    employee_id: string;
-    employee_code: string | null;
-    reason: string;
-  }>;
-}> {
-  const { rows, excludedByNoc } =
-    await getEligibleTransferRowsWithNocExclusions(runId);
+): Promise<{ rows: TransferRow[]; excludedByNoc: Array<{ employee_id: string; employee_code: string | null; reason: string }> }> {
+  const { rows, excludedByNoc } = await getEligibleTransferRowsWithNocExclusions(runId);
   return { rows: applyEligibleFilters(rows, filters), excludedByNoc };
 }
 
-function applyEligibleFilters(
-  rows: TransferRow[],
-  filters: EligibleFilters,
-): TransferRow[] {
+function applyEligibleFilters(rows: TransferRow[], filters: EligibleFilters): TransferRow[] {
   const status = filters.status ?? "active";
   return rows.filter((r) => {
     if (filters.branchId && r.branch_id !== filters.branchId) return false;
     if (filters.processId && r.process_id !== filters.processId) return false;
-    if (filters.costCentreId && r.cost_centre_id !== filters.costCentreId)
-      return false;
+    if (filters.costCentreId && r.cost_centre_id !== filters.costCentreId) return false;
     if (status === "active" && r.active_status !== 1) return false;
     if (status === "inactive" && r.active_status === 1) return false;
     // status === "both": no filter
@@ -364,12 +302,7 @@ function applyEligibleFilters(
  * same layout and risking the two formats silently diverging.
  */
 export function buildAoa(
-  rows: Array<
-    Pick<
-      TransferRow,
-      "account_number" | "employee_name" | "amount" | "ifsc" | "employee_code"
-    >
-  >,
+  rows: Array<Pick<TransferRow, "account_number" | "employee_name" | "amount" | "ifsc" | "employee_code">>,
   debitAccount: string,
   dateLabel: string,
 ): unknown[][] {
@@ -386,19 +319,7 @@ export function buildAoa(
       payMod(r.ifsc),
       dateLabel,
       r.ifsc,
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
+      "", "", "", "", "", "", "", "", "", "", "", "", "",
       sanitizeCell(r.employee_code),
     ]);
   }
@@ -456,8 +377,7 @@ export async function generateSalaryTransferBatch(params: {
       [runId],
     );
     const readySet = new Set((readyItems as any[]).map((r) => r.employee_id));
-    for (const r of readyItems as any[])
-      correctedItemByEmployee.set(r.employee_id, r.id);
+    for (const r of readyItems as any[]) correctedItemByEmployee.set(r.employee_id, r.id);
     const eligible = await getEligibleTransferRows(runId); // re-checks READY + no open item
     rows = eligible.filter((r) => readySet.has(r.employee_id));
   } else {
@@ -470,19 +390,14 @@ export async function generateSalaryTransferBatch(params: {
     const filtered = rows.filter((r) => wanted.has(r.employee_id));
     for (const id of wanted) {
       if (!rows.some((r) => r.employee_id === id)) {
-        excluded.push({
-          employee_code: id,
-          reason: "no longer eligible at export time",
-        });
+        excluded.push({ employee_code: id, reason: "no longer eligible at export time" });
       }
     }
     rows = filtered;
   }
 
   if (rows.length === 0) {
-    throw Object.assign(new Error("No eligible employees to export"), {
-      code: "NO_ELIGIBLE_ROWS",
-    });
+    throw Object.assign(new Error("No eligible employees to export"), { code: "NO_ELIGIBLE_ROWS" });
   }
 
   const aoa = buildAoa(rows, debitAccount, dateLabel);
@@ -502,17 +417,9 @@ export async function generateSalaryTransferBatch(params: {
           file_name, file_sha256, filters_snapshot, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        batchId,
-        runId,
-        batchNumber,
-        params.reexport ? "reexport" : "initial",
-        rows.length,
-        totalAmount.toFixed(2),
-        maskAccount(debitAccount),
-        fileName,
-        sha256,
-        JSON.stringify({ employeeIds: params.employeeIds ?? null }),
-        userId,
+        batchId, runId, batchNumber, params.reexport ? "reexport" : "initial",
+        rows.length, totalAmount.toFixed(2), maskAccount(debitAccount),
+        fileName, sha256, JSON.stringify({ employeeIds: params.employeeIds ?? null }), userId,
       ],
     );
     for (const r of rows) {
@@ -522,17 +429,7 @@ export async function generateSalaryTransferBatch(params: {
            (id, batch_id, run_id, employee_id, employee_code, amount, pay_mod, account_masked,
             status, corrected_from_item_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'exported', ?)`,
-        [
-          randomUUID(),
-          batchId,
-          runId,
-          r.employee_id,
-          r.employee_code,
-          r.amount,
-          payMod(r.ifsc),
-          r.account_masked,
-          correctedFrom,
-        ],
+        [randomUUID(), batchId, runId, r.employee_id, r.employee_code, r.amount, payMod(r.ifsc), r.account_masked, correctedFrom],
       );
       // The corrected_ready row this re-export came from is now superseded by the new
       // 'exported' row above — flip it to 'rejected' territory conceptually by marking it
@@ -547,15 +444,7 @@ export async function generateSalaryTransferBatch(params: {
     conn.release();
   }
 
-  return {
-    batch_id: batchId,
-    batch_number: batchNumber,
-    file_name: fileName,
-    buffer,
-    row_count: rows.length,
-    total_amount: totalAmount,
-    excluded,
-  };
+  return { batch_id: batchId, batch_number: batchNumber, file_name: fileName, buffer, row_count: rows.length, total_amount: totalAmount, excluded };
 }
 
 // ─── Rejection ────────────────────────────────────────────────────────────────
@@ -567,10 +456,7 @@ export async function rejectTransferItems(params: {
   userId: string;
 }): Promise<{ updated: number }> {
   if (params.reason === "other" && !params.note?.trim()) {
-    throw Object.assign(
-      new Error("A note is required when reason is 'other'"),
-      { code: "NOTE_REQUIRED" },
-    );
+    throw Object.assign(new Error("A note is required when reason is 'other'"), { code: "NOTE_REQUIRED" });
   }
   if (!params.itemIds.length) return { updated: 0 };
   const placeholders = params.itemIds.map(() => "?").join(",");
@@ -618,30 +504,20 @@ export function parseTransferNumberCsv(text: string): TransferImportRow[] {
   if (lines.length < 2) return [];
   const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
   const idx = (name: string) => headers.indexOf(name);
-  const iCode = idx("empcode"),
-    iName = idx("empname"),
-    iEcs = idx("ecsnumber"),
-    iDate = idx("trf date"),
-    iBranch = idx("branch");
+  const iCode = idx("empcode"), iName = idx("empname"), iEcs = idx("ecsnumber"), iDate = idx("trf date"), iBranch = idx("branch");
   if (iCode === -1 || iEcs === -1) {
-    throw Object.assign(
-      new Error("CSV must have EmpCode and ECSNumber columns"),
-      { code: "BAD_HEADERS" },
-    );
+    throw Object.assign(new Error("CSV must have EmpCode and ECSNumber columns"), { code: "BAD_HEADERS" });
   }
-  return lines
-    .slice(1)
-    .filter(Boolean)
-    .map((line) => {
-      const cells = line.split(",").map((c) => c.trim());
-      return {
-        emp_code: cells[iCode] ?? "",
-        emp_name: iName >= 0 ? (cells[iName] ?? "") : "",
-        ecs_number: cells[iEcs] ?? "",
-        trf_date: iDate >= 0 ? (cells[iDate] ?? "") : "",
-        branch: iBranch >= 0 ? (cells[iBranch] ?? "") : "",
-      };
-    });
+  return lines.slice(1).filter(Boolean).map((line) => {
+    const cells = line.split(",").map((c) => c.trim());
+    return {
+      emp_code: cells[iCode] ?? "",
+      emp_name: iName >= 0 ? (cells[iName] ?? "") : "",
+      ecs_number: cells[iEcs] ?? "",
+      trf_date: iDate >= 0 ? (cells[iDate] ?? "") : "",
+      branch: iBranch >= 0 ? (cells[iBranch] ?? "") : "",
+    };
+  });
 }
 
 /**
@@ -655,18 +531,9 @@ export function parseTransferNumberCsv(text: string): TransferImportRow[] {
  * June row, so July's "Ready for Disbursal" list never cleared and July's "Disbursed" list never
  * showed them.
  */
-export async function previewTransferNumberImport(
-  rows: TransferImportRow[],
-  runId: string,
-): Promise<TransferImportPreviewRow[]> {
+export async function previewTransferNumberImport(rows: TransferImportRow[], runId: string): Promise<TransferImportPreviewRow[]> {
   const codes = [...new Set(rows.map((r) => r.emp_code).filter(Boolean))];
-  if (codes.length === 0)
-    return rows.map((r) => ({
-      ...r,
-      outcome: "invalid",
-      detail: "blank EmpCode",
-      item_id: null,
-    }));
+  if (codes.length === 0) return rows.map((r) => ({ ...r, outcome: "invalid", detail: "blank EmpCode", item_id: null }));
 
   const placeholders = codes.map(() => "?").join(",");
   const [itemRows] = await db.execute<RowDataPacket[]>(
@@ -681,36 +548,15 @@ export async function previewTransferNumberImport(
 
   return rows.map((r) => {
     if (!r.emp_code || !r.ecs_number) {
-      return {
-        ...r,
-        outcome: "invalid",
-        detail: "blank EmpCode or ECSNumber",
-        item_id: null,
-      };
+      return { ...r, outcome: "invalid", detail: "blank EmpCode or ECSNumber", item_id: null };
     }
     const item = byCode.get(r.emp_code);
-    if (!item)
-      return {
-        ...r,
-        outcome: "unmatched",
-        detail: "no exported transfer item for this employee",
-        item_id: null,
-      };
+    if (!item) return { ...r, outcome: "unmatched", detail: "no exported transfer item for this employee", item_id: null };
     if (item.status === "confirmed") {
-      return {
-        ...r,
-        outcome: "already_confirmed",
-        detail: "transfer number already recorded",
-        item_id: item.id,
-      };
+      return { ...r, outcome: "already_confirmed", detail: "transfer number already recorded", item_id: item.id };
     }
     if (item.status !== "exported") {
-      return {
-        ...r,
-        outcome: "unmatched",
-        detail: `latest item is '${item.status}', not awaiting a transfer number`,
-        item_id: item.id,
-      };
+      return { ...r, outcome: "unmatched", detail: `latest item is '${item.status}', not awaiting a transfer number`, item_id: item.id };
     }
     return { ...r, outcome: "will_confirm", detail: "OK", item_id: item.id };
   });
@@ -734,9 +580,7 @@ export async function commitTransferNumberImport(params: {
   fileSha256: string;
   userId: string;
 }): Promise<CommitImportResult> {
-  const toApply = params.preview.filter(
-    (r) => r.outcome === "will_confirm" && r.item_id,
-  );
+  const toApply = params.preview.filter((r) => r.outcome === "will_confirm" && r.item_id);
 
   const [existingImport] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM salary_transfer_import WHERE file_sha256 = ? LIMIT 1`,
@@ -762,22 +606,10 @@ export async function commitTransferNumberImport(params: {
   await db.execute(
     `INSERT INTO salary_transfer_import (id, file_name, file_sha256, row_count, matched_count, unmatched_count, uploaded_by)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      randomUUID(),
-      params.fileName,
-      params.fileSha256,
-      params.preview.length,
-      confirmed,
-      params.preview.length - confirmed,
-      params.userId,
-    ],
+    [randomUUID(), params.fileName, params.fileSha256, params.preview.length, confirmed, params.preview.length - confirmed, params.userId],
   );
 
-  return {
-    confirmed,
-    payslips_unlocked: confirmed,
-    skipped: params.preview.length - confirmed,
-  };
+  return { confirmed, payslips_unlocked: confirmed, skipped: params.preview.length - confirmed };
 }
 
 /**
@@ -792,20 +624,7 @@ export function parseTrfDate(v: string): string | null {
   const s = String(v ?? "").trim();
   const m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
   if (!m) return null;
-  const months: Record<string, string> = {
-    jan: "01",
-    feb: "02",
-    mar: "03",
-    apr: "04",
-    may: "05",
-    jun: "06",
-    jul: "07",
-    aug: "08",
-    sep: "09",
-    oct: "10",
-    nov: "11",
-    dec: "12",
-  };
+  const months: Record<string, string> = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
   const mm = months[m[2].toLowerCase()];
   if (!mm) return null;
   const yyyy = m[3].length === 2 ? `20${m[3]}` : m[3];
@@ -813,10 +632,7 @@ export function parseTrfDate(v: string): string | null {
 }
 
 /** Whether this employee's payslip for this run is locked pending a transfer number. Additive: returns unlocked=true (no gate) when the feature has never been used for this run/employee. */
-export async function getPayslipLockState(
-  employeeId: string,
-  runId: string,
-): Promise<{ locked: boolean; reason: string | null }> {
+export async function getPayslipLockState(employeeId: string, runId: string): Promise<{ locked: boolean; reason: string | null }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT status FROM salary_transfer_batch_item WHERE employee_id = ? AND run_id = ? ORDER BY created_at DESC LIMIT 1`,
     [employeeId, runId],
@@ -824,8 +640,5 @@ export async function getPayslipLockState(
   const item = (rows as any[])[0];
   if (!item) return { locked: false, reason: null }; // no transfer item at all — existing behaviour, unchanged
   if (item.status === "confirmed") return { locked: false, reason: null };
-  return {
-    locked: true,
-    reason: `Payslip is locked until the salary transfer is confirmed (current status: ${item.status}).`,
-  };
+  return { locked: true, reason: `Payslip is locked until the salary transfer is confirmed (current status: ${item.status}).` };
 }

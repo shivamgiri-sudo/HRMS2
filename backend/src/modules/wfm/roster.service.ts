@@ -2,17 +2,8 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { WfmRosterPlan, WfmRosterAssignment } from "./wfm.types.js";
-import {
-  computeScheduledMinutes,
-  rosterAssignmentColumns,
-} from "./shift-scheduling.util.js";
-import {
-  applyRestDecision,
-  isRestPolicyFeatureActive,
-  validateMinimumRest,
-  logRestOverride,
-  withEmployeeRosterLock,
-} from "./rest-policy.service.js";
+import { computeScheduledMinutes, rosterAssignmentColumns } from "./shift-scheduling.util.js";
+import { applyRestDecision, isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock } from "./rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
@@ -61,20 +52,11 @@ export interface AssignInput {
 export class InsufficientRestError extends Error {
   code = "INSUFFICIENT_REST" as const;
   statusCode = 422;
-  constructor(
-    public details: {
-      actualRestMinutes?: number;
-      requiredRestMinutes?: number;
-      against?: string;
-      canOverride?: boolean;
-    },
-  ) {
+  constructor(public details: { actualRestMinutes?: number; requiredRestMinutes?: number; against?: string; canOverride?: boolean }) {
     super(
       `Assignment blocked: only ${details.actualRestMinutes} minutes rest against the ${details.against} shift ` +
-        `(minimum ${details.requiredRestMinutes} minutes required).` +
-        (details.canOverride
-          ? " An emergency override is permitted with reason + approver."
-          : " This policy does not permit emergency override."),
+      `(minimum ${details.requiredRestMinutes} minutes required).` +
+      (details.canOverride ? " An emergency override is permitted with reason + approver." : " This policy does not permit emergency override.")
     );
   }
 }
@@ -83,9 +65,7 @@ export class RestPolicyMissingError extends Error {
   code = "REST_POLICY_MISSING" as const;
   statusCode = 422;
   constructor() {
-    super(
-      "No minimum-rest policy is configured for this employee, process, branch, or organization. Configure one in Admin > Roster Controls > Minimum Rest before assigning shifts.",
-    );
+    super("No minimum-rest policy is configured for this employee, process, branch, or organization. Configure one in Admin > Roster Controls > Minimum Rest before assigning shifts.");
   }
 }
 
@@ -138,27 +118,22 @@ export const rosterService = {
          JOIN process_master p ON p.id = e.process_id
         WHERE e.process_id IS NOT NULL
           AND p.active_status = 1
-        LIMIT 1`,
+        LIMIT 1`
     );
     return rows[0] ?? null;
   },
 
   async getPlan(id: string): Promise<WfmRosterPlan> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM wfm_roster_plan WHERE id = ? LIMIT 1",
-      [id],
+      "SELECT * FROM wfm_roster_plan WHERE id = ? LIMIT 1", [id]
     );
     const rec = (rows as WfmRosterPlan[])[0];
     if (!rec) throw new Error("Plan not found");
     return rec;
   },
 
-  async createPlan(
-    input: CreatePlanInput,
-    userId: string,
-  ): Promise<WfmRosterPlan> {
-    if (input.toDate < input.fromDate)
-      throw new Error("toDate must be >= fromDate");
+  async createPlan(input: CreatePlanInput, userId: string): Promise<WfmRosterPlan> {
+    if (input.toDate < input.fromDate) throw new Error("toDate must be >= fromDate");
 
     const id = randomUUID();
     await db.execute(
@@ -175,7 +150,7 @@ export const rosterService = {
         input.toDate,
         input.requiredHeadcount ?? 0,
         userId,
-      ],
+      ]
     );
     return this.getPlan(id);
   },
@@ -183,38 +158,20 @@ export const rosterService = {
   async listPlans(filters: PlanListFilters): Promise<WfmRosterPlan[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.processId) {
-      conds.push("process_id = ?");
-      params.push(filters.processId);
-    }
-    if (filters.branchId) {
-      conds.push("branch_id = ?");
-      params.push(filters.branchId);
-    }
-    if (filters.planStatus) {
-      conds.push("plan_status = ?");
-      params.push(filters.planStatus);
-    }
-    if (filters.fromDate) {
-      conds.push("to_date >= ?");
-      params.push(filters.fromDate);
-    }
-    if (filters.toDate) {
-      conds.push("from_date <= ?");
-      params.push(filters.toDate);
-    }
+    if (filters.processId)  { conds.push("process_id = ?");   params.push(filters.processId); }
+    if (filters.branchId)   { conds.push("branch_id = ?");    params.push(filters.branchId); }
+    if (filters.planStatus) { conds.push("plan_status = ?");  params.push(filters.planStatus); }
+    if (filters.fromDate)   { conds.push("to_date >= ?");     params.push(filters.fromDate); }
+    if (filters.toDate)     { conds.push("from_date <= ?");   params.push(filters.toDate); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM wfm_roster_plan ${where} ORDER BY from_date DESC`,
-      params,
+      params
     );
     return rows as WfmRosterPlan[];
   },
 
-  async assignEmployee(
-    input: AssignInput,
-    userId: string,
-  ): Promise<WfmRosterAssignment> {
+  async assignEmployee(input: AssignInput, userId: string): Promise<WfmRosterAssignment> {
     // Area 2 concurrency fix (2026-08-13): the lock-check, rest-check, and
     // write below are a read-then-write critical section — two
     // near-simultaneous assignEmployee calls for the SAME employee could
@@ -232,16 +189,9 @@ export const rosterService = {
       // entirely, see scopeMiddleware.ts) could silently overwrite an
       // assignment on a date wfm.routes.ts's manager-override endpoints
       // already refuse to touch. Same shared function, same invariant.
-      const lockResult = await checkEmployeeDateNotLocked(
-        conn,
-        input.employeeId,
-        input.rosterDate,
-      );
+      const lockResult = await checkEmployeeDateNotLocked(conn, input.employeeId, input.rosterDate);
       if (lockResult.blocked) {
-        throw Object.assign(new Error(lockResult.error), {
-          statusCode: 409,
-          code: "ROSTER_DATE_LOCKED",
-        });
+        throw Object.assign(new Error(lockResult.error), { statusCode: 409, code: "ROSTER_DATE_LOCKED" });
       }
 
       // Area 2: minimum-rest validation. Manual assignment BLOCKS by default,
@@ -251,27 +201,16 @@ export const rosterService = {
       // a candidate shift's times are known (nothing to validate a week-off
       // against) and the feature has actually been turned on (migration 1210
       // applied) — otherwise this is a no-op, preserving current behavior.
-      if (
-        input.shiftStartTime &&
-        input.shiftEndTime &&
-        (await isRestPolicyFeatureActive(conn))
-      ) {
+      if (input.shiftStartTime && input.shiftEndTime && (await isRestPolicyFeatureActive(conn))) {
         const [empRows] = await conn.execute<RowDataPacket[]>(
-          "SELECT process_id, branch_id FROM employees WHERE id = ? LIMIT 1",
-          [input.employeeId],
+          "SELECT process_id, branch_id FROM employees WHERE id = ? LIMIT 1", [input.employeeId]
         );
-        const emp = empRows[0] as
-          { process_id?: string | null; branch_id?: string | null } | undefined;
+        const emp = empRows[0] as { process_id?: string | null; branch_id?: string | null } | undefined;
         const restCheck = await validateMinimumRest(
-          {
-            employeeId: input.employeeId,
-            processId: emp?.process_id ?? null,
-            branchId: emp?.branch_id ?? null,
-            forDate: input.rosterDate,
-          },
+          { employeeId: input.employeeId, processId: emp?.process_id ?? null, branchId: emp?.branch_id ?? null, forDate: input.rosterDate },
           { startTime: input.shiftStartTime, endTime: input.shiftEndTime },
           null,
-          conn,
+          conn
         );
 
         if (!restCheck.ok) {
@@ -297,16 +236,11 @@ export const rosterService = {
             // and an approver — matching "override requires reason, approver,
             // timestamp and audit entry" exactly. Anything less than that is a
             // block, not a silent pass.
-            const canUseOverride =
-              restCheck.canOverride &&
-              input.restOverrideReason &&
-              input.restOverrideApprovedBy;
+            const canUseOverride = restCheck.canOverride && input.restOverrideReason && input.restOverrideApprovedBy;
             if (!canUseOverride) {
               throw new InsufficientRestError({
-                actualRestMinutes: restCheck.actualRestMinutes,
-                requiredRestMinutes: restCheck.requiredRestMinutes,
-                against: restCheck.against,
-                canOverride: restCheck.canOverride,
+                actualRestMinutes: restCheck.actualRestMinutes, requiredRestMinutes: restCheck.requiredRestMinutes,
+                against: restCheck.against, canOverride: restCheck.canOverride,
               });
             }
 
@@ -314,26 +248,19 @@ export const rosterService = {
             const candidateStartAt = `${input.rosterDate} ${input.shiftStartTime.slice(0, 5)}:00`;
             const candidateEndAt = `${input.rosterDate} ${input.shiftEndTime.slice(0, 5)}:00`;
             const neighborAt = `${neighbor.date} ${neighbor.time}:00`;
-            await logRestOverride(
-              {
-                employeeId: input.employeeId,
-                rosterDate: input.rosterDate,
-                previousShiftEndAt:
-                  restCheck.against === "previous"
-                    ? neighborAt
-                    : candidateEndAt,
-                nextShiftStartAt:
-                  restCheck.against === "next" ? neighborAt : candidateStartAt,
-                actualRestMinutes: restCheck.actualRestMinutes!,
-                requiredRestMinutes: restCheck.requiredRestMinutes!,
-                policyId: restCheck.policy?.id ?? null,
-                source: "manual_assignment",
-                reason: input.restOverrideReason!,
-                requestedBy: userId,
-                approvedBy: input.restOverrideApprovedBy!,
-              },
-              conn,
-            );
+            await logRestOverride({
+              employeeId: input.employeeId,
+              rosterDate: input.rosterDate,
+              previousShiftEndAt: restCheck.against === "previous" ? neighborAt : candidateEndAt,
+              nextShiftStartAt: restCheck.against === "next" ? neighborAt : candidateStartAt,
+              actualRestMinutes: restCheck.actualRestMinutes!,
+              requiredRestMinutes: restCheck.requiredRestMinutes!,
+              policyId: restCheck.policy?.id ?? null,
+              source: "manual_assignment",
+              reason: input.restOverrideReason!,
+              requestedBy: userId,
+              approvedBy: input.restOverrideApprovedBy!,
+            }, conn);
           }
         }
       }
@@ -348,48 +275,17 @@ export const rosterService = {
       const raCols = await rosterAssignmentColumns(conn);
       const hasShiftVersionId = raCols.has("shift_version_id");
       const hasScheduledMinutes = raCols.has("scheduled_minutes");
-      const scheduledMinutes =
-        input.shiftStartTime && input.shiftEndTime
-          ? computeScheduledMinutes(
-              input.shiftStartTime.slice(0, 5),
-              input.shiftEndTime.slice(0, 5),
-            )
-          : null;
+      const scheduledMinutes = input.shiftStartTime && input.shiftEndTime
+        ? computeScheduledMinutes(input.shiftStartTime.slice(0, 5), input.shiftEndTime.slice(0, 5))
+        : null;
 
-      const insertCols = [
-        "id",
-        "employee_id",
-        "shift_id",
-        "plan_id",
-        "roster_date",
-        "roster_status",
-        "shift_start_time",
-        "shift_end_time",
-        "branch_name",
-        "process_name",
-      ];
-      const placeholders = [
-        "UUID()",
-        "?",
-        "?",
-        "?",
-        "?",
-        "?",
-        "?",
-        "?",
-        "?",
-        "?",
-      ];
+      const insertCols = ["id", "employee_id", "shift_id", "plan_id", "roster_date", "roster_status",
+        "shift_start_time", "shift_end_time", "branch_name", "process_name"];
+      const placeholders = ["UUID()", "?", "?", "?", "?", "?", "?", "?", "?", "?"];
       const params: unknown[] = [
-        input.employeeId,
-        input.shiftId ?? null,
-        input.planId ?? null,
-        input.rosterDate,
-        input.rosterStatus ?? "Rostered",
-        input.shiftStartTime ?? null,
-        input.shiftEndTime ?? null,
-        input.branchName ?? null,
-        input.processName ?? null,
+        input.employeeId, input.shiftId ?? null, input.planId ?? null, input.rosterDate,
+        input.rosterStatus ?? "Rostered", input.shiftStartTime ?? null, input.shiftEndTime ?? null,
+        input.branchName ?? null, input.processName ?? null,
       ];
       const updateClauses = [
         "shift_id = VALUES(shift_id)",
@@ -428,11 +324,11 @@ export const rosterService = {
          VALUES (${placeholders.join(", ")})
          ON DUPLICATE KEY UPDATE
            ${updateClauses.join(",\n           ")}`,
-        params,
+        params
       );
       const [rows] = await conn.execute<RowDataPacket[]>(
         "SELECT * FROM wfm_roster_assignment WHERE employee_id = ? AND roster_date = ? LIMIT 1",
-        [input.employeeId, input.rosterDate],
+        [input.employeeId, input.rosterDate]
       );
       const result = (rows as WfmRosterAssignment[])[0];
 
@@ -457,22 +353,13 @@ export const rosterService = {
           shift_id: input.shiftId ?? null,
           plan_id: input.planId ?? null,
         },
-      }).catch((error) =>
-        console.error(
-          "[roster.service] audit log write failed (assignment itself already succeeded):",
-          (error as Error)?.message,
-        ),
-      );
+      }).catch((error) => console.error("[roster.service] audit log write failed (assignment itself already succeeded):", (error as Error)?.message));
 
       return result;
     });
   },
 
-  async bulkAssign(
-    rows: BulkAssignRow[],
-    planId: string,
-    userId: string,
-  ): Promise<BulkAssignResult> {
+  async bulkAssign(rows: BulkAssignRow[], planId: string, userId: string): Promise<BulkAssignResult> {
     let assigned = 0;
     let failed = 0;
     const errors: string[] = [];
@@ -490,14 +377,12 @@ export const rosterService = {
             branchName: row.branchName ?? null,
             processName: row.processName ?? null,
           },
-          userId,
+          userId
         );
         assigned++;
       } catch (err) {
         failed++;
-        errors.push(
-          `${row.employeeId}/${row.rosterDate}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        errors.push(`${row.employeeId}/${row.rosterDate}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -508,69 +393,38 @@ export const rosterService = {
     await this.getPlan(planId); // throws if not found
     await db.execute(
       "UPDATE wfm_roster_plan SET plan_status = 'published' WHERE id = ?",
-      [planId],
+      [planId]
     );
     await db.execute(
       "UPDATE wfm_roster_assignment SET publish_status = 'published' WHERE plan_id = ?",
-      [planId],
+      [planId]
     );
     return this.getPlan(planId);
   },
 
-  async listAssignments(
-    filters: AssignmentListFilters,
-  ): Promise<WfmRosterAssignment[]> {
+  async listAssignments(filters: AssignmentListFilters): Promise<WfmRosterAssignment[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.planId) {
-      conds.push("plan_id = ?");
-      params.push(filters.planId);
-    }
-    if (filters.employeeId) {
-      conds.push("employee_id = ?");
-      params.push(filters.employeeId);
-    }
-    if (filters.fromDate) {
-      conds.push("roster_date >= ?");
-      params.push(filters.fromDate);
-    }
-    if (filters.toDate) {
-      conds.push("roster_date <= ?");
-      params.push(filters.toDate);
-    }
-    if (filters.publishStatus) {
-      conds.push("publish_status = ?");
-      params.push(filters.publishStatus);
-    }
-    if (filters.processName) {
-      conds.push("process_name = ?");
-      params.push(filters.processName);
-    }
+    if (filters.planId)        { conds.push("plan_id = ?");         params.push(filters.planId); }
+    if (filters.employeeId)    { conds.push("employee_id = ?");     params.push(filters.employeeId); }
+    if (filters.fromDate)      { conds.push("roster_date >= ?");    params.push(filters.fromDate); }
+    if (filters.toDate)        { conds.push("roster_date <= ?");    params.push(filters.toDate); }
+    if (filters.publishStatus) { conds.push("publish_status = ?");  params.push(filters.publishStatus); }
+    if (filters.processName)   { conds.push("process_name = ?");    params.push(filters.processName); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM wfm_roster_assignment ${where} ORDER BY roster_date ASC, employee_id ASC`,
-      params,
+      params
     );
     return rows as WfmRosterAssignment[];
   },
 
-  async listActualAssignments(
-    filters: ActualAssignmentFilters,
-  ): Promise<RowDataPacket[]> {
+  async listActualAssignments(filters: ActualAssignmentFilters): Promise<RowDataPacket[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.processId) {
-      conds.push("e.process_id = ?");
-      params.push(filters.processId);
-    }
-    if (filters.fromDate) {
-      conds.push("a.roster_date >= ?");
-      params.push(filters.fromDate);
-    }
-    if (filters.toDate) {
-      conds.push("a.roster_date <= ?");
-      params.push(filters.toDate);
-    }
+    if (filters.processId) { conds.push("e.process_id = ?"); params.push(filters.processId); }
+    if (filters.fromDate)  { conds.push("a.roster_date >= ?"); params.push(filters.fromDate); }
+    if (filters.toDate)    { conds.push("a.roster_date <= ?"); params.push(filters.toDate); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const limit = Math.min(Math.max(filters.limit ?? 250, 1), 1000);
 
@@ -597,7 +451,7 @@ export const rosterService = {
          ${where}
         ORDER BY a.roster_date DESC, e.employee_code ASC
         LIMIT ${limit}`,
-      params,
+      params
     );
     return rows;
   },

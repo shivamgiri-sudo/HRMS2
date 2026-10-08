@@ -1,13 +1,10 @@
-import { db } from "../../db/mysql.js";
-import { RowDataPacket } from "mysql2/promise";
-import { randomUUID } from "crypto";
-import {
-  assertNotBeforeToday,
-  canBackdateDates,
-} from "../../utils/dateUtils.js";
-import { assertSalaryDateNotOwnedByPayrollHead } from "../payroll/salary-start-date.service.js";
-import { sendBranchHeadApprovalEmail } from "./ats.email.service.js";
-import { triggerOfferApprovalPending } from "../work-inbox/work-inbox.triggers.js";
+import { db } from '../../db/mysql.js';
+import { RowDataPacket } from 'mysql2/promise';
+import { randomUUID } from 'crypto';
+import { assertNotBeforeToday, canBackdateDates } from '../../utils/dateUtils.js';
+import { assertSalaryDateNotOwnedByPayrollHead } from '../payroll/salary-start-date.service.js';
+import { sendBranchHeadApprovalEmail } from './ats.email.service.js';
+import { triggerOfferApprovalPending } from '../work-inbox/work-inbox.triggers.js';
 
 /**
  * Payroll HR Validation Service
@@ -38,7 +35,7 @@ interface PendingCandidate {
 
 export interface SalaryValidationInput {
   candidate_id: string;
-  employment_type: "onroll" | "offrole";
+  employment_type: 'onroll' | 'offrole';
   /** No company entity exists; the column is retained and stays NULL. */
   company_id?: string;
   designation_id: string;
@@ -198,11 +195,11 @@ export async function getCandidateForValidation(candidateId: string) {
       )
       AND COALESCE(bgv_details.blocker_count, 0) = 0
       AND COALESCE(bgv_checks.blocker_count, 0) = 0`,
-    [candidateId],
+    [candidateId]
   );
 
   if (rows.length === 0) {
-    throw new Error("Candidate not found");
+    throw new Error('Candidate not found');
   }
 
   return rows[0];
@@ -223,7 +220,7 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
 
     // Validate joining_date is provided
     if (!input.joining_date) {
-      throw new Error("joining_date is required");
+      throw new Error('joining_date is required');
     }
 
     // If salary_start_date is not provided, default to joining_date
@@ -241,51 +238,37 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
 
     // Validate salary_start_date is not before joining_date
     if (new Date(salaryStartDate) < new Date(input.joining_date)) {
-      throw new Error("salary_start_date cannot be before joining_date");
+      throw new Error('salary_start_date cannot be before joining_date');
     }
 
     // Date lock: joining / salary dates cannot be set (or moved) to before today.
     const [prevRaw] = await connection.execute(
       `SELECT joining_date, salary_start_date FROM ats_payroll_hr_validation WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
-      [input.candidate_id],
+      [input.candidate_id]
     );
     const prevVal = (prevRaw as RowDataPacket[])[0];
     const allowPast = canBackdateDates(input.actor_roles);
-    assertNotBeforeToday(
-      input.joining_date,
-      "joining_date",
-      prevVal?.joining_date,
-      allowPast,
-    );
-    assertNotBeforeToday(
-      salaryStartDate,
-      "salary_start_date",
-      prevVal?.salary_start_date,
-      allowPast,
-    );
+    assertNotBeforeToday(input.joining_date, 'joining_date', prevVal?.joining_date, allowPast);
+    assertNotBeforeToday(salaryStartDate, 'salary_start_date', prevVal?.salary_start_date, allowPast);
     // After Payroll Head approves the salary the date is theirs - refuse before anything is written.
-    await assertSalaryDateNotOwnedByPayrollHead(
-      connection,
-      input.candidate_id,
-      salaryStartDate,
-    );
+    await assertSalaryDateNotOwnedByPayrollHead(connection, input.candidate_id, salaryStartDate);
 
     const [slabRowsRaw] = await connection.execute(
       `SELECT id, range_from, range_to, active_status FROM salary_slab_master WHERE id = ? LIMIT 1`,
-      [input.salary_slab_id],
+      [input.salary_slab_id]
     );
     const slabRows = slabRowsRaw as RowDataPacket[];
     const slab = slabRows[0];
     if (!slab || Number(slab.active_status) !== 1) {
-      throw new Error("salary slab must be active");
+      throw new Error('salary slab must be active');
     }
 
     const [processRowsRaw] = await connection.execute(
       `SELECT id FROM process_master WHERE id = ? AND active_status = 1 LIMIT 1`,
-      [input.process_id],
+      [input.process_id]
     );
     const processRows = processRowsRaw as RowDataPacket[];
-    if (!processRows.length) throw new Error("process_id must exist");
+    if (!processRows.length) throw new Error('process_id must exist');
 
     const [branchRowsRaw] = await connection.execute(
       `SELECT b.id AS branch_id
@@ -293,43 +276,36 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
          LEFT JOIN branch_master b ON b.id = c.applied_for_branch OR b.branch_name = c.applied_for_branch OR b.branch_code = c.applied_for_branch
         WHERE c.id = ?
         LIMIT 1`,
-      [input.candidate_id],
+      [input.candidate_id]
     );
     const branchRows = branchRowsRaw as RowDataPacket[];
     const branchId = branchRows[0]?.branch_id;
-    if (!branchId) throw new Error("branch_id must exist");
+    if (!branchId) throw new Error('branch_id must exist');
 
     const [managerRowsRaw] = await connection.execute(
       `SELECT id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
-      [input.reporting_manager_id],
+      [input.reporting_manager_id]
     );
     const managerRows = managerRowsRaw as RowDataPacket[];
-    if (!managerRows.length)
-      throw new Error("reporting_manager_id must be active employee");
+    if (!managerRows.length) throw new Error('reporting_manager_id must be active employee');
 
     const slabGross = Number(slab.range_to);
     const requestedGross = Number(input.requested_gross_salary || 0);
     const isException = requestedGross > 0 && requestedGross !== slabGross;
-    if (isException && !String(input.salary_exception_reason || "").trim()) {
-      throw new Error("salary proposal must have reason");
+    if (isException && !String(input.salary_exception_reason || '').trim()) {
+      throw new Error('salary proposal must have reason');
     }
 
     const effectiveGross = isException ? requestedGross : slabGross;
-    const salaryBreakdown = calculateSalaryBreakdown(
-      effectiveGross,
-      input.employment_type,
-    );
-    const salaryComponents =
-      input.salary_components || salaryBreakdown.components;
+    const salaryBreakdown = calculateSalaryBreakdown(effectiveGross, input.employment_type);
+    const salaryComponents = input.salary_components || salaryBreakdown.components;
     const persistedSalaryComponents =
-      typeof salaryComponents === "object" && salaryComponents !== null
-        ? salaryComponents
-        : {};
+      typeof salaryComponents === 'object' && salaryComponents !== null ? salaryComponents : {};
 
     // Check if validation already exists
     const [existingRaw] = await connection.execute(
       `SELECT id FROM ats_payroll_hr_validation WHERE candidate_id = ?`,
-      [input.candidate_id],
+      [input.candidate_id]
     );
     const existing = existingRaw as RowDataPacket[];
 
@@ -376,17 +352,12 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
         input.reporting_manager_id,
         input.salary_slab_id,
         effectiveGross,
-        JSON.stringify({
-          ...persistedSalaryComponents,
-          slabGross,
-          requestedGross: isException ? requestedGross : null,
-          exceptionReason: input.salary_exception_reason || null,
-        }),
+        JSON.stringify({ ...persistedSalaryComponents, slabGross, requestedGross: isException ? requestedGross : null, exceptionReason: input.salary_exception_reason || null }),
         input.joining_date,
         salaryStartDate, // This ensures salary_start_date is always set
         input.shift_id || null,
         input.remarks || null,
-      ],
+      ]
     );
 
     await connection.execute(
@@ -397,20 +368,19 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
          requested_by = VALUES(requested_by),
          status = IF(status = 'approved', status, 'offer_submitted'),
          updated_at = NOW()`,
-      [input.candidate_id, branchId, input.payroll_hr_id],
+      [input.candidate_id, branchId, input.payroll_hr_id]
     );
 
     const [requestRowsRaw] = await connection.execute(
       `SELECT id FROM ats_onboarding_request WHERE candidate_id = ? LIMIT 1`,
-      [input.candidate_id],
+      [input.candidate_id]
     );
     const requestRows = requestRowsRaw as RowDataPacket[];
     const onboardingRequestId = requestRows[0]?.id;
-    if (!onboardingRequestId)
-      throw new Error("onboarding request could not be created");
+    if (!onboardingRequestId) throw new Error('onboarding request could not be created');
 
     const offerId = randomUUID();
-    const empType = input.employment_type === "offrole" ? "OffRoll" : "OnRoll";
+    const empType = input.employment_type === 'offrole' ? 'OffRoll' : 'OnRoll';
     await connection.execute(
       `INSERT INTO ats_employment_offer
          (id, onboarding_request_id, candidate_id,
@@ -476,7 +446,7 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
         input.pf_opt_out ? 1 : 0,
         input.esic_opt_out ? 1 : 0,
         input.payroll_hr_id,
-      ],
+      ]
     );
 
     // Update candidate status
@@ -486,7 +456,7 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
            current_stage = 'payroll_validated',
            updated_at = NOW()
        WHERE id = ?`,
-      [input.candidate_id],
+      [input.candidate_id]
     );
 
     await connection.execute(
@@ -494,7 +464,7 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
          (id, candidate_id, payroll_validation_id, branch_head_id, approval_status, notified_at)
        VALUES (UUID(), ?, ?, NULL, 'pending', NOW())
        ON DUPLICATE KEY UPDATE approval_status = IF(approval_status = 'rejected', 'pending', approval_status), notified_at = NOW(), updated_at = NOW()`,
-      [input.candidate_id, validationId],
+      [input.candidate_id, validationId]
     );
 
     // Log in notification table
@@ -511,11 +481,11 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
       [
         input.candidate_id,
         input.payroll_hr_id,
-        "Salary Validated",
+        'Salary Validated',
         isException
           ? `Salary exception proposed for Branch Head review. Slab: ${slabGross}, Requested: ${requestedGross}. Joining: ${input.joining_date}, Salary Start: ${salaryStartDate}`
           : `Salary slab assigned for candidate. Joining: ${input.joining_date}, Salary Start: ${salaryStartDate}`,
-      ],
+      ]
     );
 
     const [branchHeadRowsRaw] = await connection.execute(
@@ -539,7 +509,7 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
          AND u.email IS NOT NULL
        ORDER BY bha.assigned_at DESC
        LIMIT 1`,
-      [branchId, input.candidate_id],
+      [branchId, input.candidate_id]
     );
     const branchHeadRows = branchHeadRowsRaw as RowDataPacket[];
     const branchHead = branchHeadRows[0];
@@ -547,10 +517,10 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
       branchHeadNotice = {
         candidateId: input.candidate_id,
         to: String(branchHead.email),
-        branchHeadName: String(branchHead.branch_head_name ?? "Branch Head"),
-        candidateName: String(branchHead.candidate_name ?? "Candidate"),
-        branchDisplayName: String(branchHead.branch_display_name ?? "Branch"),
-        roleOffered: String(branchHead.role_offered ?? "Candidate"),
+        branchHeadName: String(branchHead.branch_head_name ?? 'Branch Head'),
+        candidateName: String(branchHead.candidate_name ?? 'Candidate'),
+        branchDisplayName: String(branchHead.branch_display_name ?? 'Branch'),
+        roleOffered: String(branchHead.role_offered ?? 'Candidate'),
         proposedSalary: `${effectiveGross}`,
         joiningDate: input.joining_date,
       };
@@ -560,10 +530,7 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
 
     if (branchHeadNotice) {
       sendBranchHeadApprovalEmail(branchHeadNotice).catch((err: unknown) => {
-        console.error(
-          "[payroll-hr] branch head approval email failed:",
-          err instanceof Error ? err.message : String(err),
-        );
+        console.error('[payroll-hr] branch head approval email failed:', err instanceof Error ? err.message : String(err));
       });
     }
 
@@ -572,7 +539,7 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
       validationId,
       joining_date: input.joining_date,
       salary_start_date: salaryStartDate,
-      message: "Salary validation completed successfully",
+      message: 'Salary validation completed successfully',
     };
   } catch (error) {
     await connection.rollback();
@@ -615,7 +582,7 @@ export async function getValidationRecord(candidateId: string) {
     LEFT JOIN cost_centre_master cost ON cost.id = phr.cost_centre_id
     LEFT JOIN employees mgr ON mgr.id = phr.reporting_manager_id
     WHERE phr.candidate_id = ?`,
-    [candidateId],
+    [candidateId]
   );
 
   return rows.length > 0 ? rows[0] : null;
@@ -624,14 +591,11 @@ export async function getValidationRecord(candidateId: string) {
 /**
  * Notify branch head for approval
  */
-export async function notifyBranchHeadForApproval(
-  candidateId: string,
-  branchHeadId: string,
-) {
+export async function notifyBranchHeadForApproval(candidateId: string, branchHeadId: string) {
   const validation = await getValidationRecord(candidateId);
 
   if (!validation) {
-    throw new Error("Validation record not found");
+    throw new Error('Validation record not found');
   }
 
   // Create branch head approval record
@@ -640,7 +604,7 @@ export async function notifyBranchHeadForApproval(
       id, candidate_id, payroll_validation_id, branch_head_id,
       approval_status, notified_at
     ) VALUES (UUID(), ?, ?, ?, 'pending', NOW())`,
-    [candidateId, validation.id, branchHeadId],
+    [candidateId, validation.id, branchHeadId]
   );
 
   // Send notification
@@ -651,10 +615,10 @@ export async function notifyBranchHeadForApproval(
     ) VALUES (UUID(), ?, 'employee', ?, ?, 'approval_request', ?, 'high', 0)`,
     [
       branchHeadId,
-      "New Candidate Approval Request",
+      'New Candidate Approval Request',
       `${validation.candidate_name} - ${validation.designation_name} - CTC: ₹${validation.gross_salary}`,
       candidateId,
-    ],
+    ]
   );
 
   // Additive alongside the portal_notification above, not a replacement — this is the
@@ -662,16 +626,13 @@ export async function notifyBranchHeadForApproval(
   // action-item-registry.ts but until now had no producer anywhere in the backend).
   await triggerOfferApprovalPending(candidateId, validation.candidate_name);
 
-  return { success: true, message: "Branch head notified for approval" };
+  return { success: true, message: 'Branch head notified for approval' };
 }
 
 /**
  * Get salary breakdown for display
  */
-export function calculateSalaryBreakdown(
-  grossSalary: number,
-  employmentType: "onroll" | "offrole",
-) {
+export function calculateSalaryBreakdown(grossSalary: number, employmentType: 'onroll' | 'offrole') {
   // Basic breakdown (customize based on company policy)
   const basic = Math.round(grossSalary * 0.4);
   const hra = Math.round(grossSalary * 0.3);
@@ -679,9 +640,8 @@ export function calculateSalaryBreakdown(
   const specialAllowance = grossSalary - basic - hra - conveyance;
 
   // Deductions (only for onroll)
-  const pf = employmentType === "onroll" ? Math.round(basic * 0.12) : 0;
-  const esic =
-    employmentType === "onroll" ? Math.round(grossSalary * 0.0075) : 0;
+  const pf = employmentType === 'onroll' ? Math.round(basic * 0.12) : 0;
+  const esic = employmentType === 'onroll' ? Math.round(grossSalary * 0.0075) : 0;
 
   const netSalary = grossSalary - pf - esic;
 

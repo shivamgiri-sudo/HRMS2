@@ -34,26 +34,19 @@ describe("every built import is reachable from the Bulk Upload Hub", () => {
     hub.indexOf("const IMPORT_RPC_BY_TYPE"),
     hub.indexOf("function getImportRpc"),
   );
-  const mappedRpcs = [...mapBody.matchAll(/"(import_[a-z_]+)"/g)].map(
-    (m) => m[1],
-  );
+  const mappedRpcs = [...mapBody.matchAll(/"(import_[a-z_]+)"/g)].map((m) => m[1]);
 
   const knownBody = routes.slice(
     routes.indexOf("const KNOWN_IMPORT_RPCS"),
     routes.indexOf("// POST /batches/:id/import"),
   );
-  const knownRpcs = new Set(
-    [...knownBody.matchAll(/"(import_[a-z_]+)"/g)].map((m) => m[1]),
-  );
+  const knownRpcs = new Set([...knownBody.matchAll(/"(import_[a-z_]+)"/g)].map((m) => m[1]));
 
   // The four approval-gated types plus PF UAN — every one of them an active row in
   // upload_template_master on the live database.
   it.each([
     ["LEAVE_APPLICATION_BULK", "import_leave_application_batch"],
-    [
-      "ATTENDANCE_REGULARIZATION_BULK",
-      "import_attendance_regularization_batch",
-    ],
+    ["ATTENDANCE_REGULARIZATION_BULK", "import_attendance_regularization_batch"],
     ["INCENTIVE_BULK", "import_incentive_bulk_batch"],
     ["DEDUCTION_BULK", "import_deduction_bulk_batch"],
     ["PF_UAN_UPDATE", "import_pf_uan_batch"],
@@ -75,34 +68,22 @@ describe("bulk leave lands in the status the attendance engine reads", () => {
 
     vi.doMock("../../../db/mysql.js", () => ({
       db: {
-        execute: vi
-          .fn()
-          .mockResolvedValue([
-            [{ id: "row-1", row_no: 2, created_entity_id: "leave-1" }],
-          ]),
+        execute: vi.fn().mockResolvedValue([
+          [{ id: "row-1", row_no: 2, created_entity_id: "leave-1" }],
+        ]),
       },
     }));
-    vi.doMock("../../leave/leave.service.js", () => ({
-      leaveService: { reviewRequest },
-    }));
+    vi.doMock("../../leave/leave.service.js", () => ({ leaveService: { reviewRequest } }));
     vi.doMock("../bulk-approval.service.js", () => ({
-      loadStagedRows: vi.fn(),
-      resolveEmployees: vi.fn(),
-      resolveSingleBranch: vi.fn(),
-      linkRowToEntity: vi.fn(),
-      markRowFailed: vi.fn(),
-      markPendingApproval: vi.fn(),
-      normalizeDate: (v: string) => v,
-      lockEntities,
+      loadStagedRows: vi.fn(), resolveEmployees: vi.fn(), resolveSingleBranch: vi.fn(),
+      linkRowToEntity: vi.fn(), markRowFailed: vi.fn(), markPendingApproval: vi.fn(),
+      normalizeDate: (v: string) => v, lockEntities,
       BulkUploadError: class extends Error {},
     }));
 
-    const { applyLeaveBatch } =
-      await import("../leave-application-bulk.service.js");
+    const { applyLeaveBatch } = await import("../leave-application-bulk.service.js");
     const out = await applyLeaveBatch(
-      { id: "b1", upload_batch_no: "BATCH-1" } as any,
-      "approver-1",
-      null,
+      { id: "b1", upload_batch_no: "BATCH-1" } as any, "approver-1", null,
     );
 
     expect(out.applied).toBe(1);
@@ -122,8 +103,6 @@ describe("bulk leave lands in the status the attendance engine reads", () => {
   it("still matches the status the attendance engine actually queries", () => {
     const engine = read("backend/src/modules/wfm/attendance-engine.service.ts");
     const override = engine.slice(engine.indexOf("// 1. Approved leave"));
-    expect(override).toMatch(
-      /FROM leave_request[\s\S]{0,120}status = 'approved'/,
-    );
+    expect(override).toMatch(/FROM leave_request[\s\S]{0,120}status = 'approved'/);
   });
 });

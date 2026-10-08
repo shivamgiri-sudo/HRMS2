@@ -34,11 +34,9 @@ import axios from "axios";
 vi.hoisted(() => {
   process.env.LUCKPAY_PROVIDER_ENABLED = "true";
   process.env.LUCKPAY_ENV = "production";
-  process.env.LUCKPAY_BASIC_TOKEN =
-    process.env.LUCKPAY_BASIC_TOKEN || "test-basic-token";
+  process.env.LUCKPAY_BASIC_TOKEN = process.env.LUCKPAY_BASIC_TOKEN || "test-basic-token";
   process.env.LUCKPAY_CLIENT_ID = process.env.LUCKPAY_CLIENT_ID || "TESTCLIENT";
-  process.env.LUCKPAY_WEBHOOK_SECRET =
-    process.env.LUCKPAY_WEBHOOK_SECRET || "test-webhook-secret";
+  process.env.LUCKPAY_WEBHOOK_SECRET = process.env.LUCKPAY_WEBHOOK_SECRET || "test-webhook-secret";
 });
 
 import { luckpayClient } from "../src/modules/integrations/luckpay/luckpay.client.js";
@@ -75,10 +73,7 @@ vi.mock("../src/config/env.js", async (importOriginal) => {
   };
 });
 
-const REF = {
-  clientTransactionId: "joining-doc-abc",
-  transactionId: "APIB1785567457469073",
-};
+const REF = { clientTransactionId: "joining-doc-abc", transactionId: "APIB1785567457469073" };
 
 /** A small but structurally real PDF, including high bytes that UTF-8 would mangle. */
 const PDF = Buffer.concat([
@@ -88,11 +83,7 @@ const PDF = Buffer.concat([
 ]);
 
 function token() {
-  return {
-    data: {
-      data: { access_token: "tkn", token_type: "Bearer", expires_in: 3600 },
-    },
-  };
+  return { data: { data: { access_token: "tkn", token_type: "Bearer", expires_in: 3600 } } };
 }
 
 beforeEach(() => {
@@ -107,10 +98,7 @@ describe("downloadESignDocument with a raw PDF body", () => {
   it("returns the bytes intact when the provider answers application/pdf", async () => {
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({
-        data: PDF,
-        headers: { "content-type": "application/pdf" },
-      });
+      .mockResolvedValueOnce({ data: PDF, headers: { "content-type": "application/pdf" } });
 
     const r = await luckpayClient.downloadESignDocument(REF);
 
@@ -123,32 +111,21 @@ describe("downloadESignDocument with a raw PDF body", () => {
   });
 
   it("requests the body as bytes rather than letting axios parse it", async () => {
-    const post = vi
-      .spyOn(axios, "post")
+    const post = vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({
-        data: PDF,
-        headers: { "content-type": "application/pdf" },
-      });
+      .mockResolvedValueOnce({ data: PDF, headers: { "content-type": "application/pdf" } });
 
     await luckpayClient.downloadESignDocument(REF);
 
-    const downloadCall = post.mock.calls.find(([url]) =>
-      String(url).includes("/downloadESignDocument"),
-    );
+    const downloadCall = post.mock.calls.find(([url]) => String(url).includes("/downloadESignDocument"));
     expect(downloadCall, "the download endpoint must be called").toBeTruthy();
-    expect((downloadCall![2] as { responseType?: string }).responseType).toBe(
-      "arraybuffer",
-    );
+    expect((downloadCall![2] as { responseType?: string }).responseType).toBe("arraybuffer");
   });
 
   it("trusts the magic bytes even when the content-type header is wrong", async () => {
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({
-        data: PDF,
-        headers: { "content-type": "text/plain" },
-      });
+      .mockResolvedValueOnce({ data: PDF, headers: { "content-type": "text/plain" } });
 
     const r = await luckpayClient.downloadESignDocument(REF);
     expect(r.buffer?.subarray(0, 5).toString("latin1")).toBe("%PDF-");
@@ -159,11 +136,7 @@ describe("downloadESignDocument with a raw PDF body", () => {
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
       .mockResolvedValueOnce({
-        data: {
-          code: "200",
-          status: "Success",
-          data: { esignDownloadDetails: { file: PDF.toString("base64") } },
-        },
+        data: { code: "200", status: "Success", data: { esignDownloadDetails: { file: PDF.toString("base64") } } },
         headers: { "content-type": "application/json" },
       });
 
@@ -174,10 +147,7 @@ describe("downloadESignDocument with a raw PDF body", () => {
   it("reports nothing retrieved when the body is neither a document nor usable JSON", async () => {
     vi.spyOn(axios, "post")
       .mockResolvedValueOnce(token())
-      .mockResolvedValueOnce({
-        data: Buffer.from("not a document", "utf8"),
-        headers: { "content-type": "text/plain" },
-      });
+      .mockResolvedValueOnce({ data: Buffer.from("not a document", "utf8"), headers: { "content-type": "text/plain" } });
 
     const r = await luckpayClient.downloadESignDocument(REF);
     expect(r.buffer).toBeNull();

@@ -25,26 +25,12 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
 export type JourneyPhase =
-  | "APPLICATION"
-  | "INTERVIEW"
-  | "OFFER"
-  | "PAYROLL"
-  | "BRANCH_HEAD"
-  | "BGV"
-  | "EMPLOYEE"
-  | "JOINING_DOCS"
-  | "PROVISIONING";
+  | "APPLICATION" | "INTERVIEW" | "OFFER" | "PAYROLL"
+  | "BRANCH_HEAD" | "BGV" | "EMPLOYEE" | "JOINING_DOCS" | "PROVISIONING";
 
 export const JOURNEY_PHASES: JourneyPhase[] = [
-  "APPLICATION",
-  "INTERVIEW",
-  "OFFER",
-  "PAYROLL",
-  "BRANCH_HEAD",
-  "BGV",
-  "EMPLOYEE",
-  "JOINING_DOCS",
-  "PROVISIONING",
+  "APPLICATION", "INTERVIEW", "OFFER", "PAYROLL",
+  "BRANCH_HEAD", "BGV", "EMPLOYEE", "JOINING_DOCS", "PROVISIONING",
 ];
 
 export type JourneyEvent = {
@@ -61,11 +47,7 @@ export type JourneyEvent = {
 export type JourneyResult = {
   candidate: Record<string, unknown> | null;
   employee: { id: string; employee_code: string | null } | null;
-  phaseSummary: Array<{
-    phase: JourneyPhase;
-    state: "done" | "in_progress" | "not_reached";
-    at: string | null;
-  }>;
+  phaseSummary: Array<{ phase: JourneyPhase; state: "done" | "in_progress" | "not_reached"; at: string | null }>;
   events: JourneyEvent[];
   /** Sources that could not be read, so the UI can say so rather than imply absence. */
   gaps: string[];
@@ -74,14 +56,12 @@ export type JourneyResult = {
 /** Tables present in this database, resolved once per request. */
 async function presentTables(names: string[]): Promise<Set<string>> {
   if (names.length === 0) return new Set();
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT TABLE_NAME FROM information_schema.TABLES
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT TABLE_NAME FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE()
         AND TABLE_NAME IN (${names.map(() => "?").join(",")})`,
-      names,
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    names,
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   return new Set(rows.map((r) => String(r.TABLE_NAME)));
 }
 
@@ -93,49 +73,28 @@ const txt = (v: unknown): string | null => {
   return s ? s : null;
 };
 
-export async function getCandidateFullJourney(
-  candidateId: string,
-): Promise<JourneyResult> {
+export async function getCandidateFullJourney(candidateId: string): Promise<JourneyResult> {
   const events: JourneyEvent[] = [];
   const gaps: string[] = [];
 
   const tables = await presentTables([
-    "ats_candidate",
-    "ats_queue_token",
-    "ats_candidate_stage_log",
-    "ats_interview_submission",
-    "ats_employment_offer",
-    "ats_offer_approval",
-    "ats_payroll_hr_validation",
-    "ats_branch_head_approval",
-    "candidate_bgv_check",
-    "candidate_bgv_report",
-    "ats_onboarding_bridge",
-    "employee_joining_document_checklist",
-    "it_provisioning_request",
+    "ats_candidate", "ats_queue_token", "ats_candidate_stage_log", "ats_interview_submission",
+    "ats_employment_offer", "ats_offer_approval", "ats_payroll_hr_validation",
+    "ats_branch_head_approval", "candidate_bgv_check", "candidate_bgv_report",
+    "ats_onboarding_bridge", "employee_joining_document_checklist", "it_provisioning_request",
   ]);
 
   /** Run one source; a failure costs that source only. */
-  const source = async (
-    label: string,
-    table: string,
-    fn: () => Promise<void>,
-  ) => {
-    if (!tables.has(table)) {
-      gaps.push(`${label} (table ${table} not present)`);
-      return;
-    }
-    try {
-      await fn();
-    } catch (e) {
+  const source = async (label: string, table: string, fn: () => Promise<void>) => {
+    if (!tables.has(table)) { gaps.push(`${label} (table ${table} not present)`); return; }
+    try { await fn(); } catch (e) {
       gaps.push(`${label} (${e instanceof Error ? e.message : String(e)})`);
     }
   };
 
   // ── candidate header ───────────────────────────────────────────────────
-  const [candRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT c.id, c.candidate_code, c.full_name, c.mobile, c.email,
+  const [candRows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id, c.candidate_code, c.full_name, c.mobile, c.email,
             c.applied_for_branch, c.branch_display_name, c.applied_for_process,
             c.current_stage, c.status, c.final_decision, c.sourcing_channel,
             c.created_at, c.employee_code,
@@ -146,20 +105,16 @@ export async function getCandidateFullJourney(
               OR b.branch_name = c.applied_for_branch
               OR b.branch_code = c.applied_for_branch
       WHERE c.id = ? LIMIT 1`,
-      [candidateId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    [candidateId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const candidate = candRows[0] ?? null;
 
   // ── APPLICATION ────────────────────────────────────────────────────────
   if (candidate) {
     events.push({
-      phase: "APPLICATION",
-      activity_type: "Applied",
-      status: txt(candidate.status),
-      occurred_at: iso(candidate.created_at),
-      actor_name: txt(candidate.sourcing_channel),
-      source_table: "ats_candidate",
+      phase: "APPLICATION", activity_type: "Applied",
+      status: txt(candidate.status), occurred_at: iso(candidate.created_at),
+      actor_name: txt(candidate.sourcing_channel), source_table: "ats_candidate",
       source_record_id: String(candidate.id),
       detail: txt(candidate.applied_for_process),
     });
@@ -174,28 +129,12 @@ export async function getCandidateFullJourney(
     );
     for (const r of rows) {
       const id = String(r.id);
-      if (r.arrival_time)
-        events.push({
-          phase: "APPLICATION",
-          activity_type: "Arrived at branch",
-          status: txt(r.queue_status),
-          occurred_at: iso(r.arrival_time),
-          actor_name: txt(r.branch_name),
-          source_table: "ats_queue_token",
-          source_record_id: id,
-          detail: txt(r.token_number),
-        });
-      if (r.called_at)
-        events.push({
-          phase: "INTERVIEW",
-          activity_type: "Called for interview",
-          status: null,
-          occurred_at: iso(r.called_at),
-          actor_name: null,
-          source_table: "ats_queue_token",
-          source_record_id: id,
-          detail: null,
-        });
+      if (r.arrival_time) events.push({ phase: "APPLICATION", activity_type: "Arrived at branch",
+        status: txt(r.queue_status), occurred_at: iso(r.arrival_time), actor_name: txt(r.branch_name),
+        source_table: "ats_queue_token", source_record_id: id, detail: txt(r.token_number) });
+      if (r.called_at) events.push({ phase: "INTERVIEW", activity_type: "Called for interview",
+        status: null, occurred_at: iso(r.called_at), actor_name: null,
+        source_table: "ats_queue_token", source_record_id: id, detail: null });
     }
   });
 
@@ -236,12 +175,9 @@ export async function getCandidateFullJourney(
       events.push({
         phase: "INTERVIEW",
         activity_type: `Stage: ${txt(r.from_stage) ?? "?"} → ${txt(r.to_stage) ?? "?"}`,
-        status: txt(r.to_stage),
-        occurred_at: iso(r.stage_date ?? r.created_at),
-        actor_name: txt(r.actor_name),
-        source_table: "ats_candidate_stage_log",
-        source_record_id: String(r.id),
-        detail: txt(r.remarks),
+        status: txt(r.to_stage), occurred_at: iso(r.stage_date ?? r.created_at),
+        actor_name: txt(r.actor_name), source_table: "ats_candidate_stage_log",
+        source_record_id: String(r.id), detail: txt(r.remarks),
       });
     }
   });
@@ -264,21 +200,14 @@ export async function getCandidateFullJourney(
     );
     for (const r of rows) {
       const rounds = [
-        ["Round 1", r.round1_result],
-        ["Round 2", r.round2_result],
-        ["Round 3", r.round3_result],
-      ]
-        .filter(([, v]) => txt(v))
-        .map(([k, v]) => `${k}: ${txt(v)}`)
-        .join(" · ");
+        ["Round 1", r.round1_result], ["Round 2", r.round2_result], ["Round 3", r.round3_result],
+      ].filter(([, v]) => txt(v)).map(([k, v]) => `${k}: ${txt(v)}`).join(" · ");
       events.push({
-        phase: "INTERVIEW",
-        activity_type: "Interview submitted",
+        phase: "INTERVIEW", activity_type: "Interview submitted",
         status: txt(r.final_decision) ?? txt(r.walkin_end_stage),
         occurred_at: iso(r.submitted_at),
         actor_name: txt(r.actor_name) ?? txt(r.recruiter_code),
-        source_table: "ats_interview_submission",
-        source_record_id: String(r.id),
+        source_table: "ats_interview_submission", source_record_id: String(r.id),
         detail: rounds || txt(r.interviewed_for_process),
       });
     }
@@ -293,16 +222,10 @@ export async function getCandidateFullJourney(
     );
     for (const r of rows) {
       events.push({
-        phase: "OFFER",
-        activity_type: "Offer raised",
-        status: txt(r.status),
-        occurred_at: iso(r.submitted_at ?? r.created_at),
-        actor_name: null,
-        source_table: "ats_employment_offer",
-        source_record_id: String(r.id),
-        detail: r.gross
-          ? `Gross ${r.gross}${r.date_of_joining ? ` · DOJ ${String(r.date_of_joining).slice(0, 10)}` : ""}`
-          : null,
+        phase: "OFFER", activity_type: "Offer raised", status: txt(r.status),
+        occurred_at: iso(r.submitted_at ?? r.created_at), actor_name: null,
+        source_table: "ats_employment_offer", source_record_id: String(r.id),
+        detail: r.gross ? `Gross ${r.gross}${r.date_of_joining ? ` · DOJ ${String(r.date_of_joining).slice(0, 10)}` : ""}` : null,
       });
     }
   });
@@ -323,14 +246,10 @@ export async function getCandidateFullJourney(
     );
     for (const r of rows) {
       events.push({
-        phase: "BRANCH_HEAD",
-        activity_type: `Offer ${txt(r.action)}`,
-        status: txt(r.action),
-        occurred_at: iso(r.action_at),
-        actor_name: txt(r.actor_name),
-        source_table: "ats_offer_approval",
-        source_record_id: String(r.id),
-        detail: txt(r.remarks),
+        phase: "BRANCH_HEAD", activity_type: `Offer ${txt(r.action)}`,
+        status: txt(r.action), occurred_at: iso(r.action_at),
+        actor_name: txt(r.actor_name), source_table: "ats_offer_approval",
+        source_record_id: String(r.id), detail: txt(r.remarks),
       });
     }
   });
@@ -352,12 +271,9 @@ export async function getCandidateFullJourney(
     );
     for (const r of rows) {
       events.push({
-        phase: "PAYROLL",
-        activity_type: "Salary validated by Payroll HR",
-        status: txt(r.validation_status),
-        occurred_at: iso(r.validated_at ?? r.created_at),
-        actor_name: txt(r.actor_name),
-        source_table: "ats_payroll_hr_validation",
+        phase: "PAYROLL", activity_type: "Salary validated by Payroll HR",
+        status: txt(r.validation_status), occurred_at: iso(r.validated_at ?? r.created_at),
+        actor_name: txt(r.actor_name), source_table: "ats_payroll_hr_validation",
         source_record_id: String(r.id),
         detail: r.gross_salary ? `Gross ${r.gross_salary}` : null,
       });
@@ -379,28 +295,14 @@ export async function getCandidateFullJourney(
     );
     for (const r of rows) {
       const id = String(r.id);
-      if (r.notified_at)
-        events.push({
-          phase: "BRANCH_HEAD",
-          activity_type: "Sent to Branch Head",
-          status: "pending",
-          occurred_at: iso(r.notified_at),
-          actor_name: null,
-          source_table: "ats_branch_head_approval",
-          source_record_id: id,
-          detail: null,
-        });
+      if (r.notified_at) events.push({ phase: "BRANCH_HEAD", activity_type: "Sent to Branch Head",
+        status: "pending", occurred_at: iso(r.notified_at), actor_name: null,
+        source_table: "ats_branch_head_approval", source_record_id: id, detail: null });
       if (r.approved_at && String(r.approval_status) !== "pending") {
-        events.push({
-          phase: "BRANCH_HEAD",
-          activity_type: `Branch Head ${txt(r.approval_status)}`,
-          status: txt(r.approval_status),
-          occurred_at: iso(r.approved_at),
-          actor_name: txt(r.actor_name),
-          source_table: "ats_branch_head_approval",
-          source_record_id: id,
-          detail: txt(r.remarks),
-        });
+        events.push({ phase: "BRANCH_HEAD", activity_type: `Branch Head ${txt(r.approval_status)}`,
+          status: txt(r.approval_status), occurred_at: iso(r.approved_at),
+          actor_name: txt(r.actor_name), source_table: "ats_branch_head_approval",
+          source_record_id: id, detail: txt(r.remarks) });
       }
     }
   });
@@ -415,14 +317,10 @@ export async function getCandidateFullJourney(
     );
     for (const r of rows) {
       events.push({
-        phase: "BGV",
-        activity_type: `BGV: ${txt(r.check_type) ?? "check"}`,
-        status: txt(r.status),
-        occurred_at: iso(r.verified_at ?? r.created_at),
-        actor_name: txt(r.provider_key),
-        source_table: "candidate_bgv_check",
-        source_record_id: String(r.id),
-        detail: null,
+        phase: "BGV", activity_type: `BGV: ${txt(r.check_type) ?? "check"}`,
+        status: txt(r.status), occurred_at: iso(r.verified_at ?? r.created_at),
+        actor_name: txt(r.provider_key), source_table: "candidate_bgv_check",
+        source_record_id: String(r.id), detail: null,
       });
     }
   });
@@ -435,13 +333,9 @@ export async function getCandidateFullJourney(
     );
     for (const r of rows) {
       events.push({
-        phase: "BGV",
-        activity_type: "BGV report",
-        status: txt(r.overall_status),
-        occurred_at: iso(r.completed_at ?? r.created_at),
-        actor_name: null,
-        source_table: "candidate_bgv_report",
-        source_record_id: String(r.id),
+        phase: "BGV", activity_type: "BGV report",
+        status: txt(r.overall_status), occurred_at: iso(r.completed_at ?? r.created_at),
+        actor_name: null, source_table: "candidate_bgv_report", source_record_id: String(r.id),
         detail: r.bgv_score != null ? `Score ${r.bgv_score}` : null,
       });
     }
@@ -460,10 +354,7 @@ export async function getCandidateFullJourney(
     );
     for (const r of rows) {
       if (r.employee_id && !employee) {
-        employee = {
-          id: String(r.employee_id),
-          employee_code: txt(r.employee_code),
-        };
+        employee = { id: String(r.employee_id), employee_code: txt(r.employee_code) };
       }
       // A bridge row exists from the moment onboarding starts; the employee is
       // only real once employee_id is set. Saying "Employee record created"
@@ -471,17 +362,10 @@ export async function getCandidateFullJourney(
       // reports none.
       events.push({
         phase: r.employee_id ? "EMPLOYEE" : "OFFER",
-        activity_type: r.employee_id
-          ? "Employee record created"
-          : "Onboarding started",
-        status: txt(r.employee_code),
-        occurred_at: iso(r.bridge_date ?? r.created_at),
-        actor_name: null,
-        source_table: "ats_onboarding_bridge",
-        source_record_id: String(r.id),
-        detail: r.joining_date
-          ? `Joining ${String(r.joining_date).slice(0, 10)}`
-          : null,
+        activity_type: r.employee_id ? "Employee record created" : "Onboarding started",
+        status: txt(r.employee_code), occurred_at: iso(r.bridge_date ?? r.created_at),
+        actor_name: null, source_table: "ats_onboarding_bridge", source_record_id: String(r.id),
+        detail: r.joining_date ? `Joining ${String(r.joining_date).slice(0, 10)}` : null,
       });
     }
   });
@@ -489,32 +373,23 @@ export async function getCandidateFullJourney(
   // ── JOINING DOCUMENTS ──────────────────────────────────────────────────
   // This table carries candidate_id directly, so it does not depend on the
   // employee bridge having been created.
-  await source(
-    "Joining documents",
-    "employee_joining_document_checklist",
-    async () => {
-      const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT id, document_name, document_code, status, mandatory, completed_at, updated_at, created_at
+  await source("Joining documents", "employee_joining_document_checklist", async () => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, document_name, document_code, status, mandatory, completed_at, updated_at, created_at
          FROM employee_joining_document_checklist
         WHERE candidate_id = ? OR (? IS NOT NULL AND employee_id = ?)
         ORDER BY COALESCE(completed_at, updated_at, created_at)`,
-        [candidateId, employee?.id ?? null, employee?.id ?? null],
-      );
-      for (const r of rows) {
-        events.push({
-          phase: "JOINING_DOCS",
-          activity_type:
-            txt(r.document_name) ?? txt(r.document_code) ?? "Document",
-          status: txt(r.status),
-          occurred_at: iso(r.completed_at ?? r.updated_at ?? r.created_at),
-          actor_name: null,
-          source_table: "employee_joining_document_checklist",
-          source_record_id: String(r.id),
-          detail: Number(r.mandatory) === 1 ? "Mandatory" : null,
-        });
-      }
-    },
-  );
+      [candidateId, employee?.id ?? null, employee?.id ?? null],
+    );
+    for (const r of rows) {
+      events.push({
+        phase: "JOINING_DOCS", activity_type: txt(r.document_name) ?? txt(r.document_code) ?? "Document",
+        status: txt(r.status), occurred_at: iso(r.completed_at ?? r.updated_at ?? r.created_at),
+        actor_name: null, source_table: "employee_joining_document_checklist",
+        source_record_id: String(r.id), detail: Number(r.mandatory) === 1 ? "Mandatory" : null,
+      });
+    }
+  });
 
   // ── PROVISIONING ───────────────────────────────────────────────────────
   // Keyed on employee_id only. This table has no candidate_id.
@@ -536,14 +411,10 @@ export async function getCandidateFullJourney(
       );
       for (const r of rows) {
         events.push({
-          phase: "PROVISIONING",
-          activity_type: txt(r.task_code) ?? "Provisioning task",
-          status: txt(r.status),
-          occurred_at: iso(r.actioned_at ?? r.requested_at),
+          phase: "PROVISIONING", activity_type: txt(r.task_code) ?? "Provisioning task",
+          status: txt(r.status), occurred_at: iso(r.actioned_at ?? r.requested_at),
           actor_name: txt(r.actor_name) ?? txt(r.assigned_role),
-          source_table: "it_provisioning_request",
-          source_record_id: String(r.id),
-          detail: null,
+          source_table: "it_provisioning_request", source_record_id: String(r.id), detail: null,
         });
       }
     });
@@ -557,13 +428,9 @@ export async function getCandidateFullJourney(
   // approves the OFFER salary; Payroll Head can revise it independently. BH
   // needs to see what was FINALLY assigned — not just what they approved.
   if (emp?.id) {
-    await source(
-      "Payroll Head salary review",
-      "employee_payroll_head_review",
-      async () => {
-        const [reviewRows] = await db
-          .execute<RowDataPacket[]>(
-            `SELECT phr.status, phr.reviewed_at, phr.package_effective_from,
+    await source("Payroll Head salary review", "employee_payroll_head_review", async () => {
+      const [reviewRows] = await db.execute<RowDataPacket[]>(
+        `SELECT phr.status, phr.reviewed_at, phr.package_effective_from,
                 phr.rejection_category, phr.rejection_reason_code, phr.rejection_remarks,
                 sca.basic, sca.hra, sca.conveyance, sca.special_allowance, sca.gross,
                 sca.net_estimate, sca.effective_date,
@@ -578,69 +445,57 @@ export async function getCandidateFullJourney(
           WHERE phr.employee_id = ?
           ORDER BY COALESCE(phr.reviewed_at, phr.created_at) DESC
           LIMIT 1`,
-            [emp.id],
-          )
-          .catch(() => [[]] as unknown as [RowDataPacket[]]);
+        [emp.id],
+      ).catch(() => [[]] as unknown as [RowDataPacket[]]);
 
-        const r = reviewRows[0];
-        if (!r) return;
+      const r = reviewRows[0];
+      if (!r) return;
 
-        if (r.status === "approved" && r.gross) {
-          const fmt = (n: unknown) =>
-            n != null
-              ? `₹${Math.round(Number(n)).toLocaleString("en-IN")}`
-              : null;
-          const components = [
-            r.basic ? `Basic ${fmt(r.basic)}` : null,
-            r.hra ? `HRA ${fmt(r.hra)}` : null,
-            r.conveyance ? `Conv ${fmt(r.conveyance)}` : null,
-            r.special_allowance ? `Special ${fmt(r.special_allowance)}` : null,
-            `Gross ${fmt(r.gross)}`,
-            r.net_estimate ? `Net ${fmt(r.net_estimate)}` : null,
-          ]
-            .filter(Boolean)
-            .join(" · ");
+      if (r.status === 'approved' && r.gross) {
+        const fmt = (n: unknown) => n != null ? `₹${Math.round(Number(n)).toLocaleString('en-IN')}` : null;
+        const components = [
+          r.basic          ? `Basic ${fmt(r.basic)}`          : null,
+          r.hra            ? `HRA ${fmt(r.hra)}`               : null,
+          r.conveyance     ? `Conv ${fmt(r.conveyance)}`       : null,
+          r.special_allowance ? `Special ${fmt(r.special_allowance)}` : null,
+          `Gross ${fmt(r.gross)}`,
+          r.net_estimate   ? `Net ${fmt(r.net_estimate)}`      : null,
+        ].filter(Boolean).join(' · ');
 
-          events.push({
-            phase: "EMPLOYEE",
-            activity_type: "Salary confirmed by Payroll Head",
-            status: r.band_code ? `Band ${r.band_code}` : "Approved",
-            occurred_at: iso(r.reviewed_at),
-            actor_name: txt(r.reviewed_by_name),
-            source_table: "employee_payroll_head_review",
-            source_record_id: emp.id,
-            detail: `${components}${r.effective_date ? ` · Effective ${String(r.effective_date).slice(0, 10)}` : ""}`,
-          });
-        } else if (r.status === "rejected") {
-          events.push({
-            phase: "EMPLOYEE",
-            activity_type: "Salary review rejected by Payroll Head",
-            status:
-              `${r.rejection_category ?? ""} / ${r.rejection_reason_code ?? ""}`.replace(
-                /^\s*\/\s*/,
-                "",
-              ),
-            occurred_at: iso(r.reviewed_at),
-            actor_name: txt(r.reviewed_by_name),
-            source_table: "employee_payroll_head_review",
-            source_record_id: emp.id,
-            detail: txt(r.rejection_remarks),
-          });
-        } else {
-          events.push({
-            phase: "EMPLOYEE",
-            activity_type: "Salary review pending (Payroll Head)",
-            status: "PENDING REVIEW",
-            occurred_at: null,
-            actor_name: null,
-            source_table: "employee_payroll_head_review",
-            source_record_id: emp.id,
-            detail:
-              "Employee is excluded from payroll until Payroll Head approves.",
-          });
-        }
-      },
-    );
+        events.push({
+          phase: "EMPLOYEE",
+          activity_type: "Salary confirmed by Payroll Head",
+          status: r.band_code ? `Band ${r.band_code}` : "Approved",
+          occurred_at: iso(r.reviewed_at),
+          actor_name: txt(r.reviewed_by_name),
+          source_table: "employee_payroll_head_review",
+          source_record_id: emp.id,
+          detail: `${components}${r.effective_date ? ` · Effective ${String(r.effective_date).slice(0, 10)}` : ''}`,
+        });
+      } else if (r.status === 'rejected') {
+        events.push({
+          phase: "EMPLOYEE",
+          activity_type: "Salary review rejected by Payroll Head",
+          status: `${r.rejection_category ?? ''} / ${r.rejection_reason_code ?? ''}`.replace(/^\s*\/\s*/, ''),
+          occurred_at: iso(r.reviewed_at),
+          actor_name: txt(r.reviewed_by_name),
+          source_table: "employee_payroll_head_review",
+          source_record_id: emp.id,
+          detail: txt(r.rejection_remarks),
+        });
+      } else {
+        events.push({
+          phase: "EMPLOYEE",
+          activity_type: "Salary review pending (Payroll Head)",
+          status: "PENDING REVIEW",
+          occurred_at: null,
+          actor_name: null,
+          source_table: "employee_payroll_head_review",
+          source_record_id: emp.id,
+          detail: "Employee is excluded from payroll until Payroll Head approves.",
+        });
+      }
+    });
   }
 
   // ── order, dedupe, summarise ───────────────────────────────────────────
@@ -665,8 +520,7 @@ export async function getCandidateFullJourney(
     const last = inPhase[inPhase.length - 1] ?? null;
     return {
       phase,
-      state: (inPhase.length === 0 ? "not_reached" : "done") as
-        "done" | "in_progress" | "not_reached",
+      state: (inPhase.length === 0 ? "not_reached" : "done") as "done" | "in_progress" | "not_reached",
       at: last?.occurred_at ?? null,
     };
   });

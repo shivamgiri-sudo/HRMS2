@@ -66,7 +66,7 @@ describe("the surviving exporter still carries every gate", () => {
     // The payment file is now registered at both /runs/:id/neft-export and
     // /month/:month/neft-export against one handler, because a month split into several runs
     // must still produce a single bank file. Locate the handler itself, not the registration.
-    const at = CANONICAL.indexOf("const neftExportHandler");
+    const at = CANONICAL.indexOf('const neftExportHandler');
     return CANONICAL.slice(at, CANONICAL.indexOf("router.", at + 50));
   })();
   // Ordering is asserted on code only. The export-log table is named in an explanatory comment

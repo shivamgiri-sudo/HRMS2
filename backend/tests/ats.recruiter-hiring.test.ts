@@ -25,13 +25,7 @@ vi.mock("../src/modules/ats/ats.onboarding.service.js", () => ({
 import { db } from "../src/db/mysql.js";
 import { atsService } from "../src/modules/ats/ats.service.js";
 import { atsQueueService } from "../src/modules/ats/ats.queue.service.js";
-import {
-  mapSheetRow,
-  importHiringActivityRows,
-  createCandidateFromActivity,
-  createTokenFromActivity,
-  __test__,
-} from "../src/modules/ats/recruiter-hiring.service.js";
+import { mapSheetRow, importHiringActivityRows, createCandidateFromActivity, createTokenFromActivity, __test__ } from "../src/modules/ats/recruiter-hiring.service.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
@@ -142,7 +136,7 @@ describe("import flow", () => {
         },
       ],
       "user-1",
-      "sample.xlsx",
+      "sample.xlsx"
     );
 
     expect(result.totalRows).toBe(2);
@@ -157,40 +151,30 @@ describe("tracker actions", () => {
 
   it("creates a candidate from a linked activity row when no match exists", async () => {
     mockExecute
-      .mockResolvedValueOnce([
-        [
-          {
-            id: "activity-1",
-            activity_date: "2025-04-28",
-            recruiter_name_snapshot: "Shivam",
-            hiring_source: "Walk-In",
-            position_name: "Agent",
-            location_name: "Delhi",
-            process_name: "Inbound",
-            candidate_name: "Asha",
-            mobile: "9999999999",
-            raw_sheet_payload: {},
-          },
-        ],
-      ]) // load activity
+      .mockResolvedValueOnce([[{
+        id: "activity-1",
+        activity_date: "2025-04-28",
+        recruiter_name_snapshot: "Shivam",
+        hiring_source: "Walk-In",
+        position_name: "Agent",
+        location_name: "Delhi",
+        process_name: "Inbound",
+        candidate_name: "Asha",
+        mobile: "9999999999",
+        raw_sheet_payload: {},
+      }]]) // load activity
       .mockResolvedValueOnce([[]]) // mobile lookup
       .mockResolvedValueOnce([[]]) // name+mobile
       .mockResolvedValueOnce([[]]) // email
       .mockResolvedValueOnce([[]]) // employee code
       .mockResolvedValueOnce([[]]) // candidate code
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // link update
-      .mockResolvedValueOnce([
-        [
-          {
-            id: "cand-1",
-            full_name: "Asha",
-            mobile: "9999999999",
-          },
-        ],
-      ]); // fetch candidate from createCandidate mock path
-    (
-      atsService.createCandidate as ReturnType<typeof vi.fn>
-    ).mockResolvedValueOnce({
+      .mockResolvedValueOnce([[{
+        id: "cand-1",
+        full_name: "Asha",
+        mobile: "9999999999",
+      }]]); // fetch candidate from createCandidate mock path
+    (atsService.createCandidate as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       id: "cand-1",
       full_name: "Asha",
       mobile: "9999999999",
@@ -198,9 +182,7 @@ describe("tracker actions", () => {
 
     const result = await createCandidateFromActivity("activity-1", "user-1");
     expect(result.created).toBe(true);
-    expect(
-      (atsService.createCandidate as ReturnType<typeof vi.fn>).mock.calls[0][0],
-    ).toMatchObject({
+    expect((atsService.createCandidate as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
       fullName: "Asha",
       mobile: "9999999999",
       appliedForProcess: "Inbound",
@@ -209,33 +191,25 @@ describe("tracker actions", () => {
 
   it("creates a walk-in token and updates the human-readable token number", async () => {
     mockExecute
-      .mockResolvedValueOnce([
-        [
-          {
-            id: "activity-1",
-            activity_date: "2025-04-28",
-            recruiter_name_snapshot: "Shivam",
-            hiring_source: "Walk-In",
-            position_name: "Agent",
-            location_name: "Delhi",
-            branch_name: "Delhi",
-            process_name: "Inbound",
-            candidate_name: "Asha",
-            mobile: "9999999999",
-            raw_sheet_payload: {},
-          },
-        ],
-      ]) // load activity
-      .mockResolvedValueOnce([
-        [{ id: "cand-1", full_name: "Asha", mobile: "9999999999" }],
-      ]) // mobile lookup resolves candidate
+      .mockResolvedValueOnce([[{
+        id: "activity-1",
+        activity_date: "2025-04-28",
+        recruiter_name_snapshot: "Shivam",
+        hiring_source: "Walk-In",
+        position_name: "Agent",
+        location_name: "Delhi",
+        branch_name: "Delhi",
+        process_name: "Inbound",
+        candidate_name: "Asha",
+        mobile: "9999999999",
+        raw_sheet_payload: {},
+      }]]) // load activity
+      .mockResolvedValueOnce([[{ id: "cand-1", full_name: "Asha", mobile: "9999999999" }]]) // mobile lookup resolves candidate
       .mockResolvedValueOnce([[{ total: 0 }]]) // token count for human token number
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // token number update
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // candidate snapshot update
       .mockResolvedValueOnce([{ affectedRows: 1 }]); // activity link update
-    (
-      atsQueueService.createToken as ReturnType<typeof vi.fn>
-    ).mockResolvedValueOnce({
+    (atsQueueService.createToken as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       id: "tok-1",
       candidate_id: "cand-1",
       token: "uuid",
@@ -249,8 +223,6 @@ describe("tracker actions", () => {
 
 describe("__test__ helpers", () => {
   it("generates a deterministic token prefix", () => {
-    expect(__test__.tokenNumberFor("Delhi", "2025-04-28", 7)).toBe(
-      "DEL-20250428-007",
-    );
+    expect(__test__.tokenNumberFor("Delhi", "2025-04-28", 7)).toBe("DEL-20250428-007");
   });
 });

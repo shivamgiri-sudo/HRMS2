@@ -12,7 +12,6 @@
 **Columns:** 161 fields
 
 ### Core Identity Fields
-
 - `id` (PK, auto_increment)
 - `EmpCode` - Employee code (varchar 50)
 - `EmpCodeNo` - Numeric employee ID (int)
@@ -20,7 +19,6 @@
 - `BioCode` - Biometric/attendance ID (varchar 50)
 
 ### Personal Information
-
 - `EmpName` - Full name (varchar 100)
 - `Title`, `Gendar`, `MaritalStatus`
 - `Father`, `Husband` - Parent/spouse names
@@ -28,14 +26,12 @@
 - `Age`, `BloodGruop`, `Qualification`
 
 ### Contact & Address
-
 - `Mobile`, `Mobile1`, `LandLine`, `LandLine1`
 - `EmailId`, `OfficeEmailId`
 - `Adrress1`, `Adrress2`, `City`, `City1`, `State`, `State1`
 - `PinCode`, `PinCode1`
 
 ### Government IDs
-
 - `PanNo` - PAN card
 - `AdharId` - Aadhaar number
 - `PassportNo` - Passport
@@ -45,7 +41,6 @@
 - `dlNo` - Driving license
 
 ### Organization Details
-
 - `BranchName` - Branch/location
 - `SubLocation`, `EmpLocation`, `Home_Branch`
 - `Dept` - Department
@@ -55,7 +50,6 @@
 - `work_status`, `Type_Of_Employee`, `Emp_Location_Type`
 
 ### Employment Status
-
 - `Status` - Active/inactive (default '1')
 - `DOJ`, `DOL` - Dates of joining/leaving
 - `ResignationDate`
@@ -63,7 +57,6 @@
 - `Approve`, `ApproveDate`, `Approve1`, `ApproveDate1`
 
 ### Compensation (Salary Components)
-
 - `CTC` - Cost to company
 - `package`, `Gross`, `NetInhand`
 - `bs` - Basic salary
@@ -79,14 +72,12 @@
 - `Bonus`, `AdminCharges`, `PLI`
 
 ### Deductions
-
 - `EPF`, `EPFCO` - Employee/employer PF
 - `ESIC`, `ESICCO` - Employee/employer ESI
 - `Gratuity`
 - `ProfessionalTax`
 
 ### Banking
-
 - `AcNo` - Account number
 - `AcBank`, `AcBranch`
 - `IFSCCode`
@@ -96,17 +87,14 @@
 - `AccountFlag`, `AcValidationDate`, `AcValidatedBy`, `AcRejectionRemarks`
 
 ### F&F (Full & Final Settlement)
-
 - `FnfStatus`, `FnfDoc`
 - `ChequeNo`, `ChequeDate`, `ChequeAmount`, `ReleasingChequeDate`
 
 ### Nomination
-
 - `NomineeName`, `NomineeRelation`, `NomineeDob`
 - `nom1`, `nom2`
 
 ### Documents & Compliance
-
 - `documentDone` - Document verification status
 - `OfferNo` - Offer letter number
 - `AuthenticationCode`
@@ -114,35 +102,29 @@
 - `BoxFileNo` - Physical file reference
 
 ### Recruitment
-
 - `Source`, `SourceType`
 - `Interview_Id`
 - `Billable_Status`
 
 ### Qualifications & Experience
-
 - `Qualification`, `Qualification_Details`
 - `Passed_Out_Year`, `Passed_Out_State`, `Passed_Out_City`, `Passed_Out_Percent`
 - `Experience`, `Experience_Year`, `Experience_Doc`
 
 ### Family Details
-
 - `Family_Annual_Income`
 - `Count_Of_Dependents`
 
 ### Reporting
-
 - `Reporting_Manager_Name`
 - `Reporting_Manager_Mobile_No`
 
 ### Statutory
-
 - `pfelig` - PF eligibility
 - `esielig` - ESI eligibility
 - `EpfDate` - EPF joining date
 
 ### System Fields
-
 - `EmpCodeDate` - Code assignment date
 - `AssignDate`
 - `EntryDate`
@@ -154,11 +136,9 @@
 - `Pwd` - Password (likely MD5/plain - SECURITY RISK)
 
 ### NOC (No Objection Certificate)
-
 - `NocValidateRemarks`, `NocValidateDate`, `NocValidateBy`
 
 ### Miscellaneous
-
 - `KPI`, `Band`
 - `EmpFor`
 - `RType`
@@ -171,9 +151,7 @@
 ## Supporting JCLR Tables
 
 ### mas_Jclrentrydata (215 rows)
-
 Training/certification tracking:
-
 - `BioCode`, `BranchName`, `EmpName`
 - `CostCenter`, `DepartMent`, `Degination`
 - `TrainningStatus`, `CertifiedDate`
@@ -181,48 +159,42 @@ Training/certification tracking:
 - `EntryDate`
 
 ### mas_jclr (0 rows)
-
 Empty legacy table with minimal fields:
-
 - `EmpCode`, `BioCode`, `Title`, `EmpType`, `EmpName`
 - `FatherName`, `HusbandName`
 
 ### masjclrentry (unknown structure)
-
 ### masjclrentry_15_april2024 (unknown structure)
-
 Likely backups or historical snapshots.
 
 ---
 
 ## Top Tables by Size
 
-| Table                            | Rows     | Type                   |
-| -------------------------------- | -------- | ---------------------- |
-| login_log                        | 3.2M     | Audit logs             |
-| email_error_log                  | 2.6M     | Error logs             |
-| **Attandence**                   | **1.4M** | **Attendance records** |
-| Attandence_old                   | 774K     | Backup                 |
-| emp_onboard_trigger_services_log | 530K     | Onboarding logs        |
-| dashboard_target_revenue         | 411K     | Business data          |
-| dashboard_data_revenue           | 340K     | Business data          |
-| WorkHomeAttandence               | 277K     | WFH attendance         |
-| mas_docoments                    | 264K     | Document storage       |
-| allocation_master                | 238K     | Allocation records     |
+| Table | Rows | Type |
+|-------|------|------|
+| login_log | 3.2M | Audit logs |
+| email_error_log | 2.6M | Error logs |
+| **Attandence** | **1.4M** | **Attendance records** |
+| Attandence_old | 774K | Backup |
+| emp_onboard_trigger_services_log | 530K | Onboarding logs |
+| dashboard_target_revenue | 411K | Business data |
+| dashboard_data_revenue | 340K | Business data |
+| WorkHomeAttandence | 277K | WFH attendance |
+| mas_docoments | 264K | Document storage |
+| allocation_master | 238K | Allocation records |
 
 ---
 
 ## Sync Strategy Recommendations
 
 ### Priority 1: Employee Master
-
 **Table:** `NewJclrMaster` (19 rows)  
 **Sync to:** `employees` table in mas_hrms  
 **Key:** `EmpCode` → `employee_code`  
 **Timestamp:** `lastUpdated`, `CreateDate`
 
 **Critical mappings:**
-
 - `EmpCode` → `employee_code`
 - `BioCode` → biometric ID field
 - `EmpName` → `first_name` + `last_name` (split required)
@@ -234,13 +206,11 @@ Likely backups or historical snapshots.
 - `Status` → `active_status`
 
 ### Priority 2: Attendance
-
 **Table:** `Attandence` (1.4M rows)  
 **Sync to:** `wfm_attendance` table  
 **Incremental:** Based on date/timestamp column
 
 ### Priority 3: Banking & Payroll
-
 **From:** NewJclrMaster salary fields  
 **To:** `payroll_salary_assignments`, `payroll_structure_lines`
 

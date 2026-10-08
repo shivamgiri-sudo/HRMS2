@@ -8,7 +8,6 @@
 ## Source Database (Legacy)
 
 **Connection:**
-
 - Host: <db_bill host — see backend/.env>
 - Port: 3306
 - Database: `db_bill`
@@ -16,7 +15,6 @@
 - Engine: MySQL 5.5.44
 
 **Primary Table:** `masjclrentry`
-
 - **Total Records:** 32,634 employees
 - **Active (Status='1'):** 1,262 employees
 - **Inactive (Status='0'):** 31,372 employees
@@ -28,7 +26,6 @@
 ## Target Database (HRMS)
 
 **Connection:**
-
 - Host: <mas_hrms DB host — see backend/.env>
 - Port: 3306
 - Database: `mas_hrms`
@@ -36,7 +33,6 @@
 - Engine: MySQL 8.x
 
 **Primary Table:** `employees`
-
 - Existing structure with UUID primary key
 - Generated column: `full_name` = `first_name` + `last_name`
 
@@ -45,86 +41,78 @@
 ## Field Mapping: masjclrentry → employees
 
 ### Identity & Core
-
-| Legacy (masjclrentry) | HRMS (employees)           | Transform                                                    |
-| --------------------- | -------------------------- | ------------------------------------------------------------ |
-| `id`                  | ❌ Don't map               | Use UUID for HRMS                                            |
-| `EmpCode`             | `employee_code`            | Direct                                                       |
-| `BioCode`             | Custom field               | Add `biometric_code` column                                  |
-| `EmpName`             | `first_name` + `last_name` | **SPLIT:** "DEEPAK KASHYAP" → first="DEEPAK", last="KASHYAP" |
-| `Title`               | `title`                    | Direct (Mr/Ms/Mrs)                                           |
-| `Gendar`              | `gender`                   | Direct (typo in legacy)                                      |
+| Legacy (masjclrentry) | HRMS (employees) | Transform |
+|---|---|---|
+| `id` | ❌ Don't map | Use UUID for HRMS |
+| `EmpCode` | `employee_code` | Direct |
+| `BioCode` | Custom field | Add `biometric_code` column |
+| `EmpName` | `first_name` + `last_name` | **SPLIT:** "DEEPAK KASHYAP" → first="DEEPAK", last="KASHYAP" |
+| `Title` | `title` | Direct (Mr/Ms/Mrs) |
+| `Gendar` | `gender` | Direct (typo in legacy) |
 
 ### Personal Info
-
-| Legacy          | HRMS              | Transform                    |
-| --------------- | ----------------- | ---------------------------- |
-| `DOB`           | `date_of_birth`   | Convert date format          |
-| `DOJ`           | `date_of_joining` | Convert date format          |
-| `DOL`           | Custom field      | Add `date_of_leaving` column |
-| `Age`           | ❌ Calculated     | Generate from DOB            |
-| `MaritalStatus` | Custom field      | Add `marital_status` column  |
-| `BloodGruop`    | Custom field      | Add `blood_group` column     |
-| `Qualification` | Custom field      | Add `qualification` column   |
+| Legacy | HRMS | Transform |
+|---|---|---|
+| `DOB` | `date_of_birth` | Convert date format |
+| `DOJ` | `date_of_joining` | Convert date format |
+| `DOL` | Custom field | Add `date_of_leaving` column |
+| `Age` | ❌ Calculated | Generate from DOB |
+| `MaritalStatus` | Custom field | Add `marital_status` column |
+| `BloodGruop` | Custom field | Add `blood_group` column |
+| `Qualification` | Custom field | Add `qualification` column |
 
 ### Contact
-
-| Legacy                     | HRMS          | Transform                   |
-| -------------------------- | ------------- | --------------------------- |
-| `Mobile`                   | `mobile`      | Direct                      |
-| `EmailId`                  | `email`       | Direct                      |
-| `OfficeEmailId`            | Custom field  | Add `official_email` column |
-| `Adrress1` + `Adrress2`    | Custom field  | Combine addresses           |
-| `City`, `State`, `PinCode` | Custom fields | Add address fields          |
+| Legacy | HRMS | Transform |
+|---|---|---|
+| `Mobile` | `mobile` | Direct |
+| `EmailId` | `email` | Direct |
+| `OfficeEmailId` | Custom field | Add `official_email` column |
+| `Adrress1` + `Adrress2` | Custom field | Combine addresses |
+| `City`, `State`, `PinCode` | Custom fields | Add address fields |
 
 ### Government IDs
-
-| Legacy       | HRMS            | Transform                    |
-| ------------ | --------------- | ---------------------------- |
-| `PanNo`      | `pan_number`    | Direct                       |
-| `AdharId`    | `aadhaar_last4` | **MASK:** Only last 4 digits |
-| `PassportNo` | Custom field    | Add `passport_number` column |
-| `EPFNo`      | Custom field    | Add `epf_number` column      |
-| `ESICNo`     | Custom field    | Add `esic_number` column     |
-| `UAN`        | Custom field    | Add `uan` column             |
+| Legacy | HRMS | Transform |
+|---|---|---|
+| `PanNo` | `pan_number` | Direct |
+| `AdharId` | `aadhaar_last4` | **MASK:** Only last 4 digits |
+| `PassportNo` | Custom field | Add `passport_number` column |
+| `EPFNo` | Custom field | Add `epf_number` column |
+| `ESICNo` | Custom field | Add `esic_number` column |
+| `UAN` | Custom field | Add `uan` column |
 
 ### Organization
-
-| Legacy        | HRMS         | Transform                |
-| ------------- | ------------ | ------------------------ |
-| `Dept`        | Custom field | Add `department` column  |
+| Legacy | HRMS | Transform |
+|---|---|---|
+| `Dept` | Custom field | Add `department` column |
 | `Desgination` | Custom field | Add `designation` column |
-| `BranchName`  | Custom field | Add `branch` column      |
-| `ClientName`  | Custom field | Add `client_name` column |
-| `Process`     | Custom field | Add `process` column     |
-| `CostCenter`  | Custom field | Add `cost_center` column |
+| `BranchName` | Custom field | Add `branch` column |
+| `ClientName` | Custom field | Add `client_name` column |
+| `Process` | Custom field | Add `process` column |
+| `CostCenter` | Custom field | Add `cost_center` column |
 
 ### Banking
-
-| Legacy      | HRMS         | Transform                        |
-| ----------- | ------------ | -------------------------------- |
-| `AcNo`      | Custom field | Add `bank_account_number` column |
-| `AcBank`    | Custom field | Add `bank_name` column           |
-| `AcBranch`  | Custom field | Add `bank_branch` column         |
-| `IFSCCode`  | Custom field | Add `ifsc_code` column           |
+| Legacy | HRMS | Transform |
+|---|---|---|
+| `AcNo` | Custom field | Add `bank_account_number` column |
+| `AcBank` | Custom field | Add `bank_name` column |
+| `AcBranch` | Custom field | Add `bank_branch` column |
+| `IFSCCode` | Custom field | Add `ifsc_code` column |
 | `AccHolder` | Custom field | Add `account_holder_name` column |
 
 ### Payroll (salary components)
-
-| Legacy                                       | HRMS               | Notes                                |
-| -------------------------------------------- | ------------------ | ------------------------------------ |
-| `CTC`                                        | Payroll table      | Sync to `payroll_salary_assignments` |
-| `bs`, `hra`, `conv`, `da`, `ma`, `lta`, etc. | Payroll components | Map to `payroll_structure_lines`     |
-| `Gross`, `NetInhand`                         | Calculated         | Generate from components             |
+| Legacy | HRMS | Notes |
+|---|---|---|
+| `CTC` | Payroll table | Sync to `payroll_salary_assignments` |
+| `bs`, `hra`, `conv`, `da`, `ma`, `lta`, etc. | Payroll components | Map to `payroll_structure_lines` |
+| `Gross`, `NetInhand` | Calculated | Generate from components |
 
 ### Status & Timestamps
-
-| Legacy        | HRMS             | Transform                         |
-| ------------- | ---------------- | --------------------------------- |
-| `Status`      | `active_status`  | '1' → true, '0' → false           |
-| `lastUpdated` | `updated_at`     | **CRITICAL FOR INCREMENTAL SYNC** |
-| `EntryDate`   | `created_at`     | Direct                            |
-| `CreateDate`  | Backup timestamp | Use if `EntryDate` is null        |
+| Legacy | HRMS | Transform |
+|---|---|---|
+| `Status` | `active_status` | '1' → true, '0' → false |
+| `lastUpdated` | `updated_at` | **CRITICAL FOR INCREMENTAL SYNC** |
+| `EntryDate` | `created_at` | Direct |
+| `CreateDate` | Backup timestamp | Use if `EntryDate` is null |
 
 ---
 
@@ -135,15 +123,14 @@
 **Sync Key:** `lastUpdated` datetime column
 
 **Algorithm:**
-
 ```sql
 -- Get latest sync checkpoint
 SELECT MAX(legacy_last_updated) FROM legacy_sync_checkpoint WHERE domain = 'employee';
 
 -- Fetch changed records
-SELECT * FROM db_bill.masjclrentry
-WHERE lastUpdated > @last_sync_time
-ORDER BY lastUpdated ASC
+SELECT * FROM db_bill.masjclrentry 
+WHERE lastUpdated > @last_sync_time 
+ORDER BY lastUpdated ASC 
 LIMIT 1000;
 
 -- Transform and upsert to mas_hrms.employees
@@ -196,7 +183,6 @@ ALTER TABLE employees
 ### Sync control tables (already created in 060_legacy_sync_schema.sql)
 
 ✅ Already exists:
-
 - `legacy_sync_checkpoint` - Tracks last sync timestamp per domain
 - `legacy_sync_run_log` - Audit log of sync runs
 - `legacy_sync_exception` - Error tracking
@@ -213,8 +199,8 @@ ALTER TABLE employees
 **New:** Use `mysql2/promise` for MySQL
 
 ```typescript
-import mysql from "mysql2/promise";
-import { env } from "../config/env.js";
+import mysql from 'mysql2/promise';
+import { env } from '../config/env.js';
 
 let legacyPool: mysql.Pool | null = null;
 
@@ -240,26 +226,24 @@ export async function getLegacyPool(): Promise<mysql.Pool> {
 **File:** `backend/src/workers/domains/employee-sync-handler.ts`
 
 **Key Changes:**
-
 - Replace Change Tracking queries with timestamp-based queries
 - Add name splitting logic (`EmpName` → `first_name` + `last_name`)
 - Add Aadhaar masking (only last 4 digits)
 - Map all 165 fields to HRMS schema
 
 **Transform Function:**
-
 ```typescript
 transform(legacyRecord: any): EmployeeRecord {
   // Split name
   const nameParts = (legacyRecord.EmpName || '').trim().split(/\s+/);
   const firstName = nameParts[0] || '';
   const lastName = nameParts.slice(1).join(' ') || '';
-
+  
   // Mask Aadhaar (security)
-  const aadhaarLast4 = legacyRecord.AdharId
-    ? legacyRecord.AdharId.slice(-4)
+  const aadhaarLast4 = legacyRecord.AdharId 
+    ? legacyRecord.AdharId.slice(-4) 
     : null;
-
+  
   return {
     employee_code: legacyRecord.EmpCode,
     biometric_code: legacyRecord.BioCode,
@@ -306,19 +290,18 @@ transform(legacyRecord: any): EmployeeRecord {
 ```
 
 **Incremental Fetch Query:**
-
 ```typescript
 async fetchChanges(lastSyncTime: Date): Promise<any[]> {
   const pool = await getLegacyPool();
-
+  
   const [rows] = await pool.execute(`
-    SELECT *
-    FROM masjclrentry
-    WHERE lastUpdated > ?
-    ORDER BY lastUpdated ASC
+    SELECT * 
+    FROM masjclrentry 
+    WHERE lastUpdated > ? 
+    ORDER BY lastUpdated ASC 
     LIMIT ?
   `, [lastSyncTime, this.batchSize]);
-
+  
   return rows as any[];
 }
 ```
@@ -326,7 +309,6 @@ async fetchChanges(lastSyncTime: Date): Promise<any[]> {
 ### Phase 3: Merge Strategy
 
 **Upsert Logic:**
-
 ```sql
 INSERT INTO employees (
   id, employee_code, biometric_code, first_name, last_name, ...
@@ -348,21 +330,18 @@ ON DUPLICATE KEY UPDATE
 ## Testing Plan
 
 ### Phase 1: Connection Test
-
 ```bash
 node scripts/test-mysql-legacy.ts
 # Expected: ✅ Connected, 32,634 rows in masjclrentry
 ```
 
 ### Phase 2: Schema Migration
-
 ```bash
 mysql -h <mas_hrms DB host — see backend/.env> -u root -p mas_hrms < backend/sql/062_employees_legacy_fields.sql
 # Adds all missing columns to employees table
 ```
 
 ### Phase 3: Sample Sync (10 records)
-
 ```bash
 # Set LEGACY_SYNC_BATCH_SIZE=10
 # Set LEGACY_SYNC_ENABLED=false (manual trigger)
@@ -370,7 +349,6 @@ curl -X POST http://localhost:3002/api/legacy/sync/trigger
 ```
 
 ### Phase 4: Full Sync (32K records)
-
 ```bash
 # Set LEGACY_SYNC_BATCH_SIZE=1000
 # Set LEGACY_SYNC_ENABLED=true
@@ -383,27 +361,23 @@ curl -X POST http://localhost:3002/api/legacy/sync/trigger
 ## Rollout Schedule
 
 ### Week 1: Infrastructure
-
 - ✅ Database connection verified
 - ⏳ Create employees table schema migration (062_employees_legacy_fields.sql)
 - ⏳ Update legacyDb.ts to use MySQL
 - ⏳ Update employee-sync-handler.ts for MySQL + field mapping
 
 ### Week 2: Testing
-
 - ⏳ Run sample sync (10 records)
 - ⏳ Verify data accuracy in HRMS
 - ⏳ Test incremental sync (update 1 record in legacy, verify sync)
 - ⏳ Test active/inactive status handling
 
 ### Week 3: Initial Sync
-
 - ⏳ Full historical sync (32K records, ~30 minutes)
 - ⏳ Verify all employees in HRMS
 - ⏳ Compare counts: legacy vs HRMS
 
 ### Week 4: Production
-
 - ⏳ Enable continuous sync (60-second interval)
 - ⏳ Monitor sync logs
 - ⏳ Train ops team on sync monitoring
@@ -413,22 +387,19 @@ curl -X POST http://localhost:3002/api/legacy/sync/trigger
 ## Monitoring & Alerts
 
 ### Key Metrics
-
 - **Sync lag:** Time between `lastUpdated` and actual sync
 - **Error rate:** Failed records / total records
 - **Sync frequency:** Runs per hour
 - **Record throughput:** Records/second
 
 ### Alerts
-
 - ❌ Sync fails 3+ times in a row
 - ⚠️ Sync lag > 10 minutes
 - ⚠️ Error rate > 5%
 
 ### Dashboard Query
-
 ```sql
-SELECT
+SELECT 
   domain,
   last_sync_time,
   records_processed,

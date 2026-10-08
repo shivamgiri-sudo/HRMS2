@@ -8,12 +8,9 @@
  * 4. Detailed excellence profile patterns
  */
 
-import type { Pool, RowDataPacket } from "mysql2/promise";
+import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { sqlLimit } from "../../db/pagination.js";
-import {
-  getCredentialsForKey,
-  getPoolForKey,
-} from "../external-db/external-db.service.js";
+import { getCredentialsForKey, getPoolForKey } from '../external-db/external-db.service.js';
 
 interface TraitExcellence {
   trait_name: string;
@@ -21,11 +18,7 @@ interface TraitExcellence {
   top_10_pass_rate: number;
   overall_pass_rate: number;
   excellence_delta: number;
-  excellence_category:
-    | "KEY_DIFFERENTIATOR"
-    | "STRONG_ADVANTAGE"
-    | "MODERATE_ADVANTAGE"
-    | "MINOR_ADVANTAGE";
+  excellence_category: 'KEY_DIFFERENTIATOR' | 'STRONG_ADVANTAGE' | 'MODERATE_ADVANTAGE' | 'MINOR_ADVANTAGE';
   top_10_sample_size: number;
   overall_sample_size: number;
 }
@@ -38,12 +31,8 @@ interface TeachabilityMetric {
   total_observations: number;
   success_count: number;
   population_mastery_rate: number;
-  teachability_category:
-    | "HIGH_TEACHABILITY"
-    | "MODERATE_TEACHABILITY"
-    | "LOW_TEACHABILITY"
-    | "UNEVEN_MASTERY";
-  replication_difficulty: "LOW" | "MODERATE" | "HIGH";
+  teachability_category: 'HIGH_TEACHABILITY' | 'MODERATE_TEACHABILITY' | 'LOW_TEACHABILITY' | 'UNEVEN_MASTERY';
+  replication_difficulty: 'LOW' | 'MODERATE' | 'HIGH';
   replication_notes: string;
 }
 
@@ -59,8 +48,7 @@ interface TopPerformerProfile {
   trait_listening: number;
   trait_grammar: number;
   trait_closure: number;
-  excellence_profile:
-    "ALL_ROUNDED_EXCELLENCE" | "SPECIALIST_EXCELLENCE" | "BALANCED_EXCELLENCE";
+  excellence_profile: 'ALL_ROUNDED_EXCELLENCE' | 'SPECIALIST_EXCELLENCE' | 'BALANCED_EXCELLENCE';
 }
 
 interface Top10PercentAnalysis {
@@ -80,13 +68,12 @@ type TraitRow = RowDataPacket & TraitExcellence;
 type PerformerRow = RowDataPacket & TopPerformerProfile;
 
 async function getQualityPool(): Promise<Pool> {
-  const credentials = await getCredentialsForKey("shivamgiri_quality");
-  if (!credentials)
-    throw new Error("Quality database connector is not configured");
-  if (credentials.db_type !== "mysql") {
-    throw new Error("Top performers analysis requires a MySQL connector");
+  const credentials = await getCredentialsForKey('shivamgiri_quality');
+  if (!credentials) throw new Error('Quality database connector is not configured');
+  if (credentials.db_type !== 'mysql') {
+    throw new Error('Top performers analysis requires a MySQL connector');
   }
-  return (await getPoolForKey("shivamgiri_quality")) as Pool;
+  return await getPoolForKey('shivamgiri_quality') as Pool;
 }
 
 /**
@@ -128,7 +115,7 @@ export async function getTop10PercentSummary(): Promise<Top10PercentAnalysis | n
         ROUND(AVG(audited_calls), 1) as top_10_avg_audited_calls,
         ROUND(MIN(avg_quality), 2) as top_10_min_quality,
         ROUND(MAX(avg_quality), 2) as top_10_max_quality
-      FROM top_10_agents t10`,
+      FROM top_10_agents t10`
     );
 
     if (!results || results.length === 0) {
@@ -137,7 +124,7 @@ export async function getTop10PercentSummary(): Promise<Top10PercentAnalysis | n
 
     return results[0] as SummaryRow;
   } catch (error) {
-    console.error("Error fetching top 10% summary:", error);
+    console.error('Error fetching top 10% summary:', error);
     return null;
   }
 }
@@ -235,10 +222,10 @@ export async function getTraitMasteryComparison(): Promise<TraitExcellence[]> {
         END as excellence_category,
         top_10_sample_size, overall_sample_size
       FROM trait_analysis
-      ORDER BY excellence_delta DESC`,
+      ORDER BY excellence_delta DESC`
     );
 
-    return ((results as TraitRow[]) || []).map((row) => ({
+    return (results as TraitRow[] || []).map((row) => ({
       trait_name: row.trait_name,
       trait_label: row.trait_label,
       top_10_pass_rate: row.top_10_pass_rate,
@@ -246,10 +233,10 @@ export async function getTraitMasteryComparison(): Promise<TraitExcellence[]> {
       excellence_delta: row.excellence_delta,
       excellence_category: row.excellence_category,
       top_10_sample_size: row.top_10_sample_size,
-      overall_sample_size: row.overall_sample_size,
+      overall_sample_size: row.overall_sample_size
     }));
   } catch (error) {
-    console.error("Error fetching trait mastery comparison:", error);
+    console.error('Error fetching trait mastery comparison:', error);
     return [];
   }
 }
@@ -262,15 +249,12 @@ export async function getTeachabilityMetrics(): Promise<TeachabilityMetric[]> {
     const pool = await getQualityPool();
 
     const traits = [
-      { name: "Response Speed", code: "call_answered_within_5_seconds" },
-      {
-        name: "Empathy & Concern Acknowledgment",
-        code: "customer_concern_acknowledged",
-      },
-      { name: "Professionalism & Conduct", code: "professionalism_maintained" },
-      { name: "Active Listening & Comprehension", code: "active_listening" },
-      { name: "Verbal Grammar & Clarity", code: "proper_grammar" },
-      { name: "Call Closure & Resolution", code: "proper_call_closure" },
+      { name: 'Response Speed', code: 'call_answered_within_5_seconds' },
+      { name: 'Empathy & Concern Acknowledgment', code: 'customer_concern_acknowledged' },
+      { name: 'Professionalism & Conduct', code: 'professionalism_maintained' },
+      { name: 'Active Listening & Comprehension', code: 'active_listening' },
+      { name: 'Verbal Grammar & Clarity', code: 'proper_grammar' },
+      { name: 'Call Closure & Resolution', code: 'proper_call_closure' }
     ];
 
     const results: TeachabilityMetric[] = [];
@@ -284,7 +268,7 @@ export async function getTeachabilityMetrics(): Promise<TeachabilityMetric[]> {
           COUNT(CASE WHEN cqa.${trait.code} = 1 THEN 1 END) as success_count
         FROM db_audit.call_quality_assessment cqa
         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 90 DAY)
-          AND cqa.${trait.code} IS NOT NULL`,
+          AND cqa.${trait.code} IS NOT NULL`
       );
 
       if (rows && rows.length > 0) {
@@ -292,27 +276,20 @@ export async function getTeachabilityMetrics(): Promise<TeachabilityMetric[]> {
         const variance = row.pass_rate_stddev || 0;
         const avgRate = row.avg_pass_rate || 0;
 
-        let teachability:
-          | "HIGH_TEACHABILITY"
-          | "MODERATE_TEACHABILITY"
-          | "LOW_TEACHABILITY"
-          | "UNEVEN_MASTERY" = "UNEVEN_MASTERY";
-        if (variance < 15 && avgRate > 80) teachability = "HIGH_TEACHABILITY";
-        else if (variance < 20 && avgRate > 70)
-          teachability = "MODERATE_TEACHABILITY";
-        else if (variance >= 20 || avgRate < 70)
-          teachability = "LOW_TEACHABILITY";
+        let teachability: 'HIGH_TEACHABILITY' | 'MODERATE_TEACHABILITY' | 'LOW_TEACHABILITY' | 'UNEVEN_MASTERY' = 'UNEVEN_MASTERY';
+        if (variance < 15 && avgRate > 80) teachability = 'HIGH_TEACHABILITY';
+        else if (variance < 20 && avgRate > 70) teachability = 'MODERATE_TEACHABILITY';
+        else if (variance >= 20 || avgRate < 70) teachability = 'LOW_TEACHABILITY';
 
-        let difficulty: "LOW" | "MODERATE" | "HIGH" = "MODERATE";
-        if (variance < 15) difficulty = "LOW";
-        else if (variance >= 25) difficulty = "HIGH";
+        let difficulty: 'LOW' | 'MODERATE' | 'HIGH' = 'MODERATE';
+        if (variance < 15) difficulty = 'LOW';
+        else if (variance >= 25) difficulty = 'HIGH';
 
-        const notes =
-          teachability === "HIGH_TEACHABILITY"
-            ? "Systematic skill; candidates replicate easily"
-            : teachability === "MODERATE_TEACHABILITY"
-              ? "Learnable skill; coaching required"
-              : "Difficult/variable skill; requires mentoring";
+        const notes = teachability === 'HIGH_TEACHABILITY'
+          ? 'Systematic skill; candidates replicate easily'
+          : teachability === 'MODERATE_TEACHABILITY'
+          ? 'Learnable skill; coaching required'
+          : 'Difficult/variable skill; requires mentoring';
 
         results.push({
           trait_name: trait.name,
@@ -321,21 +298,17 @@ export async function getTeachabilityMetrics(): Promise<TeachabilityMetric[]> {
           variance_stddev: parseFloat((variance || 0).toFixed(1)),
           total_observations: row.total_observations || 0,
           success_count: row.success_count || 0,
-          population_mastery_rate: parseFloat(
-            ((row.success_count * 100) / row.total_observations || 0).toFixed(
-              1,
-            ),
-          ),
+          population_mastery_rate: parseFloat(((row.success_count * 100 / row.total_observations) || 0).toFixed(1)),
           teachability_category: teachability,
           replication_difficulty: difficulty,
-          replication_notes: notes,
+          replication_notes: notes
         });
       }
     }
 
     return results.sort((a, b) => a.variance_stddev - b.variance_stddev);
   } catch (error) {
-    console.error("Error fetching teachability metrics:", error);
+    console.error('Error fetching teachability metrics:', error);
     return [];
   }
 }
@@ -343,9 +316,7 @@ export async function getTeachabilityMetrics(): Promise<TeachabilityMetric[]> {
 /**
  * Get detailed profiles of top 10% agents
  */
-export async function getTopPerformerProfiles(
-  limit: number = 50,
-): Promise<TopPerformerProfile[]> {
+export async function getTopPerformerProfiles(limit: number = 50): Promise<TopPerformerProfile[]> {
   try {
     const pool = await getQualityPool();
 
@@ -387,10 +358,10 @@ export async function getTopPerformerProfiles(
       WHERE qb.avg_quality >= pt.threshold
       ORDER BY qb.avg_quality DESC
       ${sqlLimit(limit)}`,
-      [],
+      []
     );
 
-    return ((results as PerformerRow[]) || []).map((row) => ({
+    return (results as PerformerRow[] || []).map((row) => ({
       employee_code: row.employee_code,
       agent_name: row.agent_name,
       overall_quality_score: row.overall_quality_score,
@@ -402,10 +373,10 @@ export async function getTopPerformerProfiles(
       trait_listening: row.trait_listening || 0,
       trait_grammar: row.trait_grammar || 0,
       trait_closure: row.trait_closure || 0,
-      excellence_profile: row.excellence_profile,
+      excellence_profile: row.excellence_profile
     }));
   } catch (error) {
-    console.error("Error fetching top performer profiles:", error);
+    console.error('Error fetching top performer profiles:', error);
     return [];
   }
 }
@@ -428,23 +399,20 @@ export async function generateExecutiveSummary(): Promise<ExecutiveSummary> {
   const [summary, traits, teachability] = await Promise.all([
     getTop10PercentSummary(),
     getTraitMasteryComparison(),
-    getTeachabilityMetrics(),
+    getTeachabilityMetrics()
   ]);
 
   const differentiators = traits
-    .filter((t) => t.excellence_category === "KEY_DIFFERENTIATOR")
-    .map(
-      (t) =>
-        `${t.trait_label}: ${t.excellence_delta.toFixed(1)}% above average`,
-    );
+    .filter(t => t.excellence_category === 'KEY_DIFFERENTIATOR')
+    .map(t => `${t.trait_label}: ${t.excellence_delta.toFixed(1)}% above average`);
 
   const teachable = teachability
-    .filter((t) => t.teachability_category === "HIGH_TEACHABILITY")
-    .map((t) => t.trait_name);
+    .filter(t => t.teachability_category === 'HIGH_TEACHABILITY')
+    .map(t => t.trait_name);
 
   const difficult = teachability
-    .filter((t) => t.teachability_category === "LOW_TEACHABILITY")
-    .map((t) => t.trait_name);
+    .filter(t => t.teachability_category === 'LOW_TEACHABILITY')
+    .map(t => t.trait_name);
 
   return {
     top_10_percent_profile: summary,
@@ -454,13 +422,13 @@ export async function generateExecutiveSummary(): Promise<ExecutiveSummary> {
     teachable_skills: teachable,
     difficult_skills: difficult,
     replication_path: [
-      "SHORT-TERM (30-60 days): Implement call-answering SLA protocol and closure checklist",
-      "MEDIUM-TERM (60-90 days): Peer coaching program with top agents on active listening",
-      "LONG-TERM (90+ days): Profile behaviors for systematic training and hiring criteria",
+      'SHORT-TERM (30-60 days): Implement call-answering SLA protocol and closure checklist',
+      'MEDIUM-TERM (60-90 days): Peer coaching program with top agents on active listening',
+      'LONG-TERM (90+ days): Profile behaviors for systematic training and hiring criteria'
     ],
     risks: [
-      "Response Speed may be infrastructure-limited (call routing)",
-      "Active Listening is personality-driven; difficult to standardize without extensive role-play",
-    ],
+      'Response Speed may be infrastructure-limited (call routing)',
+      'Active Listening is personality-driven; difficult to standardize without extensive role-play'
+    ]
   };
 }

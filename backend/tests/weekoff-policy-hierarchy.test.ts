@@ -21,12 +21,8 @@ vi.mock("../src/db/mysql.js", () => ({
   db: { execute: vi.fn() },
   pingDb: vi.fn(),
 }));
-vi.mock("../src/shared/auditLog.js", () => ({
-  logSensitiveAction: vi.fn().mockResolvedValue(undefined),
-}));
-vi.mock("../src/modules/communication/sms.helper.js", () => ({
-  sendSMS: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock("../src/shared/auditLog.js", () => ({ logSensitiveAction: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../src/modules/communication/sms.helper.js", () => ({ sendSMS: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../src/modules/roster/roster.notifications.js", () => ({
   notifyRosterPublished: vi.fn().mockResolvedValue({ sent: 0 }),
 }));
@@ -53,10 +49,7 @@ describe("resolveWeekOffScopeDefault — tier 3-5 (process > branch > global)", 
   });
 
   it("returns the resolved day and its source when a row matches", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [{ default_week_off_day: 2, scope_type: "process" }],
-      [],
-    ]);
+    mockExecute.mockResolvedValueOnce([[{ default_week_off_day: 2, scope_type: "process" }], []]);
     const result = await resolveWeekOffScopeDefault("proc-1", "branch-1");
     expect(result).toEqual({ day: 2, source: "process_default" });
   });
@@ -68,16 +61,10 @@ describe("resolveWeekOffScopeDefault — tier 3-5 (process > branch > global)", 
   });
 
   it("passes branchId=null straight through — a branchless cycle can still resolve a global row", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [{ default_week_off_day: 0, scope_type: "global" }],
-      [],
-    ]);
+    mockExecute.mockResolvedValueOnce([[{ default_week_off_day: 0, scope_type: "global" }], []]);
     const result = await resolveWeekOffScopeDefault("proc-1", null);
     expect(result).toEqual({ day: 0, source: "global_default" });
-    expect(mockExecute).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.arrayContaining([null]),
-    );
+    expect(mockExecute).toHaveBeenCalledWith(expect.any(String), expect.arrayContaining([null]));
   });
 });
 
@@ -114,9 +101,9 @@ describe("roster_template pattern parsing and lookup — tier 2", () => {
 
   it("isWeekOffByTemplate maps 0-based cycle position to 1-based day_number", () => {
     const pattern = parseRosterTemplatePattern(FIVE_DAY_WEEK)!;
-    expect(isWeekOffByTemplate(pattern, 0)).toBe(true); // day_number 1
+    expect(isWeekOffByTemplate(pattern, 0)).toBe(true);  // day_number 1
     expect(isWeekOffByTemplate(pattern, 1)).toBe(false); // day_number 2
-    expect(isWeekOffByTemplate(pattern, 6)).toBe(true); // day_number 7
+    expect(isWeekOffByTemplate(pattern, 6)).toBe(true);  // day_number 7
   });
 
   it("isWeekOffByTemplate returns null (not false) for a position outside the pattern", () => {
@@ -144,95 +131,56 @@ describe("advanceCycleStatus — publish gate blocks on WEEK_OFF_POLICY_MISSING 
 
   it("blocks with 409 when the latest run's error_details contains a WEEK_OFF_POLICY_MISSING entry", async () => {
     mockCycleAnd([
-      {
-        error_details: [
-          "WEEK_OFF_POLICY_MISSING:emp:EMP001 — no employee preference, roster template, or process/branch/org default resolved a week-off day for this cycle",
-        ],
-      },
+      { error_details: ["WEEK_OFF_POLICY_MISSING:emp:EMP001 — no employee preference, roster template, or process/branch/org default resolved a week-off day for this cycle"] },
     ]);
     await expect(
-      rosterGovernanceService.advanceCycleStatus(
-        "cycle-1",
-        "published",
-        "user-1",
-      ),
+      rosterGovernanceService.advanceCycleStatus("cycle-1", "published", "user-1")
     ).rejects.toMatchObject({ statusCode: 409 });
   });
 
   it("parses error_details as a JSON string too, not only a pre-parsed array", async () => {
     mockCycleAnd([
-      {
-        error_details: JSON.stringify([
-          "WEEK_OFF_POLICY_MISSING:emp:EMP002 — ...",
-        ]),
-      },
+      { error_details: JSON.stringify(["WEEK_OFF_POLICY_MISSING:emp:EMP002 — ..."]) },
     ]);
     await expect(
-      rosterGovernanceService.advanceCycleStatus(
-        "cycle-1",
-        "published",
-        "user-1",
-      ),
+      rosterGovernanceService.advanceCycleStatus("cycle-1", "published", "user-1")
     ).rejects.toMatchObject({ statusCode: 409 });
   });
 
   it("does NOT block on an ordinary error unrelated to week-off policy", async () => {
     mockCycleAnd([
-      {
-        error_details: [
-          "emp:EMP003 date:2026-05-21 — no shift template available",
-        ],
-      },
+      { error_details: ["emp:EMP003 date:2026-05-21 — no shift template available"] },
     ]);
     await expect(
-      rosterGovernanceService.advanceCycleStatus(
-        "cycle-1",
-        "published",
-        "user-1",
-      ),
+      rosterGovernanceService.advanceCycleStatus("cycle-1", "published", "user-1")
     ).resolves.toBeDefined();
   });
 
   it("does NOT block when the latest run has no error_details at all", async () => {
     mockCycleAnd([{ error_details: null }]);
     await expect(
-      rosterGovernanceService.advanceCycleStatus(
-        "cycle-1",
-        "published",
-        "user-1",
-      ),
+      rosterGovernanceService.advanceCycleStatus("cycle-1", "published", "user-1")
     ).resolves.toBeDefined();
   });
 
   it("does NOT block when there is no generation run recorded for this cycle yet", async () => {
     mockCycleAnd([]);
     await expect(
-      rosterGovernanceService.advanceCycleStatus(
-        "cycle-1",
-        "published",
-        "user-1",
-      ),
+      rosterGovernanceService.advanceCycleStatus("cycle-1", "published", "user-1")
     ).resolves.toBeDefined();
   });
 
   it("does not run the week-off check at all for a non-publish transition", async () => {
     mockExecute.mockImplementation(async (sql: unknown) => {
       const text = String(sql);
-      if (/FROM weekly_roster_cycle WHERE id/i.test(text))
-        return [[{ ...CYCLE, status: "draft" }], []];
+      if (/FROM weekly_roster_cycle WHERE id/i.test(text)) return [[{ ...CYCLE, status: "draft" }], []];
       if (/FROM roster_generation_run/i.test(text)) {
-        throw new Error(
-          "should not query roster_generation_run for a non-publish transition",
-        );
+        throw new Error("should not query roster_generation_run for a non-publish transition");
       }
       return [[], []];
     });
     await expect(
-      rosterGovernanceService.advanceCycleStatus(
-        "cycle-1",
-        "submitted",
-        "user-1",
-      ),
+      rosterGovernanceService.advanceCycleStatus("cycle-1", "submitted", "user-1")
     ).resolves.toBeDefined();
   });
 });

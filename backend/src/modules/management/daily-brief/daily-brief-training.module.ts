@@ -64,11 +64,7 @@ function formatAgo(hours: number): string {
 
 async function resolveFreshness(
   teamEmployeeIds: string[],
-): Promise<{
-  state: "AVAILABLE" | "STALE" | "NO_DATA";
-  detail?: string;
-  lastSyncedAt: string | null;
-}> {
+): Promise<{ state: "AVAILABLE" | "STALE" | "NO_DATA"; detail?: string; lastSyncedAt: string | null }> {
   const placeholders = teamEmployeeIds.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT MAX(synced_at) AS last_synced
@@ -76,26 +72,16 @@ async function resolveFreshness(
       WHERE employee_id IN (${placeholders})`,
     teamEmployeeIds,
   );
-  const lastSynced = rows[0]?.last_synced
-    ? new Date(rows[0].last_synced as string)
-    : null;
+  const lastSynced = rows[0]?.last_synced ? new Date(rows[0].last_synced as string) : null;
   if (!lastSynced) {
     return { state: "NO_DATA", lastSyncedAt: null };
   }
   const ageHours = (Date.now() - lastSynced.getTime()) / (1000 * 60 * 60);
   const ago = formatAgo(ageHours);
   if (ageHours > STALE_THRESHOLD_HOURS) {
-    return {
-      state: "STALE",
-      detail: `LMS data last synced ${ago} (older than ${STALE_THRESHOLD_HOURS}h — editorial threshold, needs sign-off)`,
-      lastSyncedAt: lastSynced.toISOString(),
-    };
+    return { state: "STALE", detail: `LMS data last synced ${ago} (older than ${STALE_THRESHOLD_HOURS}h — editorial threshold, needs sign-off)`, lastSyncedAt: lastSynced.toISOString() };
   }
-  return {
-    state: "AVAILABLE",
-    detail: `LMS data last synced ${ago}`,
-    lastSyncedAt: lastSynced.toISOString(),
-  };
+  return { state: "AVAILABLE", detail: `LMS data last synced ${ago}`, lastSyncedAt: lastSynced.toISOString() };
 }
 
 async function buildProgressSignals(
@@ -126,42 +112,16 @@ async function buildProgressSignals(
     const row = rows[0] ?? {};
     const total = numberValue(row.total_rows);
     const completedTotal = numberValue(row.completed_total);
-    const pct =
-      total > 0 ? Number(((completedTotal / total) * 100).toFixed(2)) : null;
+    const pct = total > 0 ? Number(((completedTotal / total) * 100).toFixed(2)) : null;
 
     return {
-      completedD1: {
-        key: "training_courses_completed_d1",
-        label: "Courses completed (D-1)",
-        value: numberValue(row.completed_d1),
-        unit: "count",
-      },
-      inProgress: {
-        key: "training_courses_in_progress",
-        label: "Courses in progress",
-        value: numberValue(row.in_progress),
-        unit: "count",
-      },
-      overdue: {
-        key: "training_overdue_mandatory",
-        label: "Overdue mandatory training",
-        value: numberValue(row.overdue),
-        unit: "count",
-      },
-      completionPct: {
-        key: "training_completion_pct",
-        label: "Training completion",
-        value: pct,
-        unit: "percent",
-      },
+      completedD1: { key: "training_courses_completed_d1", label: "Courses completed (D-1)", value: numberValue(row.completed_d1), unit: "count" },
+      inProgress: { key: "training_courses_in_progress", label: "Courses in progress", value: numberValue(row.in_progress), unit: "count" },
+      overdue: { key: "training_overdue_mandatory", label: "Overdue mandatory training", value: numberValue(row.overdue), unit: "count" },
+      completionPct: { key: "training_completion_pct", label: "Training completion", value: pct, unit: "percent" },
       health: {
         module: "training_progress",
-        state:
-          freshness.state === "STALE"
-            ? "STALE"
-            : total > 0
-              ? "AVAILABLE"
-              : "NO_DATA",
+        state: freshness.state === "STALE" ? "STALE" : total > 0 ? "AVAILABLE" : "NO_DATA",
         detail: freshness.detail,
         asOfDate: reportingDate,
       },
@@ -185,11 +145,7 @@ async function buildProgressSignals(
 async function buildCertificationSignals(
   teamEmployeeIds: string[],
   reportingDate: string,
-): Promise<{
-  expiring30d: BriefSignal | null;
-  expired: BriefSignal | null;
-  health: SourceHealth;
-}> {
+): Promise<{ expiring30d: BriefSignal | null; expired: BriefSignal | null; health: SourceHealth }> {
   const placeholders = teamEmployeeIds.map(() => "?").join(",");
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -202,23 +158,9 @@ async function buildCertificationSignals(
     );
     const row = rows[0] ?? {};
     return {
-      expiring30d: {
-        key: "training_certifications_expiring_30d",
-        label: "Certifications expiring (30 days)",
-        value: numberValue(row.expiring_30d),
-        unit: "count",
-      },
-      expired: {
-        key: "training_certifications_expired",
-        label: "Certifications expired",
-        value: numberValue(row.expired),
-        unit: "count",
-      },
-      health: {
-        module: "training_certifications",
-        state: "AVAILABLE",
-        asOfDate: reportingDate,
-      },
+      expiring30d: { key: "training_certifications_expiring_30d", label: "Certifications expiring (30 days)", value: numberValue(row.expiring_30d), unit: "count" },
+      expired: { key: "training_certifications_expired", label: "Certifications expired", value: numberValue(row.expired), unit: "count" },
+      health: { module: "training_certifications", state: "AVAILABLE", asOfDate: reportingDate },
     };
   } catch (err) {
     return {
@@ -239,12 +181,7 @@ export async function buildTrainingModule(
   reportingDate: string,
 ): Promise<TrainingModuleResult> {
   if (teamEmployeeIds.length === 0) {
-    const health: SourceHealth = {
-      module: "training_progress",
-      state: "NOT_APPLICABLE",
-      detail: "No team members in scope",
-      asOfDate: reportingDate,
-    };
+    const health: SourceHealth = { module: "training_progress", state: "NOT_APPLICABLE", detail: "No team members in scope", asOfDate: reportingDate };
     return {
       applicable: false,
       coursesCompletedD1: null,

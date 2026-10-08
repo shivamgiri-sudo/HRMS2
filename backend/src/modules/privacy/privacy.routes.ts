@@ -17,10 +17,8 @@ import { executeErasure } from "./dpdpErasure.service.js";
 export const privacyRouter = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 // ─── Consent ──────────────────────────────────────────────────────────────────
 
@@ -31,7 +29,7 @@ privacyRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await privacyService.getMyConsents(req.authUser!.id);
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 // GET /consent/all — admin/hr/dpo view all consents
@@ -48,7 +46,7 @@ privacyRouter.get(
       principal_type: req.query.principal_type as string | undefined,
     }, orgWide ? undefined : await buildPrincipalScope(req.authUser!));
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 // GET /consent/stats — coverage stats (admin/hr)
@@ -59,7 +57,7 @@ privacyRouter.get(
   h(async (_req: AuthenticatedRequest, res: Response) => {
     const data = await privacyService.getConsentCoverageStats();
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 // POST /consent — record consent (authenticated for employees; public path for candidates handled by caller supplying principal_type)
@@ -76,29 +74,19 @@ privacyRouter.post(
     };
 
     if (!purpose_code) {
-      return res
-        .status(400)
-        .json({ success: false, message: "purpose_code is required" });
+      return res.status(400).json({ success: false, message: "purpose_code is required" });
     }
 
     const data = await privacyService.recordConsent({
       principalId: req.authUser!.id,
-      principalType: (principal_type ?? "employee") as
-        "employee" | "candidate" | "client_user" | "portal_user",
-      purposeCode: purpose_code as
-        | "employment"
-        | "payroll"
-        | "communication"
-        | "lms"
-        | "portal"
-        | "recruitment"
-        | "health",
+      principalType: (principal_type ?? "employee") as "employee" | "candidate" | "client_user" | "portal_user",
+      purposeCode: purpose_code as "employment" | "payroll" | "communication" | "lms" | "portal" | "recruitment" | "health",
       channel: (channel ?? "web") as "web" | "api" | "import" | "manual",
       ipAddress: req.ip ?? undefined,
     });
 
     return res.status(201).json({ success: true, data });
-  }),
+  })
 );
 
 // POST /consent/withdraw — withdraw a consent by purpose_code
@@ -108,9 +96,7 @@ privacyRouter.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { purpose_code } = req.body as { purpose_code: string };
     if (!purpose_code) {
-      return res
-        .status(400)
-        .json({ success: false, message: "purpose_code is required" });
+      return res.status(400).json({ success: false, message: "purpose_code is required" });
     }
     await privacyService.withdrawConsent(req.authUser!.id, purpose_code);
 
@@ -124,7 +110,7 @@ privacyRouter.post(
     });
 
     return res.json({ success: true, message: "Consent withdrawn" });
-  }),
+  })
 );
 
 // ─── Data Rights ──────────────────────────────────────────────────────────────
@@ -136,7 +122,7 @@ privacyRouter.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const result = await privacyService.createAccessRequest(req.authUser!.id);
     return res.status(201).json({ success: true, data: result });
-  }),
+  })
 );
 
 // POST /rights/correction — request correction
@@ -144,35 +130,25 @@ privacyRouter.post(
   "/rights/correction",
   requireAuth,
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { field_name, current_value, requested_value, description } =
-      req.body as {
-        field_name: string;
-        current_value: string;
-        requested_value: string;
-        description?: string;
-      };
+    const { field_name, current_value, requested_value, description } = req.body as {
+      field_name: string;
+      current_value: string;
+      requested_value: string;
+      description?: string;
+    };
 
     if (!field_name || !current_value || !requested_value) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "field_name, current_value, and requested_value are required",
-        });
+      return res.status(400).json({ success: false, message: "field_name, current_value, and requested_value are required" });
     }
 
-    const data = await privacyService.createCorrectionRequest(
-      req.authUser!.id,
-      {
-        field_name,
-        current_value,
-        requested_value,
-        description,
-      },
-    );
+    const data = await privacyService.createCorrectionRequest(req.authUser!.id, {
+      field_name,
+      current_value,
+      requested_value,
+      description,
+    });
     return res.status(201).json({ success: true, data });
-  }),
+  })
 );
 
 // POST /rights/erasure — request erasure
@@ -183,7 +159,7 @@ privacyRouter.post(
     const { description } = req.body as { description?: string };
     const data = await privacyService.createErasureRequest(
       req.authUser!.id,
-      description ?? "Erasure request submitted",
+      description ?? "Erasure request submitted"
     );
 
     await logSensitiveAction({
@@ -196,7 +172,7 @@ privacyRouter.post(
     });
 
     return res.status(201).json({ success: true, data });
-  }),
+  })
 );
 
 // GET /rights/my-requests — own requests
@@ -206,7 +182,7 @@ privacyRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await privacyService.getMyRightsRequests(req.authUser!.id);
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 // GET /rights/requests — admin/hr/dpo: all requests
@@ -221,7 +197,7 @@ privacyRouter.get(
       request_type: req.query.request_type as string | undefined,
     }, orgWide ? undefined : await buildPrincipalScope(req.authUser!));
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 // PATCH /rights/requests/:id — resolve/reject (admin/hr/dpo)
@@ -237,9 +213,7 @@ privacyRouter.patch(
     };
 
     if (!status) {
-      return res
-        .status(400)
-        .json({ success: false, message: "status is required" });
+      return res.status(400).json({ success: false, message: "status is required" });
     }
 
     // An erasure request being resolved is not an ordinary status change — it is
@@ -250,10 +224,9 @@ privacyRouter.patch(
     // "resolved" with zero data operation, for every request type alike).
     const [existingRows] = await db.execute<RowDataPacket[]>(
       `SELECT request_type, status FROM data_rights_request WHERE id = ? LIMIT 1`,
-      [req.params.id],
+      [req.params.id]
     );
-    const existing = existingRows[0] as
-      { request_type?: string; status?: string } | undefined;
+    const existing = existingRows[0] as { request_type?: string; status?: string } | undefined;
 
     // Branch scoping: an hr reviewer may only act on requests from employees inside their own branch.
     if (existing && !(await hasRole(req.authUser!.id, "dpo"))) {
@@ -291,7 +264,7 @@ privacyRouter.patch(
 
       const [afterRows] = await db.execute<RowDataPacket[]>(
         `SELECT * FROM data_rights_request WHERE id = ? LIMIT 1`,
-        [req.params.id],
+        [req.params.id]
       );
       return res.json({ success: true, data: afterRows[0] });
     }
@@ -313,7 +286,7 @@ privacyRouter.patch(
     });
 
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 // ─── Retention Policy ─────────────────────────────────────────────────────────
@@ -326,7 +299,7 @@ privacyRouter.get(
   h(async (_req: AuthenticatedRequest, res: Response) => {
     const data = await privacyService.listRetentionPolicies();
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 // PUT /retention/policies/:entityType — update (admin only)
@@ -335,23 +308,19 @@ privacyRouter.put(
   requireAuth,
   requireRole("admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { retention_days, action_on_expiry, legal_basis, is_active } =
-      req.body as {
-        retention_days?: number;
-        action_on_expiry?: string;
-        legal_basis?: string;
-        is_active?: number;
-      };
+    const { retention_days, action_on_expiry, legal_basis, is_active } = req.body as {
+      retention_days?: number;
+      action_on_expiry?: string;
+      legal_basis?: string;
+      is_active?: number;
+    };
 
-    const data = await privacyService.updateRetentionPolicy(
-      req.params.entityType,
-      {
-        retention_days,
-        action_on_expiry,
-        legal_basis,
-        is_active,
-      },
-    );
+    const data = await privacyService.updateRetentionPolicy(req.params.entityType, {
+      retention_days,
+      action_on_expiry,
+      legal_basis,
+      is_active,
+    });
 
     await logSensitiveAction({
       actor_user_id: req.authUser!.id,
@@ -364,7 +333,7 @@ privacyRouter.put(
     });
 
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 // ─── DPDP Config ──────────────────────────────────────────────────────────────
@@ -377,7 +346,7 @@ privacyRouter.get(
   h(async (_req: AuthenticatedRequest, res: Response) => {
     const data = await privacyService.listConfig();
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 // PUT /config/:key — admin only
@@ -388,15 +357,10 @@ privacyRouter.put(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { config_value } = req.body as { config_value: string };
     if (!config_value && config_value !== "") {
-      return res
-        .status(400)
-        .json({ success: false, message: "config_value is required" });
+      return res.status(400).json({ success: false, message: "config_value is required" });
     }
 
-    const data = await privacyService.updateConfig(
-      req.params.key,
-      config_value,
-    );
+    const data = await privacyService.updateConfig(req.params.key, config_value);
 
     await logSensitiveAction({
       actor_user_id: req.authUser!.id,
@@ -409,7 +373,7 @@ privacyRouter.put(
     });
 
     return res.json({ success: true, data });
-  }),
+  })
 );
 
 // ─── Breach Log ───────────────────────────────────────────────────────────────
@@ -426,10 +390,10 @@ privacyRouter.get(
               notified_authority_at, notified_principals_at, authority_ref,
               remediation_notes, status, reported_by, created_at, updated_at,
               alert_sent_at_1h, alert_sent_at_48h, alert_sent_at_71h
-       FROM data_breach_log ORDER BY detected_at DESC LIMIT 100`,
+       FROM data_breach_log ORDER BY detected_at DESC LIMIT 100`
     );
     res.json({ success: true, data: rows });
-  }),
+  })
 );
 
 // POST /breaches — log a new breach (admin/hr only)
@@ -457,12 +421,7 @@ privacyRouter.post(
     };
 
     if (!detected_at || !description) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "detected_at and description are required",
-        });
+      return res.status(400).json({ success: false, message: "detected_at and description are required" });
     }
 
     const id = randomUUID();
@@ -482,10 +441,10 @@ privacyRouter.post(
         description,
         immediate_action_taken ?? null,
         req.authUser!.id,
-      ],
+      ]
     );
     res.status(201).json({ success: true, data: { id, breach_ref: ref } });
-  }),
+  })
 );
 
 // PATCH /breaches/:id — update status/notifications (admin/hr only)
@@ -528,7 +487,7 @@ privacyRouter.patch(
         blankToNull(authority_ref),
         blankToNull(remediation_notes),
         req.params.id,
-      ],
+      ]
     );
 
     await logSensitiveAction({
@@ -537,17 +496,12 @@ privacyRouter.patch(
       module_key: "privacy",
       entity_type: "data_breach_log",
       entity_id: req.params.id,
-      change_summary: {
-        status,
-        notified_authority_at,
-        notified_principals_at,
-        authority_ref,
-      },
+      change_summary: { status, notified_authority_at, notified_principals_at, authority_ref },
       req,
     });
 
     res.json({ success: true });
-  }),
+  })
 );
 
 // ─── Consent Text Versions ────────────────────────────────────────────────────
@@ -558,10 +512,10 @@ privacyRouter.get(
   requireRole("admin", "hr"),
   h(async (_req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM consent_text_version ORDER BY purpose_code, version_code",
+      "SELECT * FROM consent_text_version ORDER BY purpose_code, version_code"
     );
     res.json({ success: true, data: rows });
-  }),
+  })
 );
 
 privacyRouter.post(
@@ -569,35 +523,19 @@ privacyRouter.post(
   requireAuth,
   requireRole("admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { version_code, purpose_code, title, consent_text, language } =
-      req.body;
+    const { version_code, purpose_code, title, consent_text, language } = req.body;
     if (!version_code || !purpose_code || !title || !consent_text) {
-      return res
-        .status(400)
-        .json({
-          error: "version_code, purpose_code, title, consent_text required",
-        });
+      return res.status(400).json({ error: "version_code, purpose_code, title, consent_text required" });
     }
     const id = randomUUID();
-    const text_hash = createHash("sha256")
-      .update(String(consent_text))
-      .digest("hex");
+    const text_hash = createHash("sha256").update(String(consent_text)).digest("hex");
     await db.execute(
       `INSERT INTO consent_text_version (id, version_code, purpose_code, title, consent_text, text_hash, language, status, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?)`,
-      [
-        id,
-        version_code,
-        purpose_code,
-        title,
-        consent_text,
-        text_hash,
-        language ?? "en",
-        req.authUser!.id,
-      ],
+      [id, version_code, purpose_code, title, consent_text, text_hash, language ?? "en", req.authUser!.id]
     );
     res.status(201).json({ success: true, data: { id } });
-  }),
+  })
 );
 
 privacyRouter.patch(
@@ -606,14 +544,13 @@ privacyRouter.patch(
   requireRole("admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { legal_reviewed_by } = req.body;
-    if (!legal_reviewed_by)
-      return res.status(400).json({ error: "legal_reviewed_by required" });
+    if (!legal_reviewed_by) return res.status(400).json({ error: "legal_reviewed_by required" });
     await db.execute(
       "UPDATE consent_text_version SET status = 'legal_review', legal_reviewed_by = ?, legal_reviewed_at = NOW() WHERE id = ?",
-      [legal_reviewed_by, req.params.id],
+      [legal_reviewed_by, req.params.id]
     );
     res.json({ success: true });
-  }),
+  })
 );
 
 privacyRouter.patch(
@@ -623,10 +560,10 @@ privacyRouter.patch(
   h(async (req: AuthenticatedRequest, res: Response) => {
     await db.execute(
       "UPDATE consent_text_version SET status = 'approved' WHERE id = ? AND status = 'legal_review'",
-      [req.params.id],
+      [req.params.id]
     );
     res.json({ success: true });
-  }),
+  })
 );
 
 privacyRouter.patch(
@@ -636,29 +573,22 @@ privacyRouter.patch(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM consent_text_version WHERE id = ? AND status = 'approved' LIMIT 1",
-      [req.params.id],
+      [req.params.id]
     );
     const version = (rows as RowDataPacket[])[0];
-    if (!version)
-      return res
-        .status(400)
-        .json({ error: "Version not found or not in approved status" });
+    if (!version) return res.status(400).json({ error: "Version not found or not in approved status" });
     await db.execute(
       "UPDATE consent_text_version SET status = 'superseded', superseded_at = NOW() WHERE purpose_code = ? AND status = 'active'",
-      [version.purpose_code],
+      [version.purpose_code]
     );
     await db.execute(
       "UPDATE consent_text_version SET status = 'active', activated_at = NOW() WHERE id = ?",
-      [req.params.id],
+      [req.params.id]
     );
     const configKey = `consent_active_version_${version.purpose_code}`;
     await db.execute(
       "INSERT INTO dpdp_config (config_key, config_value, description) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)",
-      [
-        configKey,
-        version.version_code,
-        `Active consent version for ${version.purpose_code}`,
-      ],
+      [configKey, version.version_code, `Active consent version for ${version.purpose_code}`]
     );
 
     await logSensitiveAction({
@@ -667,15 +597,12 @@ privacyRouter.patch(
       module_key: "privacy",
       entity_type: "consent_text_version",
       entity_id: req.params.id,
-      change_summary: {
-        version_code: version.version_code,
-        purpose_code: version.purpose_code,
-      },
+      change_summary: { version_code: version.version_code, purpose_code: version.purpose_code },
       req,
     });
 
     res.json({ success: true });
-  }),
+  })
 );
 
 // ─── DPDP Withdrawal Workflow ──────────────────────────────────────────────────
@@ -695,7 +622,7 @@ privacyRouter.get(
 
     // 1. Consent mechanism — at least one active consent version
     const [cvRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM consent_text_version WHERE status = 'active'`,
+      `SELECT COUNT(*) AS cnt FROM consent_text_version WHERE status = 'active'`
     );
     const activeVersions: number = (cvRows[0] as any).cnt ?? 0;
     checks.push({
@@ -706,7 +633,7 @@ privacyRouter.get(
 
     // 2. Retention policies configured
     const [rpRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM data_retention_policy WHERE is_active = 1`,
+      `SELECT COUNT(*) AS cnt FROM data_retention_policy WHERE is_active = 1`
     );
     const activePolicies: number = (rpRows[0] as any).cnt ?? 0;
     checks.push({
@@ -717,7 +644,7 @@ privacyRouter.get(
 
     // 3. Rights request mechanism — any resolved rights request exists
     const [rrRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM data_rights_request WHERE status IN ('pending','in_review','resolved')`,
+      `SELECT COUNT(*) AS cnt FROM data_rights_request WHERE status IN ('pending','in_review','resolved')`
     );
     const rightsTotal: number = (rrRows[0] as any).cnt ?? 0;
     checks.push({
@@ -732,21 +659,20 @@ privacyRouter.get(
        FROM data_breach_log
        WHERE status NOT IN ('resolved','closed')
          AND notified_authority_at IS NULL
-         AND TIMESTAMPDIFF(HOUR, detected_at, NOW()) > 72`,
+         AND TIMESTAMPDIFF(HOUR, detected_at, NOW()) > 72`
     );
     const overdueBreaches: number = (breachRows[0] as any).cnt ?? 0;
     checks.push({
       id: "breach_monitoring",
       pass: overdueBreaches === 0,
-      evidence:
-        overdueBreaches === 0
-          ? "No unresolved breaches past 72-hour notification window"
-          : `${overdueBreaches} breach(es) exceed 72-hour DPDP notification window`,
+      evidence: overdueBreaches === 0
+        ? "No unresolved breaches past 72-hour notification window"
+        : `${overdueBreaches} breach(es) exceed 72-hour DPDP notification window`,
     });
 
     // 5. Withdrawal workflow — at least one approved or completed withdrawal exists or config present
     const [wdRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM dpdp_consent_withdrawal`,
+      `SELECT COUNT(*) AS cnt FROM dpdp_consent_withdrawal`
     );
     const totalWithdrawals: number = (wdRows[0] as any).cnt ?? 0;
     // Withdrawal workflow is "active" if the table exists and is accessible (any record count)
@@ -758,22 +684,19 @@ privacyRouter.get(
 
     // 6. Grievance officer configured
     const [goRows] = await db.execute<RowDataPacket[]>(
-      `SELECT config_value FROM dpdp_config WHERE config_key = 'grievance_officer_email'`,
+      `SELECT config_value FROM dpdp_config WHERE config_key = 'grievance_officer_email'`
     );
     const goEmail: string = (goRows[0] as any)?.config_value ?? "";
-    const goConfigured =
-      goEmail.length > 0 && goEmail !== "privacy@yourcompany.com";
+    const goConfigured = goEmail.length > 0 && goEmail !== "privacy@yourcompany.com";
     checks.push({
       id: "grievance_officer_configured",
       pass: goConfigured,
-      evidence: goConfigured
-        ? `Grievance officer email: ${goEmail}`
-        : "Grievance officer email is not yet configured",
+      evidence: goConfigured ? `Grievance officer email: ${goEmail}` : "Grievance officer email is not yet configured",
     });
 
     const passCount = checks.filter((c) => c.pass).length;
     const score = Math.round((passCount / checks.length) * 100);
 
     res.json({ success: true, data: { score, checks } });
-  }),
+  })
 );

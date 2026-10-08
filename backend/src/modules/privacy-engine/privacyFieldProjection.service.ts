@@ -17,30 +17,17 @@ export interface ProjectionPolicy {
 }
 
 const SENSITIVE_FIELDS = [
-  "pan_number",
-  "pan_number_encrypted",
-  "aadhaar_number",
-  "aadhaar_last4",
-  "bank_account_no",
-  "bank_account_number",
+  "pan_number", "pan_number_encrypted",
+  "aadhaar_number", "aadhaar_last4",
+  "bank_account_no", "bank_account_number",
   "ifsc_code",
-  "uan",
-  "pf_number",
-  "esic_number",
+  "uan", "pf_number", "esic_number",
   "passport_number",
-  "salary",
-  "gross_salary",
-  "net_salary",
-  "ctc",
-  "personal_email",
-  "personal_phone",
-  "alternate_mobile",
-  "address_line1",
-  "address_line2",
-  "emergency_contact_name",
-  "emergency_contact_phone",
-  "nominee_name",
-  "nominee_phone",
+  "salary", "gross_salary", "net_salary", "ctc",
+  "personal_email", "personal_phone", "alternate_mobile",
+  "address_line1", "address_line2",
+  "emergency_contact_name", "emergency_contact_phone",
+  "nominee_name", "nominee_phone",
   "medical_info",
 ] as const;
 
@@ -113,7 +100,7 @@ const EMPLOYEE_POLICY: Record<string, Record<string, FieldPolicy>> = {
   payroll: {
     ...BASE_EMPLOYEE_FIELDS,
     official_email: "allow",
-    pan_number: "allow", // payroll legitimately needs raw PAN for statutory filing
+    pan_number: "allow",    // payroll legitimately needs raw PAN for statutory filing
     aadhaar_last4: "allow",
     uan: "allow",
     pf_number: "allow",
@@ -181,14 +168,10 @@ const EMPLOYEE_POLICY: Record<string, Record<string, FieldPolicy>> = {
 export function getProjectionForRole(
   role: string,
   resource: "employee" | "candidate",
-  isSelf = false,
+  isSelf = false
 ): Record<string, FieldPolicy> {
   if (resource === "employee") {
-    const effectiveRole = isSelf
-      ? "employee_self"
-      : role in EMPLOYEE_POLICY
-        ? role
-        : "hr";
+    const effectiveRole = isSelf ? "employee_self" : (role in EMPLOYEE_POLICY ? role : "hr");
     return EMPLOYEE_POLICY[effectiveRole] ?? BASE_EMPLOYEE_FIELDS;
   }
   // Candidate projection — simpler; recruiter and HR see most fields
@@ -202,7 +185,7 @@ export function getProjectionForRole(
  */
 export function projectRecord(
   record: Record<string, unknown>,
-  policy: Record<string, FieldPolicy>,
+  policy: Record<string, FieldPolicy>
 ): { allowed: Record<string, unknown>; toMask: string[] } {
   const allowed: Record<string, unknown> = {};
   const toMask: string[] = [];

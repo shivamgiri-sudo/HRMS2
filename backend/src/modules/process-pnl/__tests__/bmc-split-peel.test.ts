@@ -15,11 +15,7 @@ import { allocatePoolAmount } from "../bpo-pnl.calculation.js";
  * not a split exists. Only where the money lands changes.
  */
 
-interface Person {
-  id: string;
-  cost: number;
-  branchId: string;
-}
+interface Person { id: string; cost: number; branchId: string }
 
 /** Mirrors the peel in getPeopleCosts: split people post direct, everyone else pools. */
 function peel(
@@ -43,11 +39,7 @@ function peel(
         direct.set(processId, (direct.get(processId) ?? 0) + amount);
         posted += amount;
       }
-      if (!outcome.balanced)
-        unbalanced.push({
-          id: person.id,
-          percentTotal: outcome.percentTotal ?? 0,
-        });
+      if (!outcome.balanced) unbalanced.push({ id: person.id, percentTotal: outcome.percentTotal ?? 0 });
       const remainder = person.cost - posted;
       if (Math.abs(remainder) > 0.005) {
         pool.set(person.branchId, (pool.get(person.branchId) ?? 0) + remainder);
@@ -57,9 +49,8 @@ function peel(
     pool.set(person.branchId, (pool.get(person.branchId) ?? 0) + person.cost);
   }
 
-  const total =
-    [...direct.values()].reduce((a, b) => a + b, 0) +
-    [...pool.values()].reduce((a, b) => a + b, 0);
+  const total = [...direct.values()].reduce((a, b) => a + b, 0)
+    + [...pool.values()].reduce((a, b) => a + b, 0);
   return { direct, pool, unbalanced, total };
 }
 
@@ -73,18 +64,9 @@ const GROSS = PEOPLE.reduce((a, p) => a + p.cost, 0);
 describe("bmc split — peel before pooling", () => {
   it("leaves total people cost identical when a split is introduced", async () => {
     const without = peel(PEOPLE, new Map());
-    const with_ = peel(
-      PEOPLE,
-      new Map([
-        [
-          "e2",
-          [
-            { processId: "p1", pct: 60 },
-            { processId: "p2", pct: 40 },
-          ],
-        ],
-      ]),
-    );
+    const with_ = peel(PEOPLE, new Map([
+      ["e2", [{ processId: "p1", pct: 60 }, { processId: "p2", pct: 40 }]],
+    ]));
     expect(without.total).toBeCloseTo(GROSS, 2);
     expect(
       with_.total,
@@ -93,24 +75,12 @@ describe("bmc split — peel before pooling", () => {
   });
 
   it("removes a split person from the branch pool entirely", async () => {
-    const result = peel(
-      PEOPLE,
-      new Map([
-        [
-          "e2",
-          [
-            { processId: "p1", pct: 60 },
-            { processId: "p2", pct: 40 },
-          ],
-        ],
-      ]),
-    );
+    const result = peel(PEOPLE, new Map([
+      ["e2", [{ processId: "p1", pct: 60 }, { processId: "p2", pct: 40 }]],
+    ]));
     // b1 held e1 + e2; after the peel it must hold e1 alone, or e2 is counted twice.
     expect(result.pool.get("b1")).toBeCloseTo(45_000, 2);
-    expect(result.direct.get("p1")! + result.direct.get("p2")!).toBeCloseTo(
-      62_500.37,
-      2,
-    );
+    expect(result.direct.get("p1")! + result.direct.get("p2")!).toBeCloseTo(62_500.37, 2);
   });
 
   it("stays exact on an amount that will not divide evenly", async () => {
@@ -127,24 +97,16 @@ describe("bmc split — peel before pooling", () => {
      */
     const result = peel(
       [{ id: "e2", cost: 62_500.37, branchId: "b1" }],
-      new Map([
-        [
-          "e2",
-          [
-            { processId: "p1", pct: 33.3333 },
-            { processId: "p2", pct: 33.3333 },
-            { processId: "p3", pct: 33.3334 },
-          ],
-        ],
-      ]),
+      new Map([["e2", [
+        { processId: "p1", pct: 33.3333 },
+        { processId: "p2", pct: 33.3333 },
+        { processId: "p3", pct: 33.3334 },
+      ]]]),
     );
     const posted = [...result.direct.values()].reduce((a, b) => a + b, 0);
     expect(posted).toBeCloseTo(62_500.38, 2);
     expect(result.pool.get("b1")).toBeCloseTo(-0.01, 2);
-    expect(result.total, "the paisa must be absorbed, not created").toBeCloseTo(
-      62_500.37,
-      2,
-    );
+    expect(result.total, "the paisa must be absorbed, not created").toBeCloseTo(62_500.37, 2);
   });
 
   it("keeps the uncovered remainder in the pool and flags the imbalance", async () => {
@@ -156,10 +118,7 @@ describe("bmc split — peel before pooling", () => {
     );
     expect(result.unbalanced).toEqual([{ id: "e2", percentTotal: 90 }]);
     expect(result.direct.get("p1")).toBeCloseTo(90_000, 2);
-    expect(
-      result.pool.get("b1"),
-      "the uncovered 10% must survive, not vanish",
-    ).toBeCloseTo(10_000, 2);
+    expect(result.pool.get("b1"), "the uncovered 10% must survive, not vanish").toBeCloseTo(10_000, 2);
     expect(result.total).toBeCloseTo(100_000, 2);
   });
 });

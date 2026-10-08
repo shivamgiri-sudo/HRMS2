@@ -30,8 +30,8 @@
  * The scope snapshot (resolved_scope_json) is immutable after request creation,
  * so re-execution is deterministic and cannot be scope-escalated.
  */
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
 
 export interface ResolvedScope {
   isSuperAdmin: boolean;
@@ -47,33 +47,27 @@ function addScopeFilters(
   scope: ResolvedScope,
   clauses: string[],
   params: unknown[],
-  alias = "e",
+  alias = 'e'
 ): void {
   if (!scope.isSuperAdmin && scope.branchIds.length > 0) {
-    clauses.push(
-      `${alias}.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`,
-    );
+    clauses.push(`${alias}.branch_id IN (${scope.branchIds.map(() => '?').join(',')})`);
     params.push(...scope.branchIds);
   }
 }
 
 function dateParam(value: unknown, fallback: string): string {
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value))
-    return value;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   return fallback;
 }
 
 function monthParam(value: unknown): string {
   const today = new Date();
-  const def = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
-  if (typeof value === "string" && /^\d{4}-\d{2}$/.test(value)) return value;
+  const def = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  if (typeof value === 'string' && /^\d{4}-\d{2}$/.test(value)) return value;
   return def;
 }
 
-async function run(
-  sql: string,
-  params: unknown[],
-): Promise<Record<string, unknown>[]> {
+async function run(sql: string, params: unknown[]): Promise<Record<string, unknown>[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows as Record<string, unknown>[];
 }
@@ -81,16 +75,16 @@ async function run(
 export async function executeReportForWorker(
   reportCode: string,
   filters: Record<string, unknown>,
-  scope: ResolvedScope,
+  scope: ResolvedScope
 ): Promise<WorkerExecutionResult> {
   const clauses: string[] = [];
   const params: unknown[] = [];
   let rows: Record<string, unknown>[] = [];
 
   switch (reportCode) {
-    case "employee-master": {
+    case 'employee-master': {
       addScopeFilters(scope, clauses, params);
-      const where = clauses.length ? clauses.join(" AND ") : "1=1";
+      const where = clauses.length ? clauses.join(' AND ') : '1=1';
       rows = await run(
         `SELECT e.employee_code,
                 COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -105,12 +99,12 @@ export async function executeReportForWorker(
            LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
           WHERE ${where}
           ORDER BY e.employee_code`,
-        params,
+        params
       );
       break;
     }
 
-    case "notification-undeliverable-recipients": {
+    case 'notification-undeliverable-recipients': {
       // Every active employee with at least one delivery gap, and which gap.
       //
       // 'gap_reason' is built from the same rules shared/recipient-resolver.ts applies at
@@ -120,8 +114,8 @@ export async function executeReportForWorker(
       //   * every manager CC resolves through employees.reporting_manager_id.
       // The domain list mirrors shared/email-domains.ts.
       addScopeFilters(scope, clauses, params);
-      clauses.push("e.active_status = 1");
-      const where = clauses.join(" AND ");
+      clauses.push('e.active_status = 1');
+      const where = clauses.join(' AND ');
       rows = await run(
         `SELECT e.employee_code,
                 COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -164,44 +158,35 @@ export async function executeReportForWorker(
                      NOT LIKE '%.teammas.in')
                 )
           ORDER BY blocks_financial_mail DESC, b.branch_name, e.employee_code`,
-        params,
+        params
       );
       break;
     }
 
-    case "headcount": {
+    case 'headcount': {
       addScopeFilters(scope, clauses, params);
-      clauses.push(
-        "e.active_status = 1",
-        "LOWER(COALESCE(e.employment_status,'active')) = 'active'",
-      );
+      clauses.push("e.active_status = 1", "LOWER(COALESCE(e.employment_status,'active')) = 'active'");
       rows = await run(
         `SELECT b.branch_name, d.dept_name AS department_name, p.process_name, COUNT(*) AS active_headcount
            FROM employees e
            LEFT JOIN branch_master b ON b.id = e.branch_id
            LEFT JOIN department_master d ON d.id = e.department_id
            LEFT JOIN process_master p ON p.id = e.process_id
-          WHERE ${clauses.join(" AND ")}
+          WHERE ${clauses.join(' AND ')}
           GROUP BY b.branch_name, d.dept_name, p.process_name
           ORDER BY b.branch_name, d.dept_name, p.process_name`,
-        params,
+        params
       );
       break;
     }
 
-    case "attendance-daily": {
-      const from = dateParam(
-        filters.from,
-        new Date().toISOString().slice(0, 10),
-      );
-      const to = dateParam(filters.to, from);
+    case 'attendance-daily': {
+      const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+      const to   = dateParam(filters.to, from);
       addScopeFilters(scope, clauses, params);
-      clauses.push("adr.record_date BETWEEN ? AND ?");
+      clauses.push('adr.record_date BETWEEN ? AND ?');
       params.push(from, to);
-      if (filters.processId) {
-        clauses.push("e.process_id = ?");
-        params.push(String(filters.processId));
-      }
+      if (filters.processId) { clauses.push('e.process_id = ?'); params.push(String(filters.processId)); }
       rows = await run(
         `SELECT adr.record_date, e.employee_code,
                 COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -213,17 +198,17 @@ export async function executeReportForWorker(
            LEFT JOIN branch_master b ON b.id = e.branch_id
            LEFT JOIN process_master p ON p.id = e.process_id
            LEFT JOIN department_master d ON d.id = e.department_id
-          WHERE ${clauses.join(" AND ")}
+          WHERE ${clauses.join(' AND ')}
           ORDER BY adr.record_date DESC, e.employee_code`,
-        params,
+        params
       );
       break;
     }
 
-    case "leave-balance": {
+    case 'leave-balance': {
       const year = Number(filters.year ?? new Date().getFullYear());
       addScopeFilters(scope, clauses, params);
-      clauses.push("e.active_status = 1");
+      clauses.push('e.active_status = 1');
       rows = await run(
         `SELECT e.employee_code,
                 COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -237,17 +222,17 @@ export async function executeReportForWorker(
            LEFT JOIN process_master p ON p.id = e.process_id
            JOIN leave_type_master lt ON lt.active_status = 1
            LEFT JOIN leave_balance_ledger lbl ON lbl.employee_id = e.id AND lbl.leave_type_id = lt.id AND lbl.balance_year = ?
-          WHERE ${clauses.join(" AND ")}
+          WHERE ${clauses.join(' AND ')}
           ORDER BY e.employee_code, lt.leave_name`,
-        [year, ...params],
+        [year, ...params]
       );
       break;
     }
 
-    case "payroll-register": {
+    case 'payroll-register': {
       const month = monthParam(filters.month);
       addScopeFilters(scope, clauses, params);
-      clauses.push("spr.run_month = ?");
+      clauses.push('spr.run_month = ?');
       params.push(month);
       rows = await run(
         `SELECT spr.run_month AS payroll_month, e.employee_code,
@@ -280,17 +265,17 @@ export async function executeReportForWorker(
            LEFT JOIN process_master p ON p.id = e.process_id
            LEFT JOIN department_master d ON d.id = e.department_id
            LEFT JOIN designation_master des ON des.id = e.designation_id
-          WHERE ${clauses.join(" AND ")}
+          WHERE ${clauses.join(' AND ')}
           ORDER BY e.employee_code`,
-        params,
+        params
       );
       break;
     }
 
-    case "birthday-list": {
+    case 'birthday-list': {
       const month = Number(filters.month ?? new Date().getMonth() + 1);
       addScopeFilters(scope, clauses, params);
-      clauses.push("e.active_status = 1", "MONTH(e.date_of_birth) = ?");
+      clauses.push('e.active_status = 1', 'MONTH(e.date_of_birth) = ?');
       params.push(month);
       rows = await run(
         `SELECT e.employee_code,
@@ -301,23 +286,21 @@ export async function executeReportForWorker(
            LEFT JOIN branch_master b ON b.id = e.branch_id
            LEFT JOIN process_master p ON p.id = e.process_id
            LEFT JOIN department_master d ON d.id = e.department_id
-          WHERE ${clauses.join(" AND ")}
+          WHERE ${clauses.join(' AND ')}
           ORDER BY birth_month, birth_day, e.employee_code`,
-        params,
+        params
       );
       break;
     }
 
     default: {
       // Generic fallback — return a metadata-only row indicating the report needs a dedicated builder
-      rows = [
-        {
-          REPORT_CODE: reportCode,
-          STATUS: "PENDING_DEDICATED_BUILDER",
-          NOTE: `Report '${reportCode}' does not yet have a dedicated server-side builder. Please contact the HRMS team.`,
-          GENERATED_AT: new Date().toISOString(),
-        },
-      ];
+      rows = [{
+        REPORT_CODE: reportCode,
+        STATUS: 'PENDING_DEDICATED_BUILDER',
+        NOTE: `Report '${reportCode}' does not yet have a dedicated server-side builder. Please contact the HRMS team.`,
+        GENERATED_AT: new Date().toISOString(),
+      }];
     }
   }
 

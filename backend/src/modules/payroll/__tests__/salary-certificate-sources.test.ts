@@ -26,15 +26,11 @@ const SOURCE = readFileSync(
   "utf8",
 );
 /** Assert on code, not on the prose that necessarily quotes the broken form. */
-const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(
-  /^\s*\/\/.*$/gm,
-  "",
-);
+const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("no column is read that the table does not have", () => {
   it("never selects basic_salary, gross_salary or net_salary from employee_salary_assignment", () => {
-    const stmts =
-      CODE.match(/FROM\s+employee_salary_assignment[\s\S]{0,400}?`/gi) ?? [];
+    const stmts = CODE.match(/FROM\s+employee_salary_assignment[\s\S]{0,400}?`/gi) ?? [];
     for (const s of stmts) {
       expect(s).not.toMatch(/\bbasic_salary\b/);
       expect(s).not.toMatch(/\bnet_salary\b/);
@@ -44,10 +40,7 @@ describe("no column is read that the table does not have", () => {
   });
 
   it("reads only columns employee_salary_assignment actually has", () => {
-    const block = CODE.slice(
-      CODE.indexOf("FROM employee_salary_assignment") - 300,
-      CODE.indexOf("FROM employee_salary_assignment") + 300,
-    );
+    const block = CODE.slice(CODE.indexOf("FROM employee_salary_assignment") - 300, CODE.indexOf("FROM employee_salary_assignment") + 300);
     expect(block).toMatch(/esa\.ctc_annual/);
     expect(block).toMatch(/esa\.active_status = 1/);
   });
@@ -96,10 +89,7 @@ describe("it refuses rather than printing a figure it cannot stand behind", () =
   });
 
   it("refuses with a 409 the caller can act on, not a 500", () => {
-    const block = CODE.slice(
-      CODE.indexOf("Cannot issue a salary certificate") - 400,
-      CODE.indexOf("Cannot issue a CTC certificate") + 400,
-    );
+    const block = CODE.slice(CODE.indexOf("Cannot issue a salary certificate") - 400, CODE.indexOf("Cannot issue a CTC certificate") + 400);
     expect(block).toMatch(/status\(409\)/);
   });
 

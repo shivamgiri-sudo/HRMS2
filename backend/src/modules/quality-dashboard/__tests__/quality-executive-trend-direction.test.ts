@@ -35,21 +35,12 @@ function fakeConn(rows: unknown[][]) {
 // per-agent scores (which also carry the org benchmarks). Every test below fills only the first
 // (what direction depends on) and leaves the rest empty — a real empty result set, not an
 // omission that could silently pass.
-function summaryFixture(
-  currentQuality: string,
-  sevenDay: string,
-  thirtyDay: string,
-) {
+function summaryFixture(currentQuality: string, sevenDay: string, thirtyDay: string) {
   return [
-    [
-      {
-        current_quality: currentQuality,
-        total_calls: 100,
-        unique_agents: 5,
-        avg_quality_7d: sevenDay,
-        avg_quality_30d: thirtyDay,
-      },
-    ],
+    [{
+      current_quality: currentQuality, total_calls: 100, unique_agents: 5,
+      avg_quality_7d: sevenDay, avg_quality_30d: thirtyDay,
+    }],
     [], // top performers
     [], // bottom performers
     [], // process metrics
@@ -61,9 +52,7 @@ describe("QualityExecutiveService trend direction — real DECIMAL-as-string inp
   it("reports a decline as '↘', not '↗', when the drop crosses below 10%", async () => {
     // The exact shape that broke: current 73.45%, 7-day average collapsed to 9.50%.
     const conn = fakeConn(summaryFixture("73.45", "9.50", "9.50"));
-    const service = new QualityExecutiveService({
-      getConnection: async () => conn as any,
-    });
+    const service = new QualityExecutiveService({ getConnection: async () => conn as any });
 
     const result = await service.getExecutiveSummary(30);
 
@@ -73,9 +62,7 @@ describe("QualityExecutiveService trend direction — real DECIMAL-as-string inp
 
   it("reports a genuine improvement as '↗'", async () => {
     const conn = fakeConn(summaryFixture("40.00", "65.00", "65.00"));
-    const service = new QualityExecutiveService({
-      getConnection: async () => conn as any,
-    });
+    const service = new QualityExecutiveService({ getConnection: async () => conn as any });
 
     const result = await service.getExecutiveSummary(30);
 
@@ -85,9 +72,7 @@ describe("QualityExecutiveService trend direction — real DECIMAL-as-string inp
 
   it("reports no change as '→' when both periods are equal strings", async () => {
     const conn = fakeConn(summaryFixture("73.45", "73.45", "73.45"));
-    const service = new QualityExecutiveService({
-      getConnection: async () => conn as any,
-    });
+    const service = new QualityExecutiveService({ getConnection: async () => conn as any });
 
     const result = await service.getExecutiveSummary(30);
 
@@ -97,9 +82,7 @@ describe("QualityExecutiveService trend direction — real DECIMAL-as-string inp
 
   it("computes change_pct numerically, not by string concatenation", async () => {
     const conn = fakeConn(summaryFixture("73.45", "9.50", "9.50"));
-    const service = new QualityExecutiveService({
-      getConnection: async () => conn as any,
-    });
+    const service = new QualityExecutiveService({ getConnection: async () => conn as any });
 
     const result = await service.getExecutiveSummary(30);
 

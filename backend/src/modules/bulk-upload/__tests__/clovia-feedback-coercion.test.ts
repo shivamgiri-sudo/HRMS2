@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseNullableFlag,
-  parseDate,
-  parseCallDate,
-  CLOVIA_FEEDBACK_HEADERS,
+  parseNullableFlag, parseDate, parseCallDate, CLOVIA_FEEDBACK_HEADERS,
 } from "../clovia-feedback-bulk.service.js";
 
 describe("parseNullableFlag", () => {

@@ -50,11 +50,7 @@ function mockConn(row: Record<string, unknown>) {
   return c;
 }
 
-const {
-  canViewEmployee,
-  resolveUserBusinessScope,
-  buildEmployeeScopeCondition,
-} = vi.hoisted(() => ({
+const { canViewEmployee, resolveUserBusinessScope, buildEmployeeScopeCondition } = vi.hoisted(() => ({
   canViewEmployee: vi.fn(),
   resolveUserBusinessScope: vi.fn(),
   buildEmployeeScopeCondition: vi.fn(),
@@ -72,19 +68,13 @@ let authUser: { id: string; role: string; roles: string[] } = {
 };
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => {
-    (req as express.Request & { authUser: typeof authUser }).authUser =
-      authUser;
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (req as express.Request & { authUser: typeof authUser }).authUser = authUser;
     next();
   },
 }));
 
-const { employeeReactivationRouter } =
-  await import("../employee-reactivation.routes.js");
+const { employeeReactivationRouter } = await import("../employee-reactivation.routes.js");
 
 function app() {
   const a = express();
@@ -115,9 +105,7 @@ describe("GET /reactivation/:id — role gate + scope", () => {
   it("401/403s a role with no access at all (the role gate that never existed before this fix)", async () => {
     authUser = { id: ACTOR_ID, role: "employee", roles: ["employee"] };
 
-    const res = await request(app()).get(
-      `/api/employees/reactivation/${REQUEST_ID}`,
-    );
+    const res = await request(app()).get(`/api/employees/reactivation/${REQUEST_ID}`);
 
     expect(res.status).toBe(403);
     expect(dbExecute).not.toHaveBeenCalled();
@@ -128,9 +116,7 @@ describe("GET /reactivation/:id — role gate + scope", () => {
     dbExecute.mockResolvedValue([[REQUEST_ROW], []]);
     canViewEmployee.mockResolvedValue(false);
 
-    const res = await request(app()).get(
-      `/api/employees/reactivation/${REQUEST_ID}`,
-    );
+    const res = await request(app()).get(`/api/employees/reactivation/${REQUEST_ID}`);
 
     expect(res.status).toBe(403);
     expect(canViewEmployee).toHaveBeenCalledWith(ACTOR_ID, EMPLOYEE_ID);
@@ -141,9 +127,7 @@ describe("GET /reactivation/:id — role gate + scope", () => {
     dbExecute.mockResolvedValue([[REQUEST_ROW], []]);
     canViewEmployee.mockResolvedValue(true);
 
-    const res = await request(app()).get(
-      `/api/employees/reactivation/${REQUEST_ID}`,
-    );
+    const res = await request(app()).get(`/api/employees/reactivation/${REQUEST_ID}`);
 
     expect(res.status).toBe(200);
     expect(res.body.data.id).toBe(REQUEST_ID);
@@ -154,9 +138,7 @@ describe("GET /reactivation/:id — role gate + scope", () => {
     dbExecute.mockResolvedValue([[REQUEST_ROW], []]);
     canViewEmployee.mockResolvedValue(true); // simulates enterpriseScope's internal hr bypass
 
-    const res = await request(app()).get(
-      `/api/employees/reactivation/${REQUEST_ID}`,
-    );
+    const res = await request(app()).get(`/api/employees/reactivation/${REQUEST_ID}`);
 
     expect(res.status).toBe(200);
   });
@@ -165,9 +147,7 @@ describe("GET /reactivation/:id — role gate + scope", () => {
     authUser = { id: ACTOR_ID, role: "hr", roles: ["hr"] };
     dbExecute.mockResolvedValue([[], []]);
 
-    const res = await request(app()).get(
-      `/api/employees/reactivation/${REQUEST_ID}`,
-    );
+    const res = await request(app()).get(`/api/employees/reactivation/${REQUEST_ID}`);
 
     expect(res.status).toBe(404);
     expect(canViewEmployee).not.toHaveBeenCalled();
@@ -192,10 +172,7 @@ describe("GET /reactivation/pending — branch_head scope", () => {
   it("applies the branch_head's employee-scope condition instead of returning everything", async () => {
     authUser = { id: ACTOR_ID, role: "branch_head", roles: ["branch_head"] };
     resolveUserBusinessScope.mockResolvedValue({ userId: ACTOR_ID } as never);
-    buildEmployeeScopeCondition.mockReturnValue({
-      sql: "e.branch_id = ?",
-      params: ["branch-A"],
-    });
+    buildEmployeeScopeCondition.mockReturnValue({ sql: "e.branch_id = ?", params: ["branch-A"] });
     dbExecute.mockResolvedValue([[REQUEST_ROW], []]);
 
     const res = await request(app()).get("/api/employees/reactivation/pending");

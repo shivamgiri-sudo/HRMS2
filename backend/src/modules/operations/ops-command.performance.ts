@@ -41,14 +41,9 @@ const MAX_METRICS = 30;
 const SUM_METHODS = new Set(["sum", "count", "total"]);
 
 /** target vs actual, capped at 120 like performance-intelligence.calculateAchievement. */
-export function achievement(
-  value: number | null,
-  target: number | null,
-  dir: PerfMetricMeta["direction"],
-): number | null {
+export function achievement(value: number | null, target: number | null, dir: PerfMetricMeta["direction"]): number | null {
   if (value === null || target === null || target === 0) return null;
-  if (dir === "lower_is_better")
-    return value <= 0 ? 120 : Math.min((target / value) * 100, 120);
+  if (dir === "lower_is_better") return value <= 0 ? 120 : Math.min((target / value) * 100, 120);
   return Math.min((value / target) * 100, 120);
 }
 
@@ -83,28 +78,15 @@ function agentKpis(from: string, to: string) {
         WHERE k.score_date BETWEEN ? AND ? GROUP BY k.employee_id, k.metric_id`,
       [from, to],
     );
-    return rows.map((r) => ({
-      eid: String(r.eid),
-      key: String(r.mkey),
-      s: num(r.s),
-      c: num(r.c),
-      n: numOrNull(r.n),
-      d: numOrNull(r.d),
-    }));
+    return rows.map((r) => ({ eid: String(r.eid), key: String(r.mkey), s: num(r.s), c: num(r.c), n: numOrNull(r.n), d: numOrNull(r.d) }));
   });
 }
 
 export async function computePerformance(
   ctx: OpsCtx,
   dim: OpsDimension,
-  source: PerfSource = dim === "all" || dim === "branch" || dim === "process"
-    ? "process"
-    : "agent",
-): Promise<{
-  metrics: PerfMetricMeta[];
-  rows: PerfRow[];
-  grain: "process" | "analyst";
-}> {
+  source: PerfSource = dim === "all" || dim === "branch" || dim === "process" ? "process" : "agent",
+): Promise<{ metrics: PerfMetricMeta[]; rows: PerfRow[]; grain: "process" | "analyst" }> {
   const { from, to } = ctx.f;
   let accs: Acc[];
   let grain: "process" | "analyst";
@@ -114,12 +96,7 @@ export async function computePerformance(
     grain = "process";
     if (hasPeopleOnlyFilter(ctx)) return { metrics: [], rows: [], grain };
     const fw = factWhere(ctx, "pm.branch_id", "pma.process_id");
-    const gx =
-      dim === "process"
-        ? `pma.process_id`
-        : dim === "branch"
-          ? `COALESCE(pm.branch_id,'__none__')`
-          : `'all'`;
+    const gx = dim === "process" ? `pma.process_id` : dim === "branch" ? `COALESCE(pm.branch_id,'__none__')` : `'all'`;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ${gx} AS gid, pma.metric_key AS mkey, SUM(pma.rollup_numerator) AS n, SUM(pma.rollup_denominator) AS d,
               SUM(pma.actual_value) AS s, AVG(pma.actual_value) AS a, COUNT(*) AS c
@@ -129,61 +106,25 @@ export async function computePerformance(
         GROUP BY gid, mkey`,
       [from, to, ...fw.params],
     );
-    accs = rows.map((r) => ({
-      gid: String(r.gid),
-      key: String(r.mkey),
-      n: numOrNull(r.n),
-      d: numOrNull(r.d),
-      s: num(r.s),
-      a: num(r.a),
-      c: num(r.c),
-    }));
+    accs = rows.map((r) => ({ gid: String(r.gid), key: String(r.mkey), n: numOrNull(r.n), d: numOrNull(r.d), s: num(r.s), a: num(r.a), c: num(r.c) }));
   } else {
     grain = "analyst";
     const view = await loadView(ctx);
     const facts = await agentKpis(from, to);
-    const byKey = new Map<
-      string,
-      {
-        gid: string;
-        key: string;
-        n: number | null;
-        d: number | null;
-        s: number;
-        c: number;
-      }
-    >();
+    const byKey = new Map<string, { gid: string; key: string; n: number | null; d: number | null; s: number; c: number }>();
     for (const f of facts) {
       const e = view.byId.get(f.eid);
       if (!e) continue;
       empProcess.set(f.eid, e.process);
       const gid = groupKey(e, dim);
       const k = `${gid}|${f.key}`;
-      const a = byKey.get(k) ?? {
-        gid,
-        key: f.key,
-        n: null,
-        d: null,
-        s: 0,
-        c: 0,
-      };
+      const a = byKey.get(k) ?? { gid, key: f.key, n: null, d: null, s: 0, c: 0 };
       a.s += f.s;
       a.c += f.c;
-      if (f.n !== null && f.d !== null) {
-        a.n = (a.n ?? 0) + f.n;
-        a.d = (a.d ?? 0) + f.d;
-      }
+      if (f.n !== null && f.d !== null) { a.n = (a.n ?? 0) + f.n; a.d = (a.d ?? 0) + f.d; }
       byKey.set(k, a);
     }
-    accs = [...byKey.values()].map((a) => ({
-      gid: a.gid,
-      key: a.key,
-      n: a.n,
-      d: a.d,
-      s: a.s,
-      a: a.c ? a.s / a.c : 0,
-      c: a.c,
-    }));
+    accs = [...byKey.values()].map((a) => ({ gid: a.gid, key: a.key, n: a.n, d: a.d, s: a.s, a: a.c ? a.s / a.c : 0, c: a.c }));
   }
   if (!accs.length) return { metrics: [], rows: [], grain };
 
@@ -192,10 +133,8 @@ export async function computePerformance(
   for (const a of accs) volume.set(a.key, (volume.get(a.key) ?? 0) + a.c);
   const keys = [...volume.keys()]
     .sort((x, y) => {
-      const hx = PERFORMANCE_HEADLINE_KEYS.indexOf(x),
-        hy = PERFORMANCE_HEADLINE_KEYS.indexOf(y);
-      if (hx !== -1 || hy !== -1)
-        return (hx === -1 ? 999 : hx) - (hy === -1 ? 999 : hy);
+      const hx = PERFORMANCE_HEADLINE_KEYS.indexOf(x), hy = PERFORMANCE_HEADLINE_KEYS.indexOf(y);
+      if (hx !== -1 || hy !== -1) return (hx === -1 ? 999 : hx) - (hy === -1 ? 999 : hy);
       return (volume.get(y) ?? 0) - (volume.get(x) ?? 0);
     })
     .slice(0, MAX_METRICS);
@@ -213,10 +152,7 @@ export async function computePerformance(
       key: k,
       label: m?.metric_name ? String(m.metric_name) : k.replace(/_/g, " "),
       unit: m?.unit ? String(m.unit) : null,
-      direction:
-        m?.direction === "lower_is_better"
-          ? "lower_is_better"
-          : "higher_is_better",
+      direction: m?.direction === "lower_is_better" ? "lower_is_better" : "higher_is_better",
       category: m?.category ? String(m.category) : null,
       family: m?.family ? String(m.family) : null,
     };
@@ -225,12 +161,9 @@ export async function computePerformance(
   // Targets: active Studio definition per process. A row gets a target only when it maps to one process.
   const targets = new Map<string, number>();
   const processIds = new Set<string>();
-  if (dim === "process")
-    for (const a of accs) if (a.gid !== "__none__") processIds.add(a.gid);
-  if (ctx.f.processId && ctx.f.processId !== "__none__")
-    processIds.add(ctx.f.processId);
-  if (dim === "employee")
-    for (const p of empProcess.values()) if (p) processIds.add(p);
+  if (dim === "process") for (const a of accs) if (a.gid !== "__none__") processIds.add(a.gid);
+  if (ctx.f.processId && ctx.f.processId !== "__none__") processIds.add(ctx.f.processId);
+  if (dim === "employee") for (const p of empProcess.values()) if (p) processIds.add(p);
   if (processIds.size) {
     const ids = [...processIds].slice(0, 400);
     const pm = ids.map(() => "?").join(",");
@@ -241,8 +174,7 @@ export async function computePerformance(
           AND d.process_id IN (${pm}) AND d.target_value IS NOT NULL AND m.metric_code IN (${marks})`,
       [...ids, ...keys],
     );
-    for (const r of tRows)
-      targets.set(`${r.process_id}|${r.metric_code}`, num(r.target_value));
+    for (const r of tRows) targets.set(`${r.process_id}|${r.metric_code}`, num(r.target_value));
   }
 
   const byGroup = new Map<string, Map<string, Acc>>();
@@ -258,37 +190,14 @@ export async function computePerformance(
     for (const meta of metrics) {
       const a = perKey.get(meta.key);
       if (!a) continue;
-      const method = String(
-        metaByKey.get(meta.key)?.aggregation_method ?? "",
-      ).toLowerCase();
-      const value = SUM_METHODS.has(method)
-        ? a.s
-        : a.d && a.n !== null
-          ? a.n / a.d
-          : a.a;
-      const targetProcess =
-        dim === "process"
-          ? gid
-          : dim === "employee"
-            ? (empProcess.get(gid) ?? null)
-            : (ctx.f.processId ?? null);
-      const target = targetProcess
-        ? (targets.get(`${targetProcess}|${meta.key}`) ?? null)
-        : null;
+      const method = String(metaByKey.get(meta.key)?.aggregation_method ?? "").toLowerCase();
+      const value = SUM_METHODS.has(method) ? a.s : a.d && a.n !== null ? a.n / a.d : a.a;
+      const targetProcess = dim === "process" ? gid : dim === "employee" ? empProcess.get(gid) ?? null : ctx.f.processId ?? null;
+      const target = targetProcess ? targets.get(`${targetProcess}|${meta.key}`) ?? null : null;
       const ach = achievement(value, target, meta.direction);
-      cells[meta.key] = {
-        value: round(value, 2),
-        target,
-        achievementPct: round(ach, 1),
-        status: achievementStatus(ach),
-      };
+      cells[meta.key] = { value: round(value, 2), target, achievementPct: round(ach, 1), status: achievementStatus(ach) };
     }
-    return {
-      id: gid,
-      name: names.get(gid)?.name ?? "—",
-      sub: names.get(gid)?.sub ?? null,
-      cells,
-    };
+    return { id: gid, name: names.get(gid)?.name ?? "—", sub: names.get(gid)?.sub ?? null, cells };
   });
   rows.sort((a, b) => a.name.localeCompare(b.name));
   return { metrics, rows, grain };

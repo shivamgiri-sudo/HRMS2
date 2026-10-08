@@ -8,9 +8,9 @@
  * Nothing sends today — every leave event ships enabled=0, dispatch_mode='shadow'
  * (migration 1022).
  */
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { notificationGateway } from "../communication/notification.gateway.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { notificationGateway } from '../communication/notification.gateway.js';
 
 interface LeaveContextRow extends RowDataPacket {
   employee_id: string;
@@ -31,9 +31,7 @@ interface LeaveContextRow extends RowDataPacket {
 }
 
 /** Everything a leave notification needs, in one query. */
-async function loadLeaveContext(
-  requestId: string,
-): Promise<LeaveContextRow | null> {
+async function loadLeaveContext(requestId: string): Promise<LeaveContextRow | null> {
   const [rows] = await db.execute<LeaveContextRow[]>(
     `SELECT lr.employee_id,
             e.employee_code,
@@ -69,24 +67,15 @@ async function loadLeaveContext(
 async function loadBalanceFigures(
   employeeId: string,
   leaveTypeId: string | null,
-): Promise<{
-  balanceAfter: number | null;
-  takenYtd: number | null;
-  leaveTypeLabel: string | null;
-}> {
-  if (!leaveTypeId)
-    return { balanceAfter: null, takenYtd: null, leaveTypeLabel: null };
+): Promise<{ balanceAfter: number | null; takenYtd: number | null; leaveTypeLabel: string | null }> {
+  if (!leaveTypeId) return { balanceAfter: null, takenYtd: null, leaveTypeLabel: null };
   try {
-    const { leaveService } = await import("./leave.service.js");
-    const balances = await leaveService.getBalance(
-      employeeId,
-      new Date().getFullYear(),
-    );
+    const { leaveService } = await import('./leave.service.js');
+    const balances = await leaveService.getBalance(employeeId, new Date().getFullYear());
     const row = (balances as Array<Record<string, unknown>>).find(
       (b) => String(b.leave_type_id) === String(leaveTypeId),
     );
-    if (!row)
-      return { balanceAfter: null, takenYtd: null, leaveTypeLabel: null };
+    if (!row) return { balanceAfter: null, takenYtd: null, leaveTypeLabel: null };
     return {
       balanceAfter: Number(row.available_days ?? 0),
       takenYtd: Number(row.used_days ?? 0),
@@ -110,14 +99,10 @@ export async function notifyLeaveSubmitted(requestId: string): Promise<void> {
     if (!ctx) return;
     const bal = await loadBalanceFigures(ctx.employee_id, ctx.leave_type_id);
     await notificationGateway.notify({
-      eventCode: "leave_submitted",
+      eventCode: 'leave_submitted',
       dedupeKey: `leave_request:${requestId}:submitted`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "leave",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'leave',
       entityId: requestId,
       correlationId: `leave:${requestId}`,
       data: {
@@ -135,10 +120,7 @@ export async function notifyLeaveSubmitted(requestId: string): Promise<void> {
       },
     });
   } catch (err) {
-    console.error(
-      `[leave-notify] submitted ${requestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[leave-notify] submitted ${requestId}:`, (err as Error).message);
   }
 }
 
@@ -150,26 +132,21 @@ export async function notifyLeaveSubmitted(requestId: string): Promise<void> {
  */
 export async function notifyLeaveDecision(
   requestId: string,
-  status: "approved" | "rejected" | "cancelled",
+  status: 'approved' | 'rejected' | 'cancelled',
   remarks?: string | null,
 ): Promise<void> {
   try {
     const ctx = await loadLeaveContext(requestId);
     if (!ctx) return;
     const bal = await loadBalanceFigures(ctx.employee_id, ctx.leave_type_id);
-    const eventCode =
-      status === "cancelled" ? "leave_cancelled" : "leave_decision";
+    const eventCode = status === 'cancelled' ? 'leave_cancelled' : 'leave_decision';
     await notificationGateway.notify({
       eventCode,
       // Status in the key: an approve-then-cancel is two legitimate notifications, but
       // each must fire exactly once however often the route is retried.
       dedupeKey: `leave_request:${requestId}:${status}`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "leave",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'leave',
       entityId: requestId,
       correlationId: `leave:${requestId}`,
       data: {
@@ -189,10 +166,7 @@ export async function notifyLeaveDecision(
       },
     });
   } catch (err) {
-    console.error(
-      `[leave-notify] decision ${requestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[leave-notify] decision ${requestId}:`, (err as Error).message);
   }
 }
 
@@ -200,22 +174,15 @@ export async function notifyLeaveDecision(
  * Third-EL escalation. leave.service.ts:117 sets status 'pending_branch_head' when the
  * policy's exception approver kicks in; the branch head needs to know why it reached them.
  */
-export async function notifyLeavePendingBranchHead(
-  requestId: string,
-  elOccurrences?: number,
-): Promise<void> {
+export async function notifyLeavePendingBranchHead(requestId: string, elOccurrences?: number): Promise<void> {
   try {
     const ctx = await loadLeaveContext(requestId);
     if (!ctx) return;
     await notificationGateway.notify({
-      eventCode: "leave_pending_branch_head",
+      eventCode: 'leave_pending_branch_head',
       dedupeKey: `leave_request:${requestId}:branch_head`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "leave",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'leave',
       entityId: requestId,
       correlationId: `leave:${requestId}`,
       data: {
@@ -228,15 +195,11 @@ export async function notifyLeavePendingBranchHead(
         days: Number(ctx.total_days ?? 0),
         // The rule that routed it here, so the approver is not guessing.
         el_occurrences_ytd: elOccurrences ?? null,
-        policy_rule:
-          "Third earned-leave occurrence this year requires branch head approval",
+        policy_rule: 'Third earned-leave occurrence this year requires branch head approval',
       },
     });
   } catch (err) {
-    console.error(
-      `[leave-notify] branch-head escalation ${requestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[leave-notify] branch-head escalation ${requestId}:`, (err as Error).message);
   }
 }
 
@@ -251,24 +214,17 @@ export async function notifyLeavePendingBranchHead(
  * per-request reminder_count only advances on a real send attempt, matching the
  * noc-sla-reminder.worker.ts pattern this mirrors.
  */
-export async function notifyLeaveApprovalOverdue(
-  requestId: string,
-  reminderNo: number,
-): Promise<boolean> {
+export async function notifyLeaveApprovalOverdue(requestId: string, reminderNo: number): Promise<boolean> {
   try {
     const ctx = await loadLeaveContext(requestId);
     if (!ctx) return false;
     const outcome = await notificationGateway.notify({
-      eventCode: "leave_approval_overdue",
+      eventCode: 'leave_approval_overdue',
       // Reminder number in the key: each successive nudge is its own claim, or the first
       // would permanently suppress the rest.
       dedupeKey: `leave_request:${requestId}:overdue:${reminderNo}`,
-      context: {
-        employeeId: ctx.employee_id,
-        branchId: ctx.branch_id,
-        processId: ctx.process_id,
-      },
-      entityType: "leave",
+      context: { employeeId: ctx.employee_id, branchId: ctx.branch_id, processId: ctx.process_id },
+      entityType: 'leave',
       entityId: requestId,
       correlationId: `leave:${requestId}`,
       data: {
@@ -282,12 +238,9 @@ export async function notifyLeaveApprovalOverdue(
         reminder_no: reminderNo,
       },
     });
-    return outcome.outcome === "sent" || outcome.outcome === "shadow";
+    return outcome.outcome === 'sent' || outcome.outcome === 'shadow';
   } catch (err) {
-    console.error(
-      `[leave-notify] approval overdue ${requestId}:`,
-      (err as Error).message,
-    );
+    console.error(`[leave-notify] approval overdue ${requestId}:`, (err as Error).message);
     return false;
   }
 }

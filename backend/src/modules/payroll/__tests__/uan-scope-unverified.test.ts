@@ -20,19 +20,14 @@ const SOURCE = readFileSync(
   "utf8",
 );
 /** Assert on code, not on the prose that necessarily quotes the thing being guarded against. */
-const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(
-  /^\s*\/\/.*$/gm,
-  "",
-);
+const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("the unverified-scope marker is always emitted", () => {
   it("pushes MISSING_UAN_SCOPE_UNVERIFIED unconditionally, not from a countIssue", () => {
     // countIssue returns null at count 0, so a conditional marker would vanish exactly when the
     // scope artefact makes the count look clean — which is the case it exists for.
     expect(CODE).toContain('code: "MISSING_UAN_SCOPE_UNVERIFIED"');
-    expect(CODE).toMatch(
-      /issues\.push\(\{\s*code: "MISSING_UAN_SCOPE_UNVERIFIED"/,
-    );
+    expect(CODE).toMatch(/issues\.push\(\{\s*code: "MISSING_UAN_SCOPE_UNVERIFIED"/);
   });
 
   it("files it under the statutory category, which is the one it must hold open", () => {
@@ -66,22 +61,13 @@ describe("LEGACY_SCOPE_UNVERIFIED outranks PASS and WARNING", () => {
     // The ternary chain is the ranking. Order matters: if hasUnverifiedScope were tested after
     // `warnings > 0` the category would report WARNING, and after nothing at all it would
     // report PASS — which is the outcome this whole file exists to prevent.
-    const chain = CODE.slice(
-      CODE.indexOf("status: hasCheckError"),
-      CODE.indexOf("blockers,\n        warnings,"),
-    );
+    const chain = CODE.slice(CODE.indexOf("status: hasCheckError"), CODE.indexOf("blockers,\n        warnings,"));
     const iCheck = chain.indexOf("CHECK_ERROR");
     const iBlocked = chain.indexOf("BLOCKED");
     const iUnverified = chain.indexOf("LEGACY_SCOPE_UNVERIFIED");
     const iWarning = chain.indexOf('"WARNING"');
     const iPass = chain.indexOf('"PASS"');
-    for (const [name, idx] of Object.entries({
-      iCheck,
-      iBlocked,
-      iUnverified,
-      iWarning,
-      iPass,
-    })) {
+    for (const [name, idx] of Object.entries({ iCheck, iBlocked, iUnverified, iWarning, iPass })) {
       expect(idx, `${name} not found in the status chain`).toBeGreaterThan(-1);
     }
     expect(iCheck).toBeLessThan(iBlocked);
@@ -93,10 +79,7 @@ describe("LEGACY_SCOPE_UNVERIFIED outranks PASS and WARNING", () => {
 
 describe("the defensible checks stay visible alongside it", () => {
   const CATEGORIES = readFileSync(
-    resolve(
-      process.cwd(),
-      "src/modules/payroll/payroll-readiness-categories.service.ts",
-    ),
+    resolve(process.cwd(), "src/modules/payroll/payroll-readiness-categories.service.ts"),
     "utf8",
   );
 

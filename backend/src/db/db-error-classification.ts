@@ -60,19 +60,10 @@ export function isSchemaOrLogicDbError(error: unknown): boolean {
  * it looks like an answer.
  */
 export function describeDbError(error: unknown): string {
-  if (error === null || error === undefined)
-    return "UNKNOWN: (no error object)";
-  if (typeof error !== "object")
-    return `UNKNOWN: ${String(error).slice(0, 200)}`;
+  if (error === null || error === undefined) return "UNKNOWN: (no error object)";
+  if (typeof error !== "object") return `UNKNOWN: ${String(error).slice(0, 200)}`;
 
-  const e = error as {
-    code?: string;
-    errno?: number;
-    name?: string;
-    message?: string;
-    sqlMessage?: string;
-    sql?: string;
-  };
+  const e = error as { code?: string; errno?: number; name?: string; message?: string; sqlMessage?: string; sql?: string };
   const sql = (e.sql ?? "").replace(/\s+/g, " ").slice(0, 300);
 
   // Most specific identifier available, then the most specific description available.

@@ -9,10 +9,8 @@ import { scopeClientIdsMiddleware } from "./call-master.scope.js";
 import { getIstDateString } from '../../utils/dateUtils.js';
 
 const router = Router();
-const h =
-  (fn: (req: Request, res: Response) => Promise<unknown>) =>
-  (req: Request, res: Response, next: (e?: unknown) => void) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
+  (req: Request, res: Response, next: (e?: unknown) => void) => fn(req, res).catch(next);
 
 router.use(
   requireAuth,
@@ -24,15 +22,10 @@ router.use(
 // ── Helpers ────────────────────────────────────────────────────────────────
 function parseFilters(q: Record<string, unknown>): svc.CallMasterFilters {
   const now = new Date();
-  const endDate = q.endDate ? String(q.endDate) : getIstDateString();
-  const startDate = q.startDate
-    ? String(q.startDate)
-    : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const endDate   = q.endDate   ? String(q.endDate)   : getIstDateString();
+  const startDate = q.startDate ? String(q.startDate) : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
   const clientIds = q.clientIds
-    ? String(q.clientIds)
-        .split(",")
-        .map(Number)
-        .filter((n) => !isNaN(n))
+    ? String(q.clientIds).split(",").map(Number).filter((n) => !isNaN(n))
     : undefined;
   const lob = (q.lob as "Inbound" | "Outbound" | "All") || "All";
   return { startDate, endDate, clientIds, lob };
@@ -74,369 +67,58 @@ router.get("/export",             h(async (req, res) => {
 }));
 
 // ── Outbound sales sub-routes ──────────────────────────────────────────────
-router.get(
-  "/outbound/summary",
-  h(async (req, res) =>
-    res.json({
-      data: await obSvc.getOBSummary(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/outbound/daily-trend",
-  h(async (req, res) =>
-    res.json({
-      data: await obSvc.getOBDailyTrend(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/outbound/hourly",
-  h(async (req, res) =>
-    res.json({
-      data: await obSvc.getOBHourly(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/outbound/agents",
-  h(async (req, res) =>
-    res.json({
-      data: await obSvc.getOBAgentPerf(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/outbound/agent-daily",
-  h(async (req, res) =>
-    res.json({
-      data: await obSvc.getOBAgentDaily(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/outbound/disposition",
-  h(async (req, res) =>
-    res.json({
-      data: await obSvc.getOBDisposition(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/outbound/products",
-  h(async (req, res) =>
-    res.json({
-      data: await obSvc.getOBProductMix(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/outbound/not-interested",
-  h(async (req, res) =>
-    res.json({
-      data: await obSvc.getOBNotInterested(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/outbound/quality-params",
-  h(async (req, res) =>
-    res.json({
-      data: await obSvc.getOBQualityParams(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
+router.get("/outbound/summary",       h(async (req, res) => res.json({ data: await obSvc.getOBSummary(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/outbound/daily-trend",   h(async (req, res) => res.json({ data: await obSvc.getOBDailyTrend(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/outbound/hourly",        h(async (req, res) => res.json({ data: await obSvc.getOBHourly(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/outbound/agents",        h(async (req, res) => res.json({ data: await obSvc.getOBAgentPerf(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/outbound/agent-daily",   h(async (req, res) => res.json({ data: await obSvc.getOBAgentDaily(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/outbound/disposition",   h(async (req, res) => res.json({ data: await obSvc.getOBDisposition(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/outbound/products",      h(async (req, res) => res.json({ data: await obSvc.getOBProductMix(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/outbound/not-interested",h(async (req, res) => res.json({ data: await obSvc.getOBNotInterested(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/outbound/quality-params",h(async (req, res) => res.json({ data: await obSvc.getOBQualityParams(parseFilters(req.query as Record<string, unknown>)) })));
 
 // ── Opening Intelligence sub-routes ───────────────────────────────────────
-router.get(
-  "/opening-intelligence/executive-summary",
-  h(async (req, res) =>
-    res.json({
-      data: await oiSvc.getOIExecutiveSummary(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/opening-intelligence/opening-categories",
-  h(async (req, res) =>
-    res.json({
-      data: await oiSvc.getOpeningByCategory(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/opening-intelligence/opening-raw",
-  h(async (req, res) =>
-    res.json({
-      data: await oiSvc.getOpeningRawCategories(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/opening-intelligence/opening-trend",
-  h(async (req, res) => {
-    const p =
-      (req.query.period as
-        "daily" | "weekly" | "monthly" | "quarterly" | "yearly") || "daily";
-    res.json({
-      data: await oiSvc.getOpeningTrend(
-        parseFilters(req.query as Record<string, unknown>),
-        p,
-      ),
-    });
-  }),
-);
-router.get(
-  "/opening-intelligence/opening-by-dim",
-  h(async (req, res) => {
-    const dim =
-      (req.query.dim as "client_id" | "AgentName" | "campaign_id") ||
-      "client_id";
-    res.json({
-      data: await oiSvc.getOpeningByDimension(
-        parseFilters(req.query as Record<string, unknown>),
-        dim,
-      ),
-    });
-  }),
-);
-router.get(
-  "/opening-intelligence/context-categories",
-  h(async (req, res) =>
-    res.json({
-      data: await oiSvc.getContextByCategory(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/opening-intelligence/context-trend",
-  h(async (req, res) => {
-    const p =
-      (req.query.period as
-        "daily" | "weekly" | "monthly" | "quarterly" | "yearly") || "daily";
-    res.json({
-      data: await oiSvc.getContextTrend(
-        parseFilters(req.query as Record<string, unknown>),
-        p,
-      ),
-    });
-  }),
-);
-router.get(
-  "/opening-intelligence/context-by-dim",
-  h(async (req, res) => {
-    const dim =
-      (req.query.dim as "client_id" | "AgentName" | "campaign_id") ||
-      "client_id";
-    res.json({
-      data: await oiSvc.getContextByDimension(
-        parseFilters(req.query as Record<string, unknown>),
-        dim,
-      ),
-    });
-  }),
-);
-router.get(
-  "/opening-intelligence/opening-vs-sales",
-  h(async (req, res) =>
-    res.json({
-      data: await oiSvc.getOpeningVsSales(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/opening-intelligence/leaderboard",
-  h(async (req, res) =>
-    res.json({
-      data: await oiSvc.getOpeningLeaderboard(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/opening-intelligence/ai-insights",
-  h(async (req, res) =>
-    res.json({
-      data: await oiSvc.getOIAIInsights(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
+router.get("/opening-intelligence/executive-summary",  h(async (req, res) => res.json({ data: await oiSvc.getOIExecutiveSummary(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/opening-intelligence/opening-categories", h(async (req, res) => res.json({ data: await oiSvc.getOpeningByCategory(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/opening-intelligence/opening-raw",        h(async (req, res) => res.json({ data: await oiSvc.getOpeningRawCategories(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/opening-intelligence/opening-trend",      h(async (req, res) => {
+  const p = (req.query.period as "daily" | "weekly" | "monthly" | "quarterly" | "yearly") || "daily";
+  res.json({ data: await oiSvc.getOpeningTrend(parseFilters(req.query as Record<string, unknown>), p) });
+}));
+router.get("/opening-intelligence/opening-by-dim",     h(async (req, res) => {
+  const dim = (req.query.dim as "client_id" | "AgentName" | "campaign_id") || "client_id";
+  res.json({ data: await oiSvc.getOpeningByDimension(parseFilters(req.query as Record<string, unknown>), dim) });
+}));
+router.get("/opening-intelligence/context-categories", h(async (req, res) => res.json({ data: await oiSvc.getContextByCategory(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/opening-intelligence/context-trend",      h(async (req, res) => {
+  const p = (req.query.period as "daily" | "weekly" | "monthly" | "quarterly" | "yearly") || "daily";
+  res.json({ data: await oiSvc.getContextTrend(parseFilters(req.query as Record<string, unknown>), p) });
+}));
+router.get("/opening-intelligence/context-by-dim",     h(async (req, res) => {
+  const dim = (req.query.dim as "client_id" | "AgentName" | "campaign_id") || "client_id";
+  res.json({ data: await oiSvc.getContextByDimension(parseFilters(req.query as Record<string, unknown>), dim) });
+}));
+router.get("/opening-intelligence/opening-vs-sales",   h(async (req, res) => res.json({ data: await oiSvc.getOpeningVsSales(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/opening-intelligence/leaderboard",        h(async (req, res) => res.json({ data: await oiSvc.getOpeningLeaderboard(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/opening-intelligence/ai-insights",        h(async (req, res) => res.json({ data: await oiSvc.getOIAIInsights(parseFilters(req.query as Record<string, unknown>)) })));
 
 // ── Customer Intelligence sub-routes ──────────────────────────────────────
-router.get(
-  "/customer-intelligence/executive-summary",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getCIExecutiveSummary(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/sentiment",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getSentimentDistribution(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/sentiment-trend",
-  h(async (req, res) => {
-    const p =
-      (req.query.period as
-        "daily" | "weekly" | "monthly" | "quarterly" | "yearly") || "daily";
-    res.json({
-      data: await ciSvc.getSentimentTrend(
-        parseFilters(req.query as Record<string, unknown>),
-        p,
-      ),
-    });
-  }),
-);
-router.get(
-  "/customer-intelligence/feedback-categories",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getFeedbackCategories(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/feedback-subcats",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getFeedbackSubCategories(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/top-objections",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getTopObjections(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/journey",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getCustomerJourney(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/client-comparison",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getClientComparison(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/campaign-comparison",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getCampaignComparison(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/agent-ranking",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getAgentCXRanking(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/agent-nps-csat",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getAgentNPSCSAT(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/product-feedback",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getProductFeedback(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/offering-funnel",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getOfferingFunnel(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
-router.get(
-  "/customer-intelligence/ai-insights",
-  h(async (req, res) =>
-    res.json({
-      data: await ciSvc.getCIAIInsights(
-        parseFilters(req.query as Record<string, unknown>),
-      ),
-    }),
-  ),
-);
+router.get("/customer-intelligence/executive-summary",  h(async (req, res) => res.json({ data: await ciSvc.getCIExecutiveSummary(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/sentiment",          h(async (req, res) => res.json({ data: await ciSvc.getSentimentDistribution(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/sentiment-trend",    h(async (req, res) => {
+  const p = (req.query.period as "daily" | "weekly" | "monthly" | "quarterly" | "yearly") || "daily";
+  res.json({ data: await ciSvc.getSentimentTrend(parseFilters(req.query as Record<string, unknown>), p) });
+}));
+router.get("/customer-intelligence/feedback-categories",h(async (req, res) => res.json({ data: await ciSvc.getFeedbackCategories(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/feedback-subcats",   h(async (req, res) => res.json({ data: await ciSvc.getFeedbackSubCategories(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/top-objections",     h(async (req, res) => res.json({ data: await ciSvc.getTopObjections(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/journey",            h(async (req, res) => res.json({ data: await ciSvc.getCustomerJourney(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/client-comparison",  h(async (req, res) => res.json({ data: await ciSvc.getClientComparison(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/campaign-comparison",h(async (req, res) => res.json({ data: await ciSvc.getCampaignComparison(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/agent-ranking",      h(async (req, res) => res.json({ data: await ciSvc.getAgentCXRanking(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/agent-nps-csat",     h(async (req, res) => res.json({ data: await ciSvc.getAgentNPSCSAT(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/product-feedback",   h(async (req, res) => res.json({ data: await ciSvc.getProductFeedback(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/offering-funnel",    h(async (req, res) => res.json({ data: await ciSvc.getOfferingFunnel(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/customer-intelligence/ai-insights",        h(async (req, res) => res.json({ data: await ciSvc.getCIAIInsights(parseFilters(req.query as Record<string, unknown>)) })));
 
 export { router as callMasterRouter };

@@ -1,10 +1,7 @@
-import { Router } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import { rtaExceptionService } from "./rta-exception.service.js";
+import { Router } from 'express';
+import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { rtaExceptionService } from './rta-exception.service.js';
 
 export const rtaExceptionRouter = Router();
 
@@ -17,20 +14,13 @@ rtaExceptionRouter.use(requireAuth);
 
 // GET /api/wfm/rta/exceptions
 rtaExceptionRouter.get(
-  "/",
-  requireRole(
-    "wfm",
-    "admin",
-    "hr",
-    "manager",
-    "process_manager",
-    "team_leader",
-  ),
+  '/',
+  requireRole('wfm', 'admin', 'hr', 'manager', 'process_manager', 'team_leader'),
   h(async (req, res) => {
-    const date = String(req.query.date ?? "").trim();
-    const processId = String(req.query.processId ?? "").trim();
-    const state = String(req.query.state ?? "").trim();
-    const employeeId = String(req.query.employeeId ?? "").trim();
+    const date = String(req.query.date ?? '').trim();
+    const processId = String(req.query.processId ?? '').trim();
+    const state = String(req.query.state ?? '').trim();
+    const employeeId = String(req.query.employeeId ?? '').trim();
 
     const filters = {
       date: date || undefined,
@@ -41,22 +31,20 @@ rtaExceptionRouter.get(
 
     const exceptions = await rtaExceptionService.listExceptions(filters);
     return res.json({ exceptions });
-  }),
+  })
 );
 
 // POST /api/wfm/rta/exceptions
 rtaExceptionRouter.post(
-  "/",
-  requireRole("wfm", "admin", "hr", "manager", "process_manager"),
+  '/',
+  requireRole('wfm', 'admin', 'hr', 'manager', 'process_manager'),
   h(async (req, res) => {
-    const { alertId, employeeId, exceptionDate, exceptionType, comment } =
-      req.body;
+    const { alertId, employeeId, exceptionDate, exceptionType, comment } = req.body;
 
     if (!alertId || !employeeId || !exceptionDate || !exceptionType) {
       return res.status(400).json({
         success: false,
-        error:
-          "alertId, employeeId, exceptionDate, and exceptionType are required",
+        error: 'alertId, employeeId, exceptionDate, and exceptionType are required',
       });
     }
 
@@ -69,35 +57,23 @@ rtaExceptionRouter.post(
     });
 
     return res.status(201).json({ exception });
-  }),
+  })
 );
 
 // PATCH /api/wfm/rta/exceptions/:id/disposition
 rtaExceptionRouter.patch(
-  "/:id/disposition",
-  requireRole(
-    "wfm",
-    "admin",
-    "hr",
-    "manager",
-    "process_manager",
-    "team_leader",
-  ),
+  '/:id/disposition',
+  requireRole('wfm', 'admin', 'hr', 'manager', 'process_manager', 'team_leader'),
   h(async (req, res) => {
     const id = parseInt(req.params.id, 10);
-    const { dispositionType, comment, regularizationId, rosterAmendmentId } =
-      req.body;
+    const { dispositionType, comment, regularizationId, rosterAmendmentId } = req.body;
 
     if (!dispositionType) {
-      return res
-        .status(400)
-        .json({ success: false, error: "dispositionType is required" });
+      return res.status(400).json({ success: false, error: 'dispositionType is required' });
     }
 
     if (isNaN(id)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid exception ID" });
+      return res.status(400).json({ success: false, error: 'Invalid exception ID' });
     }
 
     const exception = await rtaExceptionService.updateDisposition(id, {
@@ -109,34 +85,23 @@ rtaExceptionRouter.patch(
     });
 
     return res.json({ exception });
-  }),
+  })
 );
 
 // PATCH /api/wfm/rta/exceptions/:id/state
 rtaExceptionRouter.patch(
-  "/:id/state",
-  requireRole(
-    "wfm",
-    "admin",
-    "hr",
-    "manager",
-    "process_manager",
-    "team_leader",
-  ),
+  '/:id/state',
+  requireRole('wfm', 'admin', 'hr', 'manager', 'process_manager', 'team_leader'),
   h(async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const { state } = req.body;
 
     if (!state) {
-      return res
-        .status(400)
-        .json({ success: false, error: "state is required" });
+      return res.status(400).json({ success: false, error: 'state is required' });
     }
 
     if (isNaN(id)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Invalid exception ID" });
+      return res.status(400).json({ success: false, error: 'Invalid exception ID' });
     }
 
     try {
@@ -148,5 +113,5 @@ rtaExceptionRouter.patch(
       }
       throw error;
     }
-  }),
+  })
 );

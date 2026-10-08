@@ -13,18 +13,12 @@ describe("processFiltersSchema", () => {
   });
 
   it("accepts valid activeStatus values", () => {
-    expect(
-      processFiltersSchema.parse({ activeStatus: "active" }).activeStatus,
-    ).toBe("active");
-    expect(
-      processFiltersSchema.parse({ activeStatus: "inactive" }).activeStatus,
-    ).toBe("inactive");
+    expect(processFiltersSchema.parse({ activeStatus: "active" }).activeStatus).toBe("active");
+    expect(processFiltersSchema.parse({ activeStatus: "inactive" }).activeStatus).toBe("inactive");
   });
 
   it("rejects invalid activeStatus value", () => {
-    expect(() =>
-      processFiltersSchema.parse({ activeStatus: "unknown" }),
-    ).toThrow();
+    expect(() => processFiltersSchema.parse({ activeStatus: "unknown" })).toThrow();
   });
 
   it("accepts optional search and departmentId", () => {
@@ -36,9 +30,7 @@ describe("processFiltersSchema", () => {
   });
 
   it("rejects non-UUID departmentId", () => {
-    expect(() =>
-      processFiltersSchema.parse({ departmentId: "not-a-uuid" }),
-    ).toThrow();
+    expect(() => processFiltersSchema.parse({ departmentId: "not-a-uuid" })).toThrow();
   });
 });
 
@@ -52,35 +44,28 @@ describe("createProcessSchema", () => {
   });
 
   it("rejects processCode shorter than 2 characters", () => {
-    expect(() =>
-      createProcessSchema.parse({ ...valid, processCode: "X" }),
-    ).toThrow();
+    expect(() => createProcessSchema.parse({ ...valid, processCode: "X" })).toThrow();
   });
 
   it("rejects empty processName", () => {
-    expect(() =>
-      createProcessSchema.parse({ ...valid, processName: "" }),
-    ).toThrow();
+    expect(() => createProcessSchema.parse({ ...valid, processName: "" })).toThrow();
   });
 
   it("trims whitespace from processCode and processName", () => {
-    const result = createProcessSchema.parse({
-      processCode: "  OB  ",
-      processName: "  Outbound  ",
-    });
+    const result = createProcessSchema.parse({ processCode: "  OB  ", processName: "  Outbound  " });
     expect(result.processCode).toBe("OB");
     expect(result.processName).toBe("Outbound");
   });
 
   it("rejects processCode longer than 80 characters", () => {
     expect(() =>
-      createProcessSchema.parse({ ...valid, processCode: "A".repeat(81) }),
+      createProcessSchema.parse({ ...valid, processCode: "A".repeat(81) })
     ).toThrow();
   });
 
   it("rejects non-UUID departmentId", () => {
     expect(() =>
-      createProcessSchema.parse({ ...valid, departmentId: "bad-id" }),
+      createProcessSchema.parse({ ...valid, departmentId: "bad-id" })
     ).toThrow();
   });
 
@@ -111,20 +96,14 @@ describe("updateProcessStatusSchema", () => {
   });
 
   it("accepts true", () => {
-    expect(
-      updateProcessStatusSchema.parse({ activeStatus: true }).activeStatus,
-    ).toBe(true);
+    expect(updateProcessStatusSchema.parse({ activeStatus: true }).activeStatus).toBe(true);
   });
 
   it("accepts false", () => {
-    expect(
-      updateProcessStatusSchema.parse({ activeStatus: false }).activeStatus,
-    ).toBe(false);
+    expect(updateProcessStatusSchema.parse({ activeStatus: false }).activeStatus).toBe(false);
   });
 
   it("rejects non-boolean activeStatus", () => {
-    expect(() =>
-      updateProcessStatusSchema.parse({ activeStatus: "yes" }),
-    ).toThrow();
+    expect(() => updateProcessStatusSchema.parse({ activeStatus: "yes" })).toThrow();
   });
 });

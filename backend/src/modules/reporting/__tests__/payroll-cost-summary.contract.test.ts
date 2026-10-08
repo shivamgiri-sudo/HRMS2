@@ -4,8 +4,7 @@ import { describe, expect, it } from "vitest";
 import { REPORT_CATALOG } from "../report-catalog.js";
 import { EXECUTOR_MAP } from "../executors/index.js";
 
-const read = (path: string) =>
-  readFileSync(resolve(process.cwd(), path), "utf8");
+const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
 /**
  * Payroll → Cost Summary was a dead menu item. `payrollCostSummary` had been
@@ -42,20 +41,13 @@ const EXPECTED_COLUMNS = [
   "total_net",
 ];
 
-const executorSource = read(
-  "src/modules/reporting/executors/payroll.executor.ts",
-);
+const executorSource = read("src/modules/reporting/executors/payroll.executor.ts");
 
 const body = (() => {
-  const start = executorSource.indexOf(
-    "export async function payrollCostSummary(",
-  );
+  const start = executorSource.indexOf("export async function payrollCostSummary(");
   expect(start, "payrollCostSummary not found").toBeGreaterThan(-1);
   const next = executorSource.indexOf("\nexport async function ", start + 1);
-  return executorSource.slice(
-    start,
-    next === -1 ? executorSource.length : next,
-  );
+  return executorSource.slice(start, next === -1 ? executorSource.length : next);
 })();
 
 describe("payroll cost summary", () => {
@@ -66,12 +58,12 @@ describe("payroll cost summary", () => {
   it("has a catalog entry, so the library can list it and the deep link resolves", () => {
     // Without this the Payroll → Cost Summary menu item goes nowhere, which is the
     // whole defect: a working query nobody could reach.
-    expect(REPORT_CATALOG.find((r) => r.code === CODE)).toBeDefined();
+    expect(REPORT_CATALOG.find(r => r.code === CODE)).toBeDefined();
   });
 
   it("declares exactly the columns the executor returns", () => {
-    const entry = REPORT_CATALOG.find((r) => r.code === CODE)!;
-    expect(entry.columns.map((c) => c.key)).toEqual(EXPECTED_COLUMNS);
+    const entry = REPORT_CATALOG.find(r => r.code === CODE)!;
+    expect(entry.columns.map(c => c.key)).toEqual(EXPECTED_COLUMNS);
   });
 
   it("still produces every declared column in its SQL", () => {
@@ -88,21 +80,12 @@ describe("payroll cost summary", () => {
     // Matches the sibling cost reports (cost-centre-salary-summary,
     // process-lob-salary-cost). 'restricted' means non-super-admins are routed to
     // email delivery rather than immediate download — deliberate for salary cost.
-    const entry = REPORT_CATALOG.find((r) => r.code === CODE)!;
+    const entry = REPORT_CATALOG.find(r => r.code === CODE)!;
     expect(entry.sensitivityLevel).toBe("restricted");
     expect(entry.containsFinancialData).toBe(true);
 
-    for (const key of [
-      "total_gross",
-      "total_pf_employer",
-      "total_esic_employer",
-      "total_ctc",
-      "total_net",
-    ]) {
-      expect(
-        entry.columns.find((c) => c.key === key)?.sensitive,
-        `${key} not marked sensitive`,
-      ).toBe(true);
+    for (const key of ["total_gross", "total_pf_employer", "total_esic_employer", "total_ctc", "total_net"]) {
+      expect(entry.columns.find(c => c.key === key)?.sensitive, `${key} not marked sensitive`).toBe(true);
     }
   });
 
@@ -110,12 +93,9 @@ describe("payroll cost summary", () => {
     // navConfig exposes /payroll/cost-summary to payroll_head, who is absent from
     // ROLES_PAYROLL. Using that set here would have listed the report and then denied
     // it — a dead link of a subtler kind.
-    const entry = REPORT_CATALOG.find((r) => r.code === CODE)!;
+    const entry = REPORT_CATALOG.find(r => r.code === CODE)!;
     for (const role of ["super_admin", "payroll_head", "finance"]) {
-      expect(
-        entry.viewRoles,
-        `${role} can see the menu item but not the report`,
-      ).toContain(role);
+      expect(entry.viewRoles, `${role} can see the menu item but not the report`).toContain(role);
     }
   });
 
@@ -124,8 +104,6 @@ describe("payroll cost summary", () => {
     // PII. Losing the GROUP BY would turn it into a per-employee salary listing at a
     // sensitivity classified for aggregates.
     expect(body).toContain("GROUP BY");
-    expect(REPORT_CATALOG.find((r) => r.code === CODE)!.containsPII).toBe(
-      false,
-    );
+    expect(REPORT_CATALOG.find(r => r.code === CODE)!.containsPII).toBe(false);
   });
 });

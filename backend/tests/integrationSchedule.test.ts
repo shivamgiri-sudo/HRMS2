@@ -9,24 +9,14 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
 }));
 vi.mock("../src/modules/integration-hub/integration.service.js", () => ({
   integrationService: {
-    list: vi.fn(),
-    getByKey: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    listRuns: vi.fn(),
-    createRun: vi.fn(),
-    listFieldMaps: vi.fn(),
-    confirmFieldMap: vi.fn(),
-    listSuggestions: vi.fn(),
-    getSchedule: vi.fn(),
-    upsertSchedule: vi.fn(),
+    list: vi.fn(), getByKey: vi.fn(), create: vi.fn(), update: vi.fn(),
+    listRuns: vi.fn(), createRun: vi.fn(), listFieldMaps: vi.fn(),
+    confirmFieldMap: vi.fn(), listSuggestions: vi.fn(),
+    getSchedule: vi.fn(), upsertSchedule: vi.fn(),
   },
 }));
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole:
-    (..._roles: string[]) =>
-    (_req: any, _res: any, next: any) =>
-      next(),
+  requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
   ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
@@ -35,12 +25,8 @@ vi.mock("../src/shared/scopeAccess.js", () => ({
   hasAnyRole: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
   getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
-  getRosterPlanScope: vi
-    .fn()
-    .mockResolvedValue({ branchId: null, processId: null }),
-  getEmployeeForUser: vi
-    .fn()
-    .mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
+  getRosterPlanScope: vi.fn().mockResolvedValue({ branchId: null, processId: null }),
+  getEmployeeForUser: vi.fn().mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
   getUserRoles: vi.fn().mockResolvedValue([{ role_key: "admin" }]),
   hasRole: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockReturnValue({ where: "", params: [] }),
@@ -62,18 +48,13 @@ import { integrationService } from "../src/modules/integration-hub/integration.s
 import { app } from "../src/app.js";
 
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
-const svc = integrationService as {
-  [K in keyof typeof integrationService]: ReturnType<typeof vi.fn>;
-};
+const svc = integrationService as { [K in keyof typeof integrationService]: ReturnType<typeof vi.fn> };
 
 const AUTH = { Authorization: "Bearer mock-token-admin" };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetUser.mockResolvedValue({
-    data: { user: { id: "user-1", email: "admin@mcn.com" } },
-    error: null,
-  });
+  mockGetUser.mockResolvedValue({ data: { user: { id: "user-1", email: "admin@mcn.com" } }, error: null });
 });
 
 const fakeSchedule = {
@@ -88,28 +69,20 @@ const fakeSchedule = {
 describe("GET /api/integration-hub/:key/schedule", () => {
   it("returns schedule for integration", async () => {
     svc.getSchedule.mockResolvedValueOnce(fakeSchedule);
-    const res = await request(app)
-      .get("/api/integration-hub/dialer_1/schedule")
-      .set(AUTH);
+    const res = await request(app).get("/api/integration-hub/dialer_1/schedule").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.data.cron_expression).toBe("0 */15 * * * *");
   });
 
   it("returns 401 without auth", async () => {
-    const res = await request(app).get(
-      "/api/integration-hub/dialer_1/schedule",
-    );
+    const res = await request(app).get("/api/integration-hub/dialer_1/schedule");
     expect(res.status).toBe(401);
   });
 });
 
 describe("PUT /api/integration-hub/:key/schedule", () => {
   it("updates schedule and returns it", async () => {
-    svc.upsertSchedule.mockResolvedValueOnce({
-      ...fakeSchedule,
-      cron_expression: "0 0 * * *",
-      enabled: 1,
-    });
+    svc.upsertSchedule.mockResolvedValueOnce({ ...fakeSchedule, cron_expression: "0 0 * * *", enabled: 1 });
     const res = await request(app)
       .put("/api/integration-hub/dialer_1/schedule")
       .set(AUTH)

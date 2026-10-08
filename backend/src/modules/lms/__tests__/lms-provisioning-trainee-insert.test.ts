@@ -20,13 +20,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute: hrmsExecute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: hrmsExecute } }));
 
-const lmsConn = {
-  execute: vi.fn(),
-  beginTransaction: vi.fn(),
-  commit: vi.fn(),
-  rollback: vi.fn(),
-  release: vi.fn(),
-};
+const lmsConn = { execute: vi.fn(), beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
 const lmsPool = { getConnection: vi.fn(async () => lmsConn) };
 const { getLmsPool, upsertMapping } = vi.hoisted(() => ({
   getLmsPool: vi.fn(),
@@ -52,23 +46,7 @@ beforeEach(() => {
 
   hrmsExecute.mockImplementation(async (sql: string) => {
     if (sql.includes("FROM employees e")) {
-      return [
-        [
-          {
-            id: "emp-1",
-            employee_code: "MAS001",
-            first_name: "Amit",
-            last_name: "Kumar",
-            email: null,
-            official_email: "amit@teammas.in",
-            mobile: "9999999999",
-            branch_name: "NOIDA",
-            process_name: "ONFIDO",
-            department_name: null,
-          },
-        ],
-        [],
-      ];
+      return [[{ id: "emp-1", employee_code: "MAS001", first_name: "Amit", last_name: "Kumar", email: null, official_email: "amit@teammas.in", mobile: "9999999999", branch_name: "NOIDA", process_name: "ONFIDO", department_name: null }], []];
     }
     if (sql.includes("FROM lms_employee_mapping")) return [[], []];
     return [[], []];
@@ -82,18 +60,14 @@ beforeEach(() => {
 
 describe("provisionLmsIdentityForEmployee — trainee_master INSERT", () => {
   it("includes last_updated_at in the column list and a value in VALUES, keeping placeholders aligned", async () => {
-    const result = await provisionLmsIdentityForEmployee({
-      employeeCode: "MAS001",
-      createdBy: "user-1",
-    });
+    const result = await provisionLmsIdentityForEmployee({ employeeCode: "MAS001", createdBy: "user-1" });
 
     expect(result.externalSynced).toBe(true);
     expect(lmsConn.commit).toHaveBeenCalledTimes(1);
     expect(lmsConn.rollback).not.toHaveBeenCalled();
 
     const insertCall = lmsConn.execute.mock.calls.find(
-      ([sql]: [string]) =>
-        typeof sql === "string" && sql.includes("INSERT INTO trainee_master"),
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("INSERT INTO trainee_master"),
     );
     expect(insertCall, "trainee_master INSERT not found").toBeDefined();
     const [sql, params] = insertCall as [string, unknown[]];
@@ -110,15 +84,11 @@ describe("provisionLmsIdentityForEmployee — trainee_master INSERT", () => {
     lmsConn.execute.mockImplementation(async (sql: string) => {
       if (sql.includes("FOR UPDATE")) return [[], []];
       if (sql.includes("SELECT 1 FROM trainee_master")) return [[], []];
-      if (sql.includes("INSERT INTO trainee_master"))
-        throw new Error("Field 'last_updated_at' doesn't have a default value");
+      if (sql.includes("INSERT INTO trainee_master")) throw new Error("Field 'last_updated_at' doesn't have a default value");
       return [{}, []];
     });
 
-    const result = await provisionLmsIdentityForEmployee({
-      employeeCode: "MAS001",
-      createdBy: "user-1",
-    });
+    const result = await provisionLmsIdentityForEmployee({ employeeCode: "MAS001", createdBy: "user-1" });
 
     expect(result.externalSynced).toBe(false);
     expect(lmsConn.rollback).toHaveBeenCalledTimes(1);

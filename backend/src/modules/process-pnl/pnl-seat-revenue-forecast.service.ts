@@ -1,10 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
-import {
-  OWN_COMPANY_SQL,
-  PROCESS_BY_COST_CENTRE,
-} from "./pnl-actuals.service.js";
+import { OWN_COMPANY_SQL, PROCESS_BY_COST_CENTRE } from "./pnl-actuals.service.js";
 
 /**
  * Where this month's seat revenue is heading, from seat count times seat rate.
@@ -86,10 +83,7 @@ export interface SeatRevenueForecast {
 }
 
 /** Days in the month, and how many of them have elapsed as of `asOf` (IST-dated by the caller). */
-function monthProgress(
-  period: string,
-  asOf: string,
-): { daysInMonth: number; daysElapsed: number } {
+function monthProgress(period: string, asOf: string): { daysInMonth: number; daysElapsed: number } {
   const [year, month] = period.split("-").map(Number);
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const sameMonth = asOf.slice(0, 7) === period;
@@ -97,7 +91,7 @@ function monthProgress(
     ? Math.min(daysInMonth, Number(asOf.slice(8, 10)))
     : asOf.slice(0, 7) > period
       ? daysInMonth // a closed month is fully elapsed
-      : 0; // a month that has not started yet has earned nothing
+      : 0;          // a month that has not started yet has earned nothing
   return { daysInMonth, daysElapsed };
 }
 
@@ -109,9 +103,7 @@ function monthProgress(
  * 1st. Returned to the caller so the UI can say which month the classification came from rather
  * than implying it is current.
  */
-async function latestClassificationPeriod(
-  period: string,
-): Promise<string | null> {
+async function latestClassificationPeriod(period: string): Promise<string | null> {
   if (!(await tableExists("pnl_running_salary_snapshot"))) return null;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT period_code FROM pnl_running_salary_snapshot
@@ -129,46 +121,26 @@ export async function getSeatRevenueForecast(
   options: { asOfDate?: string; branchId?: string } = {},
 ): Promise<SeatRevenueForecast> {
   if (!/^\d{4}-\d{2}$/.test(period)) {
-    throw Object.assign(new Error("period must be YYYY-MM"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
-  const asOfDate =
-    options.asOfDate ??
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Kolkata",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
+  const asOfDate = options.asOfDate ?? new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
 
   const { daysInMonth, daysElapsed } = monthProgress(period, asOfDate);
   const classificationPeriod = await latestClassificationPeriod(period);
 
   const empty: SeatRevenueForecast = {
-    period,
-    asOfDate,
-    daysElapsed,
-    daysInMonth,
-    classificationPeriod,
-    costCentres: [],
-    byProcess: [],
-    projectedMonthEnd: 0,
-    earnedToDate: 0,
-    billableSeats: 0,
-    unclassifiedHeadcount: 0,
+    period, asOfDate, daysElapsed, daysInMonth, classificationPeriod,
+    costCentres: [], byProcess: [], projectedMonthEnd: 0, earnedToDate: 0,
+    billableSeats: 0, unclassifiedHeadcount: 0,
     coverage: {
-      seatBilledCostCentres: 0,
-      notSeatBilledCostCentres: 0,
-      activeCostCentresWithStaff: 0,
-      coveragePct: 0,
+      seatBilledCostCentres: 0, notSeatBilledCostCentres: 0,
+      activeCostCentresWithStaff: 0, coveragePct: 0,
     },
     method: "seat_rate_run_rate",
   };
-  if (
-    !(await tableExists("cost_centre_seat_rate")) ||
-    !(await tableExists("cost_centre_master"))
-  ) {
+  if (!(await tableExists("cost_centre_seat_rate")) || !(await tableExists("cost_centre_master"))) {
     return empty;
   }
 
@@ -178,18 +150,12 @@ export async function getSeatRevenueForecast(
   // .seat_rate_monthly has no stated tax basis, so it is used as entered, not reduced by a guessed
   // GST rate. See getSeatRevenueActuals' note for how to verify it.
   const [year, month] = period.split("-").map(Number);
-  const periodEnd = new Date(Date.UTC(year, month, 0))
-    .toISOString()
-    .slice(0, 10);
+  const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 
   // Bound in the order the placeholders appear: classification snapshot, then the two rate-dating
   // bounds, then the optional branch.
   const branchClause = options.branchId ? "AND ccm.branch_id = ?" : "";
-  const params: unknown[] = [
-    classificationPeriod ?? period,
-    periodEnd,
-    periodEnd,
-  ];
+  const params: unknown[] = [classificationPeriod ?? period, periodEnd, periodEnd];
   if (options.branchId) params.push(options.branchId);
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -229,8 +195,7 @@ export async function getSeatRevenueForecast(
     const rate = n(r.seat_rate_monthly);
     const seats = n(r.billable_seats);
     const projected = seats * rate;
-    const earned =
-      daysInMonth > 0 ? (projected * daysElapsed) / daysInMonth : 0;
+    const earned = daysInMonth > 0 ? (projected * daysElapsed) / daysInMonth : 0;
     projectedMonthEnd += projected;
     earnedToDate += earned;
     billableSeats += seats;
@@ -257,20 +222,15 @@ export async function getSeatRevenueForecast(
   for (const cc of costCentres) {
     if (!cc.processId) continue;
     const existing = processMap.get(cc.processId) ?? {
-      processId: cc.processId,
-      processName: cc.processName,
-      billableSeats: 0,
-      projectedMonthEnd: 0,
-      earnedToDate: 0,
+      processId: cc.processId, processName: cc.processName,
+      billableSeats: 0, projectedMonthEnd: 0, earnedToDate: 0,
     };
     existing.billableSeats += cc.billableSeats;
     existing.projectedMonthEnd += cc.projectedMonthEnd;
     existing.earnedToDate += cc.earnedToDate;
     processMap.set(cc.processId, existing);
   }
-  const byProcess = [...processMap.values()].sort(
-    (a, b) => b.projectedMonthEnd - a.projectedMonthEnd,
-  );
+  const byProcess = [...processMap.values()].sort((a, b) => b.projectedMonthEnd - a.projectedMonthEnd);
 
   // Coverage is measured against cost centres that actually have staff — an empty cost centre with
   // no rate is not a gap in the forecast, and counting it would understate coverage.
@@ -291,11 +251,7 @@ export async function getSeatRevenueForecast(
   const seatBilled = n(coverageRows[0]?.seat_billed);
 
   return {
-    period,
-    asOfDate,
-    daysElapsed,
-    daysInMonth,
-    classificationPeriod,
+    period, asOfDate, daysElapsed, daysInMonth, classificationPeriod,
     costCentres,
     byProcess,
     projectedMonthEnd,
@@ -306,8 +262,7 @@ export async function getSeatRevenueForecast(
       seatBilledCostCentres: seatBilled,
       notSeatBilledCostCentres: Math.max(0, staffed - seatBilled),
       activeCostCentresWithStaff: staffed,
-      coveragePct:
-        staffed > 0 ? Number(((seatBilled / staffed) * 100).toFixed(1)) : 0,
+      coveragePct: staffed > 0 ? Number(((seatBilled / staffed) * 100).toFixed(1)) : 0,
     },
     method: "seat_rate_run_rate",
   };

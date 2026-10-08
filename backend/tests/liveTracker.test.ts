@@ -53,9 +53,7 @@ describe("getLiveTracker", () => {
   });
 
   it("calculates adherence_pct for logged-in employee", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [{ ...fakeSession, total_login_minutes: 270, required_minutes: 540 }],
-    ]);
+    mockExecute.mockResolvedValueOnce([[{ ...fakeSession, total_login_minutes: 270, required_minutes: 540 }]]);
     const result = await getLiveTracker({ date: "2026-05-20" });
     expect(result.sessions[0].adherence_pct).toBe(50);
   });
@@ -90,12 +88,10 @@ describe("getLiveTracker", () => {
   });
 
   it("calculates overall_adherence_pct as average across rostered employees", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [
-        { ...fakeSession, total_login_minutes: 540, required_minutes: 540 }, // 100%
-        { ...fakeAbsent, total_login_minutes: 0, required_minutes: 540 }, // 0%
-      ],
-    ]);
+    mockExecute.mockResolvedValueOnce([[
+      { ...fakeSession, total_login_minutes: 540, required_minutes: 540 }, // 100%
+      { ...fakeAbsent,  total_login_minutes: 0,   required_minutes: 540 }, // 0%
+    ]]);
     const result = await getLiveTracker({ date: "2026-05-20" });
     expect(result.summary.overall_adherence_pct).toBe(50);
   });

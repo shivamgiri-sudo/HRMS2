@@ -53,19 +53,12 @@ function env() {
     try {
       const raw = readFileSync(path, "utf8");
       const parsed = Object.fromEntries(
-        raw
-          .split(/\r?\n/)
+        raw.split(/\r?\n/)
           .filter((l) => l && !l.startsWith("#") && l.includes("="))
           .map((l) => {
             const i = l.indexOf("=");
-            return [
-              l.slice(0, i).trim(),
-              l
-                .slice(i + 1)
-                .trim()
-                .replace(/^["']|["']$/g, ""),
-            ];
-          }),
+            return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^["']|["']$/g, "")];
+          })
       );
       return { ...process.env, ...parsed };
     } catch {
@@ -75,19 +68,14 @@ function env() {
   return { ...process.env };
 }
 
-const pick = (row, key) =>
-  row[key] ?? row[key.toLowerCase()] ?? row[key.toUpperCase()];
+const pick = (row, key) => row[key] ?? row[key.toLowerCase()] ?? row[key.toUpperCase()];
 
 async function build() {
   const e = env();
   const db = e.DB_NAME ?? "mas_hrms";
   const conn = await createConnection({
-    host: e.DB_HOST,
-    port: Number(e.DB_PORT ?? 3306),
-    user: e.DB_USER,
-    password: e.DB_PASSWORD,
-    database: db,
-    connectTimeout: 20000,
+    host: e.DB_HOST, port: Number(e.DB_PORT ?? 3306), user: e.DB_USER,
+    password: e.DB_PASSWORD, database: db, connectTimeout: 20000,
   });
 
   const [rows] = await conn.query(
@@ -95,7 +83,7 @@ async function build() {
        FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = ?
       ORDER BY TABLE_NAME, ORDINAL_POSITION`,
-    [db],
+    [db]
   );
   await conn.end();
 
@@ -124,15 +112,13 @@ if (CHECK_ONLY) {
   const a = JSON.stringify(current.tables);
   const b = JSON.stringify(next.tables);
   if (a === b) {
-    console.log(
-      `schema snapshot is current (${next.tableCount} tables, ${next.columnCount} columns)`,
-    );
+    console.log(`schema snapshot is current (${next.tableCount} tables, ${next.columnCount} columns)`);
     process.exit(0);
   }
   console.error(
     `schema snapshot has drifted: snapshot has ${current.tableCount} tables / ` +
-      `${current.columnCount} columns, the database has ${next.tableCount} / ${next.columnCount}.\n` +
-      `Run: node scripts/generate-schema-snapshot.mjs`,
+    `${current.columnCount} columns, the database has ${next.tableCount} / ${next.columnCount}.\n` +
+    `Run: node scripts/generate-schema-snapshot.mjs`
   );
   process.exit(1);
 }
@@ -143,6 +129,4 @@ if (CHECK_ONLY) {
 // job is to be compared against reality. Indentation costs nothing here and keeps the change
 // legible.
 writeFileSync(SNAPSHOT, JSON.stringify(next, null, 2) + "\n");
-console.log(
-  `wrote ${SNAPSHOT}: ${next.tableCount} tables, ${next.columnCount} columns`,
-);
+console.log(`wrote ${SNAPSHOT}: ${next.tableCount} tables, ${next.columnCount} columns`);

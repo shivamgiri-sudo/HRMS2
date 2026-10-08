@@ -24,9 +24,7 @@ const PAGE = readFileSync(
   "utf8",
 );
 const QUERY = (() => {
-  const fn = SERVICE.slice(
-    SERVICE.indexOf("export async function listPendingApprovals"),
-  );
+  const fn = SERVICE.slice(SERVICE.indexOf("export async function listPendingApprovals"));
   const open = fn.indexOf("`");
   return fn.slice(open + 1, fn.indexOf("`", open + 1));
 })();
@@ -99,10 +97,7 @@ describe("Offer approvals — Payroll HR joining dates", () => {
     const headers = headerBlock.match(/^\s*\['/gm)?.length ?? 0;
     const rowStart = PAGE.indexOf("function OfferRow");
     const rowEnd = PAGE.indexOf("\nfunction ", rowStart + 10);
-    const cells =
-      PAGE.slice(rowStart, rowEnd === -1 ? undefined : rowEnd).split(
-        "<TableCell",
-      ).length - 1;
+    const cells = PAGE.slice(rowStart, rowEnd === -1 ? undefined : rowEnd).split("<TableCell").length - 1;
     expect(headers).toBeGreaterThan(0);
     expect(cells).toBe(headers);
   });

@@ -12,13 +12,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const { transitionExitStatus } = vi.hoisted(() => ({
-  transitionExitStatus: vi.fn(),
-}));
+const { transitionExitStatus } = vi.hoisted(() => ({ transitionExitStatus: vi.fn() }));
 vi.mock("../exit.service.js", () => ({ transitionExitStatus }));
 
-const { executeAutoAdvance } =
-  await import("../../../cron/exitAutoAdvance.cron.js");
+const { executeAutoAdvance } = await import("../../../cron/exitAutoAdvance.cron.js");
 
 beforeEach(() => {
   execute.mockReset();
@@ -44,12 +41,12 @@ describe("Exit auto-advance cron", () => {
     expect(transitionExitStatus).toHaveBeenCalledWith(
       "exit-1",
       "exited",
-      expect.objectContaining({ userId: "system", userRole: "system" }),
+      expect.objectContaining({ userId: "system", userRole: "system" })
     );
     expect(transitionExitStatus).toHaveBeenCalledWith(
       "exit-2",
       "exited",
-      expect.objectContaining({ userId: "system", userRole: "system" }),
+      expect.objectContaining({ userId: "system", userRole: "system" })
     );
   });
 
@@ -108,9 +105,7 @@ describe("Exit auto-advance cron", () => {
     expect(query).toMatch(/last_working_day_confirmed <= CURDATE\(\)/i);
     expect(query).toMatch(/NOT EXISTS/i);
     expect(query).toMatch(/exit_clearance_task/i);
-    expect(query).toMatch(
-      /status NOT IN \('cleared', 'waived', 'not_applicable'\)/i,
-    );
+    expect(query).toMatch(/status NOT IN \('cleared', 'waived', 'not_applicable'\)/i);
   });
 
   it("passes system actor to transitionExitStatus", async () => {

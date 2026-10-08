@@ -50,17 +50,10 @@ function workerFiles(): string[] {
  * `db.getConnection()` is the only way to hold one across statements; `db.execute()` borrows and
  * returns internally and cannot leak.
  */
-function acquiringWorkers(): Array<{
-  file: string;
-  src: string;
-  acquisitions: number;
-}> {
+function acquiringWorkers(): Array<{ file: string; src: string; acquisitions: number }> {
   return workerFiles()
     .map((file) => ({ file, src: strip(readFileSync(file, "utf8")) }))
-    .map((w) => ({
-      ...w,
-      acquisitions: (w.src.match(/\.getConnection\(\)/g) ?? []).length,
-    }))
+    .map((w) => ({ ...w, acquisitions: (w.src.match(/\.getConnection\(\)/g) ?? []).length }))
     .filter((w) => w.acquisitions > 0);
 }
 
@@ -72,9 +65,7 @@ describe("every worker returns pooled connections on all paths", () => {
   it("releases in a finally, not on the happy path only", () => {
     const offenders = acquiringWorkers()
       .filter((w) => {
-        const finallyReleases = (
-          w.src.match(/finally\s*\{[^}]*?\.release\(\)/gs) ?? []
-        ).length;
+        const finallyReleases = (w.src.match(/finally\s*\{[^}]*?\.release\(\)/gs) ?? []).length;
         return finallyReleases < w.acquisitions;
       })
       .map((w) => path.basename(w.file));
@@ -92,26 +83,19 @@ describe("every worker returns pooled connections on all paths", () => {
     const offenders = acquiringWorkers()
       .filter((w) => {
         const total = (w.src.match(/\.release\(\)/g) ?? []).length;
-        const inFinally = (
-          w.src.match(/finally\s*\{[^}]*?\.release\(\)/gs) ?? []
-        ).length;
+        const inFinally = (w.src.match(/finally\s*\{[^}]*?\.release\(\)/gs) ?? []).length;
         return total > inFinally;
       })
       .map((w) => path.basename(w.file));
 
-    expect(
-      offenders,
-      "release() appears outside its finally — risk of a double release",
-    ).toEqual([]);
+    expect(offenders, "release() appears outside its finally — risk of a double release").toEqual([]);
   });
 
   it("never lets a failing rollback mask the original error", () => {
     // `await conn.rollback()` inside a catch throws when the connection is broken, replacing the
     // real failure with a rollback error — which is how the underlying cause stays invisible.
     const offenders = acquiringWorkers()
-      .filter((w) =>
-        /catch[^{]*\{[^}]*await\s+conn\.rollback\(\)\s*;/s.test(w.src),
-      )
+      .filter((w) => /catch[^{]*\{[^}]*await\s+conn\.rollback\(\)\s*;/s.test(w.src))
       .map((w) => path.basename(w.file));
 
     expect(

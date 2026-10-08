@@ -14,16 +14,16 @@ This analysis identifies the best process combinations and optimal team composit
 
 ### Standard Output: PROCESS | QUALITY_RANK | VARIANCE | OPTIMAL_SHIFT | FATIGUE_FACTOR
 
-| Field               | Description                   | Range                               | Interpretation                                                     |
-| ------------------- | ----------------------------- | ----------------------------------- | ------------------------------------------------------------------ |
-| **PROCESS**         | Campaign/process name         | String                              | Identifies the business process or campaign                        |
-| **QUALITY_RANK**    | Ranked position by quality    | 1-N (1=Best)                        | Lower number = higher average quality; use to prioritize resources |
-| **AVG_QUALITY**     | Average quality percentage    | 0-100%                              | Overall performance; 85%+ = Elite, 70-75% = At-risk                |
-| **VARIANCE**        | Standard deviation of quality | 0-50                                | Consistency metric; <8 = Stable, 8-12 = Moderate, >12 = Volatile   |
-| **VARIANCE_STATUS** | Classification of variance    | STABLE/MODERATE/VOLATILE            | Indicates team consistency and predictability                      |
-| **OPTIMAL_SHIFT**   | Best-performing shift window  | Morning/Afternoon/Evening/Night     | Route complex work to this shift                                   |
-| **FATIGUE_FACTOR**  | Weekly fatigue indicator      | 1-3                                 | 1 = Mid-week (best), 2 = Friday, 3 = Weekend (worst)               |
-| **PROCESS_TIER**    | Strategic classification      | TIER_1_ELITE through TIER_5_AT_RISK | Guides resource allocation decisions                               |
+| Field | Description | Range | Interpretation |
+|-------|-------------|-------|-----------------|
+| **PROCESS** | Campaign/process name | String | Identifies the business process or campaign |
+| **QUALITY_RANK** | Ranked position by quality | 1-N (1=Best) | Lower number = higher average quality; use to prioritize resources |
+| **AVG_QUALITY** | Average quality percentage | 0-100% | Overall performance; 85%+ = Elite, 70-75% = At-risk |
+| **VARIANCE** | Standard deviation of quality | 0-50 | Consistency metric; <8 = Stable, 8-12 = Moderate, >12 = Volatile |
+| **VARIANCE_STATUS** | Classification of variance | STABLE/MODERATE/VOLATILE | Indicates team consistency and predictability |
+| **OPTIMAL_SHIFT** | Best-performing shift window | Morning/Afternoon/Evening/Night | Route complex work to this shift |
+| **FATIGUE_FACTOR** | Weekly fatigue indicator | 1-3 | 1 = Mid-week (best), 2 = Friday, 3 = Weekend (worst) |
+| **PROCESS_TIER** | Strategic classification | TIER_1_ELITE through TIER_5_AT_RISK | Guides resource allocation decisions |
 
 ---
 
@@ -34,14 +34,12 @@ This analysis identifies the best process combinations and optimal team composit
 **Purpose**: Identify which processes have the strongest teams, best training, or most effective management.
 
 **Key Metrics**:
-
 - Average quality score (primary ranking metric)
 - Quality variance (consistency indicator)
 - Excellence rate (% calls >= 85%)
 - Poor rate (% calls < 70%)
 
 **Interpretation**:
-
 ```
 TIER_1_ELITE    (Rank 1-3):   Avg Quality >= 85%, Variance < 10
   → Action: Expand allocation, use as training model for other processes
@@ -60,7 +58,6 @@ TIER_5_AT_RISK  (Rank N):     Avg Quality < 70%
 ```
 
 **Best Practice Processes** (Quality Rank #1):
-
 - Study their:
   - Team composition (size, tenure, experience mix)
   - Manager behavior (coaching frequency, recognition patterns)
@@ -75,7 +72,6 @@ TIER_5_AT_RISK  (Rank N):     Avg Quality < 70%
 **Purpose**: Identify when quality degrades due to agent fatigue, and when it peaks.
 
 **Expected Pattern** (Industry Standard):
-
 ```
 MONDAY Morning      → 78-80%  (Post-weekend restart, moderate fatigue)
 TUESDAY-WEDNESDAY  → 82-84%  (Peak performance, well-rested)
@@ -92,18 +88,17 @@ HOUR-OF-DAY PATTERN:
 ```
 
 **Fatigue Factor Scoring**:
-
 - **1** (Best): Tuesday-Thursday mid-morning/mid-afternoon
 - **2** (Elevated): Friday, early morning, late evening
 - **3** (High): Saturday-Sunday, lunch hour, end-of-day
 
 **Action Items by Fatigue Level**:
 
-| Fatigue Level | Time Window             | Avg Quality | Recommendation                          |
-| ------------- | ----------------------- | ----------- | --------------------------------------- |
-| 1 (Low)       | Tue-Thu 9-11am, 2-4pm   | 80%+        | Route high-complexity/high-value calls  |
-| 2 (Moderate)  | Mon, Fri, 8am, 5pm      | 75-80%      | Mixed work: routine + medium-complexity |
-| 3 (High)      | Sat-Sun, 12-1pm, 6-10pm | <75%        | Routine/low-complexity work only        |
+| Fatigue Level | Time Window | Avg Quality | Recommendation |
+|---------------|-------------|-------------|-----------------|
+| 1 (Low) | Tue-Thu 9-11am, 2-4pm | 80%+ | Route high-complexity/high-value calls |
+| 2 (Moderate) | Mon, Fri, 8am, 5pm | 75-80% | Mixed work: routine + medium-complexity |
+| 3 (High) | Sat-Sun, 12-1pm, 6-10pm | <75% | Routine/low-complexity work only |
 
 ---
 
@@ -114,28 +109,24 @@ HOUR-OF-DAY PATTERN:
 **Shift Windows** (Global Standard, adjust for local timezone):
 
 #### Morning Shift (8:00 AM - 12:00 PM)
-
 - **Typical Quality**: 80-84%
 - **Characteristics**: High energy, peak cognitive function, fewest distractions
 - **Best For**: Complex technical issues, high-value negotiations, new agent training
 - **Staffing**: Senior agents, SMEs, complex-work specialists
 
 #### Afternoon Shift (1:00 PM - 5:00 PM)
-
 - **Typical Quality**: 78-82%
 - **Characteristics**: Post-lunch energy dip (12-1pm), recovery 2-5pm
 - **Best For**: Balanced work (routine + medium-complexity)
 - **Staffing**: Mid-tier and senior agents
 
 #### Evening Shift (6:00 PM - 10:00 PM)
-
 - **Typical Quality**: 75-80%
 - **Characteristics**: Lower volume, fresh swing-shift start, fatigue by 9-10pm
 - **Best For**: Overflow, after-hours support, lower-skill work
 - **Staffing**: Junior agents (training opportunity), experienced backup
 
 #### Night Shift (11:00 PM - 7:00 AM)
-
 - **Typical Quality**: 70-75% (if used)
 - **Characteristics**: Low volume, high fatigue, retention risk
 - **Best For**: Emergency support only or fully automated
@@ -215,12 +206,12 @@ Recommended State:
 
 **Team Load Classifications**:
 
-| Load Status   | Team Size    | Avg Quality    | Recommendation                | Example Actions                            |
-| ------------- | ------------ | -------------- | ----------------------------- | ------------------------------------------ |
-| LEAN          | 1-5 agents   | Typically 82%+ | Monitor for workload stress   | Add 1-2 agents if >85 calls/agent/day      |
-| OPTIMAL       | 6-10 agents  | 80-85%         | Maintain current structure    | Stable operation; minimal changes          |
-| STRETCHED     | 11-15 agents | 75-80%         | At threshold; monitor closely | Consider split into 2 teams of 6-8         |
-| OVER_EXTENDED | 16+ agents   | <75%           | RESTRUCTURE REQUIRED          | Split team, add manager, increase training |
+| Load Status | Team Size | Avg Quality | Recommendation | Example Actions |
+|-------------|-----------|-------------|-----------------|-----------------|
+| LEAN | 1-5 agents | Typically 82%+ | Monitor for workload stress | Add 1-2 agents if >85 calls/agent/day |
+| OPTIMAL | 6-10 agents | 80-85% | Maintain current structure | Stable operation; minimal changes |
+| STRETCHED | 11-15 agents | 75-80% | At threshold; monitor closely | Consider split into 2 teams of 6-8 |
+| OVER_EXTENDED | 16+ agents | <75% | RESTRUCTURE REQUIRED | Split team, add manager, increase training |
 
 **Quality vs. Team Size Correlation** (General Pattern):
 
@@ -257,7 +248,6 @@ IF avg_quality < 70%:
 ## Implementation Roadmap
 
 ### Week 1: Analysis & Planning
-
 ```
 Step 1: Run all 5 queries (process-team-optimization.sql)
 Step 2: Generate scorecard (optimization_scorecard output)
@@ -269,7 +259,6 @@ Step 4: Schedule stakeholder meeting (HR, Operations, Managers)
 ```
 
 ### Week 2-3: Quick Wins
-
 ```
 Action 1: Rebalance roster per process-shift matrix
   - Move 10-20% of staff from POOR combinations to OPTIMAL
@@ -287,7 +276,6 @@ Action 3: Begin benchmarking top-tier processes
 ```
 
 ### Week 4-6: Structural Changes
-
 ```
 Action 4: Restructure over-extended teams
   - Split teams >14 agents into two teams
@@ -306,7 +294,6 @@ Action 6: Deploy daily micro-huddles
 ```
 
 ### Month 2+: Continuous Optimization
-
 ```
 Ongoing:
   - Weekly quality trending (fatigue patterns)
@@ -320,7 +307,6 @@ Ongoing:
 ## Key Formulas & Calculations
 
 ### Variance Classification
-
 ```
 Variance < 8:     STABLE      (Highly predictable, low variance)
 Variance 8-12:    MODERATE    (Typical, acceptable variance)
@@ -328,7 +314,6 @@ Variance > 12:    VOLATILE    (High variance, consistency issues)
 ```
 
 ### Process Tier Assignment
-
 ```
 Tier 1 (Elite):       Rank 1-3,   Quality >= 85%, Variance < 10
 Tier 2 (High):        Rank 4-5,   Quality >= 80%, Variance < 12
@@ -338,7 +323,6 @@ Tier 5 (At-Risk):     Rank N,     Quality < 70%
 ```
 
 ### Fatigue Factor Score
-
 ```
 BEST HOURS:        9-11 AM, 2-4 PM (Fatigue Factor = 1)
 MID HOURS:         8 AM, 12-1 PM, 5-6 PM (Fatigue Factor = 2)
@@ -354,7 +338,6 @@ Avoid:   Score 5-6 (e.g., Saturday 1 PM = 3+3 = 6)
 ```
 
 ### Team Composition Formula
-
 ```
 Optimal Team Size = CEILING(Daily_Call_Volume / 40)
   (Assuming ~40 calls/agent/day, 8-hour shift)
@@ -372,55 +355,46 @@ Quality Impact of Restructuring:
 ## Risk Factors & Mitigation
 
 ### Risk 1: High Variance in ELITE Process
-
 **Problem**: Process ranked #1 in quality but with high variance (>10%)
 **Risk**: Unpredictable performance; hidden weaker team members
 **Mitigation**:
-
-- Conduct agent-level analysis to identify weak performers
-- Increase coaching frequency for below-average agents
-- Implement daily quality huddles
-- Review call calibration and QA process
+  - Conduct agent-level analysis to identify weak performers
+  - Increase coaching frequency for below-average agents
+  - Implement daily quality huddles
+  - Review call calibration and QA process
 
 ### Risk 2: Process Performs Well in ONE Shift Only
-
 **Problem**: Process A averages 82% but only 78% in optimal shift
 **Risk**: Fragile process; dependent on specific agents/managers
 **Mitigation**:
-
-- Cross-train secondary team
-- Implement knowledge transfer sessions
-- Create redundancy in optimal shift
-- Reduce single-point-of-failure risk
+  - Cross-train secondary team
+  - Implement knowledge transfer sessions
+  - Create redundancy in optimal shift
+  - Reduce single-point-of-failure risk
 
 ### Risk 3: Evening/Night Shift Quality Collapse
-
 **Problem**: Quality drops >10% in evening/night shifts
 **Risk**: Cannot scale volume to off-peak times
 **Mitigation**:
-
-- Implement offshore/remote teams for evening shifts
-- Automate routine calls for off-peak periods
-- Rotate senior agents to evening for mentoring
-- Hire and train evening specialists
+  - Implement offshore/remote teams for evening shifts
+  - Automate routine calls for off-peak periods
+  - Rotate senior agents to evening for mentoring
+  - Hire and train evening specialists
 
 ### Risk 4: Fatigue-Driven Friday Decline
-
 **Problem**: Quality drops 5-8% on Fridays
 **Risk**: Week-end pattern; predictable but expensive to fix
 **Mitigation**:
-
-- Shorter Friday shifts (6 hours instead of 8)
-- Pause training/difficult work on Fridays
-- Rotate staff (some teams get Thursday off)
-- Increase Friday incentives for performance
+  - Shorter Friday shifts (6 hours instead of 8)
+  - Pause training/difficult work on Fridays
+  - Rotate staff (some teams get Thursday off)
+  - Increase Friday incentives for performance
 
 ---
 
 ## Queries Reference
 
 ### Query 1: Process Quality Ranking
-
 ```sql
 -- Identifies best/worst processes
 -- Use for: Resource allocation, training priorities, benchmarking
@@ -428,7 +402,6 @@ Quality Impact of Restructuring:
 ```
 
 ### Query 2: Fatigue Cycle Analysis
-
 ```sql
 -- Day-of-week and hour-of-day quality patterns
 -- Use for: Shift scheduling, call routing, break timing
@@ -436,7 +409,6 @@ Quality Impact of Restructuring:
 ```
 
 ### Query 3: Shift Timing Optimization
-
 ```sql
 -- Peak performance windows per shift
 -- Use for: Complex task allocation, high-value call routing
@@ -444,7 +416,6 @@ Quality Impact of Restructuring:
 ```
 
 ### Query 4: Process + Shift Matrix
-
 ```sql
 -- Which process-shift combination is best
 -- Use for: Roster planning, agent allocation strategy
@@ -452,7 +423,6 @@ Quality Impact of Restructuring:
 ```
 
 ### Query 5: Team Composition
-
 ```sql
 -- Right-sizing teams per process/shift
 -- Use for: Org restructuring, span of control analysis
@@ -500,7 +470,6 @@ LowValue_Promo   8             68.9         22.1      VOLATILE         Night    
 ## Contact & Support
 
 For questions on:
-
 - **Data Accuracy**: Verify call_quality_assessment data freshness
 - **Query Optimization**: Check MySQL execution plans if timeout
 - **Result Interpretation**: Escalate to Operations/Analytics team

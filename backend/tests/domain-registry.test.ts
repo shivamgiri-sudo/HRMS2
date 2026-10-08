@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  BACKEND_DOMAIN_REGISTRY,
-  DATA_CLASS,
-  PAYROLL_DATA_DOMAINS,
-  FRAGMENTED_DOMAINS,
-} from "../src/platform/domain-registry.js";
+import { BACKEND_DOMAIN_REGISTRY, DATA_CLASS, PAYROLL_DATA_DOMAINS, FRAGMENTED_DOMAINS } from "../src/platform/domain-registry.js";
 
 describe("Backend domain registry", () => {
   it("all domains have a non-empty domain_code", () => {
@@ -14,7 +9,7 @@ describe("Backend domain registry", () => {
   });
 
   it("no two domains share the same domain_code", () => {
-    const codes = BACKEND_DOMAIN_REGISTRY.map((d) => d.domain_code);
+    const codes = BACKEND_DOMAIN_REGISTRY.map(d => d.domain_code);
     const unique = new Set(codes);
     expect(unique.size).toBe(codes.length);
   });
@@ -32,16 +27,12 @@ describe("Backend domain registry", () => {
   });
 
   it("payroll domain is data_class payroll", () => {
-    const payroll = BACKEND_DOMAIN_REGISTRY.find(
-      (d) => d.domain_code === "PAYROLL",
-    );
+    const payroll = BACKEND_DOMAIN_REGISTRY.find(d => d.domain_code === "PAYROLL");
     expect(payroll?.data_class).toBe(DATA_CLASS.PAYROLL);
   });
 
   it("client portal domain is NOT payroll data class", () => {
-    const portal = BACKEND_DOMAIN_REGISTRY.find(
-      (d) => d.domain_code === "PORTAL",
-    );
+    const portal = BACKEND_DOMAIN_REGISTRY.find(d => d.domain_code === "PORTAL");
     expect(portal?.data_class).not.toBe(DATA_CLASS.PAYROLL);
     expect(portal?.data_class).not.toBe(DATA_CLASS.SENSITIVE);
   });
@@ -65,7 +56,7 @@ describe("Backend domain registry", () => {
   });
 
   it("authentication domain has PUBLIC auth level", () => {
-    const auth = BACKEND_DOMAIN_REGISTRY.find((d) => d.domain_code === "AUTH");
+    const auth = BACKEND_DOMAIN_REGISTRY.find(d => d.domain_code === "AUTH");
     expect(auth?.auth_level).toBe("public");
   });
 });

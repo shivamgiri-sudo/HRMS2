@@ -49,50 +49,39 @@ describe("attendance canon", () => {
     expect(read(file)).toMatch(/from "\.\.[^"]*shared\/attendanceStatus\.js"/);
   });
 
-  it.each(CANON_CONSUMERS)(
-    "%s invents no attendance status of its own",
-    (file) => {
-      const source = stripComments(read(file));
-      // Any 'x' compared against attendance_status must be a real ENUM member.
-      const compared = [
-        ...source.matchAll(/attendance_status\s*(?:=|IN\s*\()\s*'([a-z_]+)'/g),
-      ].map((m) => m[1]);
-      const invented = [...new Set(compared)].filter(
-        (s) => !(ALL_ATTENDANCE_STATUSES as readonly string[]).includes(s),
-      );
-      expect(
-        invented,
-        `not members of the attendance_status ENUM, so these comparisons match nothing ` +
-          `and the figure silently reads 0`,
-      ).toEqual([]);
-    },
-  );
+  it.each(CANON_CONSUMERS)("%s invents no attendance status of its own", (file) => {
+    const source = stripComments(read(file));
+    // Any 'x' compared against attendance_status must be a real ENUM member.
+    const compared = [
+      ...source.matchAll(/attendance_status\s*(?:=|IN\s*\()\s*'([a-z_]+)'/g),
+    ].map((m) => m[1]);
+    const invented = [...new Set(compared)].filter(
+      (s) => !(ALL_ATTENDANCE_STATUSES as readonly string[]).includes(s),
+    );
+    expect(
+      invented,
+      `not members of the attendance_status ENUM, so these comparisons match nothing ` +
+        `and the figure silently reads 0`
+    ).toEqual([]);
+  });
 
   it.each(PHANTOM_STATUSES)(
     "management.service.ts no longer compares attendance_status against '%s'",
     (phantom) => {
-      const source = stripComments(
-        read("src/modules/management/management.service.ts"),
-      );
-      expect(source).not.toMatch(
-        new RegExp(`attendance_status[^\\n]*'${phantom}'`),
-      );
+      const source = stripComments(read("src/modules/management/management.service.ts"));
+      expect(source).not.toMatch(new RegExp(`attendance_status[^\\n]*'${phantom}'`));
     },
   );
 
   it("management dashboard reads a completed attendance day, never today", () => {
-    const source = stripComments(
-      read("src/modules/management/management.service.ts"),
-    );
+    const source = stripComments(read("src/modules/management/management.service.ts"));
     expect(source).toContain("LATEST_COMPLETE_ATTENDANCE_DATE_SQL");
     // The old anchor. It resolves to today, which is always partially written.
     expect(
       source,
       "MAX(record_date) <= CURDATE() resolves to today, whose rows are created " +
-        "before reconciliation — this is what produced the 2.3% figure",
-    ).not.toMatch(
-      /MAX\(record_date\)[\s\S]{0,80}?record_date\s*<=\s*CURDATE\(\)/,
-    );
+        "before reconciliation — this is what produced the 2.3% figure"
+    ).not.toMatch(/MAX\(record_date\)[\s\S]{0,80}?record_date\s*<=\s*CURDATE\(\)/);
   });
 
   it("management headcount matches the definition every other tile uses", () => {
@@ -109,35 +98,24 @@ describe("attendance canon", () => {
     // Ruling: active_status = 1 alone. Contradictory flags are a data-quality problem to
     // surface in an exception report, not a reason for two tiles to disagree.
     const surfaces = {
-      "management.service.ts": stripComments(
-        read("src/modules/management/management.service.ts"),
-      ),
-      "dashboard-metric.service.ts": stripComments(
-        read("src/modules/dashboards/dashboard-metric.service.ts"),
-      ),
-      "employee.executor.ts": stripComments(
-        read("src/modules/reporting/executors/employee.executor.ts"),
-      ),
+      "management.service.ts": stripComments(read("src/modules/management/management.service.ts")),
+      "dashboard-metric.service.ts": stripComments(read("src/modules/dashboards/dashboard-metric.service.ts")),
+      "employee.executor.ts": stripComments(read("src/modules/reporting/executors/employee.executor.ts")),
       // The drilldown is included because it is the "click the tile to see who" behind the
       // HEADCOUNT tile. It kept the two-flag definition after the tile moved to one, so the
       // tile said 1,125 and the list explaining it was built from 1,123 — the one place a
       // user would go to reconcile the number was the one place still disagreeing.
-      "dashboard-drilldown.service.ts": stripComments(
-        read("src/modules/dashboards/dashboard-drilldown.service.ts"),
-      ),
+      "dashboard-drilldown.service.ts": stripComments(read("src/modules/dashboards/dashboard-drilldown.service.ts")),
     };
 
-    const supersededFilter =
-      /employment_status\s*,\s*'active'\)\)\s*=\s*'active'/;
+    const supersededFilter = /employment_status\s*,\s*'active'\)\)\s*=\s*'active'/;
     for (const [name, source] of Object.entries(surfaces)) {
       expect(
         source,
         `${name} still narrows headcount by employment_status. That is the superseded ` +
-          `definition and makes this surface report a different organisation size from the rest.`,
+          `definition and makes this surface report a different organisation size from the rest.`
       ).not.toMatch(supersededFilter);
-      expect(source, `${name} must filter on active_status`).toMatch(
-        /active_status\s*=\s*1/,
-      );
+      expect(source, `${name} must filter on active_status`).toMatch(/active_status\s*=\s*1/);
     }
   });
 
@@ -151,19 +129,15 @@ describe("attendance canon", () => {
     // 1 August. What matters here is that the canonical helper is what gets wrapped — a
     // hand-rolled expression in its place is the drift this guards against.
     expect(source).toMatch(/\$\{presentSql\(\)\}(?:,\s*0\))?\s+AS presentDays/);
-    expect(source).toMatch(
-      /\$\{attendedDaysSql\(\)\}\s*\/\s*NULLIF\(\$\{expectedToWorkSql\(\)\}/,
-    );
+    expect(source).toMatch(/\$\{attendedDaysSql\(\)\}\s*\/\s*NULLIF\(\$\{expectedToWorkSql\(\)\}/);
   });
 
   it("live tracker resolves today in IST, not UTC", () => {
-    const source = stripComments(
-      read("src/modules/wfm/liveTracker.service.ts"),
-    );
+    const source = stripComments(read("src/modules/wfm/liveTracker.service.ts"));
     expect(
       source,
       "toISOString() is UTC, so before 05:30 IST the tracker queried yesterday's " +
-        "roster — during the night shift, which is when it is actually watched",
+        "roster — during the night shift, which is when it is actually watched"
     ).not.toMatch(/new Date\(\)\.toISOString\(\)\.slice\(0,\s*10\)/);
     expect(source).toContain("istToday");
   });

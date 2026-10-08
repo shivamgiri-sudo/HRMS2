@@ -56,15 +56,12 @@ function normalizeRegime(input?: string | null): TaxRegime {
 }
 
 export const taxEngineService = {
-  async getConfig(
-    financialYear: string,
-    regime: TaxRegime,
-  ): Promise<FyConfigRow> {
+  async getConfig(financialYear: string, regime: TaxRegime): Promise<FyConfigRow> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM payroll_tax_fy_config
         WHERE financial_year = ? AND regime = ? AND active_status = 1
         LIMIT 1`,
-      [financialYear, regime],
+      [financialYear, regime]
     );
 
     if (rows[0]) return rows[0] as FyConfigRow;
@@ -80,7 +77,7 @@ export const taxEngineService = {
     // that is absent too — a different route to the same approved rates, not a laxer one.
     throw new Error(
       `No approved tax configuration for financial year ${financialYear}, ${regime} regime. ` +
-        `Seed payroll_tax_fy_config before running payroll for this year.`,
+      `Seed payroll_tax_fy_config before running payroll for this year.`
     );
   },
 
@@ -90,7 +87,7 @@ export const taxEngineService = {
          FROM payroll_tax_slab_master
         WHERE financial_year = ? AND regime = ? AND active_status = 1
         ORDER BY slab_from ASC`,
-      [financialYear, regime],
+      [financialYear, regime]
     );
 
     if (rows.length) {
@@ -110,18 +107,16 @@ export const taxEngineService = {
         const key = String(row.slab_from);
         seen.set(key, (seen.get(key) ?? 0) + 1);
       }
-      const duplicated = [...seen.entries()]
-        .filter(([, n]) => n > 1)
-        .map(([from]) => from);
+      const duplicated = [...seen.entries()].filter(([, n]) => n > 1).map(([from]) => from);
       if (duplicated.length) {
         throw Object.assign(
           new Error(
             `Ambiguous tax slabs for financial year ${financialYear}, ${regime} regime: ` +
-              `slab_from ${duplicated.join(", ")} each have more than one active row in ` +
-              `payroll_tax_slab_master. Every duplicated band would be taxed more than once. ` +
-              `Deactivate the extra rows before running payroll for this year.`,
+            `slab_from ${duplicated.join(", ")} each have more than one active row in ` +
+            `payroll_tax_slab_master. Every duplicated band would be taxed more than once. ` +
+            `Deactivate the extra rows before running payroll for this year.`
           ),
-          { statusCode: 409, code: "TAX_SLABS_AMBIGUOUS" },
+          { statusCode: 409, code: "TAX_SLABS_AMBIGUOUS" }
         );
       }
       return rows as SlabRow[];
@@ -133,7 +128,7 @@ export const taxEngineService = {
     // silently tax an old-regime employee on bands nobody had approved.
     throw new Error(
       `No approved tax slabs for financial year ${financialYear}, ${regime} regime. ` +
-        `Seed payroll_tax_slab_master before running payroll for this year.`,
+      `Seed payroll_tax_slab_master before running payroll for this year.`
     );
   },
 
@@ -141,10 +136,7 @@ export const taxEngineService = {
     let tax = 0;
     for (const slab of slabs) {
       const from = Number(slab.slab_from);
-      const to =
-        slab.slab_to === null
-          ? taxableIncome
-          : Math.min(taxableIncome, Number(slab.slab_to));
+      const to = slab.slab_to === null ? taxableIncome : Math.min(taxableIncome, Number(slab.slab_to));
       if (taxableIncome <= from) continue;
       const amount = Math.max(0, to - from);
       tax += amount * (Number(slab.rate_pct) / 100);
@@ -152,67 +144,39 @@ export const taxEngineService = {
     return r2(tax);
   },
 
-  allowedOldRegimeDeductions(
-    decl?: TaxDeclarationLike | null,
-    employeeAge?: number | null,
-  ): number {
+  allowedOldRegimeDeductions(decl?: TaxDeclarationLike | null, employeeAge?: number | null): number {
     if (!decl) return 0;
     const hra = Math.max(0, Number(decl.declared_hra ?? 0));
-    const sec80c = Math.min(
-      Math.max(0, Number(decl.declared_80c ?? 0)),
-      150000,
-    );
-    const sec80dCap = employeeAge != null && employeeAge >= 60 ? 50000 : 25000; // s.80D: ₹50K for senior citizens
-    const sec80d = Math.min(
-      Math.max(0, Number(decl.declared_80d ?? 0)),
-      sec80dCap,
-    );
+    const sec80c = Math.min(Math.max(0, Number(decl.declared_80c ?? 0)), 150000);
+    const sec80dCap = (employeeAge != null && employeeAge >= 60) ? 50000 : 25000; // s.80D: ₹50K for senior citizens
+    const sec80d = Math.min(Math.max(0, Number(decl.declared_80d ?? 0)), sec80dCap);
     return r2(hra + sec80c + sec80d);
   },
 
   async calculateMonthlyTds(input: TaxEngineInput): Promise<TaxEngineResult> {
-    const regime = normalizeRegime(
-      input.declaration?.regime as string | undefined,
-    );
+    const regime = normalizeRegime(input.declaration?.regime as string | undefined);
     const config = await this.getConfig(input.financialYear, regime);
     const slabs = await this.getSlabs(input.financialYear, regime);
 
     const annualGross = Math.max(0, Number(input.annualGross || 0));
-    const standardDeduction = Math.max(
-      0,
-      Number(config.standard_deduction || 0),
-    );
-    const deductionsAllowed =
-      regime === "old"
-        ? this.allowedOldRegimeDeductions(input.declaration, input.employeeAge)
-        : 0;
+    const standardDeduction = Math.max(0, Number(config.standard_deduction || 0));
+    const deductionsAllowed = regime === "old" ? this.allowedOldRegimeDeductions(input.declaration, input.employeeAge) : 0;
 
-    const taxableIncome = r2(
-      Math.max(0, annualGross - standardDeduction - deductionsAllowed),
-    );
+    const taxableIncome = r2(Math.max(0, annualGross - standardDeduction - deductionsAllowed));
     const taxBeforeRebate = this.calculateSlabTax(taxableIncome, slabs);
 
     let rebate = 0;
     if (taxableIncome <= Number(config.rebate_limit || 0)) {
-      rebate = Math.min(
-        taxBeforeRebate,
-        Number(config.rebate_max_amount || taxBeforeRebate),
-      );
+      rebate = Math.min(taxBeforeRebate, Number(config.rebate_max_amount || taxBeforeRebate));
     }
 
     const taxAfterRebate = Math.max(0, taxBeforeRebate - rebate);
     const cess = r2(taxAfterRebate * (Number(config.cess_pct || 0) / 100));
     const taxAnnual = r2(taxAfterRebate + cess);
     const alreadyDeducted = Math.max(0, Number(input.alreadyDeducted ?? 0));
-    const monthsRemaining = Math.max(
-      1,
-      Math.min(12, Number(input.monthsRemaining ?? 12)),
-    );
-    const tdsMonthly = r2(
-      Math.max(0, taxAnnual - alreadyDeducted) / monthsRemaining,
-    );
-    const effectiveRate =
-      annualGross > 0 ? r2((taxAnnual / annualGross) * 100) : 0;
+    const monthsRemaining = Math.max(1, Math.min(12, Number(input.monthsRemaining ?? 12)));
+    const tdsMonthly = r2(Math.max(0, taxAnnual - alreadyDeducted) / monthsRemaining);
+    const effectiveRate = annualGross > 0 ? r2((taxAnnual / annualGross) * 100) : 0;
 
     return {
       financial_year: input.financialYear,
@@ -232,9 +196,7 @@ export const taxEngineService = {
         `Regime=${regime}`,
         `FY=${input.financialYear}`,
         `Standard deduction=${standardDeduction}`,
-        regime === "new"
-          ? "Old-regime deductions ignored under new regime"
-          : `Old-regime deductions allowed=${deductionsAllowed}`,
+        regime === "new" ? "Old-regime deductions ignored under new regime" : `Old-regime deductions allowed=${deductionsAllowed}`,
       ],
     };
   },

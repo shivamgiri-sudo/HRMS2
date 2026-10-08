@@ -1,11 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../../policy-engine/policy-engine.cache.js", () => ({
-  getPolicyValue: vi
-    .fn()
-    .mockResolvedValue(
-      '[{"from":0,"to":6,"max_weekoffs":0},{"from":7,"to":11,"max_weekoffs":1},{"from":12,"to":17,"max_weekoffs":2},{"from":18,"to":23,"max_weekoffs":3},{"from":24,"to":25,"max_weekoffs":4},{"from":26,"to":31,"max_weekoffs":5}]',
-    ),
+  getPolicyValue: vi.fn().mockResolvedValue(
+    '[{"from":0,"to":6,"max_weekoffs":0},{"from":7,"to":11,"max_weekoffs":1},{"from":12,"to":17,"max_weekoffs":2},{"from":18,"to":23,"max_weekoffs":3},{"from":24,"to":25,"max_weekoffs":4},{"from":26,"to":31,"max_weekoffs":5}]'
+  ),
 }));
 
 import {
@@ -14,8 +12,8 @@ import {
 } from "../weekoff-eligibility.service.js";
 
 const DEFAULT_SLABS = [
-  { from: 0, to: 6, max_weekoffs: 0 },
-  { from: 7, to: 11, max_weekoffs: 1 },
+  { from: 0,  to: 6,  max_weekoffs: 0 },
+  { from: 7,  to: 11, max_weekoffs: 1 },
   { from: 12, to: 17, max_weekoffs: 2 },
   { from: 18, to: 23, max_weekoffs: 3 },
   { from: 24, to: 25, max_weekoffs: 4 },

@@ -2,11 +2,7 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
-import {
-  financeBranchFilter,
-  resolveFinanceBranchScope,
-  type FinanceBranchScope,
-} from "../finance/finance-access-scope.js";
+import { financeBranchFilter, resolveFinanceBranchScope, type FinanceBranchScope } from "../finance/finance-access-scope.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import {
   computeLineAllocations,
@@ -40,10 +36,7 @@ async function notifyBudgetStage(
   try {
     const { inboxService } = await import("../inbox/inbox.service.js");
     const userIds = await resolveRoleHolderUserIds(role, branchId);
-    const amountLabel =
-      grossAmount != null
-        ? `₹${Number(grossAmount).toLocaleString("en-IN")}`
-        : "";
+    const amountLabel = grossAmount != null ? `₹${Number(grossAmount).toLocaleString("en-IN")}` : "";
     for (const userId of userIds) {
       await inboxService.createItem({
         user_id: userId,
@@ -75,7 +68,11 @@ async function resolveBudgetNotifications(budgetId: string) {
   }
 }
 export type BudgetTaxTreatment =
-  "inclusive" | "exclusive" | "exempt" | "reverse_charge" | "non_gst";
+  | "inclusive"
+  | "exclusive"
+  | "exempt"
+  | "reverse_charge"
+  | "non_gst";
 export type BudgetGstType = "cgst_sgst" | "igst" | "none";
 export type BudgetStatus =
   | "draft"
@@ -128,7 +125,7 @@ const REVIEW_STAGES = {
 
 /** Any role that can review at some stage. Checked before the budget row is even read. */
 const REVIEW_CAPABLE_ROLES = new Set(
-  Object.values(REVIEW_STAGES).flatMap((stage) => [...stage.roles]),
+  Object.values(REVIEW_STAGES).flatMap((stage) => [...stage.roles])
 );
 
 /**
@@ -217,12 +214,7 @@ export interface TaxAmendmentPreflight {
   consumedQuantity: number;
   openGrnCount: number;
   canAmend: boolean;
-  blockedReason:
-    | "PERIOD_LOCKED"
-    | "BUDGET_LINE_ALREADY_IN_USE"
-    | "PENDING_AMENDMENT_EXISTS"
-    | "WRONG_STATUS"
-    | null;
+  blockedReason: "PERIOD_LOCKED" | "BUDGET_LINE_ALREADY_IN_USE" | "PENDING_AMENDMENT_EXISTS" | "WRONG_STATUS" | null;
 }
 
 function roundMoney(value: number) {
@@ -240,11 +232,7 @@ function clamp(value: number, minimum: number, maximum: number) {
 function financialYearFromPeriod(periodCode: string) {
   const [year, month] = periodCode.split("-").map(Number);
   if (!year || !month || month < 1 || month > 12) {
-    throw refuse(
-      400,
-      "BUDGET_PERIOD_INVALID",
-      "Budget period must be a valid YYYY-MM month",
-    );
+    throw refuse(400, "BUDGET_PERIOD_INVALID", "Budget period must be a valid YYYY-MM month");
   }
   return month >= 4
     ? `${year}-${String(year + 1).slice(-2)}`
@@ -264,10 +252,10 @@ export function calculateBudgetLine(line: BudgetLineInput) {
     baseAmount = roundMoney(quotedAmount / (1 + gstRate / 100));
     taxAmount = roundMoney(quotedAmount - baseAmount);
   } else if (
-    ["exclusive", "reverse_charge"].includes(line.taxTreatment) &&
-    gstRate > 0
+    ["exclusive", "reverse_charge"].includes(line.taxTreatment)
+    && gstRate > 0
   ) {
-    taxAmount = roundMoney((quotedAmount * gstRate) / 100);
+    taxAmount = roundMoney(quotedAmount * gstRate / 100);
     grossAmount = roundMoney(quotedAmount + taxAmount);
   }
 
@@ -276,27 +264,25 @@ export function calculateBudgetLine(line: BudgetLineInput) {
     grossAmount = baseAmount;
   }
 
-  const gstType: BudgetGstType =
-    taxAmount === 0 ? "none" : (line.gstType ?? "cgst_sgst");
+  const gstType: BudgetGstType = taxAmount === 0
+    ? "none"
+    : line.gstType ?? "cgst_sgst";
   // For non_gst/exempt lines we assume 0% ITC recoverability: taxAmount is 0 at budget
   // time so the budget pnl_cost_amount is unaffected, but if a vendor ever raises a GST
   // invoice against this line the GRN service inherits this value and correctly treats
   // the full gross (base + tax) as P&L cost instead of silently zeroing the tax out.
-  const defaultRecoverable = ["exempt", "non_gst"].includes(line.taxTreatment)
-    ? 0
-    : 100;
-  const recoverablePct = clamp(
-    Number(line.recoverableTaxPct ?? defaultRecoverable),
-    0,
-    100,
-  );
-  const recoverableTaxAmount = roundMoney((taxAmount * recoverablePct) / 100);
+  const defaultRecoverable = ["exempt", "non_gst"].includes(line.taxTreatment) ? 0 : 100;
+  const recoverablePct = clamp(Number(line.recoverableTaxPct ?? defaultRecoverable), 0, 100);
+  const recoverableTaxAmount = roundMoney(taxAmount * recoverablePct / 100);
   const pnlCostAmount = roundMoney(
-    baseAmount + taxAmount - recoverableTaxAmount,
+    baseAmount + taxAmount - recoverableTaxAmount
   );
-  const cgstAmount = gstType === "cgst_sgst" ? roundMoney(taxAmount / 2) : 0;
-  const sgstAmount =
-    gstType === "cgst_sgst" ? roundMoney(taxAmount - cgstAmount) : 0;
+  const cgstAmount = gstType === "cgst_sgst"
+    ? roundMoney(taxAmount / 2)
+    : 0;
+  const sgstAmount = gstType === "cgst_sgst"
+    ? roundMoney(taxAmount - cgstAmount)
+    : 0;
   const igstAmount = gstType === "igst" ? taxAmount : 0;
 
   return {
@@ -327,72 +313,50 @@ function canonicalizeTaxPatch(patch: {
       recoverableTaxPct: 0,
     };
   }
-  if (patch.gstRate < 0 || patch.gstRate > 100)
-    throw refuse(400, "GST_RATE_INVALID", "Invalid GST rate");
-  if (patch.recoverableTaxPct < 0 || patch.recoverableTaxPct > 100)
-    throw refuse(400, "RECOVERABLE_PCT_INVALID", "Invalid recoverable %");
+  if (patch.gstRate < 0 || patch.gstRate > 100) throw refuse(400, "GST_RATE_INVALID", "Invalid GST rate");
+  if (patch.recoverableTaxPct < 0 || patch.recoverableTaxPct > 100) throw refuse(400, "RECOVERABLE_PCT_INVALID", "Invalid recoverable %");
   return patch;
 }
 
 function validateLine(line: BudgetLineInput, index: number) {
   const label = `Budget line ${index + 1}`;
-  if (!line.head?.trim())
-    throw refuse(400, "LINE_HEAD_REQUIRED", `${label}: head is required`);
+  if (!line.head?.trim()) throw refuse(400, "LINE_HEAD_REQUIRED", `${label}: head is required`);
   if (!line.itemName?.trim()) {
-    throw refuse(
-      400,
-      "LINE_ITEM_REQUIRED",
-      `${label}: item/service is required`,
-    );
+    throw refuse(400, "LINE_ITEM_REQUIRED", `${label}: item/service is required`);
   }
-  if (!line.unit?.trim())
-    throw refuse(400, "LINE_UNIT_REQUIRED", `${label}: unit is required`);
+  if (!line.unit?.trim()) throw refuse(400, "LINE_UNIT_REQUIRED", `${label}: unit is required`);
   if (!line.justification?.trim()) {
-    throw refuse(
-      400,
-      "LINE_JUSTIFICATION_REQUIRED",
-      `${label}: justification is required`,
-    );
+    throw refuse(400, "LINE_JUSTIFICATION_REQUIRED", `${label}: justification is required`);
   }
   if (!Number.isFinite(Number(line.quantity)) || Number(line.quantity) <= 0) {
-    throw refuse(
-      400,
-      "LINE_QUANTITY_INVALID",
-      `${label}: quantity must be greater than zero`,
-    );
+    throw refuse(400, "LINE_QUANTITY_INVALID", `${label}: quantity must be greater than zero`);
   }
   if (!Number.isFinite(Number(line.unitRate)) || Number(line.unitRate) < 0) {
-    throw refuse(
-      400,
-      "LINE_UNIT_RATE_INVALID",
-      `${label}: unit rate cannot be negative`,
-    );
+    throw refuse(400, "LINE_UNIT_RATE_INVALID", `${label}: unit rate cannot be negative`);
   }
   if (
-    !Number.isFinite(Number(line.gstRate)) ||
-    Number(line.gstRate) < 0 ||
-    Number(line.gstRate) > 100
+    !Number.isFinite(Number(line.gstRate))
+    || Number(line.gstRate) < 0
+    || Number(line.gstRate) > 100
   ) {
     throw refuse(400, "GST_RATE_INVALID", `${label}: invalid GST rate`);
   }
   if (
-    line.recoverableTaxPct != null &&
-    (!Number.isFinite(Number(line.recoverableTaxPct)) ||
-      Number(line.recoverableTaxPct) < 0 ||
-      Number(line.recoverableTaxPct) > 100)
+    line.recoverableTaxPct != null
+    && (
+      !Number.isFinite(Number(line.recoverableTaxPct))
+      || Number(line.recoverableTaxPct) < 0
+      || Number(line.recoverableTaxPct) > 100
+    )
   ) {
-    throw refuse(
-      400,
-      "RECOVERABLE_PCT_INVALID",
-      `${label}: recoverable GST must be between 0 and 100`,
-    );
+    throw refuse(400, "RECOVERABLE_PCT_INVALID", `${label}: recoverable GST must be between 0 and 100`);
   }
 }
 
 async function validateAttribution(
   connection: PoolConnection,
   branchId: string,
-  line: BudgetLineInput,
+  line: BudgetLineInput
 ) {
   let processId = line.processId?.trim() || null;
   const costCentreId = line.costCentreId?.trim() || null;
@@ -403,23 +367,14 @@ async function validateAttribution(
          FROM cost_centre_master
         WHERE id = ?
         LIMIT 1`,
-      [costCentreId],
+      [costCentreId]
     );
-    if (!costCentres[0])
-      throw refuse(
-        404,
-        "COST_CENTRE_NOT_FOUND",
-        "Selected cost centre was not found",
-      );
+    if (!costCentres[0]) throw refuse(404, "COST_CENTRE_NOT_FOUND", "Selected cost centre was not found");
     const mappedProcessId = costCentres[0].process_id
       ? String(costCentres[0].process_id)
       : null;
     if (processId && mappedProcessId && processId !== mappedProcessId) {
-      throw refuse(
-        400,
-        "COST_CENTRE_PROCESS_MISMATCH",
-        "Selected cost centre is mapped to a different process",
-      );
+      throw refuse(400, "COST_CENTRE_PROCESS_MISMATCH", "Selected cost centre is mapped to a different process");
     }
     processId = processId ?? mappedProcessId;
   }
@@ -430,20 +385,15 @@ async function validateAttribution(
          FROM process_master
         WHERE id = ?
         LIMIT 1`,
-      [processId],
+      [processId]
     );
     const process = processes[0];
-    if (!process)
-      throw refuse(404, "PROCESS_NOT_FOUND", "Selected process was not found");
+    if (!process) throw refuse(404, "PROCESS_NOT_FOUND", "Selected process was not found");
     if (Number(process.active_status ?? 1) !== 1) {
       throw refuse(409, "PROCESS_INACTIVE", "Selected process is inactive");
     }
     if (process.branch_id && String(process.branch_id) !== branchId) {
-      throw refuse(
-        400,
-        "PROCESS_BRANCH_MISMATCH",
-        "Selected process belongs to a different branch",
-      );
+      throw refuse(400, "PROCESS_BRANCH_MISMATCH", "Selected process belongs to a different branch");
     }
   }
 
@@ -453,10 +403,9 @@ async function validateAttribution(
          FROM vendor_master
         WHERE id = ?
         LIMIT 1`,
-      [line.preferredVendorId],
+      [line.preferredVendorId]
     );
-    if (!vendors[0])
-      throw refuse(404, "VENDOR_NOT_FOUND", "Preferred vendor was not found");
+    if (!vendors[0]) throw refuse(404, "VENDOR_NOT_FOUND", "Preferred vendor was not found");
     if (Number(vendors[0].is_active ?? 0) !== 1) {
       throw refuse(409, "VENDOR_INACTIVE", "Preferred vendor is inactive");
     }
@@ -469,18 +418,17 @@ async function generateBudgetNumber(
   connection: PoolConnection,
   branchId: string,
   periodCode: string,
-  id: string,
+  id: string
 ) {
   const [branches] = await connection.execute<RowDataPacket[]>(
     `SELECT branch_seq, active_status
        FROM branch_master
       WHERE id = ?
       LIMIT 1`,
-    [branchId],
+    [branchId]
   );
   const branch = branches[0];
-  if (!branch)
-    throw refuse(404, "BRANCH_NOT_FOUND", "Selected branch was not found");
+  if (!branch) throw refuse(404, "BRANCH_NOT_FOUND", "Selected branch was not found");
   if (Number(branch.active_status ?? 1) !== 1) {
     throw refuse(409, "BRANCH_INACTIVE", "Selected branch is inactive");
   }
@@ -497,7 +445,7 @@ async function audit(
   toStatus: string,
   actorId: string,
   actorRole: string,
-  remarks?: string | null,
+  remarks?: string | null
 ) {
   await db.execute(
     `INSERT INTO finance_budget_approval_log
@@ -512,7 +460,7 @@ async function audit(
       actorId,
       actorRole,
       remarks ?? null,
-    ],
+    ]
   );
 }
 
@@ -526,7 +474,7 @@ export async function auditInTransaction(
   toStatus: string,
   actorId: string,
   actorRole: string,
-  remarks?: string | null,
+  remarks?: string | null
 ) {
   await connection.execute(
     `INSERT INTO finance_budget_approval_log
@@ -541,7 +489,7 @@ export async function auditInTransaction(
       actorId,
       actorRole,
       remarks ?? null,
-    ],
+    ]
   );
 }
 
@@ -577,13 +525,10 @@ export interface CostCentreConsolidationGroup {
  * real risk (spec 7.2: "do not sum non-additive values... unless explicitly configured") is unit
  * consistency, not money — surfaced via unitConsistent rather than silently assumed.
  */
-export function buildCostCentreConsolidation(
-  lines: RowDataPacket[],
-): CostCentreConsolidationGroup[] {
+export function buildCostCentreConsolidation(lines: RowDataPacket[]): CostCentreConsolidationGroup[] {
   const groups = new Map<string, CostCentreConsolidationGroup>();
   for (const line of lines) {
-    if (String(line.planning_level) !== "cost_centre" || !line.cost_centre_id)
-      continue;
+    if (String(line.planning_level) !== "cost_centre" || !line.cost_centre_id) continue;
     const head = String(line.head);
     const subHead = line.sub_head != null ? String(line.sub_head) : null;
     const itemName = String(line.item_name);
@@ -607,23 +552,14 @@ export function buildCostCentreConsolidation(
 
     if (group.unit !== unit) group.unitConsistent = false;
     group.branchUnit += Number(line.quantity ?? 0);
-    group.branchBaseAmount = roundMoney(
-      group.branchBaseAmount + Number(line.base_amount ?? 0),
-    );
-    group.branchTaxAmount = roundMoney(
-      group.branchTaxAmount + Number(line.tax_amount ?? 0),
-    );
-    group.branchGrossAmount = roundMoney(
-      group.branchGrossAmount + Number(line.gross_amount ?? 0),
-    );
-    group.branchPnlCostAmount = roundMoney(
-      group.branchPnlCostAmount + Number(line.pnl_cost_amount ?? 0),
-    );
+    group.branchBaseAmount = roundMoney(group.branchBaseAmount + Number(line.base_amount ?? 0));
+    group.branchTaxAmount = roundMoney(group.branchTaxAmount + Number(line.tax_amount ?? 0));
+    group.branchGrossAmount = roundMoney(group.branchGrossAmount + Number(line.gross_amount ?? 0));
+    group.branchPnlCostAmount = roundMoney(group.branchPnlCostAmount + Number(line.pnl_cost_amount ?? 0));
     group.costCentreCount += 1;
     group.lines.push({
       costCentreId: String(line.cost_centre_id),
-      costCentreName:
-        line.cost_centre_name != null ? String(line.cost_centre_name) : null,
+      costCentreName: line.cost_centre_name != null ? String(line.cost_centre_name) : null,
       quantity: Number(line.quantity ?? 0),
       grossAmount: Number(line.gross_amount ?? 0),
       pnlCostAmount: Number(line.pnl_cost_amount ?? 0),
@@ -636,10 +572,7 @@ export function buildCostCentreConsolidation(
 // Structurally identical to the Executor interfaces used across this session's other
 // process-pnl services — same dependency-injection pattern for testability.
 interface ConsolidationExecutor {
-  execute<T extends RowDataPacket[] = RowDataPacket[]>(
-    sql: string,
-    params?: unknown[],
-  ): Promise<[T, unknown]>;
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]>;
 }
 
 export interface CompanyConsolidationBranchAmount {
@@ -688,7 +621,7 @@ export interface CompanyConsolidationGroup {
  */
 export async function getCompanyBudgetConsolidation(
   periodCode: string,
-  executor: ConsolidationExecutor = db,
+  executor: ConsolidationExecutor = db
 ): Promise<CompanyConsolidationGroup[]> {
   const [[rows], [grnRows]] = await Promise.all([
     executor.execute<RowDataPacket[]>(
@@ -699,7 +632,7 @@ export async function getCompanyBudgetConsolidation(
          LEFT JOIN branch_master bm ON bm.id = h.branch_id
          JOIN finance_budget_line l ON l.budget_id = h.id
         WHERE h.period_code = ?`,
-      [periodCode],
+      [periodCode]
     ),
     // Actuals, not plan. Booked-to-P&L keys off lifecycle_status='consumed', the same filter
     // vw_process_lob_grn_allocation already uses to source real P&L cost.
@@ -729,25 +662,16 @@ export async function getCompanyBudgetConsolidation(
          ) grn_totals ON grn_totals.grn_request_id = a.grn_request_id
         WHERE h.period_code = ?
         GROUP BY a.budget_line_id`,
-      [periodCode],
+      [periodCode]
     ),
   ]);
   const actualsByLineId = new Map(
-    grnRows.map((row) => [
-      String(row.budget_line_id),
-      {
-        paid: Number(row.paid_amount ?? 0),
-        booked: Number(row.booked_amount ?? 0),
-      },
-    ]),
+    grnRows.map((row) => [String(row.budget_line_id), { paid: Number(row.paid_amount ?? 0), booked: Number(row.booked_amount ?? 0) }])
   );
 
   const groups = new Map<
     string,
-    {
-      group: CompanyConsolidationGroup;
-      branchByBranchId: Map<string, CompanyConsolidationBranchAmount>;
-    }
+    { group: CompanyConsolidationGroup; branchByBranchId: Map<string, CompanyConsolidationBranchAmount> }
   >();
 
   for (const row of rows) {
@@ -757,10 +681,7 @@ export async function getCompanyBudgetConsolidation(
     const unit = String(row.unit);
     const branchId = String(row.branch_id);
     const key = `${head}|${subHead ?? ""}|${itemName}`;
-    const actuals = actualsByLineId.get(String(row.line_id)) ?? {
-      paid: 0,
-      booked: 0,
-    };
+    const actuals = actualsByLineId.get(String(row.line_id)) ?? { paid: 0, booked: 0 };
 
     let entry = groups.get(key);
     if (!entry) {
@@ -788,46 +709,22 @@ export async function getCompanyBudgetConsolidation(
 
     if (entry.group.unit !== unit) entry.group.unitConsistent = false;
     entry.group.companyUnit += Number(row.quantity ?? 0);
-    entry.group.companyGrossAmount = roundMoney(
-      entry.group.companyGrossAmount + Number(row.gross_amount ?? 0),
-    );
-    entry.group.companyPnlCostAmount = roundMoney(
-      entry.group.companyPnlCostAmount + Number(row.pnl_cost_amount ?? 0),
-    );
-    entry.group.companyReservedAmount = roundMoney(
-      entry.group.companyReservedAmount + Number(row.reserved_amount ?? 0),
-    );
-    entry.group.companyConsumedAmount = roundMoney(
-      entry.group.companyConsumedAmount + Number(row.consumed_amount ?? 0),
-    );
-    entry.group.companyPaidAmount = roundMoney(
-      entry.group.companyPaidAmount + actuals.paid,
-    );
-    entry.group.companyBookedToPnlAmount = roundMoney(
-      entry.group.companyBookedToPnlAmount + actuals.booked,
-    );
+    entry.group.companyGrossAmount = roundMoney(entry.group.companyGrossAmount + Number(row.gross_amount ?? 0));
+    entry.group.companyPnlCostAmount = roundMoney(entry.group.companyPnlCostAmount + Number(row.pnl_cost_amount ?? 0));
+    entry.group.companyReservedAmount = roundMoney(entry.group.companyReservedAmount + Number(row.reserved_amount ?? 0));
+    entry.group.companyConsumedAmount = roundMoney(entry.group.companyConsumedAmount + Number(row.consumed_amount ?? 0));
+    entry.group.companyPaidAmount = roundMoney(entry.group.companyPaidAmount + actuals.paid);
+    entry.group.companyBookedToPnlAmount = roundMoney(entry.group.companyBookedToPnlAmount + actuals.booked);
 
     const existingBranch = entry.branchByBranchId.get(branchId);
     if (existingBranch) {
       existingBranch.quantity += Number(row.quantity ?? 0);
-      existingBranch.grossAmount = roundMoney(
-        existingBranch.grossAmount + Number(row.gross_amount ?? 0),
-      );
-      existingBranch.pnlCostAmount = roundMoney(
-        existingBranch.pnlCostAmount + Number(row.pnl_cost_amount ?? 0),
-      );
-      existingBranch.reservedAmount = roundMoney(
-        existingBranch.reservedAmount + Number(row.reserved_amount ?? 0),
-      );
-      existingBranch.consumedAmount = roundMoney(
-        existingBranch.consumedAmount + Number(row.consumed_amount ?? 0),
-      );
-      existingBranch.paidAmount = roundMoney(
-        existingBranch.paidAmount + actuals.paid,
-      );
-      existingBranch.bookedToPnlAmount = roundMoney(
-        existingBranch.bookedToPnlAmount + actuals.booked,
-      );
+      existingBranch.grossAmount = roundMoney(existingBranch.grossAmount + Number(row.gross_amount ?? 0));
+      existingBranch.pnlCostAmount = roundMoney(existingBranch.pnlCostAmount + Number(row.pnl_cost_amount ?? 0));
+      existingBranch.reservedAmount = roundMoney(existingBranch.reservedAmount + Number(row.reserved_amount ?? 0));
+      existingBranch.consumedAmount = roundMoney(existingBranch.consumedAmount + Number(row.consumed_amount ?? 0));
+      existingBranch.paidAmount = roundMoney(existingBranch.paidAmount + actuals.paid);
+      existingBranch.bookedToPnlAmount = roundMoney(existingBranch.bookedToPnlAmount + actuals.booked);
     } else {
       entry.branchByBranchId.set(branchId, {
         branchId,
@@ -868,11 +765,8 @@ type CalculatedBudgetLine = {
 async function calculateBudgetLines(
   connection: BudgetConnection,
   branchId: string,
-  lines: BudgetLineInput[],
-): Promise<{
-  calculated: CalculatedBudgetLine[];
-  totals: { base: number; tax: number; gross: number; pnl: number };
-}> {
+  lines: BudgetLineInput[]
+): Promise<{ calculated: CalculatedBudgetLine[]; totals: { base: number; tax: number; gross: number; pnl: number } }> {
   const calculated: CalculatedBudgetLine[] = [];
   for (const line of lines) {
     calculated.push({
@@ -888,7 +782,7 @@ async function calculateBudgetLines(
       gross: roundMoney(total.gross + item.values.grossAmount),
       pnl: roundMoney(total.pnl + item.values.pnlCostAmount),
     }),
-    { base: 0, tax: 0, gross: 0, pnl: 0 },
+    { base: 0, tax: 0, gross: 0, pnl: 0 }
   );
   return { calculated, totals };
 }
@@ -901,11 +795,11 @@ export async function replaceBudgetLines(
   branchId: string,
   periodCode: string,
   calculated: CalculatedBudgetLine[],
-  actorId: string,
+  actorId: string
 ) {
   await connection.execute(
     `DELETE FROM finance_budget_line WHERE budget_id = ?`,
-    [budgetId],
+    [budgetId]
   );
 
   // One cache for the whole save. Every allocation lookup below is keyed on branchId/periodCode,
@@ -936,8 +830,7 @@ export async function replaceBudgetLines(
     // Guard against frontend sending duplicate IDs (causes PRIMARY key collision)
     while (usedLineIds.has(lineId)) lineId = randomUUID();
     usedLineIds.add(lineId);
-    const planningLevel: BudgetPlanningLevel =
-      line.planningLevel === "branch" ? "branch" : "cost_centre";
+    const planningLevel: BudgetPlanningLevel = line.planningLevel === "branch" ? "branch" : "cost_centre";
     await connection.execute(
       `INSERT INTO finance_budget_line
        (id, budget_id, cost_centre_id, planning_level, process_id, head, sub_head,
@@ -978,7 +871,7 @@ export async function replaceBudgetLines(
         line.justification.trim(),
         line.expenditureType ?? "opex",
         80,
-      ],
+      ]
     );
 
     if (planningLevel === "branch") {
@@ -996,7 +889,7 @@ export async function replaceBudgetLines(
         connection,
         undefined,
         line.includedCostCentreIds,
-        lookupCache,
+        lookupCache
       );
       await replaceLineAllocations(connection, lineId, allocations, actorId);
     }
@@ -1037,11 +930,7 @@ export async function getPriorBudgetFromMirror(
   branchId: string,
 ): Promise<{ head: string; subHead: string; amount: number }[]> {
   if (!/^\d{4}-\d{2}$/.test(periodCode) || !branchId) return [];
-  for (const table of [
-    "finance_budget_snapshot",
-    "finance_budget_line_snapshot",
-    "finance_expense_head_snapshot",
-  ]) {
+  for (const table of ["finance_budget_snapshot", "finance_budget_line_snapshot", "finance_expense_head_snapshot"]) {
     if (!(await tableExists(table))) return [];
   }
 
@@ -1118,34 +1007,27 @@ export const branchBudgetService = {
          ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
         GROUP BY h.id, bm.branch_name
         ORDER BY h.period_code DESC, h.created_at DESC`,
-      params,
+      params
     );
     return rows;
   },
 
-  async listPendingForReviewer(
-    actorRole: string,
-    userId: string,
-    userRoles: string[],
-  ) {
+  async listPendingForReviewer(actorRole: string, userId: string, userRoles: string[]) {
     // Derived from REVIEW_STAGES so the inbox can never disagree with what review() will accept.
     // This used to be its own role->status ternary, which broke the moment Finance Head gained
     // authority at every stage: they could approve a 'submitted' budget but their inbox only ever
     // listed 'branch_head_approved' ones, so the work was invisible until someone else surfaced
     // it. super_admin was missing from the ternary entirely and always got an empty inbox.
     const role = actorRole.toLowerCase();
-    const targetStatuses = (
-      Object.keys(REVIEW_STAGES) as (keyof typeof REVIEW_STAGES)[]
-    ).filter((status) => REVIEW_STAGES[status].roles.has(role));
+    const targetStatuses = (Object.keys(REVIEW_STAGES) as (keyof typeof REVIEW_STAGES)[])
+      .filter((status) => REVIEW_STAGES[status].roles.has(role));
     if (targetStatuses.length === 0) return [];
     const branchScope = await resolveFinanceBranchScope({
       userId,
       primaryRole: actorRole,
       userRoles,
     });
-    const where: string[] = [
-      `h.status IN (${targetStatuses.map(() => "?").join(", ")})`,
-    ];
+    const where: string[] = [`h.status IN (${targetStatuses.map(() => "?").join(", ")})`];
     const params: unknown[] = [...targetStatuses];
     if (branchScope !== undefined) {
       where.push("h.branch_id = ?");
@@ -1168,7 +1050,7 @@ export const branchBudgetService = {
          LEFT JOIN branch_master bm ON bm.id = h.branch_id
         WHERE ${where.join(" AND ")}
         ORDER BY h.updated_at ASC`,
-      params,
+      params
     );
     return rows;
   },
@@ -1180,7 +1062,7 @@ export const branchBudgetService = {
          LEFT JOIN branch_master bm ON bm.id = h.branch_id
         WHERE h.id = ?
         LIMIT 1`,
-      [id],
+      [id]
     );
     if (!headers[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
 
@@ -1200,7 +1082,7 @@ export const branchBudgetService = {
          LEFT JOIN vendor_master vm ON vm.id = l.preferred_vendor_id
         WHERE l.budget_id = ?
         ORDER BY l.created_at, l.id`,
-      [id],
+      [id]
     );
     // actor_name joined the same way the corrections query below does — on employees.user_id,
     // NOT employees.id, because actor_user_id is written from actor(req).id (the auth_user id).
@@ -1218,7 +1100,7 @@ export const branchBudgetService = {
          LEFT JOIN employees e ON e.user_id = a.actor_user_id
         WHERE a.budget_id = ?
         ORDER BY a.created_at, a.id`,
-      [id],
+      [id]
     );
 
     // Per head/sub-head correction notes raised by a reviewer sending the budget back. Ordered
@@ -1235,7 +1117,7 @@ export const branchBudgetService = {
          LEFT JOIN employees e ON e.user_id = c.raised_by
         WHERE c.budget_id = ?
         ORDER BY c.raised_at DESC, c.id`,
-      [id],
+      [id]
     );
 
     const linesWithAllocations = await Promise.all(
@@ -1243,7 +1125,7 @@ export const branchBudgetService = {
         if (String(line.planning_level) !== "branch") return line;
         const allocations = await getLineAllocations(String(line.id));
         return { ...line, allocations };
-      }),
+      })
     );
 
     return {
@@ -1258,29 +1140,19 @@ export const branchBudgetService = {
   async saveDraft(
     input: SaveBudgetInput,
     actorId: string,
-    actorRole = "branch_admin",
+    actorRole = "branch_admin"
   ) {
     if (!input.branchId || !/^\d{4}-\d{2}$/.test(input.periodCode)) {
-      throw refuse(
-        400,
-        "BUDGET_BRANCH_PERIOD_REQUIRED",
-        "Branch and a valid budget period are required",
-      );
+      throw refuse(400, "BUDGET_BRANCH_PERIOD_REQUIRED", "Branch and a valid budget period are required");
     }
     const expectedFinancialYear = financialYearFromPeriod(input.periodCode);
     if (input.financialYear !== expectedFinancialYear) {
-      throw refuse(
-        400,
-        "FINANCIAL_YEAR_MISMATCH",
-        `Financial year must be ${expectedFinancialYear} for ${input.periodCode}`,
+      throw refuse(400, "FINANCIAL_YEAR_MISMATCH",
+        `Financial year must be ${expectedFinancialYear} for ${input.periodCode}`
       );
     }
     if (!input.lines?.length) {
-      throw refuse(
-        400,
-        "BUDGET_LINES_REQUIRED",
-        "At least one detailed budget line is required",
-      );
+      throw refuse(400, "BUDGET_LINES_REQUIRED", "At least one detailed budget line is required");
     }
     input.lines.forEach(validateLine);
 
@@ -1296,20 +1168,15 @@ export const branchBudgetService = {
              FROM finance_budget_header
             WHERE id = ?
             FOR UPDATE`,
-          [budgetId],
+          [budgetId]
         );
         existing = byId[0];
-        if (!existing)
-          throw refuse(404, "BUDGET_NOT_FOUND", "Budget draft was not found");
+        if (!existing) throw refuse(404, "BUDGET_NOT_FOUND", "Budget draft was not found");
         if (
-          String(existing.branch_id) !== input.branchId ||
-          String(existing.period_code) !== input.periodCode
+          String(existing.branch_id) !== input.branchId
+          || String(existing.period_code) !== input.periodCode
         ) {
-          throw refuse(
-            409,
-            "BUDGET_IDENTITY_IMMUTABLE",
-            "Budget branch and period cannot be changed after creation",
-          );
+          throw refuse(409, "BUDGET_IDENTITY_IMMUTABLE", "Budget branch and period cannot be changed after creation");
         }
       } else {
         const [byPeriod] = await connection.execute<RowDataPacket[]>(
@@ -1318,7 +1185,7 @@ export const branchBudgetService = {
             WHERE branch_id = ? AND period_code = ?
             LIMIT 1
             FOR UPDATE`,
-          [input.branchId, input.periodCode],
+          [input.branchId, input.periodCode]
         );
         const found = byPeriod[0];
         // deleteOrSupersede() closes a budget instead of deleting it specifically to keep
@@ -1339,22 +1206,18 @@ export const branchBudgetService = {
       // rather than silently rewriting the version Branch Head may already be reviewing. Once
       // Branch Head has actually approved, the status leaves this list and edits are refused again.
       if (
-        existing &&
-        !["draft", "revision_required", "submitted"].includes(
-          String(existing.status),
-        )
+        existing
+        && !["draft", "revision_required", "submitted"].includes(String(existing.status))
       ) {
-        throw refuse(
-          409,
-          "BUDGET_ALREADY_EXISTS",
-          `A ${existing.status} budget already exists for this branch and month`,
+        throw refuse(409, "BUDGET_ALREADY_EXISTS",
+          `A ${existing.status} budget already exists for this branch and month`
         );
       }
 
       const { calculated, totals } = await calculateBudgetLines(
         connection,
         input.branchId,
-        input.lines,
+        input.lines
       );
 
       let auditAction = "SAVE_DRAFT";
@@ -1365,7 +1228,7 @@ export const branchBudgetService = {
           connection,
           input.branchId,
           input.periodCode,
-          budgetId,
+          budgetId
         );
         await connection.execute(
           `INSERT INTO finance_budget_header
@@ -1384,7 +1247,7 @@ export const branchBudgetService = {
             totals.gross,
             totals.pnl,
             actorId,
-          ],
+          ]
         );
         auditAction = "CREATE_DRAFT";
         auditFromStatus = null;
@@ -1417,7 +1280,7 @@ export const branchBudgetService = {
             totals.pnl,
             wasRevision ? 1 : 0,
             budgetId,
-          ],
+          ]
         );
         auditAction = wasRevision ? "START_REVISION" : "SAVE_DRAFT";
         auditFromStatus = String(existing.status);
@@ -1429,7 +1292,7 @@ export const branchBudgetService = {
         input.branchId,
         input.periodCode,
         calculated,
-        actorId,
+        actorId
       );
 
       await auditInTransaction(
@@ -1440,7 +1303,7 @@ export const branchBudgetService = {
         "draft",
         actorId,
         actorRole,
-        `${calculated.length} budget line(s); gross ${totals.gross}`,
+        `${calculated.length} budget line(s); gross ${totals.gross}`
       );
       await connection.commit();
     } catch (error) {
@@ -1462,29 +1325,21 @@ export const branchBudgetService = {
            FROM finance_budget_header
           WHERE id = ?
           FOR UPDATE`,
-        [id],
+        [id]
       );
       if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       if (String(rows[0].status) !== "draft") {
-        throw refuse(
-          409,
-          "BUDGET_WRONG_STATUS",
-          "Only a draft budget can be submitted",
-        );
+        throw refuse(409, "BUDGET_WRONG_STATUS", "Only a draft budget can be submitted");
       }
 
       const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE finance_budget_header
             SET status = 'submitted', submitted_by = ?, submitted_at = NOW()
           WHERE id = ? AND status = 'draft'`,
-        [actorId, id],
+        [actorId, id]
       );
       if (result.affectedRows !== 1) {
-        throw refuse(
-          409,
-          "BUDGET_STATUS_CHANGED",
-          "Budget status changed before submission; refresh and retry",
-        );
+        throw refuse(409, "BUDGET_STATUS_CHANGED", "Budget status changed before submission; refresh and retry");
       }
       // Close any outstanding correction notes: they stay open (and visible) for the whole time the
       // branch admin is editing, and are marked resolved only once the budget goes back for review.
@@ -1493,7 +1348,7 @@ export const branchBudgetService = {
         `UPDATE finance_budget_line_correction
             SET resolved_at = NOW(), resolved_by = ?
           WHERE budget_id = ? AND resolved_at IS NULL`,
-        [actorId, id],
+        [actorId, id]
       );
       await auditInTransaction(
         connection,
@@ -1502,7 +1357,7 @@ export const branchBudgetService = {
         "draft",
         "submitted",
         actorId,
-        actorRole,
+        actorRole
       );
       await connection.commit();
     } catch (error) {
@@ -1532,35 +1387,22 @@ export const branchBudgetService = {
     lines: BudgetLineInput[],
     actorId: string,
     actorRole: string,
-    reason: string,
+    reason: string
   ) {
     const role = actorRole.toLowerCase();
-    const expectedStatus =
-      role === "branch_head"
-        ? "submitted"
-        : role === "finance_head"
-          ? "branch_head_approved"
-          : null;
+    const expectedStatus = role === "branch_head"
+      ? "submitted"
+      : role === "finance_head"
+        ? "branch_head_approved"
+        : null;
     if (!expectedStatus) {
-      throw refuse(
-        403,
-        "BUDGET_NO_REVISE_ROLE",
-        `Role ${actorRole} cannot revise branch budgets`,
-      );
+      throw refuse(403, "BUDGET_NO_REVISE_ROLE", `Role ${actorRole} cannot revise branch budgets`);
     }
     if (!reason?.trim()) {
-      throw refuse(
-        400,
-        "BUDGET_REVISION_REASON_REQUIRED",
-        "A reason is required when a reviewer edits budget lines",
-      );
+      throw refuse(400, "BUDGET_REVISION_REASON_REQUIRED", "A reason is required when a reviewer edits budget lines");
     }
     if (!lines?.length) {
-      throw refuse(
-        400,
-        "BUDGET_LINES_REQUIRED",
-        "At least one budget line is required",
-      );
+      throw refuse(400, "BUDGET_LINES_REQUIRED", "At least one budget line is required");
     }
 
     const connection = await db.getConnection();
@@ -1571,25 +1413,19 @@ export const branchBudgetService = {
            FROM finance_budget_header
           WHERE id = ?
           FOR UPDATE`,
-        [id],
+        [id]
       );
       if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       const currentStatus = String(rows[0].status);
       if (currentStatus !== expectedStatus) {
-        throw refuse(
-          403,
-          "BUDGET_NO_REVISE_ROLE",
-          `Role ${actorRole} cannot revise a budget in status ${currentStatus}`,
+        throw refuse(403, "BUDGET_NO_REVISE_ROLE",
+          `Role ${actorRole} cannot revise a budget in status ${currentStatus}`
         );
       }
       const branchId = String(rows[0].branch_id);
       const periodCode = String(rows[0].period_code);
 
-      const { calculated, totals } = await calculateBudgetLines(
-        connection,
-        branchId,
-        lines,
-      );
+      const { calculated, totals } = await calculateBudgetLines(connection, branchId, lines);
       await connection.execute(
         `UPDATE finance_budget_header
             SET base_budget_amount = ?,
@@ -1597,16 +1433,9 @@ export const branchBudgetService = {
                 gross_budget_amount = ?,
                 pnl_budget_amount = ?
           WHERE id = ? AND status = ?`,
-        [totals.base, totals.tax, totals.gross, totals.pnl, id, expectedStatus],
+        [totals.base, totals.tax, totals.gross, totals.pnl, id, expectedStatus]
       );
-      await replaceBudgetLines(
-        connection,
-        id,
-        branchId,
-        periodCode,
-        calculated,
-        actorId,
-      );
+      await replaceBudgetLines(connection, id, branchId, periodCode, calculated, actorId);
 
       await auditInTransaction(
         connection,
@@ -1616,7 +1445,7 @@ export const branchBudgetService = {
         currentStatus,
         actorId,
         actorRole,
-        `${reason.trim()} — ${calculated.length} line(s); gross ${totals.gross}`,
+        `${reason.trim()} — ${calculated.length} line(s); gross ${totals.gross}`
       );
       await connection.commit();
     } catch (error) {
@@ -1643,31 +1472,21 @@ export const branchBudgetService = {
    * So the caller's intent is honoured where it is safe and converted to a supersede where it is
    * not, and the outcome is reported back rather than silently chosen.
    */
-  async deleteOrSupersede(
-    id: string,
-    actorId: string,
-    actorRole: string,
-    reason: string,
-  ) {
+  async deleteOrSupersede(id: string, actorId: string, actorRole: string, reason: string) {
     if (!reason?.trim()) {
-      throw refuse(
-        400,
-        "BUDGET_DELETE_REASON_REQUIRED",
-        "A reason is required to delete or supersede a budget",
-      );
+      throw refuse(400, "BUDGET_DELETE_REASON_REQUIRED", "A reason is required to delete or supersede a budget");
     }
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
         `SELECT id, budget_number, status, created_by FROM finance_budget_header WHERE id = ? FOR UPDATE`,
-        [id],
+        [id]
       );
       if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       const status = String(rows[0].status);
       const budgetNumber = String(rows[0].budget_number);
-      const createdBy =
-        rows[0].created_by == null ? null : String(rows[0].created_by);
+      const createdBy = rows[0].created_by == null ? null : String(rows[0].created_by);
 
       // Who may delete at all. super_admin may act on any budget; everyone else may only remove a
       // budget they raised themselves and only while it is still a draft. This is the real gate —
@@ -1676,105 +1495,70 @@ export const branchBudgetService = {
       const isSuperAdminActor = actorRole.toLowerCase() === "super_admin";
       if (!isSuperAdminActor) {
         if (createdBy !== actorId) {
-          throw refuse(
-            403,
-            "BUDGET_DELETE_NOT_CREATOR",
-            "Only the person who raised this budget can delete it",
-          );
+          throw refuse(403, "BUDGET_DELETE_NOT_CREATOR", "Only the person who raised this budget can delete it");
         }
         if (status !== "draft") {
-          throw refuse(
-            409,
-            "BUDGET_WRONG_STATUS",
-            `This budget is ${status}, so it can no longer be deleted by its creator. ` +
-              "Ask a super admin to supersede it.",
+          throw refuse(409, "BUDGET_WRONG_STATUS",
+            `This budget is ${status}, so it can no longer be deleted by its creator. `
+            + "Ask a super admin to supersede it."
           );
         }
       }
 
-      const [[usage]] = (await connection.execute<RowDataPacket[]>(
+      const [[usage]] = await connection.execute<RowDataPacket[]>(
         `SELECT COALESCE(SUM(reserved_amount),0) AS reserved,
                 COALESCE(SUM(consumed_amount),0) AS consumed,
                 COUNT(*) AS line_count
            FROM finance_budget_line WHERE budget_id = ?`,
-        [id],
-      )) as unknown as [RowDataPacket[], unknown];
-      const [[grn]] = (await connection.execute<RowDataPacket[]>(
+        [id]
+      ) as unknown as [RowDataPacket[], unknown];
+      const [[grn]] = await connection.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS n FROM grn_cost_allocation WHERE budget_id = ?`,
-        [id],
-      )) as unknown as [RowDataPacket[], unknown];
+        [id]
+      ) as unknown as [RowDataPacket[], unknown];
 
-      const touchedByGrn =
-        Number(usage?.reserved ?? 0) > 0 ||
-        Number(usage?.consumed ?? 0) > 0 ||
-        Number(grn?.n ?? 0) > 0;
+      const touchedByGrn = Number(usage?.reserved ?? 0) > 0
+        || Number(usage?.consumed ?? 0) > 0
+        || Number(grn?.n ?? 0) > 0;
 
       // Once branch_head/finance_head has signed off (or the budget is active), a hard delete
       // would erase an approval decision even if no GRN has spent against it yet — supersede
       // instead, same as the GRN-touched case, so the approval trail always survives. super_admin
       // is the one role trusted to override that and truly delete an approved-but-untouched budget;
       // touchedByGrn is NOT overridable by anyone — real spend history is never deletable.
-      const APPROVED_STATUSES = [
-        "branch_head_approved",
-        "finance_head_approved",
-        "active",
-      ];
-      const requiresSupersede =
-        touchedByGrn ||
-        (APPROVED_STATUSES.includes(status) && !isSuperAdminActor);
+      const APPROVED_STATUSES = ["branch_head_approved", "finance_head_approved", "active"];
+      const requiresSupersede = touchedByGrn || (APPROVED_STATUSES.includes(status) && !isSuperAdminActor);
 
       if (requiresSupersede) {
         await connection.execute(
           `UPDATE finance_budget_header
               SET status = 'closed', rejection_reason = ?
             WHERE id = ?`,
-          [reason.trim(), id],
+          [reason.trim(), id]
         );
-        await auditInTransaction(
-          connection,
-          id,
-          "SUPERSEDE",
-          status,
-          "closed",
-          actorId,
-          actorRole,
+        await auditInTransaction(connection, id, "SUPERSEDE", status, "closed", actorId, actorRole,
           touchedByGrn
             ? `${reason.trim()} — kept because GRN activity exists against it`
-            : `${reason.trim()} — kept because it was already approved (${status})`,
-        );
+            : `${reason.trim()} — kept because it was already approved (${status})`);
         await connection.commit();
         return {
           outcome: "superseded" as const,
           budgetNumber,
           message: touchedByGrn
-            ? `${budgetNumber} has GRN activity against it, so it was closed rather than deleted. ` +
-              `A new budget can now be created for this branch and month.`
-            : `${budgetNumber} was already approved, so it was closed rather than deleted. ` +
-              `A new budget can now be created for this branch and month.`,
+            ? `${budgetNumber} has GRN activity against it, so it was closed rather than deleted. `
+              + `A new budget can now be created for this branch and month.`
+            : `${budgetNumber} was already approved, so it was closed rather than deleted. `
+              + `A new budget can now be created for this branch and month.`,
         };
       }
 
       // Audit BEFORE the delete: the FK on the audit table cascades with the header.
-      await auditInTransaction(
-        connection,
-        id,
-        "DELETE",
-        status,
-        "deleted",
-        actorId,
-        actorRole,
-        reason.trim(),
-      );
+      await auditInTransaction(connection, id, "DELETE", status, "deleted", actorId, actorRole, reason.trim());
       const [result] = await connection.execute<ResultSetHeader>(
         `DELETE FROM finance_budget_header WHERE id = ?`,
-        [id],
+        [id]
       );
-      if (result.affectedRows !== 1)
-        throw refuse(
-          409,
-          "BUDGET_STATUS_CHANGED",
-          "Budget was changed by someone else; refresh and retry",
-        );
+      if (result.affectedRows !== 1) throw refuse(409, "BUDGET_STATUS_CHANGED", "Budget was changed by someone else; refresh and retry");
       await connection.commit();
       return {
         outcome: "deleted" as const,
@@ -1805,54 +1589,39 @@ export const branchBudgetService = {
     },
     actorId: string,
     actorRole: string,
-    reason: string,
+    reason: string
   ) {
     const role = actorRole.toLowerCase();
     if (!["finance_head", "super_admin"].includes(role)) {
-      throw refuse(
-        403,
-        "TAX_AMENDMENT_NO_ROLE",
-        "Only finance_head or super_admin can amend a budget line's tax treatment",
-      );
+      throw refuse(403, "TAX_AMENDMENT_NO_ROLE", "Only finance_head or super_admin can amend a budget line's tax treatment");
     }
     if (!reason?.trim()) {
-      throw refuse(
-        400,
-        "TAX_AMENDMENT_REASON_REQUIRED",
-        "A reason is required for a tax-treatment amendment",
-      );
+      throw refuse(400, "TAX_AMENDMENT_REASON_REQUIRED", "A reason is required for a tax-treatment amendment");
     }
 
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
 
-      const [[header]] = (await connection.execute<RowDataPacket[]>(
+      const [[header]] = await connection.execute<RowDataPacket[]>(
         `SELECT id, status FROM finance_budget_header WHERE id = ? FOR UPDATE`,
-        [budgetId],
-      )) as unknown as [RowDataPacket[], unknown];
+        [budgetId]
+      ) as unknown as [RowDataPacket[], unknown];
       if (!header) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       if (String(header.status) !== "active") {
-        throw refuse(
-          409,
-          "BUDGET_WRONG_STATUS",
-          `Tax-treatment amendment is only allowed on active budgets (current status: ${header.status})`,
+        throw refuse(409, "BUDGET_WRONG_STATUS",
+          `Tax-treatment amendment is only allowed on active budgets (current status: ${header.status})`
         );
       }
 
-      const [[line]] = (await connection.execute<RowDataPacket[]>(
+      const [[line]] = await connection.execute<RowDataPacket[]>(
         `SELECT id, head, sub_head, item_name, quantity, unit, unit_rate, justification, tax_treatment
            FROM finance_budget_line
           WHERE id = ? AND budget_id = ?
           FOR UPDATE`,
-        [lineId, budgetId],
-      )) as unknown as [RowDataPacket[], unknown];
-      if (!line)
-        throw refuse(
-          404,
-          "BUDGET_LINE_NOT_FOUND",
-          "Budget line not found in this budget",
-        );
+        [lineId, budgetId]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found in this budget");
 
       const oldTreatment = String(line.tax_treatment);
       const recomputed = calculateBudgetLine({
@@ -1877,20 +1646,12 @@ export const branchBudgetService = {
                 recoverable_tax_amount = ?, pnl_cost_amount = ?
           WHERE id = ?`,
         [
-          patch.taxTreatment,
-          patch.gstRate,
-          patch.gstType,
-          patch.recoverableTaxPct,
-          recomputed.baseAmount,
-          recomputed.taxAmount,
-          recomputed.grossAmount,
-          recomputed.cgstAmount,
-          recomputed.sgstAmount,
-          recomputed.igstAmount,
-          recomputed.recoverableTaxAmount,
-          recomputed.pnlCostAmount,
+          patch.taxTreatment, patch.gstRate, patch.gstType, patch.recoverableTaxPct,
+          recomputed.baseAmount, recomputed.taxAmount, recomputed.grossAmount,
+          recomputed.cgstAmount, recomputed.sgstAmount, recomputed.igstAmount,
+          recomputed.recoverableTaxAmount, recomputed.pnlCostAmount,
           lineId,
-        ],
+        ]
       );
 
       // A branch-level line's cost-centre split is derived from its amount, so an amount change
@@ -1900,14 +1661,14 @@ export const branchBudgetService = {
       // the branch must not block this amendment.
       await resyncLineAllocations(connection, lineId, actorId);
 
-      const [[totals]] = (await connection.execute<RowDataPacket[]>(
+      const [[totals]] = await connection.execute<RowDataPacket[]>(
         `SELECT COALESCE(SUM(base_amount),0)    AS base,
                 COALESCE(SUM(tax_amount),0)     AS tax,
                 COALESCE(SUM(gross_amount),0)   AS gross,
                 COALESCE(SUM(pnl_cost_amount),0) AS pnl
            FROM finance_budget_line WHERE budget_id = ?`,
-        [budgetId],
-      )) as unknown as [RowDataPacket[], unknown];
+        [budgetId]
+      ) as unknown as [RowDataPacket[], unknown];
 
       await connection.execute(
         `UPDATE finance_budget_header
@@ -1915,12 +1676,10 @@ export const branchBudgetService = {
                 gross_budget_amount = ?, pnl_budget_amount = ?
           WHERE id = ?`,
         [
-          Number(totals?.base ?? 0),
-          Number(totals?.tax ?? 0),
-          Number(totals?.gross ?? 0),
-          Number(totals?.pnl ?? 0),
+          Number(totals?.base ?? 0), Number(totals?.tax ?? 0),
+          Number(totals?.gross ?? 0), Number(totals?.pnl ?? 0),
           budgetId,
-        ],
+        ]
       );
 
       await auditInTransaction(
@@ -1931,7 +1690,7 @@ export const branchBudgetService = {
         "active",
         actorId,
         actorRole,
-        `Line "${line.item_name}": ${oldTreatment} → ${patch.taxTreatment} @ ${patch.gstRate}% GST. ${reason.trim()}`,
+        `Line "${line.item_name}": ${oldTreatment} → ${patch.taxTreatment} @ ${patch.gstRate}% GST. ${reason.trim()}`
       );
 
       await connection.commit();
@@ -1949,7 +1708,7 @@ export const branchBudgetService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM finance_budget_line_tax_amendment
         WHERE budget_id = ? ORDER BY requested_at DESC LIMIT 50`,
-      [budgetId],
+      [budgetId]
     );
     return rows;
   },
@@ -1959,40 +1718,39 @@ export const branchBudgetService = {
    *  Safe to call without a transaction. */
   async getTaxAmendmentPreflight(
     budgetId: string,
-    lineId: string,
+    lineId: string
   ): Promise<TaxAmendmentPreflight> {
-    const [[header]] = (await db.execute<RowDataPacket[]>(
+    const [[header]] = await db.execute<RowDataPacket[]>(
       `SELECT id, status, period_code FROM finance_budget_header WHERE id = ? LIMIT 1`,
-      [budgetId],
-    )) as unknown as [RowDataPacket[], unknown];
+      [budgetId]
+    ) as unknown as [RowDataPacket[], unknown];
     if (!header) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
 
-    const [[line]] = (await db.execute<RowDataPacket[]>(
+    const [[line]] = await db.execute<RowDataPacket[]>(
       `SELECT id, item_name, tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
               base_amount, tax_amount, gross_amount, recoverable_tax_amount, pnl_cost_amount,
               reserved_amount, consumed_amount, reserved_quantity, consumed_quantity
          FROM finance_budget_line WHERE id = ? AND budget_id = ? LIMIT 1`,
-      [lineId, budgetId],
-    )) as unknown as [RowDataPacket[], unknown];
-    if (!line)
-      throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
+      [lineId, budgetId]
+    ) as unknown as [RowDataPacket[], unknown];
+    if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
 
     const periodLocked = await isPeriodLocked(header.period_code ?? null);
 
-    const [[grnRow]] = (await db.execute<RowDataPacket[]>(
+    const [[grnRow]] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM finance_grn_line_split gls
          JOIN finance_grn_header gh ON gh.id = gls.grn_id
         WHERE gls.budget_line_id = ?
           AND gh.status IN ('draft','submitted','under_review')`,
-      [lineId],
-    )) as unknown as [RowDataPacket[], unknown];
+      [lineId]
+    ) as unknown as [RowDataPacket[], unknown];
     const openGrnCount = Number(grnRow?.cnt ?? 0);
 
-    const [[pendingRow]] = (await db.execute<RowDataPacket[]>(
+    const [[pendingRow]] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM finance_budget_line_tax_amendment
         WHERE line_id = ? AND status = 'pending'`,
-      [lineId],
-    )) as unknown as [RowDataPacket[], unknown];
+      [lineId]
+    ) as unknown as [RowDataPacket[], unknown];
     const hasPending = Number(pendingRow?.cnt ?? 0) > 0;
 
     let blockedReason: TaxAmendmentPreflight["blockedReason"] = null;
@@ -2049,14 +1807,9 @@ export const branchBudgetService = {
     },
     actorId: string,
     actorRole: string,
-    reason: string,
+    reason: string
   ): Promise<{ amendmentId: string }> {
-    if (!reason?.trim())
-      throw refuse(
-        400,
-        "TAX_AMENDMENT_REASON_REQUIRED",
-        "Reason is required for a tax treatment amendment",
-      );
+    if (!reason?.trim()) throw refuse(400, "TAX_AMENDMENT_REASON_REQUIRED", "Reason is required for a tax treatment amendment");
 
     const canonical = canonicalizeTaxPatch(patch);
     const amendmentId = randomUUID();
@@ -2064,36 +1817,27 @@ export const branchBudgetService = {
     try {
       await connection.beginTransaction();
 
-      const [[header]] = (await connection.execute<RowDataPacket[]>(
+      const [[header]] = await connection.execute<RowDataPacket[]>(
         `SELECT id, status, period_code FROM finance_budget_header WHERE id = ? FOR UPDATE`,
-        [budgetId],
-      )) as unknown as [RowDataPacket[], unknown];
+        [budgetId]
+      ) as unknown as [RowDataPacket[], unknown];
       if (!header) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       if (String(header.status) !== "active") {
-        throw refuse(
-          409,
-          "BUDGET_WRONG_STATUS",
-          "Budget must be active to request a tax treatment amendment",
-        );
+        throw refuse(409, "BUDGET_WRONG_STATUS", "Budget must be active to request a tax treatment amendment");
       }
       if (await isPeriodLocked(header.period_code ?? null, connection)) {
-        throw refuse(
-          409,
-          "FINANCE_PERIOD_LOCKED",
-          "Period is locked — tax treatment amendments are blocked until the period is reopened",
-        );
+        throw refuse(409, "FINANCE_PERIOD_LOCKED", "Period is locked — tax treatment amendments are blocked until the period is reopened");
       }
 
-      const [[line]] = (await connection.execute<RowDataPacket[]>(
+      const [[line]] = await connection.execute<RowDataPacket[]>(
         `SELECT id, item_name, head, sub_head, unit, quantity, unit_rate, justification,
                 tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
                 base_amount, tax_amount, gross_amount, recoverable_tax_amount, pnl_cost_amount,
                 reserved_amount, consumed_amount, reserved_quantity, consumed_quantity
            FROM finance_budget_line WHERE id = ? AND budget_id = ? FOR UPDATE`,
-        [lineId, budgetId],
-      )) as unknown as [RowDataPacket[], unknown];
-      if (!line)
-        throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
+        [lineId, budgetId]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
 
       const inUse =
         Number(line.reserved_amount) > 0 ||
@@ -2101,61 +1845,44 @@ export const branchBudgetService = {
         Number(line.reserved_quantity) > 0 ||
         Number(line.consumed_quantity) > 0;
 
-      const [[grnRow]] = (await connection.execute<RowDataPacket[]>(
+      const [[grnRow]] = await connection.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS cnt FROM finance_grn_line_split gls
            JOIN finance_grn_header gh ON gh.id = gls.grn_id
           WHERE gls.budget_line_id = ?
             AND gh.status IN ('draft','submitted','under_review')`,
-        [lineId],
-      )) as unknown as [RowDataPacket[], unknown];
+        [lineId]
+      ) as unknown as [RowDataPacket[], unknown];
 
       if (inUse || Number(grnRow?.cnt ?? 0) > 0) {
-        throw refuse(
-          409,
-          "BUDGET_LINE_ALREADY_IN_USE",
-          "BUDGET_LINE_ALREADY_IN_USE",
-        );
+        throw refuse(409, "BUDGET_LINE_ALREADY_IN_USE", "BUDGET_LINE_ALREADY_IN_USE");
       }
 
-      const [[pendingRow]] = (await connection.execute<RowDataPacket[]>(
+      const [[pendingRow]] = await connection.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS cnt FROM finance_budget_line_tax_amendment
           WHERE line_id = ? AND status = 'pending'`,
-        [lineId],
-      )) as unknown as [RowDataPacket[], unknown];
+        [lineId]
+      ) as unknown as [RowDataPacket[], unknown];
       if (Number(pendingRow?.cnt ?? 0) > 0) {
-        throw refuse(
-          409,
-          "TAX_AMENDMENT_PENDING_EXISTS",
-          "A pending tax amendment already exists for this line",
-        );
+        throw refuse(409, "TAX_AMENDMENT_PENDING_EXISTS", "A pending tax amendment already exists for this line");
       }
 
-      const quotedAmount =
-        Number(line.unit_rate) * (Number(line.quantity) || 1);
+      const quotedAmount = Number(line.unit_rate) * (Number(line.quantity) || 1);
       const before = calculateBudgetLine({
-        head: String(line.head),
-        subHead: line.sub_head ? String(line.sub_head) : undefined,
-        itemName: String(line.item_name),
-        unit: String(line.unit),
-        quantity: Number(line.quantity),
-        unitRate: Number(line.unit_rate),
+        head: String(line.head), subHead: line.sub_head ? String(line.sub_head) : undefined,
+        itemName: String(line.item_name), unit: String(line.unit),
+        quantity: Number(line.quantity), unitRate: Number(line.unit_rate),
         taxTreatment: line.tax_treatment as BudgetTaxTreatment,
-        gstRate: Number(line.gst_rate),
-        gstType: line.gst_type as BudgetGstType,
+        gstRate: Number(line.gst_rate), gstType: line.gst_type as BudgetGstType,
         recoverableTaxPct: Number(line.recoverable_tax_pct),
         justification: String(line.justification),
       });
       // quotedAmount for after uses same base — only tax fields change
       const afterLine = {
-        head: String(line.head),
-        subHead: line.sub_head ? String(line.sub_head) : undefined,
-        itemName: String(line.item_name),
-        unit: String(line.unit),
-        quantity: Number(line.quantity),
-        unitRate: Number(line.unit_rate),
+        head: String(line.head), subHead: line.sub_head ? String(line.sub_head) : undefined,
+        itemName: String(line.item_name), unit: String(line.unit),
+        quantity: Number(line.quantity), unitRate: Number(line.unit_rate),
         taxTreatment: canonical.taxTreatment,
-        gstRate: canonical.gstRate,
-        gstType: canonical.gstType,
+        gstRate: canonical.gstRate, gstType: canonical.gstType,
         recoverableTaxPct: canonical.recoverableTaxPct,
         justification: String(line.justification),
       };
@@ -2176,42 +1903,24 @@ export const branchBudgetService = {
             reason, requested_by, status)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')`,
         [
-          amendmentId,
-          budgetId,
-          lineId,
-          String(line.item_name),
-          String(line.tax_treatment),
-          canonical.taxTreatment,
-          Number(line.gst_rate),
-          canonical.gstRate,
-          String(line.gst_type),
-          canonical.gstType,
-          Number(line.recoverable_tax_pct),
-          canonical.recoverableTaxPct,
-          before.baseAmount,
-          after.baseAmount,
-          before.taxAmount,
-          after.taxAmount,
-          before.grossAmount,
-          after.grossAmount,
-          before.recoverableTaxAmount,
-          after.recoverableTaxAmount,
-          before.pnlCostAmount,
-          after.pnlCostAmount,
-          reason.trim(),
-          actorId,
-        ],
+          amendmentId, budgetId, lineId, String(line.item_name),
+          String(line.tax_treatment), canonical.taxTreatment,
+          Number(line.gst_rate), canonical.gstRate,
+          String(line.gst_type), canonical.gstType,
+          Number(line.recoverable_tax_pct), canonical.recoverableTaxPct,
+          before.baseAmount, after.baseAmount,
+          before.taxAmount, after.taxAmount,
+          before.grossAmount, after.grossAmount,
+          before.recoverableTaxAmount, after.recoverableTaxAmount,
+          before.pnlCostAmount, after.pnlCostAmount,
+          reason.trim(), actorId,
+        ]
       );
 
       await auditInTransaction(
-        connection,
-        budgetId,
-        "TAX_AMENDMENT_REQUESTED",
-        "active",
-        "active",
-        actorId,
-        actorRole,
-        `Line "${line.item_name}": amendment requested ${line.tax_treatment} → ${canonical.taxTreatment} @ ${canonical.gstRate}% GST. ${reason.trim()}`,
+        connection, budgetId, "TAX_AMENDMENT_REQUESTED", "active", "active",
+        actorId, actorRole,
+        `Line "${line.item_name}": amendment requested ${line.tax_treatment} → ${canonical.taxTreatment} @ ${canonical.gstRate}% GST. ${reason.trim()}`
       );
 
       await connection.commit();
@@ -2232,39 +1941,25 @@ export const branchBudgetService = {
     decision: "approved" | "rejected",
     actorId: string,
     actorRole: string,
-    decisionReason?: string,
+    decisionReason?: string
   ) {
     const role = actorRole.toLowerCase();
     if (!["finance_head", "super_admin"].includes(role)) {
-      throw refuse(
-        403,
-        "TAX_AMENDMENT_NO_ROLE",
-        "Only finance_head or super_admin can review tax amendments",
-      );
+      throw refuse(403, "TAX_AMENDMENT_NO_ROLE", "Only finance_head or super_admin can review tax amendments");
     }
 
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
 
-      const [[amend]] = (await connection.execute<RowDataPacket[]>(
+      const [[amend]] = await connection.execute<RowDataPacket[]>(
         `SELECT * FROM finance_budget_line_tax_amendment WHERE id = ? FOR UPDATE`,
-        [amendmentId],
-      )) as unknown as [RowDataPacket[], unknown];
-      if (!amend)
-        throw refuse(404, "TAX_AMENDMENT_NOT_FOUND", "Tax amendment not found");
-      if (String(amend.status) !== "pending")
-        throw refuse(
-          409,
-          "TAX_AMENDMENT_NOT_PENDING",
-          "Amendment is no longer pending",
-        );
+        [amendmentId]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!amend) throw refuse(404, "TAX_AMENDMENT_NOT_FOUND", "Tax amendment not found");
+      if (String(amend.status) !== "pending") throw refuse(409, "TAX_AMENDMENT_NOT_PENDING", "Amendment is no longer pending");
       if (String(amend.requested_by) === actorId) {
-        throw refuse(
-          409,
-          "TAX_AMENDMENT_MAKER_CHECKER",
-          "The requestor cannot approve their own amendment",
-        );
+        throw refuse(409, "TAX_AMENDMENT_MAKER_CHECKER", "The requestor cannot approve their own amendment");
       }
 
       if (decision === "rejected") {
@@ -2272,50 +1967,36 @@ export const branchBudgetService = {
           `UPDATE finance_budget_line_tax_amendment
               SET status = 'rejected', rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
             WHERE id = ?`,
-          [actorId, decisionReason ?? null, amendmentId],
+          [actorId, decisionReason ?? null, amendmentId]
         );
         await auditInTransaction(
-          connection,
-          String(amend.budget_id),
-          "TAX_AMENDMENT_REJECTED",
-          "active",
-          "active",
-          actorId,
-          actorRole,
-          `Line "${amend.item_name}" amendment rejected. ${decisionReason ?? ""}`,
+          connection, String(amend.budget_id), "TAX_AMENDMENT_REJECTED", "active", "active",
+          actorId, actorRole,
+          `Line "${amend.item_name}" amendment rejected. ${decisionReason ?? ""}`
         );
         await connection.commit();
         return null;
       }
 
       // APPROVE: re-validate all conditions inside this transaction
-      const [[header]] = (await connection.execute<RowDataPacket[]>(
+      const [[header]] = await connection.execute<RowDataPacket[]>(
         `SELECT id, status, period_code FROM finance_budget_header WHERE id = ? FOR UPDATE`,
-        [String(amend.budget_id)],
-      )) as unknown as [RowDataPacket[], unknown];
+        [String(amend.budget_id)]
+      ) as unknown as [RowDataPacket[], unknown];
       if (!header || String(header.status) !== "active") {
         throw refuse(409, "BUDGET_WRONG_STATUS", "Budget is no longer active");
       }
       if (await isPeriodLocked(header.period_code ?? null, connection)) {
-        throw refuse(
-          409,
-          "FINANCE_PERIOD_LOCKED",
-          "Period has been locked since the amendment was requested",
-        );
+        throw refuse(409, "FINANCE_PERIOD_LOCKED", "Period has been locked since the amendment was requested");
       }
 
-      const [[line]] = (await connection.execute<RowDataPacket[]>(
+      const [[line]] = await connection.execute<RowDataPacket[]>(
         `SELECT id, head, sub_head, unit, quantity, unit_rate, justification,
                 reserved_amount, consumed_amount, reserved_quantity, consumed_quantity
            FROM finance_budget_line WHERE id = ? AND budget_id = ? FOR UPDATE`,
-        [String(amend.line_id), String(amend.budget_id)],
-      )) as unknown as [RowDataPacket[], unknown];
-      if (!line)
-        throw refuse(
-          404,
-          "BUDGET_LINE_NOT_FOUND",
-          "Budget line no longer exists",
-        );
+        [String(amend.line_id), String(amend.budget_id)]
+      ) as unknown as [RowDataPacket[], unknown];
+      if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line no longer exists");
 
       const inUse =
         Number(line.reserved_amount) > 0 ||
@@ -2323,20 +2004,13 @@ export const branchBudgetService = {
         Number(line.reserved_quantity) > 0 ||
         Number(line.consumed_quantity) > 0;
       if (inUse) {
-        throw refuse(
-          409,
-          "BUDGET_LINE_ALREADY_IN_USE",
-          "BUDGET_LINE_ALREADY_IN_USE — line was used since the amendment was requested; cannot apply",
-        );
+        throw refuse(409, "BUDGET_LINE_ALREADY_IN_USE", "BUDGET_LINE_ALREADY_IN_USE — line was used since the amendment was requested; cannot apply");
       }
 
       const after = calculateBudgetLine({
-        head: String(line.head),
-        subHead: line.sub_head ? String(line.sub_head) : undefined,
-        itemName: String(amend.item_name),
-        unit: String(line.unit),
-        quantity: Number(line.quantity),
-        unitRate: Number(line.unit_rate),
+        head: String(line.head), subHead: line.sub_head ? String(line.sub_head) : undefined,
+        itemName: String(amend.item_name), unit: String(line.unit),
+        quantity: Number(line.quantity), unitRate: Number(line.unit_rate),
         taxTreatment: String(amend.new_tax_treatment) as BudgetTaxTreatment,
         gstRate: Number(amend.new_gst_rate),
         gstType: String(amend.new_gst_type) as BudgetGstType,
@@ -2352,20 +2026,13 @@ export const branchBudgetService = {
                 recoverable_tax_amount = ?, pnl_cost_amount = ?
           WHERE id = ?`,
         [
-          String(amend.new_tax_treatment),
-          Number(amend.new_gst_rate),
-          String(amend.new_gst_type),
-          Number(amend.new_recoverable_pct),
-          after.baseAmount,
-          after.taxAmount,
-          after.grossAmount,
-          after.cgstAmount,
-          after.sgstAmount,
-          after.igstAmount,
-          after.recoverableTaxAmount,
-          after.pnlCostAmount,
+          String(amend.new_tax_treatment), Number(amend.new_gst_rate),
+          String(amend.new_gst_type), Number(amend.new_recoverable_pct),
+          after.baseAmount, after.taxAmount, after.grossAmount,
+          after.cgstAmount, after.sgstAmount, after.igstAmount,
+          after.recoverableTaxAmount, after.pnlCostAmount,
           String(amend.line_id),
-        ],
+        ]
       );
 
       // A branch-level line's cost-centre split is derived from its amount, so an amount change
@@ -2375,14 +2042,14 @@ export const branchBudgetService = {
       // the branch must not block this amendment.
       await resyncLineAllocations(connection, String(amend.line_id), actorId);
 
-      const [[totals]] = (await connection.execute<RowDataPacket[]>(
+      const [[totals]] = await connection.execute<RowDataPacket[]>(
         `SELECT COALESCE(SUM(base_amount),0)     AS base,
                 COALESCE(SUM(tax_amount),0)      AS tax,
                 COALESCE(SUM(gross_amount),0)    AS gross,
                 COALESCE(SUM(pnl_cost_amount),0) AS pnl
            FROM finance_budget_line WHERE budget_id = ?`,
-        [String(amend.budget_id)],
-      )) as unknown as [RowDataPacket[], unknown];
+        [String(amend.budget_id)]
+      ) as unknown as [RowDataPacket[], unknown];
 
       await connection.execute(
         `UPDATE finance_budget_header
@@ -2390,30 +2057,23 @@ export const branchBudgetService = {
                 gross_budget_amount = ?, pnl_budget_amount = ?
           WHERE id = ?`,
         [
-          Number(totals?.base ?? 0),
-          Number(totals?.tax ?? 0),
-          Number(totals?.gross ?? 0),
-          Number(totals?.pnl ?? 0),
+          Number(totals?.base ?? 0), Number(totals?.tax ?? 0),
+          Number(totals?.gross ?? 0), Number(totals?.pnl ?? 0),
           String(amend.budget_id),
-        ],
+        ]
       );
 
       await connection.execute(
         `UPDATE finance_budget_line_tax_amendment
             SET status = 'approved', approved_by = ?, approved_at = NOW()
           WHERE id = ?`,
-        [actorId, amendmentId],
+        [actorId, amendmentId]
       );
 
       await auditInTransaction(
-        connection,
-        String(amend.budget_id),
-        "TAX_AMENDMENT_APPROVED",
-        "active",
-        "active",
-        actorId,
-        actorRole,
-        `Line "${amend.item_name}": ${amend.old_tax_treatment} → ${amend.new_tax_treatment} @ ${amend.new_gst_rate}% GST applied. Gross Δ: ${amend.gross_delta}, P&L Δ: ${amend.pnl_delta}.`,
+        connection, String(amend.budget_id), "TAX_AMENDMENT_APPROVED", "active", "active",
+        actorId, actorRole,
+        `Line "${amend.item_name}": ${amend.old_tax_treatment} → ${amend.new_tax_treatment} @ ${amend.new_gst_rate}% GST applied. Gross Δ: ${amend.gross_delta}, P&L Δ: ${amend.pnl_delta}.`
       );
 
       await connection.commit();
@@ -2438,43 +2098,27 @@ export const branchBudgetService = {
     /** Every role the caller actually holds. `actorRole` is the role that OWNS the stage being
      *  performed (resolveFinanceStageRole), so a Finance Head acting at the Branch Head stage
      *  arrives as "branch_head" — the exemption below must look at what they hold, not that. */
-    callerRoles: string[] = [],
+    callerRoles: string[] = []
   ) {
     const role = actorRole.toLowerCase();
     const holdsMakerCheckerExemptRole = callerRoles.some((held) =>
-      MAKER_CHECKER_EXEMPT_ROLES.has(String(held).toLowerCase()),
+      MAKER_CHECKER_EXEMPT_ROLES.has(String(held).toLowerCase())
     );
     if (!REVIEW_CAPABLE_ROLES.has(role)) {
-      throw refuse(
-        403,
-        "BUDGET_NO_REVIEW_ROLE",
-        `Role ${actorRole} cannot review branch budgets`,
-      );
+      throw refuse(403, "BUDGET_NO_REVIEW_ROLE", `Role ${actorRole} cannot review branch budgets`);
     }
     if (decision !== "approve" && !remarks?.trim()) {
-      throw refuse(
-        400,
-        "BUDGET_REVIEW_REMARKS_REQUIRED",
-        "Remarks are required for rejection or revision",
-      );
+      throw refuse(400, "BUDGET_REVIEW_REMARKS_REQUIRED", "Remarks are required for rejection or revision");
     }
-    const corrections = (lineCorrections ?? []).filter((entry) =>
-      entry.note?.trim(),
-    );
+    const corrections = (lineCorrections ?? []).filter((entry) => entry.note?.trim());
     if (decision === "revision" && !corrections.length) {
-      throw refuse(
-        400,
-        "BUDGET_CORRECTION_NOTES_REQUIRED",
-        "At least one head/sub-head correction note is required when sending a budget back for revision",
+      throw refuse(400, "BUDGET_CORRECTION_NOTES_REQUIRED",
+        "At least one head/sub-head correction note is required when sending a budget back for revision"
       );
     }
     for (const entry of corrections) {
       if (!entry.head?.trim()) {
-        throw refuse(
-          400,
-          "BUDGET_CORRECTION_NOTES_REQUIRED",
-          "Every correction note must name the head it applies to",
-        );
+        throw refuse(400, "BUDGET_CORRECTION_NOTES_REQUIRED", "Every correction note must name the head it applies to");
       }
     }
 
@@ -2493,7 +2137,7 @@ export const branchBudgetService = {
            FROM finance_budget_header
           WHERE id = ?
           FOR UPDATE`,
-        [id],
+        [id]
       );
       if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       const currentStatus = String(rows[0].status) as BudgetStatus;
@@ -2504,17 +2148,13 @@ export const branchBudgetService = {
       // could not review anything at all (it mapped to null and always 403d).
       const stage = REVIEW_STAGES[currentStatus as keyof typeof REVIEW_STAGES];
       if (!stage) {
-        throw refuse(
-          403,
-          "BUDGET_NO_REVIEW_ROLE",
-          `Budget in status ${currentStatus} is not awaiting review`,
+        throw refuse(403, "BUDGET_NO_REVIEW_ROLE",
+          `Budget in status ${currentStatus} is not awaiting review`
         );
       }
       if (!stage.roles.has(role)) {
-        throw refuse(
-          403,
-          "BUDGET_NO_REVIEW_ROLE",
-          `Role ${actorRole} cannot review budget in status ${currentStatus}`,
+        throw refuse(403, "BUDGET_NO_REVIEW_ROLE",
+          `Role ${actorRole} cannot review budget in status ${currentStatus}`
         );
       }
 
@@ -2527,37 +2167,21 @@ export const branchBudgetService = {
       // reviewer is still blocked. The approval log records each stage with the actor's name and
       // timestamp, so a single person completing multiple stages remains visible after the fact
       // rather than prevented up front.
-      if (
-        decision === "approve" &&
-        !MAKER_CHECKER_EXEMPT_ROLES.has(role) &&
-        !holdsMakerCheckerExemptRole
-      ) {
-        const submittedBy = rows[0].submitted_by
-          ? String(rows[0].submitted_by)
-          : null;
-        const bhApprovedBy = rows[0].branch_head_approved_by
-          ? String(rows[0].branch_head_approved_by)
-          : null;
+      if (decision === "approve" && !MAKER_CHECKER_EXEMPT_ROLES.has(role) && !holdsMakerCheckerExemptRole) {
+        const submittedBy = rows[0].submitted_by ? String(rows[0].submitted_by) : null;
+        const bhApprovedBy = rows[0].branch_head_approved_by ? String(rows[0].branch_head_approved_by) : null;
         // Every actor who already touched this budget at or before the current stage. A reviewer
         // may not be any of them. Built from the stage rather than the role so the rule cannot
         // drift apart from the stage table above.
         const priorActors: { id: string | null; label: string }[] = [
           { id: submittedBy, label: "submitted this budget" },
           ...(stage.key === "finance_head"
-            ? [
-                {
-                  id: bhApprovedBy,
-                  label: "performed the Branch Head approval",
-                },
-              ]
-            : []),
+            ? [{ id: bhApprovedBy, label: "performed the Branch Head approval" }] : []),
         ];
         for (const prior of priorActors) {
           if (prior.id && prior.id === actorId) {
-            throw refuse(
-              409,
-              "BUDGET_MAKER_CHECKER",
-              `Maker-checker violation: the same person cannot ${prior.label} and also approve it at the ${stage.label} stage`,
+            throw refuse(409, "BUDGET_MAKER_CHECKER",
+              `Maker-checker violation: the same person cannot ${prior.label} and also approve it at the ${stage.label} stage`
             );
           }
         }
@@ -2566,12 +2190,11 @@ export const branchBudgetService = {
       // Both derive from the STAGE being performed, so a finance_head acting on a 'submitted'
       // budget completes the Branch Head step (and is stamped into branch_head_approved_by)
       // rather than skipping the stage. Every stage therefore keeps its own audit row.
-      const nextStatus: BudgetStatus =
-        decision === "reject"
-          ? "rejected"
-          : decision === "revision"
-            ? "revision_required"
-            : stage.next;
+      const nextStatus: BudgetStatus = decision === "reject"
+        ? "rejected"
+        : decision === "revision"
+          ? "revision_required"
+          : stage.next;
       const approvalPrefix = stage.column;
 
       const [result] = await connection.execute<ResultSetHeader>(
@@ -2587,14 +2210,10 @@ export const branchBudgetService = {
           decision === "approve" ? null : remarks?.trim(),
           id,
           currentStatus,
-        ],
+        ]
       );
       if (result.affectedRows !== 1) {
-        throw refuse(
-          409,
-          "BUDGET_STATUS_CHANGED",
-          "Budget status changed during review; refresh and retry",
-        );
+        throw refuse(409, "BUDGET_STATUS_CHANGED", "Budget status changed during review; refresh and retry");
       }
       if (stage.key === "branch_head" && decision === "approve") {
         notifyFinanceHead = true;
@@ -2617,7 +2236,7 @@ export const branchBudgetService = {
             role,
             actorId,
             currentRevision,
-          ],
+          ]
         );
       }
 
@@ -2631,7 +2250,7 @@ export const branchBudgetService = {
         actorRole,
         corrections.length
           ? `${remarks ?? ""} (${corrections.length} head/sub-head correction note(s))`.trim()
-          : remarks,
+          : remarks
       );
       await connection.commit();
     } catch (error) {
@@ -2661,8 +2280,7 @@ export const branchBudgetService = {
     costCentreId?: string;
     period?: string;
   }) {
-    if (!filters.branchId)
-      throw refuse(400, "BRANCH_REQUIRED", "Branch is required");
+    if (!filters.branchId) throw refuse(400, "BRANCH_REQUIRED", "Branch is required");
     const conditions = ["h.branch_id = ?", "h.status = 'active'"];
     const params: unknown[] = [filters.branchId];
     if (filters.period) {
@@ -2739,7 +2357,7 @@ export const branchBudgetService = {
       // The two joined placeholders are bound first because they appear before the WHERE clause.
       // Passing null for both when no cost centre was asked about makes each join match nothing,
       // so the advisory columns come back NULL/0 and the row is otherwise unchanged.
-      [filters.costCentreId ?? null, filters.costCentreId ?? null, ...params],
+      [filters.costCentreId ?? null, filters.costCentreId ?? null, ...params]
     );
     return rows;
   },
@@ -2763,13 +2381,11 @@ export const branchBudgetService = {
           AND h.branch_id = ?
           AND h.status = 'active'
         LIMIT 1`,
-      [lineId, branchId],
+      [lineId, branchId]
     );
     if (!rows[0]) {
-      throw refuse(
-        409,
-        "BUDGET_LINE_UNAVAILABLE",
-        "The selected approved budget line is unavailable for this branch",
+      throw refuse(409, "BUDGET_LINE_UNAVAILABLE",
+        "The selected approved budget line is unavailable for this branch"
       );
     }
     return rows[0];
@@ -2789,24 +2405,9 @@ export const branchBudgetService = {
     actorRole?: string;
   }) {
     const amount = roundMoney(Number(input.transferAmount));
-    if (!Number.isFinite(amount) || amount <= 0)
-      throw refuse(
-        400,
-        "TRANSFER_AMOUNT_INVALID",
-        "Transfer amount must be a positive number",
-      );
-    if (!input.reason?.trim())
-      throw refuse(
-        400,
-        "TRANSFER_REASON_REQUIRED",
-        "Reason is required for a budget transfer",
-      );
-    if (input.fromLineId === input.toLineId)
-      throw refuse(
-        400,
-        "TRANSFER_SAME_LINE",
-        "From and To lines must be different",
-      );
+    if (!Number.isFinite(amount) || amount <= 0) throw refuse(400, "TRANSFER_AMOUNT_INVALID", "Transfer amount must be a positive number");
+    if (!input.reason?.trim()) throw refuse(400, "TRANSFER_REASON_REQUIRED", "Reason is required for a budget transfer");
+    if (input.fromLineId === input.toLineId) throw refuse(400, "TRANSFER_SAME_LINE", "From and To lines must be different");
 
     // P1-7: Idempotency — reject a duplicate pending transfer for the same lines/amount
     // created in the last 60 seconds (double-click or network retry guard).
@@ -2816,85 +2417,48 @@ export const branchBudgetService = {
           AND transfer_amount = ? AND status = 'pending'
           AND created_at > DATE_SUB(NOW(), INTERVAL 60 SECOND)
        LIMIT 1`,
-      [input.budgetId, input.fromLineId, input.toLineId, amount],
+      [input.budgetId, input.fromLineId, input.toLineId, amount]
     );
     if ((dupes as RowDataPacket[]).length > 0) {
-      throw refuse(
-        409,
-        "TRANSFER_DUPLICATE_PENDING",
-        "A duplicate transfer request is already pending. The previous request is awaiting approval.",
+      throw refuse(409, "TRANSFER_DUPLICATE_PENDING",
+        "A duplicate transfer request is already pending. The previous request is awaiting approval."
       );
     }
 
     const [headerRows] = await db.execute<RowDataPacket[]>(
       "SELECT id, status, period_code FROM finance_budget_header WHERE id = ?",
-      [input.budgetId],
+      [input.budgetId]
     );
     const header = (headerRows as RowDataPacket[])[0];
     if (!header) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
-    if (String(header.status) !== "active")
-      throw refuse(
-        409,
-        "BUDGET_WRONG_STATUS",
-        "Budget transfers are only allowed on active budgets",
-      );
+    if (String(header.status) !== "active") throw refuse(409, "BUDGET_WRONG_STATUS", "Budget transfers are only allowed on active budgets");
 
     // Early period-lock check at submission time — gives an upfront error rather than
     // having the request sit pending only to fail at review.
     if (await isPeriodLocked(String(header.period_code))) {
-      throw refuse(
-        409,
-        "FINANCE_PERIOD_LOCKED",
-        `${header.period_code} is locked for P&L close. Budget transfers cannot be submitted for locked periods.`,
+      throw refuse(409, "FINANCE_PERIOD_LOCKED",
+        `${header.period_code} is locked for P&L close. Budget transfers cannot be submitted for locked periods.`
       );
     }
 
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, budget_id, gross_amount, reserved_amount, consumed_amount
          FROM finance_budget_line WHERE id IN (?, ?)`,
-      [input.fromLineId, input.toLineId],
+      [input.fromLineId, input.toLineId]
     );
-    const fromLine = (lineRows as RowDataPacket[]).find(
-      (r) => String(r.id) === input.fromLineId,
-    );
-    const toLine = (lineRows as RowDataPacket[]).find(
-      (r) => String(r.id) === input.toLineId,
-    );
-    if (!fromLine)
-      throw refuse(
-        404,
-        "BUDGET_LINE_NOT_FOUND",
-        "Source budget line not found",
-      );
-    if (!toLine)
-      throw refuse(
-        404,
-        "BUDGET_LINE_NOT_FOUND",
-        "Target budget line not found",
-      );
-    if (String(fromLine.budget_id) !== input.budgetId)
-      throw refuse(
-        400,
-        "TRANSFER_LINE_WRONG_BUDGET",
-        "Source line belongs to a different budget",
-      );
-    if (String(toLine.budget_id) !== input.budgetId)
-      throw refuse(
-        400,
-        "TRANSFER_LINE_WRONG_BUDGET",
-        "Target line belongs to a different budget",
-      );
+    const fromLine = (lineRows as RowDataPacket[]).find((r) => String(r.id) === input.fromLineId);
+    const toLine   = (lineRows as RowDataPacket[]).find((r) => String(r.id) === input.toLineId);
+    if (!fromLine) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Source budget line not found");
+    if (!toLine)   throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Target budget line not found");
+    if (String(fromLine.budget_id) !== input.budgetId) throw refuse(400, "TRANSFER_LINE_WRONG_BUDGET", "Source line belongs to a different budget");
+    if (String(toLine.budget_id)   !== input.budgetId) throw refuse(400, "TRANSFER_LINE_WRONG_BUDGET", "Target line belongs to a different budget");
 
     const available = roundMoney(
-      Number(fromLine.gross_amount) -
-        Number(fromLine.reserved_amount) -
-        Number(fromLine.consumed_amount),
+      Number(fromLine.gross_amount) - Number(fromLine.reserved_amount) - Number(fromLine.consumed_amount)
     );
     if (amount > available + 0.01) {
-      throw refuse(
-        409,
-        "TRANSFER_EXCEEDS_AVAILABLE",
-        `Transfer amount ₹${amount.toLocaleString("en-IN")} exceeds available balance ₹${available.toLocaleString("en-IN")} on the source line`,
+      throw refuse(409, "TRANSFER_EXCEEDS_AVAILABLE",
+        `Transfer amount ₹${amount.toLocaleString("en-IN")} exceeds available balance ₹${available.toLocaleString("en-IN")} on the source line`
       );
     }
 
@@ -2906,15 +2470,7 @@ export const branchBudgetService = {
         `INSERT INTO finance_budget_transfer
            (id, budget_id, from_line_id, to_line_id, transfer_amount, reason, status, created_by)
          VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
-        [
-          id,
-          input.budgetId,
-          input.fromLineId,
-          input.toLineId,
-          amount,
-          input.reason.trim(),
-          input.actorId,
-        ],
+        [id, input.budgetId, input.fromLineId, input.toLineId, amount, input.reason.trim(), input.actorId]
       );
       await auditInTransaction(
         conn,
@@ -2924,7 +2480,7 @@ export const branchBudgetService = {
         String(header.status),
         input.actorId,
         input.actorRole ?? "",
-        `Transfer ${id}: ₹${amount} from line ${input.fromLineId} to ${input.toLineId} — ${input.reason.trim()}`,
+        `Transfer ${id}: ₹${amount} from line ${input.fromLineId} to ${input.toLineId} — ${input.reason.trim()}`
       );
       await conn.commit();
     } catch (err) {
@@ -2947,10 +2503,9 @@ export const branchBudgetService = {
          LEFT JOIN finance_budget_line fl ON fl.id = t.from_line_id
          LEFT JOIN finance_budget_line tl ON tl.id = t.to_line_id
         WHERE t.id = ?`,
-      [id],
+      [id]
     );
-    if (!(rows as RowDataPacket[])[0])
-      throw refuse(404, "TRANSFER_NOT_FOUND", "Transfer not found");
+    if (!(rows as RowDataPacket[])[0]) throw refuse(404, "TRANSFER_NOT_FOUND", "Transfer not found");
     return (rows as RowDataPacket[])[0];
   },
 
@@ -2969,14 +2524,10 @@ export const branchBudgetService = {
     decision: "approve" | "reject",
     actorId: string,
     actorRole: string,
-    remarks?: string,
+    remarks?: string
   ) {
     if (decision === "reject" && !remarks?.trim()) {
-      throw refuse(
-        400,
-        "TRANSFER_REJECT_REASON_REQUIRED",
-        "A reason is required to reject a transfer request",
-      );
+      throw refuse(400, "TRANSFER_REJECT_REASON_REQUIRED", "A reason is required to reject a transfer request");
     }
 
     const connection = await db.getConnection();
@@ -2989,25 +2540,18 @@ export const branchBudgetService = {
            JOIN finance_budget_header h ON h.id = t.budget_id
           WHERE t.id = ?
           FOR UPDATE`,
-        [id],
+        [id]
       );
       const transfer = (transferRows as RowDataPacket[])[0];
-      if (!transfer)
-        throw refuse(404, "TRANSFER_NOT_FOUND", "Budget transfer not found");
+      if (!transfer) throw refuse(404, "TRANSFER_NOT_FOUND", "Budget transfer not found");
       if (String(transfer.status) !== "pending") {
-        throw refuse(
-          409,
-          "TRANSFER_WRONG_STAGE",
-          `Transfer is not awaiting approval (status: ${transfer.status})`,
-        );
+        throw refuse(409, "TRANSFER_WRONG_STAGE", `Transfer is not awaiting approval (status: ${transfer.status})`);
       }
 
       // P1-7: Maker-checker — approver cannot be the person who submitted.
       if (String(transfer.created_by) === actorId) {
-        throw refuse(
-          409,
-          "TRANSFER_MAKER_CHECKER",
-          "Maker-checker violation: the approver cannot be the same person who submitted this transfer",
+        throw refuse(409, "TRANSFER_MAKER_CHECKER",
+          "Maker-checker violation: the approver cannot be the same person who submitted this transfer"
         );
       }
 
@@ -3016,17 +2560,12 @@ export const branchBudgetService = {
           `UPDATE finance_budget_transfer
               SET status = 'rejected', approved_by = ?, approved_at = NOW()
             WHERE id = ? AND status = 'pending'`,
-          [actorId, id],
+          [actorId, id]
         );
         await auditInTransaction(
-          connection,
-          String(transfer.budget_id),
-          "TRANSFER_REJECT",
-          "active",
-          "active",
-          actorId,
-          actorRole,
-          `Transfer ₹${transfer.transfer_amount} rejected. ${remarks?.trim() ?? ""}`,
+          connection, String(transfer.budget_id), "TRANSFER_REJECT", "active", "active",
+          actorId, actorRole,
+          `Transfer ₹${transfer.transfer_amount} rejected. ${remarks?.trim() ?? ""}`
         );
         await connection.commit();
         return this.getTransfer(id);
@@ -3036,23 +2575,17 @@ export const branchBudgetService = {
 
       // P0-3: Re-check period lock inside the transaction before mutation.
       if (await isPeriodLocked(String(transfer.period_code), connection)) {
-        throw refuse(
-          409,
-          "FINANCE_PERIOD_LOCKED",
-          `${transfer.period_code} is locked for P&L close. This transfer cannot be applied.`,
+        throw refuse(409, "FINANCE_PERIOD_LOCKED",
+          `${transfer.period_code} is locked for P&L close. This transfer cannot be applied.`
         );
       }
 
       const [headerRows] = await connection.execute<RowDataPacket[]>(
         "SELECT id, status FROM finance_budget_header WHERE id = ? FOR UPDATE",
-        [String(transfer.budget_id)],
+        [String(transfer.budget_id)]
       );
       if (!headerRows[0] || String(headerRows[0].status) !== "active") {
-        throw refuse(
-          409,
-          "BUDGET_WRONG_STATUS",
-          "Budget is no longer active; transfer cannot be applied",
-        );
+        throw refuse(409, "BUDGET_WRONG_STATUS", "Budget is no longer active; transfer cannot be applied");
       }
 
       const amount = Number(transfer.transfer_amount);
@@ -3063,15 +2596,10 @@ export const branchBudgetService = {
                 tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
                 gross_amount, reserved_amount, consumed_amount
            FROM finance_budget_line WHERE id = ? FOR UPDATE`,
-        [String(transfer.from_line_id)],
+        [String(transfer.from_line_id)]
       );
       const fromLine = (fromRows as RowDataPacket[])[0];
-      if (!fromLine)
-        throw refuse(
-          404,
-          "BUDGET_LINE_NOT_FOUND",
-          "Source budget line not found",
-        );
+      if (!fromLine) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Source budget line not found");
 
       // Derive quantity delta: grossPerUnit = calculateBudgetLine({...line, quantity:1}).grossAmount.
       // This is the exact inverse of the forward calculation so the gross change is precisely
@@ -3086,41 +2614,24 @@ export const branchBudgetService = {
         taxTreatment: String(fromLine.tax_treatment) as BudgetTaxTreatment,
         gstRate: Number(fromLine.gst_rate ?? 0),
         gstType: (fromLine.gst_type ?? undefined) as BudgetGstType | undefined,
-        recoverableTaxPct:
-          fromLine.recoverable_tax_pct == null
-            ? undefined
-            : Number(fromLine.recoverable_tax_pct),
+        recoverableTaxPct: fromLine.recoverable_tax_pct == null ? undefined : Number(fromLine.recoverable_tax_pct),
         justification: "",
       }).grossAmount;
       if (!fromGrossPerUnit || fromGrossPerUnit <= 0) {
-        throw refuse(
-          409,
-          "TRANSFER_ZERO_UNIT_RATE",
-          "Source line has a zero unit rate; transfer amount cannot be derived",
-        );
+        throw refuse(409, "TRANSFER_ZERO_UNIT_RATE", "Source line has a zero unit rate; transfer amount cannot be derived");
       }
 
       const fromQtyDelta = roundQuantity(amount / fromGrossPerUnit);
-      const newFromQty = roundQuantity(
-        Number(fromLine.quantity) - fromQtyDelta,
-      );
+      const newFromQty = roundQuantity(Number(fromLine.quantity) - fromQtyDelta);
       if (newFromQty < 0) {
-        throw refuse(
-          409,
-          "TRANSFER_BELOW_ZERO",
-          "Transfer would reduce source line quantity below zero",
-        );
+        throw refuse(409, "TRANSFER_BELOW_ZERO", "Transfer would reduce source line quantity below zero");
       }
       const available = roundMoney(
-        Number(fromLine.gross_amount) -
-          Number(fromLine.reserved_amount) -
-          Number(fromLine.consumed_amount),
+        Number(fromLine.gross_amount) - Number(fromLine.reserved_amount) - Number(fromLine.consumed_amount)
       );
       if (amount > available + 0.01) {
-        throw refuse(
-          409,
-          "TRANSFER_EXCEEDS_AVAILABLE",
-          `Transfer amount ₹${amount.toLocaleString("en-IN")} exceeds available balance ₹${available.toLocaleString("en-IN")} on the source line`,
+        throw refuse(409, "TRANSFER_EXCEEDS_AVAILABLE",
+          `Transfer amount ₹${amount.toLocaleString("en-IN")} exceeds available balance ₹${available.toLocaleString("en-IN")} on the source line`
         );
       }
 
@@ -3134,10 +2645,7 @@ export const branchBudgetService = {
         taxTreatment: String(fromLine.tax_treatment) as BudgetTaxTreatment,
         gstRate: Number(fromLine.gst_rate ?? 0),
         gstType: (fromLine.gst_type ?? undefined) as BudgetGstType | undefined,
-        recoverableTaxPct:
-          fromLine.recoverable_tax_pct == null
-            ? undefined
-            : Number(fromLine.recoverable_tax_pct),
+        recoverableTaxPct: fromLine.recoverable_tax_pct == null ? undefined : Number(fromLine.recoverable_tax_pct),
         justification: "",
       });
       await connection.execute(
@@ -3147,17 +2655,11 @@ export const branchBudgetService = {
                 cgst_amount = ?, sgst_amount = ?, igst_amount = ?
           WHERE id = ?`,
         [
-          newFromQty,
-          fromRecomputed.baseAmount,
-          fromRecomputed.taxAmount,
-          fromRecomputed.grossAmount,
-          fromRecomputed.recoverableTaxAmount,
-          fromRecomputed.pnlCostAmount,
-          fromRecomputed.cgstAmount,
-          fromRecomputed.sgstAmount,
-          fromRecomputed.igstAmount,
+          newFromQty, fromRecomputed.baseAmount, fromRecomputed.taxAmount, fromRecomputed.grossAmount,
+          fromRecomputed.recoverableTaxAmount, fromRecomputed.pnlCostAmount,
+          fromRecomputed.cgstAmount, fromRecomputed.sgstAmount, fromRecomputed.igstAmount,
           String(fromLine.id),
-        ],
+        ]
       );
 
       // Lock and read target line.
@@ -3165,15 +2667,10 @@ export const branchBudgetService = {
         `SELECT id, budget_id, head, sub_head, item_name, quantity, unit, unit_rate,
                 tax_treatment, gst_rate, gst_type, recoverable_tax_pct
            FROM finance_budget_line WHERE id = ? FOR UPDATE`,
-        [String(transfer.to_line_id)],
+        [String(transfer.to_line_id)]
       );
       const toLine = (toRows as RowDataPacket[])[0];
-      if (!toLine)
-        throw refuse(
-          404,
-          "BUDGET_LINE_NOT_FOUND",
-          "Target budget line not found",
-        );
+      if (!toLine) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Target budget line not found");
 
       const toGrossPerUnit = calculateBudgetLine({
         head: String(toLine.head),
@@ -3185,18 +2682,11 @@ export const branchBudgetService = {
         taxTreatment: String(toLine.tax_treatment) as BudgetTaxTreatment,
         gstRate: Number(toLine.gst_rate ?? 0),
         gstType: (toLine.gst_type ?? undefined) as BudgetGstType | undefined,
-        recoverableTaxPct:
-          toLine.recoverable_tax_pct == null
-            ? undefined
-            : Number(toLine.recoverable_tax_pct),
+        recoverableTaxPct: toLine.recoverable_tax_pct == null ? undefined : Number(toLine.recoverable_tax_pct),
         justification: "",
       }).grossAmount;
       if (!toGrossPerUnit || toGrossPerUnit <= 0) {
-        throw refuse(
-          409,
-          "TRANSFER_ZERO_UNIT_RATE",
-          "Target line has a zero unit rate; transfer amount cannot be derived",
-        );
+        throw refuse(409, "TRANSFER_ZERO_UNIT_RATE", "Target line has a zero unit rate; transfer amount cannot be derived");
       }
 
       const toQtyDelta = roundQuantity(amount / toGrossPerUnit);
@@ -3211,10 +2701,7 @@ export const branchBudgetService = {
         taxTreatment: String(toLine.tax_treatment) as BudgetTaxTreatment,
         gstRate: Number(toLine.gst_rate ?? 0),
         gstType: (toLine.gst_type ?? undefined) as BudgetGstType | undefined,
-        recoverableTaxPct:
-          toLine.recoverable_tax_pct == null
-            ? undefined
-            : Number(toLine.recoverable_tax_pct),
+        recoverableTaxPct: toLine.recoverable_tax_pct == null ? undefined : Number(toLine.recoverable_tax_pct),
         justification: "",
       });
       await connection.execute(
@@ -3224,17 +2711,11 @@ export const branchBudgetService = {
                 cgst_amount = ?, sgst_amount = ?, igst_amount = ?
           WHERE id = ?`,
         [
-          newToQty,
-          toRecomputed.baseAmount,
-          toRecomputed.taxAmount,
-          toRecomputed.grossAmount,
-          toRecomputed.recoverableTaxAmount,
-          toRecomputed.pnlCostAmount,
-          toRecomputed.cgstAmount,
-          toRecomputed.sgstAmount,
-          toRecomputed.igstAmount,
+          newToQty, toRecomputed.baseAmount, toRecomputed.taxAmount, toRecomputed.grossAmount,
+          toRecomputed.recoverableTaxAmount, toRecomputed.pnlCostAmount,
+          toRecomputed.cgstAmount, toRecomputed.sgstAmount, toRecomputed.igstAmount,
           String(toLine.id),
-        ],
+        ]
       );
 
       // Both sides of a transfer changed amount, so both branch-level splits are now stale.
@@ -3253,24 +2734,19 @@ export const branchBudgetService = {
                 h.pnl_budget_amount = (
                   SELECT COALESCE(SUM(l.pnl_cost_amount), 0) FROM finance_budget_line l WHERE l.budget_id = h.id)
           WHERE h.id = ?`,
-        [String(transfer.budget_id)],
+        [String(transfer.budget_id)]
       );
 
       await connection.execute(
         `UPDATE finance_budget_transfer
             SET status = 'approved', approved_by = ?, approved_at = NOW()
           WHERE id = ? AND status = 'pending'`,
-        [actorId, id],
+        [actorId, id]
       );
       await auditInTransaction(
-        connection,
-        String(transfer.budget_id),
-        "TRANSFER_APPROVE",
-        "active",
-        "active",
-        actorId,
-        actorRole,
-        `Transfer ₹${amount} from ${transfer.from_line_id} to ${transfer.to_line_id} approved`,
+        connection, String(transfer.budget_id), "TRANSFER_APPROVE", "active", "active",
+        actorId, actorRole,
+        `Transfer ₹${amount} from ${transfer.from_line_id} to ${transfer.to_line_id} approved`
       );
 
       await connection.commit();
@@ -3296,7 +2772,7 @@ export const branchBudgetService = {
         WHERE t.budget_id = ?
         ORDER BY t.created_at DESC
         LIMIT 100`,
-      [budgetId],
+      [budgetId]
     );
     return rows as RowDataPacket[];
   },
@@ -3335,7 +2811,7 @@ export const branchBudgetService = {
          LEFT JOIN cost_centre_master incurred_ccm ON incurred_ccm.id = ca.cost_centre_id
         WHERE ca.budget_line_id = ?
         ORDER BY gr.bill_date DESC`,
-      [lineId],
+      [lineId]
     );
     return rows;
   },

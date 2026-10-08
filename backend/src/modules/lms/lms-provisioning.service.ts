@@ -32,9 +32,7 @@ interface EmployeeProfileRow extends RowDataPacket {
 }
 
 function normalizeEmployeeCode(value: string): string {
-  return String(value ?? "")
-    .trim()
-    .toUpperCase();
+  return String(value ?? "").trim().toUpperCase();
 }
 
 function buildBaseLmsLearnerId(employeeCode: string): string {
@@ -43,15 +41,10 @@ function buildBaseLmsLearnerId(employeeCode: string): string {
 }
 
 function buildFallbackLmsLearnerId(): string {
-  return `LMS${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100)
-    .toString()
-    .padStart(2, "0")}`.slice(0, 20);
+  return `LMS${Date.now().toString().slice(-6)}${Math.floor(Math.random() * 100).toString().padStart(2, "0")}`.slice(0, 20);
 }
 
-async function isLearnerIdAvailable(
-  conn: PoolConnection,
-  learnerId: string,
-): Promise<boolean> {
+async function isLearnerIdAvailable(conn: PoolConnection, learnerId: string): Promise<boolean> {
   const [hrmsRows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM lms_employee_mapping WHERE lms_learner_id = ? LIMIT 1`,
     [learnerId],
@@ -65,11 +58,7 @@ async function isLearnerIdAvailable(
   return lmsRows.length === 0;
 }
 
-async function resolveLearnerId(
-  conn: PoolConnection,
-  employeeCode: string,
-  preferred?: string | null,
-): Promise<string> {
+async function resolveLearnerId(conn: PoolConnection, employeeCode: string, preferred?: string | null): Promise<string> {
   const candidates = new Set<string>();
   if (preferred?.trim()) candidates.add(preferred.trim());
   candidates.add(buildBaseLmsLearnerId(employeeCode));
@@ -92,9 +81,7 @@ async function upsertExternalTrainee(
   learnerId: string,
   createdBy?: string | null,
 ): Promise<void> {
-  const traineeName =
-    [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim() ||
-    profile.employee_code;
+  const traineeName = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim() || profile.employee_code;
   const email = profile.official_email ?? profile.email ?? null;
   await conn.execute(
     // last_updated_at on the LMS's trainee_master is datetime(3) NOT NULL with no
@@ -178,18 +165,14 @@ export async function provisionLmsIdentityForEmployee(
     };
   }
 
-  const existingMapping = await db
-    .execute<RowDataPacket[]>(
-      `SELECT lms_learner_id FROM lms_employee_mapping
+  const existingMapping = await db.execute<RowDataPacket[]>(
+    `SELECT lms_learner_id FROM lms_employee_mapping
       WHERE employee_id = ? AND is_active = 1
       LIMIT 1`,
-      [profile.id],
-    )
-    .then(([rows]) => rows as RowDataPacket[])
-    .catch(() => [] as RowDataPacket[]);
+    [profile.id],
+  ).then(([rows]) => rows as RowDataPacket[]).catch(() => [] as RowDataPacket[]);
 
-  let learnerId =
-    String(existingMapping[0]?.lms_learner_id ?? "").trim() || null;
+  let learnerId = String(existingMapping[0]?.lms_learner_id ?? "").trim() || null;
   let externalSynced = false;
   let externalError: string | null = null;
 
@@ -213,12 +196,7 @@ export async function provisionLmsIdentityForEmployee(
         learnerId = await resolveLearnerId(conn, employeeCode);
       }
 
-      await upsertExternalTrainee(
-        conn,
-        profile,
-        learnerId,
-        input.createdBy ?? null,
-      );
+      await upsertExternalTrainee(conn, profile, learnerId, input.createdBy ?? null);
       await conn.commit();
       externalSynced = true;
     } catch (err) {
@@ -234,11 +212,7 @@ export async function provisionLmsIdentityForEmployee(
   try {
     const resolvedLearnerId = learnerId ?? buildBaseLmsLearnerId(employeeCode);
     learnerId = resolvedLearnerId;
-    await lmsService.upsertMapping(
-      profile.id,
-      resolvedLearnerId,
-      profile.official_email ?? profile.email ?? undefined,
-    );
+    await lmsService.upsertMapping(profile.id, resolvedLearnerId, profile.official_email ?? profile.email ?? undefined);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -247,9 +221,7 @@ export async function provisionLmsIdentityForEmployee(
       lmsLearnerId: learnerId,
       externalSynced,
       mappingSynced: false,
-      message: externalError
-        ? `${message}; external=${externalError}`
-        : message,
+      message: externalError ? `${message}; external=${externalError}` : message,
     };
   }
 

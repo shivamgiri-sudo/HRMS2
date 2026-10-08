@@ -16,13 +16,12 @@ import { db } from "../../db/mysql.js";
 
 /** Lowercase, ASCII-alnum + hyphen only, collapsed. "GS1 India" -> "gs1-india". */
 function baseSlug(processName: string): string {
-  return (
-    processName
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "process"
-  );
+  return processName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "process";
 }
 
 /**
@@ -34,7 +33,7 @@ function baseSlug(processName: string): string {
 export async function ensureProcessSlug(processId: string): Promise<string> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT slug, process_name FROM process_master WHERE id = ? LIMIT 1",
-    [processId],
+    [processId]
   );
   const row = (rows as RowDataPacket[])[0];
   if (!row) throw new Error(`process_master row not found for id ${processId}`);
@@ -44,19 +43,14 @@ export async function ensureProcessSlug(processId: string): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const candidate = attempt === 0 ? base : `${base}-${attempt + 1}`;
     try {
-      await db.execute("UPDATE process_master SET slug = ? WHERE id = ?", [
-        candidate,
-        processId,
-      ]);
+      await db.execute("UPDATE process_master SET slug = ? WHERE id = ?", [candidate, processId]);
       return candidate;
     } catch (err) {
       // ER_DUP_ENTRY on the UNIQUE KEY -- try the next suffix. Any other error is real.
       if ((err as { code?: string }).code !== "ER_DUP_ENTRY") throw err;
     }
   }
-  throw new Error(
-    `Could not derive a unique slug for process ${processId} after 5 attempts`,
-  );
+  throw new Error(`Could not derive a unique slug for process ${processId} after 5 attempts`);
 }
 
 /** "gs1-india" -> "Gs1India" (each hyphen-segment capitalized, hyphens removed). */
@@ -83,9 +77,7 @@ export interface GeneratedCredentials {
  * The password is a deliberately guessable, one-time value -- see must_change_password on
  * client_user, which the login flow enforces to force a real password on first use.
  */
-export function generateCredentialsFromSlug(
-  slug: string,
-): GeneratedCredentials {
+export function generateCredentialsFromSlug(slug: string): GeneratedCredentials {
   const name = slugToPascalCase(slug);
   const year = new Date().getFullYear();
   return {

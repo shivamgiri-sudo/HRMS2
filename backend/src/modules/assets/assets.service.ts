@@ -25,7 +25,7 @@ export const assetsService = {
        LEFT JOIN asset_assignment aa ON aa.asset_id = a.id AND aa.returned_date IS NULL
        LEFT JOIN employees e ON e.id = aa.employee_id
        WHERE ${conds.join(" AND ")} ORDER BY a.asset_code`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
@@ -34,7 +34,7 @@ export const assetsService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT a.*, b.branch_name FROM asset_master a
        LEFT JOIN branch_master b ON b.id = a.branch_id WHERE a.id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     return (rows as RowDataPacket[])[0] ?? null;
   },
@@ -62,27 +62,14 @@ export const assetsService = {
 
   async create(data: Record<string, unknown>) {
     const id = randomUUID();
-    const code =
-      (data.asset_code as string) ||
-      `AST-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const code = (data.asset_code as string) || `AST-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
     await db.execute(
       `INSERT INTO asset_master (id, asset_code, asset_name, asset_category, asset_type, serial_number,
          purchase_date, purchase_cost, vendor, warranty_expiry, branch_id, notes)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        code,
-        data.asset_name,
-        data.asset_category,
-        data.asset_type ?? null,
-        data.serial_number ?? null,
-        data.purchase_date ?? null,
-        data.purchase_cost ?? null,
-        data.vendor ?? null,
-        data.warranty_expiry ?? null,
-        data.branch_id ?? null,
-        data.notes ?? null,
-      ],
+      [id, code, data.asset_name, data.asset_category, data.asset_type ?? null,
+       data.serial_number ?? null, data.purchase_date ?? null, data.purchase_cost ?? null,
+       data.vendor ?? null, data.warranty_expiry ?? null, data.branch_id ?? null, data.notes ?? null]
     );
     return this.getById(id);
   },
@@ -99,59 +86,35 @@ export const assetsService = {
       // warranty date in the UI is exactly how a user produces that. `data` is a
       // Record<string, unknown> straight off the request, so nothing upstream
       // turns "" into null.
-      [
-        blankToNull(data.asset_name),
-        blankToNull(data.status),
-        blankToNull(data.notes),
-        blankToNull(data.branch_id),
-        blankToNull(data.serial_number),
-        blankToNull(data.asset_category),
-        blankToNull(data.purchase_cost),
-        blankToNull(data.vendor),
-        blankToNull(data.warranty_expiry),
-        id,
-      ],
+      [blankToNull(data.asset_name), blankToNull(data.status), blankToNull(data.notes), blankToNull(data.branch_id),
+       blankToNull(data.serial_number), blankToNull(data.asset_category), blankToNull(data.purchase_cost),
+       blankToNull(data.vendor), blankToNull(data.warranty_expiry), id]
     );
     return this.getById(id);
   },
 
-  async assign(
-    assetId: string,
-    employeeId: string,
-    assignedBy: string,
-    notes?: string,
-    req?: Request,
-  ) {
+  async assign(assetId: string, employeeId: string, assignedBy: string, notes?: string, req?: Request) {
     const conn = await db.getConnection();
     try {
       await conn.beginTransaction();
       await conn.execute(
         "UPDATE asset_assignment SET returned_date = CURDATE() WHERE asset_id = ? AND returned_date IS NULL",
-        [assetId],
+        [assetId]
       );
       const id = randomUUID();
       await conn.execute(
         "INSERT INTO asset_assignment (id, asset_id, employee_id, assigned_date, assigned_by, notes) VALUES (?, ?, ?, CURDATE(), ?, ?)",
-        [id, assetId, employeeId, assignedBy, notes ?? null],
+        [id, assetId, employeeId, assignedBy, notes ?? null]
       );
-      await conn.execute(
-        "UPDATE asset_master SET status = 'assigned', updated_at = NOW() WHERE id = ?",
-        [assetId],
-      );
+      await conn.execute("UPDATE asset_master SET status = 'assigned', updated_at = NOW() WHERE id = ?", [assetId]);
       await conn.commit();
       await logSensitiveAction({
-        actor_user_id: assignedBy,
-        action_type: "ASSET_ASSIGNED",
-        module_key: "ASSETS",
-        entity_type: "asset",
-        entity_id: assetId,
+        actor_user_id: assignedBy, action_type: "ASSET_ASSIGNED", module_key: "ASSETS",
+        entity_type: "asset", entity_id: assetId,
         change_summary: { employee_id: employeeId },
         req,
       });
-      const [rows] = await conn.execute<RowDataPacket[]>(
-        "SELECT * FROM asset_assignment WHERE id = ? LIMIT 1",
-        [id],
-      );
+      const [rows] = await conn.execute<RowDataPacket[]>("SELECT * FROM asset_assignment WHERE id = ? LIMIT 1", [id]);
       return (rows as RowDataPacket[])[0];
     } catch (err) {
       await conn.rollback();
@@ -161,32 +124,16 @@ export const assetsService = {
     }
   },
 
-  async returnAsset(
-    assetId: string,
-    condition: string,
-    returnedBy: string,
-    req?: Request,
-  ) {
+  async returnAsset(assetId: string, condition: string, returnedBy: string, req?: Request) {
     await db.execute(
       "UPDATE asset_assignment SET returned_date = CURDATE(), return_condition = ? WHERE asset_id = ? AND returned_date IS NULL",
-      [condition, assetId],
+      [condition, assetId]
     );
-    const newStatus =
-      condition === "lost"
-        ? "lost"
-        : condition === "damaged"
-          ? "repair"
-          : "available";
-    await db.execute(
-      "UPDATE asset_master SET status = ?, updated_at = NOW() WHERE id = ?",
-      [newStatus, assetId],
-    );
+    const newStatus = condition === 'lost' ? 'lost' : condition === 'damaged' ? 'repair' : 'available';
+    await db.execute("UPDATE asset_master SET status = ?, updated_at = NOW() WHERE id = ?", [newStatus, assetId]);
     await logSensitiveAction({
-      actor_user_id: returnedBy,
-      action_type: "ASSET_RETURNED",
-      module_key: "ASSETS",
-      entity_type: "asset",
-      entity_id: assetId,
+      actor_user_id: returnedBy, action_type: "ASSET_RETURNED", module_key: "ASSETS",
+      entity_type: "asset", entity_id: assetId,
       change_summary: { condition },
       req,
     });
@@ -196,21 +143,10 @@ export const assetsService = {
     const id = randomUUID();
     await db.execute(
       "INSERT INTO asset_service_log (id, asset_id, service_type, service_date, service_notes, cost, performed_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [
-        id,
-        assetId,
-        data.service_type,
-        data.service_date,
-        data.service_notes ?? null,
-        data.cost ?? null,
-        data.performed_by ?? null,
-      ],
+      [id, assetId, data.service_type, data.service_date, data.service_notes ?? null, data.cost ?? null, data.performed_by ?? null]
     );
     if (data.service_type === "repair" || data.service_type === "maintenance") {
-      await db.execute(
-        "UPDATE asset_master SET status = ?, updated_at = NOW() WHERE id = ?",
-        [data.service_type, assetId],
-      );
+      await db.execute("UPDATE asset_master SET status = ?, updated_at = NOW() WHERE id = ?", [data.service_type, assetId]);
     }
     return id;
   },
@@ -220,7 +156,7 @@ export const assetsService = {
       `SELECT aa.*, a.asset_name, a.asset_category, a.asset_code, a.serial_number
        FROM asset_assignment aa JOIN asset_master a ON a.id = aa.asset_id
        WHERE aa.employee_id = ? ORDER BY aa.assigned_date DESC`,
-      [employeeId],
+      [employeeId]
     );
     return rows as RowDataPacket[];
   },

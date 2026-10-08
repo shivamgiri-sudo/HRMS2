@@ -1,18 +1,10 @@
 import { describe, it, expect } from "vitest";
-import {
-  validateTransition,
-  isTerminal,
-  canEdit,
-  getAllowedTransitions,
-  type RunStatus,
-} from "../src/modules/payroll/payroll-lifecycle.js";
+import { validateTransition, isTerminal, canEdit, getAllowedTransitions, type RunStatus } from "../src/modules/payroll/payroll-lifecycle.js";
 
 describe("payroll-lifecycle state machine", () => {
   describe("validateTransition", () => {
     it("allows draft → calculating", () => {
-      expect(validateTransition("draft", "calculating")).toEqual({
-        valid: true,
-      });
+      expect(validateTransition("draft", "calculating")).toEqual({ valid: true });
     });
 
     it("allows draft → cancelled", () => {
@@ -20,15 +12,7 @@ describe("payroll-lifecycle state machine", () => {
     });
 
     it("allows full happy path: draft → calculating → calculated → under_review → approved → locked → disbursed", () => {
-      const path: RunStatus[] = [
-        "draft",
-        "calculating",
-        "calculated",
-        "under_review",
-        "approved",
-        "locked",
-        "disbursed",
-      ];
+      const path: RunStatus[] = ["draft", "calculating", "calculated", "under_review", "approved", "locked", "disbursed"];
       for (let i = 0; i < path.length - 1; i++) {
         const result = validateTransition(path[i], path[i + 1]);
         expect(result.valid, `${path[i]} → ${path[i + 1]}`).toBe(true);
@@ -36,15 +20,7 @@ describe("payroll-lifecycle state machine", () => {
     });
 
     it("rejects disbursed → anything", () => {
-      const targets: RunStatus[] = [
-        "draft",
-        "calculating",
-        "calculated",
-        "under_review",
-        "approved",
-        "locked",
-        "cancelled",
-      ];
+      const targets: RunStatus[] = ["draft", "calculating", "calculated", "under_review", "approved", "locked", "cancelled"];
       for (const t of targets) {
         const r = validateTransition("disbursed", t);
         expect(r.valid).toBe(false);
@@ -65,9 +41,7 @@ describe("payroll-lifecycle state machine", () => {
     });
 
     it("allows rollback: under_review → calculated", () => {
-      expect(validateTransition("under_review", "calculated")).toEqual({
-        valid: true,
-      });
+      expect(validateTransition("under_review", "calculated")).toEqual({ valid: true });
     });
 
     it("allows cancelled → draft (reactivation)", () => {
@@ -105,10 +79,7 @@ describe("payroll-lifecycle state machine", () => {
 
   describe("getAllowedTransitions", () => {
     it("returns valid targets for draft", () => {
-      expect(getAllowedTransitions("draft")).toEqual([
-        "calculating",
-        "cancelled",
-      ]);
+      expect(getAllowedTransitions("draft")).toEqual(["calculating", "cancelled"]);
     });
 
     it("returns empty for disbursed", () => {

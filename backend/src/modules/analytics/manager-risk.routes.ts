@@ -14,8 +14,8 @@ import { requireRole } from '../../middleware/requireRole.js';
 import {
   getManagerRiskLeaderboard,
   getCriticalManagers,
-  getManagerTeamDrilldown,
-} from "./manager-risk.service.js";
+  getManagerTeamDrilldown
+} from './manager-risk.service.js';
 
 const router = Router();
 
@@ -39,7 +39,7 @@ async function guardManager(req: Request, res: Response, next: NextFunction) {
 
 // GET /api/analytics/manager-risk/leaderboard?branchId=&processId=&limit=50&riskLevel=
 router.get(
-  "/leaderboard",
+  '/leaderboard',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager', 'wfm'),
   attachEmployeeScope('mgr'),
@@ -48,7 +48,7 @@ router.get(
 
 // GET /api/analytics/manager-risk/critical
 router.get(
-  "/critical",
+  '/critical',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager', 'wfm'),
   attachEmployeeScope('mgr'),
@@ -57,7 +57,7 @@ router.get(
 
 // GET /api/analytics/manager-risk/:managerId
 router.get(
-  "/:managerId",
+  '/:managerId',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager', 'wfm'),
   guardManager,

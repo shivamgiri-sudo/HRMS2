@@ -1,9 +1,6 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { toIST } from "../../shared/timezone.js";
@@ -22,7 +19,7 @@ async function hasAprTable(): Promise<boolean> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'apr'`,
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'apr'`
     );
     aprTableExists = Number((rows[0] as any)?.c ?? 0) > 0;
   } catch {
@@ -34,19 +31,14 @@ async function hasAprTable(): Promise<boolean> {
 export const attendanceDailyScopedRouter = Router();
 attendanceDailyScopedRouter.use(requireAuth);
 
-const h =
-  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 const DB_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,35}$/;
 
 function safeId(value: unknown, field: string): string | null {
   if (value === undefined || value === null || value === "") return null;
   const v = String(value);
   if (!DB_ID_REGEX.test(v)) {
-    const err = new Error(`Invalid ${field}`) as Error & {
-      statusCode?: number;
-    };
+    const err = new Error(`Invalid ${field}`) as Error & { statusCode?: number };
     err.statusCode = 400;
     throw err;
   }
@@ -61,10 +53,7 @@ function safeId(value: unknown, field: string): string | null {
  * given (self/team/branch/process scoped, multi-employee, single-date/range
  * query) — see the delegation call site in wfm.routes.ts for the full story.
  */
-export async function scopedAttendanceDailyHandler(
-  req: AuthenticatedRequest,
-  res: any,
-) {
+export async function scopedAttendanceDailyHandler(req: AuthenticatedRequest, res: any) {
   const userId = req.authUser!.id;
   const isAdminHrWfm = await hasRole(userId, "admin", "hr", "wfm", "ceo");
   // "team_leader" alongside the legacy "tl" alias -- hasRole() matches role_key
@@ -72,33 +61,19 @@ export async function scopedAttendanceDailyHandler(
   // 9 real accounts hold "team_leader" against only 2 holding "tl". Without
   // this, those 9 real Team Leads fell through to the else-branch below and
   // saw only their OWN attendance record instead of their team's.
-  const isManager = await hasRole(
-    userId,
-    "manager",
-    "assistant_manager",
-    "tl",
-    "team_leader",
-  );
+  const isManager = await hasRole(userId, "manager", "assistant_manager", "tl", "team_leader");
   const callerEmp = await getEmployeeForUser(userId);
 
   const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-  const limit = Math.min(
-    Math.max(1, Number(req.query.limit ?? 200) || 200),
-    500,
-  );
+  const limit = Math.min(Math.max(1, Number(req.query.limit ?? 200) || 200), 500);
   const offset = (page - 1) * limit;
   const params: unknown[] = [];
   const where: string[] = ["1=1"];
 
   if (!isAdminHrWfm) {
-    if (!callerEmp?.id)
-      return res
-        .status(403)
-        .json({ success: false, error: "No employee record" });
+    if (!callerEmp?.id) return res.status(403).json({ success: false, error: "No employee record" });
     if (isManager) {
-      where.push(
-        "(e.reporting_manager_id = ? OR e.manager_id = ? OR adr.employee_id = ?)",
-      );
+      where.push("(e.reporting_manager_id = ? OR e.manager_id = ? OR adr.employee_id = ?)");
       params.push(callerEmp.id, callerEmp.id, callerEmp.id);
     } else {
       where.push("adr.employee_id = ?");
@@ -130,35 +105,14 @@ export async function scopedAttendanceDailyHandler(
 
   const branchId = safeId(req.query.branchId, "branchId");
   const processId = safeId(req.query.processId, "processId");
-  const costCentreId = safeId(
-    req.query.costCentreId ?? req.query.costCenterId,
-    "costCentreId",
-  );
+  const costCentreId = safeId(req.query.costCentreId ?? req.query.costCenterId, "costCentreId");
 
-  if (branchId) {
-    where.push("COALESCE(adr.branch_id, e.branch_id) = ?");
-    params.push(branchId);
-  }
-  if (processId) {
-    where.push("COALESCE(adr.process_id, e.process_id) = ?");
-    params.push(processId);
-  }
-  if (costCentreId) {
-    where.push("e.cost_centre_id = ?");
-    params.push(costCentreId);
-  }
-  if (req.query.fromDate) {
-    where.push("adr.record_date >= ?");
-    params.push(String(req.query.fromDate));
-  }
-  if (req.query.toDate) {
-    where.push("adr.record_date <= ?");
-    params.push(String(req.query.toDate));
-  }
-  if (req.query.attendanceStatus) {
-    where.push("adr.attendance_status = ?");
-    params.push(String(req.query.attendanceStatus));
-  }
+  if (branchId) { where.push("COALESCE(adr.branch_id, e.branch_id) = ?"); params.push(branchId); }
+  if (processId) { where.push("COALESCE(adr.process_id, e.process_id) = ?"); params.push(processId); }
+  if (costCentreId) { where.push("e.cost_centre_id = ?"); params.push(costCentreId); }
+  if (req.query.fromDate) { where.push("adr.record_date >= ?"); params.push(String(req.query.fromDate)); }
+  if (req.query.toDate) { where.push("adr.record_date <= ?"); params.push(String(req.query.toDate)); }
+  if (req.query.attendanceStatus) { where.push("adr.attendance_status = ?"); params.push(String(req.query.attendanceStatus)); }
 
   const fromSql = `
     FROM attendance_daily_record adr
@@ -255,17 +209,14 @@ export async function scopedAttendanceDailyHandler(
 
   const data = rows.map((r: any) => ({
     ...r,
-    clock_in_time: toIST(r.clock_in_time),
+    clock_in_time:  toIST(r.clock_in_time),
     clock_out_time: toIST(r.clock_out_time),
     // For dialler rows fall back to the APR login/logout. Those are MySQL TIME
     // values, so they are composed onto the record date and tagged IST — the
     // client must never receive a bare TIME where it expects a datetime.
-    clock_in:
-      toIST(r.clock_in) ?? composeIstDateTime(r.record_date, r.apr_login_time),
-    clock_out:
-      toIST(r.clock_out) ??
-      composeIstDateTime(r.record_date, r.apr_logout_time),
-    source: r.source ?? r.attendance_source ?? "biometric",
+    clock_in:       toIST(r.clock_in)  ?? composeIstDateTime(r.record_date, r.apr_login_time),
+    clock_out:      toIST(r.clock_out) ?? composeIstDateTime(r.record_date, r.apr_logout_time),
+    source:         r.source ?? r.attendance_source ?? "biometric",
     employee: {
       first_name: r.first_name ?? "",
       last_name: r.last_name ?? "",
@@ -275,13 +226,7 @@ export async function scopedAttendanceDailyHandler(
     },
   }));
 
-  return res.json({
-    success: true,
-    data,
-    total: Number(countRows[0]?.total ?? 0),
-    page,
-    limit,
-  });
+  return res.json({ success: true, data, total: Number(countRows[0]?.total ?? 0), page, limit });
 }
 
 attendanceDailyScopedRouter.get("/daily", h(scopedAttendanceDailyHandler));

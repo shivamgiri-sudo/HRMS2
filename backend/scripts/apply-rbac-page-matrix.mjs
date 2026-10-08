@@ -15,10 +15,7 @@ function loadBackendEnv() {
     const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
     if (!match) continue;
     let value = match[2];
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
     process.env[match[1]] = value;
@@ -47,9 +44,7 @@ const conn = await mysql.createConnection({
 });
 
 try {
-  const [activeRows] = await conn.query(
-    "SELECT page_code FROM page_catalog WHERE active_status = 1 ORDER BY page_code",
-  );
+  const [activeRows] = await conn.query("SELECT page_code FROM page_catalog WHERE active_status = 1 ORDER BY page_code");
   const activePages = activeRows.map((row) => row.page_code);
   const activePageSet = new Set(activePages);
   const [grantRows] = await conn.query(
@@ -79,13 +74,10 @@ try {
        PRIMARY KEY (role_key, page_code)
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   );
-  const [appliedRows] = await conn.query(
-    "SELECT role_key, page_code FROM rbac_matrix_applied_grants",
-  );
+  const [appliedRows] = await conn.query("SELECT role_key, page_code FROM rbac_matrix_applied_grants");
   const previouslyApplied = new Map();
   for (const row of appliedRows) {
-    if (!previouslyApplied.has(row.role_key))
-      previouslyApplied.set(row.role_key, new Set());
+    if (!previouslyApplied.has(row.role_key)) previouslyApplied.set(row.role_key, new Set());
     previouslyApplied.get(row.role_key).add(row.page_code);
   }
 
@@ -123,9 +115,7 @@ try {
     const inertRevokes = [];
     for (const role of roles) {
       const desiredSet = new Set(
-        getRolePageCodes(role, activePages).filter((pageCode) =>
-          activePageSet.has(pageCode),
-        ),
+        getRolePageCodes(role, activePages).filter((pageCode) => activePageSet.has(pageCode)),
       );
       for (const pageCode of grants.get(role) ?? new Set()) {
         if (desiredSet.has(pageCode)) continue;
@@ -133,15 +123,13 @@ try {
         // rbac_matrix_applied_grants above. A grant absent from the matrix but
         // also absent from that table was granted some other way and is not
         // this tool's to flag, let alone revoke.
-        if (!previouslyApplied.get(role)?.has(pageCode)) continue;
+        if (!(previouslyApplied.get(role)?.has(pageCode))) continue;
         // A grant on a page_catalog row with active_status = 0 reaches nothing: getAccessMe
         // returns those codes as disabledPageCodes and ProtectedRoute denies them regardless
         // of the grant. Revoking one removes no access a user could actually use, so it must
         // not be the thing that blocks an otherwise-correct apply. Only a grant on a LIVE
         // page is real access worth protecting.
-        (activePageSet.has(pageCode) ? wouldRevoke : inertRevokes).push(
-          `${role}: ${pageCode}`,
-        );
+        (activePageSet.has(pageCode) ? wouldRevoke : inertRevokes).push(`${role}: ${pageCode}`);
       }
     }
     if (inertRevokes.length > 0) {
@@ -172,13 +160,10 @@ try {
       console.log(
         (allowRevoke
           ? `--allow-revoke is set, so these WILL be deactivated. `
-          : `Dry run — nothing was written. An --apply would be refused because `) +
-          detail,
+          : `Dry run — nothing was written. An --apply would be refused because `) + detail,
       );
     } else if (!apply) {
-      console.log(
-        "Revocation guard: no live grant would be revoked; --apply would not be refused.",
-      );
+      console.log("Revocation guard: no live grant would be revoked; --apply would not be refused.");
     }
   }
 
@@ -195,20 +180,14 @@ try {
       `INSERT INTO ${backupTable} SELECT rpa.*, NOW() AS backed_up_at FROM role_page_access rpa WHERE rpa.role_key IN (${roles.map(() => "?").join(",")})`,
       roles,
     );
-    await conn.execute(
-      "UPDATE page_catalog SET active_status = 1 WHERE page_code = 'EMPLOYEE_SELF_DASHBOARD'",
-    );
+    await conn.execute("UPDATE page_catalog SET active_status = 1 WHERE page_code = 'EMPLOYEE_SELF_DASHBOARD'");
   }
 
   for (const role of roles) {
-    const desired = getRolePageCodes(role, activePages).filter((pageCode) =>
-      activePageSet.has(pageCode),
-    );
+    const desired = getRolePageCodes(role, activePages).filter((pageCode) => activePageSet.has(pageCode));
     const desiredSet = new Set(desired);
     const actualSet = grants.get(role) ?? new Set();
-    const extra = [...actualSet].filter(
-      (pageCode) => !desiredSet.has(pageCode),
-    );
+    const extra = [...actualSet].filter((pageCode) => !desiredSet.has(pageCode));
     const missing = desired.filter((pageCode) => !actualSet.has(pageCode));
 
     summary.push({
@@ -228,9 +207,7 @@ try {
       // wants. Anything active that this tool never recorded applying is left
       // untouched, no matter what today's matrix says — see previouslyApplied.
       const ownedExtras = [...actualSet].filter(
-        (pageCode) =>
-          !desiredSet.has(pageCode) &&
-          previouslyApplied.get(role)?.has(pageCode),
+        (pageCode) => !desiredSet.has(pageCode) && previouslyApplied.get(role)?.has(pageCode),
       );
       if (ownedExtras.length > 0) {
         const [disableResult] = await conn.execute(
@@ -266,19 +243,7 @@ try {
   if (apply) await conn.commit();
 
   console.table(summary);
-  console.log(
-    JSON.stringify(
-      {
-        mode: apply ? "apply" : "dry-run",
-        backupTable: apply ? backupTable : null,
-        inserted,
-        enabled,
-        disabled,
-      },
-      null,
-      2,
-    ),
-  );
+  console.log(JSON.stringify({ mode: apply ? "apply" : "dry-run", backupTable: apply ? backupTable : null, inserted, enabled, disabled }, null, 2));
 } catch (error) {
   if (apply) await conn.rollback();
   console.error(error.message);

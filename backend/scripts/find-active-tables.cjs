@@ -1,4 +1,4 @@
-const mysql = require("mysql2/promise");
+const mysql = require('mysql2/promise');
 
 function requiredEnv(name) {
   const value = process.env[name] && process.env[name].trim();
@@ -8,14 +8,14 @@ function requiredEnv(name) {
 
 async function run() {
   const conn = await mysql.createConnection({
-    host: requiredEnv("BILL_DB_HOST"),
+    host: requiredEnv('BILL_DB_HOST'),
     port: Number(process.env.BILL_DB_PORT || 3306),
-    user: requiredEnv("BILL_DB_USER"),
-    password: requiredEnv("BILL_DB_PASSWORD"),
-    database: requiredEnv("BILL_DB_NAME"),
+    user: requiredEnv('BILL_DB_USER'),
+    password: requiredEnv('BILL_DB_PASSWORD'),
+    database: requiredEnv('BILL_DB_NAME')
   });
 
-  console.log("ALL tables ordered by row count:");
+  console.log('ALL tables ordered by row count:');
   const [all] = await conn.execute(`
     SELECT
       TABLE_NAME,

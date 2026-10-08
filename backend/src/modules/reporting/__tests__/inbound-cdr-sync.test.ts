@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  buildPlans,
-  formatCallDate,
-  paramsFor,
-} from "../inbound-cdr-sync.service.js";
+import { buildPlans, formatCallDate, paramsFor } from "../inbound-cdr-sync.service.js";
 
 /**
  * These tests do NOT hit dialer_db (that host was unreachable from this
@@ -19,22 +15,12 @@ describe("buildPlans", () => {
 
   it("builds a plan for all seven clients from the SOP", () => {
     expect(plans.map((p) => p.code).sort()).toEqual(
-      [
-        "BELLAVITA",
-        "CLOVIA",
-        "DU_BANGLADESH",
-        "EXICOM",
-        "GNC",
-        "NEEMANS",
-        "VIEGA",
-      ].sort(),
+      ["BELLAVITA", "CLOVIA", "DU_BANGLADESH", "EXICOM", "GNC", "NEEMANS", "VIEGA"].sort(),
     );
   });
 
   it("maps each client to the process name confirmed live against process_master", () => {
-    const byCode = Object.fromEntries(
-      plans.map((p) => [p.code, p.processName]),
-    );
+    const byCode = Object.fromEntries(plans.map((p) => [p.code, p.processName]));
     expect(byCode.GNC).toBe("GNC");
     expect(byCode.BELLAVITA).toBe("Bella-Vita Organic");
     expect(byCode.CLOVIA).toBe("Clovia");
@@ -51,9 +37,7 @@ describe("buildPlans", () => {
     expect(gnc.dailySql).toContain("FROM cdr_in_4");
     expect(gnc.dailySql).toContain("GNC_Order_Related");
     expect(gnc.dailySql).toContain("GNC_Authentication");
-    expect(gnc.dailySql).toContain(
-      "AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0",
-    );
+    expect(gnc.dailySql).toContain("AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0");
     expect(gnc.mandateSql).toContain("8 AS Mandate");
     expect(gnc.mandateSql).toContain("6 As Required_Login");
   });
@@ -149,12 +133,8 @@ describe("buildPlans", () => {
 /** Regression: `paramsFor` must bind exactly as many copies as the SQL text has `?`s -- not a hardcoded count. */
 describe("paramsFor", () => {
   it("repeats the value once per real placeholder in a two-CTE query (Bellavita/Neemans shape)", () => {
-    const twoPlaceholderSql =
-      "SELECT * FROM t WHERE CallDate >= ? UNION SELECT * FROM u WHERE CallDate >= ?";
-    expect(paramsFor(twoPlaceholderSql, "2026-08-11")).toEqual([
-      "2026-08-11",
-      "2026-08-11",
-    ]);
+    const twoPlaceholderSql = "SELECT * FROM t WHERE CallDate >= ? UNION SELECT * FROM u WHERE CallDate >= ?";
+    expect(paramsFor(twoPlaceholderSql, "2026-08-11")).toEqual(["2026-08-11", "2026-08-11"]);
   });
 
   it("binds a single value for a single-placeholder query (every other client's shape)", () => {

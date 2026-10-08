@@ -21,11 +21,7 @@ export async function computeAndStoreFairnessScores(
   );
 
   for (const emp of employees as any[]) {
-    const score = await computeEmployeeFairnessScore(
-      emp.id,
-      processId,
-      weekStartDate,
-    );
+    const score = await computeEmployeeFairnessScore(emp.id, processId, weekStartDate);
     await upsertFairnessScore(emp.id, processId, weekStartDate, score);
   }
 }
@@ -37,9 +33,7 @@ async function computeEmployeeFairnessScore(
   employeeId: string,
   processId: string,
   weekStartDate: string,
-): Promise<
-  Omit<typeof SCORE_TEMPLATE, "employee_id" | "process_id" | "week_start_date">
-> {
+): Promise<Omit<typeof SCORE_TEMPLATE, "employee_id" | "process_id" | "week_start_date">> {
   // Last 3 weeks of fairness history
   const [history] = await db.execute<RowDataPacket[]>(
     `SELECT week_start_date, assigned_day, assigned_day_is_preferred,
@@ -61,14 +55,13 @@ async function computeEmployeeFairnessScore(
       ORDER BY created_at ASC LIMIT 1`,
     [employeeId, weekStartDate],
   );
-  const pref = prefRows[0] as any;
+  const pref = (prefRows[0] as any);
   const preferredDay: number | null = pref?.preferred_day_1 ?? null;
 
   // Consecutive no-weekend off (from last history row, or 0 if new)
   const lastHistory = hist[0];
   let consecutiveNoWeekend = lastHistory?.consecutive_no_weekend_weekoff ?? 0;
-  let consecutiveNoPreferred =
-    lastHistory?.consecutive_no_preferred_weekoff ?? 0;
+  let consecutiveNoPreferred = lastHistory?.consecutive_no_preferred_weekoff ?? 0;
 
   // Check if last week had a weekend off
   if (lastHistory) {
@@ -87,10 +80,9 @@ async function computeEmployeeFairnessScore(
     [employeeId],
   );
   const doj = (empRows[0] as any)?.date_of_joining;
-  const isNewJoinee = doj
-    ? (new Date(weekStartDate).getTime() - new Date(doj).getTime()) / 86400000 <
-      30
-    : false;
+  const isNewJoinee = doj ? (
+    (new Date(weekStartDate).getTime() - new Date(doj).getTime()) / 86400000 < 30
+  ) : false;
 
   // Compute score
   let score = 100;
@@ -139,10 +131,7 @@ async function upsertFairnessScore(
   employeeId: string,
   processId: string,
   weekStartDate: string,
-  data: Omit<
-    typeof SCORE_TEMPLATE,
-    "employee_id" | "process_id" | "week_start_date"
-  >,
+  data: Omit<typeof SCORE_TEMPLATE, "employee_id" | "process_id" | "week_start_date">,
 ): Promise<void> {
   await db.execute(
     `INSERT INTO weekoff_fairness_score
@@ -157,12 +146,8 @@ async function upsertFairnessScore(
        consecutive_no_weekend_weekoff = VALUES(consecutive_no_weekend_weekoff),
        updated_at = NOW()`,
     [
-      randomUUID(),
-      employeeId,
-      processId,
-      weekStartDate,
-      data.preferred_day,
-      data.assigned_day,
+      randomUUID(), employeeId, processId, weekStartDate,
+      data.preferred_day, data.assigned_day,
       data.assigned_day_is_preferred ? 1 : 0,
       data.consecutive_no_preferred_weekoff,
       data.consecutive_no_weekend_weekoff,
@@ -189,10 +174,9 @@ export async function recordWeekOffAllocation(
       LIMIT 1`,
     [employeeId, weekStartDate],
   );
-  const current = rows[0] as any;
+  const current = (rows[0] as any);
 
-  const isPreferred =
-    current?.preferred_day !== null && current?.preferred_day === assignedDay;
+  const isPreferred = current?.preferred_day !== null && current?.preferred_day === assignedDay;
   const isWeekend = assignedDay !== null && WEEKEND_DAYS.has(assignedDay);
 
   const consecutiveNoPreferred = isPreferred
@@ -213,13 +197,10 @@ export async function recordWeekOffAllocation(
             updated_at = NOW()
       WHERE employee_id = ? AND week_start_date = ?`,
     [
-      assignedDay,
-      isPreferred ? 1 : 0,
-      consecutiveNoPreferred,
-      consecutiveNoWeekend,
+      assignedDay, isPreferred ? 1 : 0,
+      consecutiveNoPreferred, consecutiveNoWeekend,
       exceptionReason ?? null,
-      employeeId,
-      weekStartDate,
+      employeeId, weekStartDate,
     ],
   );
 }

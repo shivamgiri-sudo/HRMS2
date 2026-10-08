@@ -3,13 +3,8 @@ import { applyUploadedValues } from "../onfido-utilization.service.js";
 import { parseUploadedNumber, parseUtilizationInputBatch, parseUtilizationInputRow } from "../onfido-wfm-inputs.validation.js";
 
 const none = {
-  fixedUtilizationForecast: null,
-  fixedUtilizationWithAdhoc: null,
-  fixedUtilizationWithoutAdhoc: null,
-  fixedUtilizationWithAdhocPct: null,
-  fixedUtilizationWithoutAdhocPct: null,
-  fixedPoaAnsweringPct: null,
-  fixedEscalatedPct: null,
+  fixedUtilizationForecast: null, fixedUtilizationWithAdhoc: null, fixedUtilizationWithoutAdhoc: null,
+  fixedUtilizationWithAdhocPct: null, fixedUtilizationWithoutAdhocPct: null, fixedPoaAnsweringPct: null, fixedEscalatedPct: null,
 };
 
 describe("import-driven Utilization values", () => {

@@ -13,32 +13,12 @@ import { parseDurationSeconds, parseFlexibleDate, parseFlexibleDateTime } from "
  */
 
 export const BLA_BLI_BLU_OVERALL_SALES_HEADERS = [
-  "Week",
-  "Date",
-  "EMP ID",
-  "Emp_Name",
-  "Customer Number",
-  "Payment Status",
-  "Amount",
-  "OrderID",
-  "Campaign",
-  "Calling Status",
-  "Discount Code",
-  "Count",
-  "Current Status",
-  "Lineitem sku",
-  "New sold line item",
-  "Created By",
-  "Order Creation time",
-  "Call Date & Time",
-  "Call Duration",
-  "Countifs of calls",
-  "Lead_Line_Item",
-  "Source",
-  "Business",
-  "New sold line item Categoty",
-  "Alternate number",
-  "Recording Link",
+  "Week", "Date", "EMP ID", "Emp_Name", "Customer Number", "Payment Status",
+  "Amount", "OrderID", "Campaign", "Calling Status", "Discount Code", "Count",
+  "Current Status", "Lineitem sku", "New sold line item", "Created By",
+  "Order Creation time", "Call Date & Time", "Call Duration",
+  "Countifs of calls", "Lead_Line_Item", "Source", "Business",
+  "New sold line item Categoty", "Alternate number", "Recording Link",
 ] as const;
 
 /** Plain integer Excel serial -> "YYYY-MM-DD". */
@@ -50,9 +30,7 @@ export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
   if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(
-      Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000,
-    );
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
     return d.toISOString().slice(0, 10);
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
@@ -70,9 +48,7 @@ export function parseDateTime(raw: unknown): string | null {
   if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
     const days = Math.floor(raw);
     const secondsOfDay = Math.round((raw - days) * 86400);
-    const d = new Date(
-      Date.UTC(1899, 11, 30) + days * 86400000 + secondsOfDay * 1000,
-    );
+    const d = new Date(Date.UTC(1899, 11, 30) + days * 86400000 + secondsOfDay * 1000);
     return d.toISOString().slice(0, 19).replace("T", " ");
   }
   const v = String(raw ?? "").trim();
@@ -122,9 +98,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 export async function importBlaBliBluOverallSalesBatch(
   batchId: string,
@@ -170,9 +144,7 @@ export async function importBlaBliBluOverallSalesBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Bla Bli Blu" process found to attach this row to`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const orderId = cleanText(data["OrderID"]);
@@ -190,10 +162,7 @@ export async function importBlaBliBluOverallSalesBatch(
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        orderId,
-        reportDate,
+        randomUUID(), processId, orderId, reportDate,
         cleanText(data["Week"]),
         cleanText(data["EMP ID"]),
         cleanText(data["Emp_Name"]),
@@ -267,33 +236,22 @@ export async function importBlaBliBluOverallSalesBatch(
 
   if (importedRows > 0) {
     const failedRowIds = new Set(inserted.errorUpdates.map((e) => e.rowId));
-    const successRowIds = toInsert
-      .filter((r) => !failedRowIds.has(r.rowId))
-      .map((r) => r.rowId);
+    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
     await markRowsImported(successRowIds);
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

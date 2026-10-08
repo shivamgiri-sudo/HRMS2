@@ -85,11 +85,7 @@ export interface CostCentreLookup {
 }
 
 export function buildCostCentreLookup(
-  rows: Array<{
-    cost_centre_code: string;
-    id: string;
-    branch_id?: string | null;
-  }>,
+  rows: Array<{ cost_centre_code: string; id: string; branch_id?: string | null }>,
 ): CostCentreLookup {
   const map = new Map<string, string>();
   const branchMap = new Map<string, string>();
@@ -135,8 +131,7 @@ export function resolveBranchStateCode(
 /** A3's fixed, filterable error message for a cost centre that genuinely does
  *  not exist in the live cost_centre_master — a future manual-reconciliation
  *  task selects on this exact string. */
-export const COST_CENTRE_UNRESOLVED_MESSAGE =
-  "cost_centre_id unresolved - needs manual reconciliation";
+export const COST_CENTRE_UNRESOLVED_MESSAGE = "cost_centre_id unresolved - needs manual reconciliation";
 
 function costCentreError(rawCode: string | null): string {
   return `${COST_CENTRE_UNRESOLVED_MESSAGE} (legacy cost_center "${rawCode ?? ""}" has no match in cost_centre_master.cost_centre_code)`;
@@ -152,21 +147,14 @@ export interface InvoiceBillNoCandidate {
  *  bill_no never participates (an invoice with no bill_no was never actually
  *  billed — design §5.4 — so it cannot be what a credit note references). */
 export function buildInvoiceBillNoIndex(
-  rows: Array<{
-    src_bill_no: string | null;
-    target_id: string;
-    src_cost_center: string | null;
-  }>,
+  rows: Array<{ src_bill_no: string | null; target_id: string; src_cost_center: string | null }>,
 ): Map<string, InvoiceBillNoCandidate[]> {
   const map = new Map<string, InvoiceBillNoCandidate[]>();
   for (const r of rows) {
     const key = (r.src_bill_no ?? "").trim();
     if (key === "") continue;
     const arr = map.get(key) ?? [];
-    arr.push({
-      targetInvoiceId: r.target_id,
-      costCenterCode: r.src_cost_center,
-    });
+    arr.push({ targetInvoiceId: r.target_id, costCenterCode: r.src_cost_center });
     map.set(key, arr);
   }
   return map;
@@ -223,9 +211,7 @@ export function matchCreditNoteInvoice(
     };
   }
   const cnCostCenter = (creditNoteCostCenter ?? "").trim();
-  const matching = candidates.filter(
-    (c) => (c.costCenterCode ?? "").trim() === cnCostCenter,
-  );
+  const matching = candidates.filter((c) => (c.costCenterCode ?? "").trim() === cnCostCenter);
   if (matching.length === 0) {
     return {
       status: "ambiguous",
@@ -293,39 +279,25 @@ function joinErrors(errors: string[]): ValidationResult {
   return { status: "error", error: msg };
 }
 
-export function validateInvoiceRow(
-  row: InvoiceValidationInput,
-  costCentre: CostCentreLookup,
-): ValidationResult {
+export function validateInvoiceRow(row: InvoiceValidationInput, costCentre: CostCentreLookup): ValidationResult {
   const errors: string[] = [];
 
   if (isBlank(row.src_category)) {
     errors.push("category is NULL/blank (client_invoice.category is NOT NULL)");
   }
   if (isBlank(row.src_finance_year)) {
-    errors.push(
-      "finance_year is NULL/blank (client_invoice.finance_year is NOT NULL)",
-    );
+    errors.push("finance_year is NULL/blank (client_invoice.finance_year is NOT NULL)");
   }
   if (isBlank(row.src_month)) {
-    errors.push(
-      "month_label is NULL/blank (client_invoice.month_label is NOT NULL)",
-    );
+    errors.push("month_label is NULL/blank (client_invoice.month_label is NOT NULL)");
   }
   if (isBlank(row.src_invoicedate)) {
-    errors.push(
-      "invoice_date is NULL/blank/unrecoverable (client_invoice.invoice_date is NOT NULL) — design §5.1",
-    );
+    errors.push("invoice_date is NULL/blank/unrecoverable (client_invoice.invoice_date is NOT NULL) — design §5.1");
   }
   if (row.target_gst_type === null) {
-    errors.push(
-      "gst_type is NULL (client_invoice.gst_type is NOT NULL, no DEFAULT — design §5.2 vs live schema conflict)",
-    );
+    errors.push("gst_type is NULL (client_invoice.gst_type is NOT NULL, no DEFAULT — design §5.2 vs live schema conflict)");
   }
-  if (
-    isBlank(row.src_cost_center) ||
-    !costCentre.has((row.src_cost_center ?? "").trim())
-  ) {
+  if (isBlank(row.src_cost_center) || !costCentre.has((row.src_cost_center ?? "").trim())) {
     errors.push(costCentreError(row.src_cost_center));
   }
   const amountFields: Array<[string, string | null]> = [
@@ -338,9 +310,7 @@ export function validateInvoiceRow(
   ];
   for (const [name, raw] of amountFields) {
     if (!parseDecimalOk(raw)) {
-      errors.push(
-        `${name} does not parse as a decimal (raw=${JSON.stringify(raw)})`,
-      );
+      errors.push(`${name} does not parse as a decimal (raw=${JSON.stringify(raw)})`);
     }
   }
 
@@ -380,34 +350,21 @@ export function validateCreditNoteRow(
   }
 
   if (isBlank(row.src_category)) {
-    errors.push(
-      "category is NULL/blank (client_credit_note.category is NOT NULL)",
-    );
+    errors.push("category is NULL/blank (client_credit_note.category is NOT NULL)");
   }
   if (isBlank(row.src_finance_year)) {
-    errors.push(
-      "finance_year is NULL/blank (client_credit_note.finance_year is NOT NULL)",
-    );
+    errors.push("finance_year is NULL/blank (client_credit_note.finance_year is NOT NULL)");
   }
   if (isBlank(row.src_month)) {
-    errors.push(
-      "month_label is NULL/blank (client_credit_note.month_label is NOT NULL)",
-    );
+    errors.push("month_label is NULL/blank (client_credit_note.month_label is NOT NULL)");
   }
   if (isBlank(row.src_creditdate)) {
-    errors.push(
-      "credit_date is NULL/blank (client_credit_note.credit_date is NOT NULL)",
-    );
+    errors.push("credit_date is NULL/blank (client_credit_note.credit_date is NOT NULL)");
   }
   if (row.target_gst_type === null) {
-    errors.push(
-      "gst_type is NULL (client_credit_note.gst_type is NOT NULL, no DEFAULT — design §5.2 vs live schema conflict)",
-    );
+    errors.push("gst_type is NULL (client_credit_note.gst_type is NOT NULL, no DEFAULT — design §5.2 vs live schema conflict)");
   }
-  if (
-    isBlank(row.src_cost_center) ||
-    !costCentre.has((row.src_cost_center ?? "").trim())
-  ) {
+  if (isBlank(row.src_cost_center) || !costCentre.has((row.src_cost_center ?? "").trim())) {
     errors.push(costCentreError(row.src_cost_center));
   }
   const amountFields: Array<[string, string | null]> = [
@@ -420,9 +377,7 @@ export function validateCreditNoteRow(
   ];
   for (const [name, raw] of amountFields) {
     if (!parseDecimalOk(raw)) {
-      errors.push(
-        `${name} does not parse as a decimal (raw=${JSON.stringify(raw)})`,
-      );
+      errors.push(`${name} does not parse as a decimal (raw=${JSON.stringify(raw)})`);
     }
   }
 
@@ -434,14 +389,10 @@ export function validateCreditNoteRow(
 // validation_status/validation_error (both live enums have safe DEFAULTs
 // so an unmapped case can never make an INSERT fail — these are provenance/
 // correctness decisions for Task 4's load.ts to reuse, not gating checks).
-export function mapInvoiceStatus(
-  billNo: string | null,
-): "proforma" | "approved" {
+export function mapInvoiceStatus(billNo: string | null): "proforma" | "approved" {
   return isBlank(billNo) ? "proforma" : "approved";
 }
 
-export function mapCreditStatus(
-  creditApprove: number | null,
-): "draft" | "approved" {
+export function mapCreditStatus(creditApprove: number | null): "draft" | "approved" {
   return creditApprove === 1 ? "approved" : "draft";
 }

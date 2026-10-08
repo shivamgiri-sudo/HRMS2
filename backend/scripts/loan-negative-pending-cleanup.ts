@@ -33,9 +33,7 @@ async function main() {
   const loans = rows as Array<Record<string, unknown>>;
 
   if (loans.length === 0) {
-    console.log(
-      "No employee_loans rows with negative pending_amount. Nothing to do.",
-    );
+    console.log("No employee_loans rows with negative pending_amount. Nothing to do.");
     return;
   }
 
@@ -43,9 +41,7 @@ async function main() {
   console.table(loans);
 
   if (!APPLY) {
-    console.log(
-      "\nDry run only — pass --apply to clamp these to 0 and write audit rows.",
-    );
+    console.log("\nDry run only — pass --apply to clamp these to 0 and write audit rows.");
     return;
   }
 
@@ -69,8 +65,7 @@ async function main() {
         new_value_json: {
           pending_amount: 0,
         },
-        reason:
-          "Migration 1603: clamp legacy-import negative pending_amount to 0",
+        reason: "Migration 1603: clamp legacy-import negative pending_amount to 0",
       });
 
       await conn.execute(
@@ -80,9 +75,7 @@ async function main() {
     }
 
     await conn.commit();
-    console.log(
-      `\nClamped ${loans.length} loan(s) to pending_amount = 0 and wrote audit rows.`,
-    );
+    console.log(`\nClamped ${loans.length} loan(s) to pending_amount = 0 and wrote audit rows.`);
   } catch (err) {
     await conn.rollback();
     throw err;

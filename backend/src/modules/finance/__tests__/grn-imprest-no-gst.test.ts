@@ -56,9 +56,7 @@ describe("imprest GRNs carry no GST — the whole amount is P&L cost", () => {
   });
 
   it("applyImprestNoGst books the full amount to P&L and zeroes every tax column", () => {
-    const rows = [SHARE, SHARE, SHARE, SHARE, SHARE]
-      .map(inclusive18)
-      .map(applyImprestNoGst);
+    const rows = [SHARE, SHARE, SHARE, SHARE, SHARE].map(inclusive18).map(applyImprestNoGst);
     const gross = rows.reduce((sum, r) => sum + r.grossAmount, 0);
     const pnl = rows.reduce((sum, r) => sum + r.pnlCostAmount, 0);
 
@@ -131,30 +129,18 @@ describe("imprest GRNs carry no GST — the whole amount is P&L cost", () => {
 describe("both GRN write paths apply the imprest rule", () => {
   it("saveAllocations() — the endpoint imprest actually posts to — flattens every row", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
-    expect(service).toContain(
-      'const isImprest = String(grn.grn_type) === "imprest";',
-    );
-    expect(service).toContain(
-      "const rowAmounts = isImprest ? applyImprestNoGst(amounts) : amounts;",
-    );
+    expect(service).toContain('const isImprest = String(grn.grn_type) === "imprest";');
+    expect(service).toContain("const rowAmounts = isImprest ? applyImprestNoGst(amounts) : amounts;");
     // The flattened amounts are what gets persisted, not the raw budget-line maths.
     expect(service).toContain("amounts: rowAmounts,");
-    expect(service).toContain(
-      "isImprest ? IMPREST_TAX_PROFILE.taxTreatment : item.line.tax_treatment,",
-    );
-    expect(service).toContain(
-      "isImprest ? IMPREST_TAX_PROFILE.recoverableTaxPct : item.line.recoverable_tax_pct,",
-    );
+    expect(service).toContain("isImprest ? IMPREST_TAX_PROFILE.taxTreatment : item.line.tax_treatment,");
+    expect(service).toContain("isImprest ? IMPREST_TAX_PROFILE.recoverableTaxPct : item.line.recoverable_tax_pct,");
   });
 
   it("the legacy single-line create path flattens too", () => {
     const service = read("src/modules/finance/grn.service.ts");
-    expect(service).toContain(
-      'const isImprest = payload.grnType === "imprest";',
-    );
-    expect(service).toContain(
-      "const amountsForGrn = isImprest ? applyImprestNoGst(amounts) : amounts;",
-    );
+    expect(service).toContain('const isImprest = payload.grnType === "imprest";');
+    expect(service).toContain("const amountsForGrn = isImprest ? applyImprestNoGst(amounts) : amounts;");
     expect(service).toContain("amountsForGrn.pnlCostAmount,");
     // The headroom check still runs on the UNTOUCHED gross — applyImprestNoGst moves tax into
     // base and must not change what is checked against budget. It is now the BRANCH AGGREGATE
@@ -181,8 +167,6 @@ describe("both GRN write paths apply the imprest rule", () => {
     expect(form).toContain("grossAmount: shareGross,");
     const service = read("src/modules/finance/grn-smart.service.ts");
     // ...and the server honours it for imprest only.
-    expect(service).toContain(
-      "const imprestShare = isImprest && allocation.grossAmount != null",
-    );
+    expect(service).toContain("const imprestShare = isImprest && allocation.grossAmount != null");
   });
 });

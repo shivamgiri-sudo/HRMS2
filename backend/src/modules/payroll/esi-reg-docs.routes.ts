@@ -159,8 +159,6 @@ esiRegDocsRouter.get(
     const offset = (page - 1) * limit;
     const branchId = req.query.branch_id as string | undefined;
     const search = req.query.search as string | undefined;
-    const activeStatusParam = req.query.active_status as string | undefined;
-    const monthParam = req.query.month as string | undefined;
 
     /**
      * LIMIT/OFFSET are interpolated, not bound.
@@ -212,6 +210,7 @@ esiRegDocsRouter.get(
     // backfilled onto `employees`. Checking only `esic_number` would have shown
     // some already-registered employees as "not registered" too.
     const whereParts: string[] = [
+      `e.active_status = 1`,
       `esi.esi_eligible = 1`,
       ESI_STILL_APPLICABLE_SQL,
       `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
@@ -1068,14 +1067,13 @@ esiRegDocsRouter.get(
   h(async (req: Request, res: Response) => {
     const actorId = (req as any).authUser?.id ?? "unknown";
     const branchId = req.query.branch_id as string | undefined;
-    const activeStatusParam = req.query.active_status as string | undefined;
-    const monthParam = req.query.month as string | undefined;
 
     // Same scope as the list above, deliberately — an export that disagrees with
     // the screen it was exported from is worse than no export. See the fix note
     // on the list query above: this must select eligible-but-not-yet-registered
     // employees, not the inverted "already has a number OR eligible" population.
     const whereParts = [
+      `e.active_status = 1`,
       `esi.esi_eligible = 1`,
       ESI_STILL_APPLICABLE_SQL,
       `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,

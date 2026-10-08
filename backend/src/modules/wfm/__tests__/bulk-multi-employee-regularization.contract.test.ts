@@ -26,10 +26,7 @@ import { describe, expect, it } from "vitest";
  */
 describe("multi-employee bulk regularization", () => {
   const source = readFileSync(
-    resolve(
-      process.cwd(),
-      "src/modules/wfm/wfm.regularization.secure.routes.ts",
-    ),
+    resolve(process.cwd(), "src/modules/wfm/wfm.regularization.secure.routes.ts"),
     "utf8",
   );
 

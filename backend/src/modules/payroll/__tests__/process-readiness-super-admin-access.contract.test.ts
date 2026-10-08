@@ -6,28 +6,22 @@
  * user_assignment_scope rows, so the existing empty-scope branch already returns count:0
  * correctly once let past the role check).
  */
-import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 const routeFile = readFileSync(
-  path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../payroll-process-readiness.routes.ts",
-  ),
-  "utf8",
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '../payroll-process-readiness.routes.ts'),
+  'utf8',
 );
 
-describe("GET /my-pending-count — role allowlist includes super_admin and admin", () => {
-  it("requireRole for my-pending-count includes super_admin and admin", () => {
+describe('GET /my-pending-count — role allowlist includes super_admin and admin', () => {
+  it('requireRole for my-pending-count includes super_admin and admin', () => {
     const match = routeFile.match(
       /"\/my-pending-count",\s*requireAuth,\s*requireRole\(([^)]*)\)/,
     );
-    expect(
-      match,
-      "could not find the my-pending-count route registration",
-    ).not.toBeNull();
+    expect(match, 'could not find the my-pending-count route registration').not.toBeNull();
     const roleArgs = match![1];
     expect(roleArgs).toContain('"super_admin"');
     expect(roleArgs).toContain('"admin"');

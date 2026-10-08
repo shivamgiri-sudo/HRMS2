@@ -68,10 +68,7 @@ describe("work-item due_at is a MySQL DATETIME literal in local time", () => {
     // catch, so assert the property rather than skipping silently.
     const now = Date.UTC(2026, 7, 28, 11, 41, 3);
     const local = dueAtLocal(48, now);
-    const utc = new Date(now + 48 * 3600_000)
-      .toISOString()
-      .slice(0, 19)
-      .replace("T", " ");
+    const utc = new Date(now + 48 * 3600_000).toISOString().slice(0, 19).replace("T", " ");
     if (new Date().getTimezoneOffset() !== 0) {
       expect(local).not.toBe(utc);
     }
@@ -82,10 +79,7 @@ describe("work-item due_at is a MySQL DATETIME literal in local time", () => {
     const now = Date.UTC(2026, 7, 28, 11, 41, 3);
     const created = dueAtLocal(0, now);
     const due = dueAtLocal(48, now);
-    const gapHours =
-      (Date.parse(due.replace(" ", "T")) -
-        Date.parse(created.replace(" ", "T"))) /
-      3600_000;
+    const gapHours = (Date.parse(due.replace(" ", "T")) - Date.parse(created.replace(" ", "T"))) / 3600_000;
     expect(gapHours).toBe(48);
   });
 

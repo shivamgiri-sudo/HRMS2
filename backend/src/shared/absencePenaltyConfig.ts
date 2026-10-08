@@ -40,9 +40,7 @@ export interface AbsencePenaltyConfigRow {
  * until this is deliberately activated. Unapproved (proposal) rows are
  * never read here, matching statutory_config_version's own rule.
  */
-export async function getEffectiveAbsencePenaltyDays(
-  asOfDate?: string,
-): Promise<number> {
+export async function getEffectiveAbsencePenaltyDays(asOfDate?: string): Promise<number> {
   const date = asOfDate ?? new Date().toISOString().slice(0, 10);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT penalty_days FROM absence_penalty_config
@@ -52,33 +50,25 @@ export async function getEffectiveAbsencePenaltyDays(
         AND (effective_to IS NULL OR effective_to >= ?)
       ORDER BY effective_from DESC
       LIMIT 1`,
-    [CONFIG_KEY, date, date],
+    [CONFIG_KEY, date, date]
   );
   return Number((rows as RowDataPacket[])[0]?.penalty_days ?? 0);
 }
 
-export async function listAbsencePenaltyConfig(): Promise<
-  AbsencePenaltyConfigRow[]
-> {
+export async function listAbsencePenaltyConfig(): Promise<AbsencePenaltyConfigRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, config_key, penalty_days, effective_from, effective_to,
             approved_by, approved_at, created_by, created_at, notes
        FROM absence_penalty_config
       WHERE config_key = ?
       ORDER BY effective_from DESC`,
-    [CONFIG_KEY],
+    [CONFIG_KEY]
   );
   return (rows as RowDataPacket[]).map((r: any) => ({
-    id: r.id,
-    configKey: r.config_key,
-    penaltyDays: Number(r.penalty_days),
-    effectiveFrom: r.effective_from,
-    effectiveTo: r.effective_to,
-    approvedBy: r.approved_by,
-    approvedAt: r.approved_at,
-    createdBy: r.created_by,
-    createdAt: r.created_at,
-    notes: r.notes,
+    id: r.id, configKey: r.config_key, penaltyDays: Number(r.penalty_days),
+    effectiveFrom: r.effective_from, effectiveTo: r.effective_to,
+    approvedBy: r.approved_by, approvedAt: r.approved_at,
+    createdBy: r.created_by, createdAt: r.created_at, notes: r.notes,
   }));
 }
 
@@ -99,25 +89,15 @@ export async function proposeAbsencePenaltyConfig(input: {
     `INSERT INTO absence_penalty_config
        (id, config_key, penalty_days, effective_from, created_by, notes)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      CONFIG_KEY,
-      input.penaltyDays,
-      input.effectiveFrom,
-      input.createdBy,
-      input.notes ?? null,
-    ],
+    [id, CONFIG_KEY, input.penaltyDays, input.effectiveFrom, input.createdBy, input.notes ?? null]
   );
   return id;
 }
 
-export async function approveAbsencePenaltyConfig(
-  id: string,
-  approvedBy: string,
-): Promise<void> {
+export async function approveAbsencePenaltyConfig(id: string, approvedBy: string): Promise<void> {
   await db.execute(
     `UPDATE absence_penalty_config SET approved_by = ?, approved_at = NOW()
       WHERE id = ? AND approved_by IS NULL`,
-    [approvedBy, id],
+    [approvedBy, id]
   );
 }

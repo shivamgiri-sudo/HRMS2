@@ -85,7 +85,7 @@ async function resolveAlertRecipients(): Promise<string[]> {
     `SELECT DISTINCT ur.user_id
        FROM user_roles ur
       WHERE ur.active_status = 1
-        AND ur.role_key IN ('finance_head', 'super_admin')`,
+        AND ur.role_key IN ('finance_head', 'super_admin')`
   );
   return (rows as RowDataPacket[]).map((r) => String(r.user_id));
 }
@@ -102,7 +102,7 @@ async function findDriftedCostCentres(): Promise<CostCentreDriftGroup[]> {
         AND e.cost_center_code IS NOT NULL
         AND e.cost_center_code <> ''
         AND e.date_of_joining <= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
-    [GRACE_PERIOD_DAYS],
+    [GRACE_PERIOD_DAYS]
   );
 
   if (employeeRows.length === 0) return [];
@@ -113,7 +113,7 @@ async function findDriftedCostCentres(): Promise<CostCentreDriftGroup[]> {
   const placeholders = codes.map(() => "?").join(",");
   const billRows = await billQuery<BillRow>(
     `SELECT EmpCode, Status, CostCenter FROM masjclrentry WHERE EmpCode IN (${placeholders})`,
-    codes,
+    codes
   );
   const billMap = new Map(billRows.map((r) => [r.EmpCode, r]));
 
@@ -129,9 +129,7 @@ async function findDriftedCostCentres(): Promise<CostCentreDriftGroup[]> {
     if (!groups.has(hrmsCode)) {
       groups.set(hrmsCode, {
         cost_centre_code: hrmsCode,
-        cost_centre_name: e.cost_centre_name
-          ? String(e.cost_centre_name)
-          : null,
+        cost_centre_name: e.cost_centre_name ? String(e.cost_centre_name) : null,
         process_id: e.process_id ? String(e.process_id) : null,
         branch_id: e.branch_id ? String(e.branch_id) : null,
         branch_name: e.branch_name ? String(e.branch_name) : null,
@@ -157,15 +155,11 @@ async function checkCostCentreDrift(): Promise<void> {
     const groups = await findDriftedCostCentres();
 
     if (groups.length === 0) {
-      console.log(
-        "[cost-centre-drift-alert] No drifted cost centres found. Done.",
-      );
+      console.log("[cost-centre-drift-alert] No drifted cost centres found. Done.");
       return;
     }
 
-    console.log(
-      `[cost-centre-drift-alert] Found ${groups.length} cost centre(s) with drift.`,
-    );
+    console.log(`[cost-centre-drift-alert] Found ${groups.length} cost centre(s) with drift.`);
     const recipients = await resolveAlertRecipients();
 
     for (const group of groups) {
@@ -175,21 +169,17 @@ async function checkCostCentreDrift(): Promise<void> {
             AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.cost_centre_code')) = ?
             AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
           LIMIT 1`,
-        [group.cost_centre_code],
+        [group.cost_centre_code]
       );
       if (existing) {
-        console.log(
-          `[cost-centre-drift-alert] Skipping ${group.cost_centre_code} — alerted within 24h`,
-        );
+        console.log(`[cost-centre-drift-alert] Skipping ${group.cost_centre_code} — alerted within 24h`);
         continue;
       }
 
       const label = group.cost_centre_name
         ? `${group.cost_centre_name} (${group.cost_centre_code})`
         : group.cost_centre_code;
-      const notFiledCount = group.employees.filter(
-        (e) => e.bill_cost_centre === null,
-      ).length;
+      const notFiledCount = group.employees.filter((e) => e.bill_cost_centre === null).length;
       const wrongCcCount = group.employees.length - notFiledCount;
 
       await pool.execute(
@@ -207,7 +197,7 @@ async function checkCostCentreDrift(): Promise<void> {
             wrong_cost_centre_in_db_bill: wrongCcCount,
             employee_codes: group.employees.map((e) => e.employee_code),
           }),
-        ],
+        ]
       );
 
       const descriptionLines = group.employees
@@ -215,13 +205,10 @@ async function checkCostCentreDrift(): Promise<void> {
         .map((e) =>
           e.bill_cost_centre === null
             ? `${e.employee_code} (${e.full_name}) — not yet in db_bill, joined ${e.date_of_joining}`
-            : `${e.employee_code} (${e.full_name}) — db_bill shows "${e.bill_cost_centre}"`,
+            : `${e.employee_code} (${e.full_name}) — db_bill shows "${e.bill_cost_centre}"`
         )
         .join("\n");
-      const more =
-        group.employees.length > 15
-          ? `\n...and ${group.employees.length - 15} more`
-          : "";
+      const more = group.employees.length > 15 ? `\n...and ${group.employees.length - 15} more` : "";
 
       for (const userId of recipients) {
         const [[already]] = await pool.execute<RowDataPacket[]>(
@@ -229,7 +216,7 @@ async function checkCostCentreDrift(): Promise<void> {
             WHERE item_type = 'COST_CENTRE_DRIFT' AND entity_id = ? AND assigned_to_user_id = ?
               AND status NOT IN ('completed', 'cancelled')
             LIMIT 1`,
-          [group.cost_centre_code, userId],
+          [group.cost_centre_code, userId]
         );
         if (already) continue;
         await createWorkItem({
@@ -239,8 +226,7 @@ async function checkCostCentreDrift(): Promise<void> {
             `mas_hrms and db_bill disagree on cost centre for ${group.employees.length} employee(s) ` +
             `who have been active for over ${GRACE_PERIOD_DAYS} days (so this isn't normal onboarding lag). ` +
             `${notFiledCount} not entered in db_bill at all, ${wrongCcCount} filed under a different cost centre.\n\n` +
-            descriptionLines +
-            more,
+            descriptionLines + more,
           moduleCode: "hrms",
           entityType: "cost_centre_master",
           entityId: group.cost_centre_code,
@@ -253,7 +239,7 @@ async function checkCostCentreDrift(): Promise<void> {
       }
 
       console.log(
-        `[cost-centre-drift-alert] Alert logged for ${label}: ${group.employees.length} drifted employee(s); notified ${recipients.length} recipient(s)`,
+        `[cost-centre-drift-alert] Alert logged for ${label}: ${group.employees.length} drifted employee(s); notified ${recipients.length} recipient(s)`
       );
     }
 
@@ -269,10 +255,7 @@ function schedule(delayMs: number): void {
     try {
       await checkCostCentreDrift();
     } catch (err) {
-      console.error(
-        "[cost-centre-drift-alert] Sweep error:",
-        (err as Error).message,
-      );
+      console.error("[cost-centre-drift-alert] Sweep error:", (err as Error).message);
     }
     schedule(millisecondsUntilNextRun());
   }, delayMs);

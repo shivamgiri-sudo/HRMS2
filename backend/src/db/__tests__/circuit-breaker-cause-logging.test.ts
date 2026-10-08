@@ -36,9 +36,7 @@ function recordFailureWithLog(
   const previous = state.status;
   const next = recordCircuitBreakerFailure(state, CONFIG, now);
   if (next.status === "open" && previous !== "open") {
-    log.push(
-      `OPEN after ${next.failures}: ${(error as { code?: string })?.code ?? "unknown"}`,
-    );
+    log.push(`OPEN after ${next.failures}: ${(error as { code?: string })?.code ?? "unknown"}`);
   }
   return next;
 }
@@ -67,9 +65,7 @@ describe("circuit breaker cause logging", () => {
     }
 
     expect(state.status).toBe("closed");
-    expect(log, "a failure below the threshold is not yet news").toHaveLength(
-      0,
-    );
+    expect(log, "a failure below the threshold is not yet news").toHaveLength(0);
   });
 
   it("does not re-log on every failure once already open", () => {
@@ -118,11 +114,7 @@ describe("circuit breaker cause logging", () => {
       nextProbeTime: 0,
     };
 
-    state = recordFailureWithLog(
-      state,
-      { code: "PROTOCOL_CONNECTION_LOST" },
-      log,
-    );
+    state = recordFailureWithLog(state, { code: "PROTOCOL_CONNECTION_LOST" }, log);
 
     expect(state.status).toBe("open");
     expect(log).toHaveLength(1);

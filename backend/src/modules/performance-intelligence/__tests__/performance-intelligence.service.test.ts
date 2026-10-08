@@ -48,18 +48,14 @@ describe("performance intelligence scope enforcement", () => {
     vi.mocked(repo.canAccessEmployee).mockResolvedValueOnce(false);
     const service = createPerformanceIntelligenceService({
       repository: repo,
-      resolveScope: vi
-        .fn()
-        .mockResolvedValue(scope("TEAM_ONLY", "team_leader")),
+      resolveScope: vi.fn().mockResolvedValue(scope("TEAM_ONLY", "team_leader")),
       narrowScope: vi.fn(async (resolved) => resolved),
     });
 
-    await expect(
-      service.scorecard(
-        { userId: "tl-user" },
-        query({ employeeId: "other-employee" }),
-      ),
-    ).rejects.toMatchObject({ statusCode: 403 });
+    await expect(service.scorecard(
+      { userId: "tl-user" },
+      query({ employeeId: "other-employee" }),
+    )).rejects.toMatchObject({ statusCode: 403 });
     expect(repo.listMetricFacts).not.toHaveBeenCalled();
   });
 
@@ -67,9 +63,7 @@ describe("performance intelligence scope enforcement", () => {
     const repo = repository();
     const service = createPerformanceIntelligenceService({
       repository: repo,
-      resolveScope: vi
-        .fn()
-        .mockResolvedValue(scope("TEAM_ONLY", "team_leader")),
+      resolveScope: vi.fn().mockResolvedValue(scope("TEAM_ONLY", "team_leader")),
       narrowScope: vi.fn(async (resolved) => resolved),
     });
 
@@ -79,9 +73,7 @@ describe("performance intelligence scope enforcement", () => {
     expect(result.canSelectProcess).toBe(false);
     expect(result.canViewPeople).toBe(true);
     expect(result.branchOptions).toEqual([{ id: "branch-1", label: "Noida" }]);
-    expect(result.processOptions).toEqual([
-      { id: "process-1", label: "Onfido" },
-    ]);
+    expect(result.processOptions).toEqual([{ id: "process-1", label: "Onfido" }]);
   });
 
   it("preserves process entitlement when narrowing a process manager by branch", async () => {
@@ -127,9 +119,10 @@ describe("performance intelligence scope enforcement", () => {
       narrowScope: vi.fn(async (resolved) => resolved),
     });
 
-    await expect(
-      service.scorecard({ userId: "employee-user" }, query()),
-    ).rejects.toMatchObject({ statusCode: 403 });
+    await expect(service.scorecard(
+      { userId: "employee-user" },
+      query(),
+    )).rejects.toMatchObject({ statusCode: 403 });
     expect(repo.listMetricFacts).not.toHaveBeenCalled();
   });
 
@@ -158,9 +151,10 @@ describe("performance intelligence scope enforcement", () => {
       narrowScope: vi.fn(async (resolved) => resolved),
     });
 
-    await expect(
-      service.people({ userId: "employee-user" }, query()),
-    ).rejects.toMatchObject({ statusCode: 403 });
+    await expect(service.people(
+      { userId: "employee-user" },
+      query(),
+    )).rejects.toMatchObject({ statusCode: 403 });
     expect(repo.listPeople).not.toHaveBeenCalled();
   });
 });

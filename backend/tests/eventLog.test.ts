@@ -5,10 +5,7 @@ vi.mock("../src/db/mysql.js", () => ({
 }));
 
 import { db } from "../src/db/mysql.js";
-import {
-  appendEvent,
-  listEvents,
-} from "../src/modules/integration-hub/eventLog.js";
+import { appendEvent, listEvents } from "../src/modules/integration-hub/eventLog.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
@@ -28,27 +25,18 @@ describe("appendEvent", () => {
   it("inserts event row", async () => {
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
     mockExecute.mockResolvedValueOnce([[fakeEvent]]);
-    const result = await appendEvent(
-      "dialer_1",
-      "run_triggered",
-      "user-1",
-      "Manual run",
-    );
+    const result = await appendEvent("dialer_1", "run_triggered", "user-1", "Manual run");
     expect(mockExecute).toHaveBeenCalledTimes(2);
     expect(result.event_type).toBe("run_triggered");
   });
 
   it("stores metadata as JSON when provided", async () => {
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    mockExecute.mockResolvedValueOnce([
-      [{ ...fakeEvent, metadata: { rows: 100 } }],
-    ]);
-    await appendEvent("dialer_1", "run_complete", "user-1", "Done", {
-      rows: 100,
-    });
+    mockExecute.mockResolvedValueOnce([[{ ...fakeEvent, metadata: { rows: 100 } }]]);
+    await appendEvent("dialer_1", "run_complete", "user-1", "Done", { rows: 100 });
     const [, params] = mockExecute.mock.calls[0];
     const metaParam = (params as unknown[]).find(
-      (p) => typeof p === "string" && p.includes("rows"),
+      (p) => typeof p === "string" && p.includes("rows")
     );
     expect(metaParam).toBeDefined();
   });

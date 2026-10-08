@@ -13,9 +13,7 @@ import request from "supertest";
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
-const mockBuildScopeWhereClause = vi
-  .fn()
-  .mockResolvedValue({ sql: "1=1", params: [] });
+const mockBuildScopeWhereClause = vi.fn().mockResolvedValue({ sql: "1=1", params: [] });
 
 vi.mock("../src/shared/scopeAccess.js", () => ({
   ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
@@ -61,9 +59,7 @@ vi.mock("../src/config/env.js", () => ({
 }));
 
 vi.mock("../src/modules/ats-full-parity/recruiterInterview.service.js", () => ({
-  submitInterviewUpdate: vi
-    .fn()
-    .mockResolvedValue({ submission: {}, action: "created" }),
+  submitInterviewUpdate: vi.fn().mockResolvedValue({ submission: {}, action: "created" }),
   verifyRecruiter: vi.fn(),
   getMyPendingCandidates: vi.fn(),
   getSubmissionHistory: vi.fn(),
@@ -87,20 +83,13 @@ function makeAuthMiddleware(userId: string, role: string) {
 // was about, which is why the scope clause was built for "demo-user-id" instead of
 // "user-bh-1".
 vi.mock("../src/middleware/authMiddleware.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("../src/middleware/authMiddleware.js")
-    >();
+  const actual = await importOriginal<typeof import("../src/middleware/authMiddleware.js")>();
   return {
     ...actual,
     requireAuth: (req: any, _res: any, next: any) => {
       if (!req.authUser) {
         req.authUser = { id: "demo-user-id", role: "employee" };
-        req.user = {
-          id: "demo-user-id",
-          email: "demo@mascallnet.com",
-          role: "employee",
-        };
+        req.user = { id: "demo-user-id", email: "demo@mascallnet.com", role: "employee" };
       }
       next();
     },
@@ -118,8 +107,7 @@ vi.mock("../src/middleware/authMiddleware.js", async (importOriginal) => {
 const ACTOR_ROLES = new Map<string, string>();
 
 vi.mock("../src/shared/roleResolver.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../src/shared/roleResolver.js")>();
+  const actual = await importOriginal<typeof import("../src/shared/roleResolver.js")>();
   return {
     ...actual,
     getUserRoleContext: vi.fn(async (userId: string) => {
@@ -136,10 +124,7 @@ vi.mock("../src/shared/roleResolver.js", async (importOriginal) => {
 });
 
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole:
-    (..._roles: string[]) =>
-    (_req: any, _res: any, next: any) =>
-      next(),
+  requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
 }));
 
 // ── Candidate rows returned by DB (simplified) ───────────────────────────────
@@ -182,8 +167,7 @@ async function makeApp(userId: string, role: string) {
     req.authUser = { id: userId, role };
     next();
   });
-  const { atsFullParityRouter } =
-    await import("../src/modules/ats-full-parity/atsFullParity.routes.js");
+  const { atsFullParityRouter } = await import("../src/modules/ats-full-parity/atsFullParity.routes.js");
   app.use("/api/ats-full-parity", atsFullParityRouter);
   return app;
 }
@@ -226,12 +210,8 @@ describe("atsFullParityService.webData() — scope injection", () => {
 
   it("TC-S11-02: bypassScope=true → buildScopeWhereClause NOT called", async () => {
     seedCandidateAndConfig();
-    const { atsFullParityService } =
-      await import("../src/modules/ats-full-parity/atsFullParity.service.js");
-    await atsFullParityService.webData({
-      actorId: "user-admin-1",
-      bypassScope: true,
-    });
+    const { atsFullParityService } = await import("../src/modules/ats-full-parity/atsFullParity.service.js");
+    await atsFullParityService.webData({ actorId: "user-admin-1", bypassScope: true });
     expect(mockBuildScopeWhereClause).not.toHaveBeenCalled();
     expect(mockResolveAtsBranchScope).not.toHaveBeenCalled();
     expect(scopedCandidateQuery()).toBeUndefined();
@@ -239,8 +219,7 @@ describe("atsFullParityService.webData() — scope injection", () => {
 
   it("TC-S11-03: no actorId at all → buildScopeWhereClause NOT called (backward-compat)", async () => {
     seedCandidateAndConfig();
-    const { atsFullParityService } =
-      await import("../src/modules/ats-full-parity/atsFullParity.service.js");
+    const { atsFullParityService } = await import("../src/modules/ats-full-parity/atsFullParity.service.js");
     await atsFullParityService.webData({});
     expect(mockBuildScopeWhereClause).not.toHaveBeenCalled();
   });
@@ -252,11 +231,8 @@ describe("atsFullParityService.webData() — scope injection", () => {
     mockDbExecute.mockResolvedValueOnce([configRows]); // getConfigMap
     // candidateSelect with 1=0 returns no rows
     mockDbExecute.mockResolvedValueOnce([[]]); // candidateSelect
-    const { atsFullParityService } =
-      await import("../src/modules/ats-full-parity/atsFullParity.service.js");
-    const result = await atsFullParityService.webData({
-      actorId: "user-bh-out-of-scope",
-    });
+    const { atsFullParityService } = await import("../src/modules/ats-full-parity/atsFullParity.service.js");
+    const result = await atsFullParityService.webData({ actorId: "user-bh-out-of-scope" });
     expect(result.candidateRows).toHaveLength(0);
   });
 });

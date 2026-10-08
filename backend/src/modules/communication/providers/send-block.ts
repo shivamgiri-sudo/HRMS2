@@ -12,9 +12,9 @@
  * deliberate trade: a pause flipped a few seconds ago might not yet be honoured by a sync caller,
  * but a pause is an admin action, not a millisecond-sensitive gate.
  */
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../../db/mysql.js";
-import type { Channel } from "../communication.types.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../../db/mysql.js';
+import type { Channel } from '../communication.types.js';
 
 const TTL_MS = 60_000;
 

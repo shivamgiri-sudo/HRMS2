@@ -55,12 +55,7 @@ export interface AttritionSummary {
   exits_total: number;
   /** Annualised, on the average of opening and closing headcount. Null when headcount is 0. */
   attrition_rate_pct: number | null;
-  by_month: {
-    month: string;
-    exits: number;
-    observed: number;
-    assumed: number;
-  }[];
+  by_month: { month: string; exits: number; observed: number; assumed: number }[];
   leavers: {
     employee_id: string;
     full_name: string;
@@ -82,13 +77,7 @@ export interface ShrinkageSummary {
   planned_pct: number | null;
   unplanned_pct: number | null;
   total_pct: number | null;
-  by_day: {
-    date: string;
-    scheduled: number;
-    planned: number;
-    unplanned: number;
-    pct: number | null;
-  }[];
+  by_day: { date: string; scheduled: number; planned: number; unplanned: number; pct: number | null }[];
   attribution: Attribution;
 }
 
@@ -135,10 +124,7 @@ export async function teamOnDate(
       [managerEmployeeId, onDate, onDate],
     );
     if (rows.length > 0) {
-      return {
-        employeeIds: rows.map((r) => String(r.employee_id)),
-        attribution: "observed",
-      };
+      return { employeeIds: rows.map((r) => String(r.employee_id)), attribution: "observed" };
     }
   }
 
@@ -148,10 +134,7 @@ export async function teamOnDate(
       LIMIT 1000`,
     [managerEmployeeId, managerEmployeeId],
   );
-  return {
-    employeeIds: rows.map((r) => String(r.id)),
-    attribution: "assumed_current",
-  };
+  return { employeeIds: rows.map((r) => String(r.id)), attribution: "assumed_current" };
 }
 
 /**
@@ -217,11 +200,7 @@ export async function getManagerAttrition(
   const leavers: AttritionSummary["leavers"] = [];
   for (const r of rows) {
     const exitDate = String(r.exit_date);
-    const verdict = await reportedToOnDate(
-      String(r.id),
-      managerEmployeeId,
-      exitDate,
-    );
+    const verdict = await reportedToOnDate(String(r.id), managerEmployeeId, exitDate);
     // verdict === false means history positively says somebody ELSE managed them that day —
     // this exit is not on this manager's record and is dropped, which is the entire purpose.
     if (verdict === false) continue;
@@ -235,12 +214,12 @@ export async function getManagerAttrition(
     });
   }
 
-  const [[hc]] = (await db.execute<RowDataPacket[]>(
+  const [[hc]] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS closing
        FROM employees
       WHERE (reporting_manager_id = ? OR manager_id = ?) AND active_status = 1`,
     [managerEmployeeId, managerEmployeeId],
-  )) as unknown as [RowDataPacket[]];
+  ) as unknown as [RowDataPacket[]];
 
   const closing = Number(hc?.closing ?? 0);
   // Opening headcount is reconstructed, not stored: today's team plus everyone who left in
@@ -248,16 +227,12 @@ export async function getManagerAttrition(
   const opening = closing + leavers.length;
   const avgHeadcount = (opening + closing) / 2;
 
-  const byMonthMap = new Map<
-    string,
-    { exits: number; observed: number; assumed: number }
-  >();
+  const byMonthMap = new Map<string, { exits: number; observed: number; assumed: number }>();
   for (const l of leavers) {
     const m = l.exit_date.slice(0, 7);
     const cur = byMonthMap.get(m) ?? { exits: 0, observed: 0, assumed: 0 };
     cur.exits += 1;
-    if (l.attribution === "observed") cur.observed += 1;
-    else cur.assumed += 1;
+    if (l.attribution === "observed") cur.observed += 1; else cur.assumed += 1;
     byMonthMap.set(m, cur);
   }
 
@@ -272,9 +247,7 @@ export async function getManagerAttrition(
     exits_total: leavers.length,
     attrition_rate_pct:
       avgHeadcount > 0
-        ? Math.round(
-            (leavers.length / avgHeadcount) * (12 / windowMonths) * 1000,
-          ) / 10
+        ? Math.round(((leavers.length / avgHeadcount) * (12 / windowMonths)) * 1000) / 10
         : null,
     by_month: [...byMonthMap.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
@@ -296,22 +269,13 @@ export async function getManagerShrinkage(
   startDate.setDate(startDate.getDate() - windowDays);
   const startIso = startDate.toISOString().slice(0, 10);
 
-  const { employeeIds, attribution } = await teamOnDate(
-    managerEmployeeId,
-    startIso,
-  );
+  const { employeeIds, attribution } = await teamOnDate(managerEmployeeId, startIso);
 
   const empty: ShrinkageSummary = {
     window_days: windowDays,
-    scheduled_days: 0,
-    planned_days: 0,
-    unplanned_days: 0,
-    missing_punch_days: 0,
-    planned_pct: null,
-    unplanned_pct: null,
-    total_pct: null,
-    by_day: [],
-    attribution,
+    scheduled_days: 0, planned_days: 0, unplanned_days: 0, missing_punch_days: 0,
+    planned_pct: null, unplanned_pct: null, total_pct: null,
+    by_day: [], attribution,
   };
   if (employeeIds.length === 0) return empty;
 
@@ -333,18 +297,12 @@ export async function getManagerShrinkage(
     [...PLANNED_STATUSES, ...UNPLANNED_STATUSES, ...employeeIds, windowDays],
   );
 
-  let scheduled = 0,
-    planned = 0,
-    unplanned = 0,
-    missing = 0;
+  let scheduled = 0, planned = 0, unplanned = 0, missing = 0;
   const byDay = rows.map((r) => {
     const s = Number(r.scheduled ?? 0);
     const p = Number(r.planned ?? 0);
     const u = Number(r.unplanned ?? 0);
-    scheduled += s;
-    planned += p;
-    unplanned += u;
-    missing += Number(r.missing_punch ?? 0);
+    scheduled += s; planned += p; unplanned += u; missing += Number(r.missing_punch ?? 0);
     return {
       date: String(r.d),
       scheduled: s,
@@ -354,8 +312,7 @@ export async function getManagerShrinkage(
     };
   });
 
-  const pct = (n: number) =>
-    scheduled > 0 ? Math.round((n / scheduled) * 1000) / 10 : null;
+  const pct = (n: number) => (scheduled > 0 ? Math.round((n / scheduled) * 1000) / 10 : null);
 
   return {
     window_days: windowDays,
@@ -416,22 +373,18 @@ export async function recordSupervisoryChange(params: {
     const open = openRows[0] ?? null;
 
     const carry = (incoming: string | null | undefined, current: unknown) =>
-      incoming === undefined
-        ? current == null
-          ? null
-          : String(current)
-        : incoming;
+      incoming === undefined ? (current == null ? null : String(current)) : incoming;
 
     const managerId = carry(params.managerId, open?.manager_id);
     const processId = carry(params.processId, open?.process_id);
-    const branchId = carry(params.branchId, open?.branch_id);
+    const branchId  = carry(params.branchId,  open?.branch_id);
 
     // Nothing actually moved — do not open a period for a no-op save.
     if (
       open &&
       String(open.manager_id ?? "") === String(managerId ?? "") &&
       String(open.process_id ?? "") === String(processId ?? "") &&
-      String(open.branch_id ?? "") === String(branchId ?? "")
+      String(open.branch_id  ?? "") === String(branchId  ?? "")
     ) {
       return;
     }
@@ -459,10 +412,7 @@ export async function recordSupervisoryChange(params: {
       [employeeId, managerId, processId, branchId, changedBy, reason ?? null],
     );
   } catch (err) {
-    console.error(
-      "[manager-history] could not record supervisory change:",
-      err,
-    );
+    console.error("[manager-history] could not record supervisory change:", err);
   }
 }
 

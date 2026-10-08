@@ -35,9 +35,8 @@ async function main() {
   const daysArg = process.argv.find((a) => a.startsWith("--days="));
   const days = daysArg ? Number(daysArg.split("=")[1]) : 90;
 
-  const [rows] = await db
-    .execute(
-      `WITH RECURSIVE date_span AS (
+  const [rows] = await db.execute(
+    `WITH RECURSIVE date_span AS (
         SELECT lr.id AS leave_request_id, lr.employee_id, lr.leave_type_code,
                lr.approved_at, lr.legacy_leave_id, lr.from_date AS d, lr.to_date AS to_date
           FROM leave_request lr
@@ -59,23 +58,20 @@ async function main() {
         AND adr.attendance_status IN ('leave_approved','absent','holiday','week_off')
       WHERE adr.id IS NULL
       ORDER BY ds.d DESC`,
-      [days],
-    )
-    .catch((err) => {
-      console.error(
-        "Query failed - schema may have drifted since this was written (2026-08-18). " +
-          "Verify table/column names against live information_schema before trusting any " +
-          "count below. Raw error:",
-        err.message,
-      );
-      throw err;
-    });
+    [days]
+  ).catch((err) => {
+    console.error(
+      "Query failed - schema may have drifted since this was written (2026-08-18). " +
+      "Verify table/column names against live information_schema before trusting any " +
+      "count below. Raw error:",
+      err.message
+    );
+    throw err;
+  });
 
   const r = rows as any[];
   if (!r.length) {
-    console.log(
-      `No unreconciled approved-leave days in the last ${days} days. Nothing to report.`,
-    );
+    console.log(`No unreconciled approved-leave days in the last ${days} days. Nothing to report.`);
     process.exit(0);
   }
 
@@ -97,29 +93,23 @@ async function main() {
     }
   }
 
-  console.log(
-    `=== Leave-Attendance Reconciliation Scan (last ${days} days) ===`,
-  );
+  console.log(`=== Leave-Attendance Reconciliation Scan (last ${days} days) ===`);
   console.log(`Total unreconciled approved-leave-days: ${r.length}`);
-  console.log(
-    `  LEGACY_MIGRATED (pre-launch bulk import, approved_at NULL): ${legacyMigrated}`,
-  );
-  console.log(
-    `  LIVE_UNRECONCILED (approved_at set - real live-code approval, no attendance row): ${liveUnreconciled}`,
-  );
+  console.log(`  LEGACY_MIGRATED (pre-launch bulk import, approved_at NULL): ${legacyMigrated}`);
+  console.log(`  LIVE_UNRECONCILED (approved_at set - real live-code approval, no attendance row): ${liveUnreconciled}`);
   console.log(`  OTHER (needs manual review): ${other}`);
 
   if (liveUnreconciled > 0) {
     console.log(
       `\n⚠️  ${liveUnreconciled} row(s) went through a LIVE approval (approved_at IS NOT NULL) ` +
-        `and still have no attendance row. Per D004 this bucket was ZERO as of this session's ` +
-        `earlier check - if it is non-zero now, that is a genuine regression in ` +
-        `leave.service.ts's attendance-write path and should be investigated before anything ` +
-        `else in this scan.`,
+      `and still have no attendance row. Per D004 this bucket was ZERO as of this session's ` +
+      `earlier check - if it is non-zero now, that is a genuine regression in ` +
+      `leave.service.ts's attendance-write path and should be investigated before anything ` +
+      `else in this scan.`
     );
     for (const o of liveOffenders.slice(0, 20)) {
       console.log(
-        `    ${o.employee_code}  ${o.full_name}  ${o.leave_date}  leave_request_id=${o.leave_request_id}  approved_at=${o.approved_at}`,
+        `    ${o.employee_code}  ${o.full_name}  ${o.leave_date}  leave_request_id=${o.leave_request_id}  approved_at=${o.approved_at}`
       );
     }
     if (liveOffenders.length > 20) {
@@ -128,8 +118,8 @@ async function main() {
   } else {
     console.log(
       `\nNo live-code offenders found - consistent with D004's finding that the current ` +
-        `approval-to-attendance write path has no proven live defect. All unreconciled rows ` +
-        `are historical/migrated data requiring HR/Payroll review, not a code fix.`,
+      `approval-to-attendance write path has no proven live defect. All unreconciled rows ` +
+      `are historical/migrated data requiring HR/Payroll review, not a code fix.`
     );
   }
 

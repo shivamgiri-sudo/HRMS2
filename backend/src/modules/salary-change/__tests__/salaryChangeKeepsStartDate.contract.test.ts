@@ -17,9 +17,7 @@ const assignmentUpdate = SRC.slice(start, SRC.indexOf(".catch", start));
 
 describe("changeSalary leaves the salary start date alone", () => {
   it("only syncs ctc_annual on the active assignment", () => {
-    expect(assignmentUpdate).toMatch(
-      /SET ctc_annual = \?, updated_at = NOW\(\)/,
-    );
+    expect(assignmentUpdate).toMatch(/SET ctc_annual = \?, updated_at = NOW\(\)/);
   });
 
   it("does not write effective_from or employees.salary_start_date anywhere", () => {

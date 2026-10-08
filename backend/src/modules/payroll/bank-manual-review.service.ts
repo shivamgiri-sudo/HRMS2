@@ -205,26 +205,8 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
 
 async function getProofDocumentsByCandidate(
   candidateIds: string[],
-): Promise<
-  Map<
-    string,
-    {
-      id: string;
-      doc_type: string;
-      file_name: string | null;
-      uploaded_at: string | null;
-    }
-  >
-> {
-  const result = new Map<
-    string,
-    {
-      id: string;
-      doc_type: string;
-      file_name: string | null;
-      uploaded_at: string | null;
-    }
-  >();
+): Promise<Map<string, { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null }>> {
+  const result = new Map<string, { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null }>();
   if (!candidateIds.length) return result;
 
   const placeholders = candidateIds.map(() => "?").join(",");

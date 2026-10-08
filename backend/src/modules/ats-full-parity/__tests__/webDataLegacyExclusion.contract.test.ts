@@ -53,9 +53,7 @@ describe("web-data excludes legacy employee records", () => {
     // four rival funnel implementations in this module family.
     // Allows other names in the same import — the module also pulls in the entity-scope rule,
     // which is the same shared-helper pattern rather than a second hand-rolled predicate.
-    expect(src).toMatch(
-      /import\s*\{[^}]*excludeEmployeeShapedCandidatesSql[^}]*\}/,
-    );
+    expect(src).toMatch(/import\s*\{[^}]*excludeEmployeeShapedCandidatesSql[^}]*\}/);
   });
 
   /**
@@ -80,9 +78,7 @@ describe("web-data excludes legacy employee records", () => {
     // mismatched alias is an ER_BAD_FIELD_ERROR at runtime, not a silent no-op, but it would
     // only surface when the dashboard is opened.
     const body = fnBody(src, "buildCandidateFilters");
-    expect(body).toMatch(
-      /excludeEmployeeShapedCandidatesSql\(\s*["']c["']\s*\)/,
-    );
+    expect(body).toMatch(/excludeEmployeeShapedCandidatesSql\(\s*["']c["']\s*\)/);
   });
 
   it.each(["webData", "commandCenterData"])(
@@ -117,16 +113,13 @@ describe("web-data excludes legacy employee records", () => {
 describe("web-data reports truncation instead of hiding it", () => {
   const src = read(SERVICE);
 
-  it.each(["webData", "commandCenterData"])(
-    "%s returns a truncation flag alongside the numbers",
-    (method) => {
-      const body = methodBody(src, method);
-      // Genuine candidates already number 7,760, so the old implicit 5,000 cap was reached in
-      // normal operation and every total silently described a subset.
-      expect(body).toMatch(/truncated/);
-      expect(body).toMatch(/rowsLoaded/);
-    },
-  );
+  it.each(["webData", "commandCenterData"])("%s returns a truncation flag alongside the numbers", (method) => {
+    const body = methodBody(src, method);
+    // Genuine candidates already number 7,760, so the old implicit 5,000 cap was reached in
+    // normal operation and every total silently described a subset.
+    expect(body).toMatch(/truncated/);
+    expect(body).toMatch(/rowsLoaded/);
+  });
 
   it("the aggregate cap is above the current genuine-candidate population", () => {
     const m = /const WEB_DATA_ROW_LIMIT = (\d+)/.exec(src);

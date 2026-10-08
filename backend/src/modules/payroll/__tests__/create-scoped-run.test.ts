@@ -41,16 +41,12 @@ function createRunRoute(): string {
 
 describe("the request contract", () => {
   it("accepts a list of cost centre ids", () => {
-    expect(
-      createRunSchema.parse({ runMonth: "2026-08", costCentreIds: ["a", "b"] })
-        .costCentreIds,
-    ).toEqual(["a", "b"]);
+    expect(createRunSchema.parse({ runMonth: "2026-08", costCentreIds: ["a", "b"] }).costCentreIds)
+      .toEqual(["a", "b"]);
   });
 
   it("still accepts a company-wide run with no cost centres", () => {
-    expect(
-      createRunSchema.parse({ runMonth: "2026-08" }).costCentreIds,
-    ).toBeUndefined();
+    expect(createRunSchema.parse({ runMonth: "2026-08" }).costCentreIds).toBeUndefined();
   });
 
   it("rejects an empty array rather than treating it as 'scoped to nothing'", () => {
@@ -59,15 +55,11 @@ describe("the request contract", () => {
      * run with no scope rows selects an unfiltered population — the whole company, from a screen
      * that said it was paying none of it.
      */
-    expect(() =>
-      createRunSchema.parse({ runMonth: "2026-08", costCentreIds: [] }),
-    ).toThrow();
+    expect(() => createRunSchema.parse({ runMonth: "2026-08", costCentreIds: [] })).toThrow();
   });
 
   it("rejects a blank id inside the list", () => {
-    expect(() =>
-      createRunSchema.parse({ runMonth: "2026-08", costCentreIds: [""] }),
-    ).toThrow();
+    expect(() => createRunSchema.parse({ runMonth: "2026-08", costCentreIds: [""] })).toThrow();
   });
 });
 
@@ -77,9 +69,7 @@ describe("run authority", () => {
   });
 
   it("lets the Payroll Head calculate a run", () => {
-    const calc = routes.slice(
-      routes.indexOf('router.post("/runs/:id/calculate"'),
-    );
+    const calc = routes.slice(routes.indexOf('router.post("/runs/:id/calculate"'));
     expect(calc.slice(0, 300)).toContain('"payroll_head"');
   });
 
@@ -127,16 +117,12 @@ describe("duplicate rules differ by run kind", () => {
     const region = service.slice(idx - 400, idx + 1400);
     expect(region).toContain("} else {");
     // The scoped guard runs first; the one-run-per-month check sits in the else arm for company runs.
-    expect(region.indexOf("assertCostCentresFree")).toBeLessThan(
-      region.indexOf("Payroll run already exists"),
-    );
+    expect(region.indexOf("assertCostCentresFree")).toBeLessThan(region.indexOf("Payroll run already exists"));
   });
 
   it("writes the scope inside the same transaction as the run", () => {
     // A run that committed without its scope rows would select every employee in the company.
-    const idx = service.indexOf(
-      "insertRunScope(conn, id, input.runMonth, scopeRows)",
-    );
+    const idx = service.indexOf("insertRunScope(conn, id, input.runMonth, scopeRows)");
     expect(idx).toBeGreaterThan(-1);
     expect(service.slice(idx, idx + 200)).toContain("conn.commit()");
   });

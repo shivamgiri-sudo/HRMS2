@@ -32,12 +32,7 @@
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
-import {
-  withWorkerLock,
-  recordWorkerRun,
-  registerTimer,
-  unregisterTimer,
-} from "./worker-utils.js";
+import { withWorkerLock, recordWorkerRun, registerTimer, unregisterTimer } from "./worker-utils.js";
 import { notifyGrnApprovalOverdue } from "../modules/finance/grn.notifications.js";
 
 /** Must match the worker_config.worker_name row exactly — isWorkerEnabled() fails OPEN on a missing row. */
@@ -104,11 +99,7 @@ async function sweep(): Promise<void> {
       for (const row of overdue) {
         const reminderNo = Number(row.reminder_count) + 1;
         try {
-          const ok = await notifyGrnApprovalOverdue(
-            String(row.id),
-            stageForStatus(row.status),
-            reminderNo,
-          );
+          const ok = await notifyGrnApprovalOverdue(String(row.id), stageForStatus(row.status), reminderNo);
 
           // Advances whether or not the send succeeded — same reasoning as
           // leave-approval-reminder.worker.ts: only advancing on success would retry a GRN
@@ -122,33 +113,20 @@ async function sweep(): Promise<void> {
             [row.id],
           );
 
-          if (ok) sent++;
-          else failed++;
+          if (ok) sent++; else failed++;
         } catch (err) {
           failed++;
-          console.error(
-            `[GrnApprovalReminder] ${row.id}:`,
-            err instanceof Error ? err.message : err,
-          );
+          console.error(`[GrnApprovalReminder] ${row.id}:`, err instanceof Error ? err.message : err);
         }
       }
 
       if (overdue.length > 0) {
-        console.log(
-          `[GrnApprovalReminder] ${overdue.length} overdue GRN(s): ${sent} reminded, ${failed} failed`,
-        );
+        console.log(`[GrnApprovalReminder] ${overdue.length} overdue GRN(s): ${sent} reminded, ${failed} failed`);
       }
       await markWorkerRun(WORKER_NAME).catch(() => undefined);
-      await recordWorkerRun(WORKER_NAME, "completed", {
-        overdue: overdue.length,
-        sent,
-        failed,
-      }).catch(() => undefined);
+      await recordWorkerRun(WORKER_NAME, "completed", { overdue: overdue.length, sent, failed }).catch(() => undefined);
     } catch (err) {
-      console.error(
-        "[GrnApprovalReminder] sweep failed:",
-        err instanceof Error ? err.message : err,
-      );
+      console.error("[GrnApprovalReminder] sweep failed:", err instanceof Error ? err.message : err);
       await recordWorkerRun(WORKER_NAME, "failed", {
         error: err instanceof Error ? err.message : String(err),
       }).catch(() => undefined);
@@ -158,23 +136,14 @@ async function sweep(): Promise<void> {
 
 export function startGrnApprovalReminderWorker(): void {
   if (intervalRef) return;
-  startupRef = setTimeout(() => {
-    void sweep();
-  }, STARTUP_DELAY_MS);
-  intervalRef = setInterval(() => {
-    void sweep();
-  }, CHECK_INTERVAL_MS);
+  startupRef = setTimeout(() => { void sweep(); }, STARTUP_DELAY_MS);
+  intervalRef = setInterval(() => { void sweep(); }, CHECK_INTERVAL_MS);
   registerTimer(WORKER_NAME, intervalRef);
-  console.log(
-    `[GrnApprovalReminder] started — sweeping hourly, first run in ${STARTUP_DELAY_MS / 60000}m`,
-  );
+  console.log(`[GrnApprovalReminder] started — sweeping hourly, first run in ${STARTUP_DELAY_MS / 60000}m`);
 }
 
 export function stopGrnApprovalReminderWorker(): void {
-  if (startupRef) {
-    clearTimeout(startupRef);
-    startupRef = undefined;
-  }
+  if (startupRef) { clearTimeout(startupRef); startupRef = undefined; }
   if (intervalRef) {
     clearInterval(intervalRef);
     unregisterTimer(WORKER_NAME);

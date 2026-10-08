@@ -12,9 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * the same statements issued together.
  */
 const execute = vi.fn();
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: (...a: unknown[]) => execute(...a) },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
 
 import { atsService } from "../ats.service.js";
 import {
@@ -26,26 +24,20 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 
 function answer(sql: string): unknown[] {
   if (/GROUP BY current_stage/.test(sql)) {
-    return [
-      [
-        { current_stage: "Applied", count: 5 },
-        { current_stage: "converted", count: 2 },
-        { current_stage: null, count: 3 },
-      ],
-    ];
+    return [[
+      { current_stage: "Applied", count: 5 },
+      { current_stage: "converted", count: 2 },
+      { current_stage: null, count: 3 },
+    ]];
   }
-  if (/GROUP BY sourcing_channel/.test(sql))
-    return [[{ sourcing_channel: "Walk-In", count: 10 }]];
+  if (/GROUP BY sourcing_channel/.test(sql)) return [[{ sourcing_channel: "Walk-In", count: 10 }]];
   if (/SELECT current_stage, mobile, created_at/.test(sql)) {
-    return [
-      [
-        { current_stage: "converted", mobile: null, created_at: "2026-01-01" },
-        { current_stage: "Applied", mobile: "999", created_at: "2026-01-01" },
-      ],
-    ];
+    return [[
+      { current_stage: "converted", mobile: null, created_at: "2026-01-01" },
+      { current_stage: "Applied", mobile: "999", created_at: "2026-01-01" },
+    ]];
   }
-  if (/GROUP BY mobile/.test(sql))
-    return [[{ mobile: "999", doj: "2026-02-01" }]];
+  if (/GROUP BY mobile/.test(sql)) return [[{ mobile: "999", doj: "2026-02-01" }]];
   if (/AVG\(DATEDIFF/.test(sql)) return [[{ avg_days: "4" }]];
   if (/requested_headcount/.test(sql)) return [[{ count: 7 }]];
   if (/COUNT\(\*\) AS cnt/.test(sql)) return [[{ cnt: 1 }]];
@@ -60,12 +52,7 @@ describe("atsService.getDashboardStats", () => {
 
   it("starts every read together and derives the total from the stage counts", async () => {
     const gates: Array<() => void> = [];
-    execute.mockImplementation(
-      (sql: string) =>
-        new Promise((resolve) => {
-          gates.push(() => resolve(answer(sql)));
-        }),
-    );
+    execute.mockImplementation((sql: string) => new Promise((resolve) => { gates.push(() => resolve(answer(sql))); }));
 
     const pending = atsService.getDashboardStats({});
     await flush();
@@ -77,7 +64,7 @@ describe("atsService.getDashboardStats", () => {
 
     const sqls = execute.mock.calls.map((c) => String(c[0]));
     expect(sqls.some((s) => /COUNT\(\*\) AS total\b/.test(s))).toBe(false);
-    expect(out.total_candidates).toBe(10); // 5 + 2 + 3 (NULL-stage group included)
+    expect(out.total_candidates).toBe(10);                 // 5 + 2 + 3 (NULL-stage group included)
     expect(out.by_stage).toMatchObject({ Applied: 5, converted: 2 });
     expect(out.by_source).toEqual({ "Walk-In": 10 });
     // one stage-converted candidate + one identity-matched (mobile 999 joined after applying)
@@ -97,18 +84,11 @@ describe("getEmployeeMobileJoinMap in-flight de-duplication", () => {
 
   it("runs one GROUP BY for concurrent callers on a cold cache, then serves from cache", async () => {
     let release: () => void = () => undefined;
-    execute.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          release = () => resolve([[{ mobile: "1", doj: "2026-01-01" }]]);
-        }),
-    );
+    execute.mockImplementation(() => new Promise((resolve) => {
+      release = () => resolve([[{ mobile: "1", doj: "2026-01-01" }]]);
+    }));
 
-    const [a, b, c] = [
-      getEmployeeMobileJoinMap(),
-      getEmployeeMobileJoinMap(),
-      getEmployeeMobileJoinMap(),
-    ];
+    const [a, b, c] = [getEmployeeMobileJoinMap(), getEmployeeMobileJoinMap(), getEmployeeMobileJoinMap()];
     await flush();
     expect(execute).toHaveBeenCalledTimes(1);
     release();

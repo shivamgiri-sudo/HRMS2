@@ -15,9 +15,7 @@ import fs from "fs";
 import path from "path";
 
 const SRC = path.resolve(
-  __dirname,
-  "..",
-  "universalDigitalFormFill.service.ts",
+  __dirname, "..", "universalDigitalFormFill.service.ts",
 );
 const src = fs.readFileSync(SRC, "utf8");
 
@@ -29,12 +27,8 @@ describe("optional unsourced fields do not block a document", () => {
     // with no configured signatory still resolves to nothing, so it must
     // remain non-blocking or the document sticks at hr_fill_required forever.
     // With no branch configured yet, that would have been every document.
-    expect(src).toMatch(
-      /field_key: "surveillance_hr_name"[^}]*required: false/,
-    );
-    expect(src).toMatch(
-      /OPTIONAL_SOURCED_FIELD_KEYS = \[[^\]]*"surveillance_hr_name"/,
-    );
+    expect(src).toMatch(/field_key: "surveillance_hr_name"[^}]*required: false/);
+    expect(src).toMatch(/OPTIONAL_SOURCED_FIELD_KEYS = \[[^\]]*"surveillance_hr_name"/);
   });
 
   it("the optional-but-sourced allowance stays narrow", () => {
@@ -46,8 +40,7 @@ describe("optional unsourced fields do not block a document", () => {
     // have no process_id and the kit stuck at hr_fill_required forever. Raise
     // this again only for a field whose source is genuinely, routinely empty —
     // not to quieten a failure.
-    const list =
-      src.match(/OPTIONAL_SOURCED_FIELD_KEYS = \[([^\]]*)\]/)?.[1] ?? "";
+    const list = src.match(/OPTIONAL_SOURCED_FIELD_KEYS = \[([^\]]*)\]/)?.[1] ?? "";
     const entries = list
       // Count quoted keys, not commas. The array is commented, and comment prose
       // contains commas — a plain split counted 12 entries where there were 4.
@@ -61,9 +54,7 @@ describe("optional unsourced fields do not block a document", () => {
 
   it("the non-blocking set is derived from the definitions, not hardcoded", () => {
     expect(src).toContain("NON_BLOCKING_FIELD_KEYS");
-    expect(src).toMatch(
-      /COMMON_TEMPLATE_FIELDS\s*\n?\s*\.filter\(\(f\) => f\.required === false && !f\.source_path\)/,
-    );
+    expect(src).toMatch(/COMMON_TEMPLATE_FIELDS\s*\n?\s*\.filter\(\(f\) => f\.required === false && !f\.source_path\)/);
   });
 
   it("missing_count excludes non-blocking fields", () => {
@@ -101,9 +92,7 @@ describe("optional unsourced fields do not block a document", () => {
 
   it("survives an empty exclusion set", () => {
     // `NOT IN ()` is a MySQL syntax error, which would break every document.
-    expect(src).toMatch(
-      /NON_BLOCKING_FIELD_KEYS\.length \? NON_BLOCKING_FIELD_KEYS : \[/,
-    );
+    expect(src).toMatch(/NON_BLOCKING_FIELD_KEYS\.length \? NON_BLOCKING_FIELD_KEYS : \[/);
   });
 
   it("does not loosen validation for required fields", () => {

@@ -10,10 +10,7 @@
  * caller — there is nothing further to authorize, since every catalog entry
  * only describes routes already behind that same middleware.
  */
-import {
-  PORTAL_HOWTO_CATALOG,
-  type PortalHowToEntry,
-} from "./portal-howto-catalog.js";
+import { PORTAL_HOWTO_CATALOG, type PortalHowToEntry } from './portal-howto-catalog.js';
 
 export interface PortalHowToResult {
   handled: boolean;
@@ -52,15 +49,13 @@ function matchesEntry(question: string, entry: PortalHowToEntry): boolean {
 export function answerPortalHowToQuestion(question: string): PortalHowToResult {
   if (!looksLikeHowToQuestion(question)) return { handled: false };
 
-  const entry = PORTAL_HOWTO_CATALOG.find((candidate) =>
-    matchesEntry(question, candidate),
-  );
+  const entry = PORTAL_HOWTO_CATALOG.find((candidate) => matchesEntry(question, candidate));
   if (!entry) return { handled: false };
 
   return {
     handled: true,
     code: entry.code,
-    answer: `Here's how to ${entry.title.toLowerCase()}:\n\n${entry.steps.join("\n")}`,
+    answer: `Here's how to ${entry.title.toLowerCase()}:\n\n${entry.steps.join('\n')}`,
     route: entry.route,
   };
 }

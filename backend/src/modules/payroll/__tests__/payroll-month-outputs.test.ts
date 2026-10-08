@@ -18,12 +18,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const execute = vi.fn();
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const {
-  getMonthRunIds,
-  resolveOutputRunIds,
-  runIdPlaceholders,
-  MonthOutputError,
-} = await import("../payroll-month-outputs.service.js");
+const { getMonthRunIds, resolveOutputRunIds, runIdPlaceholders, MonthOutputError } =
+  await import("../payroll-month-outputs.service.js");
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 /**
@@ -84,18 +80,14 @@ describe("resolveOutputRunIds", () => {
 
   it("returns every run for a per-month request", async () => {
     execute.mockResolvedValueOnce([[{ id: "r1" }, { id: "r2" }], []]);
-    await expect(
-      resolveOutputRunIds({ month: "2026-08" }),
-    ).resolves.toMatchObject({
+    await expect(resolveOutputRunIds({ month: "2026-08" })).resolves.toMatchObject({
       runIds: ["r1", "r2"],
       scope: "month",
     });
   });
 
   it("rejects a malformed month before querying with it", async () => {
-    await expect(
-      resolveOutputRunIds({ month: "August" }),
-    ).rejects.toMatchObject({ code: "BAD_MONTH" });
+    await expect(resolveOutputRunIds({ month: "August" })).rejects.toMatchObject({ code: "BAD_MONTH" });
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -105,9 +97,7 @@ describe("resolveOutputRunIds", () => {
      * than filing nothing, so the absence of runs is an error the caller must see.
      */
     execute.mockResolvedValueOnce([[], []]);
-    await expect(
-      resolveOutputRunIds({ month: "2026-08" }),
-    ).rejects.toMatchObject({
+    await expect(resolveOutputRunIds({ month: "2026-08" })).rejects.toMatchObject({
       code: "NO_RUNS",
       statusCode: 404,
     });
@@ -129,18 +119,8 @@ describe("runIdPlaceholders", () => {
 describe("the routes serve both scopes from one handler", () => {
   for (const output of ["ecr", "esic-challan", "neft-export"]) {
     it(`registers /runs/:id/${output} and /month/:month/${output} against the same handler`, () => {
-      const perRun = routes.match(
-        new RegExp(
-          `router\\.get\\("/runs/:id/${output}".*?,\\s*(\\w+)\\);`,
-          "s",
-        ),
-      );
-      const perMonth = routes.match(
-        new RegExp(
-          `router\\.get\\("/month/:month/${output}".*?,\\s*(\\w+)\\);`,
-          "s",
-        ),
-      );
+      const perRun = routes.match(new RegExp(`router\\.get\\("/runs/:id/${output}".*?,\\s*(\\w+)\\);`, "s"));
+      const perMonth = routes.match(new RegExp(`router\\.get\\("/month/:month/${output}".*?,\\s*(\\w+)\\);`, "s"));
       expect(perRun, `per-run ${output} route`).toBeTruthy();
       expect(perMonth, `per-month ${output} route`).toBeTruthy();
       // Same handler identifier on both — one implementation, so they cannot drift.
@@ -150,10 +130,7 @@ describe("the routes serve both scopes from one handler", () => {
 
   it("queries lines by a run-id list, not a single id", () => {
     // `run_id = ?` would silently return only the first run's lines for a month request.
-    const ecr = routes.slice(
-      routes.indexOf("const ecrHandler"),
-      routes.indexOf("const esicChallanHandler"),
-    );
+    const ecr = routes.slice(routes.indexOf("const ecrHandler"), routes.indexOf("const esicChallanHandler"));
     expect(ecr).toContain("spl.run_id IN (");
     expect(ecr).not.toContain("spl.run_id = ?");
   });

@@ -36,24 +36,18 @@ async function main() {
 
   try {
     const [tableRows] = await conn.execute<mysql.RowDataPacket[]>(
-      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_rest_policy' LIMIT 1`,
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_rest_policy' LIMIT 1`
     );
     if (tableRows.length === 0) {
-      console.log(
-        "wfm_rest_policy does not exist yet — migration 1210_minimum_rest_policy.sql has not been applied.",
-      );
-      console.log(
-        "This is expected pre-activation: the minimum-rest feature is not yet turned on, and no roster",
-      );
-      console.log(
-        "write path is blocking on it (see rest-policy.service.ts's isRestPolicyFeatureActive()).",
-      );
+      console.log("wfm_rest_policy does not exist yet — migration 1210_minimum_rest_policy.sql has not been applied.");
+      console.log("This is expected pre-activation: the minimum-rest feature is not yet turned on, and no roster");
+      console.log("write path is blocking on it (see rest-policy.service.ts's isRestPolicyFeatureActive()).");
       console.log("Nothing further to report until the migration is applied.");
       return;
     }
 
     const [[activeCount]] = await conn.execute<mysql.RowDataPacket[]>(
-      `SELECT COUNT(*) AS c FROM employees WHERE active_status = 1`,
+      `SELECT COUNT(*) AS c FROM employees WHERE active_status = 1`
     );
     console.log(`Active employees: ${activeCount.c}`);
     console.log("");
@@ -61,11 +55,7 @@ async function main() {
     // Correlated EXISTS subqueries rather than LEFT JOINs — a JOIN against a
     // table with (deliberately, per the schema) more than one historical
     // version per scope can fan out and inflate counts; EXISTS can't.
-    const scopeExists = (
-      alias: string,
-      scopeType: string,
-      scopeIdExpr: string,
-    ) => `
+    const scopeExists = (alias: string, scopeType: string, scopeIdExpr: string) => `
       EXISTS (
         SELECT 1 FROM wfm_rest_policy ${alias}
          WHERE ${alias}.scope_type = '${scopeType}'
@@ -88,23 +78,13 @@ async function main() {
        FROM employees e
        WHERE e.active_status = 1
        GROUP BY resolved_tier
-       ORDER BY FIELD(resolved_tier, 'employee', 'process', 'branch', 'organization', 'UNRESOLVED')`,
+       ORDER BY FIELD(resolved_tier, 'employee', 'process', 'branch', 'organization', 'UNRESOLVED')`
     );
 
-    console.log(
-      "Resolution by tier (employee > process > branch > organization > unresolved):",
-    );
+    console.log("Resolution by tier (employee > process > branch > organization > unresolved):");
     console.log("─".repeat(60));
-    const tierOrder = [
-      "employee",
-      "process",
-      "branch",
-      "organization",
-      "UNRESOLVED",
-    ];
-    const byTier = new Map(
-      rows.map((r) => [String(r.resolved_tier), Number(r.employee_count)]),
-    );
+    const tierOrder = ["employee", "process", "branch", "organization", "UNRESOLVED"];
+    const byTier = new Map(rows.map((r) => [String(r.resolved_tier), Number(r.employee_count)]));
     let unresolvedCount = 0;
     for (const tier of tierOrder) {
       const count = byTier.get(tier) ?? 0;
@@ -115,25 +95,13 @@ async function main() {
     console.log("");
 
     if (unresolvedCount > 0) {
-      console.log(
-        `⚠ ${unresolvedCount} active employee(s) resolve NO minimum-rest policy at any tier.`,
-      );
-      console.log(
-        "  If migration 1210 is applied while this is non-zero, every one of these employees'",
-      );
-      console.log(
-        "  roster writes will hit REST_POLICY_MISSING and be blocked, with no override possible",
-      );
-      console.log(
-        "  (there is no policy to override). Configure at least an organization-level default",
-      );
-      console.log(
-        "  before applying the migration, or expect this count of employees to be blocked.",
-      );
+      console.log(`⚠ ${unresolvedCount} active employee(s) resolve NO minimum-rest policy at any tier.`);
+      console.log("  If migration 1210 is applied while this is non-zero, every one of these employees'");
+      console.log("  roster writes will hit REST_POLICY_MISSING and be blocked, with no override possible");
+      console.log("  (there is no policy to override). Configure at least an organization-level default");
+      console.log("  before applying the migration, or expect this count of employees to be blocked.");
     } else {
-      console.log(
-        "✓ Every active employee resolves a minimum-rest policy at some tier.",
-      );
+      console.log("✓ Every active employee resolves a minimum-rest policy at some tier.");
     }
     console.log("");
 
@@ -148,16 +116,12 @@ async function main() {
         WHERE NOT ${scopeExists("pp2", "process", "p.id")}
         GROUP BY p.id, p.process_name
         ORDER BY active_employees DESC
-        LIMIT 20`,
+        LIMIT 20`
     );
     if (processGaps.length > 0) {
-      console.log(
-        `Processes with no process-level policy configured (falling through to branch/org — top ${processGaps.length}):`,
-      );
+      console.log(`Processes with no process-level policy configured (falling through to branch/org — top ${processGaps.length}):`);
       for (const row of processGaps) {
-        console.log(
-          `  ${String(row.process_name ?? row.id).padEnd(40)} ${String(row.active_employees).padStart(6)} active employees`,
-        );
+        console.log(`  ${String(row.process_name ?? row.id).padEnd(40)} ${String(row.active_employees).padStart(6)} active employees`);
       }
       console.log("");
     }
@@ -182,15 +146,11 @@ async function main() {
                AND p2.active_status = 1
                AND p2.effective_from <= CURDATE()
                AND (p2.effective_to IS NULL OR p2.effective_to >= CURDATE())
-          )`,
+          )`
     );
     if (Number(expiredCount.c) > 0) {
-      console.log(
-        `⚠ ${expiredCount.c} employee(s) touch a scope whose ONLY policy row has already expired`,
-      );
-      console.log(
-        "  (effective_to in the past, nothing configured to replace it) — a silent regression",
-      );
+      console.log(`⚠ ${expiredCount.c} employee(s) touch a scope whose ONLY policy row has already expired`);
+      console.log("  (effective_to in the past, nothing configured to replace it) — a silent regression");
       console.log("  risk distinct from never having been configured at all.");
     }
   } finally {

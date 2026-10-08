@@ -29,10 +29,7 @@ import { resolve } from "node:path";
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 /** Assert on code, not on prose that necessarily quotes the behaviour being described. */
 const stripComments = (s: string) =>
-  s
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "")
-    .replace(/^\s*--.*$/gm, "");
+  s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/^\s*--.*$/gm, "");
 
 const CODE = stripComments(read("src/modules/payroll/payroll.routes.ts"));
 
@@ -44,10 +41,7 @@ function slice(startMarker: string, endMarker: string): string {
 }
 
 // Same handler, two URLs (per-run and per-month) — the body is in the const.
-const HANDLER = slice(
-  "const neftExportHandler",
-  'router.get("/runs/:id/neft-export"',
-);
+const HANDLER = slice('const neftExportHandler', 'router.get("/runs/:id/neft-export"');
 
 describe("payment gate E - Finance sign-off is recorded at export and required at lock / disburse", () => {
   /*

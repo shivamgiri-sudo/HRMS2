@@ -24,18 +24,9 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "scripts",
-  "attendance-lwp-reconcile.ts",
-);
+const SCRIPT = path.resolve(__dirname, "..", "..", "..", "scripts", "attendance-lwp-reconcile.ts");
 const source = fs.readFileSync(SCRIPT, "utf8");
-const code = source
-  .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/^\s*\/\/.*$/gm, "");
+const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("dry run is the default", () => {
   it("only writes when an explicit apply switch is passed", () => {
@@ -57,9 +48,7 @@ describe("finalized-run protection", () => {
     // version of this test was satisfiable by a constant listing them that nothing read —
     // which is exactly what it was, until this was tightened. An allow-list is also the safer
     // shape: a status added later is treated as closed rather than silently permitted.
-    expect(code).toMatch(
-      /OPEN_RUN_STATUSES\s*=\s*new Set\(\[\s*"PROCESSING",\s*"DRAFT"\s*\]\)/,
-    );
+    expect(code).toMatch(/OPEN_RUN_STATUSES\s*=\s*new Set\(\[\s*"PROCESSING",\s*"DRAFT"\s*\]\)/);
     expect(code).toMatch(/OPEN_RUN_STATUSES\.has\(/);
     expect(code).toMatch(/salary_prep_run/);
   });

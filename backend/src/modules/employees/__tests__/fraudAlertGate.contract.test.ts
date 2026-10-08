@@ -24,8 +24,7 @@ vi.mock("../../../db/mysql.js", () => ({
   db: { execute: vi.fn(async () => [[]]), query: vi.fn(async () => [[]]) },
 }));
 
-const { validateNoOpenFraudAlerts } =
-  await import("../employee-creation-orchestrator.service.js");
+const { validateNoOpenFraudAlerts } = await import("../employee-creation-orchestrator.service.js");
 
 /** Stands in for the pool connection the orchestrator passes through. */
 const conn = {
@@ -35,9 +34,7 @@ const conn = {
   }),
 } as never;
 
-beforeEach(() => {
-  state.alerts = [];
-});
+beforeEach(() => { state.alerts = []; });
 
 describe("fraud alert gate", () => {
   it("allows creation when nothing is outstanding", async () => {
@@ -47,18 +44,14 @@ describe("fraud alert gate", () => {
   });
 
   it("blocks creation while a high-severity alert is open", async () => {
-    state.alerts = [
-      { alert_type: "DUPLICATE_BANK_ACCOUNT", severity: "critical", id: "a1" },
-    ];
+    state.alerts = [{ alert_type: "DUPLICATE_BANK_ACCOUNT", severity: "critical", id: "a1" }];
     const result = await validateNoOpenFraudAlerts(conn, "cand-2");
     expect(result.valid).toBe(false);
     expect(result.blockers[0].severity).toBe("critical");
   });
 
   it("names the alert so the blocker is actionable rather than mysterious", async () => {
-    state.alerts = [
-      { alert_type: "BANK_HOLDER_NAME_DIVERGENCE", severity: "high", id: "a2" },
-    ];
+    state.alerts = [{ alert_type: "BANK_HOLDER_NAME_DIVERGENCE", severity: "high", id: "a2" }];
     const result = await validateNoOpenFraudAlerts(conn, "cand-3");
     expect(result.blockers[0].reason).toContain("BANK_HOLDER_NAME_DIVERGENCE");
   });
@@ -66,9 +59,7 @@ describe("fraud alert gate", () => {
   it("does not block on a medium-severity alert", async () => {
     // FRAUD_CHECK_FAILED is medium: it means a check could not run, which is
     // worth a look but is not evidence against the candidate.
-    state.alerts = [
-      { alert_type: "FRAUD_CHECK_FAILED", severity: "medium", id: "a3" },
-    ];
+    state.alerts = [{ alert_type: "FRAUD_CHECK_FAILED", severity: "medium", id: "a3" }];
     const result = await validateNoOpenFraudAlerts(conn, "cand-4");
     expect(result.valid).toBe(true);
   });
@@ -93,10 +84,7 @@ describe("fraud alert gate", () => {
 
 describe("the gate is wired into creation, and cannot be swallowed", () => {
   const SOURCE = readFileSync(
-    resolve(
-      process.cwd(),
-      "src/modules/employees/employee-creation-orchestrator.service.ts",
-    ),
+    resolve(process.cwd(), "src/modules/employees/employee-creation-orchestrator.service.ts"),
     "utf8",
   );
 
@@ -118,9 +106,6 @@ describe("the gate is wired into creation, and cannot be swallowed", () => {
     const preceding = SOURCE.slice(Math.max(0, at - 400), at);
     const opens = (preceding.match(/\btry\s*\{/g) ?? []).length;
     const closes = (preceding.match(/\}\s*catch\b/g) ?? []).length;
-    expect(
-      opens,
-      "the gate sits inside a try block that swallows its result",
-    ).toBe(closes);
+    expect(opens, "the gate sits inside a try block that swallows its result").toBe(closes);
   });
 });

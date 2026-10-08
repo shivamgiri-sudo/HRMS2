@@ -27,8 +27,7 @@ type QueueRow = {
   branch_id: string | null;
   process_id: string | null;
   inferred_expected_status: "present" | "half_day" | "absent";
-  action_bucket:
-    "APR_SAFE_REPAIR" | "BIOMETRIC_MISSING_PUNCH_REVIEW" | "MANUAL_REVIEW";
+  action_bucket: "APR_SAFE_REPAIR" | "BIOMETRIC_MISSING_PUNCH_REVIEW" | "MANUAL_REVIEW";
 };
 
 function parseArgs(argv: string[]): Args {
@@ -40,22 +39,15 @@ function parseArgs(argv: string[]): Args {
     else if (arg === "--out-dir") out.outDir = argv[++i];
   }
   if (!out.from || !out.to) {
-    throw new Error(
-      "Usage: npm run night-shift:export-remaining -- --from YYYY-MM-DD --to YYYY-MM-DD [--out-dir logs]",
-    );
+    throw new Error("Usage: npm run night-shift:export-remaining -- --from YYYY-MM-DD --to YYYY-MM-DD [--out-dir logs]");
   }
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(out.from) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(out.to)
-  ) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(out.from) || !/^\d{4}-\d{2}-\d{2}$/.test(out.to)) {
     throw new Error("--from and --to must be YYYY-MM-DD");
   }
   return out as Args;
 }
 
-function classifyAprMinutes(
-  minutes: number,
-): "present" | "half_day" | "absent" {
+function classifyAprMinutes(minutes: number): "present" | "half_day" | "absent" {
   if (minutes >= 480) return "present";
   if (minutes >= 240) return "half_day";
   return "absent";
@@ -63,7 +55,7 @@ function classifyAprMinutes(
 
 function csvEscape(value: unknown): string {
   const text = value === null || value === undefined ? "" : String(value);
-  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, "\"\"")}"`;
   return text;
 }
 
@@ -128,12 +120,8 @@ async function main() {
       .map((row) => {
         const aprCombinedMinutes = Number(row.apr_combined_minutes ?? 0);
         const inferredExpectedStatus = classifyAprMinutes(aprCombinedMinutes);
-        const departmentName = row.department_name
-          ? String(row.department_name)
-          : null;
-        const designationName = row.designation_name
-          ? String(row.designation_name)
-          : null;
+        const departmentName = row.department_name ? String(row.department_name) : null;
+        const designationName = row.designation_name ? String(row.designation_name) : null;
         const adrStatus = row.adr_status ? String(row.adr_status) : null;
         const adrSource = row.adr_source ? String(row.adr_source) : null;
         const inferredAuthority =
@@ -148,26 +136,10 @@ async function main() {
         if (adrSource === "dialler" && adrStatus !== "missing_punch") {
           actionBucket = null;
         } else if (inferredAuthority === "apr") {
-          if (
-            adrStatus !== null &&
-            ![
-              "leave_approved",
-              "holiday",
-              "week_off",
-              "week_off_worked",
-            ].includes(adrStatus)
-          ) {
-            if (
-              inferredExpectedStatus === "present" &&
-              (adrStatus === "half_day" ||
-                adrStatus === "absent" ||
-                adrStatus === "missing_punch")
-            ) {
+          if (adrStatus !== null && !["leave_approved", "holiday", "week_off", "week_off_worked"].includes(adrStatus)) {
+            if (inferredExpectedStatus === "present" && (adrStatus === "half_day" || adrStatus === "absent" || adrStatus === "missing_punch")) {
               actionBucket = "APR_SAFE_REPAIR";
-            } else if (
-              inferredExpectedStatus === "half_day" &&
-              (adrStatus === "absent" || adrStatus === "missing_punch")
-            ) {
+            } else if (inferredExpectedStatus === "half_day" && (adrStatus === "absent" || adrStatus === "missing_punch")) {
               actionBucket = "APR_SAFE_REPAIR";
             } else if (adrStatus !== inferredExpectedStatus) {
               actionBucket = "MANUAL_REVIEW";
@@ -176,10 +148,7 @@ async function main() {
         } else if (inferredAuthority === "biometric") {
           if (adrStatus === "missing_punch" && adrSource === "biometric") {
             actionBucket = "BIOMETRIC_MISSING_PUNCH_REVIEW";
-          } else if (
-            adrStatus !== null &&
-            adrStatus !== inferredExpectedStatus
-          ) {
+          } else if (adrStatus !== null && adrStatus !== inferredExpectedStatus) {
             actionBucket = "MANUAL_REVIEW";
           }
         }
@@ -195,12 +164,9 @@ async function main() {
           apr_combined_minutes: aprCombinedMinutes,
           adr_status: adrStatus,
           adr_source: adrSource,
-          adr_raw_minutes:
-            row.adr_raw_minutes === null ? null : Number(row.adr_raw_minutes),
+          adr_raw_minutes: row.adr_raw_minutes === null ? null : Number(row.adr_raw_minutes),
           is_locked: row.is_locked === null ? null : Number(row.is_locked),
-          regularization_id: row.regularization_id
-            ? String(row.regularization_id)
-            : null,
+          regularization_id: row.regularization_id ? String(row.regularization_id) : null,
           override_by: row.override_by ? String(row.override_by) : null,
           branch_id: row.branch_id ? String(row.branch_id) : null,
           process_id: row.process_id ? String(row.process_id) : null,
@@ -211,23 +177,14 @@ async function main() {
       .filter((row) => {
         if (row.action_bucket === "APR_SAFE_REPAIR") return true;
         if (row.action_bucket === "BIOMETRIC_MISSING_PUNCH_REVIEW") return true;
-        return (
-          row.adr_status !== null &&
-          row.adr_status !== row.inferred_expected_status
-        );
+        return row.adr_status !== null && row.adr_status !== row.inferred_expected_status;
       });
 
     const outDir = path.resolve(process.cwd(), args.outDir);
     await mkdir(outDir, { recursive: true });
     const stamp = `${args.from}_to_${args.to}`;
-    const jsonPath = path.join(
-      outDir,
-      `night_shift_remaining_queue_${stamp}.json`,
-    );
-    const csvPath = path.join(
-      outDir,
-      `night_shift_remaining_queue_${stamp}.csv`,
-    );
+    const jsonPath = path.join(outDir, `night_shift_remaining_queue_${stamp}.json`);
+    const csvPath = path.join(outDir, `night_shift_remaining_queue_${stamp}.csv`);
 
     const summary = {
       from: args.from,
@@ -264,19 +221,14 @@ async function main() {
     ];
     const csvLines = [
       headers.join(","),
-      ...queue.map((row) =>
-        headers.map((header) => csvEscape((row as any)[header])).join(","),
-      ),
+      ...queue.map((row) => headers.map((header) => csvEscape((row as any)[header])).join(",")),
     ];
     await writeFile(csvPath, csvLines.join("\n"), "utf8");
 
     console.table([
       { metric: "remaining_rows", count: queue.length },
       { metric: "apr_safe_repair", count: summary.counts.APR_SAFE_REPAIR ?? 0 },
-      {
-        metric: "biometric_missing_punch_review",
-        count: summary.counts.BIOMETRIC_MISSING_PUNCH_REVIEW ?? 0,
-      },
+      { metric: "biometric_missing_punch_review", count: summary.counts.BIOMETRIC_MISSING_PUNCH_REVIEW ?? 0 },
       { metric: "manual_review", count: summary.counts.MANUAL_REVIEW ?? 0 },
     ]);
     console.log(`JSON saved: ${jsonPath}`);

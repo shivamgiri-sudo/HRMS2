@@ -22,9 +22,7 @@ import { resolve } from "path";
  */
 
 const SRC = readFileSync(
-  resolve(__dirname, "..", "src/modules/discard/discard.service.ts"),
-  "utf8",
-);
+  resolve(__dirname, "..", "src/modules/discard/discard.service.ts"), "utf8");
 
 /** VARCHAR(30), per migration 1023. */
 const COLUMN_WIDTH = 30;
@@ -40,15 +38,11 @@ function aggregate(outcomes: string[]): string | null {
 
 describe("payroll_recalc_status is actually persisted", () => {
   it("updates the ledger row after the recalculation", () => {
-    expect(SRC).toMatch(
-      /UPDATE approval_discard_log SET payroll_recalc_status = \? WHERE id = \?/,
-    );
+    expect(SRC).toMatch(/UPDATE approval_discard_log SET payroll_recalc_status = \? WHERE id = \?/);
   });
 
   it("is called from both discard paths — leave and regularization/dispute", () => {
-    const calls =
-      SRC.match(/recordRecalcStatus\(discardId, payrollResult\.outcomes\)/g) ??
-      [];
+    const calls = SRC.match(/recordRecalcStatus\(discardId, payrollResult\.outcomes\)/g) ?? [];
     expect(calls).toHaveLength(2);
   });
 
@@ -60,9 +54,7 @@ describe("payroll_recalc_status is actually persisted", () => {
     // discardId` also contains the call's text, and it necessarily sits above
     // both commits.
     const offsets = (re: RegExp) => [...SRC.matchAll(re)].map((m) => m.index!);
-    const calls = offsets(
-      /await recordRecalcStatus\(discardId, payrollResult\.outcomes\)/g,
-    );
+    const calls = offsets(/await recordRecalcStatus\(discardId, payrollResult\.outcomes\)/g);
     const commits = offsets(/await conn\.commit\(\)/g);
 
     expect(calls).toHaveLength(2);
@@ -70,9 +62,7 @@ describe("payroll_recalc_status is actually persisted", () => {
     // Pairwise: the leave path's call follows the leave path's commit, and the
     // regularization path's call follows its own.
     for (let i = 0; i < calls.length; i++) {
-      expect(calls[i], `call ${i} must follow commit ${i}`).toBeGreaterThan(
-        commits[i],
-      );
+      expect(calls[i], `call ${i} must follow commit ${i}`).toBeGreaterThan(commits[i]);
     }
   });
 
@@ -114,21 +104,15 @@ describe("the aggregate fits the column it is stored in", () => {
     expect(detailed.length).toBeGreaterThan(COLUMN_WIDTH);
 
     const cases = [
-      ["recalculated"],
-      ["queued"],
-      ["no_open_run"],
-      ["failed"],
-      ["recalculated", "queued"],
-      ["recalculated", "no_open_run"],
+      ["recalculated"], ["queued"], ["no_open_run"], ["failed"],
+      ["recalculated", "queued"], ["recalculated", "no_open_run"],
       ["queued", "no_open_run", "failed"],
       ["recalculated", "queued", "no_open_run", "failed"],
     ];
     for (const c of cases) {
       const got = aggregate(c)!;
-      expect(
-        got.length,
-        `${JSON.stringify(c)} -> '${got}' (${got.length} chars)`,
-      ).toBeLessThanOrEqual(COLUMN_WIDTH);
+      expect(got.length, `${JSON.stringify(c)} -> '${got}' (${got.length} chars)`)
+        .toBeLessThanOrEqual(COLUMN_WIDTH);
     }
   });
 

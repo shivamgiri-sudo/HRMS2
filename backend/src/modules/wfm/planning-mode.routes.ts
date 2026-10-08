@@ -1,11 +1,7 @@
-import { Router, Request, Response, NextFunction } from "express";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import {
-  getPlanningMode,
-  setPlanningMode,
-  PlanningMode,
-} from "./planning-mode.service.js";
+import { Router, Request, Response, NextFunction } from 'express';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { getPlanningMode, setPlanningMode, PlanningMode } from './planning-mode.service.js';
 
 const planningModeRouter = Router({ mergeParams: true });
 
@@ -16,8 +12,8 @@ planningModeRouter.use(requireAuth);
  * Get the planning mode configuration for a process.
  */
 planningModeRouter.get(
-  "/:id/planning-config",
-  requireRole("wfm", "admin", "super_admin"),
+  '/:id/planning-config',
+  requireRole('wfm', 'admin', 'super_admin'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id: processId } = req.params;
@@ -26,7 +22,7 @@ planningModeRouter.get(
     } catch (err) {
       next(err);
     }
-  },
+  }
 );
 
 /**
@@ -34,20 +30,15 @@ planningModeRouter.get(
  * Update the planning mode configuration for a process.
  */
 planningModeRouter.patch(
-  "/:id/planning-config",
-  requireRole("admin", "super_admin"),
+  '/:id/planning-config',
+  requireRole('admin', 'super_admin'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id: processId } = req.params;
       const { planningMode } = req.body as { planningMode?: PlanningMode };
 
-      if (
-        !planningMode ||
-        !["ROSTER_LED", "VOLUME_BASED"].includes(planningMode)
-      ) {
-        res
-          .status(400)
-          .json({ error: "planningMode must be ROSTER_LED or VOLUME_BASED" });
+      if (!planningMode || !['ROSTER_LED', 'VOLUME_BASED'].includes(planningMode)) {
+        res.status(400).json({ error: 'planningMode must be ROSTER_LED or VOLUME_BASED' });
         return;
       }
 
@@ -56,7 +47,7 @@ planningModeRouter.patch(
     } catch (err) {
       next(err);
     }
-  },
+  }
 );
 
 export { planningModeRouter };

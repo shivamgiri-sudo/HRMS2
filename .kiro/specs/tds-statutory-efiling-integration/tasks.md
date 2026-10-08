@@ -203,7 +203,7 @@ below.
 - [ ] 11. Implement CSI_Import_Engine parsing
   - [ ] 11.1 Create `backend/src/modules/payroll/tds-csi-import.service.ts` with `parseCsiFile`
     - Parse CSI text into `{ bsrCode, challanTenderDate, challanSerialNumber,
-depositedAmount, tan }` records
+      depositedAmount, tan }` records
     - All-or-nothing: any line/field that fails to match the expected
       structure throws `CsiParseError` naming the failing line/field, and
       nothing from the upload is persisted
@@ -226,7 +226,7 @@ depositedAmount, tan }` records
 - [ ] 12. Implement CSI_Import_Engine persistence, idempotence, and upload route
   - [ ] 12.1 Implement `importCsiFile` in `tds-csi-import.service.ts`
     - Enforce the 10 MB limit via multer (`limits: { fileSize: 10 * 1024 *
-1024 }`, matching `tds-certificate-part-a.routes.ts`'s limiter)
+      1024 }`, matching `tds-certificate-part-a.routes.ts`'s limiter)
     - Call `parseCsiFile`, then persist each record as `source = 'traces_csi'`,
       skipping (not erroring on) any record whose derived CIN already exists
       as a `traces_csi` row for that deductor
@@ -263,7 +263,7 @@ depositedAmount, tan }` records
       `amount_discrepancy` (`discrepancy_amount` stored, stays outside
       `reconciled`)
     - Implement `reconciliationSummaryForObligation(deductorId,
-financialYearStart, quarter)` returning `allReconciled`, the per-challan
+      financialYearStart, quarter)` returning `allReconciled`, the per-challan
       status list, and `tracesOnlyDeposits` — this is the single read path
       every gate (generation, Form 27A, mark-as-filed) will call
     - Call `reconcileForDeductor` from `importCsiFile` after a successful
@@ -329,13 +329,13 @@ financialYearStart, quarter)` returning `allReconciled`, the per-challan
 - [ ] 16. Implement Quarterly_Return obligation tracking service and routes
   - [ ] 16.1 Create `backend/src/modules/payroll/tds-quarterly-obligation.service.ts`
     - Implement `initializeQuarterlyObligation(deductorId, financialYearStart,
-quarter)`: due date is the last day of the month following quarter end
+      quarter)`: due date is the last day of the month following quarter end
       for Q1/Q2/Q3, 31 May of the same calendar year for Q4; form designation
       via `statutoryRegimeForFinancialYear(financialYearStart)`; `INSERT
-IGNORE` on `(deductor_id, financial_year_start, quarter)` for
+      IGNORE` on `(deductor_id, financial_year_start, quarter)` for
       idempotence, matching the existing `initialize/:month` route's pattern
     - Implement `markObligationFiled(obligationId, acknowledgementNumber,
-actorUserId)`: call `reconciliationSummaryForObligation` (from Task
+      actorUserId)`: call `reconciliationSummaryForObligation` (from Task
       13.1) and deny (enumerating every unmet condition) unless a
       `quarterly_return_file` is linked, at least one challan is associated,
       every associated challan is reconciled, and
@@ -381,7 +381,7 @@ actorUserId)`: call `reconciliationSummaryForObligation` (from Task
 - [ ] 18. Implement Return_File_Generator: Annexure building and generation gate
   - [ ] 18.1 Create `backend/src/modules/payroll/tds-return-file-generator.service.ts` skeleton and generation gate
     - Implement the entry of `generateQuarterlyReturn(deductorId,
-financialYearStart, quarter, actorUserId)`: call
+      financialYearStart, quarter, actorUserId)`: call
       `findActiveDeductorForScope`-equivalent TAN resolution, then
       `reconciliationSummaryForObligation` (the reconciliation gate); refuse
       (nothing persisted) when no active TAN, reconciliation incomplete
@@ -664,57 +664,9 @@ financialYearStart, quarter, actorUserId)`: call
 {
   "waves": [
     { "id": 0, "tasks": ["2.1", "4.1", "8.1", "11.1", "13.1", "15.1"] },
-    {
-      "id": 1,
-      "tasks": [
-        "2.2",
-        "4.2",
-        "4.3",
-        "4.4",
-        "4.5",
-        "4.6",
-        "5.1",
-        "8.2",
-        "8.3",
-        "8.4",
-        "8.5",
-        "8.6",
-        "8.7",
-        "8.8",
-        "8.9",
-        "11.2",
-        "11.3",
-        "11.4",
-        "13.2",
-        "13.3",
-        "13.4",
-        "15.2",
-        "15.3",
-        "15.4",
-        "15.5",
-        "15.6",
-        "16.1"
-      ]
-    },
+    { "id": 1, "tasks": ["2.2", "4.2", "4.3", "4.4", "4.5", "4.6", "5.1", "8.2", "8.3", "8.4", "8.5", "8.6", "8.7", "8.8", "8.9", "11.2", "11.3", "11.4", "13.2", "13.3", "13.4", "15.2", "15.3", "15.4", "15.5", "15.6", "16.1"] },
     { "id": 2, "tasks": ["5.2", "5.3", "6.1", "9.1", "12.1", "13.5", "16.2"] },
-    {
-      "id": 3,
-      "tasks": [
-        "6.2",
-        "6.3",
-        "6.4",
-        "9.2",
-        "12.2",
-        "12.3",
-        "12.4",
-        "16.3",
-        "16.4",
-        "16.5",
-        "16.6",
-        "16.7",
-        "18.1"
-      ]
-    },
+    { "id": 3, "tasks": ["6.2", "6.3", "6.4", "9.2", "12.2", "12.3", "12.4", "16.3", "16.4", "16.5", "16.6", "16.7", "18.1"] },
     { "id": 4, "tasks": ["18.2"] },
     { "id": 5, "tasks": ["18.3", "18.4", "18.5", "18.6", "19.1"] },
     { "id": 6, "tasks": ["19.2"] },

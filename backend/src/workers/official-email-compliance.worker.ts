@@ -4,18 +4,14 @@ import { db } from "../db/mysql.js";
 const RUN_HOUR = 9;
 let nextRun: NodeJS.Timeout | undefined;
 
-export function millisecondsUntilNextOfficialEmailSweep(
-  now = new Date(),
-): number {
+export function millisecondsUntilNextOfficialEmailSweep(now = new Date()): number {
   const next = new Date(now);
   next.setHours(RUN_HOUR, 0, 0, 0);
   if (next <= now) next.setDate(next.getDate() + 1);
   return next.getTime() - now.getTime();
 }
 
-export async function runOfficialEmailComplianceSweep(): Promise<{
-  notified: number;
-}> {
+export async function runOfficialEmailComplianceSweep(): Promise<{ notified: number }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.user_id
        FROM employees e
@@ -28,7 +24,7 @@ export async function runOfficialEmailComplianceSweep(): Promise<{
             LOWER(COALESCE(NULLIF(TRIM(e.official_email), ''), e.email)) NOT LIKE '%@teammas.in'
             AND LOWER(COALESCE(NULLIF(TRIM(e.official_email), ''), e.email)) NOT LIKE '%@teammas.co.in'
           )
-        )`,
+        )`
   );
 
   let notified = 0;
@@ -53,14 +49,12 @@ export async function runOfficialEmailComplianceSweep(): Promise<{
              AND entity_id = ?
              AND is_actioned = 0
         )`,
-      [row.user_id, row.id, row.user_id, row.id],
+      [row.user_id, row.id, row.user_id, row.id]
     );
     notified += Number(result.affectedRows ?? 0);
   }
 
-  console.log(
-    `[official-email] created ${notified} daily compliance reminder(s)`,
-  );
+  console.log(`[official-email] created ${notified} daily compliance reminder(s)`);
   return { notified };
 }
 

@@ -14,10 +14,7 @@ import { leavePolicyService } from "./leave-policy.service.js";
 export const leaveSecureRouter = Router();
 leaveSecureRouter.use(requireAuth);
 
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 // team_leader and tl are two distinct, independently assignable roles in
 // workforce_role_catalog (54 files reference team_leader vs. a handful for tl) — this
 // array only recognized tl. hasAnyRole/buildScopeWhereClause do a literal string match
@@ -27,22 +24,9 @@ const h =
 // (verified 2026-08-13) hold a user_assignment_scope row granting them exactly this
 // visibility, and TeamLeaveTab.tsx (MyTeamPage's Leave tab, whose own gate already
 // admits team_leader) calls this endpoint expecting it to work.
-const LEAVE_VIEW_SCOPE_ROLES = [
-  "manager",
-  "assistant_manager",
-  "tl",
-  "team_leader",
-  "branch_head",
-  "process_manager",
-  "hr",
-  "payroll_hr",
-  "payroll_branch",
-  "wfm",
-];
+const LEAVE_VIEW_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager", "hr", "payroll_hr", "payroll_branch", "wfm"];
 
-async function leaveListScope(
-  userId: string,
-): Promise<{ sql: string; params: unknown[] }> {
+async function leaveListScope(userId: string): Promise<{ sql: string; params: unknown[] }> {
   // payroll_head reads org-wide. It is not in LEAVE_VIEW_SCOPE_ROLES below because that
   // path needs a user_assignment_scope row to widen from, and the live payroll_head
   // holders have none — they would have fallen through to the self-only fallback and seen
@@ -55,20 +39,12 @@ async function leaveListScope(
   // canReviewLeave below is untouched, so approval stays with the effective approver.
   const span = await reportingSpanClause(userId);
   if (scoped.sql !== "1=0") {
-    return span
-      ? {
-          sql: `(${scoped.sql}) OR ${span.sql}`,
-          params: [...scoped.params, ...span.params],
-        }
-      : scoped;
+    return span ? { sql: `(${scoped.sql}) OR ${span.sql}`, params: [...scoped.params, ...span.params] } : scoped;
   }
   const callerEmp = await getEmployeeForUser(userId);
   if (callerEmp?.id) {
     return span
-      ? {
-          sql: `e.id = ? OR ${span.sql}`,
-          params: [callerEmp.id, ...span.params],
-        }
+      ? { sql: `e.id = ? OR ${span.sql}`, params: [callerEmp.id, ...span.params] }
       : { sql: "e.id = ?", params: [callerEmp.id] };
   }
   return { sql: "1=0", params: [] };
@@ -137,14 +113,8 @@ export async function makeLeaveReviewChecker(userId: string): Promise<(target: L
 // Exported for the Work Inbox derived-item approve/reject dispatcher (modules/inbox), which
 // needs the exact same row-scope + self-approval rule this route enforces — not a looser
 // or reimplemented copy of it.
-export async function canReviewLeave(
-  userId: string,
-  requestId: string,
-): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT lr.employee_id, lr.status, lr.leave_type_id, e.branch_id, e.process_id, e.lob_id, e.department_id, e.reporting_manager_id, e.manager_id FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.id = ? LIMIT 1`,
-    [requestId],
-  );
+export async function canReviewLeave(userId: string, requestId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT lr.employee_id, lr.status, lr.leave_type_id, e.branch_id, e.process_id, e.lob_id, e.department_id, e.reporting_manager_id, e.manager_id FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.id = ? LIMIT 1`, [requestId]);
   const target = rows[0] as any;
   if (!target) return false;
   return (await makeLeaveReviewChecker(userId))(target);
@@ -243,51 +213,22 @@ leaveSecureRouter.get("/requests", h(async (req: any, res: any) => {
   return res.json({ success: true, data: rows, total: Number(countRows[0]?.total ?? 0), page, limit });
 }));
 
-leaveSecureRouter.patch(
-  "/requests/:id/review",
-  h(async (req: any, res: any) => {
-    if (!(await canReviewLeave(req.authUser!.id, req.params.id)))
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Forbidden: leave request is outside your approval scope",
-        });
-    const status = String(req.body.status ?? "");
-    const allowed = [
-      "approved",
-      "rejected",
-      "branch_head_approved",
-      "branch_head_rejected",
-    ];
-    if (!allowed.includes(status))
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid leave review status" });
-    const remarks = req.body.remarks ?? req.body.reviewNotes ?? null;
-    // Owner ruling, 2026-08-27: remarks are mandatory on a REJECTION, optional on an
-    // approval. A refusal the employee cannot see a reason for is the case that needs a
-    // written record; an approval carries its own meaning. This was previously inverted —
-    // approvers were forced to type filler text to approve, and could reject in silence.
-    if (
-      (status === "rejected" || status === "branch_head_rejected") &&
-      !remarks?.trim()
-    ) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Remarks are required to reject a leave request",
-        });
-    }
-    const data = await leaveService.reviewRequest(
-      req.params.id,
-      { status: status as any, remarks: remarks ?? null },
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data, message: `Leave ${status}` });
-  }),
-);
+leaveSecureRouter.patch("/requests/:id/review", h(async (req: any, res: any) => {
+  if (!(await canReviewLeave(req.authUser!.id, req.params.id))) return res.status(403).json({ success: false, message: "Forbidden: leave request is outside your approval scope" });
+  const status = String(req.body.status ?? "");
+  const allowed = ["approved", "rejected", "branch_head_approved", "branch_head_rejected"];
+  if (!allowed.includes(status)) return res.status(400).json({ success: false, message: "Invalid leave review status" });
+  const remarks = req.body.remarks ?? req.body.reviewNotes ?? null;
+  // Owner ruling, 2026-08-27: remarks are mandatory on a REJECTION, optional on an
+  // approval. A refusal the employee cannot see a reason for is the case that needs a
+  // written record; an approval carries its own meaning. This was previously inverted —
+  // approvers were forced to type filler text to approve, and could reject in silence.
+  if ((status === "rejected" || status === "branch_head_rejected") && !remarks?.trim()) {
+    return res.status(400).json({ success: false, message: "Remarks are required to reject a leave request" });
+  }
+  const data = await leaveService.reviewRequest(req.params.id, { status: status as any, remarks: remarks ?? null }, req.authUser!.id);
+  return res.json({ success: true, data, message: `Leave ${status}` });
+}));
 
 // PATCH /requests/:id/cancel — employee cancels their own leave (pending or approved)
 leaveSecureRouter.patch("/requests/:id/cancel", h(async (req: any, res: any) => {

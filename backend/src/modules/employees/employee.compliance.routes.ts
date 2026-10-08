@@ -61,34 +61,15 @@ import {
   sanitizeEpfAuditRecord,
 } from "./employeeCompliancePrivacy.js";
 
-const h =
-  (fn: (req: Request, res: Response) => Promise<unknown>) =>
-  (req: Request, res: Response, next: NextFunction) =>
-    fn(req, res).catch(next);
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 12 * 1024 * 1024 },
-});
-import {
-  TEMPLATE_STORAGE_ROOT,
-  toStorableTemplatePath,
-} from "./joiningDocumentTemplatePath.js";
-const EPF_REVIEW_CONSENT_TEXT =
-  "Please verify your EPF details. These details will be used for EPFO compliance, UAN/KYC processing, nomination, payroll PF deduction, and statutory filing.";
-const EPF_FORM_CODES = [
-  "FORM_11",
-  "FORM_2",
-  "KYC_DECLARATION",
-  "PF_ELIGIBILITY_SHEET",
-  "HR_PAYROLL_PF_CHECKLIST",
-  "MISSING_DATA_ALERT",
-  "ECR_READINESS",
-] as const;
+const h = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
+import { TEMPLATE_STORAGE_ROOT, toStorableTemplatePath } from "./joiningDocumentTemplatePath.js";
+const EPF_REVIEW_CONSENT_TEXT = "Please verify your EPF details. These details will be used for EPFO compliance, UAN/KYC processing, nomination, payroll PF deduction, and statutory filing.";
+const EPF_FORM_CODES = ["FORM_11", "FORM_2", "KYC_DECLARATION", "PF_ELIGIBILITY_SHEET", "HR_PAYROLL_PF_CHECKLIST", "MISSING_DATA_ALERT", "ECR_READINESS"] as const;
 
 function templateMimeFromName(fileName: string) {
   const ext = path.extname(fileName).toLowerCase();
-  if (ext === ".docx")
-    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (ext === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   if (ext === ".pdf") return "application/pdf";
   if (ext === ".html" || ext === ".htm") return "text/html";
   return "application/octet-stream";
@@ -140,12 +121,7 @@ type EpfProfileRow = Record<string, unknown> & {
   last_submitted_at?: string | null;
 };
 
-function epfFormPayloads(
-  profile: Record<string, unknown>,
-  nominees: Array<Record<string, unknown>>,
-  validation: EpfValidationSummary | null,
-  ecr: Record<string, unknown> | null,
-) {
+function epfFormPayloads(profile: Record<string, unknown>, nominees: Array<Record<string, unknown>>, validation: EpfValidationSummary | null, ecr: Record<string, unknown> | null) {
   return {
     FORM_11: {
       employee_name: profile.employee_name ?? null,
@@ -183,15 +159,11 @@ function epfFormPayloads(
       ready_for_submission: Boolean(validation?.ready_for_submission),
       ecr_ready: Boolean(validation?.ecr_ready),
       missing_fields: validation?.missing_fields ?? [],
-      issue_count: Array.isArray(validation?.issues)
-        ? validation.issues.length
-        : 0,
+      issue_count: Array.isArray(validation?.issues) ? validation.issues.length : 0,
     },
     MISSING_DATA_ALERT: {
       missing_fields: validation?.missing_fields ?? [],
-      blockers: Array.isArray(validation?.issues)
-        ? validation.issues.filter((issue) => issue.severity === "error")
-        : [],
+      blockers: Array.isArray(validation?.issues) ? validation.issues.filter((issue) => issue.severity === "error") : [],
     },
     ECR_READINESS: {
       ecr_status: ecr?.ecr_status ?? "pending",
@@ -201,19 +173,12 @@ function epfFormPayloads(
   } as const;
 }
 
-function epfFormStatus(
-  formCode: string,
-  profileStatus: string,
-  validation: EpfValidationSummary | null,
-) {
+function epfFormStatus(formCode: string, profileStatus: string, validation: EpfValidationSummary | null) {
   if (profileStatus === "payroll_approved") return "approved";
   if (profileStatus === "correction_requested") return "pushback";
-  if (profileStatus === "employee_review_pending")
-    return "employee_review_pending";
-  if (formCode === "MISSING_DATA_ALERT")
-    return (validation?.missing_fields?.length ?? 0) > 0 ? "draft" : "approved";
-  if (formCode === "ECR_READINESS")
-    return validation?.ecr_ready ? "ready" : "draft";
+  if (profileStatus === "employee_review_pending") return "employee_review_pending";
+  if (formCode === "MISSING_DATA_ALERT") return (validation?.missing_fields?.length ?? 0) > 0 ? "draft" : "approved";
+  if (formCode === "ECR_READINESS") return validation?.ecr_ready ? "ready" : "draft";
   return validation?.ready_for_submission ? "ready" : "draft";
 }
 
@@ -225,12 +190,7 @@ async function upsertEpfFormInstances(params: {
   ecr: Record<string, unknown> | null;
   actorUserId: string;
 }) {
-  const payloads = epfFormPayloads(
-    params.profile,
-    params.nominees,
-    params.validation,
-    params.ecr,
-  );
+  const payloads = epfFormPayloads(params.profile, params.nominees, params.validation, params.ecr);
   for (const formCode of EPF_FORM_CODES) {
     await db.execute(
       `INSERT INTO employee_epf_form_instance
@@ -248,19 +208,11 @@ async function upsertEpfFormInstances(params: {
         params.employeeId,
         params.profile.id,
         formCode,
-        epfFormStatus(
-          formCode,
-          String(params.profile.status ?? "draft"),
-          params.validation,
-        ),
+        epfFormStatus(formCode, String(params.profile.status ?? "draft"), params.validation),
         JSON.stringify(payloads[formCode]),
         params.profile.last_submitted_at ?? null,
-        String(params.profile.status ?? "") === "payroll_approved"
-          ? new Date()
-          : null,
-        String(params.profile.status ?? "") === "payroll_approved"
-          ? params.actorUserId
-          : null,
+        String(params.profile.status ?? "") === "payroll_approved" ? new Date() : null,
+        String(params.profile.status ?? "") === "payroll_approved" ? params.actorUserId : null,
       ],
     );
   }
@@ -282,50 +234,32 @@ async function buildConsentReceiptPdf(input: {
   return await new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     const doc = new PDFDocument({ margin: 42, size: "A4" });
-    doc.on("data", (chunk) =>
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-    );
+    doc.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
     doc.fontSize(18).text("EPF Consent Receipt", { align: "center" });
     doc.moveDown();
-    doc
-      .fontSize(11)
-      .text(`Employee: ${input.profile.employee_name ?? "Employee"}`);
+    doc.fontSize(11).text(`Employee: ${input.profile.employee_name ?? "Employee"}`);
     doc.text(`Employee ID: ${input.profile.employee_id ?? ""}`);
     doc.text(`Consent Version: ${input.receipt.consent_version ?? "v1"}`);
     doc.text(`Confirmed By: ${input.receipt.consented_by_name ?? "Employee"}`);
-    doc.text(
-      `Confirmed At: ${input.receipt.consented_at ? new Date(String(input.receipt.consented_at)).toLocaleString("en-IN") : "N/A"}`,
-    );
+    doc.text(`Confirmed At: ${input.receipt.consented_at ? new Date(String(input.receipt.consented_at)).toLocaleString("en-IN") : "N/A"}`);
     doc.text(`Aadhaar: ${input.profile.aadhaar_masked ?? "Not provided"}`);
     doc.text(`PAN: ${input.profile.pan_masked ?? "Not provided"}`);
     doc.text(`UAN: ${input.profile.uan_masked ?? "Not provided"}`);
     doc.moveDown();
     doc.font("Helvetica-Bold").text("Consent Notice");
-    doc
-      .font("Helvetica")
-      .text(String(input.receipt.consent_text ?? EPF_REVIEW_CONSENT_TEXT), {
-        align: "justify",
-      });
+    doc.font("Helvetica").text(String(input.receipt.consent_text ?? EPF_REVIEW_CONSENT_TEXT), { align: "justify" });
     doc.moveDown();
     doc.font("Helvetica-Bold").text("Purpose");
-    doc
-      .font("Helvetica")
-      .text(
-        "EPF compliance, UAN/KYC processing, payroll PF deduction, nomination, statutory filing, ECR readiness, and statutory audit.",
-        { align: "justify" },
-      );
+    doc.font("Helvetica").text("EPF compliance, UAN/KYC processing, payroll PF deduction, nomination, statutory filing, ECR readiness, and statutory audit.", { align: "justify" });
     doc.end();
   });
 }
 
 async function ensureEpfProfile(employeeId: string, actorUserId: string) {
-  const access = await resolveEmployeeDocumentAccessContext(
-    actorUserId,
-    employeeId,
-  );
+  const access = await resolveEmployeeDocumentAccessContext(actorUserId, employeeId);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM employee_epf_compliance_profile WHERE employee_id = ? LIMIT 1`,
     [employeeId],
@@ -354,9 +288,7 @@ async function ensureEpfProfile(employeeId: string, actorUserId: string) {
   );
   const affectedRows = (result as { affectedRows?: number }).affectedRows ?? 0;
   if (affectedRows === 0) {
-    const err = new Error("Unable to initialize EPF profile") as Error & {
-      statusCode?: number;
-    };
+    const err = new Error("Unable to initialize EPF profile") as Error & { statusCode?: number };
     err.statusCode = 409;
     throw err;
   }
@@ -406,10 +338,7 @@ async function syncEpfValidation(employeeId: string, actorUserId: string) {
     nominees as Array<Record<string, unknown>>,
   );
 
-  await db.execute(
-    `DELETE FROM employee_epf_validation_result WHERE profile_id = ?`,
-    [profile.id],
-  );
+  await db.execute(`DELETE FROM employee_epf_validation_result WHERE profile_id = ?`, [profile.id]);
   for (const issue of summary.issues) {
     await db.execute(
       `INSERT INTO employee_epf_validation_result
@@ -447,12 +376,7 @@ async function syncEpfValidation(employeeId: string, actorUserId: string) {
       profile.id,
       summary.ecr_ready ? "ready" : "pending",
       JSON.stringify(summary.missing_fields),
-      summary.ready_for_submission
-        ? null
-        : summary.issues
-            .filter((issue) => issue.severity === "error")
-            .map((issue) => issue.message)
-            .join("; "),
+      summary.ready_for_submission ? null : summary.issues.filter((issue) => issue.severity === "error").map((issue) => issue.message).join("; "),
       summary.ecr_ready ? new Date() : null,
       actorUserId,
     ],
@@ -471,22 +395,10 @@ async function syncEpfValidation(employeeId: string, actorUserId: string) {
             updated_at = NOW()
       WHERE id = ?`,
     [
-      [
-        "employee_review_pending",
-        "payroll_review_pending",
-        "payroll_approved",
-        "correction_requested",
-      ].includes(String(profile.status ?? ""))
+      ["employee_review_pending", "payroll_review_pending", "payroll_approved", "correction_requested"].includes(String(profile.status ?? ""))
         ? String(profile.status)
-        : summary.ready_for_submission
-          ? "draft"
-          : "hr_fill_required",
-      [
-        "employee_review_pending",
-        "payroll_review_pending",
-        "payroll_approved",
-        "correction_requested",
-      ].includes(String(profile.status ?? ""))
+        : summary.ready_for_submission ? "draft" : "hr_fill_required",
+      ["employee_review_pending", "payroll_review_pending", "payroll_approved", "correction_requested"].includes(String(profile.status ?? ""))
         ? String(profile.compliance_stage ?? summary.inferred_status)
         : summary.inferred_status,
       summary.uan_hash,
@@ -563,15 +475,9 @@ async function getEpfCompliancePack(employeeId: string, actorUserId: string) {
 // { success: false, message: "Unauthorized webhook" } for all three reasons, and
 // the distinction lives only in the log level and the audit action_type.
 
-type LuckpayWebhookRejectionReason = Exclude<
-  WebhookAuthOutcome["reason"],
-  "accepted"
->;
+type LuckpayWebhookRejectionReason = Exclude<WebhookAuthOutcome["reason"], "accepted">;
 
-const LUCKPAY_WEBHOOK_REJECTION_AUDIT_ACTION: Record<
-  LuckpayWebhookRejectionReason,
-  string
-> = {
+const LUCKPAY_WEBHOOK_REJECTION_AUDIT_ACTION: Record<LuckpayWebhookRejectionReason, string> = {
   secret_not_configured: "LUCKPAY_WEBHOOK_REJECTED_UNCONFIGURED",
   header_mismatch: "LUCKPAY_WEBHOOK_REJECTED_MISMATCH",
   header_absent: "LUCKPAY_WEBHOOK_REJECTED_NO_HEADER",
@@ -596,9 +502,7 @@ type LuckpayWebhookTxRow = RowDataPacket & {
 async function resolveLuckpayWebhookTransaction(
   payload: Record<string, unknown>,
 ): Promise<LuckpayWebhookTxRow | null> {
-  const clientTransactionId = String(
-    payload.client_transaction_id ?? payload.clientTransactionId ?? "",
-  ).trim();
+  const clientTransactionId = String(payload.client_transaction_id ?? payload.clientTransactionId ?? "").trim();
   if (!clientTransactionId) return null;
   try {
     const [rows] = await db.execute<LuckpayWebhookTxRow[]>(
@@ -619,11 +523,7 @@ async function resolveLuckpayWebhookTransaction(
   }
 }
 
-async function rejectLuckpayWebhook(
-  req: Request,
-  res: Response,
-  reason: LuckpayWebhookRejectionReason,
-) {
+async function rejectLuckpayWebhook(req: Request, res: Response, reason: LuckpayWebhookRejectionReason) {
   const payload = (req.body ?? {}) as Record<string, unknown>;
   const actionType = LUCKPAY_WEBHOOK_REJECTION_AUDIT_ACTION[reason];
   const tx = await resolveLuckpayWebhookTransaction(payload);
@@ -661,11 +561,7 @@ async function rejectLuckpayWebhook(
           tx.checklist_id ?? null,
           tx.document_code ?? null,
           actionType,
-          JSON.stringify({
-            rejectionReason: reason,
-            esignTransactionId: tx.id,
-            provider: "luckpay",
-          }),
+          JSON.stringify({ rejectionReason: reason, esignTransactionId: tx.id, provider: "luckpay" }),
           "Inbound Luckpay webhook delivery rejected",
           req.ip ?? null,
           req.get("user-agent") ?? null,
@@ -675,10 +571,7 @@ async function rejectLuckpayWebhook(
       // Reported, never swallowed: a silent .catch() here is exactly how the kit audit log
       // lost every row before joiningKitDispatch.service.ts:57-78 was fixed. The rejection
       // still answers 401 — an audit failure must not upgrade itself into a 500.
-      console.error(
-        `[luckpay-webhook] ${actionType} audit write failed for employee ${tx.employee_id}:`,
-        error,
-      );
+      console.error(`[luckpay-webhook] ${actionType} audit write failed for employee ${tx.employee_id}:`, error);
     }
   } else {
     // Unattributable delivery: a log event, not an employee audit event. The insert is
@@ -688,9 +581,7 @@ async function rejectLuckpayWebhook(
     );
   }
 
-  return res
-    .status(401)
-    .json({ success: false, message: "Unauthorized webhook" });
+  return res.status(401).json({ success: false, message: "Unauthorized webhook" });
 }
 
 export const employeeJoiningDocumentsRouter = Router();
@@ -700,369 +591,243 @@ export const employeeJoiningDocumentsRouter = Router();
 // check anyone able to guess a provider_reference_id could mark a document
 // e-signed: the handler sets esign_completed, signature_mode
 // 'aadhaar_esign_verified', and final_file_locked_at.
-employeeJoiningDocumentsRouter.post(
-  "/:employeeId/joining-documents/esign/webhook/luckpay",
-  h(async (req, res) => {
-    const auth = classifyLuckpayWebhookAuth(
-      req.get("X-HRMS-Webhook-Secret"),
-      env.LUCKPAY_WEBHOOK_SECRET,
-    );
-    if (!auth.ok) {
-      return rejectLuckpayWebhook(req, res, auth.reason);
-    }
-    const data = await handleJoiningDocumentEsignWebhook({
-      payload: (req.body ?? {}) as Record<string, unknown>,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/esign/webhook/luckpay", h(async (req, res) => {
+  const auth = classifyLuckpayWebhookAuth(req.get("X-HRMS-Webhook-Secret"), env.LUCKPAY_WEBHOOK_SECRET);
+  if (!auth.ok) {
+    return rejectLuckpayWebhook(req, res, auth.reason);
+  }
+  const data = await handleJoiningDocumentEsignWebhook({
+    payload: (req.body ?? {}) as Record<string, unknown>,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
 
 employeeJoiningDocumentsRouter.use(requireAuth);
 
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/joining-documents",
-  h(async (req: AuthenticatedRequest, res) => {
-    const data = await getJoiningDocumentPack(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents", h(async (req: AuthenticatedRequest, res) => {
+  const data = await getJoiningDocumentPack(req.params.employeeId, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.post(
-  "/:employeeId/joining-documents/generate-checklist",
-  h(async (req: AuthenticatedRequest, res) => {
-    const data = await generateJoiningDocumentChecklist(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    return res.status(201).json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/generate-checklist", h(async (req: AuthenticatedRequest, res) => {
+  const data = await generateJoiningDocumentChecklist(req.params.employeeId, req.authUser!.id);
+  return res.status(201).json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.post(
-  "/:employeeId/joining-documents/checklist/:checklistId/upload",
-  upload.single("file"),
-  h(async (req: AuthenticatedRequest, res) => {
-    if (!req.file)
-      return res
-        .status(400)
-        .json({ success: false, message: "file is required" });
-    const data = await uploadJoiningDocument({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      file: req.file,
-      actorUserId: req.authUser!.id,
-      wetSigned:
-        String(
-          req.body?.wetSigned ?? req.body?.wet_signed ?? "",
-        ).toLowerCase() === "true",
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.status(201).json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/checklist/:checklistId/upload", upload.single("file"), h(async (req: AuthenticatedRequest, res) => {
+  if (!req.file) return res.status(400).json({ success: false, message: "file is required" });
+  const data = await uploadJoiningDocument({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    file: req.file,
+    actorUserId: req.authUser!.id,
+      wetSigned: String(req.body?.wetSigned ?? req.body?.wet_signed ?? "").toLowerCase() === "true",
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.status(201).json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.post(
-  "/:employeeId/joining-documents/:checklistId/upload",
-  upload.single("file"),
-  h(async (req: AuthenticatedRequest, res) => {
-    if (!req.file)
-      return res
-        .status(400)
-        .json({ success: false, message: "file is required" });
-    const data = await uploadJoiningDocument({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      file: req.file,
-      actorUserId: req.authUser!.id,
-      wetSigned:
-        String(
-          req.body?.wetSigned ?? req.body?.wet_signed ?? "",
-        ).toLowerCase() === "true",
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.status(201).json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/:checklistId/upload", upload.single("file"), h(async (req: AuthenticatedRequest, res) => {
+  if (!req.file) return res.status(400).json({ success: false, message: "file is required" });
+  const data = await uploadJoiningDocument({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    file: req.file,
+    actorUserId: req.authUser!.id,
+      wetSigned: String(req.body?.wetSigned ?? req.body?.wet_signed ?? "").toLowerCase() === "true",
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.status(201).json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.patch(
-  "/:employeeId/joining-documents/checklist/:checklistId/review",
-  h(async (req: AuthenticatedRequest, res) => {
-    const decision = String(req.body.decision ?? "");
-    if (decision !== "verified" && decision !== "needs_correction") {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "decision must be verified or needs_correction",
-        });
-    }
-    const data = await reviewJoiningDocument({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      actorUserId: req.authUser!.id,
-      decision,
-      remarks: req.body.remarks ?? null,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.patch("/:employeeId/joining-documents/checklist/:checklistId/review", h(async (req: AuthenticatedRequest, res) => {
+  const decision = String(req.body.decision ?? "");
+  if (decision !== "verified" && decision !== "needs_correction") {
+    return res.status(400).json({ success: false, message: "decision must be verified or needs_correction" });
+  }
+  const data = await reviewJoiningDocument({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    decision,
+    remarks: req.body.remarks ?? null,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.patch(
-  "/:employeeId/joining-documents/:checklistId/verify",
-  h(async (req: AuthenticatedRequest, res) => {
-    const decision = String(req.body.decision ?? "verified");
-    if (decision !== "verified" && decision !== "needs_correction") {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "decision must be verified or needs_correction",
-        });
-    }
-    const data = await reviewJoiningDocument({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      actorUserId: req.authUser!.id,
-      decision,
-      remarks: req.body.remarks ?? null,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.patch("/:employeeId/joining-documents/:checklistId/verify", h(async (req: AuthenticatedRequest, res) => {
+  const decision = String(req.body.decision ?? "verified");
+  if (decision !== "verified" && decision !== "needs_correction") {
+    return res.status(400).json({ success: false, message: "decision must be verified or needs_correction" });
+  }
+  const data = await reviewJoiningDocument({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    decision,
+    remarks: req.body.remarks ?? null,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.patch(
-  "/:employeeId/joining-documents/:checklistId/status",
-  h(async (req: AuthenticatedRequest, res) => {
-    const status = String(req.body?.status ?? "").trim();
-    if (!status)
-      return res
-        .status(400)
-        .json({ success: false, message: "status is required" });
-    const data = await updateJoiningDocumentChecklistStatus({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      actorUserId: req.authUser!.id,
-      status,
-      remarks: req.body?.remarks ?? null,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.patch("/:employeeId/joining-documents/:checklistId/status", h(async (req: AuthenticatedRequest, res) => {
+  const status = String(req.body?.status ?? "").trim();
+  if (!status) return res.status(400).json({ success: false, message: "status is required" });
+  const data = await updateJoiningDocumentChecklistStatus({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    status,
+    remarks: req.body?.remarks ?? null,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.post(
-  "/:employeeId/joining-documents/checklist/:checklistId/esign-link",
-  h(async (req: AuthenticatedRequest, res) => {
-    const data = await createJoiningDocumentEsignRequest({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      actorUserId: req.authUser!.id,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/checklist/:checklistId/esign-link", h(async (req: AuthenticatedRequest, res) => {
+  const data = await createJoiningDocumentEsignRequest({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.post(
-  "/:employeeId/joining-documents/:checklistId/esign/initiate",
-  h(async (req: AuthenticatedRequest, res) => {
-    const data = await createJoiningDocumentEsignRequest({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      actorUserId: req.authUser!.id,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/:checklistId/esign/initiate", h(async (req: AuthenticatedRequest, res) => {
+  const data = await createJoiningDocumentEsignRequest({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
 
 /**
  * The appointment letter the employee signed with Aadhaar eSign. Same page, same
  * access resolution as the joining documents above (see
  * employeeSignedAppointmentLetter.service.ts); ?inline=1 previews it in the browser.
  */
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/joining-documents/appointment-letters/:issueId/signed-copy",
-  h(async (req: AuthenticatedRequest, res) => {
-    const inline = req.query.inline === "1" || req.query.inline === "true";
-    const file = await getSignedAppointmentLetterForAccess({
-      employeeId: req.params.employeeId,
-      issueId: req.params.issueId,
-      actorUserId: req.authUser!.id,
-      inline,
-    });
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Cache-Control", "private, no-store");
-    res.setHeader("Content-Length", String(file.bytes.length));
-    res.setHeader(
-      "Content-Disposition",
-      `${inline ? "inline" : "attachment"}; filename="${file.fileName.replace(/"/g, "")}"`,
-    );
-    res.end(file.bytes);
-  }),
-);
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/appointment-letters/:issueId/signed-copy", h(async (req: AuthenticatedRequest, res) => {
+  const inline = req.query.inline === "1" || req.query.inline === "true";
+  const file = await getSignedAppointmentLetterForAccess({
+    employeeId: req.params.employeeId,
+    issueId: req.params.issueId,
+    actorUserId: req.authUser!.id,
+    inline,
+  });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("Content-Length", String(file.bytes.length));
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${file.fileName.replace(/"/g, "")}"`);
+  res.end(file.bytes);
+}));
 
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/joining-documents/files/:fileId/preview",
-  h(async (req: AuthenticatedRequest, res) => {
-    const file = await getJoiningDocumentFileForAccess({
-      fileId: req.params.fileId,
-      actorUserId: req.authUser!.id,
-      action: "preview",
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    res.setHeader("Content-Type", file.mimeType);
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="${file.fileName.replace(/"/g, "")}"`,
-    );
-    fs.createReadStream(file.storagePath).pipe(res);
-  }),
-);
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/files/:fileId/preview", h(async (req: AuthenticatedRequest, res) => {
+  const file = await getJoiningDocumentFileForAccess({
+    fileId: req.params.fileId,
+    actorUserId: req.authUser!.id,
+    action: "preview",
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  res.setHeader("Content-Type", file.mimeType);
+  res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/"/g, "")}"`);
+  fs.createReadStream(file.storagePath).pipe(res);
+}));
 
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/joining-documents/files/:fileId/download",
-  h(async (req: AuthenticatedRequest, res) => {
-    const file = await getJoiningDocumentFileForAccess({
-      fileId: req.params.fileId,
-      actorUserId: req.authUser!.id,
-      action: "download",
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    res.setHeader("Content-Type", file.mimeType);
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${file.fileName.replace(/"/g, "")}"`,
-    );
-    fs.createReadStream(file.storagePath).pipe(res);
-  }),
-);
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/files/:fileId/download", h(async (req: AuthenticatedRequest, res) => {
+  const file = await getJoiningDocumentFileForAccess({
+    fileId: req.params.fileId,
+    actorUserId: req.authUser!.id,
+    action: "download",
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  res.setHeader("Content-Type", file.mimeType);
+  res.setHeader("Content-Disposition", `attachment; filename="${file.fileName.replace(/"/g, "")}"`);
+  fs.createReadStream(file.storagePath).pipe(res);
+}));
 
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/joining-documents/:checklistId/preview",
-  h(async (req: AuthenticatedRequest, res) => {
-    const file = await getChecklistDocumentFileForAccess({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      actorUserId: req.authUser!.id,
-      action: "preview",
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    res.setHeader("Content-Type", file.mimeType);
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="${file.fileName.replace(/"/g, "")}"`,
-    );
-    fs.createReadStream(file.storagePath).pipe(res);
-  }),
-);
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/:checklistId/preview", h(async (req: AuthenticatedRequest, res) => {
+  const file = await getChecklistDocumentFileForAccess({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    action: "preview",
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  res.setHeader("Content-Type", file.mimeType);
+  res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/"/g, "")}"`);
+  fs.createReadStream(file.storagePath).pipe(res);
+}));
 
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/joining-documents/:checklistId/download",
-  h(async (req: AuthenticatedRequest, res) => {
-    const file = await getChecklistDocumentFileForAccess({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      actorUserId: req.authUser!.id,
-      action: "download",
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    res.setHeader("Content-Type", file.mimeType);
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${file.fileName.replace(/"/g, "")}"`,
-    );
-    fs.createReadStream(file.storagePath).pipe(res);
-  }),
-);
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/:checklistId/download", h(async (req: AuthenticatedRequest, res) => {
+  const file = await getChecklistDocumentFileForAccess({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    action: "download",
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  res.setHeader("Content-Type", file.mimeType);
+  res.setHeader("Content-Disposition", `attachment; filename="${file.fileName.replace(/"/g, "")}"`);
+  fs.createReadStream(file.storagePath).pipe(res);
+}));
 
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/joining-documents/checklist/:checklistId/review",
-  h(async (req: AuthenticatedRequest, res) => {
-    await resolveEmployeeDocumentAccessContext(
-      req.authUser!.id,
-      req.params.employeeId,
-    );
-    await synchronizeChecklistFieldValues(
-      req.params.checklistId,
-      req.authUser!.id,
-    );
-    const data = await getChecklistFieldReview(req.params.checklistId);
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/checklist/:checklistId/review", h(async (req: AuthenticatedRequest, res) => {
+  await resolveEmployeeDocumentAccessContext(req.authUser!.id, req.params.employeeId);
+  await synchronizeChecklistFieldValues(req.params.checklistId, req.authUser!.id);
+  const data = await getChecklistFieldReview(req.params.checklistId);
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.put(
-  "/:employeeId/joining-documents/checklist/:checklistId/review",
-  h(async (req: AuthenticatedRequest, res) => {
-    const updates = Array.isArray(req.body?.updates) ? req.body.updates : [];
-    const data = await manualFillChecklistValues({
-      checklistId: req.params.checklistId,
-      actorUserId: req.authUser!.id,
-      updates,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.put("/:employeeId/joining-documents/checklist/:checklistId/review", h(async (req: AuthenticatedRequest, res) => {
+  const updates = Array.isArray(req.body?.updates) ? req.body.updates : [];
+  const data = await manualFillChecklistValues({
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+    updates,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.post(
-  "/:employeeId/joining-documents/checklist/:checklistId/generate-draft",
-  h(async (req: AuthenticatedRequest, res) => {
-    await resolveEmployeeDocumentAccessContext(
-      req.authUser!.id,
-      req.params.employeeId,
-    );
-    const data = await generateChecklistDraft(
-      req.params.checklistId,
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/checklist/:checklistId/generate-draft", h(async (req: AuthenticatedRequest, res) => {
+  await resolveEmployeeDocumentAccessContext(req.authUser!.id, req.params.employeeId);
+  const data = await generateChecklistDraft(req.params.checklistId, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/joining-documents/checklist/:checklistId/acroform/inspect",
-  h(async (req: AuthenticatedRequest, res) => {
-    await resolveEmployeeDocumentAccessContext(
-      req.authUser!.id,
-      req.params.employeeId,
-    );
-    const data = await inspectChecklistAcroFormTemplate(req.params.checklistId);
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/checklist/:checklistId/acroform/inspect", h(async (req: AuthenticatedRequest, res) => {
+  await resolveEmployeeDocumentAccessContext(req.authUser!.id, req.params.employeeId);
+  const data = await inspectChecklistAcroFormTemplate(req.params.checklistId);
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/joining-documents/:checklistId/esign/status",
-  h(async (req: AuthenticatedRequest, res) => {
-    const data = await getJoiningDocumentEsignStatus({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      actorUserId: req.authUser!.id,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/:checklistId/esign/status", h(async (req: AuthenticatedRequest, res) => {
+  const data = await getJoiningDocumentEsignStatus({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+  });
+  return res.json({ success: true, data });
+}));
 
 /**
  * Pull the signed artefact from the provider for a transaction that is still open.
@@ -1071,86 +836,60 @@ employeeJoiningDocumentsRouter.get(
  * 'esign_initiated' indefinitely after the employee has genuinely signed. This is
  * the manual counterpart to the reconciliation worker.
  */
-employeeJoiningDocumentsRouter.post(
-  "/:employeeId/joining-documents/:checklistId/esign/sync",
-  h(async (req: AuthenticatedRequest, res) => {
-    const data = await syncJoiningDocumentEsign({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      actorUserId: req.authUser!.id,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/:checklistId/esign/sync", h(async (req: AuthenticatedRequest, res) => {
+  const data = await syncJoiningDocumentEsign({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    actorUserId: req.authUser!.id,
+  });
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.delete(
-  "/:employeeId/joining-documents/:checklistId/files/:fileId",
-  h(async (req: AuthenticatedRequest, res) => {
-    const data = await deleteJoiningDocumentFile({
-      employeeId: req.params.employeeId,
-      checklistId: req.params.checklistId,
-      fileId: req.params.fileId,
-      actorUserId: req.authUser!.id,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.delete("/:employeeId/joining-documents/:checklistId/files/:fileId", h(async (req: AuthenticatedRequest, res) => {
+  const data = await deleteJoiningDocumentFile({
+    employeeId: req.params.employeeId,
+    checklistId: req.params.checklistId,
+    fileId: req.params.fileId,
+    actorUserId: req.authUser!.id,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/epf-compliance",
-  h(async (req: AuthenticatedRequest, res) => {
-    const data = await getEpfCompliancePack(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.get("/:employeeId/epf-compliance", h(async (req: AuthenticatedRequest, res) => {
+  const data = await getEpfCompliancePack(req.params.employeeId, req.authUser!.id);
+  return res.json({ success: true, data });
+}));
 
-employeeJoiningDocumentsRouter.get(
-  "/:employeeId/epf-compliance/consent-receipt",
-  h(async (req: AuthenticatedRequest, res) => {
-    const { profile } = await ensureEpfProfile(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT consent_version, consent_text, consented_by_name, consented_at
+employeeJoiningDocumentsRouter.get("/:employeeId/epf-compliance/consent-receipt", h(async (req: AuthenticatedRequest, res) => {
+  const { profile } = await ensureEpfProfile(req.params.employeeId, req.authUser!.id);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT consent_version, consent_text, consented_by_name, consented_at
        FROM employee_epf_consent_receipt
       WHERE profile_id = ?
       ORDER BY consented_at DESC
       LIMIT 1`,
-      [profile.id],
-    );
-    const receipt = rows[0];
-    if (!receipt) {
-      return res
-        .status(404)
-        .json({
-          success: false,
-          message: "Consent receipt is not available yet.",
-        });
-    }
-    const pdf = await buildConsentReceiptPdf({ profile, receipt });
-    await logEpfAudit({
-      employeeId: req.params.employeeId,
-      profileId: String(profile.id),
-      actionType: "EPF_CONSENT_RECEIPT_DOWNLOADED",
-      actorUserId: req.authUser!.id,
-      actorType: "employee",
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="epf-consent-receipt-${req.params.employeeId}.pdf"`,
-    );
-    return res.send(pdf);
-  }),
-);
+    [profile.id],
+  );
+  const receipt = rows[0];
+  if (!receipt) {
+    return res.status(404).json({ success: false, message: "Consent receipt is not available yet." });
+  }
+  const pdf = await buildConsentReceiptPdf({ profile, receipt });
+  await logEpfAudit({
+    employeeId: req.params.employeeId,
+    profileId: String(profile.id),
+    actionType: "EPF_CONSENT_RECEIPT_DOWNLOADED",
+    actorUserId: req.authUser!.id,
+    actorType: "employee",
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="epf-consent-receipt-${req.params.employeeId}.pdf"`);
+  return res.send(pdf);
+}));
 
 /**
  * Columns this endpoint may write, and how a submitted value is coerced.
@@ -1167,327 +906,196 @@ employeeJoiningDocumentsRouter.get(
  * endpoint safe for a partial save from a narrower screen.
  */
 const EPF_PROFILE_BOOLEAN_COLUMNS = new Set([
-  "previous_pf_member",
-  "previous_eps_member",
-  "international_worker",
-  "specially_abled",
-  "excluded_employee",
+  "previous_pf_member", "previous_eps_member", "international_worker",
+  "specially_abled", "excluded_employee",
 ]);
 
 const EPF_PROFILE_WRITABLE_COLUMNS = [
-  "employee_name",
-  "father_or_spouse_name",
-  "relationship_type",
-  "date_of_birth",
-  "gender",
-  "marital_status",
-  "mobile_number",
-  "personal_email",
-  "previous_pf_member",
-  "previous_pf_account_number",
-  "previous_exit_date",
-  "scheme_certificate_number",
-  "ppo_number",
-  "previous_eps_member",
-  "international_worker",
-  "country_of_origin",
-  "passport_number",
-  "passport_valid_from",
-  "passport_valid_to",
-  "education_qualification",
-  "specially_abled",
-  "disability_type",
-  "aadhaar_name_as_per_kyc",
-  "pan_name_as_per_kyc",
-  "bank_verification_status",
-  "pan_verification_status",
-  "uan_verification_status",
-  "excluded_employee",
-  "joining_date",
-  "basic_wage",
-  "gross_monthly_wage",
+  "employee_name", "father_or_spouse_name", "relationship_type", "date_of_birth",
+  "gender", "marital_status", "mobile_number", "personal_email",
+  "previous_pf_member", "previous_pf_account_number", "previous_exit_date",
+  "scheme_certificate_number", "ppo_number", "previous_eps_member",
+  "international_worker", "country_of_origin", "passport_number",
+  "passport_valid_from", "passport_valid_to", "education_qualification",
+  "specially_abled", "disability_type", "aadhaar_name_as_per_kyc",
+  "pan_name_as_per_kyc", "bank_verification_status", "pan_verification_status",
+  "uan_verification_status", "excluded_employee", "joining_date",
+  "basic_wage", "gross_monthly_wage",
 ] as const;
 
-employeeJoiningDocumentsRouter.put(
-  "/:employeeId/epf-compliance/profile",
-  h(async (req: AuthenticatedRequest, res) => {
-    const { profile } = await ensureEpfProfile(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const sent = (key: string) =>
-      Object.prototype.hasOwnProperty.call(body, key);
+employeeJoiningDocumentsRouter.put("/:employeeId/epf-compliance/profile", h(async (req: AuthenticatedRequest, res) => {
+  const { profile } = await ensureEpfProfile(req.params.employeeId, req.authUser!.id);
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const sent = (key: string) => Object.prototype.hasOwnProperty.call(body, key);
 
-    const sets: string[] = [];
-    const params: unknown[] = [];
-    for (const column of EPF_PROFILE_WRITABLE_COLUMNS) {
-      if (!sent(column)) continue;
-      sets.push(`${column} = ?`);
-      // A boolean column still coerces, but only when the caller named it —
-      // otherwise an absent flag would read as false and clear a real 1.
-      params.push(
-        EPF_PROFILE_BOOLEAN_COLUMNS.has(column)
-          ? body[column]
-            ? 1
-            : 0
-          : (body[column] ?? null),
-      );
-    }
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const column of EPF_PROFILE_WRITABLE_COLUMNS) {
+    if (!sent(column)) continue;
+    sets.push(`${column} = ?`);
+    // A boolean column still coerces, but only when the caller named it —
+    // otherwise an absent flag would read as false and clear a real 1.
+    params.push(EPF_PROFILE_BOOLEAN_COLUMNS.has(column) ? (body[column] ? 1 : 0) : body[column] ?? null);
+  }
 
-    // The masked identifiers accept either the raw or the pre-masked form, so they
-    // are considered sent if either key appears.
-    const masked: Array<[string, string[], (v: unknown) => unknown]> = [
-      ["aadhaar_masked", ["aadhaar_number", "aadhaar_masked"], maskAadhaar],
-      ["pan_masked", ["pan_number", "pan_masked"], maskPan],
-      ["uan_masked", ["uan_number", "uan_masked"], maskUan],
-    ];
-    for (const [column, keys, mask] of masked) {
-      if (!keys.some(sent)) continue;
-      sets.push(`${column} = ?`);
-      params.push(mask(body[keys[0]] ?? body[keys[1]] ?? null));
-    }
+  // The masked identifiers accept either the raw or the pre-masked form, so they
+  // are considered sent if either key appears.
+  const masked: Array<[string, string[], (v: unknown) => unknown]> = [
+    ["aadhaar_masked", ["aadhaar_number", "aadhaar_masked"], maskAadhaar],
+    ["pan_masked", ["pan_number", "pan_masked"], maskPan],
+    ["uan_masked", ["uan_number", "uan_masked"], maskUan],
+  ];
+  for (const [column, keys, mask] of masked) {
+    if (!keys.some(sent)) continue;
+    sets.push(`${column} = ?`);
+    params.push(mask(body[keys[0]] ?? body[keys[1]] ?? null));
+  }
 
-    // Stage always advances, even for a save that changed nothing else.
-    sets.push(
-      "status = 'draft'",
-      "compliance_stage = 'profile_in_progress'",
-      "updated_at = NOW()",
-    );
-    params.push(profile.id);
+  // Stage always advances, even for a save that changed nothing else.
+  sets.push("status = 'draft'", "compliance_stage = 'profile_in_progress'", "updated_at = NOW()");
+  params.push(profile.id);
 
+  await db.execute(
+    `UPDATE employee_epf_compliance_profile SET ${sets.join(", ")} WHERE id = ?`,
+    params,
+  );
+  const { validation } = await syncEpfValidation(req.params.employeeId, req.authUser!.id);
+  await logEpfAudit({
+    employeeId: req.params.employeeId,
+    profileId: String(profile.id),
+    actionType: "EPF_PROFILE_UPDATED",
+    actorUserId: req.authUser!.id,
+    actorType: "hr",
+    oldValue: sanitizeEpfAuditRecord(profile as Record<string, unknown>),
+    newValue: sanitizeEpfAuditRecord((req.body ?? {}) as Record<string, unknown>),
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data: { validation, pack: await getEpfCompliancePack(req.params.employeeId, req.authUser!.id) } });
+}));
+
+employeeJoiningDocumentsRouter.put("/:employeeId/epf-compliance/nominees", h(async (req: AuthenticatedRequest, res) => {
+  const { profile } = await ensureEpfProfile(req.params.employeeId, req.authUser!.id);
+  const existingNominees = await epfNominees(String(profile.id));
+  await db.execute(`DELETE FROM employee_epf_nominee WHERE profile_id = ?`, [profile.id]);
+  const nominees = Array.isArray(req.body?.nominees) ? req.body.nominees : [];
+  for (const nominee of nominees) {
     await db.execute(
-      `UPDATE employee_epf_compliance_profile SET ${sets.join(", ")} WHERE id = ?`,
-      params,
-    );
-    const { validation } = await syncEpfValidation(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    await logEpfAudit({
-      employeeId: req.params.employeeId,
-      profileId: String(profile.id),
-      actionType: "EPF_PROFILE_UPDATED",
-      actorUserId: req.authUser!.id,
-      actorType: "hr",
-      oldValue: sanitizeEpfAuditRecord(profile as Record<string, unknown>),
-      newValue: sanitizeEpfAuditRecord(
-        (req.body ?? {}) as Record<string, unknown>,
-      ),
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({
-      success: true,
-      data: {
-        validation,
-        pack: await getEpfCompliancePack(
-          req.params.employeeId,
-          req.authUser!.id,
-        ),
-      },
-    });
-  }),
-);
-
-employeeJoiningDocumentsRouter.put(
-  "/:employeeId/epf-compliance/nominees",
-  h(async (req: AuthenticatedRequest, res) => {
-    const { profile } = await ensureEpfProfile(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    const existingNominees = await epfNominees(String(profile.id));
-    await db.execute(`DELETE FROM employee_epf_nominee WHERE profile_id = ?`, [
-      profile.id,
-    ]);
-    const nominees = Array.isArray(req.body?.nominees) ? req.body.nominees : [];
-    for (const nominee of nominees) {
-      await db.execute(
-        `INSERT INTO employee_epf_nominee
+      `INSERT INTO employee_epf_nominee
          (id, profile_id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, guardian_name, guardian_relationship, aadhaar_last4, address_line, city, state, pincode, is_primary)
        VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          profile.id,
-          req.params.employeeId,
-          nominee.nominee_name ?? null,
-          nominee.relationship ?? null,
-          nominee.date_of_birth ?? null,
-          nominee.share_percentage ?? 0,
-          nominee.guardian_name ?? null,
-          nominee.guardian_relationship ?? null,
-          nominee.aadhaar_last4 ?? null,
-          nominee.address_line ?? null,
-          nominee.city ?? null,
-          nominee.state ?? null,
-          nominee.pincode ?? null,
-          nominee.is_primary ? 1 : 0,
-        ],
-      );
-    }
-    const { validation } = await syncEpfValidation(
-      req.params.employeeId,
-      req.authUser!.id,
+      [
+        profile.id,
+        req.params.employeeId,
+        nominee.nominee_name ?? null,
+        nominee.relationship ?? null,
+        nominee.date_of_birth ?? null,
+        nominee.share_percentage ?? 0,
+        nominee.guardian_name ?? null,
+        nominee.guardian_relationship ?? null,
+        nominee.aadhaar_last4 ?? null,
+        nominee.address_line ?? null,
+        nominee.city ?? null,
+        nominee.state ?? null,
+        nominee.pincode ?? null,
+        nominee.is_primary ? 1 : 0,
+      ],
     );
-    await logEpfAudit({
-      employeeId: req.params.employeeId,
-      profileId: String(profile.id),
-      actionType: "EPF_NOMINEES_UPDATED",
-      actorUserId: req.authUser!.id,
-      actorType: "hr",
-      oldValue: existingNominees,
-      newValue: nominees,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({
-      success: true,
-      data: {
-        validation,
-        pack: await getEpfCompliancePack(
-          req.params.employeeId,
-          req.authUser!.id,
-        ),
-      },
-    });
-  }),
-);
+  }
+  const { validation } = await syncEpfValidation(req.params.employeeId, req.authUser!.id);
+  await logEpfAudit({
+    employeeId: req.params.employeeId,
+    profileId: String(profile.id),
+    actionType: "EPF_NOMINEES_UPDATED",
+    actorUserId: req.authUser!.id,
+    actorType: "hr",
+    oldValue: existingNominees,
+    newValue: nominees,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data: { validation, pack: await getEpfCompliancePack(req.params.employeeId, req.authUser!.id) } });
+}));
 
-employeeJoiningDocumentsRouter.post(
-  "/:employeeId/epf-compliance/submit",
-  h(async (req: AuthenticatedRequest, res) => {
-    const { profile } = await ensureEpfProfile(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    const { validation } = await syncEpfValidation(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    if (!validation.ready_for_submission) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "EPF compliance pack still has blocking validation errors.",
-          data: validation,
-        });
-    }
-    await db.execute(
-      `UPDATE employee_epf_compliance_profile
+employeeJoiningDocumentsRouter.post("/:employeeId/epf-compliance/submit", h(async (req: AuthenticatedRequest, res) => {
+  const { profile } = await ensureEpfProfile(req.params.employeeId, req.authUser!.id);
+  const { validation } = await syncEpfValidation(req.params.employeeId, req.authUser!.id);
+  if (!validation.ready_for_submission) {
+    return res.status(400).json({ success: false, message: "EPF compliance pack still has blocking validation errors.", data: validation });
+  }
+  await db.execute(
+    `UPDATE employee_epf_compliance_profile
         SET status = 'employee_review_pending',
             compliance_stage = 'employee_review_pending',
             last_submitted_at = NOW(),
             correction_status = 'none',
             updated_at = NOW()
       WHERE id = ?`,
-      [profile.id],
-    );
-    const reviewLink = await createPublicTokenForEpfReview({
-      employeeId: req.params.employeeId,
-      actorUserId: req.authUser!.id,
-    });
-    await logEpfAudit({
-      employeeId: req.params.employeeId,
-      profileId: String(profile.id),
-      actionType: "EPF_SUBMITTED_FOR_EMPLOYEE_REVIEW",
-      actorUserId: req.authUser!.id,
-      actorType: "hr",
-      newValue: { review_link: reviewLink.review_link },
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({
-      success: true,
-      data: {
-        reviewLink,
-        pack: await getEpfCompliancePack(
-          req.params.employeeId,
-          req.authUser!.id,
-        ),
-      },
-    });
-  }),
-);
+    [profile.id],
+  );
+  const reviewLink = await createPublicTokenForEpfReview({ employeeId: req.params.employeeId, actorUserId: req.authUser!.id });
+  await logEpfAudit({
+    employeeId: req.params.employeeId,
+    profileId: String(profile.id),
+    actionType: "EPF_SUBMITTED_FOR_EMPLOYEE_REVIEW",
+    actorUserId: req.authUser!.id,
+    actorType: "hr",
+    newValue: { review_link: reviewLink.review_link },
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data: { reviewLink, pack: await getEpfCompliancePack(req.params.employeeId, req.authUser!.id) } });
+}));
 
-employeeJoiningDocumentsRouter.post(
-  "/:employeeId/epf-compliance/review-link",
-  h(async (req: AuthenticatedRequest, res) => {
-    const data = await createPublicTokenForEpfReview({
-      employeeId: req.params.employeeId,
-      actorUserId: req.authUser!.id,
-    });
-    const { profile } = await ensureEpfProfile(
-      req.params.employeeId,
-      req.authUser!.id,
-    );
-    await logEpfAudit({
-      employeeId: req.params.employeeId,
-      profileId: String(profile.id),
-      actionType: "EPF_REVIEW_LINK_CREATED",
-      actorUserId: req.authUser!.id,
-      actorType: "hr",
-      newValue: buildPublicTokenAuditValue(),
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+employeeJoiningDocumentsRouter.post("/:employeeId/epf-compliance/review-link", h(async (req: AuthenticatedRequest, res) => {
+  const data = await createPublicTokenForEpfReview({ employeeId: req.params.employeeId, actorUserId: req.authUser!.id });
+  const { profile } = await ensureEpfProfile(req.params.employeeId, req.authUser!.id);
+  await logEpfAudit({
+    employeeId: req.params.employeeId,
+    profileId: String(profile.id),
+    actionType: "EPF_REVIEW_LINK_CREATED",
+    actorUserId: req.authUser!.id,
+    actorType: "hr",
+    newValue: buildPublicTokenAuditValue(),
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data });
+}));
 
 export const hrDocumentTemplatesRouter = Router();
-hrDocumentTemplatesRouter.use(
-  requireAuth,
-  requireRole("admin", "super_admin", "hr", "payroll_hr", "payroll"),
-);
+hrDocumentTemplatesRouter.use(requireAuth, requireRole("admin", "super_admin", "hr", "payroll_hr", "payroll"));
 
-hrDocumentTemplatesRouter.get(
-  "/document-templates",
-  h(async (_req: AuthenticatedRequest, res) => {
-    return res.json({
-      success: true,
-      data: await listJoiningDocumentTemplates(),
-    });
-  }),
-);
+hrDocumentTemplatesRouter.get("/document-templates", h(async (_req: AuthenticatedRequest, res) => {
+  return res.json({ success: true, data: await listJoiningDocumentTemplates() });
+}));
 
-hrDocumentTemplatesRouter.put(
-  "/document-templates",
-  h(async (req: AuthenticatedRequest, res) => {
-    const body = req.body ?? {};
-    const data = await upsertJoiningDocumentTemplate({
-      id: body.id ?? null,
-      actorUserId: req.authUser!.id,
-      document_code: String(body.document_code ?? ""),
-      document_name: String(body.document_name ?? ""),
-      document_category: String(body.document_category ?? "other"),
-      template_version: body.template_version ?? "v1",
-      requires_candidate_esign: Boolean(body.requires_candidate_esign),
-      requires_hr_upload: Boolean(body.requires_hr_upload),
-      requires_hr_verification: body.requires_hr_verification !== false,
-      is_mandatory: body.is_mandatory !== false,
-      active_status: body.active_status !== false,
-    });
-    return res.json({ success: true, data });
-  }),
-);
+hrDocumentTemplatesRouter.put("/document-templates", h(async (req: AuthenticatedRequest, res) => {
+  const body = req.body ?? {};
+  const data = await upsertJoiningDocumentTemplate({
+    id: body.id ?? null,
+    actorUserId: req.authUser!.id,
+    document_code: String(body.document_code ?? ""),
+    document_name: String(body.document_name ?? ""),
+    document_category: String(body.document_category ?? "other"),
+    template_version: body.template_version ?? "v1",
+    requires_candidate_esign: Boolean(body.requires_candidate_esign),
+    requires_hr_upload: Boolean(body.requires_hr_upload),
+    requires_hr_verification: body.requires_hr_verification !== false,
+    is_mandatory: body.is_mandatory !== false,
+    active_status: body.active_status !== false,
+  });
+  return res.json({ success: true, data });
+}));
 
 hrDocumentTemplatesRouter.post(
   "/document-templates/:templateId/upload",
-  upload.fields([
-    { name: "template", maxCount: 1 },
-    { name: "file", maxCount: 1 },
-    { name: "schema", maxCount: 1 },
-  ]),
+  upload.fields([{ name: "template", maxCount: 1 }, { name: "file", maxCount: 1 }, { name: "schema", maxCount: 1 }]),
   h(async (req: AuthenticatedRequest, res) => {
-    const files = req.files as
-      Record<string, Express.Multer.File[]> | undefined;
+    const files = req.files as Record<string, Express.Multer.File[]> | undefined;
     const templateFile = files?.["template"]?.[0] ?? files?.["file"]?.[0];
     const schemaFile = files?.["schema"]?.[0];
-    if (!templateFile)
-      return res
-        .status(400)
-        .json({ success: false, message: "template file is required" });
+    if (!templateFile) return res.status(400).json({ success: false, message: "template file is required" });
 
     const fillMode = String(req.body?.fill_mode ?? "placeholder");
     fs.mkdirSync(TEMPLATE_STORAGE_ROOT, { recursive: true });
@@ -1499,11 +1107,7 @@ hrDocumentTemplatesRouter.post(
     const schemaFilename = schemaFile?.originalname ?? null;
     let parsedSchema: unknown = null;
     if (schemaFile) {
-      try {
-        parsedSchema = JSON.parse(schemaFile.buffer.toString("utf8"));
-      } catch {
-        /* ignore bad JSON */
-      }
+      try { parsedSchema = JSON.parse(schemaFile.buffer.toString("utf8")); } catch { /* ignore bad JSON */ }
     }
 
     await db.execute(
@@ -1536,17 +1140,8 @@ hrDocumentTemplatesRouter.post(
     const documentCode = String(templateRows[0]?.document_code ?? "");
 
     if (documentCode) {
-      if (
-        parsedSchema &&
-        typeof parsedSchema === "object" &&
-        Array.isArray((parsedSchema as any).fields)
-      ) {
-        await seedFieldMapsFromSchema(
-          req.params.templateId,
-          documentCode,
-          parsedSchema as any,
-          req.authUser!.id,
-        );
+      if (parsedSchema && typeof parsedSchema === "object" && Array.isArray((parsedSchema as any).fields)) {
+        await seedFieldMapsFromSchema(req.params.templateId, documentCode, parsedSchema as any, req.authUser!.id);
       } else {
         await ensureDefaultTemplateFieldMaps({
           templateId: req.params.templateId,
@@ -1558,83 +1153,46 @@ hrDocumentTemplatesRouter.post(
       }
     }
 
-    return res.json({
-      success: true,
-      data: await listJoiningDocumentTemplates(),
-    });
+    return res.json({ success: true, data: await listJoiningDocumentTemplates() });
   }),
 );
 
-hrDocumentTemplatesRouter.get(
-  "/document-templates/:templateId/field-map",
-  h(async (req: AuthenticatedRequest, res) => {
-    const documentCode = String(
-      req.query.documentCode ?? req.query.document_code ?? "",
-    );
-    if (!documentCode)
-      return res
-        .status(400)
-        .json({ success: false, message: "documentCode is required" });
-    return res.json({
-      success: true,
-      data: await listTemplateFieldMaps(req.params.templateId, documentCode),
-    });
-  }),
-);
+hrDocumentTemplatesRouter.get("/document-templates/:templateId/field-map", h(async (req: AuthenticatedRequest, res) => {
+  const documentCode = String(req.query.documentCode ?? req.query.document_code ?? "");
+  if (!documentCode) return res.status(400).json({ success: false, message: "documentCode is required" });
+  return res.json({ success: true, data: await listTemplateFieldMaps(req.params.templateId, documentCode) });
+}));
 
-hrDocumentTemplatesRouter.put(
-  "/document-templates/:templateId/field-map",
-  h(async (req: AuthenticatedRequest, res) => {
-    const documentCode = String(req.body?.document_code ?? "");
-    if (!documentCode)
-      return res
-        .status(400)
-        .json({ success: false, message: "document_code is required" });
-    const maps = Array.isArray(req.body?.maps) ? req.body.maps : [];
-    const data = await replaceTemplateFieldMaps(
-      req.params.templateId,
-      documentCode,
-      req.authUser!.id,
-      maps,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+hrDocumentTemplatesRouter.put("/document-templates/:templateId/field-map", h(async (req: AuthenticatedRequest, res) => {
+  const documentCode = String(req.body?.document_code ?? "");
+  if (!documentCode) return res.status(400).json({ success: false, message: "document_code is required" });
+  const maps = Array.isArray(req.body?.maps) ? req.body.maps : [];
+  const data = await replaceTemplateFieldMaps(req.params.templateId, documentCode, req.authUser!.id, maps);
+  return res.json({ success: true, data });
+}));
 
 export const publicEmployeeDocumentRouter = Router();
 
-publicEmployeeDocumentRouter.get(
-  "/esign/:token",
-  h(async (req, res) => {
-    const session = await getPublicJoiningDocumentEsignSession(
-      req.params.token,
-    );
-    await synchronizeChecklistFieldValues(session.checklist_id);
-    const review = await getChecklistFieldReview(session.checklist_id);
-    return res.json({
-      success: true,
-      data: {
-        session,
-        review,
-        employee_message:
-          "These details have been prepared for your joining and statutory documents. Please review carefully before you confirm or proceed to eSign.",
-      },
-    });
-  }),
-);
+publicEmployeeDocumentRouter.get("/esign/:token", h(async (req, res) => {
+  const session = await getPublicJoiningDocumentEsignSession(req.params.token);
+  await synchronizeChecklistFieldValues(session.checklist_id);
+  const review = await getChecklistFieldReview(session.checklist_id);
+  return res.json({
+    success: true,
+    data: {
+      session,
+      review,
+      employee_message: "These details have been prepared for your joining and statutory documents. Please review carefully before you confirm or proceed to eSign.",
+    },
+  });
+}));
 
-publicEmployeeDocumentRouter.get(
-  "/esign/:token/download",
-  h(async (req, res) => {
-    const file = await getPublicJoiningDocumentDraftFile(req.params.token);
-    res.setHeader("Content-Type", file.mimeType);
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${file.fileName.replace(/"/g, "")}"`,
-    );
-    fs.createReadStream(file.storagePath).pipe(res);
-  }),
-);
+publicEmployeeDocumentRouter.get("/esign/:token/download", h(async (req, res) => {
+  const file = await getPublicJoiningDocumentDraftFile(req.params.token);
+  res.setHeader("Content-Type", file.mimeType);
+  res.setHeader("Content-Disposition", `attachment; filename="${file.fileName.replace(/"/g, "")}"`);
+  fs.createReadStream(file.storagePath).pipe(res);
+}));
 
 /**
  * Statutory KYC supplied by the employee from the public e-sign review page.
@@ -1672,144 +1230,81 @@ publicEmployeeDocumentRouter.get(
  *   harmful: a branch office shares one public IP, so a dozen employees signing documents on
  *   the same morning would lock each other out of their own onboarding.
  */
-publicEmployeeDocumentRouter.post(
-  "/esign/:token/epf-kyc",
-  h(async (req, res) => {
-    const session = await getPublicJoiningDocumentEsignSession(
-      req.params.token,
-    );
+publicEmployeeDocumentRouter.post("/esign/:token/epf-kyc", h(async (req, res) => {
+  const session = await getPublicJoiningDocumentEsignSession(req.params.token);
 
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const text = (value: unknown): string | null => {
-      const s = typeof value === "string" ? value.trim() : "";
-      return s === "" ? null : s;
-    };
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const text = (value: unknown): string | null => {
+    const s = typeof value === "string" ? value.trim() : "";
+    return s === "" ? null : s;
+  };
 
-    // The page posts snake_case; the service takes camelCase. Mapped explicitly rather than
-    // transformed, so a renamed field fails to compile instead of silently arriving as null.
-    const result = await applyEpfKycAndRegenerate({
-      checklistId: String(session.checklist_id),
-      employeeId: String(session.employee_id),
-      input: {
-        panNumber: text(body.pan_number),
-        panNameAsPerKyc: text(body.pan_name),
-        aadhaarNumber: text(body.aadhaar_number),
-        aadhaarNameAsPerKyc: text(body.aadhaar_name),
-        uanNumber: text(body.uan_number),
-        bankAccountNumber: text(body.bank_account_number),
-        bankIfsc: text(body.bank_ifsc),
-        bankAccountName: text(body.bank_account_name),
-      },
+  // The page posts snake_case; the service takes camelCase. Mapped explicitly rather than
+  // transformed, so a renamed field fails to compile instead of silently arriving as null.
+  const result = await applyEpfKycAndRegenerate({
+    checklistId: String(session.checklist_id),
+    employeeId: String(session.employee_id),
+    input: {
+      panNumber:           text(body.pan_number),
+      panNameAsPerKyc:     text(body.pan_name),
+      aadhaarNumber:       text(body.aadhaar_number),
+      aadhaarNameAsPerKyc: text(body.aadhaar_name),
+      uanNumber:           text(body.uan_number),
+      bankAccountNumber:   text(body.bank_account_number),
+      bankIfsc:            text(body.bank_ifsc),
+      bankAccountName:     text(body.bank_account_name),
+    },
+  });
+
+  if (result.errors.length) {
+    // Shape fixed by the caller: it maps errors[] into per-field messages.
+    return res.status(400).json({
+      success: false,
+      message: "Please correct the highlighted details.",
+      errors: result.errors,
     });
+  }
 
-    if (result.errors.length) {
-      // Shape fixed by the caller: it maps errors[] into per-field messages.
-      return res.status(400).json({
-        success: false,
-        message: "Please correct the highlighted details.",
-        errors: result.errors,
-      });
-    }
+  return res.json({ success: true, regenerated: result.regenerated });
+}));
 
-    return res.json({ success: true, regenerated: result.regenerated });
-  }),
-);
-
-publicEmployeeDocumentRouter.post(
-  "/esign/:token",
-  h(async (req, res) => {
-    const action = String(req.body?.action ?? "");
-    const publicTokenHash = hashIdentifier(req.params.token);
-    if (action === "confirm" || action === "request_correction") {
-      const session = await getPublicJoiningDocumentEsignSession(
-        req.params.token,
-      );
-      const review = await employeeReviewChecklistByToken({
-        publicToken: req.params.token,
-        action: action === "confirm" ? "confirm" : "request_correction",
-        comment: req.body?.comment ?? null,
-        actorName: req.body?.actor_name ?? null,
-        ipAddress: req.ip,
-        userAgent: req.get("user-agent") ?? null,
-      });
-      if (action === "confirm" && Boolean(req.body?.record_epf_consent)) {
-        await db.execute(
-          `INSERT INTO employee_epf_consent_receipt
+publicEmployeeDocumentRouter.post("/esign/:token", h(async (req, res) => {
+  const action = String(req.body?.action ?? "");
+  const publicTokenHash = hashIdentifier(req.params.token);
+  if (action === "confirm" || action === "request_correction") {
+    const session = await getPublicJoiningDocumentEsignSession(req.params.token);
+    const review = await employeeReviewChecklistByToken({
+      publicToken: req.params.token,
+      action: action === "confirm" ? "confirm" : "request_correction",
+      comment: req.body?.comment ?? null,
+      actorName: req.body?.actor_name ?? null,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? null,
+    });
+    if (action === "confirm" && Boolean(req.body?.record_epf_consent)) {
+      await db.execute(
+        `INSERT INTO employee_epf_consent_receipt
            (id, profile_id, employee_id, consent_token, consent_text, consent_ip, consent_user_agent, consented_by_name)
          SELECT UUID(), p.id, p.employee_id, ?, ?, ?, ?, ?
            FROM employee_epf_compliance_profile p
           WHERE p.employee_id = ?`,
-          [
-            hashIdentifier(req.params.token),
-            EPF_REVIEW_CONSENT_TEXT,
-            req.ip,
-            req.get("user-agent") ?? null,
-            req.body?.actor_name ?? null,
-            session.employee_id,
-          ],
-        );
-        await db.execute(
-          `UPDATE employee_epf_compliance_profile
+        [
+          hashIdentifier(req.params.token),
+          EPF_REVIEW_CONSENT_TEXT,
+          req.ip,
+          req.get("user-agent") ?? null,
+          req.body?.actor_name ?? null,
+          session.employee_id,
+        ],
+      );
+      await db.execute(
+        `UPDATE employee_epf_compliance_profile
             SET consent_status = 'confirmed',
                 status = 'employee_review_pending',
             compliance_stage = 'payroll_review_pending',
             updated_at = NOW()
           WHERE employee_id = ?`,
-          [session.employee_id],
-        );
-        const [profileRows] = await db.execute<RowDataPacket[]>(
-          `SELECT id FROM employee_epf_compliance_profile WHERE employee_id = ? LIMIT 1`,
-          [session.employee_id],
-        );
-        await logEpfAudit({
-          employeeId: String(session.employee_id),
-          profileId: String(profileRows[0]?.id ?? ""),
-          actionType: "EPF_EMPLOYEE_CONSENT_RECORDED",
-          actorType: "public_token",
-          remarks: req.body?.comment ?? null,
-          newValue: {
-            actor_name: req.body?.actor_name ?? null,
-            consent_token_hash: publicTokenHash,
-          },
-          ipAddress: req.ip,
-          userAgent: req.get("user-agent") ?? null,
-        });
-      } else if (
-        action === "request_correction" &&
-        String(session.document_code).toUpperCase() === "EPF_DECLARATION"
-      ) {
-        const [profileRows] = await db.execute<RowDataPacket[]>(
-          `SELECT id FROM employee_epf_compliance_profile WHERE employee_id = ? LIMIT 1`,
-          [session.employee_id],
-        );
-        await db.execute(
-          `UPDATE employee_epf_compliance_profile
-            SET correction_status = 'requested',
-                correction_requested_at = NOW(),
-                correction_reason = ?,
-                updated_at = NOW()
-          WHERE employee_id = ?`,
-          [req.body?.comment ?? null, session.employee_id],
-        );
-        await logEpfAudit({
-          employeeId: String(session.employee_id),
-          profileId: String(profileRows[0]?.id ?? ""),
-          actionType: "EPF_CORRECTION_REQUESTED",
-          actorType: "public_token",
-          remarks: req.body?.comment ?? null,
-          newValue: {
-            actor_name: req.body?.actor_name ?? null,
-            public_token_hash: publicTokenHash,
-          },
-          ipAddress: req.ip,
-          userAgent: req.get("user-agent") ?? null,
-        });
-      }
-      return res.json({ success: true, data: review });
-    }
-    if (action === "esign") {
-      const session = await getPublicJoiningDocumentEsignSession(
-        req.params.token,
+        [session.employee_id],
       );
       const [profileRows] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM employee_epf_compliance_profile WHERE employee_id = ? LIMIT 1`,
@@ -1818,32 +1313,67 @@ publicEmployeeDocumentRouter.post(
       await logEpfAudit({
         employeeId: String(session.employee_id),
         profileId: String(profileRows[0]?.id ?? ""),
-        actionType: "EPF_ESIGN_STARTED",
+        actionType: "EPF_EMPLOYEE_CONSENT_RECORDED",
         actorType: "public_token",
         remarks: req.body?.comment ?? null,
-        newValue: {
-          public_token_hash: publicTokenHash,
-          providerUrlIssued: Boolean(session.provider_url),
-        },
+        newValue: { actor_name: req.body?.actor_name ?? null, consent_token_hash: publicTokenHash },
         ipAddress: req.ip,
         userAgent: req.get("user-agent") ?? null,
       });
-      return res.json({
-        success: true,
-        data: {
-          provider_url: session.provider_url,
-          tx_status: session.tx_status,
-          fallback_message: session.provider_url
-            ? null
-            : "Luckpay eSign is unavailable. Use the wet-sign fallback workflow.",
-        },
+    } else if (action === "request_correction" && String(session.document_code).toUpperCase() === "EPF_DECLARATION") {
+      const [profileRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM employee_epf_compliance_profile WHERE employee_id = ? LIMIT 1`,
+        [session.employee_id],
+      );
+      await db.execute(
+        `UPDATE employee_epf_compliance_profile
+            SET correction_status = 'requested',
+                correction_requested_at = NOW(),
+                correction_reason = ?,
+                updated_at = NOW()
+          WHERE employee_id = ?`,
+        [req.body?.comment ?? null, session.employee_id],
+      );
+      await logEpfAudit({
+        employeeId: String(session.employee_id),
+        profileId: String(profileRows[0]?.id ?? ""),
+        actionType: "EPF_CORRECTION_REQUESTED",
+        actorType: "public_token",
+        remarks: req.body?.comment ?? null,
+        newValue: { actor_name: req.body?.actor_name ?? null, public_token_hash: publicTokenHash },
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent") ?? null,
       });
     }
-    return res
-      .status(400)
-      .json({ success: false, message: "Unsupported action" });
-  }),
-);
+    return res.json({ success: true, data: review });
+  }
+  if (action === "esign") {
+    const session = await getPublicJoiningDocumentEsignSession(req.params.token);
+    const [profileRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employee_epf_compliance_profile WHERE employee_id = ? LIMIT 1`,
+      [session.employee_id],
+    );
+    await logEpfAudit({
+      employeeId: String(session.employee_id),
+      profileId: String(profileRows[0]?.id ?? ""),
+      actionType: "EPF_ESIGN_STARTED",
+      actorType: "public_token",
+      remarks: req.body?.comment ?? null,
+      newValue: { public_token_hash: publicTokenHash, providerUrlIssued: Boolean(session.provider_url) },
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? null,
+    });
+    return res.json({
+      success: true,
+      data: {
+        provider_url: session.provider_url,
+        tx_status: session.tx_status,
+        fallback_message: session.provider_url ? null : "Luckpay eSign is unavailable. Use the wet-sign fallback workflow.",
+      },
+    });
+  }
+  return res.status(400).json({ success: false, message: "Unsupported action" });
+}));
 
 // DORMANT BY PROVIDER DESIGN — not broken, and not misconfigured.
 //
@@ -1869,139 +1399,113 @@ publicEmployeeDocumentRouter.post(
 // configured to push, a pushed completion enters `handleJoiningDocumentEsignWebhook` and
 // therefore converges on the same completion writer a pulled one does — one writer, one
 // resulting database state, whichever direction the news arrives from.
-publicEmployeeDocumentRouter.post(
-  "/esign/webhook/luckpay",
-  h(async (req, res) => {
-    const configuredSecret = env.LUCKPAY_WEBHOOK_SECRET;
-    const webhookSecret = req.get("X-HRMS-Webhook-Secret");
-    const auth = classifyLuckpayWebhookAuth(webhookSecret, configuredSecret);
-    if (!auth.ok) {
-      return rejectLuckpayWebhook(req, res, auth.reason);
-    }
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const data = await handleJoiningDocumentEsignWebhook({
-      payload: body,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
+publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", h(async (req, res) => {
+  const configuredSecret = env.LUCKPAY_WEBHOOK_SECRET;
+  const webhookSecret = req.get("X-HRMS-Webhook-Secret");
+  const auth = classifyLuckpayWebhookAuth(webhookSecret, configuredSecret);
+  if (!auth.ok) {
+    return rejectLuckpayWebhook(req, res, auth.reason);
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const data = await handleJoiningDocumentEsignWebhook({
+    payload: body,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
 
-    // Fallback: joining-document handler only looks in employee_document_esign_transaction.
-    // Appointment letter e-signs are tracked in appointment_letter_request instead.
-    // On signed callback: auto-complete the full chain (candidate_signed → company_signed →
-    // completed) without DSC, download the signed PDF from Luckpay, save to vault, email candidate.
-    if (!data.matched) {
-      const clientTxId = String(
-        body.client_transaction_id ?? body.clientTransactionId ?? "",
-      ).trim();
-      if (clientTxId) {
-        const [alRows] = await db.execute<RowDataPacket[]>(
-          `SELECT alr.id, alr.candidate_esign_status, alr.candidate_id,
+  // Fallback: joining-document handler only looks in employee_document_esign_transaction.
+  // Appointment letter e-signs are tracked in appointment_letter_request instead.
+  // On signed callback: auto-complete the full chain (candidate_signed → company_signed →
+  // completed) without DSC, download the signed PDF from Luckpay, save to vault, email candidate.
+  if (!data.matched) {
+    const clientTxId = String(body.client_transaction_id ?? body.clientTransactionId ?? "").trim();
+    if (clientTxId) {
+      const [alRows] = await db.execute<RowDataPacket[]>(
+        `SELECT alr.id, alr.candidate_esign_status, alr.candidate_id,
                 c.full_name, c.email
            FROM appointment_letter_request alr
            JOIN ats_candidate c ON c.id = alr.candidate_id
           WHERE alr.esign_transaction_id = ? LIMIT 1`,
-          [clientTxId],
-        );
-        const alRow = alRows[0];
-        if (alRow && alRow.candidate_esign_status === "pending") {
-          const rawStatus = String(
-            body.status ?? body.event ?? body.result ?? "",
-          ).toLowerCase();
-          const isSigned =
-            rawStatus.includes("sign") ||
-            rawStatus.includes("success") ||
-            rawStatus.includes("complete");
-          if (isSigned) {
-            // Step 1: mark candidate signed
-            await db.execute(
-              `UPDATE appointment_letter_request
+        [clientTxId],
+      );
+      const alRow = alRows[0];
+      if (alRow && alRow.candidate_esign_status === "pending") {
+        const rawStatus = String(body.status ?? body.event ?? body.result ?? "").toLowerCase();
+        const isSigned = rawStatus.includes("sign") || rawStatus.includes("success") || rawStatus.includes("complete");
+        if (isSigned) {
+          // Step 1: mark candidate signed
+          await db.execute(
+            `UPDATE appointment_letter_request
                 SET current_state = 'candidate_signed', candidate_esign_status = 'signed', candidate_esign_at = NOW()
               WHERE id = ?`,
-              [alRow.id],
-            );
+            [alRow.id],
+          );
 
-            // Step 2: auto company-sign (no DSC) + finalize
-            const uploadRoot =
-              process.env.UPLOAD_DIR ?? path.join(process.cwd(), "uploads");
-            const vaultDir = path.join(
-              uploadRoot,
-              "vault",
-              "appointment-letters",
-              String(alRow.id),
-            );
-            const vaultFile = path.join(
-              vaultDir,
-              "signed_appointment_letter.pdf",
-            );
-            const vaultRelPath = `vault/appointment-letters/${alRow.id}/signed_appointment_letter.pdf`;
+          // Step 2: auto company-sign (no DSC) + finalize
+          const uploadRoot = process.env.UPLOAD_DIR ?? path.join(process.cwd(), "uploads");
+          const vaultDir = path.join(uploadRoot, "vault", "appointment-letters", String(alRow.id));
+          const vaultFile = path.join(vaultDir, "signed_appointment_letter.pdf");
+          const vaultRelPath = `vault/appointment-letters/${alRow.id}/signed_appointment_letter.pdf`;
 
-            // Download signed PDF from Luckpay
-            let pdfBytes: Buffer | null = null;
-            try {
-              const { luckpayClient } =
-                await import("../integrations/luckpay/luckpay.client.js");
-              const [txRows] = await db.execute<RowDataPacket[]>(
-                `SELECT provider_reference_id FROM ats_provider_transaction_log
+          // Download signed PDF from Luckpay
+          let pdfBytes: Buffer | null = null;
+          try {
+            const { luckpayClient } = await import("../integrations/luckpay/luckpay.client.js");
+            const [txRows] = await db.execute<RowDataPacket[]>(
+              `SELECT provider_reference_id FROM ats_provider_transaction_log
                WHERE candidate_id = ? AND provider = 'luckpay' AND service_type = 'esign'
                ORDER BY updated_at DESC LIMIT 1`,
-                [alRow.candidate_id],
-              );
-              const result = await luckpayClient.downloadESignDocument({
-                clientTransactionId: clientTxId,
-                transactionId: String(txRows[0]?.provider_reference_id ?? ""),
-              });
-              if (result.buffer?.length) pdfBytes = result.buffer;
-            } catch (dlErr) {
-              console.warn(
-                "[appointment-webhook] PDF download failed:",
-                dlErr instanceof Error ? dlErr.message : dlErr,
-              );
-            }
+              [alRow.candidate_id],
+            );
+            const result = await luckpayClient.downloadESignDocument({
+              clientTransactionId: clientTxId,
+              transactionId: String(txRows[0]?.provider_reference_id ?? ""),
+            });
+            if (result.buffer?.length) pdfBytes = result.buffer;
+          } catch (dlErr) {
+            console.warn("[appointment-webhook] PDF download failed:", dlErr instanceof Error ? dlErr.message : dlErr);
+          }
 
-            // Fallback to offer letter PDF if download failed
-            if (!pdfBytes) {
-              const [offerRows] = await db.execute<RowDataPacket[]>(
-                `SELECT pdf_path FROM ats_offer_letters WHERE candidate_id = ? AND pdf_path IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
-                [alRow.candidate_id],
-              );
-              const srcPath = offerRows[0]?.pdf_path
-                ? path.join(uploadRoot, String(offerRows[0].pdf_path))
-                : null;
-              if (srcPath && fs.existsSync(srcPath))
-                pdfBytes = fs.readFileSync(srcPath);
-            }
+          // Fallback to offer letter PDF if download failed
+          if (!pdfBytes) {
+            const [offerRows] = await db.execute<RowDataPacket[]>(
+              `SELECT pdf_path FROM ats_offer_letters WHERE candidate_id = ? AND pdf_path IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+              [alRow.candidate_id],
+            );
+            const srcPath = offerRows[0]?.pdf_path ? path.join(uploadRoot, String(offerRows[0].pdf_path)) : null;
+            if (srcPath && fs.existsSync(srcPath)) pdfBytes = fs.readFileSync(srcPath);
+          }
 
-            if (pdfBytes) {
-              fs.mkdirSync(vaultDir, { recursive: true });
-              fs.writeFileSync(vaultFile, pdfBytes);
-            }
+          if (pdfBytes) {
+            fs.mkdirSync(vaultDir, { recursive: true });
+            fs.writeFileSync(vaultFile, pdfBytes);
+          }
 
-            // Finalize in DB
-            await db.execute(
-              `UPDATE appointment_letter_request
+          // Finalize in DB
+          await db.execute(
+            `UPDATE appointment_letter_request
                 SET current_state = 'completed', company_sign_status = 'signed',
                     company_sign_at = NOW(), company_signed_by = 'system_auto',
                     pdf_locked = 1, pdf_locked_at = NOW(), vault_path = ?
               WHERE id = ?`,
-              [vaultRelPath, alRow.id],
-            );
-            const [existingVault] = await db.execute<RowDataPacket[]>(
-              `SELECT id FROM employee_document_vault WHERE source_entity_id = ? LIMIT 1`,
-              [alRow.id],
-            );
-            if (!existingVault[0]) {
-              await db.execute(
-                `INSERT INTO employee_document_vault
+            [vaultRelPath, alRow.id],
+          );
+          const [existingVault] = await db.execute<RowDataPacket[]>(
+            `SELECT id FROM employee_document_vault WHERE source_entity_id = ? LIMIT 1`, [alRow.id],
+          );
+          if (!existingVault[0]) {
+            await db.execute(
+              `INSERT INTO employee_document_vault
                  (id, candidate_id, document_type, document_name, file_path, is_locked, locked_at, locked_by, source_module, source_entity_id, uploaded_at, uploaded_by)
                VALUES (?, ?, 'APPOINTMENT_LETTER', 'Signed Appointment Letter', ?, 1, NOW(), 'system_auto', 'letters', ?, NOW(), 'system_auto')`,
-                [randomUUID(), alRow.candidate_id, vaultRelPath, alRow.id],
-              );
-            }
-            await db.execute(
-              `INSERT INTO appointment_letter_audit (id, letter_request_id, action, from_state, to_state, performed_by, remarks, created_at)
-             VALUES (UUID(), ?, 'AUTO_COMPLETE_AND_SEND', 'candidate_esign_pending', 'completed', 'system_auto', 'Auto-finalized and emailed via Luckpay webhook', NOW())`,
-              [alRow.id],
+              [randomUUID(), alRow.candidate_id, vaultRelPath, alRow.id],
             );
+          }
+          await db.execute(
+            `INSERT INTO appointment_letter_audit (id, letter_request_id, action, from_state, to_state, performed_by, remarks, created_at)
+             VALUES (UUID(), ?, 'AUTO_COMPLETE_AND_SEND', 'candidate_esign_pending', 'completed', 'system_auto', 'Auto-finalized and emailed via Luckpay webhook', NOW())`,
+            [alRow.id],
+          );
 
           // Step 3: email candidate
           const candidateEmail = String(alRow.email ?? "");
@@ -2014,65 +1518,36 @@ publicEmployeeDocumentRouter.post(
                 html: `<p>Dear ${String(alRow.full_name ?? "")},</p>
                        <p>Your appointment letter is ready. It is attached to this email as a PDF.</p>
                        <p>Regards,<br/>MAS Callnet HR Team</p>`,
-                  attachments: pdfBytes
-                    ? [
-                        {
-                          filename: "Appointment_Letter.pdf",
-                          content: pdfBytes,
-                        },
-                      ]
-                    : undefined,
-                });
-              } catch (mailErr) {
-                console.warn(
-                  "[appointment-webhook] Email failed:",
-                  mailErr instanceof Error ? mailErr.message : mailErr,
-                );
-              }
+                attachments: pdfBytes ? [{ filename: "Appointment_Letter.pdf", content: pdfBytes }] : undefined,
+              });
+            } catch (mailErr) {
+              console.warn("[appointment-webhook] Email failed:", mailErr instanceof Error ? mailErr.message : mailErr);
             }
-
-            return res.json({
-              success: true,
-              data: {
-                matched: true,
-                processed: true,
-                source: "appointment_letter",
-                auto_sent: true,
-              },
-            });
           }
+
+          return res.json({ success: true, data: { matched: true, processed: true, source: "appointment_letter", auto_sent: true } });
         }
       }
     }
+  }
 
-    return res.json({ success: true, data });
-  }),
-);
+  return res.json({ success: true, data });
+}));
 
-publicEmployeeDocumentRouter.post(
-  "/esign/:token/start",
-  h(async (req, res) => {
-    const session = await getPublicJoiningDocumentEsignSession(
-      req.params.token,
-    );
-    return res.json({
-      success: true,
-      data: {
-        provider_url: session.provider_url,
-        tx_status: session.tx_status,
-        fallback_message: session.provider_url
-          ? null
-          : "Luckpay eSign is unavailable. Use the wet-sign fallback workflow.",
-      },
-    });
-  }),
-);
+publicEmployeeDocumentRouter.post("/esign/:token/start", h(async (req, res) => {
+  const session = await getPublicJoiningDocumentEsignSession(req.params.token);
+  return res.json({
+    success: true,
+    data: {
+      provider_url: session.provider_url,
+      tx_status: session.tx_status,
+      fallback_message: session.provider_url ? null : "Luckpay eSign is unavailable. Use the wet-sign fallback workflow.",
+    },
+  });
+}));
 
 export const payrollEpfComplianceRouter = Router();
-payrollEpfComplianceRouter.use(
-  requireAuth,
-  requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr", "manager"),
-);
+payrollEpfComplianceRouter.use(requireAuth, requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr", "manager"));
 
 payrollEpfComplianceRouter.get("/epf-compliance", h(async (req: AuthenticatedRequest, res) => {
   const userId = req.authUser!.id;
@@ -2110,11 +1585,10 @@ payrollEpfComplianceRouter.get("/epf-compliance", h(async (req: AuthenticatedReq
        LEFT JOIN employee_epf_ecr_readiness ecr ON ecr.employee_id = p.employee_id
       WHERE (${whereSql})
       ORDER BY p.updated_at DESC`,
-      adminBypass ? [] : scoped.params,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    adminBypass ? [] : scoped.params,
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 payrollEpfComplianceRouter.post("/epf-compliance/:employeeId/review", h(async (req: AuthenticatedRequest, res) => {
   const decision = String(req.body?.decision ?? "");
@@ -2140,42 +1614,33 @@ payrollEpfComplianceRouter.post("/epf-compliance/:employeeId/review", h(async (r
             retention_locked_at = CASE WHEN ? = 'approved' THEN COALESCE(retention_locked_at, NOW()) ELSE retention_locked_at END,
             updated_at = NOW()
       WHERE employee_id = ?`,
-      [
-        decision === "approved" ? "payroll_approved" : "correction_requested",
-        decision === "approved"
-          ? "payroll_review_complete"
-          : "correction_requested",
-        decision === "approved" ? "none" : "requested",
-        decision,
-        decision,
-        req.authUser!.id,
-        decision,
-        req.body?.remarks ?? null,
-        req.authUser!.id,
-        decision,
-        req.params.employeeId,
-      ],
-    );
-    await logEpfAudit({
-      employeeId: req.params.employeeId,
-      profileId: String(profile.id),
-      actionType:
-        decision === "approved"
-          ? "EPF_PAYROLL_APPROVED"
-          : "EPF_PAYROLL_PUSHBACK",
-      actorUserId: req.authUser!.id,
-      actorType: "payroll",
-      remarks: req.body?.remarks ?? null,
-      newValue: { decision },
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-    return res.json({
-      success: true,
-      data: await getEpfCompliancePack(req.params.employeeId, req.authUser!.id),
-    });
-  }),
-);
+    [
+      decision === "approved" ? "payroll_approved" : "correction_requested",
+      decision === "approved" ? "payroll_review_complete" : "correction_requested",
+      decision === "approved" ? "none" : "requested",
+      decision,
+      decision,
+      req.authUser!.id,
+      decision,
+      req.body?.remarks ?? null,
+      req.authUser!.id,
+      decision,
+      req.params.employeeId,
+    ],
+  );
+  await logEpfAudit({
+    employeeId: req.params.employeeId,
+    profileId: String(profile.id),
+    actionType: decision === "approved" ? "EPF_PAYROLL_APPROVED" : "EPF_PAYROLL_PUSHBACK",
+    actorUserId: req.authUser!.id,
+    actorType: "payroll",
+    remarks: req.body?.remarks ?? null,
+    newValue: { decision },
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent") ?? null,
+  });
+  return res.json({ success: true, data: await getEpfCompliancePack(req.params.employeeId, req.authUser!.id) });
+}));
 
 /**
  * POST /api/payroll/statutory-numbers/bulk-upload
@@ -2209,70 +1674,29 @@ payrollEpfComplianceRouter.post("/epf-compliance/:employeeId/review", h(async (r
 payrollEpfComplianceRouter.post(
   "/statutory-numbers/bulk-upload",
   requireAuth,
-  requireRole(
-    "admin",
-    "super_admin",
-    "hr",
-    "hr_head",
-    "payroll",
-    "payroll_head",
-  ),
+  requireRole("admin", "super_admin", "hr", "hr_head", "payroll", "payroll_head"),
   upload.single("file"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     if (!req.file) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: 'No file uploaded. Send CSV as multipart field "file".',
-        });
+      return res.status(400).json({ success: false, message: 'No file uploaded. Send CSV as multipart field "file".' });
     }
-    const dryRun = ["1", "true", "yes"].includes(
-      String(req.query.dryRun ?? "").toLowerCase(),
-    );
+    const dryRun = ["1", "true", "yes"].includes(String(req.query.dryRun ?? "").toLowerCase());
 
-    const lines = req.file.buffer
-      .toString("utf-8")
-      .split(/\r?\n/)
-      .filter((l) => l.trim());
-    if (lines.length < 2)
-      return res
-        .status(400)
-        .json({ success: false, message: "CSV has no data rows" });
+    const lines = req.file.buffer.toString("utf-8").split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length < 2) return res.status(400).json({ success: false, message: "CSV has no data rows" });
 
-    const headers = lines[0]
-      .split(",")
-      .map((x) => x.trim().toLowerCase().replace(/\s+/g, "_"));
+    const headers = lines[0].split(",").map((x) => x.trim().toLowerCase().replace(/\s+/g, "_"));
     const idx = {
-      code: headers.findIndex((x) =>
-        ["employee_code", "employeecode", "emp_code", "code"].includes(x),
-      ),
-      esic: headers.findIndex((x) =>
-        ["esic_number", "esic", "esic_no", "esi_number"].includes(x),
-      ),
-      pf: headers.findIndex((x) =>
-        ["pf_number", "pf", "pf_no", "epf_number"].includes(x),
-      ),
-      uan: headers.findIndex((x) =>
-        ["uan_number", "uan", "uan_no"].includes(x),
-      ),
+      code: headers.findIndex((x) => ["employee_code", "employeecode", "emp_code", "code"].includes(x)),
+      esic: headers.findIndex((x) => ["esic_number", "esic", "esic_no", "esi_number"].includes(x)),
+      pf:   headers.findIndex((x) => ["pf_number", "pf", "pf_no", "epf_number"].includes(x)),
+      uan:  headers.findIndex((x) => ["uan_number", "uan", "uan_no"].includes(x)),
     };
     if (idx.code === -1) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "CSV must have an employee_code column",
-        });
+      return res.status(400).json({ success: false, message: "CSV must have an employee_code column" });
     }
     if (idx.esic === -1 && idx.pf === -1 && idx.uan === -1) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "CSV must have at least one of esic_number, pf_number, uan_number",
-        });
+      return res.status(400).json({ success: false, message: "CSV must have at least one of esic_number, pf_number, uan_number" });
     }
 
     // Branch scoping (owner ruling 2026-10-01): an hr / payroll uploader can only touch employees inside
@@ -2285,59 +1709,39 @@ payrollEpfComplianceRouter.post(
       `SELECT id, employee_code FROM employees WHERE active_status = 1 AND (${uploadScope.sql})`,
       uploadScope.params,
     );
+    const empMap = new Map((empRows as RowDataPacket[]).map((e) => [String(e.employee_code ?? "").trim().toLowerCase(), e.id as string]));
 
     const errors: string[] = [];
-    const updates: Array<{
-      id: string;
-      code: string;
-      esic?: string;
-      pf?: string;
-      uan?: string;
-    }> = [];
+    const updates: Array<{ id: string; code: string; esic?: string; pf?: string; uan?: string }> = [];
 
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(",").map((c) => c.trim());
       const code = cols[idx.code] ?? "";
-      if (!code) {
-        errors.push(`Row ${i + 1}: employee_code is blank`);
-        continue;
-      }
+      if (!code) { errors.push(`Row ${i + 1}: employee_code is blank`); continue; }
 
       const empId = empMap.get(code.toLowerCase());
       if (!empId) { errors.push(`Row ${i + 1}: employee_code "${code}" not found among active employees in your scope`); continue; }
 
       const pick = (at: number) => (at === -1 ? "" : (cols[at] ?? "").trim());
       const esic = pick(idx.esic);
-      const pf = pick(idx.pf);
-      const uan = pick(idx.uan);
+      const pf   = pick(idx.pf);
+      const uan  = pick(idx.uan);
 
       // Digits only for the two that have a fixed statutory width.
       // 10, not 17. 17 is the employer's ESIC registration width, not the per-employee
       // Insured Person number this CSV carries — so the old check rejected every correct
       // value. Live 2026-08-16: 382 of the 394 active employees with an esic_number hold
       // 10 digits, and none holds 17. Kept in step with ESI_FORMAT in shared/statutoryFormat.ts.
-      if (esic && !/^\d{10}$/.test(esic.replace(/\D/g, ""))) {
-        errors.push(
-          `Row ${i + 1} (${code}): ESIC number must be 10 digits, got "${esic}"`,
-        );
-        continue;
+      if (esic && !/^\d{10}$/.test(esic.replace(/\D/g, "")) ) {
+        errors.push(`Row ${i + 1} (${code}): ESIC number must be 10 digits, got "${esic}"`); continue;
       }
       if (uan && !/^\d{12}$/.test(uan.replace(/\D/g, ""))) {
-        errors.push(
-          `Row ${i + 1} (${code}): UAN must be 12 digits, got "${uan}"`,
-        );
-        continue;
+        errors.push(`Row ${i + 1} (${code}): UAN must be 12 digits, got "${uan}"`); continue;
       }
       if (pf && pf.length > 40) {
-        errors.push(
-          `Row ${i + 1} (${code}): PF number looks wrong (over 40 characters)`,
-        );
-        continue;
+        errors.push(`Row ${i + 1} (${code}): PF number looks wrong (over 40 characters)`); continue;
       }
-      if (!esic && !pf && !uan) {
-        errors.push(`Row ${i + 1} (${code}): no values to set`);
-        continue;
-      }
+      if (!esic && !pf && !uan) { errors.push(`Row ${i + 1} (${code}): no values to set`); continue; }
 
       updates.push({
         id: empId,
@@ -2352,11 +1756,7 @@ payrollEpfComplianceRouter.post(
       return res.json({
         success: true,
         dryRun: true,
-        data: {
-          wouldUpdate: updates.length,
-          rowsRejected: errors.length,
-          errors: errors.slice(0, 100),
-        },
+        data: { wouldUpdate: updates.length, rowsRejected: errors.length, errors: errors.slice(0, 100) },
       });
     }
 
@@ -2365,23 +1765,14 @@ payrollEpfComplianceRouter.post(
       // Only the columns this row actually carries. A blank cell must not clear a stored value.
       const sets: string[] = [];
       const params: unknown[] = [];
-      if (u.esic) {
-        sets.push("esic_number = ?");
-        params.push(u.esic);
-      }
-      if (u.pf) {
-        sets.push("epf_number = ?");
-        params.push(u.pf);
-      }
-      if (u.uan) {
-        sets.push("uan_number = ?");
-        params.push(u.uan);
-      }
+      if (u.esic) { sets.push("esic_number = ?"); params.push(u.esic); }
+      if (u.pf)   { sets.push("epf_number = ?");  params.push(u.pf); }
+      if (u.uan)  { sets.push("uan_number = ?");  params.push(u.uan); }
       if (!sets.length) continue;
       params.push(u.id);
       const [r] = await db.execute<ResultSetHeader>(
         `UPDATE employees SET ${sets.join(", ")}, updated_at = NOW() WHERE id = ?`,
-        params,
+        params
       );
       updated += r.affectedRows;
     }
@@ -2392,22 +1783,13 @@ payrollEpfComplianceRouter.post(
       module_key: "PAYROLL",
       entity_type: "employees",
       entity_id: "bulk",
-      change_summary: {
-        rowsAccepted: updates.length,
-        rowsRejected: errors.length,
-        updated,
-      },
+      change_summary: { rowsAccepted: updates.length, rowsRejected: errors.length, updated },
       req,
     });
 
     return res.json({
       success: true,
-      data: {
-        updated,
-        rowsAccepted: updates.length,
-        rowsRejected: errors.length,
-        errors: errors.slice(0, 100),
-      },
+      data: { updated, rowsAccepted: updates.length, rowsRejected: errors.length, errors: errors.slice(0, 100) },
     });
-  }),
+  })
 );

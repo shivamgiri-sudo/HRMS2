@@ -2,11 +2,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../lib/logger.js";
 import type { RowDataPacket } from "mysql2";
-import {
-  evaluateCoachingTrigger,
-  type QualitySignal,
-  type CoachingTrigger,
-} from "./coaching-trigger.js";
+import { evaluateCoachingTrigger, type QualitySignal, type CoachingTrigger } from "./coaching-trigger.js";
 
 /**
  * Turns a coaching decision into rows somebody will actually see.
@@ -25,12 +21,7 @@ import {
 
 export type CoachingOutcome =
   | { created: false; reason: "no_trigger" | "already_open" | "no_employee" }
-  | {
-      created: true;
-      sessionId: string;
-      trainingNeedId: string | null;
-      trigger: CoachingTrigger;
-    };
+  | { created: true; sessionId: string; trainingNeedId: string | null; trigger: CoachingTrigger };
 
 /**
  * The LOGIN of the person who should hold the conversation.
@@ -66,11 +57,7 @@ async function resolveCoach(employeeId: string): Promise<string | null> {
  * happened and a fresh shortfall deserves a new session, while a cancelled one
  * was deliberately dropped and should not be silently resurrected.
  */
-async function hasOpenSession(
-  employeeId: string,
-  from: string,
-  to: string,
-): Promise<boolean> {
+async function hasOpenSession(employeeId: string, from: string, to: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM coaching_session
       WHERE employee_id = ?
@@ -95,9 +82,7 @@ export async function raiseCoachingFromQuality(input: {
   const trigger = evaluateCoachingTrigger(input.signal);
   if (!trigger) return { created: false, reason: "no_trigger" };
 
-  if (
-    await hasOpenSession(input.employeeId, input.periodStart, input.periodEnd)
-  ) {
+  if (await hasOpenSession(input.employeeId, input.periodStart, input.periodEnd)) {
     // The nightly sync will re-evaluate this same shortfall every night until
     // somebody acts on it. One open session is the point; thirty is noise.
     return { created: false, reason: "already_open" };
@@ -126,11 +111,7 @@ export async function raiseCoachingFromQuality(input: {
          (id, employee_id, coach_user_id, session_date, session_type, notes, action_items, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled')`,
       [
-        sessionId,
-        input.employeeId,
-        coachId,
-        input.periodEnd,
-        trigger.sessionType,
+        sessionId, input.employeeId, coachId, input.periodEnd, trigger.sessionType,
         trigger.reason,
         // Structured alongside the prose so a UI can render it without parsing
         // a sentence, and so the numbers behind the decision stay auditable.
@@ -155,13 +136,8 @@ export async function raiseCoachingFromQuality(input: {
             priority, status, identified_by)
          VALUES (?, ?, ?, ?, 'quality', ?, ?, 'identified', ?)`,
         [
-          trainingNeedId,
-          input.employeeId,
-          input.metricId ?? null,
-          sessionId,
-          trigger.reason,
-          trigger.priority,
-          input.raisedByUserId ?? null,
+          trainingNeedId, input.employeeId, input.metricId ?? null, sessionId,
+          trigger.reason, trigger.priority, input.raisedByUserId ?? null,
         ],
       );
     }
@@ -177,11 +153,7 @@ export async function raiseCoachingFromQuality(input: {
   }
 
   logger.info(
-    {
-      employeeId: input.employeeId,
-      priority: trigger.priority,
-      sessionType: trigger.sessionType,
-    },
+    { employeeId: input.employeeId, priority: trigger.priority, sessionType: trigger.sessionType },
     `[Coaching] raised a ${trigger.priority} ${trigger.sessionType} session — ${trigger.reason}`,
   );
 

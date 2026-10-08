@@ -88,300 +88,34 @@ type MetricDefinition = {
 };
 
 const METRICS: Readonly<Record<MetricKey, MetricDefinition>> = {
-  hc: {
-    code: "HEADCOUNT",
-    label: "Active headcount",
-    unit: "employees",
-    source: "Employee master",
-    sourceTable: "employees",
-    higherIsBetter: true,
-    moduleCode: "hrms",
-    execute: getHeadcountMetrics,
-  },
-  hiringAlert: {
-    code: "HIRING_ALERT",
-    label: "Hiring shortage",
-    unit: "seats",
-    source: "Cost centre billing mandate",
-    sourceTable: "workforce_mandate",
-    higherIsBetter: false,
-    moduleCode: "hrms",
-    execute: getHiringAlertMetrics,
-  },
-  onb: {
-    code: "ONBOARDING",
-    label: "Onboarding pipeline",
-    unit: "candidates",
-    source: "ATS onboarding",
-    sourceTable: "ats_onboarding_bridge",
-    higherIsBetter: true,
-    moduleCode: "ats",
-    execute: getOnboardingMetrics,
-  },
-  att: {
-    code: "ATTENDANCE",
-    label: "Processed attendance rate",
-    unit: "percent",
-    source: "Processed attendance",
-    sourceTable: "attendance_daily_record",
-    numeratorKey: "attendedDays",
-    denominatorKey: "expectedToWork",
-    higherIsBetter: true,
-    moduleCode: "attendance",
-    execute: getAttendanceMetrics,
-  },
-  payroll: {
-    code: "PAYROLL_READINESS",
-    label: "Payroll readiness",
-    unit: "employees",
-    source: "Employee payroll master",
-    sourceTable: "employees",
-    numeratorKey: "readyCount",
-    denominatorKey: "total",
-    higherIsBetter: true,
-    moduleCode: "payroll",
-    execute: getPayrollReadinessMetrics,
-  },
-  incentive: {
-    code: "INCENTIVE",
-    label: "Pending incentive batches",
-    unit: "batches",
-    source: "Incentive upload",
-    sourceTable: "incentive_upload_batch",
-    higherIsBetter: false,
-    moduleCode: "payroll",
-    execute: getIncentiveMetrics,
-  },
-  tat: {
-    code: "TAT",
-    label: "Open TAT items",
-    unit: "items",
-    source: "TAT governance",
-    sourceTable: "task_tat_instance",
-    higherIsBetter: false,
-    moduleCode: "governance",
-    execute: getTatMetrics,
-  },
-  resign: {
-    code: "RESIGNATION",
-    label: "Active exits",
-    unit: "requests",
-    source: "Exit management",
-    sourceTable: "exit_request",
-    higherIsBetter: false,
-    moduleCode: "exit",
-    execute: getResignationMetrics,
-  },
-  dpdp: {
-    code: "DPDP",
-    label: "Pending DPDP requests",
-    unit: "requests",
-    source: "DPDP consent withdrawal",
-    sourceTable: "dpdp_consent_withdrawal",
-    higherIsBetter: false,
-    moduleCode: "compliance",
-    execute: getDpdpWithdrawalMetrics,
-  },
-  appointmentEsign: {
-    code: "APPOINTMENT_ESIGN",
-    label: "Appointment eSign pending",
-    unit: "requests",
-    source: "Appointment letters",
-    sourceTable: "appointment_letter_request",
-    higherIsBetter: false,
-    moduleCode: "onboarding",
-    execute: getAppointmentEsignMetrics,
-  },
-  bgv: {
-    code: "BGV",
-    label: "BGV pending",
-    unit: "candidates",
-    source: "Candidate BGV",
-    sourceTable: "candidate_bgv_check",
-    higherIsBetter: false,
-    moduleCode: "ats",
-    execute: getBgvMetrics,
-  },
-  nm: {
-    code: "NAME_MISMATCH",
-    label: "Name mismatches",
-    unit: "candidates",
-    source: "Name match summary",
-    sourceTable: "candidate_name_match_summary",
-    higherIsBetter: false,
-    moduleCode: "ats",
-    execute: getNameMismatchMetrics,
-  },
-  joiningDocEsign: {
-    code: "JOINING_DOC_ESIGN",
-    label: "Joining document eSign pending",
-    unit: "documents",
-    source: "Joining documents",
-    sourceTable: "employee_joining_document_checklist",
-    higherIsBetter: false,
-    moduleCode: "onboarding",
-    execute: getJoiningDocEsignMetrics,
-  },
-  attException: {
-    code: "ATTENDANCE_EXCEPTIONS",
-    label: "Open attendance exceptions",
-    unit: "issues",
-    source: "Attendance reconciliation",
-    sourceTable: "attendance_reconciliation_issue",
-    numeratorKey: "blockers",
-    denominatorKey: "openTotal",
-    higherIsBetter: false,
-    moduleCode: "attendance",
-    execute: getAttendanceExceptionMetrics,
-  },
-  docCompliance: {
-    code: "DOC_COMPLIANCE",
-    label: "Employees with no documents",
-    unit: "employees",
-    source: "Employee documents",
-    sourceTable: "employee_documents",
-    numeratorKey: "employeesWithDocs",
-    denominatorKey: "activeEmployees",
-    higherIsBetter: false,
-    moduleCode: "hrms",
-    execute: getDocumentComplianceMetrics,
-  },
-  biometric: {
-    code: "BIOMETRIC_ACTIVITY",
-    label: "Biometric punch coverage",
-    unit: "employees",
-    source: "Biometric daily activity",
-    sourceTable: "integration_biometric_daily",
-    numeratorKey: "completePunchPairs",
-    denominatorKey: "employees",
-    higherIsBetter: true,
-    moduleCode: "attendance",
-    execute: getBiometricActivityMetrics,
-  },
-  salaryComponents: {
-    code: "SALARY_COMPONENTS",
-    label: "Payroll components in latest run",
-    unit: "components",
-    source: "Salary component lines",
-    sourceTable: "salary_prep_line_component",
-    higherIsBetter: true,
-    moduleCode: "payroll",
-    execute: getSalaryComponentMetrics,
-  },
-  recruiterActivity: {
-    code: "RECRUITER_ACTIVITY",
-    label: "Recruiter pipeline (30d)",
-    unit: "leads",
-    source: "Recruiter hiring activity",
-    sourceTable: "ats_recruiter_hiring_activity",
-    numeratorKey: "selected",
-    denominatorKey: "leads",
-    higherIsBetter: true,
-    moduleCode: "ats",
-    execute: getRecruiterActivityMetrics,
-  },
-  training: {
-    code: "TRAINING_PROGRESS",
-    label: "Training completion rate",
-    unit: "percent",
-    source: "LMS progress snapshot",
-    sourceTable: "lms_learning_progress_snapshot",
-    numeratorKey: "completed",
-    denominatorKey: "assignments",
-    higherIsBetter: true,
-    moduleCode: "lms",
-    execute: getTrainingProgressMetrics,
-  },
-  leaveApprovals: {
-    code: "LEAVE_APPROVALS",
-    label: "Pending leave approvals",
-    unit: "requests",
-    source: "Leave requests",
-    sourceTable: "leave_request",
-    higherIsBetter: false,
-    moduleCode: "leave",
-    execute: getLeaveApprovalMetrics,
-  },
-  attendanceStatus: {
-    code: "ATTENDANCE_STATUS",
-    label: "Attendance",
-    unit: "days",
-    source: "Attendance snapshot",
-    sourceTable: "employee_performance_daily_snapshot",
-    higherIsBetter: true,
-    moduleCode: "performance-scorecard",
-    execute: getAttendanceStatusMetric,
-  },
-  latecoming: {
-    code: "LATECOMING",
-    label: "Latecoming",
-    unit: "minutes",
-    source: "Attendance snapshot",
-    sourceTable: "employee_performance_daily_snapshot",
-    higherIsBetter: false,
-    moduleCode: "performance-scorecard",
-    execute: getLatecomingMetric,
-  },
-  unplannedLeave: {
-    code: "UNPLANNED_LEAVE",
-    label: "Unplanned Leave",
-    unit: "days",
-    source: "Attendance snapshot",
-    sourceTable: "employee_performance_daily_snapshot",
-    higherIsBetter: false,
-    moduleCode: "performance-scorecard",
-    execute: getUnplannedLeaveMetric,
-  },
-  pipStatus: {
-    code: "PIP_STATUS",
-    label: "PIP Status",
-    unit: "status",
-    source: "PIP records",
-    sourceTable: "pip_record",
-    higherIsBetter: true,
-    moduleCode: "performance-scorecard",
-    execute: getPipStatusMetric,
-  },
-  qualityBaseline: {
-    code: "QUALITY_BASELINE",
-    label: "Quality",
-    unit: "score",
-    source: "KPI daily actuals",
-    sourceTable: "kpi_daily_actual",
-    higherIsBetter: true,
-    moduleCode: "performance-scorecard",
-    execute: getQualityBaselineMetric,
-  },
-  attrition: {
-    code: "ATTRITION",
-    label: "Attrition",
-    unit: "%",
-    source: "Attrition analytics",
-    sourceTable: "employee_performance_daily_snapshot",
-    higherIsBetter: false,
-    moduleCode: "performance-scorecard",
-    execute: getAttritionMetric,
-  },
-  shrinkage: {
-    code: "SHRINKAGE",
-    label: "Shrinkage",
-    unit: "%",
-    source: "Shrinkage analytics",
-    sourceTable: "employee_performance_daily_snapshot",
-    higherIsBetter: false,
-    moduleCode: "performance-scorecard",
-    execute: getShrinkageMetric,
-  },
-  revenue: {
-    code: "REVENUE",
-    label: "Revenue",
-    unit: "INR",
-    source: "Finance/BI",
-    sourceTable: "employee_performance_daily_snapshot",
-    higherIsBetter: true,
-    moduleCode: "performance-scorecard",
-    execute: getRevenueMetric,
-  },
+  hc: { code: "HEADCOUNT", label: "Active headcount", unit: "employees", source: "Employee master", sourceTable: "employees", higherIsBetter: true, moduleCode: "hrms", execute: getHeadcountMetrics },
+  hiringAlert: { code: "HIRING_ALERT", label: "Hiring shortage", unit: "seats", source: "Cost centre billing mandate", sourceTable: "workforce_mandate", higherIsBetter: false, moduleCode: "hrms", execute: getHiringAlertMetrics },
+  onb: { code: "ONBOARDING", label: "Onboarding pipeline", unit: "candidates", source: "ATS onboarding", sourceTable: "ats_onboarding_bridge", higherIsBetter: true, moduleCode: "ats", execute: getOnboardingMetrics },
+  att: { code: "ATTENDANCE", label: "Processed attendance rate", unit: "percent", source: "Processed attendance", sourceTable: "attendance_daily_record", numeratorKey: "attendedDays", denominatorKey: "expectedToWork", higherIsBetter: true, moduleCode: "attendance", execute: getAttendanceMetrics },
+  payroll: { code: "PAYROLL_READINESS", label: "Payroll readiness", unit: "employees", source: "Employee payroll master", sourceTable: "employees", numeratorKey: "readyCount", denominatorKey: "total", higherIsBetter: true, moduleCode: "payroll", execute: getPayrollReadinessMetrics },
+  incentive: { code: "INCENTIVE", label: "Pending incentive batches", unit: "batches", source: "Incentive upload", sourceTable: "incentive_upload_batch", higherIsBetter: false, moduleCode: "payroll", execute: getIncentiveMetrics },
+  tat: { code: "TAT", label: "Open TAT items", unit: "items", source: "TAT governance", sourceTable: "task_tat_instance", higherIsBetter: false, moduleCode: "governance", execute: getTatMetrics },
+  resign: { code: "RESIGNATION", label: "Active exits", unit: "requests", source: "Exit management", sourceTable: "exit_request", higherIsBetter: false, moduleCode: "exit", execute: getResignationMetrics },
+  dpdp: { code: "DPDP", label: "Pending DPDP requests", unit: "requests", source: "DPDP consent withdrawal", sourceTable: "dpdp_consent_withdrawal", higherIsBetter: false, moduleCode: "compliance", execute: getDpdpWithdrawalMetrics },
+  appointmentEsign: { code: "APPOINTMENT_ESIGN", label: "Appointment eSign pending", unit: "requests", source: "Appointment letters", sourceTable: "appointment_letter_request", higherIsBetter: false, moduleCode: "onboarding", execute: getAppointmentEsignMetrics },
+  bgv: { code: "BGV", label: "BGV pending", unit: "candidates", source: "Candidate BGV", sourceTable: "candidate_bgv_check", higherIsBetter: false, moduleCode: "ats", execute: getBgvMetrics },
+  nm: { code: "NAME_MISMATCH", label: "Name mismatches", unit: "candidates", source: "Name match summary", sourceTable: "candidate_name_match_summary", higherIsBetter: false, moduleCode: "ats", execute: getNameMismatchMetrics },
+  joiningDocEsign: { code: "JOINING_DOC_ESIGN", label: "Joining document eSign pending", unit: "documents", source: "Joining documents", sourceTable: "employee_joining_document_checklist", higherIsBetter: false, moduleCode: "onboarding", execute: getJoiningDocEsignMetrics },
+  attException: { code: "ATTENDANCE_EXCEPTIONS", label: "Open attendance exceptions", unit: "issues", source: "Attendance reconciliation", sourceTable: "attendance_reconciliation_issue", numeratorKey: "blockers", denominatorKey: "openTotal", higherIsBetter: false, moduleCode: "attendance", execute: getAttendanceExceptionMetrics },
+  docCompliance: { code: "DOC_COMPLIANCE", label: "Employees with no documents", unit: "employees", source: "Employee documents", sourceTable: "employee_documents", numeratorKey: "employeesWithDocs", denominatorKey: "activeEmployees", higherIsBetter: false, moduleCode: "hrms", execute: getDocumentComplianceMetrics },
+  biometric: { code: "BIOMETRIC_ACTIVITY", label: "Biometric punch coverage", unit: "employees", source: "Biometric daily activity", sourceTable: "integration_biometric_daily", numeratorKey: "completePunchPairs", denominatorKey: "employees", higherIsBetter: true, moduleCode: "attendance", execute: getBiometricActivityMetrics },
+  salaryComponents: { code: "SALARY_COMPONENTS", label: "Payroll components in latest run", unit: "components", source: "Salary component lines", sourceTable: "salary_prep_line_component", higherIsBetter: true, moduleCode: "payroll", execute: getSalaryComponentMetrics },
+  recruiterActivity: { code: "RECRUITER_ACTIVITY", label: "Recruiter pipeline (30d)", unit: "leads", source: "Recruiter hiring activity", sourceTable: "ats_recruiter_hiring_activity", numeratorKey: "selected", denominatorKey: "leads", higherIsBetter: true, moduleCode: "ats", execute: getRecruiterActivityMetrics },
+  training: { code: "TRAINING_PROGRESS", label: "Training completion rate", unit: "percent", source: "LMS progress snapshot", sourceTable: "lms_learning_progress_snapshot", numeratorKey: "completed", denominatorKey: "assignments", higherIsBetter: true, moduleCode: "lms", execute: getTrainingProgressMetrics },
+  leaveApprovals: { code: "LEAVE_APPROVALS", label: "Pending leave approvals", unit: "requests", source: "Leave requests", sourceTable: "leave_request", higherIsBetter: false, moduleCode: "leave", execute: getLeaveApprovalMetrics },
+  attendanceStatus: { code: "ATTENDANCE_STATUS", label: "Attendance", unit: "days", source: "Attendance snapshot", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: true, moduleCode: "performance-scorecard", execute: getAttendanceStatusMetric },
+  latecoming: { code: "LATECOMING", label: "Latecoming", unit: "minutes", source: "Attendance snapshot", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: false, moduleCode: "performance-scorecard", execute: getLatecomingMetric },
+  unplannedLeave: { code: "UNPLANNED_LEAVE", label: "Unplanned Leave", unit: "days", source: "Attendance snapshot", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: false, moduleCode: "performance-scorecard", execute: getUnplannedLeaveMetric },
+  pipStatus: { code: "PIP_STATUS", label: "PIP Status", unit: "status", source: "PIP records", sourceTable: "pip_record", higherIsBetter: true, moduleCode: "performance-scorecard", execute: getPipStatusMetric },
+  qualityBaseline: { code: "QUALITY_BASELINE", label: "Quality", unit: "score", source: "KPI daily actuals", sourceTable: "kpi_daily_actual", higherIsBetter: true, moduleCode: "performance-scorecard", execute: getQualityBaselineMetric },
+  attrition: { code: "ATTRITION", label: "Attrition", unit: "%", source: "Attrition analytics", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: false, moduleCode: "performance-scorecard", execute: getAttritionMetric },
+  shrinkage: { code: "SHRINKAGE", label: "Shrinkage", unit: "%", source: "Shrinkage analytics", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: false, moduleCode: "performance-scorecard", execute: getShrinkageMetric },
+  revenue: { code: "REVENUE", label: "Revenue", unit: "INR", source: "Finance/BI", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: true, moduleCode: "performance-scorecard", execute: getRevenueMetric },
 };
 
 /**
@@ -475,17 +209,10 @@ function numberFromDetail(result: MetricResult, key?: string): number | null {
  * metric actually describes while still satisfying the schema. Falls back to the
  * request's own generation time when the metric didn't compute one of its own.
  */
-function normalizeAsOf(
-  value: string | null | undefined,
-  generatedAt: Date,
-): string {
+function normalizeAsOf(value: string | null | undefined, generatedAt: Date): string {
   if (!value) return generatedAt.toISOString();
-  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value)
-    ? new Date(`${value}T00:00:00.000Z`)
-    : new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? generatedAt.toISOString()
-    : parsed.toISOString();
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? generatedAt.toISOString() : parsed.toISOString();
 }
 
 export function adaptLegacyMetric(
@@ -494,11 +221,8 @@ export function adaptLegacyMetric(
   scope: DashboardScope,
   generatedAt: Date,
 ): DashboardMetric {
-  const definition = Object.values(METRICS).find(
-    (item) => item.code === metricCode,
-  );
-  if (!definition)
-    throw new Error(`Metric definition not found: ${metricCode}`);
+  const definition = Object.values(METRICS).find((item) => item.code === metricCode);
+  if (!definition) throw new Error(`Metric definition not found: ${metricCode}`);
   const rawAvailable = result.value !== null && result.value !== undefined;
   const statusMap = {
     ok: "healthy",
@@ -521,8 +245,7 @@ export function adaptLegacyMetric(
   // SOURCE_UNAVAILABLE: the tile said the database was unreachable when the query had in
   // fact run perfectly and matched no rows. QUERY_FAILED still wins, because a metric that
   // actually threw has a row count of nothing for a different reason.
-  const emptySource =
-    result.sourceRowCount === 0 && result.errorCode !== "QUERY_FAILED";
+  const emptySource = result.sourceRowCount === 0 && result.errorCode !== "QUERY_FAILED";
   // An empty source counts as AVAILABLE — the read succeeded. unavailableMetricCodes()
   // drives the red "database sources unavailable" banner off this flag, and listing empty
   // tables there is what buried real breakage among routine empties.
@@ -537,8 +260,7 @@ export function adaptLegacyMetric(
   const errorMessage = emptySource
     ? `${definition.source} holds no records for this scope yet`
     : !available
-      ? (result.errorMessage ??
-        `${definition.source} did not return a usable value`)
+      ? (result.errorMessage ?? `${definition.source} did not return a usable value`)
       : null;
 
   return {
@@ -578,9 +300,7 @@ export function adaptLegacyMetric(
   };
 }
 
-export function getDashboardMetricKeys(
-  code: DashboardCode,
-): readonly MetricKey[] {
+export function getDashboardMetricKeys(code: DashboardCode): readonly MetricKey[] {
   return DASHBOARD_METRICS[code];
 }
 
@@ -638,9 +358,9 @@ export type RoleMetricConfigEntry = {
  */
 export function getRoleMetricConfigEntries(): readonly RoleMetricConfigEntry[] {
   const entries: RoleMetricConfigEntry[] = [];
-  for (const [dashboardCode, keys] of Object.entries(
-    DASHBOARD_METRICS,
-  ) as Array<[DashboardCode, readonly MetricKey[]]>) {
+  for (const [dashboardCode, keys] of Object.entries(DASHBOARD_METRICS) as Array<
+    [DashboardCode, readonly MetricKey[]]
+  >) {
     keys.forEach((key, index) => {
       entries.push({
         dashboardCode,
@@ -666,21 +386,14 @@ export async function executeMetricByCode(
   scope: DashboardScope,
 ): Promise<MetricResult | null> {
   const normalized = String(metricCode).trim().toUpperCase();
-  const definition = Object.values(METRICS).find(
-    (entry) => entry.code === normalized,
-  );
+  const definition = Object.values(METRICS).find((entry) => entry.code === normalized);
   if (!definition) return null;
   return definition.execute(scope);
 }
 
-export function isMetricConfiguredForDashboard(
-  code: DashboardCode,
-  metricCode: string,
-): boolean {
+export function isMetricConfiguredForDashboard(code: DashboardCode, metricCode: string): boolean {
   const normalizedMetricCode = String(metricCode).trim().toUpperCase();
-  return DASHBOARD_METRICS[code].some(
-    (key) => METRICS[key].code === normalizedMetricCode,
-  );
+  return DASHBOARD_METRICS[code].some((key) => METRICS[key].code === normalizedMetricCode);
 }
 
 export async function executeDashboardMetrics(
@@ -692,10 +405,7 @@ export async function executeDashboardMetrics(
     DASHBOARD_METRICS[code].map(async (key) => {
       const definition = METRICS[key];
       const result = await definition.execute(scope);
-      return [
-        key,
-        adaptLegacyMetric(definition.code, result, scope, asOf),
-      ] as const;
+      return [key, adaptLegacyMetric(definition.code, result, scope, asOf)] as const;
     }),
   );
   return Object.fromEntries(entries);

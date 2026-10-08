@@ -24,18 +24,11 @@ const read = (p: string) => fs.readFileSync(path.join(backendRoot, p), "utf8");
  * snapshot no longer claims they exist — and this test keeps them from coming back together.
  */
 describe("org cost-centre create writes only columns the table has", () => {
-  const PHANTOM = [
-    "current_mandate",
-    "billing_days_per_month",
-    "hours_per_fte_per_day",
-    "billing_type",
-  ];
+  const PHANTOM = ["current_mandate", "billing_days_per_month", "hours_per_fte_per_day", "billing_type"];
 
   it("the INSERT names no column that is absent from cost_centre_master", () => {
     const service = read("src/modules/org/org.service.ts");
-    const insert = service.slice(
-      service.indexOf("INSERT INTO cost_centre_master"),
-    );
+    const insert = service.slice(service.indexOf("INSERT INTO cost_centre_master"));
     const columns = insert.slice(insert.indexOf("("), insert.indexOf("VALUES"));
     for (const column of PHANTOM) {
       expect(columns).not.toContain(column);
@@ -44,11 +37,10 @@ describe("org cost-centre create writes only columns the table has", () => {
     expect(columns).toContain("working_days_per_week");
   });
 
+
   it("the UPDATE does not either — the worse of the two, since nothing gates it", () => {
     const service = read("src/modules/org/org.service.ts");
-    const update = service.slice(
-      service.indexOf("UPDATE cost_centre_master SET"),
-    );
+    const update = service.slice(service.indexOf("UPDATE cost_centre_master SET"));
     const assignments = update.slice(0, update.indexOf("WHERE id = ?"));
     for (const column of PHANTOM) {
       expect(assignments).not.toContain(column);
@@ -67,6 +59,7 @@ describe("org cost-centre create writes only columns the table has", () => {
     }
   });
 
+
   it("the schema snapshot no longer claims cost_centre_master has them", () => {
     const snapshot = JSON.parse(read("sql/schema-snapshot.json")) as {
       tables: Record<string, string[]>;
@@ -81,20 +74,11 @@ describe("org cost-centre create writes only columns the table has", () => {
 
   it("column list and placeholder count still agree", () => {
     const service = read("src/modules/org/org.service.ts");
-    const insert = service.slice(
-      service.indexOf("INSERT INTO cost_centre_master"),
-    );
-    const columns = insert.slice(
-      insert.indexOf("(") + 1,
-      insert.indexOf("VALUES"),
-    );
-    const columnCount = columns
-      .split(",")
-      .filter((part) => part.trim().replace(/\)/g, "")).length;
+    const insert = service.slice(service.indexOf("INSERT INTO cost_centre_master"));
+    const columns = insert.slice(insert.indexOf("(") + 1, insert.indexOf("VALUES"));
+    const columnCount = columns.split(",").filter((part) => part.trim().replace(/\)/g, "")).length;
     const values = insert.slice(insert.indexOf("VALUES"));
-    const placeholders = (
-      values.slice(0, values.indexOf("`")).match(/\?/g) ?? []
-    ).length;
+    const placeholders = (values.slice(0, values.indexOf("`")).match(/\?/g) ?? []).length;
     expect(placeholders).toBe(columnCount);
   });
 });

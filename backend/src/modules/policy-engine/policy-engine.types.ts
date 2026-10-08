@@ -1,11 +1,11 @@
 export type ConfigValueType =
-  | "integer"
-  | "decimal"
-  | "percentage"
-  | "string"
-  | "boolean"
-  | "json_array"
-  | "json_object";
+  | 'integer'
+  | 'decimal'
+  | 'percentage'
+  | 'string'
+  | 'boolean'
+  | 'json_array'
+  | 'json_object';
 
 export interface ConfigItem {
   config_key: string;

@@ -41,7 +41,7 @@ export interface ClientMandateSummary {
  */
 export async function syncMandateSeatsFromDbBill(
   financeYear: string,
-  month: string,
+  month: string
 ): Promise<{ synced: number; errors: string[] }> {
   const errors: string[] = [];
 
@@ -65,7 +65,7 @@ export async function syncMandateSeatsFromDbBill(
        AND CAST(p.rate AS DECIMAL(12,2)) BETWEEN 10000 AND 100000
        AND cm.active = 1
      ORDER BY cm.client, cm.cost_center`,
-    [financeYear, month],
+    [financeYear, month]
   );
 
   const periodMonth = monthToPeriod(month, financeYear);
@@ -76,18 +76,17 @@ export async function syncMandateSeatsFromDbBill(
       const [existing] = await db.execute<RowDataPacket[]>(
         `SELECT id, mandate_seats FROM mandate_seat_history
          WHERE cost_center = ? AND period_month = ?`,
-        [r.cost_center, periodMonth],
+        [r.cost_center, periodMonth]
       );
 
       const prevMonth = getPreviousMonth(periodMonth);
       const [prevRecord] = await db.execute<RowDataPacket[]>(
         `SELECT mandate_seats FROM mandate_seat_history
          WHERE cost_center = ? AND period_month = ?`,
-        [r.cost_center, prevMonth],
+        [r.cost_center, prevMonth]
       );
       const prevSeats = prevRecord[0]?.mandate_seats ?? null;
-      const seatChange =
-        prevSeats !== null ? Math.round(r.seats) - prevSeats : 0;
+      const seatChange = prevSeats !== null ? Math.round(r.seats) - prevSeats : 0;
 
       if (existing.length > 0) {
         await db.execute(
@@ -108,7 +107,7 @@ export async function syncMandateSeatsFromDbBill(
             prevSeats,
             seatChange,
             existing[0].id,
-          ],
+          ]
         );
       } else {
         await db.execute(
@@ -130,7 +129,7 @@ export async function syncMandateSeatsFromDbBill(
             r.amount,
             prevSeats,
             seatChange,
-          ],
+          ]
         );
       }
       synced++;
@@ -147,7 +146,7 @@ export async function syncMandateSeatsFromDbBill(
  */
 export async function getMandateSeatTrend(
   costCenter: string,
-  months = 12,
+  months = 12
 ): Promise<SeatTrendPoint[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT period_month, mandate_seats, actual_billed_seats, monthly_revenue, seat_rate
@@ -155,7 +154,7 @@ export async function getMandateSeatTrend(
      WHERE cost_center = ?
      ORDER BY period_month DESC
      LIMIT ?`,
-    [costCenter, months],
+    [costCenter, months]
   );
 
   return rows
@@ -173,7 +172,7 @@ export async function getMandateSeatTrend(
  * Get client-level mandate summary with drill-down data
  */
 export async function getClientMandateSummary(
-  periodMonth: string,
+  periodMonth: string
 ): Promise<ClientMandateSummary[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -187,7 +186,7 @@ export async function getClientMandateSummary(
      WHERE period_month = ?
      GROUP BY client_name
      ORDER BY total_revenue DESC`,
-    [periodMonth],
+    [periodMonth]
   );
 
   return rows.map((r) => ({
@@ -205,7 +204,7 @@ export async function getClientMandateSummary(
  */
 export async function getClientCostCenterDetails(
   clientName: string,
-  periodMonth: string,
+  periodMonth: string
 ): Promise<MandateSeatRecord[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -219,7 +218,7 @@ export async function getClientCostCenterDetails(
      FROM mandate_seat_history
      WHERE client_name = ? AND period_month = ?
      ORDER BY monthly_revenue DESC`,
-    [clientName, periodMonth],
+    [clientName, periodMonth]
   );
 
   return rows.map((r) => ({
@@ -234,8 +233,7 @@ export async function getClientCostCenterDetails(
     seat_rate: Number(r.seat_rate),
     monthly_revenue: Number(r.monthly_revenue),
     seat_change: Number(r.seat_change),
-    seat_change_pct:
-      r.seat_change_pct !== null ? Number(r.seat_change_pct) : null,
+    seat_change_pct: r.seat_change_pct !== null ? Number(r.seat_change_pct) : null,
     source: r.source,
   }));
 }
@@ -248,12 +246,12 @@ export async function updateMandateSeats(
   periodMonth: string,
   newMandateSeats: number,
   changeReason: string,
-  userId: string,
+  userId: string
 ): Promise<{ success: boolean; previous: number }> {
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id, mandate_seats FROM mandate_seat_history
      WHERE cost_center = ? AND period_month = ?`,
-    [costCenter, periodMonth],
+    [costCenter, periodMonth]
   );
 
   const previous = existing[0]?.mandate_seats ?? 0;
@@ -276,7 +274,7 @@ export async function updateMandateSeats(
         changeReason,
         userId,
         existing[0].id,
-      ],
+      ]
     );
   } else {
     await db.execute(
@@ -284,7 +282,7 @@ export async function updateMandateSeats(
          (cost_center, period_month, mandate_seats, seat_change,
           change_reason, change_effective_date, source, updated_by)
        VALUES (?, ?, ?, 0, ?, CURDATE(), 'manual', ?)`,
-      [costCenter, periodMonth, newMandateSeats, changeReason, userId],
+      [costCenter, periodMonth, newMandateSeats, changeReason, userId]
     );
   }
 
@@ -294,7 +292,9 @@ export async function updateMandateSeats(
 /**
  * Get branch-level mandate summary (for P&L drill-down)
  */
-export async function getBranchMandateSummary(periodMonth: string): Promise<
+export async function getBranchMandateSummary(
+  periodMonth: string
+): Promise<
   Array<{
     branch_name: string;
     client_count: number;
@@ -314,7 +314,7 @@ export async function getBranchMandateSummary(periodMonth: string): Promise<
      WHERE period_month = ? AND branch_name IS NOT NULL
      GROUP BY branch_name
      ORDER BY total_revenue DESC`,
-    [periodMonth],
+    [periodMonth]
   );
 
   return rows.map((r) => ({
@@ -331,7 +331,7 @@ export async function getBranchMandateSummary(periodMonth: string): Promise<
  */
 export async function getMultiPeriodTrend(
   costCenters: string[],
-  periods = 6,
+  periods = 6
 ): Promise<Map<string, SeatTrendPoint[]>> {
   if (costCenters.length === 0) return new Map();
 
@@ -341,7 +341,7 @@ export async function getMultiPeriodTrend(
      FROM mandate_seat_history
      WHERE cost_center IN (${costCenters.map(() => "?").join(",")})
      ORDER BY cost_center, period_month DESC`,
-    costCenters,
+    costCenters
   );
 
   const result = new Map<string, SeatTrendPoint[]>();
@@ -370,18 +370,8 @@ export async function getMultiPeriodTrend(
 // Helpers
 function monthToPeriod(monthLabel: string, finYear: string): string {
   const months: Record<string, string> = {
-    Jan: "01",
-    Feb: "02",
-    Mar: "03",
-    Apr: "04",
-    May: "05",
-    Jun: "06",
-    Jul: "07",
-    Aug: "08",
-    Sep: "09",
-    Oct: "10",
-    Nov: "11",
-    Dec: "12",
+    Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+    Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
   };
   const [mon] = monthLabel.split("-");
   const monthNum = months[mon] ?? "01";

@@ -2,10 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const migration = readFileSync(
-  resolve(__dirname, "../../../sql/227_week_off_preference_schema_fix.sql"),
-  "utf8",
-);
+const migration = readFileSync(resolve(__dirname, "../../../sql/227_week_off_preference_schema_fix.sql"), "utf8");
 
 describe("week off preference schema fix migration", () => {
   it("does not use MySQL-incompatible executable alter syntax", () => {

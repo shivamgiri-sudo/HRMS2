@@ -1,9 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's real "Repeat CDR" export -- writes into the SAME already-
@@ -12,11 +9,7 @@ import {
  * 3 real columns; live schema matches the doc exactly.
  */
 
-export const BVO_REPEAT_CDR_HEADERS = [
-  "PhoneNumber",
-  "CallStatus",
-  "Agent",
-] as const;
+export const BVO_REPEAT_CDR_HEADERS = ["PhoneNumber", "CallStatus", "Agent"] as const;
 
 /** Lowercase, strip everything but letters/digits -- same convention as every other importer
  * in this module. Needed because the uploader sends the file's literal header text as keys, and
@@ -30,8 +23,7 @@ function get(data: Record<string, unknown>, ...keys: string[]): string {
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
     const v = normalized[normalizeKey(k)];
-    if (v !== undefined && v !== null && String(v).trim() !== "")
-      return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
   }
   return "";
 }
@@ -52,8 +44,7 @@ export async function importBvoRepeatCdrMasmisBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0)
-    return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
@@ -68,21 +59,13 @@ export async function importBvoRepeatCdrMasmisBatch(
     const phone = get(data, "PhoneNumber");
     if (!phone) {
       const msg = `Row ${row.row_no}: "PhoneNumber" is required`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
-      values: [
-        phone,
-        get(data, "CallStatus") || null,
-        get(data, "Agent") || null,
-        null,
-        batchId,
-      ],
+      values: [phone, get(data, "CallStatus") || null, get(data, "Agent") || null, null, batchId],
     });
   }
 
@@ -105,17 +88,12 @@ export async function importBvoRepeatCdrMasmisBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 

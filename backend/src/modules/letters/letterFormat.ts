@@ -24,30 +24,14 @@ export function istDate(value: unknown): string {
   }
   // en-CA gives yyyy-mm-dd.
   return new Intl.DateTimeFormat("en-CA", {
-    timeZone: IST_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
+    timeZone: IST_TZ, year: "numeric", month: "2-digit", day: "2-digit",
   }).format(d);
 }
 
 // Spelled out rather than taken from Intl: ICU renders September as "Sept" in
 // some versions and "Sep" in others, and a legal document should not change
 // wording because Node was upgraded.
-const MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** Human form used in the letter body, e.g. "26 Sep 2025". */
 export function istDisplayDate(value: unknown): string {
@@ -62,10 +46,7 @@ export function istTimestamp(value: Date = new Date()): string {
   const iso = istDate(value);
   const [y, m, d] = iso.split("-");
   const t = new Intl.DateTimeFormat("en-GB", {
-    timeZone: IST_TZ,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
+    timeZone: IST_TZ, hour: "2-digit", minute: "2-digit", hour12: true,
   }).format(value);
   return `${d} ${MONTHS[Number(m) - 1]} ${y}, ${t} IST`;
 }
@@ -82,14 +63,10 @@ export function istTimestamp(value: Date = new Date()): string {
  * than rejecting.
  */
 export function assertUsableName(name: unknown): string {
-  const n = String(name ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const n = String(name ?? "").replace(/\s+/g, " ").trim();
   if (n.length < 3 || !/[A-Za-z]{3}/.test(n)) {
     throw Object.assign(
-      new Error(
-        `Employee name on record is "${String(name ?? "")}", which cannot be printed on a letter. Correct the name before issuing.`,
-      ),
+      new Error(`Employee name on record is "${String(name ?? "")}", which cannot be printed on a letter. Correct the name before issuing.`),
       { statusCode: 409, code: "employee_name_incomplete" },
     );
   }

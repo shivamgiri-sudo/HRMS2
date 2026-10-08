@@ -25,10 +25,7 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(
-  path.resolve(__dirname, "../lms.sync.service.ts"),
-  "utf8",
-);
+const source = fs.readFileSync(path.resolve(__dirname, "../lms.sync.service.ts"), "utf8");
 
 /** The binding, reproduced — the service module pulls in the LMS + HRMS pools. */
 const courseId = (batchNo: unknown) => String(batchNo ?? "").trim();
@@ -66,18 +63,11 @@ describe("progress snapshot course_id binding", () => {
     const codeOnly = source
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
-    const start = codeOnly.indexOf(
-      "INSERT INTO lms_learning_progress_snapshot",
-    );
-    const stmt = codeOnly.slice(
-      start,
-      codeOnly.indexOf("sync_type, records_synced", start),
-    );
+    const start = codeOnly.indexOf("INSERT INTO lms_learning_progress_snapshot");
+    const stmt = codeOnly.slice(start, codeOnly.indexOf("sync_type, records_synced", start));
 
     expect(start, "progress insert not found").toBeGreaterThan(-1);
     expect(stmt).toContain('String(t.batch_no ?? "").trim()');
-    expect(stmt, "the null-yielding binding is back").not.toContain(
-      "t.batch_no ?? null",
-    );
+    expect(stmt, "the null-yielding binding is back").not.toContain("t.batch_no ?? null");
   });
 });

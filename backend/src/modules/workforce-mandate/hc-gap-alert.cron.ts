@@ -41,6 +41,7 @@ function millisecondsUntilNextRun(): number {
   return target.getTime() - now.getTime();
 }
 
+
 /**
  * Who is told about a shortage on this mandate.
  *
@@ -73,7 +74,7 @@ async function resolveAlertRecipients(gap: GapAlert): Promise<string[]> {
             )
           )
         )`,
-    [gap.branch_id, gap.process_id],
+    [gap.branch_id, gap.process_id]
   );
   return (rows as RowDataPacket[]).map((r) => String(r.user_id));
 }
@@ -172,9 +173,7 @@ async function checkHcGaps(): Promise<void> {
       return;
     }
 
-    console.log(
-      `[hc-gap-alert] Found ${gaps.length} mandates below threshold.`,
-    );
+    console.log(`[hc-gap-alert] Found ${gaps.length} mandates below threshold.`);
 
     for (const gap of gaps as GapAlert[]) {
       const [[existing]] = await pool.execute<RowDataPacket[]>(
@@ -183,13 +182,11 @@ async function checkHcGaps(): Promise<void> {
            AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.mandate_id')) = ?
            AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
          LIMIT 1`,
-        [gap.mandate_id],
+        [gap.mandate_id]
       );
 
       if (existing) {
-        console.log(
-          `[hc-gap-alert] Skipping ${gap.process_name} (${gap.branch_name ?? "all branches"}) — alerted within 24h`,
-        );
+        console.log(`[hc-gap-alert] Skipping ${gap.process_name} (${gap.branch_name ?? "all branches"}) — alerted within 24h`);
         continue;
       }
 
@@ -212,7 +209,7 @@ async function checkHcGaps(): Promise<void> {
             net_gap: gap.net_gap,
             hiring_demand: gap.hiring_demand,
           }),
-        ],
+        ]
       );
 
       // Deliver it. Until now this cron wrote an audit row and told nobody — the worker
@@ -225,7 +222,7 @@ async function checkHcGaps(): Promise<void> {
             WHERE item_type = 'HIRING_SHORTAGE' AND entity_id = ? AND assigned_to_user_id = ?
               AND status NOT IN ('completed', 'cancelled')
             LIMIT 1`,
-          [gap.mandate_id, userId],
+          [gap.mandate_id, userId]
         );
         if (already) continue;
         await createWorkItem({
@@ -246,9 +243,7 @@ async function checkHcGaps(): Promise<void> {
         });
       }
 
-      console.log(
-        `[hc-gap-alert] Alert logged for ${scopeLabel}: coverage ${gap.coverage_pct}%, gap ${gap.net_gap}, hiring demand ${gap.hiring_demand}; notified ${recipients.length} recipient(s)`,
-      );
+      console.log(`[hc-gap-alert] Alert logged for ${scopeLabel}: coverage ${gap.coverage_pct}%, gap ${gap.net_gap}, hiring demand ${gap.hiring_demand}; notified ${recipients.length} recipient(s)`);
     }
 
     console.log("[hc-gap-alert] HC gap check complete.");

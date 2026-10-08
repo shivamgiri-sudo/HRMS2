@@ -32,16 +32,7 @@ import { buildPeriodColumns } from "../process-performance/clovia-lob.shared.js"
  * utilisation (no login-time data), planned staffing, callback outcomes.
  */
 
-export const INSIGHT_PROJECT_KEYS = [
-  "dubangladesh",
-  "exicom",
-  "viega",
-  "dalmia",
-  "neemans",
-  "gnc",
-  "bellavita",
-  "clovia",
-] as const;
+export const INSIGHT_PROJECT_KEYS = ["dubangladesh", "exicom", "viega", "dalmia", "neemans", "gnc", "bellavita", "clovia"] as const;
 /** Pattern A projects (GNC, Bellavita) measure service level at 20s, pattern B at 30s -- as inbound.service.ts does. */
 const SL_SEC_A = 20;
 const SL_SEC_B = 30;
@@ -143,8 +134,7 @@ async function getProject(key: string) {
 
 /** Validate a YYYY-MM-DD string and return its UTC day number (throws otherwise). */
 function dayNumber(s: string): number {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s))
-    throw new Error("Dates must be YYYY-MM-DD");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error("Dates must be YYYY-MM-DD");
   const t = Date.parse(`${s}T00:00:00Z`);
   if (Number.isNaN(t)) throw new Error("Invalid date");
   return Math.floor(t / 86_400_000);
@@ -154,22 +144,16 @@ function assertRange(f: InsightFilters) {
   const a = dayNumber(f.startDate);
   const b = dayNumber(f.endDate);
   if (b < a) throw new Error("endDate is before startDate");
-  if (b - a + 1 > MAX_RANGE_DAYS)
-    throw new Error(`Date range is limited to ${MAX_RANGE_DAYS} days`);
+  if (b - a + 1 > MAX_RANGE_DAYS) throw new Error(`Date range is limited to ${MAX_RANGE_DAYS} days`);
 }
 
 function callerSecret() {
-  return (
-    process.env.JWT_SECRET || process.env.SESSION_SECRET || "inbound-insights"
-  );
+  return process.env.JWT_SECRET || process.env.SESSION_SECRET || "inbound-insights";
 }
 
 /** Opaque per-number key so the UI can drill into a caller without ever holding the number. */
 function callerKey(phone: string): string {
-  return createHmac("sha256", callerSecret())
-    .update(phone)
-    .digest("hex")
-    .slice(0, 12);
+  return createHmac("sha256", callerSecret()).update(phone).digest("hex").slice(0, 12);
 }
 
 function maskPhone(phone: string): string {
@@ -209,44 +193,42 @@ async function loadCalls(projectKey: string, f: InsightFilters): Promise<{ rows:
         AND CampaignName IN (${ph})${p.pattern === "A" ? " AND DisconnBy != 'HOLDTIME'" : ""}
       ORDER BY CallDate ASC, id ASC
       LIMIT ${MAX_ROWS + 1}`,
-    [f.startDate, f.endDate, ...campaigns],
+    [f.startDate, f.endDate, ...campaigns]
   );
 
   const list = raw as Record<string, unknown>[];
   const truncated = list.length > MAX_ROWS;
-  const rows: CallRow[] = (truncated ? list.slice(0, MAX_ROWS) : list).map(
-    (r) => {
-      const agentId = String(r.AgentId ?? "");
-      const handled = agentId !== "VDCL";
-      const waitSec = n(r.wait);
-      // No after-hours carve-out any more -- a call an agent never took is
-      // abandoned, for every project (removed 2026-09-23 per explicit request).
-      const answered = handled;
-      const transferId = String(r.CallTransferId ?? "").trim();
-      return {
-        id: n(r.id),
-        date: String(r.d),
-        time: String(r.t ?? ""),
-        hour: n(r.hr),
-        agentId,
-        agentName: String(r.AgentName ?? "").trim() || agentId,
-        campaign: String(r.CampaignName ?? ""),
-        phone: String(r.PhoneNumber ?? "").trim(),
-        disposition: String(r.Disposition ?? "") || "—",
-        disconnBy: String(r.DisconnBy ?? "") || "—",
-        duration: n(r.dur),
-        wait: waitSec,
-        hold: n(r.hold),
-        talk: n(r.talk),
-        acw: n(r.acw),
-        transferred: transferId !== "" && transferId !== "0",
-        answered,
-        handled,
-        inSl: answered && waitSec <= slSec,
-        shortWait: waitSec <= slSec,
-      };
-    },
-  );
+  const rows: CallRow[] = (truncated ? list.slice(0, MAX_ROWS) : list).map((r) => {
+    const agentId = String(r.AgentId ?? "");
+    const handled = agentId !== "VDCL";
+    const waitSec = n(r.wait);
+    // No after-hours carve-out any more -- a call an agent never took is
+    // abandoned, for every project (removed 2026-09-23 per explicit request).
+    const answered = handled;
+    const transferId = String(r.CallTransferId ?? "").trim();
+    return {
+      id: n(r.id),
+      date: String(r.d),
+      time: String(r.t ?? ""),
+      hour: n(r.hr),
+      agentId,
+      agentName: String(r.AgentName ?? "").trim() || agentId,
+      campaign: String(r.CampaignName ?? ""),
+      phone: String(r.PhoneNumber ?? "").trim(),
+      disposition: String(r.Disposition ?? "") || "—",
+      disconnBy: String(r.DisconnBy ?? "") || "—",
+      duration: n(r.dur),
+      wait: waitSec,
+      hold: n(r.hold),
+      talk: n(r.talk),
+      acw: n(r.acw),
+      transferred: transferId !== "" && transferId !== "0",
+      answered,
+      handled,
+      inSl: answered && waitSec <= slSec,
+      shortWait: waitSec <= slSec,
+    };
+  });
   return { rows, truncated, campaigns: p.campaigns, slSec };
 }
 
@@ -270,20 +252,8 @@ interface Acc {
 }
 
 const newAcc = (): Acc => ({
-  offered: 0,
-  answered: 0,
-  handled: 0,
-  abandoned: 0,
-  slNum: 0,
-  durSum: 0,
-  talkSum: 0,
-  holdSum: 0,
-  acwSum: 0,
-  waitAnsweredSum: 0,
-  waitAbandonSum: 0,
-  maxWait: 0,
-  transfers: 0,
-  shortAbandon: 0,
+  offered: 0, answered: 0, handled: 0, abandoned: 0, slNum: 0, durSum: 0, talkSum: 0, holdSum: 0, acwSum: 0,
+  waitAnsweredSum: 0, waitAbandonSum: 0, maxWait: 0, transfers: 0, shortAbandon: 0,
 });
 
 function add(a: Acc, r: CallRow) {
@@ -340,10 +310,7 @@ function groupBy<K>(rows: CallRow[], keyFn: (r: CallRow) => K): Map<K, Acc> {
   for (const r of rows) {
     const k = keyFn(r);
     let a = m.get(k);
-    if (!a) {
-      a = newAcc();
-      m.set(k, a);
-    }
+    if (!a) { a = newAcc(); m.set(k, a); }
     add(a, r);
   }
   return m;
@@ -362,10 +329,7 @@ function quarterOf(time: string): string {
   return `${m[1]}:${String(q).padStart(2, "0")}`;
 }
 
-function bucketIndex(
-  sec: number,
-  buckets: readonly { min: number; max: number }[],
-) {
+function bucketIndex(sec: number, buckets: readonly { min: number; max: number }[]) {
   return buckets.findIndex((b) => sec >= b.min && sec <= b.max);
 }
 
@@ -378,27 +342,9 @@ function bucketIndex(
  * The tagging row carries the agent as callcreated = "DialDesk - <employee code>", which is the CDR's AgentId.
  * Best-effort -- a failure here must not take the whole dashboard down.
  */
-const FCR_SOURCES: Record<
-  string,
-  {
-    clientId: number;
-    valueField: string;
-    inboundCond: string;
-    totalExpr: string;
-  }
-> = {
-  neemans: {
-    clientId: 475,
-    valueField: "Field2",
-    inboundCond: "Field1 = 'Inbound'",
-    totalExpr: "COUNT(Field2)",
-  },
-  bellavita: {
-    clientId: 375,
-    valueField: "Field28",
-    inboundCond: "Field13 = 'Inbound'",
-    totalExpr: "COUNT(*)",
-  },
+const FCR_SOURCES: Record<string, { clientId: number; valueField: string; inboundCond: string; totalExpr: string }> = {
+  neemans: { clientId: 475, valueField: "Field2", inboundCond: "Field1 = 'Inbound'", totalExpr: "COUNT(Field2)" },
+  bellavita: { clientId: 375, valueField: "Field28", inboundCond: "Field13 = 'Inbound'", totalExpr: "COUNT(*)" },
 };
 
 interface FcrResult {
@@ -417,15 +363,9 @@ const agentCodeOf = (callcreated: unknown): string => {
 // query is never awaited past FCR_WAIT_MS -- the dashboard then shows "—" for FCR and the finished query fills the cache.
 const FCR_TTL_MS = 15 * 60 * 1000;
 const FCR_WAIT_MS = 22_000;
-const fcrCache = new Map<
-  string,
-  { at: number; value: Promise<FcrResult | null> }
->();
+const fcrCache = new Map<string, { at: number; value: Promise<FcrResult | null> }>();
 
-async function queryFcr(
-  projectKey: string,
-  f: InsightFilters,
-): Promise<FcrResult | null> {
+async function queryFcr(projectKey: string, f: InsightFilters): Promise<FcrResult | null> {
   const src = FCR_SOURCES[projectKey];
   if (!src) return null;
   try {
@@ -441,77 +381,40 @@ async function queryFcr(
     const dayTot = new Map<string, { fcr: number; tot: number }>();
     const byAgent = new Map<string, { fcr: number; tot: number }>();
     const byAgentDate = new Map<string, { fcr: number; tot: number }>();
-    const bump = (
-      m: Map<string, { fcr: number; tot: number }>,
-      k: string,
-      fcr: number,
-      tot: number,
-    ) => {
+    const bump = (m: Map<string, { fcr: number; tot: number }>, k: string, fcr: number, tot: number) => {
       const c = m.get(k) ?? { fcr: 0, tot: 0 };
-      c.fcr += fcr;
-      c.tot += tot;
-      m.set(k, c);
+      c.fcr += fcr; c.tot += tot; m.set(k, c);
     };
     let fcrSum = 0;
     let totSum = 0;
     for (const r of raw as Record<string, unknown>[]) {
-      const d = String(r.d);
-      const fcr = n(r.fcr);
-      const tot = n(r.tot);
-      const agent = agentCodeOf(r.a);
+      const d = String(r.d); const fcr = n(r.fcr); const tot = n(r.tot); const agent = agentCodeOf(r.a);
       bump(dayTot, d, fcr, tot);
-      if (agent) {
-        bump(byAgent, agent, fcr, tot);
-        bump(byAgentDate, `${agent}|${d}`, fcr, tot);
-      }
-      fcrSum += fcr;
-      totSum += tot;
+      if (agent) { bump(byAgent, agent, fcr, tot); bump(byAgentDate, `${agent}|${d}`, fcr, tot); }
+      fcrSum += fcr; totSum += tot;
     }
     const byDate = new Map<string, number>();
     for (const [d, v] of dayTot) byDate.set(d, pct(v.fcr, v.tot));
-    return {
-      overall: totSum ? pct(fcrSum, totSum) : null,
-      byDate,
-      byAgent,
-      byAgentDate,
-    };
+    return { overall: totSum ? pct(fcrSum, totSum) : null, byDate, byAgent, byAgentDate };
   } catch {
     return null;
   }
 }
 
-function loadFcr(
-  projectKey: string,
-  f: InsightFilters,
-): Promise<FcrResult | null> {
+function loadFcr(projectKey: string, f: InsightFilters): Promise<FcrResult | null> {
   if (!FCR_SOURCES[projectKey]) return Promise.resolve(null);
   const key = `${projectKey}|${f.startDate}|${f.endDate}`;
   const hit = fcrCache.get(key);
   if (hit && Date.now() - hit.at < FCR_TTL_MS) return hit.value;
-  const value = queryFcr(projectKey, f).then((v) => {
-    if (!v) fcrCache.delete(key);
-    return v;
-  });
+  const value = queryFcr(projectKey, f).then((v) => { if (!v) fcrCache.delete(key); return v; });
   fcrCache.set(key, { at: Date.now(), value });
-  if (fcrCache.size > 60)
-    for (const k of fcrCache.keys()) {
-      fcrCache.delete(k);
-      if (fcrCache.size <= 40) break;
-    }
+  if (fcrCache.size > 60) for (const k of fcrCache.keys()) { fcrCache.delete(k); if (fcrCache.size <= 40) break; }
   return value;
 }
 
 /** loadFcr, but never waits longer than FCR_WAIT_MS (the query keeps running and fills the cache). */
-function loadFcrWithinBudget(
-  projectKey: string,
-  f: InsightFilters,
-): Promise<FcrResult | null> {
-  return Promise.race([
-    loadFcr(projectKey, f),
-    new Promise<null>((resolve) =>
-      setTimeout(() => resolve(null), FCR_WAIT_MS),
-    ),
-  ]);
+function loadFcrWithinBudget(projectKey: string, f: InsightFilters): Promise<FcrResult | null> {
+  return Promise.race([loadFcr(projectKey, f), new Promise<null>((resolve) => setTimeout(() => resolve(null), FCR_WAIT_MS))]);
 }
 
 /**
@@ -520,15 +423,11 @@ function loadFcrWithinBudget(
  * 5,771 calls in a month. Treating it as a "caller" would report 97% repeat calls
  * and hide every real caller, so caller analysis excludes it and says so.
  */
-function detectSharedNumber(
-  rows: CallRow[],
-): { phone: string; calls: number } | null {
+function detectSharedNumber(rows: CallRow[]): { phone: string; calls: number } | null {
   const counts = new Map<string, number>();
-  for (const r of rows)
-    if (r.phone) counts.set(r.phone, (counts.get(r.phone) ?? 0) + 1);
+  for (const r of rows) if (r.phone) counts.set(r.phone, (counts.get(r.phone) ?? 0) + 1);
   let top: { phone: string; calls: number } | null = null;
-  for (const [phone, calls] of counts)
-    if (!top || calls > top.calls) top = { phone, calls };
+  for (const [phone, calls] of counts) if (!top || calls > top.calls) top = { phone, calls };
   return top && top.calls >= 50 && top.calls / rows.length >= 0.3 ? top : null;
 }
 
@@ -582,10 +481,7 @@ function buildBellavitaGroups(rows: CallRow[]) {
       if (!c) continue;
       const k = keyFn(c);
       let a = acc.get(k);
-      if (!a) {
-        a = newAcc();
-        acc.set(k, a);
-      }
+      if (!a) { a = newAcc(); acc.set(k, a); }
       add(a, r);
       if (r.handled) {
         let agents = agentsByKey.get(k);
@@ -602,29 +498,15 @@ function buildBellavitaGroups(rows: CallRow[]) {
 
 /* ─────────────────────────────── insights ─────────────────────────────── */
 
-export async function getInboundInsights(
-  projectKey: string,
-  f: InsightFilters,
-) {
+export async function getInboundInsights(projectKey: string, f: InsightFilters) {
   const fcrP = loadFcrWithinBudget(projectKey, f); // started now so it overlaps the CDR load
   const { rows, truncated, campaigns, slSec } = await loadCalls(projectKey, f);
   const p = await getProject(projectKey);
 
   const total = newAcc();
   const shared = detectSharedNumber(rows);
-  const isCaller = (r: CallRow) =>
-    Boolean(r.phone) && r.phone !== shared?.phone;
-  const callers = new Map<
-    string,
-    {
-      phone: string;
-      calls: number;
-      answered: number;
-      abandoned: number;
-      lastDate: string;
-      campaigns: Set<string>;
-    }
-  >();
+  const isCaller = (r: CallRow) => Boolean(r.phone) && r.phone !== shared?.phone;
+  const callers = new Map<string, { phone: string; calls: number; answered: number; abandoned: number; lastDate: string; campaigns: Set<string> }>();
   const agentSet = new Set<string>();
   let holdCalls = 0;
   for (const r of rows) {
@@ -635,20 +517,9 @@ export async function getInboundInsights(
     }
     if (isCaller(r)) {
       let c = callers.get(r.phone);
-      if (!c) {
-        c = {
-          phone: r.phone,
-          calls: 0,
-          answered: 0,
-          abandoned: 0,
-          lastDate: r.date,
-          campaigns: new Set(),
-        };
-        callers.set(r.phone, c);
-      }
+      if (!c) { c = { phone: r.phone, calls: 0, answered: 0, abandoned: 0, lastDate: r.date, campaigns: new Set() }; callers.set(r.phone, c); }
       c.calls++;
-      if (r.answered) c.answered++;
-      else c.abandoned++;
+      if (r.answered) c.answered++; else c.abandoned++;
       if (r.date > c.lastDate) c.lastDate = r.date;
       c.campaigns.add(r.campaign);
     }
@@ -683,9 +554,7 @@ export async function getInboundInsights(
   const hourKeys = [...byHour.keys()].sort((a, b) => a - b);
   const hourly = hourKeys.map((h) => {
     const a = byHour.get(h)!;
-    const daysWithCalls = new Set(
-      rows.filter((r) => r.hour === h).map((r) => r.date),
-    ).size;
+    const daysWithCalls = new Set(rows.filter((r) => r.hour === h).map((r) => r.date)).size;
     return {
       hour: h,
       label: `${String(h).padStart(2, "0")}:00`,
@@ -719,9 +588,7 @@ export async function getInboundInsights(
       weekday: WEEKDAYS[w],
       days: weekdayDays.get(w)?.size ?? 0,
       ...metrics(byWeekday.get(w)!),
-      avgPerDay: round1(
-        byWeekday.get(w)!.offered / Math.max(weekdayDays.get(w)?.size ?? 1, 1),
-      ),
+      avgPerDay: round1(byWeekday.get(w)!.offered / Math.max(weekdayDays.get(w)?.size ?? 1, 1)),
     }));
 
   // ── date x hour heatmap (offered / abandoned / answered) ──
@@ -729,54 +596,23 @@ export async function getInboundInsights(
   for (const r of rows) {
     const k = `${r.date}|${r.hour}`;
     let c = heat.get(k);
-    if (!c) {
-      c = { o: 0, a: 0, s: 0 };
-      heat.set(k, c);
-    }
+    if (!c) { c = { o: 0, a: 0, s: 0 }; heat.set(k, c); }
     c.o++;
     if (!r.answered) c.a++;
     else if (r.inSl) c.s++;
   }
   const heatmap = [...heat.entries()].map(([k, v]) => {
     const [date, hour] = k.split("|");
-    return {
-      date,
-      hour: Number(hour),
-      offered: v.o,
-      abandoned: v.a,
-      answeredInSl: v.s,
-    };
+    return { date, hour: Number(hour), offered: v.o, abandoned: v.a, answeredInSl: v.s };
   });
 
   // ── agents ──
   const answeredRows = rows.filter((r) => r.handled);
   const byAgent = groupBy(answeredRows, (r) => r.agentId);
-  const agentInfo = new Map<
-    string,
-    {
-      name: string;
-      dates: Set<string>;
-      first: string;
-      last: string;
-      maxDur: number;
-      short: number;
-      long: number;
-    }
-  >();
+  const agentInfo = new Map<string, { name: string; dates: Set<string>; first: string; last: string; maxDur: number; short: number; long: number }>();
   for (const r of answeredRows) {
     let i = agentInfo.get(r.agentId);
-    if (!i) {
-      i = {
-        name: r.agentName,
-        dates: new Set(),
-        first: r.time,
-        last: r.time,
-        maxDur: 0,
-        short: 0,
-        long: 0,
-      };
-      agentInfo.set(r.agentId, i);
-    }
+    if (!i) { i = { name: r.agentName, dates: new Set(), first: r.time, last: r.time, maxDur: 0, short: 0, long: 0 }; agentInfo.set(r.agentId, i); }
     i.dates.add(r.date);
     if (r.time && r.time < i.first) i.first = r.time;
     if (r.time > i.last) i.last = r.time;
@@ -794,12 +630,7 @@ export async function getInboundInsights(
         handled: a.handled,
         sharePct: pct(a.handled, total.handled),
         slWithinPct: pct(a.slNum, a.answered),
-        fcrPct: fcr?.byAgent.get(agentId.toUpperCase())
-          ? pct(
-              fcr.byAgent.get(agentId.toUpperCase())!.fcr,
-              fcr.byAgent.get(agentId.toUpperCase())!.tot,
-            )
-          : null,
+        fcrPct: fcr?.byAgent.get(agentId.toUpperCase()) ? pct(fcr.byAgent.get(agentId.toUpperCase())!.fcr, fcr.byAgent.get(agentId.toUpperCase())!.tot) : null,
         fcrTagged: fcr?.byAgent.get(agentId.toUpperCase())?.tot ?? 0,
         aht: m.aht,
         avgTalk: m.avgTalk,
@@ -821,44 +652,22 @@ export async function getInboundInsights(
   // One row per agent per day: volume plus the same service/handling metrics as the agent table, so clicking an agent
   // can show that agent's date-wise performance (FCR% included where the project has it).
   const agentDaily: Array<{
-    agentId: string;
-    date: string;
-    calls: number;
-    slWithinPct: number;
-    aht: number;
-    avgTalk: number;
-    avgHold: number;
-    avgAcw: number;
-    transfers: number;
-    fcrPct: number | null;
-    fcrTagged: number;
+    agentId: string; date: string; calls: number; slWithinPct: number; aht: number; avgTalk: number; avgHold: number; avgAcw: number;
+    transfers: number; fcrPct: number | null; fcrTagged: number;
   }> = [];
   for (const [k, a] of groupBy(answeredRows, (r) => `${r.agentId}|${r.date}`)) {
     const [agentId, date] = k.split("|");
     const m = metrics(a);
     const fc = fcr?.byAgentDate.get(`${agentId.toUpperCase()}|${date}`);
     agentDaily.push({
-      agentId,
-      date,
-      calls: a.handled,
-      slWithinPct: pct(a.slNum, a.answered),
-      aht: m.aht,
-      avgTalk: m.avgTalk,
-      avgHold: m.avgHold,
-      avgAcw: m.avgAcw,
-      transfers: a.transfers,
-      fcrPct: fc ? pct(fc.fcr, fc.tot) : null,
-      fcrTagged: fc?.tot ?? 0,
+      agentId, date, calls: a.handled, slWithinPct: pct(a.slNum, a.answered), aht: m.aht, avgTalk: m.avgTalk, avgHold: m.avgHold,
+      avgAcw: m.avgAcw, transfers: a.transfers, fcrPct: fc ? pct(fc.fcr, fc.tot) : null, fcrTagged: fc?.tot ?? 0,
     });
   }
 
   const agentHourly: { agentId: string; hour: number; calls: number }[] = [];
   const ah = new Map<string, number>();
-  for (const r of answeredRows)
-    ah.set(
-      `${r.agentId}|${r.hour}`,
-      (ah.get(`${r.agentId}|${r.hour}`) ?? 0) + 1,
-    );
+  for (const r of answeredRows) ah.set(`${r.agentId}|${r.hour}`, (ah.get(`${r.agentId}|${r.hour}`) ?? 0) + 1);
   for (const [k, calls] of ah) {
     const [agentId, hour] = k.split("|");
     agentHourly.push({ agentId, hour: Number(hour), calls });
@@ -871,30 +680,17 @@ export async function getInboundInsights(
       campaign,
       ...metrics(a),
       sharePct: pct(a.offered, total.offered),
-      uniqueCallers: new Set(
-        rows
-          .filter((r) => r.campaign === campaign && isCaller(r))
-          .map((r) => r.phone),
-      ).size,
-      agents: new Set(
-        rows
-          .filter((r) => r.campaign === campaign && r.handled)
-          .map((r) => r.agentId),
-      ).size,
+      uniqueCallers: new Set(rows.filter((r) => r.campaign === campaign && isCaller(r)).map((r) => r.phone)).size,
+      agents: new Set(rows.filter((r) => r.campaign === campaign && r.handled).map((r) => r.agentId)).size,
     }))
     .sort((x, y) => y.offered - x.offered);
 
   // Bellavita's 16 campaigns are named <H|E>_<Brand>_<Line>; roll them up by brand and by language.
-  const lobGroups =
-    projectKey === "bellavita" ? buildBellavitaGroups(rows) : null;
+  const lobGroups = projectKey === "bellavita" ? buildBellavitaGroups(rows) : null;
 
   const lobDaily: { campaign: string; date: string; offered: number }[] = [];
   const ld = new Map<string, number>();
-  for (const r of rows)
-    ld.set(
-      `${r.campaign}|${r.date}`,
-      (ld.get(`${r.campaign}|${r.date}`) ?? 0) + 1,
-    );
+  for (const r of rows) ld.set(`${r.campaign}|${r.date}`, (ld.get(`${r.campaign}|${r.date}`) ?? 0) + 1);
   for (const [k, offered] of ld) {
     const [campaign, date] = k.split("|");
     lobDaily.push({ campaign, date, offered });
@@ -918,17 +714,10 @@ export async function getInboundInsights(
   }
 
   // ── wait / abandon ──
-  const waitBuckets = WAIT_BUCKETS.map((b) => ({
-    label: b.label,
-    answered: 0,
-    abandoned: 0,
-  }));
+  const waitBuckets = WAIT_BUCKETS.map((b) => ({ label: b.label, answered: 0, abandoned: 0 }));
   for (const r of rows) {
     const i = bucketIndex(r.wait, WAIT_BUCKETS);
-    if (i >= 0) {
-      if (r.answered) waitBuckets[i].answered++;
-      else waitBuckets[i].abandoned++;
-    }
+    if (i >= 0) { if (r.answered) waitBuckets[i].answered++; else waitBuckets[i].abandoned++; }
   }
   const talkBuckets = TALK_BUCKETS.map((b) => ({ label: b.label, calls: 0 }));
   for (const r of answeredRows) {
@@ -938,38 +727,21 @@ export async function getInboundInsights(
   const countBy = (keyFn: (r: CallRow) => string, src: CallRow[]) => {
     const m = new Map<string, number>();
     for (const r of src) m.set(keyFn(r), (m.get(keyFn(r)) ?? 0) + 1);
-    return [...m.entries()]
-      .map(([label, count]) => ({ label, count }))
-      .sort((a, b) => b.count - a.count);
+    return [...m.entries()].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
   };
   const dispositions = countBy((r) => r.disposition, rows);
   const disconnects = countBy((r) => r.disconnBy, rows);
-  const abandonReasons = countBy(
-    (r) => `${r.disposition} / ${r.disconnBy}`,
-    rows.filter((r) => !r.answered),
-  );
+  const abandonReasons = countBy((r) => `${r.disposition} / ${r.disconnBy}`, rows.filter((r) => !r.answered));
 
   // ── callers ──
   const callerList = [...callers.values()];
   const repeatCallers = callerList.filter((c) => c.calls > 1);
   const unserved = callerList.filter((c) => c.answered === 0);
   const repeatDist = [
-    {
-      label: "1 call",
-      callers: callerList.filter((c) => c.calls === 1).length,
-    },
-    {
-      label: "2 calls",
-      callers: callerList.filter((c) => c.calls === 2).length,
-    },
-    {
-      label: "3 calls",
-      callers: callerList.filter((c) => c.calls === 3).length,
-    },
-    {
-      label: "4+ calls",
-      callers: callerList.filter((c) => c.calls >= 4).length,
-    },
+    { label: "1 call", callers: callerList.filter((c) => c.calls === 1).length },
+    { label: "2 calls", callers: callerList.filter((c) => c.calls === 2).length },
+    { label: "3 calls", callers: callerList.filter((c) => c.calls === 3).length },
+    { label: "4+ calls", callers: callerList.filter((c) => c.calls >= 4).length },
   ];
   const toCaller = (c: (typeof callerList)[number]) => ({
     key: callerKey(c.phone),
@@ -980,16 +752,8 @@ export async function getInboundInsights(
     lastDate: c.lastDate,
     campaigns: [...c.campaigns].sort(),
   });
-  const topRepeatCallers = repeatCallers
-    .sort((a, b) => b.calls - a.calls || (a.lastDate < b.lastDate ? 1 : -1))
-    .slice(0, 25)
-    .map(toCaller);
-  const unservedCallers = unserved
-    .sort(
-      (a, b) => b.abandoned - a.abandoned || (a.lastDate < b.lastDate ? 1 : -1),
-    )
-    .slice(0, 25)
-    .map(toCaller);
+  const topRepeatCallers = repeatCallers.sort((a, b) => b.calls - a.calls || (a.lastDate < b.lastDate ? 1 : -1)).slice(0, 25).map(toCaller);
+  const unservedCallers = unserved.sort((a, b) => b.abandoned - a.abandoned || (a.lastDate < b.lastDate ? 1 : -1)).slice(0, 25).map(toCaller);
 
   // ── headline ──
   const m = metrics(total);
@@ -1001,109 +765,56 @@ export async function getInboundInsights(
     uniqueCallers: callerList.length,
     repeatCallers: repeatCallers.length,
     repeatCallerPct: pct(repeatCallers.length, callerList.length),
-    repeatCallPct: pct(
-      rows.filter((r) => isCaller(r) && (callers.get(r.phone)?.calls ?? 0) > 1)
-        .length,
-      rows.length - (shared?.calls ?? 0),
-    ),
-    sharedNumber: shared
-      ? {
-          masked: maskPhone(shared.phone),
-          calls: shared.calls,
-          sharePct: pct(shared.calls, rows.length),
-        }
-      : null,
+    repeatCallPct: pct(rows.filter((r) => isCaller(r) && (callers.get(r.phone)?.calls ?? 0) > 1).length, rows.length - (shared?.calls ?? 0)),
+    sharedNumber: shared ? { masked: maskPhone(shared.phone), calls: shared.calls, sharePct: pct(shared.calls, rows.length) } : null,
     unservedCallers: unserved.length,
     agentsActive: agentSet.size,
     callsPerAgent: agentSet.size ? round1(total.handled / agentSet.size) : 0,
     daysWithCalls: dateKeys.length,
-    avgCallsPerDay: dateKeys.length
-      ? round1(total.offered / dateKeys.length)
-      : 0,
+    avgCallsPerDay: dateKeys.length ? round1(total.offered / dateKeys.length) : 0,
     holdCallPct: pct(holdCalls, total.handled),
     fcrPct: fcr?.overall ?? null,
     shortAbandonPct: pct(total.shortAbandon, total.abandoned),
     peakHour: peak ? { label: peak.label, offered: peak.offered } : null,
-    busiestDay: busiest
-      ? { date: busiest.date, offered: busiest.offered }
-      : null,
+    busiestDay: busiest ? { date: busiest.date, offered: busiest.offered } : null,
   };
 
   // ── narrative insights: only facts computed from the rows above ──
-  const insights: { tone: "info" | "good" | "warn" | "bad"; text: string }[] =
-    [];
+  const insights: { tone: "info" | "good" | "warn" | "bad"; text: string }[] = [];
   if (total.offered) {
-    if (peak)
-      insights.push({
-        tone: "info",
-        text: `Peak hour is ${peak.label} with ${peak.offered} calls (${peak.sharePct}% of volume).`,
-      });
+    if (peak) insights.push({ tone: "info", text: `Peak hour is ${peak.label} with ${peak.offered} calls (${peak.sharePct}% of volume).` });
     // abandonPct is now AL% (Answered/Offered, high = good), so the WORST hour/day
     // for abandonment is the one with the LOWEST abandonPct -- sort ascending and
     // report the true abandon share (100 - AL%) in the text.
-    const worstAband = hourly
-      .filter((h) => h.offered >= 5)
-      .sort((a, b) => a.abandonPct - b.abandonPct)[0];
+    const worstAband = hourly.filter((h) => h.offered >= 5).sort((a, b) => a.abandonPct - b.abandonPct)[0];
     if (worstAband && worstAband.abandoned > 0) {
-      insights.push({
-        tone: "warn",
-        text: `Highest abandon rate is at ${worstAband.label}: ${round2(100 - worstAband.abandonPct)}% (${worstAband.abandoned} of ${worstAband.offered} calls).`,
-      });
+      insights.push({ tone: "warn", text: `Highest abandon rate is at ${worstAband.label}: ${round2(100 - worstAband.abandonPct)}% (${worstAband.abandoned} of ${worstAband.offered} calls).` });
     }
-    const worstSl = hourly
-      .filter((h) => h.offered >= 5)
-      .sort((a, b) => a.slPct - b.slPct)[0];
+    const worstSl = hourly.filter((h) => h.offered >= 5).sort((a, b) => a.slPct - b.slPct)[0];
     if (worstSl && worstSl.slPct < 100) {
-      insights.push({
-        tone: worstSl.slPct < 80 ? "bad" : "warn",
-        text: `Lowest service level is at ${worstSl.label}: ${worstSl.slPct}% answered within ${slSec}s.`,
-      });
+      insights.push({ tone: worstSl.slPct < 80 ? "bad" : "warn", text: `Lowest service level is at ${worstSl.label}: ${worstSl.slPct}% answered within ${slSec}s.` });
     }
-    const worstDay = daily
-      .filter((d) => d.offered >= 5)
-      .sort((a, b) => a.abandonPct - b.abandonPct)[0];
+    const worstDay = daily.filter((d) => d.offered >= 5).sort((a, b) => a.abandonPct - b.abandonPct)[0];
     if (worstDay && worstDay.abandoned > 0) {
-      insights.push({
-        tone: "warn",
-        text: `Worst abandon day is ${worstDay.date} (${worstDay.weekday}): ${round2(100 - worstDay.abandonPct)}% abandoned.`,
-      });
+      insights.push({ tone: "warn", text: `Worst abandon day is ${worstDay.date} (${worstDay.weekday}): ${round2(100 - worstDay.abandonPct)}% abandoned.` });
     }
     if (agents.length > 1 && agents[0].sharePct >= 35) {
-      insights.push({
-        tone: "info",
-        text: `${agents[0].agentName} handled ${agents[0].sharePct}% of answered calls — workload is concentrated on one agent.`,
-      });
+      insights.push({ tone: "info", text: `${agents[0].agentName} handled ${agents[0].sharePct}% of answered calls — workload is concentrated on one agent.` });
     }
     if (shared) {
-      insights.push({
-        tone: "warn",
-        text: `${pct(shared.calls, rows.length)}% of calls (${fmtN(shared.calls)}) come from one number (${maskPhone(shared.phone)}) — a shared line, not a customer. Caller, repeat and never-answered figures exclude it.`,
-      });
+      insights.push({ tone: "warn", text: `${pct(shared.calls, rows.length)}% of calls (${fmtN(shared.calls)}) come from one number (${maskPhone(shared.phone)}) — a shared line, not a customer. Caller, repeat and never-answered figures exclude it.` });
     }
     if (unserved.length) {
-      insights.push({
-        tone: "bad",
-        text: `${unserved.length} caller${unserved.length > 1 ? "s" : ""} called in this period and never reached an agent.`,
-      });
+      insights.push({ tone: "bad", text: `${unserved.length} caller${unserved.length > 1 ? "s" : ""} called in this period and never reached an agent.` });
     }
     if (repeatCallers.length) {
-      insights.push({
-        tone: "info",
-        text: `${repeatCallers.length} callers (${headline.repeatCallerPct}%) called more than once; they account for ${headline.repeatCallPct}% of calls.`,
-      });
+      insights.push({ tone: "info", text: `${repeatCallers.length} callers (${headline.repeatCallerPct}%) called more than once; they account for ${headline.repeatCallPct}% of calls.` });
     }
     if (total.abandoned && headline.shortAbandonPct >= 50) {
-      insights.push({
-        tone: "info",
-        text: `${headline.shortAbandonPct}% of abandoned calls dropped within ${slSec}s of queueing.`,
-      });
+      insights.push({ tone: "info", text: `${headline.shortAbandonPct}% of abandoned calls dropped within ${slSec}s of queueing.` });
     }
     // abandonPct is AL% (Answered/Offered) now, so "healthy" means both figures high.
-    if (m.slPct >= 90 && m.abandonPct >= 90)
-      insights.push({
-        tone: "good",
-        text: `Service is healthy: SL ${m.slPct}% and AL ${m.abandonPct}%.`,
-      });
+    if (m.slPct >= 90 && m.abandonPct >= 90) insights.push({ tone: "good", text: `Service is healthy: SL ${m.slPct}% and AL ${m.abandonPct}%.` });
   }
 
   return {
@@ -1115,18 +826,12 @@ export async function getInboundInsights(
       abandoned: "Calls that never reached an agent (agent = VDCL)",
       al: "AL % = Answered / Offered",
       sl: `SL % = answered within ${slSec}s of queueing, as % of ANSWERED calls`,
-      ...(FCR_SOURCES[projectKey]
-        ? {
-            fcr:
-              projectKey === "bellavita"
-                ? "FCR % = calls tagged 'FCR' / all inbound calls tagged on the disposition form (Field13 = Inbound); tagged 'Not Required' stay in the base"
-                : "FCR % = calls tagged 'FCR' / inbound calls carrying an FCR tag (FCR + NFCR)",
-          }
-        : {}),
+      ...(FCR_SOURCES[projectKey] ? { fcr: projectKey === "bellavita"
+        ? "FCR % = calls tagged 'FCR' / all inbound calls tagged on the disposition form (Field13 = Inbound); tagged 'Not Required' stay in the base"
+        : "FCR % = calls tagged 'FCR' / inbound calls carrying an FCR tag (FCR + NFCR)" } : {}),
       aht: "Average call duration of answered calls",
       asa: "Average queue wait of answered calls",
-      unavailable:
-        "Occupancy, staffing plan and callback outcomes are not in the dialer data",
+      unavailable: "Occupancy, staffing plan and callback outcomes are not in the dialer data",
     },
     truncated,
     headline,
@@ -1161,11 +866,9 @@ export async function getInboundCalls(projectKey: string, f: DrillFilters) {
 
   let list = rows;
   if (f.date) list = list.filter((r) => r.date === f.date);
-  if (f.hour !== undefined && Number.isFinite(f.hour))
-    list = list.filter((r) => r.hour === f.hour);
+  if (f.hour !== undefined && Number.isFinite(f.hour)) list = list.filter((r) => r.hour === f.hour);
   if (f.quarter) list = list.filter((r) => quarterOf(r.time) === f.quarter);
-  if (f.weekday)
-    list = list.filter((r) => WEEKDAYS[weekdayOf(r.date)] === f.weekday);
+  if (f.weekday) list = list.filter((r) => WEEKDAYS[weekdayOf(r.date)] === f.weekday);
   if (f.agentId) list = list.filter((r) => r.agentId === f.agentId);
   if (f.outcome === "answered") list = list.filter((r) => r.answered);
   if (f.outcome === "abandoned") list = list.filter((r) => !r.answered);
@@ -1175,19 +878,15 @@ export async function getInboundCalls(projectKey: string, f: DrillFilters) {
     const b = WAIT_BUCKETS.find((x) => x.label === f.waitBucket);
     if (b) list = list.filter((r) => r.wait >= b.min && r.wait <= b.max);
   }
-  if (f.callerKey)
-    list = list.filter((r) => r.phone && callerKey(r.phone) === f.callerKey);
+  if (f.callerKey) list = list.filter((r) => r.phone && callerKey(r.phone) === f.callerKey);
 
   const page = Math.max(1, Math.floor(f.page ?? 1));
-  const sorted = [...list].sort((a, b) =>
-    a.date === b.date ? (a.time < b.time ? 1 : -1) : a.date < b.date ? 1 : -1,
-  );
+  const sorted = [...list].sort((a, b) => (a.date === b.date ? (a.time < b.time ? 1 : -1) : a.date < b.date ? 1 : -1));
   const slice = sorted.slice((page - 1) * DRILL_LIMIT, page * DRILL_LIMIT);
 
   // Per-caller history within the window, used for the "call #k of N" column.
   const perCaller = new Map<string, number>();
-  for (const r of rows)
-    if (r.phone) perCaller.set(r.phone, (perCaller.get(r.phone) ?? 0) + 1);
+  for (const r of rows) if (r.phone) perCaller.set(r.phone, (perCaller.get(r.phone) ?? 0) + 1);
 
   return {
     total: list.length,
@@ -1204,7 +903,7 @@ export async function getInboundCalls(projectKey: string, f: DrillFilters) {
       agentName: r.handled ? r.agentName : null,
       caller: maskPhone(r.phone),
       callerKey: r.phone ? callerKey(r.phone) : null,
-      callsInPeriod: r.phone ? (perCaller.get(r.phone) ?? 1) : 1,
+      callsInPeriod: r.phone ? perCaller.get(r.phone) ?? 1 : 1,
       outcome: r.answered ? "Answered" : "Abandoned",
       disposition: r.disposition,
       disconnBy: r.disconnBy,
@@ -1230,13 +929,9 @@ export async function getInboundCalls(projectKey: string, f: DrillFilters) {
  */
 export async function getInboundPeriods(projectKey: string, f: InsightFilters) {
   const { rows, campaigns, slSec } = await loadCalls(projectKey, f);
-  const { columns, dailyColumnsOmitted } = buildPeriodColumns(
-    f.startDate,
-    f.endDate,
-  );
+  const { columns, dailyColumnsOmitted } = buildPeriodColumns(f.startDate, f.endDate);
   const shared = detectSharedNumber(rows);
-  const of = (from: string, to: string) =>
-    rows.filter((r) => r.date >= from && r.date <= to);
+  const of = (from: string, to: string) => rows.filter((r) => r.date >= from && r.date <= to);
   const compute = (list: CallRow[]) => {
     const a = newAcc();
     const agentSet = new Set<string>();
@@ -1248,93 +943,37 @@ export async function getInboundPeriods(projectKey: string, f: InsightFilters) {
     }
     const m = metrics(a);
     return {
-      offered: m.offered,
-      answered: m.answered,
-      abandoned: m.abandoned,
-      answeredPct: m.answeredPct,
-      abandonPct: m.abandonPct,
-      slPct: m.slPct,
-      aht: m.aht,
-      avgTalk: m.avgTalk,
-      avgHold: m.avgHold,
-      avgAcw: m.avgAcw,
-      asa: m.asa,
-      avgAbandonWait: m.avgAbandonWait,
-      maxWait: m.maxWait,
-      transfers: m.transfers,
-      uniqueCallers: callerSet.size,
-      agents: agentSet.size,
-      callsPerAgent: agentSet.size ? round1(a.handled / agentSet.size) : 0,
+      offered: m.offered, answered: m.answered, abandoned: m.abandoned, answeredPct: m.answeredPct, abandonPct: m.abandonPct,
+      slPct: m.slPct, aht: m.aht, avgTalk: m.avgTalk, avgHold: m.avgHold, avgAcw: m.avgAcw, asa: m.asa,
+      avgAbandonWait: m.avgAbandonWait, maxWait: m.maxWait, transfers: m.transfers,
+      uniqueCallers: callerSet.size, agents: agentSet.size, callsPerAgent: agentSet.size ? round1(a.handled / agentSet.size) : 0,
     } as Record<string, number>;
   };
-  const defs: Array<{
-    key: string;
-    label: string;
-    fmt: "int" | "pct" | "sec" | "dec1";
-  }> = [
-    { key: "offered", label: "Offered Calls", fmt: "int" },
-    { key: "answered", label: "Answered", fmt: "int" },
-    { key: "abandoned", label: "Abandoned", fmt: "int" },
-    { key: "answeredPct", label: "Answer %", fmt: "pct" },
-    { key: "abandonPct", label: "AL %", fmt: "pct" },
-    {
-      key: "slPct",
-      label: `Service Level (${slSec}s, of answered)`,
-      fmt: "pct",
-    },
-    { key: "aht", label: "AHT (s)", fmt: "sec" },
-    { key: "avgTalk", label: "Avg Talk (s)", fmt: "sec" },
-    { key: "avgHold", label: "Avg Hold (s)", fmt: "sec" },
-    { key: "avgAcw", label: "Avg After-call Work (s)", fmt: "sec" },
-    { key: "asa", label: "Avg Speed of Answer (s)", fmt: "sec" },
-    { key: "avgAbandonWait", label: "Avg Abandon Wait (s)", fmt: "sec" },
-    { key: "maxWait", label: "Longest Wait (s)", fmt: "sec" },
-    { key: "uniqueCallers", label: "Unique Callers", fmt: "int" },
-    { key: "agents", label: "Active Agents", fmt: "int" },
-    { key: "callsPerAgent", label: "Calls Handled / Agent", fmt: "dec1" },
-    { key: "transfers", label: "Transferred Calls", fmt: "int" },
+  const defs: Array<{ key: string; label: string; fmt: "int" | "pct" | "sec" | "dec1" }> = [
+    { key: "offered", label: "Offered Calls", fmt: "int" }, { key: "answered", label: "Answered", fmt: "int" }, { key: "abandoned", label: "Abandoned", fmt: "int" },
+    { key: "answeredPct", label: "Answer %", fmt: "pct" }, { key: "abandonPct", label: "AL %", fmt: "pct" },
+    { key: "slPct", label: `Service Level (${slSec}s, of answered)`, fmt: "pct" },
+    { key: "aht", label: "AHT (s)", fmt: "sec" }, { key: "avgTalk", label: "Avg Talk (s)", fmt: "sec" }, { key: "avgHold", label: "Avg Hold (s)", fmt: "sec" },
+    { key: "avgAcw", label: "Avg After-call Work (s)", fmt: "sec" }, { key: "asa", label: "Avg Speed of Answer (s)", fmt: "sec" },
+    { key: "avgAbandonWait", label: "Avg Abandon Wait (s)", fmt: "sec" }, { key: "maxWait", label: "Longest Wait (s)", fmt: "sec" },
+    { key: "uniqueCallers", label: "Unique Callers", fmt: "int" }, { key: "agents", label: "Active Agents", fmt: "int" },
+    { key: "callsPerAgent", label: "Calls Handled / Agent", fmt: "dec1" }, { key: "transfers", label: "Transferred Calls", fmt: "int" },
   ];
   const whole = compute(of(f.startDate, f.endDate));
-  const perCol = new Map(
-    columns.map((c) => [c.key, compute(of(c.from, c.to))]),
-  );
+  const perCol = new Map(columns.map((c) => [c.key, compute(of(c.from, c.to))]));
   const metricRows = defs.map((d) => ({
-    key: d.key,
-    label: d.label,
-    fmt: d.fmt,
-    value: whole[d.key] ?? 0,
-    cols: Object.fromEntries(
-      columns.map((c) => [c.key, perCol.get(c.key)?.[d.key] ?? 0]),
-    ),
+    key: d.key, label: d.label, fmt: d.fmt, value: whole[d.key] ?? 0,
+    cols: Object.fromEntries(columns.map((c) => [c.key, perCol.get(c.key)?.[d.key] ?? 0])),
   }));
   const campRows = campaigns.map((c) => ({
-    key: c,
-    label: c,
-    fmt: "int" as const,
-    value: rows.filter((r) => r.campaign === c).length,
-    cols: Object.fromEntries(
-      columns.map((col) => [
-        col.key,
-        of(col.from, col.to).filter((r) => r.campaign === c).length,
-      ]),
-    ),
+    key: c, label: c, fmt: "int" as const, value: rows.filter((r) => r.campaign === c).length,
+    cols: Object.fromEntries(columns.map((col) => [col.key, of(col.from, col.to).filter((r) => r.campaign === c).length])),
   }));
   return {
-    from: f.startDate,
-    to: f.endDate,
-    columns,
-    dailyColumnsOmitted,
+    from: f.startDate, to: f.endDate, columns, dailyColumnsOmitted,
     tables: [
       { title: "Inbound metrics", rowsLabel: "Metric", rows: metricRows },
-      ...(campaigns.length > 1
-        ? [
-            {
-              title: "Offered calls by campaign",
-              rowsLabel: "Campaign",
-              rows: campRows,
-            },
-          ]
-        : []),
+      ...(campaigns.length > 1 ? [{ title: "Offered calls by campaign", rowsLabel: "Campaign", rows: campRows }] : []),
     ],
   };
 }

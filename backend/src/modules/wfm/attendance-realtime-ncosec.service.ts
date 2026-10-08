@@ -7,26 +7,23 @@
  *   Applies night shift merge, leave/holiday/regularization overrides, IST tag — no arithmetic.
  */
 
-import sql from "mssql";
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { getNcosecPool } from "../../db/ncosecDb.js";
-import { env } from "../../config/env.js";
-import { nowIST } from "../../shared/timezone.js";
-import { classifyCosecMinutes } from "./attendance-engine.service.js";
-import { assessAggregatePunches } from "./cosec-punch-interpretation.service.js";
-import {
-  type PunchGroup,
-  mergeNightShiftRollover,
-} from "./cosec-sync.service.js";
+import sql from 'mssql';
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { getNcosecPool } from '../../db/ncosecDb.js';
+import { env } from '../../config/env.js';
+import { nowIST } from '../../shared/timezone.js';
+import { classifyCosecMinutes } from './attendance-engine.service.js';
+import { assessAggregatePunches } from './cosec-punch-interpretation.service.js';
+import { type PunchGroup, mergeNightShiftRollover } from './cosec-sync.service.js';
 
 interface RealTimePunch {
   punch_date: string;
-  first_punch_in: string | null; // already IST-tagged: "YYYY-MM-DDTHH:mm:ss+05:30"
-  last_punch_out: string | null; // already IST-tagged: "YYYY-MM-DDTHH:mm:ss+05:30"
+  first_punch_in: string | null;   // already IST-tagged: "YYYY-MM-DDTHH:mm:ss+05:30"
+  last_punch_out: string | null;   // already IST-tagged: "YYYY-MM-DDTHH:mm:ss+05:30"
   total_punches: number;
   raw_minutes: number;
-  source: "ncosec_realtime";
+  source: 'ncosec_realtime';
 }
 
 /**
@@ -45,9 +42,7 @@ interface EmployeeCosecMapping {
 /**
  * Get employee's COSEC UserID mapping from HRMS database
  */
-async function getEmployeeCosecMapping(
-  employeeId: string,
-): Promise<EmployeeCosecMapping | null> {
+async function getEmployeeCosecMapping(employeeId: string): Promise<EmployeeCosecMapping | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id as employee_id, e.employee_code,
             COALESCE(em.external_id, e.employee_code) as cosec_user_id
@@ -55,7 +50,7 @@ async function getEmployeeCosecMapping(
      LEFT JOIN employee_external_mapping em ON em.employee_id = e.id AND em.system_name = 'ncosec' AND em.is_active = 1
      WHERE e.id = ?
      LIMIT 1`,
-    [employeeId],
+    [employeeId]
   );
 
   if (rows.length === 0) return null;
@@ -74,7 +69,7 @@ async function getEmployeeCosecMapping(
 function calculateLateMark(
   clockInTime: string | null,
   workingHoursStart: string | null,
-  graceMinutes = 15,
+  graceMinutes = 15
 ): { late_mark: 0 | 1; late_by_minutes: number } {
   if (!clockInTime || !workingHoursStart) {
     return { late_mark: 0, late_by_minutes: 0 };
@@ -88,7 +83,7 @@ function calculateLateMark(
     }
 
     // Parse working_hours_start (format: "HH:MM" or "HH:MM:SS")
-    const [h, m, s] = workingHoursStart.split(":").map(Number);
+    const [h, m, s] = workingHoursStart.split(':').map(Number);
     const shiftStart = new Date(clockIn);
     shiftStart.setHours(h, m || 0, s || 0, 0);
 
@@ -108,15 +103,11 @@ function calculateLateMark(
  * Query NCOSEC directly for today's punch events
  * READ-ONLY: Does not modify NCOSEC or HRMS data
  */
-export async function getRealTimePunchesToday(
-  employeeId: string,
-): Promise<RealTimePunch | null> {
+export async function getRealTimePunchesToday(employeeId: string): Promise<RealTimePunch | null> {
   // Get COSEC mapping
   const mapping = await getEmployeeCosecMapping(employeeId);
   if (!mapping) {
-    console.warn(
-      `[realtime-ncosec] No COSEC mapping found for employee ${employeeId}`,
-    );
+    console.warn(`[realtime-ncosec] No COSEC mapping found for employee ${employeeId}`);
     return null;
   }
 
@@ -124,18 +115,18 @@ export async function getRealTimePunchesToday(
 
   try {
     const pool = await getNcosecPool();
-    const result = await pool
-      .request()
-      .input("userId", mapping.cosec_user_id)
-      .input("dateStart", `${todayStr} 00:00:00`)
-      .input("dateEnd", `${todayStr} 23:59:59`).query(`
+    const result = await pool.request()
+      .input('userId', mapping.cosec_user_id)
+      .input('dateStart', `${todayStr} 00:00:00`)
+      .input('dateEnd', `${todayStr} 23:59:59`)
+      .query(`
         SELECT
           UserID,
           CONVERT(CHAR(19), MIN(Edatetime), 120) as first_punch,
           CONVERT(CHAR(19), MAX(Edatetime), 120) as last_punch,
           COUNT(*) as total_punches,
           DATEDIFF(MINUTE, MIN(Edatetime), MAX(Edatetime)) as raw_minutes
-        FROM ${env.NCOSEC_EVENT_TABLE || "dbo.Mx_ATDEventTrn"}
+        FROM ${env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn'}
         WHERE UserID = @userId
           AND Edatetime >= @dateStart
           AND Edatetime <= @dateEnd
@@ -150,8 +141,7 @@ export async function getRealTimePunchesToday(
 
     // NCOSEC stores IST wall-clock. CONVERT(CHAR) returns IST string directly.
     // Just tag with +05:30, no arithmetic needed.
-    const tagIST = (str: string | null) =>
-      str ? str.replace(" ", "T") + "+05:30" : null;
+    const tagIST = (str: string | null) => str ? str.replace(' ', 'T') + '+05:30' : null;
 
     const assessed = assessAggregatePunches({
       firstPunch: row.first_punch,
@@ -166,13 +156,10 @@ export async function getRealTimePunchesToday(
       last_punch_out: tagIST(assessed.effectivePunchOut),
       total_punches: assessed.effectivePunchCount,
       raw_minutes: assessed.effectiveWorkingMinutes,
-      source: "ncosec_realtime",
+      source: 'ncosec_realtime',
     };
   } catch (error) {
-    console.error(
-      "[realtime-ncosec] Query failed:",
-      error instanceof Error ? error.message : String(error),
-    );
+    console.error('[realtime-ncosec] Query failed:', error instanceof Error ? error.message : String(error));
     throw error;
   }
 }
@@ -183,7 +170,7 @@ export async function getRealTimePunchesToday(
 export async function getRealTimePunchesRange(
   employeeId: string,
   fromDate: string,
-  toDate: string,
+  toDate: string
 ): Promise<RealTimePunch[]> {
   const mapping = await getEmployeeCosecMapping(employeeId);
   if (!mapping) {
@@ -193,28 +180,26 @@ export async function getRealTimePunchesRange(
   // Cap at 7 days for performance
   const from = new Date(fromDate);
   const to = new Date(toDate);
-  const daysDiff = Math.ceil(
-    (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24),
-  );
+  const daysDiff = Math.ceil((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
 
   if (daysDiff > 7) {
-    throw new Error("Date range limited to 7 days for real-time queries");
+    throw new Error('Date range limited to 7 days for real-time queries');
   }
 
   try {
     const pool = await getNcosecPool();
-    const result = await pool
-      .request()
-      .input("userId", mapping.cosec_user_id)
-      .input("dateStart", `${fromDate} 00:00:00`)
-      .input("dateEnd", `${toDate} 23:59:59`).query(`
+    const result = await pool.request()
+      .input('userId', mapping.cosec_user_id)
+      .input('dateStart', `${fromDate} 00:00:00`)
+      .input('dateEnd', `${toDate} 23:59:59`)
+      .query(`
         SELECT
           CONVERT(CHAR(10), CAST(Edatetime AS DATE), 23) as punch_date,
           CONVERT(CHAR(19), MIN(Edatetime), 120) as first_punch,
           CONVERT(CHAR(19), MAX(Edatetime), 120) as last_punch,
           COUNT(*) as total_punches,
           DATEDIFF(MINUTE, MIN(Edatetime), MAX(Edatetime)) as raw_minutes
-        FROM ${env.NCOSEC_EVENT_TABLE || "dbo.Mx_ATDEventTrn"}
+        FROM ${env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn'}
         WHERE UserID = @userId
           AND Edatetime >= @dateStart
           AND Edatetime <= @dateEnd
@@ -222,11 +207,10 @@ export async function getRealTimePunchesRange(
         ORDER BY CAST(Edatetime AS DATE) DESC
       `);
 
-    const tagIST = (str: string | null) =>
-      str ? str.replace(" ", "T") + "+05:30" : null;
+    const tagIST = (str: string | null) => str ? str.replace(' ', 'T') + '+05:30' : null;
 
     const todayIST = nowIST().slice(0, 10);
-    return result.recordset.map((row) => {
+    return result.recordset.map(row => {
       const punchDate = String(row.punch_date);
       const assessed = assessAggregatePunches({
         firstPunch: row.first_punch,
@@ -235,7 +219,7 @@ export async function getRealTimePunchesRange(
         workingMinutes: row.raw_minutes,
         // Past dates: treat odd punch count as completed shift (last swipe = out)
         // Today: keep live mode so mid-shift odd count isn't shown as clocked-out
-        mode: punchDate < todayIST ? "historical" : "live",
+        mode: punchDate < todayIST ? 'historical' : 'live',
       });
       return {
         punch_date: punchDate,
@@ -243,14 +227,11 @@ export async function getRealTimePunchesRange(
         last_punch_out: tagIST(assessed.effectivePunchOut),
         total_punches: assessed.effectivePunchCount,
         raw_minutes: assessed.effectiveWorkingMinutes,
-        source: "ncosec_realtime" as const,
+        source: 'ncosec_realtime' as const,
       };
     });
   } catch (error) {
-    console.error(
-      "[realtime-ncosec] Range query failed:",
-      error instanceof Error ? error.message : String(error),
-    );
+    console.error('[realtime-ncosec] Range query failed:', error instanceof Error ? error.message : String(error));
     throw error;
   }
 }
@@ -280,7 +261,7 @@ export interface NcosecMonthlyRecord {
   late_mark: 0 | 1;
   late_by_minutes: number;
   is_locked: number;
-  attendance_source: "biometric";
+  attendance_source: 'biometric';
   source_system: string;
   override_note: string | null;
   employee: {
@@ -320,20 +301,19 @@ interface AttendanceOverride {
 }
 
 function istParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
   }).formatToParts(date);
-  const pick = (type: string) =>
-    parts.find((part) => part.type === type)?.value ?? "";
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
   return {
-    year: pick("year"),
-    month: pick("month"),
-    day: pick("day"),
-    hour: Number(pick("hour") || "0"),
+    year: pick('year'),
+    month: pick('month'),
+    day: pick('day'),
+    hour: Number(pick('hour') || '0'),
   };
 }
 
@@ -350,16 +330,9 @@ function resolveMonthlyOverlayShiftDate() {
   return now.hour >= 5 ? today : shiftDateByDays(today, -1);
 }
 
-function queryWithTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  label: string,
-): Promise<T> {
+function queryWithTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
-      timeoutMs,
-    );
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -376,11 +349,9 @@ function queryWithTimeout<T>(
 /**
  * Bulk-fetch COSEC UserID + employee metadata for a set of employee IDs.
  */
-export async function getBulkCosecMappings(
-  employeeIds: string[],
-): Promise<CosecMapping[]> {
+export async function getBulkCosecMappings(employeeIds: string[]): Promise<CosecMapping[]> {
   if (employeeIds.length === 0) return [];
-  const placeholders = employeeIds.map(() => "?").join(", ");
+  const placeholders = employeeIds.map(() => '?').join(', ');
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        e.id AS employee_id,
@@ -423,7 +394,7 @@ async function getAttendanceOverrides(
   toDate: string,
 ): Promise<Map<string, AttendanceOverride>> {
   if (employeeIds.length === 0) return new Map();
-  const ph = employeeIds.map(() => "?").join(", ");
+  const ph = employeeIds.map(() => '?').join(', ');
   const overrides = new Map<string, AttendanceOverride>();
 
   // --- Holidays (lowest priority — apply first so higher priority can overwrite) ---
@@ -456,7 +427,7 @@ async function getAttendanceOverrides(
   );
   for (const row of holidays as any[]) {
     overrides.set(`${row.employee_id}:${row.record_date}`, {
-      override_status: "holiday",
+      override_status: 'holiday',
       lwp_value: 0,
       is_locked: 0,
       override_note: row.override_note ?? null,
@@ -488,7 +459,7 @@ async function getAttendanceOverrides(
   );
   for (const row of leaves as any[]) {
     overrides.set(`${row.employee_id}:${row.record_date}`, {
-      override_status: "leave_approved",
+      override_status: 'leave_approved',
       lwp_value: 0,
       is_locked: 0,
       override_note: row.override_note ?? null,
@@ -511,7 +482,7 @@ async function getAttendanceOverrides(
     // Only set week_off if no leave_approved or holiday already
     if (!overrides.has(key)) {
       overrides.set(key, {
-        override_status: "week_off",
+        override_status: 'week_off',
         lwp_value: 0,
         is_locked: 0,
         override_note: null,
@@ -558,7 +529,7 @@ async function getRealtimePunchMapForMappings(
 
   const userIdsByEmployee = new Map<string, string[]>();
   for (const mapping of mappings) {
-    const userId = String(mapping.cosec_user_id ?? "").trim();
+    const userId = String(mapping.cosec_user_id ?? '').trim();
     if (!userId) continue;
     const bucket = userIdsByEmployee.get(userId) ?? [];
     bucket.push(mapping.employee_id);
@@ -569,20 +540,17 @@ async function getRealtimePunchMapForMappings(
   if (userIds.length === 0) return new Map();
 
   const dateStart = `${shiftDate} 00:00:00`;
-  const dateEnd =
-    shiftDate === currentShiftDate
-      ? `${shiftDate} 23:59:59`
-      : `${currentShiftDate} 23:59:59`;
-  const userIdColumn = env.NCOSEC_USER_ID_COLUMN || "UserID";
-  const dateTimeColumn = env.NCOSEC_DATETIME_COLUMN || "Edatetime";
-  const eventTable = env.NCOSEC_EVENT_TABLE || "dbo.Mx_ATDEventTrn";
+  const dateEnd = shiftDate === currentShiftDate ? `${shiftDate} 23:59:59` : `${currentShiftDate} 23:59:59`;
+  const userIdColumn = env.NCOSEC_USER_ID_COLUMN || 'UserID';
+  const dateTimeColumn = env.NCOSEC_DATETIME_COLUMN || 'Edatetime';
+  const eventTable = env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn';
 
   let result: sql.IResult<any>;
   try {
     const pool = await getNcosecPool();
     const request = pool.request();
-    request.input("dateStart", dateStart);
-    request.input("dateEnd", dateEnd);
+    request.input('dateStart', dateStart);
+    request.input('dateEnd', dateEnd);
 
     const idParams: string[] = [];
     userIds.forEach((userId, index) => {
@@ -602,30 +570,27 @@ async function getRealtimePunchMapForMappings(
         FROM ${eventTable}
         WHERE ${dateTimeColumn} >= @dateStart
           AND ${dateTimeColumn} <= @dateEnd
-          AND CAST(${userIdColumn} AS NVARCHAR(100)) IN (${idParams.join(", ")})
+          AND CAST(${userIdColumn} AS NVARCHAR(100)) IN (${idParams.join(', ')})
         GROUP BY CAST(${userIdColumn} AS NVARCHAR(100))
       `),
       10000,
-      "monthly live COSEC overlay",
+      'monthly live COSEC overlay',
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `[realtime-ncosec] Live COSEC overlay unavailable for ${shiftDate} (${userIds.length} user(s)): ${message}`,
-    );
+    console.warn(`[realtime-ncosec] Live COSEC overlay unavailable for ${shiftDate} (${userIds.length} user(s)): ${message}`);
     return new Map();
   }
 
-  const tagIST = (value: string | null | undefined) =>
-    value ? value.replace(" ", "T") + "+05:30" : null;
+  const tagIST = (value: string | null | undefined) => (value ? value.replace(' ', 'T') + '+05:30' : null);
   const livePunches = new Map<string, RealTimePunch>();
   for (const row of result.recordset ?? []) {
-    const userId = String((row as any).user_id ?? "").trim();
+    const userId = String((row as any).user_id ?? '').trim();
     if (!userId) continue;
 
     const assessed = assessAggregatePunches({
-      firstPunch: String((row as any).first_punch ?? ""),
-      lastPunch: String((row as any).last_punch ?? ""),
+      firstPunch: String((row as any).first_punch ?? ''),
+      lastPunch: String((row as any).last_punch ?? ''),
       totalPunches: Number((row as any).total_punches ?? 0),
       workingMinutes: Number((row as any).raw_minutes ?? 0),
     });
@@ -636,7 +601,7 @@ async function getRealtimePunchMapForMappings(
       last_punch_out: tagIST(assessed.effectivePunchOut),
       total_punches: assessed.effectivePunchCount,
       raw_minutes: assessed.effectiveWorkingMinutes,
-      source: "ncosec_realtime",
+      source: 'ncosec_realtime',
     };
 
     for (const employeeId of userIdsByEmployee.get(userId) ?? []) {
@@ -662,7 +627,7 @@ export async function getMonthlyAttendanceFromNcosec(
   if (mappings.length === 0) return [];
 
   const tagIST = (s: string | null | undefined): string | null =>
-    s ? s.replace(" ", "T") + "+05:30" : null;
+    s ? s.replace(' ', 'T') + '+05:30' : null;
 
   // Build cosecUserId → mapping lookup and employeeId → mapping lookup
   const cosecToMapping = new Map<string, CosecMapping>();
@@ -672,8 +637,8 @@ export async function getMonthlyAttendanceFromNcosec(
     empIdToMapping.set(m.employee_id, m);
   }
 
-  const employeeIds = mappings.map((m) => m.employee_id);
-  const cosecUserIds = mappings.map((m) => m.cosec_user_id);
+  const employeeIds = mappings.map(m => m.employee_id);
+  const cosecUserIds = mappings.map(m => m.cosec_user_id);
 
   // Fetch overrides (leave, holiday, week-off, regularization)
   const overrides = await getAttendanceOverrides(employeeIds, fromDate, toDate);
@@ -681,8 +646,8 @@ export async function getMonthlyAttendanceFromNcosec(
   // Query NCOSEC Mx_DATDTrn
   const pool = await getNcosecPool();
   const request = pool.request();
-  request.input("fromDate", sql.Date, fromDate);
-  request.input("toDate", sql.Date, toDate);
+  request.input('fromDate', sql.Date, fromDate);
+  request.input('toDate', sql.Date, toDate);
 
   // Build individual named params per user ID — avoids STRING_SPLIT compatibility issues
   const userConditions: string[] = [];
@@ -690,8 +655,8 @@ export async function getMonthlyAttendanceFromNcosec(
     request.input(`u${i}`, sql.NVarChar(100), cosecUserIds[i]);
     userConditions.push(`@u${i}`);
   }
-  const dailyTable = env.NCOSEC_DAILY_TABLE || "dbo.Mx_DATDTrn";
-  const eventTable = env.NCOSEC_EVENT_TABLE || "dbo.Mx_ATDEventTrn";
+  const dailyTable = env.NCOSEC_DAILY_TABLE || 'dbo.Mx_DATDTrn';
+  const eventTable = env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn';
   const todayIST = nowIST().slice(0, 10);
 
   // Mx_DATDTrn.OutPunch is populated by NCOSEC's end-of-day batch job, so it
@@ -719,7 +684,7 @@ export async function getMonthlyAttendanceFromNcosec(
     FROM ${dailyTable} d
     WHERE d.[PDate] >= @fromDate
       AND d.[PDate] < DATEADD(DAY, 1, @toDate)
-      AND CAST(d.[UserID] AS NVARCHAR(100)) IN (${userConditions.join(", ")})
+      AND CAST(d.[UserID] AS NVARCHAR(100)) IN (${userConditions.join(', ')})
       AND d.[Punch1] IS NOT NULL
     ORDER BY d.[UserID], d.[PDate]
   `);
@@ -727,27 +692,26 @@ export async function getMonthlyAttendanceFromNcosec(
   // Map to PunchGroup format for night-shift merge
   const rawGroups: PunchGroup[] = result.recordset
     .map((row: any) => {
-      const cosecUserId = String(row.user_id ?? "").trim();
-      const attendanceDate = String(row.attendance_date ?? "").trim();
-      const firstPunch = String(row.first_punch ?? "").trim();
-      const lastPunch = String(row.last_punch ?? "").trim();
+      const cosecUserId = String(row.user_id ?? '').trim();
+      const attendanceDate = String(row.attendance_date ?? '').trim();
+      const firstPunch = String(row.first_punch ?? '').trim();
+      const lastPunch = String(row.last_punch ?? '').trim();
       const workingMinutes = Math.max(0, Number(row.working_minutes ?? 0));
       return {
         cosecUserId,
         punchDate: attendanceDate,
         firstPunch,
         lastPunch: lastPunch || firstPunch,
-        totalPunches: lastPunch && lastPunch !== firstPunch ? 2 : 1,
+        totalPunches: (lastPunch && lastPunch !== firstPunch) ? 2 : 1,
         workingMinutes,
-        sourceSystem: "ncosec_direct",
+        sourceSystem: 'ncosec_direct',
         sourceTable: dailyTable,
       };
     })
-    .filter(
-      (g: PunchGroup) =>
-        g.cosecUserId &&
-        /^\d{4}-\d{2}-\d{2}$/.test(g.punchDate) &&
-        /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(g.firstPunch),
+    .filter((g: PunchGroup) =>
+      g.cosecUserId &&
+      /^\d{4}-\d{2}-\d{2}$/.test(g.punchDate) &&
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(g.firstPunch),
     );
 
   // Apply night-shift merge (same logic as cosec-sync)
@@ -764,10 +728,9 @@ export async function getMonthlyAttendanceFromNcosec(
     resultKeys.add(key);
 
     const clockIn = tagIST(group.firstPunch);
-    const clockOut =
-      group.lastPunch && group.lastPunch !== group.firstPunch
-        ? tagIST(group.lastPunch)
-        : null;
+    const clockOut = (group.lastPunch && group.lastPunch !== group.firstPunch)
+      ? tagIST(group.lastPunch)
+      : null;
     const totalHours = Math.round((group.workingMinutes / 60) * 100) / 100;
 
     const override = overrides.get(key);
@@ -781,22 +744,20 @@ export async function getMonthlyAttendanceFromNcosec(
       finalStatus = override.override_status;
       finalLwp = override.lwp_value;
       finalLocked = override.is_locked;
-      finalSource = override.is_locked
-        ? "regularization"
-        : "ncosec_with_override";
+      finalSource = override.is_locked ? 'regularization' : 'ncosec_with_override';
       finalNote = override.override_note;
     } else if (!clockOut && clockIn) {
-      finalStatus = "present";
+      finalStatus = 'present';
       finalLwp = 0;
       finalLocked = 0;
-      finalSource = "ncosec_direct_live_open";
+      finalSource = 'ncosec_direct_live_open';
       finalNote = null;
     } else {
       const cls = classifyCosecMinutes(group.workingMinutes);
       finalStatus = cls.status;
       finalLwp = cls.lwpValue;
       finalLocked = 0;
-      finalSource = "ncosec_direct";
+      finalSource = 'ncosec_direct';
       finalNote = null;
     }
 
@@ -822,7 +783,7 @@ export async function getMonthlyAttendanceFromNcosec(
       lwp_value: finalLwp,
       ...calculateLateMark(clockIn, mapping.working_hours_start),
       is_locked: finalLocked,
-      attendance_source: "biometric",
+      attendance_source: 'biometric',
       source_system: finalSource,
       override_note: finalNote,
       employee: {
@@ -838,7 +799,7 @@ export async function getMonthlyAttendanceFromNcosec(
   // Add override-only records (leave/holiday/regularization with no NCOSEC punch)
   for (const [key, override] of overrides) {
     if (resultKeys.has(key)) continue;
-    const colonIdx = key.indexOf(":");
+    const colonIdx = key.indexOf(':');
     const empId = key.slice(0, colonIdx);
     const recDate = key.slice(colonIdx + 1);
     const mapping = empIdToMapping.get(empId);
@@ -864,13 +825,11 @@ export async function getMonthlyAttendanceFromNcosec(
       attendance_status: override.override_status,
       status: override.override_status,
       lwp_value: override.lwp_value,
-      late_mark: 0, // No clock-in for override-only records (leave/holiday)
+      late_mark: 0,  // No clock-in for override-only records (leave/holiday)
       late_by_minutes: 0,
       is_locked: override.is_locked,
-      attendance_source: "biometric",
-      source_system: override.is_locked
-        ? "regularization"
-        : "ncosec_with_override",
+      attendance_source: 'biometric',
+      source_system: override.is_locked ? 'regularization' : 'ncosec_with_override',
       override_note: override.override_note,
       employee: {
         first_name: mapping.first_name,
@@ -884,21 +843,12 @@ export async function getMonthlyAttendanceFromNcosec(
 
   const currentShiftDate = resolveMonthlyOverlayShiftDate();
   if (currentShiftDate >= fromDate && currentShiftDate <= toDate) {
-    const livePunches = await getRealtimePunchMapForMappings(
-      mappings,
-      currentShiftDate,
-    );
+    const livePunches = await getRealtimePunchMapForMappings(mappings, currentShiftDate);
     for (const [employeeId, livePunch] of livePunches) {
       const key = `${employeeId}:${currentShiftDate}`;
       const override = overrides.get(key);
       if (override?.is_locked) continue;
-      if (
-        override &&
-        ["leave_approved", "holiday", "week_off"].includes(
-          override.override_status,
-        )
-      )
-        continue;
+      if (override && ['leave_approved', 'holiday', 'week_off'].includes(override.override_status)) continue;
 
       const mapping = empIdToMapping.get(employeeId);
       if (!mapping) continue;
@@ -907,14 +857,10 @@ export async function getMonthlyAttendanceFromNcosec(
       const liveClockOut = livePunch.last_punch_out;
       const liveMinutes = Math.max(0, Number(livePunch.raw_minutes ?? 0));
       const liveStatus = liveClockIn
-        ? liveClockOut
-          ? classifyCosecMinutes(liveMinutes).status
-          : "present"
-        : "absent";
+        ? (liveClockOut ? classifyCosecMinutes(liveMinutes).status : 'present')
+        : 'absent';
       const liveLwp = liveClockIn
-        ? liveClockOut
-          ? classifyCosecMinutes(liveMinutes).lwpValue
-          : 0
+        ? (liveClockOut ? classifyCosecMinutes(liveMinutes).lwpValue : 0)
         : 1;
       const liveTotalHours = Math.round((liveMinutes / 60) * 100) / 100;
       const liveRecord: NcosecMonthlyRecord = {
@@ -939,10 +885,8 @@ export async function getMonthlyAttendanceFromNcosec(
         lwp_value: override ? override.lwp_value : liveLwp,
         ...calculateLateMark(liveClockIn, mapping.working_hours_start),
         is_locked: override?.is_locked ?? 0,
-        attendance_source: "biometric",
-        source_system: override?.is_locked
-          ? "regularization"
-          : "ncosec_realtime",
+        attendance_source: 'biometric',
+        source_system: override?.is_locked ? 'regularization' : 'ncosec_realtime',
         override_note: override?.override_note ?? null,
         employee: {
           first_name: mapping.first_name,
@@ -953,11 +897,7 @@ export async function getMonthlyAttendanceFromNcosec(
         },
       };
 
-      const existingIndex = results.findIndex(
-        (record) =>
-          record.employee_id === employeeId &&
-          record.record_date === currentShiftDate,
-      );
+      const existingIndex = results.findIndex((record) => record.employee_id === employeeId && record.record_date === currentShiftDate);
       if (existingIndex >= 0) {
         results[existingIndex] = liveRecord;
       } else {

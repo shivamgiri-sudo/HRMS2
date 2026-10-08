@@ -48,9 +48,7 @@ describe("approveOffer records the branch head decision", () => {
     // Otherwise a transient blocker leaves the offer permanently 'approved'
     // with no employee and no way for anyone to decide it again.
     expect(onboarding).toContain("revertBranchHeadDecision");
-    expect(onboarding).toMatch(
-      /decision\.recorded && !decision\.alreadyDecided/,
-    );
+    expect(onboarding).toMatch(/decision\.recorded && !decision\.alreadyDecided/);
   });
 
   it("normalises the approver to an employees.id", () => {
@@ -75,9 +73,7 @@ describe("approveOffer records the branch head decision", () => {
 
 describe("recordBranchHeadDecision is safe to call twice", () => {
   it("guards the update on approval_status = 'pending'", () => {
-    expect(record).toMatch(
-      /WHERE payroll_validation_id = \? AND approval_status = 'pending'/,
-    );
+    expect(record).toMatch(/WHERE payroll_validation_id = \? AND approval_status = 'pending'/);
   });
 
   it("treats zero affected rows as already decided", () => {
@@ -103,12 +99,8 @@ describe("scope and roles", () => {
     const jour = routes.indexOf("'/journey/:candidateId'");
     expect(hist).toBeGreaterThan(-1);
     expect(jour).toBeGreaterThan(-1);
-    expect(routes.slice(hist, hist + 700)).toContain(
-      "assertBranchHeadCanSeeCandidate",
-    );
-    expect(routes.slice(jour, jour + 700)).toContain(
-      "assertBranchHeadCanSeeCandidate",
-    );
+    expect(routes.slice(hist, hist + 700)).toContain("assertBranchHeadCanSeeCandidate");
+    expect(routes.slice(jour, jour + 700)).toContain("assertBranchHeadCanSeeCandidate");
   });
 
   it("admits every role the UI grants ATS_OFFER_APPROVALS", () => {
@@ -129,9 +121,7 @@ describe("history is sourced from the offers trail", () => {
     // Production holds 14 ats_offer_approval rows against 3 in
     // ats_branch_head_approval; the nav-menu screen has always written to the
     // offer tables.
-    const fnAt = service.indexOf(
-      "export async function listBranchHeadDecisions",
-    );
+    const fnAt = service.indexOf("export async function listBranchHeadDecisions");
     expect(fnAt).toBeGreaterThan(-1);
     const body = service.slice(fnAt);
     expect(body).toContain("FROM ats_employment_offer o");
@@ -139,9 +129,7 @@ describe("history is sourced from the offers trail", () => {
   });
 
   it("reaches the approval row via payroll_validation_id", () => {
-    const fnAt = service.indexOf(
-      "export async function listBranchHeadDecisions",
-    );
+    const fnAt = service.indexOf("export async function listBranchHeadDecisions");
     expect(service.slice(fnAt)).toContain("bha.payroll_validation_id = phv.id");
   });
 
@@ -150,9 +138,7 @@ describe("history is sourced from the offers trail", () => {
     // user_id; either can fan out. SELECT DISTINCT could not collapse the
     // result because the duplicates differed in the very column that fanned
     // out, and production returned 13 rows for 7 rejections.
-    const fnAt = service.indexOf(
-      "export async function listBranchHeadDecisions",
-    );
+    const fnAt = service.indexOf("export async function listBranchHeadDecisions");
     // Strip comments first: the code explains itself with the phrase
     // "not SELECT DISTINCT", which a naive scan would read as the bug.
     const body = service.slice(fnAt).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
@@ -175,17 +161,13 @@ describe("history is sourced from the offers trail", () => {
 
   it("orders pending rows by a column that is not null", () => {
     // approved_at became nullable in migration 1055.
-    expect(service).toContain(
-      "COALESCE(bha.approved_at, bha.updated_at, bha.created_at)",
-    );
+    expect(service).toContain("COALESCE(bha.approved_at, bha.updated_at, bha.created_at)");
   });
 });
 
 describe("the journey never queries columns that do not exist", () => {
   it("keys provisioning on employee_id", () => {
-    expect(journey).toMatch(
-      /FROM it_provisioning_request r[\s\S]{0,400}WHERE r\.employee_id = \?/,
-    );
+    expect(journey).toMatch(/FROM it_provisioning_request r[\s\S]{0,400}WHERE r\.employee_id = \?/);
   });
 
   it("does not select the four columns joining-control-room gets wrong", () => {
@@ -197,16 +179,8 @@ describe("the journey never queries columns that do not exist", () => {
     // legitimate JS property read, not a column selection.
     const at = journey.indexOf("FROM it_provisioning_request");
     expect(at).toBeGreaterThan(-1);
-    const sql = journey.slice(
-      journey.lastIndexOf("`SELECT", at),
-      journey.indexOf("`", at),
-    );
-    for (const bad of [
-      "assigned_to",
-      "completed_at",
-      "sla_due",
-      "candidate_id",
-    ]) {
+    const sql = journey.slice(journey.lastIndexOf("`SELECT", at), journey.indexOf("`", at));
+    for (const bad of ["assigned_to", "completed_at", "sla_due", "candidate_id"]) {
       expect(sql).not.toContain(bad);
     }
   });
@@ -251,9 +225,7 @@ describe("submitting the offer is the payroll validation", () => {
   });
 
   it("copies the figures from the offer rather than inventing them", () => {
-    const fnAt = onboarding.indexOf(
-      "async function deriveSalaryValidationFromOffer",
-    );
+    const fnAt = onboarding.indexOf("async function deriveSalaryValidationFromOffer");
     const body = onboarding.slice(fnAt, fnAt + 4000);
     expect(body).toContain("FROM ats_employment_offer o");
     for (const col of ["o.gross", "o.date_of_joining", "o.emp_type"]) {
@@ -263,18 +235,12 @@ describe("submitting the offer is the payroll validation", () => {
 
   it("refuses to write a row that would violate NOT NULL", () => {
     // gross_salary and joining_date are NOT NULL with no default.
-    const fnAt = onboarding.indexOf(
-      "async function deriveSalaryValidationFromOffer",
-    );
-    expect(onboarding.slice(fnAt, fnAt + 4000)).toMatch(
-      /o\.gross == null \|\| !o\.date_of_joining/,
-    );
+    const fnAt = onboarding.indexOf("async function deriveSalaryValidationFromOffer");
+    expect(onboarding.slice(fnAt, fnAt + 4000)).toMatch(/o\.gross == null \|\| !o\.date_of_joining/);
   });
 
   it("is idempotent — refreshes an existing row instead of duplicating", () => {
-    const fnAt = onboarding.indexOf(
-      "async function deriveSalaryValidationFromOffer",
-    );
+    const fnAt = onboarding.indexOf("async function deriveSalaryValidationFromOffer");
     const body = onboarding.slice(fnAt, fnAt + 4500);
     expect(body).toContain("UPDATE ats_payroll_hr_validation");
     expect(body).toContain("INSERT INTO ats_payroll_hr_validation");
@@ -299,9 +265,8 @@ describe("offers submitted before the fix still approve", () => {
   it("derives before recording the decision", () => {
     const at = onboarding.indexOf("export async function approveOffer");
     const body = onboarding.slice(at, at + 3000);
-    expect(body.indexOf("deriveSalaryValidationFromOffer")).toBeLessThan(
-      body.indexOf("recordBranchHeadDecision"),
-    );
+    expect(body.indexOf("deriveSalaryValidationFromOffer"))
+      .toBeLessThan(body.indexOf("recordBranchHeadDecision"));
   });
 
   it("the queue flag reports whether the salary can be established", () => {

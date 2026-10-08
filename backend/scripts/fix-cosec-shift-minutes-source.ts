@@ -34,17 +34,14 @@ async function main() {
     `SELECT * FROM kpi_studio_data_source WHERE id IN (?, ?)`,
     [OLD_SOURCES[0].id, OLD_SOURCES[1].id],
   );
-  if (oldSources.length !== 2)
-    throw new Error(`Expected 2 old sources, found ${oldSources.length}`);
+  if (oldSources.length !== 2) throw new Error(`Expected 2 old sources, found ${oldSources.length}`);
 
   const idMap = new Map<string, string>(); // old id -> new id
 
   for (const old of oldSources) {
     const newId = randomUUID();
     idMap.set(old.id as string, newId);
-    const newCode = (old.source_code as string)
-      .replace("COSEC_DAILY_ONFIDO", "BIOMETRIC_DAILY_ONFIDO")
-      .replace("COSEC_SHARED", "BIOMETRIC_DAILY_SHARED");
+    const newCode = (old.source_code as string).replace("COSEC_DAILY_ONFIDO", "BIOMETRIC_DAILY_ONFIDO").replace("COSEC_SHARED", "BIOMETRIC_DAILY_SHARED");
     await db.execute(
       `INSERT INTO kpi_studio_data_source
          (id, source_code, source_name, source_type, integration_key, source_object,
@@ -55,18 +52,11 @@ async function main() {
                'employee_code', 'employee_code', 'activity_date', NULL, NULL,
                ?, 1, ?, ?, ?, ?, ?)`,
       [
-        newId,
-        newCode,
+        newId, newCode,
         (old.source_name as string) + " (live, integration_biometric_daily)",
-        old.source_type,
-        old.integration_key,
-        (old.description as string) +
-          " -- repoints the dead cosec_daily_agg (frozen 2026-06-17) to the live integration_biometric_daily feed.",
-        old.created_by,
-        old.process_key_kind,
-        old.process_key_column,
-        old.process_key_value,
-        old.process_id,
+        old.source_type, old.integration_key,
+        (old.description as string) + " -- repoints the dead cosec_daily_agg (frozen 2026-06-17) to the live integration_biometric_daily feed.",
+        old.created_by, old.process_key_kind, old.process_key_column, old.process_key_value, old.process_id,
       ],
     );
     console.log(`Created ${newCode} (${newId}) from ${old.source_code}`);
@@ -77,40 +67,17 @@ async function main() {
     );
     for (const f of fields) {
       // mysql2 auto-parses JSON columns into JS values already -- do not JSON.parse again.
-      const parsedFilter =
-        typeof f.filter_json === "string"
-          ? JSON.parse(f.filter_json)
-          : f.filter_json;
+      const parsedFilter = typeof f.filter_json === "string" ? JSON.parse(f.filter_json) : f.filter_json;
       const newFilterJson = parsedFilter
-        ? JSON.stringify(
-            (parsedFilter as Array<{ column: string }>).map((c) => ({
-              ...c,
-              column: "biometric_minutes",
-            })),
-          )
+        ? JSON.stringify((parsedFilter as Array<{ column: string }>).map((c) => ({ ...c, column: "biometric_minutes" })))
         : null;
-      const newExpr = f.source_expression
-        ? (f.source_expression as string).replace(
-            /work_minutes/g,
-            "biometric_minutes",
-          )
-        : null;
+      const newExpr = f.source_expression ? (f.source_expression as string).replace(/work_minutes/g, "biometric_minutes") : null;
       await db.execute(
         `INSERT INTO kpi_studio_source_field
            (id, data_source_id, field_name, display_name, source_column, aggregate_fn,
             source_expression, filter_json, unit, description, active_status)
          VALUES (?, ?, ?, ?, 'biometric_minutes', ?, ?, ?, ?, ?, 1)`,
-        [
-          randomUUID(),
-          newId,
-          f.field_name,
-          f.display_name,
-          f.aggregate_fn,
-          newExpr,
-          newFilterJson,
-          f.unit,
-          f.description,
-        ],
+        [randomUUID(), newId, f.field_name, f.display_name, f.aggregate_fn, newExpr, newFilterJson, f.unit, f.description],
       );
     }
     console.log(`  -> replicated ${fields.length} field mapping(s)`);
@@ -125,20 +92,13 @@ async function main() {
     );
     const affected = (result as { affectedRows: number }).affectedRows;
     totalRepointed += affected;
-    console.log(
-      `Repointed ${affected} active definition(s) from ${old.code} to its live equivalent`,
-    );
+    console.log(`Repointed ${affected} active definition(s) from ${old.code} to its live equivalent`);
   }
 
   console.log(`\nTotal definitions repointed: ${totalRepointed}`);
-  console.log(
-    "Old (dead) sources and fields left in place, deactivated nothing, deleted nothing.",
-  );
+  console.log("Old (dead) sources and fields left in place, deactivated nothing, deleted nothing.");
 }
 
 main()
   .then(() => process.exit(0))
-  .catch((e) => {
-    console.error("FAILED", e);
-    process.exit(1);
-  });
+  .catch((e) => { console.error("FAILED", e); process.exit(1); });

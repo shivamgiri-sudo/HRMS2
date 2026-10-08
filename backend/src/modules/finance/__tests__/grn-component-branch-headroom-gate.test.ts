@@ -17,8 +17,7 @@ const { stateRef } = vi.hoisted(() => ({ stateRef: { current: null as any } }));
 
 vi.mock("../../../db/mysql.js", () => ({
   db: {
-    execute: (...args: unknown[]) =>
-      stateRef.current.route(...(args as [string, unknown[]?])),
+    execute: (...args: unknown[]) => stateRef.current.route(...(args as [string, unknown[]?])),
     getConnection: async () => stateRef.current.connection,
   },
 }));
@@ -46,27 +45,15 @@ vi.mock("../../process-pnl/finance-period-lock.js", () => ({
 }));
 
 // Real getHeadSubHeadCoverage/allocateAcrossLines implementation throughout.
-vi.mock(
-  "../../process-pnl/budget-headroom-gate.service.js",
-  async (importOriginal) => {
-    const actual =
-      await importOriginal<
-        typeof import("../../process-pnl/budget-headroom-gate.service.js")
-      >();
-    return {
-      ...actual,
-      getHeadSubHeadCoverage: vi.fn(actual.getHeadSubHeadCoverage),
-    };
-  },
-);
+vi.mock("../../process-pnl/budget-headroom-gate.service.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../process-pnl/budget-headroom-gate.service.js")>();
+  return {
+    ...actual,
+    getHeadSubHeadCoverage: vi.fn(actual.getHeadSubHeadCoverage),
+  };
+});
 
-type FakeBudgetHeader = {
-  id: string;
-  branch_id: string;
-  period_code: string;
-  status: string;
-  financial_year?: string;
-};
+type FakeBudgetHeader = { id: string; branch_id: string; period_code: string; status: string; financial_year?: string };
 type FakeBudgetLine = {
   id: string;
   budget_id: string;
@@ -91,61 +78,22 @@ type FakeBudgetLine = {
   reserved_amount: number;
   consumed_amount: number;
 };
-type FakeCostCentre = {
-  id: string;
-  cost_centre_code: string;
-  cost_centre_name: string;
-  branch_id: string;
-  active_status: number;
-};
+type FakeCostCentre = { id: string; cost_centre_code: string; cost_centre_name: string; branch_id: string; active_status: number };
 
 // funding_cost_centre_id sits beside cost_centre_id from migration 1630: WHO INCURRED the
 // spend and WHOSE BUDGET PAID it are separate facts now, so this fixture mirrors that order.
 const ALLOCATION_INSERT_COLUMNS = [
-  "id",
-  "grn_request_id",
-  "sequence_no",
-  "budget_id",
-  "budget_line_id",
-  "invoice_component_id",
-  "branch_id",
-  "process_id",
-  "cost_centre_id",
-  "funding_cost_centre_id",
-  "cost_class",
-  "allocation_percentage",
-  "quantity",
-  "unit",
-  "unit_rate",
-  "tax_treatment",
-  "gst_rate",
-  "gst_type",
-  "recoverable_tax_pct",
-  "amount_without_tax",
-  "tax_amount",
-  "cgst_amount",
-  "sgst_amount",
-  "igst_amount",
-  "amount_with_tax",
-  "recoverable_tax_amount",
-  "pnl_cost_amount",
-  "lifecycle_status",
-  "remarks",
-  "is_unbudgeted",
-  "created_by",
+  "id", "grn_request_id", "sequence_no", "budget_id", "budget_line_id", "invoice_component_id",
+  "branch_id", "process_id", "cost_centre_id", "funding_cost_centre_id", "cost_class", "allocation_percentage",
+  "quantity", "unit", "unit_rate", "tax_treatment", "gst_rate", "gst_type",
+  "recoverable_tax_pct", "amount_without_tax", "tax_amount", "cgst_amount",
+  "sgst_amount", "igst_amount", "amount_with_tax", "recoverable_tax_amount",
+  "pnl_cost_amount", "lifecycle_status", "remarks", "is_unbudgeted", "created_by",
 ] as const;
 
 const COMPONENT_INSERT_COLUMNS = [
-  "id",
-  "grn_request_id",
-  "sequence_no",
-  "amount_without_tax",
-  "gst_rate",
-  "hsn_sac_code",
-  "tax_amount",
-  "amount_with_tax",
-  "remarks",
-  "created_by",
+  "id", "grn_request_id", "sequence_no", "amount_without_tax", "gst_rate",
+  "hsn_sac_code", "tax_amount", "amount_with_tax", "remarks", "created_by",
 ] as const;
 
 function makeState(opts: {
@@ -159,15 +107,10 @@ function makeState(opts: {
   let grnUpdateParams: unknown[] | null = null;
 
   function norm(v: unknown) {
-    return String(v ?? "")
-      .trim()
-      .toUpperCase();
+    return String(v ?? "").trim().toUpperCase();
   }
 
-  async function route(
-    sql: string,
-    params: unknown[] = [],
-  ): Promise<[unknown, unknown]> {
+  async function route(sql: string, params: unknown[] = []): Promise<[unknown, unknown]> {
     const s = String(sql).replace(/\s+/g, " ").trim();
 
     if (s.includes("SELECT * FROM grn_request WHERE id = ? FOR UPDATE")) {
@@ -188,38 +131,22 @@ function makeState(opts: {
     // lockBudgetLine — distinctive via its join to finance_budget_line AND process_master; must
     // be checked before the generic "LEFT JOIN process_master" match, since getWorkspace()'s own
     // query also joins process_master.
-    if (
-      s.includes("FROM finance_budget_line l") &&
-      s.includes("LEFT JOIN process_master")
-    ) {
+    if (s.includes("FROM finance_budget_line l") && s.includes("LEFT JOIN process_master")) {
       const [budgetLineId, branchId] = params;
-      const line = opts.budgetLines.find(
-        (l) => String(l.id) === String(budgetLineId),
-      );
+      const line = opts.budgetLines.find((l) => String(l.id) === String(budgetLineId));
       if (!line) return [[], []];
-      const header = opts.budgetHeaders.find(
-        (h) => String(h.id) === String(line.budget_id),
-      );
-      if (!header || String(header.branch_id) !== String(branchId))
-        return [[], []];
-      const cc = opts.costCentres.find(
-        (c) => String(c.id) === String(line.cost_centre_id),
-      );
-      return [
-        [
-          {
-            ...line,
-            budget_status: header.status,
-            branch_id: header.branch_id,
-            period_code: header.period_code,
-            financial_year: header.financial_year ?? "2026-27",
-            process_name: null,
-            cost_centre_name:
-              cc?.cost_centre_name ?? line.cost_centre_name ?? null,
-          },
-        ],
-        [],
-      ];
+      const header = opts.budgetHeaders.find((h) => String(h.id) === String(line.budget_id));
+      if (!header || String(header.branch_id) !== String(branchId)) return [[], []];
+      const cc = opts.costCentres.find((c) => String(c.id) === String(line.cost_centre_id));
+      return [[{
+        ...line,
+        budget_status: header.status,
+        branch_id: header.branch_id,
+        period_code: header.period_code,
+        financial_year: header.financial_year ?? "2026-27",
+        process_name: null,
+        cost_centre_name: cc?.cost_centre_name ?? line.cost_centre_name ?? null,
+      }], []];
     }
 
     // getHeadSubHeadCoverage's lines query. Matched on the derived headroom column rather than
@@ -227,59 +154,33 @@ function makeState(opts: {
     // finance_expense_head_master (a budget line may store head_code where the GRN carries
     // head_name), and a matcher keyed to the old literal silently stopped matching, so the mock
     // returned nothing and every headroom test failed as NO_BUDGET_FOR_HEAD.
-    if (
-      s.includes("FROM finance_budget_line l") &&
-      s.includes("available_gross_amount")
-    ) {
+    if (s.includes("FROM finance_budget_line l") && s.includes("available_gross_amount")) {
       const [headerId, head, subHead] = params;
-      const matches = opts.budgetLines.filter(
-        (l) =>
-          String(l.budget_id) === String(headerId) &&
-          norm(l.head) === norm(head) &&
-          norm(l.sub_head) === norm(subHead),
+      const matches = opts.budgetLines.filter((l) =>
+        String(l.budget_id) === String(headerId)
+        && norm(l.head) === norm(head)
+        && norm(l.sub_head) === norm(subHead)
       );
       const rows = matches.map((l) => ({
         ...l,
-        available_quantity:
-          Number(l.quantity) -
-          Number(l.reserved_quantity) -
-          Number(l.consumed_quantity),
-        available_gross_amount:
-          Math.round(
-            (Number(l.gross_amount) -
-              Number(l.reserved_amount) -
-              Number(l.consumed_amount) +
-              Number.EPSILON) *
-              100,
-          ) / 100,
+        available_quantity: Number(l.quantity) - Number(l.reserved_quantity) - Number(l.consumed_quantity),
+        available_gross_amount: Math.round((Number(l.gross_amount) - Number(l.reserved_amount) - Number(l.consumed_amount) + Number.EPSILON) * 100) / 100,
       }));
       return [rows, []];
     }
 
     // getHeadSubHeadCoverage's header query.
-    if (
-      s.includes("FROM finance_budget_header") &&
-      s.includes("status = 'active'") &&
-      s.includes("LIMIT 1")
-    ) {
+    if (s.includes("FROM finance_budget_header") && s.includes("status = 'active'") && s.includes("LIMIT 1")) {
       const [branchId, periodCode] = params;
-      const header = opts.budgetHeaders.find(
-        (h) =>
-          String(h.branch_id) === String(branchId) &&
-          String(h.period_code) === String(periodCode) &&
-          h.status === "active",
+      const header = opts.budgetHeaders.find((h) =>
+        String(h.branch_id) === String(branchId) && String(h.period_code) === String(periodCode) && h.status === "active"
       );
       return [header ? [{ id: header.id }] : [], []];
     }
 
-    if (
-      s.includes("FROM cost_centre_master") &&
-      s.includes("active_status = 1")
-    ) {
+    if (s.includes("FROM cost_centre_master") && s.includes("active_status = 1")) {
       const [ccId] = params;
-      const cc = opts.costCentres.find(
-        (c) => String(c.id) === String(ccId) && c.active_status === 1,
-      );
+      const cc = opts.costCentres.find((c) => String(c.id) === String(ccId) && c.active_status === 1);
       return [cc ? [cc] : [], []];
     }
 
@@ -295,47 +196,30 @@ function makeState(opts: {
 
     if (s.startsWith("INSERT INTO grn_invoice_component")) {
       const record: Record<string, unknown> = {};
-      COMPONENT_INSERT_COLUMNS.forEach((col, i) => {
-        record[col] = params[i];
-      });
+      COMPONENT_INSERT_COLUMNS.forEach((col, i) => { record[col] = params[i]; });
       insertedComponents.push(record);
       return [{ insertId: insertedComponents.length, affectedRows: 1 }, []];
     }
 
     if (s.startsWith("INSERT INTO grn_cost_allocation")) {
       const record: Record<string, unknown> = {};
-      ALLOCATION_INSERT_COLUMNS.forEach((col, i) => {
-        record[col] = params[i];
-      });
+      ALLOCATION_INSERT_COLUMNS.forEach((col, i) => { record[col] = params[i]; });
       insertedAllocations.push(record);
       return [{ insertId: insertedAllocations.length, affectedRows: 1 }, []];
     }
 
-    if (
-      s.includes("SELECT id, allocation_percentage FROM grn_cost_allocation")
-    ) {
-      return [
-        insertedAllocations.map((r) => ({
-          id: r.id,
-          allocation_percentage: r.allocation_percentage,
-        })),
-        [],
-      ];
+    if (s.includes("SELECT id, allocation_percentage FROM grn_cost_allocation")) {
+      return [insertedAllocations.map((r) => ({ id: r.id, allocation_percentage: r.allocation_percentage })), []];
     }
 
     if (s.includes("UPDATE grn_cost_allocation SET allocation_percentage")) {
       const [delta, id] = params;
       const rec = insertedAllocations.find((r) => r.id === id);
-      if (rec)
-        rec.allocation_percentage =
-          Number(rec.allocation_percentage) + Number(delta);
+      if (rec) rec.allocation_percentage = Number(rec.allocation_percentage) + Number(delta);
       return [{ affectedRows: 1 }, []];
     }
 
-    if (
-      s.startsWith("UPDATE grn_request") &&
-      s.includes("SET allocation_mode")
-    ) {
+    if (s.startsWith("UPDATE grn_request") && s.includes("SET allocation_mode")) {
       grnUpdateParams = params;
       return [{ affectedRows: 1 }, []];
     }
@@ -343,10 +227,7 @@ function makeState(opts: {
     if (s.includes("DELETE FROM grn_period_allocation")) {
       return [{ affectedRows: 0 }, []];
     }
-    if (
-      s.startsWith("UPDATE grn_request") &&
-      s.includes("recognition_start_period = NULL")
-    ) {
+    if (s.startsWith("UPDATE grn_request") && s.includes("recognition_start_period = NULL")) {
       return [{ affectedRows: 1 }, []];
     }
     if (s.startsWith("INSERT INTO sensitive_action_log")) {
@@ -375,15 +256,9 @@ function makeState(opts: {
   return {
     route,
     connection,
-    get insertedAllocations() {
-      return insertedAllocations;
-    },
-    get insertedComponents() {
-      return insertedComponents;
-    },
-    get grnUpdateParams() {
-      return grnUpdateParams;
-    },
+    get insertedAllocations() { return insertedAllocations; },
+    get insertedComponents() { return insertedComponents; },
+    get grnUpdateParams() { return grnUpdateParams; },
   };
 }
 
@@ -412,24 +287,9 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
   it("1. zero budget lines anywhere for the shared head/sub-head — throws NO_BUDGET_FOR_HEAD", async () => {
     stateRef.current = makeState({
       grn: baseGrn({ head: "Marketing", sub_head: "Events" }),
-      budgetHeaders: [
-        {
-          id: "hdr-1",
-          branch_id: "br-1",
-          period_code: "2026-08",
-          status: "active",
-        },
-      ],
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
       budgetLines: [], // nothing anywhere for this head/sub-head
-      costCentres: [
-        {
-          id: "cc-X",
-          cost_centre_code: "CCX",
-          cost_centre_name: "CC X",
-          branch_id: "br-1",
-          active_status: 1,
-        },
-      ],
+      costCentres: [{ id: "cc-X", cost_centre_code: "CCX", cost_centre_name: "CC X", branch_id: "br-1", active_status: 1 }],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
@@ -441,8 +301,8 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
           costCentreSplits: [{ costCentreId: "cc-X", percentage: 100 }],
         },
         "user-1",
-        "branch_head",
-      ),
+        "branch_head"
+      )
     ).rejects.toMatchObject({ code: "NO_BUDGET_FOR_HEAD", statusCode: 409 });
   });
 
@@ -451,15 +311,7 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
       grn: baseGrn({ head: "Marketing", sub_head: "Events" }),
       budgetHeaders: [], // no active header for br-1/2026-08 at all
       budgetLines: [],
-      costCentres: [
-        {
-          id: "cc-X",
-          cost_centre_code: "CCX",
-          cost_centre_name: "CC X",
-          branch_id: "br-1",
-          active_status: 1,
-        },
-      ],
+      costCentres: [{ id: "cc-X", cost_centre_code: "CCX", cost_centre_name: "CC X", branch_id: "br-1", active_status: 1 }],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
     await expect(
@@ -471,87 +323,39 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
           costCentreSplits: [{ costCentreId: "cc-X", percentage: 100 }],
         },
         "user-1",
-        "branch_head",
-      ),
+        "branch_head"
+      )
     ).rejects.toMatchObject({ code: "NO_BRANCH_BUDGET", statusCode: 409 });
   });
 
   it("3/4. own line short, a sibling covers the rest — 4 rows (2 components x 2 draws), original cost centre preserved, gross reproduces exactly, and gst_rate stays the INVOICE's own rate even though the funding line's own gst_rate/tax_treatment differ", async () => {
     const lineA: FakeBudgetLine = {
-      id: "line-A",
-      budget_id: "hdr-1",
-      head: "Office Supplies",
-      sub_head: "Consumables",
-      item_name: "Consumables A",
-      cost_centre_id: "cc-A",
-      cost_centre_name: "CC A",
-      process_id: null,
-      unit: "nos",
-      unit_rate: 10,
-      tax_treatment: "exclusive",
-      gst_rate: 5,
-      gst_type: "cgst_sgst",
-      recoverable_tax_pct: 100,
-      justification: "Approved",
-      period_code: "2026-08",
-      quantity: 1000,
-      reserved_quantity: 0,
-      consumed_quantity: 980,
-      gross_amount: 10000,
-      reserved_amount: 0,
-      consumed_amount: 9800, // available: ~₹200
+      id: "line-A", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Consumables",
+      item_name: "Consumables A", cost_centre_id: "cc-A", cost_centre_name: "CC A", process_id: null,
+      unit: "nos", unit_rate: 10, tax_treatment: "exclusive", gst_rate: 5, gst_type: "cgst_sgst",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      quantity: 1000, reserved_quantity: 0, consumed_quantity: 980,
+      gross_amount: 10000, reserved_amount: 0, consumed_amount: 9800, // available: ~₹200
     };
     // Sibling's own gst_rate/tax_treatment DELIBERATELY differ from lineA's and from the
     // invoice components' own rates (18% and 0%) — proves the ground-truth rule: the funding
     // line's own tax profile must never leak into the invoice-driven amounts.
     const lineB: FakeBudgetLine = {
-      id: "line-B",
-      budget_id: "hdr-1",
-      head: "Office Supplies",
-      sub_head: "Consumables",
-      item_name: "Consumables B (Pooled)",
-      cost_centre_id: null,
-      cost_centre_name: null,
-      process_id: null,
-      unit: "nos",
-      unit_rate: 20,
-      tax_treatment: "inclusive",
-      gst_rate: 12,
-      gst_type: "igst",
-      recoverable_tax_pct: 50,
-      justification: "Approved",
-      period_code: "2026-08",
-      quantity: 1000,
-      reserved_quantity: 0,
-      consumed_quantity: 0,
-      gross_amount: 50000,
-      reserved_amount: 0,
-      consumed_amount: 0, // ample
+      id: "line-B", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Consumables",
+      item_name: "Consumables B (Pooled)", cost_centre_id: null, cost_centre_name: null, process_id: null,
+      unit: "nos", unit_rate: 20, tax_treatment: "inclusive", gst_rate: 12, gst_type: "igst",
+      recoverable_tax_pct: 50, justification: "Approved", period_code: "2026-08",
+      quantity: 1000, reserved_quantity: 0, consumed_quantity: 0,
+      gross_amount: 50000, reserved_amount: 0, consumed_amount: 0, // ample
     };
     stateRef.current = makeState({
       grn: baseGrn(),
-      budgetHeaders: [
-        {
-          id: "hdr-1",
-          branch_id: "br-1",
-          period_code: "2026-08",
-          status: "active",
-        },
-      ],
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
       budgetLines: [lineA, lineB],
-      costCentres: [
-        {
-          id: "cc-A",
-          cost_centre_code: "CCA",
-          cost_centre_name: "CC A",
-          branch_id: "br-1",
-          active_status: 1,
-        },
-      ],
+      costCentres: [{ id: "cc-A", cost_centre_code: "CCA", cost_centre_name: "CC A", branch_id: "br-1", active_status: 1 }],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    const { calculateBudgetLine } =
-      await import("../../process-pnl/branch-budget.service.js");
+    const { calculateBudgetLine } = await import("../../process-pnl/branch-budget.service.js");
 
     // Two components, single 100% split against line-A. Chosen so the total (1108) safely
     // exceeds line-A's own ~₹200 headroom and must spill onto line-B.
@@ -566,7 +370,7 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
         costCentreSplits: [{ budgetLineId: "line-A", percentage: 100 }],
       },
       "user-1",
-      "branch_head",
+      "branch_head"
     );
 
     const rows = stateRef.current.insertedAllocations;
@@ -595,19 +399,14 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
     // tax_amount are each independently roundMoney()'d off the same pro-rata drawFraction.
     for (const row of rows) {
       expect(Number(row.igst_amount)).toBeCloseTo(0, 6);
-      expect(Number(row.cgst_amount) + Number(row.sgst_amount)).toBeCloseTo(
-        Number(row.tax_amount),
-        1,
-      );
+      expect(Number(row.cgst_amount) + Number(row.sgst_amount)).toBeCloseTo(Number(row.tax_amount), 1);
     }
 
     // gst_rate column is the INVOICE COMPONENT's own real rate, never the funding line's
     // (5% on line-A, 12% on line-B) — this is the test that would catch the ground-truth rule
     // being violated.
     const componentIndexOf = (invoiceComponentId: unknown) =>
-      stateRef.current.insertedComponents.findIndex(
-        (c: any) => c.id === invoiceComponentId,
-      );
+      stateRef.current.insertedComponents.findIndex((c: any) => c.id === invoiceComponentId);
     const rowsForComponent = (compIdx: number) =>
       rows.filter((r) => componentIndexOf(r.invoice_component_id) === compIdx);
 
@@ -621,29 +420,15 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
     // Re-derive each component's pre-split gross INDEPENDENTLY (same call shape the source uses
     // to build the grid cell) and confirm the fan-out sub-rows sum to it exactly.
     const expectedComp0 = calculateBudgetLine({
-      head: "Office Supplies",
-      subHead: "Consumables",
-      itemName: lineA.item_name,
-      quantity: 1,
-      unit: lineA.unit,
-      unitRate: 600,
-      taxTreatment: "exclusive",
-      gstRate: 18,
-      gstType: lineA.gst_type as any,
-      recoverableTaxPct: lineA.recoverable_tax_pct,
+      head: "Office Supplies", subHead: "Consumables", itemName: lineA.item_name,
+      quantity: 1, unit: lineA.unit, unitRate: 600, taxTreatment: "exclusive",
+      gstRate: 18, gstType: lineA.gst_type as any, recoverableTaxPct: lineA.recoverable_tax_pct,
       justification: "x",
     });
     const expectedComp1 = calculateBudgetLine({
-      head: "Office Supplies",
-      subHead: "Consumables",
-      itemName: lineA.item_name,
-      quantity: 1,
-      unit: lineA.unit,
-      unitRate: 400,
-      taxTreatment: "exclusive",
-      gstRate: 0,
-      gstType: lineA.gst_type as any,
-      recoverableTaxPct: lineA.recoverable_tax_pct,
+      head: "Office Supplies", subHead: "Consumables", itemName: lineA.item_name,
+      quantity: 1, unit: lineA.unit, unitRate: 400, taxTreatment: "exclusive",
+      gstRate: 0, gstType: lineA.gst_type as any, recoverableTaxPct: lineA.recoverable_tax_pct,
       justification: "x",
     });
     const sum0 = comp0Rows.reduce((s, r) => s + Number(r.amount_with_tax), 0);
@@ -652,96 +437,41 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
     expect(sum1).toBeCloseTo(expectedComp1.grossAmount, 6);
 
     // One draw per component is funded by line-A, the other by line-B.
-    expect(comp0Rows.map((r) => r.budget_line_id).sort()).toEqual([
-      "line-A",
-      "line-B",
-    ]);
-    expect(comp1Rows.map((r) => r.budget_line_id).sort()).toEqual([
-      "line-A",
-      "line-B",
-    ]);
+    expect(comp0Rows.map((r) => r.budget_line_id).sort()).toEqual(["line-A", "line-B"]);
+    expect(comp1Rows.map((r) => r.budget_line_id).sort()).toEqual(["line-A", "line-B"]);
 
     // Spillover audit note on the line-B draws only.
     const lineBRows = rows.filter((r) => r.budget_line_id === "line-B");
     for (const row of lineBRows) {
-      expect(String(row.remarks)).toContain(
-        "Auto-allocated from branch aggregate headroom for Office Supplies/Consumables",
-      );
+      expect(String(row.remarks)).toContain("Auto-allocated from branch aggregate headroom for Office Supplies/Consumables");
     }
   });
 
   it("5. spillover sub-row needs more UNITS than the funding line has left — allowed now, because money is the only gate", async () => {
     const lineA: FakeBudgetLine = {
-      id: "line-A",
-      budget_id: "hdr-1",
-      head: "Office Supplies",
-      sub_head: "Consumables",
-      item_name: "Consumables A",
-      cost_centre_id: "cc-A",
-      cost_centre_name: "CC A",
-      process_id: null,
-      unit: "nos",
-      unit_rate: 10,
-      tax_treatment: "exclusive",
-      gst_rate: 0,
-      gst_type: "cgst_sgst",
-      recoverable_tax_pct: 100,
-      justification: "Approved",
-      period_code: "2026-08",
-      quantity: 1000,
-      reserved_quantity: 0,
-      consumed_quantity: 980,
-      gross_amount: 10000,
-      reserved_amount: 0,
-      consumed_amount: 9800, // available: ~₹200
+      id: "line-A", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Consumables",
+      item_name: "Consumables A", cost_centre_id: "cc-A", cost_centre_name: "CC A", process_id: null,
+      unit: "nos", unit_rate: 10, tax_treatment: "exclusive", gst_rate: 0, gst_type: "cgst_sgst",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      quantity: 1000, reserved_quantity: 0, consumed_quantity: 980,
+      gross_amount: 10000, reserved_amount: 0, consumed_amount: 9800, // available: ~₹200
     };
     const lineB: FakeBudgetLine = {
-      id: "line-B",
-      budget_id: "hdr-1",
-      head: "Office Supplies",
-      sub_head: "Consumables",
-      item_name: "Consumables B (Pooled)",
-      cost_centre_id: null,
-      cost_centre_name: null,
-      process_id: null,
-      unit: "nos",
-      unit_rate: 20,
-      tax_treatment: "exclusive",
-      gst_rate: 0,
-      gst_type: "cgst_sgst",
-      recoverable_tax_pct: 100,
-      justification: "Approved",
-      period_code: "2026-08",
+      id: "line-B", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Consumables",
+      item_name: "Consumables B (Pooled)", cost_centre_id: null, cost_centre_name: null, process_id: null,
+      unit: "nos", unit_rate: 20, tax_treatment: "exclusive", gst_rate: 0, gst_type: "cgst_sgst",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
       // Plenty of MONEY, but the spillover draw of ~₹500 needs 25 units at ₹20/unit — only 5 left.
       // No longer a stop: the whole-unit count is a planning figure, not a spending control.
       // See the banner atop budget-consumption.service.ts.
-      quantity: 5,
-      reserved_quantity: 0,
-      consumed_quantity: 0,
-      gross_amount: 50000,
-      reserved_amount: 0,
-      consumed_amount: 0,
+      quantity: 5, reserved_quantity: 0, consumed_quantity: 0,
+      gross_amount: 50000, reserved_amount: 0, consumed_amount: 0,
     };
     stateRef.current = makeState({
       grn: baseGrn(),
-      budgetHeaders: [
-        {
-          id: "hdr-1",
-          branch_id: "br-1",
-          period_code: "2026-08",
-          status: "active",
-        },
-      ],
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
       budgetLines: [lineA, lineB],
-      costCentres: [
-        {
-          id: "cc-A",
-          cost_centre_code: "CCA",
-          cost_centre_name: "CC A",
-          branch_id: "br-1",
-          active_status: 1,
-        },
-      ],
+      costCentres: [{ id: "cc-A", cost_centre_code: "CCA", cost_centre_name: "CC A", branch_id: "br-1", active_status: 1 }],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
@@ -753,66 +483,32 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
         costCentreSplits: [{ budgetLineId: "line-A", percentage: 100 }],
       },
       "user-1",
-      "branch_head",
+      "branch_head"
     );
 
     // Rs 700 split: line A funds its remaining ~Rs 200, line B the rest — more units than B has
     // left, which is exactly what used to be refused. The money still reconciles to the invoice.
     const rows = stateRef.current.insertedAllocations;
     expect(rows.length).toBeGreaterThan(1);
-    const total = rows.reduce(
-      (sum: number, r: any) => sum + Number(r.amount_with_tax),
-      0,
-    );
+    const total = rows.reduce((sum: number, r: any) => sum + Number(r.amount_with_tax), 0);
     expect(total).toBeCloseTo(700, 6);
   });
 
   it("5b. the MONEY gate is untouched — a split the whole branch cannot fund is still refused", async () => {
     const lineD: FakeBudgetLine = {
-      id: "line-D",
-      budget_id: "hdr-1",
-      head: "Office Supplies",
-      sub_head: "Consumables",
-      item_name: "Consumables D",
-      cost_centre_id: "cc-A",
-      cost_centre_name: "CC A",
-      process_id: null,
-      unit: "nos",
-      unit_rate: 10,
-      tax_treatment: "exclusive",
-      gst_rate: 0,
-      gst_type: "cgst_sgst",
-      recoverable_tax_pct: 100,
-      justification: "Approved",
-      period_code: "2026-08",
+      id: "line-D", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Consumables",
+      item_name: "Consumables D", cost_centre_id: "cc-A", cost_centre_name: "CC A", process_id: null,
+      unit: "nos", unit_rate: 10, tax_treatment: "exclusive", gst_rate: 0, gst_type: "cgst_sgst",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
       // Units to spare, money nearly gone: the mirror image of test 5, and still a hard stop.
-      quantity: 10000,
-      reserved_quantity: 0,
-      consumed_quantity: 0,
-      gross_amount: 10000,
-      reserved_amount: 0,
-      consumed_amount: 9800, // available: Rs 200
+      quantity: 10000, reserved_quantity: 0, consumed_quantity: 0,
+      gross_amount: 10000, reserved_amount: 0, consumed_amount: 9800, // available: Rs 200
     };
     stateRef.current = makeState({
       grn: baseGrn(),
-      budgetHeaders: [
-        {
-          id: "hdr-1",
-          branch_id: "br-1",
-          period_code: "2026-08",
-          status: "active",
-        },
-      ],
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
       budgetLines: [lineD],
-      costCentres: [
-        {
-          id: "cc-A",
-          cost_centre_code: "CCA",
-          cost_centre_name: "CC A",
-          branch_id: "br-1",
-          active_status: 1,
-        },
-      ],
+      costCentres: [{ id: "cc-A", cost_centre_code: "CCA", cost_centre_name: "CC A", branch_id: "br-1", active_status: 1 }],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
@@ -825,8 +521,8 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
           costCentreSplits: [{ budgetLineId: "line-D", percentage: 100 }],
         },
         "user-1",
-        "branch_head",
-      ),
+        "branch_head"
+      )
     ).rejects.toMatchObject({ code: "HEADROOM_EXCEEDED", statusCode: 409 });
   });
 
@@ -837,103 +533,36 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
     // split's allocateAcrossLines call against the first split's already-decided draw, both
     // would wrongly see the FULL ₹1000 available and succeed, overcommitting the aggregate.
     const lineA: FakeBudgetLine = {
-      id: "line-A",
-      budget_id: "hdr-1",
-      head: "Office Supplies",
-      sub_head: "Consumables",
-      item_name: "Consumables A",
-      cost_centre_id: "cc-A",
-      cost_centre_name: "CC A",
-      process_id: null,
-      unit: "nos",
-      unit_rate: 10,
-      tax_treatment: "exclusive",
-      gst_rate: 0,
-      gst_type: "cgst_sgst",
-      recoverable_tax_pct: 100,
-      justification: "Approved",
-      period_code: "2026-08",
-      quantity: 100,
-      reserved_quantity: 100,
-      consumed_quantity: 0,
-      gross_amount: 1000,
-      reserved_amount: 1000,
-      consumed_amount: 0, // available: ₹0
+      id: "line-A", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Consumables",
+      item_name: "Consumables A", cost_centre_id: "cc-A", cost_centre_name: "CC A", process_id: null,
+      unit: "nos", unit_rate: 10, tax_treatment: "exclusive", gst_rate: 0, gst_type: "cgst_sgst",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      quantity: 100, reserved_quantity: 100, consumed_quantity: 0,
+      gross_amount: 1000, reserved_amount: 1000, consumed_amount: 0, // available: ₹0
     };
     const lineC: FakeBudgetLine = {
-      id: "line-C",
-      budget_id: "hdr-1",
-      head: "Office Supplies",
-      sub_head: "Consumables",
-      item_name: "Consumables C",
-      cost_centre_id: "cc-C",
-      cost_centre_name: "CC C",
-      process_id: null,
-      unit: "nos",
-      unit_rate: 10,
-      tax_treatment: "exclusive",
-      gst_rate: 0,
-      gst_type: "cgst_sgst",
-      recoverable_tax_pct: 100,
-      justification: "Approved",
-      period_code: "2026-08",
-      quantity: 100,
-      reserved_quantity: 100,
-      consumed_quantity: 0,
-      gross_amount: 1000,
-      reserved_amount: 1000,
-      consumed_amount: 0, // available: ₹0
+      id: "line-C", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Consumables",
+      item_name: "Consumables C", cost_centre_id: "cc-C", cost_centre_name: "CC C", process_id: null,
+      unit: "nos", unit_rate: 10, tax_treatment: "exclusive", gst_rate: 0, gst_type: "cgst_sgst",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      quantity: 100, reserved_quantity: 100, consumed_quantity: 0,
+      gross_amount: 1000, reserved_amount: 1000, consumed_amount: 0, // available: ₹0
     };
     const lineS: FakeBudgetLine = {
-      id: "line-S",
-      budget_id: "hdr-1",
-      head: "Office Supplies",
-      sub_head: "Consumables",
-      item_name: "Consumables (Pooled)",
-      cost_centre_id: null,
-      cost_centre_name: null,
-      process_id: null,
-      unit: "nos",
-      unit_rate: 10,
-      tax_treatment: "exclusive",
-      gst_rate: 0,
-      gst_type: "cgst_sgst",
-      recoverable_tax_pct: 100,
-      justification: "Approved",
-      period_code: "2026-08",
-      quantity: 100,
-      reserved_quantity: 0,
-      consumed_quantity: 0,
-      gross_amount: 1000,
-      reserved_amount: 0,
-      consumed_amount: 0, // available: ₹1000 total
+      id: "line-S", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Consumables",
+      item_name: "Consumables (Pooled)", cost_centre_id: null, cost_centre_name: null, process_id: null,
+      unit: "nos", unit_rate: 10, tax_treatment: "exclusive", gst_rate: 0, gst_type: "cgst_sgst",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      quantity: 100, reserved_quantity: 0, consumed_quantity: 0,
+      gross_amount: 1000, reserved_amount: 0, consumed_amount: 0, // available: ₹1000 total
     };
     stateRef.current = makeState({
       grn: baseGrn(),
-      budgetHeaders: [
-        {
-          id: "hdr-1",
-          branch_id: "br-1",
-          period_code: "2026-08",
-          status: "active",
-        },
-      ],
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
       budgetLines: [lineA, lineC, lineS],
       costCentres: [
-        {
-          id: "cc-A",
-          cost_centre_code: "CCA",
-          cost_centre_name: "CC A",
-          branch_id: "br-1",
-          active_status: 1,
-        },
-        {
-          id: "cc-C",
-          cost_centre_code: "CCC",
-          cost_centre_name: "CC C",
-          branch_id: "br-1",
-          active_status: 1,
-        },
+        { id: "cc-A", cost_centre_code: "CCA", cost_centre_name: "CC A", branch_id: "br-1", active_status: 1 },
+        { id: "cc-C", cost_centre_code: "CCC", cost_centre_name: "CC C", branch_id: "br-1", active_status: 1 },
       ],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
@@ -945,61 +574,30 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
           declaredInvoiceTotal: 1100,
           components: [{ amountWithoutTax: 1100, gstRate: 0 }],
           costCentreSplits: [
-            { budgetLineId: "line-A", percentage: (800 / 1100) * 100 }, // ~₹800 of the invoice
-            { budgetLineId: "line-C", percentage: (300 / 1100) * 100 }, // ~₹300 of the invoice
+            { budgetLineId: "line-A", percentage: 800 / 1100 * 100 }, // ~₹800 of the invoice
+            { budgetLineId: "line-C", percentage: 300 / 1100 * 100 }, // ~₹300 of the invoice
           ],
         },
         "user-1",
-        "branch_head",
-      ),
+        "branch_head"
+      )
     ).rejects.toMatchObject({ code: "HEADROOM_EXCEEDED", statusCode: 409 });
   });
 
   it("7. normal case, no spillover anywhere — row count, amounts and quantities identical to pre-change behaviour", async () => {
     const lineN: FakeBudgetLine = {
-      id: "line-N",
-      budget_id: "hdr-1",
-      head: "Travel",
-      sub_head: "Local Conveyance",
-      item_name: "Local Conveyance",
-      cost_centre_id: "cc-N",
-      cost_centre_name: "CC N",
-      process_id: null,
-      unit: "trip",
-      unit_rate: 50,
-      tax_treatment: "exclusive",
-      gst_rate: 18,
-      gst_type: "cgst_sgst",
-      recoverable_tax_pct: 100,
-      justification: "Approved",
-      period_code: "2026-08",
-      quantity: 1000,
-      reserved_quantity: 0,
-      consumed_quantity: 0,
-      gross_amount: 100000,
-      reserved_amount: 0,
-      consumed_amount: 0, // ample room
+      id: "line-N", budget_id: "hdr-1", head: "Travel", sub_head: "Local Conveyance",
+      item_name: "Local Conveyance", cost_centre_id: "cc-N", cost_centre_name: "CC N", process_id: null,
+      unit: "trip", unit_rate: 50, tax_treatment: "exclusive", gst_rate: 18, gst_type: "cgst_sgst",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      quantity: 1000, reserved_quantity: 0, consumed_quantity: 0,
+      gross_amount: 100000, reserved_amount: 0, consumed_amount: 0, // ample room
     };
     stateRef.current = makeState({
       grn: baseGrn(),
-      budgetHeaders: [
-        {
-          id: "hdr-1",
-          branch_id: "br-1",
-          period_code: "2026-08",
-          status: "active",
-        },
-      ],
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
       budgetLines: [lineN],
-      costCentres: [
-        {
-          id: "cc-N",
-          cost_centre_code: "CCN",
-          cost_centre_name: "CC N",
-          branch_id: "br-1",
-          active_status: 1,
-        },
-      ],
+      costCentres: [{ id: "cc-N", cost_centre_code: "CCN", cost_centre_name: "CC N", branch_id: "br-1", active_status: 1 }],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
@@ -1008,16 +606,10 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
       {
         declaredInvoiceTotal: 590, // 500 base + 18% = 590
         components: [{ amountWithoutTax: 500, gstRate: 18 }],
-        costCentreSplits: [
-          {
-            budgetLineId: "line-N",
-            percentage: 100,
-            remarks: "Straightforward",
-          },
-        ],
+        costCentreSplits: [{ budgetLineId: "line-N", percentage: 100, remarks: "Straightforward" }],
       },
       "user-1",
-      "branch_head",
+      "branch_head"
     );
 
     const rows = stateRef.current.insertedAllocations;
@@ -1031,49 +623,18 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
 
   it("8. an unbudgeted split with real branch capacity available succeeds, resulting rows carry a real non-null budget_id/budget_line_id", async () => {
     const lineT: FakeBudgetLine = {
-      id: "line-T",
-      budget_id: "hdr-1",
-      head: "Travel",
-      sub_head: "Local Conveyance",
-      item_name: "Local Conveyance",
-      cost_centre_id: null,
-      cost_centre_name: null,
-      process_id: null,
-      unit: "trip",
-      unit_rate: 100,
-      tax_treatment: "exclusive",
-      gst_rate: 0,
-      gst_type: "cgst_sgst",
-      recoverable_tax_pct: 100,
-      justification: "Approved",
-      period_code: "2026-08",
-      quantity: 50,
-      reserved_quantity: 0,
-      consumed_quantity: 0,
-      gross_amount: 5000,
-      reserved_amount: 0,
-      consumed_amount: 0,
+      id: "line-T", budget_id: "hdr-1", head: "Travel", sub_head: "Local Conveyance",
+      item_name: "Local Conveyance", cost_centre_id: null, cost_centre_name: null, process_id: null,
+      unit: "trip", unit_rate: 100, tax_treatment: "exclusive", gst_rate: 0, gst_type: "cgst_sgst",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      quantity: 50, reserved_quantity: 0, consumed_quantity: 0,
+      gross_amount: 5000, reserved_amount: 0, consumed_amount: 0,
     };
     stateRef.current = makeState({
       grn: baseGrn({ head: "Travel", sub_head: "Local Conveyance" }),
-      budgetHeaders: [
-        {
-          id: "hdr-1",
-          branch_id: "br-1",
-          period_code: "2026-08",
-          status: "active",
-        },
-      ],
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
       budgetLines: [lineT],
-      costCentres: [
-        {
-          id: "cc-X",
-          cost_centre_code: "CCX",
-          cost_centre_name: "CC X",
-          branch_id: "br-1",
-          active_status: 1,
-        },
-      ],
+      costCentres: [{ id: "cc-X", cost_centre_code: "CCX", cost_centre_name: "CC X", branch_id: "br-1", active_status: 1 }],
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
@@ -1085,7 +646,7 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
         costCentreSplits: [{ costCentreId: "cc-X", percentage: 100 }], // no budgetLineId
       },
       "user-1",
-      "branch_head",
+      "branch_head"
     );
 
     const rows = stateRef.current.insertedAllocations;
@@ -1105,6 +666,7 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
   });
 });
 
+
 /*
  * A non-taxable budget line is weighed against the invoice's TAXABLE value, not its total.
  *
@@ -1120,52 +682,22 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
  */
 describe("tax basis: a non-taxable line carries the taxable value, not the invoice total", () => {
   const nonTaxableLine = (): FakeBudgetLine => ({
-    id: "line-N",
-    budget_id: "hdr-1",
-    head: "Office Supplies",
-    sub_head: "Stationery",
-    item_name: "Stationery",
-    cost_centre_id: "cc-X",
-    cost_centre_name: "CC X",
-    process_id: null,
-    unit: "amount",
-    unit_rate: 1,
+    id: "line-N", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Stationery",
+    item_name: "Stationery", cost_centre_id: "cc-X", cost_centre_name: "CC X", process_id: null,
+    unit: "amount", unit_rate: 1,
     // Planned WITHOUT tax: this Rs 21,000 is a taxable figure, not a tax-inclusive one.
-    tax_treatment: "non_gst",
-    gst_rate: 0,
-    gst_type: "none",
-    recoverable_tax_pct: 0,
-    justification: "Approved",
-    period_code: "2026-08",
-    quantity: 21000,
-    reserved_quantity: 0,
-    consumed_quantity: 0,
-    gross_amount: 21000,
-    reserved_amount: 0,
-    consumed_amount: 0,
+    tax_treatment: "non_gst", gst_rate: 0, gst_type: "none",
+    recoverable_tax_pct: 0, justification: "Approved", period_code: "2026-08",
+    quantity: 21000, reserved_quantity: 0, consumed_quantity: 0,
+    gross_amount: 21000, reserved_amount: 0, consumed_amount: 0,
   });
 
   const setup = () => {
     stateRef.current = makeState({
       grn: baseGrn(),
-      budgetHeaders: [
-        {
-          id: "hdr-1",
-          branch_id: "br-1",
-          period_code: "2026-08",
-          status: "active",
-        },
-      ],
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
       budgetLines: [nonTaxableLine()],
-      costCentres: [
-        {
-          id: "cc-X",
-          cost_centre_code: "CCX",
-          cost_centre_name: "CC X",
-          branch_id: "br-1",
-          active_status: 1,
-        },
-      ],
+      costCentres: [{ id: "cc-X", cost_centre_code: "CCX", cost_centre_name: "CC X", branch_id: "br-1", active_status: 1 }],
     });
   };
 
@@ -1181,12 +713,10 @@ describe("tax basis: a non-taxable line carries the taxable value, not the invoi
       {
         declaredInvoiceTotal: 23600,
         components: [{ amountWithoutTax: 20000, gstRate: 18 }],
-        costCentreSplits: [
-          { budgetLineId: "line-N", costCentreId: "cc-X", percentage: 100 },
-        ],
+        costCentreSplits: [{ budgetLineId: "line-N", costCentreId: "cc-X", percentage: 100 }],
       },
       "user-1",
-      "branch_head",
+      "branch_head"
     );
 
     const rows = stateRef.current.insertedAllocations;
@@ -1210,13 +740,11 @@ describe("tax basis: a non-taxable line carries the taxable value, not the invoi
         {
           declaredInvoiceTotal: 29500,
           components: [{ amountWithoutTax: 25000, gstRate: 18 }],
-          costCentreSplits: [
-            { budgetLineId: "line-N", costCentreId: "cc-X", percentage: 100 },
-          ],
+          costCentreSplits: [{ budgetLineId: "line-N", costCentreId: "cc-X", percentage: 100 }],
         },
         "user-1",
-        "branch_head",
-      ),
+        "branch_head"
+      )
     ).rejects.toMatchObject({ code: "HEADROOM_EXCEEDED", statusCode: 409 });
   });
 });

@@ -23,23 +23,13 @@ describe("tenure badge sweep", () => {
   });
 
   it("continues after an employee evaluation fails", async () => {
-    mockExecute.mockResolvedValueOnce([
-      [{ id: "employee-1" }, { id: "employee-2" }],
-      [],
-    ]);
+    mockExecute.mockResolvedValueOnce([[{ id: "employee-1" }, { id: "employee-2" }], []]);
     mockCheckAutoAwards
       .mockRejectedValueOnce(new Error("temporary failure"))
       .mockResolvedValueOnce([]);
 
-    await expect(runTenureBadgeSweep()).resolves.toEqual({
-      checked: 2,
-      failed: 1,
-    });
-    expect(mockCheckAutoAwards).toHaveBeenNthCalledWith(
-      2,
-      "employee-2",
-      "tenure",
-    );
+    await expect(runTenureBadgeSweep()).resolves.toEqual({ checked: 2, failed: 1 });
+    expect(mockCheckAutoAwards).toHaveBeenNthCalledWith(2, "employee-2", "tenure");
   });
 
   it("schedules the next sweep for 2 AM", () => {

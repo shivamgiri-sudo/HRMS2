@@ -19,11 +19,7 @@ import path from "path";
  * is pinned against the schema file instead.
  */
 
-const SERVICE = path.resolve(
-  __dirname,
-  "..",
-  "employeeJoiningDocuments.service.ts",
-);
+const SERVICE = path.resolve(__dirname, "..", "employeeJoiningDocuments.service.ts");
 
 function serviceSource(): string {
   // Normalise line endings before any assertion reads this.
@@ -45,16 +41,11 @@ function templateTableColumns(): string[] {
     if (!fs.existsSync(dir)) return;
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-        continue;
-      }
+      if (entry.isDirectory()) { walk(full); continue; }
       if (!entry.name.endsWith(".sql")) continue;
       const sql = fs.readFileSync(full, "utf8");
       if (!/employee_joining_document_template/i.test(sql)) continue;
-      for (const m of sql.matchAll(
-        /^\s*`?([a-z_]+)`?\s+(varchar|char|text|int|tinyint|datetime|json|enum|decimal)/gim,
-      )) {
+      for (const m of sql.matchAll(/^\s*`?([a-z_]+)`?\s+(varchar|char|text|int|tinyint|datetime|json|enum|decimal)/gim)) {
         found.add(m[1].toLowerCase());
       }
     }
@@ -66,10 +57,9 @@ function templateTableColumns(): string[] {
 describe("joining-document e-sign template guard", () => {
   it("orders by template_version, a column that exists", () => {
     const src = serviceSource();
-    expect(
-      src,
-      "the guard must not order by a bare `version` column",
-    ).not.toMatch(/ORDER BY \(version\s*=\s*\?\)/);
+    expect(src, "the guard must not order by a bare `version` column").not.toMatch(
+      /ORDER BY \(version\s*=\s*\?\)/,
+    );
     expect(src).toMatch(/ORDER BY \(template_version\s*=\s*\?\)/);
   });
 
@@ -78,14 +68,8 @@ describe("joining-document e-sign template guard", () => {
     const offenders = src
       .split("\n")
       .map((line, i) => ({ line: line.trim(), n: i + 1 }))
-      .filter(
-        ({ line }) =>
-          /\bversion\b\s*=\s*\?/.test(line) && !/template_version/.test(line),
-      );
-    expect(
-      offenders,
-      "employee_joining_document_template has template_version, not version",
-    ).toEqual([]);
+      .filter(({ line }) => /\bversion\b\s*=\s*\?/.test(line) && !/template_version/.test(line));
+    expect(offenders, "employee_joining_document_template has template_version, not version").toEqual([]);
   });
 
   it("the schema confirms template_version exists and version does not", () => {
@@ -99,13 +83,8 @@ describe("joining-document e-sign template guard", () => {
 
   it("logs when the template lookup fails instead of swallowing it", () => {
     const src = serviceSource();
-    const guard = src.slice(
-      src.indexOf("async function assertTemplateConfiguredForEsign"),
-    );
+    const guard = src.slice(src.indexOf("async function assertTemplateConfiguredForEsign"));
     const body = guard.slice(0, guard.indexOf("\n}\n") + 3);
-    expect(
-      body,
-      "a swallowed catch here reads as 'no template configured'",
-    ).toMatch(/console\.error/);
+    expect(body, "a swallowed catch here reads as 'no template configured'").toMatch(/console\.error/);
   });
 });

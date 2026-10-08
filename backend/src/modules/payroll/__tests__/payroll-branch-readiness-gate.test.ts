@@ -61,8 +61,7 @@ vi.mock("../../policy-engine/policy-engine.cache.js", () => ({
   getPolicyValue: vi.fn(async () => minReadinessScore),
 }));
 
-const { payrollBranchReadinessService } =
-  await import("../payroll-branch-readiness.service.js");
+const { payrollBranchReadinessService } = await import("../payroll-branch-readiness.service.js");
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -108,20 +107,11 @@ describe("validatePayrollRunCreation", () => {
     // payroll_head applied. Before the fix this returned blocked=[NOIDA, NOIDA-2] and
     // createRun threw, which is what made August impossible to create.
     stubReadiness({
-      "b-noida": {
-        attendance_frozen: 0,
-        ho_override_ready: 1,
-        readiness_status: "blocked",
-      },
-      "b-noida2": {
-        attendance_frozen: 0,
-        ho_override_ready: 1,
-        readiness_status: "blocked",
-      },
+      "b-noida": { attendance_frozen: 0, ho_override_ready: 1, readiness_status: "blocked" },
+      "b-noida2": { attendance_frozen: 0, ho_override_ready: 1, readiness_status: "blocked" },
     });
 
-    const result =
-      await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
+    const result = await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
 
     expect(result.blocked).toEqual([]);
     expect(result.ready).toEqual(["NOIDA", "NOIDA-2"]);
@@ -129,20 +119,11 @@ describe("validatePayrollRunCreation", () => {
 
   it("admits a branch that is genuinely frozen and ready", async () => {
     stubReadiness({
-      "b-noida": {
-        attendance_frozen: 1,
-        ho_override_ready: 0,
-        readiness_status: "ready",
-      },
-      "b-noida2": {
-        attendance_frozen: 1,
-        ho_override_ready: 0,
-        readiness_status: "ready",
-      },
+      "b-noida": { attendance_frozen: 1, ho_override_ready: 0, readiness_status: "ready" },
+      "b-noida2": { attendance_frozen: 1, ho_override_ready: 0, readiness_status: "ready" },
     });
 
-    const result =
-      await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
+    const result = await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
 
     expect(result.blocked).toEqual([]);
     expect(result.ready).toEqual(["NOIDA", "NOIDA-2"]);
@@ -151,20 +132,11 @@ describe("validatePayrollRunCreation", () => {
   it("still blocks a branch with no override, no freeze and no readiness", async () => {
     // The other direction. Relaxing the gate must not turn it into a rubber stamp.
     stubReadiness({
-      "b-noida": {
-        attendance_frozen: 0,
-        ho_override_ready: 0,
-        readiness_status: "blocked",
-      },
-      "b-noida2": {
-        attendance_frozen: 0,
-        ho_override_ready: 0,
-        readiness_status: "in_progress",
-      },
+      "b-noida": { attendance_frozen: 0, ho_override_ready: 0, readiness_status: "blocked" },
+      "b-noida2": { attendance_frozen: 0, ho_override_ready: 0, readiness_status: "in_progress" },
     });
 
-    const result =
-      await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
+    const result = await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
 
     expect(result.ready).toEqual([]);
     expect(result.blocked).toEqual(["NOIDA", "NOIDA-2"]);
@@ -172,20 +144,11 @@ describe("validatePayrollRunCreation", () => {
 
   it("blocks only the branches that are not ready, not the whole company", async () => {
     stubReadiness({
-      "b-noida": {
-        attendance_frozen: 0,
-        ho_override_ready: 1,
-        readiness_status: "blocked",
-      },
-      "b-noida2": {
-        attendance_frozen: 0,
-        ho_override_ready: 0,
-        readiness_status: "blocked",
-      },
+      "b-noida": { attendance_frozen: 0, ho_override_ready: 1, readiness_status: "blocked" },
+      "b-noida2": { attendance_frozen: 0, ho_override_ready: 0, readiness_status: "blocked" },
     });
 
-    const result =
-      await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
+    const result = await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
 
     expect(result.ready).toEqual(["NOIDA"]);
     expect(result.blocked).toEqual(["NOIDA-2"]);
@@ -197,31 +160,23 @@ describe("validatePayrollRunCreation", () => {
     // differs from branch_master.id (utf8mb4_unicode_ci), so an unguarded join raises
     // ER_CANT_AGGREGATE_2COLLATIONS and would be indistinguishable from an unprepared branch.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.spyOn(payrollBranchReadinessService, "getOrRefresh").mockImplementation(
-      async () => {
-        throw new Error("Illegal mix of collations");
-      },
-    );
+    vi.spyOn(payrollBranchReadinessService, "getOrRefresh").mockImplementation(async () => {
+      throw new Error("Illegal mix of collations");
+    });
 
-    const result =
-      await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
+    const result = await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
 
     expect(result.ready).toEqual([]);
     expect(result.blocked).toEqual(["NOIDA", "NOIDA-2"]);
     // The error must be visible, not swallowed into an ordinary "branch not ready".
     expect(warn).toHaveBeenCalled();
-    expect(
-      warn.mock.calls.some((c) =>
-        String(c.join(" ")).includes("Illegal mix of collations"),
-      ),
-    ).toBe(true);
+    expect(warn.mock.calls.some((c) => String(c.join(" ")).includes("Illegal mix of collations"))).toBe(true);
   });
 
   it("returns neither ready nor blocked when the branch list cannot be read", async () => {
     execute.mockRejectedValue(new Error("ER_NO_SUCH_TABLE: branch_master"));
 
-    const result =
-      await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
+    const result = await payrollBranchReadinessService.validatePayrollRunCreation("2026-08");
 
     expect(result).toEqual({ blocked: [], ready: [] });
   });
@@ -236,61 +191,39 @@ describe("computeStatus", () => {
     // stays out. The 4th argument is attendance_data_ready, the WFM declaration, which
     // carries no such circularity: it lives on the readiness row, set before any run exists.
     // frozen is still 0 here, which is the point.
-    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0, 1)).toBe(
-      "ready",
-    );
+    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0, 1)).toBe("ready");
   });
 
   it("refuses 'ready' when WFM has NOT declared attendance ready, however high the score", async () => {
     // The hole this closes: the weights used to total 110 and were clamped to 100, so a
     // branch could skip both attendance gates (25 points) and still clear the threshold of
     // 80 with 85. Attendance is the input payroll is computed from.
-    expect(
-      await payrollBranchReadinessService.computeStatus(85, 0, 0, 0),
-    ).not.toBe("ready");
-    expect(
-      await payrollBranchReadinessService.computeStatus(100, 1, 0, 0),
-    ).not.toBe("ready");
+    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0, 0)).not.toBe("ready");
+    expect(await payrollBranchReadinessService.computeStatus(100, 1, 0, 0)).not.toBe("ready");
   });
 
   it("treats an HO override as ready regardless of score", async () => {
-    expect(await payrollBranchReadinessService.computeStatus(5, 0, 1)).toBe(
-      "ready",
-    );
+    expect(await payrollBranchReadinessService.computeStatus(5, 0, 1)).toBe("ready");
   });
 
   it("does not call a branch ready below the policy threshold", async () => {
     // Other direction: the score still has to be earned.
-    expect(
-      await payrollBranchReadinessService.computeStatus(79, 0, 0),
-    ).not.toBe("ready");
-    expect(
-      await payrollBranchReadinessService.computeStatus(60, 1, 0),
-    ).not.toBe("ready");
+    expect(await payrollBranchReadinessService.computeStatus(79, 0, 0)).not.toBe("ready");
+    expect(await payrollBranchReadinessService.computeStatus(60, 1, 0)).not.toBe("ready");
   });
 
   it("honours a policy threshold other than the default", async () => {
     minReadinessScore = "90";
-    expect(
-      await payrollBranchReadinessService.computeStatus(85, 0, 0, 1),
-    ).not.toBe("ready");
+    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0, 1)).not.toBe("ready");
     minReadinessScore = "70";
-    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0, 1)).toBe(
-      "ready",
-    );
+    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0, 1)).toBe("ready");
   });
 
   it("still reports blocked and in_progress at the low end", async () => {
     // Only the 'ready' limb changes. The lower bands are left exactly as they were, so a
     // branch that has done nothing still reads as blocked rather than quietly passing.
-    expect(await payrollBranchReadinessService.computeStatus(0, 0, 0)).toBe(
-      "blocked",
-    );
-    expect(await payrollBranchReadinessService.computeStatus(20, 0, 0)).toBe(
-      "blocked",
-    );
-    expect(await payrollBranchReadinessService.computeStatus(60, 0, 0)).toBe(
-      "in_progress",
-    );
+    expect(await payrollBranchReadinessService.computeStatus(0, 0, 0)).toBe("blocked");
+    expect(await payrollBranchReadinessService.computeStatus(20, 0, 0)).toBe("blocked");
+    expect(await payrollBranchReadinessService.computeStatus(60, 0, 0)).toBe("in_progress");
   });
 });

@@ -1,12 +1,8 @@
 import { describe, it, expect } from "vitest";
 import * as XLSX from "xlsx";
 import {
-  normalizeHeader,
-  parseFlexibleSheet,
-  normalizeDate,
-  normalizeDurationSeconds,
-  normalizeNumber,
-  normalizeName,
+  normalizeHeader, parseFlexibleSheet, normalizeDate, normalizeDurationSeconds,
+  normalizeNumber, normalizeName,
 } from "../flexible-parser.js";
 
 function bufferFrom(header: string[], rows: unknown[][]): Buffer {
@@ -31,10 +27,7 @@ describe("parseFlexibleSheet", () => {
   ];
 
   it("maps columns regardless of order and naming variant", () => {
-    const buf = bufferFrom(
-      ["Value", "agent_name", "date"],
-      [[100, "Test Agent", "2026-09-01"]],
-    );
+    const buf = bufferFrom(["Value", "agent_name", "date"], [[100, "Test Agent", "2026-09-01"]]);
     const result = parseFlexibleSheet(buf, fields, ["date", "agentName"]);
     expect(result.validRows).toBe(1);
     expect(result.rows[0].agentName).toBe("Test Agent");
@@ -42,10 +35,7 @@ describe("parseFlexibleSheet", () => {
   });
 
   it("tolerates extra columns without failing", () => {
-    const buf = bufferFrom(
-      ["Date", "Agent Name", "Value", "Some Random Extra Column"],
-      [["2026-09-01", "Test", 50, "junk"]],
-    );
+    const buf = bufferFrom(["Date", "Agent Name", "Value", "Some Random Extra Column"], [["2026-09-01", "Test", 50, "junk"]]);
     const result = parseFlexibleSheet(buf, fields, ["date", "agentName"]);
     expect(result.validRows).toBe(1);
     expect(result.additionalColumns).toContain("Some Random Extra Column");
@@ -60,27 +50,21 @@ describe("parseFlexibleSheet", () => {
   });
 
   it("skips blank rows without counting them as valid or duplicate", () => {
-    const buf = bufferFrom(
-      ["Date", "Agent Name", "Value"],
-      [
-        ["2026-09-01", "Test", 50],
-        [null, null, null],
-        ["2026-09-02", "Test2", 60],
-      ],
-    );
+    const buf = bufferFrom(["Date", "Agent Name", "Value"], [
+      ["2026-09-01", "Test", 50],
+      [null, null, null],
+      ["2026-09-02", "Test2", 60],
+    ]);
     const result = parseFlexibleSheet(buf, fields, ["date", "agentName"]);
     expect(result.validRows).toBe(2);
   });
 
   it("detects duplicates by the dedupe key without deleting legitimate distinct rows", () => {
-    const buf = bufferFrom(
-      ["Date", "Agent Name", "Value"],
-      [
-        ["2026-09-01", "Test", 50],
-        ["2026-09-01", "Test", 50],
-        ["2026-09-01", "Other Agent", 60],
-      ],
-    );
+    const buf = bufferFrom(["Date", "Agent Name", "Value"], [
+      ["2026-09-01", "Test", 50],
+      ["2026-09-01", "Test", 50],
+      ["2026-09-01", "Other Agent", 60],
+    ]);
     const result = parseFlexibleSheet(buf, fields, ["date", "agentName"]);
     expect(result.validRows).toBe(2);
     expect(result.duplicateRows).toBe(1);
@@ -129,8 +113,6 @@ describe("normalizeNumber", () => {
 
 describe("normalizeName", () => {
   it("matches names differing only in case/spacing", () => {
-    expect(normalizeName("Dhiraj   Prajapati")).toBe(
-      normalizeName("dhiraj prajapati"),
-    );
+    expect(normalizeName("Dhiraj   Prajapati")).toBe(normalizeName("dhiraj prajapati"));
   });
 });

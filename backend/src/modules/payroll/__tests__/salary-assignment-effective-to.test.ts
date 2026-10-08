@@ -24,15 +24,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const PAYROLL = readFileSync(
-  resolve(process.cwd(), "src/modules/payroll/payroll.service.ts"),
-  "utf8",
-);
+const PAYROLL = readFileSync(resolve(process.cwd(), "src/modules/payroll/payroll.service.ts"), "utf8");
 const INCREMENT = readFileSync(
-  resolve(
-    process.cwd(),
-    "src/modules/salary-increment/salaryIncrement.service.ts",
-  ),
+  resolve(process.cwd(), "src/modules/salary-increment/salaryIncrement.service.ts"),
   "utf8",
 );
 
@@ -40,8 +34,7 @@ const INCREMENT = readFileSync(
 function deactivationStatements(): string[] {
   const out: string[] = [];
   for (const src of [PAYROLL, INCREMENT]) {
-    const re =
-      /UPDATE employee_salary_assignment[\s\S]{0,400}?active_status = 1`/g;
+    const re = /UPDATE employee_salary_assignment[\s\S]{0,400}?active_status = 1`/g;
     for (const m of src.matchAll(re)) out.push(m[0]);
   }
   return out;
@@ -57,10 +50,7 @@ describe("every salary-assignment deactivation closes effective_to", () => {
 
   it("sets effective_to alongside active_status in each of them", () => {
     for (const stmt of deactivationStatements()) {
-      expect(
-        stmt,
-        `a deactivation still leaves effective_to NULL:\n${stmt}`,
-      ).toMatch(
+      expect(stmt, `a deactivation still leaves effective_to NULL:\n${stmt}`).toMatch(
         /effective_to = COALESCE\(effective_to, DATE_SUB\(\?, INTERVAL 1 DAY\)\)/,
       );
     }

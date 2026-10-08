@@ -11,10 +11,7 @@ import { describe, expect, it } from "vitest";
  * carries all four, and that the branch/process/DOJ lookup feeding it is present.
  */
 const src = readFileSync(
-  resolve(
-    process.cwd(),
-    "src/modules/it-provisioning/it-provisioning.service.ts",
-  ),
+  resolve(process.cwd(), "src/modules/it-provisioning/it-provisioning.service.ts"),
   "utf8",
 );
 
@@ -31,17 +28,11 @@ describe("ADMIN_BIOMETRIC_ID_CARD notification includes DOJ, Branch, Process/Dep
   });
 
   it("titleFn/descFn calls in the dispatch loop are passed the resolved taskInfo", () => {
-    expect(src).toContain(
-      "task.titleFn(employeeName, employeeCode, null, taskInfo)",
-    );
-    expect(src).toContain(
-      "task.descFn(employeeName, employeeCode, null, taskInfo)",
-    );
+    expect(src).toContain("task.titleFn(employeeName, employeeCode, null, taskInfo)");
+    expect(src).toContain("task.descFn(employeeName, employeeCode, null, taskInfo)");
   });
 
   it("a lookup failure does not abort the whole dispatch (non-fatal fallback)", () => {
-    expect(src).toContain(
-      "Non-fatal: failed to resolve branch/process for task notifications",
-    );
+    expect(src).toContain("Non-fatal: failed to resolve branch/process for task notifications");
   });
 });

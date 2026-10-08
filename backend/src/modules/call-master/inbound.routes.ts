@@ -5,26 +5,15 @@ import { inboundProjectAllowed, resolveProcessScope, tpzGrantCoversInboundKey } 
 import { getInboundProject } from "./inbound-projects.js";
 import { logger } from "../../lib/logger.js";
 import * as svc from "./inbound.service.js";
-import { getIstDateString } from "../../utils/dateUtils.js";
+import { getIstDateString } from '../../utils/dateUtils.js';
 
 const router = Router();
-const h =
-  (fn: (req: Request, res: Response) => Promise<unknown>) =>
-  (req: Request, res: Response, next: (e?: unknown) => void) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
+  (req: Request, res: Response, next: (e?: unknown) => void) => fn(req, res).catch(next);
 
 router.use(
   requireAuth,
-  requireRole(
-    "super_admin",
-    "admin",
-    "ceo",
-    "manager",
-    "process_manager",
-    "operations_manager",
-    "qa",
-    "quality_analyst",
-  ),
+  requireRole("super_admin", "admin", "ceo", "manager", "process_manager", "operations_manager", "qa", "quality_analyst")
 );
 
 /**
@@ -42,16 +31,8 @@ router.use(
  * from "no data" via `_unavailable`, and changing the status here would break
  * that contract for no gain.
  */
-function unavailable<T>(
-  res: Response,
-  route: string,
-  error: unknown,
-  fallback: T,
-) {
-  logger.error(
-    { route, err: error },
-    `[Inbound] ${route} failed — responding _unavailable`,
-  );
+function unavailable<T>(res: Response, route: string, error: unknown, fallback: T) {
+  logger.error({ route, err: error }, `[Inbound] ${route} failed — responding _unavailable`);
   return res.json({ success: true, _unavailable: true, data: fallback });
 }
 
@@ -83,7 +64,7 @@ router.use("/project/:key", async (req: Request, res: Response, next: (e?: unkno
 });
 
 function parseFilters(q: Record<string, unknown>) {
-  const endDate = q.endDate ? String(q.endDate) : getIstDateString();
+  const endDate   = q.endDate   ? String(q.endDate)   : getIstDateString();
   const startDate = q.startDate ? String(q.startDate) : getIstDateString();
   return { startDate, endDate };
 }
@@ -133,90 +114,55 @@ router.get("/projects", h(async (req, res) => {
 }));
 
 // Per-project
-router.get(
-  "/project/:key",
-  h(async (req, res) => {
-    try {
-      const f = parseFilters(req.query as Record<string, unknown>);
-      const data = await svc.getProjectSummary(f, req.params.key);
-      res.json({ success: true, data: data[0] ?? null });
-    } catch (err) {
-      unavailable(res, `GET /project/${req.params.key}`, err, null);
-    }
-  }),
-);
-router.get(
-  "/project/:key/trend",
-  h(async (req, res) => {
-    try {
-      const f = parseFilters(req.query as Record<string, unknown>);
-      const data = await svc.getProjectTrend(f, req.params.key);
-      res.json({ success: true, data: data[0]?.trend ?? [] });
-    } catch (err) {
-      unavailable(res, `GET /project/${req.params.key}/trend`, err, []);
-    }
-  }),
-);
-router.get(
-  "/project/:key/hourly",
-  h(async (req, res) => {
-    try {
-      const f = parseFilters(req.query as Record<string, unknown>);
-      res.json({
-        success: true,
-        data: await svc.getProjectHourly(f, req.params.key),
-      });
-    } catch (err) {
-      unavailable(res, `GET /project/${req.params.key}/hourly`, err, []);
-    }
-  }),
-);
-router.get(
-  "/project/:key/hourly-by-date",
-  h(async (req, res) => {
-    try {
-      const f = parseFilters(req.query as Record<string, unknown>);
-      res.json({
-        success: true,
-        data: await svc.getProjectHourlyByDate(f, req.params.key),
-      });
-    } catch (err) {
-      unavailable(
-        res,
-        `GET /project/${req.params.key}/hourly-by-date`,
-        err,
-        [],
-      );
-    }
-  }),
-);
-router.get(
-  "/project/:key/lob",
-  h(async (req, res) => {
-    try {
-      const f = parseFilters(req.query as Record<string, unknown>);
-      res.json({
-        success: true,
-        data: await svc.getProjectLobSummary(f, req.params.key),
-      });
-    } catch (err) {
-      unavailable(res, `GET /project/${req.params.key}/lob`, err, []);
-    }
-  }),
-);
-router.get(
-  "/project/:key/agents",
-  h(async (req, res) => {
-    try {
-      const f = parseFilters(req.query as Record<string, unknown>);
-      res.json({
-        success: true,
-        data: await svc.getProjectAgentSummary(f, req.params.key),
-      });
-    } catch (err) {
-      unavailable(res, `GET /project/${req.params.key}/agents`, err, []);
-    }
-  }),
-);
+router.get("/project/:key", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    const data = await svc.getProjectSummary(f, req.params.key);
+    res.json({ success: true, data: data[0] ?? null });
+  } catch (err) {
+    unavailable(res, `GET /project/${req.params.key}`, err, null);
+  }
+}));
+router.get("/project/:key/trend", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    const data = await svc.getProjectTrend(f, req.params.key);
+    res.json({ success: true, data: data[0]?.trend ?? [] });
+  } catch (err) {
+    unavailable(res, `GET /project/${req.params.key}/trend`, err, []);
+  }
+}));
+router.get("/project/:key/hourly", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getProjectHourly(f, req.params.key) });
+  } catch (err) {
+    unavailable(res, `GET /project/${req.params.key}/hourly`, err, []);
+  }
+}));
+router.get("/project/:key/hourly-by-date", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getProjectHourlyByDate(f, req.params.key) });
+  } catch (err) {
+    unavailable(res, `GET /project/${req.params.key}/hourly-by-date`, err, []);
+  }
+}));
+router.get("/project/:key/lob", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getProjectLobSummary(f, req.params.key) });
+  } catch (err) {
+    unavailable(res, `GET /project/${req.params.key}/lob`, err, []);
+  }
+}));
+router.get("/project/:key/agents", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getProjectAgentSummary(f, req.params.key) });
+  } catch (err) {
+    unavailable(res, `GET /project/${req.params.key}/agents`, err, []);
+  }
+}));
 
 export { router as inboundRouter };

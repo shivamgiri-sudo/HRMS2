@@ -70,9 +70,7 @@ function formatMoney(v: number) {
 
 async function main() {
   const targets = await loadTargets();
-  console.log(
-    `Found ${targets.length} target row(s) matching the exact clean-match/period-mismatch signature.\n`,
-  );
+  console.log(`Found ${targets.length} target row(s) matching the exact clean-match/period-mismatch signature.\n`);
 
   let applied = 0;
   let refused = 0;
@@ -80,10 +78,7 @@ async function main() {
 
   for (const row of targets) {
     const amount = Number(row.pnl_cost_amount);
-    const column =
-      row.lifecycle_status === "reserved"
-        ? "reserved_amount"
-        : "consumed_amount";
+    const column = row.lifecycle_status === "reserved" ? "reserved_amount" : "consumed_amount";
 
     const connection = await db.getConnection();
     try {
@@ -91,18 +86,17 @@ async function main() {
 
       const [lineRows] = await connection.execute<RowDataPacket[]>(
         `SELECT ${column} AS current_value FROM finance_budget_line WHERE id = ? FOR UPDATE`,
-        [row.budget_line_id],
+        [row.budget_line_id]
       );
       const line = lineRows[0];
       if (!line) throw new Error("budget line vanished");
       const currentValue = Number(line.current_value);
-      const nextValue =
-        Math.round((currentValue - amount + Number.EPSILON) * 100) / 100;
+      const nextValue = Math.round((currentValue - amount + Number.EPSILON) * 100) / 100;
 
       if (nextValue < -0.01) {
         console.log(
           `  REFUSED  ${row.grn_number}  ${row.branch_name}  ${row.head}/${row.sub_head ?? ""}  ` +
-            `${formatMoney(amount)}  -- would take ${column} negative (current ${formatMoney(currentValue)}); needs manual look`,
+          `${formatMoney(amount)}  -- would take ${column} negative (current ${formatMoney(currentValue)}); needs manual look`
         );
         refused++;
         await connection.rollback();
@@ -111,45 +105,33 @@ async function main() {
 
       console.log(
         `  ${APPLY ? "APPLIED " : "WOULD-APPLY"}  ${row.grn_number}  ${row.branch_name}  ${row.head}/${row.sub_head ?? ""}  ` +
-          `${formatMoney(amount)}  (${row.grn_period} spend wrongly on ${row.budget_period} budget)`,
+        `${formatMoney(amount)}  (${row.grn_period} spend wrongly on ${row.budget_period} budget)`
       );
 
       if (APPLY) {
         await connection.execute(
           `UPDATE finance_budget_line SET ${column} = ${column} - ? WHERE id = ?`,
-          [amount, row.budget_line_id],
+          [amount, row.budget_line_id]
         );
-        await connection.execute(
-          `DELETE FROM grn_cost_allocation WHERE id = ?`,
-          [row.allocation_id],
-        );
+        await connection.execute(`DELETE FROM grn_cost_allocation WHERE id = ?`, [row.allocation_id]);
         await connection.commit();
       } else {
         await connection.rollback();
       }
       applied++;
-      totalReversed =
-        Math.round((totalReversed + amount + Number.EPSILON) * 100) / 100;
+      totalReversed = Math.round((totalReversed + amount + Number.EPSILON) * 100) / 100;
     } catch (error) {
       await connection.rollback();
-      console.log(
-        `  FAILED  ${row.grn_number}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      console.log(`  FAILED  ${row.grn_number}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       connection.release();
     }
   }
 
   console.log(`\n=== Summary ===`);
-  console.log(
-    `  ${APPLY ? "Applied" : "Would apply"}: ${applied} row(s), ${formatMoney(totalReversed)}`,
-  );
+  console.log(`  ${APPLY ? "Applied" : "Would apply"}: ${applied} row(s), ${formatMoney(totalReversed)}`);
   console.log(`  Refused: ${refused} row(s)`);
-  console.log(
-    APPLY
-      ? "\nAPPLIED."
-      : "\nDRY RUN — nothing written. Pass --apply to write.",
-  );
+  console.log(APPLY ? "\nAPPLIED." : "\nDRY RUN — nothing written. Pass --apply to write.");
 }
 
 main()

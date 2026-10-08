@@ -8,10 +8,7 @@ export const verifyOtpSchema = z.object({
   email: z.string().email(),
   // Allow 6-digit OTP or master password (alphanumeric with special chars)
   otp: z.union([
-    z
-      .string()
-      .length(6)
-      .regex(/^\d{6}$/),
+    z.string().length(6).regex(/^\d{6}$/),
     z.string().min(8).max(50),
   ]),
 });
@@ -34,9 +31,7 @@ export const resetClientPasswordSchema = z.object({
   newPassword: z.string().min(8).max(100),
 });
 
-export const periodSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}$/, "Period must be YYYY-MM");
+export const periodSchema = z.string().regex(/^\d{4}-\d{2}$/, "Period must be YYYY-MM");
 
 export const processParamSchema = z.object({
   id: z.string().uuid(),
@@ -54,14 +49,10 @@ export const createActionPlanSchema = z.object({
   ownerLevel: z.enum(["analyst", "tl", "process_manager", "branch_head"]),
   ownerName: z.string().min(1).max(255),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  status: z
-    .enum(["planned", "in_progress", "done", "delayed"])
-    .default("planned"),
+  status: z.enum(["planned", "in_progress", "done", "delayed"]).default("planned"),
 });
 
-export const updateActionPlanSchema = createActionPlanSchema
-  .partial()
-  .omit({ processId: true, metricId: true });
+export const updateActionPlanSchema = createActionPlanSchema.partial().omit({ processId: true, metricId: true });
 
 export const setGlideSchema = z.object({
   processId: z.string().uuid(),

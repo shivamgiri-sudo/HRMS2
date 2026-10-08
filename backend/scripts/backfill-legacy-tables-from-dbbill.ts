@@ -74,9 +74,7 @@ interface EmpMasterRow extends RowDataPacket {
 }
 
 function blank(v: unknown): boolean {
-  return (
-    v === null || v === undefined || (typeof v === "string" && v.trim() === "")
-  );
+  return v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 }
 
 function toDateOrNull(value: unknown): string | null {
@@ -95,51 +93,41 @@ async function main() {
             Mobile1, documentDone, Gross, NetInhand, CTC, PassportNo, dlNo, EntryDate,
             LeftReason, BoxFileNo, UpdatedBy, NomineeName, NomineeRelation, NomineeDob
        FROM masjclrentry
-      WHERE EmpCode IS NOT NULL AND EmpCode <> ''`,
+      WHERE EmpCode IS NOT NULL AND EmpCode <> ''`
   );
   const legacyByCode = new Map<string, LegacyRow>();
-  for (const r of legacyRows)
-    if (r.EmpCode) legacyByCode.set(String(r.EmpCode).trim().toUpperCase(), r);
+  for (const r of legacyRows) if (r.EmpCode) legacyByCode.set(String(r.EmpCode).trim().toUpperCase(), r);
   console.log(`masjclrentry: ${legacyByCode.size} rows keyed`);
 
   const emRows = await billQuery<EmpMasterRow>(
     `SELECT EmpCode, Fname, CostCenter, EmpFor, Qualification, LeftRmks, TMobNo, CTCOffered
        FROM employee_master
-      WHERE EmpCode IS NOT NULL AND EmpCode <> ''`,
+      WHERE EmpCode IS NOT NULL AND EmpCode <> ''`
   );
   const emByCode = new Map<string, EmpMasterRow>();
-  for (const r of emRows)
-    if (r.EmpCode) emByCode.set(String(r.EmpCode).trim().toUpperCase(), r);
+  for (const r of emRows) if (r.EmpCode) emByCode.set(String(r.EmpCode).trim().toUpperCase(), r);
   console.log(`employee_master: ${emByCode.size} rows keyed`);
 
   const conn = await db.getConnection();
   await conn.query("SET SESSION innodb_lock_wait_timeout = 5");
 
   try {
-    const [employees] = await conn.execute<
-      (RowDataPacket & { id: string; employee_code: string })[]
-    >(`SELECT id, employee_code FROM employees`);
+    const [employees] = await conn.execute<(RowDataPacket & { id: string; employee_code: string })[]>(
+      `SELECT id, employee_code FROM employees`
+    );
     console.log(`mas_hrms employees: ${employees.length}`);
 
-    const [existingNomineeRows] = await conn.execute<
-      (RowDataPacket & { employee_id: string })[]
-    >(`SELECT DISTINCT employee_id FROM employee_nominee`);
+    const [existingNomineeRows] = await conn.execute<(RowDataPacket & { employee_id: string })[]>(
+      `SELECT DISTINCT employee_id FROM employee_nominee`
+    );
     const hasNominee = new Set(existingNomineeRows.map((r) => r.employee_id));
 
-    const [existingEducationRows] = await conn.execute<
-      (RowDataPacket & { employee_id: string })[]
-    >(`SELECT DISTINCT employee_id FROM employee_education`);
-    const hasEducation = new Set(
-      existingEducationRows.map((r) => r.employee_id),
+    const [existingEducationRows] = await conn.execute<(RowDataPacket & { employee_id: string })[]>(
+      `SELECT DISTINCT employee_id FROM employee_education`
     );
+    const hasEducation = new Set(existingEducationRows.map((r) => r.employee_id));
 
-    let lmWritten = 0,
-      nomineeWritten = 0,
-      eduWritten = 0,
-      expWritten = 0,
-      ecmWritten = 0,
-      essWritten = 0,
-      mobileWritten = 0;
+    let lmWritten = 0, nomineeWritten = 0, eduWritten = 0, expWritten = 0, ecmWritten = 0, essWritten = 0, mobileWritten = 0;
     const failures: { employee_code: string; error: string }[] = [];
 
     for (const emp of employees) {
@@ -150,14 +138,8 @@ async function main() {
         if (!lg && !em) continue;
 
         // employee_legacy_meta
-        const fatherName =
-          (lg && (lg.Father || lg.Husband)) || (em && em.Fname) || null;
-        const relationshipType =
-          lg && !blank(lg.Father)
-            ? "Father"
-            : lg && !blank(lg.Husband)
-              ? "Husband"
-              : null;
+        const fatherName = (lg && (lg.Father || lg.Husband)) || (em && em.Fname) || null;
+        const relationshipType = lg && !blank(lg.Father) ? "Father" : lg && !blank(lg.Husband) ? "Husband" : null;
         const bloodGroup = lg?.BloodGruop ?? null;
         const qualification = lg?.Qualification ?? null;
         const landLineP = lg?.LandLine ?? null;
@@ -168,25 +150,11 @@ async function main() {
         const documentDone = lg?.documentDone ?? null;
         const updatedBy = lg?.UpdatedBy ?? null;
         const entryDate = toDateOrNull(lg?.EntryDate);
-        const leftReason =
-          (lg && !blank(lg.LeftReason) ? lg.LeftReason : null) ??
-          em?.LeftRmks ??
-          null;
+        const leftReason = (lg && !blank(lg.LeftReason) ? lg.LeftReason : null) ?? em?.LeftRmks ?? null;
 
-        if (
-          !blank(fatherName) ||
-          !blank(bloodGroup) ||
-          !blank(qualification) ||
-          !blank(landLineP) ||
-          !blank(landLineT) ||
-          !blank(passportNo) ||
-          !blank(dlNo) ||
-          !blank(boxFileNo) ||
-          !blank(documentDone) ||
-          !blank(updatedBy) ||
-          entryDate ||
-          !blank(leftReason)
-        ) {
+        if (!blank(fatherName) || !blank(bloodGroup) || !blank(qualification) || !blank(landLineP)
+            || !blank(landLineT) || !blank(passportNo) || !blank(dlNo) || !blank(boxFileNo)
+            || !blank(documentDone) || !blank(updatedBy) || entryDate || !blank(leftReason)) {
           await conn.execute(
             `INSERT INTO employee_legacy_meta
                (id, employee_id, father_name, relationship_type, blood_group, qualification,
@@ -207,55 +175,30 @@ async function main() {
                updated_by          = COALESCE(NULLIF(updated_by,''), VALUES(updated_by)),
                entry_date          = COALESCE(entry_date, VALUES(entry_date)),
                left_reason         = COALESCE(NULLIF(left_reason,''), VALUES(left_reason))`,
-            [
-              emp.id,
-              fatherName,
-              relationshipType,
-              bloodGroup,
-              qualification,
-              landLineP,
-              landLineT,
-              passportNo,
-              dlNo,
-              boxFileNo,
-              documentDone,
-              updatedBy,
-              entryDate,
-              leftReason,
-            ],
+            [emp.id, fatherName, relationshipType, bloodGroup, qualification, landLineP, landLineT,
+             passportNo, dlNo, boxFileNo, documentDone, updatedBy, entryDate, leftReason]
           );
           lmWritten++;
         }
 
         // employees.alternate_mobile — direct column, update only when blank
-        const altMobile =
-          (lg && !blank(lg.Mobile1) ? lg.Mobile1 : null) ?? em?.TMobNo ?? null;
+        const altMobile = (lg && !blank(lg.Mobile1) ? lg.Mobile1 : null) ?? em?.TMobNo ?? null;
         if (altMobile && !blank(altMobile)) {
           const [r] = await conn.execute<import("mysql2").ResultSetHeader>(
             `UPDATE employees SET alternate_mobile = ?
               WHERE id = ? AND (alternate_mobile IS NULL OR alternate_mobile = '')`,
-            [altMobile, emp.id],
+            [altMobile, emp.id]
           );
-          if ((r as unknown as { affectedRows: number }).affectedRows > 0)
-            mobileWritten++;
+          if ((r as unknown as { affectedRows: number }).affectedRows > 0) mobileWritten++;
         }
 
         // employee_nominee — no employee_id unique key (genuinely multi-row); insert only if
         // the employee has zero rows there yet.
-        if (
-          lg?.NomineeName &&
-          !blank(lg.NomineeName) &&
-          !hasNominee.has(emp.id)
-        ) {
+        if (lg?.NomineeName && !blank(lg.NomineeName) && !hasNominee.has(emp.id)) {
           await conn.execute(
             `INSERT INTO employee_nominee (id, employee_id, nominee_name, relationship, date_of_birth)
              VALUES (UUID(), ?, ?, ?, ?)`,
-            [
-              emp.id,
-              lg.NomineeName,
-              lg.NomineeRelation ?? null,
-              toDateOrNull(lg.NomineeDob),
-            ],
+            [emp.id, lg.NomineeName, lg.NomineeRelation ?? null, toDateOrNull(lg.NomineeDob)]
           );
           hasNominee.add(emp.id);
           nomineeWritten++;
@@ -265,35 +208,17 @@ async function main() {
         // employee_master.Qualification when masjclrentry doesn't have it (masjclrentry alone
         // covers 91% of matched employees; employee_master covers a different, overlapping
         // set — combining them is what got the original db_bill-fallback path to 99.8%).
-        const qualificationForEdu =
-          (lg && !blank(lg.Qualification) ? lg.Qualification : null) ??
-          em?.Qualification ??
-          null;
-        if (
-          qualificationForEdu &&
-          !blank(qualificationForEdu) &&
-          !hasEducation.has(emp.id)
-        ) {
+        const qualificationForEdu = (lg && !blank(lg.Qualification) ? lg.Qualification : null) ?? em?.Qualification ?? null;
+        if (qualificationForEdu && !blank(qualificationForEdu) && !hasEducation.has(emp.id)) {
           await conn.execute(
             `INSERT INTO employee_education
                (id, employee_id, qualification, specialization_course_name, passed_out_state,
                 passed_out_city, passed_out_year, passed_out_percentage)
              VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              emp.id,
-              qualificationForEdu,
-              lg?.Qualification_Details ?? null,
-              lg?.Passed_Out_State ?? null,
-              lg?.Passed_Out_City ?? null,
-              lg?.Passed_Out_Year &&
-              /^\d+$/.test(String(lg.Passed_Out_Year).trim())
-                ? Number(lg.Passed_Out_Year)
-                : null,
-              lg?.Passed_Out_Percent &&
-              /^[\d.]+$/.test(String(lg.Passed_Out_Percent).trim())
-                ? Number(lg.Passed_Out_Percent)
-                : null,
-            ],
+            [emp.id, qualificationForEdu, lg?.Qualification_Details ?? null, lg?.Passed_Out_State ?? null,
+             lg?.Passed_Out_City ?? null,
+             lg?.Passed_Out_Year && /^\d+$/.test(String(lg.Passed_Out_Year).trim()) ? Number(lg.Passed_Out_Year) : null,
+             lg?.Passed_Out_Percent && /^[\d.]+$/.test(String(lg.Passed_Out_Percent).trim()) ? Number(lg.Passed_Out_Percent) : null]
           );
           hasEducation.add(emp.id);
           eduWritten++;
@@ -301,15 +226,13 @@ async function main() {
 
         // employee_experience — employee_id unique key, safe upsert.
         if (lg?.Experience_Year && !blank(lg.Experience_Year)) {
-          const years = /^[\d.]+$/.test(String(lg.Experience_Year).trim())
-            ? Number(lg.Experience_Year)
-            : null;
+          const years = /^[\d.]+$/.test(String(lg.Experience_Year).trim()) ? Number(lg.Experience_Year) : null;
           if (years !== null) {
             await conn.execute(
               `INSERT INTO employee_experience (id, employee_id, experience_years)
                VALUES (UUID(), ?, ?)
                ON DUPLICATE KEY UPDATE experience_years = COALESCE(experience_years, VALUES(experience_years))`,
-              [emp.id, years],
+              [emp.id, years]
             );
             expWritten++;
           }
@@ -325,7 +248,7 @@ async function main() {
              ON DUPLICATE KEY UPDATE
                cost_center = COALESCE(NULLIF(cost_center,''), VALUES(cost_center)),
                emp_for     = COALESCE(NULLIF(emp_for,''), VALUES(emp_for))`,
-            [emp.id, costCenter, empFor],
+            [emp.id, costCenter, empFor]
           );
           ecmWritten++;
         }
@@ -350,27 +273,16 @@ async function main() {
                gross       = COALESCE(gross, VALUES(gross)),
                net_in_hand = COALESCE(net_in_hand, VALUES(net_in_hand)),
                ctc_offered = COALESCE(ctc_offered, VALUES(ctc_offered))`,
-            [emp.id, gross, netInHand, ctcOffered],
+            [emp.id, gross, netInHand, ctcOffered]
           );
           essWritten++;
         }
       } catch (err) {
-        failures.push({
-          employee_code: emp.employee_code,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        failures.push({ employee_code: emp.employee_code, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
-    console.log({
-      lmWritten,
-      nomineeWritten,
-      eduWritten,
-      expWritten,
-      ecmWritten,
-      essWritten,
-      mobileWritten,
-    });
+    console.log({ lmWritten, nomineeWritten, eduWritten, expWritten, ecmWritten, essWritten, mobileWritten });
     console.log(`Failures: ${failures.length}`);
     if (failures.length > 0) {
       console.log("First 20 failures:", failures.slice(0, 20));

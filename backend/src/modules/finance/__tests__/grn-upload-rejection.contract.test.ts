@@ -23,14 +23,10 @@ function read(relativePath: string) {
 describe("GRN document upload rejections are explained", () => {
   it("never discards a file silently", () => {
     const routes = read(ROUTES);
-    const code = routes
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\/\/.*$/gm, "");
+    const code = routes.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     // The silent form: a falsy second argument tells multer to drop the file with no error.
-    expect(
-      code,
-      "callback(null, false) drops the file without telling anyone",
-    ).not.toMatch(/callback\(\s*null\s*,\s*(false|[a-zA-Z]+Ok\s*&&)/);
+    expect(code, "callback(null, false) drops the file without telling anyone")
+      .not.toMatch(/callback\(\s*null\s*,\s*(false|[a-zA-Z]+Ok\s*&&)/);
     // Accepting is still explicit.
     expect(code).toMatch(/callback\(null,\s*true\)/);
   });
@@ -68,30 +64,19 @@ describe("GRN document upload rejections are explained", () => {
 
   it("the upload route actually uses the wrapper, not raw upload.array", () => {
     const routes = read(ROUTES);
-    const code = routes
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\/\/.*$/gm, "");
+    const code = routes.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     expect(code).toContain('uploadGrnFiles("files"');
     // A raw upload.array on a route would bypass the MulterError translation entirely.
     const rawUses = [...code.matchAll(/^\s*upload\.array\(/gm)];
-    expect(
-      rawUses,
-      "route-level upload.array bypasses the error translation",
-    ).toHaveLength(0);
+    expect(rawUses, "route-level upload.array bypasses the error translation").toHaveLength(0);
   });
 
   it("keeps the accepted types in one place, used by both checks", () => {
     const routes = read(ROUTES);
     expect(routes).toContain("ALLOWED_UPLOAD_EXTENSIONS");
     expect(routes).toContain("ALLOWED_UPLOAD_MIME_TYPES");
-    for (const ext of [".pdf", ".jpg", ".jpeg", ".png", ".webp"])
-      expect(routes).toContain(`"${ext}"`);
-    for (const mime of [
-      "application/pdf",
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-    ]) {
+    for (const ext of [".pdf", ".jpg", ".jpeg", ".png", ".webp"]) expect(routes).toContain(`"${ext}"`);
+    for (const mime of ["application/pdf", "image/jpeg", "image/png", "image/webp"]) {
       expect(routes).toContain(`"${mime}"`);
     }
   });

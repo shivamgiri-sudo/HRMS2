@@ -66,19 +66,16 @@ export type SimulationResult = {
  */
 const HIGH_TRIGGER_RATE = 0.5;
 
-export async function simulateQualityTarget(
-  input: SimulationInput,
-): Promise<SimulationResult> {
+export async function simulateQualityTarget(input: SimulationInput): Promise<SimulationResult> {
   const lookbackWeeks = Math.min(Math.max(input.lookbackWeeks ?? 4, 1), 26);
   const metricCode = input.metricCode ?? "QUALITY_SCORE";
   const warningPct = input.warningThresholdPct ?? 90;
   const criticalPct = input.criticalThresholdPct ?? 75;
   const minAudits = input.minAuditCount ?? 3;
 
-  const [[proc]] = (await db.execute<RowDataPacket[]>(
-    `SELECT id, process_name FROM process_master WHERE id = ? LIMIT 1`,
-    [input.processId],
-  )) as unknown as [RowDataPacket[], unknown];
+  const [[proc]] = await db.execute<RowDataPacket[]>(
+    `SELECT id, process_name FROM process_master WHERE id = ? LIMIT 1`, [input.processId],
+  ) as unknown as [RowDataPacket[], unknown];
   if (!proc) throw new Error(`Process not found: ${input.processId}`);
 
   // Real history, per employee, over the lookback window.
@@ -97,19 +94,15 @@ export async function simulateQualityTarget(
   );
 
   const employees: SimulatedEmployee[] = [];
-  let insufficientAudits = 0,
-    singleAuditTriggers = 0;
-  let windowFrom = "",
-    windowTo = "";
+  let insufficientAudits = 0, singleAuditTriggers = 0;
+  let windowFrom = "", windowTo = "";
 
   for (const r of rows) {
     const avg = Number(r.avg_quality ?? 0);
     const audits = Number(r.audit_count ?? 0);
     const ratio = input.targetScore > 0 ? (avg / input.targetScore) * 100 : 0;
-    if (!windowFrom || String(r.from_d) < windowFrom)
-      windowFrom = String(r.from_d).slice(0, 10);
-    if (!windowTo || String(r.to_d) > windowTo)
-      windowTo = String(r.to_d).slice(0, 10);
+    if (!windowFrom || String(r.from_d) < windowFrom) windowFrom = String(r.from_d).slice(0, 10);
+    if (!windowTo || String(r.to_d) > windowTo) windowTo = String(r.to_d).slice(0, 10);
 
     const wouldBand: SimulatedEmployee["band"] =
       ratio < criticalPct ? "critical" : ratio < warningPct ? "warning" : "ok";
@@ -164,8 +157,7 @@ export async function simulateQualityTarget(
   }
 
   // Sessions per week implied by this rate, at one per employee per period.
-  const perWeek =
-    Math.round((wouldTrigger / Math.max(lookbackWeeks, 1)) * 10) / 10;
+  const perWeek = Math.round((wouldTrigger / Math.max(lookbackWeeks, 1)) * 10) / 10;
 
   return {
     processId: String(proc.id),
@@ -182,9 +174,7 @@ export async function simulateQualityTarget(
     singleAuditTriggers,
     expectedWeeklyCoachingLoad: perWeek,
     unusuallyHighTriggerRate: rate >= HIGH_TRIGGER_RATE && evaluated > 0,
-    employees: employees
-      .sort((a, b) => a.ratioOfTarget - b.ratioOfTarget)
-      .slice(0, 50),
+    employees: employees.sort((a, b) => a.ratioOfTarget - b.ratioOfTarget).slice(0, 50),
     notes,
   };
 }

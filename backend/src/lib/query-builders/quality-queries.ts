@@ -14,10 +14,7 @@ export interface QueryResult {
 /**
  * CQ Score aggregation: current, 7d, 30d, clean, rank, peer avg, weekly
  */
-export function buildCQScoreQuery(
-  employeeCode: string,
-  daysBack: number = 7,
-): QueryResult {
+export function buildCQScoreQuery(employeeCode: string, daysBack: number = 7): QueryResult {
   const query = `
     WITH agent_scores AS (
       SELECT
@@ -111,14 +108,8 @@ export function buildCQScoreQuery(
   `;
 
   return {
-    query: query.replace(/\n\s+/g, " ").trim(),
-    params: [
-      employeeCode,
-      employeeCode,
-      employeeCode,
-      employeeCode,
-      employeeCode,
-    ],
+    query: query.replace(/\n\s+/g, ' ').trim(),
+    params: [employeeCode, employeeCode, employeeCode, employeeCode, employeeCode]
   };
 }
 
@@ -237,15 +228,8 @@ export function buildWeaknessDetailQuery(employeeCode: string): QueryResult {
   `;
 
   return {
-    query: query.replace(/\n\s+/g, " ").trim(),
-    params: [
-      employeeCode,
-      employeeCode,
-      employeeCode,
-      employeeCode,
-      employeeCode,
-      employeeCode,
-    ],
+    query: query.replace(/\n\s+/g, ' ').trim(),
+    params: [employeeCode, employeeCode, employeeCode, employeeCode, employeeCode, employeeCode]
   };
 }
 
@@ -256,13 +240,11 @@ export function buildCallsReviewQuery(
   employeeCode: string,
   limit: number = 10,
   offset: number = 0,
-  sort: "date" | "cq" | "fatal" = "date",
+  sort: 'date' | 'cq' | 'fatal' = 'date'
 ): QueryResult {
-  let orderBy = "CallDate DESC";
-  if (sort === "cq") orderBy = "quality_percentage ASC";
-  if (sort === "fatal")
-    orderBy =
-      "(CASE WHEN quality_percentage < 50 AND (professionalism_maintained = 0 OR active_listening = 0) THEN 1 ELSE 0 END) DESC, CallDate DESC";
+  let orderBy = 'CallDate DESC';
+  if (sort === 'cq') orderBy = 'quality_percentage ASC';
+  if (sort === 'fatal') orderBy = '(CASE WHEN quality_percentage < 50 AND (professionalism_maintained = 0 OR active_listening = 0) THEN 1 ELSE 0 END) DESC, CallDate DESC';
 
   const query = `
     SELECT
@@ -295,18 +277,15 @@ export function buildCallsReviewQuery(
   `;
 
   return {
-    query: query.replace(/\n\s+/g, " ").trim(),
-    params: [employeeCode],
+    query: query.replace(/\n\s+/g, ' ').trim(),
+    params: [employeeCode]
   };
 }
 
 /**
  * Single call detail with sub-scores
  */
-export function buildCallDetailQuery(
-  callId: string,
-  ownerEmployeeCode: string,
-): QueryResult {
+export function buildCallDetailQuery(callId: string, ownerEmployeeCode: string): QueryResult {
   const query = `
     SELECT
       id as call_id,
@@ -337,8 +316,8 @@ export function buildCallDetailQuery(
   `;
 
   return {
-    query: query.replace(/\n\s+/g, " ").trim(),
-    params: [callId, ownerEmployeeCode],
+    query: query.replace(/\n\s+/g, ' ').trim(),
+    params: [callId, ownerEmployeeCode]
   };
 }
 
@@ -356,7 +335,7 @@ export function buildTotalCallsCountQuery(employeeCode: string): QueryResult {
   `;
 
   return {
-    query: query.replace(/\n\s+/g, " ").trim(),
-    params: [employeeCode],
+    query: query.replace(/\n\s+/g, ' ').trim(),
+    params: [employeeCode]
   };
 }

@@ -56,9 +56,7 @@ describe("resolve-dispute respects the cycle lifecycle", () => {
     // raised against an already-published/acknowledged assignment, so gating on that
     // narrower set would reject the exact case this route exists for.
     const body = handler();
-    expect(body).toMatch(
-      /if \(DISPUTE_LOCKED_STATUSES\.has\(assignment\.cycle_status\)\)/,
-    );
+    expect(body).toMatch(/if \(DISPUTE_LOCKED_STATUSES\.has\(assignment\.cycle_status\)\)/);
     expect(body).not.toMatch(/if \(!?EDITABLE_ASSIGNMENT_STATUSES\.has/);
   });
 });

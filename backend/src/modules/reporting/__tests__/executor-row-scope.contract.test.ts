@@ -46,17 +46,11 @@ const EXEMPT = new Set([
   "assetMovementLog",
 ]);
 
-interface Fn {
-  file: string;
-  name: string;
-  body: string;
-}
+interface Fn { file: string; name: string; body: string }
 
 function exportedFunctions(): Fn[] {
   const out: Fn[] = [];
-  for (const file of fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(".executor.ts"))) {
+  for (const file of fs.readdirSync(dir).filter(f => f.endsWith(".executor.ts"))) {
     const src = fs.readFileSync(path.join(dir, file), "utf8");
     const marks = [...src.matchAll(/^export (?:async )?function (\w+)/gm)];
     marks.forEach((m, i) => {
@@ -101,7 +95,7 @@ describe("report executor row scope", () => {
         const inlineBoth = /scope\.branchScope\./.test(f.body) && /scope\.processScope\./.test(f.body);
         return !canonical && !inlineBoth;
       })
-      .map((f) => `${f.file}:${f.name}`);
+      .map(f => `${f.file}:${f.name}`);
 
     expect(
       offenders,
@@ -129,28 +123,21 @@ describe("report executor row scope", () => {
     // An inline implementation that only handles 'restricted' silently returns
     // everything instead — the fail-open shape.
     const offenders = fns
-      .filter((f) => !EXEMPT.has(f.name))
-      .filter((f) => !f.body.includes("appendScopeConditions"))
-      .filter((f) => /scope\.branchScope\./.test(f.body))
-      .filter((f) => !f.body.includes("ReportScopeAccessDeniedError"))
-      .map((f) => `${f.file}:${f.name}`);
+      .filter(f => !EXEMPT.has(f.name))
+      .filter(f => !f.body.includes("appendScopeConditions"))
+      .filter(f => /scope\.branchScope\./.test(f.body))
+      .filter(f => !f.body.includes("ReportScopeAccessDeniedError"))
+      .map(f => `${f.file}:${f.name}`);
 
-    expect(
-      offenders,
-      "inline scope that ignores mode 'none' fails open",
-    ).toEqual([]);
+    expect(offenders, "inline scope that ignores mode 'none' fails open").toEqual([]);
   });
 
   it("the two repaired reports now take the full scope", () => {
     for (const name of ["incrementPromotionHistory", "lifecycleEvents"]) {
-      const fn = fns.find((f) => f.name === name);
+      const fn = fns.find(f => f.name === name);
       expect(fn, `${name} missing`).toBeTruthy();
-      expect(fn!.body).toContain(
-        'appendScopeConditions(scope, clauses, params, "e")',
-      );
-      expect(fn!.body, "the hand-rolled branch clause is back").not.toMatch(
-        /scope\.branchScope\.ids\.map/,
-      );
+      expect(fn!.body).toContain('appendScopeConditions(scope, clauses, params, "e")');
+      expect(fn!.body, "the hand-rolled branch clause is back").not.toMatch(/scope\.branchScope\.ids\.map/);
     }
   });
 });

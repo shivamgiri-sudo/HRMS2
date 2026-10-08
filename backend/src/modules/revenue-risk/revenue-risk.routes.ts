@@ -1,9 +1,6 @@
 import { Router } from "express";
 import type { Response, NextFunction } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { revenueRiskService } from "./revenue-risk.service.js";
 import { resolveProcessScope } from "../dashboards/process-scope-guards.js";
 
@@ -16,10 +13,8 @@ async function allowedProcesses(req: AuthenticatedRequest): Promise<ReadonlySet<
 export const revenueRiskRouter = Router();
 revenueRiskRouter.use(requireAuth);
 
-const h =
-  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
 revenueRiskRouter.get("/contracts", h(async (req, res) => {
   const allowed = await allowedProcesses(req);

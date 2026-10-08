@@ -31,42 +31,24 @@ function daysBetween(a: string, b: string): number {
   return Math.abs(new Date(a).getTime() - new Date(b).getTime()) / 86_400_000;
 }
 
-async function findCandidates(
-  bankAccountId: string,
-  txnDate: string,
-  debit: number,
-  credit: number,
-) {
-  const amountClause =
-    debit > 0 ? "bale.debit_amount = ?" : "bale.credit_amount = ?";
+async function findCandidates(bankAccountId: string, txnDate: string, debit: number, credit: number) {
+  const amountClause = debit > 0 ? "bale.debit_amount = ?" : "bale.credit_amount = ?";
   const amountParam = debit > 0 ? debit : credit;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT bale.id, bale.entry_date FROM bank_account_ledger_entry bale
       WHERE bale.bank_account_id = ? AND bale.matched_statement_line_id IS NULL AND ${amountClause}`,
     [bankAccountId, amountParam],
   );
-  return (rows as RowDataPacket[]).filter(
-    (r) =>
-      daysBetween(String(r.entry_date).slice(0, 10), txnDate) <=
-      MATCH_WINDOW_DAYS,
-  );
+  return (rows as RowDataPacket[]).filter((r) => daysBetween(String(r.entry_date).slice(0, 10), txnDate) <= MATCH_WINDOW_DAYS);
 }
 
 async function linkLine(statementLineId: string, ledgerEntryId: string) {
-  await db.execute(
-    `UPDATE bank_statement_line SET match_status = 'matched', matched_ledger_entry_id = ? WHERE id = ?`,
-    [ledgerEntryId, statementLineId],
-  );
-  await db.execute(
-    `UPDATE bank_account_ledger_entry SET matched_statement_line_id = ? WHERE id = ?`,
-    [statementLineId, ledgerEntryId],
-  );
+  await db.execute(`UPDATE bank_statement_line SET match_status = 'matched', matched_ledger_entry_id = ? WHERE id = ?`, [ledgerEntryId, statementLineId]);
+  await db.execute(`UPDATE bank_account_ledger_entry SET matched_statement_line_id = ? WHERE id = ?`, [statementLineId, ledgerEntryId]);
 }
 
 export const bankReconciliationMatchService = {
-  async autoMatch(
-    importId: string,
-  ): Promise<{ matchedCount: number; unmatchedCount: number }> {
+  async autoMatch(importId: string): Promise<{ matchedCount: number; unmatchedCount: number }> {
     const [lines] = await db.execute<RowDataPacket[]>(
       `SELECT bsl.id, bsl.txn_date, bsl.debit_amount, bsl.credit_amount, bsi.bank_account_id
          FROM bank_statement_line bsl
@@ -77,12 +59,7 @@ export const bankReconciliationMatchService = {
     let matchedCount = 0;
     let unmatchedCount = 0;
     for (const line of lines as RowDataPacket[]) {
-      const candidates = await findCandidates(
-        String(line.bank_account_id),
-        String(line.txn_date).slice(0, 10),
-        Number(line.debit_amount),
-        Number(line.credit_amount),
-      );
+      const candidates = await findCandidates(String(line.bank_account_id), String(line.txn_date).slice(0, 10), Number(line.debit_amount), Number(line.credit_amount));
       if (candidates.length === 1) {
         await linkLine(String(line.id), String(candidates[0].id));
         matchedCount++;
@@ -93,105 +70,36 @@ export const bankReconciliationMatchService = {
     return { matchedCount, unmatchedCount };
   },
 
-  async manualMatch(
-    statementLineId: string,
-    ledgerEntryId: string,
-    actorUserId: string,
-  ): Promise<void> {
-    const [[line]] = await db.execute<RowDataPacket[]>(
-      `SELECT id, debit_amount, credit_amount, match_status FROM bank_statement_line WHERE id = ?`,
-      [statementLineId],
-    );
-    if (!line)
-      throw new BankReconciliationMatchError("Statement line not found.", 404);
-    if (line.match_status !== "unmatched")
-      throw new BankReconciliationMatchError(
-        "Statement line is already resolved.",
-      );
-    const [[entry]] = await db.execute<RowDataPacket[]>(
-      `SELECT id, debit_amount, credit_amount FROM bank_account_ledger_entry WHERE id = ?`,
-      [ledgerEntryId],
-    );
-    if (!entry)
-      throw new BankReconciliationMatchError("Ledger entry not found.", 404);
-    const lineAmount =
-      Number(line.debit_amount) > 0
-        ? Number(line.debit_amount)
-        : Number(line.credit_amount);
-    const entryAmount =
-      Number(line.debit_amount) > 0
-        ? Number(entry.debit_amount)
-        : Number(entry.credit_amount);
-    if (lineAmount !== entryAmount)
-      throw new BankReconciliationMatchError(
-        `Amounts don't match: statement ₹${lineAmount} vs ledger ₹${entryAmount}.`,
-      );
+  async manualMatch(statementLineId: string, ledgerEntryId: string, actorUserId: string): Promise<void> {
+    const [[line]] = await db.execute<RowDataPacket[]>(`SELECT id, debit_amount, credit_amount, match_status FROM bank_statement_line WHERE id = ?`, [statementLineId]);
+    if (!line) throw new BankReconciliationMatchError("Statement line not found.", 404);
+    if (line.match_status !== "unmatched") throw new BankReconciliationMatchError("Statement line is already resolved.");
+    const [[entry]] = await db.execute<RowDataPacket[]>(`SELECT id, debit_amount, credit_amount FROM bank_account_ledger_entry WHERE id = ?`, [ledgerEntryId]);
+    if (!entry) throw new BankReconciliationMatchError("Ledger entry not found.", 404);
+    const lineAmount = Number(line.debit_amount) > 0 ? Number(line.debit_amount) : Number(line.credit_amount);
+    const entryAmount = Number(line.debit_amount) > 0 ? Number(entry.debit_amount) : Number(entry.credit_amount);
+    if (lineAmount !== entryAmount) throw new BankReconciliationMatchError(`Amounts don't match: statement ₹${lineAmount} vs ledger ₹${entryAmount}.`);
     await linkLine(statementLineId, ledgerEntryId);
-    await logSensitiveAction({
-      actor_user_id: actorUserId,
-      action_type: "BANK_RECONCILIATION_MANUAL_MATCH",
-      module_key: "FINANCE",
-      entity_type: "bank_statement_line",
-      entity_id: statementLineId,
-      change_summary: { ledger_entry_id: ledgerEntryId },
-    }).catch(() => undefined);
+    await logSensitiveAction({ actor_user_id: actorUserId, action_type: "BANK_RECONCILIATION_MANUAL_MATCH", module_key: "FINANCE", entity_type: "bank_statement_line", entity_id: statementLineId, change_summary: { ledger_entry_id: ledgerEntryId } }).catch(() => undefined);
   },
 
   async unmatch(statementLineId: string, actorUserId: string): Promise<void> {
-    const [[line]] = await db.execute<RowDataPacket[]>(
-      `SELECT matched_ledger_entry_id FROM bank_statement_line WHERE id = ?`,
-      [statementLineId],
-    );
-    if (!line?.matched_ledger_entry_id)
-      throw new BankReconciliationMatchError(
-        "Statement line has no match to undo.",
-      );
-    await db.execute(
-      `UPDATE bank_account_ledger_entry SET matched_statement_line_id = NULL WHERE id = ?`,
-      [line.matched_ledger_entry_id],
-    );
-    await db.execute(
-      `UPDATE bank_statement_line SET match_status = 'unmatched', matched_ledger_entry_id = NULL WHERE id = ?`,
-      [statementLineId],
-    );
-    await logSensitiveAction({
-      actor_user_id: actorUserId,
-      action_type: "BANK_RECONCILIATION_UNMATCH",
-      module_key: "FINANCE",
-      entity_type: "bank_statement_line",
-      entity_id: statementLineId,
-    }).catch(() => undefined);
+    const [[line]] = await db.execute<RowDataPacket[]>(`SELECT matched_ledger_entry_id FROM bank_statement_line WHERE id = ?`, [statementLineId]);
+    if (!line?.matched_ledger_entry_id) throw new BankReconciliationMatchError("Statement line has no match to undo.");
+    await db.execute(`UPDATE bank_account_ledger_entry SET matched_statement_line_id = NULL WHERE id = ?`, [line.matched_ledger_entry_id]);
+    await db.execute(`UPDATE bank_statement_line SET match_status = 'unmatched', matched_ledger_entry_id = NULL WHERE id = ?`, [statementLineId]);
+    await logSensitiveAction({ actor_user_id: actorUserId, action_type: "BANK_RECONCILIATION_UNMATCH", module_key: "FINANCE", entity_type: "bank_statement_line", entity_id: statementLineId }).catch(() => undefined);
   },
 
-  async postAdjustment(input: {
-    statementLineId: string;
-    bankAccountId: string;
-    payableAccountId: string;
-    narration: string;
-    actorUserId: string;
-  }): Promise<{ ledgerEntryId: string }> {
-    const [[line]] = await db.execute<RowDataPacket[]>(
-      `SELECT id, txn_date, description, debit_amount, credit_amount, match_status FROM bank_statement_line WHERE id = ?`,
-      [input.statementLineId],
-    );
-    if (!line)
-      throw new BankReconciliationMatchError("Statement line not found.", 404);
-    if (line.match_status !== "unmatched")
-      throw new BankReconciliationMatchError(
-        "Statement line is already resolved.",
-      );
+  async postAdjustment(input: { statementLineId: string; bankAccountId: string; payableAccountId: string; narration: string; actorUserId: string }): Promise<{ ledgerEntryId: string }> {
+    const [[line]] = await db.execute<RowDataPacket[]>(`SELECT id, txn_date, description, debit_amount, credit_amount, match_status FROM bank_statement_line WHERE id = ?`, [input.statementLineId]);
+    if (!line) throw new BankReconciliationMatchError("Statement line not found.", 404);
+    if (line.match_status !== "unmatched") throw new BankReconciliationMatchError("Statement line is already resolved.");
 
     // Same discipline as payment-voucher.service.ts's release(): lock the account row, read the
     // last running_balance, compute the new one, insert. FOR UPDATE serializes concurrent posts.
-    await db.execute(
-      `SELECT id FROM company_bank_account WHERE id = ? FOR UPDATE`,
-      [input.bankAccountId],
-    );
-    await assertNotInClosedPeriod(
-      db,
-      input.bankAccountId,
-      String(line.txn_date).slice(0, 10),
-    );
+    await db.execute(`SELECT id FROM company_bank_account WHERE id = ? FOR UPDATE`, [input.bankAccountId]);
+    await assertNotInClosedPeriod(db, input.bankAccountId, String(line.txn_date).slice(0, 10));
     const [[last]] = await db.execute<RowDataPacket[]>(
       `SELECT running_balance FROM bank_account_ledger_entry WHERE bank_account_id = ? ORDER BY entry_date DESC, created_at DESC, id DESC LIMIT 1`,
       [input.bankAccountId],
@@ -206,24 +114,9 @@ export const bankReconciliationMatchService = {
       `INSERT INTO bank_account_ledger_entry
          (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount, payable_account_id, narration, running_balance, source_type, created_by, matched_statement_line_id)
        VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        ledgerEntryId,
-        input.bankAccountId,
-        line.txn_date,
-        debit,
-        credit,
-        input.payableAccountId,
-        input.narration,
-        newBalance,
-        "reconciliation_adjustment",
-        input.actorUserId,
-        input.statementLineId,
-      ],
+      [ledgerEntryId, input.bankAccountId, line.txn_date, debit, credit, input.payableAccountId, input.narration, newBalance, "reconciliation_adjustment", input.actorUserId, input.statementLineId],
     );
-    await db.execute(
-      `UPDATE bank_statement_line SET match_status = 'adjusted', matched_ledger_entry_id = ? WHERE id = ?`,
-      [ledgerEntryId, input.statementLineId],
-    );
+    await db.execute(`UPDATE bank_statement_line SET match_status = 'adjusted', matched_ledger_entry_id = ? WHERE id = ?`, [ledgerEntryId, input.statementLineId]);
 
     // Journal Task 7 (Phase 7) — Dr/Cr Bank against the counter-account this adjustment was
     // raised under, mirroring the debit/credit the bank statement itself shows. This function
@@ -241,49 +134,22 @@ export const bankReconciliationMatchService = {
         sourceType: "bank_reconciliation_adjustment",
         sourceId: ledgerEntryId,
         postedBy: input.actorUserId,
-        lines:
-          debit > 0
-            ? [
-                // money left the bank per the statement (a charge, say): Dr the counter-account, Cr Bank
-                {
-                  accountType: "payable_account",
-                  accountId: input.payableAccountId,
-                  debitAmount: debit,
-                },
-                {
-                  accountType: "bank_account",
-                  accountId: input.bankAccountId,
-                  creditAmount: debit,
-                },
-              ]
-            : [
-                // money came in per the statement (interest, say): Dr Bank, Cr the counter-account
-                {
-                  accountType: "bank_account",
-                  accountId: input.bankAccountId,
-                  debitAmount: credit,
-                },
-                {
-                  accountType: "payable_account",
-                  accountId: input.payableAccountId,
-                  creditAmount: credit,
-                },
-              ],
+        lines: debit > 0
+          ? [ // money left the bank per the statement (a charge, say): Dr the counter-account, Cr Bank
+              { accountType: "payable_account", accountId: input.payableAccountId, debitAmount: debit },
+              { accountType: "bank_account", accountId: input.bankAccountId, creditAmount: debit },
+            ]
+          : [ // money came in per the statement (interest, say): Dr Bank, Cr the counter-account
+              { accountType: "bank_account", accountId: input.bankAccountId, debitAmount: credit },
+              { accountType: "payable_account", accountId: input.payableAccountId, creditAmount: credit },
+            ],
       });
     }
 
     await logSensitiveAction({
-      actor_user_id: input.actorUserId,
-      action_type: "BANK_RECONCILIATION_ADJUSTMENT_POSTED",
-      module_key: "FINANCE",
-      entity_type: "bank_account_ledger_entry",
-      entity_id: ledgerEntryId,
-      change_summary: {
-        statement_line_id: input.statementLineId,
-        debit,
-        credit,
-        narration: input.narration,
-      },
+      actor_user_id: input.actorUserId, action_type: "BANK_RECONCILIATION_ADJUSTMENT_POSTED", module_key: "FINANCE",
+      entity_type: "bank_account_ledger_entry", entity_id: ledgerEntryId,
+      change_summary: { statement_line_id: input.statementLineId, debit, credit, narration: input.narration },
     }).catch(() => undefined);
     return { ledgerEntryId };
   },

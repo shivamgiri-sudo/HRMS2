@@ -19,21 +19,10 @@ const { querySource } = vi.hoisted(() => ({ querySource: vi.fn() }));
 vi.mock("../../../db/sourceDb.js", () => ({ querySource }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (
-    req: express.Request,
-    _res: express.Response,
-    next: express.NextFunction,
-  ) => next(),
+  requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole:
-    () =>
-    (
-      _req: express.Request,
-      _res: express.Response,
-      next: express.NextFunction,
-    ) =>
-      next(),
+  requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
 import { clientDrillRouter } from "../client-drill.routes.js";
@@ -52,9 +41,7 @@ beforeEach(() => {
 
 describe("GET /client-drill/transcript requires clientId", () => {
   it("refuses with 400 when clientId is missing, even with a valid leadId", async () => {
-    const res = await request(buildApp()).get(
-      "/api/quality-dashboard/client-drill/transcript?leadId=lead-1",
-    );
+    const res = await request(buildApp()).get("/api/quality-dashboard/client-drill/transcript?leadId=lead-1");
 
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/clientId is required/);
@@ -62,9 +49,7 @@ describe("GET /client-drill/transcript requires clientId", () => {
   });
 
   it("refuses with 400 when leadId is missing", async () => {
-    const res = await request(buildApp()).get(
-      "/api/quality-dashboard/client-drill/transcript?clientId=client-1",
-    );
+    const res = await request(buildApp()).get("/api/quality-dashboard/client-drill/transcript?clientId=client-1");
 
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/leadId is required/);
@@ -73,9 +58,7 @@ describe("GET /client-drill/transcript requires clientId", () => {
   it("passes clientId into the query, scoping the lookup to that client", async () => {
     querySource.mockResolvedValue([]);
 
-    await request(buildApp()).get(
-      "/api/quality-dashboard/client-drill/transcript?leadId=lead-1&clientId=client-1",
-    );
+    await request(buildApp()).get("/api/quality-dashboard/client-drill/transcript?leadId=lead-1&clientId=client-1");
 
     expect(querySource).toHaveBeenCalledTimes(1);
     const [sql, params] = querySource.mock.calls[0];
@@ -87,19 +70,12 @@ describe("GET /client-drill/transcript requires clientId", () => {
     // Mocking querySource replaces the whole SQL round-trip, so the fixture must use the
     // query's OUTPUT column names (post-alias), not the raw db_audit column names — the SQL
     // aliases Transcribe_Text to transcript_text, but that aliasing never runs here.
-    querySource.mockResolvedValue([
-      {
-        lead_id: "lead-1",
-        date: "2026-08-01",
-        agent_name: "Agent One",
-        cq_score: 92,
-        transcript_text: "hello",
-      },
-    ]);
+    querySource.mockResolvedValue([{
+      lead_id: "lead-1", date: "2026-08-01", agent_name: "Agent One",
+      cq_score: 92, transcript_text: "hello",
+    }]);
 
-    const res = await request(buildApp()).get(
-      "/api/quality-dashboard/client-drill/transcript?leadId=lead-1&clientId=client-1",
-    );
+    const res = await request(buildApp()).get("/api/quality-dashboard/client-drill/transcript?leadId=lead-1&clientId=client-1");
 
     expect(res.status).toBe(200);
     expect(res.body.data.lead_id).toBe("lead-1");
@@ -112,9 +88,7 @@ describe("GET /client-drill/transcript requires clientId", () => {
     // route/service correctly surfaces that as null rather than papering over it.
     querySource.mockResolvedValue([]);
 
-    const res = await request(buildApp()).get(
-      "/api/quality-dashboard/client-drill/transcript?leadId=lead-1&clientId=client-OTHER",
-    );
+    const res = await request(buildApp()).get("/api/quality-dashboard/client-drill/transcript?leadId=lead-1&clientId=client-OTHER");
 
     expect(res.status).toBe(200);
     expect(res.body.data).toBeNull();

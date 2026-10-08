@@ -21,8 +21,7 @@ const WINDOWS_CHROME =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36";
 const MAC_SAFARI =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15";
-const LINUX_FIREFOX =
-  "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/119.0";
+const LINUX_FIREFOX = "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/119.0";
 
 describe("device-guard: isBlockedDeviceUserAgent", () => {
   it("blocks real phone browsers", () => {
@@ -56,16 +55,14 @@ describe("device-guard: isDeviceGateEnabled", () => {
     const original = process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED;
     delete process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED;
     expect(isDeviceGateEnabled()).toBe(true);
-    if (original !== undefined)
-      process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED = original;
+    if (original !== undefined) process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED = original;
   });
 
   it("is a working kill switch when explicitly set to false", () => {
     const original = process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED;
     process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED = "false";
     expect(isDeviceGateEnabled()).toBe(false);
-    if (original === undefined)
-      delete process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED;
+    if (original === undefined) delete process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED;
     else process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED = original;
   });
 });
@@ -91,8 +88,6 @@ describe("device-guard: CLIENT_DEVICE_GUARD_SNIPPET", () => {
   });
 
   it("embeds the exact same pattern source the server uses, so the two can never disagree", () => {
-    expect(CLIENT_DEVICE_GUARD_SNIPPET).toContain(
-      JSON.stringify(MOBILE_UA_PATTERN_SOURCE),
-    );
+    expect(CLIENT_DEVICE_GUARD_SNIPPET).toContain(JSON.stringify(MOBILE_UA_PATTERN_SOURCE));
   });
 });

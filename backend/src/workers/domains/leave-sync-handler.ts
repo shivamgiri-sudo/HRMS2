@@ -1,6 +1,6 @@
-import { getLegacyPool } from "../../db/legacyDb.js";
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { getLegacyPool } from '../../db/legacyDb.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 interface LegacyLeaveRecord {
   Id: number;
@@ -63,10 +63,7 @@ export class LeaveSyncHandler {
   /**
    * Fetch leave records from legacy database that were created/updated after lastSyncTime
    */
-  async fetchChanges(
-    lastSyncTime: Date,
-    batchSize: number = 1000,
-  ): Promise<LegacyLeaveRecord[]> {
+  async fetchChanges(lastSyncTime: Date, batchSize: number = 1000): Promise<LegacyLeaveRecord[]> {
     const pool = await getLegacyPool();
 
     const [rows] = await pool.execute<RowDataPacket[]>(
@@ -74,12 +71,10 @@ export class LeaveSyncHandler {
        WHERE CreateDate > ? OR LeaveApproveDate > ?
        ORDER BY COALESCE(CreateDate, LeaveApproveDate) ASC
        LIMIT ?`,
-      [lastSyncTime, lastSyncTime, batchSize],
+      [lastSyncTime, lastSyncTime, batchSize]
     );
 
-    console.log(
-      `[LEAVE-SYNC] Fetched ${rows.length} leave records from legacy`,
-    );
+    console.log(`[LEAVE-SYNC] Fetched ${rows.length} leave records from legacy`);
     return rows as LegacyLeaveRecord[];
   }
 
@@ -91,11 +86,11 @@ export class LeaveSyncHandler {
     if (employeeCodes.length === 0) return;
 
     // Build placeholders for IN clause
-    const placeholders = employeeCodes.map(() => "?").join(",");
+    const placeholders = employeeCodes.map(() => '?').join(',');
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_code FROM employees WHERE employee_code IN (${placeholders})`,
-      employeeCodes,
+      employeeCodes
     );
 
     this.employeeCache.clear();
@@ -106,53 +101,51 @@ export class LeaveSyncHandler {
       });
     }
 
-    console.log(
-      `[LEAVE-SYNC] Loaded ${this.employeeCache.size} employee mappings into cache`,
-    );
+    console.log(`[LEAVE-SYNC] Loaded ${this.employeeCache.size} employee mappings into cache`);
   }
 
   /**
    * Map legacy leave type to HRMS leave type code
    */
   private mapLeaveType(legacyLeaveType: string | null): string {
-    if (!legacyLeaveType) return "OTHER";
+    if (!legacyLeaveType) return 'OTHER';
 
     const normalized = legacyLeaveType.trim().toUpperCase();
 
     const mapping: Record<string, string> = {
-      CL: "CL",
-      CASUAL: "CL",
-      "CASUAL LEAVE": "CL",
-      ML: "ML",
-      MEDICAL: "ML",
-      "MEDICAL LEAVE": "ML",
-      SICK: "ML",
-      "SICK LEAVE": "ML",
-      DL: "DL",
-      "DUTY LEAVE": "DL",
-      EL: "EL",
-      EARNED: "EL",
-      "EARNED LEAVE": "EL",
-      PRIVILEGE: "EL",
-      PTRL: "PTRL",
-      PATERNITY: "PTRL",
-      "PATERNITY LEAVE": "PTRL",
-      MTRL: "MTRL",
-      MATERNITY: "MTRL",
-      "MATERNITY LEAVE": "MTRL",
-      LWP: "LWP",
-      "LEAVE WITHOUT PAY": "LWP",
-      "WITHOUT PAY": "LWP",
+      'CL': 'CL',
+      'CASUAL': 'CL',
+      'CASUAL LEAVE': 'CL',
+      'ML': 'ML',
+      'MEDICAL': 'ML',
+      'MEDICAL LEAVE': 'ML',
+      'SICK': 'ML',
+      'SICK LEAVE': 'ML',
+      'DL': 'DL',
+      'DUTY LEAVE': 'DL',
+      'EL': 'EL',
+      'EARNED': 'EL',
+      'EARNED LEAVE': 'EL',
+      'PRIVILEGE': 'EL',
+      'PTRL': 'PTRL',
+      'PATERNITY': 'PTRL',
+      'PATERNITY LEAVE': 'PTRL',
+      'MTRL': 'MTRL',
+      'MATERNITY': 'MTRL',
+      'MATERNITY LEAVE': 'MTRL',
+      'LWP': 'LWP',
+      'LEAVE WITHOUT PAY': 'LWP',
+      'WITHOUT PAY': 'LWP',
     };
 
-    return mapping[normalized] || "OTHER";
+    return mapping[normalized] || 'OTHER';
   }
 
   /**
    * Map legacy leave status to HRMS status
    */
   private mapStatus(legacyStatus: string | null): string {
-    if (!legacyStatus) return "pending";
+    if (!legacyStatus) return 'pending';
 
     const normalized = legacyStatus.trim().toLowerCase();
 
@@ -166,21 +159,21 @@ export class LeaveSyncHandler {
     // balances. Ordering the checks the other way round is what fixes it; the
     // 'disapprove' guard alone never covered the value the source actually uses.
     if (
-      normalized.includes("reject") ||
-      normalized.includes("disapprove") ||
-      normalized.includes("not approve") ||
-      normalized.includes("notapprove")
+      normalized.includes('reject')
+      || normalized.includes('disapprove')
+      || normalized.includes('not approve')
+      || normalized.includes('notapprove')
     ) {
-      return "rejected";
+      return 'rejected';
     }
-    if (normalized.includes("cancel")) {
-      return "cancelled";
+    if (normalized.includes('cancel')) {
+      return 'cancelled';
     }
-    if (normalized.includes("approve")) {
-      return "approved";
+    if (normalized.includes('approve')) {
+      return 'approved';
     }
-    if (normalized.includes("pending") || normalized.includes("waiting")) {
-      return "pending";
+    if (normalized.includes('pending') || normalized.includes('waiting')) {
+      return 'pending';
     }
 
     // Unrecognised values stay 'pending' on purpose: an unknown state must not be
@@ -188,7 +181,7 @@ export class LeaveSyncHandler {
     // pendency on the dashboards, which is how 547 already-decided db_bill rows came
     // to sit in the "Pending Leave Approvals" queue — see the legacy_leave_id split in
     // dashboard-metric.service.ts::getLeaveApprovalMetrics.
-    return "pending";
+    return 'pending';
   }
 
   /**
@@ -199,17 +192,13 @@ export class LeaveSyncHandler {
     // CRITICAL VALIDATION: Check if employee exists in HRMS
     const employee = this.employeeCache.get(legacyRecord.EmpCode);
     if (!employee) {
-      console.warn(
-        `[LEAVE-SYNC] SKIP: Employee ${legacyRecord.EmpCode} not found in HRMS`,
-      );
+      console.warn(`[LEAVE-SYNC] SKIP: Employee ${legacyRecord.EmpCode} not found in HRMS`);
       return null;
     }
 
     // Validate required fields
     if (!legacyRecord.LeaveFrom || !legacyRecord.LeaveTo) {
-      console.warn(
-        `[LEAVE-SYNC] SKIP: Leave record ${legacyRecord.Id} missing dates`,
-      );
+      console.warn(`[LEAVE-SYNC] SKIP: Leave record ${legacyRecord.Id} missing dates`);
       return null;
     }
 
@@ -219,11 +208,8 @@ export class LeaveSyncHandler {
     // Calculate total days
     const startDate = new Date(legacyRecord.LeaveFrom);
     const endDate = new Date(legacyRecord.LeaveTo);
-    const totalDays =
-      legacyRecord.TotalLeave ||
-      Math.ceil(
-        (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24),
-      ) + 1;
+    const totalDays = legacyRecord.TotalLeave ||
+      Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
     return {
       id: this.generateUUID(),
@@ -237,11 +223,8 @@ export class LeaveSyncHandler {
       status,
       requested_at: legacyRecord.CreateDate || new Date(),
       approved_at: legacyRecord.LeaveApproveDate || null,
-      approved_by: legacyRecord.LeaveApproveBy
-        ? String(legacyRecord.LeaveApproveBy)
-        : null,
-      rejection_reason:
-        status === "rejected" ? legacyRecord.DisApprovedReason : null,
+      approved_by: legacyRecord.LeaveApproveBy ? String(legacyRecord.LeaveApproveBy) : null,
+      rejection_reason: status === 'rejected' ? legacyRecord.DisApprovedReason : null,
       legacy_leave_id: legacyRecord.Id,
       legacy_created_at: legacyRecord.CreateDate,
     };
@@ -264,7 +247,7 @@ export class LeaveSyncHandler {
         // Check if leave request already exists by legacy_leave_id
         const [existing] = await db.execute<RowDataPacket[]>(
           `SELECT id FROM leave_request WHERE legacy_leave_id = ? LIMIT 1`,
-          [record.legacy_leave_id],
+          [record.legacy_leave_id]
         );
 
         if (existing.length > 0) {
@@ -295,7 +278,7 @@ export class LeaveSyncHandler {
               record.approved_by,
               record.rejection_reason,
               record.legacy_leave_id,
-            ],
+            ]
           );
           result.updated++;
         } else {
@@ -321,59 +304,48 @@ export class LeaveSyncHandler {
               record.rejection_reason,
               record.legacy_leave_id,
               record.legacy_created_at || new Date(),
-            ],
+            ]
           );
           result.inserted++;
         }
       } catch (error: any) {
-        console.error(
-          `[LEAVE-SYNC] ERROR syncing leave ${record.legacy_leave_id}:`,
-          error.message,
-        );
+        console.error(`[LEAVE-SYNC] ERROR syncing leave ${record.legacy_leave_id}:`, error.message);
         result.errors.push({ record, error: error.message });
       }
     }
 
-    console.log(
-      `[LEAVE-SYNC] Sync complete: ${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped, ${result.errors.length} errors`,
-    );
+    console.log(`[LEAVE-SYNC] Sync complete: ${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped, ${result.errors.length} errors`);
     return result;
   }
 
   /**
    * Main sync method - orchestrates the full sync workflow
    */
-  async sync(lastSyncTime: Date = new Date("2020-01-01")): Promise<void> {
-    console.log(
-      `[LEAVE-SYNC] Starting sync from ${lastSyncTime.toISOString()}`,
-    );
+  async sync(lastSyncTime: Date = new Date('2020-01-01')): Promise<void> {
+    console.log(`[LEAVE-SYNC] Starting sync from ${lastSyncTime.toISOString()}`);
 
     try {
       // Step 1: Fetch changes from legacy
       const legacyRecords = await this.fetchChanges(lastSyncTime, 1000);
 
       if (legacyRecords.length === 0) {
-        console.log("[LEAVE-SYNC] No new leave records to sync");
+        console.log('[LEAVE-SYNC] No new leave records to sync');
         return;
       }
 
       // Step 2: Load employee mappings for validation
-      const employeeCodes = [...new Set(legacyRecords.map((r) => r.EmpCode))];
+      const employeeCodes = [...new Set(legacyRecords.map(r => r.EmpCode))];
       await this.loadEmployeeCache(employeeCodes);
 
       // Step 3: Transform records (validates employee exists)
       const transformed = legacyRecords
-        .map((r) => this.transform(r))
+        .map(r => this.transform(r))
         .filter((r): r is TransformedLeaveRequest => r !== null);
 
-      console.log(
-        `[LEAVE-SYNC] Transformed ${transformed.length}/${legacyRecords.length} leave records (${legacyRecords.length - transformed.length} skipped due to missing employees)`,
-      );
+      console.log(`[LEAVE-SYNC] Transformed ${transformed.length}/${legacyRecords.length} leave records (${legacyRecords.length - transformed.length} skipped due to missing employees)`);
 
       if (transformed.length === 0) {
-        console.log(
-          "[LEAVE-SYNC] No valid leave records to sync after validation",
-        );
+        console.log('[LEAVE-SYNC] No valid leave records to sync after validation');
         return;
       }
 
@@ -382,7 +354,7 @@ export class LeaveSyncHandler {
 
       console.log(`[LEAVE-SYNC] ✅ Sync complete:`, result);
     } catch (error: any) {
-      console.error("[LEAVE-SYNC] ❌ Sync failed:", error.message);
+      console.error('[LEAVE-SYNC] ❌ Sync failed:', error.message);
       throw error;
     }
   }
@@ -391,9 +363,9 @@ export class LeaveSyncHandler {
    * Generate UUID v4
    */
   private generateUUID(): string {
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
       const r = (Math.random() * 16) | 0;
-      const v = c === "x" ? r : (r & 0x3) | 0x8;
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
       return v.toString(16);
     });
   }

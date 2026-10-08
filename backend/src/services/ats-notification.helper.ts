@@ -1,8 +1,5 @@
 import { notificationService } from "./notification.service.js";
-import type {
-  NotificationRecipient,
-  NotificationContext,
-} from "./notification.service.js";
+import type { NotificationRecipient, NotificationContext } from "./notification.service.js";
 import { emailService } from "../modules/communication/email.service.js";
 import { buildAppLink } from "../shared/appLink.js";
 
@@ -34,7 +31,7 @@ export async function notifyRecruiterNewAssignment(input: {
     // Get recruiter email/mobile
     const [recruiterRows]: any = await db.execute(
       "SELECT email, mobile FROM ats_recruiter_roster WHERE name = ? AND active_status = 1 LIMIT 1",
-      [input.recruiterName],
+      [input.recruiterName]
     );
 
     const recipients: NotificationRecipient[] = [];
@@ -57,7 +54,7 @@ export async function notifyRecruiterNewAssignment(input: {
        WHERE ur.role_key IN ('hr', 'admin', 'super_admin')
        AND e.active_status = 1
        AND e.email IS NOT NULL
-       LIMIT 3`,
+       LIMIT 3`
     );
 
     if (hrRows) {
@@ -255,10 +252,9 @@ function buildSlaBreachHtml(input: {
   slaMinutes: number;
   qToken: string;
 }): string {
-  const waitStr =
-    input.slaMinutes >= 60
-      ? `${Math.floor(input.slaMinutes / 60)}h ${input.slaMinutes % 60}m`
-      : `${input.slaMinutes} min`;
+  const waitStr = input.slaMinutes >= 60
+    ? `${Math.floor(input.slaMinutes / 60)}h ${input.slaMinutes % 60}m`
+    : `${input.slaMinutes} min`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -407,7 +403,7 @@ export async function notifySLABreach(input: {
        LEFT JOIN auth_user manager_user ON manager_user.id = manager_emp.user_id
        WHERE rr.name = ? AND rr.active_status = 1
        LIMIT 1`,
-      [input.recruiterName],
+      [input.recruiterName]
     );
 
     const roster = rosterRows?.[0];
@@ -415,9 +411,7 @@ export async function notifySLABreach(input: {
     const managerEmail: string | null = roster?.manager_email || null;
 
     if (!managerEmail && !recruiterEmail) {
-      console.warn(
-        `[ATSNotification] No email addresses resolved for recruiter "${input.recruiterName}" — SLA alert skipped`,
-      );
+      console.warn(`[ATSNotification] No email addresses resolved for recruiter "${input.recruiterName}" — SLA alert skipped`);
       return;
     }
 
@@ -434,15 +428,11 @@ export async function notifySLABreach(input: {
         text,
         ...(recruiterEmail ? { cc: recruiterEmail } : {}),
       });
-      console.log(
-        `[ATSNotification] SLA alert sent → manager: ${managerEmail}${recruiterEmail ? `, cc: ${recruiterEmail}` : ""}`,
-      );
+      console.log(`[ATSNotification] SLA alert sent → manager: ${managerEmail}${recruiterEmail ? `, cc: ${recruiterEmail}` : ""}`);
     } else if (recruiterEmail) {
       // Fallback: no manager found — send directly to recruiter
       await emailService.send({ to: recruiterEmail, subject, html, text });
-      console.log(
-        `[ATSNotification] SLA alert sent → recruiter (no manager found): ${recruiterEmail}`,
-      );
+      console.log(`[ATSNotification] SLA alert sent → recruiter (no manager found): ${recruiterEmail}`);
     }
   } catch (error: any) {
     console.error("[ATSNotification] SLA_BREACH failed:", error.message);

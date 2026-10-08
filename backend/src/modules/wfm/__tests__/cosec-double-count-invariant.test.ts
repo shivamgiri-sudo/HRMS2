@@ -41,10 +41,7 @@ function simulateDoubleCount(minutesA: number, minutesB: number): number {
  * Simulates the ON DUPLICATE KEY UPDATE overwrite behaviour: the second write
  * replaces raw_minutes; no summation occurs.
  */
-function simulateUpsert(
-  existingMinutes: number,
-  incomingMinutes: number,
-): number {
+function simulateUpsert(existingMinutes: number, incomingMinutes: number): number {
   return incomingMinutes; // ON DUPLICATE KEY UPDATE raw_minutes = VALUES(raw_minutes)
 }
 
@@ -56,10 +53,10 @@ describe("COSEC biometric unique-key invariant: no double-count", () => {
     const incoming = 510; // resync with corrected 8h30m
 
     const upserted = simulateUpsert(existing, incoming);
-    const doubled = simulateDoubleCount(existing, incoming);
+    const doubled  = simulateDoubleCount(existing, incoming);
 
     expect(upserted).toBe(510);
-    expect(doubled).toBe(990); // what a plain INSERT would produce
+    expect(doubled).toBe(990);  // what a plain INSERT would produce
     expect(upserted).not.toBe(doubled);
   });
 
@@ -122,24 +119,15 @@ describe("classifyCosecMinutes: biometric presence thresholds", () => {
 
 describe("classifyOperationsNetLogin: APR dialler thresholds", () => {
   it("≥ 480 min → present, lwp=0", () => {
-    expect(classifyOperationsNetLogin(480)).toEqual({
-      status: "present",
-      lwpValue: 0,
-    });
+    expect(classifyOperationsNetLogin(480)).toEqual({ status: "present", lwpValue: 0 });
   });
 
   it("≥ 240 min and < 480 → half_day, lwp=0.5", () => {
-    expect(classifyOperationsNetLogin(300)).toEqual({
-      status: "half_day",
-      lwpValue: 0.5,
-    });
+    expect(classifyOperationsNetLogin(300)).toEqual({ status: "half_day", lwpValue: 0.5 });
   });
 
   it("< 240 → absent, lwp=1", () => {
-    expect(classifyOperationsNetLogin(180)).toEqual({
-      status: "absent",
-      lwpValue: 1,
-    });
+    expect(classifyOperationsNetLogin(180)).toEqual({ status: "absent", lwpValue: 1 });
   });
 });
 
@@ -153,10 +141,7 @@ describe("G12: week_off_worked decision logic (pure)", () => {
    *     if actualMinutesOnWeekOff > 0 → week_off_worked
    *     else → regular week_off override (paid, no work)
    */
-  function applyG12Logic(
-    isRosterWeekOff: boolean,
-    actualMinutes: number,
-  ): string {
+  function applyG12Logic(isRosterWeekOff: boolean, actualMinutes: number): string {
     if (!isRosterWeekOff) return "not_a_week_off"; // caller handles normal path
     if (actualMinutes > 0) return "week_off_worked";
     return "week_off";
@@ -245,7 +230,7 @@ describe("cross-midnight night shift detection", () => {
     // not 2026-08-02 (the punch-out calendar day).
     // This test documents the expected invariant — the engine's punch ownership
     // logic uses `sourceRecordDate = startDate` (shiftWindowInfo.startDate).
-    const shiftDate = "2026-08-01";
+    const shiftDate    = "2026-08-01";
     const spilloverDay = "2026-08-02";
     // Confirm isCrossMidnightShift identifies this correctly
     expect(isCrossMidnightShift("21:00:00", "06:00:00")).toBe(true);

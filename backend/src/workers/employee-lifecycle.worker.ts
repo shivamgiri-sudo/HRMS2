@@ -50,9 +50,7 @@ let _clearanceLwdTriggerTimer: ReturnType<typeof setTimeout> | null = null;
 function msUntilNextActivationRun(): number {
   const now = new Date();
   const next = new Date();
-  next.setDate(
-    now.getDate() + (now.getHours() >= 0 && now.getMinutes() >= 1 ? 1 : 0),
-  );
+  next.setDate(now.getDate() + (now.getHours() >= 0 && now.getMinutes() >= 1 ? 1 : 0));
   next.setHours(0, 1, 0, 0); // 12:01 AM
   if (next <= now) {
     next.setDate(next.getDate() + 1);
@@ -111,18 +109,16 @@ async function runActivation(): Promise<void> {
     const report = await runDailyActivationJob();
     console.log(
       `[employee-lifecycle] Activation job complete: activated=${report.activated.length}` +
-        ` errors=${report.errors.length} sla_violations=${report.slaViolations.length}`,
+      ` errors=${report.errors.length} sla_violations=${report.slaViolations.length}`
     );
     if (report.slaViolations.length > 0) {
       console.warn(
         `[employee-lifecycle] SLA violations:`,
-        report.slaViolations.map(
-          (v) => `${v.employeeCode}/${v.taskCode} overdue ${v.hoursOverdue}h`,
-        ),
+        report.slaViolations.map(v => `${v.employeeCode}/${v.taskCode} overdue ${v.hoursOverdue}h`)
       );
     }
   } catch (err) {
-    console.error("[employee-lifecycle] Activation job failed:", err);
+    console.error('[employee-lifecycle] Activation job failed:', err);
   }
   // Schedule next run (24h)
   _activationTimer = setTimeout(runActivation, 24 * 60 * 60 * 1000);
@@ -132,7 +128,7 @@ async function runAwolScan(): Promise<void> {
   try {
     await runAwolDetectionScan();
   } catch (err) {
-    console.error("[employee-lifecycle] AWOL detection scan failed:", err);
+    console.error('[employee-lifecycle] AWOL detection scan failed:', err);
   }
   // Schedule next run (24h)
   _awolTimer = setTimeout(runAwolScan, 24 * 60 * 60 * 1000);
@@ -143,11 +139,11 @@ async function runLwdScan(): Promise<void> {
     const r = await runLastWorkingDayScan();
     if (r.scanned > 0) {
       console.log(
-        `[employee-lifecycle] LWD scan: scanned=${r.scanned} notified=${r.notified} failed=${r.failed}`,
+        `[employee-lifecycle] LWD scan: scanned=${r.scanned} notified=${r.notified} failed=${r.failed}`
       );
     }
   } catch (err) {
-    console.error("[employee-lifecycle] Last-working-day scan failed:", err);
+    console.error('[employee-lifecycle] Last-working-day scan failed:', err);
   }
   // Schedule next run (24h)
   _lwdTimer = setTimeout(runLwdScan, 24 * 60 * 60 * 1000);
@@ -159,11 +155,11 @@ async function runNocTrigger(): Promise<void> {
     if (r.scanned > 0) {
       console.log(
         `[employee-lifecycle] NOC LWD trigger: scanned=${r.scanned}` +
-          ` created=${r.created} alreadyExisted=${r.alreadyExisted} failed=${r.failed}`,
+        ` created=${r.created} alreadyExisted=${r.alreadyExisted} failed=${r.failed}`
       );
     }
   } catch (err) {
-    console.error("[employee-lifecycle] NOC LWD trigger failed:", err);
+    console.error('[employee-lifecycle] NOC LWD trigger failed:', err);
   }
   // Schedule next run (24h)
   _nocTriggerTimer = setTimeout(runNocTrigger, 24 * 60 * 60 * 1000);
@@ -175,20 +171,14 @@ async function runClearanceLwdTrigger(): Promise<void> {
     if (r.scanned > 0) {
       console.log(
         `[employee-lifecycle] Exit-clearance LWD trigger: scanned=${r.scanned}` +
-          ` created=${r.created} alreadyExisted=${r.alreadyExisted} failed=${r.failed}`,
+        ` created=${r.created} alreadyExisted=${r.alreadyExisted} failed=${r.failed}`
       );
     }
   } catch (err) {
-    console.error(
-      "[employee-lifecycle] Exit-clearance LWD trigger failed:",
-      err,
-    );
+    console.error('[employee-lifecycle] Exit-clearance LWD trigger failed:', err);
   }
   // Schedule next run (24h)
-  _clearanceLwdTriggerTimer = setTimeout(
-    runClearanceLwdTrigger,
-    24 * 60 * 60 * 1000,
-  );
+  _clearanceLwdTriggerTimer = setTimeout(runClearanceLwdTrigger, 24 * 60 * 60 * 1000);
 }
 
 async function runExitAuto(): Promise<void> {
@@ -217,11 +207,11 @@ async function runRetry(): Promise<void> {
     if (report.attempted > 0) {
       console.log(
         `[employee-lifecycle] Provisioning retry: attempted=${report.attempted}` +
-          ` succeeded=${report.succeeded} failed=${report.failed.length}`,
+        ` succeeded=${report.succeeded} failed=${report.failed.length}`
       );
     }
   } catch (err) {
-    console.error("[employee-lifecycle] Provisioning retry job failed:", err);
+    console.error('[employee-lifecycle] Provisioning retry job failed:', err);
   }
 }
 
@@ -232,16 +222,14 @@ export function startEmployeeLifecycleWorker(): void {
   const msUntilFirstRun = msUntilNextActivationRun();
   console.log(
     `[employee-lifecycle] Activation job scheduled in ${Math.round(msUntilFirstRun / 60000)}m ` +
-      `(next 12:01 AM)`,
+    `(next 12:01 AM)`
   );
   _activationTimer = setTimeout(runActivation, msUntilFirstRun);
 
   // Hourly provisioning retry
   _retryTimer = setInterval(runRetry, 60 * 60 * 1000);
   runRetry(); // Run immediately on start
-  console.log(
-    "[employee-lifecycle] Provisioning retry scheduler started (hourly)",
-  );
+  console.log('[employee-lifecycle] Provisioning retry scheduler started (hourly)');
 
   // Exit buckets move on their own: submitted -> review -> accepted -> notice -> exited (hourly)
   _exitAutoTimer = setInterval(runExitAuto, 60 * 60 * 1000);
@@ -252,7 +240,7 @@ export function startEmployeeLifecycleWorker(): void {
   const msUntilAwolRun = msUntilNextAwolScanRun();
   console.log(
     `[employee-lifecycle] AWOL detection scan scheduled in ${Math.round(msUntilAwolRun / 60000)}m ` +
-      `(next 2:00 AM)`,
+    `(next 2:00 AM)`
   );
   _awolTimer = setTimeout(runAwolScan, msUntilAwolRun);
 
@@ -260,7 +248,7 @@ export function startEmployeeLifecycleWorker(): void {
   const msUntilLwdRun = msUntilNextLwdScanRun();
   console.log(
     `[employee-lifecycle] Last-working-day scan scheduled in ${Math.round(msUntilLwdRun / 60000)}m ` +
-      `(next 3:00 AM)`,
+    `(next 3:00 AM)`
   );
   _lwdTimer = setTimeout(runLwdScan, msUntilLwdRun);
 
@@ -268,7 +256,7 @@ export function startEmployeeLifecycleWorker(): void {
   const msUntilNocRun = msUntilNextNocTriggerRun();
   console.log(
     `[employee-lifecycle] NOC LWD trigger scheduled in ${Math.round(msUntilNocRun / 60000)}m ` +
-      `(next 8:00 AM)`,
+    `(next 8:00 AM)`
   );
   _nocTriggerTimer = setTimeout(runNocTrigger, msUntilNocRun);
 
@@ -276,12 +264,9 @@ export function startEmployeeLifecycleWorker(): void {
   const msUntilClearanceLwdRun = msUntilNextClearanceLwdTriggerRun();
   console.log(
     `[employee-lifecycle] Exit-clearance LWD trigger scheduled in ${Math.round(msUntilClearanceLwdRun / 60000)}m ` +
-      `(next 8:30 AM)`,
+    `(next 8:30 AM)`
   );
-  _clearanceLwdTriggerTimer = setTimeout(
-    runClearanceLwdTrigger,
-    msUntilClearanceLwdRun,
-  );
+  _clearanceLwdTriggerTimer = setTimeout(runClearanceLwdTrigger, msUntilClearanceLwdRun);
 }
 
 export function stopEmployeeLifecycleWorker(): void {

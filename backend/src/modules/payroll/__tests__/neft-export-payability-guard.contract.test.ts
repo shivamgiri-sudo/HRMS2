@@ -24,10 +24,10 @@ const CANONICAL = readFileSync(
   "utf8",
 );
 const block = (() => {
-  // The payment file is now registered at both /runs/:id/neft-export and
-  // /month/:month/neft-export against one handler, because a month split into several runs
-  // must still produce a single bank file. Locate the handler itself, not the registration.
-  const at = CANONICAL.indexOf("const neftExportHandler");
+    // The payment file is now registered at both /runs/:id/neft-export and
+    // /month/:month/neft-export against one handler, because a month split into several runs
+    // must still produce a single bank file. Locate the handler itself, not the registration.
+  const at = CANONICAL.indexOf('const neftExportHandler');
   return CANONICAL.slice(at, CANONICAL.indexOf("router.", at + 50));
 })();
 
@@ -62,9 +62,7 @@ describe("the bank file only ever contains rows a bank can route", () => {
   });
 
   it("surfaces excluded employees rather than dropping them silently", () => {
-    expect(block).toContain(
-      "EXCLUDED — NOT PAYABLE, NOT INCLUDED IN TOTAL ABOVE",
-    );
+    expect(block).toContain("EXCLUDED — NOT PAYABLE, NOT INCLUDED IN TOTAL ABOVE");
     expect(block).toContain("EXCLUDED_TOTAL");
     expect(block).toContain("X-Payroll-Excluded-Count");
   });

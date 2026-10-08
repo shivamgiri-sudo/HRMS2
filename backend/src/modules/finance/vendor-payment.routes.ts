@@ -47,10 +47,8 @@ const PNL_GOVERNANCE_READ_ROLES = [
 ] as const;
 
 const router = Router();
-const h =
-  (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: any, next: any) => fn(req, res).catch(next);
 
 function actor(req: AuthenticatedRequest) {
   const id = req.authUser?.id;
@@ -66,7 +64,7 @@ function allRoles(req: AuthenticatedRequest) {
   return new Set(
     [req.authUser?.role, ...(req.userRoles ?? [])]
       .filter((value): value is string => Boolean(value))
-      .map((value) => value.toLowerCase()),
+      .map((value) => value.toLowerCase())
   );
 }
 
@@ -82,7 +80,7 @@ type ScopedPaymentRequest = AuthenticatedRequest & { financePayment?: any };
 async function authorizePaymentBranch(
   req: ScopedPaymentRequest,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ) {
   try {
     const user = actor(req);
@@ -138,8 +136,7 @@ router.get(
       userRoles: user.roles,
       requestedBranchId: undefined,
     });
-    const scopeBranchNames =
-      await vendorPaymentService.getScopeBranchNames(scope);
+    const scopeBranchNames = await vendorPaymentService.getScopeBranchNames(scope);
     res.json({
       success: true,
       data: {
@@ -151,7 +148,7 @@ router.get(
         paymentModel: "installment_ledger",
       },
     });
-  }),
+  })
 );
 
 router.get(
@@ -160,7 +157,7 @@ router.get(
   h(async (_req, res) => {
     const data = await vendorPaymentService.listBanks();
     res.json({ success: true, data });
-  }),
+  })
 );
 
 router.get(
@@ -203,7 +200,7 @@ router.get(
       limit: req.query.limit ? Number(req.query.limit) : 50,
     });
     res.json({ success: true, ...result });
-  }),
+  })
 );
 
 router.get(
@@ -258,45 +255,18 @@ router.get(
     // tax split, Paid/Balance/Status/Remarks) are NOT dropped — they move behind
     // ?format=extended, so the official report stays as-is while nobody loses data they were
     // already using.
-    const EXTENDED =
-      String(req.query.format ?? "").toLowerCase() === "extended";
+    const EXTENDED = String(req.query.format ?? "").toLowerCase() === "extended";
 
     const LEGACY_COLUMNS = [
-      "Sr. No.",
-      "Branch",
-      "Grn No.",
-      "Head",
-      "SubHead",
-      "Due Amount",
-      "Due Date",
-      "Grn File",
-      "Payment Mode",
-      "Payment Date",
-      "Bank Name",
-      "Transaction ID / Cheque No.",
+      "Sr. No.", "Branch", "Grn No.", "Head", "SubHead", "Due Amount", "Due Date",
+      "Grn File", "Payment Mode", "Payment Date", "Bank Name", "Transaction ID / Cheque No.",
     ];
     const EXTENDED_COLUMNS = [
-      "Sr No",
-      "Branch",
-      "Process",
-      "Cost Centre",
-      "Cost Class",
-      "GRN No",
-      "Vendor",
-      "Head",
-      "Sub Head",
-      "Amount Without Tax",
-      "Tax Amount",
-      "Due Amount With Tax",
-      "Due Date",
-      "Latest Payment Mode",
-      "Latest Payment Date",
-      "Latest Bank Name",
-      "Latest Transaction ID",
-      "Paid Amount",
-      "Balance Amount",
-      "Payment Status",
-      "Remarks",
+      "Sr No", "Branch", "Process", "Cost Centre", "Cost Class", "GRN No",
+      "Vendor", "Head", "Sub Head", "Amount Without Tax", "Tax Amount",
+      "Due Amount With Tax", "Due Date", "Latest Payment Mode",
+      "Latest Payment Date", "Latest Bank Name", "Latest Transaction ID",
+      "Paid Amount", "Balance Amount", "Payment Status", "Remarks",
     ];
     const columns = EXTENDED ? EXTENDED_COLUMNS : LEGACY_COLUMNS;
 
@@ -307,55 +277,30 @@ router.get(
       ...(rows as any[]).map((row, index) =>
         (EXTENDED
           ? [
-              index + 1,
-              row.branch_name ?? row.branch_id,
-              row.process_name ?? "",
-              row.cost_centre_name ?? "",
-              row.cost_class ?? "",
-              row.grn_number,
-              row.vendor_name,
-              row.head,
-              row.sub_head,
-              row.amount_without_tax,
-              row.tax_amount,
-              row.due_amount,
-              row.due_date,
-              row.payment_mode,
-              row.payment_date,
-              row.bank_name,
-              row.transaction_id,
-              row.paid_amount,
-              row.balance_amount,
-              row.payment_status,
-              row.remarks,
+              index + 1, row.branch_name ?? row.branch_id, row.process_name ?? "",
+              row.cost_centre_name ?? "", row.cost_class ?? "", row.grn_number,
+              row.vendor_name, row.head, row.sub_head, row.amount_without_tax,
+              row.tax_amount, row.due_amount, row.due_date, row.payment_mode,
+              row.payment_date, row.bank_name, row.transaction_id, row.paid_amount,
+              row.balance_amount, row.payment_status, row.remarks,
             ]
           : [
-              index + 1,
-              row.branch_name ?? row.branch_id,
-              row.grn_number,
-              row.head,
-              row.sub_head,
-              row.due_amount,
-              row.due_date,
-              row.grn_file_name ?? "",
-              row.payment_mode,
-              row.payment_date,
-              row.bank_name,
-              row.transaction_id,
+              index + 1, row.branch_name ?? row.branch_id, row.grn_number,
+              row.head, row.sub_head, row.due_amount, row.due_date,
+              row.grn_file_name ?? "", row.payment_mode, row.payment_date,
+              row.bank_name, row.transaction_id,
             ]
-        )
-          .map(escape)
-          .join(","),
+        ).map(escape).join(",")
       ),
     ];
 
     res.setHeader("Content-Type", "text/csv");
     res.setHeader(
       "Content-Disposition",
-      'attachment; filename="vendor-payments-export.csv"',
+      'attachment; filename="vendor-payments-export.csv"'
     );
     res.send(csvRows.join("\n"));
-  }),
+  })
 );
 
 // 4-B: AP Aging — unpaid balances grouped into standard overdue buckets.
@@ -377,15 +322,11 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId
-        ? String(req.query.branchId)
-        : undefined,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
-    const { rows: data } = await vendorPaymentService.getAgingReport({
-      branchScope,
-    });
+    const { rows: data } = await vendorPaymentService.getAgingReport({ branchScope });
     res.json({ success: true, data });
-  }),
+  })
 );
 
 // Must stay above /vendor-payments/:id, same reason as /vendor-payments/aging above: Express
@@ -400,16 +341,14 @@ router.get(
   h(async (req, res) => {
     const periodCode = String(req.query.period ?? "");
     if (!/^\d{4}-\d{2}$/.test(periodCode)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "period must be in YYYY-MM format" });
+      return res.status(400).json({ success: false, error: "period must be in YYYY-MM format" });
     }
     const data = await vendorPaymentService.getPeriodReadiness({
       periodCode,
       branchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
     res.json({ success: true, ...data });
-  }),
+  })
 );
 
 router.get(
@@ -417,11 +356,9 @@ router.get(
   requireRole(...PAYMENT_READ_ROLES),
   authorizePaymentBranch,
   h(async (req, res) => {
-    const data = await vendorPaymentLedgerService.listTransactions(
-      req.params.id,
-    );
+    const data = await vendorPaymentLedgerService.listTransactions(req.params.id);
     res.json({ success: true, data });
-  }),
+  })
 );
 
 router.get(
@@ -430,7 +367,7 @@ router.get(
   authorizePaymentBranch,
   async (req: ScopedPaymentRequest, res) => {
     res.json({ success: true, data: req.financePayment });
-  },
+  }
 );
 
 router.post(
@@ -444,10 +381,10 @@ router.post(
       req.params.id,
       req.body,
       user.id,
-      paymentWriteRole(req),
+      paymentWriteRole(req)
     );
     res.json({ success: true, data });
-  }),
+  })
 );
 
 router.post(
@@ -463,10 +400,10 @@ router.post(
       hold,
       req.body?.reason ? String(req.body.reason) : undefined,
       user.id,
-      paymentWriteRole(req),
+      paymentWriteRole(req)
     );
     res.json({ success: true, data });
-  }),
+  })
 );
 
 router.post(
@@ -476,10 +413,9 @@ router.post(
   (_req, res) => {
     res.status(410).json({
       success: false,
-      error:
-        "Aggregate payment updates are retired. Use /dispatch for installments or /hold for hold/release actions.",
+      error: "Aggregate payment updates are retired. Use /dispatch for installments or /hold for hold/release actions.",
     });
-  },
+  }
 );
 
 router.post(
@@ -489,16 +425,15 @@ router.post(
   (_req, res) => {
     res.status(410).json({
       success: false,
-      error:
-        "Bulk aggregate updates are retired because each installment requires its own payment reference.",
+      error: "Bulk aggregate updates are retired because each installment requires its own payment reference.",
     });
-  },
+  }
 );
 
 const proofUploadDirectory = path.join(
   process.cwd(),
   "uploads",
-  "payment-proofs",
+  "payment-proofs"
 );
 if (!fs.existsSync(proofUploadDirectory)) {
   fs.mkdirSync(proofUploadDirectory, { recursive: true });
@@ -507,10 +442,7 @@ if (!fs.existsSync(proofUploadDirectory)) {
 const proofStorage = multer.diskStorage({
   destination: (_req, _file, callback) => callback(null, proofUploadDirectory),
   filename: (_req, file, callback) => {
-    callback(
-      null,
-      `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`,
-    );
+    callback(null, `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`);
   },
 });
 const proofUpload = multer({
@@ -518,18 +450,13 @@ const proofUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, callback) => {
     const allowedMimeTypes = [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "application/pdf",
+      "image/jpeg", "image/png", "image/webp", "application/pdf",
     ];
     const allowedExtensions = [".jpg", ".jpeg", ".png", ".webp", ".pdf"];
     callback(
       null,
-      allowedMimeTypes.includes(file.mimetype) &&
-        allowedExtensions.includes(
-          path.extname(file.originalname).toLowerCase(),
-        ),
+      allowedMimeTypes.includes(file.mimetype)
+        && allowedExtensions.includes(path.extname(file.originalname).toLowerCase())
     );
   },
 });
@@ -542,9 +469,7 @@ router.post(
   proofUpload.single("proof"),
   h(async (req, res) => {
     if (!req.file) {
-      res
-        .status(400)
-        .json({ success: false, error: "PDF or image proof required" });
+      res.status(400).json({ success: false, error: "PDF or image proof required" });
       return;
     }
     const user = actor(req);
@@ -555,10 +480,10 @@ router.post(
       req.file.path,
       req.file.mimetype,
       user.id,
-      paymentWriteRole(req),
+      paymentWriteRole(req)
     );
     res.json({ success: true, message: "Installment proof uploaded" });
-  }),
+  })
 );
 
 router.post(
@@ -570,7 +495,7 @@ router.post(
       success: false,
       error: "Upload proof against a specific payment installment transaction.",
     });
-  },
+  }
 );
 
 router.get(
@@ -578,25 +503,19 @@ router.get(
   requireRole(...PAYMENT_READ_ROLES),
   authorizePaymentBranch,
   h(async (req, res) => {
-    const transactions = (await vendorPaymentLedgerService.listTransactions(
-      req.params.id,
-    )) as any[];
-    const transaction = transactions.find(
-      (item) => String(item.id) === req.params.transactionRowId,
-    );
+    const transactions = await vendorPaymentLedgerService.listTransactions(req.params.id) as any[];
+    const transaction = transactions.find((item) => String(item.id) === req.params.transactionRowId);
     const filePath = transaction?.proof_file_path as string | undefined;
     if (!filePath || !fs.existsSync(filePath)) {
-      res
-        .status(404)
-        .json({ success: false, error: "Installment proof not found" });
+      res.status(404).json({ success: false, error: "Installment proof not found" });
       return;
     }
     res.setHeader(
       "Content-Type",
-      transaction.proof_file_mime ?? "application/octet-stream",
+      transaction.proof_file_mime ?? "application/octet-stream"
     );
     res.sendFile(path.resolve(filePath));
-  }),
+  })
 );
 
 router.get(
@@ -607,17 +526,15 @@ router.get(
     const record = req.financePayment;
     const filePath = record?.payment_proof_file_path as string | undefined;
     if (!filePath || !fs.existsSync(filePath)) {
-      res
-        .status(404)
-        .json({ success: false, error: "Payment proof not found" });
+      res.status(404).json({ success: false, error: "Payment proof not found" });
       return;
     }
     res.setHeader(
       "Content-Type",
-      record.payment_proof_file_mime ?? "application/octet-stream",
+      record.payment_proof_file_mime ?? "application/octet-stream"
     );
     res.sendFile(path.resolve(filePath));
-  },
+  }
 );
 
 router.get(
@@ -633,10 +550,10 @@ router.get(
     }
     res.setHeader(
       "Content-Type",
-      record.grn_file_mime ?? "application/octet-stream",
+      record.grn_file_mime ?? "application/octet-stream"
     );
     res.sendFile(path.resolve(filePath));
-  },
+  }
 );
 
 // 4-B: AP Aging moved above, before /vendor-payments/:id — see the comment there.
@@ -655,20 +572,16 @@ router.get(
       userId: user.id,
       primaryRole: user.role,
       userRoles: user.roles,
-      requestedBranchId: req.query.branchId
-        ? String(req.query.branchId)
-        : undefined,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
     const data = await vendorPaymentService.getVendorLedger({
       vendorId: req.params.vendorId,
       branchScope,
-      fromPeriod: req.query.fromPeriod
-        ? String(req.query.fromPeriod)
-        : undefined,
+      fromPeriod: req.query.fromPeriod ? String(req.query.fromPeriod) : undefined,
       toPeriod: req.query.toPeriod ? String(req.query.toPeriod) : undefined,
     });
     res.json({ success: true, data });
-  }),
+  })
 );
 
 // 4-D: Vendor advance/on-account balance — backs the Raise form's inline display and the
@@ -677,11 +590,9 @@ router.get(
   "/vendors/:vendorId/advance-balance",
   requireRole(...PAYMENT_READ_ROLES),
   h(async (req, res) => {
-    const balance = await vendorPaymentService.getAdvanceBalance(
-      req.params.vendorId,
-    );
+    const balance = await vendorPaymentService.getAdvanceBalance(req.params.vendorId);
     res.json({ success: true, data: { balance } });
-  }),
+  })
 );
 
 export { router as vendorPaymentRouter };

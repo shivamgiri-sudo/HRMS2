@@ -123,15 +123,14 @@ const num = (value: unknown) => Number(value ?? 0);
 
 /** Head + sub-head identity. Sub-head is nullable, and "" is a distinct value from NULL in the
  *  data, so both collapse to one key rather than producing two rows that read identically. */
-const headKey = (head: string, subHead: string | null) =>
-  JSON.stringify([head, subHead]);
+const headKey = (head: string, subHead: string | null) => JSON.stringify([head, subHead]);
 
 export const budgetCostCentreUtilizationService = {
   /** Branch of the budget, for the route's row-scope check before any figures are read. */
   async getBudgetBranch(budgetId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id FROM finance_budget_header WHERE id = ?`,
-      [budgetId],
+      [budgetId]
     );
     if (!rows[0]) {
       throw Object.assign(new Error("Budget not found"), {
@@ -142,12 +141,7 @@ export const budgetCostCentreUtilizationService = {
     return String(rows[0].branch_id);
   },
 
-  async get(
-    budgetId: string,
-  ): Promise<{
-    rows: BudgetCostCentreRow[];
-    unallocated: UnallocatedBranchLineSummary;
-  }> {
+  async get(budgetId: string): Promise<{ rows: BudgetCostCentreRow[]; unallocated: UnallocatedBranchLineSummary }> {
     // Budgeted, at (cost centre, head, sub-head) grain. `line_id` rides along so lineCount can be
     // a DISTINCT count — an allocated line appears once per cost centre it touches, and counting
     // rows instead of lines would inflate every branch-level budget's line count.
@@ -165,7 +159,7 @@ export const budgetCostCentreUtilizationService = {
             WHERE l.budget_id = ? AND l.cost_centre_id IS NULL
          ) src
         GROUP BY cost_centre_id, head, sub_head, line_id`,
-      [budgetId, budgetId],
+      [budgetId, budgetId]
     );
 
     // Measured spend. Joined back to the line so a GRN is attributed to the head/sub-head it was
@@ -212,7 +206,7 @@ export const budgetCostCentreUtilizationService = {
          JOIN finance_budget_line l ON l.id = g.budget_line_id
         WHERE l.budget_id = ? AND g.lifecycle_status IN ('reserved', 'consumed')
         GROUP BY g.cost_centre_id, l.head, l.sub_head`,
-      [budgetId],
+      [budgetId]
     );
 
     // Same rows as spendRows, split out where the budget that PAID is not this row's own cost
@@ -249,7 +243,7 @@ export const budgetCostCentreUtilizationService = {
           AND g.budget_line_id IS NOT NULL
           AND NOT (COALESCE(g.funding_cost_centre_id, l.cost_centre_id) <=> g.cost_centre_id)
         GROUP BY g.cost_centre_id, COALESCE(g.funding_cost_centre_id, l.cost_centre_id)`,
-      [budgetId],
+      [budgetId]
     );
 
     // Simple GRNs: budget lines that are pinned to a specific cost centre but whose spend was
@@ -289,7 +283,7 @@ export const budgetCostCentreUtilizationService = {
                WHERE g.budget_line_id = l.id AND g.lifecycle_status = 'consumed'
             )
           )`,
-      [budgetId],
+      [budgetId]
     );
 
     // How much branch-level budget is completely invisible in this per-CC view because no
@@ -303,7 +297,7 @@ export const budgetCostCentreUtilizationService = {
           AND NOT EXISTS (
             SELECT 1 FROM finance_budget_line_allocation a WHERE a.budget_line_id = l.id
           )`,
-      [budgetId],
+      [budgetId]
     );
     const unallocated: UnallocatedBranchLineSummary = {
       lineCount: Number(unallocatedRows[0]?.cnt ?? 0),
@@ -318,8 +312,7 @@ export const budgetCostCentreUtilizationService = {
     // funded from a line that could belong to any active cost centre in the branch) — collected
     // separately so its name is still resolved even when it never appears as an incurring centre.
     for (const row of fundedElsewhereRows) {
-      if (row.funding_cost_centre_id != null)
-        centreIds.add(String(row.funding_cost_centre_id));
+      if (row.funding_cost_centre_id != null) centreIds.add(String(row.funding_cost_centre_id));
     }
 
     // Names are looked up in one pass rather than joined into both aggregates above, so a missing
@@ -331,29 +324,21 @@ export const budgetCostCentreUtilizationService = {
         `SELECT id, cost_centre_code, cost_centre_name
            FROM cost_centre_master
           WHERE id IN (${ids.map(() => "?").join(",")})`,
-        ids,
+        ids
       );
       for (const row of nameRows) {
         names.set(String(row.id), {
-          code:
-            row.cost_centre_code == null ? null : String(row.cost_centre_code),
-          name: String(
-            row.cost_centre_name ??
-              row.cost_centre_code ??
-              "Unnamed cost centre",
-          ),
+          code: row.cost_centre_code == null ? null : String(row.cost_centre_code),
+          name: String(row.cost_centre_name ?? row.cost_centre_code ?? "Unnamed cost centre"),
         });
       }
     }
 
-    const centres = new Map<
-      string,
-      BudgetCostCentreRow & {
-        _heads: Map<string, BudgetCostCentreHeadRow>;
-        _lines: Set<string>;
-        _fundingSources: Map<string, FundingSourceRow>;
-      }
-    >();
+    const centres = new Map<string, BudgetCostCentreRow & {
+      _heads: Map<string, BudgetCostCentreHeadRow>;
+      _lines: Set<string>;
+      _fundingSources: Map<string, FundingSourceRow>;
+    }>();
 
     const centreFor = (rawId: unknown) => {
       const id = rawId == null ? null : String(rawId);
@@ -365,7 +350,7 @@ export const budgetCostCentreUtilizationService = {
           costCentreId: id,
           costCentreCode: master?.code ?? null,
           costCentreName: id
-            ? (master?.name ?? "Unknown cost centre")
+            ? master?.name ?? "Unknown cost centre"
             : "Unattributed (no cost centre on the GRN)",
           isUnattributed: !id,
           budgeted: 0,
@@ -385,22 +370,11 @@ export const budgetCostCentreUtilizationService = {
       return centre;
     };
 
-    const headFor = (
-      centre: ReturnType<typeof centreFor>,
-      head: string,
-      subHead: string | null,
-    ) => {
+    const headFor = (centre: ReturnType<typeof centreFor>, head: string, subHead: string | null) => {
       const key = headKey(head, subHead);
       let row = centre._heads.get(key);
       if (!row) {
-        row = {
-          head,
-          subHead,
-          budgeted: 0,
-          reserved: 0,
-          consumed: 0,
-          available: 0,
-        };
+        row = { head, subHead, budgeted: 0, reserved: 0, consumed: 0, available: 0 };
         centre._heads.set(key, row);
       }
       return row;
@@ -454,10 +428,7 @@ export const budgetCostCentreUtilizationService = {
       centre.fundedElsewhere.reserved += reserved;
       centre.fundedElsewhere.consumed += consumed;
 
-      const fundingId =
-        row.funding_cost_centre_id == null
-          ? null
-          : String(row.funding_cost_centre_id);
+      const fundingId = row.funding_cost_centre_id == null ? null : String(row.funding_cost_centre_id);
       const sourceKey = fundingId ?? "__pool__";
       let source = centre._fundingSources.get(sourceKey);
       if (!source) {
@@ -475,8 +446,7 @@ export const budgetCostCentreUtilizationService = {
       source.consumed += consumed;
     }
 
-    const round = (value: number) =>
-      Math.round((value + Number.EPSILON) * 100) / 100;
+    const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
     const rows = [...centres.values()]
       .map((centre) => {
@@ -488,16 +458,10 @@ export const budgetCostCentreUtilizationService = {
             consumed: round(head.consumed),
             available: round(head.budgeted - head.reserved - head.consumed),
           }))
-          .sort(
-            (a, b) => b.budgeted - a.budgeted || a.head.localeCompare(b.head),
-          );
+          .sort((a, b) => b.budgeted - a.budgeted || a.head.localeCompare(b.head));
         const fundingSources = [...centre._fundingSources.values()]
-          .map((source) => ({
-            ...source,
-            reserved: round(source.reserved),
-            consumed: round(source.consumed),
-          }))
-          .sort((a, b) => b.reserved + b.consumed - (a.reserved + a.consumed));
+          .map((source) => ({ ...source, reserved: round(source.reserved), consumed: round(source.consumed) }))
+          .sort((a, b) => (b.reserved + b.consumed) - (a.reserved + a.consumed));
         return {
           costCentreId: centre.costCentreId,
           costCentreCode: centre.costCentreCode,
@@ -519,12 +483,8 @@ export const budgetCostCentreUtilizationService = {
       // Largest budget first; the unattributed bucket always last, because it is a data-quality
       // note rather than a cost centre competing for the reader's attention.
       .sort((a, b) => {
-        if (a.isUnattributed !== b.isUnattributed)
-          return a.isUnattributed ? 1 : -1;
-        return (
-          b.budgeted - a.budgeted ||
-          a.costCentreName.localeCompare(b.costCentreName)
-        );
+        if (a.isUnattributed !== b.isUnattributed) return a.isUnattributed ? 1 : -1;
+        return b.budgeted - a.budgeted || a.costCentreName.localeCompare(b.costCentreName);
       });
     return { rows, unallocated };
   },

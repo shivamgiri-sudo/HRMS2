@@ -44,16 +44,7 @@ describe("GSTIN check-digit validation", () => {
 
   it("rejects blanks and the junk values that really live in cost_centre_master", async () => {
     const { isValidGstin } = await import("../gst-export.service.js");
-    for (const junk of [
-      "",
-      "NA",
-      "N/A",
-      "0",
-      "-",
-      null,
-      undefined,
-      "09AAACM5866H1Z",
-    ]) {
+    for (const junk of ["", "NA", "N/A", "0", "-", null, undefined, "09AAACM5866H1Z"]) {
       expect(isValidGstin(junk as unknown)).toBe(false);
     }
   });
@@ -131,9 +122,7 @@ describe("filing guards", () => {
   it("marks a batch validated only when nothing blocks", () => {
     const src = read(SERVICE);
     expect(src).toContain('exceptionRows > 0 ? "draft" : "validated"');
-    expect(src).toContain(
-      "filingReady: exceptionRows === 0 && rows.length > 0",
-    );
+    expect(src).toContain("filingReady: exceptionRows === 0 && rows.length > 0");
   });
 });
 
@@ -142,9 +131,7 @@ describe("export route guards", () => {
 
   it("blocks CSV download of a batch with unresolved exceptions unless forced", () => {
     const src = read(ROUTES);
-    expect(src).toContain(
-      "if (Number((batch as any).exception_rows) > 0 && !includeExceptions)",
-    );
+    expect(src).toContain("if (Number((batch as any).exception_rows) > 0 && !includeExceptions)");
     expect(src).toContain("res.status(409)");
   });
 
@@ -155,9 +142,7 @@ describe("export route guards", () => {
 
   it("restricts generation to the roles that own filing", () => {
     const src = read(ROUTES);
-    expect(src).toContain(
-      'const GST_WRITE_ROLES = ["accounts_head", "finance_head", "super_admin"]',
-    );
+    expect(src).toContain('const GST_WRITE_ROLES = ["accounts_head", "finance_head", "super_admin"]');
     expect(src).toContain("requireRole(...GST_WRITE_ROLES)");
   });
 

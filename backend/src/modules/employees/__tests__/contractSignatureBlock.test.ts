@@ -18,15 +18,12 @@ import { describe, it, expect } from "vitest";
 import { TEMPLATE_DEFINITIONS } from "../joiningDocumentTemplates.js";
 
 function contractText(): string {
-  const blocks = TEMPLATE_DEFINITIONS.find(
-    (e) => e.code === "EMPLOYMENT_CONTRACT",
-  )?.blocks;
+  const blocks = TEMPLATE_DEFINITIONS.find((e) => e.code === "EMPLOYMENT_CONTRACT")?.blocks;
   expect(blocks, "EMPLOYMENT_CONTRACT template not found").toBeTruthy();
   return JSON.stringify(blocks);
 }
 
-const occurrences = (haystack: string, needle: RegExp) =>
-  (haystack.match(needle) ?? []).length;
+const occurrences = (haystack: string, needle: RegExp) => (haystack.match(needle) ?? []).length;
 
 describe("employment contract signature blocks", () => {
   it("has exactly one IN WITNESS WHEREOF clause", () => {
@@ -34,12 +31,7 @@ describe("employment contract signature blocks", () => {
   });
 
   it("has exactly one employer signature line", () => {
-    expect(
-      occurrences(
-        contractText(),
-        /Mas Callnet India \(P\) Ltd \(First Party\)/g,
-      ),
-    ).toBe(1);
+    expect(occurrences(contractText(), /Mas Callnet India \(P\) Ltd \(First Party\)/g)).toBe(1);
   });
 
   it("names who signs for the company", () => {
@@ -59,14 +51,10 @@ describe("employment contract signature blocks", () => {
     // Without that it also catches the notices clause, "To Second Party:
     // {{employee_name}}, {{employee_address}}", and reports a duplicate that
     // is not one — which is exactly what the looser version did.
-    expect(
-      occurrences(contractText(), /"Second Party: \{\{employee_name\}\}"/g),
-    ).toBe(1);
+    expect(occurrences(contractText(), /"Second Party: \{\{employee_name\}\}"/g)).toBe(1);
   });
 
   it("keeps the notices clause distinct from the signature block", () => {
-    expect(
-      occurrences(contractText(), /To Second Party: \{\{employee_name\}\}/g),
-    ).toBe(1);
+    expect(occurrences(contractText(), /To Second Party: \{\{employee_name\}\}/g)).toBe(1);
   });
 });

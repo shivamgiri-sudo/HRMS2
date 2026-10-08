@@ -27,15 +27,10 @@ export interface TaxDeclaration {
 }
 
 export const taxDeclarationService = {
-  async upsert(
-    employeeId: string,
-    financialYear: string,
-    data: TaxDeclarationInput,
-    submittedBy: string,
-  ): Promise<TaxDeclaration> {
+  async upsert(employeeId: string, financialYear: string, data: TaxDeclarationInput, submittedBy: string): Promise<TaxDeclaration> {
     const [salRows] = await db.execute<RowDataPacket[]>(
       "SELECT ctc_annual FROM employee_salary_assignment WHERE employee_id = ? AND active_status = 1 LIMIT 1",
-      [employeeId],
+      [employeeId]
     );
     const ctcAnnual: number = Number((salRows as any[])[0]?.ctc_annual ?? 0);
 
@@ -43,17 +38,12 @@ export const taxDeclarationService = {
     const inv80c = data.declared80c ?? 0;
     const inv80d = data.declared80d ?? 0;
     const invHra = data.declaredHra ?? 0;
-    const totalInv = data.totalInvestment ?? inv80c + inv80d;
+    const totalInv = data.totalInvestment ?? (inv80c + inv80d);
 
     const projection = await taxEngineService.calculateMonthlyTds({
       financialYear,
       annualGross: ctcAnnual,
-      declaration: {
-        regime,
-        declared_hra: invHra,
-        declared_80c: inv80c,
-        declared_80d: inv80d,
-      },
+      declaration: { regime, declared_hra: invHra, declared_80c: inv80c, declared_80d: inv80d },
       alreadyDeducted: 0,
       monthsRemaining: 12,
     });
@@ -73,30 +63,16 @@ export const taxDeclarationService = {
          tds_projected = VALUES(tds_projected),
          submitted_by = VALUES(submitted_by),
          updated_at = CURRENT_TIMESTAMP`,
-      [
-        id,
-        employeeId,
-        financialYear,
-        regime,
-        totalInv,
-        invHra,
-        inv80c,
-        inv80d,
-        projection.tax_annual,
-        submittedBy,
-      ],
+      [id, employeeId, financialYear, regime, totalInv, invHra, inv80c, inv80d, projection.tax_annual, submittedBy]
     );
 
     return this.get(employeeId, financialYear);
   },
 
-  async get(
-    employeeId: string,
-    financialYear: string,
-  ): Promise<TaxDeclaration> {
+  async get(employeeId: string, financialYear: string): Promise<TaxDeclaration> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM tax_declaration WHERE employee_id = ? AND financial_year = ? LIMIT 1",
-      [employeeId, financialYear],
+      [employeeId, financialYear]
     );
     const rec = (rows as TaxDeclaration[])[0];
     if (!rec) throw new Error("Tax declaration not found");

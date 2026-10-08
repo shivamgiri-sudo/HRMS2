@@ -7,9 +7,7 @@ try {
   const dbModule = await import("../db/mysql.js");
   db = dbModule.db;
 } catch {
-  console.error(
-    "[EsignComplianceWorker] Database module not found - worker will not run",
-  );
+  console.error("[EsignComplianceWorker] Database module not found - worker will not run");
   process.exit(1);
 }
 
@@ -52,7 +50,7 @@ async function canSend(
     );
     const last = rows[0]?.last_sent_at;
     if (!last) return true;
-    return Date.now() - new Date(String(last)).getTime() >= cooldownMs;
+    return (Date.now() - new Date(String(last)).getTime()) >= cooldownMs;
   } catch (error: any) {
     console.error(
       `[EsignComplianceWorker] Cooldown read failed for ${kind} — skipping send:`,
@@ -71,11 +69,7 @@ async function markSent(
   employeeId: string,
   checklistId: string,
   kind: CooldownKind,
-): Promise<{
-  ok: boolean;
-  previousLastSentAt: string | null;
-  existed: boolean;
-}> {
+): Promise<{ ok: boolean; previousLastSentAt: string | null; existed: boolean }> {
   // The prior state is captured so a dispatch that reaches nobody can put it back. Without
   // it the only way to "release" is to blank the row, which would let the NEXT cycle send
   // immediately even when an older, still-valid send exists — turning a failed retry into a
@@ -90,9 +84,7 @@ async function markSent(
     );
     if (prior[0]) {
       existed = true;
-      previousLastSentAt = prior[0].last_sent_at
-        ? String(prior[0].last_sent_at)
-        : null;
+      previousLastSentAt = prior[0].last_sent_at ? String(prior[0].last_sent_at) : null;
     }
 
     await db.execute(
@@ -104,10 +96,7 @@ async function markSent(
     );
     return { ok: true, previousLastSentAt, existed };
   } catch (error: any) {
-    console.error(
-      `[EsignComplianceWorker] Cooldown write failed for ${kind}:`,
-      error.message,
-    );
+    console.error(`[EsignComplianceWorker] Cooldown write failed for ${kind}:`, error.message);
     return { ok: false, previousLastSentAt, existed };
   }
 }
@@ -150,18 +139,13 @@ async function releaseClaim(
       `[EsignComplianceWorker] ${kind} reached nobody — cooldown released so the next cycle retries`,
     );
   } catch (error: any) {
-    console.error(
-      `[EsignComplianceWorker] Cooldown release failed for ${kind}:`,
-      error.message,
-    );
+    console.error(`[EsignComplianceWorker] Cooldown release failed for ${kind}:`, error.message);
   }
 }
 
 /** True when a dispatch queued nothing at all. A PARTIAL success keeps its claim: re-sending
  *  to recipients who did receive it is the storm this whole design exists to prevent. */
-function reachedNobody(
-  result: { queued?: number } | null | undefined,
-): boolean {
+function reachedNobody(result: { queued?: number } | null | undefined): boolean {
   return !result || Number(result.queued ?? 0) <= 0;
 }
 
@@ -202,10 +186,7 @@ async function findPendingEsignItems(): Promise<any[]> {
     );
     return rows || [];
   } catch (error: any) {
-    console.error(
-      "[EsignComplianceWorker] Failed to query pending items:",
-      error.message,
-    );
+    console.error("[EsignComplianceWorker] Failed to query pending items:", error.message);
     return [];
   }
 }
@@ -240,7 +221,7 @@ async function getHrUsersForBranch(branchId: string | null): Promise<string[]> {
 }
 
 async function processEsignCompliance(): Promise<void> {
-  if (!(await isWorkerEnabled("esign-compliance"))) return;
+  if (!await isWorkerEnabled("esign-compliance")) return;
   await markWorkerRun("esign-compliance");
 
   const items = await findPendingEsignItems();
@@ -257,25 +238,13 @@ async function processEsignCompliance(): Promise<void> {
       : "soon";
 
     // Daily reminder to employee (after day 1)
-    if (
-      daysPending >= 1 &&
-      (await canSend(
-        item.employee_id,
-        item.checklist_id,
-        "reminder",
-        REMINDER_COOLDOWN_MS,
-      ))
-    ) {
-      const claim_reminder = await markSent(
-        item.employee_id,
-        item.checklist_id,
-        "reminder",
-      );
+    if (daysPending >= 1 && await canSend(item.employee_id, item.checklist_id, "reminder", REMINDER_COOLDOWN_MS)) {
+      const claim_reminder = await markSent(item.employee_id, item.checklist_id, "reminder");
       try {
         // Claim the cooldown BEFORE dispatching. Claiming afterwards leaves a
         // window where a send that succeeded is never recorded, and the next
         // cycle sends it again.
-        if (claim_reminder.ok) {
+                if (claim_reminder.ok) {
           // Kit-scoped items CAN carry a real button: mintFreshKitSigningLink
           // (via autoRefreshKitLinkForReminder) issues a brand-new token, since
           // the original is stored only as a hash and cannot be rebuilt — this
@@ -290,9 +259,7 @@ async function processEsignCompliance(): Promise<void> {
           // minted for them, so the message still points at "the link already
           // sent" as it always has — that path has not been audited for the
           // same fix and stays out of scope here.
-          const freshLink = item.kit_id
-            ? await autoRefreshKitLinkForReminder(String(item.kit_id))
-            : null;
+          const freshLink = item.kit_id ? await autoRefreshKitLinkForReminder(String(item.kit_id)) : null;
           const result_reminder = await notificationEventService.dispatch({
             eventCode: "esign_reminder",
             recipientEmployeeIds: [item.employee_id],
@@ -305,86 +272,46 @@ async function processEsignCompliance(): Promise<void> {
           });
           // A dispatch that queued nothing must not hold the window shut.
           if (reachedNobody(result_reminder)) {
-            await releaseClaim(
-              item.employee_id,
-              item.checklist_id,
-              "reminder",
-              claim_reminder,
-            );
+            await releaseClaim(item.employee_id, item.checklist_id, "reminder", claim_reminder);
           } else {
             reminders++;
           }
         }
       } catch (err: any) {
-        console.error(
-          "[EsignComplianceWorker] Reminder dispatch failed:",
-          err.message,
-        );
+        console.error("[EsignComplianceWorker] Reminder dispatch failed:", err.message);
         // A throw burns the window exactly like a silent failure, so it releases too.
-        if (claim_reminder.ok)
-          await releaseClaim(
-            item.employee_id,
-            item.checklist_id,
-            "reminder",
-            claim_reminder,
-          );
+        if (claim_reminder.ok) await releaseClaim(item.employee_id, item.checklist_id, "reminder", claim_reminder);
       }
     }
 
     // Manager escalation (after 5 days)
     if (daysPending >= MANAGER_ESCALATION_DAYS && item.reporting_manager_id) {
-      if (
-        await canSend(
-          item.employee_id,
-          item.checklist_id,
-          "manager_escalation",
-          ESCALATION_COOLDOWN_MS,
-        )
-      ) {
+      if (await canSend(item.employee_id, item.checklist_id, "manager_escalation", ESCALATION_COOLDOWN_MS)) {
         const managerId = await getEmployeeIdForUser(item.reporting_manager_id);
         if (managerId) {
-          const claim_manager_escalation = await markSent(
-            item.employee_id,
-            item.checklist_id,
-            "manager_escalation",
-          );
+          const claim_manager_escalation = await markSent(item.employee_id, item.checklist_id, "manager_escalation");
           try {
-            if (claim_manager_escalation.ok) {
-              const result_manager_escalation =
-                await notificationEventService.dispatch({
-                  eventCode: "esign_escalation_manager",
-                  recipientEmployeeIds: [managerId],
-                  data: {
-                    employee_name: item.employee_name,
-                    employee_code: item.employee_code,
-                    document_name: item.document_name,
-                    days_pending: String(daysPending),
-                  },
-                });
+                        if (claim_manager_escalation.ok) {
+              const result_manager_escalation = await notificationEventService.dispatch({
+                eventCode: "esign_escalation_manager",
+                recipientEmployeeIds: [managerId],
+                data: {
+                  employee_name: item.employee_name,
+                  employee_code: item.employee_code,
+                  document_name: item.document_name,
+                  days_pending: String(daysPending),
+                },
+              });
               // A dispatch that queued nothing must not hold the window shut.
               if (reachedNobody(result_manager_escalation)) {
-                await releaseClaim(
-                  item.employee_id,
-                  item.checklist_id,
-                  "manager_escalation",
-                  claim_manager_escalation,
-                );
+                await releaseClaim(item.employee_id, item.checklist_id, "manager_escalation", claim_manager_escalation);
               } else {
                 managerEscalations++;
               }
             }
           } catch (err: any) {
-            console.error(
-              "[EsignComplianceWorker] Manager escalation failed:",
-              err.message,
-            );
-            if (claim_manager_escalation.ok)
-              await releaseClaim(
-                item.employee_id,
-                item.checklist_id,
-                "manager_escalation",
-                claim_manager_escalation,
-              );
+            console.error("[EsignComplianceWorker] Manager escalation failed:", err.message);
+            if (claim_manager_escalation.ok) await releaseClaim(item.employee_id, item.checklist_id, "manager_escalation", claim_manager_escalation);
           }
         }
       }
@@ -392,59 +319,33 @@ async function processEsignCompliance(): Promise<void> {
 
     // HR escalation (after 6 days — link about to expire)
     if (daysPending >= HR_ESCALATION_DAYS) {
-      if (
-        await canSend(
-          item.employee_id,
-          item.checklist_id,
-          "hr_escalation",
-          ESCALATION_COOLDOWN_MS,
-        )
-      ) {
+      if (await canSend(item.employee_id, item.checklist_id, "hr_escalation", ESCALATION_COOLDOWN_MS)) {
         const hrIds = await getHrUsersForBranch(item.branch_id);
         if (hrIds.length > 0) {
-          const claim_hr_escalation = await markSent(
-            item.employee_id,
-            item.checklist_id,
-            "hr_escalation",
-          );
+          const claim_hr_escalation = await markSent(item.employee_id, item.checklist_id, "hr_escalation");
           try {
-            if (claim_hr_escalation.ok) {
-              const result_hr_escalation =
-                await notificationEventService.dispatch({
-                  eventCode: "esign_escalation_hr",
-                  recipientEmployeeIds: hrIds,
-                  data: {
-                    employee_name: item.employee_name,
-                    employee_code: item.employee_code,
-                    document_name: item.document_name,
-                    days_pending: String(daysPending),
-                    deadline,
-                  },
-                });
+                        if (claim_hr_escalation.ok) {
+              const result_hr_escalation = await notificationEventService.dispatch({
+                eventCode: "esign_escalation_hr",
+                recipientEmployeeIds: hrIds,
+                data: {
+                  employee_name: item.employee_name,
+                  employee_code: item.employee_code,
+                  document_name: item.document_name,
+                  days_pending: String(daysPending),
+                  deadline,
+                },
+              });
               // A dispatch that queued nothing must not hold the window shut.
               if (reachedNobody(result_hr_escalation)) {
-                await releaseClaim(
-                  item.employee_id,
-                  item.checklist_id,
-                  "hr_escalation",
-                  claim_hr_escalation,
-                );
+                await releaseClaim(item.employee_id, item.checklist_id, "hr_escalation", claim_hr_escalation);
               } else {
                 hrEscalations++;
               }
             }
           } catch (err: any) {
-            console.error(
-              "[EsignComplianceWorker] HR escalation failed:",
-              err.message,
-            );
-            if (claim_hr_escalation.ok)
-              await releaseClaim(
-                item.employee_id,
-                item.checklist_id,
-                "hr_escalation",
-                claim_hr_escalation,
-              );
+            console.error("[EsignComplianceWorker] HR escalation failed:", err.message);
+            if (claim_hr_escalation.ok) await releaseClaim(item.employee_id, item.checklist_id, "hr_escalation", claim_hr_escalation);
           }
         }
       }
@@ -489,9 +390,7 @@ let startupHandle: ReturnType<typeof setTimeout> | null = null;
 const STARTUP_DELAY_MS = 90 * 1000;
 
 export async function startEsignComplianceWorker(): Promise<void> {
-  console.log(
-    "[EsignComplianceWorker] Starting (first run in 90s, then every 4h)",
-  );
+  console.log("[EsignComplianceWorker] Starting (first run in 90s, then every 4h)");
 
   // This originally ran a cycle IMMEDIATELY at startup, which — combined with
   // cooldowns held in memory — turned every restart into a fresh blast: 1,818

@@ -13,20 +13,19 @@ import { db } from "../../db/mysql.js";
 
 export type LegacyFilter = {
   branch?: string;
-  process?: string; // process_name exact match
-  month?: string; // 'YYYY-MM'
-  from_date?: string; // 'YYYY-MM-DD'
-  to_date?: string; // 'YYYY-MM-DD'
+  process?: string;     // process_name exact match
+  month?: string;       // 'YYYY-MM'
+  from_date?: string;   // 'YYYY-MM-DD'
+  to_date?: string;     // 'YYYY-MM-DD'
   employee_code?: string;
   employee_name?: string; // partial name search
-  _limit?: number; // internal — set by service, not by user input
+  _limit?: number;      // internal — set by service, not by user input
 };
 
 export type LegacyColumn = {
   key: string;
   label: string;
-  format:
-    "text" | "number" | "currency" | "date" | "datetime" | "status" | "boolean";
+  format: "text" | "number" | "currency" | "date" | "datetime" | "status" | "boolean";
   align?: "left" | "right" | "center";
 };
 
@@ -35,7 +34,7 @@ export type LegacyReportResult = {
   rows: Record<string, unknown>[];
   total: number;
   summary?: Record<string, number>;
-  truncated?: boolean; // true when rows are capped at displayLimit
+  truncated?: boolean;   // true when rows are capped at displayLimit
   displayLimit?: number; // the limit that was applied
 };
 
@@ -57,21 +56,10 @@ function empWhere(col: string, emp?: string): [string, unknown[]] {
   return [`AND ${col} = ?`, [emp]];
 }
 
-function dateRangeWhere(
-  col: string,
-  from?: string,
-  to?: string,
-): [string, unknown[]] {
-  const parts: string[] = [];
-  const vals: unknown[] = [];
-  if (from) {
-    parts.push(`${col} >= ?`);
-    vals.push(from);
-  }
-  if (to) {
-    parts.push(`${col} <= ?`);
-    vals.push(to);
-  }
+function dateRangeWhere(col: string, from?: string, to?: string): [string, unknown[]] {
+  const parts: string[] = []; const vals: unknown[] = [];
+  if (from) { parts.push(`${col} >= ?`); vals.push(from); }
+  if (to)   { parts.push(`${col} <= ?`); vals.push(to); }
   return [parts.length ? `AND ${parts.join(" AND ")}` : "", vals];
 }
 
@@ -89,10 +77,7 @@ function nameWhere(col: string, name?: string): [string, unknown[]] {
   return [`AND ${col} LIKE ?`, [`%${name}%`]];
 }
 
-function numSum(
-  rows: Record<string, unknown>[],
-  keys: string[],
-): Record<string, number> {
+function numSum(rows: Record<string, unknown>[], keys: string[]): Record<string, number> {
   const s: Record<string, number> = {};
   for (const k of keys) s[k] = 0;
   for (const r of rows) for (const k of keys) s[k] += Number(r[k] ?? 0);
@@ -116,348 +101,109 @@ type ReportDef = {
 };
 
 const REPORTS: Record<string, ReportDef> = {
+
   // ── 1. Legacy Salary Register ─────────────────────────────────────────────
   "salary-register": {
     label: "Salary Register",
-    sumCols: [
-      "gross_salary",
-      "net_salary",
-      "pf_employee",
-      "esic_employee",
-      "pf_employer",
-      "esic_employer",
-      "tds",
-      "incentive_total",
-      "total_deduction",
-    ],
+    sumCols: ["gross_salary","net_salary","pf_employee","esic_employee","pf_employer","esic_employer","tds","incentive_total","total_deduction"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "cost_centre", label: "Cost Centre", format: "text" },
-      { key: "process_name", label: "Process Name", format: "text" },
-      { key: "department", label: "Department", format: "text" },
-      { key: "designation", label: "Designation", format: "text" },
-      { key: "profile", label: "Profile", format: "text" },
-      { key: "emp_for", label: "Employee For", format: "text" },
-      { key: "billable", label: "Billable", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "basic", label: "Basic", format: "currency", align: "right" },
-      { key: "hra", label: "HRA", format: "currency", align: "right" },
-      { key: "bonus", label: "Bonus", format: "currency", align: "right" },
-      { key: "conv", label: "Conv", format: "currency", align: "right" },
-      {
-        key: "portfolio",
-        label: "Portfolio",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "medical",
-        label: "Medical Allow",
-        format: "currency",
-        align: "right",
-      },
-      { key: "lta", label: "LTA", format: "currency", align: "right" },
-      {
-        key: "special",
-        label: "Special Allow",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "other_allow",
-        label: "Other Allow",
-        format: "currency",
-        align: "right",
-      },
-      { key: "pli1", label: "PLI1", format: "currency", align: "right" },
-      {
-        key: "gross_salary",
-        label: "Gross",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "working_days",
-        label: "Working Days",
-        format: "number",
-        align: "right",
-      },
-      {
-        key: "ctc_offered",
-        label: "CTC Offered",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "current_ctc",
-        label: "Current CTC",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "present_days",
-        label: "Earned Days",
-        format: "number",
-        align: "right",
-      },
-      {
-        key: "actual_days",
-        label: "Actual Days",
-        format: "number",
-        align: "right",
-      },
-      {
-        key: "extra_day",
-        label: "Extra Day",
-        format: "number",
-        align: "right",
-      },
-      { key: "leave_days", label: "Leave", format: "number", align: "right" },
-      { key: "basic1", label: "Basic1", format: "currency", align: "right" },
-      { key: "hra1", label: "HRA1", format: "currency", align: "right" },
-      { key: "bonus1", label: "Bonus1", format: "currency", align: "right" },
-      { key: "conv1", label: "Conv1", format: "currency", align: "right" },
-      {
-        key: "portfolio1",
-        label: "Portfolio1",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "special1",
-        label: "Special Allow1",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "other_allow1",
-        label: "Other Allow1",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "medical1",
-        label: "Medical1",
-        format: "currency",
-        align: "right",
-      },
-      { key: "gross1", label: "Gross1", format: "currency", align: "right" },
-      { key: "esi_elig", label: "ESI Elig", format: "text" },
-      { key: "pf_elig", label: "PF Elig", format: "text" },
-      {
-        key: "esic_employee",
-        label: "ESIC",
-        format: "currency",
-        align: "right",
-      },
-      { key: "pf_employee", label: "EPF", format: "currency", align: "right" },
-      { key: "tds", label: "Income Tax", format: "currency", align: "right" },
-      {
-        key: "adv_taken",
-        label: "Adv Taken",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "advance_recovery",
-        label: "Adv Paid",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "loan_taken",
-        label: "Loan Taken",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "loan_ded",
-        label: "Loan Ded",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "incentive_total",
-        label: "Incentive",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "extra_day_inc",
-        label: "Extra Day Inc",
-        format: "currency",
-        align: "right",
-      },
-      { key: "arrear", label: "Arrear", format: "currency", align: "right" },
-      { key: "pli", label: "PLI", format: "currency", align: "right" },
-      {
-        key: "net_salary",
-        label: "Net Salary",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "esic_employer",
-        label: "ESIC Co",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "pf_employer",
-        label: "EPF Co",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "admin_charges",
-        label: "Admin Chg",
-        format: "currency",
-        align: "right",
-      },
-      { key: "ctc", label: "CTC", format: "currency", align: "right" },
-      { key: "shsh", label: "SHSH", format: "currency", align: "right" },
-      {
-        key: "mobile_ded",
-        label: "Mobile Ded",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "short_collection",
-        label: "Short Collection",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "asset_rec",
-        label: "Asset Recovery",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "insurance",
-        label: "Insurance",
-        format: "currency",
-        align: "right",
-      },
+      { key: "employee_code",    label: "Emp Code",           format: "text" },
+      { key: "employee_name",    label: "Employee Name",       format: "text" },
+      { key: "cost_centre",      label: "Cost Centre",         format: "text" },
+      { key: "process_name",     label: "Process Name",        format: "text" },
+      { key: "department",       label: "Department",          format: "text" },
+      { key: "designation",      label: "Designation",         format: "text" },
+      { key: "profile",          label: "Profile",             format: "text" },
+      { key: "emp_for",          label: "Employee For",        format: "text" },
+      { key: "billable",         label: "Billable",            format: "text" },
+      { key: "branch_name",      label: "Branch",              format: "text" },
+      { key: "basic",            label: "Basic",               format: "currency", align: "right" },
+      { key: "hra",              label: "HRA",                 format: "currency", align: "right" },
+      { key: "bonus",            label: "Bonus",               format: "currency", align: "right" },
+      { key: "conv",             label: "Conv",                format: "currency", align: "right" },
+      { key: "portfolio",        label: "Portfolio",           format: "currency", align: "right" },
+      { key: "medical",          label: "Medical Allow",       format: "currency", align: "right" },
+      { key: "lta",              label: "LTA",                 format: "currency", align: "right" },
+      { key: "special",          label: "Special Allow",       format: "currency", align: "right" },
+      { key: "other_allow",      label: "Other Allow",         format: "currency", align: "right" },
+      { key: "pli1",             label: "PLI1",                format: "currency", align: "right" },
+      { key: "gross_salary",     label: "Gross",               format: "currency", align: "right" },
+      { key: "working_days",     label: "Working Days",        format: "number",   align: "right" },
+      { key: "ctc_offered",      label: "CTC Offered",         format: "currency", align: "right" },
+      { key: "current_ctc",      label: "Current CTC",         format: "currency", align: "right" },
+      { key: "present_days",     label: "Earned Days",         format: "number",   align: "right" },
+      { key: "actual_days",      label: "Actual Days",         format: "number",   align: "right" },
+      { key: "extra_day",        label: "Extra Day",           format: "number",   align: "right" },
+      { key: "leave_days",       label: "Leave",               format: "number",   align: "right" },
+      { key: "basic1",           label: "Basic1",              format: "currency", align: "right" },
+      { key: "hra1",             label: "HRA1",                format: "currency", align: "right" },
+      { key: "bonus1",           label: "Bonus1",              format: "currency", align: "right" },
+      { key: "conv1",            label: "Conv1",               format: "currency", align: "right" },
+      { key: "portfolio1",       label: "Portfolio1",          format: "currency", align: "right" },
+      { key: "special1",         label: "Special Allow1",      format: "currency", align: "right" },
+      { key: "other_allow1",     label: "Other Allow1",        format: "currency", align: "right" },
+      { key: "medical1",         label: "Medical1",            format: "currency", align: "right" },
+      { key: "gross1",           label: "Gross1",              format: "currency", align: "right" },
+      { key: "esi_elig",         label: "ESI Elig",            format: "text" },
+      { key: "pf_elig",          label: "PF Elig",             format: "text" },
+      { key: "esic_employee",    label: "ESIC",                format: "currency", align: "right" },
+      { key: "pf_employee",      label: "EPF",                 format: "currency", align: "right" },
+      { key: "tds",              label: "Income Tax",          format: "currency", align: "right" },
+      { key: "adv_taken",        label: "Adv Taken",           format: "currency", align: "right" },
+      { key: "advance_recovery", label: "Adv Paid",            format: "currency", align: "right" },
+      { key: "loan_taken",       label: "Loan Taken",          format: "currency", align: "right" },
+      { key: "loan_ded",         label: "Loan Ded",            format: "currency", align: "right" },
+      { key: "incentive_total",  label: "Incentive",           format: "currency", align: "right" },
+      { key: "extra_day_inc",    label: "Extra Day Inc",       format: "currency", align: "right" },
+      { key: "arrear",           label: "Arrear",              format: "currency", align: "right" },
+      { key: "pli",              label: "PLI",                 format: "currency", align: "right" },
+      { key: "net_salary",       label: "Net Salary",          format: "currency", align: "right" },
+      { key: "esic_employer",    label: "ESIC Co",             format: "currency", align: "right" },
+      { key: "pf_employer",      label: "EPF Co",              format: "currency", align: "right" },
+      { key: "admin_charges",    label: "Admin Chg",           format: "currency", align: "right" },
+      { key: "ctc",              label: "CTC",                 format: "currency", align: "right" },
+      { key: "shsh",             label: "SHSH",                format: "currency", align: "right" },
+      { key: "mobile_ded",       label: "Mobile Ded",          format: "currency", align: "right" },
+      { key: "short_collection", label: "Short Collection",    format: "currency", align: "right" },
+      { key: "asset_rec",        label: "Asset Recovery",      format: "currency", align: "right" },
+      { key: "insurance",        label: "Insurance",           format: "currency", align: "right" },
       // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
       // company-wide, all states); this column reads 0 on runs after removal.
-      { key: "pt", label: "Prof Tax", format: "currency", align: "right" },
-      {
-        key: "lwp_deduction",
-        label: "Leave Ded",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "other_deductions",
-        label: "Other Ded",
-        format: "currency",
-        align: "right",
-      },
-      { key: "other_ded_remarks", label: "Other Ded Remarks", format: "text" },
-      {
-        key: "total_deduction",
-        label: "Total Deduction",
-        format: "currency",
-        align: "right",
-      },
-      { key: "sal_date", label: "Sal Date", format: "date" },
-      { key: "uan", label: "UAN", format: "text" },
-      { key: "epf_no", label: "EPF No", format: "text" },
-      { key: "esic_no", label: "ESIC No", format: "text" },
+      { key: "pt",               label: "Prof Tax",            format: "currency", align: "right" },
+      { key: "lwp_deduction",    label: "Leave Ded",           format: "currency", align: "right" },
+      { key: "other_deductions", label: "Other Ded",           format: "currency", align: "right" },
+      { key: "other_ded_remarks",label: "Other Ded Remarks",   format: "text" },
+      { key: "total_deduction",  label: "Total Deduction",     format: "currency", align: "right" },
+      { key: "sal_date",         label: "Sal Date",            format: "date" },
+      { key: "uan",              label: "UAN",                 format: "text" },
+      { key: "epf_no",           label: "EPF No",              format: "text" },
+      { key: "esic_no",          label: "ESIC No",             format: "text" },
       // cheque_no/cheque_date/print_date are legacy column names inherited from db_bill's
       // physical-cheque era; this company pays by bank transfer now, so they carry the
       // Salary Transfer File's ECS number, its transfer date, and the date that number was
       // recorded (see the query below) rather than any actual cheque.
-      { key: "cheque_no", label: "Cheque No", format: "text" },
-      { key: "cheque_date", label: "Cheque Date", format: "date" },
-      { key: "print_date", label: "Print Date", format: "date" },
-      { key: "left_status", label: "Left Status", format: "text" },
-      {
-        key: "tax_total_gross",
-        label: "Tax Total Gross",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "tax_section10",
-        label: "Tax Section 10",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "tax_balance",
-        label: "Tax Balance",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "tax_under_hd",
-        label: "Tax Under Hd",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "deduction_under24",
-        label: "Dedn Under 24",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "tax_gross_total",
-        label: "Tax Gross Total",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "tax_agg_chapter6",
-        label: "Tax Agg Ch6",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_income",
-        label: "Total Income",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "tax_on_total",
-        label: "Tax on Income",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "edu_cess",
-        label: "Edu Cess",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "tax_pay_edu_cess",
-        label: "Tax+Edu Cess",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "tax_deducted_prev",
-        label: "Tax Prev Month",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "balance_tax",
-        label: "Balance Tax",
-        format: "currency",
-        align: "right",
-      },
-      { key: "salary_pay_mode", label: "Pay Mode", format: "text" },
-      { key: "ac_no", label: "Account No", format: "text" },
-      { key: "ifsc_code", label: "IFSC Code", format: "text" },
-      { key: "ac_bank", label: "Bank Name", format: "text" },
-      { key: "ac_branch", label: "Bank Branch", format: "text" },
+      { key: "cheque_no",        label: "Cheque No",           format: "text" },
+      { key: "cheque_date",      label: "Cheque Date",         format: "date" },
+      { key: "print_date",       label: "Print Date",          format: "date" },
+      { key: "left_status",      label: "Left Status",         format: "text" },
+      { key: "tax_total_gross",  label: "Tax Total Gross",     format: "currency", align: "right" },
+      { key: "tax_section10",    label: "Tax Section 10",      format: "currency", align: "right" },
+      { key: "tax_balance",      label: "Tax Balance",         format: "currency", align: "right" },
+      { key: "tax_under_hd",     label: "Tax Under Hd",        format: "currency", align: "right" },
+      { key: "deduction_under24",label: "Dedn Under 24",       format: "currency", align: "right" },
+      { key: "tax_gross_total",  label: "Tax Gross Total",     format: "currency", align: "right" },
+      { key: "tax_agg_chapter6", label: "Tax Agg Ch6",         format: "currency", align: "right" },
+      { key: "total_income",     label: "Total Income",        format: "currency", align: "right" },
+      { key: "tax_on_total",     label: "Tax on Income",       format: "currency", align: "right" },
+      { key: "edu_cess",         label: "Edu Cess",            format: "currency", align: "right" },
+      { key: "tax_pay_edu_cess", label: "Tax+Edu Cess",        format: "currency", align: "right" },
+      { key: "tax_deducted_prev",label: "Tax Prev Month",      format: "currency", align: "right" },
+      { key: "balance_tax",      label: "Balance Tax",         format: "currency", align: "right" },
+      { key: "salary_pay_mode",  label: "Pay Mode",            format: "text" },
+      { key: "ac_no",            label: "Account No",          format: "text" },
+      { key: "ifsc_code",        label: "IFSC Code",           format: "text" },
+      { key: "ac_bank",          label: "Bank Name",           format: "text" },
+      { key: "ac_branch",        label: "Bank Branch",         format: "text" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
@@ -467,8 +213,7 @@ const REPORTS: Record<string, ReportDef> = {
       const [ew, ev] = empWhere("spl.employee_code", f.employee_code);
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT
           spl.employee_code,
           e.full_name                                                                AS employee_name,
@@ -602,9 +347,7 @@ const REPORTS: Record<string, ReportDef> = {
                  e.bank_account_number, e.ifsc_code, e.bank_name, e.bank_branch, e.account_type
         ORDER BY bm.branch_name, spl.employee_code
         LIMIT 10000
-      `,
-        [...bv, ...mv, ...ev, ...nv, ...pv],
-      );
+      `, [...bv, ...mv, ...ev, ...nv, ...pv]);
     },
   },
 
@@ -613,41 +356,31 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Attendance Register",
     defaultDisplayLimit: 3000,
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "cost_center", label: "Cost Centre", format: "text" },
-      { key: "att_date", label: "Date", format: "date" },
-      { key: "status", label: "Status", format: "status" },
-      { key: "old_status", label: "Old Status", format: "text" },
-      { key: "source", label: "Source", format: "text" },
+      { key: "employee_code", label: "Emp Code",     format: "text" },
+      { key: "employee_name", label: "Employee Name",format: "text" },
+      { key: "branch_name",   label: "Branch",       format: "text" },
+      { key: "cost_center",   label: "Cost Centre",  format: "text" },
+      { key: "att_date",      label: "Date",         format: "date" },
+      { key: "status",        label: "Status",       format: "status" },
+      { key: "old_status",    label: "Old Status",   format: "text" },
+      { key: "source",        label: "Source",       format: "text" },
     ],
     async query(f) {
       const bCond = f.branch ? "AND branch_name = ?" : "";
       const eCond = f.employee_code ? "AND employee_code = ?" : "";
       // Use BETWEEN for month (avoids DATE_FORMAT full-scan on 2.2M-row snapshot)
       const monthStart = f.month ? `${f.month}-01` : null;
-      const dCond = f.from_date
-        ? `AND attend_date BETWEEN ? AND ?`
-        : monthStart
-          ? `AND attend_date BETWEEN ? AND LAST_DAY(?)`
-          : "";
+      const dCond = f.from_date ? `AND attend_date BETWEEN ? AND ?`
+        : monthStart ? `AND attend_date BETWEEN ? AND LAST_DAY(?)` : "";
       const bv = f.branch ? [f.branch] : [];
       const ev = f.employee_code ? [f.employee_code] : [];
-      const dv = f.from_date
-        ? [f.from_date, f.to_date ?? "9999-12-31"]
-        : monthStart
-          ? [monthStart, monthStart]
-          : [];
+      const dv = f.from_date ? [f.from_date, f.to_date ?? "9999-12-31"]
+        : monthStart ? [monthStart, monthStart] : [];
       const [bw2, bv2] = branchWhere("bm.branch_name", f.branch);
       const [ew2, ev2] = empWhere("e.employee_code", f.employee_code);
-      const dCond2 = f.from_date
-        ? `AND adr.record_date BETWEEN ? AND ?`
-        : monthStart
-          ? `AND adr.record_date BETWEEN ? AND LAST_DAY(?)`
-          : "";
-      return q(
-        `
+      const dCond2 = f.from_date ? `AND adr.record_date BETWEEN ? AND ?`
+        : monthStart ? `AND adr.record_date BETWEEN ? AND LAST_DAY(?)` : "";
+      return q(`
         SELECT employee_code, employee_name, branch_name, cost_center,
                attend_date AS att_date, status, old_status, 'legacy' AS source
         FROM attendance_legacy_snapshot
@@ -668,9 +401,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${bw2} ${ew2} ${dCond2}
         ${f._limit != null && f._limit <= 5000 ? "" : "ORDER BY branch_name, employee_code, att_date"}
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...ev, ...dv, ...bv2, ...ev2, ...dv],
-      );
+      `, [...bv, ...ev, ...dv, ...bv2, ...ev2, ...dv]);
     },
   },
 
@@ -678,26 +409,24 @@ const REPORTS: Record<string, ReportDef> = {
   "wfh-attendance": {
     label: "WFH Attendance",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "cost_center", label: "Cost Centre", format: "text" },
-      { key: "att_date", label: "Date", format: "date" },
-      { key: "status", label: "Status", format: "status" },
-      { key: "old_status", label: "Old Status", format: "text" },
+      { key: "employee_code", label: "Emp Code",     format: "text" },
+      { key: "employee_name", label: "Employee Name",format: "text" },
+      { key: "branch_name",   label: "Branch",       format: "text" },
+      { key: "cost_center",   label: "Cost Centre",  format: "text" },
+      { key: "att_date",      label: "Date",         format: "date" },
+      { key: "status",        label: "Status",       format: "status" },
+      { key: "old_status",    label: "Old Status",   format: "text" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("branch_name", f.branch);
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      const [dw, dv] = f.from_date
-        ? dateRangeWhere("att_date", f.from_date, f.to_date)
+      const [dw, dv] = f.from_date ? dateRangeWhere("att_date", f.from_date, f.to_date)
         : monthWhere("att_date", f.month);
       // Historical snapshot UNION live attendance_daily_record (work_mode=wfh)
       const [bw2, bv2] = branchWhere("bm.branch_name", f.branch);
       const [ew2, ev2] = empWhere("e.employee_code", f.employee_code);
       const dw2 = dw.replace(/att_date/g, "adr.record_date");
-      return q(
-        `
+      return q(`
         SELECT employee_code, employee_name, branch_name, cost_center,
                att_date, status, old_status
         FROM wfh_attendance_snapshot
@@ -717,9 +446,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE adr.work_mode = 'wfh' ${bw2} ${ew2} ${dw2}
         ORDER BY branch_name, employee_code, att_date
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...ev, ...dv, ...bv2, ...ev2, ...dv],
-      );
+      `, [...bv, ...ev, ...dv, ...bv2, ...ev2, ...dv]);
     },
   },
 
@@ -727,31 +454,27 @@ const REPORTS: Record<string, ReportDef> = {
   "field-attendance": {
     label: "Field Attendance",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "cost_center", label: "Cost Centre", format: "text" },
-      { key: "att_date", label: "Date", format: "date" },
-      { key: "status", label: "Status", format: "status" },
-      { key: "old_status", label: "Old Status", format: "text" },
+      { key: "employee_code", label: "Emp Code",     format: "text" },
+      { key: "employee_name", label: "Employee Name",format: "text" },
+      { key: "branch_name",   label: "Branch",       format: "text" },
+      { key: "cost_center",   label: "Cost Centre",  format: "text" },
+      { key: "att_date",      label: "Date",         format: "date" },
+      { key: "status",        label: "Status",       format: "status" },
+      { key: "old_status",    label: "Old Status",   format: "text" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("branch_name", f.branch);
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      const [dw, dv] = f.from_date
-        ? dateRangeWhere("attend_date", f.from_date, f.to_date)
+      const [dw, dv] = f.from_date ? dateRangeWhere("attend_date", f.from_date, f.to_date)
         : monthWhere("attend_date", f.month);
-      return q(
-        `
+      return q(`
         SELECT employee_code, employee_name, branch_name, cost_center,
                attend_date AS att_date, status, old_status
         FROM field_attendance_snapshot
         WHERE 1=1 ${bw} ${ew} ${dw}
         ORDER BY branch_name, employee_code, attend_date
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...ev, ...dv],
-      );
+      `, [...bv, ...ev, ...dv]);
     },
   },
 
@@ -759,29 +482,27 @@ const REPORTS: Record<string, ReportDef> = {
   "attendance-issues": {
     label: "Attendance Issues",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "process_name", label: "Process", format: "text" },
-      { key: "session_date", label: "Att Date", format: "date" },
-      { key: "old_status", label: "Current Status", format: "text" },
-      { key: "new_status", label: "Expected Status", format: "text" },
-      { key: "dispute_type", label: "Issue Type", format: "text" },
-      { key: "reason", label: "Reason", format: "text" },
-      { key: "status", label: "Approval Status", format: "status" },
-      { key: "reviewed_at", label: "Approved Date", format: "date" },
-      { key: "manager_review_note", label: "Approved By", format: "text" },
+      { key: "employee_code",       label: "Emp Code",       format: "text" },
+      { key: "employee_name",       label: "Employee Name",  format: "text" },
+      { key: "branch_name",         label: "Branch",         format: "text" },
+      { key: "process_name",        label: "Process",        format: "text" },
+      { key: "session_date",        label: "Att Date",       format: "date" },
+      { key: "old_status",          label: "Current Status", format: "text" },
+      { key: "new_status",          label: "Expected Status",format: "text" },
+      { key: "dispute_type",        label: "Issue Type",     format: "text" },
+      { key: "reason",              label: "Reason",         format: "text" },
+      { key: "status",              label: "Approval Status",format: "status" },
+      { key: "reviewed_at",         label: "Approved Date",  format: "date" },
+      { key: "manager_review_note", label: "Approved By",    format: "text" },
     ],
     async query(f) {
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
-      const [dw, dv] = f.from_date
-        ? dateRangeWhere("ar.session_date", f.from_date, f.to_date)
+      const [dw, dv] = f.from_date ? dateRangeWhere("ar.session_date", f.from_date, f.to_date)
         : monthWhere("ar.session_date", f.month);
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name, pm.process_name,
                ar.session_date, ar.old_status, ar.new_status,
@@ -794,9 +515,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE ar.escalated_to LIKE 'BWAI:%' ${ew} ${nw} ${dw} ${bw} ${pw}
         ORDER BY bm.branch_name, e.employee_code, ar.session_date
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...ev, ...nv, ...dv, ...bv, ...pv],
-      );
+      `, [...ev, ...nv, ...dv, ...bv, ...pv]);
     },
   },
 
@@ -804,33 +523,26 @@ const REPORTS: Record<string, ReportDef> = {
   "leave-register": {
     label: "Leave Register",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "process_name", label: "Process", format: "text" },
-      { key: "cost_center", label: "Cost Centre", format: "text" },
-      { key: "from_date", label: "Leave From", format: "date" },
-      { key: "to_date", label: "Leave To", format: "date" },
-      {
-        key: "total_days",
-        label: "Total Days",
-        format: "number",
-        align: "right",
-      },
-      { key: "leave_type", label: "Leave Type", format: "text" },
-      { key: "status", label: "Status", format: "status" },
-      { key: "reason", label: "Reason", format: "text" },
+      { key: "employee_code", label: "Emp Code",     format: "text" },
+      { key: "employee_name", label: "Employee Name",format: "text" },
+      { key: "branch_name",   label: "Branch",       format: "text" },
+      { key: "process_name",  label: "Process",      format: "text" },
+      { key: "cost_center",   label: "Cost Centre",  format: "text" },
+      { key: "from_date",     label: "Leave From",   format: "date" },
+      { key: "to_date",       label: "Leave To",     format: "date" },
+      { key: "total_days",    label: "Total Days",   format: "number",   align: "right" },
+      { key: "leave_type",    label: "Leave Type",   format: "text" },
+      { key: "status",        label: "Status",       format: "status" },
+      { key: "reason",        label: "Reason",       format: "text" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
-      const [dw, dv] = f.from_date
-        ? dateRangeWhere("lr.from_date", f.from_date, f.to_date)
+      const [dw, dv] = f.from_date ? dateRangeWhere("lr.from_date", f.from_date, f.to_date)
         : monthWhere("lr.from_date", f.month);
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
                cc.cost_centre_code AS cost_center,
@@ -846,9 +558,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${bw} ${ew} ${nw} ${dw} ${pw}
         ORDER BY bm.branch_name, e.employee_code, lr.from_date
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...ev, ...nv, ...dv, ...pv],
-      );
+      `, [...bv, ...ev, ...nv, ...dv, ...pv]);
     },
   },
 
@@ -857,52 +567,26 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Loan Register",
     sumCols: ["loan_amount", "deducted_amount", "pending_amount"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "process_name", label: "Process", format: "text" },
-      { key: "loan_type", label: "Type", format: "text" },
-      {
-        key: "loan_amount",
-        label: "Amount",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "installment_amount",
-        label: "Installment/Month",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_installments",
-        label: "Installments",
-        format: "number",
-        align: "right",
-      },
-      { key: "start_date", label: "Start Date", format: "date" },
-      { key: "end_date", label: "End Date", format: "date" },
-      {
-        key: "deducted_amount",
-        label: "Deducted",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "pending_amount",
-        label: "Pending",
-        format: "currency",
-        align: "right",
-      },
-      { key: "status", label: "Status", format: "status" },
+      { key: "employee_code",      label: "Emp Code",          format: "text" },
+      { key: "employee_name",      label: "Employee Name",     format: "text" },
+      { key: "branch_name",        label: "Branch",            format: "text" },
+      { key: "process_name",       label: "Process",           format: "text" },
+      { key: "loan_type",          label: "Type",              format: "text" },
+      { key: "loan_amount",        label: "Amount",            format: "currency", align: "right" },
+      { key: "installment_amount", label: "Installment/Month", format: "currency", align: "right" },
+      { key: "total_installments", label: "Installments",      format: "number",   align: "right" },
+      { key: "start_date",         label: "Start Date",        format: "date" },
+      { key: "end_date",           label: "End Date",          format: "date" },
+      { key: "deducted_amount",    label: "Deducted",          format: "currency", align: "right" },
+      { key: "pending_amount",     label: "Pending",           format: "currency", align: "right" },
+      { key: "status",             label: "Status",            format: "status" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
                el.loan_type,
@@ -918,9 +602,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${bw} ${ew} ${nw} ${pw}
         ORDER BY bm.branch_name, e.employee_code
         LIMIT 10000
-      `,
-        [...bv, ...ev, ...nv, ...pv],
-      );
+      `, [...bv, ...ev, ...nv, ...pv]);
     },
   },
 
@@ -929,28 +611,22 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Income Tax Register",
     sumCols: ["tds_amount"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "tax_month", label: "Tax Month", format: "text" },
-      {
-        key: "tds_amount",
-        label: "Income Tax",
-        format: "currency",
-        align: "right",
-      },
-      { key: "source", label: "Source", format: "text" },
+      { key: "employee_code", label: "Emp Code",     format: "text" },
+      { key: "employee_name", label: "Employee Name",format: "text" },
+      { key: "branch_name",   label: "Branch",       format: "text" },
+      { key: "tax_month",     label: "Tax Month",    format: "text" },
+      { key: "tds_amount",    label: "Income Tax",   format: "currency", align: "right" },
+      { key: "source",        label: "Source",       format: "text" },
     ],
     async query(f) {
       const mCond = f.month ? "AND ils.tax_month = ?" : "";
-      const mv = f.month ? [f.month] : [];
+      const mv    = f.month ? [f.month] : [];
       const [bw1, bv1] = branchWhere("bm1.branch_name", f.branch);
       const [ew1, ev1] = empWhere("ils.employee_code", f.employee_code);
       const [bw2, bv2] = branchWhere("bm2.branch_name", f.branch);
       const [ew2, ev2] = empWhere("spl.employee_code", f.employee_code);
       const mCond2 = f.month ? "AND spr.run_month = ?" : "";
-      return q(
-        `
+      return q(`
         SELECT ils.employee_code, e1.full_name AS employee_name,
                bm1.branch_name, ils.tax_month,
                ils.income_tax AS tds_amount, 'legacy' AS source
@@ -972,9 +648,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE spl.tds > 0 ${mCond2} ${bw2} ${ew2}
         ORDER BY branch_name, employee_code, tax_month
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...mv, ...bv1, ...ev1, ...mv, ...bv2, ...ev2],
-      );
+      `, [...mv, ...bv1, ...ev1, ...mv, ...bv2, ...ev2]);
     },
   },
 
@@ -982,26 +656,24 @@ const REPORTS: Record<string, ReportDef> = {
   "od-register": {
     label: "OD Register",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "designation", label: "Designation", format: "text" },
-      { key: "start_date", label: "OD From", format: "date" },
-      { key: "end_date", label: "OD To", format: "date" },
-      { key: "reason", label: "Reason", format: "text" },
-      { key: "current_status", label: "Status", format: "text" },
-      { key: "approve_first", label: "L1 Approval", format: "text" },
+      { key: "employee_code",  label: "Emp Code",    format: "text" },
+      { key: "employee_name",  label: "Employee Name",format: "text" },
+      { key: "branch_name",    label: "Branch",      format: "text" },
+      { key: "designation",    label: "Designation", format: "text" },
+      { key: "start_date",     label: "OD From",     format: "date" },
+      { key: "end_date",       label: "OD To",       format: "date" },
+      { key: "reason",         label: "Reason",      format: "text" },
+      { key: "current_status", label: "Status",      format: "text" },
+      { key: "approve_first",  label: "L1 Approval", format: "text" },
       { key: "approve_second", label: "L2 Approval", format: "text" },
-      { key: "created_at", label: "Created Date", format: "date" },
+      { key: "created_at",     label: "Created Date",format: "date" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("branch_name", f.branch);
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      const [dw, dv] = f.from_date
-        ? dateRangeWhere("start_date", f.from_date, f.to_date)
+      const [dw, dv] = f.from_date ? dateRangeWhere("start_date", f.from_date, f.to_date)
         : monthWhere("start_date", f.month);
-      return q(
-        `
+      return q(`
         SELECT employee_code, employee_name, branch_name, designation,
                start_date, end_date, reason, current_status,
                approve_first, approve_second, created_at
@@ -1009,9 +681,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${bw} ${ew} ${dw}
         ORDER BY branch_name, employee_code, start_date
         LIMIT 10000
-      `,
-        [...bv, ...ev, ...dv],
-      );
+      `, [...bv, ...ev, ...dv]);
     },
   },
 
@@ -1020,100 +690,60 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Incentive Register",
     sumCols: ["amount"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "cost_center", label: "Cost Centre", format: "text" },
+      { key: "employee_code",  label: "Emp Code",       format: "text" },
+      { key: "employee_name",  label: "Employee Name",  format: "text" },
+      { key: "branch_name",    label: "Branch",         format: "text" },
+      { key: "cost_center",    label: "Cost Centre",    format: "text" },
       { key: "incentive_type", label: "Incentive Type", format: "text" },
-      { key: "amount", label: "Amount", format: "currency", align: "right" },
-      { key: "salary_month", label: "Salary Month", format: "text" },
-      { key: "approve_status", label: "Status", format: "status" },
+      { key: "amount",         label: "Amount",         format: "currency", align: "right" },
+      { key: "salary_month",   label: "Salary Month",   format: "text" },
+      { key: "approve_status", label: "Status",         format: "status" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("branch_name", f.branch);
       const [ew, ev] = empWhere("employee_code", f.employee_code);
       const [mw, mv] = monthWhere("salary_month", f.month);
-      return q(
-        `
+      return q(`
         SELECT employee_code, employee_name, branch_name, cost_center,
                incentive_type, amount, salary_month, approve_status
         FROM incentive_upload_snapshot
         WHERE 1=1 ${bw} ${ew} ${mw}
         ORDER BY branch_name, employee_code, salary_month
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...ev, ...mv],
-      );
+      `, [...bv, ...ev, ...mv]);
     },
   },
 
   // ── 11. Deduction Register ────────────────────────────────────────────────
   "deduction-register": {
     label: "Deduction Register",
-    sumCols: [
-      "mobile_deduction",
-      "short_collection",
-      "asset_recovery",
-      "leave_deduction",
-      "others_deduction",
-    ],
+    sumCols: ["mobile_deduction", "short_collection", "asset_recovery", "leave_deduction", "others_deduction"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "cost_center", label: "Cost Centre", format: "text" },
-      { key: "salary_month", label: "Salary Month", format: "text" },
-      {
-        key: "mobile_deduction",
-        label: "Mobile Ded",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "short_collection",
-        label: "Short Collection",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "asset_recovery",
-        label: "Asset Recovery",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "insurance",
-        label: "Insurance",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "leave_deduction",
-        label: "Leave Ded",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "others_deduction",
-        label: "Other Ded",
-        format: "currency",
-        align: "right",
-      },
-      { key: "remarks", label: "Remarks", format: "text" },
+      { key: "employee_code",    label: "Emp Code",        format: "text" },
+      { key: "employee_name",    label: "Employee Name",   format: "text" },
+      { key: "branch_name",      label: "Branch",          format: "text" },
+      { key: "cost_center",      label: "Cost Centre",     format: "text" },
+      { key: "salary_month",     label: "Salary Month",    format: "text" },
+      { key: "mobile_deduction", label: "Mobile Ded",      format: "currency", align: "right" },
+      { key: "short_collection", label: "Short Collection",format: "currency", align: "right" },
+      { key: "asset_recovery",   label: "Asset Recovery",  format: "currency", align: "right" },
+      { key: "insurance",        label: "Insurance",       format: "currency", align: "right" },
+      { key: "leave_deduction",  label: "Leave Ded",       format: "currency", align: "right" },
+      { key: "others_deduction", label: "Other Ded",       format: "currency", align: "right" },
+      { key: "remarks",          label: "Remarks",         format: "text" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("branch_name", f.branch);
       const [ew, ev] = empWhere("employee_code", f.employee_code);
       // salary_month and run_month are varchar(YYYY-MM) — use direct equality
-      const mw = f.month ? "AND salary_month = ?" : "";
-      const mv = f.month ? [f.month] : [];
+      const mw  = f.month ? "AND salary_month = ?" : "";
+      const mv  = f.month ? [f.month] : [];
       const [ew2, ev2] = empWhere("e.employee_code", f.employee_code);
       const mw2 = f.month ? "AND ede.run_month = ?" : "";
       const mv2 = f.month ? [f.month] : [];
       const bw2 = f.branch ? "AND bm.branch_name = ?" : "";
       const bv2 = f.branch ? [f.branch] : [];
-      return q(
-        `
+      return q(`
         SELECT employee_code, employee_name, branch_name, cost_center,
                salary_month, mobile_deduction, short_collection,
                asset_recovery, insurance, leave_deduction,
@@ -1139,9 +769,7 @@ const REPORTS: Record<string, ReportDef> = {
                  cc.cost_centre_code, ede.run_month
         ORDER BY branch_name, employee_code, salary_month
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...ev, ...mv, ...ev2, ...mv2, ...bv2],
-      );
+      `, [...bv, ...ev, ...mv, ...ev2, ...mv2, ...bv2]);
     },
   },
 
@@ -1149,22 +777,21 @@ const REPORTS: Record<string, ReportDef> = {
   "transfer-register": {
     label: "Transfer Register",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "from_branch", label: "From Branch", format: "text" },
-      { key: "to_branch", label: "To Branch", format: "text" },
-      { key: "from_cost_center", label: "From CC", format: "text" },
-      { key: "to_cost_center", label: "To CC", format: "text" },
-      { key: "move_month", label: "Move Month", format: "text" },
-      { key: "reason", label: "Reason", format: "text" },
-      { key: "move_date", label: "Move Date", format: "date" },
+      { key: "employee_code",    label: "Emp Code",    format: "text" },
+      { key: "from_branch",      label: "From Branch", format: "text" },
+      { key: "to_branch",        label: "To Branch",   format: "text" },
+      { key: "from_cost_center", label: "From CC",     format: "text" },
+      { key: "to_cost_center",   label: "To CC",       format: "text" },
+      { key: "move_month",       label: "Move Month",  format: "text" },
+      { key: "reason",           label: "Reason",      format: "text" },
+      { key: "move_date",        label: "Move Date",   format: "date" },
     ],
     async query(f) {
       const [ew, ev] = empWhere("employee_code", f.employee_code);
       const bCond = f.branch ? "AND (from_branch = ? OR to_branch = ?)" : "";
-      const bv = f.branch ? [f.branch, f.branch] : [];
+      const bv    = f.branch ? [f.branch, f.branch] : [];
       const [mw, mv] = monthWhere("move_month", f.month);
-      return q(
-        `
+      return q(`
         SELECT employee_code, from_branch, to_branch,
                from_cost_center, to_cost_center,
                move_month, reason, move_date
@@ -1172,9 +799,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${ew} ${bCond} ${mw}
         ORDER BY move_month DESC, employee_code
         LIMIT 10000
-      `,
-        [...ev, ...bv, ...mv],
-      );
+      `, [...ev, ...bv, ...mv]);
     },
   },
 
@@ -1182,29 +807,26 @@ const REPORTS: Record<string, ReportDef> = {
   "doj-change-register": {
     label: "DOJ Change Register",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "old_doj", label: "Old DOJ", format: "date" },
-      { key: "new_doj", label: "New DOJ", format: "date" },
-      { key: "remarks", label: "Remarks", format: "text" },
-      { key: "approve_status", label: "Status", format: "status" },
-      { key: "approve_date", label: "Approved On", format: "date" },
+      { key: "employee_code", label: "Emp Code",     format: "text" },
+      { key: "employee_name", label: "Employee Name",format: "text" },
+      { key: "branch_name",   label: "Branch",       format: "text" },
+      { key: "old_doj",       label: "Old DOJ",      format: "date" },
+      { key: "new_doj",       label: "New DOJ",      format: "date" },
+      { key: "remarks",       label: "Remarks",      format: "text" },
+      { key: "approve_status",label: "Status",       format: "status" },
+      { key: "approve_date",  label: "Approved On",  format: "date" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("branch_name", f.branch);
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      return q(
-        `
+      return q(`
         SELECT employee_code, employee_name, branch_name,
                old_doj, new_doj, remarks, approve_status, approve_date
         FROM change_doj_snapshot
         WHERE 1=1 ${bw} ${ew}
         ORDER BY branch_name, employee_code
         LIMIT 10000
-      `,
-        [...bv, ...ev],
-      );
+      `, [...bv, ...ev]);
     },
   },
 
@@ -1212,31 +834,27 @@ const REPORTS: Record<string, ReportDef> = {
   "document-register": {
     label: "Document Register",
     columns: [
-      { key: "offer_no", label: "Offer No", format: "text" },
-      { key: "doc_type", label: "Doc Type", format: "text" },
-      { key: "doc_name", label: "Doc Name", format: "text" },
-      { key: "file_no", label: "File No", format: "text" },
-      { key: "box_no", label: "Box No", format: "text" },
-      { key: "doc_status", label: "Status", format: "status" },
-      { key: "save_date", label: "Saved On", format: "date" },
+      { key: "offer_no",    label: "Offer No",  format: "text" },
+      { key: "doc_type",    label: "Doc Type",  format: "text" },
+      { key: "doc_name",    label: "Doc Name",  format: "text" },
+      { key: "file_no",     label: "File No",   format: "text" },
+      { key: "box_no",      label: "Box No",    format: "text" },
+      { key: "doc_status",  label: "Status",    format: "status" },
+      { key: "save_date",   label: "Saved On",  format: "date" },
     ],
     async query(f) {
       const oCond = f.employee_code ? "AND offer_no = ?" : "";
-      const ov = f.employee_code ? [f.employee_code] : [];
-      const [dw, dv] = f.from_date
-        ? dateRangeWhere("save_date", f.from_date, f.to_date)
+      const ov    = f.employee_code ? [f.employee_code] : [];
+      const [dw, dv] = f.from_date ? dateRangeWhere("save_date", f.from_date, f.to_date)
         : monthWhere("save_date", f.month);
-      return q(
-        `
+      return q(`
         SELECT offer_no, doc_type, doc_name, file_no,
                box_no, doc_status, save_date
         FROM doc_legacy_snapshot
         WHERE 1=1 ${oCond} ${dw}
         ORDER BY offer_no, doc_type
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...ov, ...dv],
-      );
+      `, [...ov, ...dv]);
     },
   },
 
@@ -1244,39 +862,28 @@ const REPORTS: Record<string, ReportDef> = {
   "legacy-employee-master": {
     label: "Legacy Employee Master",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "process", label: "Process", format: "text" },
-      { key: "designation", label: "Designation", format: "text" },
-      { key: "doj", label: "DOJ", format: "date" },
-      { key: "dol", label: "DOL", format: "date" },
-      { key: "basic", label: "Basic", format: "currency", align: "right" },
-      { key: "hra", label: "HRA", format: "currency", align: "right" },
-      { key: "gross", label: "Gross", format: "currency", align: "right" },
-      {
-        key: "ctc_monthly",
-        label: "CTC/Month",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "net_salary",
-        label: "Net In Hand",
-        format: "currency",
-        align: "right",
-      },
-      { key: "pf_eligible", label: "PF Eligible", format: "text" },
-      { key: "esic_eligible", label: "ESI Eligible", format: "text" },
+      { key: "employee_code",  label: "Emp Code",    format: "text" },
+      { key: "employee_name",  label: "Name",        format: "text" },
+      { key: "branch_name",    label: "Branch",      format: "text" },
+      { key: "process",        label: "Process",     format: "text" },
+      { key: "designation",    label: "Designation", format: "text" },
+      { key: "doj",            label: "DOJ",         format: "date" },
+      { key: "dol",            label: "DOL",         format: "date" },
+      { key: "basic",          label: "Basic",       format: "currency", align: "right" },
+      { key: "hra",            label: "HRA",         format: "currency", align: "right" },
+      { key: "gross",          label: "Gross",       format: "currency", align: "right" },
+      { key: "ctc_monthly",    label: "CTC/Month",   format: "currency", align: "right" },
+      { key: "net_salary",     label: "Net In Hand", format: "currency", align: "right" },
+      { key: "pf_eligible",    label: "PF Eligible", format: "text" },
+      { key: "esic_eligible",  label: "ESI Eligible",format: "text" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("ls.branch_name", f.branch);
       const [ew, ev] = empWhere("ls.employee_code", f.employee_code);
       const [nw, nv] = nameWhere("ls.employee_name", f.employee_name);
-      const pw = f.process ? "AND ls.process = ?" : "";
-      const pv = f.process ? [f.process] : [];
-      return q(
-        `
+      const pw  = f.process ? "AND ls.process = ?"     : "";
+      const pv  = f.process ? [f.process]              : [];
+      return q(`
         SELECT ls.employee_code, ls.employee_name, ls.branch_name,
                ls.process, ls.designation, ls.doj, ls.dol,
                ls.basic, ls.hra, ls.gross, ls.ctc_monthly, ls.net_salary,
@@ -1286,9 +893,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${bw} ${ew} ${nw} ${pw}
         ORDER BY ls.branch_name, ls.employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...ev, ...nv, ...pv],
-      );
+      `, [...bv, ...ev, ...nv, ...pv]);
     },
   },
 
@@ -1296,36 +901,25 @@ const REPORTS: Record<string, ReportDef> = {
   "salary-history": {
     label: "Salary History",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "process_name", label: "Process", format: "text" },
-      { key: "designation", label: "Designation", format: "text" },
-      { key: "basic", label: "Basic", format: "currency", align: "right" },
-      { key: "hra", label: "HRA", format: "currency", align: "right" },
-      { key: "gross", label: "Gross", format: "currency", align: "right" },
-      {
-        key: "ctc_monthly",
-        label: "CTC/Month",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "net_in_hand",
-        label: "Net In Hand",
-        format: "currency",
-        align: "right",
-      },
-      { key: "effective_from", label: "Effective", format: "date" },
+      { key: "employee_code",  label: "Emp Code",     format: "text" },
+      { key: "employee_name",  label: "Name",         format: "text" },
+      { key: "branch_name",    label: "Branch",       format: "text" },
+      { key: "process_name",   label: "Process",      format: "text" },
+      { key: "designation",    label: "Designation",  format: "text" },
+      { key: "basic",          label: "Basic",        format: "currency", align: "right" },
+      { key: "hra",            label: "HRA",          format: "currency", align: "right" },
+      { key: "gross",          label: "Gross",        format: "currency", align: "right" },
+      { key: "ctc_monthly",    label: "CTC/Month",    format: "currency", align: "right" },
+      { key: "net_in_hand",    label: "Net In Hand",  format: "currency", align: "right" },
+      { key: "effective_from", label: "Effective",    format: "date" },
     ],
     async query(f) {
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const [pw, pv] = processWhere("pm", f.process);
       const bCond = f.branch ? "AND esh.branch_name = ?" : "";
-      const bv = f.branch ? [f.branch] : [];
-      return q(
-        `
+      const bv    = f.branch ? [f.branch] : [];
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                esh.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
                esh.designation_name AS designation,
@@ -1337,9 +931,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE esh.source = 'data_migration' ${ew} ${nw} ${bCond} ${pw}
         ORDER BY e.employee_code, esh.effective_from DESC
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...ev, ...nv, ...bv, ...pv],
-      );
+      `, [...ev, ...nv, ...bv, ...pv]);
     },
   },
 
@@ -1348,53 +940,36 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Quality Attendance",
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "present", label: "Present", format: "number", align: "right" },
-      { key: "wo", label: "WO", format: "number", align: "right" },
-      { key: "holiday", label: "Holiday", format: "number", align: "right" },
-      { key: "half_day", label: "Half Day", format: "number", align: "right" },
-      { key: "compoff", label: "Compoff", format: "number", align: "right" },
-      { key: "el", label: "EL", format: "number", align: "right" },
-      { key: "cl", label: "CL", format: "number", align: "right" },
-      { key: "sl", label: "SL", format: "number", align: "right" },
-      { key: "ot", label: "OT", format: "number", align: "right" },
-      { key: "sal_month", label: "Month", format: "text" },
-      { key: "sal_year", label: "Year", format: "text" },
+      { key: "present",       label: "Present",  format: "number", align: "right" },
+      { key: "wo",            label: "WO",       format: "number", align: "right" },
+      { key: "holiday",       label: "Holiday",  format: "number", align: "right" },
+      { key: "half_day",      label: "Half Day", format: "number", align: "right" },
+      { key: "compoff",       label: "Compoff",  format: "number", align: "right" },
+      { key: "el",            label: "EL",       format: "number", align: "right" },
+      { key: "cl",            label: "CL",       format: "number", align: "right" },
+      { key: "sl",            label: "SL",       format: "number", align: "right" },
+      { key: "ot",            label: "OT",       format: "number", align: "right" },
+      { key: "sal_month",     label: "Month",    format: "text" },
+      { key: "sal_year",      label: "Year",     format: "text" },
     ],
     async query(f) {
       const [ew, ev] = empWhere("employee_code", f.employee_code);
       // sal_month stored as 3-letter name ('Jan','Feb',...,'Dec'), sal_year as string ('2026')
-      const MONTH_NAMES = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      let mCond = "";
-      let mv: unknown[] = [];
+      const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      let mCond = ""; let mv: unknown[] = [];
       if (f.month) {
-        const [yr, mo] = f.month.split("-");
+        const [yr, mo] = f.month.split('-');
         mCond = "AND sal_month = ? AND sal_year = ?";
         mv = [MONTH_NAMES[parseInt(mo, 10) - 1], yr];
       }
-      return q(
-        `
+      return q(`
         SELECT employee_code, present, wo, holiday, half_day,
                compoff, el, cl, sl, ot, sal_month, sal_year
         FROM qual_attendance_snapshot
         WHERE 1=1 ${ew} ${mCond}
         ORDER BY sal_year DESC, sal_month DESC, employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...ev, ...mv],
-      );
+      `, [...ev, ...mv]);
     },
   },
 
@@ -1403,47 +978,30 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Quality Leave",
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "pl", label: "PL", format: "number", align: "right" },
-      { key: "cl", label: "CL", format: "number", align: "right" },
-      { key: "sl", label: "SL", format: "number", align: "right" },
-      { key: "leave_status", label: "Status", format: "status" },
-      { key: "leave_month", label: "Month", format: "text" },
-      { key: "leave_year", label: "Year", format: "text" },
+      { key: "pl",            label: "PL",       format: "number", align: "right" },
+      { key: "cl",            label: "CL",       format: "number", align: "right" },
+      { key: "sl",            label: "SL",       format: "number", align: "right" },
+      { key: "leave_status",  label: "Status",   format: "status" },
+      { key: "leave_month",   label: "Month",    format: "text" },
+      { key: "leave_year",    label: "Year",     format: "text" },
     ],
     async query(f) {
       const [ew, ev] = empWhere("employee_code", f.employee_code);
       // leave_month stored as 3-letter name ('Jan','Feb',...,'Dec'), leave_year as string
-      const MONTH_NAMES = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      let mCond = "";
-      let mv: unknown[] = [];
+      const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      let mCond = ""; let mv: unknown[] = [];
       if (f.month) {
-        const [yr, mo] = f.month.split("-");
+        const [yr, mo] = f.month.split('-');
         mCond = "AND leave_month = ? AND leave_year = ?";
         mv = [MONTH_NAMES[parseInt(mo, 10) - 1], yr];
       }
-      return q(
-        `
+      return q(`
         SELECT employee_code, pl, cl, sl, leave_status, leave_month, leave_year
         FROM qual_leave_snapshot
         WHERE 1=1 ${ew} ${mCond}
         ORDER BY leave_year DESC, leave_month DESC, employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...ev, ...mv],
-      );
+      `, [...ev, ...mv]);
     },
   },
 
@@ -1452,46 +1010,31 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Quality Salary",
     sumCols: ["gross", "net_pay", "pf", "esi", "tds"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
+      { key: "employee_code", label: "Emp Code",  format: "text" },
       { key: "qual_emp_code", label: "Qual Code", format: "text" },
-      { key: "employee_name", label: "Name", format: "text" },
-      { key: "designation", label: "Desg", format: "text" },
-      { key: "basic", label: "Basic", format: "currency", align: "right" },
-      { key: "hra", label: "HRA", format: "currency", align: "right" },
-      { key: "gross", label: "Gross", format: "currency", align: "right" },
-      { key: "pf", label: "PF", format: "currency", align: "right" },
-      { key: "tds", label: "TDS", format: "currency", align: "right" },
-      { key: "esi", label: "ESIC", format: "currency", align: "right" },
-      { key: "net_pay", label: "Net Pay", format: "currency", align: "right" },
-      { key: "sal_month", label: "Month", format: "text" },
-      { key: "sal_year", label: "Year", format: "text" },
+      { key: "employee_name", label: "Name",      format: "text" },
+      { key: "designation",   label: "Desg",      format: "text" },
+      { key: "basic",         label: "Basic",     format: "currency", align: "right" },
+      { key: "hra",           label: "HRA",       format: "currency", align: "right" },
+      { key: "gross",         label: "Gross",     format: "currency", align: "right" },
+      { key: "pf",            label: "PF",        format: "currency", align: "right" },
+      { key: "tds",           label: "TDS",       format: "currency", align: "right" },
+      { key: "esi",           label: "ESIC",      format: "currency", align: "right" },
+      { key: "net_pay",       label: "Net Pay",   format: "currency", align: "right" },
+      { key: "sal_month",     label: "Month",     format: "text" },
+      { key: "sal_year",      label: "Year",      format: "text" },
     ],
     async query(f) {
       const [ew, ev] = empWhere("employee_code", f.employee_code);
       // sal_month stored as 3-letter name ('Jan','Feb',...,'Dec'), sal_year as string
-      const MONTH_NAMES = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      let mCond = "";
-      let mv: unknown[] = [];
+      const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      let mCond = ""; let mv: unknown[] = [];
       if (f.month) {
-        const [yr, mo] = f.month.split("-");
+        const [yr, mo] = f.month.split('-');
         mCond = "AND sal_month = ? AND sal_year = ?";
         mv = [MONTH_NAMES[parseInt(mo, 10) - 1], yr];
       }
-      return q(
-        `
+      return q(`
         SELECT employee_code, qual_emp_code, employee_name, designation,
                basic, hra, gross, pf, tds, esi, net_pay,
                sal_month, sal_year
@@ -1499,9 +1042,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${ew} ${mCond}
         ORDER BY sal_year DESC, sal_month DESC, employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...ev, ...mv],
-      );
+      `, [...ev, ...mv]);
     },
   },
 
@@ -1510,46 +1051,29 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Quality Incentive",
     sumCols: ["amount"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "amount", label: "Incentive", format: "currency", align: "right" },
-      { key: "sal_month", label: "Month", format: "text" },
-      { key: "sal_year", label: "Year", format: "text" },
-      { key: "remarks", label: "Remarks", format: "text" },
+      { key: "employee_code", label: "Emp Code",  format: "text" },
+      { key: "amount",        label: "Incentive", format: "currency", align: "right" },
+      { key: "sal_month",     label: "Month",     format: "text" },
+      { key: "sal_year",      label: "Year",      format: "text" },
+      { key: "remarks",       label: "Remarks",   format: "text" },
     ],
     async query(f) {
       const [ew, ev] = empWhere("employee_code", f.employee_code);
       // sal_month stored as 3-letter name ('Jan','Feb',...,'Dec'), sal_year as string
-      const MONTH_NAMES = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      let mCond = "";
-      let mv: unknown[] = [];
+      const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      let mCond = ""; let mv: unknown[] = [];
       if (f.month) {
-        const [yr, mo] = f.month.split("-");
+        const [yr, mo] = f.month.split('-');
         mCond = "AND sal_month = ? AND sal_year = ?";
         mv = [MONTH_NAMES[parseInt(mo, 10) - 1], yr];
       }
-      return q(
-        `
+      return q(`
         SELECT employee_code, amount, sal_month, sal_year, remarks
         FROM qual_incentive_snapshot
         WHERE 1=1 ${ew} ${mCond}
         ORDER BY sal_year DESC, sal_month DESC, employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...ev, ...mv],
-      );
+      `, [...ev, ...mv]);
     },
   },
 
@@ -1557,14 +1081,14 @@ const REPORTS: Record<string, ReportDef> = {
   "leave-balance": {
     label: "Leave Balance",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
+      { key: "employee_code", label: "Emp Code",      format: "text" },
       { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "leave_type", label: "Leave Type", format: "text" },
-      { key: "balance_year", label: "Year", format: "text" },
-      { key: "allocated", label: "Allocated", format: "number" },
-      { key: "used", label: "Used", format: "number" },
-      { key: "adjusted", label: "Adjusted", format: "number" },
+      { key: "branch_name",   label: "Branch",        format: "text" },
+      { key: "leave_type",    label: "Leave Type",    format: "text" },
+      { key: "balance_year",  label: "Year",          format: "text" },
+      { key: "allocated",     label: "Allocated",     format: "number" },
+      { key: "used",          label: "Used",          format: "number" },
+      { key: "adjusted",      label: "Adjusted",      format: "number" },
     ],
     async query(f: LegacyFilter) {
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
@@ -1572,8 +1096,7 @@ const REPORTS: Record<string, ReportDef> = {
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
       const pj = processJoin("pm", "e");
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
                ltm.leave_name AS leave_type,
@@ -1589,9 +1112,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE e.active_status = 1 ${bw} ${ew} ${pw} ${nw}
         ORDER BY bm.branch_name, e.employee_code, ltm.leave_name
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...ev, ...pv, ...nv],
-      );
+      `, [...bv, ...ev, ...pv, ...nv]);
     },
   },
 
@@ -1599,20 +1120,15 @@ const REPORTS: Record<string, ReportDef> = {
   "bank-account": {
     label: "Bank Account Register",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "bank_name", label: "Bank Name", format: "text" },
-      { key: "account_number", label: "Account Number", format: "text" },
-      { key: "ifsc_code", label: "IFSC Code", format: "text" },
-      { key: "account_type", label: "Account Type", format: "text" },
-      {
-        key: "net_amount",
-        label: "Net Amount",
-        format: "currency",
-        align: "right",
-      },
-      { key: "salary_month", label: "Month", format: "text" },
+      { key: "employee_code",    label: "Emp Code",        format: "text" },
+      { key: "employee_name",    label: "Employee Name",   format: "text" },
+      { key: "branch_name",      label: "Branch",          format: "text" },
+      { key: "bank_name",        label: "Bank Name",       format: "text" },
+      { key: "account_number",   label: "Account Number",  format: "text" },
+      { key: "ifsc_code",        label: "IFSC Code",       format: "text" },
+      { key: "account_type",     label: "Account Type",    format: "text" },
+      { key: "net_amount",       label: "Net Amount",      format: "currency", align: "right" },
+      { key: "salary_month",     label: "Month",           format: "text" },
     ],
     async query(f: LegacyFilter) {
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
@@ -1620,8 +1136,7 @@ const REPORTS: Record<string, ReportDef> = {
       const [pw, pv] = processWhere("pm", f.process);
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       if (f.month) {
-        return q(
-          `
+        return q(`
           SELECT e.employee_code, e.full_name AS employee_name,
                  bm.branch_name,
                  e.bank_name, e.bank_account_number AS account_number, e.ifsc_code, e.account_type,
@@ -1634,12 +1149,9 @@ const REPORTS: Record<string, ReportDef> = {
           WHERE 1=1 ${bw} ${pw} ${nw}
           ORDER BY bm.branch_name, e.employee_code
           LIMIT ${f._limit ?? 50000}
-        `,
-          [f.month, ...bv, ...pv, ...nv],
-        );
+        `, [f.month, ...bv, ...pv, ...nv]);
       }
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
                e.bank_name, e.bank_account_number AS account_number, e.ifsc_code, e.account_type,
@@ -1650,9 +1162,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE e.active_status = 1 ${bw} ${pw} ${nw}
         ORDER BY bm.branch_name, e.employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...pv, ...nv],
-      );
+      `, [...bv, ...pv, ...nv]);
     },
   },
 
@@ -1660,17 +1170,16 @@ const REPORTS: Record<string, ReportDef> = {
   "nominee-details": {
     label: "Nominee Details",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "nominee_name", label: "Nominee Name", format: "text" },
-      { key: "relationship", label: "Relationship", format: "text" },
-      { key: "dob", label: "Date of Birth", format: "date" },
-      { key: "share_pct", label: "Share %", format: "number" },
+      { key: "employee_code",   label: "Emp Code",       format: "text" },
+      { key: "employee_name",   label: "Employee Name",  format: "text" },
+      { key: "nominee_name",    label: "Nominee Name",   format: "text" },
+      { key: "relationship",    label: "Relationship",   format: "text" },
+      { key: "dob",             label: "Date of Birth",  format: "date" },
+      { key: "share_pct",       label: "Share %",        format: "number" },
     ],
     async query(f: LegacyFilter) {
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                en.nominee_name, en.relationship, en.date_of_birth AS dob, en.share_percentage AS share_pct
         FROM employee_nominee en
@@ -1678,9 +1187,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE e.active_status = 1 ${nw}
         ORDER BY e.employee_code, en.nominee_name
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...nv],
-      );
+      `, [...nv]);
     },
   },
 
@@ -1688,20 +1195,19 @@ const REPORTS: Record<string, ReportDef> = {
   "asset-details": {
     label: "Asset Details",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "asset_code", label: "Asset Code", format: "text" },
-      { key: "asset_name", label: "Asset Name", format: "text" },
-      { key: "asset_category", label: "Category", format: "text" },
-      { key: "issue_date", label: "Issue Date", format: "date" },
-      { key: "return_date", label: "Return Date", format: "date" },
+      { key: "employee_code",  label: "Emp Code",       format: "text" },
+      { key: "employee_name",  label: "Employee Name",  format: "text" },
+      { key: "asset_code",     label: "Asset Code",     format: "text" },
+      { key: "asset_name",     label: "Asset Name",     format: "text" },
+      { key: "asset_category", label: "Category",       format: "text" },
+      { key: "issue_date",     label: "Issue Date",     format: "date" },
+      { key: "return_date",    label: "Return Date",    format: "date" },
     ],
     async query(f: LegacyFilter) {
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const pj = processJoin("pm", "e");
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                am.asset_code, am.asset_name, am.asset_category,
                aa.assigned_date AS issue_date, aa.returned_date AS return_date
@@ -1712,9 +1218,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${pw} ${nw}
         ORDER BY e.employee_code, am.asset_name
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...pv, ...nv],
-      );
+      `, [...pv, ...nv]);
     },
   },
 
@@ -1722,22 +1226,21 @@ const REPORTS: Record<string, ReportDef> = {
   "resignation-tracker": {
     label: "Resignation Tracker",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "exit_type", label: "Exit Type", format: "text" },
-      { key: "exit_sub_type", label: "Exit Sub-Type", format: "text" },
-      { key: "reason", label: "Reason", format: "text" },
-      { key: "lwd_proposed", label: "LWD Proposed", format: "date" },
-      { key: "lwd_confirmed", label: "LWD Confirmed", format: "date" },
-      { key: "status", label: "Status", format: "text" },
+      { key: "employee_code",    label: "Emp Code",         format: "text" },
+      { key: "employee_name",    label: "Employee Name",    format: "text" },
+      { key: "branch_name",      label: "Branch",           format: "text" },
+      { key: "exit_type",        label: "Exit Type",        format: "text" },
+      { key: "exit_sub_type",    label: "Exit Sub-Type",    format: "text" },
+      { key: "reason",           label: "Reason",           format: "text" },
+      { key: "lwd_proposed",     label: "LWD Proposed",     format: "date" },
+      { key: "lwd_confirmed",    label: "LWD Confirmed",    format: "date" },
+      { key: "status",           label: "Status",           format: "text" },
     ],
     async query(f: LegacyFilter) {
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const pj = processJoin("pm", "e");
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
                er.exit_type, er.exit_sub_type,
@@ -1752,9 +1255,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${pw} ${nw}
         ORDER BY er.submitted_at DESC, e.employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...pv, ...nv],
-      );
+      `, [...pv, ...nv]);
     },
   },
 
@@ -1762,21 +1263,20 @@ const REPORTS: Record<string, ReportDef> = {
   "exit-checklist": {
     label: "Exit Clearance Checklist",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "exit_type", label: "Exit Type", format: "text" },
-      { key: "exit_status", label: "Exit Status", format: "text" },
+      { key: "employee_code",  label: "Emp Code",       format: "text" },
+      { key: "employee_name",  label: "Employee Name",  format: "text" },
+      { key: "branch_name",    label: "Branch",         format: "text" },
+      { key: "exit_type",      label: "Exit Type",      format: "text" },
+      { key: "exit_status",    label: "Exit Status",    format: "text" },
       { key: "clearance_area", label: "Clearance Area", format: "text" },
-      { key: "task_title", label: "Task", format: "text" },
-      { key: "status", label: "Task Status", format: "text" },
+      { key: "task_title",     label: "Task",           format: "text" },
+      { key: "status",         label: "Task Status",    format: "text" },
     ],
     async query(f: LegacyFilter) {
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const pj = processJoin("pm", "e");
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
                er.exit_type, er.status AS exit_status,
@@ -1791,9 +1291,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${pw} ${nw}
         ORDER BY e.employee_code, ect.clearance_area, ect.task_title
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...pv, ...nv],
-      );
+      `, [...pv, ...nv]);
     },
   },
 
@@ -1801,46 +1299,25 @@ const REPORTS: Record<string, ReportDef> = {
   "pf-esic-register": {
     label: "PF/ESIC Register",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
+      { key: "employee_code", label: "Emp Code",      format: "text" },
       { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "uan_number", label: "UAN", format: "text" },
-      { key: "pf_number", label: "PF Number", format: "text" },
-      { key: "esic_number", label: "ESIC Number", format: "text" },
-      {
-        key: "epf_wages",
-        label: "PF Wage",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "esic_wages",
-        label: "ESIC Wages",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_pf",
-        label: "Total PF",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_esic",
-        label: "Total ESIC",
-        format: "currency",
-        align: "right",
-      },
-      { key: "run_month", label: "Month", format: "text" },
+      { key: "branch_name",   label: "Branch",        format: "text" },
+      { key: "uan_number",    label: "UAN",           format: "text" },
+      { key: "pf_number",     label: "PF Number",     format: "text" },
+      { key: "esic_number",   label: "ESIC Number",   format: "text" },
+      { key: "epf_wages",     label: "PF Wage",       format: "currency", align: "right" },
+      { key: "esic_wages",    label: "ESIC Wages",    format: "currency", align: "right" },
+      { key: "total_pf",      label: "Total PF",      format: "currency", align: "right" },
+      { key: "total_esic",    label: "Total ESIC",    format: "currency", align: "right" },
+      { key: "run_month",     label: "Month",         format: "text" },
     ],
     async query(f: LegacyFilter) {
       const mCond = f.month ? "AND spr.run_month = ?" : "";
-      const mv = f.month ? [f.month] : [];
+      const mv    = f.month ? [f.month] : [];
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const pj = processJoin("pm", "e");
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
                COALESCE(eu.uan, esi.uan_number, e.uan_number) AS uan_number,
@@ -1860,45 +1337,31 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${mCond} ${pw} ${nw}
         ORDER BY bm.branch_name, e.employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...mv, ...pv, ...nv],
-      );
+      `, [...mv, ...pv, ...nv]);
     },
   },
   // ── New Joiners ───────────────────────────────────────────────────────────
   "new-joiners": {
     label: "New Joiners",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "cost_centre", label: "Cost Centre", format: "text" },
-      { key: "department", label: "Department", format: "text" },
-      { key: "designation", label: "Designation", format: "text" },
-      { key: "doj", label: "DOJ", format: "date" },
-      { key: "source", label: "Source", format: "text" },
-      { key: "sub_source", label: "Sub Source", format: "text" },
-      { key: "mobile", label: "Mobile No", format: "text" },
-      {
-        key: "net_inhand",
-        label: "Net In Hand",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "ctc_offered",
-        label: "Offered CTC",
-        format: "currency",
-        align: "right",
-      },
+      { key: "employee_code", label: "Emp Code",       format: "text" },
+      { key: "employee_name", label: "Employee Name",  format: "text" },
+      { key: "branch_name",   label: "Branch",         format: "text" },
+      { key: "cost_centre",   label: "Cost Centre",    format: "text" },
+      { key: "department",    label: "Department",     format: "text" },
+      { key: "designation",   label: "Designation",    format: "text" },
+      { key: "doj",           label: "DOJ",            format: "date" },
+      { key: "source",        label: "Source",         format: "text" },
+      { key: "sub_source",    label: "Sub Source",     format: "text" },
+      { key: "mobile",        label: "Mobile No",      format: "text" },
+      { key: "net_inhand",    label: "Net In Hand",    format: "currency", align: "right" },
+      { key: "ctc_offered",   label: "Offered CTC",    format: "currency", align: "right" },
     ],
     async query(f: LegacyFilter) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
-      const [dw, dv] = f.from_date
-        ? dateRangeWhere("e.date_of_joining", f.from_date, f.to_date)
+      const [dw, dv] = f.from_date ? dateRangeWhere("e.date_of_joining", f.from_date, f.to_date)
         : monthWhere("e.date_of_joining", f.month);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name, cc.cost_centre_code AS cost_centre,
                COALESCE(dpm.dept_name,'') AS department,
@@ -1914,9 +1377,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${bw} ${dw}
         ORDER BY bm.branch_name, e.date_of_joining DESC
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...dv],
-      );
+      `, [...bv, ...dv]);
     },
   },
 
@@ -1924,38 +1385,26 @@ const REPORTS: Record<string, ReportDef> = {
   "left-employees": {
     label: "Left Employees",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
+      { key: "employee_code", label: "Emp Code",      format: "text" },
       { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "department", label: "Department", format: "text" },
-      { key: "designation", label: "Designation", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "cost_centre", label: "Cost Centre", format: "text" },
-      { key: "mobile", label: "Mobile No", format: "text" },
-      { key: "doj", label: "DOJ", format: "date" },
-      { key: "dol", label: "Left Date", format: "date" },
-      { key: "left_remarks", label: "Left Remarks", format: "text" },
-      { key: "source", label: "Source", format: "text" },
-      { key: "sub_source", label: "Sub Source", format: "text" },
-      {
-        key: "net_inhand",
-        label: "Net In Hand",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "ctc_offered",
-        label: "Offered CTC",
-        format: "currency",
-        align: "right",
-      },
+      { key: "department",    label: "Department",    format: "text" },
+      { key: "designation",   label: "Designation",   format: "text" },
+      { key: "branch_name",   label: "Branch",        format: "text" },
+      { key: "cost_centre",   label: "Cost Centre",   format: "text" },
+      { key: "mobile",        label: "Mobile No",     format: "text" },
+      { key: "doj",           label: "DOJ",           format: "date" },
+      { key: "dol",           label: "Left Date",     format: "date" },
+      { key: "left_remarks",  label: "Left Remarks",  format: "text" },
+      { key: "source",        label: "Source",        format: "text" },
+      { key: "sub_source",    label: "Sub Source",    format: "text" },
+      { key: "net_inhand",    label: "Net In Hand",   format: "currency", align: "right" },
+      { key: "ctc_offered",   label: "Offered CTC",   format: "currency", align: "right" },
     ],
     async query(f: LegacyFilter) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
-      const [dw, dv] = f.from_date
-        ? dateRangeWhere("e.date_of_leaving", f.from_date, f.to_date)
+      const [dw, dv] = f.from_date ? dateRangeWhere("e.date_of_leaving", f.from_date, f.to_date)
         : monthWhere("e.date_of_leaving", f.month);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                COALESCE(dpm.dept_name,'') AS department,
                dm.designation_name AS designation,
@@ -1973,9 +1422,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE (e.active_status = 0 OR e.date_of_leaving IS NOT NULL) ${bw} ${dw}
         ORDER BY bm.branch_name, e.date_of_leaving DESC
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...dv],
-      );
+      `, [...bv, ...dv]);
     },
   },
 
@@ -1988,33 +1435,22 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Professional Tax Register",
     sumCols: ["pt_amount"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
+      { key: "employee_code", label: "Emp Code",      format: "text" },
       { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "process_name", label: "Process", format: "text" },
-      { key: "run_month", label: "Month", format: "text" },
-      {
-        key: "pt_amount",
-        label: "PT Amount",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "gross_salary",
-        label: "Gross Salary",
-        format: "currency",
-        align: "right",
-      },
-      { key: "pt_state", label: "PT State", format: "text" },
+      { key: "branch_name",   label: "Branch",        format: "text" },
+      { key: "process_name",  label: "Process",       format: "text" },
+      { key: "run_month",     label: "Month",         format: "text" },
+      { key: "pt_amount",     label: "PT Amount",     format: "currency", align: "right" },
+      { key: "gross_salary",  label: "Gross Salary",  format: "currency", align: "right" },
+      { key: "pt_state",      label: "PT State",      format: "text" },
     ],
     async query(f: LegacyFilter) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
-      const mw = f.month ? "AND spr.run_month = ?" : "";
-      const mv = f.month ? [f.month] : [];
+      const mw  = f.month ? "AND spr.run_month = ?" : "";
+      const mv  = f.month ? [f.month] : [];
       const [ew, ev] = empWhere("spl.employee_code", f.employee_code);
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT spl.employee_code, e.full_name AS employee_name,
                bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
                spr.run_month,
@@ -2033,9 +1469,7 @@ const REPORTS: Record<string, ReportDef> = {
         HAVING pt_amount > 0
         ORDER BY bm.branch_name, spl.employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...mv, ...ev, ...pv],
-      );
+      `, [...bv, ...mv, ...ev, ...pv]);
     },
   },
 
@@ -2044,35 +1478,19 @@ const REPORTS: Record<string, ReportDef> = {
     label: "PF ECR Export",
     sumCols: ["epf_employee", "eps_employer"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "uan", label: "UAN", format: "text" },
-      { key: "member_name", label: "Member Name", format: "text" },
-      {
-        key: "pf_wages",
-        label: "PF Wages",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "epf_employee",
-        label: "EPF Employee",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "eps_employer",
-        label: "EPS Employer",
-        format: "currency",
-        align: "right",
-      },
-      { key: "run_month", label: "Month", format: "text" },
+      { key: "employee_code", label: "Emp Code",    format: "text" },
+      { key: "uan",           label: "UAN",         format: "text" },
+      { key: "member_name",   label: "Member Name", format: "text" },
+      { key: "pf_wages",      label: "PF Wages",    format: "currency", align: "right" },
+      { key: "epf_employee",  label: "EPF Employee",format: "currency", align: "right" },
+      { key: "eps_employer",  label: "EPS Employer",format: "currency", align: "right" },
+      { key: "run_month",     label: "Month",       format: "text" },
     ],
     async query(f: LegacyFilter) {
-      const mw = f.month ? "AND spr.run_month = ?" : "";
-      const mv = f.month ? [f.month] : [];
+      const mw  = f.month ? "AND spr.run_month = ?" : "";
+      const mv  = f.month ? [f.month] : [];
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
-      return q(
-        `
+      return q(`
         SELECT spl.employee_code,
                COALESCE(e.uan_number, '') AS uan,
                e.full_name AS member_name,
@@ -2087,72 +1505,32 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE spl.pf_employee > 0 ${bw} ${mw}
         ORDER BY bm.branch_name, spl.employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...mv],
-      );
+      `, [...bv, ...mv]);
     },
   },
 
   // ── Payroll Cost Summary ──────────────────────────────────────────────────
   "payroll-cost-summary": {
     label: "Payroll Cost Summary",
-    sumCols: [
-      "employee_count",
-      "total_gross",
-      "total_pf_employer",
-      "total_esic_employer",
-      "total_ctc",
-      "total_net",
-    ],
+    sumCols: ["employee_count","total_gross","total_pf_employer","total_esic_employer","total_ctc","total_net"],
     columns: [
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "process_name", label: "Process", format: "text" },
-      { key: "department_name", label: "Department", format: "text" },
-      { key: "run_month", label: "Month", format: "text" },
-      {
-        key: "employee_count",
-        label: "Head Count",
-        format: "number",
-        align: "right",
-      },
-      {
-        key: "total_gross",
-        label: "Total Gross",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_pf_employer",
-        label: "EPF Co",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_esic_employer",
-        label: "ESIC Co",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_ctc",
-        label: "Total CTC",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_net",
-        label: "Total Net",
-        format: "currency",
-        align: "right",
-      },
+      { key: "branch_name",        label: "Branch",         format: "text" },
+      { key: "process_name",       label: "Process",        format: "text" },
+      { key: "department_name",    label: "Department",     format: "text" },
+      { key: "run_month",          label: "Month",          format: "text" },
+      { key: "employee_count",     label: "Head Count",     format: "number", align: "right" },
+      { key: "total_gross",        label: "Total Gross",    format: "currency", align: "right" },
+      { key: "total_pf_employer",  label: "EPF Co",         format: "currency", align: "right" },
+      { key: "total_esic_employer",label: "ESIC Co",        format: "currency", align: "right" },
+      { key: "total_ctc",          label: "Total CTC",      format: "currency", align: "right" },
+      { key: "total_net",          label: "Total Net",      format: "currency", align: "right" },
     ],
     async query(f: LegacyFilter) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const mw = f.month ? "AND spr.run_month = ?" : "";
       const mv = f.month ? [f.month] : [];
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
                COALESCE(dpm.dept_name,'') AS department_name,
                spr.run_month,
@@ -2178,85 +1556,33 @@ const REPORTS: Record<string, ReportDef> = {
         GROUP BY bm.branch_name, pm.process_name, dpm.dept_name, spr.run_month
         ORDER BY bm.branch_name, pm.process_name
         LIMIT 5000
-      `,
-        [...bv, ...mv, ...pv],
-      );
+      `, [...bv, ...mv, ...pv]);
     },
   },
 
   // ── Payroll Reconciliation ────────────────────────────────────────────────
   "payroll-reconciliation": {
     label: "Payroll Reconciliation",
-    sumCols: [
-      "employee_count",
-      "total_gross",
-      "total_deductions",
-      "total_net",
-      "total_pf_employee",
-      "total_esic_employee",
-      "total_tds",
-      "total_lwp_deduction",
-    ],
+    sumCols: ["employee_count","total_gross","total_deductions","total_net","total_pf_employee","total_esic_employee","total_tds","total_lwp_deduction"],
     columns: [
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "process_name", label: "Process", format: "text" },
-      { key: "run_month", label: "Month", format: "text" },
-      {
-        key: "employee_count",
-        label: "Head Count",
-        format: "number",
-        align: "right",
-      },
-      {
-        key: "total_gross",
-        label: "Total Gross",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_deductions",
-        label: "Total Deductions",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_net",
-        label: "Total Net",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_pf_employee",
-        label: "Total EPF",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_esic_employee",
-        label: "Total ESIC",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_tds",
-        label: "Total TDS",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "total_lwp_deduction",
-        label: "Total LWP Ded",
-        format: "currency",
-        align: "right",
-      },
+      { key: "branch_name",          label: "Branch",          format: "text" },
+      { key: "process_name",         label: "Process",         format: "text" },
+      { key: "run_month",            label: "Month",           format: "text" },
+      { key: "employee_count",       label: "Head Count",      format: "number", align: "right" },
+      { key: "total_gross",          label: "Total Gross",     format: "currency", align: "right" },
+      { key: "total_deductions",     label: "Total Deductions",format: "currency", align: "right" },
+      { key: "total_net",            label: "Total Net",       format: "currency", align: "right" },
+      { key: "total_pf_employee",    label: "Total EPF",       format: "currency", align: "right" },
+      { key: "total_esic_employee",  label: "Total ESIC",      format: "currency", align: "right" },
+      { key: "total_tds",            label: "Total TDS",       format: "currency", align: "right" },
+      { key: "total_lwp_deduction",  label: "Total LWP Ded",   format: "currency", align: "right" },
     ],
     async query(f: LegacyFilter) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const mw = f.month ? "AND spr.run_month = ?" : "";
       const mv = f.month ? [f.month] : [];
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
                spr.run_month,
                COUNT(DISTINCT spl.employee_code) AS employee_count,
@@ -2276,9 +1602,7 @@ const REPORTS: Record<string, ReportDef> = {
         GROUP BY bm.branch_name, pm.process_name, spr.run_month
         ORDER BY bm.branch_name, spr.run_month
         LIMIT 5000
-      `,
-        [...bv, ...mv, ...pv],
-      );
+      `, [...bv, ...mv, ...pv]);
     },
   },
 
@@ -2286,56 +1610,25 @@ const REPORTS: Record<string, ReportDef> = {
   "payroll-variance": {
     label: "Payroll Variance Report",
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "process_name", label: "Process", format: "text" },
-      { key: "department_name", label: "Department", format: "text" },
-      { key: "run_month", label: "Month", format: "text" },
-      {
-        key: "current_gross",
-        label: "Current Gross",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "previous_gross",
-        label: "Previous Gross",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "variance_gross",
-        label: "Variance Gross",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "current_net",
-        label: "Current Net",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "previous_net",
-        label: "Previous Net",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "variance_net",
-        label: "Variance Net",
-        format: "currency",
-        align: "right",
-      },
-      { key: "variance_flag", label: "Flag", format: "status" },
+      { key: "employee_code",   label: "Emp Code",       format: "text" },
+      { key: "employee_name",   label: "Employee Name",  format: "text" },
+      { key: "branch_name",     label: "Branch",         format: "text" },
+      { key: "process_name",    label: "Process",        format: "text" },
+      { key: "department_name", label: "Department",     format: "text" },
+      { key: "run_month",       label: "Month",          format: "text" },
+      { key: "current_gross",   label: "Current Gross",  format: "currency", align: "right" },
+      { key: "previous_gross",  label: "Previous Gross", format: "currency", align: "right" },
+      { key: "variance_gross",  label: "Variance Gross", format: "currency", align: "right" },
+      { key: "current_net",     label: "Current Net",    format: "currency", align: "right" },
+      { key: "previous_net",    label: "Previous Net",   format: "currency", align: "right" },
+      { key: "variance_net",    label: "Variance Net",   format: "currency", align: "right" },
+      { key: "variance_flag",   label: "Flag",           format: "status" },
     ],
     async query(f: LegacyFilter) {
       const month = f.month || new Date().toISOString().slice(0, 7);
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const [pw, pv] = processWhere("pm", f.process);
-      return q(
-        `
+      return q(`
         SELECT cur.employee_code, e.full_name AS employee_name,
                bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
                COALESCE(dpm.dept_name,'') AS department_name,
@@ -2363,9 +1656,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${bw} ${pw}
         ORDER BY bm.branch_name, cur.employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [month, month, month, ...bv, ...pv],
-      );
+      `, [month, month, month, ...bv, ...pv]);
     },
   },
 
@@ -2374,38 +1665,32 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Tally Invoice Data",
     sumCols: ["total_amt", "tax_amt", "grand_total"],
     columns: [
-      { key: "bill_no", label: "Bill No", format: "text" },
-      { key: "payment_status", label: "Pending", format: "text" },
-      { key: "cost_centre_code", label: "Process Code", format: "text" },
-      { key: "bill_branch", label: "Branch", format: "text" },
-      { key: "bill_client", label: "Client", format: "text" },
-      { key: "finance_year", label: "Financial Year", format: "text" },
-      { key: "month_label", label: "Month", format: "text" },
-      { key: "po_no", label: "PO No", format: "text" },
-      { key: "grn", label: "GRN No", format: "text" },
-      { key: "invoice_date", label: "Invoice Date", format: "text" },
-      { key: "total_amt", label: "Amount", format: "currency", align: "right" },
-      { key: "igst", label: "IGST", format: "currency", align: "right" },
-      { key: "cgst", label: "CGST", format: "currency", align: "right" },
-      { key: "sgst", label: "SGST", format: "currency", align: "right" },
-      {
-        key: "grand_total",
-        label: "G Total",
-        format: "currency",
-        align: "right",
-      },
-      { key: "invoice_type", label: "Type", format: "text" },
-      { key: "category", label: "Category", format: "text" },
+      { key: "bill_no",           label: "Bill No",        format: "text" },
+      { key: "payment_status",    label: "Pending",        format: "text" },
+      { key: "cost_centre_code",  label: "Process Code",   format: "text" },
+      { key: "bill_branch",       label: "Branch",         format: "text" },
+      { key: "bill_client",       label: "Client",         format: "text" },
+      { key: "finance_year",      label: "Financial Year", format: "text" },
+      { key: "month_label",       label: "Month",          format: "text" },
+      { key: "po_no",             label: "PO No",          format: "text" },
+      { key: "grn",               label: "GRN No",         format: "text" },
+      { key: "invoice_date",      label: "Invoice Date",   format: "text" },
+      { key: "total_amt",         label: "Amount",         format: "currency", align: "right" },
+      { key: "igst",              label: "IGST",           format: "currency", align: "right" },
+      { key: "cgst",              label: "CGST",           format: "currency", align: "right" },
+      { key: "sgst",              label: "SGST",           format: "currency", align: "right" },
+      { key: "grand_total",       label: "G Total",        format: "currency", align: "right" },
+      { key: "invoice_type",      label: "Type",           format: "text" },
+      { key: "category",          label: "Category",       format: "text" },
     ],
     async query(f: LegacyFilter) {
       const bCond = f.branch ? "AND bill_branch = ?" : "";
-      const bv = f.branch ? [f.branch] : [];
-      const mCond = f.month ? "AND month_label LIKE ?" : "";
-      const mv = f.month ? [`%${f.month.split("-")[1]}%`] : [];
+      const bv    = f.branch ? [f.branch] : [];
+      const mCond = f.month  ? "AND month_label LIKE ?" : "";
+      const mv    = f.month  ? [`%${f.month.split('-')[1]}%`] : [];
       const fyCond = f.from_date ? "AND finance_year = ?" : "";
-      const fyv = f.from_date ? [f.from_date] : [];
-      return q(
-        `
+      const fyv    = f.from_date ? [f.from_date] : [];
+      return q(`
         SELECT bill_no,
                IF(payment_status='paid','Paid','Pending') AS payment_status,
                cost_centre_code, bill_branch, bill_client,
@@ -2421,9 +1706,7 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${bCond} ${mCond} ${fyCond}
         ORDER BY finance_year DESC, month_label, bill_no
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...mv, ...fyv],
-      );
+      `, [...bv, ...mv, ...fyv]);
     },
   },
 
@@ -2432,27 +1715,21 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Bank Transfer File",
     sumCols: ["net_salary"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "bank_name", label: "Bank Name", format: "text" },
-      { key: "account_number", label: "Account No", format: "text" },
-      { key: "ifsc_code", label: "IFSC Code", format: "text" },
-      {
-        key: "net_salary",
-        label: "Net Amount",
-        format: "currency",
-        align: "right",
-      },
-      { key: "pay_mode", label: "Pay Mode", format: "text" },
-      { key: "salary_month", label: "Month", format: "text" },
+      { key: "employee_code",  label: "Emp Code",       format: "text" },
+      { key: "employee_name",  label: "Employee Name",  format: "text" },
+      { key: "branch_name",    label: "Branch",         format: "text" },
+      { key: "bank_name",      label: "Bank Name",      format: "text" },
+      { key: "account_number", label: "Account No",     format: "text" },
+      { key: "ifsc_code",      label: "IFSC Code",      format: "text" },
+      { key: "net_salary",     label: "Net Amount",     format: "currency", align: "right" },
+      { key: "pay_mode",       label: "Pay Mode",       format: "text" },
+      { key: "salary_month",   label: "Month",          format: "text" },
     ],
     async query(f: LegacyFilter) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
       const month = f.month || new Date().toISOString().slice(0, 7);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
                COALESCE(ebd.bank_name, e.bank_name) AS bank_name,
@@ -2470,9 +1747,7 @@ const REPORTS: Record<string, ReportDef> = {
           AND (ebd.account_number IS NOT NULL OR e.bank_account_number IS NOT NULL)
         ORDER BY bm.branch_name, e.employee_code
         LIMIT ${f._limit ?? 50000}
-      `,
-        [month, ...bv, ...ev],
-      );
+      `, [month, ...bv, ...ev]);
     },
   },
 
@@ -2481,34 +1756,26 @@ const REPORTS: Record<string, ReportDef> = {
     label: "TDS Summary",
     sumCols: ["total_tds"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "tax_month", label: "Tax Month", format: "text" },
-      {
-        key: "total_tds",
-        label: "Income Tax",
-        format: "currency",
-        align: "right",
-      },
+      { key: "employee_code",  label: "Emp Code",      format: "text" },
+      { key: "employee_name",  label: "Employee Name", format: "text" },
+      { key: "branch_name",    label: "Branch",        format: "text" },
+      { key: "tax_month",      label: "Tax Month",     format: "text" },
+      { key: "total_tds",      label: "Income Tax",    format: "currency", align: "right" },
     ],
     async query(f: LegacyFilter) {
       const bCond = f.branch ? "AND branch_name = ?" : "";
-      const bv = f.branch ? [f.branch] : [];
+      const bv    = f.branch ? [f.branch] : [];
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      const mCond = f.month ? "AND tax_month = ?" : "";
-      const mv = f.month ? [f.month] : [];
-      return q(
-        `
+      const mCond = f.month  ? "AND tax_month = ?" : "";
+      const mv    = f.month  ? [f.month] : [];
+      return q(`
         SELECT employee_code, employee_name, branch_name,
                tax_month, income_tax AS total_tds
         FROM incometax_legacy_snapshot
         WHERE 1=1 ${bCond} ${ew} ${mCond}
         ORDER BY branch_name, employee_code, tax_month DESC
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...ev, ...mv],
-      );
+      `, [...bv, ...ev, ...mv]);
     },
   },
 
@@ -2517,35 +1784,19 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Gratuity Liability",
     sumCols: ["gratuity_liability"],
     columns: [
-      { key: "employee_code", label: "Emp Code", format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "date_of_joining", label: "DOJ", format: "date" },
-      {
-        key: "years_of_service",
-        label: "Years",
-        format: "number",
-        align: "right",
-      },
-      {
-        key: "last_basic",
-        label: "Last Basic",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "gratuity_liability",
-        label: "Gratuity",
-        format: "currency",
-        align: "right",
-      },
-      { key: "eligible", label: "Eligible", format: "text" },
+      { key: "employee_code",      label: "Emp Code",       format: "text" },
+      { key: "employee_name",      label: "Employee Name",  format: "text" },
+      { key: "branch_name",        label: "Branch",         format: "text" },
+      { key: "date_of_joining",    label: "DOJ",            format: "date" },
+      { key: "years_of_service",   label: "Years",          format: "number", align: "right" },
+      { key: "last_basic",         label: "Last Basic",     format: "currency", align: "right" },
+      { key: "gratuity_liability", label: "Gratuity",       format: "currency", align: "right" },
+      { key: "eligible",           label: "Eligible",       format: "text" },
     ],
     async query(f: LegacyFilter) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
-      return q(
-        `
+      return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
                e.date_of_joining,
@@ -2565,9 +1816,7 @@ const REPORTS: Record<string, ReportDef> = {
         GROUP BY e.id, e.employee_code, e.full_name, bm.branch_name, e.date_of_joining
         ORDER BY gratuity_liability DESC, bm.branch_name
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...ev],
-      );
+      `, [...bv, ...ev]);
     },
   },
 
@@ -2593,45 +1842,24 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Client Bill Collection History",
     sumCols: ["bill_amount", "tds_deducted", "net_amount"],
     columns: [
-      { key: "bill_no", label: "Bill No", format: "text" },
-      { key: "branch_name", label: "Branch", format: "text" },
-      { key: "financial_year", label: "Financial Year", format: "text" },
-      {
-        key: "bill_amount",
-        label: "Bill Amount",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "tds_deducted",
-        label: "TDS Deducted by Client",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "deduction",
-        label: "Other Deduction",
-        format: "currency",
-        align: "right",
-      },
-      {
-        key: "net_amount",
-        label: "Net Collected",
-        format: "currency",
-        align: "right",
-      },
-      { key: "payment_completeness", label: "Completeness", format: "status" },
-      { key: "bill_passed", label: "Bill Passed", format: "text" },
-      { key: "status", label: "Status", format: "status" },
-      { key: "bank_name", label: "Bank", format: "text" },
-      { key: "pay_type_date", label: "Collected On", format: "date" },
-      { key: "raised_by", label: "Raised By", format: "text" },
+      { key: "bill_no",              label: "Bill No",       format: "text" },
+      { key: "branch_name",          label: "Branch",        format: "text" },
+      { key: "financial_year",       label: "Financial Year", format: "text" },
+      { key: "bill_amount",          label: "Bill Amount",   format: "currency", align: "right" },
+      { key: "tds_deducted",         label: "TDS Deducted by Client", format: "currency", align: "right" },
+      { key: "deduction",            label: "Other Deduction", format: "currency", align: "right" },
+      { key: "net_amount",           label: "Net Collected", format: "currency", align: "right" },
+      { key: "payment_completeness", label: "Completeness",  format: "status" },
+      { key: "bill_passed",          label: "Bill Passed",   format: "text" },
+      { key: "status",               label: "Status",        format: "status" },
+      { key: "bank_name",            label: "Bank",          format: "text" },
+      { key: "pay_type_date",        label: "Collected On",  format: "date" },
+      { key: "raised_by",            label: "Raised By",     format: "text" },
     ],
     async query(f: LegacyFilter) {
       const [bw, bv] = branchWhere("branch_name", f.branch);
       const [dw, dv] = dateRangeWhere("pay_type_date", f.from_date, f.to_date);
-      return q(
-        `
+      return q(`
         SELECT bill_no, branch_name, financial_year,
                COALESCE(bill_amount,0)  AS bill_amount,
                COALESCE(tds_deducted,0) AS tds_deducted,
@@ -2643,25 +1871,20 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE is_deleted = 0 ${bw} ${dw}
         ORDER BY pay_type_date DESC, bill_source_id DESC
         LIMIT ${f._limit ?? 50000}
-      `,
-        [...bv, ...dv],
-      );
+      `, [...bv, ...dv]);
     },
   },
+
 };
 
 // "employee-master" is an alias for "legacy-employee-master"
-(REPORTS as Record<string, unknown>)["employee-master"] =
-  REPORTS["legacy-employee-master"];
+(REPORTS as Record<string, unknown>)["employee-master"] = REPORTS["legacy-employee-master"];
 
 // ── public API ─────────────────────────────────────────────────────────────────
 
 export const legacyReportsService = {
   list(): { code: string; label: string }[] {
-    return Object.entries(REPORTS).map(([code, def]) => ({
-      code,
-      label: def.label,
-    }));
+    return Object.entries(REPORTS).map(([code, def]) => ({ code, label: def.label }));
   },
 
   async run(
@@ -2673,29 +1896,21 @@ export const legacyReportsService = {
     if (!def) throw new Error(`Unknown legacy report: ${code}`);
     const EXPORT_HARD_LIMIT = 200_000;
     const displayLimit = def.defaultDisplayLimit;
-    const effectiveLimit = options?.forExport
-      ? EXPORT_HARD_LIMIT
-      : (displayLimit ?? 50_000);
+    const effectiveLimit = options?.forExport ? EXPORT_HARD_LIMIT : (displayLimit ?? 50_000);
     const enriched: LegacyFilter = { ...filter, _limit: effectiveLimit };
     const rows = (await def.query(enriched)) as Record<string, unknown>[];
     const summary = def.sumCols ? numSum(rows, def.sumCols) : undefined;
     // Truncated for display when capped by defaultDisplayLimit
-    const truncatedDisplay =
-      !options?.forExport &&
-      displayLimit != null &&
-      rows.length >= displayLimit;
+    const truncatedDisplay = !options?.forExport && displayLimit != null && rows.length >= displayLimit;
     // Truncated for export when rows hit the hard cap
-    const truncatedExport =
-      options?.forExport && rows.length >= EXPORT_HARD_LIMIT;
+    const truncatedExport  = options?.forExport && rows.length >= EXPORT_HARD_LIMIT;
     return {
       columns: def.columns,
       rows,
       total: rows.length,
       summary,
       ...(truncatedDisplay ? { truncated: true, displayLimit } : {}),
-      ...(truncatedExport
-        ? { truncated: true, displayLimit: EXPORT_HARD_LIMIT }
-        : {}),
+      ...(truncatedExport  ? { truncated: true, displayLimit: EXPORT_HARD_LIMIT } : {}),
     };
   },
 
@@ -2722,16 +1937,13 @@ export const legacyReportsService = {
       }
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const warning =
-      result.truncated && result.displayLimit
-        ? `"WARNING: Export capped at ${result.displayLimit.toLocaleString()} rows. Apply branch/date/employee filters and re-export to get the full dataset."\n`
-        : "";
-    const header = result.columns.map((c) => esc(c.label, false)).join(",");
-    const body = result.rows
-      .map((r) =>
-        result.columns.map((c) => esc(r[c.key], c.format === "text")).join(","),
-      )
-      .join("\n");
+    const warning = result.truncated && result.displayLimit
+      ? `"WARNING: Export capped at ${result.displayLimit.toLocaleString()} rows. Apply branch/date/employee filters and re-export to get the full dataset."\n`
+      : "";
+    const header = result.columns.map(c => esc(c.label, false)).join(",");
+    const body   = result.rows.map(r =>
+      result.columns.map(c => esc(r[c.key], c.format === "text")).join(",")
+    ).join("\n");
     return warning + header + "\n" + body;
   },
 
@@ -2739,22 +1951,17 @@ export const legacyReportsService = {
   // renders them as text (no scientific notation, no leading-zero stripping).
   toXlsb(result: LegacyReportResult, sheetName = "Report"): Buffer {
     const TEXT_PREFIX_KEYS = new Set([
-      "ac_no",
-      "account_number",
-      "uan",
-      "epf_no",
-      "esic_no",
-      "cheque_no",
-      "ifsc_code",
+      "ac_no", "account_number", "uan", "epf_no", "esic_no",
+      "cheque_no", "ifsc_code",
     ]);
-    const header = result.columns.map((c) => c.label);
-    const dataRows = result.rows.map((r) =>
-      result.columns.map((c) => {
+    const header = result.columns.map(c => c.label);
+    const dataRows = result.rows.map(r =>
+      result.columns.map(c => {
         const v = r[c.key];
         const s = v != null ? String(v) : "";
         if (TEXT_PREFIX_KEYS.has(c.key) && s.trim() !== "") return `'${s}`;
         return v ?? "";
-      }),
+      })
     );
     const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
     const wb = XLSX.utils.book_new();

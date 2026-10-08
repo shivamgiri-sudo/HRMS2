@@ -8,11 +8,7 @@ import {
 } from "../src/modules/leave/leave.validation.js";
 
 describe("createLeaveTypeSchema", () => {
-  const valid = {
-    leaveCode: "CL",
-    leaveName: "Casual Leave",
-    maxDaysPerYear: 12,
-  };
+  const valid = { leaveCode: "CL", leaveName: "Casual Leave", maxDaysPerYear: 12 };
 
   it("accepts valid input", () => {
     const r = createLeaveTypeSchema.parse(valid);
@@ -20,9 +16,7 @@ describe("createLeaveTypeSchema", () => {
   });
 
   it("rejects empty leaveCode", () => {
-    expect(() =>
-      createLeaveTypeSchema.parse({ ...valid, leaveCode: "" }),
-    ).toThrow();
+    expect(() => createLeaveTypeSchema.parse({ ...valid, leaveCode: "" })).toThrow();
   });
 
   it("defaults carryForward and requiresApproval", () => {
@@ -33,9 +27,7 @@ describe("createLeaveTypeSchema", () => {
   });
 
   it("rejects negative maxDaysPerYear", () => {
-    expect(() =>
-      createLeaveTypeSchema.parse({ ...valid, maxDaysPerYear: -1 }),
-    ).toThrow();
+    expect(() => createLeaveTypeSchema.parse({ ...valid, maxDaysPerYear: -1 })).toThrow();
   });
 });
 
@@ -53,27 +45,18 @@ describe("leaveRequestSchema", () => {
   });
 
   it("accepts non-empty legacy database identifiers", () => {
-    const parsed = leaveRequestSchema.parse({
-      ...valid,
-      employeeId: "legacy-employee-1",
-    });
+    const parsed = leaveRequestSchema.parse({ ...valid, employeeId: "legacy-employee-1" });
     expect(parsed.employeeId).toBe("legacy-employee-1");
   });
 
   it("rejects toDate before fromDate", () => {
     expect(() =>
-      leaveRequestSchema.parse({
-        ...valid,
-        fromDate: "2026-06-05",
-        toDate: "2026-06-01",
-      }),
+      leaveRequestSchema.parse({ ...valid, fromDate: "2026-06-05", toDate: "2026-06-01" })
     ).toThrow();
   });
 
   it("rejects totalDays less than 0.5", () => {
-    expect(() =>
-      leaveRequestSchema.parse({ ...valid, totalDays: 0 }),
-    ).toThrow();
+    expect(() => leaveRequestSchema.parse({ ...valid, totalDays: 0 })).toThrow();
   });
 });
 
@@ -103,19 +86,11 @@ describe("leaveRequestFiltersSchema", () => {
 
 describe("createHolidaySchema", () => {
   it("accepts valid holiday", () => {
-    const r = createHolidaySchema.parse({
-      holidayName: "Diwali",
-      holidayDate: "2026-10-20",
-    });
+    const r = createHolidaySchema.parse({ holidayName: "Diwali", holidayDate: "2026-10-20" });
     expect(r.holidayType).toBe("national");
   });
 
   it("rejects invalid date", () => {
-    expect(() =>
-      createHolidaySchema.parse({
-        holidayName: "X",
-        holidayDate: "20-10-2026",
-      }),
-    ).toThrow();
+    expect(() => createHolidaySchema.parse({ holidayName: "X", holidayDate: "20-10-2026" })).toThrow();
   });
 });

@@ -5,18 +5,13 @@
  * they carry no name. Names live in HRMS, so they are resolved from
  * mas_hrms.employees. A code with no HRMS record is simply absent from the map.
  */
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
 
 /** Upper-cased, trimmed employee code — the form both sides are matched in. */
-export const codeKey = (code: unknown) =>
-  String(code ?? "")
-    .trim()
-    .toUpperCase();
+export const codeKey = (code: unknown) => String(code ?? '').trim().toUpperCase();
 
-export async function resolveEmployeeNames(
-  codes: string[],
-): Promise<Map<string, string>> {
+export async function resolveEmployeeNames(codes: string[]): Promise<Map<string, string>> {
   const unique = [...new Set(codes.map(codeKey).filter(Boolean))];
   const names = new Map<string, string>();
   if (unique.length === 0) return names;

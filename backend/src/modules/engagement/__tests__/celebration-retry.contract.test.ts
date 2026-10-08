@@ -34,17 +34,13 @@ afterEach(() => {
 
 /** Advance to the first 08:00 firing. */
 async function advanceToFirstRun() {
-  await vi.advanceTimersByTimeAsync(
-    cron.millisecondsUntilNextCelebrationSweep() + 10,
-  );
+  await vi.advanceTimersByTimeAsync(cron.millisecondsUntilNextCelebrationSweep() + 10);
 }
 
 describe("celebration sweep survives a transient failure", () => {
   it("retries instead of skipping the day", async () => {
     runCelebrationSweep
-      .mockRejectedValueOnce(
-        new Error("Database circuit breaker open. Retry after 40s"),
-      )
+      .mockRejectedValueOnce(new Error("Database circuit breaker open. Retry after 40s"))
       .mockResolvedValueOnce(OK);
 
     cron.startCelebrationScheduler();
@@ -57,14 +53,11 @@ describe("celebration sweep survives a transient failure", () => {
   });
 
   it("keeps retrying while the breaker stays open, up to the cap", async () => {
-    runCelebrationSweep.mockRejectedValue(
-      new Error("Database circuit breaker open"),
-    );
+    runCelebrationSweep.mockRejectedValue(new Error("Database circuit breaker open"));
 
     cron.startCelebrationScheduler();
     await advanceToFirstRun();
-    for (let i = 0; i < 8; i++)
-      await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
+    for (let i = 0; i < 8; i++) await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
 
     // Bounded: it must not hammer a struggling database forever.
     expect(runCelebrationSweep).toHaveBeenCalledTimes(6);
@@ -86,8 +79,7 @@ describe("celebration sweep survives a transient failure", () => {
 
     cron.startCelebrationScheduler();
     await advanceToFirstRun();
-    for (let i = 0; i < 8; i++)
-      await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
+    for (let i = 0; i < 8; i++) await vi.advanceTimersByTimeAsync(5 * 60_000 + 10);
     expect(runCelebrationSweep).toHaveBeenCalledTimes(6);
 
     // A day that fails outright must not disable the scheduler permanently.

@@ -3,16 +3,10 @@ import { describe, it, expect, vi } from "vitest";
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 
-import {
-  ACTION_ITEM_MAP,
-  resolveActionItemDef,
-} from "../../work-inbox/action-item-registry.js";
+import { ACTION_ITEM_MAP, resolveActionItemDef } from "../../work-inbox/action-item-registry.js";
 import { triggerAwolSuspected } from "../../work-inbox/work-inbox.triggers.js";
 import { runAwolDetectionScan } from "../awol-detection.service.js";
-import {
-  startEmployeeLifecycleWorker,
-  stopEmployeeLifecycleWorker,
-} from "../../../workers/employee-lifecycle.worker.js";
+import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "../../../workers/employee-lifecycle.worker.js";
 
 describe("AWOL detection wiring smoke test", () => {
   it("registers AWOL_SUSPECTED with the expected shape", () => {
@@ -52,9 +46,7 @@ describe("AWOL detection wiring smoke test", () => {
       absentDays: 7,
     });
 
-    const inserts = dbExecute.mock.calls.filter((c) =>
-      String(c[0]).includes("INSERT INTO work_item"),
-    );
+    const inserts = dbExecute.mock.calls.filter((c) => String(c[0]).includes("INSERT INTO work_item"));
     expect(inserts).toHaveLength(2);
     expect(inserts[0][1]).toContain("AWOL_SUSPECTED");
     expect(inserts[0][1]).toContain("user-mgr-1"); // addressed to the manager, not a role
@@ -76,9 +68,7 @@ describe("AWOL detection wiring smoke test", () => {
     // Must be the INSERT, not the dedup SELECT — the SELECT's own params
     // (entity_type/entity_id/item_type) also happen to contain the string "AWOL_SUSPECTED".
     const suspected = dbExecute.mock.calls.find(
-      (c) =>
-        String(c[0]).includes("INSERT INTO work_item") &&
-        String(c[1]).includes("AWOL_SUSPECTED"),
+      (c) => String(c[0]).includes("INSERT INTO work_item") && String(c[1]).includes("AWOL_SUSPECTED"),
     );
     expect(suspected?.[1]).toContain("manager"); // role fallback, since no user id was supplied
   });
@@ -86,26 +76,10 @@ describe("AWOL detection wiring smoke test", () => {
   it("runAwolDetectionScan runs the query and isolates per-row trigger failures", async () => {
     dbExecute.mockReset();
     // scan query
-    dbExecute.mockResolvedValueOnce([
-      [
-        {
-          employee_id: "emp-1",
-          employee_code: "MAS1",
-          full_name: "Emp One",
-          branch_id: "b1",
-          reporting_manager_user_id: "user-mgr-1",
-          last_worked_date: "2026-09-01",
-        },
-        {
-          employee_id: "emp-2",
-          employee_code: "MAS2",
-          full_name: "Emp Two",
-          branch_id: "b2",
-          reporting_manager_user_id: null,
-          last_worked_date: null,
-        },
-      ],
-    ]);
+    dbExecute.mockResolvedValueOnce([[
+      { employee_id: "emp-1", employee_code: "MAS1", full_name: "Emp One", branch_id: "b1", reporting_manager_user_id: "user-mgr-1", last_worked_date: "2026-09-01" },
+      { employee_id: "emp-2", employee_code: "MAS2", full_name: "Emp Two", branch_id: "b2", reporting_manager_user_id: null, last_worked_date: null },
+    ]]);
     // trigger for emp-1: AWOL_SUSPECTED dedup + insert, AWOL_PAYROLL_NOTICE dedup + insert
     dbExecute.mockResolvedValueOnce([[]]);
     dbExecute.mockResolvedValueOnce([{ insertId: 1 }]);

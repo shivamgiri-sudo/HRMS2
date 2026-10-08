@@ -35,19 +35,11 @@ describe("pushScoreMonthCond", () => {
 });
 
 describe("team-overview route", () => {
-  const routes = readFileSync(
-    new URL("../management.routes.ts", import.meta.url),
-    "utf8",
-  );
-  const body = routes.slice(
-    routes.indexOf('router.get("/team-overview"'),
-    routes.indexOf('router.get("/agent-performance"'),
-  );
+  const routes = readFileSync(new URL("../management.routes.ts", import.meta.url), "utf8");
+  const body = routes.slice(routes.indexOf('router.get("/team-overview"'), routes.indexOf('router.get("/agent-performance"'));
   it("uses a sargable current-month range and resolves payroll access in the same wave", () => {
     expect(body).not.toContain("DATE_FORMAT(kda.score_date");
-    expect(body).toContain(
-      "kda.score_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')",
-    );
+    expect(body).toContain("kda.score_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')");
     expect(body).toContain("callerHasPayrollAccess(req.authUser!.id),\n  ]);");
   });
 });

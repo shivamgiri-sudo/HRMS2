@@ -44,17 +44,10 @@ export type ClassifiedUser =
 const INACTIVE_EMPLOYMENT_STATUSES = new Set(["resigned", "terminated"]);
 
 function isInactiveEmploymentStatus(status?: string): boolean {
-  return INACTIVE_EMPLOYMENT_STATUSES.has(
-    String(status ?? "")
-      .trim()
-      .toLowerCase(),
-  );
+  return INACTIVE_EMPLOYMENT_STATUSES.has(String(status ?? "").trim().toLowerCase());
 }
 
-export function buildSourceUserMaps(
-  employeeRows: EmployeeRow[],
-  excludedCosecIds: string[],
-): SourceMaps {
+export function buildSourceUserMaps(employeeRows: EmployeeRow[], excludedCosecIds: string[]): SourceMaps {
   const byCosecId = new Map<string, EmployeeRow>();
   const byEmployeeCode = new Map<string, EmployeeRow>();
   const inactiveSet = new Set<string>();
@@ -85,13 +78,9 @@ export function buildSourceUserMaps(
   };
 }
 
-export function classifySourceUser(
-  cosecUserId: string,
-  maps: SourceMaps,
-): ClassifiedUser {
+export function classifySourceUser(cosecUserId: string, maps: SourceMaps): ClassifiedUser {
   const key = String(cosecUserId);
-  if (maps.excludedSet.has(key) || isThirdPartyCosecUser(key))
-    return { kind: "excluded" };
+  if (maps.excludedSet.has(key) || isThirdPartyCosecUser(key)) return { kind: "excluded" };
   const employee = maps.byCosecId.get(key);
   if (!employee) return { kind: "unmapped" };
   if (maps.inactiveSet.has(key)) return { kind: "inactive", employee };

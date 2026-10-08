@@ -23,13 +23,7 @@ const SCOPE: ExecScope = {
   roles: ["super_admin"],
 };
 
-const OPTIONS: ExecOptions = {
-  limit: 100,
-  offset: 0,
-  cursor: null,
-  includeTotal: true,
-  mode: "preview",
-};
+const OPTIONS: ExecOptions = { limit: 100, offset: 0, cursor: null, includeTotal: true, mode: "preview" };
 
 describe("AON Attrition Rate", () => {
   // Without this, mockExecute's call history accumulates across tests in this file (vitest

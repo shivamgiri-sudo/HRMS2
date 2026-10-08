@@ -60,109 +60,47 @@ export interface UpdateWeekOffDefaultInput {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function assertValidCreateInput(input: CreateWeekOffDefaultInput) {
-  const validScopes: WeekOffDefaultScopeType[] = [
-    "global",
-    "branch",
-    "process",
-  ];
+  const validScopes: WeekOffDefaultScopeType[] = ["global", "branch", "process"];
   if (!validScopes.includes(input.scope_type)) {
-    throw Object.assign(
-      new Error(`scope_type must be one of ${validScopes.join(", ")}`),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error(`scope_type must be one of ${validScopes.join(", ")}`), { statusCode: 400 });
   }
   if (input.scope_type === "global") {
     if (input.process_id || input.branch_id) {
-      throw Object.assign(
-        new Error("process_id/branch_id must be omitted for scope_type=global"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("process_id/branch_id must be omitted for scope_type=global"), { statusCode: 400 });
     }
   } else if (input.scope_type === "process") {
-    if (!input.process_id)
-      throw Object.assign(
-        new Error("process_id is required for scope_type=process"),
-        { statusCode: 400 },
-      );
-    if (input.branch_id)
-      throw Object.assign(
-        new Error("branch_id must be omitted for scope_type=process"),
-        { statusCode: 400 },
-      );
+    if (!input.process_id) throw Object.assign(new Error("process_id is required for scope_type=process"), { statusCode: 400 });
+    if (input.branch_id) throw Object.assign(new Error("branch_id must be omitted for scope_type=process"), { statusCode: 400 });
   } else if (input.scope_type === "branch") {
-    if (!input.branch_id)
-      throw Object.assign(
-        new Error("branch_id is required for scope_type=branch"),
-        { statusCode: 400 },
-      );
-    if (input.process_id)
-      throw Object.assign(
-        new Error("process_id must be omitted for scope_type=branch"),
-        { statusCode: 400 },
-      );
+    if (!input.branch_id) throw Object.assign(new Error("branch_id is required for scope_type=branch"), { statusCode: 400 });
+    if (input.process_id) throw Object.assign(new Error("process_id must be omitted for scope_type=branch"), { statusCode: 400 });
   }
   if (
     !Number.isInteger(input.default_week_off_day) ||
     input.default_week_off_day < 0 ||
     input.default_week_off_day > 6
   ) {
-    throw Object.assign(
-      new Error(
-        "default_week_off_day must be an integer 0 (Sunday) through 6 (Saturday)",
-      ),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error("default_week_off_day must be an integer 0 (Sunday) through 6 (Saturday)"), { statusCode: 400 });
   }
   if (input.effective_from && !DATE_RE.test(input.effective_from)) {
-    throw Object.assign(
-      new Error("effective_from must be in YYYY-MM-DD format"),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error("effective_from must be in YYYY-MM-DD format"), { statusCode: 400 });
   }
   if (input.effective_to && !DATE_RE.test(input.effective_to)) {
-    throw Object.assign(
-      new Error("effective_to must be in YYYY-MM-DD format"),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error("effective_to must be in YYYY-MM-DD format"), { statusCode: 400 });
   }
-  if (
-    input.effective_from &&
-    input.effective_to &&
-    input.effective_to < input.effective_from
-  ) {
-    throw Object.assign(
-      new Error("effective_to must be on or after effective_from"),
-      { statusCode: 400 },
-    );
+  if (input.effective_from && input.effective_to && input.effective_to < input.effective_from) {
+    throw Object.assign(new Error("effective_to must be on or after effective_from"), { statusCode: 400 });
   }
 }
 
-async function assertScopeRefExists(
-  scopeType: WeekOffDefaultScopeType,
-  processId?: string | null,
-  branchId?: string | null,
-) {
+async function assertScopeRefExists(scopeType: WeekOffDefaultScopeType, processId?: string | null, branchId?: string | null) {
   if (scopeType === "process" && processId) {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT 1 FROM process_master WHERE id = ? LIMIT 1",
-      [processId],
-    );
-    if (!rows[0])
-      throw Object.assign(
-        new Error("process_id does not match any row in process_master"),
-        { statusCode: 400 },
-      );
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT 1 FROM process_master WHERE id = ? LIMIT 1", [processId]);
+    if (!rows[0]) throw Object.assign(new Error("process_id does not match any row in process_master"), { statusCode: 400 });
   }
   if (scopeType === "branch" && branchId) {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT 1 FROM branch_master WHERE id = ? LIMIT 1",
-      [branchId],
-    );
-    if (!rows[0])
-      throw Object.assign(
-        new Error("branch_id does not match any row in branch_master"),
-        { statusCode: 400 },
-      );
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT 1 FROM branch_master WHERE id = ? LIMIT 1", [branchId]);
+    if (!rows[0]) throw Object.assign(new Error("branch_id does not match any row in branch_master"), { statusCode: 400 });
   }
 }
 
@@ -178,99 +116,55 @@ async function findOverlappingActiveRow(
   branchId: string | null,
   effectiveFrom: string,
   effectiveTo: string | null,
-  excludeId?: string,
+  excludeId?: string
 ): Promise<WeekOffDefaultRow | null> {
-  const conds = [
-    "scope_type = ?",
-    "active_status = 1",
-    "effective_from <= ?",
-    "(effective_to IS NULL OR effective_to >= ?)",
-  ];
-  const params: unknown[] = [
-    scopeType,
-    effectiveTo ?? "9999-12-31",
-    effectiveFrom,
-  ];
-  conds.push(
-    scopeType === "process" ? "process_id <=> ?" : "process_id IS NULL",
-  );
+  const conds = ["scope_type = ?", "active_status = 1", "effective_from <= ?", "(effective_to IS NULL OR effective_to >= ?)"];
+  const params: unknown[] = [scopeType, effectiveTo ?? "9999-12-31", effectiveFrom];
+  conds.push(scopeType === "process" ? "process_id <=> ?" : "process_id IS NULL");
   if (scopeType === "process") params.push(processId);
   conds.push(scopeType === "branch" ? "branch_id <=> ?" : "branch_id IS NULL");
   if (scopeType === "branch") params.push(branchId);
-  if (excludeId) {
-    conds.push("id <> ?");
-    params.push(excludeId);
-  }
+  if (excludeId) { conds.push("id <> ?"); params.push(excludeId); }
 
   const [rows] = await db.execute<WeekOffDefaultRow[]>(
     `SELECT * FROM week_off_policy_default WHERE ${conds.join(" AND ")} LIMIT 1`,
-    params,
+    params
   );
   return rows[0] ?? null;
 }
 
 export const weekOffDefaultConfigService = {
-  async list(filters: {
-    scope_type?: string;
-    active_status?: string;
-  }): Promise<WeekOffDefaultRow[]> {
+  async list(filters: { scope_type?: string; active_status?: string }): Promise<WeekOffDefaultRow[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (filters.scope_type) {
-      conds.push("scope_type = ?");
-      params.push(filters.scope_type);
-    }
-    if (filters.active_status !== undefined) {
-      conds.push("active_status = ?");
-      params.push(Number(filters.active_status));
-    }
+    if (filters.scope_type) { conds.push("scope_type = ?"); params.push(filters.scope_type); }
+    if (filters.active_status !== undefined) { conds.push("active_status = ?"); params.push(Number(filters.active_status)); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<WeekOffDefaultRow[]>(
       `SELECT * FROM week_off_policy_default ${where} ORDER BY scope_type ASC, effective_from DESC`,
-      params,
+      params
     );
     return rows;
   },
 
   async get(id: string): Promise<WeekOffDefaultRow> {
-    const [rows] = await db.execute<WeekOffDefaultRow[]>(
-      "SELECT * FROM week_off_policy_default WHERE id = ? LIMIT 1",
-      [id],
-    );
-    if (!rows[0])
-      throw Object.assign(new Error("Week-off default policy not found"), {
-        statusCode: 404,
-      });
+    const [rows] = await db.execute<WeekOffDefaultRow[]>("SELECT * FROM week_off_policy_default WHERE id = ? LIMIT 1", [id]);
+    if (!rows[0]) throw Object.assign(new Error("Week-off default policy not found"), { statusCode: 404 });
     return rows[0];
   },
 
-  async create(
-    input: CreateWeekOffDefaultInput,
-    userId: string,
-    req?: Request,
-  ): Promise<WeekOffDefaultRow> {
+  async create(input: CreateWeekOffDefaultInput, userId: string, req?: Request): Promise<WeekOffDefaultRow> {
     assertValidCreateInput(input);
-    await assertScopeRefExists(
-      input.scope_type,
-      input.process_id,
-      input.branch_id,
-    );
+    await assertScopeRefExists(input.scope_type, input.process_id, input.branch_id);
 
-    const effectiveFrom =
-      input.effective_from ?? new Date().toISOString().slice(0, 10);
+    const effectiveFrom = input.effective_from ?? new Date().toISOString().slice(0, 10);
     const overlap = await findOverlappingActiveRow(
-      input.scope_type,
-      input.process_id ?? null,
-      input.branch_id ?? null,
-      effectiveFrom,
-      input.effective_to ?? null,
+      input.scope_type, input.process_id ?? null, input.branch_id ?? null, effectiveFrom, input.effective_to ?? null
     );
     if (overlap) {
       throw Object.assign(
-        new Error(
-          "An active week-off default for this exact scope and effective window already exists — adjust effective_from/effective_to or edit the existing row instead",
-        ),
-        { statusCode: 409 },
+        new Error("An active week-off default for this exact scope and effective window already exists — adjust effective_from/effective_to or edit the existing row instead"),
+        { statusCode: 409 }
       );
     }
 
@@ -291,7 +185,7 @@ export const weekOffDefaultConfigService = {
         input.change_reason ?? null,
         userId,
         userId,
-      ],
+      ]
     );
 
     await logSensitiveAction({
@@ -314,72 +208,35 @@ export const weekOffDefaultConfigService = {
   /** scope_type/process_id/branch_id are immutable once created — matches
    *  rest-policy-config.service.ts's own update() posture: changing what a
    *  policy applies to is a new policy, not an edit of this one. */
-  async update(
-    id: string,
-    input: UpdateWeekOffDefaultInput,
-    userId: string,
-    req?: Request,
-  ): Promise<WeekOffDefaultRow> {
+  async update(id: string, input: UpdateWeekOffDefaultInput, userId: string, req?: Request): Promise<WeekOffDefaultRow> {
     const existing = await this.get(id);
     if (input.default_week_off_day !== undefined) {
-      if (
-        !Number.isInteger(input.default_week_off_day) ||
-        input.default_week_off_day < 0 ||
-        input.default_week_off_day > 6
-      ) {
-        throw Object.assign(
-          new Error(
-            "default_week_off_day must be an integer 0 (Sunday) through 6 (Saturday)",
-          ),
-          { statusCode: 400 },
-        );
+      if (!Number.isInteger(input.default_week_off_day) || input.default_week_off_day < 0 || input.default_week_off_day > 6) {
+        throw Object.assign(new Error("default_week_off_day must be an integer 0 (Sunday) through 6 (Saturday)"), { statusCode: 400 });
       }
     }
     if (input.effective_to !== undefined && input.effective_to !== null) {
       if (!DATE_RE.test(input.effective_to)) {
-        throw Object.assign(
-          new Error("effective_to must be in YYYY-MM-DD format"),
-          { statusCode: 400 },
-        );
+        throw Object.assign(new Error("effective_to must be in YYYY-MM-DD format"), { statusCode: 400 });
       }
       if (input.effective_to < existing.effective_from) {
-        throw Object.assign(
-          new Error("effective_to must be on or after effective_from"),
-          { statusCode: 400 },
-        );
+        throw Object.assign(new Error("effective_to must be on or after effective_from"), { statusCode: 400 });
       }
     }
 
     const sets: string[] = [];
     const params: unknown[] = [];
-    if (input.default_week_off_day !== undefined) {
-      sets.push("default_week_off_day = ?");
-      params.push(input.default_week_off_day);
-    }
-    if (input.effective_to !== undefined) {
-      sets.push("effective_to = ?");
-      params.push(input.effective_to);
-    }
-    if (input.change_reason !== undefined) {
-      sets.push("change_reason = ?");
-      params.push(input.change_reason);
-    }
+    if (input.default_week_off_day !== undefined) { sets.push("default_week_off_day = ?"); params.push(input.default_week_off_day); }
+    if (input.effective_to !== undefined) { sets.push("effective_to = ?"); params.push(input.effective_to); }
+    if (input.change_reason !== undefined) { sets.push("change_reason = ?"); params.push(input.change_reason); }
     if (!sets.length) return existing;
 
     sets.push("updated_by = ?");
     params.push(userId, id);
-    await db.execute(
-      `UPDATE week_off_policy_default SET ${sets.join(", ")} WHERE id = ?`,
-      params,
-    );
+    await db.execute(`UPDATE week_off_policy_default SET ${sets.join(", ")} WHERE id = ?`, params);
     await logSensitiveAction({
-      actor_user_id: userId,
-      action_type: "WEEK_OFF_DEFAULT_UPDATED",
-      module_key: "week_off_policy_default",
-      entity_type: "week_off_policy_default",
-      entity_id: id,
-      change_summary: input as Record<string, unknown>,
-      req,
+      actor_user_id: userId, action_type: "WEEK_OFF_DEFAULT_UPDATED", module_key: "week_off_policy_default",
+      entity_type: "week_off_policy_default", entity_id: id, change_summary: input as Record<string, unknown>, req,
     });
     return this.get(id);
   },
@@ -392,20 +249,14 @@ export const weekOffDefaultConfigService = {
     await this.get(id); // 404s if missing
     const [result] = await db.execute<ResultSetHeader>(
       "UPDATE week_off_policy_default SET active_status = 0, updated_by = ? WHERE id = ? AND active_status = 1",
-      [userId, id],
+      [userId, id]
     );
     if ((result as ResultSetHeader).affectedRows === 0) {
-      throw Object.assign(new Error("Policy not found or already inactive"), {
-        statusCode: 409,
-      });
+      throw Object.assign(new Error("Policy not found or already inactive"), { statusCode: 409 });
     }
     await logSensitiveAction({
-      actor_user_id: userId,
-      action_type: "WEEK_OFF_DEFAULT_DEACTIVATED",
-      module_key: "week_off_policy_default",
-      entity_type: "week_off_policy_default",
-      entity_id: id,
-      req,
+      actor_user_id: userId, action_type: "WEEK_OFF_DEFAULT_DEACTIVATED", module_key: "week_off_policy_default",
+      entity_type: "week_off_policy_default", entity_id: id, req,
     });
   },
 };

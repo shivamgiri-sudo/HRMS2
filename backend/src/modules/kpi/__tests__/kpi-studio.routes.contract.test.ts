@@ -22,10 +22,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * covered without a database in kpi-formula.engine.test.ts and kpi-studio-scope.test.ts.
  */
 
-const { execute, getConnection } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  getConnection: vi.fn(),
-}));
+const { execute, getConnection } = vi.hoisted(() => ({ execute: vi.fn(), getConnection: vi.fn() }));
 
 vi.mock("../../../db/mysql.js", () => ({
   db: { execute, query: execute, getConnection },
@@ -34,10 +31,7 @@ vi.mock("../../../db/mysql.js", () => ({
 let actor: { id: string; role: string; roles: string[] };
 
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../../middleware/authMiddleware.js")
-    >();
+  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
   return {
     ...original,
     requireAuth: (req: any, _res: any, next: any) => {
@@ -142,11 +136,7 @@ describe("who may author a KPI", () => {
       resetStudioCapability();
       const response = await request(appFor(role))
         .post("/api/kpi-studio/definitions")
-        .send({
-          metric_id: "metric-1",
-          process_id: "process-1",
-          target_value: 240,
-        });
+        .send({ metric_id: "metric-1", process_id: "process-1", target_value: 240 });
       // Reaches the handler, which then fails on the mocked metric lookup. What matters here is
       // that it is not a 403.
       expect(response.status).not.toBe(403);
@@ -159,11 +149,7 @@ describe("who may author a KPI", () => {
       resetStudioCapability();
       const response = await request(appFor(role))
         .post("/api/kpi-studio/definitions")
-        .send({
-          metric_id: "metric-1",
-          process_id: "process-1",
-          target_value: 240,
-        });
+        .send({ metric_id: "metric-1", process_id: "process-1", target_value: 240 });
       expect(response.status).toBe(403);
     }
   });
@@ -175,17 +161,9 @@ describe("who may author a KPI", () => {
     schemaInstalled();
     const app = appFor("team_leader");
 
-    expect(
-      (
-        await request(app)
-          .post("/api/kpi-studio/metrics")
-          .send({ metric_code: "X", metric_name: "X" })
-      ).status,
-    ).toBe(403);
+    expect((await request(app).post("/api/kpi-studio/metrics").send({ metric_code: "X", metric_name: "X" })).status).toBe(403);
     resetStudioCapability();
-    expect((await request(app).get("/api/kpi-studio/definitions")).status).toBe(
-      200,
-    );
+    expect((await request(app).get("/api/kpi-studio/definitions")).status).toBe(200);
   });
 
   it("keeps running a real computation narrower than authoring", async () => {
@@ -195,26 +173,20 @@ describe("who may author a KPI", () => {
     for (const role of ["qa", "tq_head", "team_leader", "employee"]) {
       resetStudioCapability();
       schemaInstalled();
-      const response = await request(appFor(role))
-        .post("/api/kpi-studio/compute")
-        .send({ date: "2026-08-01" });
+      const response = await request(appFor(role)).post("/api/kpi-studio/compute").send({ date: "2026-08-01" });
       expect(response.status).toBe(403);
     }
     for (const role of ["admin", "hr", "process_manager"]) {
       resetStudioCapability();
       schemaInstalled();
-      const response = await request(appFor(role))
-        .post("/api/kpi-studio/compute")
-        .send({ date: "2026-08-01" });
+      const response = await request(appFor(role)).post("/api/kpi-studio/compute").send({ date: "2026-08-01" });
       expect(response.status).not.toBe(403);
     }
   });
 
   it("lets super_admin through without being listed", async () => {
     schemaInstalled();
-    const response = await request(appFor("super_admin")).get(
-      "/api/kpi-studio/definitions",
-    );
+    const response = await request(appFor("super_admin")).get("/api/kpi-studio/definitions");
     expect(response.status).toBe(200);
   });
 
@@ -232,17 +204,9 @@ describe("who may author a KPI", () => {
 describe("a database without the Studio schema", () => {
   it("reports capability instead of failing", async () => {
     schemaMissing();
-    const response = await request(appFor("admin")).get(
-      "/api/kpi-studio/capability",
-    );
+    const response = await request(appFor("admin")).get("/api/kpi-studio/capability");
     expect(response.status).toBe(200);
-    expect(response.body.data).toEqual({
-      tables: false,
-      resolution: false,
-      processGrain: false,
-      fieldFilters: false,
-      dateFormat: false,
-    });
+    expect(response.body.data).toEqual({ tables: false, resolution: false, processGrain: false, fieldFilters: false, dateFormat: false });
   });
 
   it("answers a write with an actionable 503 naming the migrations", async () => {
@@ -251,11 +215,7 @@ describe("a database without the Studio schema", () => {
     schemaMissing();
     const response = await request(appFor("admin"))
       .post("/api/kpi-studio/data-sources")
-      .send({
-        source_code: "TEST",
-        source_name: "Test",
-        source_type: "local_query",
-      });
+      .send({ source_code: "TEST", source_name: "Test", source_type: "local_query" });
     expect(response.status).toBe(503);
     expect(response.body.message).toContain("1644_kpi_studio_foundation.sql");
     expect(response.body.studio_installed).toBe(false);
@@ -264,9 +224,7 @@ describe("a database without the Studio schema", () => {
   it("returns an empty list rather than an error for a read", async () => {
     // A read degrading to "nothing configured" keeps the page usable; the banner explains why.
     schemaMissing();
-    const response = await request(appFor("admin")).get(
-      "/api/kpi-studio/definitions",
-    );
+    const response = await request(appFor("admin")).get("/api/kpi-studio/definitions");
     expect(response.status).toBe(200);
     expect(response.body.data).toEqual([]);
   });
@@ -279,16 +237,8 @@ describe("a database without the Studio schema", () => {
       if (sql.includes("INFORMATION_SCHEMA.COLUMNS")) return [[{ n: 0 }], []];
       return [[], []];
     });
-    const response = await request(appFor("admin")).get(
-      "/api/kpi-studio/capability",
-    );
-    expect(response.body.data).toEqual({
-      tables: true,
-      resolution: false,
-      processGrain: false,
-      fieldFilters: false,
-      dateFormat: false,
-    });
+    const response = await request(appFor("admin")).get("/api/kpi-studio/capability");
+    expect(response.body.data).toEqual({ tables: true, resolution: false, processGrain: false, fieldFilters: false, dateFormat: false });
   });
 });
 
@@ -333,23 +283,15 @@ describe("a user's mistake is a 400, not a 500", () => {
   beforeEach(schemaInstalled);
 
   it("names the missing pieces when previewing without them", async () => {
-    const response = await request(appFor("admin"))
-      .post("/api/kpi-studio/preview")
-      .send({ formula: "calls" });
+    const response = await request(appFor("admin")).post("/api/kpi-studio/preview").send({ formula: "calls" });
     expect(response.status).toBe(400);
-    expect(response.body.message).toMatch(
-      /formula, a data source and an employee/i,
-    );
+    expect(response.body.message).toMatch(/formula, a data source and an employee/i);
   });
 
   it("rejects an unusable source type by name", async () => {
     const response = await request(appFor("admin"))
       .post("/api/kpi-studio/data-sources")
-      .send({
-        source_code: "TEST",
-        source_name: "Test",
-        source_type: "carrier_pigeon",
-      });
+      .send({ source_code: "TEST", source_name: "Test", source_type: "carrier_pigeon" });
     expect(response.status).toBe(400);
     expect(response.body.message).toContain("local_query");
   });
@@ -357,11 +299,7 @@ describe("a user's mistake is a 400, not a 500", () => {
   it("refuses a connector source with no integration key", async () => {
     const response = await request(appFor("admin"))
       .post("/api/kpi-studio/data-sources")
-      .send({
-        source_code: "EXT",
-        source_name: "External",
-        source_type: "integration_connector",
-      });
+      .send({ source_code: "EXT", source_name: "External", source_type: "integration_connector" });
     expect(response.status).toBe(400);
     expect(response.body.message).toContain("integration key");
   });
@@ -377,20 +315,13 @@ describe("a user's mistake is a 400, not a 500", () => {
   it("refuses a manual value that is not a number", async () => {
     const response = await request(appFor("admin"))
       .post("/api/kpi-studio/manual-value")
-      .send({
-        employee_id: "emp-1",
-        field_name: "audited_calls",
-        value_date: "2026-08-01",
-        value: "many",
-      });
+      .send({ employee_id: "emp-1", field_name: "audited_calls", value_date: "2026-08-01", value: "many" });
     expect(response.status).toBe(400);
     expect(response.body.message).toContain("must be a number");
   });
 
   it("refuses an upload with no file", async () => {
-    const response = await request(appFor("admin"))
-      .post("/api/kpi-studio/upload/preview")
-      .send({});
+    const response = await request(appFor("admin")).post("/api/kpi-studio/upload/preview").send({});
     expect(response.status).toBe(400);
     expect(response.body.message).toContain("No file");
   });
@@ -404,47 +335,31 @@ describe("root-cause endpoint scope", () => {
       if (sql.includes("INFORMATION_SCHEMA.COLUMNS")) return [[{ n: 6 }], []];
       // Reporting tree: nobody reports to this viewer.
       if (sql.includes("reporting_tree")) return [[], []];
-      if (sql.includes("FROM kpi_metric_master"))
-        return [[{ metric_code: "AHT", metric_name: "Handle time" }], []];
+      if (sql.includes("FROM kpi_metric_master")) return [[{ metric_code: "AHT", metric_name: "Handle time" }], []];
       if (sql.includes("kpi_studio_computation_log")) return [[], []];
-      if (sql.includes("process_id, branch_id FROM employees"))
-        return [[{ process_id: "p1", branch_id: "b1" }], []];
+      if (sql.includes("process_id, branch_id FROM employees")) return [[{ process_id: "p1", branch_id: "b1" }], []];
       return [[], []];
     });
   });
 
   it("lets an employee read their own explanation", async () => {
-    employeeForUser.mockResolvedValue({
-      id: "emp-self",
-      employee_code: "MAS1",
-    });
-    const response = await request(appFor("employee")).get(
-      "/api/kpi-studio/explain/emp-self/metric-1",
-    );
+    employeeForUser.mockResolvedValue({ id: "emp-self", employee_code: "MAS1" });
+    const response = await request(appFor("employee")).get("/api/kpi-studio/explain/emp-self/metric-1");
     expect(response.status).toBe(200);
   });
 
   it("refuses an employee reading somebody else's", async () => {
     // This endpoint exposes the raw inputs behind a KPI, so it must be scoped at least as tightly
     // as the endpoint exposing the value.
-    employeeForUser.mockResolvedValue({
-      id: "emp-self",
-      employee_code: "MAS1",
-    });
-    const response = await request(appFor("employee")).get(
-      "/api/kpi-studio/explain/emp-other/metric-1",
-    );
+    employeeForUser.mockResolvedValue({ id: "emp-self", employee_code: "MAS1" });
+    const response = await request(appFor("employee")).get("/api/kpi-studio/explain/emp-other/metric-1");
     expect(response.status).toBe(403);
-    expect(response.body.message).toMatch(
-      /outside your reporting or assigned scope/i,
-    );
+    expect(response.body.message).toMatch(/outside your reporting or assigned scope/i);
   });
 
   it("refuses a manager reading somebody outside their reporting tree", async () => {
     employeeForUser.mockResolvedValue({ id: "mgr-1", employee_code: "MAS2" });
-    const response = await request(appFor("manager")).get(
-      "/api/kpi-studio/explain/emp-elsewhere/metric-1",
-    );
+    const response = await request(appFor("manager")).get("/api/kpi-studio/explain/emp-elsewhere/metric-1");
     expect(response.status).toBe(403);
   });
 
@@ -454,63 +369,41 @@ describe("root-cause endpoint scope", () => {
       if (sql.includes("INFORMATION_SCHEMA.TABLES")) return [[{ n: 6 }], []];
       if (sql.includes("INFORMATION_SCHEMA.COLUMNS")) return [[{ n: 6 }], []];
       if (sql.includes("reporting_tree")) return [[{ id: "emp-report" }], []];
-      if (sql.includes("FROM kpi_metric_master"))
-        return [[{ metric_code: "AHT", metric_name: "Handle time" }], []];
+      if (sql.includes("FROM kpi_metric_master")) return [[{ metric_code: "AHT", metric_name: "Handle time" }], []];
       if (sql.includes("kpi_studio_computation_log")) return [[], []];
       return [[], []];
     });
-    const response = await request(appFor("manager")).get(
-      "/api/kpi-studio/explain/emp-report/metric-1",
-    );
+    const response = await request(appFor("manager")).get("/api/kpi-studio/explain/emp-report/metric-1");
     expect(response.status).toBe(200);
   });
 
   it("lets hr read anyone", async () => {
     employeeForUser.mockResolvedValue({ id: "hr-1", employee_code: "MAS3" });
-    const response = await request(appFor("hr")).get(
-      "/api/kpi-studio/explain/emp-anyone/metric-1",
-    );
+    const response = await request(appFor("hr")).get("/api/kpi-studio/explain/emp-anyone/metric-1");
     expect(response.status).toBe(200);
   });
 
   it("defers to process scope for qa rather than granting outright", async () => {
     employeeForUser.mockResolvedValue({ id: "qa-1", employee_code: "MAS4" });
     processScope.mockResolvedValue(false);
-    expect(
-      (
-        await request(appFor("qa")).get(
-          "/api/kpi-studio/explain/emp-x/metric-1",
-        )
-      ).status,
-    ).toBe(403);
+    expect((await request(appFor("qa")).get("/api/kpi-studio/explain/emp-x/metric-1")).status).toBe(403);
 
     processScope.mockResolvedValue(true);
     resetStudioCapability();
-    expect(
-      (
-        await request(appFor("qa")).get(
-          "/api/kpi-studio/explain/emp-x/metric-1",
-        )
-      ).status,
-    ).toBe(200);
+    expect((await request(appFor("qa")).get("/api/kpi-studio/explain/emp-x/metric-1")).status).toBe(200);
   });
 
   it("says so plainly when a KPI has no calculation history", async () => {
     // A KPI fed by an existing sync has no Studio working to show. That is not an error, and it must
     // not read as one — otherwise every pre-existing metric looks broken.
-    employeeForUser.mockResolvedValue({
-      id: "emp-self",
-      employee_code: "MAS1",
-    });
+    employeeForUser.mockResolvedValue({ id: "emp-self", employee_code: "MAS1" });
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("INFORMATION_SCHEMA.TABLES")) return [[{ n: 6 }], []];
       if (sql.includes("INFORMATION_SCHEMA.COLUMNS")) return [[{ n: 6 }], []];
       if (sql.includes("FROM kpi_metric_master")) return [[], []];
       return [[], []];
     });
-    const response = await request(appFor("employee")).get(
-      "/api/kpi-studio/explain/emp-self/metric-unknown",
-    );
+    const response = await request(appFor("employee")).get("/api/kpi-studio/explain/emp-self/metric-unknown");
     expect(response.status).toBe(200);
     expect(response.body.data).toBeNull();
     expect(response.body.message).toMatch(/existing sync/i);
@@ -521,36 +414,21 @@ describe("read endpoints available to viewing roles", () => {
   beforeEach(schemaInstalled);
 
   it("exposes the function catalogue to any authenticated user", async () => {
-    const response = await request(appFor("employee")).get(
-      "/api/kpi-studio/formula-help",
-    );
+    const response = await request(appFor("employee")).get("/api/kpi-studio/formula-help");
     expect(response.status).toBe(200);
-    expect(
-      response.body.data.functions.map((fn: { name: string }) => fn.name),
-    ).toContain("SAFE_DIV");
+    expect(response.body.data.functions.map((fn: { name: string }) => fn.name)).toContain("SAFE_DIV");
     expect(response.body.data.aggregations).toContain("average");
   });
 
   it("gates the scope pickers to viewing roles", async () => {
-    expect(
-      (
-        await request(appFor("team_leader")).get(
-          "/api/kpi-studio/scope-options",
-        )
-      ).status,
-    ).toBe(200);
+    expect((await request(appFor("team_leader")).get("/api/kpi-studio/scope-options")).status).toBe(200);
     resetStudioCapability();
-    expect(
-      (await request(appFor("employee")).get("/api/kpi-studio/scope-options"))
-        .status,
-    ).toBe(403);
+    expect((await request(appFor("employee")).get("/api/kpi-studio/scope-options")).status).toBe(403);
   });
 
   it("requires a search term or filter before listing employees", async () => {
     // Guards against an accidental full-directory dump through the picker.
-    const response = await request(appFor("admin")).get(
-      "/api/kpi-studio/employees",
-    );
+    const response = await request(appFor("admin")).get("/api/kpi-studio/employees");
     expect(response.status).toBe(200);
     expect(response.body.data).toEqual([]);
   });

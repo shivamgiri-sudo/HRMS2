@@ -1,3 +1,4 @@
+
 /**
  * Retry a bulk row that lost a lock race.
  *
@@ -82,9 +83,7 @@ export async function withBulkLockRetry<T>(fn: () => Promise<T>): Promise<T> {
       }
 
       // Full jitter over [0, waitBase). Collided tasks must not resume together.
-      await new Promise((r) =>
-        setTimeout(r, Math.floor(Math.random() * waitBase)),
-      );
+      await new Promise((r) => setTimeout(r, Math.floor(Math.random() * waitBase)));
     }
   }
 }

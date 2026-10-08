@@ -8,16 +8,10 @@ vi.mock("../../../../db/mysql.js", () => ({
 const { hasRole } = vi.hoisted(() => ({ hasRole: vi.fn() }));
 vi.mock("../../../../shared/accessGuard.js", () => ({ hasRole }));
 
-const { getUserRoleContext } = vi.hoisted(() => ({
-  getUserRoleContext: vi.fn(),
-}));
+const { getUserRoleContext } = vi.hoisted(() => ({ getUserRoleContext: vi.fn() }));
 vi.mock("../../../../shared/roleResolver.js", () => ({ getUserRoleContext }));
 
-const {
-  resolveDashboardScope,
-  DashboardScopeConfigurationError,
-  buildScopeWhereEmployees,
-} = vi.hoisted(() => {
+const { resolveDashboardScope, DashboardScopeConfigurationError, buildScopeWhereEmployees } = vi.hoisted(() => {
   class DashboardScopeConfigurationError extends Error {
     statusCode = 409;
     code = "DASHBOARD_SCOPE_NOT_CONFIGURED";
@@ -68,17 +62,9 @@ describe("daily-brief-recipient.resolver: scope fail-closed", () => {
       return [[]];
     });
     hasRole.mockResolvedValue(true); // eligible role
-    getUserRoleContext.mockResolvedValue({
-      primaryRole: "team_leader",
-      roleKeys: ["team_leader"],
-      isSuperAdmin: false,
-      isHO: false,
-    });
+    getUserRoleContext.mockResolvedValue({ primaryRole: "team_leader", roleKeys: ["team_leader"], isSuperAdmin: false, isHO: false });
     resolveDashboardScope.mockRejectedValue(
-      new DashboardScopeConfigurationError(
-        "team_leader",
-        "reporting hierarchy",
-      ),
+      new DashboardScopeConfigurationError("team_leader", "reporting hierarchy"),
     );
 
     const result = await resolveDailyBriefRecipient("emp-1");
@@ -86,9 +72,7 @@ describe("daily-brief-recipient.resolver: scope fail-closed", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.unresolved.employeeId).toBe("emp-1");
-      expect(result.unresolved.reason).toContain(
-        "No active reporting hierarchy scope",
-      );
+      expect(result.unresolved.reason).toContain("No active reporting hierarchy scope");
     }
   });
 
@@ -96,17 +80,11 @@ describe("daily-brief-recipient.resolver: scope fail-closed", () => {
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM employees WHERE id")) return [[EMPLOYEE_ROW]];
       if (sql.includes("FROM auth_user")) return [[{ is_blocked: 0 }]];
-      if (sql.includes("FROM employees e WHERE e.active_status"))
-        return [[{ id: "report-1" }, { id: "report-2" }]];
+      if (sql.includes("FROM employees e WHERE e.active_status")) return [[{ id: "report-1" }, { id: "report-2" }]];
       return [[]];
     });
     hasRole.mockResolvedValue(true);
-    getUserRoleContext.mockResolvedValue({
-      primaryRole: "team_leader",
-      roleKeys: ["team_leader"],
-      isSuperAdmin: false,
-      isHO: false,
-    });
+    getUserRoleContext.mockResolvedValue({ primaryRole: "team_leader", roleKeys: ["team_leader"], isSuperAdmin: false, isHO: false });
     resolveDashboardScope.mockResolvedValue({
       level: "TEAM_ONLY",
       branchIds: [],
@@ -115,19 +93,13 @@ describe("daily-brief-recipient.resolver: scope fail-closed", () => {
       userId: "user-1",
       role: "team_leader",
     });
-    buildScopeWhereEmployees.mockReturnValue({
-      sql: "e.id IN (?,?)",
-      params: ["report-1", "report-2"],
-    });
+    buildScopeWhereEmployees.mockReturnValue({ sql: "e.id IN (?,?)", params: ["report-1", "report-2"] });
 
     const result = await resolveDailyBriefRecipient("emp-1");
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.recipient.teamEmployeeIds).toEqual([
-        "report-1",
-        "report-2",
-      ]);
+      expect(result.recipient.teamEmployeeIds).toEqual(["report-1", "report-2"]);
       expect(result.recipient.scopeLabel).toBe("Your direct/indirect reports");
     }
   });

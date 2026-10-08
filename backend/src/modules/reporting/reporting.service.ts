@@ -22,17 +22,11 @@ function scopeClause(
  * the same rows. Anything that is not a valid YYYY-MM keeps the original
  * predicate so unusual input behaves exactly as before.
  */
-export function monthClause(
-  col: string,
-  month: string | undefined,
-): { sql: string; params: unknown[] } {
+export function monthClause(col: string, month: string | undefined): { sql: string; params: unknown[] } {
   if (!month) return { sql: "", params: [] };
   if (/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
     const first = `${month}-01`;
-    return {
-      sql: `AND ${col} >= ? AND ${col} < DATE_ADD(?, INTERVAL 1 MONTH)`,
-      params: [first, first],
-    };
+    return { sql: `AND ${col} >= ? AND ${col} < DATE_ADD(?, INTERVAL 1 MONTH)`, params: [first, first] };
   }
   return { sql: `AND DATE_FORMAT(${col},'%Y-%m') = ?`, params: [month] };
 }
@@ -734,7 +728,11 @@ const QUERIES: Record<string, Builder> = {
               ${f.branch ? "AND e.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), e.id
             ORDER BY month, b.branch_name, total_late_marks DESC`,
-      params: [...sc.params, ...mc.params, ...(f.branch ? [f.branch] : [])],
+      params: [
+        ...sc.params,
+        ...mc.params,
+        ...(f.branch ? [f.branch] : []),
+      ],
     };
   },
 
@@ -914,7 +912,11 @@ const QUERIES: Record<string, Builder> = {
               ${f.branch ? "AND e.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(a.ReportDate,'%Y-%m'), a.UserID, a.campaign_id
             ORDER BY month, b.branch_name, a.UserID`,
-      params: [...sc.params, ...mc.params, ...(f.branch ? [f.branch] : [])],
+      params: [
+        ...sc.params,
+        ...mc.params,
+        ...(f.branch ? [f.branch] : []),
+      ],
     };
   },
 
@@ -1049,7 +1051,11 @@ const QUERIES: Record<string, Builder> = {
               ${f.branch ? "AND e.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), e.id
             ORDER BY month, b.branch_name, total_lwp_days DESC`,
-      params: [...sc.params, ...mc.params, ...(f.branch ? [f.branch] : [])],
+      params: [
+        ...sc.params,
+        ...mc.params,
+        ...(f.branch ? [f.branch] : []),
+      ],
     };
   },
 
@@ -1144,7 +1150,11 @@ const QUERIES: Record<string, Builder> = {
               ${f.branch ? "AND ar.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(ar.exit_date,'%Y-%m'), ar.branch_id, ar.process_id, ar.exit_type
             ORDER BY month DESC, b.branch_name`,
-      params: [...sc.params, ...mc.params, ...(f.branch ? [f.branch] : [])],
+      params: [
+        ...sc.params,
+        ...mc.params,
+        ...(f.branch ? [f.branch] : []),
+      ],
     };
   },
 

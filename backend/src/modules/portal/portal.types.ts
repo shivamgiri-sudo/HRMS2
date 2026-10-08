@@ -164,10 +164,7 @@ export interface TrainingComplianceData {
   breached_count: number;
   /** null when nothing has ever been completed in this process — never a fabricated 0h. */
   avg_completion_hours: number | null;
-  by_severity: Array<{
-    severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-    active_count: number;
-  }>;
+  by_severity: Array<{ severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"; active_count: number }>;
 }
 
 export interface Commentary {

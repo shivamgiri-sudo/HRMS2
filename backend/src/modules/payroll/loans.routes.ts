@@ -12,10 +12,7 @@ import { sqlLimitOffset } from "../../db/pagination.js";
 import type { Response } from "express";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { randomUUID } from "crypto";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
@@ -26,18 +23,11 @@ export const loansRouter = Router();
 // ---------------------------------------------------------------------------
 // Typed error-catching wrapper — keeps handlers free of try/catch boilerplate
 // ---------------------------------------------------------------------------
-type RouteHandler = (
-  req: AuthenticatedRequest,
-  res: Response,
-) => Promise<unknown>;
+type RouteHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 
 const h =
   (fn: RouteHandler) =>
-  (
-    req: AuthenticatedRequest,
-    res: Response,
-    next: (err?: unknown) => void,
-  ): void => {
+  (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void): void => {
     void fn(req, res).catch(next);
   };
 
@@ -52,31 +42,15 @@ loansRouter.get(
   requireAuth,
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (
-      !(await hasAnyRole(
-        userId,
-        "admin",
-        "finance",
-        "payroll_head",
-        "payroll",
-        "hr",
-        "super_admin",
-      ))
-    ) {
+    if (!(await hasAnyRole(userId, "admin", "finance", "payroll_head", "payroll", "hr", "super_admin"))) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
-    const { employee_id, status, branch_name, q } = req.query as Record<
-      string,
-      string | undefined
-    >;
+    const { employee_id, status, branch_name, q } = req.query as Record<string, string | undefined>;
     const rawPage = parseInt(String(req.query.page ?? "1"), 10);
     const rawLimit = parseInt(String(req.query.limit ?? "50"), 10);
     const page = Math.max(1, Number.isNaN(rawPage) ? 1 : rawPage);
-    const limit = Math.min(
-      200,
-      Math.max(1, Number.isNaN(rawLimit) ? 50 : rawLimit),
-    );
+    const limit = Math.min(200, Math.max(1, Number.isNaN(rawLimit) ? 50 : rawLimit));
     const offset = (page - 1) * limit;
 
     const conditions: string[] = [];
@@ -91,16 +65,7 @@ loansRouter.get(
       conditions.push("el.employee_id = ?");
       params.push(employee_id);
     }
-    if (
-      status &&
-      [
-        "active",
-        "completed",
-        "cancelled",
-        "pending_approval",
-        "rejected",
-      ].includes(status)
-    ) {
+    if (status && ["active", "completed", "cancelled", "pending_approval", "rejected"].includes(status)) {
       conditions.push("el.status = ?");
       params.push(status);
     }
@@ -110,21 +75,20 @@ loansRouter.get(
     }
     if (q?.trim()) {
       conditions.push(
-        "(el.employee_code LIKE ? OR CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ? OR el.loan_type LIKE ?)",
+        "(el.employee_code LIKE ? OR CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ? OR el.loan_type LIKE ?)"
       );
       const like = `%${q.trim()}%`;
       params.push(like, like, like);
     }
 
-    const where =
-      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total
          FROM employee_loans el
          LEFT JOIN employees e ON e.id = el.employee_id
          ${where}`,
-      params,
+      params
     );
     const total = Number((countRows as RowDataPacket[])[0]?.total ?? 0);
 
@@ -136,11 +100,11 @@ loansRouter.get(
          ${where}
          ORDER BY el.created_at DESC
          ${sqlLimitOffset(limit, offset)}`,
-      params,
+      params
     );
 
     return res.json({ success: true, data: rows, total, page, limit });
-  }),
+  })
 );
 
 // ---------------------------------------------------------------------------
@@ -157,24 +121,17 @@ loansRouter.get(
 
     const isPayrollRole = await hasAnyRole(
       userId,
-      "admin",
-      "finance",
-      "payroll_head",
-      "payroll",
-      "hr",
-      "super_admin",
+      "admin", "finance", "payroll_head", "payroll", "hr", "super_admin"
     );
 
     if (!isPayrollRole) {
       // Verify the authenticated user maps to this employeeId
       const [empRows] = await db.execute<RowDataPacket[]>(
         "SELECT id FROM employees WHERE id = ? AND user_id = ? AND active_status = 1 LIMIT 1",
-        [employeeId, userId],
+        [employeeId, userId]
       );
       if (!(empRows as RowDataPacket[])[0]) {
-        return res
-          .status(403)
-          .json({ success: false, message: "Access denied" });
+        return res.status(403).json({ success: false, message: "Access denied" });
       }
     } else if (!(await guardEmployee(req, res, employeeId))) {
       return;
@@ -187,24 +144,21 @@ loansRouter.get(
          LEFT JOIN employees e ON e.id = el.employee_id
         WHERE el.employee_id = ?
         ORDER BY el.created_at DESC`,
-      [employeeId],
+      [employeeId]
     );
 
     const loanList = loans as RowDataPacket[];
     const total_deducted = loanList.reduce(
       (sum, l) => sum + Number(l.deducted_amount ?? 0),
-      0,
+      0
     );
     const total_pending = loanList.reduce(
       (sum, l) => sum + Number(l.pending_amount ?? 0),
-      0,
+      0
     );
 
-    return res.json({
-      success: true,
-      data: { loans: loanList, total_deducted, total_pending },
-    });
-  }),
+    return res.json({ success: true, data: { loans: loanList, total_deducted, total_pending } });
+  })
 );
 
 // ---------------------------------------------------------------------------
@@ -216,52 +170,24 @@ loansRouter.post(
   requireAuth,
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (
-      !(await hasAnyRole(
-        userId,
-        "admin",
-        "payroll_head",
-        "finance",
-        "super_admin",
-      ))
-    ) {
+    if (!(await hasAnyRole(userId, "admin", "payroll_head", "finance", "super_admin"))) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
     const body = req.body as Record<string, unknown>;
     const {
-      employee_id,
-      loan_type,
-      amount,
-      start_date,
-      installments,
-      deduction_per_month,
-      end_date,
-      reason,
-      cheque_number,
-      cheque_bank,
-      cheque_date,
-      rtgs_number,
-      rtgs_date,
-      guarantor_name,
-      guarantor_emp_code,
-      guarantor_emp_id,
-      branch_name,
-      cost_center,
+      employee_id, loan_type, amount, start_date, installments, deduction_per_month,
+      end_date, reason,
+      cheque_number, cheque_bank, cheque_date,
+      rtgs_number, rtgs_date,
+      guarantor_name, guarantor_emp_code, guarantor_emp_id,
+      branch_name, cost_center,
     } = body;
 
-    if (
-      !employee_id ||
-      !loan_type ||
-      !amount ||
-      !start_date ||
-      !installments ||
-      !deduction_per_month
-    ) {
+    if (!employee_id || !loan_type || !amount || !start_date || !installments || !deduction_per_month) {
       return res.status(400).json({
         success: false,
-        message:
-          "Required fields: employee_id, loan_type, amount, start_date, installments, deduction_per_month",
+        message: "Required fields: employee_id, loan_type, amount, start_date, installments, deduction_per_month",
       });
     }
 
@@ -272,17 +198,12 @@ loansRouter.post(
     // Resolve employee_code from DB
     const [empRows] = await db.execute<RowDataPacket[]>(
       "SELECT id, employee_code, branch_name FROM employees WHERE id = ? AND active_status = 1 LIMIT 1",
-      [employee_id],
+      [employee_id]
     );
-    type EmpRow = RowDataPacket & {
-      employee_code: string;
-      branch_name: string | null;
-    };
+    type EmpRow = RowDataPacket & { employee_code: string; branch_name: string | null };
     const emp = (empRows as EmpRow[])[0];
     if (!emp) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Employee not found or inactive" });
+      return res.status(404).json({ success: false, message: "Employee not found or inactive" });
     }
 
     const loanId = randomUUID();
@@ -328,7 +249,7 @@ loansRouter.post(
         rtgs_date ? String(rtgs_date) : null,
         branch_name ? String(branch_name) : (emp.branch_name ?? null),
         cost_center ? String(cost_center) : null,
-      ],
+      ]
     );
 
     void logSensitiveAction({
@@ -352,12 +273,10 @@ loansRouter.post(
 
     const [newRows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
-      [loanId],
+      [loanId]
     );
-    return res
-      .status(201)
-      .json({ success: true, data: (newRows as RowDataPacket[])[0] });
-  }),
+    return res.status(201).json({ success: true, data: (newRows as RowDataPacket[])[0] });
+  })
 );
 
 // ---------------------------------------------------------------------------
@@ -402,19 +321,14 @@ loansRouter.post(
          FROM employees
         WHERE user_id = ? AND active_status = 1
         LIMIT 1`,
-      [userId],
+      [userId]
     );
-    type EmpRow = RowDataPacket & {
-      id: string;
-      employee_code: string;
-      branch_name: string | null;
-    };
+    type EmpRow = RowDataPacket & { id: string; employee_code: string; branch_name: string | null };
     const emp = (empRows as EmpRow[])[0];
     if (!emp) {
       return res.status(403).json({
         success: false,
-        message:
-          "Your login is not linked to an active employee record. Contact HR.",
+        message: "Your login is not linked to an active employee record. Contact HR.",
       });
     }
 
@@ -428,20 +342,11 @@ loansRouter.post(
 
     const amt = Number(amount);
     if (!Number.isFinite(amt) || amt <= 0 || amt > 9_999_999) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "amount must be a positive number under 1,00,00,000",
-        });
+      return res.status(400).json({ success: false, message: "amount must be a positive number under 1,00,00,000" });
     }
 
     const inst = Number(installments);
-    if (
-      !Number.isInteger(inst) ||
-      inst < 1 ||
-      inst > MAX_SELF_REQUEST_INSTALLMENTS
-    ) {
+    if (!Number.isInteger(inst) || inst < 1 || inst > MAX_SELF_REQUEST_INSTALLMENTS) {
       return res.status(400).json({
         success: false,
         message: `installments must be a whole number between 1 and ${MAX_SELF_REQUEST_INSTALLMENTS}`,
@@ -454,7 +359,7 @@ loansRouter.post(
       `SELECT id FROM employee_loans
         WHERE employee_id = ? AND status = 'pending_approval'
         LIMIT 1`,
-      [emp.id],
+      [emp.id]
     );
     if ((openRows as RowDataPacket[])[0]) {
       return res.status(409).json({
@@ -495,7 +400,7 @@ loansRouter.post(
         reason ? String(reason).slice(0, 2000) : null,
         userId,
         emp.branch_name ?? null,
-      ],
+      ]
     );
 
     void logSensitiveAction({
@@ -520,12 +425,10 @@ loansRouter.post(
 
     const [newRows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
-      [loanId],
+      [loanId]
     );
-    return res
-      .status(201)
-      .json({ success: true, data: (newRows as RowDataPacket[])[0] });
-  }),
+    return res.status(201).json({ success: true, data: (newRows as RowDataPacket[])[0] });
+  })
 );
 
 // ---------------------------------------------------------------------------
@@ -540,15 +443,7 @@ loansRouter.post(
   requireAuth,
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (
-      !(await hasAnyRole(
-        userId,
-        "finance_head",
-        "payroll_head",
-        "admin",
-        "super_admin",
-      ))
-    ) {
+    if (!(await hasAnyRole(userId, "finance_head", "payroll_head", "admin", "super_admin"))) {
       return res.status(403).json({
         success: false,
         message: "Approving a loan is reserved for Finance or Payroll heads.",
@@ -558,22 +453,19 @@ loansRouter.post(
     const { id } = req.params;
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     type LoanRow = RowDataPacket & Record<string, unknown>;
     const loan = (existing as LoanRow[])[0];
     if (!loan) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Loan not found" });
+      return res.status(404).json({ success: false, message: "Loan not found" });
     }
     if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     if (loan.created_by && String(loan.created_by) === String(userId)) {
       return res.status(403).json({
         success: false,
-        message:
-          "You created this loan record, so it must be approved by someone else",
+        message: "You created this loan record, so it must be approved by someone else",
         code: "LOAN_SELF_APPROVAL",
       });
     }
@@ -589,13 +481,12 @@ loansRouter.post(
       `UPDATE employee_loans
           SET status = 'active', approved_by = ?, approved_at = NOW()
         WHERE id = ? AND status = 'pending_approval'`,
-      [userId, id],
+      [userId, id]
     );
     if ((result as ResultSetHeader).affectedRows !== 1) {
       return res.status(409).json({
         success: false,
-        message:
-          "This loan was already acted on by another action. Refresh and try again.",
+        message: "This loan was already acted on by another action. Refresh and try again.",
       });
     }
 
@@ -613,10 +504,10 @@ loansRouter.post(
 
     const [updated] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     return res.json({ success: true, data: (updated as RowDataPacket[])[0] });
-  }),
+  })
 );
 
 // ---------------------------------------------------------------------------
@@ -629,15 +520,7 @@ loansRouter.post(
   requireAuth,
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (
-      !(await hasAnyRole(
-        userId,
-        "finance_head",
-        "payroll_head",
-        "admin",
-        "super_admin",
-      ))
-    ) {
+    if (!(await hasAnyRole(userId, "finance_head", "payroll_head", "admin", "super_admin"))) {
       return res.status(403).json({
         success: false,
         message: "Rejecting a loan is reserved for Finance or Payroll heads.",
@@ -649,22 +532,19 @@ loansRouter.post(
 
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     type LoanRow = RowDataPacket & Record<string, unknown>;
     const loan = (existing as LoanRow[])[0];
     if (!loan) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Loan not found" });
+      return res.status(404).json({ success: false, message: "Loan not found" });
     }
     if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     if (loan.created_by && String(loan.created_by) === String(userId)) {
       return res.status(403).json({
         success: false,
-        message:
-          "You created this loan record, so it must be reviewed by someone else",
+        message: "You created this loan record, so it must be reviewed by someone else",
         code: "LOAN_SELF_APPROVAL",
       });
     }
@@ -680,13 +560,12 @@ loansRouter.post(
       `UPDATE employee_loans
           SET status = 'rejected', rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
         WHERE id = ? AND status = 'pending_approval'`,
-      [userId, reason ? String(reason) : null, id],
+      [userId, reason ? String(reason) : null, id]
     );
     if ((result as ResultSetHeader).affectedRows !== 1) {
       return res.status(409).json({
         success: false,
-        message:
-          "This loan was already acted on by another action. Refresh and try again.",
+        message: "This loan was already acted on by another action. Refresh and try again.",
       });
     }
 
@@ -698,20 +577,16 @@ loansRouter.post(
       entity_type: "employee_loan",
       entity_id: id,
       old_value_json: { status: loan.status },
-      new_value_json: {
-        status: "rejected",
-        rejected_by: userId,
-        rejection_reason: reason ?? null,
-      },
+      new_value_json: { status: "rejected", rejected_by: userId, rejection_reason: reason ?? null },
       req,
     });
 
     const [updated] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     return res.json({ success: true, data: (updated as RowDataPacket[])[0] });
-  }),
+  })
 );
 
 // ---------------------------------------------------------------------------
@@ -731,26 +606,19 @@ loansRouter.patch(
     const { id } = req.params;
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     type LoanRow = RowDataPacket & Record<string, unknown>;
     const loan = (existing as LoanRow[])[0];
     if (!loan) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Loan not found" });
+      return res.status(404).json({ success: false, message: "Loan not found" });
     }
     if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     const body = req.body as Record<string, unknown>;
     const ALLOWED = [
-      "deduction_per_month",
-      "end_date",
-      "reason",
-      "cheque_number",
-      "cheque_bank",
-      "rtgs_number",
-      "status",
+      "deduction_per_month", "end_date", "reason",
+      "cheque_number", "cheque_bank", "rtgs_number", "status",
     ] as const;
 
     const sets: string[] = [];
@@ -764,18 +632,8 @@ loansRouter.patch(
     }
 
     if (body.status !== undefined) {
-      if (
-        ![
-          "active",
-          "completed",
-          "cancelled",
-          "pending_approval",
-          "rejected",
-        ].includes(String(body.status))
-      ) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid status value" });
+      if (!["active", "completed", "cancelled", "pending_approval", "rejected"].includes(String(body.status))) {
+        return res.status(400).json({ success: false, message: "Invalid status value" });
       }
       // A pending_approval -> active or -> rejected transition is the approval decision
       // itself — it must go through POST /:id/approve or POST /:id/reject (head-role check,
@@ -801,15 +659,13 @@ loansRouter.patch(
     }
 
     if (sets.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No updatable fields provided" });
+      return res.status(400).json({ success: false, message: "No updatable fields provided" });
     }
 
     params.push(id);
     await db.execute<ResultSetHeader>(
       `UPDATE employee_loans SET ${sets.join(", ")} WHERE id = ?`,
-      params,
+      params
     );
 
     void logSensitiveAction({
@@ -830,10 +686,10 @@ loansRouter.patch(
 
     const [updated] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     return res.json({ success: true, data: (updated as RowDataPacket[])[0] });
-  }),
+  })
 );
 
 // ---------------------------------------------------------------------------
@@ -846,15 +702,7 @@ loansRouter.post(
   requireAuth,
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (
-      !(await hasAnyRole(
-        userId,
-        "admin",
-        "payroll_head",
-        "finance",
-        "super_admin",
-      ))
-    ) {
+    if (!(await hasAnyRole(userId, "admin", "payroll_head", "finance", "super_admin"))) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
 
@@ -862,24 +710,17 @@ loansRouter.post(
     const { amount_paid } = req.body as { amount_paid?: unknown };
     const paid = Number(amount_paid);
     if (!paid || Number.isNaN(paid) || paid <= 0) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "amount_paid must be a positive number",
-        });
+      return res.status(400).json({ success: false, message: "amount_paid must be a positive number" });
     }
 
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     type LoanRow = RowDataPacket & Record<string, unknown>;
     const loan = (existing as LoanRow[])[0];
     if (!loan) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Loan not found" });
+      return res.status(404).json({ success: false, message: "Loan not found" });
     }
     if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
     if (loan.status === "cancelled") {
@@ -895,7 +736,7 @@ loansRouter.post(
 
     await db.execute<ResultSetHeader>(
       `UPDATE employee_loans SET deducted_amount = ?, pending_amount = ?, status = ? WHERE id = ?`,
-      [newDeducted, newPending, newStatus, id],
+      [newDeducted, newPending, newStatus, id]
     );
 
     void logSensitiveAction({
@@ -921,10 +762,10 @@ loansRouter.post(
 
     const [updated] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     return res.json({ success: true, data: (updated as RowDataPacket[])[0] });
-  }),
+  })
 );
 
 // ---------------------------------------------------------------------------
@@ -945,24 +786,17 @@ loansRouter.get(
          FROM employee_loans el
          LEFT JOIN employees e ON e.id = el.employee_id
         WHERE el.id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     type LoanRow = RowDataPacket & Record<string, unknown>;
     const loan = (existing as LoanRow[])[0];
     if (!loan) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Loan not found" });
+      return res.status(404).json({ success: false, message: "Loan not found" });
     }
 
     const isPayrollRole = await hasAnyRole(
       userId,
-      "admin",
-      "finance",
-      "payroll_head",
-      "payroll",
-      "hr",
-      "super_admin",
+      "admin", "finance", "payroll_head", "payroll", "hr", "super_admin"
     );
     if (!isPayrollRole && String(loan.emp_user_id) !== userId) {
       return res.status(403).json({ success: false, message: "Access denied" });
@@ -979,11 +813,7 @@ loansRouter.get(
     const startYear = yyyy ?? new Date().getFullYear();
     const startMonth = (mm ?? 1) - 1; // 0-indexed
 
-    const schedule: Array<{
-      month: string;
-      emi: number;
-      running_balance: number;
-    }> = [];
+    const schedule: Array<{ month: string; emi: number; running_balance: number }> = [];
     let balance = totalAmount;
 
     for (let i = 0; i < installments; i++) {
@@ -991,15 +821,11 @@ loansRouter.get(
       const monthLabel = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       const thisEmi = parseFloat(Math.min(emi, balance).toFixed(2));
       balance = parseFloat(Math.max(0, balance - thisEmi).toFixed(2));
-      schedule.push({
-        month: monthLabel,
-        emi: thisEmi,
-        running_balance: balance,
-      });
+      schedule.push({ month: monthLabel, emi: thisEmi, running_balance: balance });
     }
 
     return res.json({ success: true, data: schedule });
-  }),
+  })
 );
 
 // ---------------------------------------------------------------------------
@@ -1013,22 +839,18 @@ loansRouter.delete(
   h(async (req, res) => {
     const userId = req.authUser!.id;
     if (!(await hasAnyRole(userId, "super_admin"))) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Only super_admin can cancel loans" });
+      return res.status(403).json({ success: false, message: "Only super_admin can cancel loans" });
     }
 
     const { id } = req.params;
     const [existing] = await db.execute<RowDataPacket[]>(
       "SELECT id, status FROM employee_loans WHERE id = ? LIMIT 1",
-      [id],
+      [id]
     );
     type LoanRow = RowDataPacket & { status: string };
     const loan = (existing as LoanRow[])[0];
     if (!loan) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Loan not found" });
+      return res.status(404).json({ success: false, message: "Loan not found" });
     }
     if (loan.status !== "active") {
       return res.status(400).json({
@@ -1039,7 +861,7 @@ loansRouter.delete(
 
     await db.execute<ResultSetHeader>(
       "UPDATE employee_loans SET status = 'cancelled' WHERE id = ?",
-      [id],
+      [id]
     );
 
     void logSensitiveAction({
@@ -1055,5 +877,5 @@ loansRouter.delete(
     });
 
     return res.json({ success: true, message: "Loan cancelled successfully" });
-  }),
+  })
 );

@@ -36,7 +36,7 @@ function encryptWithForeignKey(plaintext: string): string {
       iv: iv.toString("hex"),
       tag: cipher.getAuthTag().toString("hex"),
       ct: ct.toString("hex"),
-    }),
+    })
   ).toString("base64");
 }
 
@@ -46,30 +46,19 @@ describe("field encryption key parity guard", () => {
   });
 
   it("passes when the loaded key wrote the stored ciphertext", () => {
-    const samples = ["123456789012", "9876543210987654"].map((v) =>
-      encryptField(v),
-    );
-    expect(checkKeyParity(samples)).toEqual({
-      sampled: 2,
-      decrypted: 2,
-      ok: true,
-    });
+    const samples = ["123456789012", "9876543210987654"].map((v) => encryptField(v));
+    expect(checkKeyParity(samples)).toEqual({ sampled: 2, decrypted: 2, ok: true });
   });
 
   it("REJECTS ciphertext written with a different key — the production scenario", () => {
-    const samples = ["123456789012", "9876543210987654"].map(
-      encryptWithForeignKey,
-    );
+    const samples = ["123456789012", "9876543210987654"].map(encryptWithForeignKey);
     const result = checkKeyParity(samples);
     expect(result.decrypted).toBe(0);
     expect(result.ok).toBe(false);
   });
 
   it("rejects a partial pass, because mixed keys are worse than a uniformly wrong one", () => {
-    const samples = [
-      encryptField("123456789012"),
-      encryptWithForeignKey("9876543210987654"),
-    ];
+    const samples = [encryptField("123456789012"), encryptWithForeignKey("9876543210987654")];
     const result = checkKeyParity(samples);
     expect(result).toEqual({ sampled: 2, decrypted: 1, ok: false });
   });
@@ -97,30 +86,20 @@ describe("field encryption key parity guard", () => {
  */
 describe("key version handling", () => {
   it("writes version 1, which is what every stored row is", () => {
-    const payload = JSON.parse(
-      Buffer.from(encryptField("123456789012"), "base64").toString("utf8"),
-    );
+    const payload = JSON.parse(Buffer.from(encryptField("123456789012"), "base64").toString("utf8"));
     expect(payload.v).toBe(SUPPORTED_KEY_VERSION);
   });
 
   it("refuses an unsupported version explicitly rather than failing as a bad auth tag", () => {
     // Hand-build a v2 envelope with otherwise valid, correctly-keyed contents: the ONLY thing
     // wrong is the version, so a passing decrypt here would prove `v` is ignored.
-    const real = JSON.parse(
-      Buffer.from(encryptField("123456789012"), "base64").toString("utf8"),
-    );
-    const v2 = Buffer.from(JSON.stringify({ ...real, v: 2 })).toString(
-      "base64",
-    );
-    expect(() => decryptField(v2)).toThrow(
-      /key version 2.*rotation is not implemented/s,
-    );
+    const real = JSON.parse(Buffer.from(encryptField("123456789012"), "base64").toString("utf8"));
+    const v2 = Buffer.from(JSON.stringify({ ...real, v: 2 })).toString("base64");
+    expect(() => decryptField(v2)).toThrow(/key version 2.*rotation is not implemented/s);
   });
 
   it("still reads a genuine v1 envelope", () => {
-    expect(decryptField(encryptField("9876543210987654"))).toBe(
-      "9876543210987654",
-    );
+    expect(decryptField(encryptField("9876543210987654"))).toBe("9876543210987654");
   });
 });
 

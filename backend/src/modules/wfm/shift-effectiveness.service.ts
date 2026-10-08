@@ -56,23 +56,13 @@ const BDS_DERIVED =
   `${budgetSql("b")} AS budget FROM break_daily_summary b WHERE b.shift_date BETWEEN ? AND ?) bds`;
 const BUDGET = "bds.budget";
 
-export interface ScopeFilter {
-  branchId?: string;
-  processId?: string;
-  lob: LobFilter;
-}
+export interface ScopeFilter { branchId?: string; processId?: string; lob: LobFilter }
 
 function scope(f: ScopeFilter): { sql: string; params: string[] } {
   let sql = "";
   const params: string[] = [];
-  if (f.branchId) {
-    sql += " AND e.branch_id = ?";
-    params.push(f.branchId);
-  }
-  if (f.processId) {
-    sql += " AND e.process_id = ?";
-    params.push(f.processId);
-  }
+  if (f.branchId) { sql += " AND e.branch_id = ?"; params.push(f.branchId); }
+  if (f.processId) { sql += " AND e.process_id = ?"; params.push(f.processId); }
   const l = lobAnd(f.lob);
   sql += l.sql;
   params.push(...l.params);
@@ -89,12 +79,7 @@ const SHIFT_KEYS = `sm.id AS shift_id, sm.shift_name, sm.process_id AS tpl_proce
          HOUR(sm.start_time) AS start_hour`;
 const SHIFT_GROUP = `GROUP BY sm.id, sm.shift_name, sm.process_id, sm.branch_id, sm.start_time, sm.end_time`;
 
-function shiftAggQuery(
-  w: DateWindow,
-  f: ScopeFilter,
-  full: boolean,
-  onlyShiftId?: string,
-) {
+function shiftAggQuery(w: DateWindow, f: ScopeFilter, full: boolean, onlyShiftId?: string) {
   const sc = scope(f);
   const params: string[] = [];
   let qaJoin = "";
@@ -127,10 +112,7 @@ function shiftAggQuery(
   params.push(...bdsParams);
   let where = `WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster("ra")}`;
   params.push(w.from, w.to);
-  if (onlyShiftId) {
-    where += " AND sm.id = ?";
-    params.push(onlyShiftId);
-  }
+  if (onlyShiftId) { where += " AND sm.id = ?"; params.push(onlyShiftId); }
   where += sc.sql;
   params.push(...sc.params);
   const sql = `SELECT ${SHIFT_KEYS},
@@ -164,10 +146,7 @@ function toAgg(r: any): ShiftAggRow {
   };
 }
 
-export async function getShiftEffectiveness(
-  f: ScopeFilter,
-  now: Date = new Date(),
-) {
+export async function getShiftEffectiveness(f: ScopeFilter, now: Date = new Date()) {
   const win = analysisWindows(now);
   const cur = shiftAggQuery(win.cur, f, true);
   const prev = shiftAggQuery(win.prev, f, true);
@@ -182,23 +161,11 @@ export async function getShiftEffectiveness(
        WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster("ra")}${sc.sql}
        GROUP BY sm.id, ra.roster_date ORDER BY ra.roster_date`;
   // Two heavy aggregations in parallel (2 in flight max); the light daily series after.
-  const [[curRows], [prevRows]] = await Promise.all([
-    db.execute<any[]>(cur.sql, cur.params),
-    db.execute<any[]>(prev.sql, prev.params),
-  ]);
-  const [dailyRows] = await db.execute<any[]>(daily, [
-    win.cur.from,
-    win.cur.to,
-    ...sc.params,
-  ]);
+  const [[curRows], [prevRows]] = await Promise.all([db.execute<any[]>(cur.sql, cur.params), db.execute<any[]>(prev.sql, prev.params)]);
+  const [dailyRows] = await db.execute<any[]>(daily, [win.cur.from, win.cur.to, ...sc.params]);
 
-  const prevById = new Map<string, ShiftAggRow>(
-    prevRows.map((r: any) => [r.shift_id, toAgg(r)]),
-  );
-  const sparkById = new Map<
-    string,
-    Array<{ date: string; adherencePct: number | null }>
-  >();
+  const prevById = new Map<string, ShiftAggRow>(prevRows.map((r: any) => [r.shift_id, toAgg(r)]));
+  const sparkById = new Map<string, Array<{ date: string; adherencePct: number | null }>>();
   const overall = new Map<string, { scheduled: number; present: number }>();
   for (const r of dailyRows) {
     const list = sparkById.get(r.shift_id) ?? [];
@@ -228,23 +195,15 @@ export async function getShiftEffectiveness(
         breakDays: agg.breakDays,
         qualityDays: agg.qualityDays,
         metrics,
-        trend: {
-          adherence: deltaPts(metrics.adherencePct, pm?.adherencePct),
-          quality: deltaPts(metrics.qualityAvg, pm?.qualityAvg),
-        },
-        spark: (sparkById.get(r.shift_id) ?? []).map(
-          (x) => x.adherencePct ?? 0,
-        ),
+        trend: { adherence: deltaPts(metrics.adherencePct, pm?.adherencePct), quality: deltaPts(metrics.qualityAvg, pm?.qualityAvg) },
+        spark: (sparkById.get(r.shift_id) ?? []).map((x) => x.adherencePct ?? 0),
       };
     }),
   );
 
-  const tot = (rows: any[], col: string) =>
-    rows.reduce((a, r) => a + n(r[col]), 0);
-  const curSched = tot(curRows, "scheduled_days"),
-    curPresent = tot(curRows, "present_days");
-  const prevSched = tot(prevRows, "scheduled_days"),
-    prevPresent = tot(prevRows, "present_days");
+  const tot = (rows: any[], col: string) => rows.reduce((a, r) => a + n(r[col]), 0);
+  const curSched = tot(curRows, "scheduled_days"), curPresent = tot(curRows, "present_days");
+  const prevSched = tot(prevRows, "scheduled_days"), prevPresent = tot(prevRows, "present_days");
   return {
     shifts,
     window: win,
@@ -252,16 +211,9 @@ export async function getShiftEffectiveness(
       scheduledDays: curSched,
       presentDays: curPresent,
       adherencePct: pct(curPresent, curSched),
-      adherenceDelta: deltaPts(
-        pct(curPresent, curSched),
-        pct(prevPresent, prevSched),
-      ),
+      adherenceDelta: deltaPts(pct(curPresent, curSched), pct(prevPresent, prevSched)),
     },
-    daily: [...overall.entries()].map(([date, o]) => ({
-      date,
-      adherencePct: pct(o.present, o.scheduled),
-      scheduledDays: o.scheduled,
-    })),
+    daily: [...overall.entries()].map(([date, o]) => ({ date, adherencePct: pct(o.present, o.scheduled), scheduledDays: o.scheduled })),
   };
 }
 
@@ -279,10 +231,7 @@ function breakFrom(f: ScopeFilter, w: DateWindow) {
   };
 }
 
-export async function getBreakCompliance(
-  f: ScopeFilter,
-  now: Date = new Date(),
-) {
+export async function getBreakCompliance(f: ScopeFilter, now: Date = new Date()) {
   const win = analysisWindows(now);
   const base = breakFrom(f, win.cur);
   const basePrev = breakFrom(f, win.prev);
@@ -330,12 +279,8 @@ export async function getBreakCompliance(
     ),
   ]);
 
-  const row = (r: any) => ({
-    days: n(r?.days),
-    compliant: n(r?.compliant_days),
-  });
-  const c = row(o?.[0]),
-    p = row(po?.[0]);
+  const row = (r: any) => ({ days: n(r?.days), compliant: n(r?.compliant_days) });
+  const c = row(o?.[0]), p = row(po?.[0]);
   const cp = pct(c.compliant, c.days);
   const overall = {
     compliancePct: cp,
@@ -356,12 +301,7 @@ export async function getBreakCompliance(
   return {
     overall,
     window: win,
-    byShift: shiftRows.map((r: any) => ({
-      shiftId: r.shift_id,
-      shiftName: r.shift_name,
-      ...grp(r),
-      trend: null as number | null,
-    })),
+    byShift: shiftRows.map((r: any) => ({ shiftId: r.shift_id, shiftName: r.shift_name, ...grp(r), trend: null as number | null })),
     byProcess: processRows.map((r: any) => ({
       processId: r.process_id ?? "",
       processName: r.process_name,
@@ -377,21 +317,13 @@ export async function getBreakCompliance(
       daysObserved: n(r.days_observed),
       lastViolation: r.last_violation ?? null,
     })),
-    daily: dailyRows.map((r: any) => ({
-      date: r.d,
-      compliancePct: pct(n(r.compliant_days), n(r.days)),
-      avgBreakMinutes: Math.round(n(r.avg_break)),
-      sessions: n(r.days),
-    })),
+    daily: dailyRows.map((r: any) => ({ date: r.d, compliancePct: pct(n(r.compliant_days), n(r.days)), avgBreakMinutes: Math.round(n(r.avg_break)), sessions: n(r.days) })),
   };
 }
 
 // ── /shift-recommendations ───────────────────────────────────────────────────
 
-export async function getShiftRecommendations(
-  f: ScopeFilter,
-  now: Date = new Date(),
-) {
+export async function getShiftRecommendations(f: ScopeFilter, now: Date = new Date()) {
   const win = analysisWindows(now);
   const cohortQ = shiftAggQuery(win.cur, f, false);
   const sc = scope(f);
@@ -435,42 +367,31 @@ export async function getShiftRecommendations(
 
 // ── Drill-down: shift ────────────────────────────────────────────────────────
 
-export async function getShiftDetail(
-  shiftId: string,
-  f: ScopeFilter,
-  now: Date = new Date(),
-) {
-  const [tplRows] = await db.execute<any[]>(
-    `SELECT * FROM wfm_shift_template WHERE id = ?`,
-    [shiftId],
-  );
+export async function getShiftDetail(shiftId: string, f: ScopeFilter, now: Date = new Date()) {
+  const [tplRows] = await db.execute<any[]>(`SELECT * FROM wfm_shift_template WHERE id = ?`, [shiftId]);
   const tpl = tplRows[0];
   if (!tpl) return null;
   const win = analysisWindows(now);
   const sc = scope(f);
   const cur = shiftAggQuery(win.cur, f, true, shiftId);
   const prev = shiftAggQuery(win.prev, f, true, shiftId);
-  const [[curRows], [prevRows]] = await Promise.all([
-    db.execute<any[]>(cur.sql, cur.params),
-    db.execute<any[]>(prev.sql, prev.params),
-  ]);
+  const [[curRows], [prevRows]] = await Promise.all([db.execute<any[]>(cur.sql, cur.params), db.execute<any[]>(prev.sql, prev.params)]);
   const common = `FROM wfm_roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
        JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE sm.id = ? AND ra.roster_date BETWEEN ? AND ? AND ${realRoster("ra")}${sc.sql}`;
   const baseParams = [shiftId, win.cur.from, win.cur.to, ...sc.params];
-  const [[dailyRows], [procRows], [empRows], [versions], [audit]] =
-    await Promise.all([
-      db.execute<any[]>(
-        `SELECT DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS d, SUM(CASE WHEN ${COUNTED} THEN 1 ELSE 0 END) AS scheduled,
+  const [[dailyRows], [procRows], [empRows], [versions], [audit]] = await Promise.all([
+    db.execute<any[]>(
+      `SELECT DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS d, SUM(CASE WHEN ${COUNTED} THEN 1 ELSE 0 END) AS scheduled,
          SUM(CASE WHEN ${COUNTED} AND ${PRESENT} THEN 1 ELSE 0 END) AS present,
          SUM(CASE WHEN ${COUNTED} AND ${PRESENT} AND adr.late_mark = 0 THEN 1 ELSE 0 END) AS on_time
        ${common} GROUP BY ra.roster_date ORDER BY ra.roster_date`,
-        baseParams,
-      ),
-      db.execute<any[]>(
-        `SELECT COALESCE(pm.process_name, 'Unassigned') AS process_name, COUNT(DISTINCT ra.employee_id) AS employees,
+      baseParams,
+    ),
+    db.execute<any[]>(
+      `SELECT COALESCE(pm.process_name, 'Unassigned') AS process_name, COUNT(DISTINCT ra.employee_id) AS employees,
          SUM(CASE WHEN ${COUNTED} THEN 1 ELSE 0 END) AS scheduled, SUM(CASE WHEN ${COUNTED} AND ${PRESENT} THEN 1 ELSE 0 END) AS present
        FROM wfm_roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
@@ -479,60 +400,40 @@ export async function getShiftDetail(
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE sm.id = ? AND ra.roster_date BETWEEN ? AND ? AND ${realRoster("ra")}${sc.sql}
        GROUP BY pm.process_name ORDER BY scheduled DESC LIMIT 20`,
-        baseParams,
-      ),
-      db.execute<any[]>(
-        `SELECT e.id AS employee_id, e.employee_code, e.full_name, SUM(CASE WHEN ${COUNTED} THEN 1 ELSE 0 END) AS scheduled,
+      baseParams,
+    ),
+    db.execute<any[]>(
+      `SELECT e.id AS employee_id, e.employee_code, e.full_name, SUM(CASE WHEN ${COUNTED} THEN 1 ELSE 0 END) AS scheduled,
          SUM(CASE WHEN ${COUNTED} AND ${PRESENT} THEN 1 ELSE 0 END) AS present
        ${common} GROUP BY e.id, e.employee_code, e.full_name
        HAVING scheduled >= 5 ORDER BY (present / scheduled) ASC, scheduled DESC LIMIT 15`,
-        baseParams,
-      ),
-      db.execute<any[]>(
-        `SELECT id, version, shift_name, DATE_FORMAT(effective_from, '%Y-%m-%d') AS effective_from, DATE_FORMAT(effective_to, '%Y-%m-%d') AS effective_to,
+      baseParams,
+    ),
+    db.execute<any[]>(
+      `SELECT id, version, shift_name, DATE_FORMAT(effective_from, '%Y-%m-%d') AS effective_from, DATE_FORMAT(effective_to, '%Y-%m-%d') AS effective_to,
          active_status, created_by, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS created_at
        FROM wfm_shift_template WHERE shift_code = ? ORDER BY version DESC LIMIT 20`,
-        [tpl.shift_code],
-      ),
-      db.execute<any[]>(
-        `SELECT actor_user_id, action_type, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS created_at, metadata_json
+      [tpl.shift_code],
+    ),
+    db.execute<any[]>(
+      `SELECT actor_user_id, action_type, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS created_at, metadata_json
        FROM audit_action_log WHERE entity_id = ? AND entity_type IN ('wfm_shift_template','shift_template','shift')
        ORDER BY created_at DESC LIMIT 20`,
-        [shiftId],
-      ),
-    ]);
+      [shiftId],
+    ),
+  ]);
   const metrics = curRows[0] ? shiftMetrics(toAgg(curRows[0])) : null;
   const pm = prevRows[0] ? shiftMetrics(toAgg(prevRows[0])) : null;
   return {
     template: tpl,
     window: win,
     metrics,
-    trend: {
-      adherence: deltaPts(metrics?.adherencePct, pm?.adherencePct),
-      quality: deltaPts(metrics?.qualityAvg, pm?.qualityAvg),
-    },
+    trend: { adherence: deltaPts(metrics?.adherencePct, pm?.adherencePct), quality: deltaPts(metrics?.qualityAvg, pm?.qualityAvg) },
     totalEmployees: n(curRows[0]?.total_employees),
     scheduledDays: n(curRows[0]?.scheduled_days),
-    daily: dailyRows.map((r: any) => ({
-      date: r.d,
-      scheduledDays: n(r.scheduled),
-      adherencePct: pct(n(r.present), n(r.scheduled)),
-      onTimePct: pct(n(r.on_time), n(r.present)),
-    })),
-    byProcess: procRows.map((r: any) => ({
-      processName: r.process_name,
-      employees: n(r.employees),
-      scheduledDays: n(r.scheduled),
-      adherencePct: pct(n(r.present), n(r.scheduled)),
-    })),
-    lowestAdherence: empRows.map((r: any) => ({
-      employeeId: r.employee_id,
-      employeeCode: r.employee_code,
-      employeeName: r.full_name,
-      scheduledDays: n(r.scheduled),
-      presentDays: n(r.present),
-      adherencePct: pct(n(r.present), n(r.scheduled)),
-    })),
+    daily: dailyRows.map((r: any) => ({ date: r.d, scheduledDays: n(r.scheduled), adherencePct: pct(n(r.present), n(r.scheduled)), onTimePct: pct(n(r.on_time), n(r.present)) })),
+    byProcess: procRows.map((r: any) => ({ processName: r.process_name, employees: n(r.employees), scheduledDays: n(r.scheduled), adherencePct: pct(n(r.present), n(r.scheduled)) })),
+    lowestAdherence: empRows.map((r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code, employeeName: r.full_name, scheduledDays: n(r.scheduled), presentDays: n(r.present), adherencePct: pct(n(r.present), n(r.scheduled)) })),
     versions,
     audit,
   };
@@ -540,10 +441,7 @@ export async function getShiftDetail(
 
 // ── Drill-down: employee break record ────────────────────────────────────────
 
-export async function getEmployeeBreakDetail(
-  employeeId: string,
-  now: Date = new Date(),
-) {
+export async function getEmployeeBreakDetail(employeeId: string, now: Date = new Date()) {
   const win = analysisWindows(now);
   const [empRows] = await db.execute<any[]>(
     `SELECT e.id, e.employee_code, e.full_name, pm.process_name, bm.branch_name, m.full_name AS manager_name
@@ -594,31 +492,16 @@ export async function getEmployeeBreakDetail(
   const over = days.filter((d) => d.overBudget);
   return {
     employee: {
-      id: emp.id,
-      employeeCode: emp.employee_code,
-      fullName: emp.full_name,
-      processName: emp.process_name ?? null,
-      branchName: emp.branch_name ?? null,
-      managerName: emp.manager_name ?? null,
+      id: emp.id, employeeCode: emp.employee_code, fullName: emp.full_name, processName: emp.process_name ?? null,
+      branchName: emp.branch_name ?? null, managerName: emp.manager_name ?? null,
     },
     window: win,
     summary: {
       daysObserved: days.length,
       overBudgetDays: over.length,
       compliancePct: pct(days.length - over.length, days.length),
-      avgBreakMinutes: days.length
-        ? Math.round(
-            days.reduce((a, d) => a + d.totalBreakMinutes, 0) / days.length,
-          )
-        : null,
-      avgExcessMinutes: over.length
-        ? Math.round(
-            over.reduce(
-              (a, d) => a + (d.totalBreakMinutes - d.budgetMinutes),
-              0,
-            ) / over.length,
-          )
-        : null,
+      avgBreakMinutes: days.length ? Math.round(days.reduce((a, d) => a + d.totalBreakMinutes, 0) / days.length) : null,
+      avgExcessMinutes: over.length ? Math.round(over.reduce((a, d) => a + (d.totalBreakMinutes - d.budgetMinutes), 0) / over.length) : null,
     },
     days,
     sessions: sessionRows,

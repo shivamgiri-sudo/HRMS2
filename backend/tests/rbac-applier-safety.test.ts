@@ -18,8 +18,7 @@ import {
  * applier cannot quietly become destructive again.
  */
 
-const resolves = (role: string, code: string) =>
-  getRolePageCodes(role).includes(code);
+const resolves = (role: string, code: string) => getRolePageCodes(role).includes(code);
 
 describe("access that exists in production survives the matrix", () => {
   // Measured from role_page_access on 2026-08-01.
@@ -47,9 +46,7 @@ describe("access that exists in production survives the matrix", () => {
 
   it("covers every role that had production-only grants", () => {
     // 20 roles were affected. If this shrinks, someone deleted an import.
-    expect(Object.keys(LIVE_IMPORTED_PAGE_CODES).length).toBeGreaterThanOrEqual(
-      20,
-    );
+    expect(Object.keys(LIVE_IMPORTED_PAGE_CODES).length).toBeGreaterThanOrEqual(20);
   });
 });
 
@@ -65,13 +62,9 @@ describe("imported grants stay distinguishable from chosen ones", () => {
     let overlap = 0;
     for (const [role, codes] of Object.entries(LIVE_IMPORTED_PAGE_CODES)) {
       const curated = new Set(
-        (ROLE_SPECIFIC_PAGE_CODES[
-          role as keyof typeof ROLE_SPECIFIC_PAGE_CODES
-        ] ?? []) as readonly string[],
+        (ROLE_SPECIFIC_PAGE_CODES[role as keyof typeof ROLE_SPECIFIC_PAGE_CODES] ?? []) as readonly string[],
       );
-      overlap += (codes as readonly string[]).filter((c) =>
-        curated.has(c),
-      ).length;
+      overlap += (codes as readonly string[]).filter((c) => curated.has(c)).length;
     }
     expect(overlap).toBe(0);
   });
@@ -94,9 +87,7 @@ describe("the Quality work is unaffected", () => {
 
   it("leaves super_admin resolution alone", () => {
     // super_admin takes exactly the caller's active page list, with no union.
-    expect(getRolePageCodes("super_admin", ["ONLY_THIS"])).toEqual([
-      "ONLY_THIS",
-    ]);
+    expect(getRolePageCodes("super_admin", ["ONLY_THIS"])).toEqual(["ONLY_THIS"]);
   });
 
   it("keeps the CEO exclusion working through the import", () => {

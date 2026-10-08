@@ -1,8 +1,5 @@
 import { Router } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
@@ -27,205 +24,100 @@ const QUEUE_REASON_LIST_MAX = 500;
  * A malformed month matches nothing (as the old string compare did) instead of erroring.
  */
 function pushMonthRange(conds: string[], params: unknown[], ym: string) {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) {
-    conds.push("1 = 0");
-    return;
-  }
-  conds.push(
-    "(rq.payroll_month >= ? AND rq.payroll_month < DATE_ADD(?, INTERVAL 1 MONTH))",
-  );
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) { conds.push("1 = 0"); return; }
+  conds.push("(rq.payroll_month >= ? AND rq.payroll_month < DATE_ADD(?, INTERVAL 1 MONTH))");
   params.push(`${ym}-01`, `${ym}-01`);
 }
 
 export const payrollMoreRouter = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 payrollMoreRouter.use(requireAuth);
 
-payrollMoreRouter.get(
-  "/form16-data/:runId/:employeeId",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { runId, employeeId } = req.params;
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    const isSelf = Boolean(callerEmp && callerEmp.id === employeeId);
-    if (!isSelf) {
-      // A role check alone let a branch-scoped hr/finance/payroll user pull any
-      // employee's Form 16 income/TDS data org-wide (see the sibling route in
-      // payroll.routes.ts for the same fix).
-      const isPayrollRole = await hasRole(
-        req.authUser!.id,
-        "admin",
-        "hr",
-        "finance",
-        "payroll",
-      );
-      if (!isPayrollRole)
-        return res.status(403).json({ success: false, message: "Forbidden" });
-      const [targetRows] = await db.execute<RowDataPacket[]>(
-        "SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1",
-        [employeeId],
-      );
-      const target = targetRows[0] as
-        | {
-            branch_id: string | null;
-            process_id: string | null;
-            department_id: string | null;
-          }
-        | undefined;
-      const scoped = await hasScopedAccess(
-        req.authUser!.id,
-        ["hr", "finance", "payroll"],
-        {
-          branchId: target?.branch_id ?? null,
-          processId: target?.process_id ?? null,
-          departmentId: target?.department_id ?? null,
-          employeeId,
-        },
-      );
-      if (!scoped)
-        return res.status(403).json({ success: false, message: "Forbidden" });
-    }
+payrollMoreRouter.get("/form16-data/:runId/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { runId, employeeId } = req.params;
+  const callerEmp = await getEmployeeForUser(req.authUser!.id);
+  const isSelf = Boolean(callerEmp && callerEmp.id === employeeId);
+  if (!isSelf) {
+    // A role check alone let a branch-scoped hr/finance/payroll user pull any
+    // employee's Form 16 income/TDS data org-wide (see the sibling route in
+    // payroll.routes.ts for the same fix).
+    const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+    if (!isPayrollRole) return res.status(403).json({ success: false, message: "Forbidden" });
+    const [targetRows] = await db.execute<RowDataPacket[]>(
+      "SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1",
+      [employeeId]
+    );
+    const target = targetRows[0] as { branch_id: string | null; process_id: string | null; department_id: string | null } | undefined;
+    const scoped = await hasScopedAccess(req.authUser!.id, ["hr", "finance", "payroll"], {
+      branchId: target?.branch_id ?? null, processId: target?.process_id ?? null, departmentId: target?.department_id ?? null, employeeId,
+    });
+    if (!scoped) return res.status(403).json({ success: false, message: "Forbidden" });
+  }
 
-    // This route is shadowed in production (payrollRouter mounts its correct
-    // /form16-data ahead of payrollMoreRouter in app.ts), but it previously
-    // carried a second, WRONG computation — a single month's gross × 12, a
-    // hardcoded ₹75,000 standard deduction, no professional tax, no statutory
-    // block and no Part A. If the mount order ever changed, that stale copy
-    // would silently start issuing incorrect certificates. It now delegates to
-    // the same shared service as the canonical route, so both are identical.
-    const result = await computeForm16Data(runId, employeeId);
-    if (!result.ok) {
-      if (result.kind === "run_not_found") {
-        return res
-          .status(404)
-          .json({ success: false, message: "Run not found" });
-      }
-      if (result.kind === "line_not_found") {
-        return res
-          .status(404)
-          .json({
-            success: false,
-            message: "Payroll line not found for employee",
-          });
-      }
-      return res.status(409).json({
-        success: false,
-        message:
-          "Cannot issue the certificate: tds_standard_deduction has no active configuration " +
-          `effective for FY ${result.financialYearLabel}. Seed and activate it, then retry.`,
-        data: { missing_config_keys: result.missingKeys },
-      });
+  // This route is shadowed in production (payrollRouter mounts its correct
+  // /form16-data ahead of payrollMoreRouter in app.ts), but it previously
+  // carried a second, WRONG computation — a single month's gross × 12, a
+  // hardcoded ₹75,000 standard deduction, no professional tax, no statutory
+  // block and no Part A. If the mount order ever changed, that stale copy
+  // would silently start issuing incorrect certificates. It now delegates to
+  // the same shared service as the canonical route, so both are identical.
+  const result = await computeForm16Data(runId, employeeId);
+  if (!result.ok) {
+    if (result.kind === "run_not_found") {
+      return res.status(404).json({ success: false, message: "Run not found" });
     }
-    return res.json({ success: true, data: result.data });
-  }),
-);
+    if (result.kind === "line_not_found") {
+      return res.status(404).json({ success: false, message: "Payroll line not found for employee" });
+    }
+    return res.status(409).json({
+      success: false,
+      message:
+        "Cannot issue the certificate: tds_standard_deduction has no active configuration " +
+        `effective for FY ${result.financialYearLabel}. Seed and activate it, then retry.`,
+      data: { missing_config_keys: result.missingKeys },
+    });
+  }
+  return res.json({ success: true, data: result.data });
+}));
 
-payrollMoreRouter.post(
-  "/pt-slabs",
-  requireRole("admin", "finance"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const {
-      state_code,
-      state_name,
-      income_from,
-      income_to,
-      pt_amount,
-      frequency,
-      effective_from,
-    } = req.body as {
-      state_code: string;
-      state_name: string;
-      income_from: number;
-      income_to?: number | null;
-      pt_amount: number;
-      frequency: string;
-      effective_from: string;
-    };
-    if (
-      !state_code ||
-      !state_name ||
-      income_from === undefined ||
-      pt_amount === undefined ||
-      !frequency ||
-      !effective_from
-    ) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "state_code, state_name, income_from, pt_amount, frequency, effective_from are required",
-        });
-    }
-    const id = (await import("crypto")).randomUUID();
-    await db.execute(
-      `INSERT INTO pt_slab_master (id, state_code, state_name, income_from, income_to, pt_amount, frequency, effective_from, is_active)
+payrollMoreRouter.post("/pt-slabs", requireRole("admin", "finance"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { state_code, state_name, income_from, income_to, pt_amount, frequency, effective_from } = req.body as {
+    state_code: string;
+    state_name: string;
+    income_from: number;
+    income_to?: number | null;
+    pt_amount: number;
+    frequency: string;
+    effective_from: string;
+  };
+  if (!state_code || !state_name || income_from === undefined || pt_amount === undefined || !frequency || !effective_from) {
+    return res.status(400).json({ success: false, message: "state_code, state_name, income_from, pt_amount, frequency, effective_from are required" });
+  }
+  const id = (await import("crypto")).randomUUID();
+  await db.execute(
+    `INSERT INTO pt_slab_master (id, state_code, state_name, income_from, income_to, pt_amount, frequency, effective_from, is_active)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [
-        id,
-        state_code,
-        state_name,
-        income_from,
-        income_to ?? null,
-        pt_amount,
-        frequency,
-        effective_from,
-      ],
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM pt_slab_master WHERE id = ? LIMIT 1",
-      [id],
-    );
-    return res.status(201).json({ success: true, data: rows[0] });
-  }),
-);
+    [id, state_code, state_name, income_from, income_to ?? null, pt_amount, frequency, effective_from],
+  );
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM pt_slab_master WHERE id = ? LIMIT 1", [id]);
+  return res.status(201).json({ success: true, data: rows[0] });
+}));
 
-payrollMoreRouter.patch(
-  "/pt-slabs/:id",
-  requireRole("admin", "finance"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    const { pt_amount, income_to, is_active } = req.body as {
-      pt_amount?: number;
-      income_to?: number | null;
-      is_active?: number;
-    };
-    const sets: string[] = [];
-    const params: unknown[] = [];
-    if (pt_amount !== undefined) {
-      sets.push("pt_amount = ?");
-      params.push(pt_amount);
-    }
-    if (income_to !== undefined) {
-      sets.push("income_to = ?");
-      params.push(income_to ?? null);
-    }
-    if (is_active !== undefined) {
-      sets.push("is_active = ?");
-      params.push(is_active);
-    }
-    if (sets.length === 0)
-      return res
-        .status(400)
-        .json({ success: false, message: "No fields to update" });
-    params.push(id);
-    const [result] = await db.execute<any>(
-      `UPDATE pt_slab_master SET ${sets.join(", ")} WHERE id = ?`,
-      params,
-    );
-    if (result.affectedRows === 0)
-      return res
-        .status(404)
-        .json({ success: false, message: "PT slab not found" });
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM pt_slab_master WHERE id = ? LIMIT 1",
-      [id],
-    );
-    return res.json({ success: true, data: rows[0] });
-  }),
-);
+payrollMoreRouter.patch("/pt-slabs/:id", requireRole("admin", "finance"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { pt_amount, income_to, is_active } = req.body as { pt_amount?: number; income_to?: number | null; is_active?: number };
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  if (pt_amount !== undefined) { sets.push("pt_amount = ?"); params.push(pt_amount); }
+  if (income_to !== undefined) { sets.push("income_to = ?"); params.push(income_to ?? null); }
+  if (is_active !== undefined) { sets.push("is_active = ?"); params.push(is_active); }
+  if (sets.length === 0) return res.status(400).json({ success: false, message: "No fields to update" });
+  params.push(id);
+  const [result] = await db.execute<any>(`UPDATE pt_slab_master SET ${sets.join(", ")} WHERE id = ?`, params);
+  if (result.affectedRows === 0) return res.status(404).json({ success: false, message: "PT slab not found" });
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM pt_slab_master WHERE id = ? LIMIT 1", [id]);
+  return res.json({ success: true, data: rows[0] });
+}));
 
 // ─── Payroll Config Flags ─────────────────────────────────────────────────────
 
@@ -279,23 +171,14 @@ payrollMoreRouter.put("/config-flags", requireRole("admin", "super_admin", "fina
     `INSERT INTO payroll_config_flags (id, branch_id, process_id, config_key, config_value, description, updated_by)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), description = COALESCE(VALUES(description), description), updated_by = VALUES(updated_by), updated_at = NOW()`,
-      [
-        id,
-        branch_id ?? null,
-        process_id ?? null,
-        config_key,
-        config_value,
-        description ?? null,
-        actor,
-      ],
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM payroll_config_flags WHERE config_key = ? AND (branch_id <=> ?) AND (process_id <=> ?) LIMIT 1`,
-      [config_key, branch_id ?? null, process_id ?? null],
-    );
-    return res.json({ success: true, data: rows[0] });
-  }),
-);
+    [id, branch_id ?? null, process_id ?? null, config_key, config_value, description ?? null, actor]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM payroll_config_flags WHERE config_key = ? AND (branch_id <=> ?) AND (process_id <=> ?) LIMIT 1`,
+    [config_key, branch_id ?? null, process_id ?? null]
+  );
+  return res.json({ success: true, data: rows[0] });
+}));
 
 // ─── Recalculation Queue ─────────────────────────────────────────────────────
 
@@ -351,147 +234,92 @@ payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin"
   const statusCounts: Record<string, number> = {};
   (statusRows as any[]).forEach((r) => { statusCounts[r.status] = Number(r.c); });
 
-    return res.json({
-      success: true,
-      data: rows,
-      total: (countRow[0] as any).total,
-      page,
-      limit,
-      statusCounts,
-    });
-  }),
-);
+  return res.json({ success: true, data: rows, total: (countRow[0] as any).total, page, limit, statusCounts });
+}));
 
-payrollMoreRouter.post(
-  "/recalculation-queue",
-  requireRole("admin", "super_admin", "payroll_head"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { employee_id, payroll_month, reason } = req.body as {
-      employee_id: string;
-      payroll_month: string;
-      reason?: string;
-    };
-    if (!employee_id || !payroll_month) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "employee_id and payroll_month (YYYY-MM) are required",
-        });
-    }
-    if (!/^\d{4}-\d{2}$/.test(payroll_month)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "payroll_month must be YYYY-MM format",
-        });
-    }
-    const monthDate = `${payroll_month}-01`;
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id FROM employees WHERE id = ? LIMIT 1",
-      [employee_id],
-    );
-    if (!(empRows as any[]).length)
-      return res
-        .status(404)
-        .json({ success: false, message: "Employee not found" });
-    const { v4: uuidv4 } = await import("uuid");
-    const id = uuidv4();
-    await db.execute(
-      `INSERT INTO payroll_recalculation_queue
+payrollMoreRouter.post("/recalculation-queue", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employee_id, payroll_month, reason } = req.body as {
+    employee_id: string; payroll_month: string; reason?: string;
+  };
+  if (!employee_id || !payroll_month) {
+    return res.status(400).json({ success: false, message: "employee_id and payroll_month (YYYY-MM) are required" });
+  }
+  if (!/^\d{4}-\d{2}$/.test(payroll_month)) {
+    return res.status(400).json({ success: false, message: "payroll_month must be YYYY-MM format" });
+  }
+  const monthDate = `${payroll_month}-01`;
+  const [empRows] = await db.execute<RowDataPacket[]>("SELECT id FROM employees WHERE id = ? LIMIT 1", [employee_id]);
+  if (!(empRows as any[]).length) return res.status(404).json({ success: false, message: "Employee not found" });
+  const { v4: uuidv4 } = await import("uuid");
+  const id = uuidv4();
+  await db.execute(
+    `INSERT INTO payroll_recalculation_queue
        (id, employee_id, payroll_month, source_event_type, reason, status, requested_by, requested_at)
      VALUES (?, ?, ?, 'manual_override', ?, 'pending', ?, NOW())`,
-      [
-        id,
-        employee_id,
-        monthDate,
-        reason ?? "Manual recalculation request",
-        req.authUser!.id,
-      ],
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT rq.*,
+    [id, employee_id, monthDate, reason ?? "Manual recalculation request", req.authUser!.id]
+  );
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT rq.*,
             COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
             e.employee_code
        FROM payroll_recalculation_queue rq
        LEFT JOIN employees e ON e.id = rq.employee_id
       WHERE rq.id = ? LIMIT 1`,
-      [id],
-    );
-    return res.status(201).json({ success: true, data: rows[0] });
-  }),
-);
+    [id]
+  );
+  return res.status(201).json({ success: true, data: rows[0] });
+}));
 
 // E1.8: Bulk recalculation for entire payroll run
-payrollMoreRouter.post(
-  "/recalculation-queue/bulk",
-  requireRole("admin", "super_admin", "payroll_head"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { run_id, reason } = req.body as { run_id: string; reason?: string };
-    if (!run_id) {
-      return res
-        .status(400)
-        .json({ success: false, message: "run_id is required" });
-    }
+payrollMoreRouter.post("/recalculation-queue/bulk", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { run_id, reason } = req.body as { run_id: string; reason?: string };
+  if (!run_id) {
+    return res.status(400).json({ success: false, message: "run_id is required" });
+  }
 
-    // Get all employees in the run
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT spl.employee_id FROM salary_prep_line spl WHERE spl.run_id = ?`,
-      [run_id],
-    );
-    const employees = empRows as Array<{ employee_id: string }>;
+  // Get all employees in the run
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT spl.employee_id FROM salary_prep_line spl WHERE spl.run_id = ?`,
+    [run_id]
+  );
+  const employees = empRows as Array<{ employee_id: string }>;
 
-    // Get run month for month reference
-    const [runRows] = await db.execute<RowDataPacket[]>(
-      `SELECT run_month FROM salary_prep_run WHERE id = ? LIMIT 1`,
-      [run_id],
-    );
-    const run = (runRows as any[])[0];
-    if (!run) {
-      return res.status(404).json({ success: false, message: "Run not found" });
-    }
+  // Get run month for month reference
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    `SELECT run_month FROM salary_prep_run WHERE id = ? LIMIT 1`,
+    [run_id]
+  );
+  const run = (runRows as any[])[0];
+  if (!run) {
+    return res.status(404).json({ success: false, message: "Run not found" });
+  }
 
-    const monthStart = `${run.run_month}-01`;
-    const { v4: uuidv4 } = await import("uuid");
+  const monthStart = `${run.run_month}-01`;
+  const { v4: uuidv4 } = await import("uuid");
 
-    // Create recalc queue entries for each employee
-    for (const emp of employees) {
-      const id = uuidv4();
-      await db.execute(
-        `INSERT INTO payroll_recalculation_queue
+  // Create recalc queue entries for each employee
+  for (const emp of employees) {
+    const id = uuidv4();
+    await db.execute(
+      `INSERT INTO payroll_recalculation_queue
          (id, employee_id, payroll_month, source_event_type, reason, status, requested_by, requested_at)
        VALUES (?, ?, ?, 'bulk_run_recalc', ?, 'pending', ?, NOW())`,
-        [
-          id,
-          emp.employee_id,
-          monthStart,
-          reason ?? "Bulk run recalculation",
-          req.authUser!.id,
-        ],
-      );
-    }
+      [id, emp.employee_id, monthStart, reason ?? "Bulk run recalculation", req.authUser!.id]
+    );
+  }
 
-    return res.status(201).json({
-      success: true,
-      message: `Queued recalculation for ${employees.length} employees in run ${run_id}`,
-      count: employees.length,
-    });
-  }),
-);
+  return res.status(201).json({
+    success: true,
+    message: `Queued recalculation for ${employees.length} employees in run ${run_id}`,
+    count: employees.length,
+  });
+}));
 
 // ─── Salary Drift Check ───────────────────────────────────────────────────────
 
 payrollMoreRouter.get(
   "/runs/:runId/drift-check",
-  requireRole(
-    "payroll_head",
-    "payroll_branch",
-    "admin",
-    "super_admin",
-    "finance",
-    "payroll",
-  ),
+  requireRole("payroll_head", "payroll_branch", "admin", "super_admin", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params as { runId: string };
     const driftScope = await employeeScopeFor(req, "e");
@@ -500,14 +328,12 @@ payrollMoreRouter.get(
       [runId],
     );
     const run = (runRows as any[])[0];
-    if (!run)
-      return res.status(404).json({ success: false, message: "Run not found" });
+    if (!run) return res.status(404).json({ success: false, message: "Run not found" });
 
     if (run.attendance_snapshot_locked) {
       return res.status(409).json({
         success: false,
-        message:
-          "Attendance snapshot is locked — recalculation is disabled for this run.",
+        message: "Attendance snapshot is locked — recalculation is disabled for this run.",
       });
     }
 
@@ -554,7 +380,7 @@ payrollMoreRouter.get(
 
     const rows = driftRows as any[];
     const underpaid_count = rows.filter((r: any) => Number(r.diff) > 0).length;
-    const overpaid_count = rows.filter((r: any) => Number(r.diff) < 0).length;
+    const overpaid_count  = rows.filter((r: any) => Number(r.diff) < 0).length;
 
     return res.json({
       success: true,
@@ -564,15 +390,15 @@ payrollMoreRouter.get(
         overpaid_count,
         snapshot_locked: Boolean(run.attendance_snapshot_locked),
         rows: rows.map((r: any) => ({
-          employee_id: String(r.employee_id),
-          employee_code: String(r.employee_code ?? ""),
-          full_name: `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim(),
-          branch_name: r.branch_name ?? null,
-          process_name: r.process_name ?? null,
+          employee_id:      String(r.employee_id),
+          employee_code:    String(r.employee_code ?? ""),
+          full_name:        `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim(),
+          branch_name:      r.branch_name ?? null,
+          process_name:     r.process_name ?? null,
           stored_paid_days: Number(r.stored_paid_days),
-          live_paid_days: Number(r.live_paid_days),
-          diff: Number(r.diff),
-          direction: Number(r.diff) > 0 ? "underpaid" : "overpaid",
+          live_paid_days:   Number(r.live_paid_days),
+          diff:             Number(r.diff),
+          direction:        Number(r.diff) > 0 ? "underpaid" : "overpaid",
         })),
       },
     });
@@ -591,12 +417,9 @@ payrollMoreRouter.post(
       [runId],
     );
     const run = (runRows as any[])[0];
-    if (!run)
-      return res.status(404).json({ success: false, message: "Run not found" });
+    if (!run) return res.status(404).json({ success: false, message: "Run not found" });
     if (run.attendance_snapshot_locked) {
-      return res
-        .status(409)
-        .json({ success: false, message: "Attendance snapshot is locked." });
+      return res.status(409).json({ success: false, message: "Attendance snapshot is locked." });
     }
 
     let targetIds: string[];
@@ -631,9 +454,7 @@ payrollMoreRouter.post(
     }
 
     const actorId = req.authUser?.id ?? "system";
-    let processed = 0,
-      failed = 0,
-      skipped_locked = 0;
+    let processed = 0, failed = 0, skipped_locked = 0;
 
     for (const employeeId of targetIds) {
       try {
@@ -646,15 +467,10 @@ payrollMoreRouter.post(
         });
         if (result.status === "recalculated") processed++;
         else skipped_locked++;
-      } catch {
-        failed++;
-      }
+      } catch { failed++; }
     }
 
-    return res.json({
-      success: true,
-      data: { processed, failed, skipped_locked, total: targetIds.length },
-    });
+    return res.json({ success: true, data: { processed, failed, skipped_locked, total: targetIds.length } });
   }),
 );
 
@@ -670,10 +486,7 @@ payrollMoreRouter.post(
       [id],
     );
     const item = (rows as any[])[0];
-    if (!item)
-      return res
-        .status(404)
-        .json({ success: false, message: "Queue item not found" });
+    if (!item) return res.status(404).json({ success: false, message: "Queue item not found" });
     if (item.status !== "failed") {
       return res.status(409).json({
         success: false,
@@ -685,13 +498,7 @@ payrollMoreRouter.post(
       `INSERT INTO payroll_recalculation_queue
          (id, employee_id, payroll_month, source_event_type, reason, status, requested_by, requested_at)
        VALUES (?, ?, ?, 'manual_override', ?, 'pending', ?, NOW())`,
-      [
-        newId,
-        item.employee_id,
-        item.payroll_month,
-        `Retry of ${id}: ${item.reason}`,
-        req.authUser!.id,
-      ],
+      [newId, item.employee_id, item.payroll_month, `Retry of ${id}: ${item.reason}`, req.authUser!.id],
     );
     return res.json({ success: true, data: { new_id: newId } });
   }),
@@ -707,10 +514,7 @@ payrollMoreRouter.post(
       [id],
     );
     const item = (rows as any[])[0];
-    if (!item)
-      return res
-        .status(404)
-        .json({ success: false, message: "Queue item not found" });
+    if (!item) return res.status(404).json({ success: false, message: "Queue item not found" });
     if (item.status !== "pending") {
       return res.status(409).json({
         success: false,
@@ -897,26 +701,10 @@ payrollMoreRouter.post("/holiday-master/designation-mapping", requireRole(...HOL
   await db.execute("DELETE FROM holiday_designation_mapping WHERE holiday_id = ?", [holiday_id]);
   for (const did of designation_ids) {
     const { v4: uuidv4 } = await import("uuid");
-    const id = uuidv4();
-    await db.execute(
-      `INSERT INTO leave_holiday_master (id, holiday_name, holiday_date, holiday_type, branch_id, active_status)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        holiday_name,
-        holiday_date,
-        holiday_type,
-        branch_id ?? null,
-        active_status ?? 1,
-      ],
-    );
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1",
-      [id],
-    );
-    return res.status(201).json({ success: true, data: rows[0] });
-  }),
-);
+    await db.execute("INSERT INTO holiday_designation_mapping (id, holiday_id, designation_id) VALUES (?, ?, ?)", [uuidv4(), holiday_id, did]);
+  }
+  return res.json({ success: true });
+}));
 
 payrollMoreRouter.delete("/holiday-master/:id", requireRole(...HOLIDAY_WRITE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
@@ -961,11 +749,10 @@ payrollMoreRouter.get("/holiday-work/requests", requireRole("admin", "super_admi
        LEFT JOIN employees e ON e.id = hwr.requested_by
        ${where}
        ORDER BY hwr.created_at DESC`,
-      params,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    params
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 payrollMoreRouter.post("/holiday-work/requests", requireRole("admin", "super_admin", "payroll", "payroll_head", "wfm", "payroll_branch", "branch_wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { holiday_id, request_month, branch_id, process_id, cost_centre_id, payout_policy_id, designation_ids, request_reason, remarks } = req.body as {
@@ -987,34 +774,17 @@ payrollMoreRouter.post("/holiday-work/requests", requireRole("admin", "super_adm
   await db.execute(
     `INSERT INTO holiday_work_request (id, holiday_id, request_month, branch_id, process_id, cost_centre_id, payout_policy_id, request_reason, remarks, status, requested_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?)`,
-      [
-        id,
-        holiday_id,
-        month,
-        branch_id ?? null,
-        process_id ?? null,
-        cost_centre_id ?? null,
-        payout_policy_id,
-        request_reason ?? remarks ?? "",
-        remarks ?? null,
-        req.authUser!.id,
-      ],
-    );
-    if (Array.isArray(designation_ids) && designation_ids.length > 0) {
-      for (const did of designation_ids) {
-        await db.execute(
-          "INSERT INTO holiday_work_request_designation (id, request_id, designation_id) VALUES (?, ?, ?)",
-          [uuidv4(), id, did],
-        );
-      }
+    [id, holiday_id, month, branch_id ?? null, process_id ?? null, cost_centre_id ?? null,
+     payout_policy_id, request_reason ?? remarks ?? "", remarks ?? null, req.authUser!.id]
+  );
+  if (Array.isArray(designation_ids) && designation_ids.length > 0) {
+    for (const did of designation_ids) {
+      await db.execute("INSERT INTO holiday_work_request_designation (id, request_id, designation_id) VALUES (?, ?, ?)", [uuidv4(), id, did]);
     }
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM holiday_work_request WHERE id = ? LIMIT 1",
-      [id],
-    );
-    return res.status(201).json({ success: true, data: rows[0] });
-  }),
-);
+  }
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM holiday_work_request WHERE id = ? LIMIT 1", [id]);
+  return res.status(201).json({ success: true, data: rows[0] });
+}));
 
 // Branch ids the caller may raise holiday-work requests for (null = every branch). The request
 // form uses this to limit its Branch dropdown; the POST handler still enforces it server-side.
@@ -1049,23 +819,19 @@ payrollMoreRouter.get("/holiday-work/requests/:id", requireRole("admin", "super_
        FROM holiday_work_request_designation hwrd
        LEFT JOIN designation_master dm ON dm.id = hwrd.designation_id
       WHERE hwrd.request_id = ?`,
-      [id],
-    );
-    const [approvalLog] = await db.execute<RowDataPacket[]>(
-      `SELECT hwal.*,
+    [id]
+  );
+  const [approvalLog] = await db.execute<RowDataPacket[]>(
+    `SELECT hwal.*,
             COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS approver_name
        FROM holiday_work_approval_log hwal
        LEFT JOIN employees e ON e.id = hwal.approver_id
       WHERE hwal.request_id = ?
       ORDER BY hwal.created_at ASC`,
-      [id],
-    );
-    return res.json({
-      success: true,
-      data: { ...rows[0], designations, approvalLog },
-    });
-  }),
-);
+    [id]
+  );
+  return res.json({ success: true, data: { ...rows[0], designations, approvalLog } });
+}));
 
 payrollMoreRouter.patch("/holiday-work/requests/:id/approve", requireRole("admin", "super_admin", "payroll", "payroll_head", "wfm", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
@@ -1091,238 +857,115 @@ payrollMoreRouter.patch("/holiday-work/requests/:id/approve", requireRole("admin
 // ══════════════════════════════════════════════════════════════════════════════
 // DEDUCTION TYPE MASTER — CRUD + TOGGLE
 // ══════════════════════════════════════════════════════════════════════════════
-const dedCsvUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
+const dedCsvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // GET /deductions/types — list all deduction types
-payrollMoreRouter.get(
-  "/deductions/types",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const includeInactive = (req.query as any).all === "true";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM payroll_deduction_type ${includeInactive ? "" : "WHERE active_status = 1"} ORDER BY deduction_name`,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+payrollMoreRouter.get("/deductions/types", h(async (req: AuthenticatedRequest, res: Response) => {
+  const includeInactive = (req.query as any).all === "true";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM payroll_deduction_type ${includeInactive ? "" : "WHERE active_status = 1"} ORDER BY deduction_name`
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 // POST /deductions/types — create new deduction type
-payrollMoreRouter.post(
-  "/deductions/types",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { deduction_code, deduction_name, description, is_prorated } =
-      req.body as any;
-    if (!deduction_code || !deduction_name)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "deduction_code and deduction_name are required",
-        });
-    const code = String(deduction_code).toUpperCase().replace(/\s+/g, "_");
-    const id = randomUUID();
-    await db.execute(
-      "INSERT INTO payroll_deduction_type (id, deduction_code, deduction_name, description, is_prorated, active_status, created_by) VALUES (?, ?, ?, ?, ?, 1, ?)",
-      [
-        id,
-        code,
-        deduction_name,
-        description ?? null,
-        is_prorated ? 1 : 0,
-        req.authUser!.id,
-      ],
-    );
-    return res
-      .status(201)
-      .json({
-        success: true,
-        data: { id, deduction_code: code, deduction_name },
-      });
-  }),
-);
+payrollMoreRouter.post("/deductions/types", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { deduction_code, deduction_name, description, is_prorated } = req.body as any;
+  if (!deduction_code || !deduction_name) return res.status(400).json({ success: false, message: "deduction_code and deduction_name are required" });
+  const code = String(deduction_code).toUpperCase().replace(/\s+/g, "_");
+  const id = randomUUID();
+  await db.execute(
+    "INSERT INTO payroll_deduction_type (id, deduction_code, deduction_name, description, is_prorated, active_status, created_by) VALUES (?, ?, ?, ?, ?, 1, ?)",
+    [id, code, deduction_name, description ?? null, is_prorated ? 1 : 0, req.authUser!.id]
+  );
+  return res.status(201).json({ success: true, data: { id, deduction_code: code, deduction_name } });
+}));
 
 // PUT /deductions/types/:id — update deduction type
-payrollMoreRouter.put(
-  "/deductions/types/:id",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { deduction_name, description, is_prorated } = req.body as any;
-    if (!deduction_name)
-      return res
-        .status(400)
-        .json({ success: false, message: "deduction_name is required" });
-    await db.execute(
-      "UPDATE payroll_deduction_type SET deduction_name=?, description=?, is_prorated=? WHERE id=?",
-      [deduction_name, description ?? null, is_prorated ? 1 : 0, req.params.id],
-    );
-    return res.json({ success: true });
-  }),
-);
+payrollMoreRouter.put("/deductions/types/:id", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { deduction_name, description, is_prorated } = req.body as any;
+  if (!deduction_name) return res.status(400).json({ success: false, message: "deduction_name is required" });
+  await db.execute(
+    "UPDATE payroll_deduction_type SET deduction_name=?, description=?, is_prorated=? WHERE id=?",
+    [deduction_name, description ?? null, is_prorated ? 1 : 0, req.params.id]
+  );
+  return res.json({ success: true });
+}));
 
 // PATCH /deductions/types/:id/toggle — activate / deactivate
-payrollMoreRouter.patch(
-  "/deductions/types/:id/toggle",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT active_status FROM payroll_deduction_type WHERE id=?",
-      [req.params.id],
-    );
-    if (!(rows as any[]).length)
-      return res
-        .status(404)
-        .json({ success: false, message: "Deduction type not found" });
-    const current = (rows[0] as any).active_status;
-    await db.execute(
-      "UPDATE payroll_deduction_type SET active_status=? WHERE id=?",
-      [current ? 0 : 1, req.params.id],
-    );
-    return res.json({
-      success: true,
-      data: { active_status: current ? 0 : 1 },
-    });
-  }),
-);
+payrollMoreRouter.patch("/deductions/types/:id/toggle", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT active_status FROM payroll_deduction_type WHERE id=?", [req.params.id]);
+  if (!(rows as any[]).length) return res.status(404).json({ success: false, message: "Deduction type not found" });
+  const current = (rows[0] as any).active_status;
+  await db.execute("UPDATE payroll_deduction_type SET active_status=? WHERE id=?", [current ? 0 : 1, req.params.id]);
+  return res.json({ success: true, data: { active_status: current ? 0 : 1 } });
+}));
 
 // ── DEDUCTION UPLOAD TEMPLATE ─────────────────────────────────────────────────
 // GET /deductions/upload-template?month=YYYY-MM
-payrollMoreRouter.get(
-  "/deductions/upload-template",
-  requireRole("admin", "hr", "finance", "payroll"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const month =
-      ((req.query as any).month as string) ||
-      new Date().toISOString().slice(0, 7);
+payrollMoreRouter.get("/deductions/upload-template", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const month = ((req.query as any).month as string) || new Date().toISOString().slice(0, 7);
 
-    const [types] = await db.execute<RowDataPacket[]>(
-      "SELECT deduction_code FROM payroll_deduction_type WHERE active_status = 1 ORDER BY deduction_name",
-    );
-    const typeCodes = (types as any[]).map(
-      (t: any) => t.deduction_code as string,
-    );
+  const [types] = await db.execute<RowDataPacket[]>(
+    "SELECT deduction_code FROM payroll_deduction_type WHERE active_status = 1 ORDER BY deduction_name"
+  );
+  const typeCodes = (types as any[]).map((t: any) => t.deduction_code as string);
 
-    const [employees] = await db.execute<RowDataPacket[]>(
-      `SELECT e.employee_code, b.branch_name, cc.cost_centre_code
+  const [employees] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code, b.branch_name, cc.cost_centre_code
      FROM employees e
      LEFT JOIN branch_master b ON b.id = e.branch_id
      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
      WHERE e.employment_status IN ('active','on_leave')
      ORDER BY e.employee_code
-     LIMIT 5000`,
-    );
+     LIMIT 5000`
+  );
 
-    const headers = [
-      "employee_code",
-      "month",
-      "branch",
-      "cost_centre",
-      ...typeCodes,
-      "total_deduction",
-    ];
-    const rows = (employees as any[]).map((emp: any) => [
-      emp.employee_code,
-      month,
-      emp.branch_name ?? "",
-      emp.cost_centre_code ?? "",
-      ...typeCodes.map(() => 0),
-      0,
-    ]);
+  const headers = ["employee_code", "month", "branch", "cost_centre", ...typeCodes, "total_deduction"];
+  const rows = (employees as any[]).map((emp: any) => [
+    emp.employee_code, month,
+    emp.branch_name ?? "", emp.cost_centre_code ?? "",
+    ...typeCodes.map(() => 0), 0,
+  ]);
 
-    const csv = [
-      headers.join(","),
-      ...rows.map((r: any[]) => r.join(",")),
-    ].join("\n");
-    res.setHeader("Content-Type", "text/csv");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="deduction_upload_${month}.csv"`,
-    );
-    return res.send(csv);
-  }),
-);
+  const csv = [headers.join(","), ...rows.map((r: any[]) => r.join(","))].join("\n");
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="deduction_upload_${month}.csv"`);
+  return res.send(csv);
+}));
 
 // ── DEDUCTION BULK UPLOAD ─────────────────────────────────────────────────────
 // POST /deductions/bulk-upload — multipart CSV
-payrollMoreRouter.post(
-  "/deductions/bulk-upload",
+payrollMoreRouter.post("/deductions/bulk-upload",
   requireRole("admin", "hr", "finance", "payroll"),
   dedCsvUpload.single("file"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!req.file)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: 'No file uploaded. Send CSV as multipart field "file".',
-        });
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded. Send CSV as multipart field "file".' });
 
     const csvText = req.file.buffer.toString("utf-8");
     const lines = csvText.split(/\r?\n/).filter((l: string) => l.trim());
-    if (lines.length < 2)
-      return res
-        .status(400)
-        .json({ success: false, message: "CSV has no data rows" });
+    if (lines.length < 2) return res.status(400).json({ success: false, message: "CSV has no data rows" });
 
-    const headers = lines[0]
-      .split(",")
-      .map((h: string) => h.trim().toLowerCase());
-    const FIXED = new Set([
-      "employee_code",
-      "month",
-      "branch",
-      "cost_centre",
-      "total_deduction",
-    ]);
+    const headers = lines[0].split(",").map((h: string) => h.trim().toLowerCase());
+    const FIXED = new Set(["employee_code", "month", "branch", "cost_centre", "total_deduction"]);
     const typeCols = headers.filter((h: string) => !FIXED.has(h));
 
-    if (!typeCols.length)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "No deduction type columns found in CSV",
-        });
+    if (!typeCols.length) return res.status(400).json({ success: false, message: "No deduction type columns found in CSV" });
 
     // Validate type columns exist in master
     const [dedTypes] = await db.execute<RowDataPacket[]>(
-      "SELECT deduction_code, is_prorated FROM payroll_deduction_type WHERE active_status = 1",
+      "SELECT deduction_code, is_prorated FROM payroll_deduction_type WHERE active_status = 1"
     );
-    const typeMap = new Map(
-      (dedTypes as any[]).map((t: any) => [
-        t.deduction_code.toLowerCase(),
-        t.is_prorated as number,
-      ]),
-    );
+    const typeMap = new Map((dedTypes as any[]).map((t: any) => [t.deduction_code.toLowerCase(), t.is_prorated as number]));
 
-    const [branches] = await db.execute<RowDataPacket[]>(
-      "SELECT id, branch_name FROM branch_master",
-    );
-    const branchMap = new Map(
-      (branches as any[]).map((b: any) => [b.branch_name?.toLowerCase(), b.id]),
-    );
+    const [branches] = await db.execute<RowDataPacket[]>("SELECT id, branch_name FROM branch_master");
+    const branchMap = new Map((branches as any[]).map((b: any) => [b.branch_name?.toLowerCase(), b.id]));
 
-    const [costCentres] = await db.execute<RowDataPacket[]>(
-      "SELECT id, cost_centre_code FROM cost_centre_master",
-    );
-    const ccMap = new Map(
-      (costCentres as any[]).map((c: any) => [
-        c.cost_centre_code?.toLowerCase(),
-        c.id,
-      ]),
-    );
+    const [costCentres] = await db.execute<RowDataPacket[]>("SELECT id, cost_centre_code FROM cost_centre_master");
+    const ccMap = new Map((costCentres as any[]).map((c: any) => [c.cost_centre_code?.toLowerCase(), c.id]));
 
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, employee_code FROM employees WHERE employment_status IN ('active','on_leave')",
-    );
-    const empMap = new Map(
-      (empRows as any[]).map((e: any) => [
-        e.employee_code?.toLowerCase(),
-        e.id,
-      ]),
-    );
+    const [empRows] = await db.execute<RowDataPacket[]>("SELECT id, employee_code FROM employees WHERE employment_status IN ('active','on_leave')");
+    const empMap = new Map((empRows as any[]).map((e: any) => [e.employee_code?.toLowerCase(), e.id]));
 
     // Branch scoping: rows for employees outside the caller's scope are rejected, not written.
     const visibleEmpIds = await filterVisibleEmployeeIds(req, Array.from(empMap.values()).map(String));
@@ -1333,9 +976,7 @@ payrollMoreRouter.post(
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(",").map((c: string) => c.trim());
       const row: Record<string, string> = {};
-      headers.forEach((h: string, idx: number) => {
-        row[h] = cols[idx] ?? "";
-      });
+      headers.forEach((h: string, idx: number) => { row[h] = cols[idx] ?? ""; });
 
       const empCode = row["employee_code"]?.toLowerCase();
       const empId = empMap.get(empCode);
@@ -1349,10 +990,7 @@ payrollMoreRouter.post(
       for (const typeCode of typeCols) {
         const amount = parseFloat(row[typeCode]);
         if (!amount || amount <= 0) continue;
-        if (!typeMap.has(typeCode.toLowerCase())) {
-          errors.push(`Unknown deduction type: ${typeCode}`);
-          continue;
-        }
+        if (!typeMap.has(typeCode.toLowerCase())) { errors.push(`Unknown deduction type: ${typeCode}`); continue; }
 
         const isProrated = typeMap.get(typeCode.toLowerCase()) ?? 0;
         await db.execute(
@@ -1360,18 +998,8 @@ payrollMoreRouter.post(
              (id, employee_id, description, deduction_type_code, amount, is_prorated, run_month, status, branch_id, cost_centre_id, created_by)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
            ON DUPLICATE KEY UPDATE amount=VALUES(amount), is_prorated=VALUES(is_prorated), status='active'`,
-          [
-            randomUUID(),
-            empId,
-            typeCode.toUpperCase(),
-            typeCode.toUpperCase(),
-            amount,
-            isProrated,
-            runMonth,
-            branchId,
-            ccId,
-            req.authUser!.id,
-          ],
+          [randomUUID(), empId, typeCode.toUpperCase(), typeCode.toUpperCase(),
+           amount, isProrated, runMonth, branchId, ccId, req.authUser!.id]
         );
         inserted++;
       }
@@ -1381,7 +1009,7 @@ payrollMoreRouter.post(
       success: true,
       data: { lines_inserted: inserted, errors: errors.slice(0, 20) },
     });
-  }),
+  })
 );
 
 // GET /deductions/employee/:employeeId — list deduction entries for one employee
@@ -1396,11 +1024,10 @@ payrollMoreRouter.get("/deductions/employee/:employeeId", requireRole("admin", "
      LEFT JOIN payroll_deduction_type pdt ON pdt.deduction_code = ede.deduction_type_code
      WHERE ede.employee_id = ?${extra}
      ORDER BY ede.created_at DESC`,
-      params,
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    params
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 // PATCH /deductions/entry/:id — activate / deactivate one entry
 payrollMoreRouter.patch("/deductions/entry/:id", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -1420,11 +1047,8 @@ payrollMoreRouter.patch("/deductions/entry/:id", requireRole("admin", "hr", "fin
 
 // GET /api/payroll/holiday-work/config/processes
 // List all processes with their auto-gen status
-payrollMoreRouter.get(
-  "/holiday-work/config/processes",
-  requireRole("admin", "super_admin", "payroll_head"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [processes] = await db.execute<RowDataPacket[]>(`
+payrollMoreRouter.get("/holiday-work/config/processes", requireRole("admin", "super_admin", "payroll_head"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const [processes] = await db.execute<RowDataPacket[]>(`
     SELECT p.id, p.process_name,
            COALESCE(pcf.config_value, 'false') AS auto_gen_enabled
     FROM process_master p
@@ -1434,69 +1058,45 @@ payrollMoreRouter.get(
     WHERE p.active_status = 1
     ORDER BY p.process_name
   `);
-    return res.json({ success: true, data: processes });
-  }),
-);
+  return res.json({ success: true, data: processes });
+}));
 
 // PATCH /api/payroll/holiday-work/config/process/:processId
 // Enable/disable auto-generation for a process
-payrollMoreRouter.patch(
-  "/holiday-work/config/process/:processId",
-  requireRole("admin", "super_admin", "payroll_head"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { processId } = req.params;
-    const { enabled } = req.body as { enabled: boolean };
+payrollMoreRouter.patch("/holiday-work/config/process/:processId", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { processId } = req.params;
+  const { enabled } = req.body as { enabled: boolean };
 
-    await db.execute(
-      `
+  await db.execute(`
     INSERT INTO payroll_config_flags (id, process_id, config_key, config_value)
     VALUES (UUID(), ?, 'holiday_work_extra_pay_enabled', ?)
     ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
-  `,
-      [processId, enabled ? "true" : "false"],
-    );
+  `, [processId, enabled ? 'true' : 'false']);
 
-    return res.json({
-      success: true,
-      message: "Process configuration updated",
-    });
-  }),
-);
+  return res.json({ success: true, message: 'Process configuration updated' });
+}));
 
 // PATCH /api/payroll/holidays/:holidayId/extra-pay-eligible
 // Mark holiday as eligible/ineligible for extra pay
-payrollMoreRouter.patch(
-  "/holidays/:holidayId/extra-pay-eligible",
-  requireRole("admin", "super_admin", "hr"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { holidayId } = req.params;
-    const { eligible } = req.body as { eligible: boolean };
+payrollMoreRouter.patch("/holidays/:holidayId/extra-pay-eligible", requireRole("admin", "super_admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { holidayId } = req.params;
+  const { eligible } = req.body as { eligible: boolean };
 
-    await db.execute(
-      `
+  await db.execute(`
     UPDATE leave_holiday_master
     SET extra_pay_eligible = ?
     WHERE id = ?
-  `,
-      [eligible ? 1 : 0, holidayId],
-    );
+  `, [eligible ? 1 : 0, holidayId]);
 
-    return res.json({
-      success: true,
-      message: "Holiday extra pay eligibility updated",
-    });
-  }),
-);
+  return res.json({ success: true, message: 'Holiday extra pay eligibility updated' });
+}));
 
 // ─── Overtime Process Configuration ──────────────────────────────────────────
 
 // GET /api/payroll/overtime/config/processes
 // List all processes with their overtime eligibility status + rate/cap
-payrollMoreRouter.get(
-  "/overtime/config/processes",
-  requireRole("admin", "super_admin", "payroll_head", "wfm"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [processes] = await db.execute<RowDataPacket[]>(`
+payrollMoreRouter.get("/overtime/config/processes", requireRole("admin", "super_admin", "payroll_head", "wfm"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const [processes] = await db.execute<RowDataPacket[]>(`
     SELECT p.id, p.process_code, p.process_name,
            COALESCE(pcf_allowed.config_value, 'false') AS overtime_allowed,
            COALESCE(pcf_rate.config_value, '1.5') AS overtime_rate_multiplier,
@@ -1527,92 +1127,63 @@ payrollMoreRouter.get(
     WHERE p.active_status = 1
     ORDER BY p.process_name
   `);
-    return res.json({ success: true, data: processes });
-  }),
-);
+  return res.json({ success: true, data: processes });
+}));
 
 // PATCH /api/payroll/overtime/config/process/:processId
 // Enable/disable overtime + set rate/cap for a process
-payrollMoreRouter.patch(
-  "/overtime/config/process/:processId",
-  requireRole("admin", "super_admin", "payroll_head"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { processId } = req.params;
-    const {
-      overtime_allowed,
-      overtime_rate_multiplier,
-      overtime_monthly_cap_hours,
-      overtime_minimum_hours,
-      overtime_rounding_unit,
-    } = req.body as {
-      overtime_allowed?: boolean;
-      overtime_rate_multiplier?: number;
-      overtime_monthly_cap_hours?: number;
-      overtime_minimum_hours?: number;
-      overtime_rounding_unit?: number;
-    };
+payrollMoreRouter.patch("/overtime/config/process/:processId", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { processId } = req.params;
+  const { overtime_allowed, overtime_rate_multiplier, overtime_monthly_cap_hours, overtime_minimum_hours, overtime_rounding_unit } = req.body as {
+    overtime_allowed?: boolean;
+    overtime_rate_multiplier?: number;
+    overtime_monthly_cap_hours?: number;
+    overtime_minimum_hours?: number;
+    overtime_rounding_unit?: number;
+  };
 
-    if (overtime_allowed !== undefined) {
-      await db.execute(
-        `
+  if (overtime_allowed !== undefined) {
+    await db.execute(`
       INSERT INTO payroll_config_flags (id, process_id, config_key, config_value, description)
       VALUES (UUID(), ?, 'overtime_allowed', ?, 'Whether overtime is allowed for this process')
       ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
-    `,
-        [processId, overtime_allowed ? "true" : "false"],
-      );
-    }
+    `, [processId, overtime_allowed ? 'true' : 'false']);
+  }
 
-    if (overtime_rate_multiplier !== undefined) {
-      await db.execute(
-        `
+  if (overtime_rate_multiplier !== undefined) {
+    await db.execute(`
       INSERT INTO payroll_config_flags (id, process_id, config_key, config_value, description)
       VALUES (UUID(), ?, 'overtime_rate_multiplier', ?, 'OT rate multiplier for this process')
       ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
-    `,
-        [processId, String(overtime_rate_multiplier)],
-      );
-    }
+    `, [processId, String(overtime_rate_multiplier)]);
+  }
 
-    if (overtime_monthly_cap_hours !== undefined) {
-      await db.execute(
-        `
+  if (overtime_monthly_cap_hours !== undefined) {
+    await db.execute(`
       INSERT INTO payroll_config_flags (id, process_id, config_key, config_value, description)
       VALUES (UUID(), ?, 'overtime_monthly_cap_hours', ?, 'Monthly OT cap hours for this process')
       ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
-    `,
-        [processId, String(overtime_monthly_cap_hours)],
-      );
-    }
+    `, [processId, String(overtime_monthly_cap_hours)]);
+  }
 
-    if (overtime_minimum_hours !== undefined) {
-      await db.execute(
-        `
+  if (overtime_minimum_hours !== undefined) {
+    await db.execute(`
       INSERT INTO payroll_config_flags (id, process_id, config_key, config_value, description)
       VALUES (UUID(), ?, 'overtime_minimum_hours', ?, 'Minimum OT hours threshold for this process')
       ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
-    `,
-        [processId, String(overtime_minimum_hours)],
-      );
-    }
+    `, [processId, String(overtime_minimum_hours)]);
+  }
 
-    if (overtime_rounding_unit !== undefined) {
-      await db.execute(
-        `
+  if (overtime_rounding_unit !== undefined) {
+    await db.execute(`
       INSERT INTO payroll_config_flags (id, process_id, config_key, config_value, description)
       VALUES (UUID(), ?, 'overtime_rounding_unit', ?, 'OT rounding granularity (floor) for this process')
       ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_at = NOW()
-    `,
-        [processId, String(overtime_rounding_unit)],
-      );
-    }
+    `, [processId, String(overtime_rounding_unit)]);
+  }
 
-    return res.json({
-      success: true,
-      message: "Overtime configuration updated for process",
-    });
-  }),
-);
+  return res.json({ success: true, message: 'Overtime configuration updated for process' });
+}));
 
 // ══════════════════════════════════════════════════════════════════════════════
 // M5 — BULK PAYSLIP OUTPUTS
@@ -1645,30 +1216,23 @@ function createBulkJob(runId: string, total: number): BulkJob {
 
 // POST /api/payroll/runs/:id/bulk-generate-payslips
 // Enqueue a bulk payslip generation job
-payrollMoreRouter.post(
-  "/runs/:id/bulk-generate-payslips",
+payrollMoreRouter.post("/runs/:id/bulk-generate-payslips",
   requireRole("admin", "super_admin", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id: runId } = req.params;
 
     const [runRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, run_month, status FROM salary_prep_run WHERE id = ? LIMIT 1",
-      [runId],
+      "SELECT id, run_month, status FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]
     );
-    if (!(runRows as any[]).length)
-      return res.status(404).json({ success: false, message: "Run not found" });
+    if (!(runRows as any[]).length) return res.status(404).json({ success: false, message: "Run not found" });
 
     const run = (runRows as any[])[0];
 
     const [countRow] = await db.execute<RowDataPacket[]>(
-      "SELECT COUNT(*) AS cnt FROM salary_prep_line WHERE run_id = ?",
-      [runId],
+      "SELECT COUNT(*) AS cnt FROM salary_prep_line WHERE run_id = ?", [runId]
     );
     const total = Number((countRow as any[])[0]?.cnt ?? 0);
-    if (total === 0)
-      return res
-        .status(400)
-        .json({ success: false, message: "No payroll lines in this run" });
+    if (total === 0) return res.status(400).json({ success: false, message: "No payroll lines in this run" });
 
     const job = createBulkJob(runId, total);
     bulkJobs.set(runId, job);
@@ -1691,19 +1255,14 @@ payrollMoreRouter.post(
     setImmediate(async () => {
       try {
         const [lines] = await db.execute<RowDataPacket[]>(
-          "SELECT id, employee_id FROM salary_prep_line WHERE run_id = ?",
-          [runId],
+          "SELECT id, employee_id FROM salary_prep_line WHERE run_id = ?", [runId]
         );
         for (const line of lines as any[]) {
           try {
-            await payslipService.generatePayslip(
-              runId,
-              String(line.employee_id),
-              actorUserId,
-            );
+            await payslipService.generatePayslip(runId, String(line.employee_id), actorUserId);
             await db.execute(
               "UPDATE salary_prep_line SET payslip_generated = 1, payslip_generated_at = NOW() WHERE id = ?",
-              [line.id],
+              [line.id]
             );
             job.done++;
           } catch (err: unknown) {
@@ -1724,16 +1283,12 @@ payrollMoreRouter.post(
       }
     });
 
-    return res.json({
-      success: true,
-      data: { runId, total, message: "Bulk generation started" },
-    });
-  }),
+    return res.json({ success: true, data: { runId, total, message: "Bulk generation started" } });
+  })
 );
 
 // GET /api/payroll/runs/:id/bulk-generate-status
-payrollMoreRouter.get(
-  "/runs/:id/bulk-generate-status",
+payrollMoreRouter.get("/runs/:id/bulk-generate-status",
   requireRole("admin", "super_admin", "payroll_head", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id: runId } = req.params;
@@ -1744,45 +1299,32 @@ payrollMoreRouter.get(
         `SELECT
            COUNT(*) AS total,
            SUM(CASE WHEN payslip_generated = 1 THEN 1 ELSE 0 END) AS done
-         FROM salary_prep_line WHERE run_id = ?`,
-        [runId],
+         FROM salary_prep_line WHERE run_id = ?`, [runId]
       );
       const r = (rows as any[])[0];
-      return res.json({
-        success: true,
-        data: {
-          runId,
-          status: "unknown",
-          total: Number(r?.total ?? 0),
-          done: Number(r?.done ?? 0),
-          failed: 0,
-        },
-      });
+      return res.json({ success: true, data: { runId, status: "unknown", total: Number(r?.total ?? 0), done: Number(r?.done ?? 0), failed: 0 } });
     }
     return res.json({ success: true, data: job });
-  }),
+  })
 );
 
 // POST /api/payroll/runs/:id/email-payslips
 // Mark payslips as emailed (actual email delivery is handled by notification service)
-payrollMoreRouter.post(
-  "/runs/:id/email-payslips",
+payrollMoreRouter.post("/runs/:id/email-payslips",
   requireRole("admin", "super_admin", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id: runId } = req.params;
 
     const [runRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1",
-      [runId],
+      "SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]
     );
-    if (!(runRows as any[]).length)
-      return res.status(404).json({ success: false, message: "Run not found" });
+    if (!(runRows as any[]).length) return res.status(404).json({ success: false, message: "Run not found" });
 
     const [result] = await db.execute(
       `UPDATE salary_prep_line
           SET payslip_emailed = 1, payslip_emailed_at = NOW()
         WHERE run_id = ? AND payslip_generated = 1`,
-      [runId],
+      [runId]
     );
     const affected = (result as any).affectedRows ?? 0;
     const runMonth = (runRows as any[])[0]?.run_month;
@@ -1793,22 +1335,17 @@ payrollMoreRouter.post(
       module_key: "payroll",
       entity_type: "salary_prep_run",
       entity_id: runId,
-      change_summary: {
-        run_id: runId,
-        run_month: runMonth,
-        affected_rows: affected,
-      },
+      change_summary: { run_id: runId, run_month: runMonth, affected_rows: affected },
       req,
     });
 
     return res.json({ success: true, data: { runId, emailed: affected } });
-  }),
+  })
 );
 
 // GET /api/payroll/runs/:id/bulk-payslip-summary
 // Aggregated status: generated count, emailed count, pending count
-payrollMoreRouter.get(
-  "/runs/:id/bulk-payslip-summary",
+payrollMoreRouter.get("/runs/:id/bulk-payslip-summary",
   requireRole("admin", "super_admin", "payroll_head", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id: runId } = req.params;
@@ -1821,21 +1358,20 @@ payrollMoreRouter.get(
          MIN(payslip_generated_at) AS first_generated_at,
          MAX(payslip_generated_at) AS last_generated_at
        FROM salary_prep_line
-       WHERE run_id = ?`,
-      [runId],
+       WHERE run_id = ?`, [runId]
     );
     const r = (rows as any[])[0];
     return res.json({
       success: true,
       data: {
         runId,
-        total: Number(r?.total ?? 0),
+        total:     Number(r?.total ?? 0),
         generated: Number(r?.generated ?? 0),
-        emailed: Number(r?.emailed ?? 0),
-        pending: Number(r?.total ?? 0) - Number(r?.generated ?? 0),
+        emailed:   Number(r?.emailed ?? 0),
+        pending:   Number(r?.total ?? 0) - Number(r?.generated ?? 0),
         first_generated_at: r?.first_generated_at ?? null,
-        last_generated_at: r?.last_generated_at ?? null,
+        last_generated_at:  r?.last_generated_at  ?? null,
       },
     });
-  }),
+  })
 );

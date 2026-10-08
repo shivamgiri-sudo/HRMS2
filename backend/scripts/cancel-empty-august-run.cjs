@@ -41,10 +41,8 @@ const REASON =
 
 async function main() {
   const c = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
     port: +(process.env.DB_PORT || 3306),
   });
 
@@ -53,45 +51,24 @@ async function main() {
             (SELECT COUNT(*) FROM salary_prep_line l WHERE l.run_id = r.id) lines_n,
             (SELECT COALESCE(SUM(payslip_generated),0) FROM salary_prep_line l WHERE l.run_id = r.id) payslips,
             (SELECT COALESCE(SUM(bank_transfer_initiated),0) FROM salary_prep_line l WHERE l.run_id = r.id) transfers
-       FROM salary_prep_run r WHERE r.id = ?`,
-    [RUN_ID],
-  );
+       FROM salary_prep_run r WHERE r.id = ?`, [RUN_ID]);
 
-  if (!run) {
-    console.error(`Run ${RUN_ID} not found.`);
-    await c.end();
-    process.exitCode = 1;
-    return;
-  }
+  if (!run) { console.error(`Run ${RUN_ID} not found.`); await c.end(); process.exitCode = 1; return; }
 
-  console.log(
-    `run ${run.run_month}  status=${run.status}  scope=${run.scope_kind}`,
-  );
-  console.log(
-    `  salary lines=${run.lines_n}  total_employees=${run.total_employees}`,
-  );
-  console.log(
-    `  payslips generated=${run.payslips}  bank transfers initiated=${run.transfers}`,
-  );
+  console.log(`run ${run.run_month}  status=${run.status}  scope=${run.scope_kind}`);
+  console.log(`  salary lines=${run.lines_n}  total_employees=${run.total_employees}`);
+  console.log(`  payslips generated=${run.payslips}  bank transfers initiated=${run.transfers}`);
   console.log(`  disbursed_at=${run.disbursed_at ?? "(never)"}`);
 
   // Refuse on any sign this run actually paid somebody.
   const reasons = [];
-  if (Number(run.lines_n) > MAX_STUB_LINES)
-    reasons.push(`${run.lines_n} salary lines (> ${MAX_STUB_LINES})`);
-  if (Number(run.payslips) > 0)
-    reasons.push(`${run.payslips} payslip(s) generated`);
-  if (Number(run.transfers) > 0)
-    reasons.push(`${run.transfers} bank transfer(s) initiated`);
-  if (run.disbursed_at)
-    reasons.push(`disbursed_at is set (${run.disbursed_at})`);
+  if (Number(run.lines_n) > MAX_STUB_LINES) reasons.push(`${run.lines_n} salary lines (> ${MAX_STUB_LINES})`);
+  if (Number(run.payslips) > 0) reasons.push(`${run.payslips} payslip(s) generated`);
+  if (Number(run.transfers) > 0) reasons.push(`${run.transfers} bank transfer(s) initiated`);
+  if (run.disbursed_at) reasons.push(`disbursed_at is set (${run.disbursed_at})`);
   if (reasons.length) {
-    console.error(
-      `\nREFUSING to cancel — this run shows signs of having paid people:\n  - ${reasons.join("\n  - ")}`,
-    );
-    console.error(
-      `Cancelling it would orphan real payments. Investigate before doing anything else.`,
-    );
+    console.error(`\nREFUSING to cancel — this run shows signs of having paid people:\n  - ${reasons.join("\n  - ")}`);
+    console.error(`Cancelling it would orphan real payments. Investigate before doing anything else.`);
     await c.end();
     process.exitCode = 1;
     return;
@@ -103,14 +80,8 @@ async function main() {
     return;
   }
 
-  console.log(
-    `\n${APPLY ? "APPLY" : "DRY RUN"} — would set status 'cancelled' and record the reason.`,
-  );
-  if (!APPLY) {
-    console.log("No changes written. Re-run with APPLY=1.");
-    await c.end();
-    return;
-  }
+  console.log(`\n${APPLY ? "APPLY" : "DRY RUN"} — would set status 'cancelled' and record the reason.`);
+  if (!APPLY) { console.log("No changes written. Re-run with APPLY=1."); await c.end(); return; }
 
   await c.beginTransaction();
   try {
@@ -125,19 +96,11 @@ async function main() {
       `INSERT INTO sensitive_action_log
          (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, acted_at, reason)
        VALUES (UUID(), ?, 'PAYROLL_RUN_CANCELLED', 'payroll', 'salary_prep_run', ?, ?, NOW(), ?)`,
-      [
-        ACTOR,
-        RUN_ID,
-        JSON.stringify({
-          run_month: run.run_month,
-          previous_status: run.status,
-          salary_lines: Number(run.lines_n),
-          total_employees: Number(run.total_employees),
-          payslips: Number(run.payslips),
-          bank_transfers: Number(run.transfers),
-        }),
-        REASON,
-      ],
+      [ACTOR, RUN_ID,
+       JSON.stringify({ run_month: run.run_month, previous_status: run.status, salary_lines: Number(run.lines_n),
+                        total_employees: Number(run.total_employees), payslips: Number(run.payslips),
+                        bank_transfers: Number(run.transfers) }),
+       REASON],
     );
     await c.commit();
     console.log(`\nCommitted. rows updated = ${res.affectedRows}`);
@@ -150,7 +113,4 @@ async function main() {
   await c.end();
 }
 
-main().catch((e) => {
-  console.error("ERR", e.message);
-  process.exit(1);
-});
+main().catch((e) => { console.error("ERR", e.message); process.exit(1); });

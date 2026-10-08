@@ -2,11 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import {
-  columnExists,
-  ifObjectExists,
-  tableExists,
-} from "../../shared/schema-object-cache.js";
+import { columnExists, ifObjectExists, tableExists } from "../../shared/schema-object-cache.js";
 import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
 import { latestPayrollMonth } from "../reporting/payroll-month.js";
 import { runRankSql } from "../payroll/run-status.js";
@@ -35,21 +31,15 @@ function monthKeys(monthCount: number): string[] {
   const months: string[] = [];
 
   for (let offset = monthCount - 1; offset >= 0; offset -= 1) {
-    const date = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1),
-    );
-    months.push(
-      `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`,
-    );
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1));
+    months.push(`${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`);
   }
 
   return months;
 }
 
 const SYSTEM_DASHBOARD_TTL_MS = 45_000;
-const systemDashboardCache = new TtlCache<
-  Awaited<ReturnType<typeof loadSystemDashboardRows>>
->({
+const systemDashboardCache = new TtlCache<Awaited<ReturnType<typeof loadSystemDashboardRows>>>({
   maxEntries: 4,
   defaultTtlMs: SYSTEM_DASHBOARD_TTL_MS,
   // Stale-while-revalidate: the table scans take ~7s cold, so a Super Admin visit after the TTL gets the last result at once.
@@ -79,88 +69,80 @@ export function resetSystemDashboardCacheForTest(): void {
  * original order, so the response is unchanged.
  */
 async function loadModuleActivityRows(): Promise<RowDataPacket[]> {
-  const [ats, payroll, leave, attendance, integration, kpi] = await Promise.all(
-    [
-      db.execute<RowDataPacket[]>(
-        `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
-         FROM ats_candidate`,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT 'Payroll' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity,
+  const [ats, payroll, leave, attendance, integration, kpi] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
+         FROM ats_candidate`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT 'Payroll' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity,
               SUM(status = 'failed') AS error_count
-         FROM salary_prep_run`,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT 'Leave' AS module_name, COUNT(*) AS record_count, MAX(COALESCE(applied_at, created_at)) AS last_activity,
+         FROM salary_prep_run`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT 'Leave' AS module_name, COUNT(*) AS record_count, MAX(COALESCE(applied_at, created_at)) AS last_activity,
               0 AS error_count
-         FROM leave_request`,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT 'Attendance' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity,
+         FROM leave_request`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT 'Attendance' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity,
               0 AS error_count
-         FROM attendance_daily_record`,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT 'Integration Hub' AS module_name, COUNT(*) AS record_count, MAX(completed_at) AS last_activity,
+         FROM attendance_daily_record`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT 'Integration Hub' AS module_name, COUNT(*) AS record_count, MAX(completed_at) AS last_activity,
               SUM(status = 'failed' AND started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS error_count
-         FROM integration_connector_run`,
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT 'KPI' AS module_name, COUNT(*) AS record_count, MAX(created_at) AS last_activity,
+         FROM integration_connector_run`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT 'KPI' AS module_name, COUNT(*) AS record_count, MAX(created_at) AS last_activity,
               0 AS error_count
-         FROM kpi_daily_actual`,
-      ),
-    ],
-  );
-  return [ats, payroll, leave, attendance, integration, kpi].flatMap(
-    ([rows]) => rows,
-  );
+         FROM kpi_daily_actual`
+    ),
+  ]);
+  return [ats, payroll, leave, attendance, integration, kpi].flatMap(([rows]) => rows);
 }
 
 async function loadSystemDashboardRows() {
   const [
-    usersRows,
-    employeeRows,
-    roleRows,
-    pageRows,
-    integrationRows,
-    twoFaRows,
-    moduleRowList,
-    activityRows,
-    branchCountRows,
-  ] = await Promise.all([
-    db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM auth_user"),
-    db.execute<RowDataPacket[]>(
-      "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND date_of_joining <= CURDATE()",
-    ),
-    db.execute<RowDataPacket[]>(
-      "SELECT COUNT(*) AS total FROM workforce_role_catalog WHERE active_status = 1",
-    ),
-    db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM page_catalog"),
-    db.execute<RowDataPacket[]>(
-      `SELECT
+      usersRows,
+      employeeRows,
+      roleRows,
+      pageRows,
+      integrationRows,
+      twoFaRows,
+      moduleRowList,
+      activityRows,
+      branchCountRows,
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM auth_user"),
+      db.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND date_of_joining <= CURDATE()"
+      ),
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM workforce_role_catalog WHERE active_status = 1"),
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM page_catalog"),
+      db.execute<RowDataPacket[]>(
+        `SELECT
            COUNT(*) AS configured,
            SUM(active_status = 1) AS active
-         FROM integration_config`,
-    ),
-    // auth_user has no 2FA column at all — two-factor is not implemented, so
-    // this cannot be counted. It used to fall into `.catch(() => 0)`, which
-    // rendered as "0 users without 2FA", i.e. the strongest possible security
-    // reassurance produced by a query that had never run. null so the tile
-    // reads as unavailable rather than as good news.
-    ifObjectExists(
-      columnExists("auth_user", "two_fa_enabled"),
-      () =>
-        db
-          .execute<RowDataPacket[]>(
-            `SELECT COUNT(*) AS count FROM auth_user WHERE two_fa_enabled = 0 OR two_fa_enabled IS NULL`,
-          )
-          .catch(() => [[{ count: null }]] as any),
-      [[{ count: null }]] as any,
-    ),
-    loadModuleActivityRows(),
-    db.execute<RowDataPacket[]>(
-      `SELECT
+         FROM integration_config`
+      ),
+      // auth_user has no 2FA column at all — two-factor is not implemented, so
+      // this cannot be counted. It used to fall into `.catch(() => 0)`, which
+      // rendered as "0 users without 2FA", i.e. the strongest possible security
+      // reassurance produced by a query that had never run. null so the tile
+      // reads as unavailable rather than as good news.
+      ifObjectExists(
+        columnExists("auth_user", "two_fa_enabled"),
+        () =>
+          db.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) AS count FROM auth_user WHERE two_fa_enabled = 0 OR two_fa_enabled IS NULL`
+          ).catch(() => [[{ count: null }]] as any),
+        [[{ count: null }]] as any,
+      ),
+      loadModuleActivityRows(),
+      db.execute<RowDataPacket[]>(
+        `SELECT
            sal.id,
            LOWER(sal.module_key) AS type,
            COALESCE(au.email, 'System') AS user,
@@ -172,14 +154,12 @@ async function loadSystemDashboardRows() {
          FROM sensitive_action_log sal
          LEFT JOIN auth_user au ON au.id = sal.actor_user_id
          ORDER BY sal.acted_at DESC
-         LIMIT 12`,
-    ),
-    db
-      .execute<RowDataPacket[]>(
-        "SELECT COUNT(*) AS count FROM branch_master WHERE active_status = 1",
-      )
-      .catch(() => [[{ count: null }]] as any),
-  ]);
+         LIMIT 12`
+      ),
+      db.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS count FROM branch_master WHERE active_status = 1"
+      ).catch(() => [[{ count: null }]] as any),
+    ]);
   return {
     usersRows,
     employeeRows,
@@ -198,16 +178,10 @@ async function loadSystemDashboardRows() {
  * score_date is usable (same rows as DATE_FORMAT(score_date,'%Y-%m') = period); any other
  * value keeps the original predicate so odd input behaves exactly as before.
  */
-export function pushScoreMonthCond(
-  conds: string[],
-  params: unknown[],
-  period: string,
-): void {
+export function pushScoreMonthCond(conds: string[], params: unknown[], period: string): void {
   if (/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
     const first = `${period}-01`;
-    conds.push(
-      "kda.score_date >= ? AND kda.score_date < DATE_ADD(?, INTERVAL 1 MONTH)",
-    );
+    conds.push("kda.score_date >= ? AND kda.score_date < DATE_ADD(?, INTERVAL 1 MONTH)");
     params.push(first, first);
     return;
   }
@@ -226,7 +200,7 @@ export const managementService = {
         WHERE (reporting_manager_id = ? OR manager_id = ?)
           AND active_status = 1
         LIMIT 500`,
-      [managerEmployeeId, managerEmployeeId],
+      [managerEmployeeId, managerEmployeeId]
     );
     return (rows as RowDataPacket[]).map((r) => String(r.id));
   },
@@ -240,14 +214,8 @@ export const managementService = {
   }) {
     const conds: string[] = ["e.active_status = 1"];
     const params: unknown[] = [];
-    if (filters.process_id) {
-      conds.push("e.process_id = ?");
-      params.push(filters.process_id);
-    }
-    if (filters.branch_id) {
-      conds.push("e.branch_id = ?");
-      params.push(filters.branch_id);
-    }
+    if (filters.process_id) { conds.push("e.process_id = ?"); params.push(filters.process_id); }
+    if (filters.branch_id)  { conds.push("e.branch_id = ?");  params.push(filters.branch_id); }
     if (filters.employee_ids && filters.employee_ids.length > 0) {
       const placeholders = filters.employee_ids.map(() => "?").join(",");
       conds.push(`e.id IN (${placeholders})`);
@@ -297,7 +265,7 @@ export const managementService = {
         GROUP BY e.id, e.employee_code, e.full_name, p.process_name
         ORDER BY rank_position ASC, overall_score DESC
         LIMIT 200`,
-      [period, ...params],
+      [period, ...params]
     );
 
     // Build trend by comparing current period score to previous period score
@@ -330,13 +298,11 @@ export const managementService = {
            JOIN kpi_metric_master kmm ON kmm.id = kda.metric_id
           WHERE ${prevConds.join(" AND ")}
           GROUP BY e.id`,
-        prevParams,
+        prevParams
       );
 
       for (const prev of prevRows as RowDataPacket[]) {
-        prevScoreMap[String(prev.employee_id)] = numberValue(
-          prev.overall_score,
-        );
+        prevScoreMap[String(prev.employee_id)] = numberValue(prev.overall_score);
       }
     }
 
@@ -362,18 +328,9 @@ export const managementService = {
   }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
-    if (filters.employee_id) {
-      conds.push("cs.employee_id = ?");
-      params.push(filters.employee_id);
-    }
-    if (filters.coach_user_id) {
-      conds.push("cs.coach_user_id = ?");
-      params.push(filters.coach_user_id);
-    }
-    if (filters.status) {
-      conds.push("cs.status = ?");
-      params.push(filters.status);
-    }
+    if (filters.employee_id)   { conds.push("cs.employee_id = ?");   params.push(filters.employee_id); }
+    if (filters.coach_user_id) { conds.push("cs.coach_user_id = ?"); params.push(filters.coach_user_id); }
+    if (filters.status)        { conds.push("cs.status = ?");        params.push(filters.status); }
     if (filters.employee_ids && filters.employee_ids.length > 0) {
       const placeholders = filters.employee_ids.map(() => "?").join(",");
       conds.push(`cs.employee_id IN (${placeholders})`);
@@ -383,47 +340,22 @@ export const managementService = {
       `SELECT cs.*, e.employee_code, e.full_name AS employee_name FROM coaching_session cs
          JOIN employees e ON e.id = cs.employee_id
         WHERE ${conds.join(" AND ")} ORDER BY cs.session_date DESC LIMIT 200`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
 
-  async createCoachingSession(
-    data: {
-      employee_id: string;
-      session_date: string;
-      session_type: string;
-      notes?: string;
-      action_items?: Record<string, unknown>[];
-    },
-    coachUserId: string,
-    req?: Request,
-  ) {
+  async createCoachingSession(data: {
+    employee_id: string; session_date: string; session_type: string;
+    notes?: string; action_items?: Record<string, unknown>[];
+  }, coachUserId: string, req?: Request) {
     const id = randomUUID();
     await db.execute(
       "INSERT INTO coaching_session (id, employee_id, coach_user_id, session_date, session_type, notes, action_items) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [
-        id,
-        data.employee_id,
-        coachUserId,
-        data.session_date,
-        data.session_type,
-        data.notes ?? null,
-        data.action_items ? JSON.stringify(data.action_items) : null,
-      ],
+      [id, data.employee_id, coachUserId, data.session_date, data.session_type, data.notes ?? null, data.action_items ? JSON.stringify(data.action_items) : null]
     );
-    await logSensitiveAction({
-      actor_user_id: coachUserId,
-      action_type: "COACHING_SESSION_CREATED",
-      module_key: "MANAGEMENT",
-      entity_type: "employee",
-      entity_id: data.employee_id,
-      req,
-    });
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM coaching_session WHERE id = ? LIMIT 1",
-      [id],
-    );
+    await logSensitiveAction({ actor_user_id: coachUserId, action_type: "COACHING_SESSION_CREATED", module_key: "MANAGEMENT", entity_type: "employee", entity_id: data.employee_id, req });
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM coaching_session WHERE id = ? LIMIT 1", [id]);
     return (rows as RowDataPacket[])[0];
   },
 
@@ -436,18 +368,9 @@ export const managementService = {
   }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
-    if (filters.employee_id) {
-      conds.push("pa.employee_id = ?");
-      params.push(filters.employee_id);
-    }
-    if (filters.severity) {
-      conds.push("pa.severity = ?");
-      params.push(filters.severity);
-    }
-    if (filters.acknowledged !== undefined) {
-      conds.push("pa.acknowledged = ?");
-      params.push(filters.acknowledged ? 1 : 0);
-    }
+    if (filters.employee_id)                { conds.push("pa.employee_id = ?"); params.push(filters.employee_id); }
+    if (filters.severity)                   { conds.push("pa.severity = ?");    params.push(filters.severity); }
+    if (filters.acknowledged !== undefined) { conds.push("pa.acknowledged = ?"); params.push(filters.acknowledged ? 1 : 0); }
     if (filters.employee_ids && filters.employee_ids.length > 0) {
       const placeholders = filters.employee_ids.map(() => "?").join(",");
       conds.push(`pa.employee_id IN (${placeholders})`);
@@ -457,28 +380,14 @@ export const managementService = {
       `SELECT pa.*, e.employee_code, e.full_name AS employee_name FROM performance_alert pa
          JOIN employees e ON e.id = pa.employee_id
         WHERE ${conds.join(" AND ")} ORDER BY pa.created_at DESC LIMIT 200`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
 
-  async acknowledgeAlert(
-    alertId: string,
-    acknowledgedBy: string,
-    req?: Request,
-  ) {
-    await db.execute(
-      "UPDATE performance_alert SET acknowledged = 1, acknowledged_by = ?, acknowledged_at = NOW() WHERE id = ?",
-      [acknowledgedBy, alertId],
-    );
-    await logSensitiveAction({
-      actor_user_id: acknowledgedBy,
-      action_type: "ALERT_ACKNOWLEDGED",
-      module_key: "MANAGEMENT",
-      entity_type: "performance_alert",
-      entity_id: alertId,
-      req,
-    });
+  async acknowledgeAlert(alertId: string, acknowledgedBy: string, req?: Request) {
+    await db.execute("UPDATE performance_alert SET acknowledged = 1, acknowledged_by = ?, acknowledged_at = NOW() WHERE id = ?", [acknowledgedBy, alertId]);
+    await logSensitiveAction({ actor_user_id: acknowledgedBy, action_type: "ALERT_ACKNOWLEDGED", module_key: "MANAGEMENT", entity_type: "performance_alert", entity_id: alertId, req });
   },
 
   // ─── TNI (Training Needs Identification) ───────────────────────────────────
@@ -515,22 +424,19 @@ export const managementService = {
          LEFT JOIN coaching_session cs ON cs.id = tn.coaching_session_id
         WHERE ${conds.join(" AND ")}
         ORDER BY tn.created_at DESC LIMIT 500`,
-      params,
+      params
     );
     return rows as RowDataPacket[];
   },
 
-  async createTni(
-    data: {
-      employee_id: string;
-      metric_id?: string;
-      need_type: string;
-      description?: string;
-      priority?: string;
-      coaching_session_id?: string;
-    },
-    identifiedBy: string,
-  ) {
+  async createTni(data: {
+    employee_id: string;
+    metric_id?: string;
+    need_type: string;
+    description?: string;
+    priority?: string;
+    coaching_session_id?: string;
+  }, identifiedBy: string) {
     const id = randomUUID();
     await db.execute(
       `INSERT INTO training_need
@@ -545,40 +451,33 @@ export const managementService = {
         data.description ?? null,
         data.priority ?? "medium",
         identifiedBy,
-      ],
+      ]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM training_need WHERE id = ? LIMIT 1",
-      [id],
+      "SELECT * FROM training_need WHERE id = ? LIMIT 1", [id]
     );
     return (rows as RowDataPacket[])[0];
   },
 
   async updateTniStatus(tniId: string, status: string) {
-    await db.execute("UPDATE training_need SET status = ? WHERE id = ?", [
-      status,
-      tniId,
-    ]);
+    await db.execute(
+      "UPDATE training_need SET status = ? WHERE id = ?",
+      [status, tniId]
+    );
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM training_need WHERE id = ? LIMIT 1",
-      [tniId],
+      "SELECT * FROM training_need WHERE id = ? LIMIT 1", [tniId]
     );
     return (rows as RowDataPacket[])[0];
   },
 
-  async createTniFromCoaching(
-    coachingId: string,
-    overrides: {
-      need_type: string;
-      description?: string;
-      priority?: string;
-      metric_id?: string;
-    },
-    identifiedBy: string,
-  ) {
+  async createTniFromCoaching(coachingId: string, overrides: {
+    need_type: string;
+    description?: string;
+    priority?: string;
+    metric_id?: string;
+  }, identifiedBy: string) {
     const [sessionRows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM coaching_session WHERE id = ? LIMIT 1",
-      [coachingId],
+      "SELECT * FROM coaching_session WHERE id = ? LIMIT 1", [coachingId]
     );
     const session = (sessionRows as RowDataPacket[])[0];
     if (!session) throw new Error("Coaching session not found");
@@ -592,7 +491,7 @@ export const managementService = {
         metric_id: overrides.metric_id,
         coaching_session_id: coachingId,
       },
-      identifiedBy,
+      identifiedBy
     );
   },
 
@@ -606,24 +505,26 @@ export const managementService = {
     const buildEmpConds = (alias: string) => {
       if (hasEmpScope) {
         const placeholders = employeeIds!.map(() => "?").join(",");
-        return {
-          clause: `AND ${alias}.id IN (${placeholders})`,
-          params: [...employeeIds!],
-        };
+        return { clause: `AND ${alias}.id IN (${placeholders})`, params: [...employeeIds!] };
       }
       return { clause: processClause, params: [...processParams] };
     };
 
     const empConds = buildEmpConds("e");
 
-    const [workforceRows, leaveRows, ticketRows, attendanceRows, kpiRows] =
-      await Promise.all([
-        // employment_status is filtered here to match dashboard-metric.service.ts,
-        // which is what every other headcount tile uses. Without it this surface
-        // counted employees the rest of the product does not — the CEO UAT saw 1152
-        // here against different figures elsewhere for the same organisation.
-        db.execute<RowDataPacket[]>(
-          `SELECT
+    const [
+      workforceRows,
+      leaveRows,
+      ticketRows,
+      attendanceRows,
+      kpiRows,
+    ] = await Promise.all([
+      // employment_status is filtered here to match dashboard-metric.service.ts,
+      // which is what every other headcount tile uses. Without it this surface
+      // counted employees the rest of the product does not — the CEO UAT saw 1152
+      // here against different figures elsewhere for the same organisation.
+      db.execute<RowDataPacket[]>(
+        `SELECT
            SUM(
              e.active_status = 1
              AND e.date_of_joining <= CURDATE()
@@ -634,38 +535,38 @@ export const managementService = {
            ) AS exits_30d
          FROM employees e
          WHERE 1=1 ${empConds.clause}`,
-          empConds.params,
-        ),
-        db.execute<RowDataPacket[]>(
-          `SELECT COUNT(*) AS pending_leaves
+        empConds.params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS pending_leaves
            FROM leave_request lr
            JOIN employees e ON e.id = lr.employee_id
           WHERE LOWER(lr.status) = 'pending' ${empConds.clause}`,
-          empConds.params,
-        ),
-        db.execute<RowDataPacket[]>(
-          `SELECT COUNT(*) AS open_tickets
+        empConds.params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS open_tickets
            FROM helpdesk_ticket ht
            JOIN employees e ON e.id = ht.employee_id
           WHERE ht.status IN ('open', 'in_progress') ${empConds.clause}`,
-          empConds.params,
-        ),
-        // Anchored on LATEST_COMPLETE_ATTENDANCE_DATE_SQL, not MAX(record_date) <= CURDATE().
-        //
-        // The old anchor resolved to TODAY. Attendance rows are created at start of
-        // day and reconciled overnight, so "today" is a partially-written day: on
-        // 2026-07-30 at 15:00 it held 802 rows of which 1 was present and 431 were
-        // missing_punch. That is what produced the "Attendance Rate 2.3%" the CEO UAT
-        // reported — the panel was reading an in-progress day as if it were final.
-        // The shared helper picks the latest substantially-processed day and
-        // explicitly excludes today; see shared/attendanceStatus.ts for why a
-        // row-count threshold alone is not sufficient.
-        //
-        // Status vocabulary now comes from the same helpers as every other surface.
-        // 'on_leave' and 'leave' in the old list are not ENUM members; the real value
-        // is 'leave_approved'. 'present' alone also omitted 'week_off_worked'.
-        db.execute<RowDataPacket[]>(
-          `SELECT
+        empConds.params
+      ),
+      // Anchored on LATEST_COMPLETE_ATTENDANCE_DATE_SQL, not MAX(record_date) <= CURDATE().
+      //
+      // The old anchor resolved to TODAY. Attendance rows are created at start of
+      // day and reconciled overnight, so "today" is a partially-written day: on
+      // 2026-07-30 at 15:00 it held 802 rows of which 1 was present and 431 were
+      // missing_punch. That is what produced the "Attendance Rate 2.3%" the CEO UAT
+      // reported — the panel was reading an in-progress day as if it were final.
+      // The shared helper picks the latest substantially-processed day and
+      // explicitly excludes today; see shared/attendanceStatus.ts for why a
+      // row-count threshold alone is not sufficient.
+      //
+      // Status vocabulary now comes from the same helpers as every other surface.
+      // 'on_leave' and 'leave' in the old list are not ENUM members; the real value
+      // is 'leave_approved'. 'present' alone also omitted 'week_off_worked'.
+      db.execute<RowDataPacket[]>(
+        `SELECT
            COUNT(*) AS total,
            ${expectedToWorkSql("adr.attendance_status")} AS expected_to_work,
            ${presentSql("adr.attendance_status")} AS present,
@@ -674,14 +575,14 @@ export const managementService = {
          FROM attendance_daily_record adr
          JOIN employees e ON e.id = adr.employee_id
          WHERE adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL} ${empConds.clause}`,
-          empConds.params,
-        ),
-        this.getTeamKpiSummary({
-          process_id: hasEmpScope ? undefined : processId,
-          period: new Date().toISOString().slice(0, 7),
-          employee_ids: employeeIds,
-        }),
-      ]);
+        empConds.params
+      ),
+      this.getTeamKpiSummary({
+        process_id: hasEmpScope ? undefined : processId,
+        period: new Date().toISOString().slice(0, 7),
+        employee_ids: employeeIds,
+      }),
+    ]);
 
     const workforce = workforceRows[0][0] ?? {};
     const attendance = attendanceRows[0][0] ?? {};
@@ -689,32 +590,25 @@ export const managementService = {
     const exits = numberValue(workforce.exits_30d);
     const expectedToWork = numberValue(attendance.expected_to_work);
     const averageKpi = kpiRows.length
-      ? (kpiRows as any[]).reduce(
-          (sum, row) => sum + numberValue(row.overall_score),
-          0,
-        ) / kpiRows.length
+      ? (kpiRows as any[]).reduce((sum, row) => sum + numberValue(row.overall_score), 0) / kpiRows.length
       : 0;
 
     return {
       headcount,
-      attrition_rate:
-        headcount + exits > 0
-          ? Number(((exits / (headcount + exits / 2)) * 100).toFixed(2))
-          : 0,
+      attrition_rate: headcount + exits > 0
+        ? Number(((exits / (headcount + exits / 2)) * 100).toFixed(2))
+        : 0,
       avg_kpi_score: Number(averageKpi.toFixed(2)),
       open_tickets: numberValue(ticketRows[0][0]?.open_tickets),
       pending_leaves: numberValue(leaveRows[0][0]?.pending_leaves),
-      attendance_rate:
-        expectedToWork > 0
-          ? Number(
-              (
-                ((numberValue(attendance.present) +
-                  numberValue(attendance.half_day) * 0.5) /
-                  expectedToWork) *
-                100
-              ).toFixed(2),
-            )
-          : 0,
+      attendance_rate: expectedToWork > 0
+        ? Number(
+            ((
+              (numberValue(attendance.present) + numberValue(attendance.half_day) * 0.5)
+              / expectedToWork
+            ) * 100).toFixed(2)
+          )
+        : 0,
     };
   },
 
@@ -723,10 +617,7 @@ export const managementService = {
     // once per window and shared — with in-flight de-duplication, so a burst of Super Admin
     // page loads (or a cold start) runs ONE set of table scans instead of one per request.
     // uptime and generatedAt are still computed fresh below.
-    const { value: rows } = await systemDashboardCache.getOrCompute(
-      "system-dashboard",
-      loadSystemDashboardRows,
-    );
+    const { value: rows } = await systemDashboardCache.getOrCompute("system-dashboard", loadSystemDashboardRows);
     const {
       usersRows,
       employeeRows,
@@ -744,12 +635,7 @@ export const managementService = {
       const errorCount = numberValue(row.error_count);
       return {
         module: String(row.module_name),
-        status:
-          errorCount > 0
-            ? "degraded"
-            : recordCount > 0
-              ? "operational"
-              : "degraded",
+        status: errorCount > 0 ? "degraded" : recordCount > 0 ? "operational" : "degraded",
         lastActivity: row.last_activity ?? null,
         errorCount,
         recordCount,
@@ -761,12 +647,11 @@ export const managementService = {
     const uptimeDays = Math.floor(uptimeSeconds / 86400);
     const uptimeHours = Math.floor((uptimeSeconds % 86400) / 3600);
     const uptimeMinutes = Math.floor((uptimeSeconds % 3600) / 60);
-    const uptimeFormatted =
-      uptimeDays > 0
-        ? `${uptimeDays}d ${uptimeHours}h`
-        : uptimeHours > 0
-          ? `${uptimeHours}h ${uptimeMinutes}m`
-          : `${uptimeMinutes}m`;
+    const uptimeFormatted = uptimeDays > 0
+      ? `${uptimeDays}d ${uptimeHours}h`
+      : uptimeHours > 0
+        ? `${uptimeHours}h ${uptimeMinutes}m`
+        : `${uptimeMinutes}m`;
 
     return {
       metrics: {
@@ -776,16 +661,13 @@ export const managementService = {
         totalPages: numberValue(pageRows[0][0]?.total),
         activeIntegrations: numberValue(integrationRows[0][0]?.active),
         configuredIntegrations: numberValue(integrationRows[0][0]?.configured),
-        systemHealth: modules.some((module) => module.status === "degraded")
-          ? "warning"
-          : "healthy",
+        systemHealth: modules.some((module) => module.status === "degraded") ? "warning" : "healthy",
         uptime: uptimeFormatted,
         // null, not 0 — see the query above. 2FA is not implemented, and a 0
         // here is read as "everyone is covered".
-        usersWithout2fa:
-          (twoFaRows as any)[0]?.[0]?.count == null
-            ? null
-            : numberValue((twoFaRows as any)[0][0].count),
+        usersWithout2fa: (twoFaRows as any)[0]?.[0]?.count == null
+          ? null
+          : numberValue((twoFaRows as any)[0][0].count),
         totalBranches: numberValue((branchCountRows as any)[0]?.[0]?.count),
       },
       modules,
@@ -827,21 +709,17 @@ export const managementService = {
       scopeParams.push(...branchIds);
     }
     if (processIds.length) {
-      scopeConds.push(
-        `process_id IN (${processIds.map(() => "?").join(", ")})`,
-      );
+      scopeConds.push(`process_id IN (${processIds.map(() => "?").join(", ")})`);
       scopeParams.push(...processIds);
     }
-    const empScopeWhere = scopeConds.length
-      ? " AND " + scopeConds.join(" AND ")
-      : "";
+    const empScopeWhere = scopeConds.length ? " AND " + scopeConds.join(" AND ") : "";
     const empScopeJoinWhere = scopeConds.length
-      ? " AND " + scopeConds.map((c) => "e." + c).join(" AND ")
+      ? " AND " + scopeConds.map(c => "e." + c).join(" AND ")
       : "";
     // For tables that carry branch_id/process_id themselves instead of reaching them
     // through employees — work_item is the one on this dashboard.
     const workItemScopeWhere = scopeConds.length
-      ? " AND " + scopeConds.map((c) => "wi." + c).join(" AND ")
+      ? " AND " + scopeConds.map(c => "wi." + c).join(" AND ")
       : "";
 
     const [
@@ -1040,19 +918,15 @@ export const managementService = {
     const activeHeadcount = numberValue(workforce.active_headcount);
     const exits30d = numberValue(workforce.exits_30d);
     const attritionDenominator = activeHeadcount + exits30d / 2;
-    const attritionRate30d =
-      attritionDenominator > 0
-        ? Number(((exits30d / attritionDenominator) * 100).toFixed(2))
-        : 0;
+    const attritionRate30d = attritionDenominator > 0
+      ? Number(((exits30d / attritionDenominator) * 100).toFixed(2))
+      : 0;
 
     const attendanceRows = attendanceResult[0];
     const attendanceByStatus = Object.fromEntries(
       attendanceRows.map((row) => [String(row.status), numberValue(row.value)]),
     );
-    const attendanceTotal = Object.values(attendanceByStatus).reduce(
-      (sum, value) => sum + value,
-      0,
-    );
+    const attendanceTotal = Object.values(attendanceByStatus).reduce((sum, value) => sum + value, 0);
     // Expected to work = total - leave/week_off/holiday (employees who should have been present).
     // Reuses the shared vocabulary rather than a hand-maintained copy of the same five
     // statuses — attendance-canon.contract.test.ts pins this file to the shared list
@@ -1063,9 +937,9 @@ export const managementService = {
     );
     const expectedToWork = attendanceTotal - nonWorkingCount;
     const absentEquivalent =
-      numberValue(attendanceByStatus.absent) +
-      numberValue(attendanceByStatus.unreconciled) +
-      numberValue(attendanceByStatus.half_day) * 0.5;
+      numberValue(attendanceByStatus.absent)
+      + numberValue(attendanceByStatus.unreconciled)
+      + numberValue(attendanceByStatus.half_day) * 0.5;
     // PRESENT_STATUSES (present + week_off_worked) — not 'present' alone. Omitting
     // week_off_worked here reintroduced, in this one hand-rolled breakdown, the exact
     // bug the shared helper exists to prevent: an employee who worked their rostered
@@ -1075,70 +949,42 @@ export const managementService = {
     // shared presentSql() helper — counted them correctly. Both numbers render on the
     // same CEO tile row.
     const productiveEquivalent =
-      PRESENT_STATUSES.reduce(
-        (sum, status) => sum + numberValue(attendanceByStatus[status]),
-        0,
-      ) +
-      numberValue(attendanceByStatus.half_day) * 0.5;
+      PRESENT_STATUSES.reduce((sum, status) => sum + numberValue(attendanceByStatus[status]), 0)
+      + numberValue(attendanceByStatus.half_day) * 0.5;
     const attendanceDate = attendanceRows[0]?.record_date
-      ? new Date(attendanceRows[0].record_date as string | Date)
-          .toISOString()
-          .slice(0, 10)
+      ? new Date(attendanceRows[0].record_date as string | Date).toISOString().slice(0, 10)
       : null;
     const attendanceDataAgeDays = attendanceDate
-      ? Math.max(
-          0,
-          Math.floor(
-            (Date.now() - new Date(`${attendanceDate}T00:00:00Z`).getTime()) /
-              86_400_000,
-          ),
-        )
+      ? Math.max(0, Math.floor((Date.now() - new Date(`${attendanceDate}T00:00:00Z`).getTime()) / 86_400_000))
       : null;
 
     const months = monthKeys(6);
     const joinsByMonth = new Map(
-      joinerResult[0].map((row) => [
-        String(row.period),
-        numberValue(row.value),
-      ]),
+      joinerResult[0].map((row) => [String(row.period), numberValue(row.value)]),
     );
     const exitsByMonth = new Map(
-      leaverResult[0].map((row) => [
-        String(row.period),
-        numberValue(row.value),
-      ]),
+      leaverResult[0].map((row) => [String(row.period), numberValue(row.value)]),
     );
     let runningHeadcount = activeHeadcount;
-    const movement = [...months]
-      .reverse()
-      .map((period) => {
-        const joins = joinsByMonth.get(period) ?? 0;
-        const exits = exitsByMonth.get(period) ?? 0;
-        const point = { period, headcount: runningHeadcount, joins, exits };
-        runningHeadcount = runningHeadcount - joins + exits;
-        return point;
-      })
-      .reverse();
+    const movement = [...months].reverse().map((period) => {
+      const joins = joinsByMonth.get(period) ?? 0;
+      const exits = exitsByMonth.get(period) ?? 0;
+      const point = { period, headcount: runningHeadcount, joins, exits };
+      runningHeadcount = runningHeadcount - joins + exits;
+      return point;
+    }).reverse();
 
     const pipeline = pipelineResult[0].map((row) => ({
       stage: String(row.stage),
       value: numberValue(row.value),
     }));
-    const terminalStages = new Set([
-      "onboarded",
-      "converted",
-      "rejected",
-      "declined",
-      "withdrawn",
-    ]);
+    const terminalStages = new Set(["onboarded", "converted", "rejected", "declined", "withdrawn"]);
     const openPipeline = pipeline.reduce(
-      (sum, item) =>
-        terminalStages.has(item.stage.toLowerCase()) ? sum : sum + item.value,
+      (sum, item) => terminalStages.has(item.stage.toLowerCase()) ? sum : sum + item.value,
       0,
     );
     const analystsInTraining =
-      numberValue(training.ats_training) +
-      numberValue(training.training_stage_candidates);
+      numberValue(training.ats_training) + numberValue(training.training_stage_candidates);
 
     // Add missing fields for dashboard
     //
@@ -1176,7 +1022,7 @@ export const managementService = {
         [...scopeParams],
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) as count FROM branch_master WHERE active_status = 1`,
+        `SELECT COUNT(*) as count FROM branch_master WHERE active_status = 1`
       ),
       // Scoped, and the 90-day window is now reported alongside the rows.
       //
@@ -1204,7 +1050,7 @@ export const managementService = {
          WHERE e.active_status = 1
            AND e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          ORDER BY e.date_of_joining DESC
-         LIMIT 10`,
+         LIMIT 10`
       ),
       db.execute<RowDataPacket[]>(
         `SELECT
@@ -1225,7 +1071,7 @@ export const managementService = {
          GROUP BY b.id, b.branch_name
          HAVING employee_count > 0
          ORDER BY employee_count DESC
-         LIMIT 15`,
+         LIMIT 15`
       ),
       // Leave balance usage percentage
       db.execute<RowDataPacket[]>(
@@ -1236,7 +1082,7 @@ export const managementService = {
            AND lr.status = 'approved'
            AND lr.start_date >= MAKEDATE(YEAR(CURDATE()), 1)
            AND lr.start_date < MAKEDATE(YEAR(CURDATE()) + 1, 1)
-         WHERE e.active_status = 1`,
+         WHERE e.active_status = 1`
       ),
       // Manager-specific: expense claims, work items
       //
@@ -1249,25 +1095,21 @@ export const managementService = {
       // expense_type is constrained too: the table is a mixed ledger and 5,534 of
       // those rows are migrated vendor bills and imprest, which are settled through
       // the GRN / vendor-payment flow and are not a manager's expense queue.
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT COUNT(*) as count FROM expense_claim ec
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM expense_claim ec
          JOIN employees e ON e.id = ec.employee_id
           WHERE ec.status = 'submitted' AND ec.expense_type = 'employee_claim'${empScopeJoinWhere}`,
-          [...scopeParams],
-        )
-        .catch(() => [[{ count: 0 }]] as any),
+        [...scopeParams],
+      ).catch(() => [[{ count: 0 }]] as any),
       // null, not 0, on failure. A zero here reads as "nothing is overdue", which is
       // the reassuring answer, and it would be produced by a query that never ran.
       // work_item carries its own branch_id/process_id — it has no employee_id, so it is
       // scoped on its own columns rather than through a join to employees.
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT COUNT(*) as overdue FROM work_item wi
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as overdue FROM work_item wi
          WHERE wi.status NOT IN ('completed','cancelled') AND wi.due_at < NOW()${workItemScopeWhere}`,
-          [...scopeParams],
-        )
-        .catch(() => [[{ overdue: null }]] as any),
+        [...scopeParams],
+      ).catch(() => [[{ overdue: null }]] as any),
       // Pending timesheets.
       //
       // The query is correct and the table is real, but `item_type` is free varchar and
@@ -1277,11 +1119,9 @@ export const managementService = {
       //
       // Returned as null so the tile renders as unavailable, matching how Document
       // Compliance already omits expiry for the same reason.
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT COUNT(*) AS count FROM work_item WHERE item_type = 'timesheet' AND status = 'pending'`,
-        )
-        .catch(() => [[{ count: null }]] as any),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count FROM work_item WHERE item_type = 'timesheet' AND status = 'pending'`
+      ).catch(() => [[{ count: null }]] as any),
       // Expired employee documents.
       //
       // The table name and column were fixed earlier (it is employee_documents,
@@ -1293,18 +1133,16 @@ export const managementService = {
       // count is only meaningful once some document actually carries an expiry date,
       // and at that point this reports it. Document Compliance already omits expiry
       // for exactly this reason; the two panels now agree.
-      db
-        .execute<RowDataPacket[]>(
-          // NOT EXISTS + a bounded COUNT instead of two SUM()s over the whole table: with an index on
-          // expiry_date both probes are index-only (the old form read every one of ~209k rows to
-          // compute two aggregates). Same three outcomes — NULL when no row carries an expiry
-          // date (including an empty table), otherwise the number already expired.
-          `SELECT
+      db.execute<RowDataPacket[]>(
+        // NOT EXISTS + a bounded COUNT instead of two SUM()s over the whole table: with an index on
+        // expiry_date both probes are index-only (the old form read every one of ~209k rows to
+        // compute two aggregates). Same three outcomes — NULL when no row carries an expiry
+        // date (including an empty table), otherwise the number already expired.
+        `SELECT
            CASE WHEN NOT EXISTS (SELECT 1 FROM employee_documents WHERE expiry_date IS NOT NULL) THEN NULL
                 ELSE (SELECT COUNT(*) FROM employee_documents WHERE expiry_date IS NOT NULL AND expiry_date < CURDATE())
-           END AS count`,
-        )
-        .catch(() => [[{ count: null }]] as any),
+           END AS count`
+      ).catch(() => [[{ count: null }]] as any),
       // Pending policy acknowledgements.
       //
       // `policy_acknowledgement` does not exist — there is no acknowledgement
@@ -1319,35 +1157,30 @@ export const managementService = {
       ifObjectExists(
         tableExists("policy_acknowledgement"),
         () =>
-          db
-            .execute<RowDataPacket[]>(
-              `SELECT COUNT(*) AS count FROM policy_acknowledgement
-             WHERE acknowledged = 0`,
-            )
-            .catch(() => [[{ count: null }]] as any),
+          db.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) AS count FROM policy_acknowledgement
+             WHERE acknowledged = 0`
+          ).catch(() => [[{ count: null }]] as any),
         [[{ count: null }]] as any,
       ),
       // Appraisal completion percentage
       ifObjectExists(
         tableExists("performance_appraisal"),
         () =>
-          db
-            .execute<RowDataPacket[]>(
-              `SELECT
+          db.execute<RowDataPacket[]>(
+            `SELECT
                ROUND(
                  SUM(pa.status IN ('completed','approved')) * 100.0
                  / NULLIF(COUNT(*), 0)
                , 2) AS completion_pct
              FROM performance_appraisal pa
-             WHERE YEAR(pa.appraisal_year) = YEAR(CURDATE())`,
-            )
-            .catch(() => [[{ completion_pct: null }]] as any),
+             WHERE YEAR(pa.appraisal_year) = YEAR(CURDATE())`
+          ).catch(() => [[{ completion_pct: null }]] as any),
         [[{ completion_pct: null }]] as any,
       ),
       // Process breakdown for Operations dashboard
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT
+      db.execute<RowDataPacket[]>(
+        `SELECT
            pm.id,
            pm.process_name,
            COUNT(DISTINCT e.id) AS headcount,
@@ -1365,9 +1198,8 @@ export const managementService = {
          GROUP BY pm.id, pm.process_name
          HAVING headcount > 0
          ORDER BY headcount DESC
-         LIMIT 15`,
-        )
-        .catch(() => [[]] as any),
+         LIMIT 15`
+      ).catch(() => [[]] as any),
       // Team members snapshot for Manager dashboard roster panel.
       //
       // Scoped. This selected every active employee in the company, sorted by name and
@@ -1379,9 +1211,8 @@ export const managementService = {
       // is anchored to the last fully processed day. Today is still being written, so the
       // roster reported 'missing_punch' for people whose day merely had not been processed
       // yet. Anchored to the same day as the rest of the page.
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT
+      db.execute<RowDataPacket[]>(
+        `SELECT
            e.id, e.employee_code, e.full_name as employee_name,
            e.designation_id, e.employment_status,
            b.branch_name,
@@ -1398,9 +1229,8 @@ export const managementService = {
          WHERE e.employment_status = 'active'${empScopeJoinWhere}
          ORDER BY e.full_name ASC
          LIMIT 20`,
-          [...scopeParams],
-        )
-        .catch(() => [[]] as any),
+        [...scopeParams],
+      ).catch(() => [[]] as any),
     ]);
     const onLeaveCount = numberValue(onLeaveResult[0]?.count);
     const totalBranches = numberValue(branchCountResult[0]?.count);
@@ -1422,14 +1252,12 @@ export const managementService = {
         attrition_rate_30d: attritionRate30d,
         open_pipeline: openPipeline,
         analysts_in_training: analystsInTraining,
-        shrinkage_pct:
-          expectedToWork > 0
-            ? Number(((absentEquivalent / expectedToWork) * 100).toFixed(2))
-            : null,
-        attendance_pct:
-          expectedToWork > 0
-            ? Number(((productiveEquivalent / expectedToWork) * 100).toFixed(2))
-            : null,
+        shrinkage_pct: expectedToWork > 0
+          ? Number(((absentEquivalent / expectedToWork) * 100).toFixed(2))
+          : null,
+        attendance_pct: expectedToWork > 0
+          ? Number(((productiveEquivalent / expectedToWork) * 100).toFixed(2))
+          : null,
         expected_to_work: expectedToWork,
       },
       on_leave: onLeaveCount,
@@ -1443,10 +1271,7 @@ export const managementService = {
       projects_at_risk: null,
       // null passes through as "—". See the query: a 0 here would be produced by a
       // failed lookup and would read as "nothing overdue".
-      overdue_tasks:
-        overtaskResult[0]?.overdue == null
-          ? null
-          : numberValue(overtaskResult[0].overdue),
+      overdue_tasks: overtaskResult[0]?.overdue == null ? null : numberValue(overtaskResult[0].overdue),
       team_members: teamMembersResult.map((row: RowDataPacket) => ({
         id: String(row.id),
         employee_code: String(row.employee_code),
@@ -1455,40 +1280,29 @@ export const managementService = {
         today_status: String(row.today_status),
         status: String(row.today_status),
         attendance_status: String(row.today_status),
-        designation_name: row.designation_name
-          ? String(row.designation_name)
-          : null,
+        designation_name: row.designation_name ? String(row.designation_name) : null,
       })),
       // Both deliberately null rather than 0 — see the queries above. `?? 0` here was
       // undoing the null the query goes out of its way to produce.
-      pending_timesheets:
-        (timesheetResult as any)[0]?.[0]?.count == null
-          ? null
-          : numberValue((timesheetResult as any)[0][0].count),
-      expired_documents:
-        (expiredDocsResult as any)[0]?.[0]?.count == null
-          ? null
-          : numberValue((expiredDocsResult as any)[0][0].count),
+      pending_timesheets: (timesheetResult as any)[0]?.[0]?.count == null
+        ? null
+        : numberValue((timesheetResult as any)[0][0].count),
+      expired_documents: (expiredDocsResult as any)[0]?.[0]?.count == null
+        ? null
+        : numberValue((expiredDocsResult as any)[0][0].count),
       // null, not 0 — the table does not exist. See the query above.
-      pending_policy_acknowledgements:
-        (pendingPolicyResult as any)[0]?.[0]?.count == null
-          ? null
-          : numberValue((pendingPolicyResult as any)[0][0].count),
-      appraisal_completion_pct:
-        (appraisalResult as any)[0]?.[0]?.completion_pct !== null
-          ? Number(
-              Number(
-                (appraisalResult as any)[0]?.[0]?.completion_pct ?? 0,
-              ).toFixed(2),
-            )
-          : null,
+      pending_policy_acknowledgements: (pendingPolicyResult as any)[0]?.[0]?.count == null
+        ? null
+        : numberValue((pendingPolicyResult as any)[0][0].count),
+      appraisal_completion_pct: (appraisalResult as any)[0]?.[0]?.completion_pct !== null
+        ? Number(Number((appraisalResult as any)[0]?.[0]?.completion_pct ?? 0).toFixed(2))
+        : null,
       process_breakdown: (processBreakdownResult as any[]).map((row: any) => ({
         id: String(row.id),
         process_name: String(row.process_name),
         headcount: numberValue(row.headcount),
         present_count: numberValue(row.present_count),
-        attendance_pct:
-          row.attendance_pct !== null ? Number(row.attendance_pct) : null,
+        attendance_pct: row.attendance_pct !== null ? Number(row.attendance_pct) : null,
       })),
       leave_balance_usage_pct: leaveBalanceUsagePct,
       leave_summary: leaveSummaryResult.map((row) => ({
@@ -1501,9 +1315,7 @@ export const managementService = {
         employee_name: String(row.employee_name),
         designation_id: row.designation_id ? String(row.designation_id) : null,
         // The layout reads this; without it every joiner read "Employee".
-        designation_name: row.designation_name
-          ? String(row.designation_name)
-          : null,
+        designation_name: row.designation_name ? String(row.designation_name) : null,
         joining_date: row.joining_date,
       })),
       branches: branchSnapshotResult.map((row) => ({
@@ -1539,73 +1351,51 @@ export const managementService = {
       training: {
         analysts_in_training: analystsInTraining,
         ats_training: numberValue(training.ats_training),
-        training_stage_candidates: numberValue(
-          training.training_stage_candidates,
-        ),
-        training_needs_in_progress: numberValue(
-          training.training_needs_in_progress,
-        ),
+        training_stage_candidates: numberValue(training.training_stage_candidates),
+        training_needs_in_progress: numberValue(training.training_needs_in_progress),
         lms_in_progress: numberValue(training.lms_in_progress),
         onboarding_in_progress: numberValue(training.onboarding_in_progress),
         // LMS live data (async, non-blocking)
         certified_learners: await (async () => {
           try {
             const { lmsDb } = await import("../../db/lms-mysql.js");
-            const [rows] = await lmsDb.execute<
-              import("mysql2").RowDataPacket[]
-            >(
-              `SELECT SUM(certification_status IN ('certified','Certified')) AS cnt FROM trainee_master WHERE status != 'archived'`,
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT SUM(certification_status IN ('certified','Certified')) AS cnt FROM trainee_master WHERE status != 'archived'`
             );
             return Number(rows[0]?.cnt ?? 0);
-          } catch {
-            return null;
-          }
+          } catch { return null; }
         })(),
         lms_total_trainees: await (async () => {
           try {
             const { lmsDb } = await import("../../db/lms-mysql.js");
-            const [rows] = await lmsDb.execute<
-              import("mysql2").RowDataPacket[]
-            >(
-              `SELECT COUNT(*) AS cnt FROM trainee_master WHERE status != 'archived'`,
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT COUNT(*) AS cnt FROM trainee_master WHERE status != 'archived'`
             );
             return Number(rows[0]?.cnt ?? 0);
-          } catch {
-            return null;
-          }
+          } catch { return null; }
         })(),
         lms_high_risk: await (async () => {
           try {
             const { lmsDb } = await import("../../db/lms-mysql.js");
-            const [rows] = await lmsDb.execute<
-              import("mysql2").RowDataPacket[]
-            >(
-              `SELECT COUNT(*) AS cnt FROM training_risk_log WHERE status = 'Open' AND severity IN ('HIGH','CRITICAL')`,
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT COUNT(*) AS cnt FROM training_risk_log WHERE status = 'Open' AND severity IN ('HIGH','CRITICAL')`
             );
             return Number(rows[0]?.cnt ?? 0);
-          } catch {
-            return null;
-          }
+          } catch { return null; }
         })(),
         lms_avg_completion: await (async () => {
           try {
             const { lmsDb } = await import("../../db/lms-mysql.js");
-            const [rows] = await lmsDb.execute<
-              import("mysql2").RowDataPacket[]
-            >(
-              `SELECT ROUND(AVG(course_completion_pct),1) AS avg_pct FROM trainee_master WHERE status != 'archived'`,
+            const [rows] = await lmsDb.execute<import("mysql2").RowDataPacket[]>(
+              `SELECT ROUND(AVG(course_completion_pct),1) AS avg_pct FROM trainee_master WHERE status != 'archived'`
             );
             return Number(rows[0]?.avg_pct ?? 0);
-          } catch {
-            return null;
-          }
+          } catch { return null; }
         })(),
       },
       actions: {
         pending_leave_approvals: numberValue(approvals.pending_leave_approvals),
-        critical_performance_alerts: numberValue(
-          approvals.critical_performance_alerts,
-        ),
+        critical_performance_alerts: numberValue(approvals.critical_performance_alerts),
         missing_manager: numberValue(workforce.missing_manager),
         missing_department: numberValue(workforce.missing_department),
         missing_process: numberValue(workforce.missing_process),
@@ -1619,13 +1409,11 @@ export const managementService = {
       },
       data_readiness: {
         attendance_available: attendanceTotal > 0,
-        attendance_fresh:
-          attendanceDataAgeDays !== null && attendanceDataAgeDays <= 1,
+        attendance_fresh: attendanceDataAgeDays !== null && attendanceDataAgeDays <= 1,
         training_records_available:
-          analystsInTraining +
-            numberValue(training.training_needs_in_progress) +
-            numberValue(training.lms_in_progress) >
-          0,
+          analystsInTraining
+          + numberValue(training.training_needs_in_progress)
+          + numberValue(training.lms_in_progress) > 0,
         workforce_mandates_available: numberValue(mandate.active_mandates) > 0,
       },
     };
@@ -1669,7 +1457,7 @@ export const managementService = {
            LIMIT 1
          ) spr ON spr.id = spl.run_id
          GROUP BY spr.run_month`,
-        [payrollMonth],
+        [payrollMonth]
       ),
       // 2. HC gap by process: mandated vs active
       db.execute<RowDataPacket[]>(
@@ -1691,7 +1479,7 @@ export const managementService = {
            AND wm.effective_from <= CURDATE()
            AND (wm.effective_to IS NULL OR wm.effective_to >= CURDATE())
          ORDER BY hc_gap DESC
-         LIMIT 10`,
+         LIMIT 10`
       ),
       // 3. Shrinkage cost from latest snapshot
       db.execute<RowDataPacket[]>(
@@ -1719,7 +1507,7 @@ export const managementService = {
            SELECT MAX(snapshot_date) FROM shrinkage_daily_snapshot WHERE snapshot_date <= CURDATE()
          )
          ORDER BY sds.total_shrinkage_pct DESC
-         LIMIT 8`,
+         LIMIT 8`
       ),
       // 4. Last billing cycle
       db.execute<RowDataPacket[]>(
@@ -1733,7 +1521,7 @@ export const managementService = {
            AND bi.period_from >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
          GROUP BY DATE_FORMAT(bi.period_from, '%Y-%m')
          ORDER BY billing_month DESC
-         LIMIT 1`,
+         LIMIT 1`
       ),
       // 5. Attrition cost (exits last 30d × avg CTC × 0.5 replacement multiplier)
       // Industry standard: replacement cost ≈ 50% of annual CTC (recruitment + training + productivity loss)
@@ -1752,7 +1540,7 @@ export const managementService = {
          FROM employees
          WHERE active_status = 0
            AND COALESCE(date_of_leaving, resignation_date, date_of_exit)
-             BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()`,
+             BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND CURDATE()`
       ),
       // 6. Open hiring pipeline
       db.execute<RowDataPacket[]>(
@@ -1771,7 +1559,7 @@ export const managementService = {
          FROM ats_candidate
          WHERE active_status = 1
            AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
-           AND current_stage NOT IN ('joined','rejected','declined','withdrawn','absconded')`,
+           AND current_stage NOT IN ('joined','rejected','declined','withdrawn','absconded')`
       ),
       // 7. F&F pending liability
       db.execute<RowDataPacket[]>(
@@ -1781,7 +1569,7 @@ export const managementService = {
          FROM full_final_calculation ffc
          JOIN exit_request er ON er.id = ffc.exit_request_id
          WHERE er.status NOT IN ('completed','cancelled')
-           AND ffc.is_ff_provisional = 1`,
+           AND ffc.is_ff_provisional = 1`
       ),
     ]);
 
@@ -1793,32 +1581,24 @@ export const managementService = {
     const hiring = hiringGapResult[0][0] ?? {};
     const ff = ffLiabilityResult[0][0] ?? {};
 
-    const totalHcGap = mandateGaps.reduce(
-      (s, r) => s + Math.max(0, numberValue(r.hc_gap)),
-      0,
-    );
+    const totalHcGap = mandateGaps.reduce((s, r) => s + Math.max(0, numberValue(r.hc_gap)), 0);
     const totalRevenueAtRisk = shrinkageByProcess.reduce(
-      (s, r) => s + numberValue(r.estimated_daily_revenue_at_risk),
-      0,
+      (s, r) => s + numberValue(r.estimated_daily_revenue_at_risk), 0
     );
-    const processesUnderstaffed = mandateGaps.filter(
-      (r) => numberValue(r.hc_gap) > 0,
-    ).length;
+    const processesUnderstaffed = mandateGaps.filter(r => numberValue(r.hc_gap) > 0).length;
 
     return {
       payroll_liability: {
         run_month: payroll.run_month ?? null,
         total_gross: numberValue(payroll.total_gross),
         total_net: numberValue(payroll.total_net),
-        employer_statutory:
-          numberValue(payroll.total_pf_employer) +
-          numberValue(payroll.total_esic_employer),
+        employer_statutory: numberValue(payroll.total_pf_employer) + numberValue(payroll.total_esic_employer),
         employee_count: numberValue(payroll.employee_count),
       },
       hc_gap: {
         total_gap: totalHcGap,
         processes_understaffed: processesUnderstaffed,
-        by_process: mandateGaps.map((r) => ({
+        by_process: mandateGaps.map(r => ({
           process_name: String(r.process_name),
           mandated_hc: numberValue(r.mandated_hc),
           required_hc: numberValue(r.required_hc),
@@ -1828,7 +1608,7 @@ export const managementService = {
       },
       revenue_at_risk: {
         total_daily_estimate: totalRevenueAtRisk,
-        by_process: shrinkageByProcess.map((r) => ({
+        by_process: shrinkageByProcess.map(r => ({
           process_name: String(r.process_name),
           shrinkage_pct: numberValue(r.total_shrinkage_pct),
           absent_hc: numberValue(r.absent_hc),
@@ -1843,9 +1623,7 @@ export const managementService = {
       },
       attrition_cost: {
         exits_30d: numberValue(attrition.exits_30d),
-        replacement_cost_estimate: numberValue(
-          attrition.replacement_cost_estimate,
-        ),
+        replacement_cost_estimate: numberValue(attrition.replacement_cost_estimate),
       },
       hiring_pipeline: {
         open_candidates: numberValue(hiring.open_candidates),

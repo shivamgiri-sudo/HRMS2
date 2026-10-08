@@ -2,10 +2,7 @@ import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
-import {
-  financeBranchFilter,
-  type FinanceBranchScope,
-} from "./finance-access-scope.js";
+import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
 import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js";
 
@@ -22,20 +19,12 @@ import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js
  *  replenishment_floor_pct override. */
 const DEFAULT_REPLENISHMENT_FLOOR_PCT = 25;
 
-const ALLOCATION_STATUSES = [
-  "draft",
-  "submitted",
-  "branch_head_approved",
-  "disbursed",
-  "rejected",
-] as const;
+const ALLOCATION_STATUSES = ["draft", "submitted", "branch_head_approved", "disbursed", "rejected"] as const;
 export type ImprestAllocationStatus = (typeof ALLOCATION_STATUSES)[number];
 
 function assertPeriod(periodCode: string) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodCode)) {
-    throw new Error(
-      `Allocation period must be YYYY-MM, received "${periodCode}"`,
-    );
+    throw new Error(`Allocation period must be YYYY-MM, received "${periodCode}"`);
   }
 }
 
@@ -83,28 +72,13 @@ export async function allocateImprestNumber(
  * with; a value outside this set is rejected with a readable message instead of reaching MySQL.
  */
 const ALLOCATION_PAYMENT_MODES = [
-  "Cheque",
-  "NEFT",
-  "RTGS",
-  "IMPS",
-  "UPI",
-  "Cash",
-  "Bank Transfer",
-  "Adjustment",
-  "Other",
+  "Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Cash", "Bank Transfer", "Adjustment", "Other",
 ];
 
 // Mirrors vendor-payment-ledger.service.ts's BANK_MODES — the modes that genuinely move money
 // through a specific bank account, as opposed to Cash (no account) or Adjustment/Other (not a
 // real bank-rail transfer). Used to require company_bank_account_id only where it applies.
-const ALLOCATION_BANK_MODES = new Set([
-  "Cheque",
-  "NEFT",
-  "RTGS",
-  "IMPS",
-  "UPI",
-  "Bank Transfer",
-]);
+const ALLOCATION_BANK_MODES = new Set(["Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Bank Transfer"]);
 
 function round2(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
@@ -113,11 +87,7 @@ function round2(value: number) {
 export const imprestService = {
   // ── Manager master ────────────────────────────────────────────────────────
 
-  async listManagers(filters: {
-    branchScope?: FinanceBranchScope;
-    branchId?: string;
-    activeOnly?: boolean;
-  }) {
+  async listManagers(filters: { branchScope?: FinanceBranchScope; branchId?: string; activeOnly?: boolean }) {
     const conditions: string[] = [];
     const params: unknown[] = [];
     if (filters.branchScope) {
@@ -139,12 +109,8 @@ export const imprestService = {
       // Effective dating, not just the flag: "who holds this float today" has to exclude an
       // appointment that has already ended, which an active_status check alone would not.
       conditions.push("m.active_status = 1");
-      conditions.push(
-        "(m.effective_from IS NULL OR m.effective_from <= CURDATE())",
-      );
-      conditions.push(
-        "(m.effective_to IS NULL OR m.effective_to >= CURDATE())",
-      );
+      conditions.push("(m.effective_from IS NULL OR m.effective_from <= CURDATE())");
+      conditions.push("(m.effective_to IS NULL OR m.effective_to >= CURDATE())");
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -182,16 +148,10 @@ export const imprestService = {
     // For creates, require the full set
     if (!input.id) {
       if (!input.branchId) throw new Error("Branch is required");
-      if (!input.userId)
-        throw new Error("A user is required to hold the float");
-      if (!input.effectiveFrom)
-        throw new Error("An effective-from date is required");
+      if (!input.userId) throw new Error("A user is required to hold the float");
+      if (!input.effectiveFrom) throw new Error("An effective-from date is required");
     }
-    if (
-      input.effectiveTo &&
-      input.effectiveFrom &&
-      input.effectiveTo < input.effectiveFrom
-    ) {
+    if (input.effectiveTo && input.effectiveFrom && input.effectiveTo < input.effectiveFrom) {
       throw new Error("Effective-to cannot be before effective-from");
     }
 
@@ -265,20 +225,15 @@ export const imprestService = {
                 AND effective_from <= COALESCE(?, '9999-12-31')
                 AND ? <= COALESCE(effective_to, '9999-12-31')
               FOR UPDATE`,
-            [
-              current.branch_id,
-              input.id,
-              nextEffectiveTo ?? null,
-              current.effective_from,
-            ],
+            [current.branch_id, input.id, nextEffectiveTo ?? null, current.effective_from],
           );
           if (clashes.length) {
             const clash = clashes[0];
             throw new Error(
-              `This branch already has an imprest manager for that period ` +
-                `(${String(clash.effective_from).slice(0, 10)} to ` +
-                `${clash.effective_to ? String(clash.effective_to).slice(0, 10) : "open-ended"}). ` +
-                `End that appointment before starting another.`,
+              `This branch already has an imprest manager for that period `
+              + `(${String(clash.effective_from).slice(0, 10)} to `
+              + `${clash.effective_to ? String(clash.effective_to).slice(0, 10) : "open-ended"}). `
+              + `End that appointment before starting another.`,
             );
           }
         }
@@ -320,10 +275,10 @@ export const imprestService = {
       if (clashes.length) {
         const clash = clashes[0];
         throw new Error(
-          `This branch already has an imprest manager for that period ` +
-            `(${String(clash.effective_from).slice(0, 10)} to ` +
-            `${clash.effective_to ? String(clash.effective_to).slice(0, 10) : "open-ended"}). ` +
-            `End that appointment before starting another.`,
+          `This branch already has an imprest manager for that period `
+          + `(${String(clash.effective_from).slice(0, 10)} to `
+          + `${clash.effective_to ? String(clash.effective_to).slice(0, 10) : "open-ended"}). `
+          + `End that appointment before starting another.`,
         );
       }
 
@@ -334,17 +289,9 @@ export const imprestService = {
             active_status, sanctioned_float_amount, replenishment_floor_pct, created_by, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
-          id,
-          input.branchId,
-          input.userId,
-          input.employeeId ?? null,
-          input.tallyName ?? null,
-          input.effectiveFrom,
-          input.effectiveTo ?? null,
-          input.activeStatus ?? 1,
-          input.sanctionedFloatAmount ?? null,
-          input.replenishmentFloorPct ?? null,
-          actorUserId,
+          id, input.branchId, input.userId, input.employeeId ?? null, input.tallyName ?? null,
+          input.effectiveFrom, input.effectiveTo ?? null, input.activeStatus ?? 1,
+          input.sanctionedFloatAmount ?? null, input.replenishmentFloorPct ?? null, actorUserId,
         ],
       );
       await connection.commit();
@@ -380,36 +327,19 @@ export const imprestService = {
 
   async getReplenishmentStatus(imprestManagerId: string) {
     const manager = await this.getManager(imprestManagerId);
-    const sanctioned =
-      manager.sanctioned_float_amount != null
-        ? Number(manager.sanctioned_float_amount)
-        : null;
-    const currentBalance =
-      await imprestLedgerService.getBalance(imprestManagerId);
+    const sanctioned = manager.sanctioned_float_amount != null ? Number(manager.sanctioned_float_amount) : null;
+    const currentBalance = await imprestLedgerService.getBalance(imprestManagerId);
     if (sanctioned == null || sanctioned <= 0) {
       return {
-        imprestManagerId,
-        sanctionedFloatAmount: null,
-        floorPct: null,
-        floorAmount: null,
-        currentBalance,
-        needsReplenishment: false,
-        reason:
-          "No sanctioned float amount set for this manager — cannot compute a percentage floor.",
+        imprestManagerId, sanctionedFloatAmount: null, floorPct: null, floorAmount: null,
+        currentBalance, needsReplenishment: false,
+        reason: "No sanctioned float amount set for this manager — cannot compute a percentage floor.",
       };
     }
-    const floorPct =
-      manager.replenishment_floor_pct != null
-        ? Number(manager.replenishment_floor_pct)
-        : DEFAULT_REPLENISHMENT_FLOOR_PCT;
-    const floorAmount =
-      Math.round(((sanctioned * floorPct) / 100 + Number.EPSILON) * 100) / 100;
+    const floorPct = manager.replenishment_floor_pct != null ? Number(manager.replenishment_floor_pct) : DEFAULT_REPLENISHMENT_FLOOR_PCT;
+    const floorAmount = Math.round((sanctioned * floorPct / 100 + Number.EPSILON) * 100) / 100;
     return {
-      imprestManagerId,
-      sanctionedFloatAmount: sanctioned,
-      floorPct,
-      floorAmount,
-      currentBalance,
+      imprestManagerId, sanctionedFloatAmount: sanctioned, floorPct, floorAmount, currentBalance,
       needsReplenishment: currentBalance < floorAmount,
       reason: null,
     };
@@ -417,10 +347,7 @@ export const imprestService = {
 
   /** Every active manager whose float is currently below its own flag line — the list a Finance
    *  Head dashboard/queue reads to know who to raise a Lane B voucher for. */
-  async listReplenishmentFlags(filters: {
-    branchScope?: FinanceBranchScope;
-    branchId?: string;
-  }) {
+  async listReplenishmentFlags(filters: { branchScope?: FinanceBranchScope; branchId?: string }) {
     const managers = await this.listManagers({ ...filters, activeOnly: true });
     const flagged: any[] = [];
     for (const m of managers as any[]) {
@@ -588,33 +515,26 @@ export const imprestService = {
       // configured is unaffected.
       if (ALLOCATION_BANK_MODES.has(mode) && !companyBankAccountId) {
         const [[anyAccount]] = await connection.execute<RowDataPacket[]>(
-          `SELECT id FROM company_bank_account WHERE active_status = 1 LIMIT 1`,
+          `SELECT id FROM company_bank_account WHERE active_status = 1 LIMIT 1`
         );
-        if (anyAccount)
-          throw new Error("Bank account is required for this payment mode");
+        if (anyAccount) throw new Error("Bank account is required for this payment mode");
       }
 
       const [managerRows] = await connection.execute<RowDataPacket[]>(
         `SELECT id, branch_id FROM imprest_manager WHERE id = ? AND active_status = 1 LIMIT 1`,
         [input.imprestManagerId],
       );
-      if (!managerRows[0])
-        throw new Error("Imprest manager not found or inactive");
+      if (!managerRows[0]) throw new Error("Imprest manager not found or inactive");
       if (String(managerRows[0].branch_id) !== String(input.branchId)) {
-        throw new Error(
-          "This imprest manager does not hold a float for that branch",
-        );
+        throw new Error("This imprest manager does not hold a float for that branch");
       }
 
       // accountingPeriod overrides the IMP number month and the P&L period lock check.
       // Falls back to allocationDate's month when not provided.
-      const periodCode =
-        input.accountingPeriod?.trim() || input.allocationDate.slice(0, 7);
+      const periodCode = (input.accountingPeriod?.trim() || input.allocationDate.slice(0, 7));
       const allocationNo = await allocateImprestNumber(periodCode, connection);
       const id = randomUUID();
-      const status: ImprestAllocationStatus = input.disburseImmediately
-        ? "disbursed"
-        : "submitted";
+      const status: ImprestAllocationStatus = input.disburseImmediately ? "disbursed" : "submitted";
 
       await connection.execute(
         `INSERT INTO imprest_allocation
@@ -624,24 +544,12 @@ export const imprestService = {
             status, submitted_by, submitted_at, disbursed_at, created_by, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW())`,
         [
-          id,
-          allocationNo,
-          input.imprestManagerId,
-          input.branchId,
-          input.allocationDate,
-          amount,
-          mode,
-          input.bankId ?? null,
-          companyBankAccountId,
-          input.bankName ?? null,
+          id, allocationNo, input.imprestManagerId, input.branchId, input.allocationDate, amount,
+          mode, input.bankId ?? null, companyBankAccountId, input.bankName ?? null,
           input.referenceNo ?? null,
-          input.transactionDate ?? null,
-          input.remarks ?? null,
+          input.transactionDate ?? null, input.remarks ?? null,
           input.accountingPeriod?.trim() || null,
-          status,
-          actorUserId,
-          input.disburseImmediately ? new Date() : null,
-          actorUserId,
+          status, actorUserId, input.disburseImmediately ? new Date() : null, actorUserId,
         ],
       );
 
@@ -673,35 +581,26 @@ export const imprestService = {
           const [[bankAccount]] = await connection.execute<RowDataPacket[]>(
             `SELECT id, opening_balance, active_status
                FROM company_bank_account WHERE id = ? FOR UPDATE`,
-            [companyBankAccountId],
+            [companyBankAccountId]
           );
           if (!bankAccount) throw new Error("Bank account not found");
-          if (!(bankAccount as any).active_status)
-            throw new Error("This bank account is closed");
-          await assertNotInClosedPeriod(
-            connection,
-            companyBankAccountId,
-            input.allocationDate,
-          );
+          if (!(bankAccount as any).active_status) throw new Error("This bank account is closed");
+          await assertNotInClosedPeriod(connection, companyBankAccountId, input.allocationDate);
 
           const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
             `SELECT running_balance FROM bank_account_ledger_entry
                WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
-            [companyBankAccountId],
+            [companyBankAccountId]
           );
           const runningBalance = round2(
-            (lastEntry
-              ? Number((lastEntry as any).running_balance)
-              : Number((bankAccount as any).opening_balance)) - amount,
+            (lastEntry ? Number((lastEntry as any).running_balance) : Number((bankAccount as any).opening_balance))
+            - amount
           );
 
-          const [[imprestPayableAccount]] = await connection.execute<
-            RowDataPacket[]
-          >(
-            `SELECT id FROM payable_account_master WHERE account_name = 'Imprest Float' LIMIT 1`,
+          const [[imprestPayableAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id FROM payable_account_master WHERE account_name = 'Imprest Float' LIMIT 1`
           );
-          if (!imprestPayableAccount)
-            throw new Error("Imprest Float ledger account is not configured");
+          if (!imprestPayableAccount) throw new Error("Imprest Float ledger account is not configured");
 
           await connection.execute(
             `INSERT INTO bank_account_ledger_entry
@@ -718,7 +617,7 @@ export const imprestService = {
               input.referenceNo ?? null,
               runningBalance,
               actorUserId,
-            ],
+            ]
           );
         }
       }
@@ -778,8 +677,7 @@ export const imprestService = {
         throw new Error("A reason is required to reject an allocation");
       }
 
-      const to: ImprestAllocationStatus =
-        decision === "reject" ? "rejected" : "disbursed";
+      const to: ImprestAllocationStatus = decision === "reject" ? "rejected" : "disbursed";
 
       await connection.execute(
         `UPDATE imprest_allocation
@@ -789,15 +687,8 @@ export const imprestService = {
                 rejection_reason = ?,
                 disbursed_at = ?
           WHERE id = ? AND status = ?`,
-        [
-          to,
-          actorUserId,
-          remarks ?? null,
-          decision === "reject" ? (remarks ?? null) : null,
-          decision === "approve" ? new Date() : null,
-          id,
-          from,
-        ],
+        [to, actorUserId, remarks ?? null, decision === "reject" ? remarks ?? null : null,
+         decision === "approve" ? new Date() : null, id, from],
       );
 
       if (decision === "approve") {
@@ -828,36 +719,26 @@ export const imprestService = {
           const [[bankAccount]] = await connection.execute<RowDataPacket[]>(
             `SELECT id, opening_balance, active_status
                FROM company_bank_account WHERE id = ? FOR UPDATE`,
-            [companyBankAccountId],
+            [companyBankAccountId]
           );
           if (!bankAccount) throw new Error("Bank account not found");
-          if (!(bankAccount as any).active_status)
-            throw new Error("This bank account is closed");
-          await assertNotInClosedPeriod(
-            connection,
-            companyBankAccountId,
-            String(allocation.allocation_date).slice(0, 10),
-          );
+          if (!(bankAccount as any).active_status) throw new Error("This bank account is closed");
+          await assertNotInClosedPeriod(connection, companyBankAccountId, String(allocation.allocation_date).slice(0, 10));
 
           const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
             `SELECT running_balance FROM bank_account_ledger_entry
                WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
-            [companyBankAccountId],
+            [companyBankAccountId]
           );
           const runningBalance = round2(
-            (lastEntry
-              ? Number((lastEntry as any).running_balance)
-              : Number((bankAccount as any).opening_balance)) -
-              Number(allocation.amount),
+            (lastEntry ? Number((lastEntry as any).running_balance) : Number((bankAccount as any).opening_balance))
+            - Number(allocation.amount)
           );
 
-          const [[imprestPayableAccount]] = await connection.execute<
-            RowDataPacket[]
-          >(
-            `SELECT id FROM payable_account_master WHERE account_name = 'Imprest Float' LIMIT 1`,
+          const [[imprestPayableAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id FROM payable_account_master WHERE account_name = 'Imprest Float' LIMIT 1`
           );
-          if (!imprestPayableAccount)
-            throw new Error("Imprest Float ledger account is not configured");
+          if (!imprestPayableAccount) throw new Error("Imprest Float ledger account is not configured");
 
           await connection.execute(
             `INSERT INTO bank_account_ledger_entry
@@ -874,7 +755,7 @@ export const imprestService = {
               allocation.reference_no ?? null,
               runningBalance,
               actorUserId,
-            ],
+            ]
           );
         }
       }
@@ -939,13 +820,10 @@ export const imprestService = {
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new Error("Adjustment amount must be greater than zero");
     }
-    if (!input.transactionDate)
-      throw new Error("A transaction date is required");
+    if (!input.transactionDate) throw new Error("A transaction date is required");
     const reason = input.reason?.trim() ?? "";
     if (reason.length < 10) {
-      throw new Error(
-        "A reason of at least 10 characters is required to post an adjustment",
-      );
+      throw new Error("A reason of at least 10 characters is required to post an adjustment");
     }
 
     const connection = await db.getConnection();
@@ -956,8 +834,7 @@ export const imprestService = {
         `SELECT id, branch_id FROM imprest_manager WHERE id = ? AND active_status = 1 LIMIT 1 FOR UPDATE`,
         [input.imprestManagerId],
       );
-      if (!managerRows[0])
-        throw new Error("Imprest manager not found or inactive");
+      if (!managerRows[0]) throw new Error("Imprest manager not found or inactive");
       const branchId = String(managerRows[0].branch_id);
 
       // Read on THIS connection, under the manager row lock taken above, so it reflects exactly
@@ -1005,13 +882,7 @@ export const imprestService = {
           actorUserId,
           actorRole,
           remarks: reason,
-          details: {
-            direction: input.direction,
-            amount,
-            balanceBefore,
-            balanceAfter,
-            ledgerId,
-          },
+          details: { direction: input.direction, amount, balanceBefore, balanceAfter, ledgerId },
         },
         connection,
       );

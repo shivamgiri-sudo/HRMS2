@@ -22,10 +22,7 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(
-  path.resolve(__dirname, "../privacy-retention.worker.ts"),
-  "utf8",
-);
+const source = fs.readFileSync(path.resolve(__dirname, "../privacy-retention.worker.ts"), "utf8");
 
 /** The ats_candidate UPDATE only, with comments stripped so prose cannot satisfy an assertion. */
 const handlerSql = (() => {
@@ -33,9 +30,7 @@ const handlerSql = (() => {
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
   const start = body.indexOf("UPDATE ats_candidate");
-  expect(start, "ats_candidate anonymize handler not found").toBeGreaterThan(
-    -1,
-  );
+  expect(start, "ats_candidate anonymize handler not found").toBeGreaterThan(-1);
   return body.slice(start, body.indexOf("WHERE id = ?", start));
 })();
 
@@ -92,13 +87,8 @@ describe("DPDP erasure — ats_candidate anonymize handler", () => {
    * masked column added later cannot reintroduce it unnoticed.
    */
   it("whenever a derived copy is cleared, the column it derives from is cleared too", () => {
-    const derived = [...assignments.keys()].filter((c) =>
-      /_masked$|_hash$|_encrypted$/.test(c),
-    );
-    expect(
-      derived.length,
-      "no derived columns found — parser likely broken",
-    ).toBeGreaterThan(0);
+    const derived = [...assignments.keys()].filter((c) => /_masked$|_hash$|_encrypted$/.test(c));
+    expect(derived.length, "no derived columns found — parser likely broken").toBeGreaterThan(0);
     for (const d of derived) {
       const base = d.replace(/_masked$|_hash$|_encrypted$/, "");
       expect(
@@ -111,10 +101,7 @@ describe("DPDP erasure — ats_candidate anonymize handler", () => {
   it("does not erase the recruiter's own contact details", () => {
     // These identify staff, not the data subject. Clearing them would damage unrelated records.
     for (const column of ["recruiter_email", "recruiter_mobile"]) {
-      expect(
-        assignments.has(column),
-        `${column} must not be cleared by subject erasure`,
-      ).toBe(false);
+      expect(assignments.has(column), `${column} must not be cleared by subject erasure`).toBe(false);
     }
   });
 });

@@ -73,15 +73,12 @@
 //     `salary_prep_run` and is therefore a parameter.
 //
 
-import type {
-  DayClassification,
-  ResolvedAttendanceSource,
-} from "./attendance-variance.js";
-import type { FloorAbsenceOccurrence } from "./floor-absence-pattern.js";
+import type { DayClassification, ResolvedAttendanceSource } from './attendance-variance.js';
+import type { FloorAbsenceOccurrence } from './floor-absence-pattern.js';
 import type {
   UnreviewedStatus,
   VarianceRecordStatus as CutOffVarianceRecordStatus,
-} from "./variance-payroll-cutoff.js";
+} from './variance-payroll-cutoff.js';
 import {
   MIN_REVIEWER_COMMENT_LENGTH,
   assessOutcomeConflict,
@@ -102,7 +99,7 @@ import {
   type ReviewSubmission,
   type VarianceRecord,
   type VarianceRecordStatus,
-} from "./variance-review.js";
+} from './variance-review.js';
 
 // ---------------------------------------------------------------------------------------------
 // Compile-time assertions. `Assert<false>` is an error because false does not extend true; the
@@ -119,9 +116,7 @@ type Assert<T extends true> = T;
 // reviewed count.
 type _StatusVocabulariesAgree = Assert<
   [Exclude<VarianceRecordStatus, CutOffVarianceRecordStatus>] extends [never]
-    ? [Exclude<CutOffVarianceRecordStatus, VarianceRecordStatus>] extends [
-        never,
-      ]
+    ? [Exclude<CutOffVarianceRecordStatus, VarianceRecordStatus>] extends [never]
       ? true
       : false
     : false
@@ -145,7 +140,7 @@ export const DEFAULT_DUAL_REVIEW_CEILING = 100;
  * grouping keeps `designationId: null` and only the DISPLAY value is substituted. Filtering can
  * still target those rows by putting `null` in the filter list -- see `VarianceQueueFilter`.
  */
-export const UNASSIGNED_GROUPING_LABEL = "(unassigned)";
+export const UNASSIGNED_GROUPING_LABEL = '(unassigned)';
 
 /**
  * criterion 9.5's partition, imported as a type and re-expressed here as the one predicate this
@@ -154,10 +149,8 @@ export const UNASSIGNED_GROUPING_LABEL = "(unassigned)";
  * 'no_issue', 'regularization_required') is closed to further recording -- which is exactly
  * variance-review.ts's private CLOSED_STATUSES list, derived here rather than copied.
  */
-function isUnreviewedStatus(
-  status: VarianceRecordStatus,
-): status is UnreviewedStatus {
-  return status === "open" || status === "notified";
+function isUnreviewedStatus(status: VarianceRecordStatus): status is UnreviewedStatus {
+  return status === 'open' || status === 'notified';
 }
 
 /** The complement of `isUnreviewedStatus`: closed to further Review_Outcomes (criteria 7.5, 7.10). */
@@ -205,12 +198,10 @@ export interface VarianceReportingDimensions {
 }
 
 /** A Variance_Record with the reporting dimensions attached. The unit of everything below. */
-export type ReportableVarianceRecord = VarianceRecord &
-  VarianceReportingDimensions;
+export type ReportableVarianceRecord = VarianceRecord & VarianceReportingDimensions;
 
 /** The Queued_For_Dual_Review arm of `ReportableVarianceRecord`, dimensions retained. */
-export type QueuedReportableVarianceRecord = QueuedVarianceRecord &
-  VarianceReportingDimensions;
+export type QueuedReportableVarianceRecord = QueuedVarianceRecord & VarianceReportingDimensions;
 
 /**
  * Narrowing that keeps the reporting dimensions. `isQueuedForDualReview` narrows to
@@ -246,15 +237,13 @@ function isQueuedFloorAbsence(record: ReportableVarianceRecord): boolean {
  */
 function hasRequestedAdjustment(record: ReportableVarianceRecord): boolean {
   return (
-    record.wfmReview?.outcome === "adjustment_requested" ||
-    record.managerReview?.outcome === "adjustment_requested"
+    record.wfmReview?.outcome === 'adjustment_requested' ||
+    record.managerReview?.outcome === 'adjustment_requested'
   );
 }
 
 /** The Dialler_Sources that actually contributed evidence to this record's canonical figure. */
-function contributingDiallerSourceIds(
-  record: ReportableVarianceRecord,
-): readonly string[] {
+function contributingDiallerSourceIds(record: ReportableVarianceRecord): readonly string[] {
   // AMBIGUITY, STATED. Criterion 13.2 filters by Dialler_Source and does not say what it means for
   // a Variance_Record -- which is an employee-day, not a source row -- to belong to one. The
   // reading applied: a record matches a Dialler_Source when that source SUPPLIED minutes for the
@@ -293,13 +282,9 @@ function compareNullableStrings(a: string | null, b: string | null): number {
  * Total order over records. `id` is last and is unique, so the order is total rather than merely
  * deterministic-if-lucky.
  */
-function compareRecords(
-  a: ReportableVarianceRecord,
-  b: ReportableVarianceRecord,
-): number {
+function compareRecords(a: ReportableVarianceRecord, b: ReportableVarianceRecord): number {
   if (a.workDate !== b.workDate) return compareStrings(a.workDate, b.workDate);
-  if (a.employeeId !== b.employeeId)
-    return compareStrings(a.employeeId, b.employeeId);
+  if (a.employeeId !== b.employeeId) return compareStrings(a.employeeId, b.employeeId);
   return compareStrings(a.id, b.id);
 }
 
@@ -324,9 +309,7 @@ function recordIdentity(record: ReportableVarianceRecord): string {
     record.designationId,
     record.carriedForwardFromPayMonth,
     record.salaryLineId ?? null,
-    record.floorAbsenceOccurrence === null
-      ? null
-      : record.floorAbsenceOccurrence.reason,
+    record.floorAbsenceOccurrence === null ? null : record.floorAbsenceOccurrence.reason,
     record.evidence.evaluation.varianceRiskScore,
     record.evidence.evaluation.resolvedAttendanceSource,
     record.wfmReview?.outcome ?? null,
@@ -348,10 +331,7 @@ function recordIdentity(record: ReportableVarianceRecord): string {
 function dedupeRecords(
   records: readonly ReportableVarianceRecord[],
 ): readonly ReportableVarianceRecord[] {
-  const byId = new Map<
-    string,
-    { record: ReportableVarianceRecord; identity: string }
-  >();
+  const byId = new Map<string, { record: ReportableVarianceRecord; identity: string }>();
   for (const record of records) {
     const identity = recordIdentity(record);
     const seen = byId.get(record.id);
@@ -378,15 +358,10 @@ function dedupeRecords(
  *   occurrence -- and one that a warning would not save, because the Floor_Absence_Pattern count is
  *   the whole reason criterion 6.8's always-queue disposition is visible in this report.
  */
-function assertFloorAbsenceOccurrenceMatches(
-  record: ReportableVarianceRecord,
-): void {
+function assertFloorAbsenceOccurrenceMatches(record: ReportableVarianceRecord): void {
   const occurrence = record.floorAbsenceOccurrence;
   if (occurrence === null) return;
-  if (
-    occurrence.employeeId !== record.employeeId ||
-    occurrence.date !== record.workDate
-  ) {
+  if (occurrence.employeeId !== record.employeeId || occurrence.date !== record.workDate) {
     throw new Error(
       `variance-exception-report: the Floor_Absence_Pattern occurrence attached to Variance_Record ` +
         `${JSON.stringify(record.id)} names employee ${JSON.stringify(occurrence.employeeId)} on ` +
@@ -407,7 +382,7 @@ const PAY_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
  *   defined results.
  */
 function assertPayMonth(label: string, value: string): void {
-  if (typeof value !== "string" || !PAY_MONTH_PATTERN.test(value)) {
+  if (typeof value !== 'string' || !PAY_MONTH_PATTERN.test(value)) {
     throw new Error(
       `variance-exception-report: ${label} must be a Pay_Month of the form 'YYYY-MM' ` +
         `(received ${JSON.stringify(value)}).`,
@@ -440,24 +415,24 @@ export interface QueueViewer {
 /** Why a record is inside the viewer's scope (criteria 13.1, 14.4). */
 export type ViewerScopeBasis =
   /** criterion 7.1: the viewer is one of the WFM_Reviewers the record is presented to. */
-  | "wfm_reviewer_slot"
+  | 'wfm_reviewer_slot'
   /** criteria 7.1, 7.6: the viewer holds the second slot, as manager or as branch substitute. */
-  | "reporting_manager_slot"
+  | 'reporting_manager_slot'
   /** criterion 7.10: the viewer is an Override_Approver for the employee's branch. */
-  | "override_approver"
+  | 'override_approver'
   /** criterion 14.4: the viewer's resolved business scope covers the record's branch. */
-  | "business_scope_branch";
+  | 'business_scope_branch';
 
 /** Why no Review_Outcome is outstanding for the viewer even though they hold a slot. */
 export type OutstandingSuppressionReason =
   /** criteria 6.11, 7.1: never presented for Dual_Review, so nothing is owed on it. */
-  | "recorded_not_queued"
+  | 'recorded_not_queued'
   /** criteria 7.5, 7.10: reviewed, contested or legacy-closed; it accepts no further outcome. */
-  | "record_closed"
+  | 'record_closed'
   /** criterion 7.7: the viewer is the employee named on the record and may never review it. */
-  | "self_review_not_permitted"
+  | 'self_review_not_permitted'
   /** criterion 7.3: the viewer has already recorded on every slot they hold. */
-  | "own_outcome_already_recorded";
+  | 'own_outcome_already_recorded';
 
 /** One of the viewer's own recorded outcomes, so the screen can show what they said. */
 export interface ViewerRecordedOutcome {
@@ -561,23 +536,18 @@ function resolveViewerSlots(
   viewer: QueueViewer,
 ): readonly ReviewerRole[] {
   const slots: ReviewerRole[] = [];
-  if (record.authorizedWfmReviewerUserIds.includes(viewer.userId))
-    slots.push("wfm_reviewer");
+  if (record.authorizedWfmReviewerUserIds.includes(viewer.userId)) slots.push('wfm_reviewer');
   const holdsSecondSlot =
     record.reportingManagerUserId !== null
       ? record.reportingManagerUserId === viewer.userId
       : // criterion 7.6: only reachable when there is no Reporting_Manager at all.
-        record.branchWfmContactUserId !== null &&
-        record.branchWfmContactUserId === viewer.userId;
-  if (holdsSecondSlot) slots.push("reporting_manager");
+        record.branchWfmContactUserId !== null && record.branchWfmContactUserId === viewer.userId;
+  if (holdsSecondSlot) slots.push('reporting_manager');
   return slots;
 }
 
 /** criterion 7.7's identity test, both halves, as `authorizeReviewer` applies it. */
-function viewerIsTheEmployee(
-  record: ReportableVarianceRecord,
-  viewer: QueueViewer,
-): boolean {
+function viewerIsTheEmployee(record: ReportableVarianceRecord, viewer: QueueViewer): boolean {
   const isEmployeeLogin =
     record.employeeUserId !== null && record.employeeUserId === viewer.userId;
   const isEmployeeRow =
@@ -593,12 +563,10 @@ function resolveViewerScopeBases(
   slots: readonly ReviewerRole[],
 ): readonly ViewerScopeBasis[] {
   const bases: ViewerScopeBasis[] = [];
-  if (slots.includes("wfm_reviewer")) bases.push("wfm_reviewer_slot");
-  if (slots.includes("reporting_manager")) bases.push("reporting_manager_slot");
-  if (record.overrideApproverUserIds.includes(viewer.userId))
-    bases.push("override_approver");
-  if ((viewer.scopedBranchIds ?? []).includes(record.branchId))
-    bases.push("business_scope_branch");
+  if (slots.includes('wfm_reviewer')) bases.push('wfm_reviewer_slot');
+  if (slots.includes('reporting_manager')) bases.push('reporting_manager_slot');
+  if (record.overrideApproverUserIds.includes(viewer.userId)) bases.push('override_approver');
+  if ((viewer.scopedBranchIds ?? []).includes(record.branchId)) bases.push('business_scope_branch');
   return bases;
 }
 
@@ -606,7 +574,7 @@ function recordedReviewFor(
   record: ReportableVarianceRecord,
   role: ReviewerRole,
 ): RecordedReview | null {
-  return role === "wfm_reviewer" ? record.wfmReview : record.managerReview;
+  return role === 'wfm_reviewer' ? record.wfmReview : record.managerReview;
 }
 
 interface ViewerOutstanding {
@@ -660,29 +628,22 @@ function resolveViewerOutstanding(
   // a branch). Nothing is outstanding for them and nothing is being suppressed either.
   if (slots.length === 0) return settle([], null);
   // criteria 6.11, 7.1.
-  if (!isQueuedReportable(record)) return settle([], "recorded_not_queued");
+  if (!isQueuedReportable(record)) return settle([], 'recorded_not_queued');
   // criteria 7.5, 7.10.
-  if (isClosedStatus(record.status)) return settle([], "record_closed");
+  if (isClosedStatus(record.status)) return settle([], 'record_closed');
   // criterion 7.7.
-  if (viewerIsTheEmployee(record, viewer))
-    return settle([], "self_review_not_permitted");
+  if (viewerIsTheEmployee(record, viewer)) return settle([], 'self_review_not_permitted');
 
-  const outstanding = slots.filter(
-    (role) => recordedReviewFor(record, role) === null,
-  );
-  if (outstanding.length === 0)
-    return settle([], "own_outcome_already_recorded");
+  const outstanding = slots.filter((role) => recordedReviewFor(record, role) === null);
+  if (outstanding.length === 0) return settle([], 'own_outcome_already_recorded');
   return settle(outstanding, null);
 }
 
-function awaitingSlots(
-  record: ReportableVarianceRecord,
-): readonly ReviewerRole[] {
-  if (!isQueuedReportable(record) || isClosedStatus(record.status))
-    return Object.freeze([]);
+function awaitingSlots(record: ReportableVarianceRecord): readonly ReviewerRole[] {
+  if (!isQueuedReportable(record) || isClosedStatus(record.status)) return Object.freeze([]);
   const awaiting: ReviewerRole[] = [];
-  if (record.wfmReview === null) awaiting.push("wfm_reviewer");
-  if (record.managerReview === null) awaiting.push("reporting_manager");
+  if (record.wfmReview === null) awaiting.push('wfm_reviewer');
+  if (record.managerReview === null) awaiting.push('reporting_manager');
   return Object.freeze(awaiting);
 }
 
@@ -705,8 +666,7 @@ function buildQueueListingRow(
     queueState: record.queueState,
     status: record.status,
     varianceRiskScore: record.evidence.evaluation.varianceRiskScore,
-    resolvedAttendanceSource:
-      record.evidence.evaluation.resolvedAttendanceSource,
+    resolvedAttendanceSource: record.evidence.evaluation.resolvedAttendanceSource,
     contributingDiallerSourceIds: Object.freeze(
       [...contributingDiallerSourceIds(record)].sort(compareStrings),
     ),
@@ -736,18 +696,13 @@ function buildQueueListingRow(
  * @throws only for programmer errors -- two different records under one id (see `dedupeRecords`), a
  *   mismatched Floor_Absence_Pattern occurrence, or a malformed Pay_Month inside the filter.
  */
-export function listVarianceReviewQueue(
-  input: QueueListingInput,
-): QueueListing {
+export function listVarianceReviewQueue(input: QueueListingInput): QueueListing {
   const { viewer } = input;
   const deduped = dedupeRecords(input.records);
   for (const record of deduped) assertFloorAbsenceOccurrenceMatches(record);
 
-  const inScope: {
-    record: ReportableVarianceRecord;
-    slots: readonly ReviewerRole[];
-    bases: readonly ViewerScopeBasis[];
-  }[] = [];
+  const inScope: { record: ReportableVarianceRecord; slots: readonly ReviewerRole[]; bases: readonly ViewerScopeBasis[] }[] =
+    [];
   let outOfScopeRecordCount = 0;
   for (const record of deduped) {
     const slots = resolveViewerSlots(record, viewer);
@@ -762,29 +717,22 @@ export function listVarianceReviewQueue(
 
   const filter = input.filter ?? null;
   const kept =
-    filter === null
-      ? inScope
-      : inScope.filter((entry) => matchesQueueFilter(entry.record, filter));
+    filter === null ? inScope : inScope.filter((entry) => matchesQueueFilter(entry.record, filter));
 
   const rows = kept
     .sort((a, b) => compareRecords(a.record, b.record))
-    .map((entry) =>
-      buildQueueListingRow(entry.record, viewer, entry.slots, entry.bases),
-    );
+    .map((entry) => buildQueueListingRow(entry.record, viewer, entry.slots, entry.bases));
 
   const outstandingRows = rows.filter((row) => row.ownReviewOutstanding);
   const outstandingSlots = new Set<ReviewerRole>();
-  for (const row of outstandingRows)
-    for (const slot of row.viewerOutstandingSlots) outstandingSlots.add(slot);
+  for (const row of outstandingRows) for (const slot of row.viewerOutstandingSlots) outstandingSlots.add(slot);
 
   return Object.freeze({
     viewerUserId: viewer.userId,
     rows: Object.freeze(rows),
     rowCount: rows.length,
     ownOutstandingCount: outstandingRows.length,
-    ownOutstandingSlots: Object.freeze(
-      [...outstandingSlots].sort(compareStrings),
-    ),
+    ownOutstandingSlots: Object.freeze([...outstandingSlots].sort(compareStrings)),
     outOfScopeRecordCount,
     filteredOutRecordCount: inScope.length - kept.length,
   });
@@ -832,9 +780,7 @@ export interface VarianceQueueFilter {
 }
 
 /** Absent, null and empty all mean "no constraint" -- see the note on `VarianceQueueFilter`. */
-function isConstrained<T>(
-  values: readonly T[] | null | undefined,
-): values is readonly T[] {
+function isConstrained<T>(values: readonly T[] | null | undefined): values is readonly T[] {
   return values !== null && values !== undefined && values.length > 0;
 }
 
@@ -848,50 +794,26 @@ function matchesQueueFilter(
   filter: VarianceQueueFilter,
 ): boolean {
   if (isConstrained(filter.payMonths)) {
-    for (const payMonth of filter.payMonths)
-      assertPayMonth("filter.payMonths entry", payMonth);
+    for (const payMonth of filter.payMonths) assertPayMonth('filter.payMonths entry', payMonth);
     if (!filter.payMonths.includes(record.payMonth)) return false;
   }
-  if (
-    isConstrained(filter.branchIds) &&
-    !filter.branchIds.includes(record.branchId)
-  )
-    return false;
-  if (
-    isConstrained(filter.processIds) &&
-    !filter.processIds.includes(record.processId)
-  )
-    return false;
-  if (
-    isConstrained(filter.costCentreIds) &&
-    !filter.costCentreIds.includes(record.costCentreId)
-  ) {
+  if (isConstrained(filter.branchIds) && !filter.branchIds.includes(record.branchId)) return false;
+  if (isConstrained(filter.processIds) && !filter.processIds.includes(record.processId)) return false;
+  if (isConstrained(filter.costCentreIds) && !filter.costCentreIds.includes(record.costCentreId)) {
     return false;
   }
   if (isConstrained(filter.diallerSourceIds)) {
     const contributing = contributingDiallerSourceIds(record);
-    if (
-      !filter.diallerSourceIds.some((sourceId) =>
-        contributing.includes(sourceId),
-      )
-    )
-      return false;
+    if (!filter.diallerSourceIds.some((sourceId) => contributing.includes(sourceId))) return false;
   }
-  if (
-    isConstrained(filter.reviewStates) &&
-    !filter.reviewStates.includes(record.status)
-  ) {
+  if (isConstrained(filter.reviewStates) && !filter.reviewStates.includes(record.status)) {
     return false;
   }
-  if (
-    isConstrained(filter.queueStates) &&
-    !filter.queueStates.includes(record.queueState)
-  ) {
+  if (isConstrained(filter.queueStates) && !filter.queueStates.includes(record.queueState)) {
     return false;
   }
   if (filter.carriedForward !== null && filter.carriedForward !== undefined) {
-    if ((record.carriedForwardFromPayMonth !== null) !== filter.carriedForward)
-      return false;
+    if ((record.carriedForwardFromPayMonth !== null) !== filter.carriedForward) return false;
   }
   return true;
 }
@@ -915,9 +837,7 @@ export function applyQueueFilter(
 ): readonly ReportableVarianceRecord[] {
   const sorted = [...records].sort(compareRecords);
   if (filter === null || filter === undefined) return Object.freeze(sorted);
-  return Object.freeze(
-    sorted.filter((record) => matchesQueueFilter(record, filter)),
-  );
+  return Object.freeze(sorted.filter((record) => matchesQueueFilter(record, filter)));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -937,10 +857,10 @@ export function applyQueueFilter(
  * Override_Approver under criteria 8.3 to 8.6.
  */
 export type BulkReviewSubmission =
-  | { readonly outcome: "apr_accepted" }
-  | { readonly outcome: "apr_disputed" }
+  | { readonly outcome: 'apr_accepted' }
+  | { readonly outcome: 'apr_disputed' }
   | {
-      readonly outcome: "adjustment_requested";
+      readonly outcome: 'adjustment_requested';
       readonly requestedClassification: DayClassification;
       readonly requestedLwpValue?: number | null;
     };
@@ -948,17 +868,17 @@ export type BulkReviewSubmission =
 /** Why one selected row could not take the bulk outcome. */
 export type BulkRowRefusalCode =
   /** The selected id is not in the supplied record set at all. */
-  | "record_not_in_supplied_set"
+  | 'record_not_in_supplied_set'
   /** criteria 14.4, 14.6: the record is outside the acting user's scope. */
-  | "record_outside_user_scope"
+  | 'record_outside_user_scope'
   /** criteria 6.11, 7.1: Recorded_Not_Queued records are never presented for Dual_Review. */
-  | "record_not_queued_for_dual_review"
+  | 'record_not_queued_for_dual_review'
   /** criteria 7.5, 7.10: reviewed, contested or legacy-closed. */
-  | "record_already_closed"
+  | 'record_already_closed'
   /** criterion 7.7. */
-  | "self_review_not_permitted"
+  | 'self_review_not_permitted'
   /** criteria 7.1, 7.3: the acting user holds no slot, or has already recorded on the one they hold. */
-  | "no_outstanding_slot_for_user"
+  | 'no_outstanding_slot_for_user'
   /**
    * criterion 7.5 protected. The acting user holds BOTH reviewer slots on this record and both are
    * outstanding -- reachable in criterion 7.6's substitution case, where the employee has no
@@ -968,7 +888,7 @@ export type BulkRowRefusalCode =
    * which is the single thing Requirement 7 exists to prevent. The row is refused and the reviewer
    * is left to record each slot deliberately on the single-record screen.
    */
-  | "viewer_holds_both_outstanding_slots";
+  | 'viewer_holds_both_outstanding_slots';
 
 /** One selected row's eligibility for the bulk action. */
 export interface BulkSelectionRow {
@@ -1015,14 +935,12 @@ export interface BulkReviewInput {
  * single unforgeable gate -- and never by a re-implementation of it here.
  */
 export function assessBulkSelection(
-  input: Pick<BulkReviewInput, "viewer" | "records" | "selectedRecordIds">,
+  input: Pick<BulkReviewInput, 'viewer' | 'records' | 'selectedRecordIds'>,
 ): BulkSelectionAssessment {
   const deduped = dedupeRecords(input.records);
   for (const record of deduped) assertFloorAbsenceOccurrenceMatches(record);
   const byId = new Map(deduped.map((record) => [record.id, record] as const));
-  const selectedIds = [...new Set(input.selectedRecordIds)].sort(
-    compareStrings,
-  );
+  const selectedIds = [...new Set(input.selectedRecordIds)].sort(compareStrings);
 
   const rows: BulkSelectionRow[] = [];
   let outOfScopeRecordCount = 0;
@@ -1037,7 +955,7 @@ export function assessBulkSelection(
           recordId,
           eligible: false,
           role: null,
-          refusalCode: "record_not_in_supplied_set" as const,
+          refusalCode: 'record_not_in_supplied_set' as const,
         }),
       );
       continue;
@@ -1052,7 +970,7 @@ export function assessBulkSelection(
           recordId,
           eligible: false,
           role: null,
-          refusalCode: "record_outside_user_scope" as const,
+          refusalCode: 'record_outside_user_scope' as const,
         }),
       );
       continue;
@@ -1066,7 +984,7 @@ export function assessBulkSelection(
           recordId,
           eligible: false,
           role: null,
-          refusalCode: "record_not_queued_for_dual_review" as const,
+          refusalCode: 'record_not_queued_for_dual_review' as const,
         }),
       );
       continue;
@@ -1078,15 +996,13 @@ export function assessBulkSelection(
           recordId,
           eligible: false,
           role: null,
-          refusalCode: "record_already_closed" as const,
+          refusalCode: 'record_already_closed' as const,
         }),
       );
       continue;
     }
 
-    const outstanding = slots.filter(
-      (role) => recordedReviewFor(record, role) === null,
-    );
+    const outstanding = slots.filter((role) => recordedReviewFor(record, role) === null);
     // criterion 7.7. Checked here so a self-reviewer sees the self-review refusal rather than an
     // "already recorded" one, matching the ordering `authorizeReviewer` deliberately applies.
     if (viewerIsTheEmployee(record, input.viewer)) {
@@ -1095,7 +1011,7 @@ export function assessBulkSelection(
           recordId,
           eligible: false,
           role: null,
-          refusalCode: "self_review_not_permitted" as const,
+          refusalCode: 'self_review_not_permitted' as const,
         }),
       );
       continue;
@@ -1106,7 +1022,7 @@ export function assessBulkSelection(
           recordId,
           eligible: false,
           role: null,
-          refusalCode: "no_outstanding_slot_for_user" as const,
+          refusalCode: 'no_outstanding_slot_for_user' as const,
         }),
       );
       continue;
@@ -1117,7 +1033,7 @@ export function assessBulkSelection(
           recordId,
           eligible: false,
           role: null,
-          refusalCode: "viewer_holds_both_outstanding_slots" as const,
+          refusalCode: 'viewer_holds_both_outstanding_slots' as const,
         }),
       );
       continue;
@@ -1139,31 +1055,26 @@ export function assessBulkSelection(
           eligible: false,
           role: null,
           refusalCode:
-            authorized.rejection.code === "self_review_not_permitted"
-              ? ("self_review_not_permitted" as const)
-              : authorized.rejection.code ===
-                  "record_not_queued_for_dual_review"
-                ? ("record_not_queued_for_dual_review" as const)
-                : ("no_outstanding_slot_for_user" as const),
+            authorized.rejection.code === 'self_review_not_permitted'
+              ? ('self_review_not_permitted' as const)
+              : authorized.rejection.code === 'record_not_queued_for_dual_review'
+                ? ('record_not_queued_for_dual_review' as const)
+                : ('no_outstanding_slot_for_user' as const),
         }),
       );
       continue;
     }
-    rows.push(
-      Object.freeze({ recordId, eligible: true, role, refusalCode: null }),
-    );
+    rows.push(Object.freeze({ recordId, eligible: true, role, refusalCode: null }));
   }
 
   const ineligibleRows = rows.filter(
-    (row) => !row.eligible && row.refusalCode !== "record_outside_user_scope",
+    (row) => !row.eligible && row.refusalCode !== 'record_outside_user_scope',
   );
 
   return Object.freeze({
     rows: Object.freeze(rows),
     selectedCount: selectedIds.length,
-    eligibleRecordIds: Object.freeze(
-      rows.filter((row) => row.eligible).map((row) => row.recordId),
-    ),
+    eligibleRecordIds: Object.freeze(rows.filter((row) => row.eligible).map((row) => row.recordId)),
     ineligibleRows: Object.freeze(ineligibleRows),
     outOfScopeRecordCount,
     missingRecordCount,
@@ -1173,13 +1084,13 @@ export function assessBulkSelection(
 /** Why the whole bulk action was refused. */
 export type BulkRefusalCode =
   /** No record was selected. There is nothing to apply one outcome and one comment to. */
-  | "selection_empty"
+  | 'selection_empty'
   /** criterion 7.4, measured once for the set-wide comment. */
-  | "comment_too_short"
+  | 'comment_too_short'
   /** criterion 8.2: an adjustment request must state the requested classification. */
-  | "requested_classification_required"
+  | 'requested_classification_required'
   /** criterion 13.3 with 14.4 / 7.1 / 7.3: at least one selected row could not take the outcome. */
-  | "selection_contains_ineligible_records";
+  | 'selection_contains_ineligible_records';
 
 export interface BulkReviewRefusal {
   /** The first refusal that applied. */
@@ -1268,17 +1179,15 @@ export type BulkReviewResult =
  * @throws only for programmer errors -- two different records under one id, or a mismatched
  *   Floor_Absence_Pattern occurrence.
  */
-export function recordBulkReviewOutcome(
-  input: BulkReviewInput,
-): BulkReviewResult {
+export function recordBulkReviewOutcome(input: BulkReviewInput): BulkReviewResult {
   const assessment = assessBulkSelection(input);
 
   const codes: BulkRefusalCode[] = [];
   const criteria: string[] = [];
 
   if (assessment.selectedCount === 0) {
-    codes.push("selection_empty");
-    criteria.push("13.3");
+    codes.push('selection_empty');
+    criteria.push('13.3');
   }
 
   // criterion 7.4, measured ONCE for the whole set with variance-review.ts's own measurement --
@@ -1287,20 +1196,20 @@ export function recordBulkReviewOutcome(
   // check cannot disagree with this one.
   const comment = normalizeReviewerComment(input.comment);
   const commentRequired =
-    input.submission.outcome === "apr_disputed" ||
-    input.submission.outcome === "adjustment_requested";
+    input.submission.outcome === 'apr_disputed' ||
+    input.submission.outcome === 'adjustment_requested';
   if (commentRequired && comment.length < MIN_REVIEWER_COMMENT_LENGTH) {
-    codes.push("comment_too_short");
-    criteria.push("7.4");
+    codes.push('comment_too_short');
+    criteria.push('7.4');
   }
 
   // criterion 8.2.
   if (
-    input.submission.outcome === "adjustment_requested" &&
+    input.submission.outcome === 'adjustment_requested' &&
     !input.submission.requestedClassification
   ) {
-    codes.push("requested_classification_required");
-    criteria.push("8.2");
+    codes.push('requested_classification_required');
+    criteria.push('8.2');
   }
 
   if (
@@ -1308,26 +1217,24 @@ export function recordBulkReviewOutcome(
     assessment.outOfScopeRecordCount > 0 ||
     assessment.missingRecordCount > 0
   ) {
-    codes.push("selection_contains_ineligible_records");
-    criteria.push("7.1", "7.3", "13.3", "14.4");
+    codes.push('selection_contains_ineligible_records');
+    criteria.push('7.1', '7.3', '13.3', '14.4');
   }
 
   if (codes.length > 0) return bulkRefusal(codes, criteria, assessment, input);
 
-  const byId = new Map(
-    dedupeRecords(input.records).map((record) => [record.id, record] as const),
-  );
+  const byId = new Map(dedupeRecords(input.records).map((record) => [record.id, record] as const));
   const submission: ReviewSubmission =
-    input.submission.outcome === "adjustment_requested"
+    input.submission.outcome === 'adjustment_requested'
       ? {
-          outcome: "adjustment_requested",
+          outcome: 'adjustment_requested',
           comment: comment.normalized,
           requestedClassification: input.submission.requestedClassification,
           requestedLwpValue: input.submission.requestedLwpValue ?? null,
         }
-      : input.submission.outcome === "apr_disputed"
-        ? { outcome: "apr_disputed", comment: comment.normalized }
-        : { outcome: "apr_accepted", comment: comment.normalized };
+      : input.submission.outcome === 'apr_disputed'
+        ? { outcome: 'apr_disputed', comment: comment.normalized }
+        : { outcome: 'apr_accepted', comment: comment.normalized };
 
   const applied: BulkReviewApplied[] = [];
   const lateRefusals: BulkSelectionRow[] = [];
@@ -1342,7 +1249,7 @@ export function recordBulkReviewOutcome(
         recordId: row.recordId,
         eligible: false,
         role: null,
-        refusalCode: "record_not_in_supplied_set",
+        refusalCode: 'record_not_in_supplied_set',
       });
       continue;
     }
@@ -1356,7 +1263,7 @@ export function recordBulkReviewOutcome(
         recordId: row.recordId,
         eligible: false,
         role: null,
-        refusalCode: "no_outstanding_slot_for_user",
+        refusalCode: 'no_outstanding_slot_for_user',
       });
       continue;
     }
@@ -1371,13 +1278,11 @@ export function recordBulkReviewOutcome(
         recordId: row.recordId,
         eligible: false,
         role: null,
-        refusalCode: "no_outstanding_slot_for_user",
+        refusalCode: 'no_outstanding_slot_for_user',
       });
       continue;
     }
-    applied.push(
-      Object.freeze({ recordId: row.recordId, role: row.role, result }),
-    );
+    applied.push(Object.freeze({ recordId: row.recordId, role: row.role, result }));
   }
 
   // All-or-nothing, defence in depth. If the recorder refused a row this function had assessed as
@@ -1386,14 +1291,11 @@ export function recordBulkReviewOutcome(
   if (lateRefusals.length > 0) {
     const lateAssessment: BulkSelectionAssessment = Object.freeze({
       ...assessment,
-      ineligibleRows: Object.freeze([
-        ...assessment.ineligibleRows,
-        ...lateRefusals,
-      ]),
+      ineligibleRows: Object.freeze([...assessment.ineligibleRows, ...lateRefusals]),
     });
     return bulkRefusal(
-      ["selection_contains_ineligible_records"],
-      ["7.1", "7.3", "13.3"],
+      ['selection_contains_ineligible_records'],
+      ['7.1', '7.3', '13.3'],
       lateAssessment,
       input,
     );
@@ -1408,13 +1310,11 @@ export function recordBulkReviewOutcome(
     appliedCount: sorted.length,
     applied: Object.freeze(sorted),
     completedDualReviewRecordIds: Object.freeze(
-      sorted
-        .filter((entry) => entry.result.dualReviewComplete)
-        .map((entry) => entry.recordId),
+      sorted.filter((entry) => entry.result.dualReviewComplete).map((entry) => entry.recordId),
     ),
     contestedRecordIds: Object.freeze(
       sorted
-        .filter((entry) => entry.result.statusAfter === "contested")
+        .filter((entry) => entry.result.statusAfter === 'contested')
         .map((entry) => entry.recordId),
     ),
     adjustmentRequests: Object.freeze(
@@ -1425,9 +1325,7 @@ export function recordBulkReviewOutcome(
     overrideApproverRoutings: Object.freeze(
       sorted
         .map((entry) => entry.result.routing)
-        .filter(
-          (routing): routing is OverrideApproverRouting => routing !== null,
-        ),
+        .filter((routing): routing is OverrideApproverRouting => routing !== null),
     ),
   });
 }
@@ -1457,21 +1355,18 @@ function bulkRefusal(
   });
 }
 
-function bulkRefusalMessage(
-  code: BulkRefusalCode,
-  assessment: BulkSelectionAssessment,
-): string {
+function bulkRefusalMessage(code: BulkRefusalCode, assessment: BulkSelectionAssessment): string {
   switch (code) {
-    case "selection_empty":
-      return "No Variance_Record was selected, so there is nothing to record one Review_Outcome against.";
-    case "comment_too_short":
+    case 'selection_empty':
+      return 'No Variance_Record was selected, so there is nothing to record one Review_Outcome against.';
+    case 'comment_too_short':
       return (
         `A bulk Review_Outcome of apr_disputed or adjustment_requested requires one reviewer ` +
         `comment of at least ${MIN_REVIEWER_COMMENT_LENGTH} characters for the whole set.`
       );
-    case "requested_classification_required":
-      return "A bulk adjustment request must state the requested classification.";
-    case "selection_contains_ineligible_records":
+    case 'requested_classification_required':
+      return 'A bulk adjustment request must state the requested classification.';
+    case 'selection_contains_ineligible_records':
       return (
         `The bulk action was refused in full: ${assessment.ineligibleRows.length} selected ` +
         `Variance_Record(s) cannot take this Review_Outcome, ` +
@@ -1524,12 +1419,7 @@ function resolveDualReviewCeiling(
     (config) => config.branchId === branchId && config.payMonth === payMonth,
   );
   const values = [...new Set(matching.map((config) => config.ceiling))];
-  if (values.length === 0)
-    return {
-      ceiling: DEFAULT_DUAL_REVIEW_CEILING,
-      wasConfigured: false,
-      warning: null,
-    };
+  if (values.length === 0) return { ceiling: DEFAULT_DUAL_REVIEW_CEILING, wasConfigured: false, warning: null };
   if (values.length > 1) {
     return {
       ceiling: DEFAULT_DUAL_REVIEW_CEILING,
@@ -1542,11 +1432,7 @@ function resolveDualReviewCeiling(
   }
   const configured = values[0]!;
   if (configured === null) {
-    return {
-      ceiling: DEFAULT_DUAL_REVIEW_CEILING,
-      wasConfigured: false,
-      warning: null,
-    };
+    return { ceiling: DEFAULT_DUAL_REVIEW_CEILING, wasConfigured: false, warning: null };
   }
   if (!Number.isInteger(configured) || configured < 0) {
     return {
@@ -1604,7 +1490,8 @@ export interface VarianceExceptionCounts {
 }
 
 export interface VarianceExceptionGroupRow
-  extends VarianceExceptionGroupingKey, VarianceExceptionCounts {
+  extends VarianceExceptionGroupingKey,
+    VarianceExceptionCounts {
   /** criteria 6.10, 6.12, 13.4: the ceiling that was applied to this grouping's branch and month. */
   readonly appliedDualReviewCeiling: number;
   /** false when the default of 100 was applied, whether because no row existed or one was invalid. */
@@ -1641,9 +1528,7 @@ export interface VarianceExceptionReportInput {
   readonly dualReviewCeilings?: readonly DualReviewCeilingConfig[] | null;
 }
 
-function groupingKeyOf(
-  record: ReportableVarianceRecord,
-): VarianceExceptionGroupingKey {
+function groupingKeyOf(record: ReportableVarianceRecord): VarianceExceptionGroupingKey {
   return {
     costCentreId: record.costCentreId,
     branchId: record.branchId,
@@ -1654,12 +1539,7 @@ function groupingKeyOf(
 
 /** Fixed field order, so two records in one grouping produce one key whatever their literal order. */
 function groupingKeyString(key: VarianceExceptionGroupingKey): string {
-  return JSON.stringify([
-    key.costCentreId,
-    key.branchId,
-    key.processId,
-    key.designationId,
-  ]);
+  return JSON.stringify([key.costCentreId, key.branchId, key.processId, key.designationId]);
 }
 
 function compareGroupingKeys(
@@ -1676,15 +1556,11 @@ function compareGroupingKeys(
 }
 
 /** The eight counts of criterion 13.4 over one set of records. Subtraction, not parallel filters. */
-function countGroup(
-  records: readonly ReportableVarianceRecord[],
-): VarianceExceptionCounts {
+function countGroup(records: readonly ReportableVarianceRecord[]): VarianceExceptionCounts {
   const raised = records.length;
   const queued = records.filter(isQueuedReportable);
   const queuedForDualReview = queued.length;
-  const unreviewed = queued.filter((record) =>
-    isUnreviewedStatus(record.status),
-  ).length;
+  const unreviewed = queued.filter((record) => isUnreviewedStatus(record.status)).length;
   return {
     raised,
     queuedForDualReview,
@@ -1694,7 +1570,7 @@ function countGroup(
     // The queued partition, also by construction.
     reviewed: queuedForDualReview - unreviewed,
     unreviewed,
-    contested: records.filter((record) => record.status === "contested").length,
+    contested: records.filter((record) => record.status === 'contested').length,
     adjusted: records.filter(hasRequestedAdjustment).length,
   };
 }
@@ -1712,31 +1588,24 @@ function countGroup(
 export function buildVarianceExceptionReport(
   input: VarianceExceptionReportInput,
 ): VarianceExceptionReport {
-  assertPayMonth("payMonth", input.payMonth);
+  assertPayMonth('payMonth', input.payMonth);
   const ceilings = input.dualReviewCeilings ?? [];
-  for (const config of ceilings)
-    assertPayMonth("dualReviewCeilings entry payMonth", config.payMonth);
+  for (const config of ceilings) assertPayMonth('dualReviewCeilings entry payMonth', config.payMonth);
 
   const deduped = dedupeRecords(input.records);
   for (const record of deduped) {
-    assertPayMonth("record.payMonth", record.payMonth);
+    assertPayMonth('record.payMonth', record.payMonth);
     assertFloorAbsenceOccurrenceMatches(record);
   }
 
-  const inScope = deduped.filter(
-    (record) => record.payMonth === input.payMonth,
-  );
+  const inScope = deduped.filter((record) => record.payMonth === input.payMonth);
 
-  const buckets = new Map<
-    string,
-    { key: VarianceExceptionGroupingKey; records: ReportableVarianceRecord[] }
-  >();
+  const buckets = new Map<string, { key: VarianceExceptionGroupingKey; records: ReportableVarianceRecord[] }>();
   for (const record of inScope) {
     const key = groupingKeyOf(record);
     const keyString = groupingKeyString(key);
     const bucket = buckets.get(keyString);
-    if (bucket === undefined)
-      buckets.set(keyString, { key, records: [record] });
+    if (bucket === undefined) buckets.set(keyString, { key, records: [record] });
     else bucket.records.push(record);
   }
 
@@ -1744,11 +1613,7 @@ export function buildVarianceExceptionReport(
   const groupings = [...buckets.values()]
     .sort((a, b) => compareGroupingKeys(a.key, b.key))
     .map(({ key, records }) => {
-      const applied = resolveDualReviewCeiling(
-        key.branchId,
-        input.payMonth,
-        ceilings,
-      );
+      const applied = resolveDualReviewCeiling(key.branchId, input.payMonth, ceilings);
       if (applied.warning !== null && !warnings.includes(applied.warning)) {
         warnings.push(applied.warning);
       }
@@ -1757,9 +1622,7 @@ export function buildVarianceExceptionReport(
         ...countGroup(records),
         appliedDualReviewCeiling: applied.ceiling,
         dualReviewCeilingWasConfigured: applied.wasConfigured,
-        recordIds: Object.freeze(
-          records.map((record) => record.id).sort(compareStrings),
-        ),
+        recordIds: Object.freeze(records.map((record) => record.id).sort(compareStrings)),
       });
     });
 
@@ -1770,9 +1633,7 @@ export function buildVarianceExceptionReport(
       ...countGroup(inScope),
       groupingCount: groupings.length,
       branchIds: Object.freeze(
-        [...new Set(inScope.map((record) => record.branchId))].sort(
-          compareStrings,
-        ),
+        [...new Set(inScope.map((record) => record.branchId))].sort(compareStrings),
       ),
     }),
     outOfScopeRecordCount: deduped.length - inScope.length,
@@ -1782,7 +1643,7 @@ export function buildVarianceExceptionReport(
 
 /** One grouping on which criterion 13.4's invariant failed. Empty in every correct report. */
 export interface NoDiscardViolation {
-  readonly scope: "grouping" | "overall";
+  readonly scope: 'grouping' | 'overall';
   /** null on the footer, which has no grouping key. */
   readonly key: VarianceExceptionGroupingKey | null;
   readonly raised: number;
@@ -1804,18 +1665,13 @@ export interface NoDiscardInvariantCheck {
  * it. If a future edit replaces that subtraction with a second filter, the property test that calls
  * this function fails, and so does any caller that asserts it in production.
  */
-export function checkNoDiscardInvariant(
-  report: VarianceExceptionReport,
-): NoDiscardInvariantCheck {
+export function checkNoDiscardInvariant(report: VarianceExceptionReport): NoDiscardInvariantCheck {
   const violations: NoDiscardViolation[] = [];
   for (const grouping of report.groupings) {
-    if (
-      grouping.raised !==
-      grouping.queuedForDualReview + grouping.recordedNotQueued
-    ) {
+    if (grouping.raised !== grouping.queuedForDualReview + grouping.recordedNotQueued) {
       violations.push(
         Object.freeze({
-          scope: "grouping" as const,
+          scope: 'grouping' as const,
           key: Object.freeze({
             costCentreId: grouping.costCentreId,
             branchId: grouping.branchId,
@@ -1830,13 +1686,10 @@ export function checkNoDiscardInvariant(
     }
   }
   const overall = report.overall;
-  if (
-    overall.raised !==
-    overall.queuedForDualReview + overall.recordedNotQueued
-  ) {
+  if (overall.raised !== overall.queuedForDualReview + overall.recordedNotQueued) {
     violations.push(
       Object.freeze({
-        scope: "overall" as const,
+        scope: 'overall' as const,
         key: null,
         raised: overall.raised,
         queuedForDualReview: overall.queuedForDualReview,
@@ -1886,29 +1739,26 @@ export interface VarianceExceptionScreenRow {
  * a real field of `VarianceExceptionScreenRow`.
  */
 export const VARIANCE_EXCEPTION_REPORT_COLUMNS = [
-  { key: "costCentre", header: "Cost centre" },
-  { key: "branch", header: "Branch" },
-  { key: "process", header: "Process" },
-  { key: "designation", header: "Designation" },
-  { key: "raised", header: "Raised" },
-  { key: "queuedForDualReview", header: "Queued for dual review" },
-  { key: "recordedNotQueued", header: "Recorded not queued" },
-  {
-    key: "queuedAsFloorAbsencePattern",
-    header: "Queued as floor absence pattern",
-  },
-  { key: "appliedDualReviewCeiling", header: "Applied dual review ceiling" },
-  { key: "reviewed", header: "Reviewed" },
-  { key: "unreviewed", header: "Unreviewed" },
-  { key: "contested", header: "Contested" },
-  { key: "adjusted", header: "Adjusted" },
+  { key: 'costCentre', header: 'Cost centre' },
+  { key: 'branch', header: 'Branch' },
+  { key: 'process', header: 'Process' },
+  { key: 'designation', header: 'Designation' },
+  { key: 'raised', header: 'Raised' },
+  { key: 'queuedForDualReview', header: 'Queued for dual review' },
+  { key: 'recordedNotQueued', header: 'Recorded not queued' },
+  { key: 'queuedAsFloorAbsencePattern', header: 'Queued as floor absence pattern' },
+  { key: 'appliedDualReviewCeiling', header: 'Applied dual review ceiling' },
+  { key: 'reviewed', header: 'Reviewed' },
+  { key: 'unreviewed', header: 'Unreviewed' },
+  { key: 'contested', header: 'Contested' },
+  { key: 'adjusted', header: 'Adjusted' },
 ] as const satisfies readonly {
   readonly key: keyof VarianceExceptionScreenRow;
   readonly header: string;
 }[];
 
 export type VarianceExceptionReportColumnKey =
-  (typeof VARIANCE_EXCEPTION_REPORT_COLUMNS)[number]["key"];
+  (typeof VARIANCE_EXCEPTION_REPORT_COLUMNS)[number]['key'];
 
 // criterion 13.5, made structural. The first assertion fails if a field is added to the screen row
 // and not to the column list -- which would ship an export missing a column the screen shows. The
@@ -1916,16 +1766,12 @@ export type VarianceExceptionReportColumnKey =
 // "the export carries the same columns the screen displays" a compile error to break, and the
 // property test then checks the same fact at run time over generated reports.
 type _ColumnsCoverEveryScreenField = Assert<
-  [
-    Exclude<keyof VarianceExceptionScreenRow, VarianceExceptionReportColumnKey>,
-  ] extends [never]
+  [Exclude<keyof VarianceExceptionScreenRow, VarianceExceptionReportColumnKey>] extends [never]
     ? true
     : false
 >;
 type _ScreenRowHasEveryColumn = Assert<
-  [
-    Exclude<VarianceExceptionReportColumnKey, keyof VarianceExceptionScreenRow>,
-  ] extends [never]
+  [Exclude<VarianceExceptionReportColumnKey, keyof VarianceExceptionScreenRow>] extends [never]
     ? true
     : false
 >;
@@ -1993,17 +1839,11 @@ export function buildVarianceExceptionExport(
   const screenRows = buildVarianceExceptionScreenRows(report);
   return Object.freeze({
     payMonth: report.payMonth,
-    headers: Object.freeze(
-      VARIANCE_EXCEPTION_REPORT_COLUMNS.map((column) => column.header),
-    ),
-    columnKeys: Object.freeze(
-      VARIANCE_EXCEPTION_REPORT_COLUMNS.map((column) => column.key),
-    ),
+    headers: Object.freeze(VARIANCE_EXCEPTION_REPORT_COLUMNS.map((column) => column.header)),
+    columnKeys: Object.freeze(VARIANCE_EXCEPTION_REPORT_COLUMNS.map((column) => column.key)),
     rows: Object.freeze(
       screenRows.map((row) =>
-        Object.freeze(
-          VARIANCE_EXCEPTION_REPORT_COLUMNS.map((column) => row[column.key]),
-        ),
+        Object.freeze(VARIANCE_EXCEPTION_REPORT_COLUMNS.map((column) => row[column.key])),
       ),
     ),
     rowCount: screenRows.length,
@@ -2091,10 +1931,10 @@ export interface PreCloseUnreviewedListingInput {
 export function buildPreCloseUnreviewedListing(
   input: PreCloseUnreviewedListingInput,
 ): PreCloseUnreviewedListing {
-  assertPayMonth("payMonth", input.payMonth);
+  assertPayMonth('payMonth', input.payMonth);
   const deduped = dedupeRecords(input.records);
   for (const record of deduped) {
-    assertPayMonth("record.payMonth", record.payMonth);
+    assertPayMonth('record.payMonth', record.payMonth);
     assertFloorAbsenceOccurrenceMatches(record);
   }
 
@@ -2117,25 +1957,15 @@ export function buildPreCloseUnreviewedListing(
 
   const rows = [...byEmployee.entries()]
     .map(([employeeId, records]) => {
-      const dates = [...new Set(records.map((record) => record.workDate))].sort(
-        compareStrings,
-      );
-      const lineIds = [
-        ...new Set(records.map((record) => record.salaryLineId ?? null)),
-      ];
+      const dates = [...new Set(records.map((record) => record.workDate))].sort(compareStrings);
+      const lineIds = [...new Set(records.map((record) => record.salaryLineId ?? null))];
       const sources = [
-        ...new Set(
-          records.map(
-            (record) => record.evidence.evaluation.resolvedAttendanceSource,
-          ),
-        ),
+        ...new Set(records.map((record) => record.evidence.evaluation.resolvedAttendanceSource)),
       ].sort(compareStrings);
       return Object.freeze({
         employeeId,
         branchIds: Object.freeze(
-          [...new Set(records.map((record) => record.branchId))].sort(
-            compareStrings,
-          ),
+          [...new Set(records.map((record) => record.branchId))].sort(compareStrings),
         ),
         salaryLineId: lineIds.length === 1 ? lineIds[0]! : null,
         paidWithUnreviewedVariance: true as const,
@@ -2143,20 +1973,19 @@ export function buildPreCloseUnreviewedListing(
         unreviewedDates: Object.freeze(dates),
         resolvedAttendanceSource: sources.length === 1 ? sources[0]! : null,
         resolvedAttendanceSources: Object.freeze(sources),
-        unreviewedRecordIds: Object.freeze(
-          records.map((record) => record.id).sort(compareStrings),
-        ),
+        unreviewedRecordIds: Object.freeze(records.map((record) => record.id).sort(compareStrings)),
         dates: Object.freeze(
-          [...records].sort(compareRecords).map((record) =>
-            Object.freeze({
-              workDate: record.workDate,
-              recordId: record.id,
-              branchId: record.branchId,
-              resolvedAttendanceSource:
-                record.evidence.evaluation.resolvedAttendanceSource,
-              carriedForwardFromPayMonth: record.carriedForwardFromPayMonth,
-            }),
-          ),
+          [...records]
+            .sort(compareRecords)
+            .map((record) =>
+              Object.freeze({
+                workDate: record.workDate,
+                recordId: record.id,
+                branchId: record.branchId,
+                resolvedAttendanceSource: record.evidence.evaluation.resolvedAttendanceSource,
+                carriedForwardFromPayMonth: record.carriedForwardFromPayMonth,
+              }),
+            ),
         ),
       });
     })
@@ -2166,10 +1995,7 @@ export function buildPreCloseUnreviewedListing(
     payMonth: input.payMonth,
     rows: Object.freeze(rows),
     employeeCount: rows.length,
-    unreviewedDateCount: rows.reduce(
-      (total, row) => total + row.unreviewedDateCount,
-      0,
-    ),
+    unreviewedDateCount: rows.reduce((total, row) => total + row.unreviewedDateCount, 0),
     outOfScopeRecordCount: deduped.length - inScope.length,
   });
 }
@@ -2226,15 +2052,12 @@ export type ContestedRecordDisplay =
       readonly displayed: false;
       readonly recordId: string;
       readonly status: VarianceRecordStatus;
-      readonly reason: "not_marked_contested" | "second_outcome_not_recorded";
+      readonly reason: 'not_marked_contested' | 'second_outcome_not_recorded';
       /** Whatever is recorded so far, so a partially reviewed record is still readable. */
       readonly outcomes: readonly ContestedOutcomeView[];
     };
 
-function contestedOutcomeView(
-  role: ReviewerRole,
-  review: RecordedReview,
-): ContestedOutcomeView {
+function contestedOutcomeView(role: ReviewerRole, review: RecordedReview): ContestedOutcomeView {
   return Object.freeze({
     role,
     userId: review.userId,
@@ -2245,13 +2068,9 @@ function contestedOutcomeView(
     // narrowing below is the type system stating that an accepted or disputed outcome cannot carry
     // a requested classification.
     requestedClassification:
-      review.outcome === "adjustment_requested"
-        ? review.requestedClassification
-        : null,
+      review.outcome === 'adjustment_requested' ? review.requestedClassification : null,
     requestedLwpValue:
-      review.outcome === "adjustment_requested"
-        ? (review.requestedLwpValue ?? null)
-        : null,
+      review.outcome === 'adjustment_requested' ? (review.requestedLwpValue ?? null) : null,
     substituted: review.substitution !== null,
   });
 }
@@ -2266,21 +2085,20 @@ export function describeContestedRecord(
   record: ReportableVarianceRecord,
 ): ContestedRecordDisplay {
   const views: ContestedOutcomeView[] = [];
-  if (record.wfmReview !== null)
-    views.push(contestedOutcomeView("wfm_reviewer", record.wfmReview));
+  if (record.wfmReview !== null) views.push(contestedOutcomeView('wfm_reviewer', record.wfmReview));
   if (record.managerReview !== null) {
-    views.push(contestedOutcomeView("reporting_manager", record.managerReview));
+    views.push(contestedOutcomeView('reporting_manager', record.managerReview));
   }
   const frozenViews = Object.freeze([...views]);
 
   // criterion 13.7 is scoped to "WHEN a Variance_Record is marked contested". A record that is not
   // is not a conflict display, and saying so is more useful than inventing one.
-  if (record.status !== "contested") {
+  if (record.status !== 'contested') {
     return Object.freeze({
       displayed: false as const,
       recordId: record.id,
       status: record.status,
-      reason: "not_marked_contested" as const,
+      reason: 'not_marked_contested' as const,
       outcomes: frozenViews,
     });
   }
@@ -2289,17 +2107,14 @@ export function describeContestedRecord(
       displayed: false as const,
       recordId: record.id,
       status: record.status,
-      reason: "second_outcome_not_recorded" as const,
+      reason: 'second_outcome_not_recorded' as const,
       outcomes: frozenViews,
     });
   }
 
   // criterion 7.10's own reading, reused. Called with (wfm, manager) but the function normalizes the
   // ordered pair internally, so the verdict does not depend on who recorded first.
-  const conflict = assessOutcomeConflict(
-    record.wfmReview,
-    record.managerReview,
-  );
+  const conflict = assessOutcomeConflict(record.wfmReview, record.managerReview);
   return Object.freeze({
     displayed: true as const,
     recordId: record.id,
@@ -2307,8 +2122,8 @@ export function describeContestedRecord(
     conflict,
     assessmentAgreesWithContestedStatus: conflict.conflicting,
     outcomes: Object.freeze([
-      contestedOutcomeView("wfm_reviewer", record.wfmReview),
-      contestedOutcomeView("reporting_manager", record.managerReview),
+      contestedOutcomeView('wfm_reviewer', record.wfmReview),
+      contestedOutcomeView('reporting_manager', record.managerReview),
     ]) as readonly [ContestedOutcomeView, ContestedOutcomeView],
     overrideApproverUserIds: Object.freeze([...record.overrideApproverUserIds]),
     unroutable: record.overrideApproverUserIds.length === 0,
@@ -2340,10 +2155,7 @@ export function describeContestedRecord(
  * result carries the fact the clamp discards, so no caller has to infer it from a negative value
  * that never appears.
  */
-function clampWholeDaysRemaining(
-  referenceDate: string,
-  payrollCutOffDate: string,
-): number {
+function clampWholeDaysRemaining(referenceDate: string, payrollCutOffDate: string): number {
   return Math.max(0, wholeDaysBetween(referenceDate, payrollCutOffDate));
 }
 
@@ -2403,31 +2215,24 @@ export interface QueueClearanceOutlook {
 export function buildQueueClearanceOutlook(
   input: QueueClearanceOutlookInput,
 ): QueueClearanceOutlook {
-  assertPayMonth("payMonth", input.payMonth);
+  assertPayMonth('payMonth', input.payMonth);
   const deduped = dedupeRecords(input.records);
   for (const record of deduped) {
-    assertPayMonth("record.payMonth", record.payMonth);
+    assertPayMonth('record.payMonth', record.payMonth);
     assertFloorAbsenceOccurrenceMatches(record);
   }
 
   const inScope = deduped.filter(
-    (record) =>
-      record.branchId === input.branchId && record.payMonth === input.payMonth,
+    (record) => record.branchId === input.branchId && record.payMonth === input.payMonth,
   );
   const outstanding = inScope
-    .filter(
-      (record) =>
-        isQueuedReportable(record) && isUnreviewedStatus(record.status),
-    )
+    .filter((record) => isQueuedReportable(record) && isUnreviewedStatus(record.status))
     .sort(compareRecords);
 
   const cutOff = input.payrollCutOffDate;
   // Both branches read the same calendar-day arithmetic, so "past the cut-off" and "zero days
   // remaining" cannot disagree.
-  const daysRemaining =
-    cutOff === null
-      ? null
-      : clampWholeDaysRemaining(input.referenceDate, cutOff);
+  const daysRemaining = cutOff === null ? null : clampWholeDaysRemaining(input.referenceDate, cutOff);
   const pastPayrollCutOff =
     cutOff === null ? false : wholeDaysBetween(input.referenceDate, cutOff) < 0;
 
@@ -2439,9 +2244,7 @@ export function buildQueueClearanceOutlook(
       outstanding.map((record) => record.id).sort(compareStrings),
     ),
     outstandingEmployeeIds: Object.freeze(
-      [...new Set(outstanding.map((record) => record.employeeId))].sort(
-        compareStrings,
-      ),
+      [...new Set(outstanding.map((record) => record.employeeId))].sort(compareStrings),
     ),
     outstandingCarriedForwardCount: outstanding.filter(
       (record) => record.carriedForwardFromPayMonth !== null,

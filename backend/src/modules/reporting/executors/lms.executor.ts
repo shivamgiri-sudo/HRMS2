@@ -12,12 +12,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type {
-  ExecFilters,
-  ExecScope,
-  ExecOptions,
-  ExecResult,
-} from "./types.js";
+import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -33,7 +28,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params,
+    params
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -44,7 +39,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 export async function trainingCompletionStatus(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   // `employees` has no company_id column — this deployment is single-tenant, and
   // ExecScope.companyId is a hardcoded '1' placeholder (see resolveFullScope: "single-tenant;
@@ -57,7 +52,7 @@ export async function trainingCompletionStatus(
   // with the broken clause removed and nothing in its place the report returned all 58,627
   // employee rows ever created — the same 52x overstatement that cc_headcount had.
   const clauses: string[] = ["e.active_status = 1"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params, "e");
   appendFilterConditions(filters, clauses, params, "e");
 
@@ -66,7 +61,7 @@ export async function trainingCompletionStatus(
   // than dropping the clause, which would return unfiltered rows that look filtered.
   if (filters.status) {
     throw new Error(
-      "training-completion-status: the 'status' filter is unavailable — certification status is not synced from the LMS into lms_learner_progress.",
+      "training-completion-status: the 'status' filter is unavailable — certification status is not synced from the LMS into lms_learner_progress."
     );
   }
 
@@ -115,16 +110,9 @@ export async function trainingCompletionStatus(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }

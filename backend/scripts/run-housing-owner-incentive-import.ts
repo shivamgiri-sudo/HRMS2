@@ -35,13 +35,7 @@ async function main() {
     await db.execute(
       `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status)
        VALUES (?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), 'valid')`,
-      [
-        randomUUID(),
-        batchId,
-        i + 1,
-        JSON.stringify(rows[i]),
-        JSON.stringify(rows[i]),
-      ],
+      [randomUUID(), batchId, i + 1, JSON.stringify(rows[i]), JSON.stringify(rows[i])],
     );
   }
   console.log("[IMPORT] batch rows staged:", rows.length);
@@ -56,7 +50,4 @@ async function main() {
 
   process.exit(result.errorRows > 0 && result.importedRows === 0 ? 1 : 0);
 }
-main().catch((e) => {
-  console.error("[IMPORT] FAILED", e);
-  process.exit(1);
-});
+main().catch((e) => { console.error("[IMPORT] FAILED", e); process.exit(1); });

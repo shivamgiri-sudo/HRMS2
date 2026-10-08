@@ -41,41 +41,13 @@ const { resolveEmployees } = await import("../bulk-approval.service.js");
  */
 const TABLE = [
   { employee_code: "ACTIVE_ATT", employment_status: "Active", attending: true },
-  {
-    employee_code: "ACTIVE_NOATT",
-    employment_status: "Active",
-    attending: false,
-  },
-  {
-    employee_code: "INACTIVE_ATT",
-    employment_status: "inactive",
-    attending: true,
-  },
-  {
-    employee_code: "INACTIVE_NOATT",
-    employment_status: "inactive",
-    attending: false,
-  },
-  {
-    employee_code: "RESIGNED_ATT",
-    employment_status: "Resigned",
-    attending: true,
-  },
-  {
-    employee_code: "RESIGNED_NOATT",
-    employment_status: "Resigned",
-    attending: false,
-  },
-  {
-    employee_code: "TERMINATED_ATT",
-    employment_status: "terminated",
-    attending: true,
-  },
-  {
-    employee_code: "NULLSTATUS_NOATT",
-    employment_status: null,
-    attending: false,
-  },
+  { employee_code: "ACTIVE_NOATT", employment_status: "Active", attending: false },
+  { employee_code: "INACTIVE_ATT", employment_status: "inactive", attending: true },
+  { employee_code: "INACTIVE_NOATT", employment_status: "inactive", attending: false },
+  { employee_code: "RESIGNED_ATT", employment_status: "Resigned", attending: true },
+  { employee_code: "RESIGNED_NOATT", employment_status: "Resigned", attending: false },
+  { employee_code: "TERMINATED_ATT", employment_status: "terminated", attending: true },
+  { employee_code: "NULLSTATUS_NOATT", employment_status: null, attending: false },
 ];
 
 beforeEach(() => {
@@ -83,27 +55,20 @@ beforeEach(() => {
   execute.mockImplementation(async (_sql: string, params: unknown[]) => {
     // Trailing parameter is the activity window; everything before it is the code list.
     const codes = (params as unknown[]).slice(0, -1) as string[];
-    const rows = TABLE.filter((r) => codes.includes(r.employee_code))
+    const rows = TABLE
+      .filter((r) => codes.includes(r.employee_code))
       // The predicate the SQL expresses: active by status, OR seen in attendance recently.
-      .filter(
-        (r) =>
-          String(r.employment_status ?? "").toLowerCase() === "active" ||
-          r.attending,
-      )
+      .filter((r) => String(r.employment_status ?? "").toLowerCase() === "active" || r.attending)
       .map((r) => ({
         id: `id-${r.employee_code}`,
         employee_code: r.employee_code,
-        branch_id: "b1",
-        process_id: "p1",
-        first_name: "A",
-        last_name: "B",
+        branch_id: "b1", process_id: "p1", first_name: "A", last_name: "B",
       }));
     return [rows, []];
   });
 });
 
-const resolve = async (code: string) =>
-  (await resolveEmployees([code])).get(code);
+const resolve = async (code: string) => (await resolveEmployees([code])).get(code);
 
 describe("resolveEmployees — who may appear in a batch", () => {
   it("admits an inactive employee who is still attending", async () => {
@@ -149,9 +114,7 @@ describe("resolveEmployees — who may appear in a batch", () => {
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toMatch(/EXISTS/);
     expect(sql).toMatch(/attendance_daily_record/);
-    expect(sql).toMatch(
-      /record_date >= DATE_SUB\(CURDATE\(\), INTERVAL \? DAY\)/,
-    );
+    expect(sql).toMatch(/record_date >= DATE_SUB\(CURDATE\(\), INTERVAL \? DAY\)/);
     expect(sql).toMatch(/LOWER\(employment_status\) = 'active'/);
     expect(sql).not.toMatch(/COALESCE\(employment_status/);
     expect((params as unknown[]).at(-1)).toBe(180);

@@ -31,19 +31,14 @@ export async function warmFeedHealthCache(): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT id FROM process_master WHERE active_status = 1",
   );
-  await getNeverReported(
-    new Set((rows as RowDataPacket[]).map((r) => String(r.id))),
-  );
+  await getNeverReported(new Set((rows as RowDataPacket[]).map((r) => String(r.id))));
 }
 
 export function startFeedHealthCacheWarmer(): void {
   if (warmTimer) return;
   const run = (): void => {
     warmFeedHealthCache().catch((err: unknown) => {
-      console.warn(
-        "[feed-health] cache warm failed:",
-        err instanceof Error ? err.message : err,
-      );
+      console.warn("[feed-health] cache warm failed:", err instanceof Error ? err.message : err);
     });
   };
   run();
@@ -226,13 +221,10 @@ export interface NeverReportedGroup {
  * are one root cause wearing 116 faces, and a reader needs to see that once,
  * not scroll past it 116 times.
  */
-export async function getNeverReported(
-  allowedProcessIds: Set<string>,
-): Promise<NeverReportedGroup[]> {
+export async function getNeverReported(allowedProcessIds: Set<string>): Promise<NeverReportedGroup[]> {
   if (!allowedProcessIds.size) return [];
-  const [rows] = await retryOnLock(() =>
-    db.execute<RowDataPacket[]>(
-      `SELECT d.process_id, p.process_name, m.metric_code, m.metric_name, ds.source_object,
+  const [rows] = await retryOnLock(() => db.execute<RowDataPacket[]>(
+    `SELECT d.process_id, p.process_name, m.metric_code, m.metric_name, ds.source_object,
             ds.process_key_kind, ds.process_key_column, ds.process_key_value,
             ds.employee_key_column, ds.employee_key_kind,
             t.upload_type_code, t.upload_type_name
@@ -249,8 +241,7 @@ export async function getNeverReported(
           SELECT 1 FROM process_metric_actual a
            WHERE a.process_id = d.process_id AND a.metric_key = m.metric_code
         )`,
-    ),
-  );
+  ));
 
   interface Accum extends NeverReportedGroup {
     /** Working state for the existence check below — stripped before return. */
@@ -282,19 +273,14 @@ export async function getNeverReported(
       _kind: r.process_key_kind ? String(r.process_key_kind) : null,
       _keyColumn: r.process_key_column ? String(r.process_key_column) : null,
       _keyValues: new Set<string>(),
-      _employeeKeyColumn: r.employee_key_column
-        ? String(r.employee_key_column)
-        : null,
-      _employeeKeyKind: r.employee_key_kind
-        ? String(r.employee_key_kind)
-        : null,
+      _employeeKeyColumn: r.employee_key_column ? String(r.employee_key_column) : null,
+      _employeeKeyKind: r.employee_key_kind ? String(r.employee_key_kind) : null,
       _processIds: new Set<string>(),
     };
     g.processCount++;
     if (g.processNames.length < 8) g.processNames.push(String(r.process_name));
     g._processIds.add(processId);
-    if (r.process_key_value != null)
-      g._keyValues.add(String(r.process_key_value));
+    if (r.process_key_value != null) g._keyValues.add(String(r.process_key_value));
     groups.set(key, g);
   }
 
@@ -306,60 +292,34 @@ export async function getNeverReported(
   const resolveExistingSourceRows = async (g: Accum): Promise<void> => {
     try {
       const table = assertSafeIdentifier(g._sourceObject, "source table");
-      const quotedTable = table
-        .split(".")
-        .map((p) => `\`${p}\``)
-        .join(".");
+      const quotedTable = table.split(".").map((p) => `\`${p}\``).join(".");
       let cacheKey: string;
       let run: () => Promise<RowDataPacket[]>;
-      if (
-        g._kind === "employee" &&
-        g._employeeKeyColumn &&
-        g._processIds.size
-      ) {
-        const employeeCol = assertSafeIdentifier(
-          g._employeeKeyColumn,
-          "employee key column",
-        );
-        const employeeSide =
-          g._employeeKeyKind === "employee_id" ? "id" : "employee_code";
+      if (g._kind === "employee" && g._employeeKeyColumn && g._processIds.size) {
+        const employeeCol = assertSafeIdentifier(g._employeeKeyColumn, "employee key column");
+        const employeeSide = g._employeeKeyKind === "employee_id" ? "id" : "employee_code";
         const ids = [...g._processIds].sort();
         cacheKey = `employee|${table}|${employeeCol}|${employeeSide}|${ids.join(",")}`;
-        run = async () =>
-          (
-            await retryOnLock(() =>
-              db.execute<RowDataPacket[]>(
-                `SELECT COUNT(*) AS n FROM ${quotedTable} s
+        run = async () => (await retryOnLock(() => db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS n FROM ${quotedTable} s
              JOIN employees e ON e.\`${employeeSide}\` = s.\`${employeeCol}\`
             WHERE e.process_id IN (${ids.map(() => "?").join(",")})`,
-                ids,
-              ),
-            )
-          )[0];
+          ids,
+        )))[0];
       } else if (g._kind === "column" && g._keyColumn && g._keyValues.size) {
         const keyCol = assertSafeIdentifier(g._keyColumn, "process key column");
         const values = [...g._keyValues].sort();
         cacheKey = `column|${table}|${keyCol}|${values.join(",")}`;
-        run = async () =>
-          (
-            await retryOnLock(() =>
-              db.execute<RowDataPacket[]>(
-                `SELECT COUNT(*) AS n FROM ${quotedTable} WHERE \`${keyCol}\` IN (${values.map(() => "?").join(",")})`,
-                values,
-              ),
-            )
-          )[0];
+        run = async () => (await retryOnLock(() => db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS n FROM ${quotedTable} WHERE \`${keyCol}\` IN (${values.map(() => "?").join(",")})`,
+          values,
+        )))[0];
       } else if (g._kind === "constant") {
         // The whole table already belongs to one process — no extra filter needed.
         cacheKey = `constant|${table}`;
-        run = async () =>
-          (
-            await retryOnLock(() =>
-              db.execute<RowDataPacket[]>(
-                `SELECT COUNT(*) AS n FROM ${quotedTable}`,
-              ),
-            )
-          )[0];
+        run = async () => (await retryOnLock(() => db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS n FROM ${quotedTable}`,
+        )))[0];
       } else {
         return;
       }
@@ -378,47 +338,29 @@ export async function getNeverReported(
   };
   const pending = [...groups.values()].filter((g) => g.uploadTypeName);
   await Promise.all(
-    Array.from(
-      { length: Math.min(EXISTENCE_CONCURRENCY, pending.length) },
-      async () => {
-        for (let g = pending.shift(); g; g = pending.shift()) {
-          await resolveExistingSourceRows(g);
-        }
-      },
-    ),
+    Array.from({ length: Math.min(EXISTENCE_CONCURRENCY, pending.length) }, async () => {
+      for (let g = pending.shift(); g; g = pending.shift()) {
+        await resolveExistingSourceRows(g);
+      }
+    }),
   );
 
   return [...groups.values()]
     .sort((a, b) => b.processCount - a.processCount)
-    .map(
-      ({
-        _sourceObject,
-        _kind,
-        _keyColumn,
-        _keyValues,
-        _employeeKeyColumn,
-        _employeeKeyKind,
-        _processIds,
-        ...g
-      }) => ({ ...g, processIds: [..._processIds] }),
-    );
+    .map(({ _sourceObject, _kind, _keyColumn, _keyValues, _employeeKeyColumn, _employeeKeyKind, _processIds, ...g }) =>
+      ({ ...g, processIds: [..._processIds] }));
 }
 
 /**
  * @param allowedProcessIds the caller's own readable set — feed health is still
  *        process data, and a stopped feed names a client.
  */
-export async function getFeedHealth(
-  allowedProcessIds: Set<string>,
-): Promise<FeedHealth> {
+export async function getFeedHealth(allowedProcessIds: Set<string>): Promise<FeedHealth> {
   if (!allowedProcessIds.size) {
     return {
-      checkedAt: isoDate(new Date()),
-      warnAfterDays: WARN_AFTER_DAYS,
+      checkedAt: isoDate(new Date()), warnAfterDays: WARN_AFTER_DAYS,
       stoppedAfterDays: STOPPED_AFTER_DAYS,
-      counts: { ok: 0, slowing: 0, stopped: 0 },
-      feeds: [],
-      neverReported: [],
+      counts: { ok: 0, slowing: 0, stopped: 0 }, feeds: [], neverReported: [],
     };
   }
 
@@ -426,9 +368,8 @@ export async function getFeedHealth(
   // with when it last did and how busy it was in the month before that. The
   // volume matters: a metric that produced twice in its life going quiet is not
   // the same event as one that produced daily for a month and then stopped.
-  const [rows] = await retryOnLock(() =>
-    db.execute<RowDataPacket[]>(
-      `SELECT x.process_id, p.process_name, x.metric_key,
+  const [rows] = await retryOnLock(() => db.execute<RowDataPacket[]>(
+    `SELECT x.process_id, p.process_name, x.metric_key,
             COALESCE(m.metric_name, x.metric_key) metric_name,
             x.latest, x.recent_readings
        FROM (
@@ -441,8 +382,7 @@ export async function getFeedHealth(
             ) x
        JOIN process_master p ON p.id = x.process_id AND p.active_status = 1
        LEFT JOIN kpi_metric_master m ON m.metric_code = x.metric_key`,
-    ),
-  );
+  ));
 
   const feeds: FeedRow[] = [];
   for (const r of rows as any[]) {
@@ -451,20 +391,15 @@ export async function getFeedHealth(
     const latestDate = r.latest ? isoDate(r.latest) : null;
     const staleDays = latestDate ? daysSince(latestDate) : null;
     const state: FeedState =
-      staleDays === null
-        ? "stopped"
-        : staleDays >= STOPPED_AFTER_DAYS
-          ? "stopped"
-          : staleDays > WARN_AFTER_DAYS
-            ? "slowing"
-            : "ok";
+      staleDays === null ? "stopped"
+        : staleDays >= STOPPED_AFTER_DAYS ? "stopped"
+          : staleDays > WARN_AFTER_DAYS ? "slowing" : "ok";
     feeds.push({
       metricKey: String(r.metric_key),
       metricName: String(r.metric_name),
       processId,
       processName: String(r.process_name),
-      latestDate,
-      staleDays,
+      latestDate, staleDays,
       recentReadings: Number(r.recent_readings) || 0,
       state,
     });
@@ -473,12 +408,10 @@ export async function getFeedHealth(
   // Stopped first, then longest-quiet, then the busiest feed among equals — the
   // one whose silence costs most is the one to look at first.
   const rank: Record<FeedState, number> = { stopped: 0, slowing: 1, ok: 2 };
-  feeds.sort(
-    (a, b) =>
-      rank[a.state] - rank[b.state] ||
-      (b.staleDays ?? 0) - (a.staleDays ?? 0) ||
-      b.recentReadings - a.recentReadings,
-  );
+  feeds.sort((a, b) =>
+    rank[a.state] - rank[b.state]
+    || (b.staleDays ?? 0) - (a.staleDays ?? 0)
+    || b.recentReadings - a.recentReadings);
 
   const neverReported = await getNeverReported(allowedProcessIds);
 

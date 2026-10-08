@@ -1,7 +1,7 @@
-import { db } from "../../db/mysql.js";
-import { RowDataPacket } from "mysql2/promise";
-import { getIstDateString } from "../../utils/dateUtils.js";
-import { toIST } from "../../shared/timezone.js";
+import { db } from '../../db/mysql.js';
+import { RowDataPacket } from 'mysql2/promise';
+import { getIstDateString } from '../../utils/dateUtils.js';
+import { toIST } from '../../shared/timezone.js';
 
 /**
  * Enhanced Queue Service
@@ -18,7 +18,7 @@ export interface QueueEntry {
   applied_role: string;
   branch_name: string;
   branch_display_name: string;
-  queue_status: "waiting" | "called" | "in_interview" | "completed" | "no_show";
+  queue_status: 'waiting' | 'called' | 'in_interview' | 'completed' | 'no_show';
   recruiter_id: string;
   recruiter_name: string;
   recruiter_employee_code: string;
@@ -61,25 +61,20 @@ interface AvgDurationRow extends RowDataPacket {
   avg_duration?: number | null;
 }
 
-const ROLE_EXPR =
-  "COALESCE(NULLIF(c.role_applied, ''), NULLIF(pm.process_name, ''), NULLIF(c.applied_for_process, ''))";
-const BRANCH_EXPR =
-  "COALESCE(NULLIF(qt.branch_name, ''), NULLIF(c.branch_display_name, ''), NULLIF(bm.branch_name, ''), NULLIF(c.applied_for_branch, ''))";
-const queueTimeExpr = (alias: string) =>
-  `COALESCE(${alias}.arrival_time, ${alias}.created_at)`;
+const ROLE_EXPR = "COALESCE(NULLIF(c.role_applied, ''), NULLIF(pm.process_name, ''), NULLIF(c.applied_for_process, ''))";
+const BRANCH_EXPR = "COALESCE(NULLIF(qt.branch_name, ''), NULLIF(c.branch_display_name, ''), NULLIF(bm.branch_name, ''), NULLIF(c.applied_for_branch, ''))";
+const queueTimeExpr = (alias: string) => `COALESCE(${alias}.arrival_time, ${alias}.created_at)`;
 
 /**
  * Get live queue with filters
  */
-export async function getLiveQueue(
-  filters: QueueFilters = {},
-): Promise<QueueEntry[]> {
-  const conditions: string[] = ["1=1"];
+export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEntry[]> {
+  const conditions: string[] = ['1=1'];
   const params: unknown[] = [];
 
   // Date filter (default to today)
   const targetDate = filters.date || getIstDateString();
-  conditions.push(`DATE(${queueTimeExpr("qt")}) = ?`);
+  conditions.push(`DATE(${queueTimeExpr('qt')}) = ?`);
   params.push(targetDate);
 
   if (filters.scope && filters.scope.sql !== '1=1') {
@@ -95,15 +90,13 @@ export async function getLiveQueue(
 
   // Status filter — fall back to legacy `status` column when queue_status is null
   if (filters.status) {
-    conditions.push(
-      "COALESCE(qt.queue_status, IF(qt.status='active','waiting',qt.status)) = ?",
-    );
+    conditions.push('COALESCE(qt.queue_status, IF(qt.status=\'active\',\'waiting\',qt.status)) = ?');
     params.push(filters.status);
   }
 
   // Recruiter filter
   if (filters.recruiter_id) {
-    conditions.push("qt.recruiter_id = ?");
+    conditions.push('qt.recruiter_id = ?');
     params.push(filters.recruiter_id);
   }
 
@@ -162,15 +155,11 @@ export async function getLiveQueue(
       LEFT JOIN ats_typing_test_attempt ata ON ata.assessment_id = aca.id
       GROUP BY aca.candidate_id
     ) scores ON scores.candidate_id = c.id
-    WHERE ${conditions.join(" AND ")}
-      ${
-        !filters.status
-          ? `AND (
+    WHERE ${conditions.join(' AND ')}
+      ${!filters.status ? `AND (
         qt.queue_status IN ('waiting','called','in_interview')
         OR (qt.queue_status IS NULL AND qt.status = 'active')
-      )`
-          : ""
-      }
+      )` : ''}
       ORDER BY
         CASE COALESCE(qt.queue_status, 'waiting')
         WHEN 'in_interview' THEN 1
@@ -180,8 +169,8 @@ export async function getLiveQueue(
         WHEN 'no_show' THEN 5
         ELSE 6
       END,
-       ${queueTimeExpr("qt")} ASC`,
-    params,
+       ${queueTimeExpr('qt')} ASC`,
+    params
   );
 
   // Assign position_in_queue in JS — the query is already sorted by arrival_time ASC
@@ -228,8 +217,8 @@ export async function getQueueMetrics(branch?: string, date?: string, scope?: { 
     FROM ats_queue_token qt
     INNER JOIN ats_candidate c ON c.id = qt.candidate_id
     LEFT JOIN branch_master bm ON bm.id = c.applied_for_branch
-    WHERE DATE(${queueTimeExpr("qt")}) = ? ${branchCondition}`,
-    params,
+    WHERE DATE(${queueTimeExpr('qt')}) = ? ${branchCondition}`,
+    params
   );
 
   const metrics = rows[0] || {};
@@ -294,12 +283,12 @@ export async function getNextCandidate(recruiterId: string, branch: string, scop
  */
 export async function updateQueueStatus(
   queueId: string,
-  status: "waiting" | "called" | "in_interview" | "completed" | "no_show",
+  status: 'waiting' | 'called' | 'in_interview' | 'completed' | 'no_show'
 ): Promise<void> {
   const timestampFields: Record<string, string> = {
-    called: "called_at",
-    in_interview: "interview_started_at",
-    completed: "interview_completed_at",
+    called: 'called_at',
+    in_interview: 'interview_started_at',
+    completed: 'interview_completed_at',
   };
 
   const timestampField = timestampFields[status];
@@ -309,14 +298,14 @@ export async function updateQueueStatus(
       `UPDATE ats_queue_token
        SET queue_status = ?, ${timestampField} = NOW()
        WHERE id = ?`,
-      [status, queueId],
+      [status, queueId]
     );
   } else {
     await db.execute(
       `UPDATE ats_queue_token
        SET queue_status = ?
        WHERE id = ?`,
-      [status, queueId],
+      [status, queueId]
     );
   }
 
@@ -353,16 +342,14 @@ async function updateEstimatedWaitTimes(): Promise<void> {
          AND DATE(COALESCE(qt1.arrival_time, qt1.created_at)) = CURDATE()
        GROUP BY qt1.id, qt1.branch_name
      ) AS sub ON sub.id = qt.id
-     SET qt.estimated_wait_time = sub.wait_time`,
+     SET qt.estimated_wait_time = sub.wait_time`
   );
 }
 
 /**
  * Get recruiter's current queue
  */
-export async function getRecruiterQueue(
-  recruiterId: string,
-): Promise<QueueEntry[]> {
+export async function getRecruiterQueue(recruiterId: string): Promise<QueueEntry[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       qt.id,
@@ -395,9 +382,9 @@ export async function getRecruiterQueue(
         qt.queue_status IN ('waiting', 'called', 'in_interview')
         OR (qt.queue_status IS NULL AND qt.status = 'active')
       )
-      AND DATE(${queueTimeExpr("qt")}) = CURDATE()
-    ORDER BY ${queueTimeExpr("qt")} ASC`,
-    [recruiterId],
+      AND DATE(${queueTimeExpr('qt')}) = CURDATE()
+    ORDER BY ${queueTimeExpr('qt')} ASC`,
+    [recruiterId]
   );
 
   // Assign position_in_queue in JS — the query is already sorted by arrival_time ASC
@@ -419,14 +406,14 @@ export async function getRecruiterQueue(
  * Call next candidate (update status to 'called')
  */
 export async function callNextCandidate(queueId: string): Promise<void> {
-  await updateQueueStatus(queueId, "called");
+  await updateQueueStatus(queueId, 'called');
 }
 
 /**
  * Mark candidate as no-show
  */
 export async function markNoShow(queueId: string): Promise<void> {
-  await updateQueueStatus(queueId, "no_show");
+  await updateQueueStatus(queueId, 'no_show');
 }
 
 /**
@@ -438,17 +425,17 @@ export async function getQueuePosition(candidateId: string): Promise<number> {
       (
         SELECT COUNT(*) + 1
         FROM ats_queue_token qt2
-        WHERE ${queueTimeExpr("qt2")} < ${queueTimeExpr("qt")}
-          AND DATE(${queueTimeExpr("qt2")}) = CURDATE()
+        WHERE ${queueTimeExpr('qt2')} < ${queueTimeExpr('qt')}
+          AND DATE(${queueTimeExpr('qt2')}) = CURDATE()
           AND (qt2.queue_status IN ('waiting', 'called') OR (qt2.queue_status IS NULL AND qt2.status = 'active'))
       ) as position
     FROM ats_queue_token qt
     WHERE qt.candidate_id = ?
-      AND DATE(${queueTimeExpr("qt")}) = CURDATE()
+      AND DATE(${queueTimeExpr('qt')}) = CURDATE()
       AND (qt.queue_status IS NULL OR qt.queue_status NOT IN ('completed','no_show'))
       AND (qt.status IS NULL OR qt.status = 'active')
     LIMIT 1`,
-    [candidateId],
+    [candidateId]
   );
 
   return rows.length > 0 ? rows[0].position : 0;
@@ -469,7 +456,7 @@ export async function cleanupStaleInterviews(): Promise<number> {
        AND interview_started_at IS NOT NULL
        AND TIMESTAMPDIFF(MINUTE, interview_started_at, NOW()) > ?
        AND DATE(COALESCE(arrival_time, created_at)) = CURDATE()`,
-    [STALE_THRESHOLD_MINUTES],
+    [STALE_THRESHOLD_MINUTES]
   );
 
   return (result as any).affectedRows || 0;
@@ -491,10 +478,7 @@ export interface OpsRoundEntry {
   arrived_at: string | null;
 }
 
-export async function getOpsRoundQueue(
-  opsEmployeeId: string,
-  date?: string,
-): Promise<OpsRoundEntry[]> {
+export async function getOpsRoundQueue(opsEmployeeId: string, date?: string): Promise<OpsRoundEntry[]> {
   const params: unknown[] = [opsEmployeeId, date ?? null, date ?? null];
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -535,7 +519,7 @@ export async function getOpsRoundQueue(
       )
       AND (? IS NULL OR DATE(COALESCE(isub.submitted_at, c.created_at)) = ?)
     ORDER BY COALESCE(isub.submitted_at, c.created_at) ASC`,
-    params,
+    params
   );
 
   return rows as OpsRoundEntry[];
@@ -559,17 +543,14 @@ export interface OpsBoardEntry {
   mcq_percentage: number | null;
   typing_net_wpm: number | null;
   typing_accuracy: number | null;
-  skilltest_typing: number | null; // Legacy typing score fallback
-  skilltest_ai: number | null; // Legacy assessment score fallback
+  skilltest_typing: number | null;  // Legacy typing score fallback
+  skilltest_ai: number | null;      // Legacy assessment score fallback
   arrived_at: string | null;
   recruiter_assigned_name: string | null;
   second_round_interviewer_name_snapshot: string | null;
 }
 
-export async function getOpsBoard(
-  branch?: string,
-  date?: string,
-): Promise<OpsBoardEntry[]> {
+export async function getOpsBoard(branch?: string, date?: string): Promise<OpsBoardEntry[]> {
   const targetDate = date || getIstDateString();
 
   // Branch filter: match by branch_master name OR the raw string stored in applied_for_branch
@@ -578,7 +559,7 @@ export async function getOpsBoard(
         LOWER(TRIM(COALESCE(bm.branch_name, ''))) = LOWER(TRIM(?))
         OR LOWER(TRIM(COALESCE(c.applied_for_branch, ''))) = LOWER(TRIM(?))
       )`
-    : "";
+    : '';
   const params: unknown[] = [targetDate, targetDate, targetDate];
   if (branch) params.push(branch, branch);
 
@@ -686,7 +667,7 @@ export async function getOpsBoard(
       c.skilltest_typing, c.skilltest_ai,
       pm.process_name, bm.branch_name
     ORDER BY arrived_at ASC`,
-    params,
+    params
   );
 
   return rows.map((r) => ({

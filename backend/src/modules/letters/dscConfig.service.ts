@@ -32,24 +32,9 @@ import { encrypt, decrypt } from "../../utils/encryption.js";
  * "eMudhra Sub CA for Class 3 Organisation 2022" still resolves.
  */
 const LICENSED_CA_PATTERNS = [
-  "emudhra",
-  "e-mudhra",
-  "sify",
-  "safescrypt",
-  "ncode",
-  "(n)code",
-  "gnfc",
-  "capricorn",
-  "vsign",
-  "verasys",
-  "xtratrust",
-  "idsign",
-  "prodigisign",
-  "pantasign",
-  "cdac",
-  "c-dac",
-  "nic certifying",
-  "indiapki",
+  "emudhra", "e-mudhra", "sify", "safescrypt", "ncode", "(n)code", "gnfc",
+  "capricorn", "vsign", "verasys", "xtratrust", "idsign", "prodigisign",
+  "pantasign", "cdac", "c-dac", "nic certifying", "indiapki",
 ];
 
 export type CertificateSummary = {
@@ -101,10 +86,7 @@ function cnOf(attrs: forge.pki.CertificateField[]): string | null {
   return cn?.value ? String(cn.value) : null;
 }
 
-function issuerLooksLicensed(
-  issuerCn: string | null,
-  issuerO: string | null,
-): boolean {
+function issuerLooksLicensed(issuerCn: string | null, issuerO: string | null): boolean {
   const hay = `${issuerCn ?? ""} ${issuerO ?? ""}`.toLowerCase();
   return LICENSED_CA_PATTERNS.some((p) => hay.includes(p));
 }
@@ -113,63 +95,42 @@ function issuerLooksLicensed(
 export function inspectP12(p12Buffer: Buffer, passphrase: string) {
   let p12: forge.pkcs12.Pkcs12Pfx;
   try {
-    const asn1 = forge.asn1.fromDer(
-      forge.util.createBuffer(p12Buffer.toString("binary")),
-    );
+    const asn1 = forge.asn1.fromDer(forge.util.createBuffer(p12Buffer.toString("binary")));
     p12 = forge.pkcs12.pkcs12FromAsn1(asn1, passphrase);
   } catch {
     throw Object.assign(
-      new Error(
-        "Could not open the certificate file. Check that it is a .pfx/.p12 and that the password is correct.",
-      ),
+      new Error("Could not open the certificate file. Check that it is a .pfx/.p12 and that the password is correct."),
       { statusCode: 400, code: "certificate_unreadable" },
     );
   }
 
-  const certBags =
-    p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] ??
-    [];
+  const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] ?? [];
   const cert = certBags.map((b) => b.cert).find(Boolean);
   if (!cert) {
-    throw Object.assign(new Error("The file contains no certificate."), {
-      statusCode: 400,
-      code: "certificate_missing",
-    });
+    throw Object.assign(new Error("The file contains no certificate."), { statusCode: 400, code: "certificate_missing" });
   }
   const keyBags =
-    p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[
-      forge.pki.oids.pkcs8ShroudedKeyBag
-    ] ??
-    p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] ??
-    [];
+    p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] ??
+    p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] ?? [];
   if (!keyBags.some((b) => b.key)) {
     throw Object.assign(
-      new Error(
-        "The file contains a certificate but no private key, so it cannot sign.",
-      ),
+      new Error("The file contains a certificate but no private key, so it cannot sign."),
       { statusCode: 400, code: "certificate_no_private_key" },
     );
   }
 
   const subjectCn = cnOf(cert.subject.attributes);
   const issuerCn = cnOf(cert.issuer.attributes);
-  const issuerO =
-    cert.issuer.attributes.find((a) => a.shortName === "O")?.value ?? null;
+  const issuerO = cert.issuer.attributes.find((a) => a.shortName === "O")?.value ?? null;
 
   // Self-signed when the issuer is the subject. Derived, never declared.
   const isSelfSigned =
-    JSON.stringify(
-      cert.issuer.attributes.map((a) => [a.shortName, a.value]),
-    ) ===
+    JSON.stringify(cert.issuer.attributes.map((a) => [a.shortName, a.value])) ===
     JSON.stringify(cert.subject.attributes.map((a) => [a.shortName, a.value]));
 
   const der = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
-  const fingerprint = createHash("sha256")
-    .update(Buffer.from(der, "binary"))
-    .digest("hex")
-    .toUpperCase()
-    .match(/.{2}/g)!
-    .join(":");
+  const fingerprint = createHash("sha256").update(Buffer.from(der, "binary")).digest("hex")
+    .toUpperCase().match(/.{2}/g)!.join(":");
 
   return {
     subjectCn,
@@ -180,9 +141,7 @@ export function inspectP12(p12Buffer: Buffer, passphrase: string) {
     validTo: cert.validity.notAfter,
     fingerprintSha256: fingerprint,
     isSelfSigned,
-    isCaIssued:
-      !isSelfSigned &&
-      issuerLooksLicensed(issuerCn, issuerO ? String(issuerO) : null),
+    isCaIssued: !isSelfSigned && issuerLooksLicensed(issuerCn, issuerO ? String(issuerO) : null),
   };
 }
 
@@ -202,9 +161,7 @@ export function generateSelfSignedP12(params: {
   cert.serialNumber = "01" + randomUUID().replace(/-/g, "").slice(0, 18);
   cert.validity.notBefore = new Date();
   cert.validity.notAfter = new Date();
-  cert.validity.notAfter.setFullYear(
-    cert.validity.notBefore.getFullYear() + (params.validityYears ?? 2),
-  );
+  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + (params.validityYears ?? 2));
 
   const attrs: forge.pki.CertificateField[] = [
     { name: "commonName", value: params.organisation },
@@ -220,15 +177,10 @@ export function generateSelfSignedP12(params: {
   ]);
   cert.sign(keys.privateKey, forge.md.sha256.create());
 
-  const p12Asn1 = forge.pkcs12.toPkcs12Asn1(
-    keys.privateKey,
-    [cert],
-    params.passphrase,
-    {
-      algorithm: "3des",
-      friendlyName: params.signerName,
-    },
-  );
+  const p12Asn1 = forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], params.passphrase, {
+    algorithm: "3des",
+    friendlyName: params.signerName,
+  });
   return Buffer.from(forge.asn1.toDer(p12Asn1).getBytes(), "binary");
 }
 
@@ -243,9 +195,7 @@ function toSummary(r: RowDataPacket): CertificateSummary {
     subjectCn: (r.subject_cn as string) ?? null,
     issuerCn: (r.issuer_cn as string) ?? null,
     serialNumber: (r.serial_number as string) ?? null,
-    validFrom: r.valid_from
-      ? new Date(r.valid_from as string).toISOString()
-      : null,
+    validFrom: r.valid_from ? new Date(r.valid_from as string).toISOString() : null,
     validTo: validTo ? validTo.toISOString() : null,
     fingerprintSha256: (r.fingerprint_sha256 as string) ?? null,
     isSelfSigned,
@@ -253,38 +203,19 @@ function toSummary(r: RowDataPacket): CertificateSummary {
     signerName: String(r.signer_name ?? ""),
     signerDesignation: String(r.signer_designation ?? ""),
     activeStatus: Number(r.active_status) === 1,
-    uploadedAt: r.uploaded_at
-      ? new Date(r.uploaded_at as string).toISOString()
-      : null,
+    uploadedAt: r.uploaded_at ? new Date(r.uploaded_at as string).toISOString() : null,
     expired: Boolean(validTo && validTo.getTime() < now),
-    expiringSoon: Boolean(
-      validTo &&
-      validTo.getTime() >= now &&
-      validTo.getTime() - now < 30 * 24 * 3600 * 1000,
-    ),
+    expiringSoon: Boolean(validTo && validTo.getTime() >= now && validTo.getTime() - now < 30 * 24 * 3600 * 1000),
     legalStanding: legalStandingFor(isCaIssued, isSelfSigned),
   };
 }
 
-async function audit(
-  certificateId: string | null,
-  action: string,
-  actorUserId: string | null,
-  detail: unknown,
-) {
-  await db
-    .execute(
-      `INSERT INTO company_signing_certificate_audit (id, certificate_id, action, actor_user_id, detail_json)
+async function audit(certificateId: string | null, action: string, actorUserId: string | null, detail: unknown) {
+  await db.execute(
+    `INSERT INTO company_signing_certificate_audit (id, certificate_id, action, actor_user_id, detail_json)
      VALUES (?, ?, ?, ?, CAST(? AS JSON))`,
-      [
-        randomUUID(),
-        certificateId,
-        action,
-        actorUserId,
-        JSON.stringify(detail ?? {}),
-      ],
-    )
-    .catch(() => undefined);
+    [randomUUID(), certificateId, action, actorUserId, JSON.stringify(detail ?? {})],
+  ).catch(() => undefined);
 }
 
 /** Metadata for every certificate. Never includes key material. */
@@ -313,9 +244,7 @@ export async function storeCertificate(params: {
 
   if (info.validTo.getTime() < Date.now()) {
     throw Object.assign(
-      new Error(
-        `This certificate expired on ${info.validTo.toISOString().slice(0, 10)} and cannot be used to sign.`,
-      ),
+      new Error(`This certificate expired on ${info.validTo.toISOString().slice(0, 10)} and cannot be used to sign.`),
       { statusCode: 400, code: "certificate_expired" },
     );
   }
@@ -328,34 +257,17 @@ export async function storeCertificate(params: {
         passphrase_encrypted, signer_name, signer_designation, uploaded_by)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      id,
-      params.label,
-      info.subjectCn,
-      info.issuerCn,
-      info.serialNumber,
-      info.validFrom,
-      info.validTo,
-      info.fingerprintSha256,
-      info.isSelfSigned ? 1 : 0,
-      info.isCaIssued ? 1 : 0,
+      id, params.label, info.subjectCn, info.issuerCn, info.serialNumber,
+      info.validFrom, info.validTo, info.fingerprintSha256,
+      info.isSelfSigned ? 1 : 0, info.isCaIssued ? 1 : 0,
       encrypt(params.p12.toString("base64")),
       encrypt(params.passphrase),
-      params.signerName,
-      params.signerDesignation,
-      params.actorUserId,
+      params.signerName, params.signerDesignation, params.actorUserId,
     ],
   );
-  await audit(
-    id,
-    params.origin === "generated" ? "GENERATE" : "UPLOAD",
-    params.actorUserId,
-    {
-      label: params.label,
-      issuerCn: info.issuerCn,
-      isCaIssued: info.isCaIssued,
-      isSelfSigned: info.isSelfSigned,
-    },
-  );
+  await audit(id, params.origin === "generated" ? "GENERATE" : "UPLOAD", params.actorUserId, {
+    label: params.label, issuerCn: info.issuerCn, isCaIssued: info.isCaIssued, isSelfSigned: info.isSelfSigned,
+  });
 
   if (params.activate) await activateCertificate(id, params.actorUserId);
 
@@ -363,31 +275,20 @@ export async function storeCertificate(params: {
     `SELECT id, label, subject_cn, issuer_cn, serial_number, valid_from, valid_to,
             fingerprint_sha256, is_self_signed, is_ca_issued, signer_name,
             signer_designation, active_status, uploaded_at
-       FROM company_signing_certificate WHERE id = ?`,
-    [id],
+       FROM company_signing_certificate WHERE id = ?`, [id],
   );
   return toSummary((rows as RowDataPacket[])[0]);
 }
 
 /** Exactly one certificate is active; activating one stands the others down. */
-export async function activateCertificate(
-  id: string,
-  actorUserId: string | null,
-): Promise<void> {
+export async function activateCertificate(id: string, actorUserId: string | null): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, valid_to FROM company_signing_certificate WHERE id = ?`,
-    [id],
-  );
+    `SELECT id, valid_to FROM company_signing_certificate WHERE id = ?`, [id]);
   const row = (rows as RowDataPacket[])[0];
-  if (!row)
-    throw Object.assign(new Error("Certificate not found"), {
-      statusCode: 404,
-    });
+  if (!row) throw Object.assign(new Error("Certificate not found"), { statusCode: 404 });
   if (row.valid_to && new Date(row.valid_to as string).getTime() < Date.now()) {
     throw Object.assign(
-      new Error(
-        "That certificate has expired. Upload a current one before activating.",
-      ),
+      new Error("That certificate has expired. Upload a current one before activating."),
       { statusCode: 400, code: "certificate_expired" },
     );
   }
@@ -395,14 +296,11 @@ export async function activateCertificate(
   await db.execute(
     `UPDATE company_signing_certificate
         SET active_status = 0, active_marker = NULL, deactivated_at = NOW()
-      WHERE active_marker = 'Y'`,
-  );
+      WHERE active_marker = 'Y'`);
   await db.execute(
     `UPDATE company_signing_certificate
         SET active_status = 1, active_marker = 'Y', deactivated_at = NULL
-      WHERE id = ?`,
-    [id],
-  );
+      WHERE id = ?`, [id]);
   await audit(id, "ACTIVATE", actorUserId, {});
 }
 
@@ -411,23 +309,19 @@ export async function activateCertificate(
  * private key, so this must never be reachable from a route.
  */
 export async function getActiveCertificate(): Promise<ActiveCertificate | null> {
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT id, p12_encrypted, passphrase_encrypted, signer_name, signer_designation,
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, p12_encrypted, passphrase_encrypted, signer_name, signer_designation,
             is_ca_issued, is_self_signed, valid_to
        FROM company_signing_certificate
       WHERE active_marker = 'Y' LIMIT 1`,
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const r = (rows as RowDataPacket[])[0];
   if (!r) return null;
 
   return {
     id: String(r.id),
     p12: Buffer.from(decrypt(String(r.p12_encrypted)), "base64"),
-    passphrase: r.passphrase_encrypted
-      ? decrypt(String(r.passphrase_encrypted))
-      : "",
+    passphrase: r.passphrase_encrypted ? decrypt(String(r.passphrase_encrypted)) : "",
     signerName: String(r.signer_name ?? ""),
     signerDesignation: String(r.signer_designation ?? ""),
     isCaIssued: Number(r.is_ca_issued) === 1,
@@ -436,29 +330,17 @@ export async function getActiveCertificate(): Promise<ActiveCertificate | null> 
   };
 }
 
-export async function deleteCertificate(
-  id: string,
-  actorUserId: string | null,
-): Promise<void> {
+export async function deleteCertificate(id: string, actorUserId: string | null): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT active_status FROM company_signing_certificate WHERE id = ?`,
-    [id],
-  );
+    `SELECT active_status FROM company_signing_certificate WHERE id = ?`, [id]);
   const r = (rows as RowDataPacket[])[0];
-  if (!r)
-    throw Object.assign(new Error("Certificate not found"), {
-      statusCode: 404,
-    });
+  if (!r) throw Object.assign(new Error("Certificate not found"), { statusCode: 404 });
   if (Number(r.active_status) === 1) {
     throw Object.assign(
-      new Error(
-        "That certificate is currently active. Activate a different one before removing it.",
-      ),
+      new Error("That certificate is currently active. Activate a different one before removing it."),
       { statusCode: 409, code: "certificate_active" },
     );
   }
-  await db.execute(`DELETE FROM company_signing_certificate WHERE id = ?`, [
-    id,
-  ]);
+  await db.execute(`DELETE FROM company_signing_certificate WHERE id = ?`, [id]);
   await audit(id, "DELETE", actorUserId, {});
 }

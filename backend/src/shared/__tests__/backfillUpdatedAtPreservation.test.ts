@@ -32,47 +32,35 @@ const BULK_WRITERS = [
 
 /** Source with comments removed — the rollback recipes in the header are prose, not writes. */
 function codeOf(file: string): string {
-  return fs
-    .readFileSync(path.join(SCRIPTS, file), "utf8")
+  return fs.readFileSync(path.join(SCRIPTS, file), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
 }
 
 describe("bulk backfills preserve employees.updated_at", () => {
   it.each(BULK_WRITERS)("%s exists", (file) => {
-    expect(fs.existsSync(path.join(SCRIPTS, file)), `${file} missing`).toBe(
-      true,
-    );
+    expect(fs.existsSync(path.join(SCRIPTS, file)), `${file} missing`).toBe(true);
   });
 
-  it.each(BULK_WRITERS)(
-    "%s assigns updated_at = updated_at on every UPDATE employees",
-    (file) => {
-      const code = codeOf(file);
-      const statements =
-        code.match(/UPDATE\s+employees\s+SET[\s\S]*?(?=`|;|$)/gi) ?? [];
+  it.each(BULK_WRITERS)("%s assigns updated_at = updated_at on every UPDATE employees", (file) => {
+    const code = codeOf(file);
+    const statements = code.match(/UPDATE\s+employees\s+SET[\s\S]*?(?=`|;|$)/gi) ?? [];
 
+    expect(statements.length, `no UPDATE employees found in ${file}`).toBeGreaterThan(0);
+
+    for (const stmt of statements) {
       expect(
-        statements.length,
-        `no UPDATE employees found in ${file}`,
-      ).toBeGreaterThan(0);
-
-      for (const stmt of statements) {
-        expect(
-          /updated_at\s*=\s*updated_at/i.test(stmt),
-          `UPDATE employees in ${file} does not preserve updated_at:\n${stmt.trim().slice(0, 240)}`,
-        ).toBe(true);
-      }
-    },
-  );
+        /updated_at\s*=\s*updated_at/i.test(stmt),
+        `UPDATE employees in ${file} does not preserve updated_at:\n${stmt.trim().slice(0, 240)}`,
+      ).toBe(true);
+    }
+  });
 
   it("the rollback recipe in each header also preserves updated_at", () => {
     // A rollback that stamps 53,449 rows as modified is the same defect in reverse, and is
     // the instruction someone will paste under time pressure.
     for (const file of BULK_WRITERS) {
-      const header = fs
-        .readFileSync(path.join(SCRIPTS, file), "utf8")
-        .slice(0, 4000);
+      const header = fs.readFileSync(path.join(SCRIPTS, file), "utf8").slice(0, 4000);
       const rollbacks = header.match(/UPDATE\s+employees\s+SET[^\n]*/gi) ?? [];
       for (const line of rollbacks) {
         expect(

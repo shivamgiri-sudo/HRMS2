@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  parseDate,
-  parseNullableInt,
-  cleanText,
-  DALMIA_OUTBOUND_HEADERS,
-} from "../dalmia-outbound-bulk.service.js";
+import { parseDate, parseNullableInt, cleanText, DALMIA_OUTBOUND_HEADERS } from "../dalmia-outbound-bulk.service.js";
 
 describe("parseDate", () => {
   it("reads the real Calling Date sample", () => {

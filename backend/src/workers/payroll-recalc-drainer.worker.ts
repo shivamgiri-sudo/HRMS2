@@ -2,11 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import { drainPayrollRecalcQueue } from "../modules/payroll/payroll-recalc-drainer.service.js";
 import { logger } from "../lib/logger.js";
-import {
-  withWorkerLock,
-  registerTimer,
-  unregisterTimer,
-} from "./worker-utils.js";
+import { withWorkerLock, registerTimer, unregisterTimer } from "./worker-utils.js";
 
 const WORKER_NAME = "payroll-recalc-drainer";
 
@@ -86,8 +82,7 @@ async function drainAllPendingMonths(): Promise<void> {
 
     while (batches < MAX_BATCHES_PER_MONTH && moved < startingBacklog) {
       const result = await drainPayrollRecalcQueue(month);
-      const movedThisBatch =
-        result.processed + result.failed + result.skipped_locked;
+      const movedThisBatch = result.processed + result.failed + result.skipped_locked;
 
       totalProcessed += result.processed;
       totalFailed += result.failed;
@@ -102,14 +97,7 @@ async function drainAllPendingMonths(): Promise<void> {
     }
 
     logger.info(
-      {
-        month,
-        pending_at_start: Number(pending),
-        batches,
-        processed: totalProcessed,
-        failed: totalFailed,
-        skipped_locked: totalSkipped,
-      },
+      { month, pending_at_start: Number(pending), batches, processed: totalProcessed, failed: totalFailed, skipped_locked: totalSkipped },
       `[${WORKER_NAME}] drained ${month}`,
     );
 
@@ -145,16 +133,11 @@ export function startPayrollRecalcDrainerWorker(): void {
   if (scheduledTimer) return;
   scheduledTimer = setInterval(() => {
     tick().catch((err: unknown) => {
-      logger.error(
-        { err: err instanceof Error ? err.message : String(err) },
-        `[${WORKER_NAME}] tick failed`,
-      );
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, `[${WORKER_NAME}] tick failed`);
     });
   }, TICK_MS);
   registerTimer(WORKER_NAME, scheduledTimer);
-  logger.info(
-    `[${WORKER_NAME}] started — draining payroll_recalculation_queue every ${TICK_MS / 60000} min`,
-  );
+  logger.info(`[${WORKER_NAME}] started — draining payroll_recalculation_queue every ${TICK_MS / 60000} min`);
 }
 
 export function stopPayrollRecalcDrainerWorker(): void {

@@ -46,10 +46,7 @@ export type ExitFollowUpStep =
   | "ACCESS_DEPROVISION"
   | "IT_DEPROVISION_DISPATCH";
 
-const STEP_META: Record<
-  ExitFollowUpStep,
-  { title: string; role: string; priority: string }
-> = {
+const STEP_META: Record<ExitFollowUpStep, { title: string; role: string; priority: string }> = {
   FF_DRAFT_CREATION: {
     title: "Full & final draft was not created for an exited employee",
     role: "payroll",

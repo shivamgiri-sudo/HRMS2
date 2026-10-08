@@ -33,7 +33,7 @@ vi.mock("../../../db/mysql.js", () => ({
 
 vi.mock("../../../shared/accessGuard.js", () => ({
   hasRole: vi.fn(async (_userId: string, ...roles: string[]) =>
-    roles.some((r) => ["team_leader", "assistant_manager"].includes(r)),
+    roles.some((r) => ["team_leader", "assistant_manager"].includes(r))
   ),
   getEmployeeForUser: vi.fn(async () => ({ id: "emp-tl-1" })),
 }));
@@ -49,10 +49,7 @@ vi.mock("../management.service.js", () => ({
 
 let actorRoles: string[] = ["team_leader"];
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../../middleware/authMiddleware.js")
-    >();
+  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
   return {
     ...original,
     requireAuth: (req: any, _res: any, next: any) => {
@@ -78,9 +75,7 @@ beforeEach(() => {
 describe("management.routes.ts — MyTeamPage's endpoints admit team_leader/assistant_manager", () => {
   for (const roles of [["team_leader"], ["assistant_manager"]]) {
     describe(`caller role: ${roles[0]}`, () => {
-      beforeEach(() => {
-        actorRoles = roles;
-      });
+      beforeEach(() => { actorRoles = roles; });
 
       it("GET /team-overview is not 403", async () => {
         const res = await request(app()).get("/api/management/team-overview");
@@ -93,34 +88,24 @@ describe("management.routes.ts — MyTeamPage's endpoints admit team_leader/assi
       });
 
       it("GET /agent-performance is not 403", async () => {
-        const res = await request(app()).get(
-          "/api/management/agent-performance",
-        );
+        const res = await request(app()).get("/api/management/agent-performance");
         expect(res.status).not.toBe(403);
       });
 
       it("GET /alerts is not 403", async () => {
-        const res = await request(app()).get(
-          "/api/management/alerts?acknowledged=false",
-        );
+        const res = await request(app()).get("/api/management/alerts?acknowledged=false");
         expect(res.status).not.toBe(403);
       });
 
       it("POST /alerts/:id/acknowledge is not 403", async () => {
-        const res = await request(app()).post(
-          "/api/management/alerts/alert-1/acknowledge",
-        );
+        const res = await request(app()).post("/api/management/alerts/alert-1/acknowledge");
         expect(res.status).not.toBe(403);
       });
 
       it("POST /coaching is not 403", async () => {
         const res = await request(app())
           .post("/api/management/coaching")
-          .send({
-            employee_id: "emp-report-1",
-            session_date: "2026-08-13",
-            session_type: "1:1",
-          });
+          .send({ employee_id: "emp-report-1", session_date: "2026-08-13", session_type: "1:1" });
         expect(res.status).not.toBe(403);
       });
     });

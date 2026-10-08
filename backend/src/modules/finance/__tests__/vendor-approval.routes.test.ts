@@ -19,10 +19,7 @@ vi.mock("../finance-access-scope.js", () => ({ getUserBranchId }));
 // not the gate; a few probe the role boundaries directly.
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = {
-      id: "user-1",
-      role: String(req.headers["x-test-role"] ?? "branch_admin"),
-    };
+    req.authUser = { id: "user-1", role: String(req.headers["x-test-role"] ?? "branch_admin") };
     next();
   },
 }));
@@ -63,10 +60,7 @@ describe("POST /api/finance/vendor-approval/raise", () => {
 
     const res = await request(app)
       .post("/api/finance/vendor-approval/raise")
-      .send({
-        requestType: "create",
-        payload: { vendor_name: "Acme Supplies" },
-      });
+      .send({ requestType: "create", payload: { vendor_name: "Acme Supplies" } });
 
     expect(res.status).toBe(202);
     expect(raise).toHaveBeenCalledWith({
@@ -89,9 +83,7 @@ describe("POST /api/finance/vendor-approval/raise", () => {
   });
 
   it("returns 400 when requestType or payload is missing", async () => {
-    const res = await request(app)
-      .post("/api/finance/vendor-approval/raise")
-      .send({});
+    const res = await request(app).post("/api/finance/vendor-approval/raise").send({});
     expect(res.status).toBe(400);
     expect(raise).not.toHaveBeenCalled();
   });
@@ -111,17 +103,11 @@ describe("GET /api/finance/vendor-approval/requests", () => {
     list.mockResolvedValueOnce([{ id: "req-1" }]);
 
     const res = await request(app)
-      .get(
-        "/api/finance/vendor-approval/requests?status=pending&branchId=branch-9",
-      )
+      .get("/api/finance/vendor-approval/requests?status=pending&branchId=branch-9")
       .set("x-test-role", "finance_head");
 
     expect(res.status).toBe(200);
-    expect(list).toHaveBeenCalledWith({
-      status: "pending",
-      branchId: "branch-9",
-      limit: undefined,
-    });
+    expect(list).toHaveBeenCalledWith({ status: "pending", branchId: "branch-9", limit: undefined });
   });
 });
 
@@ -129,9 +115,7 @@ describe("GET /api/finance/vendor-approval/my-requests", () => {
   it("scopes to the caller's own raised requests regardless of role", async () => {
     list.mockResolvedValueOnce([]);
 
-    const res = await request(app).get(
-      "/api/finance/vendor-approval/my-requests",
-    );
+    const res = await request(app).get("/api/finance/vendor-approval/my-requests");
 
     expect(res.status).toBe(200);
     expect(list).toHaveBeenCalledWith({ raisedBy: "user-1", limit: 50 });
@@ -145,18 +129,10 @@ describe("PATCH /api/finance/vendor-approval/:id/approve", () => {
     const res = await request(app)
       .patch("/api/finance/vendor-approval/req-1/approve")
       .set("x-test-role", "finance_head")
-      .send({
-        editedPayload: { gst_number: "22AAAAA0000A1Z5" },
-        reviewNotes: "looks fine",
-      });
+      .send({ editedPayload: { gst_number: "22AAAAA0000A1Z5" }, reviewNotes: "looks fine" });
 
     expect(res.status).toBe(200);
-    expect(approve).toHaveBeenCalledWith(
-      "req-1",
-      "user-1",
-      { gst_number: "22AAAAA0000A1Z5" },
-      "looks fine",
-    );
+    expect(approve).toHaveBeenCalledWith("req-1", "user-1", { gst_number: "22AAAAA0000A1Z5" }, "looks fine");
   });
 
   it("rejects a branch_admin from approving", async () => {

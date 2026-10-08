@@ -16,138 +16,113 @@
  *   HeadId=000011 / SubHeadId=NULL    Repair & Maintenance / NULL           (1 vendor)
  */
 
-"use strict";
-require("dotenv").config();
-const mysql = require("mysql2/promise");
-const { randomUUID } = require("crypto");
+'use strict';
+require('dotenv').config();
+const mysql = require('mysql2/promise');
+const { randomUUID } = require('crypto');
 
-const DRY_RUN = process.argv.includes("--dry-run");
+const DRY_RUN = process.argv.includes('--dry-run');
 
 // ── Cross-reference: db_bill (HeadId:SubHeadId) → mas_hrms (head_code:sub_head_code) ──
 // Data-error cases are included with a comment explaining the correction applied.
 const MAPPING = [
   // Communication & Connectivity
-  ["000001", "000003", "COMMUNICATION_CONNECTIVITY", "COMPANY_VOICE"],
-  ["000001", "000004", "COMMUNICATION_CONNECTIVITY", "COMPANY_DATA"],
-  [
-    "000001",
-    "000005",
-    "COMMUNICATION_CONNECTIVITY",
-    "MOBILE_INTERNET_REIMBURSEMENT",
-  ],
-  ["000001", "000025", "COMMUNICATION_CONNECTIVITY", "POSTAGE_COURIER"],
-  ["000001", "000066", "COMMUNICATION_CONNECTIVITY", "SMS_CHARGES"],
-  [
-    "000001",
-    "000068",
-    "COMMUNICATION_CONNECTIVITY",
-    "COMPANY_VOICE_REIMBURSEMENT",
-  ],
+  ['000001','000003','COMMUNICATION_CONNECTIVITY','COMPANY_VOICE'],
+  ['000001','000004','COMMUNICATION_CONNECTIVITY','COMPANY_DATA'],
+  ['000001','000005','COMMUNICATION_CONNECTIVITY','MOBILE_INTERNET_REIMBURSEMENT'],
+  ['000001','000025','COMMUNICATION_CONNECTIVITY','POSTAGE_COURIER'],
+  ['000001','000066','COMMUNICATION_CONNECTIVITY','SMS_CHARGES'],
+  ['000001','000068','COMMUNICATION_CONNECTIVITY','COMPANY_VOICE_REIMBURSEMENT'],
   // Electricity
-  ["000002", "000007", "ELECTRICITY", "ELECTRICITY_GOVT"],
-  ["000002", "000008", "ELECTRICITY", "GENERATOR_DIESEL"], // PO variant
-  ["000002", "000050", "ELECTRICITY", "GENERATOR_DIESEL"],
-  ["000002", "000012", "ELECTRICITY", "GENERATOR_DIESEL"], // data-err: subhead 000012 belongs to head 000004; vendor is clearly a generator supplier
+  ['000002','000007','ELECTRICITY','ELECTRICITY_GOVT'],
+  ['000002','000008','ELECTRICITY','GENERATOR_DIESEL'],   // PO variant
+  ['000002','000050','ELECTRICITY','GENERATOR_DIESEL'],
+  ['000002','000012','ELECTRICITY','GENERATOR_DIESEL'],   // data-err: subhead 000012 belongs to head 000004; vendor is clearly a generator supplier
   // Hiring Charges
-  ["000004", "000012", "HIRING_CHARGES", "GENERATOR_HIRE"],
-  ["000004", "000051", "HIRING_CHARGES", "COMPUTER_HIRE"],
-  ["000004", "000061", "HIRING_CHARGES", "AC_HIRE"],
-  ["000004", "000062", "HIRING_CHARGES", "AC_HIRE"], // data-err: subhead 000062 cross-head; AC hire intent clear
-  ["000004", "000063", "HIRING_CHARGES", "UPS_HIRE"],
+  ['000004','000012','HIRING_CHARGES','GENERATOR_HIRE'],
+  ['000004','000051','HIRING_CHARGES','COMPUTER_HIRE'],
+  ['000004','000061','HIRING_CHARGES','AC_HIRE'],
+  ['000004','000062','HIRING_CHARGES','AC_HIRE'],          // data-err: subhead 000062 cross-head; AC hire intent clear
+  ['000004','000063','HIRING_CHARGES','UPS_HIRE'],
   // Office Rent
-  ["000005", "000013", "OFFICE_RENT", "OFFICE_RENT"],
+  ['000005','000013','OFFICE_RENT','OFFICE_RENT'],
   // Contract Fees
-  ["000006", "000056", "CONTRACT_FEES_FACILITIES", "FACILITY_STAFF"],
+  ['000006','000056','CONTRACT_FEES_FACILITIES','FACILITY_STAFF'],
   // Miscellaneous Expenses — each subhead maps to a different mas_hrms head
-  ["000007", "000017", "LEGAL_CONSULTANCY", "LEGAL_PROFESSIONAL"],
-  ["000007", "000018", "INSURANCE_EXPENSES", "INFRA_INSURANCE"],
-  ["000007", "000078", "FEE_SUBSCRIPTION", "FEE_SUBSCRIPTION"],
-  ["000007", "000089", "FREIGHT_CARGO", "FREIGHT_CARGO"],
+  ['000007','000017','LEGAL_CONSULTANCY','LEGAL_PROFESSIONAL'],
+  ['000007','000018','INSURANCE_EXPENSES','INFRA_INSURANCE'],
+  ['000007','000078','FEE_SUBSCRIPTION','FEE_SUBSCRIPTION'],
+  ['000007','000089','FREIGHT_CARGO','FREIGHT_CARGO'],
   // Office Maintenance
-  ["000008", "000019", "OFFICE_MAINTENANCE", "WATER_TANKER"],
-  ["000008", "000020", "OFFICE_MAINTENANCE", "CAFETERIA_MAINTENANCE"],
-  ["000008", "000021", "OFFICE_MAINTENANCE", "CLEANING_MATERIAL"],
+  ['000008','000019','OFFICE_MAINTENANCE','WATER_TANKER'],
+  ['000008','000020','OFFICE_MAINTENANCE','CAFETERIA_MAINTENANCE'],
+  ['000008','000021','OFFICE_MAINTENANCE','CLEANING_MATERIAL'],
   // Outsourcing Exp
-  ["000009", "000022", "SECURITY_SERVICE", "SECURITY_SERVICE"],
-  ["000009", "000024", "CONTRACT_FEES", "PROCESS_OUTSOURCING"],
+  ['000009','000022','SECURITY_SERVICE','SECURITY_SERVICE'],
+  ['000009','000024','CONTRACT_FEES','PROCESS_OUTSOURCING'],
   // Printing & Stationery
-  ["000010", "000026", "PRINTING_STATIONERY", "OFFICE_STATIONERY"],
-  ["000010", "000027", "PRINTING_STATIONERY", "OFFICE_STATIONERY"],
+  ['000010','000026','PRINTING_STATIONERY','OFFICE_STATIONERY'],
+  ['000010','000027','PRINTING_STATIONERY','OFFICE_STATIONERY'],
   // Repair & Maintenance — OPEX
-  ["000011", "000030", "REPAIRS_MAINTENANCE", "COMPUTER_PERIPHERALS"],
-  ["000011", "000031", "REPAIRS_MAINTENANCE", "COMPUTER_PERIPHERALS"],
-  ["000011", "000058", "REPAIRS_MAINTENANCE", "UPS_NETWORKING"],
-  ["000011", "000062", "REPAIRS_MAINTENANCE", "AC_REPAIRS"],
-  ["000011", "000081", "REPAIRS_MAINTENANCE", "ELECTRICAL_REPAIRS"],
-  ["000011", "000082", "REPAIRS_MAINTENANCE", "FURNITURE_FIXTURES_REPAIR"],
-  ["000011", "000083", "REPAIRS_MAINTENANCE", "OFFICE_REPAIRS"],
-  ["000011", "000084", "REPAIRS_MAINTENANCE", "COMPUTER_PERIPHERALS"],
-  ["000011", "000085", "REPAIRS_MAINTENANCE", "VEHICLE_REPAIR"],
-  ["000011", "000086", "REPAIRS_MAINTENANCE", "SERVICE_MAINTENANCE"],
+  ['000011','000030','REPAIRS_MAINTENANCE','COMPUTER_PERIPHERALS'],
+  ['000011','000031','REPAIRS_MAINTENANCE','COMPUTER_PERIPHERALS'],
+  ['000011','000058','REPAIRS_MAINTENANCE','UPS_NETWORKING'],
+  ['000011','000062','REPAIRS_MAINTENANCE','AC_REPAIRS'],
+  ['000011','000081','REPAIRS_MAINTENANCE','ELECTRICAL_REPAIRS'],
+  ['000011','000082','REPAIRS_MAINTENANCE','FURNITURE_FIXTURES_REPAIR'],
+  ['000011','000083','REPAIRS_MAINTENANCE','OFFICE_REPAIRS'],
+  ['000011','000084','REPAIRS_MAINTENANCE','COMPUTER_PERIPHERALS'],
+  ['000011','000085','REPAIRS_MAINTENANCE','VEHICLE_REPAIR'],
+  ['000011','000086','REPAIRS_MAINTENANCE','SERVICE_MAINTENANCE'],
   // Repair & Maintenance — CAPEX (installation/fitting)
-  ["000011", "000032", "REPAIRS_MAINTENANCE_CAPEX", "CAPEX_ELECTRICAL"],
-  ["000011", "000033", "REPAIRS_MAINTENANCE_CAPEX", "CAPEX_ELECTRICAL"],
-  ["000011", "000034", "REPAIRS_MAINTENANCE_CAPEX", "CAPEX_FURNITURE_FIXTURE"],
-  ["000011", "000035", "REPAIRS_MAINTENANCE_CAPEX", "CAPEX_FURNITURE_FIXTURE"],
-  ["000011", "000060", "REPAIRS_MAINTENANCE_CAPEX", "CAPEX_AIR_CONDITIONING"],
+  ['000011','000032','REPAIRS_MAINTENANCE_CAPEX','CAPEX_ELECTRICAL'],
+  ['000011','000033','REPAIRS_MAINTENANCE_CAPEX','CAPEX_ELECTRICAL'],
+  ['000011','000034','REPAIRS_MAINTENANCE_CAPEX','CAPEX_FURNITURE_FIXTURE'],
+  ['000011','000035','REPAIRS_MAINTENANCE_CAPEX','CAPEX_FURNITURE_FIXTURE'],
+  ['000011','000060','REPAIRS_MAINTENANCE_CAPEX','CAPEX_AIR_CONDITIONING'],
   // Staff Training & Recruitment
-  [
-    "000012",
-    "000038",
-    "STAFF_TRAINING_RECRUITMENT",
-    "RECRUITMENT_ADVERTISEMENT",
-  ],
-  [
-    "000012",
-    "000039",
-    "STAFF_TRAINING_RECRUITMENT",
-    "RECRUITMENT_ADVERTISEMENT",
-  ],
-  ["000012", "000045", "STAFF_WELFARE", "REFRESHMENT"], // Tea & Coffee misfiled under training
+  ['000012','000038','STAFF_TRAINING_RECRUITMENT','RECRUITMENT_ADVERTISEMENT'],
+  ['000012','000039','STAFF_TRAINING_RECRUITMENT','RECRUITMENT_ADVERTISEMENT'],
+  ['000012','000045','STAFF_WELFARE','REFRESHMENT'],  // Tea & Coffee misfiled under training
   // Staff Welfare
-  ["000013", "000040", "STAFF_WELFARE", "DRINKING_WATER"],
-  ["000013", "000041", "STAFF_WELFARE", "RNR_EXPENSES"],
-  ["000013", "000042", "STAFF_WELFARE", "FESTIVAL_EXPENSE"],
-  ["000013", "000043", "BUSINESS_PROMOTION", "BUSINESS_PROMOTION"],
-  ["000013", "000044", "STAFF_WELFARE", "REFRESHMENT"],
-  ["000013", "000045", "STAFF_WELFARE", "REFRESHMENT"],
-  ["000013", "000052", "STAFF_WELFARE", "RNR_EXPENSES"],
-  ["000013", "000053", "STAFF_WELFARE", "DRINKING_WATER"],
+  ['000013','000040','STAFF_WELFARE','DRINKING_WATER'],
+  ['000013','000041','STAFF_WELFARE','RNR_EXPENSES'],
+  ['000013','000042','STAFF_WELFARE','FESTIVAL_EXPENSE'],
+  ['000013','000043','BUSINESS_PROMOTION','BUSINESS_PROMOTION'],
+  ['000013','000044','STAFF_WELFARE','REFRESHMENT'],
+  ['000013','000045','STAFF_WELFARE','REFRESHMENT'],
+  ['000013','000052','STAFF_WELFARE','RNR_EXPENSES'],
+  ['000013','000053','STAFF_WELFARE','DRINKING_WATER'],
   // Travelling
-  ["000014", "000046", "TOURS_TRAVELLING_CONVEYANCE", "LOCAL_CONVEYANCE"],
-  ["000014", "000047", "TOURS_TRAVELLING_CONVEYANCE", "LOCAL_CONVEYANCE"],
-  ["000014", "000049", "TOUR_EXPENSES", "TOUR_EXPENSES"],
+  ['000014','000046','TOURS_TRAVELLING_CONVEYANCE','LOCAL_CONVEYANCE'],
+  ['000014','000047','TOURS_TRAVELLING_CONVEYANCE','LOCAL_CONVEYANCE'],
+  ['000014','000049','TOUR_EXPENSES','TOUR_EXPENSES'],
   // Others
-  ["000015", "000054", "OTHERS", "DONATION_OTHERS"],
-  ["000015", "000069", "OTHERS", "CAPEX_OTHERS"],
-  ["000015", "000016", "OTHERS", "DONATION_OTHERS"], // data-err: subhead 000016 (Donation) belongs to head 000006; donation intent correct
+  ['000015','000054','OTHERS','DONATION_OTHERS'],
+  ['000015','000069','OTHERS','CAPEX_OTHERS'],
+  ['000015','000016','OTHERS','DONATION_OTHERS'],   // data-err: subhead 000016 (Donation) belongs to head 000006; donation intent correct
   // Contract Fees Facilities (head 000016)
-  ["000016", "000070", "CONTRACT_FEES_FACILITIES", "FACILITY_STAFF"],
+  ['000016','000070','CONTRACT_FEES_FACILITIES','FACILITY_STAFF'],
   // Security
-  ["000018", "000072", "SECURITY_SERVICE", "SECURITY_SERVICE"],
+  ['000018','000072','SECURITY_SERVICE','SECURITY_SERVICE'],
   // Insurance
-  ["000019", "000074", "INSURANCE_EXPENSES", "INFRA_INSURANCE"],
+  ['000019','000074','INSURANCE_EXPENSES','INFRA_INSURANCE'],
   // Legal / Consultancy
-  ["000020", "000076", "LEGAL_CONSULTANCY", "BROKERAGE_CONSULTANCY"],
-  ["000020", "000077", "LEGAL_CONSULTANCY", "LEGAL_PROFESSIONAL"],
+  ['000020','000076','LEGAL_CONSULTANCY','BROKERAGE_CONSULTANCY'],
+  ['000020','000077','LEGAL_CONSULTANCY','LEGAL_PROFESSIONAL'],
   // Sales / Business Promotion
-  ["000021", "000091", "BUSINESS_PROMOTION", "BUSINESS_PROMOTION"],
+  ['000021','000091','BUSINESS_PROMOTION','BUSINESS_PROMOTION'],
 ];
 
 // Build a quick lookup: "headId|subId" → [hrms_head_code, hrms_sub_code]
-const LOOKUP = new Map(
-  MAPPING.map(([h, s, hc, sc]) => [`${h}|${s}`, [hc, sc]]),
-);
+const LOOKUP = new Map(MAPPING.map(([h, s, hc, sc]) => [`${h}|${s}`, [hc, sc]]));
 
 // Skipped combos (for reporting)
 const SKIP_REASONS = {
-  "000003|000010":
-    "NO_MATCH: Finance Expenses/Interest Charges — no matching head in mas_hrms (6 vendors)",
-  "000009|000080":
-    "NO_MATCH: Software Development Charges — no matching subhead in mas_hrms (3 vendors)",
-  "000006|000000":
-    "AMBIGUOUS: Contract Fees-Others / NULL subhead — cannot determine correct subhead (4 vendors)",
-  "000011|": "AMBIGUOUS: Repair & Maintenance / NULL subhead (1 vendor)",
+  '000003|000010': 'NO_MATCH: Finance Expenses/Interest Charges — no matching head in mas_hrms (6 vendors)',
+  '000009|000080': 'NO_MATCH: Software Development Charges — no matching subhead in mas_hrms (3 vendors)',
+  '000006|000000': 'AMBIGUOUS: Contract Fees-Others / NULL subhead — cannot determine correct subhead (4 vendors)',
+  '000011|':       'AMBIGUOUS: Repair & Maintenance / NULL subhead (1 vendor)',
 };
 
 async function main() {
@@ -155,32 +130,27 @@ async function main() {
   // live DB password in a committed file; a missing var must fail loudly, not connect quietly.
   const need = (name) => {
     const v = process.env[name];
-    if (!v)
-      throw new Error(
-        `Missing required env var ${name} - run from backend/ with .env loaded`,
-      );
+    if (!v) throw new Error(`Missing required env var ${name} - run from backend/ with .env loaded`);
     return v;
   };
   const billCfg = {
-    host: need("BILL_DB_HOST"),
+    host: need('BILL_DB_HOST'),
     port: Number(process.env.BILL_DB_PORT || 3306),
-    user: need("BILL_DB_USER"),
-    password: need("BILL_DB_PASSWORD"),
-    database: process.env.BILL_DB_NAME || "db_bill",
+    user: need('BILL_DB_USER'),
+    password: need('BILL_DB_PASSWORD'),
+    database: process.env.BILL_DB_NAME || 'db_bill',
   };
   const hrmsCfg = {
-    host: need("DB_HOST"),
+    host: need('DB_HOST'),
     port: Number(process.env.DB_PORT || 3306),
-    user: need("DB_USER"),
-    password: need("DB_PASSWORD"),
-    database: process.env.DB_NAME || "mas_hrms",
+    user: need('DB_USER'),
+    password: need('DB_PASSWORD'),
+    database: process.env.DB_NAME || 'mas_hrms',
   };
 
   const bill = await mysql.createConnection(billCfg);
   const hrms = await mysql.createConnection(hrmsCfg);
-  console.log(
-    DRY_RUN ? "[DRY RUN] Connected to both DBs" : "Connected to both DBs",
-  );
+  console.log(DRY_RUN ? '[DRY RUN] Connected to both DBs' : 'Connected to both DBs');
 
   // 1. Get all active db_bill vendors with head/subhead.
   //
@@ -204,42 +174,33 @@ async function main() {
   //     then looked up in the hand-verified MAPPING above. A legacy head with no padded twin of
   //     the same name resolves to nothing and is reported as a gap - never guessed.
   const [headRows] = await bill.query(
-    "SELECT HeadingId, HeadingDesc FROM tbl_bgt_expenseheadingmaster",
+    'SELECT HeadingId, HeadingDesc FROM tbl_bgt_expenseheadingmaster',
   );
   const [subRows] = await bill.query(
-    "SELECT SubHeadingId, SubHeadingDesc FROM tbl_bgt_expensesubheadingmaster",
+    'SELECT SubHeadingId, SubHeadingDesc FROM tbl_bgt_expensesubheadingmaster',
   );
-  const isPadded = (id) => /^0{3}/.test(String(id || ""));
-  const norm = (d) =>
-    String(d || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, "");
+  const isPadded = (id) => /^0{3}/.test(String(id || ''));
+  const norm = (d) => String(d || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const paddedHeadByName = new Map();
   for (const r of headRows) {
-    if (isPadded(r.HeadingId) && norm(r.HeadingDesc))
-      paddedHeadByName.set(norm(r.HeadingDesc), String(r.HeadingId));
+    if (isPadded(r.HeadingId) && norm(r.HeadingDesc)) paddedHeadByName.set(norm(r.HeadingDesc), String(r.HeadingId));
   }
   const paddedSubByName = new Map();
   for (const r of subRows) {
-    if (isPadded(r.SubHeadingId) && norm(r.SubHeadingDesc))
-      paddedSubByName.set(norm(r.SubHeadingDesc), String(r.SubHeadingId));
+    if (isPadded(r.SubHeadingId) && norm(r.SubHeadingDesc)) paddedSubByName.set(norm(r.SubHeadingDesc), String(r.SubHeadingId));
   }
   const legacyHeadName = new Map(
-    headRows
-      .filter((r) => !isPadded(r.HeadingId))
-      .map((r) => [String(r.HeadingId), r.HeadingDesc]),
+    headRows.filter((r) => !isPadded(r.HeadingId)).map((r) => [String(r.HeadingId), r.HeadingDesc]),
   );
   const legacySubName = new Map(
-    subRows
-      .filter((r) => !isPadded(r.SubHeadingId))
-      .map((r) => [String(r.SubHeadingId), r.SubHeadingDesc]),
+    subRows.filter((r) => !isPadded(r.SubHeadingId)).map((r) => [String(r.SubHeadingId), r.SubHeadingDesc]),
   );
 
   /** Translate a possibly-legacy (head, sub) pair into the zero-padded scheme MAPPING is keyed on.
    *  Returns null when either half has no same-named padded twin, so the caller reports a gap. */
   function toPaddedKey(headId, subId) {
-    const h = String(headId || "");
-    const sub = String(subId || "");
+    const h = String(headId || '');
+    const sub = String(subId || '');
     if (isPadded(h)) return `${h}|${sub}`;
     const hName = legacyHeadName.get(h);
     const sName = legacySubName.get(sub);
@@ -271,30 +232,20 @@ async function main() {
      WHERE h.active_status = 1`,
   );
   const subLookup = new Map(
-    heads.map((r) => [
-      `${r.head_code}|${r.sub_head_code}`,
-      { head_id: r.head_id, sub_id: r.sub_id },
-    ]),
+    heads.map((r) => [`${r.head_code}|${r.sub_head_code}`, { head_id: r.head_id, sub_id: r.sub_id }]),
   );
 
   // 4. Process
-  let inserted = 0,
-    skipped = 0,
-    noMatch = 0,
-    alreadyMapped = 0;
+  let inserted = 0, skipped = 0, noMatch = 0, alreadyMapped = 0;
   const gapReport = [];
 
   const billById = new Map(billVendors.map((v) => [v.Id, v]));
 
   for (const [billId, hrmsId] of unmappedByBillId) {
     const bv = billById.get(billId);
-    if (!bv) {
-      gapReport.push({ billId, reason: "NOT_IN_DB_BILL_ACTIVE" });
-      noMatch++;
-      continue;
-    }
+    if (!bv) { gapReport.push({ billId, reason: 'NOT_IN_DB_BILL_ACTIVE' }); noMatch++; continue; }
 
-    const key = `${bv.HeadId || ""}|${bv.SubHeadId || ""}`;
+    const key = `${bv.HeadId || ''}|${bv.SubHeadId || ''}`;
     const skipReason = SKIP_REASONS[key] || SKIP_REASONS[`${bv.HeadId}|`];
     // NOTE: SKIP_REASONS is keyed on the padded scheme, so a legacy-id vendor in one of those
     // four known-ambiguous buckets is not caught here; it falls through to toPaddedKey() and is
@@ -308,9 +259,7 @@ async function main() {
     const paddedKey = toPaddedKey(bv.HeadId, bv.SubHeadId);
     if (!paddedKey) {
       gapReport.push({
-        billId,
-        vendor: bv.vendor,
-        key,
+        billId, vendor: bv.vendor, key,
         reason: `LEGACY_ID_NO_PADDED_TWIN: ${key} - legacy head/sub-head has no same-named entry in the padded scheme; map by hand`,
       });
       noMatch++;
@@ -319,10 +268,8 @@ async function main() {
     const hrmsTarget = LOOKUP.get(paddedKey);
     if (!hrmsTarget) {
       gapReport.push({
-        billId,
-        vendor: bv.vendor,
-        key,
-        reason: `UNMAPPED_COMBO: ${key}${paddedKey === key ? "" : " (padded " + paddedKey + ")"}`,
+        billId, vendor: bv.vendor, key,
+        reason: `UNMAPPED_COMBO: ${key}${paddedKey === key ? '' : ' (padded ' + paddedKey + ')'}`,
       });
       noMatch++;
       continue;
@@ -331,12 +278,7 @@ async function main() {
     const [hrmsHeadCode, hrmsSubCode] = hrmsTarget;
     const subEntry = subLookup.get(`${hrmsHeadCode}|${hrmsSubCode}`);
     if (!subEntry) {
-      gapReport.push({
-        billId,
-        vendor: bv.vendor,
-        key,
-        reason: `HRMS_SUBHEAD_NOT_FOUND: ${hrmsHeadCode}:${hrmsSubCode}`,
-      });
+      gapReport.push({ billId, vendor: bv.vendor, key, reason: `HRMS_SUBHEAD_NOT_FOUND: ${hrmsHeadCode}:${hrmsSubCode}` });
       noMatch++;
       continue;
     }
@@ -348,24 +290,15 @@ async function main() {
             active_status, effective_from, created_by, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, 1, CURDATE(),
                  '00000000-0000-0000-0000-000000000001', NOW(), NOW())`,
-        [
-          randomUUID(),
-          hrmsId,
-          subEntry.head_id,
-          hrmsHeadCode,
-          subEntry.sub_id,
-          hrmsSubCode,
-        ],
+        [randomUUID(), hrmsId, subEntry.head_id, hrmsHeadCode, subEntry.sub_id, hrmsSubCode],
       );
     } else {
-      console.log(
-        `  WOULD INSERT: DB_BILL_${billId} "${bv.vendor}" → ${hrmsHeadCode}:${hrmsSubCode}`,
-      );
+      console.log(`  WOULD INSERT: DB_BILL_${billId} "${bv.vendor}" → ${hrmsHeadCode}:${hrmsSubCode}`);
     }
     inserted++;
   }
 
-  console.log("\n════════════════ SUMMARY ════════════════");
+  console.log('\n════════════════ SUMMARY ════════════════');
   console.log(`Total unmapped vendors in mas_hrms:  ${unmappedByBillId.size}`);
   console.log(`Inserted (or would insert):          ${inserted}`);
   console.log(`Skipped (ambiguous / no match):      ${skipped}`);
@@ -373,15 +306,11 @@ async function main() {
   console.log(`Already mapped (control check):      ${alreadyMapped}`);
 
   if (gapReport.length) {
-    console.log(
-      "\n════════════════ GAPS — NEED MANUAL MAPPING ════════════════",
-    );
+    console.log('\n════════════════ GAPS — NEED MANUAL MAPPING ════════════════');
     const grouped = {};
     for (const g of gapReport) {
       grouped[g.reason] = grouped[g.reason] || [];
-      grouped[g.reason].push(
-        `  DB_BILL_${g.billId}${g.vendor ? ' "' + g.vendor + '"' : ""}`,
-      );
+      grouped[g.reason].push(`  DB_BILL_${g.billId}${g.vendor ? ' "' + g.vendor + '"' : ''}`);
     }
     for (const [reason, vendors] of Object.entries(grouped)) {
       console.log(`\n${reason}`);
@@ -393,7 +322,4 @@ async function main() {
   await hrms.end();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main().catch((err) => { console.error(err); process.exit(1); });

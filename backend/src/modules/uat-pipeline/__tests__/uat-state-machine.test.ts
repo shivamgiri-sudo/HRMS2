@@ -30,10 +30,7 @@ describe("uat state machine — graph integrity", () => {
   it("every target status is itself a declared status", () => {
     for (const [from, targets] of Object.entries(LEGAL_TRANSITIONS)) {
       for (const t of targets) {
-        expect(
-          ALL_STATUSES,
-          `${from} -> ${t} targets an undeclared status`,
-        ).toContain(t);
+        expect(ALL_STATUSES, `${from} -> ${t} targets an undeclared status`).toContain(t);
       }
     }
   });
@@ -54,17 +51,12 @@ describe("uat state machine — graph integrity", () => {
       }
     }
     const unreachable = ALL_STATUSES.filter((s) => !seen.has(s));
-    expect(
-      unreachable,
-      `unreachable states: ${unreachable.join(", ")}`,
-    ).toEqual([]);
+    expect(unreachable, `unreachable states: ${unreachable.join(", ")}`).toEqual([]);
   });
 
   it("rejects an illegal transition rather than silently allowing it", () => {
     expect(canTransition("submitted", "merged")).toBe(false);
-    expect(() => assertTransition("submitted", "merged")).toThrow(
-      /Illegal UAT status transition/,
-    );
+    expect(() => assertTransition("submitted", "merged")).toThrow(/Illegal UAT status transition/);
     expect(() => assertTransition("closed", "triaged")).toThrow();
   });
 });
@@ -72,15 +64,12 @@ describe("uat state machine — graph integrity", () => {
 describe("uat state machine — invariant 1: approval gates every pipeline PR", () => {
   it("no path from submitted to pr_open avoids awaiting_approval", () => {
     const paths = allSimplePaths("submitted", "pr_open");
-    expect(
-      paths.length,
-      "expected at least one path to pr_open",
-    ).toBeGreaterThan(0);
+    expect(paths.length, "expected at least one path to pr_open").toBeGreaterThan(0);
     const offending = paths.filter((p) => !p.includes("awaiting_approval"));
     expect(
       offending,
       `these paths reach a pipeline PR with nobody approving one:\n` +
-        offending.map((p) => "  " + p.join(" -> ")).join("\n"),
+        offending.map((p) => "  " + p.join(" -> ")).join("\n")
     ).toEqual([]);
   });
 
@@ -99,52 +88,37 @@ describe("uat state machine — invariant 2: a shipped fix closes only after ret
     // that would strand every withdrawn or won't-fix item permanently open. What must never
     // happen is an item being marked verified in production having never passed a retest.
     const paths = allSimplePaths("submitted", "production_verified");
-    expect(
-      paths.length,
-      "expected at least one path to production_verified",
-    ).toBeGreaterThan(0);
+    expect(paths.length, "expected at least one path to production_verified").toBeGreaterThan(0);
     const offending = paths.filter((p) => !p.includes("retest_passed"));
     expect(
       offending,
       `these paths verify a fix in production that never passed a retest:\n` +
-        offending.map((p) => "  " + p.join(" -> ")).join("\n"),
+        offending.map((p) => "  " + p.join(" -> ")).join("\n")
     ).toEqual([]);
   });
 
   it("a merged fix is always retested one way or the other before it can close", () => {
-    const paths = allSimplePaths("submitted", "closed").filter((p) =>
-      p.includes("merged"),
-    );
+    const paths = allSimplePaths("submitted", "closed").filter((p) => p.includes("merged"));
     expect(paths.length).toBeGreaterThan(0);
     const unretested = paths.filter(
-      (p) => !p.includes("retest_passed") && !p.includes("retest_failed"),
+      (p) => !p.includes("retest_passed") && !p.includes("retest_failed")
     );
     expect(
       unretested,
       `a fix shipped and closed without any retest outcome:\n` +
-        unretested.map((p) => "  " + p.join(" -> ")).join("\n"),
+        unretested.map((p) => "  " + p.join(" -> ")).join("\n")
     ).toEqual([]);
   });
 
   it("closed is reachable directly only from no-fix-shipped states or production_verified", () => {
-    const predecessors = ALL_STATUSES.filter((s) =>
-      LEGAL_TRANSITIONS[s].includes("closed"),
-    );
-    const allowed = new Set<UatStatus>([
-      ...NO_FIX_SHIPPED_STATES,
-      "production_verified",
-    ]);
+    const predecessors = ALL_STATUSES.filter((s) => LEGAL_TRANSITIONS[s].includes("closed"));
+    const allowed = new Set<UatStatus>([...NO_FIX_SHIPPED_STATES, "production_verified"]);
     const unexpected = predecessors.filter((s) => !allowed.has(s));
-    expect(
-      unexpected,
-      `unexpected direct predecessors of closed: ${unexpected.join(", ")}`,
-    ).toEqual([]);
+    expect(unexpected, `unexpected direct predecessors of closed: ${unexpected.join(", ")}`).toEqual([]);
   });
 
   it("production_verified is the only way a released fix reaches closed", () => {
-    expect(LEGAL_TRANSITIONS.production_released).toContain(
-      "production_verified",
-    );
+    expect(LEGAL_TRANSITIONS.production_released).toContain("production_verified");
     expect(LEGAL_TRANSITIONS.production_released).not.toContain("closed");
     expect(LEGAL_TRANSITIONS.merged).toEqual(["deployed_to_uat"]);
   });
@@ -153,22 +127,14 @@ describe("uat state machine — invariant 2: a shipped fix closes only after ret
 describe("uat state machine — lifecycle completeness", () => {
   it("supports the Phase 1 manual path end to end, with no LLM or build states", () => {
     const manual: UatStatus[] = [
-      "submitted",
-      "scanning",
-      "scan_done",
-      "triaged",
-      "merged",
-      "deployed_to_uat",
-      "ready_for_retest",
-      "retest_passed",
-      "production_released",
-      "production_verified",
-      "closed",
+      "submitted", "scanning", "scan_done", "triaged", "merged",
+      "deployed_to_uat", "ready_for_retest", "retest_passed",
+      "production_released", "production_verified", "closed",
     ];
     for (let i = 0; i < manual.length - 1; i++) {
       expect(
         canTransition(manual[i], manual[i + 1]),
-        `Phase 1 manual path breaks at ${manual[i]} -> ${manual[i + 1]}`,
+        `Phase 1 manual path breaks at ${manual[i]} -> ${manual[i + 1]}`
       ).toBe(true);
     }
   });
@@ -180,9 +146,7 @@ describe("uat state machine — lifecycle completeness", () => {
   });
 
   it("a production regression routes to rollback, not to an ordinary reopen", () => {
-    expect(canTransition("production_released", "rollback_required")).toBe(
-      true,
-    );
+    expect(canTransition("production_released", "rollback_required")).toBe(true);
     expect(canTransition("rollback_required", "rolled_back")).toBe(true);
     expect(canTransition("rolled_back", "reopened")).toBe(true);
     expect(canTransition("production_released", "reopened")).toBe(false);
@@ -190,11 +154,7 @@ describe("uat state machine — lifecycle completeness", () => {
 
   it("a deny-tier scan can never re-enter the automated path", () => {
     expect(LEGAL_TRANSITIONS.scan_blocked).toEqual(["triaged", "closed"]);
-    for (const forbidden of [
-      "validating",
-      "prompt_writing",
-      "build_queued",
-    ] as UatStatus[]) {
+    for (const forbidden of ["validating", "prompt_writing", "build_queued"] as UatStatus[]) {
       expect(canTransition("scan_blocked", forbidden)).toBe(false);
     }
   });

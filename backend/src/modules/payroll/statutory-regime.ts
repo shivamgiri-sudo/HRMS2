@@ -51,14 +51,10 @@ export const REQUIRED_TDS_CONFIG_KEYS = [
 ] as const;
 
 /** Keys from REQUIRED_TDS_CONFIG_KEYS absent from a config map. */
-export function missingTdsConfigKeys(
-  config: Record<string, unknown>,
-): string[] {
+export function missingTdsConfigKeys(config: Record<string, unknown>): string[] {
   return REQUIRED_TDS_CONFIG_KEYS.filter((key) => {
     const value = config[key];
-    return (
-      value === undefined || value === null || !Number.isFinite(Number(value))
-    );
+    return value === undefined || value === null || !Number.isFinite(Number(value));
   });
 }
 
@@ -115,9 +111,7 @@ const ACT_2025: StatutoryRegime = {
 
 function assertIsoDate(value: string, label: string): void {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error(
-      `${label} must be an ISO date (YYYY-MM-DD), received "${value}"`,
-    );
+    throw new Error(`${label} must be an ISO date (YYYY-MM-DD), received "${value}"`);
   }
 }
 
@@ -138,9 +132,7 @@ export function statutoryRegimeForDate(isoDate: string): StatutoryRegime {
  */
 export function statutoryRegimeForPeriod(period: string): StatutoryRegime {
   if (!/^\d{4}-\d{2}$/.test(period)) {
-    throw new Error(
-      `A payroll period (YYYY-MM) is required, received "${period}"`,
-    );
+    throw new Error(`A payroll period (YYYY-MM) is required, received "${period}"`);
   }
   return statutoryRegimeForDate(`${period}-01`);
 }
@@ -149,17 +141,9 @@ export function statutoryRegimeForPeriod(period: string): StatutoryRegime {
  * Regime governing an Indian financial year given its starting calendar year —
  * financialYearStart 2026 means FY 2026-27, which begins 1 April 2026.
  */
-export function statutoryRegimeForFinancialYear(
-  financialYearStart: number,
-): StatutoryRegime {
-  if (
-    !Number.isInteger(financialYearStart) ||
-    financialYearStart < 1900 ||
-    financialYearStart > 2999
-  ) {
-    throw new Error(
-      `A four-digit financial year start is required, received "${financialYearStart}"`,
-    );
+export function statutoryRegimeForFinancialYear(financialYearStart: number): StatutoryRegime {
+  if (!Number.isInteger(financialYearStart) || financialYearStart < 1900 || financialYearStart > 2999) {
+    throw new Error(`A four-digit financial year start is required, received "${financialYearStart}"`);
   }
   return statutoryRegimeForDate(`${financialYearStart}-04-01`);
 }
@@ -172,7 +156,5 @@ export function statutoryRegimeForFinancialYear(
  * must keep meaning what they meant when they were filed.
  */
 export function quarterlyTdsFilingType(period: string): "TDS_24Q" | "TDS_138" {
-  return statutoryRegimeForPeriod(period).act === "2025"
-    ? "TDS_138"
-    : "TDS_24Q";
+  return statutoryRegimeForPeriod(period).act === "2025" ? "TDS_138" : "TDS_24Q";
 }

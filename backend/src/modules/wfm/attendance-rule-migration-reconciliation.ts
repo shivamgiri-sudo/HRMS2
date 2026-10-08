@@ -46,7 +46,7 @@ import {
   type DimensionScopedRule,
   type EmployeeAttributes,
   type RuleDimension,
-} from "./attendance-source-rule-resolver.js";
+} from './attendance-source-rule-resolver.js';
 
 import type {
   AttendanceRuleMigrationProposal,
@@ -54,7 +54,7 @@ import type {
   ProposedDayThresholdRule,
   ProposedDimensionValue,
   ProposedSourceRule,
-} from "./attendance-rule-migration-proposal.js";
+} from './attendance-rule-migration-proposal.js';
 
 /**
  * The part of the builder's output these reports consume. Declared as a Pick of the builder's
@@ -64,7 +64,7 @@ import type {
  */
 export type ReconciliationRuleSet = Pick<
   AttendanceRuleMigrationProposal,
-  "sourceRules" | "dayThresholdRules"
+  'sourceRules' | 'dayThresholdRules'
 >;
 
 /** The three day-classification thresholds of criteria 15.9 / 15.8. */
@@ -110,13 +110,13 @@ export interface BuildReconciliationInput {
 
 export type SourceComparisonStatus =
   /** Existing and proposed resolutions agree. Eligible for the criterion 15.13 unchanged set. */
-  | "match"
+  | 'match'
   /** Both resolutions are known and they differ. criterion 15.10's differing list. */
-  | "differs"
+  | 'differs'
   /** No proposed rule matched this employee at all. Usually a criterion 15.15 population. */
-  | "proposed_unresolved"
+  | 'proposed_unresolved'
   /** The caller could not supply the existing resolution, so nothing can be asserted. */
-  | "existing_unknown";
+  | 'existing_unknown';
 
 export interface AttendanceSourceComparison {
   employeeId: string;
@@ -146,8 +146,7 @@ export interface AttendanceSourceComparison {
 
 export type ThresholdComparisonStatus = SourceComparisonStatus;
 
-export type DayThresholdField =
-  "fullDayMinutes" | "halfDayMinutes" | "graceMinutes";
+export type DayThresholdField = 'fullDayMinutes' | 'halfDayMinutes' | 'graceMinutes';
 
 export interface DayThresholdComparison {
   employeeId: string;
@@ -204,29 +203,29 @@ export const NO_SILENT_CHANGE_VIOLATION = {
    * the employee cannot be placed in the unchanged set. A proposed set missing its
    * System_Default_Rule (criterion 1.10) produces this for everyone no scoped rule matches.
    */
-  PROPOSED_UNRESOLVED: "proposed_unresolved",
+  PROPOSED_UNRESOLVED: 'proposed_unresolved',
   /**
    * The caller supplied no usable existing resolution, so "unchanged" is unverifiable for this
    * employee - the report would be claiming a property of a value it does not have.
    */
-  EXISTING_UNKNOWN: "existing_unknown",
+  EXISTING_UNKNOWN: 'existing_unknown',
   /**
    * The winning proposed rule was picked by comparing identity, so the applied migration may
    * resolve a different rule than this report did. See tieBreakReachedIdentity.
    */
-  TIE_BREAK_NOT_REPRODUCIBLE: "tie_break_not_reproducible",
+  TIE_BREAK_NOT_REPRODUCIBLE: 'tie_break_not_reproducible',
   /**
    * Re-resolving the same employee against the same rules in the opposite order produced a
    * different answer. Resolution must be a function of content only; when it is not, "matches
    * the existing resolution" is an accident of iteration order rather than a property.
    */
-  RESOLUTION_NOT_ORDER_INDEPENDENT: "resolution_not_order_independent",
+  RESOLUTION_NOT_ORDER_INDEPENDENT: 'resolution_not_order_independent',
   /**
    * Internal partition guard: an employee counted as unchanged whose proposed source does not
    * equal their existing source. Unreachable by construction, checked anyway, because the whole
    * value of this report is that its unchanged set is trustworthy.
    */
-  PARTITION_INCONSISTENT: "partition_inconsistent",
+  PARTITION_INCONSISTENT: 'partition_inconsistent',
 } as const;
 
 export type NoSilentChangeViolationKind =
@@ -289,12 +288,12 @@ export interface MissingDimensionReport {
 }
 
 export type ReprocessingReason =
-  | "attendance_source_differs"
-  | "attendance_source_unresolved"
-  | "existing_attendance_source_unknown"
-  | "day_thresholds_differ"
-  | "day_thresholds_unresolved"
-  | "existing_day_thresholds_unknown";
+  | 'attendance_source_differs'
+  | 'attendance_source_unresolved'
+  | 'existing_attendance_source_unknown'
+  | 'day_thresholds_differ'
+  | 'day_thresholds_unresolved'
+  | 'existing_day_thresholds_unknown';
 
 export interface ReprocessingEntry {
   employeeId: string;
@@ -346,7 +345,7 @@ export interface AttendanceRuleMigrationReconciliation {
  * consequence is that criterion 2.5's created_at step can never break a tie between two proposed
  * rules, so a tie falls through to identity - which is detected and reported rather than hidden.
  */
-const PROPOSED_RULE_CREATED_AT = "";
+const PROPOSED_RULE_CREATED_AT = '';
 
 // -- small pure helpers -------------------------------------------------------------------
 
@@ -370,7 +369,7 @@ function sortDimensions(dimensions: readonly RuleDimension[]): RuleDimension[] {
 function normaliseText(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   const trimmed = String(value).trim();
-  return trimmed === "" ? null : trimmed;
+  return trimmed === '' ? null : trimmed;
 }
 
 /**
@@ -383,7 +382,7 @@ function normaliseAttendanceSource(
   value: string | null | undefined,
 ): ProposedAttendanceSource | null {
   const text = normaliseText(value)?.toLowerCase() ?? null;
-  if (text === "dialler" || text === "biometric") return text;
+  if (text === 'dialler' || text === 'biometric') return text;
   return null;
 }
 
@@ -400,12 +399,10 @@ function normaliseThresholds(
   return { fullDayMinutes: full, halfDayMinutes: half, graceMinutes: grace };
 }
 
-function toFiniteInteger(
-  value: number | string | null | undefined,
-): number | null {
+function toFiniteInteger(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
-  if (text === "") return null;
+  if (text === '') return null;
   const parsed = Number(text);
   if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) return null;
   return parsed;
@@ -440,11 +437,7 @@ function toDimensionSets(
  * does not: the DB-backed callers push this filter into indexed SQL, so the pure resolver never
  * sees an out-of-window rule. Lexicographic comparison is exact for 'YYYY-MM-DD'.
  */
-function coversDate(
-  effectiveFrom: string,
-  effectiveTo: string | null,
-  date: string,
-): boolean {
+function coversDate(effectiveFrom: string, effectiveTo: string | null, date: string): boolean {
   if (effectiveFrom > date) return false;
   if (effectiveTo !== null && effectiveTo < date) return false;
   return true;
@@ -479,9 +472,7 @@ function toWindowedSourceRule(rule: ProposedSourceRule): WindowedSourceRule {
   };
 }
 
-function toWindowedThresholdRule(
-  rule: ProposedDayThresholdRule,
-): WindowedThresholdRule {
+function toWindowedThresholdRule(rule: ProposedDayThresholdRule): WindowedThresholdRule {
   return {
     id: rule.proposalKey,
     dimensionValues: toDimensionSets(rule.dimensionValues),
@@ -512,7 +503,7 @@ function tieBrokenOnIdentity<T extends DimensionScopedRule>(
   if (winner === null) return false;
   return candidates.some(
     (c) =>
-      c.eliminatedAtStep === "deterministic_tail" &&
+      c.eliminatedAtStep === 'deterministic_tail' &&
       c.rule.effectiveFrom === winner.effectiveFrom,
   );
 }
@@ -533,24 +524,20 @@ function tieBrokenOnIdentity<T extends DimensionScopedRule>(
 export function buildAttendanceRuleMigrationReconciliation(
   input: BuildReconciliationInput,
 ): AttendanceRuleMigrationReconciliation {
-  const effectiveDate = String(input.effectiveDate ?? "").trim();
+  const effectiveDate = String(input.effectiveDate ?? '').trim();
   if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(effectiveDate)) {
     throw new Error(
       `effectiveDate must be 'YYYY-MM-DD' (received ${JSON.stringify(input.effectiveDate)}). ` +
-        "Every proposed rule is selected by effective-date window against this date.",
+        'Every proposed rule is selected by effective-date window against this date.',
     );
   }
 
   const windowedSourceRules = (input.proposal?.sourceRules ?? [])
-    .filter((rule) =>
-      coversDate(rule.effectiveFrom, rule.effectiveTo, effectiveDate),
-    )
+    .filter((rule) => coversDate(rule.effectiveFrom, rule.effectiveTo, effectiveDate))
     .map(toWindowedSourceRule);
 
   const windowedThresholdRules = (input.proposal?.dayThresholdRules ?? [])
-    .filter((rule) =>
-      coversDate(rule.effectiveFrom, rule.effectiveTo, effectiveDate),
-    )
+    .filter((rule) => coversDate(rule.effectiveFrom, rule.effectiveTo, effectiveDate))
     .map(toWindowedThresholdRule);
 
   // Reversed copies exist only for the criterion 15.13 order-independence check below. Built
@@ -569,40 +556,31 @@ export function buildAttendanceRuleMigrationReconciliation(
   const unchangedEmployeeIds: string[] = [];
   const changedEmployeeIds: string[] = [];
   const undeterminedEmployeeIds: string[] = [];
-  const reprocessingByEmployee: Array<{
-    employeeId: string;
-    reasons: ReprocessingReason[];
-  }> = [];
+  const reprocessingByEmployee: Array<{ employeeId: string; reasons: ReprocessingReason[] }> = [];
 
   for (const employee of employees) {
-    const employeeId =
-      normaliseText(employee.employeeId) ?? String(employee.employeeId ?? "");
+    const employeeId = normaliseText(employee.employeeId) ?? String(employee.employeeId ?? '');
     const attributes = employee.attributes;
 
     // -- criterion 15.10: existing versus proposed Attendance_Source ------------------------
     const sourceResult = resolveRule(windowedSourceRules, attributes);
     const sourceWinner = sourceResult.winner;
     const existingSourceRaw = normaliseText(employee.existingAttendanceSource);
-    const existingSource = normaliseAttendanceSource(
-      employee.existingAttendanceSource,
-    );
+    const existingSource = normaliseAttendanceSource(employee.existingAttendanceSource);
     const proposedSource = sourceWinner ? sourceWinner.attendanceSource : null;
     const missingDimensions = sortDimensions(sourceResult.unresolvedDimensions);
-    const sourceTieOnIdentity = tieBrokenOnIdentity(
-      sourceResult.candidates,
-      sourceWinner,
-    );
+    const sourceTieOnIdentity = tieBrokenOnIdentity(sourceResult.candidates, sourceWinner);
 
     let sourceStatus: SourceComparisonStatus;
     if (proposedSource === null) {
       // criterion 2.8 / 15.15: no rule matched. Not an error, and not a match either.
-      sourceStatus = "proposed_unresolved";
+      sourceStatus = 'proposed_unresolved';
     } else if (existingSource === null) {
-      sourceStatus = "existing_unknown";
+      sourceStatus = 'existing_unknown';
     } else if (existingSource === proposedSource) {
-      sourceStatus = "match";
+      sourceStatus = 'match';
     } else {
-      sourceStatus = "differs";
+      sourceStatus = 'differs';
     }
 
     sourceComparisons.push({
@@ -612,9 +590,7 @@ export function buildAttendanceRuleMigrationReconciliation(
       proposedAttendanceSource: proposedSource,
       proposedRuleProposalKey: sourceWinner ? sourceWinner.proposalKey : null,
       proposedRuleName: sourceWinner ? sourceWinner.ruleName : null,
-      proposedRuleIsSystemDefault: sourceWinner
-        ? sourceWinner.isSystemDefault
-        : false,
+      proposedRuleIsSystemDefault: sourceWinner ? sourceWinner.isSystemDefault : false,
       proposedSpecificityCount: sourceResult.specificityCount,
       status: sourceStatus,
       tieBreakReachedIdentity: sourceTieOnIdentity,
@@ -625,32 +601,26 @@ export function buildAttendanceRuleMigrationReconciliation(
     const thresholdResult = resolveRule(windowedThresholdRules, attributes);
     const thresholdWinner = thresholdResult.winner;
     const existingThresholds = normaliseThresholds(employee.existingThresholds);
-    const proposedThresholds = thresholdWinner
-      ? thresholdWinner.thresholds
-      : null;
+    const proposedThresholds = thresholdWinner ? thresholdWinner.thresholds : null;
 
     let thresholdStatus: ThresholdComparisonStatus;
     let differingFields: DayThresholdField[] = [];
     if (proposedThresholds === null) {
-      thresholdStatus = "proposed_unresolved";
+      thresholdStatus = 'proposed_unresolved';
     } else if (existingThresholds === null) {
-      thresholdStatus = "existing_unknown";
+      thresholdStatus = 'existing_unknown';
     } else {
       differingFields = (
-        ["fullDayMinutes", "halfDayMinutes", "graceMinutes"] as const
-      ).filter(
-        (field) => existingThresholds[field] !== proposedThresholds[field],
-      );
-      thresholdStatus = differingFields.length === 0 ? "match" : "differs";
+        ['fullDayMinutes', 'halfDayMinutes', 'graceMinutes'] as const
+      ).filter((field) => existingThresholds[field] !== proposedThresholds[field]);
+      thresholdStatus = differingFields.length === 0 ? 'match' : 'differs';
     }
 
     thresholdComparisons.push({
       employeeId,
       existingThresholds,
       proposedThresholds,
-      proposedRuleProposalKey: thresholdWinner
-        ? thresholdWinner.proposalKey
-        : null,
+      proposedRuleProposalKey: thresholdWinner ? thresholdWinner.proposalKey : null,
       proposedRuleName: thresholdWinner ? thresholdWinner.ruleName : null,
       proposedRuleIsUnconstrainedDefault: thresholdWinner
         ? thresholdWinner.isUnconstrainedDefault
@@ -658,10 +628,7 @@ export function buildAttendanceRuleMigrationReconciliation(
       proposedSpecificityCount: thresholdResult.specificityCount,
       status: thresholdStatus,
       differingFields,
-      tieBreakReachedIdentity: tieBrokenOnIdentity(
-        thresholdResult.candidates,
-        thresholdWinner,
-      ),
+      tieBreakReachedIdentity: tieBrokenOnIdentity(thresholdResult.candidates, thresholdWinner),
       missingDimensions,
     });
 
@@ -674,18 +641,14 @@ export function buildAttendanceRuleMigrationReconciliation(
     }
 
     // -- criterion 15.13: the no-silent-change property ------------------------------------
-    if (sourceStatus === "match") {
+    if (sourceStatus === 'match') {
       // Independent re-resolution over the same rules in the opposite order. If resolution is a
       // function of content, as criteria 2.3-2.5 require, this is the same answer. If it is not,
       // then "matches the existing resolution" was an artefact of iteration order and the
       // employee must not be certified unchanged.
       const reResolved = resolveRule(reversedSourceRules, attributes);
-      const reResolvedSource = reResolved.winner
-        ? reResolved.winner.attendanceSource
-        : null;
-      const reResolvedKey = reResolved.winner
-        ? reResolved.winner.proposalKey
-        : null;
+      const reResolvedSource = reResolved.winner ? reResolved.winner.attendanceSource : null;
+      const reResolvedKey = reResolved.winner ? reResolved.winner.proposalKey : null;
       const orderIndependent =
         reResolvedSource === proposedSource &&
         reResolvedKey === (sourceWinner ? sourceWinner.proposalKey : null);
@@ -700,8 +663,8 @@ export function buildAttendanceRuleMigrationReconciliation(
             `opposite order produced ${JSON.stringify(reResolvedSource)} from rule ` +
             `${JSON.stringify(reResolvedKey)} instead of ${JSON.stringify(proposedSource)} from ` +
             `${JSON.stringify(sourceWinner ? sourceWinner.proposalKey : null)}. Two proposed ` +
-            "rules tie all the way through the deterministic tail, so this employee cannot be " +
-            "certified unchanged.",
+            'rules tie all the way through the deterministic tail, so this employee cannot be ' +
+            'certified unchanged.',
         });
       } else if (sourceTieOnIdentity) {
         undeterminedEmployeeIds.push(employeeId);
@@ -711,9 +674,9 @@ export function buildAttendanceRuleMigrationReconciliation(
           detail:
             `Employee ${employeeId} resolves to proposed rule ` +
             `${JSON.stringify(sourceWinner ? sourceWinner.proposalKey : null)} only because rule ` +
-            "identity broke a tie between two equally specific rules sharing an effective-from " +
-            "date. The applied rules carry minted identifiers rather than these proposal keys, " +
-            "so the applied resolution is not guaranteed to be the one reported here.",
+            'identity broke a tie between two equally specific rules sharing an effective-from ' +
+            'date. The applied rules carry minted identifiers rather than these proposal keys, ' +
+            'so the applied resolution is not guaranteed to be the one reported here.',
         });
       } else if (existingSource !== proposedSource) {
         undeterminedEmployeeIds.push(employeeId);
@@ -728,12 +691,12 @@ export function buildAttendanceRuleMigrationReconciliation(
       } else {
         unchangedEmployeeIds.push(employeeId);
       }
-    } else if (sourceStatus === "differs") {
+    } else if (sourceStatus === 'differs') {
       changedEmployeeIds.push(employeeId);
     } else {
       undeterminedEmployeeIds.push(employeeId);
       violations.push(
-        sourceStatus === "proposed_unresolved"
+        sourceStatus === 'proposed_unresolved'
           ? {
               employeeId,
               kind: NO_SILENT_CHANGE_VIOLATION.PROPOSED_UNRESOLVED,
@@ -741,13 +704,13 @@ export function buildAttendanceRuleMigrationReconciliation(
                 `No proposed Attendance_Source_Rule in force on ${effectiveDate} matches ` +
                 `employee ${employeeId}` +
                 (missingDimensions.length > 0
-                  ? `, who holds no value for ${missingDimensions.join(", ")} and so cannot be ` +
-                    "matched by a rule constraining any of those dimensions (criteria 2.8, " +
-                    "15.15)"
-                  : "") +
-                ". There is no proposed resolution to compare, so the employee cannot be shown " +
-                "unchanged. Criterion 1.10 requires a System_Default_Rule that reaches every " +
-                "employee.",
+                  ? `, who holds no value for ${missingDimensions.join(', ')} and so cannot be ` +
+                    'matched by a rule constraining any of those dimensions (criteria 2.8, ' +
+                    '15.15)'
+                  : '') +
+                '. There is no proposed resolution to compare, so the employee cannot be shown ' +
+                'unchanged. Criterion 1.10 requires a System_Default_Rule that reaches every ' +
+                'employee.',
             }
           : {
               employeeId,
@@ -755,24 +718,20 @@ export function buildAttendanceRuleMigrationReconciliation(
               detail:
                 `No usable existing Attendance_Source was supplied for employee ${employeeId} ` +
                 `(received ${JSON.stringify(employee.existingAttendanceSource ?? null)}), so ` +
-                "whether the proposed rule set leaves their resolution unchanged cannot be " +
-                "evaluated.",
+                'whether the proposed rule set leaves their resolution unchanged cannot be ' +
+                'evaluated.',
             },
       );
     }
 
     // -- criterion 15.14: who needs reprocessing ------------------------------------------
     const reasons: ReprocessingReason[] = [];
-    if (sourceStatus === "differs") reasons.push("attendance_source_differs");
-    if (sourceStatus === "proposed_unresolved")
-      reasons.push("attendance_source_unresolved");
-    if (sourceStatus === "existing_unknown")
-      reasons.push("existing_attendance_source_unknown");
-    if (thresholdStatus === "differs") reasons.push("day_thresholds_differ");
-    if (thresholdStatus === "proposed_unresolved")
-      reasons.push("day_thresholds_unresolved");
-    if (thresholdStatus === "existing_unknown")
-      reasons.push("existing_day_thresholds_unknown");
+    if (sourceStatus === 'differs') reasons.push('attendance_source_differs');
+    if (sourceStatus === 'proposed_unresolved') reasons.push('attendance_source_unresolved');
+    if (sourceStatus === 'existing_unknown') reasons.push('existing_attendance_source_unknown');
+    if (thresholdStatus === 'differs') reasons.push('day_thresholds_differ');
+    if (thresholdStatus === 'proposed_unresolved') reasons.push('day_thresholds_unresolved');
+    if (thresholdStatus === 'existing_unknown') reasons.push('existing_day_thresholds_unknown');
     if (reasons.length > 0) {
       reprocessingByEmployee.push({ employeeId, reasons });
     }
@@ -791,15 +750,12 @@ export function buildAttendanceRuleMigrationReconciliation(
   thresholdComparisons.sort(
     (a, b) =>
       compareText(a.employeeId, b.employeeId) ||
-      compareText(
-        thresholdComparisonSignature(a),
-        thresholdComparisonSignature(b),
-      ),
+      compareText(thresholdComparisonSignature(a), thresholdComparisonSignature(b)),
   );
   missingEmployees.sort(
     (a, b) =>
       compareText(a.employeeId, b.employeeId) ||
-      compareText(a.missingDimensions.join(","), b.missingDimensions.join(",")),
+      compareText(a.missingDimensions.join(','), b.missingDimensions.join(',')),
   );
   violations.sort(
     (a, b) =>
@@ -817,34 +773,22 @@ export function buildAttendanceRuleMigrationReconciliation(
   reprocessingByEmployee.sort(
     (a, b) =>
       compareText(a.employeeId, b.employeeId) ||
-      compareText(a.reasons.join(","), b.reasons.join(",")),
+      compareText(a.reasons.join(','), b.reasons.join(',')),
   );
 
   const openPayMonths = [
-    ...new Set(
-      (input.openPayMonths ?? [])
-        .map((m) => normaliseText(m))
-        .filter(isNonNullString),
-    ),
+    ...new Set((input.openPayMonths ?? []).map((m) => normaliseText(m)).filter(isNonNullString)),
   ].sort(compareText);
 
   const reprocessingEntries: ReprocessingEntry[] = [];
   for (const { employeeId, reasons } of reprocessingByEmployee) {
     for (const payMonth of openPayMonths) {
-      reprocessingEntries.push({
-        employeeId,
-        payMonth,
-        reasons: [...reasons].sort(compareText),
-      });
+      reprocessingEntries.push({ employeeId, payMonth, reasons: [...reasons].sort(compareText) });
     }
   }
 
-  const differingSources = sourceComparisons.filter(
-    (c) => c.status === "differs",
-  );
-  const differingThresholds = thresholdComparisons.filter(
-    (c) => c.status === "differs",
-  );
+  const differingSources = sourceComparisons.filter((c) => c.status === 'differs');
+  const differingThresholds = thresholdComparisons.filter((c) => c.status === 'differs');
   const employeeCount = sourceComparisons.length;
 
   return {
@@ -858,21 +802,17 @@ export function buildAttendanceRuleMigrationReconciliation(
       comparisons: sourceComparisons,
       differing: differingSources,
       differingEmployeeIds: differingSources.map((c) => c.employeeId),
-      matchedCount: sourceComparisons.filter((c) => c.status === "match")
-        .length,
+      matchedCount: sourceComparisons.filter((c) => c.status === 'match').length,
       differingCount: differingSources.length,
       unresolvedEmployeeIds: sourceComparisons
-        .filter((c) => c.status === "proposed_unresolved")
+        .filter((c) => c.status === 'proposed_unresolved')
         .map((c) => c.employeeId),
-      unresolvedCount: sourceComparisons.filter(
-        (c) => c.status === "proposed_unresolved",
-      ).length,
+      unresolvedCount: sourceComparisons.filter((c) => c.status === 'proposed_unresolved').length,
       existingUnknownEmployeeIds: sourceComparisons
-        .filter((c) => c.status === "existing_unknown")
+        .filter((c) => c.status === 'existing_unknown')
         .map((c) => c.employeeId),
-      existingUnknownCount: sourceComparisons.filter(
-        (c) => c.status === "existing_unknown",
-      ).length,
+      existingUnknownCount: sourceComparisons.filter((c) => c.status === 'existing_unknown')
+        .length,
     },
 
     // criterion 15.9
@@ -880,21 +820,18 @@ export function buildAttendanceRuleMigrationReconciliation(
       comparisons: thresholdComparisons,
       differing: differingThresholds,
       differingEmployeeIds: differingThresholds.map((c) => c.employeeId),
-      matchedCount: thresholdComparisons.filter((c) => c.status === "match")
-        .length,
+      matchedCount: thresholdComparisons.filter((c) => c.status === 'match').length,
       differingCount: differingThresholds.length,
       unresolvedEmployeeIds: thresholdComparisons
-        .filter((c) => c.status === "proposed_unresolved")
+        .filter((c) => c.status === 'proposed_unresolved')
         .map((c) => c.employeeId),
-      unresolvedCount: thresholdComparisons.filter(
-        (c) => c.status === "proposed_unresolved",
-      ).length,
+      unresolvedCount: thresholdComparisons.filter((c) => c.status === 'proposed_unresolved')
+        .length,
       existingUnknownEmployeeIds: thresholdComparisons
-        .filter((c) => c.status === "existing_unknown")
+        .filter((c) => c.status === 'existing_unknown')
         .map((c) => c.employeeId),
-      existingUnknownCount: thresholdComparisons.filter(
-        (c) => c.status === "existing_unknown",
-      ).length,
+      existingUnknownCount: thresholdComparisons.filter((c) => c.status === 'existing_unknown')
+        .length,
     },
 
     // criterion 15.13
@@ -904,8 +841,7 @@ export function buildAttendanceRuleMigrationReconciliation(
       holds:
         violations.length === 0 &&
         undeterminedEmployeeIds.length === 0 &&
-        unchangedEmployeeIds.length + changedEmployeeIds.length ===
-          employeeCount,
+        unchangedEmployeeIds.length + changedEmployeeIds.length === employeeCount,
       unchangedEmployeeIds,
       unchangedCount: unchangedEmployeeIds.length,
       changedEmployeeIds,
@@ -914,9 +850,7 @@ export function buildAttendanceRuleMigrationReconciliation(
       undeterminedCount: undeterminedEmployeeIds.length,
       violations,
       evaluatedEmployeeCount:
-        unchangedEmployeeIds.length +
-        changedEmployeeIds.length +
-        undeterminedEmployeeIds.length,
+        unchangedEmployeeIds.length + changedEmployeeIds.length + undeterminedEmployeeIds.length,
     },
 
     // criterion 15.15
@@ -925,9 +859,7 @@ export function buildAttendanceRuleMigrationReconciliation(
       employeeIds: missingEmployees.map((e) => e.employeeId),
       employeeCount: missingEmployees.length,
       byDimension: DIMENSION_PRIORITY_ORDER.map((dimension) => {
-        const employeeIds = [...(missingByDimension.get(dimension) ?? [])].sort(
-          compareText,
-        );
+        const employeeIds = [...(missingByDimension.get(dimension) ?? [])].sort(compareText);
         return {
           dimension,
           employeeIds,
@@ -957,12 +889,12 @@ function isNonNullString(value: string | null): value is string {
 function sourceComparisonSignature(c: AttendanceSourceComparison): string {
   return [
     c.status,
-    c.existingAttendanceSource ?? "-",
-    c.proposedAttendanceSource ?? "-",
-    c.proposedRuleProposalKey ?? "-",
+    c.existingAttendanceSource ?? '-',
+    c.proposedAttendanceSource ?? '-',
+    c.proposedRuleProposalKey ?? '-',
     String(c.proposedSpecificityCount),
-    c.missingDimensions.join(","),
-  ].join("|");
+    c.missingDimensions.join(','),
+  ].join('|');
 }
 
 function thresholdComparisonSignature(c: DayThresholdComparison): string {
@@ -970,11 +902,11 @@ function thresholdComparisonSignature(c: DayThresholdComparison): string {
     c.status,
     c.existingThresholds
       ? `${c.existingThresholds.fullDayMinutes}/${c.existingThresholds.halfDayMinutes}/${c.existingThresholds.graceMinutes}`
-      : "-",
+      : '-',
     c.proposedThresholds
       ? `${c.proposedThresholds.fullDayMinutes}/${c.proposedThresholds.halfDayMinutes}/${c.proposedThresholds.graceMinutes}`
-      : "-",
-    c.proposedRuleProposalKey ?? "-",
-    c.differingFields.join(","),
-  ].join("|");
+      : '-',
+    c.proposedRuleProposalKey ?? '-',
+    c.differingFields.join(','),
+  ].join('|');
 }

@@ -1,20 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: dbExecute, query: dbExecute },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute, query: dbExecute } }));
 
 const { costCentreService } = await import("../org.service.js");
 
 function listQuery() {
-  const call = dbExecute.mock.calls.find(([sql]) =>
-    /FROM cost_centre_master cc/i.test(String(sql)),
-  );
-  return {
-    sql: String(call?.[0] ?? ""),
-    params: (call?.[1] ?? []) as unknown[],
-  };
+  const call = dbExecute.mock.calls.find(([sql]) => /FROM cost_centre_master cc/i.test(String(sql)));
+  return { sql: String(call?.[0] ?? ""), params: (call?.[1] ?? []) as unknown[] };
 }
 
 beforeEach(() => {

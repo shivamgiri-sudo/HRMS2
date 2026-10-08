@@ -17,10 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 import { withBulkLockRetry } from "../lock-retry.js";
 
 /** Shaped like a real mysql2 error, which carries both `code` and `errno`. */
-function mysqlError(
-  code: string,
-  errno: number,
-): Error & { code: string; errno: number } {
+function mysqlError(code: string, errno: number): Error & { code: string; errno: number } {
   return Object.assign(new Error(code), { code, errno });
 }
 
@@ -40,9 +37,7 @@ describe("withBulkLockRetry", () => {
     // Some driver paths surface the numeric errno without the symbolic code, so matching
     // only on `code` would silently miss exactly the rows this fix is for.
     const attempt = vi.fn<[], Promise<string>>();
-    attempt
-      .mockRejectedValueOnce(mysqlError("", 1205))
-      .mockResolvedValueOnce("applied");
+    attempt.mockRejectedValueOnce(mysqlError("", 1205)).mockResolvedValueOnce("applied");
 
     await expect(withBulkLockRetry(attempt)).resolves.toBe("applied");
     expect(attempt).toHaveBeenCalledTimes(2);
@@ -65,9 +60,7 @@ describe("withBulkLockRetry", () => {
   it("gives up on a deadlock rather than spinning for ever", async () => {
     const attempt = vi.fn<[], Promise<never>>().mockRejectedValue(deadlock());
 
-    await expect(withBulkLockRetry(attempt)).rejects.toMatchObject({
-      errno: 1213,
-    });
+    await expect(withBulkLockRetry(attempt)).rejects.toMatchObject({ errno: 1213 });
     // Bounded: a genuinely contended row has to surface as a failed row, not hang the batch.
     expect(attempt).toHaveBeenCalledTimes(5);
   });
@@ -75,9 +68,7 @@ describe("withBulkLockRetry", () => {
   it("spends only one retry on a lock wait timeout, because each one costs 60s", async () => {
     const attempt = vi.fn<[], Promise<never>>().mockRejectedValue(lockWait());
 
-    await expect(withBulkLockRetry(attempt)).rejects.toMatchObject({
-      errno: 1205,
-    });
+    await expect(withBulkLockRetry(attempt)).rejects.toMatchObject({ errno: 1205 });
     expect(attempt).toHaveBeenCalledTimes(2);
   });
 
@@ -88,9 +79,7 @@ describe("withBulkLockRetry", () => {
       .fn<[], Promise<never>>()
       .mockRejectedValue(new Error("session_date must be a date"));
 
-    await expect(withBulkLockRetry(attempt)).rejects.toThrow(
-      "session_date must be a date",
-    );
+    await expect(withBulkLockRetry(attempt)).rejects.toThrow("session_date must be a date");
     expect(attempt).toHaveBeenCalledTimes(1);
   });
 

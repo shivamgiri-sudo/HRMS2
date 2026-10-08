@@ -1,10 +1,6 @@
-export type PiiFieldType =
-  "aadhaar" | "pan" | "bank_account" | "mobile" | "email" | "upi_id";
+export type PiiFieldType = "aadhaar" | "pan" | "bank_account" | "mobile" | "email" | "upi_id";
 
-export function maskPii(
-  value: string | null | undefined,
-  type: PiiFieldType,
-): string {
+export function maskPii(value: string | null | undefined, type: PiiFieldType): string {
   if (!value) return "";
   switch (type) {
     case "aadhaar":

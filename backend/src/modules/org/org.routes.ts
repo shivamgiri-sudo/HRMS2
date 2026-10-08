@@ -6,16 +6,9 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import * as XLSX from "xlsx";
 import {
-  branchService,
-  departmentService,
-  lobService,
-  designationService,
-  campaignService,
-  costCentreService,
-  gradeBandService,
-  locationService,
-  policyService,
-  processService,
+  branchService, departmentService, lobService, designationService,
+  campaignService, costCentreService, gradeBandService,
+  locationService, policyService, processService,
 } from "./org.service.js";
 import { resolveFinanceBranchScopeSet } from "../finance/finance-access-scope.js";
 import { branchAllowed, resolveCallerBranchScope } from "./branchScope.js";
@@ -49,10 +42,7 @@ const OUT_OF_BRANCH = { error: "Forbidden: this branch is outside your scope" };
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -71,36 +61,23 @@ router.use(requireAuth);
  * finance_head and payroll_head only. Everyone else - HR, admin, branch heads, recruiters - is held
  * to the branch(es) they are assigned to.
  */
-const ALL_BRANCH_COST_CENTRE_ROLES = new Set([
-  "super_admin",
-  "finance_head",
-  "payroll_head",
-]);
+const ALL_BRANCH_COST_CENTRE_ROLES = new Set(["super_admin", "finance_head", "payroll_head"]);
 
 /**
  * The branch ids a caller may see cost centres for. undefined = every branch. An empty array means
  * "no branch" and the service turns it into an empty result - never into "no filter".
  */
-async function costCentreBranchEntitlement(
-  req: Request,
-): Promise<string[] | undefined> {
+async function costCentreBranchEntitlement(req: Request): Promise<string[] | undefined> {
   const auth = (req as any).authUser;
   if (!auth?.id) return [];
-  const roles = [
-    auth.role,
-    ...(Array.isArray(auth.roles) ? auth.roles : []),
-    ...((req as any).userRoles ?? []),
-  ]
+  const roles = [auth.role, ...(Array.isArray(auth.roles) ? auth.roles : []), ...((req as any).userRoles ?? [])]
     .filter((r): r is string => typeof r === "string")
     .map((r) => r.toLowerCase());
   if (roles.some((r) => ALL_BRANCH_COST_CENTRE_ROLES.has(r))) return undefined;
   try {
     // Deliberately no roles passed: the finance resolver would otherwise widen admin / hr_admin / ceo
     // to every branch, which is not what Org Masters is allowed to do.
-    const scope = await resolveFinanceBranchScopeSet({
-      userId: String(auth.id),
-      userRoles: [],
-    });
+    const scope = await resolveFinanceBranchScopeSet({ userId: String(auth.id), userRoles: [] });
     return scope.mode === "all" ? [] : scope.branchIds;
   } catch {
     return [];
@@ -110,10 +87,7 @@ async function costCentreBranchEntitlement(
 function orgActor(req: Request): { id: string; role: string } | undefined {
   const auth = (req as any).authUser;
   if (!auth?.id) return undefined;
-  return {
-    id: String(auth.id),
-    role: String(auth.role ?? (req as any).userRoles?.[0] ?? "unknown"),
-  };
+  return { id: String(auth.id), role: String(auth.role ?? (req as any).userRoles?.[0] ?? "unknown") };
 }
 
 /**
@@ -154,7 +128,7 @@ const isDepartmentHeadAssignment = (body: unknown): boolean => {
 };
 
 const requireDepartmentStructure = requireRole("super_admin");
-const requireDepartmentHead = requireRole("admin", "hr");
+const requireDepartmentHead      = requireRole("admin", "hr");
 
 const requireDepartmentWrite: RequestHandler = (req, res, next) =>
   isDepartmentHeadAssignment(req.body)
@@ -171,9 +145,9 @@ function buildCrud(
     delete(id: string): any;
     setStatus?(id: string, status: number): any;
   },
-  guards: CrudGuards = {},
+  guards: CrudGuards = {}
 ) {
-  const writeGuard = guards.write ?? requireRole("admin", "hr");
+  const writeGuard  = guards.write  ?? requireRole("admin", "hr");
   const removeGuard = guards.remove ?? requireRole("admin");
   const statusGuard = guards.status ?? requireRole("admin", "hr");
   router.get(path, h(async (req: Request, res: Response) => {
@@ -234,23 +208,7 @@ function buildCrud(
       }
       await svc.setStatus!(req.params.id, active_status);
       res.json({ ok: true });
-    }),
-  );
-  if (svc.setStatus) {
-    router.patch(
-      `${path}/:id/status`,
-      statusGuard,
-      h(async (req: Request, res: Response) => {
-        const { active_status } = req.body;
-        if (active_status !== 0 && active_status !== 1) {
-          return res
-            .status(400)
-            .json({ error: "active_status must be 0 or 1" });
-        }
-        await svc.setStatus!(req.params.id, active_status);
-        res.json({ ok: true });
-      }),
-    );
+    }));
   }
 }
 
@@ -298,30 +256,11 @@ router.get("/filter-options", h(async (req: Request, res: Response) => {
       costCentres: scopedCostCentres,
       designations,
       locations,
-    ] = await Promise.all([
-      managersPromise,
-      branchService.list(),
-      departmentService.list(),
-      processService.list(),
-      costCentreService.list({ active_status: 1, limit: 500 }),
-      designationService.list(),
-      locationService.list(),
-    ]);
-    res.json({
-      success: true,
-      data: {
-        branches,
-        departments,
-        processes,
-        costCentres,
-        designations,
-        locations,
-        managers,
-      },
-      meta: { activeOnly: true },
-    });
-  }),
-);
+      managers,
+    },
+    meta: { activeOnly: true },
+  });
+}));
 
 router.get("/", h(async (req: Request, res: Response) => {
   const [
@@ -361,128 +300,79 @@ router.get("/", h(async (req: Request, res: Response) => {
       cost_centres: await restrictToCallerBranches(req, costCentres as any[], "branch_id"),
       grade_bands: gradeBands,
       campaigns,
-    ] = await Promise.all([
-      branchService.list(),
-      departmentService.list(),
-      designationService.list(),
-      processService.list(),
-      lobService.list(),
-      locationService.list(),
-      policyService.list(),
-      costCentreService.list({ active_status: 1, limit: 500 }),
-      gradeBandService.list(),
-      campaignService.list(),
-    ]);
-
-    return res.json({
-      success: true,
-      data: {
-        branches,
-        departments,
-        designations,
-        processes,
-        lobs,
-        locations,
-        policies,
-        cost_centres: costCentres,
-        grade_bands: gradeBands,
-        campaigns,
-      },
-    });
-  }),
-);
+    },
+  });
+}));
 
 // Call Centre Code: register GET before buildCrud to avoid /:id swallowing the static segment
-router.get(
-  "/branches/cc-code-map",
+router.get("/branches/cc-code-map",
   requireAuth,
   requireRole("admin", "hr", "super_admin"),
   h(async (_req: any, res: any) => {
     const data = await branchService.getCallCentreCodeMap();
     res.json({ data });
-  }),
+  })
 );
 
-buildCrud("/branches", branchService);
-buildCrud("/departments", departmentService, {
-  write: requireDepartmentWrite,
+buildCrud("/branches",      branchService);
+buildCrud("/departments",   departmentService, {
+  write:  requireDepartmentWrite,
   remove: requireRole("super_admin"),
   status: requireRole("super_admin"),
 });
-buildCrud("/lobs", lobService);
-buildCrud("/designations", designationService);
-buildCrud("/campaigns", campaignService);
-buildCrud("/grade-bands", gradeBandService);
-buildCrud("/locations", locationService);
-buildCrud("/policies", policyService);
-buildCrud("/processes", processService);
+buildCrud("/lobs",          lobService);
+buildCrud("/designations",  designationService);
+buildCrud("/campaigns",     campaignService);
+buildCrud("/grade-bands",   gradeBandService);
+buildCrud("/locations",     locationService);
+buildCrud("/policies",      policyService);
+buildCrud("/processes",     processService);
 
 // Cost-centres: migration status (must be before :id route)
-router.get(
-  "/cost-centres/migration-status",
-  h(async (_req: Request, res: Response) => {
-    const counts = await costCentreService.countOrphanedRecords();
-    const { total, orphaned } = counts;
-    // Name only the fields that are actually missing. The old message always listed all four,
-    // so it told users to go and assign a Branch to 406 cost centres that already have one.
-    const gaps = [
-      counts.missingClient ? `Client (${counts.missingClient})` : null,
-      counts.missingLob ? `LOB (${counts.missingLob})` : null,
-      counts.missingBranch ? `Branch (${counts.missingBranch})` : null,
-      counts.missingProcess ? `Process (${counts.missingProcess})` : null,
-    ]
-      .filter(Boolean)
-      .join(", ");
-    res.json({
-      success: true,
-      data: {
-        ...counts,
-        migrationComplete: orphaned === 0,
-        // Creating a cost centre is no longer blocked by this backlog — see costCentreService.create.
-        blocksCreate: false,
-        message:
-          orphaned > 0
-            ? `${orphaned} of ${total} cost centre(s) are missing a relationship — ${gaps}. New cost centres can still be created.`
-            : "All cost centres have required relationships.",
-      },
-    });
-  }),
-);
+router.get("/cost-centres/migration-status", h(async (_req: Request, res: Response) => {
+  const counts = await costCentreService.countOrphanedRecords();
+  const { total, orphaned } = counts;
+  // Name only the fields that are actually missing. The old message always listed all four,
+  // so it told users to go and assign a Branch to 406 cost centres that already have one.
+  const gaps = [
+    counts.missingClient  ? `Client (${counts.missingClient})`   : null,
+    counts.missingLob     ? `LOB (${counts.missingLob})`         : null,
+    counts.missingBranch  ? `Branch (${counts.missingBranch})`   : null,
+    counts.missingProcess ? `Process (${counts.missingProcess})` : null,
+  ].filter(Boolean).join(", ");
+  res.json({
+    success: true,
+    data: {
+      ...counts,
+      migrationComplete: orphaned === 0,
+      // Creating a cost centre is no longer blocked by this backlog — see costCentreService.create.
+      blocksCreate: false,
+      message: orphaned > 0
+        ? `${orphaned} of ${total} cost centre(s) are missing a relationship — ${gaps}. New cost centres can still be created.`
+        : "All cost centres have required relationships.",
+    },
+  });
+}));
 
 // Cost-centres: list with full relationship joins
-router.get(
-  "/cost-centres",
-  h(async (req: Request, res: Response) => {
-    const {
-      q,
-      active_status,
-      page,
-      limit,
-      branch_id,
-      client_id,
-      lob_id,
-      process_id,
-    } = req.query;
-    const options = {
-      branchIds: await costCentreBranchEntitlement(req),
-      q: q as string | undefined,
-      active_status: active_status as string | undefined,
-      page: page ? parseInt(page as string, 10) : undefined,
-      limit: limit ? parseInt(limit as string, 10) : undefined,
-      branch_id: branch_id as string | undefined,
-      client_id: client_id as string | undefined,
-      lob_id: lob_id as string | undefined,
-      process_id: process_id as string | undefined,
-    };
-    const rows = await costCentreService.list(options);
-    // truncated rides alongside data rather than wrapping it, so every existing caller that reads
-    // response.data keeps working unchanged while a caller that cares can warn the user.
-    return res.json({
-      data: rows,
-      truncated: Boolean((rows as { truncated?: boolean }).truncated),
-    });
-  }),
-);
+router.get("/cost-centres", h(async (req: Request, res: Response) => {
+  const { q, active_status, page, limit, branch_id, client_id, lob_id, process_id } = req.query;
+  const options = {
+    branchIds: await costCentreBranchEntitlement(req),
+    q: q as string | undefined,
+    active_status: active_status as string | undefined,
+    page: page ? parseInt(page as string, 10) : undefined,
+    limit: limit ? parseInt(limit as string, 10) : undefined,
+    branch_id: branch_id as string | undefined,
+    client_id: client_id as string | undefined,
+    lob_id: lob_id as string | undefined,
+    process_id: process_id as string | undefined,
+  };
+  const rows = await costCentreService.list(options);
+  // truncated rides alongside data rather than wrapping it, so every existing caller that reads
+  // response.data keeps working unchanged while a caller that cares can warn the user.
+  return res.json({ data: rows, truncated: Boolean((rows as { truncated?: boolean }).truncated) });
+}));
 
 // Cost-centres: billing summary for last 3 months (must be before /:id route)
 router.get("/cost-centres/billing-summary", h(async (req: Request, res: Response) => {
@@ -517,25 +407,21 @@ router.get("/cost-centres/billing-summary", h(async (req: Request, res: Response
     if (!map[key].bill_client_name && row.bill_client_name) {
       map[key].bill_client_name = row.bill_client_name;
     }
-    res.json({ success: true, data: map });
-  }),
-);
+  }
+  res.json({ success: true, data: map });
+}));
 
-router.get(
-  "/cost-centres/:id",
-  h(async (req: Request, res: Response) => {
-    const item = await costCentreService.getById(req.params.id);
-    if (!item) return res.status(404).json({ error: "Not found" });
-    // Same branch entitlement as the list: another branch's cost centre answers as not found.
-    const entitled = await costCentreBranchEntitlement(req);
-    const itemBranch =
-      (item as { branch_id?: string | null }).branch_id ?? null;
-    if (entitled && (!itemBranch || !entitled.includes(String(itemBranch)))) {
-      return res.status(404).json({ error: "Not found" });
-    }
-    res.json({ data: item });
-  }),
-);
+router.get("/cost-centres/:id", h(async (req: Request, res: Response) => {
+  const item = await costCentreService.getById(req.params.id);
+  if (!item) return res.status(404).json({ error: "Not found" });
+  // Same branch entitlement as the list: another branch's cost centre answers as not found.
+  const entitled = await costCentreBranchEntitlement(req);
+  const itemBranch = (item as { branch_id?: string | null }).branch_id ?? null;
+  if (entitled && (!itemBranch || !entitled.includes(String(itemBranch)))) {
+    return res.status(404).json({ error: "Not found" });
+  }
+  res.json({ data: item });
+}));
 
 router.post("/cost-centres", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
   if (!(await mayWriteCostCentre(req, req.body?.branch_id))) return res.status(403).json(OUT_OF_BRANCH);
@@ -560,14 +446,10 @@ router.put("/cost-centres/:id/migrate", requireRole("admin", "hr"), h(async (req
   res.json({ data: item, message: "Cost centre migrated successfully" });
 }));
 
-router.delete(
-  "/cost-centres/:id",
-  requireRole("admin"),
-  h(async (req: Request, res: Response) => {
-    await costCentreService.delete(req.params.id);
-    res.json({ ok: true });
-  }),
-);
+router.delete("/cost-centres/:id", requireRole("admin"), h(async (req: Request, res: Response) => {
+  await costCentreService.delete(req.params.id);
+  res.json({ ok: true });
+}));
 
 router.patch("/cost-centres/:id/status", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
   const { active_status } = req.body;
@@ -598,11 +480,10 @@ router.get("/employees-by-cost-centre", h(async (req: Request, res: Response) =>
        AND e.active_status = 1
        AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
      ORDER BY full_name ASC`,
-      [costCentreId],
-    );
-    res.json({ ok: true, data: rows });
-  }),
-);
+    [costCentreId]
+  );
+  res.json({ ok: true, data: rows });
+}));
 
 // Employees scoped to a branch (for reporting manager dropdown)
 router.get("/employees-by-branch", h(async (req: Request, res: Response) => {
@@ -620,15 +501,13 @@ router.get("/employees-by-branch", h(async (req: Request, res: Response) => {
        AND e.active_status = 1
        AND LOWER(COALESCE(e.employment_status,'active')) = 'active'
      ORDER BY full_name ASC`,
-      [branchId],
-    );
-    res.json({ ok: true, data: rows });
-  }),
-);
+    [branchId]
+  );
+  res.json({ ok: true, data: rows });
+}));
 
 // Call Centre Code: PATCH can safely follow buildCrud (different HTTP method, no collision)
-router.patch(
-  "/branches/:id/call-centre-code",
+router.patch("/branches/:id/call-centre-code",
   requireAuth,
   requireRole("admin", "hr", "super_admin"),
   h(async (req: any, res: any) => {
@@ -639,12 +518,11 @@ router.patch(
     if (!branchAllowed(await callerBranches(req), req.params.id)) return res.status(403).json(OUT_OF_BRANCH);
     await branchService.updateCallCentreCode(req.params.id, ccCode.trim().toUpperCase());
     res.json({ success: true });
-  }),
+  })
 );
 
 // ── Excel export: branches + processes + cost centres ─────────────────────────
-router.get(
-  "/export/masters",
+router.get("/export/masters",
   requireAuth,
   requireRole("admin", "hr"),
   h(async (req: Request, res: Response) => {
@@ -663,62 +541,44 @@ router.get(
     const branchRows = (branches as any[]).map((b) => ({
       "Branch Code": b.branch_code ?? "",
       "Branch Name": b.branch_name ?? "",
-      City: b.city ?? "",
-      State: b.state ?? "",
+      "City": b.city ?? "",
+      "State": b.state ?? "",
       "Call Centre Code": b.call_centre_code ?? "",
-      Status: Number(b.active_status) === 1 ? "Active" : "Inactive",
+      "Status": Number(b.active_status) === 1 ? "Active" : "Inactive",
     }));
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(branchRows),
-      "Branch Master",
-    );
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(branchRows), "Branch Master");
 
     // Sheet 2: Process Master
     const processRows = (processes as any[]).map((p) => ({
       "Process Code": p.process_code ?? "",
       "Process Name": p.process_name ?? "",
       "Client Name": p.client_name ?? "",
-      Branch: p.branch_name ?? "",
+      "Branch": p.branch_name ?? "",
       "Business LOB": p.business_lob ?? "",
       "Workload Type": p.workload_type ?? "",
-      Status: Number(p.active_status) === 1 ? "Active" : "Inactive",
+      "Status": Number(p.active_status) === 1 ? "Active" : "Inactive",
     }));
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(processRows),
-      "Process Master",
-    );
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(processRows), "Process Master");
 
     // Sheet 3: Cost Centre Master (with relationship names)
     const ccRows = (costCentres as any[]).map((c) => ({
       "Cost Centre Code": c.cost_centre_code ?? "",
       "Cost Centre Name": c.cost_centre_name ?? "",
-      Client: c.client_name ?? "",
-      LOB: c.lob_name ?? "",
-      Branch: c.branch_name ?? "",
-      Process: c.process_name ?? "",
+      "Client": c.client_name ?? "",
+      "LOB": c.lob_name ?? "",
+      "Branch": c.branch_name ?? "",
+      "Process": c.process_name ?? "",
       "Needs Migration": c.needs_migration ? "Yes" : "No",
-      Status: Number(c.active_status) === 1 ? "Active" : "Inactive",
+      "Status": Number(c.active_status) === 1 ? "Active" : "Inactive",
     }));
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.json_to_sheet(ccRows),
-      "Cost Centre Master",
-    );
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ccRows), "Cost Centre Master");
 
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
     const today = new Date().toISOString().slice(0, 10);
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="org-masters-${today}.xlsx"`,
-    );
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="org-masters-${today}.xlsx"`);
     res.send(buf);
-  }),
+  })
 );
 
 export { router as orgRouter };

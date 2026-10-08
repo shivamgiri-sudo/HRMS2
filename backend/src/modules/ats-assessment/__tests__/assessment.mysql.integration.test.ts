@@ -62,10 +62,7 @@ integrationDescribe("ATS assessment MySQL lifecycle", () => {
     expect(assignment.assessment.maxAssessmentAttempts).toBe(1);
     expect(assignment.assessment.maxTypingAttempts).toBe(2);
 
-    const repeatedLookup = await assessmentService.lookupOrAssignAssessment({
-      queueToken,
-      mobile,
-    });
+    const repeatedLookup = await assessmentService.lookupOrAssignAssessment({ queueToken, mobile });
     expect(repeatedLookup.assessment.id).toBe(assignment.assessment.id);
 
     const started = await assessmentService.startAssessment(assignment.token);
@@ -84,33 +81,21 @@ integrationDescribe("ATS assessment MySQL lifecycle", () => {
       );
     }
 
-    const typingOne = await assessmentService.startTypingAttempt(
-      assignment.token,
-    );
+    const typingOne = await assessmentService.startTypingAttempt(assignment.token);
     const typingOneResult = await assessmentService.submitTypingAttempt(
       assignment.token,
       typingOne.id,
-      {
-        typedText: definition.typing.passage,
-        backspaceCount: 0,
-        pasteAttempts: 0,
-      },
+      { typedText: definition.typing.passage, backspaceCount: 0, pasteAttempts: 0 },
     );
     expect(typingOneResult.attemptNo).toBe(1);
     expect(typingOneResult.accuracy).toBe(100);
     expect(typingOneResult.attemptsRemaining).toBe(1);
 
-    const typingTwo = await assessmentService.startTypingAttempt(
-      assignment.token,
-    );
+    const typingTwo = await assessmentService.startTypingAttempt(assignment.token);
     const typingTwoResult = await assessmentService.submitTypingAttempt(
       assignment.token,
       typingTwo.id,
-      {
-        typedText: `${definition.typing.passage} extra`,
-        backspaceCount: 1,
-        pasteAttempts: 0,
-      },
+      { typedText: `${definition.typing.passage} extra`, backspaceCount: 1, pasteAttempts: 0 },
     );
     expect(typingTwoResult.attemptNo).toBe(2);
     expect(typingTwoResult.attemptsRemaining).toBe(0);
@@ -119,17 +104,13 @@ integrationDescribe("ATS assessment MySQL lifecycle", () => {
       assessmentService.startTypingAttempt(assignment.token),
     ).rejects.toMatchObject({ code: "TYPING_ATTEMPTS_USED" });
 
-    const submitted = await assessmentService.submitAssessment(
-      assignment.token,
-    );
+    const submitted = await assessmentService.submitAssessment(assignment.token);
     expect(submitted.status).toBe("completed");
     expect(submitted.result).toBe("pass");
     expect(submitted.manualReviewRequired).toBe(false);
     expect(submitted.typing?.attemptNo).toBe(1);
 
-    const duplicateSubmit = await assessmentService.submitAssessment(
-      assignment.token,
-    );
+    const duplicateSubmit = await assessmentService.submitAssessment(assignment.token);
     expect(duplicateSubmit.alreadySubmitted).toBe(true);
 
     const [attemptRows] = await db.execute<any[]>(
@@ -148,19 +129,13 @@ integrationDescribe("ATS assessment MySQL lifecycle", () => {
       "SELECT status, queue_status FROM ats_queue_token WHERE id = ?",
       [queueTokenId],
     );
-    expect(queueRows[0]).toMatchObject({
-      status: "active",
-      queue_status: "waiting",
-    });
+    expect(queueRows[0]).toMatchObject({ status: "active", queue_status: "waiting" });
 
     const [candidateRows] = await db.execute<any[]>(
       "SELECT status, current_stage FROM ats_candidate WHERE id = ?",
       [candidateId],
     );
-    expect(candidateRows[0]).toMatchObject({
-      status: "Waiting",
-      current_stage: "Arrived",
-    });
+    expect(candidateRows[0]).toMatchObject({ status: "Waiting", current_stage: "Arrived" });
   });
 });
 
@@ -194,17 +169,9 @@ integrationDescribe("ATS assessment device gate", () => {
   });
 
   afterAll(async () => {
-    await db.execute(
-      "DELETE FROM ats_assessment_audit_log WHERE assessment_id IN (SELECT id FROM ats_candidate_assessment WHERE candidate_id = ?)",
-      [candidateId],
-    );
-    await db.execute(
-      "DELETE FROM ats_candidate_assessment WHERE candidate_id = ?",
-      [candidateId],
-    );
-    await db.execute("DELETE FROM ats_queue_token WHERE candidate_id = ?", [
-      candidateId,
-    ]);
+    await db.execute("DELETE FROM ats_assessment_audit_log WHERE assessment_id IN (SELECT id FROM ats_candidate_assessment WHERE candidate_id = ?)", [candidateId]);
+    await db.execute("DELETE FROM ats_candidate_assessment WHERE candidate_id = ?", [candidateId]);
+    await db.execute("DELETE FROM ats_queue_token WHERE candidate_id = ?", [candidateId]);
     await db.execute("DELETE FROM ats_candidate WHERE id = ?", [candidateId]);
   });
 
@@ -228,18 +195,12 @@ integrationDescribe("ATS assessment device gate", () => {
     const assignment = await assessmentService.lookupOrAssignAssessment({
       queueToken,
       mobile,
-      meta: {
-        actorType: "candidate",
-        ip: "127.0.0.1",
-        userAgent: "vitest-desktop",
-      },
+      meta: { actorType: "candidate", ip: "127.0.0.1", userAgent: "vitest-desktop" },
     });
     expect(assignment.assessment.status).toBe("assigned");
 
     await expect(
-      assessmentService.startAssessment(assignment.token, {
-        userAgent: MOBILE_UA,
-      }),
+      assessmentService.startAssessment(assignment.token, { userAgent: MOBILE_UA }),
     ).rejects.toMatchObject({ code: "DEVICE_NOT_ALLOWED" });
 
     // Still assigned, not started — the rejected attempt made no progress.
@@ -259,14 +220,10 @@ integrationDescribe("ATS assessment device gate", () => {
         mobile,
         meta: { actorType: "candidate", ip: "127.0.0.1", userAgent: MOBILE_UA },
       });
-      const started = await assessmentService.startAssessment(
-        assignment.token,
-        { userAgent: MOBILE_UA },
-      );
+      const started = await assessmentService.startAssessment(assignment.token, { userAgent: MOBILE_UA });
       expect(started.assessment.status).toBe("in_progress");
     } finally {
-      if (original === undefined)
-        delete process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED;
+      if (original === undefined) delete process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED;
       else process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED = original;
     }
   });

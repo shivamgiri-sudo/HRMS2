@@ -1,16 +1,16 @@
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import { querySource } from "../../db/sourceDb.js";
-import { TtlCache } from "../../shared/ttlCache.js";
-import { getLegacyPool } from "../../db/legacyDb.js";
-import { getIstDateString, getIstMonthStart } from "../../utils/dateUtils.js";
-import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
-import { logger } from "../../lib/logger.js";
-import { LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from "../../shared/attendanceStatus.js";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { querySource } from '../../db/sourceDb.js';
+import { TtlCache } from '../../shared/ttlCache.js';
+import { getLegacyPool } from '../../db/legacyDb.js';
+import { getIstDateString, getIstMonthStart } from '../../utils/dateUtils.js';
+import { getPolicyValue } from '../policy-engine/policy-engine.cache.js';
+import { logger } from '../../lib/logger.js';
+import { LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from '../../shared/attendanceStatus.js';
 
 export interface InterventionFlag {
   type: string;
-  severity: "critical" | "warning" | "info";
+  severity: 'critical' | 'warning' | 'info';
   detail: string;
   action: string;
 }
@@ -26,25 +26,13 @@ export interface DailyOpsPulse {
   total_calls: number;
   avg_aht_seconds: number;
   avg_shrinkage_pct: number;
-  shrinkage_breakdown: {
-    lunch: number;
-    bio: number;
-    training: number;
-    qa: number;
-    idle: number;
-  };
+  shrinkage_breakdown: { lunch: number; bio: number; training: number; qa: number; idle: number };
   // Org-wide weighted figure above is the capacity/forecasting number.
   // Per-agent-average variant kept for coaching use ("is the typical agent
   // over-using breaks") — a different question, deliberately not conflated
   // into the primary field. See DECIDED comment in getDailyOpsPulse.
   avg_shrinkage_pct_per_agent: number;
-  shrinkage_breakdown_per_agent: {
-    lunch: number;
-    bio: number;
-    training: number;
-    qa: number;
-    idle: number;
-  };
+  shrinkage_breakdown_per_agent: { lunch: number; bio: number; training: number; qa: number; idle: number };
   top_process: { name: string; calls: number; agent_count: number } | null;
   intervention_flags: InterventionFlag[];
 }
@@ -54,34 +42,21 @@ export interface DailyOpsPulse {
 // full query bundle (and a cold cache stampeded the DB). 30s matches the dashboards summary
 // metrics cache. Failures are never cached (see TtlCache.getOrCompute).
 const BI_CACHE_TTL_MS = 30_000;
-const biCache = new TtlCache<unknown>({
-  maxEntries: 100,
-  defaultTtlMs: BI_CACHE_TTL_MS,
-});
+const biCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: BI_CACHE_TTL_MS });
 
 /** Test seam: drop every cached BI payload. */
 export function resetBiCacheForTest(): void {
   biCache.clear();
 }
 
-export async function getDailyOpsPulse(
-  targetDate?: string,
-  branchIds?: string[],
-  processIds?: string[],
-): Promise<DailyOpsPulse> {
+export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[], processIds?: string[]): Promise<DailyOpsPulse> {
   const date = targetDate || getIstDateString(0);
-  const key = `pulse:${date}:${(branchIds ?? []).join(",")}:${(processIds ?? []).join(",")}`;
-  const { value } = await biCache.getOrCompute(key, () =>
-    computeDailyOpsPulse(date, branchIds, processIds),
-  );
+  const key = `pulse:${date}:${(branchIds ?? []).join(',')}:${(processIds ?? []).join(',')}`;
+  const { value } = await biCache.getOrCompute(key, () => computeDailyOpsPulse(date, branchIds, processIds));
   return value as DailyOpsPulse;
 }
 
-async function computeDailyOpsPulse(
-  date: string,
-  branchIds?: string[],
-  processIds?: string[],
-): Promise<DailyOpsPulse> {
+async function computeDailyOpsPulse(date: string, branchIds?: string[], processIds?: string[]): Promise<DailyOpsPulse> {
   // branchIds/processIds accepted for future scoped queries; currently the apr table
   // does not carry branch_id so the main APR aggregation remains org-wide.
 
@@ -119,18 +94,12 @@ async function computeDailyOpsPulse(
   // its own investigation): per-agent 2.69% vs weighted 2.39% on the same
   // 220 agents — different enough to matter for a capacity call.
   // Scheduled agents from attendance records — scoped to branch/process when provided
-  const attendScopeClause =
-    branchIds && branchIds.length > 0
-      ? ` AND employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => "?").join(",")}) AND active_status = 1)`
-      : processIds && processIds.length > 0
-        ? ` AND employee_id IN (SELECT id FROM employees WHERE process_id IN (${processIds.map(() => "?").join(",")}) AND active_status = 1)`
-        : "";
-  const attendScopeParams =
-    branchIds && branchIds.length > 0
-      ? branchIds
-      : processIds && processIds.length > 0
-        ? processIds
-        : [];
+  const attendScopeClause = branchIds && branchIds.length > 0
+    ? ` AND employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => "?").join(",")}) AND active_status = 1)`
+    : processIds && processIds.length > 0
+    ? ` AND employee_id IN (SELECT id FROM employees WHERE process_id IN (${processIds.map(() => "?").join(",")}) AND active_status = 1)`
+    : "";
+  const attendScopeParams = branchIds && branchIds.length > 0 ? branchIds : processIds && processIds.length > 0 ? processIds : [];
   // Fetched alongside `scheduled`, not sequentially — see scheduledDataReliable
   // below for why a baseline from the latest fully-processed day is needed.
   //
@@ -138,27 +107,21 @@ async function computeDailyOpsPulse(
   // all of them go out in one batch instead of five sequential round trips. `a.ReportDate`
   // is a DATE column: comparing it directly (was DATE(a.ReportDate) = ?) lets the primary key
   // (ReportDate, UserID, campaign_id) serve the lookup instead of scanning the table.
-  const [[attendRows], [baselineRows], [aprRows], [topProcRows], policyValues] =
-    await Promise.all([
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT COUNT(DISTINCT employee_id) AS scheduled
+  const [[attendRows], [baselineRows], [aprRows], [topProcRows], policyValues] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT employee_id) AS scheduled
        FROM attendance_daily_record
        WHERE record_date = ?${attendScopeClause}`,
-          [date, ...attendScopeParams],
-        )
-        .catch(() => [[{ scheduled: 0 }]] as any),
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT COUNT(DISTINCT employee_id) AS baseline
+      [date, ...attendScopeParams]
+    ).catch(() => [[{ scheduled: 0 }]] as any),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT employee_id) AS baseline
        FROM attendance_daily_record
        WHERE record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}${attendScopeClause}`,
-          [...attendScopeParams],
-        )
-        .catch(() => [[{ baseline: 0 }]] as any),
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT
+      [...attendScopeParams]
+    ).catch(() => [[{ baseline: 0 }]] as any),
+    db.execute<RowDataPacket[]>(
+      `SELECT
          COUNT(DISTINCT a.UserID) AS agents_logged_in,
          SUM(a.Calls) AS total_calls,
          ROUND(AVG(TIME_TO_SEC(a.AHT)), 0) AS avg_aht_seconds,
@@ -204,19 +167,14 @@ async function computeDailyOpsPulse(
          ), 2) AS shrinkage_pct_per_agent
        FROM apr a
        WHERE a.ReportDate = ?`,
-          [date],
-        )
-        .catch((err) => {
-          logger.error(
-            { err, date },
-            "[bi.service] getDailyOpsPulse apr aggregate query failed",
-          );
-          return [[null]] as any;
-        }),
-      // Top process by calls
-      db
-        .execute<RowDataPacket[]>(
-          `SELECT COALESCE(pm.process_name, a.campaign_id) AS name,
+      [date]
+    ).catch((err) => {
+      logger.error({ err, date }, "[bi.service] getDailyOpsPulse apr aggregate query failed");
+      return [[null]] as any;
+    }),
+    // Top process by calls
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(pm.process_name, a.campaign_id) AS name,
               SUM(a.Calls) AS calls,
               COUNT(DISTINCT a.UserID) AS agent_count
        FROM apr a
@@ -225,45 +183,22 @@ async function computeDailyOpsPulse(
        GROUP BY a.campaign_id
        ORDER BY calls DESC
        LIMIT 1`,
-          [date],
-        )
-        .catch(() => [[null]] as any),
-      // Load thresholds from policy engine
-      Promise.all([
-        getPolicyValue(
-          "rta",
-          "login_adherence",
-          "critical_threshold_pct",
-          "50",
-        ),
-        getPolicyValue("rta", "login_adherence", "warning_threshold_pct", "70"),
-        getPolicyValue(
-          "operations",
-          "shrinkage",
-          "critical_threshold_pct",
-          "25",
-        ),
-        getPolicyValue(
-          "operations",
-          "shrinkage",
-          "warning_threshold_pct",
-          "18",
-        ),
-        getPolicyValue(
-          "operations",
-          "call_quality",
-          "aht_benchmark_seconds",
-          "400",
-        ),
-      ]),
-    ]);
+      [date]
+    ).catch(() => [[null]] as any),
+    // Load thresholds from policy engine
+    Promise.all([
+      getPolicyValue('rta',        'login_adherence', 'critical_threshold_pct', '50'),
+      getPolicyValue('rta',        'login_adherence', 'warning_threshold_pct',  '70'),
+      getPolicyValue('operations', 'shrinkage',       'critical_threshold_pct', '25'),
+      getPolicyValue('operations', 'shrinkage',       'warning_threshold_pct',  '18'),
+      getPolicyValue('operations', 'call_quality',    'aht_benchmark_seconds',  '400'),
+    ]),
+  ]);
 
   const aprRow = (aprRows as any[])[0] ?? {};
   const totalCalls = Number(aprRow.total_calls ?? 0);
   const agentsLoggedIn = Number(aprRow.agents_logged_in ?? 0);
-  const agentsScheduled = Number(
-    (attendRows as any[])[0]?.scheduled ?? agentsLoggedIn,
-  );
+  const agentsScheduled = Number((attendRows as any[])[0]?.scheduled ?? agentsLoggedIn);
   // agentsScheduled is a same-day count from attendance_daily_record, which
   // (documented extensively elsewhere in this codebase — see
   // LATEST_COMPLETE_ATTENDANCE_DATE_SQL and its usages) is incomplete for
@@ -294,139 +229,80 @@ async function computeDailyOpsPulse(
   // (baseline 0) rather than treating an org/scope with no recent history as
   // unreliable — that's a different, unrelated condition.
   const baselineScheduled = Number((baselineRows as any[])[0]?.baseline ?? 0);
-  const scheduledDataReliable =
-    agentsScheduled >= agentsLoggedIn &&
-    (baselineScheduled === 0 || agentsScheduled >= baselineScheduled * 0.3);
-  const loginAdherence =
-    scheduledDataReliable && agentsScheduled > 0
-      ? parseFloat(((agentsLoggedIn / agentsScheduled) * 100).toFixed(1))
-      : null;
-  const avgCalls =
-    agentsLoggedIn > 0 ? Math.round(totalCalls / agentsLoggedIn) : 0;
+  const scheduledDataReliable = agentsScheduled >= agentsLoggedIn
+    && (baselineScheduled === 0 || agentsScheduled >= baselineScheduled * 0.3);
+  const loginAdherence = scheduledDataReliable && agentsScheduled > 0
+    ? parseFloat(((agentsLoggedIn / agentsScheduled) * 100).toFixed(1))
+    : null;
+  const avgCalls = agentsLoggedIn > 0 ? Math.round(totalCalls / agentsLoggedIn) : 0;
   const avgAht = Number(aprRow.avg_aht_seconds ?? 0);
   const avgShrinkage = parseFloat(String(aprRow.avg_shrinkage_pct ?? 0));
   const lunchPct = parseFloat(String(aprRow.avg_lunch_pct ?? 0));
   const bioPct = parseFloat(String(aprRow.avg_bio_pct ?? 0));
   const trainingPct = parseFloat(String(aprRow.avg_training_pct ?? 0));
   const qaPct = parseFloat(String(aprRow.avg_qa_pct ?? 0));
-  const idlePct = Math.max(
-    0,
-    parseFloat(
-      (avgShrinkage - lunchPct - bioPct - trainingPct - qaPct).toFixed(2),
-    ),
-  );
-  const avgShrinkagePerAgent = parseFloat(
-    String(aprRow.shrinkage_pct_per_agent ?? 0),
-  );
+  const idlePct = Math.max(0, parseFloat((avgShrinkage - lunchPct - bioPct - trainingPct - qaPct).toFixed(2)));
+  const avgShrinkagePerAgent = parseFloat(String(aprRow.shrinkage_pct_per_agent ?? 0));
   const lunchPctPerAgent = parseFloat(String(aprRow.lunch_pct_per_agent ?? 0));
   const bioPctPerAgent = parseFloat(String(aprRow.bio_pct_per_agent ?? 0));
-  const trainingPctPerAgent = parseFloat(
-    String(aprRow.training_pct_per_agent ?? 0),
-  );
+  const trainingPctPerAgent = parseFloat(String(aprRow.training_pct_per_agent ?? 0));
   const qaPctPerAgent = parseFloat(String(aprRow.qa_pct_per_agent ?? 0));
-  const idlePctPerAgent = Math.max(
-    0,
-    parseFloat(
-      (
-        avgShrinkagePerAgent -
-        lunchPctPerAgent -
-        bioPctPerAgent -
-        trainingPctPerAgent -
-        qaPctPerAgent
-      ).toFixed(2),
-    ),
-  );
+  const idlePctPerAgent = Math.max(0, parseFloat((avgShrinkagePerAgent - lunchPctPerAgent - bioPctPerAgent - trainingPctPerAgent - qaPctPerAgent).toFixed(2)));
 
   const topProc = (topProcRows as any[])[0] ?? null;
   const [loginCrit, loginWarn, shrinkCrit, shrinkWarn, ahtBench] = policyValues;
   const T = {
-    loginCritical: Number(loginCrit),
-    loginWarning: Number(loginWarn),
+    loginCritical:  Number(loginCrit),
+    loginWarning:   Number(loginWarn),
     shrinkCritical: Number(shrinkCrit),
-    shrinkWarning: Number(shrinkWarn),
-    ahtBenchmark: Number(ahtBench),
+    shrinkWarning:  Number(shrinkWarn),
+    ahtBenchmark:   Number(ahtBench),
   };
 
   // Build intervention flags
   const flags: InterventionFlag[] = [];
-  if (
-    loginAdherence !== null &&
-    loginAdherence < T.loginCritical &&
-    agentsScheduled > 0
-  ) {
+  if (loginAdherence !== null && loginAdherence < T.loginCritical && agentsScheduled > 0) {
     flags.push({
-      type: "LOW_LOGIN_ADHERENCE",
-      severity: "critical",
+      type: 'LOW_LOGIN_ADHERENCE', severity: 'critical',
       detail: `Login adherence at ${loginAdherence}% — ${agentsScheduled - agentsLoggedIn} agents scheduled but not logged in`,
-      action: "Floor check required — contact team leads immediately",
+      action: 'Floor check required — contact team leads immediately',
     });
-  } else if (
-    loginAdherence !== null &&
-    loginAdherence < T.loginWarning &&
-    agentsScheduled > 0
-  ) {
+  } else if (loginAdherence !== null && loginAdherence < T.loginWarning && agentsScheduled > 0) {
     flags.push({
-      type: "LOW_LOGIN_ADHERENCE",
-      severity: "warning",
+      type: 'LOW_LOGIN_ADHERENCE', severity: 'warning',
       detail: `Login adherence at ${loginAdherence}% — ${agentsScheduled - agentsLoggedIn} agents below expected`,
-      action: "Send login reminders to late arrivals",
+      action: 'Send login reminders to late arrivals',
     });
   }
   if (avgShrinkage > T.shrinkCritical) {
     flags.push({
-      type: "HIGH_SHRINKAGE",
-      severity: "critical",
+      type: 'HIGH_SHRINKAGE', severity: 'critical',
       detail: `Avg shrinkage at ${avgShrinkage}% — exceeds ${T.shrinkCritical}% org threshold`,
-      action: "Review break schedules and bio patterns immediately",
+      action: 'Review break schedules and bio patterns immediately',
     });
   } else if (avgShrinkage > T.shrinkWarning) {
     flags.push({
-      type: "HIGH_SHRINKAGE",
-      severity: "warning",
+      type: 'HIGH_SHRINKAGE', severity: 'warning',
       detail: `Avg shrinkage at ${avgShrinkage}% — above ${T.shrinkWarning}% advisory limit`,
-      action: "Monitor floor — check DISMX/DSTBY codes by campaign",
+      action: 'Monitor floor — check DISMX/DSTBY codes by campaign',
     });
   }
   if (avgAht > T.ahtBenchmark) {
     flags.push({
-      type: "HIGH_AHT",
-      severity: "warning",
+      type: 'HIGH_AHT', severity: 'warning',
       detail: `Avg AHT at ${Math.round(avgAht)}s — above ${T.ahtBenchmark}s benchmark`,
-      action: "Pull agent-level AHT breakdown and run QA check",
+      action: 'Pull agent-level AHT breakdown and run QA check',
     });
   }
 
   return {
-    date,
-    agents_scheduled: agentsScheduled,
-    agents_logged_in: agentsLoggedIn,
-    login_adherence_pct: loginAdherence,
-    avg_calls_per_agent: avgCalls,
-    total_calls: totalCalls,
-    avg_aht_seconds: avgAht,
-    avg_shrinkage_pct: avgShrinkage,
-    shrinkage_breakdown: {
-      lunch: lunchPct,
-      bio: bioPct,
-      training: trainingPct,
-      qa: qaPct,
-      idle: idlePct,
-    },
+    date, agents_scheduled: agentsScheduled, agents_logged_in: agentsLoggedIn,
+    login_adherence_pct: loginAdherence, avg_calls_per_agent: avgCalls,
+    total_calls: totalCalls, avg_aht_seconds: avgAht, avg_shrinkage_pct: avgShrinkage,
+    shrinkage_breakdown: { lunch: lunchPct, bio: bioPct, training: trainingPct, qa: qaPct, idle: idlePct },
     avg_shrinkage_pct_per_agent: avgShrinkagePerAgent,
-    shrinkage_breakdown_per_agent: {
-      lunch: lunchPctPerAgent,
-      bio: bioPctPerAgent,
-      training: trainingPctPerAgent,
-      qa: qaPctPerAgent,
-      idle: idlePctPerAgent,
-    },
-    top_process: topProc
-      ? {
-          name: String(topProc.name),
-          calls: Number(topProc.calls),
-          agent_count: Number(topProc.agent_count),
-        }
-      : null,
+    shrinkage_breakdown_per_agent: { lunch: lunchPctPerAgent, bio: bioPctPerAgent, training: trainingPctPerAgent, qa: qaPctPerAgent, idle: idlePctPerAgent },
+    top_process: topProc ? { name: String(topProc.name), calls: Number(topProc.calls), agent_count: Number(topProc.agent_count) } : null,
     intervention_flags: flags,
   };
 }
@@ -434,20 +310,8 @@ async function computeDailyOpsPulse(
 // ─── 3b: Attrition Risk Signal ────────────────────────────────────────────────
 
 export interface AttritionRiskSignal {
-  summary: {
-    total_at_risk: number;
-    consecutive_absent: number;
-    pending_resignations: number;
-    high_lms_risk: number;
-    churn_rate_30d: number;
-  };
-  top_risk_employees: Array<{
-    employee_code: string;
-    employee_name: string;
-    risk_reasons: string[];
-    branch?: string;
-    process?: string;
-  }>;
+  summary: { total_at_risk: number; consecutive_absent: number; pending_resignations: number; high_lms_risk: number; churn_rate_30d: number };
+  top_risk_employees: Array<{ employee_code: string; employee_name: string; risk_reasons: string[]; branch?: string; process?: string }>;
   intervention_flags: InterventionFlag[];
 }
 
@@ -467,9 +331,8 @@ export async function getAttritionRiskSignal(branchId?: string, processId?: stri
   const toDate = getIstDateString(0);
 
   // Consecutive 3+ day absentees
-  const [absRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT e.employee_code,
+  const [absRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code,
             COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
             COUNT(*) AS absent_days,
             bm.branch_name, pm.process_name
@@ -484,50 +347,41 @@ export async function getAttritionRiskSignal(branchId?: string, processId?: stri
      HAVING absent_days >= 3
      ORDER BY absent_days DESC
      LIMIT 20`,
-      [fromDate, toDate, ...params],
-    )
-    .catch(() => [[] as any]);
+    [fromDate, toDate, ...params]
+  ).catch(() => [[] as any]);
 
   // Pending resignations
-  const [resignRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM exit_request er
+  const [resignRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM exit_request er
      JOIN employees e ON e.id = er.employee_id
      WHERE LOWER(er.status) NOT IN ('completed','cancelled','exited')
        AND ${empWhere}`,
-      params,
-    )
-    .catch(() => [[{ cnt: 0 }]] as any);
+    params
+  ).catch(() => [[{ cnt: 0 }]] as any);
 
   // LMS high risk
-  const [lmsRiskRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM lms_learner_progress lp
+  const [lmsRiskRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM lms_learner_progress lp
      JOIN employees e ON e.id = lp.employee_id COLLATE utf8mb4_unicode_ci
      WHERE lp.attrition_risk_signal = 'red' AND lp.ops_handover_ready = 0
        AND ${empWhere}`,
-      params,
-    )
-    .catch(() => [[{ cnt: 0 }]] as any);
+    params
+  ).catch(() => [[{ cnt: 0 }]] as any);
 
   // Churn rate last 30 days
-  const [churnRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS exits FROM exit_request er
+  const [churnRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS exits FROM exit_request er
      JOIN employees e ON e.id = er.employee_id
      WHERE LOWER(er.status) IN ('completed','exited')
        AND er.updated_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
        AND ${empWhere}`,
-      params,
-    )
-    .catch(() => [[{ exits: 0 }]] as any);
+    params
+  ).catch(() => [[{ exits: 0 }]] as any);
 
-  const [totalEmpRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM employees e WHERE ${empWhere}`,
-      params,
-    )
-    .catch(() => [[{ total: 1 }]] as any);
+  const [totalEmpRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total FROM employees e WHERE ${empWhere}`,
+    params
+  ).catch(() => [[{ total: 1 }]] as any);
 
   const consecutiveAbsent = (absRows as any[]).length;
   const pendingResignations = Number((resignRows as any[])[0]?.cnt ?? 0);
@@ -535,10 +389,9 @@ export async function getAttritionRiskSignal(branchId?: string, processId?: stri
   const exits = Number((churnRows as any[])[0]?.exits ?? 0);
   const totalEmp = Math.max(Number((totalEmpRows as any[])[0]?.total ?? 1), 1);
   const churnRate30d = parseFloat(((exits / totalEmp) * 100).toFixed(2));
-  const totalAtRisk =
-    new Set([...(absRows as any[]).map((r: any) => r.employee_code)]).size +
-    pendingResignations +
-    highLmsRisk;
+  const totalAtRisk = new Set([
+    ...(absRows as any[]).map((r: any) => r.employee_code),
+  ]).size + pendingResignations + highLmsRisk;
 
   // Build top risk list
   const topRisk = (absRows as any[]).slice(0, 10).map((r: any) => ({
@@ -552,37 +405,28 @@ export async function getAttritionRiskSignal(branchId?: string, processId?: stri
   const flags: InterventionFlag[] = [];
   if (churnRate30d > 5) {
     flags.push({
-      type: "HIGH_CHURN",
-      severity: "critical",
+      type: 'HIGH_CHURN', severity: 'critical',
       detail: `${churnRate30d}% churn in last 30 days (${exits} exits)`,
-      action: "Escalate to HR head — retention interviews required",
+      action: 'Escalate to HR head — retention interviews required',
     });
   }
   if (consecutiveAbsent > 10) {
     flags.push({
-      type: "MASS_ABSENTEEISM",
-      severity: "warning",
+      type: 'MASS_ABSENTEEISM', severity: 'warning',
       detail: `${consecutiveAbsent} employees with 3+ consecutive absences`,
-      action: "Team leads to conduct 1-on-1 check-ins this week",
+      action: 'Team leads to conduct 1-on-1 check-ins this week',
     });
   }
   if (pendingResignations > 5) {
     flags.push({
-      type: "HIGH_RESIGNATION",
-      severity: "warning",
+      type: 'HIGH_RESIGNATION', severity: 'warning',
       detail: `${pendingResignations} active resignations pending discussion`,
-      action: "HR to prioritize exit interviews and counter-offer review",
+      action: 'HR to prioritize exit interviews and counter-offer review',
     });
   }
 
   return {
-    summary: {
-      total_at_risk: totalAtRisk,
-      consecutive_absent: consecutiveAbsent,
-      pending_resignations: pendingResignations,
-      high_lms_risk: highLmsRisk,
-      churn_rate_30d: churnRate30d,
-    },
+    summary: { total_at_risk: totalAtRisk, consecutive_absent: consecutiveAbsent, pending_resignations: pendingResignations, high_lms_risk: highLmsRisk, churn_rate_30d: churnRate30d },
     top_risk_employees: topRisk,
     intervention_flags: flags,
   };
@@ -604,85 +448,69 @@ export interface PayrollExposureSummary {
 export async function getPayrollExposureSummary(): Promise<PayrollExposureSummary> {
   const monthStart = getIstMonthStart();
 
-  const [runRows] = await db
-    .execute<RowDataPacket[]>(
-      // salary_prep_line has no gross_pay/net_pay; the computed finals are gross_salary and
-      // net_salary. base_gross_pay/base_net_pay exist too but are pre-adjustment and base_net_pay
-      // is all zeros, so they are not the liability figure.
-      `SELECT COALESCE(SUM(gross_salary),0) AS gross_liability,
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    // salary_prep_line has no gross_pay/net_pay; the computed finals are gross_salary and
+    // net_salary. base_gross_pay/base_net_pay exist too but are pre-adjustment and base_net_pay
+    // is all zeros, so they are not the liability figure.
+    `SELECT COALESCE(SUM(gross_salary),0) AS gross_liability,
             COALESCE(SUM(net_salary),0) AS net_disbursable,
             COUNT(DISTINCT run_id) AS run_count
      FROM salary_prep_line spl
      JOIN salary_prep_run spr ON spr.id = spl.run_id
      WHERE spr.run_month >= ? AND spr.status != 'cancelled'`,
-      [monthStart],
-    )
-    .catch(
-      () => [[{ gross_liability: 0, net_disbursable: 0, run_count: 0 }]] as any,
-    );
+    [monthStart]
+  ).catch(() => [[{ gross_liability: 0, net_disbursable: 0, run_count: 0 }]] as any);
 
-  const [incentiveRows] = await db
-    .execute<RowDataPacket[]>(
-      // FIXED 2026-08-14: this named two columns incentive_upload_batch does not have —
-      // `batch_status` (the column is `status`) and `disbursed_at` (there is no such column at
-      // all). Every execution raised ER_BAD_FIELD_ERROR into the .catch below and the tile has
-      // always reported 0, which is indistinguishable from "nothing unclaimed".
-      //
-      // 'approved' is the unclaimed state: applyToRun moves a consumed batch to 'applied', so a
-      // batch still sitting at 'approved' is money authorised and not yet taken into a payroll run.
-      `SELECT COALESCE(SUM(total_amount),0) AS unclaimed FROM incentive_upload_batch WHERE status = 'approved'`,
-    )
-    .catch((err: unknown) => {
-      // Still non-fatal — one broken tile must not take down the BI dashboard — but no longer
-      // silent. A swallowed error here is exactly how the wrong column survived unnoticed.
-      console.error(
-        `[bi] unclaimed-incentive tile failed, reporting 0: ${(err as Error).message}`,
-      );
-      return [[{ unclaimed: 0 }]] as any;
-    });
+  const [incentiveRows] = await db.execute<RowDataPacket[]>(
+    // FIXED 2026-08-14: this named two columns incentive_upload_batch does not have —
+    // `batch_status` (the column is `status`) and `disbursed_at` (there is no such column at
+    // all). Every execution raised ER_BAD_FIELD_ERROR into the .catch below and the tile has
+    // always reported 0, which is indistinguishable from "nothing unclaimed".
+    //
+    // 'approved' is the unclaimed state: applyToRun moves a consumed batch to 'applied', so a
+    // batch still sitting at 'approved' is money authorised and not yet taken into a payroll run.
+    `SELECT COALESCE(SUM(total_amount),0) AS unclaimed FROM incentive_upload_batch WHERE status = 'approved'`
+  ).catch((err: unknown) => {
+    // Still non-fatal — one broken tile must not take down the BI dashboard — but no longer
+    // silent. A swallowed error here is exactly how the wrong column survived unnoticed.
+    console.error(`[bi] unclaimed-incentive tile failed, reporting 0: ${(err as Error).message}`);
+    return [[{ unclaimed: 0 }]] as any;
+  });
 
-  const [ffRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(net_payable_to_employee),0) AS ff_pending FROM ff_settlement WHERE status NOT IN ('paid','cancelled')`,
-    )
-    .catch(() => [[{ ff_pending: 0 }]] as any);
+  const [ffRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(net_payable_to_employee),0) AS ff_pending FROM ff_settlement WHERE status NOT IN ('paid','cancelled')`
+  ).catch(() => [[{ ff_pending: 0 }]] as any);
 
   // Loan recovery from legacy db_bill (best-effort)
   let loanRecovery = 0;
   try {
     const legacyPool = await getLegacyPool();
     const [loanRows] = await legacyPool.execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(PendingAmount),0) AS outstanding FROM LoanMaster WHERE LoanStatus = 'Active'`,
+      `SELECT COALESCE(SUM(PendingAmount),0) AS outstanding FROM LoanMaster WHERE LoanStatus = 'Active'`
     );
     loanRecovery = Number((loanRows as any[])[0]?.outstanding ?? 0);
-  } catch {
-    /* legacy DB unavailable */
-  }
+  } catch { /* legacy DB unavailable */ }
 
   const rRow = (runRows as any[])[0] ?? {};
   const grossLiability = Number(rRow.gross_liability ?? 0);
   const netDisbursable = Number(rRow.net_disbursable ?? 0);
   const pendingRuns = Number(rRow.run_count ?? 0);
-  const unclaimedIncentives = Number(
-    (incentiveRows as any[])[0]?.unclaimed ?? 0,
-  );
+  const unclaimedIncentives = Number((incentiveRows as any[])[0]?.unclaimed ?? 0);
   const ffPending = Number((ffRows as any[])[0]?.ff_pending ?? 0);
 
   const flags: InterventionFlag[] = [];
   if (pendingRuns === 0) {
     flags.push({
-      type: "NO_PAYROLL_RUN",
-      severity: "warning",
-      detail: "No payroll runs found for current month",
-      action: "Verify payroll calendar — initiate run if not scheduled",
+      type: 'NO_PAYROLL_RUN', severity: 'warning',
+      detail: 'No payroll runs found for current month',
+      action: 'Verify payroll calendar — initiate run if not scheduled',
     });
   }
   if (ffPending > 0) {
     flags.push({
-      type: "FF_PENDING",
-      severity: "info",
-      detail: `₹${ffPending.toLocaleString("en-IN")} in F&F settlements pending disbursement`,
-      action: "Finance to process pending F&F payments",
+      type: 'FF_PENDING', severity: 'info',
+      detail: `₹${ffPending.toLocaleString('en-IN')} in F&F settlements pending disbursement`,
+      action: 'Finance to process pending F&F payments',
     });
   }
 
@@ -701,29 +529,9 @@ export async function getPayrollExposureSummary(): Promise<PayrollExposureSummar
 // ─── 3d: Training Readiness Pulse ────────────────────────────────────────────
 
 export interface TrainingReadinessPulse {
-  summary: {
-    total_learners: number;
-    certified_pct: number;
-    at_risk_count: number;
-    avg_completion_pct: number | null;
-    avg_score: number;
-    overdue_count: number;
-  };
-  by_process: Array<{
-    process: string;
-    total: number;
-    certified: number;
-    certified_pct: number;
-    at_risk: number;
-    avg_score: number;
-  }>;
-  critical_agents: Array<{
-    employee_code: string;
-    employee_name: string;
-    risk_level: string;
-    completion_pct: number | null;
-    last_active?: string;
-  }>;
+  summary: { total_learners: number; certified_pct: number; at_risk_count: number; avg_completion_pct: number | null; avg_score: number; overdue_count: number };
+  by_process: Array<{ process: string; total: number; certified: number; certified_pct: number; at_risk: number; avg_score: number }>;
+  critical_agents: Array<{ employee_code: string; employee_name: string; risk_level: string; completion_pct: number | null; last_active?: string }>;
   intervention_flags: InterventionFlag[];
 }
 
@@ -735,9 +543,8 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
   if (scope) { whereParts.push(scope.sql); params.push(...scope.params); }
   const empWhere = whereParts.join(' AND ');
 
-  const [summaryRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT
+  const [summaryRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
        COUNT(DISTINCT lp.employee_id) AS total_learners,
        ROUND(SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*),0), 1) AS certified_pct,
        SUM(CASE WHEN lp.attrition_risk_signal = 'red' THEN 1 ELSE 0 END) AS at_risk_count,
@@ -747,13 +554,11 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
      FROM lms_learner_progress lp
      JOIN employees e ON e.id = lp.employee_id COLLATE utf8mb4_unicode_ci
      WHERE ${empWhere}`,
-      params,
-    )
-    .catch(() => [[null]] as any);
+    params
+  ).catch(() => [[null]] as any);
 
-  const [byProcessRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT COALESCE(pm.process_name, 'Unknown') AS process,
+  const [byProcessRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(pm.process_name, 'Unknown') AS process,
             COUNT(DISTINCT lp.employee_id) AS total,
             SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) AS certified,
             ROUND(SUM(CASE WHEN lp.ops_handover_ready = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*),0), 1) AS certified_pct,
@@ -766,13 +571,11 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
      GROUP BY e.process_id
      ORDER BY total DESC
      LIMIT 20`,
-      params,
-    )
-    .catch(() => [[] as any]);
+    params
+  ).catch(() => [[] as any]);
 
-  const [criticalRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT e.employee_code,
+  const [criticalRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code,
             COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
             lp.attrition_risk_signal AS risk_level,
             NULL AS completion_pct,
@@ -784,9 +587,8 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
        AND ${empWhere}
      ORDER BY lp.attrition_risk_signal DESC, lp.readiness_score ASC
      LIMIT 15`,
-      params,
-    )
-    .catch(() => [[] as any]);
+    params
+  ).catch(() => [[] as any]);
 
   const s = (summaryRows as any[])[0] ?? {};
   const certifiedPct = Number(s.certified_pct ?? 0);
@@ -795,18 +597,16 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
   const flags: InterventionFlag[] = [];
   if (certifiedPct < 60) {
     flags.push({
-      type: "LOW_CERTIFICATION",
-      severity: "critical",
+      type: 'LOW_CERTIFICATION', severity: 'critical',
       detail: `Only ${certifiedPct}% of learners certified — below 60% threshold`,
-      action: "Trainer to review curriculum bottleneck and MCQ pass rates",
+      action: 'Trainer to review curriculum bottleneck and MCQ pass rates',
     });
   }
   if (atRisk > 5) {
     flags.push({
-      type: "HIGH_LMS_RISK",
-      severity: "warning",
+      type: 'HIGH_LMS_RISK', severity: 'warning',
       detail: `${atRisk} learners flagged red attrition risk by LMS`,
-      action: "Assign dedicated trainer support to flagged learners",
+      action: 'Assign dedicated trainer support to flagged learners',
     });
   }
 
@@ -822,19 +622,12 @@ export async function getTrainingReadinessPulse(branchId?: string, processId?: s
       overdue_count: Number(s.overdue_count ?? 0),
     },
     by_process: (byProcessRows as any[]).map((r: any) => ({
-      process: r.process,
-      total: Number(r.total),
-      certified: Number(r.certified),
-      certified_pct: Number(r.certified_pct),
-      at_risk: Number(r.at_risk),
-      avg_score: Number(r.avg_score),
+      process: r.process, total: Number(r.total), certified: Number(r.certified),
+      certified_pct: Number(r.certified_pct), at_risk: Number(r.at_risk), avg_score: Number(r.avg_score),
     })),
     critical_agents: (criticalRows as any[]).map((r: any) => ({
-      employee_code: r.employee_code,
-      employee_name: r.employee_name,
-      risk_level: r.risk_level,
-      completion_pct: null,
-      last_active: r.last_active,
+      employee_code: r.employee_code, employee_name: r.employee_name,
+      risk_level: r.risk_level, completion_pct: null, last_active: r.last_active,
     })),
     intervention_flags: flags,
   };
@@ -852,13 +645,7 @@ export interface RevenueAtRisk {
   days_remaining: number;
   daily_run_rate: number;
   projected_eom: number;
-  by_process: Array<{
-    process: string;
-    target: number;
-    actual: number;
-    gap: number;
-    gap_pct: number;
-  }>;
+  by_process: Array<{ process: string; target: number; actual: number; gap: number; gap_pct: number }>;
   intervention_flags: InterventionFlag[];
 }
 
@@ -868,7 +655,7 @@ export interface RevenueAtRisk {
  * forces a full scan of bill_revenue_target_snapshot (392k rows).
  */
 export function monthRangeBounds(y: number, m: number): [string, string] {
-  const pad = (n: number) => String(n).padStart(2, "0");
+  const pad = (n: number) => String(n).padStart(2, '0');
   const ny = m === 12 ? y + 1 : y;
   const nm = m === 12 ? 1 : m + 1;
   return [`${y}-${pad(m)}-01`, `${ny}-${pad(nm)}-01`];
@@ -877,16 +664,15 @@ export function monthRangeBounds(y: number, m: number): [string, string] {
 export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
   const today = getIstDateString(0);
   const monthStart = getIstMonthStart();
-  const [y, m] = monthStart.split("-").map(Number);
+  const [y, m] = monthStart.split('-').map(Number);
   const [tgtFrom, tgtTo] = monthRangeBounds(y, m);
   const daysInMonth = new Date(y, m, 0).getDate();
   const dayOfMonth = parseInt(today.slice(8), 10);
   const daysElapsed = dayOfMonth;
   const daysRemaining = daysInMonth - dayOfMonth;
 
-  let target = 0,
-    actual = 0;
-  const byProcess: RevenueAtRisk["by_process"] = [];
+  let target = 0, actual = 0;
+  const byProcess: RevenueAtRisk['by_process'] = [];
 
   try {
     // Monthly target — read from snapshot table (synced from db_bill)
@@ -894,7 +680,7 @@ export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
       `SELECT COALESCE(SUM(target_revenue),0) AS total_target
        FROM bill_revenue_target_snapshot
        WHERE target_month >= ? AND target_month < ?`,
-      [tgtFrom, tgtTo],
+      [tgtFrom, tgtTo]
     );
     target = Number((targetRows as any[])[0]?.total_target ?? 0);
 
@@ -903,7 +689,7 @@ export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
       `SELECT COALESCE(SUM(actual_revenue),0) AS total_actual
        FROM bill_revenue_actual_snapshot
        WHERE revenue_date BETWEEN ? AND ?`,
-      [monthStart, today],
+      [monthStart, today]
     );
     actual = Number((actualRows as any[])[0]?.total_actual ?? 0);
 
@@ -920,23 +706,14 @@ export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
        GROUP BY t.process_name
        ORDER BY target DESC
        LIMIT 10`,
-      [monthStart, today, tgtFrom, tgtTo],
+      [monthStart, today, tgtFrom, tgtTo]
     );
     for (const r of processRows as any[]) {
-      const tgt = Number(r.target),
-        act = Number(r.actual);
+      const tgt = Number(r.target), act = Number(r.actual);
       const gap = act - tgt;
-      byProcess.push({
-        process: r.process,
-        target: tgt,
-        actual: act,
-        gap,
-        gap_pct: tgt > 0 ? parseFloat(((gap / tgt) * 100).toFixed(1)) : 0,
-      });
+      byProcess.push({ process: r.process, target: tgt, actual: act, gap, gap_pct: tgt > 0 ? parseFloat(((gap / tgt) * 100).toFixed(1)) : 0 });
     }
-  } catch {
-    /* snapshot unavailable — return zeroes */
-  }
+  } catch { /* snapshot unavailable — return zeroes */ }
 
   const gap = actual - target;
   const gapPct = target > 0 ? parseFloat(((gap / target) * 100).toFixed(1)) : 0;
@@ -946,63 +723,39 @@ export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
   const flags: InterventionFlag[] = [];
   if (gapPct < -15) {
     flags.push({
-      type: "REVENUE_DEFICIT",
-      severity: "critical",
+      type: 'REVENUE_DEFICIT', severity: 'critical',
       detail: `${Math.abs(gapPct)}% below MTD target — projected shortfall ${((projectedEom - target) / 1000).toFixed(0)}K`,
-      action: "Ops + Sales review required — escalate high-gap processes",
+      action: 'Ops + Sales review required — escalate high-gap processes',
     });
   } else if (gapPct < -5) {
     flags.push({
-      type: "REVENUE_BELOW_TARGET",
-      severity: "warning",
+      type: 'REVENUE_BELOW_TARGET', severity: 'warning',
       detail: `MTD revenue ${Math.abs(gapPct)}% below target`,
-      action: "Focus on high-revenue processes to recover gap this week",
+      action: 'Focus on high-revenue processes to recover gap this week',
     });
   }
 
   return {
-    period: monthStart.slice(0, 7),
-    target,
-    actual,
-    gap,
-    gap_pct: gapPct,
-    days_elapsed: daysElapsed,
-    days_remaining: daysRemaining,
-    daily_run_rate: dailyRunRate,
-    projected_eom: projectedEom,
-    by_process: byProcess,
-    intervention_flags: flags,
+    period: monthStart.slice(0, 7), target, actual, gap, gap_pct: gapPct,
+    days_elapsed: daysElapsed, days_remaining: daysRemaining,
+    daily_run_rate: dailyRunRate, projected_eom: projectedEom,
+    by_process: byProcess, intervention_flags: flags,
   };
 }
 
 // ─── 3f: Quality Intervention ────────────────────────────────────────────────
 
 export interface QualityIntervention {
-  summary: {
-    avg_quality_score: number;
-    agents_below_threshold: number;
-    processes_declining: number;
-  };
-  critical_agents: Array<{
-    agent_code: string;
-    agent_name: string;
-    call_count: number;
-    quality_score: number;
-    campaign: string;
-  }>;
-  process_rag: Array<{
-    process: string;
-    avg_score: number;
-    rag: "red" | "amber" | "green";
-    wow_change: number;
-  }>;
+  summary: { avg_quality_score: number; agents_below_threshold: number; processes_declining: number };
+  critical_agents: Array<{ agent_code: string; agent_name: string; call_count: number; quality_score: number; campaign: string }>;
+  process_rag: Array<{ process: string; avg_score: number; rag: 'red' | 'amber' | 'green'; wow_change: number }>;
   intervention_flags: InterventionFlag[];
 }
 
-function auditRag(score: number): "red" | "amber" | "green" {
-  if (score >= 90) return "green";
-  if (score >= 85) return "amber";
-  return "red";
+function auditRag(score: number): 'red' | 'amber' | 'green' {
+  if (score >= 90) return 'green';
+  if (score >= 85) return 'amber';
+  return 'red';
 }
 
 export async function getQualityIntervention(branchId?: string, processId?: string, codes?: string[] | null): Promise<QualityIntervention> {
@@ -1046,13 +799,8 @@ async function computeQualityIntervention(codes?: string[] | null): Promise<Qual
   // derived table so the value is the same either way, but MAX() keeps
   // this valid under ONLY_FULL_GROUP_BY without relying on MySQL's
   // functional-dependency detection for a cross-joined single row.
-  interface SummaryRow {
-    avg_score: number;
-    total_agents: number;
-    below_threshold: number;
-  }
-  const summaryPromise = querySource<SummaryRow>(
-    `
+  interface SummaryRow { avg_score: number; total_agents: number; below_threshold: number }
+  const summaryPromise = querySource<SummaryRow>(`
     SELECT
       MAX(g.avg_score)                                                     AS avg_score,
       COUNT(DISTINCT t.agent)                                              AS total_agents,
@@ -1077,15 +825,8 @@ async function computeQualityIntervention(codes?: string[] | null): Promise<Qual
   });
 
   // ── Bottom agents (min 3 audits, ordered by lowest quality_percentage) ───
-  interface AgentRow {
-    agent_code: string;
-    agent_name: string;
-    call_count: number;
-    avg_score: number;
-    client_id: string;
-  }
-  const agentPromise = querySource<AgentRow>(
-    `
+  interface AgentRow { agent_code: string; agent_name: string; call_count: number; avg_score: number; client_id: string }
+  const agentPromise = querySource<AgentRow>(`
     SELECT
       q.User                                                 AS agent_code,
       COALESCE(am.AgentName, q.User)                        AS agent_name,
@@ -1104,13 +845,9 @@ async function computeQualityIntervention(codes?: string[] | null): Promise<Qual
   `, [fromDate, toDate, ...scQ.params]).catch(() => [] as AgentRow[]);
 
   // ── Per-client/process RAG with WoW change ────────────────────────────────
-  interface ProcRow {
-    process: string;
-    avg_score: number;
-  }
+  interface ProcRow { process: string; avg_score: number }
   const procPromise = Promise.all([
-    querySource<ProcRow>(
-      `
+    querySource<ProcRow>(`
       SELECT
         q.ClientId                           AS process,
         ROUND(AVG(q.quality_percentage), 1)  AS avg_score
@@ -1137,15 +874,14 @@ async function computeQualityIntervention(codes?: string[] | null): Promise<Qual
   // The four audit-table aggregates are independent of each other; they used to be awaited
   // one after another (summary, then agents, then the two process queries). Each keeps its
   // own .catch, so the failure semantics are unchanged.
-  const [summaryRows, agentRows, [currProcRows, prevProcRows]] =
-    await Promise.all([summaryPromise, agentPromise, procPromise]);
+  const [summaryRows, agentRows, [currProcRows, prevProcRows]] = await Promise.all([
+    summaryPromise, agentPromise, procPromise,
+  ]);
   const avgScore = Number(summaryRows[0]?.avg_score ?? 0);
   const belowThreshold = Number(summaryRows[0]?.below_threshold ?? 0);
 
-  const prevMap = new Map(
-    prevProcRows.map((r) => [String(r.process), Number(r.avg_score)]),
-  );
-  const processRag = currProcRows.map((r) => {
+  const prevMap = new Map(prevProcRows.map(r => [String(r.process), Number(r.avg_score)]));
+  const processRag = currProcRows.map(r => {
     const score = Number(r.avg_score);
     const prev = prevMap.get(String(r.process)) ?? score;
     return {
@@ -1156,32 +892,29 @@ async function computeQualityIntervention(codes?: string[] | null): Promise<Qual
     };
   });
 
-  const redProcesses = processRag.filter((p) => p.rag === "red").length;
-  const decliningProcesses = processRag.filter((p) => p.wow_change < -2).length;
+  const redProcesses = processRag.filter(p => p.rag === 'red').length;
+  const decliningProcesses = processRag.filter(p => p.wow_change < -2).length;
 
   const flags: InterventionFlag[] = [];
   if (avgScore > 0 && avgScore < 85) {
     flags.push({
-      type: "LOW_ORG_QUALITY",
-      severity: "critical",
+      type: 'LOW_ORG_QUALITY', severity: 'critical',
       detail: `Org-wide quality at ${avgScore}% — below 85% threshold`,
-      action: "QA team to prioritise coaching queue immediately",
+      action: 'QA team to prioritise coaching queue immediately',
     });
   }
   if (redProcesses > 2) {
     flags.push({
-      type: "MULTI_PROCESS_QUALITY_DROP",
-      severity: "critical",
+      type: 'MULTI_PROCESS_QUALITY_DROP', severity: 'critical',
       detail: `${redProcesses} client processes in RED quality zone (<85%)`,
-      action: "QA review call — assign TL coaching this week",
+      action: 'QA review call — assign TL coaching this week',
     });
   }
   if (belowThreshold > 5) {
     flags.push({
-      type: "AGENTS_BELOW_THRESHOLD",
-      severity: "warning",
+      type: 'AGENTS_BELOW_THRESHOLD', severity: 'warning',
       detail: `${belowThreshold} agents with avg quality below 85%`,
-      action: "Schedule targeted coaching sessions for flagged agents",
+      action: 'Schedule targeted coaching sessions for flagged agents',
     });
   }
 
@@ -1191,7 +924,7 @@ async function computeQualityIntervention(codes?: string[] | null): Promise<Qual
       agents_below_threshold: belowThreshold,
       processes_declining: decliningProcesses,
     },
-    critical_agents: agentRows.map((r) => ({
+    critical_agents: agentRows.map(r => ({
       agent_code: String(r.agent_code),
       agent_name: String(r.agent_name),
       call_count: Number(r.call_count),

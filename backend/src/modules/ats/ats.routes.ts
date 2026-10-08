@@ -1,8 +1,5 @@
 ﻿import { Router } from "express";
-import {
-  requireAuth,
-  requireWriteAccess,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
@@ -20,18 +17,10 @@ import multer from "multer";
 import path from "path";
 
 import { atsQueueService } from "./ats.queue.service.js";
-import {
-  verifyRecruiter,
-  resolveRecruiterForActor,
-  getMyPendingCandidates,
-  getOtherRecruitersPendingCandidates,
-  reassignCandidate,
-  getSubmissionHistory,
-  getRecruiterDailyStats,
-} from "../ats-full-parity/recruiterInterview.service.js";
+import { verifyRecruiter, resolveRecruiterForActor, getMyPendingCandidates, getOtherRecruitersPendingCandidates, reassignCandidate, getSubmissionHistory, getRecruiterDailyStats } from "../ats-full-parity/recruiterInterview.service.js";
 import { persistCandidateFile } from "./candidate-file.service.js";
 import { joiningDocumentsTrackerRouter } from "./ats.joiningDocumentsTracker.routes.js";
-import { getIstDateString } from "../../utils/dateUtils.js";
+import { getIstDateString } from '../../utils/dateUtils.js';
 import { bulkImportRouter } from "./bulk-import.routes.js";
 import { getRecruiterAnalyticsSummary } from "./recruiter-analytics.service.js";
 import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
@@ -45,18 +34,13 @@ import { getCohorts, getLeakage, getReusablePool, getRecruiterNameSuspects, getS
 export const atsRouter = Router();
 export const atsPublicRouter = Router(); // Public routes (no auth)
 
-type AsyncHandler = (
-  req: AuthenticatedRequest,
-  res: Response,
-) => Promise<unknown>;
-const h =
-  (fn: AsyncHandler) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    void fn(req, res).catch(next);
-  };
+type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  void fn(req, res).catch(next);
+};
 
 // â”€â”€ PUBLIC â€” candidate self-registration (no auth required) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-atsRouter.post("/candidates", h(c.createCandidate.bind(c)));
+atsRouter.post("/candidates",                    h(c.createCandidate.bind(c)));
 
 // â”€â”€ PUBLIC â€” candidate onboarding with token (no auth required) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 atsRouter.use("/onboarding-full", onboardingFullRouter);
@@ -92,9 +76,7 @@ atsPublicRouter.post(
     const { type, mobile } = req.body; // "resume" or "selfie" + mobile for ownership proof
 
     if (!type || !["resume", "selfie"].includes(type)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "type must be 'resume' or 'selfie'" });
+      return res.status(400).json({ success: false, message: "type must be 'resume' or 'selfie'" });
     }
 
     // Ownership proof is required before anything is looked up. Checking it after
@@ -102,17 +84,9 @@ atsPublicRouter.post(
     // caller with no proof at all could tell a real candidate id (404) from a fake
     // one (404 vs 403). Validating first also matches the type check above — no DB
     // hit for a request that cannot succeed.
-    const normalizedInput = String(mobile ?? "")
-      .replace(/\D/g, "")
-      .slice(-10);
+    const normalizedInput = String(mobile ?? "").replace(/\D/g, "").slice(-10);
     if (!normalizedInput) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "mobile is required to verify ownership of this candidate record",
-        });
+      return res.status(400).json({ success: false, message: "mobile is required to verify ownership of this candidate record" });
     }
 
     // Verify candidate exists and was registered recently (within 1 hour of walk-in)
@@ -121,20 +95,14 @@ atsPublicRouter.post(
     const { db } = await import("../../db/mysql.js");
     const [rows] = await db.execute(
       `SELECT id, updated_at, mobile FROM ats_candidate WHERE id = ?`,
-      [id],
+      [id]
     );
 
     if (!rows.length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Candidate not found" });
+      return res.status(404).json({ success: false, message: "Candidate not found" });
     }
 
-    const candidate = rows[0] as {
-      id: string;
-      updated_at: string;
-      mobile: string | null;
-    };
+    const candidate = rows[0] as { id: string; updated_at: string; mobile: string | null };
 
     // Ownership check: mobile sent by caller must match the registered candidate mobile.
     //
@@ -147,65 +115,43 @@ atsPublicRouter.post(
       // Nothing to compare against, so ownership cannot be established. Denying is
       // the only safe reading — the alternative lets a candidate row with no stored
       // mobile accept an upload from anyone.
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Mobile number does not match candidate record",
-        });
+      return res.status(403).json({ success: false, message: "Mobile number does not match candidate record" });
     }
-    const normalizedStored = String(candidate.mobile)
-      .replace(/\D/g, "")
-      .slice(-10);
+    const normalizedStored = String(candidate.mobile).replace(/\D/g, "").slice(-10);
     if (normalizedInput !== normalizedStored) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "Mobile number does not match candidate record",
-        });
+      return res.status(403).json({ success: false, message: "Mobile number does not match candidate record" });
     }
 
     // dateStrings:true returns bare "YYYY-MM-DD HH:mm:ss" — append T and Z for safe UTC parse
-    const registeredAt = new Date(
-      (candidate.updated_at as string).replace(" ", "T") + "Z",
-    );
+    const registeredAt = new Date((candidate.updated_at as string).replace(" ", "T") + "Z");
     const now = new Date();
-    const hoursSinceRegistration =
-      (now.getTime() - registeredAt.getTime()) / (1000 * 60 * 60);
+    const hoursSinceRegistration = (now.getTime() - registeredAt.getTime()) / (1000 * 60 * 60);
 
     if (hoursSinceRegistration > 1) {
       return res.status(403).json({
         success: false,
-        message: "Upload window expired (1 hour limit from registration)",
+        message: "Upload window expired (1 hour limit from registration)"
       });
     }
 
     if (!req.file) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No file uploaded" });
+      return res.status(400).json({ success: false, message: "No file uploaded" });
     }
 
     // Magic-byte validation — prevent disguised executable files
     const MAGIC: Record<string, number[][]> = {
-      ".pdf": [[0x25, 0x50, 0x44, 0x46]],
-      ".jpg": [[0xff, 0xd8, 0xff]],
-      ".jpeg": [[0xff, 0xd8, 0xff]],
-      ".png": [[0x89, 0x50, 0x4e, 0x47]],
+      ".pdf":  [[0x25, 0x50, 0x44, 0x46]],
+      ".jpg":  [[0xFF, 0xD8, 0xFF]],
+      ".jpeg": [[0xFF, 0xD8, 0xFF]],
+      ".png":  [[0x89, 0x50, 0x4E, 0x47]],
     };
     const ext = path.extname(req.file.originalname).toLowerCase();
     const sigs = MAGIC[ext];
     if (sigs) {
       const head = req.file.buffer;
-      const valid = sigs.some((sig) => sig.every((b, i) => head[i] === b));
+      const valid = sigs.some(sig => sig.every((b, i) => head[i] === b));
       if (!valid) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "File content does not match declared type",
-          });
+        return res.status(400).json({ success: false, message: "File content does not match declared type" });
       }
     }
 
@@ -224,7 +170,7 @@ atsPublicRouter.post(
     const updateField = type === "resume" ? "resume_url" : "selfie_url";
     await db.execute(
       `UPDATE ats_candidate SET ${updateField} = ? WHERE id = ?`,
-      [secureUrl, id],
+      [secureUrl, id]
     );
 
     return res.json({
@@ -235,81 +181,45 @@ atsPublicRouter.post(
       filename: uploaded.stored_filename,
       message: `${type} uploaded successfully`,
     });
-  }),
+  })
 );
 
 // â”€â”€ PROTECTED â€” all remaining routes require a logged-in HR/recruiter â”€â”€â”€â”€â”€â”€â”€â”€
 atsRouter.use(requireAuth);
 
 // Recruiter Analytics (Dashboard)
-atsRouter.get(
-  "/recruiter-analytics",
-  requireRole("super_admin", "admin", "recruiter", "hr", "ceo"),
-  h(async (req, res) => {
-    const summary = await getRecruiterAnalyticsSummary();
-    res.json({ success: true, data: summary });
-  }),
-);
+atsRouter.get("/recruiter-analytics", requireRole("super_admin", "admin", "recruiter", "hr", "ceo"), h(async (req, res) => {
+  const summary = await getRecruiterAnalyticsSummary();
+  res.json({ success: true, data: summary });
+}));
 
 // Candidates (HR/recruiter facing) - Scoped
 // ats_candidate stores applied_for_branch as a text name (not a UUID), so we can't use
 // buildScopeWhereClause which compares against UUID branch_id from user_assignment_scope.
 // admin/hr/manager/super_admin see all; recruiter scope is resolved via branch_master name lookup.
-atsRouter.get(
-  "/candidates",
-  requireRole("admin", "hr", "recruiter", "manager", "super_admin"),
-  h(async (req, res) => {
-    // Scope comes from the shared resolver in candidate-access.ts, which is the same rule the
-    // by-id routes now use. It was previously resolved inline here, which is why the by-id
-    // paths had no scope at all: there was nothing to reuse.
-    const { resolveCandidateScope } = await import("./candidate-access.js");
-    const scopeFilter = await resolveCandidateScope(req.authUser!.id);
-    (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter =
-      scopeFilter;
-    return c.listCandidates.bind(c)(req, res);
-  }),
-);
+atsRouter.get("/candidates", requireRole("admin", "hr", "recruiter", "manager", "super_admin"), h(async (req, res) => {
+  // Scope comes from the shared resolver in candidate-access.ts, which is the same rule the
+  // by-id routes now use. It was previously resolved inline here, which is why the by-id
+  // paths had no scope at all: there was nothing to reuse.
+  const { resolveCandidateScope } = await import("./candidate-access.js");
+  const scopeFilter = await resolveCandidateScope(req.authUser!.id);
+  (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = scopeFilter;
+  return c.listCandidates.bind(c)(req, res);
+}));
 // Re-walk-in report: how often already-registered candidates filled the walk-in form again.
 // Same scope resolver and audience as GET /candidates above.
-atsRouter.get(
-  "/reports/rewalkins",
-  requireRole("admin", "hr", "recruiter", "manager", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { resolveCandidateScope } = await import("./candidate-access.js");
-    const { getRewalkinReport } = await import("./rewalkin.service.js");
-    const scope = await resolveCandidateScope(req.authUser!.id);
-    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-    const data = await getRewalkinReport({
-      from: str(req.query.from),
-      to: str(req.query.to),
-      branch: str(req.query.branch),
-      scope,
-    });
-    return res.json({ success: true, data });
-  }),
-);
-atsRouter.get(
-  "/candidates/:id",
-  requireRole("admin", "hr", "recruiter", "manager"),
-  h(c.getCandidate.bind(c)),
-);
-atsRouter.put(
-  "/candidates/:id",
-  requireWriteAccess,
-  requireRole("admin", "recruiter"),
-  h(c.updateCandidate.bind(c)),
-);
-atsRouter.post(
-  "/candidates/:id/move-stage",
-  requireWriteAccess,
-  requireRole("admin", "recruiter", "manager"),
-  h(c.moveStage.bind(c)),
-);
-atsRouter.get(
-  "/candidates/:id/stage-logs",
-  requireRole("admin", "hr", "recruiter", "manager"),
-  h(c.listStageLogs.bind(c)),
-);
+atsRouter.get("/reports/rewalkins", requireRole("admin", "hr", "recruiter", "manager", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { resolveCandidateScope } = await import("./candidate-access.js");
+  const { getRewalkinReport } = await import("./rewalkin.service.js");
+  const scope = await resolveCandidateScope(req.authUser!.id);
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const data = await getRewalkinReport({ from: str(req.query.from), to: str(req.query.to), branch: str(req.query.branch), scope });
+  return res.json({ success: true, data });
+}));
+atsRouter.get("/candidates/:id",                 requireRole("admin", "hr", "recruiter", "manager"), h(c.getCandidate.bind(c)));
+atsRouter.put("/candidates/:id",                 requireWriteAccess, requireRole("admin", "recruiter"), h(c.updateCandidate.bind(c)));
+atsRouter.post("/candidates/:id/move-stage",     requireWriteAccess, requireRole("admin", "recruiter", "manager"), h(c.moveStage.bind(c)));
+atsRouter.get("/candidates/:id/stage-logs",      requireRole("admin", "hr", "recruiter", "manager"), h(c.listStageLogs.bind(c)));
 
 // Candidate â†’ Employee conversion
 atsRouter.post(
@@ -320,89 +230,40 @@ atsRouter.post(
     // every caller who can currently reach the route. It is here so that widening the role
     // list later cannot silently hand conversion of any candidate to a scoped role.
     const { assertCandidateInScope } = await import("./candidate-access.js");
-    if (
-      !(await assertCandidateInScope(
-        req.authUser!.id,
-        req.params.candidateId,
-        res,
-      ))
-    )
-      return;
+    if (!(await assertCandidateInScope(req.authUser!.id, req.params.candidateId, res))) return;
 
     const result = await convertCandidateToEmployee(
       req.params.candidateId,
-      req.authUser!.id,
+      req.authUser!.id
     );
     return res.status(201).json({ success: true, data: result });
-  }),
+  })
 );
 
 // Onboarding bridge
-atsRouter.get(
-  "/onboarding-bridge",
-  requireRole("admin", "hr", "manager"),
-  h(c.listOnboardingBridges.bind(c)),
-);
-atsRouter.post(
-  "/onboarding-bridge",
-  requireRole("admin", "hr"),
-  h(c.createOnboardingBridge.bind(c)),
-);
-atsRouter.patch(
-  "/onboarding-bridge/:id",
-  requireRole("admin", "hr"),
-  h(c.updateOnboardingBridge.bind(c)),
-);
+atsRouter.get("/onboarding-bridge",              requireRole("admin", "hr", "manager"), h(c.listOnboardingBridges.bind(c)));
+atsRouter.post("/onboarding-bridge",             requireRole("admin", "hr"), h(c.createOnboardingBridge.bind(c)));
+atsRouter.patch("/onboarding-bridge/:id",        requireRole("admin", "hr"), h(c.updateOnboardingBridge.bind(c)));
 
 // Reference data
-atsRouter.get(
-  "/sourcing-channels",
-  requireRole("admin", "hr", "recruiter"),
-  h(c.listSourcingChannels.bind(c)),
-);
+atsRouter.get("/sourcing-channels",              requireRole("admin", "hr", "recruiter"), h(c.listSourcingChannels.bind(c)));
 // Gate derived from the dashboard registry, not restated: HR, CEO, Manager, Super Admin
 // and Recruiter dashboards all render tiles from this endpoint. The hand-written list
 // omitted `ceo`, so the CEO dashboard's own hiring panel returned 403 for all four CEO
 // accounts while reading fine as super_admin (requireRole short-circuits for it).
-atsRouter.get(
-  "/stats",
-  requireRole(
-    "admin",
-    ...dashboardConsumerRoles(
-      "HR_DASHBOARD",
-      "CEO_DASHBOARD",
-      "MANAGEMENT_DASHBOARD",
-      "SUPER_ADMIN_DASHBOARD",
-      "RECRUITER_DASHBOARD",
-    ),
-  ),
-  h(c.getDashboardStats.bind(c)),
-);
+atsRouter.get("/stats",                          requireRole("admin", ...dashboardConsumerRoles(
+  "HR_DASHBOARD", "CEO_DASHBOARD", "MANAGEMENT_DASHBOARD", "SUPER_ADMIN_DASHBOARD", "RECRUITER_DASHBOARD",
+)), h(c.getDashboardStats.bind(c)));
 
 // ── ATS dashboards: server-side aggregates + drill-down ─────────────────────────────────────────
 // Aggregates are computed once and cached org-wide, so they cannot be row-scoped per user: they are limited to the
 // roles that already see every candidate (candidate-access.ts WIDE_ROLES). Candidate-level endpoints (list, drill,
 // journey) apply resolveCandidateScope / canAccessCandidate, the repo's single row-scope rule.
 const DASH_AGG_ROLES = ["admin", "hr", "manager", "ceo"] as const;
-const DASH_CANDIDATE_ROLES = [
-  "admin",
-  "hr",
-  "recruiter",
-  "manager",
-  "branch_head",
-  "process_manager",
-  "ceo",
-] as const;
-const dashPeriod = (v: unknown, dflt: OverviewPeriod): OverviewPeriod =>
-  ["today", "7d", "30d", "90d", "all"].includes(String(v))
-    ? (v as OverviewPeriod)
-    : dflt;
-const dashText = (v: unknown, max = 120) =>
-  typeof v === "string" && v.length <= max ? v : undefined;
-const dashInt = (v: unknown) =>
-  v !== undefined && v !== "" && Number.isInteger(Number(v))
-    ? Number(v)
-    : undefined;
+const DASH_CANDIDATE_ROLES = ["admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"] as const;
+const dashPeriod = (v: unknown, dflt: OverviewPeriod): OverviewPeriod => (["today", "7d", "30d", "90d", "all"].includes(String(v)) ? (v as OverviewPeriod) : dflt);
+const dashText = (v: unknown, max = 120) => (typeof v === "string" && v.length <= max ? v : undefined);
+const dashInt = (v: unknown) => (v !== undefined && v !== "" && Number.isInteger(Number(v)) ? Number(v) : undefined);
 
 // Branch scoping (owner ruling 2026-10-01): hr / manager are no longer org-wide. Org-wide roles keep the cached
 // org-wide aggregates; everyone else is pinned to ONE branch of their own (a ?branch= may only narrow to a branch
@@ -450,29 +311,11 @@ atsRouter.get("/dashboard/operations", requireRole(...DASH_AGG_ROLES), h(async (
 const dashFilters = async (req: AuthenticatedRequest) => {
   const q = req.query;
   return {
-    from: dashText(q.from, 10),
-    to: dashText(q.to, 10),
-    branch: dashText(q.branch),
-    process: dashText(q.process),
-    status: dashText(q.status),
-    stage: dashText(q.stage),
-    search: dashText(q.search, 60),
-    includeLeads: q.includeLeads === "1",
-    page: Number(q.page) || 1,
-    limit: Number(q.limit) || 50,
-    source: dashText(q.source),
-    recruiter: dashText(q.recruiter),
-    outcome: dashText(q.outcome, 20),
-    gender: dashText(q.gender, 20),
-    idle: dashText(q.idle, 10),
-    hour: dashInt(q.hour),
-    dow: dashInt(q.dow),
-    experience: dashText(q.experience),
-    education: dashText(q.education),
-    shift: dashText(q.shift, 20),
-    age: dashText(q.age, 10),
-    voc: dashText(q.voc, 200),
-    interviewer: dashText(q.interviewer, 200),
+    from: dashText(q.from, 10), to: dashText(q.to, 10), branch: dashText(q.branch), process: dashText(q.process), status: dashText(q.status), stage: dashText(q.stage),
+    search: dashText(q.search, 60), includeLeads: q.includeLeads === "1", page: Number(q.page) || 1, limit: Number(q.limit) || 50,
+    source: dashText(q.source), recruiter: dashText(q.recruiter), outcome: dashText(q.outcome, 20), gender: dashText(q.gender, 20), idle: dashText(q.idle, 10),
+    hour: dashInt(q.hour), dow: dashInt(q.dow), experience: dashText(q.experience), education: dashText(q.education), shift: dashText(q.shift, 20), age: dashText(q.age, 10),
+    voc: dashText(q.voc, 200), interviewer: dashText(q.interviewer, 200),
     scope: await resolveCandidateScope(req.authUser!.id),
   };
 };
@@ -563,28 +406,15 @@ atsRouter.post("/queue-tokens", requireRole("admin", "hr", "super_admin", "recru
 }));
 
 // GET /api/ats/queue-tokens/candidate/:candidateId â€” active token for a candidate
-atsRouter.get(
-  "/queue-tokens/candidate/:candidateId",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    // recruiter is a scoped role, so this needs the same candidate guard as the by-id routes:
-    // a walk-in token names the candidate and their queue position.
-    const { assertCandidateInScope } = await import("./candidate-access.js");
-    if (
-      !(await assertCandidateInScope(
-        req.authUser!.id,
-        req.params.candidateId,
-        res,
-      ))
-    )
-      return;
+atsRouter.get("/queue-tokens/candidate/:candidateId", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // recruiter is a scoped role, so this needs the same candidate guard as the by-id routes:
+  // a walk-in token names the candidate and their queue position.
+  const { assertCandidateInScope } = await import("./candidate-access.js");
+  if (!(await assertCandidateInScope(req.authUser!.id, req.params.candidateId, res))) return;
 
-    const data = await atsQueueService.getTokenByCandidateId(
-      req.params.candidateId,
-    );
-    return res.json({ success: true, data });
-  }),
-);
+  const data = await atsQueueService.getTokenByCandidateId(req.params.candidateId);
+  return res.json({ success: true, data });
+}));
 
 // POST /api/ats/queue-tokens/:id/walk-out â€” mark candidate as walked out
 atsRouter.post("/queue-tokens/:id/walk-out", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -647,177 +477,120 @@ atsRouter.get("/queue-tokens/active", requireRole("admin", "hr", "super_admin", 
 // POST /api/ats/recruiter/verify â€” validates recruiter code + PIN and biometric availability
 // Requires HRMS JWT (requireAuth already applied above)
 // No role restriction: recruiter app provides separate credential layer
-atsRouter.post(
-  "/recruiter/verify",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { recruiterCode, pin } = req.body;
-    if (!recruiterCode || !pin)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "recruiterCode and pin are required",
-        });
-    const profile = await verifyRecruiter(recruiterCode, pin);
-    return res.json({ success: true, data: profile });
-  }),
-);
+atsRouter.post("/recruiter/verify", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { recruiterCode, pin } = req.body;
+  if (!recruiterCode || !pin) return res.status(400).json({ success: false, message: "recruiterCode and pin are required" });
+  const profile = await verifyRecruiter(recruiterCode, pin);
+  return res.json({ success: true, data: profile });
+}));
 
 // GET /api/ats/recruiter/my-candidates â€” returns candidates assigned to the authenticated recruiter.
 // Admin/hr/super_admin may inspect all or filter by supplying ?recruiterName=.
 // Any other role sees only their own queue derived from the JWT â†’ employee â†’ roster chain.
-atsRouter.get(
-  "/recruiter/my-candidates",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userRoles =
-      (req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? [];
-    const isPrivileged = userRoles.some((role) =>
-      ["admin", "hr", "super_admin"].includes(role),
-    );
-    const isRecruiterUser = userRoles.includes("recruiter");
-    const overrideName = String(req.query.recruiterName ?? "").trim();
+atsRouter.get("/recruiter/my-candidates", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
+  const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
+  const isRecruiterUser = userRoles.includes("recruiter");
+  const overrideName = String(req.query.recruiterName ?? "").trim();
 
-    let recruiterName: string | undefined;
-    let profile: Awaited<ReturnType<typeof resolveRecruiterForActor>> = null;
+  let recruiterName: string | undefined;
+  let profile: Awaited<ReturnType<typeof resolveRecruiterForActor>> = null;
 
-    if (isPrivileged && overrideName) {
-      // Admin/HR may explicitly request any recruiter's queue by name
-      recruiterName = overrideName;
-    } else if (isRecruiterUser) {
-      // Mixed HR+recruiter accounts should still default to their own recruiter queue.
-      profile = await resolveRecruiterForActor(req.authUser!.id);
-      if (!profile) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "No recruiter profile linked to this account",
-          });
-      }
-      recruiterName = profile.name;
+  if (isPrivileged && overrideName) {
+    // Admin/HR may explicitly request any recruiter's queue by name
+    recruiterName = overrideName;
+  } else if (isRecruiterUser) {
+    // Mixed HR+recruiter accounts should still default to their own recruiter queue.
+    profile = await resolveRecruiterForActor(req.authUser!.id);
+    if (!profile) {
+      return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
     }
+    recruiterName = profile.name;
+  }
 
-    const data = await getMyPendingCandidates(recruiterName);
-    return res.json({ success: true, data, recruiter: profile });
-  }),
-);
+  const data = await getMyPendingCandidates(recruiterName);
+  return res.json({ success: true, data, recruiter: profile });
+}));
 
 // GET /api/ats/recruiter/submission-history â€” submission history for the authenticated recruiter.
 // Admin/hr/super_admin may inspect all or filter by supplying ?recruiterCode=.
-atsRouter.get(
-  "/recruiter/submission-history",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userRoles =
-      (req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? [];
-    const isPrivileged = userRoles.some((role) =>
-      ["admin", "hr", "super_admin"].includes(role),
-    );
-    const isRecruiterUser = userRoles.includes("recruiter");
-    const overrideCode = String(req.query.recruiterCode ?? "").trim();
+atsRouter.get("/recruiter/submission-history", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
+  const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
+  const isRecruiterUser = userRoles.includes("recruiter");
+  const overrideCode = String(req.query.recruiterCode ?? "").trim();
 
-    let recruiterCode: string | null = null;
-    let rosterId: string | null = null;
-    let profile: Awaited<ReturnType<typeof resolveRecruiterForActor>> = null;
+  let recruiterCode: string | null = null;
+  let rosterId: string | null = null;
+  let profile: Awaited<ReturnType<typeof resolveRecruiterForActor>> = null;
 
-    if (isPrivileged && overrideCode) {
-      recruiterCode = overrideCode;
-    } else if (isRecruiterUser) {
-      profile = await resolveRecruiterForActor(req.authUser!.id);
-      if (!profile) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "No recruiter profile linked to this account",
-          });
-      }
-      recruiterCode = profile.recruiterCode ?? null;
-      rosterId = profile.id ?? null;
+  if (isPrivileged && overrideCode) {
+    recruiterCode = overrideCode;
+  } else if (isRecruiterUser) {
+    profile = await resolveRecruiterForActor(req.authUser!.id);
+    if (!profile) {
+      return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
     }
+    recruiterCode = profile.recruiterCode ?? null;
+    rosterId = profile.id ?? null;
+  }
 
-    const userId = req.authUser?.id ?? null;
-    const data = await getSubmissionHistory(recruiterCode, rosterId, userId);
-    return res.json({ success: true, data, recruiter: profile });
-  }),
-);
+  const userId = req.authUser?.id ?? null;
+  const data = await getSubmissionHistory(recruiterCode, rosterId, userId);
+  return res.json({ success: true, data, recruiter: profile });
+}));
 
 // GET /api/ats/recruiter/daily-stats â€” today's KPI summary for the authenticated recruiter.
-atsRouter.get(
-  "/recruiter/daily-stats",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userRoles =
-      (req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? [];
-    const isPrivileged = userRoles.some((role) =>
-      ["admin", "hr", "super_admin"].includes(role),
-    );
-    const isRecruiterUser = userRoles.includes("recruiter");
-    let recruiterName: string | undefined;
-    let recruiterCode: string | null = null;
-    if (isPrivileged && req.query.recruiterName) {
-      recruiterName = String(req.query.recruiterName).trim();
-    } else if (isRecruiterUser) {
-      const profile = await resolveRecruiterForActor(req.authUser!.id);
-      if (!profile)
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "No recruiter profile linked to this account",
-          });
-      recruiterName = profile.name;
-      recruiterCode = profile.recruiterCode ?? null;
-    } else {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message:
-            "recruiterName is required for privileged non-recruiter users",
-        });
-    }
-    const stats = await getRecruiterDailyStats(recruiterName!, recruiterCode);
-    return res.json({ success: true, data: stats });
-  }),
-);
+atsRouter.get("/recruiter/daily-stats", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userRoles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
+  const isPrivileged = userRoles.some((role) => ["admin", "hr", "super_admin"].includes(role));
+  const isRecruiterUser = userRoles.includes("recruiter");
+  let recruiterName: string | undefined;
+  let recruiterCode: string | null = null;
+  if (isPrivileged && req.query.recruiterName) {
+    recruiterName = String(req.query.recruiterName).trim();
+  } else if (isRecruiterUser) {
+    const profile = await resolveRecruiterForActor(req.authUser!.id);
+    if (!profile) return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
+    recruiterName = profile.name;
+    recruiterCode = profile.recruiterCode ?? null;
+  } else {
+    return res.status(400).json({ success: false, message: "recruiterName is required for privileged non-recruiter users" });
+  }
+  const stats = await getRecruiterDailyStats(recruiterName!, recruiterCode);
+  return res.json({ success: true, data: stats });
+}));
 
 // GET /api/ats/recruiter/my-performance — detailed performance report for the logged-in recruiter
-atsRouter.get(
-  "/recruiter/my-performance",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { db } = await import("../../db/mysql.js");
+atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { db } = await import("../../db/mysql.js");
 
-    const userId = req.authUser!.id;
-    const period = String(req.query.period ?? "MTD"); // FTD | WTD | MTD | L30
+  const userId = req.authUser!.id;
+  const period = String(req.query.period ?? "MTD"); // FTD | WTD | MTD | L30
 
-    let dateStart: string;
-    if (period === "FTD") {
-      dateStart = "CURDATE()";
-    } else if (period === "WTD") {
-      dateStart = "DATE(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY))";
-    } else if (period === "MTD") {
-      dateStart = "DATE(DATE_FORMAT(CURDATE(),'%Y-%m-01'))";
-    } else {
-      // L30
-      dateStart = "DATE(DATE_SUB(CURDATE(), INTERVAL 29 DAY))";
-    }
+  let dateStart: string;
+  if (period === "FTD") {
+    dateStart = "CURDATE()";
+  } else if (period === "WTD") {
+    dateStart = "DATE(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY))";
+  } else if (period === "MTD") {
+    dateStart = "DATE(DATE_FORMAT(CURDATE(),'%Y-%m-01'))";
+  } else { // L30
+    dateStart = "DATE(DATE_SUB(CURDATE(), INTERVAL 29 DAY))";
+  }
 
-    const dateClause =
-      period === "FTD"
-        ? `DATE(s.submitted_at) = ${dateStart}`
-        : `DATE(s.submitted_at) >= ${dateStart}`;
+  const dateClause = period === "FTD"
+    ? `DATE(s.submitted_at) = ${dateStart}`
+    : `DATE(s.submitted_at) >= ${dateStart}`;
 
-    const base = `FROM ats_interview_submission s WHERE s.recruiter_user_id = ? AND ${dateClause}`;
-    const params: unknown[] = [userId];
+  const base = `FROM ats_interview_submission s WHERE s.recruiter_user_id = ? AND ${dateClause}`;
+  const params: unknown[] = [userId];
 
-    // ── KPI summary ────────────────────────────────────────────────────────────
-    // TAT = Turn Around Time (interview_started_at to submitted_at)
-    // SLA breach = TAT > 90 minutes
-    const kpiQ = db.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT
+  // ── KPI summary ────────────────────────────────────────────────────────────
+  // TAT = Turn Around Time (interview_started_at to submitted_at)
+  // SLA breach = TAT > 90 minutes
+  const kpiQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT
       COUNT(*)                                                              AS total,
       SUM(s.final_decision='Selected')                                      AS selected,
       SUM(s.final_decision='Rejected')                                      AS rejected,
@@ -828,64 +601,62 @@ atsRouter.get(
       ROUND(AVG(TIMESTAMPDIFF(MINUTE,s.interview_started_at,s.submitted_at)),1) AS avg_tat_min,
       SUM(CASE WHEN TIMESTAMPDIFF(MINUTE,s.interview_started_at,s.submitted_at) > 90 THEN 1 ELSE 0 END) AS sla_breach_count
     ${base}`,
-      params,
-    );
+    params
+  );
 
-    // ── Hiring flow KPIs — compute from ats_interview_submission ─────────────────
-    // This shows: Total Interviewed → Walkins (arrived) → Selected → Joined
-    // We derive this from the same interview submission data for consistency
-    const hiringFlowQ = db.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT
+  // ── Hiring flow KPIs — compute from ats_interview_submission ─────────────────
+  // This shows: Total Interviewed → Walkins (arrived) → Selected → Joined
+  // We derive this from the same interview submission data for consistency
+  const hiringFlowQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT
       COUNT(*)                                              AS total_entries,
       COUNT(*)                                              AS walkin_count,
       SUM(s.final_decision='Selected')                      AS selected_count,
       0                                                     AS joined_count
      ${base}`,
-      params,
-    );
+    params
+  );
 
-    // Try to get joined count from ats_recruiter_hiring_activity if roster exists.
-    // The joined lookup depends on the roster row, so the two are chained in one promise that
-    // runs alongside the other (independent) queries.
-    // activity_date is a DATE column, so DATE() around it was a no-op that only blocked its index.
-    const rosterQ = (async () => {
-      const [[rosterRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
-        `SELECT r.id AS roster_id, r.recruiter_code
+  // Try to get joined count from ats_recruiter_hiring_activity if roster exists.
+  // The joined lookup depends on the roster row, so the two are chained in one promise that
+  // runs alongside the other (independent) queries.
+  // activity_date is a DATE column, so DATE() around it was a no-op that only blocked its index.
+  const rosterQ = (async () => {
+    const [[rosterRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
+      `SELECT r.id AS roster_id, r.recruiter_code
        FROM ats_recruiter_roster r
        INNER JOIN employees e ON e.id = r.employee_id
        WHERE e.user_id = ? LIMIT 1`,
-        [userId],
-      );
-      const rosterId = (rosterRow?.roster_id as string) ?? null;
-      let joinedCount = 0;
-      if (rosterId) {
-        const [[joinedRow]] = await db.execute<
-          import("mysql2").RowDataPacket[]
-        >(
-          `SELECT SUM(h.joined_flag=1) AS joined_count
+      [userId]
+    );
+    const rosterId = (rosterRow?.roster_id as string) ?? null;
+    let joinedCount = 0;
+    if (rosterId) {
+      const [[joinedRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
+        `SELECT SUM(h.joined_flag=1) AS joined_count
          FROM ats_recruiter_hiring_activity h
          WHERE h.recruiter_id = ?
            AND h.activity_date >= ${dateStart}`,
-          [rosterId],
-        );
-        joinedCount = Number(joinedRow?.joined_count) || 0;
-      }
-      return joinedCount;
-    })();
+        [rosterId]
+      );
+      joinedCount = Number(joinedRow?.joined_count) || 0;
+    }
+    return joinedCount;
+  })();
 
-    // ── Stage funnel — derive stage from round results ─────────────────────────────
-    // Stages: Arrival → HR Round → Skill Test → Ops Round → Client Round → Selection
-    //
-    // Logic to determine which stage a candidate was rejected/stopped at:
-    // - No Show at Arrival: final_decision='No Show' AND round1_result IS NULL
-    // - Rejected at HR Round: round1_result='Rejected'
-    // - Rejected at Skill Test: round1='Selected' AND (skilltest='Rejected' OR skilltest='No Show')
-    // - Rejected at Ops Round: round1='Selected' AND skilltest NOT rejected AND round2='Rejected'
-    // - Rejected at Client Round: round1='Selected' AND round2='Selected' AND round3='Rejected'
-    // - Selected: final_decision='Selected'
+  // ── Stage funnel — derive stage from round results ─────────────────────────────
+  // Stages: Arrival → HR Round → Skill Test → Ops Round → Client Round → Selection
+  //
+  // Logic to determine which stage a candidate was rejected/stopped at:
+  // - No Show at Arrival: final_decision='No Show' AND round1_result IS NULL
+  // - Rejected at HR Round: round1_result='Rejected'
+  // - Rejected at Skill Test: round1='Selected' AND (skilltest='Rejected' OR skilltest='No Show')
+  // - Rejected at Ops Round: round1='Selected' AND skilltest NOT rejected AND round2='Rejected'
+  // - Rejected at Client Round: round1='Selected' AND round2='Selected' AND round3='Rejected'
+  // - Selected: final_decision='Selected'
 
-    const stageQ = db.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT
+  const stageQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT
       CASE
         WHEN final_decision = 'No Show' AND (round1_result IS NULL OR round1_result = '') THEN 'Arrival'
         WHEN round1_result = 'Rejected' THEN 'HR Round'
@@ -900,12 +671,12 @@ atsRouter.get(
       COUNT(*) AS cnt
      ${base}
      GROUP BY effective_stage, final_decision`,
-      params,
-    );
+    params
+  );
 
-    // ── Daily trend (all days in period, filled) ───────────────────────────────
-    const trendQ = db.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT DATE(s.submitted_at) AS day,
+  // ── Daily trend (all days in period, filled) ───────────────────────────────
+  const trendQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT DATE(s.submitted_at) AS day,
             COUNT(*) AS total,
             SUM(s.final_decision='Selected') AS selected,
             SUM(s.final_decision='Rejected') AS rejected,
@@ -913,24 +684,24 @@ atsRouter.get(
      ${base}
      GROUP BY DATE(s.submitted_at)
      ORDER BY day ASC`,
-      params,
-    );
+    params
+  );
 
-    // ── Process breakdown ──────────────────────────────────────────────────────
-    const byProcessQ = db.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT COALESCE(s.interviewed_for_process,'Unknown') AS process,
+  // ── Process breakdown ──────────────────────────────────────────────────────
+  const byProcessQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT COALESCE(s.interviewed_for_process,'Unknown') AS process,
             COUNT(*) AS total,
             SUM(s.final_decision='Selected') AS selected,
             ROUND(SUM(s.final_decision='Selected')*100.0/NULLIF(COUNT(*),0),1) AS rate
      ${base}
      GROUP BY s.interviewed_for_process
      ORDER BY total DESC LIMIT 10`,
-      params,
-    );
+    params
+  );
 
-    // ── VOC breakdown ──────────────────────────────────────────────────────────
-    const vocQ = db.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT voc_reason, COUNT(*) AS cnt FROM (
+  // ── VOC breakdown ──────────────────────────────────────────────────────────
+  const vocQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT voc_reason, COUNT(*) AS cnt FROM (
        SELECT s.round1_voc   AS voc_reason ${base} AND s.round1_voc   IS NOT NULL AND s.round1_voc   != ''
        UNION ALL
        SELECT s.round2_voc   AS voc_reason ${base} AND s.round2_voc   IS NOT NULL AND s.round2_voc   != ''
@@ -939,298 +710,193 @@ atsRouter.get(
        UNION ALL
        SELECT s.skilltest_voc AS voc_reason ${base} AND s.skilltest_voc IS NOT NULL AND s.skilltest_voc != ''
      ) v GROUP BY voc_reason ORDER BY cnt DESC LIMIT 10`,
-      [...params, ...params, ...params, ...params],
-    );
+    [...params, ...params, ...params, ...params]
+  );
 
-    // ── Source breakdown ───────────────────────────────────────────────────────
-    const bySourceQ = db.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(s.hiring_source_snapshot,''),'Direct/Walk-in') AS source,
+  // ── Source breakdown ───────────────────────────────────────────────────────
+  const bySourceQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(s.hiring_source_snapshot,''),'Direct/Walk-in') AS source,
             COUNT(*) AS total,
             SUM(s.final_decision='Selected') AS selected
      ${base}
      GROUP BY source
      ORDER BY total DESC LIMIT 8`,
-      params,
-    );
+    params
+  );
 
-    // ── Recruiter profile ──────────────────────────────────────────────────────
-    // All of the above are independent reads, so they run concurrently.
-    const [
-      [[kpi]],
-      [[hiringFlowRow]],
-      joinedCount,
-      [stageRows],
-      [trend],
-      [byProcess],
-      [voc],
-      [bySource],
-      profile,
-    ] = await Promise.all([
-      kpiQ,
-      hiringFlowQ,
-      rosterQ,
-      stageQ,
-      trendQ,
-      byProcessQ,
-      vocQ,
-      bySourceQ,
-      resolveRecruiterForActor(userId),
-    ]);
+  // ── Recruiter profile ──────────────────────────────────────────────────────
+  // All of the above are independent reads, so they run concurrently.
+  const [[[kpi]], [[hiringFlowRow]], joinedCount, [stageRows], [trend], [byProcess], [voc], [bySource], profile] = await Promise.all([
+    kpiQ, hiringFlowQ, rosterQ, stageQ, trendQ, byProcessQ, vocQ, bySourceQ,
+    resolveRecruiterForActor(userId),
+  ]);
 
-    const hiringFlow = {
-      total_entries: Number(hiringFlowRow?.total_entries) || 0,
-      walkin_count: Number(hiringFlowRow?.walkin_count) || 0,
-      selected_count: Number(hiringFlowRow?.selected_count) || 0,
-      joined_count: joinedCount,
+  const hiringFlow = {
+    total_entries: Number(hiringFlowRow?.total_entries) || 0,
+    walkin_count: Number(hiringFlowRow?.walkin_count) || 0,
+    selected_count: Number(hiringFlowRow?.selected_count) || 0,
+    joined_count: joinedCount,
+  };
+
+  // Aggregate by stage
+  const stageData: Record<string, { rejected: number; no_show: number; hold: number; pending: number; selected: number }> = {
+    'Arrival': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+    'HR Round': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+    'Skill Test': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+    'Ops Round': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+    'Client Round': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+    'Selection': { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
+  };
+
+  for (const row of stageRows) {
+    const stage = row.effective_stage as string;
+    const decision = row.final_decision as string;
+    const cnt = Number(row.cnt) || 0;
+
+    if (!stageData[stage]) continue;
+
+    if (decision === 'Rejected') stageData[stage].rejected += cnt;
+    else if (decision === 'No Show') stageData[stage].no_show += cnt;
+    else if (decision === 'Hold') stageData[stage].hold += cnt;
+    else if (decision === 'Client Round - Pending') stageData[stage].pending += cnt;
+    else if (decision === 'Selected') stageData[stage].selected += cnt;
+  }
+
+  // Build funnel: calculate entered/passed for each stage
+  const STAGES = ['Arrival', 'HR Round', 'Skill Test', 'Ops Round', 'Client Round', 'Selection'];
+  const totalCount = Number(kpi?.total) || 0;
+
+  // Calculate cumulative: entered at stage N = total - sum of all rejected/no_show at stages before N
+  let cumulativeDropped = 0;
+  const funnel = STAGES.map((stageName, idx) => {
+    const data = stageData[stageName];
+    const entered = totalCount - cumulativeDropped;
+    const rejected = data.rejected;
+    const no_show = data.no_show;
+    const hold = data.hold;
+    const pending = data.pending;
+    const selected = data.selected;
+
+    // Dropped at this stage = rejected + no_show at this stage
+    const droppedHere = rejected + no_show;
+
+    // Passed = entered - dropped at this stage (for final stage, passed = selected)
+    const passed = idx === STAGES.length - 1 ? selected : (entered - droppedHere);
+
+    // Pass rate
+    const passRate = entered > 0 ? Math.round((passed / entered) * 1000) / 10 : 0;
+
+    // Add to cumulative for next stage
+    cumulativeDropped += droppedHere;
+
+    return {
+      stage: stageName,
+      entered,
+      passed,
+      rejected,
+      hold,
+      no_show,
+      pending,
+      completed: passed + rejected + no_show,
+      pass_rate: passRate,
     };
+  }).filter(row => row.entered > 0); // skip stages no candidate ever reached
 
-    // Aggregate by stage
-    const stageData: Record<
-      string,
-      {
-        rejected: number;
-        no_show: number;
-        hold: number;
-        pending: number;
-        selected: number;
-      }
-    > = {
-      Arrival: { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
-      "HR Round": { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
-      "Skill Test": {
-        rejected: 0,
-        no_show: 0,
-        hold: 0,
-        pending: 0,
-        selected: 0,
-      },
-      "Ops Round": {
-        rejected: 0,
-        no_show: 0,
-        hold: 0,
-        pending: 0,
-        selected: 0,
-      },
-      "Client Round": {
-        rejected: 0,
-        no_show: 0,
-        hold: 0,
-        pending: 0,
-        selected: 0,
-      },
-      Selection: { rejected: 0, no_show: 0, hold: 0, pending: 0, selected: 0 },
-    };
-
-    for (const row of stageRows) {
-      const stage = row.effective_stage as string;
-      const decision = row.final_decision as string;
-      const cnt = Number(row.cnt) || 0;
-
-      if (!stageData[stage]) continue;
-
-      if (decision === "Rejected") stageData[stage].rejected += cnt;
-      else if (decision === "No Show") stageData[stage].no_show += cnt;
-      else if (decision === "Hold") stageData[stage].hold += cnt;
-      else if (decision === "Client Round - Pending")
-        stageData[stage].pending += cnt;
-      else if (decision === "Selected") stageData[stage].selected += cnt;
-    }
-
-    // Build funnel: calculate entered/passed for each stage
-    const STAGES = [
-      "Arrival",
-      "HR Round",
-      "Skill Test",
-      "Ops Round",
-      "Client Round",
-      "Selection",
-    ];
-    const totalCount = Number(kpi?.total) || 0;
-
-    // Calculate cumulative: entered at stage N = total - sum of all rejected/no_show at stages before N
-    let cumulativeDropped = 0;
-    const funnel = STAGES.map((stageName, idx) => {
-      const data = stageData[stageName];
-      const entered = totalCount - cumulativeDropped;
-      const rejected = data.rejected;
-      const no_show = data.no_show;
-      const hold = data.hold;
-      const pending = data.pending;
-      const selected = data.selected;
-
-      // Dropped at this stage = rejected + no_show at this stage
-      const droppedHere = rejected + no_show;
-
-      // Passed = entered - dropped at this stage (for final stage, passed = selected)
-      const passed =
-        idx === STAGES.length - 1 ? selected : entered - droppedHere;
-
-      // Pass rate
-      const passRate =
-        entered > 0 ? Math.round((passed / entered) * 1000) / 10 : 0;
-
-      // Add to cumulative for next stage
-      cumulativeDropped += droppedHere;
-
-      return {
-        stage: stageName,
-        entered,
-        passed,
-        rejected,
-        hold,
-        no_show,
-        pending,
-        completed: passed + rejected + no_show,
-        pass_rate: passRate,
-      };
-    }).filter((row) => row.entered > 0); // skip stages no candidate ever reached
-
-    return res.json({
-      success: true,
-      period,
-      profile: profile ?? null,
-      data: { kpi, hiringFlow, funnel, trend, byProcess, voc, bySource },
-    });
-  }),
-);
+  return res.json({
+    success: true,
+    period,
+    profile: profile ?? null,
+    data: { kpi, hiringFlow, funnel, trend, byProcess, voc, bySource },
+  });
+}));
 
 // GET /api/ats/recruiter/other-pending — candidates in same branch assigned to absent recruiters
-atsRouter.get(
-  "/recruiter/other-pending",
-  requireRole("admin", "hr", "super_admin", "recruiter"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const profile = await resolveRecruiterForActor(req.authUser!.id);
-    if (!profile) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "No recruiter profile linked to this account",
-        });
-    }
-    if (!profile.branch) {
-      return res.json({ success: true, data: [] });
-    }
-    const data = await getOtherRecruitersPendingCandidates(
-      profile.name,
-      profile.branch,
-    );
-    return res.json({ success: true, data, recruiter: profile });
-  }),
-);
+atsRouter.get("/recruiter/other-pending", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const profile = await resolveRecruiterForActor(req.authUser!.id);
+  if (!profile) {
+    return res.status(403).json({ success: false, message: "No recruiter profile linked to this account" });
+  }
+  if (!profile.branch) {
+    return res.json({ success: true, data: [] });
+  }
+  const data = await getOtherRecruitersPendingCandidates(profile.name, profile.branch);
+  return res.json({ success: true, data, recruiter: profile });
+}));
 
 // GET /api/ats/recruiter-roster/active — list of active recruiters for reassignment dropdown
 // Only returns recruiters whose linked employee is still active
-atsRouter.get(
-  "/recruiter-roster/active",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { db } = await import("../../db/mysql.js");
-    const [rows] = await db.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT r.id, r.name, r.recruiter_code, r.branch, r.email, r.employee_id
+atsRouter.get("/recruiter-roster/active", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { db } = await import("../../db/mysql.js");
+  const [rows] = await db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT r.id, r.name, r.recruiter_code, r.branch, r.email, r.employee_id
      FROM ats_recruiter_roster r
      LEFT JOIN employees e ON e.id = r.employee_id
      WHERE r.active_status = 1
        AND (r.employee_id IS NULL OR (e.active_status = 1 AND LOWER(e.employment_status) = 'active'))
      ORDER BY r.name ASC`,
-      [],
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    []
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 // PATCH /api/ats/recruiter-roster/:id/deactivate — remove a recruiter from the active roster
-atsRouter.patch(
-  "/recruiter-roster/:id/deactivate",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { db } = await import("../../db/mysql.js");
-    const [result] = await db.execute<import("mysql2").ResultSetHeader>(
-      `UPDATE ats_recruiter_roster SET active_status = 0 WHERE id = ?`,
-      [req.params.id],
-    );
-    if (result.affectedRows === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Recruiter roster entry not found" });
-    }
-    return res.json({
-      success: true,
-      message: "Recruiter deactivated from roster",
-    });
-  }),
-);
+atsRouter.patch("/recruiter-roster/:id/deactivate", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { db } = await import("../../db/mysql.js");
+  const [result] = await db.execute<import("mysql2").ResultSetHeader>(
+    `UPDATE ats_recruiter_roster SET active_status = 0 WHERE id = ?`,
+    [req.params.id]
+  );
+  if (result.affectedRows === 0) {
+    return res.status(404).json({ success: false, message: "Recruiter roster entry not found" });
+  }
+  return res.json({ success: true, message: "Recruiter deactivated from roster" });
+}));
 
 // PATCH /api/ats/candidates/:id/reassign — HR/Admin formal reassignment with audit
-atsRouter.patch(
-  "/candidates/:id/reassign",
-  requireRole("admin", "hr", "super_admin"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    // Defence in depth, as with /convert: every role admitted here is wide today, so this
-    // guard is currently a no-op. It exists so the route cannot become scoped-role-reachable
-    // without the candidate check coming with it.
-    const { assertCandidateInScope } = await import("./candidate-access.js");
-    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res)))
-      return;
+atsRouter.patch("/candidates/:id/reassign", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // Defence in depth, as with /convert: every role admitted here is wide today, so this
+  // guard is currently a no-op. It exists so the route cannot become scoped-role-reachable
+  // without the candidate check coming with it.
+  const { assertCandidateInScope } = await import("./candidate-access.js");
+  if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res))) return;
 
-    const { newRecruiterId, reason } = req.body;
-    if (!newRecruiterId || typeof newRecruiterId !== "string") {
-      return res
-        .status(400)
-        .json({ success: false, message: "newRecruiterId is required" });
-    }
-    if (!reason || typeof reason !== "string" || !reason.trim()) {
-      return res
-        .status(400)
-        .json({ success: false, message: "reason is required" });
-    }
-    const actorEmail = req.authUser!.email ?? req.authUser!.id;
-    await reassignCandidate(
-      req.params.id,
-      newRecruiterId,
-      reason.trim(),
-      actorEmail,
-    );
-    return res.json({
-      success: true,
-      message: "Candidate reassigned successfully",
-    });
-  }),
-);
+  const { newRecruiterId, reason } = req.body;
+  if (!newRecruiterId || typeof newRecruiterId !== "string") {
+    return res.status(400).json({ success: false, message: "newRecruiterId is required" });
+  }
+  if (!reason || typeof reason !== "string" || !reason.trim()) {
+    return res.status(400).json({ success: false, message: "reason is required" });
+  }
+  const actorEmail = req.authUser!.email ?? req.authUser!.id;
+  await reassignCandidate(req.params.id, newRecruiterId, reason.trim(), actorEmail);
+  return res.json({ success: true, message: "Candidate reassigned successfully" });
+}));
 
 // Joining Documents Tracker routes
-atsRouter.use("/joining-documents-tracker", joiningDocumentsTrackerRouter);
+atsRouter.use('/joining-documents-tracker', joiningDocumentsTrackerRouter);
 
 // Historical data bulk import
-atsRouter.use("/bulk-import", bulkImportRouter);
+atsRouter.use('/bulk-import', bulkImportRouter);
 
 // GET /api/ats/my-onboarding-status — employee's own onboarding progress (stub for dashboard)
-atsRouter.get(
-  "/my-onboarding-status",
-  requireAuth,
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const { getEmployeeForUser } = await import("../../shared/accessGuard.js");
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp) {
-      return res.json({
-        success: true,
-        data: { status: "not_applicable" },
-        generatedAt: new Date().toISOString(),
-      });
-    }
+atsRouter.get("/my-onboarding-status", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
+  const { getEmployeeForUser } = await import("../../shared/accessGuard.js");
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) {
+    return res.json({ success: true, data: { status: "not_applicable" }, generatedAt: new Date().toISOString() });
+  }
 
-    const { db } = await import("../../db/mysql.js");
-    // `ats_onboarding` does not exist and never has. The query threw on every
-    // call, the .catch() turned that into "no rows", and the branch below reads
-    // no rows as "already onboarded" — so this endpoint told every employee they
-    // were 100% complete, four of four steps done, regardless of the truth. It
-    // also logged an ER_NO_SUCH_TABLE on each request.
-    //
-    // The real milestones live across the bridge, the onboarding profile and the
-    // BGV report, so read those. Response shape is unchanged.
-    const [rows] = await db
-      .execute<import("mysql2").RowDataPacket[]>(
-        `SELECT b.status              AS bridge_status,
+  const { db } = await import("../../db/mysql.js");
+  // `ats_onboarding` does not exist and never has. The query threw on every
+  // call, the .catch() turned that into "no rows", and the branch below reads
+  // no rows as "already onboarded" — so this endpoint told every employee they
+  // were 100% complete, four of four steps done, regardless of the truth. It
+  // also logged an ER_NO_SUCH_TABLE on each request.
+  //
+  // The real milestones live across the bridge, the onboarding profile and the
+  // BGV report, so read those. Response shape is unchanged.
+  const [rows] = await db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT b.status              AS bridge_status,
             b.joining_date,
             b.converted_at,
             b.joining_document_status,
@@ -1243,153 +909,135 @@ atsRouter.get(
        LEFT JOIN candidate_bgv_report r        ON r.candidate_id = b.candidate_id
       WHERE b.employee_id = ?
       LIMIT 1`,
-        [emp.id],
-      )
-      .catch(() => [[]] as any);
+    [emp.id]
+  ).catch(() => [[]] as any);
 
-    const record = (rows as any[])[0];
-    if (!record) {
-      // No onboarding record = already onboarded, return completed status with steps
-      return res.json({
-        success: true,
-        generatedAt: new Date().toISOString(),
-        data: {
-          status: "completed",
-          stage: "Joining Completion",
-          percentComplete: 100,
-          completedSteps: 4,
-          totalSteps: 4,
-          offer_accepted: true,
-          documents_submitted: true,
-          bgv_cleared: true,
-          joining_date: (emp as any).date_of_joining ?? null,
-        },
-      });
-    }
-
-    const offerAccepted = Boolean(record.has_offer);
-    const documentsSubmitted =
-      String(record.profile_status ?? "") === "submitted" ||
-      String(record.joining_document_status ?? "") === "completed";
-    // Only 'clear' counts. 'pending' and 'refer' are explicitly not cleared —
-    // see migration 1070, where six reports were reset off a fabricated 'clear'.
-    const bgvCleared = String(record.bgv_status ?? "") === "clear";
-
+  const record = (rows as any[])[0];
+  if (!record) {
+    // No onboarding record = already onboarded, return completed status with steps
     return res.json({
       success: true,
       generatedAt: new Date().toISOString(),
       data: {
-        status: record.converted_at
-          ? "completed"
-          : String(record.bridge_status ?? "in_progress"),
+        status: "completed",
         stage: "Joining Completion",
-        percentComplete: bgvCleared
-          ? 100
-          : documentsSubmitted
-            ? 75
-            : offerAccepted
-              ? 50
-              : 25,
-        completedSteps:
-          [offerAccepted, documentsSubmitted, bgvCleared].filter(Boolean)
-            .length + 1,
+        percentComplete: 100,
+        completedSteps: 4,
         totalSteps: 4,
-        offer_accepted: offerAccepted,
-        documents_submitted: documentsSubmitted,
-        bgv_cleared: bgvCleared,
-        joining_date: record.joining_date,
-      },
+        offer_accepted: true,
+        documents_submitted: true,
+        bgv_cleared: true,
+        joining_date: (emp as any).date_of_joining ?? null,
+      }
     });
-  }),
-);
+  }
+
+  const offerAccepted = Boolean(record.has_offer);
+  const documentsSubmitted = String(record.profile_status ?? "") === "submitted"
+    || String(record.joining_document_status ?? "") === "completed";
+  // Only 'clear' counts. 'pending' and 'refer' are explicitly not cleared —
+  // see migration 1070, where six reports were reset off a fabricated 'clear'.
+  const bgvCleared = String(record.bgv_status ?? "") === "clear";
+
+  return res.json({
+    success: true,
+    generatedAt: new Date().toISOString(),
+    data: {
+      status: record.converted_at ? "completed" : String(record.bridge_status ?? "in_progress"),
+      stage: "Joining Completion",
+      percentComplete: bgvCleared ? 100 : documentsSubmitted ? 75 : offerAccepted ? 50 : 25,
+      completedSteps: [offerAccepted, documentsSubmitted, bgvCleared].filter(Boolean).length + 1,
+      totalSteps: 4,
+      offer_accepted: offerAccepted,
+      documents_submitted: documentsSubmitted,
+      bgv_cleared: bgvCleared,
+      joining_date: record.joining_date
+    }
+  });
+}));
 
 // ── Trigger Daily Hiring Report ──────────────────────────────────────────────
 
-atsRouter.post(
-  "/trigger-daily-report",
-  requireRole("admin", "hr_admin", "super_admin"),
-  h(async (req, res) => {
-    const { date, email, preview } = req.body;
+atsRouter.post("/trigger-daily-report", requireRole("admin", "hr_admin", "super_admin"), h(async (req, res) => {
+  const { date, email, preview } = req.body;
 
-    // Import the report function
-    const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
+  // Import the report function
+  const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
 
-    try {
-      // If preview mode, just return the data
-      if (preview) {
-        const result = await runDailyHiringReport(date, "preview");
-        return res.json({
-          success: true,
-          preview: true,
-          data: result,
-          message: "Preview generated. Check 'data' field for report content.",
-        });
-      }
-
-      // Otherwise send the email
-      const result = await runDailyHiringReport(date, email);
-
+  try {
+    // If preview mode, just return the data
+    if (preview) {
+      const result = await runDailyHiringReport(date, 'preview');
       return res.json({
-        success: result.success,
-        messageId: result.messageId,
-        recipients: result.recipients || email,
-        stats: result.stats,
-        error: result.error,
-        message: result.success
-          ? "Daily report email sent successfully"
-          : "Failed to send email",
-      });
-    } catch (error) {
-      console.error("[trigger-daily-report] Error:", error);
-      return res.status(500).json({
-        success: false,
-        error: String(error),
-        message: "Failed to generate report",
+        success: true,
+        preview: true,
+        data: result,
+        message: "Preview generated. Check 'data' field for report content."
       });
     }
-  }),
-);
+
+    // Otherwise send the email
+    const result = await runDailyHiringReport(
+      date,
+      email
+    );
+
+    return res.json({
+      success: result.success,
+      messageId: result.messageId,
+      recipients: result.recipients || email,
+      stats: result.stats,
+      error: result.error,
+      message: result.success ? "Daily report email sent successfully" : "Failed to send email"
+    });
+  } catch (error) {
+    console.error("[trigger-daily-report] Error:", error);
+    return res.status(500).json({
+      success: false,
+      error: String(error),
+      message: "Failed to generate report"
+    });
+  }
+}));
 
 // ── PUBLIC TEST ROUTE - REMOVE AFTER TESTING ────────────────────────────────
 
-atsPublicRouter.post(
-  "/test-daily-report",
-  requireAuth,
-  requireRole("admin", "hr_admin", "super_admin"),
-  async (req, res) => {
-    const { date, email, preview } = req.body;
+atsPublicRouter.post("/test-daily-report", requireAuth, requireRole("admin", "hr_admin", "super_admin"), async (req, res) => {
+  const { date, email, preview } = req.body;
 
-    try {
-      const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
+  try {
+    const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
 
-      if (preview) {
-        const result = await runDailyHiringReport(date, "preview");
-        return res.json({
-          success: true,
-          preview: true,
-          data: result,
-          message: "Preview generated successfully",
-        });
-      }
-
-      const result = await runDailyHiringReport(date, email);
-
+    if (preview) {
+      const result = await runDailyHiringReport(date, 'preview');
       return res.json({
-        success: result.success,
-        messageId: result.messageId,
-        recipients: result.recipients || email,
-        stats: result.stats,
-        error: result.error,
-        message: result.success ? "Daily report email sent" : "Failed to send",
-      });
-    } catch (error: any) {
-      return res.status(500).json({
-        success: false,
-        error: error.message || String(error),
-        message: "Failed to generate report",
+        success: true,
+        preview: true,
+        data: result,
+        message: "Preview generated successfully"
       });
     }
-  },
-);
+
+    const result = await runDailyHiringReport(
+      date,
+      email
+    );
+
+    return res.json({
+      success: result.success,
+      messageId: result.messageId,
+      recipients: result.recipients || email,
+      stats: result.stats,
+      error: result.error,
+      message: result.success ? "Daily report email sent" : "Failed to send"
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      error: error.message || String(error),
+      message: "Failed to generate report"
+    });
+  }
+});
 
 export default atsRouter;

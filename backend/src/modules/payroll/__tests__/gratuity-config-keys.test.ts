@@ -45,9 +45,7 @@ const LEGACY = [
 function mockConfigAndJoining(cfg: unknown[], dateOfJoining: string | null) {
   execute
     .mockResolvedValueOnce([cfg])
-    .mockResolvedValueOnce([
-      dateOfJoining ? [{ date_of_joining: dateOfJoining }] : [],
-    ]);
+    .mockResolvedValueOnce([dateOfJoining ? [{ date_of_joining: dateOfJoining }] : []]);
 }
 
 describe("gratuity resolves against the key names production actually holds", () => {

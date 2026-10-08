@@ -38,37 +38,17 @@ const GRN_PAYMENT_REPORT_COLUMNS = [
 // two contracts, not one: IDC has ten columns, MAS has twelve — two unnamed columns sit
 // between Amount and DebitCredit, and Amount equals their sum on 48 of 48 rows.
 const IDC_VOUCHER_COLUMNS = [
-  "Vch No",
-  "Date",
-  "Details",
-  "Amount",
-  "DebitCredit",
-  "Cost Category",
-  "Cost Centre",
-  "Narration for Each Entry",
-  "Narration",
-  "VchType",
+  "Vch No", "Date", "Details", "Amount", "DebitCredit",
+  "Cost Category", "Cost Centre", "Narration for Each Entry", "Narration", "VchType",
 ];
 const MAS_VOUCHER_COLUMNS = [
-  "Vch No",
-  "Date",
-  "Details",
-  "Amount",
-  "",
-  "",
-  "DebitCredit",
-  "Cost Category",
-  "Cost Centre",
-  "Narration for Each Entry",
-  "Narration",
-  "VchType",
+  "Vch No", "Date", "Details", "Amount", "", "",
+  "DebitCredit", "Cost Category", "Cost Centre",
+  "Narration for Each Entry", "Narration", "VchType",
 ];
 
 function exportSource(): string {
-  return readFileSync(
-    new URL("../vendor-payment.routes.ts", import.meta.url),
-    "utf8",
-  );
+  return readFileSync(new URL("../vendor-payment.routes.ts", import.meta.url), "utf8");
 }
 
 describe("GRN Payment Report — the default export is the legacy format", () => {
@@ -76,26 +56,16 @@ describe("GRN Payment Report — the default export is the legacy format", () =>
 
   it("declares the twelve legacy columns, spelled exactly", () => {
     for (const column of GRN_PAYMENT_REPORT_COLUMNS) {
-      expect(src, `missing or renamed column: ${column}`).toContain(
-        `"${column}"`,
-      );
+      expect(src, `missing or renamed column: ${column}`).toContain(`"${column}"`);
     }
   });
 
   it("keeps them in the legacy order", () => {
     // Order is part of the contract. Reorganising into a "better logical grouping" is exactly
     // what this test exists to prevent.
-    const block = src.slice(
-      src.indexOf("const LEGACY_COLUMNS"),
-      src.indexOf("const EXTENDED_COLUMNS"),
-    );
-    const found = GRN_PAYMENT_REPORT_COLUMNS.map((c) =>
-      block.indexOf(`"${c}"`),
-    );
-    expect(
-      found.every((i) => i > -1),
-      "a legacy column is missing from LEGACY_COLUMNS",
-    ).toBe(true);
+    const block = src.slice(src.indexOf("const LEGACY_COLUMNS"), src.indexOf("const EXTENDED_COLUMNS"));
+    const found = GRN_PAYMENT_REPORT_COLUMNS.map((c) => block.indexOf(`"${c}"`));
+    expect(found.every((i) => i > -1), "a legacy column is missing from LEGACY_COLUMNS").toBe(true);
     const sorted = [...found].sort((a, b) => a - b);
     expect(found).toEqual(sorted);
   });
@@ -103,10 +73,7 @@ describe("GRN Payment Report — the default export is the legacy format", () =>
   it("does not rename Due Amount, Grn No. or SubHead", () => {
     // The three most tempting to "tidy". HRMS2 internally calls them due_amount_with_tax,
     // grn_number and sub_head; the report must not.
-    const block = src.slice(
-      src.indexOf("const LEGACY_COLUMNS"),
-      src.indexOf("const EXTENDED_COLUMNS"),
-    );
+    const block = src.slice(src.indexOf("const LEGACY_COLUMNS"), src.indexOf("const EXTENDED_COLUMNS"));
     expect(block).toContain('"Due Amount"');
     expect(block).not.toContain('"Due Amount With Tax"');
     expect(block).toContain('"Grn No."');

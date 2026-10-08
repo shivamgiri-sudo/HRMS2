@@ -35,12 +35,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const read = (f: string) => readFileSync(join(here, "..", f), "utf8");
 
 const SOURCES = {
-  "payroll-branch-readiness.routes.ts": read(
-    "payroll-branch-readiness.routes.ts",
-  ),
-  "payroll-branch-readiness.service.ts": read(
-    "payroll-branch-readiness.service.ts",
-  ),
+  "payroll-branch-readiness.routes.ts": read("payroll-branch-readiness.routes.ts"),
+  "payroll-branch-readiness.service.ts": read("payroll-branch-readiness.service.ts"),
 };
 
 /**
@@ -59,21 +55,16 @@ function updateWhereClauses(source: string): string[] {
 }
 
 describe("branch readiness — every UPDATE is scoped to a single process row", () => {
-  it.each(Object.keys(SOURCES))(
-    "%s has at least one readiness UPDATE to check",
-    (file) => {
-      expect(
-        updateWhereClauses(SOURCES[file as keyof typeof SOURCES]).length,
-      ).toBeGreaterThan(0);
-    },
-  );
+  it.each(Object.keys(SOURCES))("%s has at least one readiness UPDATE to check", (file) => {
+    expect(updateWhereClauses(SOURCES[file as keyof typeof SOURCES]).length).toBeGreaterThan(0);
+  });
 
   it.each(Object.keys(SOURCES))(
     "%s: no UPDATE filters on (process_month, branch_id) without process_id",
     (file) => {
-      const offenders = updateWhereClauses(
-        SOURCES[file as keyof typeof SOURCES],
-      ).filter((w) => !/process_id\s*=/.test(w));
+      const offenders = updateWhereClauses(SOURCES[file as keyof typeof SOURCES]).filter(
+        (w) => !/process_id\s*=/.test(w),
+      );
       expect(
         offenders,
         `these UPDATE statements would write every process row for the branch:\n  ${offenders.join("\n  ")}`,
@@ -98,9 +89,6 @@ describe("branch readiness — every UPDATE is scoped to a single process row", 
     const stmt = src.match(
       /WHERE process_month = \? AND branch_id = \? AND process_id = \?`,\s*\[value, month, branchId, processId\]/,
     );
-    expect(
-      stmt,
-      "process-scoped checklist UPDATE must bind the route's processId",
-    ).not.toBeNull();
+    expect(stmt, "process-scoped checklist UPDATE must bind the route's processId").not.toBeNull();
   });
 });

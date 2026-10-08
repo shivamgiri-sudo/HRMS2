@@ -29,9 +29,7 @@ describe("access control shows the official email", () => {
 
 describe("joining-kit contract remuneration", () => {
   it("prints the Payroll Head assigned CTC, not the payslip gross", () => {
-    const src = read(
-      "src/modules/employees/universalDigitalFormFill.service.ts",
-    );
+    const src = read("src/modules/employees/universalDigitalFormFill.service.ts");
     expect(src).toContain("SELECT p.ctc AS package_gross");
     expect(src).not.toContain("SELECT p.gross AS package_gross");
   });

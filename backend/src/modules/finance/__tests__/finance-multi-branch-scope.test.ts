@@ -38,31 +38,19 @@ type ScopeRow = {
  * and getUserBranchId go through the same mocked db.execute, so a single blanket
  * mockResolvedValue would feed employee rows to the scope query and vice versa.
  */
-function mockDb(options: {
-  scopes?: ScopeRow[];
-  employeeBranchId?: string | null;
-}) {
+function mockDb(options: { scopes?: ScopeRow[]; employeeBranchId?: string | null }) {
   execute.mockImplementation(async (sql: string) => {
     if (/FROM\s+user_assignment_scope/i.test(sql)) {
       return [options.scopes ?? [], []];
     }
     if (/FROM\s+employees/i.test(sql)) {
-      return [
-        options.employeeBranchId
-          ? [{ branch_id: options.employeeBranchId }]
-          : [],
-        [],
-      ];
+      return [options.employeeBranchId ? [{ branch_id: options.employeeBranchId }] : [], []];
     }
     return [[], []];
   });
 }
 
-const BRANCH_USER = {
-  userId: "u1",
-  primaryRole: "branch_admin",
-  userRoles: ["branch_admin", "employee"],
-};
+const BRANCH_USER = { userId: "u1", primaryRole: "branch_admin", userRoles: ["branch_admin", "employee"] };
 
 beforeEach(() => {
   execute.mockReset();
@@ -71,19 +59,11 @@ beforeEach(() => {
 describe("resolveFinanceBranchScopeSet", () => {
   it("returns every branch for a global finance role, without querying grants at all", async () => {
     mockDb({ employeeBranchId: "branch-own" });
-    const { resolveFinanceBranchScopeSet } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScopeSet } = await import("../finance-access-scope.js");
     expect(
-      await resolveFinanceBranchScopeSet({
-        userId: "u9",
-        primaryRole: "finance_head",
-        userRoles: ["finance_head"],
-      }),
+      await resolveFinanceBranchScopeSet({ userId: "u9", primaryRole: "finance_head", userRoles: ["finance_head"] }),
     ).toEqual({ mode: "all" });
-    expect(
-      execute,
-      "a global role must not need a scope lookup",
-    ).not.toHaveBeenCalled();
+    expect(execute, "a global role must not need a scope lookup").not.toHaveBeenCalled();
   });
 
   it("returns all three granted branches for a multi-branch user", async () => {
@@ -91,16 +71,11 @@ describe("resolveFinanceBranchScopeSet", () => {
       scopes: [
         { scope_type: "branch", branch_id: "noida" },
         { scope_type: "branch", branch_id: "noida-2" },
-        {
-          scope_type: "branch_process",
-          branch_id: "ahmedabad",
-          process_id: "p1",
-        },
+        { scope_type: "branch_process", branch_id: "ahmedabad", process_id: "p1" },
       ],
       employeeBranchId: "noida",
     });
-    const { resolveFinanceBranchScopeSet } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScopeSet } = await import("../finance-access-scope.js");
     const scope = await resolveFinanceBranchScopeSet(BRANCH_USER);
     expect(scope.mode).toBe("branches");
     expect(scope.mode === "branches" && [...scope.branchIds].sort()).toEqual([
@@ -117,26 +92,19 @@ describe("resolveFinanceBranchScopeSet", () => {
       scopes: [{ scope_type: "branch", branch_id: "ahmedabad" }],
       employeeBranchId: "noida",
     });
-    const { resolveFinanceBranchScopeSet } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScopeSet } = await import("../finance-access-scope.js");
     const scope = await resolveFinanceBranchScopeSet(BRANCH_USER);
-    expect(scope.mode === "branches" && [...scope.branchIds].sort()).toEqual([
-      "ahmedabad",
-      "noida",
-    ]);
+    expect(scope.mode === "branches" && [...scope.branchIds].sort()).toEqual(["ahmedabad", "noida"]);
   });
 
   it("ignores a process-scoped grant that happens to carry a branch id", async () => {
     // The row grants a PROCESS. Its branch_id is context, not a grant, and widening on it
     // would hand out a whole branch nobody authorised.
     mockDb({
-      scopes: [
-        { scope_type: "process", branch_id: "ahmedabad", process_id: "p1" },
-      ],
+      scopes: [{ scope_type: "process", branch_id: "ahmedabad", process_id: "p1" }],
       employeeBranchId: "noida",
     });
-    const { resolveFinanceBranchScopeSet } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScopeSet } = await import("../finance-access-scope.js");
     expect(await resolveFinanceBranchScopeSet(BRANCH_USER)).toEqual({
       mode: "branches",
       branchIds: ["noida"],
@@ -148,8 +116,7 @@ describe("resolveFinanceBranchScopeSet", () => {
     // never been registered in MIGRATION_MANIFEST. Without this fallback every branch user
     // loses finance access the moment multi-branch ships.
     mockDb({ scopes: [], employeeBranchId: "branch-own" });
-    const { resolveFinanceBranchScopeSet } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScopeSet } = await import("../finance-access-scope.js");
     expect(await resolveFinanceBranchScopeSet(BRANCH_USER)).toEqual({
       mode: "branches",
       branchIds: ["branch-own"],
@@ -162,12 +129,8 @@ describe("resolveFinanceBranchScopeSet", () => {
     // every employee or every roster. Honouring one here would hand a branch user every
     // branch's spend — the exact escalation finance-branch-bound-scope.test.ts was written
     // to prevent. In finance, "all branches" comes from hasGlobalFinanceScope alone.
-    mockDb({
-      scopes: [{ scope_type: "all", branch_id: null }],
-      employeeBranchId: "noida",
-    });
-    const { resolveFinanceBranchScopeSet } =
-      await import("../finance-access-scope.js");
+    mockDb({ scopes: [{ scope_type: "all", branch_id: null }], employeeBranchId: "noida" });
+    const { resolveFinanceBranchScopeSet } = await import("../finance-access-scope.js");
     expect(await resolveFinanceBranchScopeSet(BRANCH_USER)).toEqual({
       mode: "branches",
       branchIds: ["noida"],
@@ -181,8 +144,7 @@ describe("resolveFinanceBranchScopeSet", () => {
       scopes: [{ scope_type: "all", branch_id: "ahmedabad" }],
       employeeBranchId: "noida",
     });
-    const { resolveFinanceBranchScopeSet } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScopeSet } = await import("../finance-access-scope.js");
     expect(await resolveFinanceBranchScopeSet(BRANCH_USER)).toEqual({
       mode: "branches",
       branchIds: ["noida"],
@@ -196,13 +158,9 @@ describe("resolveFinanceBranchScopeSet", () => {
         { scope_type: "branch", branch_id: "ahmedabad" },
       ],
     });
-    const { resolveFinanceBranchScopeSet } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScopeSet } = await import("../finance-access-scope.js");
     expect(
-      await resolveFinanceBranchScopeSet({
-        ...BRANCH_USER,
-        requestedBranchId: "ahmedabad",
-      }),
+      await resolveFinanceBranchScopeSet({ ...BRANCH_USER, requestedBranchId: "ahmedabad" }),
     ).toEqual({ mode: "branches", branchIds: ["ahmedabad"] });
   });
 
@@ -213,13 +171,9 @@ describe("resolveFinanceBranchScopeSet", () => {
         { scope_type: "branch", branch_id: "ahmedabad" },
       ],
     });
-    const { resolveFinanceBranchScopeSet } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScopeSet } = await import("../finance-access-scope.js");
     await expect(
-      resolveFinanceBranchScopeSet({
-        ...BRANCH_USER,
-        requestedBranchId: "delhi",
-      }),
+      resolveFinanceBranchScopeSet({ ...BRANCH_USER, requestedBranchId: "delhi" }),
     ).rejects.toThrow(/only access finance records for your assigned branch/i);
   });
 
@@ -227,8 +181,7 @@ describe("resolveFinanceBranchScopeSet", () => {
     // An empty list would render as `IN ()`, a SQL error, and the obvious guard against that
     // (`if (ids.length) filter()`) turns "entitled to nothing" into "entitled to everything".
     mockDb({ scopes: [], employeeBranchId: null });
-    const { resolveFinanceBranchScopeSet } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScopeSet } = await import("../finance-access-scope.js");
     await expect(resolveFinanceBranchScopeSet(BRANCH_USER)).rejects.toThrow(
       /not mapped to an active employee branch/i,
     );
@@ -252,31 +205,22 @@ describe("financeBranchFilter", () => {
 
   it("degrades to a no-op predicate for global scope", async () => {
     const { financeBranchFilter } = await import("../finance-access-scope.js");
-    expect(financeBranchFilter({ mode: "all" }, "g.branch_id")).toEqual({
-      sql: "1=1",
-      params: [],
-    });
+    expect(financeBranchFilter({ mode: "all" }, "g.branch_id")).toEqual({ sql: "1=1", params: [] });
   });
 });
 
 describe("resolveFinanceBranchScope — the single-branch adapter", () => {
   it("still returns undefined for a global role, exactly as before", async () => {
     mockDb({});
-    const { resolveFinanceBranchScope } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScope } = await import("../finance-access-scope.js");
     expect(
-      await resolveFinanceBranchScope({
-        userId: "u9",
-        primaryRole: "finance_head",
-        userRoles: ["finance_head"],
-      }),
+      await resolveFinanceBranchScope({ userId: "u9", primaryRole: "finance_head", userRoles: ["finance_head"] }),
     ).toBeUndefined();
   });
 
   it("still returns the one branch for a single-branch user, exactly as before", async () => {
     mockDb({ scopes: [], employeeBranchId: "branch-own" });
-    const { resolveFinanceBranchScope } =
-      await import("../finance-access-scope.js");
+    const { resolveFinanceBranchScope } = await import("../finance-access-scope.js");
     expect(await resolveFinanceBranchScope(BRANCH_USER)).toBe("branch-own");
   });
 
@@ -309,23 +253,18 @@ describe("assertFinanceRecordBranch — multi-branch record guard", () => {
 
   it("allows a record in either granted branch", async () => {
     mockDb(multiBranch);
-    const { assertFinanceRecordBranch } =
-      await import("../finance-access-scope.js");
+    const { assertFinanceRecordBranch } = await import("../finance-access-scope.js");
     await expect(
       assertFinanceRecordBranch({ ...BRANCH_USER, recordBranchId: "noida" }),
     ).resolves.toBeUndefined();
     await expect(
-      assertFinanceRecordBranch({
-        ...BRANCH_USER,
-        recordBranchId: "ahmedabad",
-      }),
+      assertFinanceRecordBranch({ ...BRANCH_USER, recordBranchId: "ahmedabad" }),
     ).resolves.toBeUndefined();
   });
 
   it("denies a record in a third branch", async () => {
     mockDb(multiBranch);
-    const { assertFinanceRecordBranch } =
-      await import("../finance-access-scope.js");
+    const { assertFinanceRecordBranch } = await import("../finance-access-scope.js");
     await expect(
       assertFinanceRecordBranch({ ...BRANCH_USER, recordBranchId: "delhi" }),
     ).rejects.toThrow(/cannot access a finance record from another branch/i);
@@ -333,8 +272,7 @@ describe("assertFinanceRecordBranch — multi-branch record guard", () => {
 
   it("still denies a record whose branch is unknown", async () => {
     mockDb(multiBranch);
-    const { assertFinanceRecordBranch } =
-      await import("../finance-access-scope.js");
+    const { assertFinanceRecordBranch } = await import("../finance-access-scope.js");
     await expect(
       assertFinanceRecordBranch({ ...BRANCH_USER, recordBranchId: null }),
     ).rejects.toThrow(/cannot access a finance record from another branch/i);

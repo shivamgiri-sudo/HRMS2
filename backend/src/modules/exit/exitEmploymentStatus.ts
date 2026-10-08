@@ -19,12 +19,7 @@
  */
 
 /** Statuses an exit can leave behind. Anything here must never be auto-reactivated. */
-export const TERMINAL_EXIT_STATUSES = [
-  "inactive",
-  "terminated",
-  "absconded",
-  "not_joined",
-] as const;
+export const TERMINAL_EXIT_STATUSES = ["inactive", "terminated", "absconded", "not_joined"] as const;
 
 export type TerminalExitStatus = (typeof TERMINAL_EXIT_STATUSES)[number];
 
@@ -34,14 +29,7 @@ export type TerminalExitStatus = (typeof TERMINAL_EXIT_STATUSES)[number];
  * 'absconding' is the spelling employee-activation.service.ts used before this change;
  * dropping it would un-guard any row already carrying it.
  */
-export const LEGACY_TERMINAL_STATUSES = [
-  "resigned",
-  "exited",
-  "offboarded",
-  "absconding",
-  "left",
-  "separated",
-] as const;
+export const LEGACY_TERMINAL_STATUSES = ["resigned", "exited", "offboarded", "absconding", "left", "separated"] as const;
 
 /** Every status the nightly activation job must refuse to reactivate. */
 export const NON_REACTIVATABLE_STATUSES: readonly string[] = [
@@ -71,16 +59,12 @@ export function employmentStatusForExit(
   exitType: string | null | undefined,
   exitSubType: string | null | undefined,
 ): TerminalExitStatus {
-  const sub = String(exitSubType ?? "")
-    .trim()
-    .toLowerCase();
+  const sub = String(exitSubType ?? "").trim().toLowerCase();
   if (sub === "absconding" || sub === "abandonment") return "absconded";
   if (sub === "did_not_join") return "not_joined";
   if (sub === "termination") return "terminated";
 
-  const type = String(exitType ?? "")
-    .trim()
-    .toLowerCase();
+  const type = String(exitType ?? "").trim().toLowerCase();
   if (type === "involuntary") return "terminated";
 
   return "inactive";

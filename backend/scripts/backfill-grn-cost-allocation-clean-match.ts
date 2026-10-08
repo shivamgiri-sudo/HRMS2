@@ -69,11 +69,7 @@ function roundMoney(v: number) {
 /** Inverts calculateBudgetLine's forward math for a single line: given the target gross
  *  (the GRN's real amount_with_tax) and the budget line's own tax_treatment/gst_rate,
  *  finds the unitRate that reproduces exactly that gross when quantity=1. */
-function unitRateForTargetGross(
-  targetGross: number,
-  taxTreatment: string,
-  gstRate: number,
-): number {
+function unitRateForTargetGross(targetGross: number, taxTreatment: string, gstRate: number): number {
   if (["exclusive", "reverse_charge"].includes(taxTreatment) && gstRate > 0) {
     return roundMoney(targetGross / (1 + gstRate / 100));
   }
@@ -126,7 +122,7 @@ async function loadBudgetLine(hrms: mysql.Connection, lineId: string) {
     `SELECT l.*, h.status AS budget_status FROM finance_budget_line l
      JOIN finance_budget_header h ON h.id = l.budget_id
      WHERE l.id = ?`,
-    [lineId],
+    [lineId]
   );
   return rows[0];
 }
@@ -135,73 +131,41 @@ async function loadBudgetLine(hrms: mysql.Connection, lineId: string) {
  *  `availability()`), read fresh inside the row's own transaction below via FOR UPDATE —
  *  the one gate this backfill keeps: a historical GRN still must not push a line's
  *  reserved+consumed past its approved gross_amount. */
-async function loadBudgetLineForUpdate(
-  connection: PoolConnection,
-  lineId: string,
-) {
+async function loadBudgetLineForUpdate(connection: PoolConnection, lineId: string) {
   const [rows] = await connection.execute<any[]>(
     `SELECT * FROM finance_budget_line WHERE id = ? FOR UPDATE`,
-    [lineId],
+    [lineId]
   );
   return rows[0];
 }
 
-async function processOne(
-  pool: mysql.Pool,
-  target: TargetGrn,
-  hrms: mysql.Connection,
-) {
+async function processOne(pool: mysql.Pool, target: TargetGrn, hrms: mysql.Connection) {
   const line = await loadBudgetLine(hrms, target.budget_line_id);
-  if (!line)
-    return {
-      grn: target,
-      outcome: "SKIP" as const,
-      reason: "budget line vanished between scan and apply",
-    };
+  if (!line) return { grn: target, outcome: "SKIP" as const, reason: "budget line vanished between scan and apply" };
 
   const amountWithTax = Number(target.amount_with_tax);
-  const unitRate = unitRateForTargetGross(
-    amountWithTax,
-    String(line.tax_treatment),
-    Number(line.gst_rate),
-  );
+  const unitRate = unitRateForTargetGross(amountWithTax, String(line.tax_treatment), Number(line.gst_rate));
   const amounts = calculateBudgetLine({
-    head: String(line.head),
-    subHead: line.sub_head,
-    itemName: String(line.item_name),
-    quantity: 1,
-    unit: String(line.unit),
-    unitRate,
-    taxTreatment: line.tax_treatment,
-    gstRate: Number(line.gst_rate),
-    gstType: line.gst_type,
-    recoverableTaxPct: Number(line.recoverable_tax_pct),
-    justification: "Backfilled from migrated GRN",
+    head: String(line.head), subHead: line.sub_head, itemName: String(line.item_name),
+    quantity: 1, unit: String(line.unit), unitRate,
+    taxTreatment: line.tax_treatment, gstRate: Number(line.gst_rate), gstType: line.gst_type,
+    recoverableTaxPct: Number(line.recoverable_tax_pct), justification: "Backfilled from migrated GRN",
   });
 
   const reproducedGross = amounts.grossAmount;
   if (Math.abs(reproducedGross - amountWithTax) > 0.02) {
     return {
-      grn: target,
-      outcome: "SKIP" as const,
+      grn: target, outcome: "SKIP" as const,
       reason: `tax-split reproduction mismatch: target ${amountWithTax} vs reproduced ${reproducedGross} (line tax_treatment=${line.tax_treatment}, gst_rate=${line.gst_rate})`,
     };
   }
 
   let lifecycleStatus: "draft" | "reserved" | "consumed" = "draft";
   if (target.status === "branch_head_approved") lifecycleStatus = "reserved";
-  else if (
-    target.status === "finance_head_approved" ||
-    target.status === "paid"
-  )
-    lifecycleStatus = "consumed";
+  else if (target.status === "finance_head_approved" || target.status === "paid") lifecycleStatus = "consumed";
 
   if (!APPLY) {
-    return {
-      grn: target,
-      outcome: "WOULD_APPLY" as const,
-      reason: `-> lifecycle_status=${lifecycleStatus}, budget_line=${line.item_name}`,
-    };
+    return { grn: target, outcome: "WOULD_APPLY" as const, reason: `-> lifecycle_status=${lifecycleStatus}, budget_line=${line.item_name}` };
   }
 
   const connection: PoolConnection = await pool.getConnection();
@@ -214,30 +178,23 @@ async function processOne(
     // budgetConsumptionService's own availability() does, just without the
     // active-header-status or subhead-closure gates (see file header note).
     if (lifecycleStatus === "reserved" || lifecycleStatus === "consumed") {
-      const freshLine = await loadBudgetLineForUpdate(
-        connection,
-        target.budget_line_id,
-      );
+      const freshLine = await loadBudgetLineForUpdate(connection, target.budget_line_id);
       if (!freshLine) throw new Error("budget line vanished before write");
       const available = roundMoney(
-        Number(freshLine.gross_amount || 0) -
-          Number(freshLine.reserved_amount || 0) -
-          Number(freshLine.consumed_amount || 0),
+        Number(freshLine.gross_amount || 0) - Number(freshLine.reserved_amount || 0) - Number(freshLine.consumed_amount || 0)
       );
       if (amounts.grossAmount > available + 0.01) {
-        throw new Error(
-          `GRN_EXCEEDS_BUDGET_AMOUNT: exceeds available budget by ${(amounts.grossAmount - available).toFixed(2)}`,
-        );
+        throw new Error(`GRN_EXCEEDS_BUDGET_AMOUNT: exceeds available budget by ${(amounts.grossAmount - available).toFixed(2)}`);
       }
       if (lifecycleStatus === "reserved") {
         await connection.execute(
           `UPDATE finance_budget_line SET reserved_amount = reserved_amount + ?, reserved_quantity = reserved_quantity + 1 WHERE id = ?`,
-          [amounts.grossAmount, target.budget_line_id],
+          [amounts.grossAmount, target.budget_line_id]
         );
       } else {
         await connection.execute(
           `UPDATE finance_budget_line SET consumed_amount = consumed_amount + ?, consumed_quantity = consumed_quantity + 1 WHERE id = ?`,
-          [amounts.grossAmount, target.budget_line_id],
+          [amounts.grossAmount, target.budget_line_id]
         );
       }
     }
@@ -253,49 +210,23 @@ async function processOne(
         reserved_at, consumed_at, created_by)
        VALUES (?,?,1,?,?,?,?,?,?,100.000000,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?)`,
       [
-        randomUUID(),
-        target.grn_id,
-        line.budget_id,
-        target.budget_line_id,
-        target.branch_id,
-        line.process_id ?? null,
-        target.cost_centre_id,
-        "direct",
-        line.unit,
-        unitRate,
-        line.tax_treatment,
-        line.gst_rate,
-        line.gst_type,
-        line.recoverable_tax_pct,
-        amounts.baseAmount,
-        amounts.taxAmount,
-        amounts.cgstAmount,
-        amounts.sgstAmount,
-        amounts.igstAmount,
-        amounts.grossAmount,
-        amounts.recoverableTaxAmount,
-        amounts.pnlCostAmount,
-        lifecycleStatus,
-        "Backfilled 2026-08-21 — migrated GRN, clean budget-line match",
+        randomUUID(), target.grn_id, line.budget_id, target.budget_line_id, target.branch_id,
+        line.process_id ?? null, target.cost_centre_id, "direct",
+        line.unit, unitRate, line.tax_treatment, line.gst_rate, line.gst_type,
+        line.recoverable_tax_pct, amounts.baseAmount, amounts.taxAmount, amounts.cgstAmount,
+        amounts.sgstAmount, amounts.igstAmount, amounts.grossAmount, amounts.recoverableTaxAmount,
+        amounts.pnlCostAmount, lifecycleStatus, "Backfilled 2026-08-21 — migrated GRN, clean budget-line match",
         lifecycleStatus === "reserved" ? now : null,
         lifecycleStatus === "consumed" ? now : null,
         MIGRATION_USER,
-      ],
+      ]
     );
 
     await connection.commit();
-    return {
-      grn: target,
-      outcome: "APPLIED" as const,
-      reason: `lifecycle_status=${lifecycleStatus}`,
-    };
+    return { grn: target, outcome: "APPLIED" as const, reason: `lifecycle_status=${lifecycleStatus}` };
   } catch (error) {
     await connection.rollback();
-    return {
-      grn: target,
-      outcome: "REFUSED" as const,
-      reason: error instanceof Error ? error.message : String(error),
-    };
+    return { grn: target, outcome: "REFUSED" as const, reason: error instanceof Error ? error.message : String(error) };
   } finally {
     connection.release();
   }
@@ -303,27 +234,19 @@ async function processOne(
 
 async function main() {
   const hrms = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
   });
   const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
     connectionLimit: 5,
   });
 
   try {
     const targets = await findCleanMatches(hrms);
     console.log(`\nClean-match in-scope GRNs: ${targets.length}`);
-    console.log(
-      `Total amount: ${targets.reduce((s, t) => s + Number(t.amount_with_tax), 0).toFixed(2)}\n`,
-    );
+    console.log(`Total amount: ${targets.reduce((s, t) => s + Number(t.amount_with_tax), 0).toFixed(2)}\n`);
 
     const results = { APPLIED: 0, WOULD_APPLY: 0, SKIP: 0, REFUSED: 0 };
     const problems: string[] = [];
@@ -332,9 +255,7 @@ async function main() {
       const result = await processOne(pool, target, hrms);
       results[result.outcome]++;
       if (result.outcome === "SKIP" || result.outcome === "REFUSED") {
-        problems.push(
-          `  ${target.grn_number} (${result.outcome}): ${result.reason}`,
-        );
+        problems.push(`  ${target.grn_number} (${result.outcome}): ${result.reason}`);
       }
     }
 
@@ -344,18 +265,11 @@ async function main() {
       console.log(`\n${problems.length} GRN(s) could not be processed:`);
       console.log(problems.join("\n"));
     }
-    console.log(
-      APPLY
-        ? "\nAPPLIED."
-        : "\nDRY RUN — nothing written. Pass --apply to write.",
-    );
+    console.log(APPLY ? "\nAPPLIED." : "\nDRY RUN — nothing written. Pass --apply to write.");
   } finally {
     await hrms.end();
     await pool.end();
   }
 }
 
-main().catch((e) => {
-  console.error("FATAL", e);
-  process.exit(1);
-});
+main().catch((e) => { console.error("FATAL", e); process.exit(1); });

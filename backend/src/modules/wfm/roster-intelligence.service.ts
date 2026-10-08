@@ -12,9 +12,9 @@
  * - db_audit.call_quality_assessment (quality scores) - optional
  * - attendance_regularization (pending regularizations)
  */
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import { isShiftDueYet, todayLocalDateStr } from "./shift-due.util.js";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { isShiftDueYet, todayLocalDateStr } from './shift-due.util.js';
 import {
   shrinkagePct as calcShrinkagePct,
   minutesSinceShiftStart,
@@ -22,8 +22,8 @@ import {
   hasShiftEnded,
   canJudgeIncomplete,
   timeToMinutes,
-} from "./roster-intelligence.calc.js";
-import { lobCondition, type LobFilter } from "../../shared/lobFilter.js";
+} from './roster-intelligence.calc.js';
+import { lobCondition, type LobFilter } from '../../shared/lobFilter.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,9 +31,9 @@ export interface TeamMemberAttendance {
   employeeId: string;
   employeeCode: string;
   employeeName: string;
-  rosterType: "SHIFT" | "WEEK_OFF" | "LEAVE" | "HOLIDAY" | "TRAINING";
+  rosterType: 'SHIFT' | 'WEEK_OFF' | 'LEAVE' | 'HOLIDAY' | 'TRAINING';
   shiftTime: string | null;
-  adherence: "GREEN" | "AMBER" | "RED" | "BROWN" | "GREY";
+  adherence: 'GREEN' | 'AMBER' | 'RED' | 'BROWN' | 'GREY';
   firstIn: string | null;
   lastOut: string | null;
   lateMinutes: number | null;
@@ -134,19 +134,15 @@ const INCOMPLETE_THRESHOLD = 0.8;
 export async function generateManagerDailyDigests(
   date: string = yesterdayDate(),
   scope?: RosterIntelligenceScope,
-  filters?: RosterIntelligenceFilters,
+  filters?: RosterIntelligenceFilters
 ): Promise<ManagerDailyDigest[]> {
-  if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0)
-    return [];
+  if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) return [];
 
   // Scoped on e (the team member), not mgr — a branch-scoped or process-scoped caller sees
   // digests for managers whose team sits in their branch/process, matching
   // detectUnplannedAbsences's convention above. UI filters (branch/process/LOB) are ANDed on
   // top and also narrow each manager's TEAM (so counts reflect the filter, not the whole team).
-  const { conds: scopeConds, params: scopeParams } = buildEmployeeScope(
-    scope,
-    filters,
-  );
+  const { conds: scopeConds, params: scopeParams } = buildEmployeeScope(scope, filters);
 
   // Get all managers with active team members who have roster for the date
   const [managers] = await db.execute<RowDataPacket[]>(
@@ -161,7 +157,7 @@ export async function generateManagerDailyDigests(
        AND e.employment_status = 'Active'
        AND mgr.active_status = 1
        ${scopeConds.map((c) => `AND ${c}`).join("\n       ")}`,
-    [date, ...scopeParams],
+    [date, ...scopeParams]
   );
 
   const digests: ManagerDailyDigest[] = [];
@@ -170,17 +166,15 @@ export async function generateManagerDailyDigests(
   const CONCURRENCY = 6;
   for (let i = 0; i < managers.length; i += CONCURRENCY) {
     const batch = await Promise.all(
-      managers
-        .slice(i, i + CONCURRENCY)
-        .map((mgr) =>
-          generateSingleManagerDigest(
-            String(mgr.manager_id),
-            String(mgr.manager_name),
-            mgr.manager_email ? String(mgr.manager_email) : null,
-            date,
-            { conds: scopeConds, params: scopeParams },
-          ),
+      managers.slice(i, i + CONCURRENCY).map((mgr) =>
+        generateSingleManagerDigest(
+          String(mgr.manager_id),
+          String(mgr.manager_name),
+          mgr.manager_email ? String(mgr.manager_email) : null,
+          date,
+          { conds: scopeConds, params: scopeParams },
         ),
+      ),
     );
     for (const digest of batch) if (digest.teamSize > 0) digests.push(digest);
   }
@@ -193,7 +187,7 @@ export async function generateSingleManagerDigest(
   managerName: string,
   managerEmail: string | null,
   date: string,
-  teamScope: { conds: string[]; params: unknown[] } = { conds: [], params: [] },
+  teamScope: { conds: string[]; params: unknown[] } = { conds: [], params: [] }
 ): Promise<ManagerDailyDigest> {
   // Get team roster + attendance for the date
   const [teamRows] = await db.execute<RowDataPacket[]>(
@@ -221,7 +215,7 @@ export async function generateSingleManagerDigest(
        AND e.active_status = 1
        AND e.employment_status = 'Active'
        ${teamScope.conds.map((c) => `AND ${c}`).join("\n       ")}`,
-    [date, date, managerId, ...teamScope.params],
+    [date, date, managerId, ...teamScope.params]
   );
 
   // Merge-plan Phase B bug #2: Command Center's branch filter was a no-op ("Would need
@@ -235,11 +229,7 @@ export async function generateSingleManagerDigest(
     const key = String(r.branch_id);
     const existing = branchCounts.get(key);
     if (existing) existing.count++;
-    else
-      branchCounts.set(key, {
-        branchName: r.branch_name ? String(r.branch_name) : "Unknown",
-        count: 1,
-      });
+    else branchCounts.set(key, { branchName: r.branch_name ? String(r.branch_name) : 'Unknown', count: 1 });
   }
   let branchId: string | null = null;
   let branchName: string | null = null;
@@ -260,24 +250,23 @@ export async function generateSingleManagerDigest(
   let present = 0;
 
   for (const r of teamRows) {
-    const type = String(r.assignment_type ?? "").toUpperCase();
+    const type = String(r.assignment_type ?? '').toUpperCase();
     // TRAINING is not production-floor attendance: excluded here exactly as detectUnplannedAbsences does.
-    const isOff = ["WEEK_OFF", "LEAVE", "HOLIDAY", "TRAINING"].includes(type);
+    const isOff = ['WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING'].includes(type);
 
     const shiftStart = r.template_start || r.shift_start_time;
     const shiftEnd = r.template_end || r.shift_end_time;
-    const shiftTime =
-      shiftStart && shiftEnd
-        ? `${String(shiftStart).slice(0, 5)}-${String(shiftEnd).slice(0, 5)}`
-        : null;
+    const shiftTime = shiftStart && shiftEnd
+      ? `${String(shiftStart).slice(0, 5)}-${String(shiftEnd).slice(0, 5)}`
+      : null;
 
     const member: TeamMemberAttendance = {
       employeeId: String(r.employee_id),
       employeeCode: String(r.employee_code),
       employeeName: String(r.employee_name),
-      rosterType: isOff ? (type as any) : "SHIFT",
+      rosterType: isOff ? (type as any) : 'SHIFT',
       shiftTime,
-      adherence: "GREY",
+      adherence: 'GREY',
       firstIn: r.first_in ? String(r.first_in) : null,
       lastOut: r.last_out ? String(r.last_out) : null,
       lateMinutes: null,
@@ -286,7 +275,7 @@ export async function generateSingleManagerDigest(
     };
 
     if (isOff) {
-      member.adherence = "GREY";
+      member.adherence = 'GREY';
       continue;
     }
 
@@ -302,11 +291,8 @@ export async function generateSingleManagerDigest(
     // `date === todayDate()` comparison used todayDate()'s UTC-based toISOString(), which
     // misclassifies "today" for the first ~5.5 hours of the IST day on this host; the shared
     // util uses local Date getters instead (see shift-due.util.ts for the full explanation).
-    if (
-      !r.first_in &&
-      !isShiftDueYet(shiftStart ? String(shiftStart) : null, date)
-    ) {
-      member.adherence = "GREY";
+    if (!r.first_in && !isShiftDueYet(shiftStart ? String(shiftStart) : null, date)) {
+      member.adherence = 'GREY';
       continue;
     }
 
@@ -317,47 +303,34 @@ export async function generateSingleManagerDigest(
     if (shiftStart && shiftEnd) {
       const start = timeToMinutes(String(shiftStart));
       const end = timeToMinutes(String(shiftEnd));
-      expectedMinutes = end >= start ? end - start : 24 * 60 - start + end;
+      expectedMinutes = end >= start ? end - start : (24 * 60 - start) + end;
     }
 
     if (!r.first_in) {
       // No attendance = RED (unplanned absence)
-      member.adherence = "RED";
+      member.adherence = 'RED';
       unplannedAbsences.push(member);
     } else {
       present++;
       const loginMinutes = timeToMinutes(String(r.first_in));
-      const shiftStartMinutes = shiftStart
-        ? timeToMinutes(String(shiftStart))
-        : 0;
+      const shiftStartMinutes = shiftStart ? timeToMinutes(String(shiftStart)) : 0;
       const workedMinutes = (Number(r.total_hours) || 0) * 60;
-      const workedPct =
-        expectedMinutes > 0
-          ? Math.round((workedMinutes / expectedMinutes) * 100)
-          : 100;
+      const workedPct = expectedMinutes > 0 ? Math.round((workedMinutes / expectedMinutes) * 100) : 100;
       member.workedPct = workedPct;
 
-      const judgeable = canJudgeIncomplete(
-        !!r.last_out,
-        date,
-        shiftStart ? String(shiftStart) : null,
-        shiftEnd ? String(shiftEnd) : null,
-      );
+      const judgeable = canJudgeIncomplete(!!r.last_out, date, shiftStart ? String(shiftStart) : null, shiftEnd ? String(shiftEnd) : null);
       if (judgeable && workedPct < INCOMPLETE_THRESHOLD * 100) {
         // Incomplete shift = BROWN
-        member.adherence = "BROWN";
+        member.adherence = 'BROWN';
         incompleteShifts.push(member);
-      } else if (
-        shiftStart &&
-        loginMinutes > shiftStartMinutes + GRACE_MINUTES
-      ) {
+      } else if (shiftStart && loginMinutes > shiftStartMinutes + GRACE_MINUTES) {
         // Late = AMBER
-        member.adherence = "AMBER";
+        member.adherence = 'AMBER';
         member.lateMinutes = loginMinutes - shiftStartMinutes;
         lateArrivals.push(member);
       } else {
         // On-time = GREEN
-        member.adherence = "GREEN";
+        member.adherence = 'GREEN';
         onTime.push(member);
       }
     }
@@ -378,7 +351,7 @@ export async function generateSingleManagerDigest(
      JOIN employees e ON e.id = apr.employee_id
      WHERE e.reporting_manager_id = ?
        AND apr.status = 'pending'`,
-    [managerId],
+    [managerId]
   );
   const aprPending = Number(aprRows[0]?.cnt ?? 0);
 
@@ -412,16 +385,14 @@ export async function generateSingleManagerDigest(
  */
 export async function generateBranchDashboard(
   branchId: string,
-  date: string = yesterdayDate(),
+  date: string = yesterdayDate()
 ): Promise<BranchDailyDashboard> {
   // Get branch info
   const [branchRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, branch_name FROM branch_master WHERE id = ?`,
-    [branchId],
+    [branchId]
   );
-  const branchName = branchRows[0]?.branch_name
-    ? String(branchRows[0].branch_name)
-    : "Unknown";
+  const branchName = branchRows[0]?.branch_name ? String(branchRows[0].branch_name) : 'Unknown';
 
   // Get roster + attendance for all employees in branch
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -444,7 +415,7 @@ export async function generateBranchDashboard(
      WHERE e.branch_id = ?
        AND e.active_status = 1
        AND e.employment_status = 'Active'`,
-    [date, date, branchId],
+    [date, date, branchId]
   );
 
   const totalHC = rows.length;
@@ -452,15 +423,12 @@ export async function generateBranchDashboard(
   let present = 0;
 
   // Process-level aggregation
-  const processMap = new Map<
-    string,
-    { name: string; planned: number; onTime: number }
-  >();
+  const processMap = new Map<string, { name: string; planned: number; onTime: number }>();
 
   for (const r of rows) {
-    const type = String(r.assignment_type ?? "").toUpperCase();
+    const type = String(r.assignment_type ?? '').toUpperCase();
     // TRAINING is not production-floor attendance: excluded here exactly as detectUnplannedAbsences does.
-    const isOff = ["WEEK_OFF", "LEAVE", "HOLIDAY", "TRAINING"].includes(type);
+    const isOff = ['WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING'].includes(type);
     if (isOff) continue;
 
     // Same "shift hasn't started yet today" guard as generateSingleManagerDigest above — a row
@@ -468,16 +436,13 @@ export async function generateBranchDashboard(
     // shift-due.util.ts as part of Phase C (2026-09-12); see that file and the comment on the
     // generateSingleManagerDigest call site above for the UTC-vs-local fix that came with it.
     const shiftStartForDue = r.template_start || r.shift_start_time;
-    if (
-      !r.first_in &&
-      !isShiftDueYet(shiftStartForDue ? String(shiftStartForDue) : null, date)
-    ) {
+    if (!r.first_in && !isShiftDueYet(shiftStartForDue ? String(shiftStartForDue) : null, date)) {
       continue;
     }
 
     planned++;
-    const processId = r.process_id ? String(r.process_id) : "unknown";
-    const processName = r.process_name ? String(r.process_name) : "Unknown";
+    const processId = r.process_id ? String(r.process_id) : 'unknown';
+    const processName = r.process_name ? String(r.process_name) : 'Unknown';
 
     if (!processMap.has(processId)) {
       processMap.set(processId, { name: processName, planned: 0, onTime: 0 });
@@ -500,16 +465,13 @@ export async function generateBranchDashboard(
     }
   }
 
-  const byProcess = [...processMap.entries()]
-    .map(([processId, p]) => ({
-      processId,
-      processName: p.name,
-      planned: p.planned,
-      onTime: p.onTime,
-      adherencePct:
-        p.planned > 0 ? Math.round((p.onTime / p.planned) * 100) : 0,
-    }))
-    .sort((a, b) => a.adherencePct - b.adherencePct); // Worst first
+  const byProcess = [...processMap.entries()].map(([processId, p]) => ({
+    processId,
+    processName: p.name,
+    planned: p.planned,
+    onTime: p.onTime,
+    adherencePct: p.planned > 0 ? Math.round((p.onTime / p.planned) * 100) : 0,
+  })).sort((a, b) => a.adherencePct - b.adherencePct); // Worst first
 
   const shrinkagePct = calcShrinkagePct(planned, present);
 
@@ -538,7 +500,7 @@ export async function generateBranchDashboard(
      HAVING unplanned_count >= 3
      ORDER BY unplanned_count DESC
      LIMIT 10`,
-    [branchId, fromDate, date],
+    [branchId, fromDate, date]
   );
 
   const chronicAbsentees = chronicRows.map((r) => ({
@@ -570,17 +532,10 @@ export async function generateBranchDashboard(
 // caller's scope is unrestricted on that dimension (ORG_ALL, or the wfm/super_admin roles
 // this endpoint left untouched); an empty array means the caller's scope resolved to zero
 // branches/processes and must fail CLOSED (matches getCosecLatestPunches's convention).
-export type RosterIntelligenceScope = {
-  branchIds?: string[];
-  processIds?: string[];
-};
+export type RosterIntelligenceScope = { branchIds?: string[]; processIds?: string[] };
 
 // Optional UI narrowing filters. They are ANDed onto (never replace) the caller's RBAC scope.
-export type RosterIntelligenceFilters = {
-  branchId?: string;
-  processId?: string;
-  lob?: LobFilter;
-};
+export type RosterIntelligenceFilters = { branchId?: string; processId?: string; lob?: LobFilter };
 
 /**
  * Detect employees who are rostered for a shift but haven't punched in.
@@ -592,16 +547,12 @@ export async function detectUnplannedAbsences(
   date: string = todayDate(),
   gracePeriodMinutes: number = 30,
   scope?: RosterIntelligenceScope,
-  filters?: RosterIntelligenceFilters,
+  filters?: RosterIntelligenceFilters
 ): Promise<UnplannedAbsenceAlert[]> {
-  if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0)
-    return [];
+  if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) return [];
 
   const now = new Date();
-  const { conds: scopeConds, params: scopeParams } = buildEmployeeScope(
-    scope,
-    filters,
-  );
+  const { conds: scopeConds, params: scopeParams } = buildEmployeeScope(scope, filters);
 
   // For today's live view also look back one roster day: an overnight shift (e.g. 22:00-06:00)
   // rostered yesterday is still running after midnight, and an employee absent from it must
@@ -624,7 +575,7 @@ export async function detectUnplannedAbsences(
        COALESCE(st.start_time, ra.shift_start_time) AS shift_start,
        COALESCE(st.end_time, ra.shift_end_time) AS shift_end
      FROM employees e
-     JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date IN (${dates.map(() => "?").join(",")})
+     JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date IN (${dates.map(() => '?').join(',')})
      LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
      LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
@@ -635,7 +586,7 @@ export async function detectUnplannedAbsences(
        AND ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING')
        AND att.clock_in_time IS NULL
        ${scopeConds.map((c) => `AND ${c}`).join("\n       ")}`,
-    [...dates, ...scopeParams],
+    [...dates, ...scopeParams]
   );
 
   const alerts: UnplannedAbsenceAlert[] = [];
@@ -648,19 +599,11 @@ export async function detectUnplannedAbsences(
 
     // Yesterday's row only matters while its overnight shift is still running.
     if (rosterDay !== date) {
-      if (
-        !isOvernightShift(String(shiftStart), shiftEnd) ||
-        hasShiftEnded(rosterDay, String(shiftStart), shiftEnd, now)
-      )
-        continue;
+      if (!isOvernightShift(String(shiftStart), shiftEnd) || hasShiftEnded(rosterDay, String(shiftStart), shiftEnd, now)) continue;
     }
 
     // Real elapsed minutes (date-aware), not clock-of-day arithmetic.
-    const minutesSinceStart = minutesSinceShiftStart(
-      rosterDay,
-      String(shiftStart),
-      now,
-    );
+    const minutesSinceStart = minutesSinceShiftStart(rosterDay, String(shiftStart), now);
 
     // Only alert if shift started + grace period passed
     if (minutesSinceStart >= gracePeriodMinutes) {
@@ -674,9 +617,7 @@ export async function detectUnplannedAbsences(
         employeeName: String(r.employee_name),
         date: rosterDay,
         shiftTime,
-        managerId: r.reporting_manager_id
-          ? String(r.reporting_manager_id)
-          : null,
+        managerId: r.reporting_manager_id ? String(r.reporting_manager_id) : null,
         managerName: r.manager_name ? String(r.manager_name) : null,
         managerEmail: r.manager_email ? String(r.manager_email) : null,
         processName: r.process_name ? String(r.process_name) : null,
@@ -699,21 +640,19 @@ export function buildEmployeeScope(
   const conds: string[] = [];
   const params: unknown[] = [];
   if (scope?.branchIds) {
-    conds.push(`e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`);
+    conds.push(`e.branch_id IN (${scope.branchIds.map(() => '?').join(',')})`);
     params.push(...scope.branchIds);
   }
   if (scope?.processIds) {
-    conds.push(
-      `e.process_id IN (${scope.processIds.map(() => "?").join(",")})`,
-    );
+    conds.push(`e.process_id IN (${scope.processIds.map(() => '?').join(',')})`);
     params.push(...scope.processIds);
   }
   if (filters?.branchId) {
-    conds.push("e.branch_id = ?");
+    conds.push('e.branch_id = ?');
     params.push(filters.branchId);
   }
   if (filters?.processId) {
-    conds.push("e.process_id = ?");
+    conds.push('e.process_id = ?');
     params.push(filters.processId);
   }
   const lobCond = filters?.lob ? lobCondition(filters.lob) : null;
@@ -750,7 +689,7 @@ export interface WeeklyShrinkageReport {
 
 export async function generateWeeklyShrinkageReport(
   branchId: string,
-  weekStartDate: string,
+  weekStartDate: string
 ): Promise<WeeklyShrinkageReport> {
   // Calculate week end
   const weekStart = new Date(weekStartDate);
@@ -761,11 +700,9 @@ export async function generateWeeklyShrinkageReport(
   // Get branch name
   const [branchRows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_name FROM branch_master WHERE id = ?`,
-    [branchId],
+    [branchId]
   );
-  const branchName = branchRows[0]?.branch_name
-    ? String(branchRows[0].branch_name)
-    : "Unknown";
+  const branchName = branchRows[0]?.branch_name ? String(branchRows[0].branch_name) : 'Unknown';
 
   // Get roster + attendance for the week
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -787,7 +724,7 @@ export async function generateWeeklyShrinkageReport(
      WHERE e.branch_id = ?
        AND e.active_status = 1
        AND ra.roster_date BETWEEN ? AND ?`,
-    [branchId, weekStartDate, weekEndStr],
+    [branchId, weekStartDate, weekEndStr]
   );
 
   let plannedLeaveCount = 0;
@@ -796,34 +733,25 @@ export async function generateWeeklyShrinkageReport(
   let trainingCount = 0;
   let totalPlanned = 0;
 
-  const managerStats = new Map<
-    string,
-    { name: string; teamDays: number; shrinkageDays: number }
-  >();
+  const managerStats = new Map<string, { name: string; teamDays: number; shrinkageDays: number }>();
 
   for (const r of rows) {
-    const type = String(r.assignment_type ?? "").toUpperCase();
-    const managerId = r.reporting_manager_id
-      ? String(r.reporting_manager_id)
-      : "unknown";
-    const managerName = r.manager_name ? String(r.manager_name) : "Unknown";
+    const type = String(r.assignment_type ?? '').toUpperCase();
+    const managerId = r.reporting_manager_id ? String(r.reporting_manager_id) : 'unknown';
+    const managerName = r.manager_name ? String(r.manager_name) : 'Unknown';
 
     if (!managerStats.has(managerId)) {
-      managerStats.set(managerId, {
-        name: managerName,
-        teamDays: 0,
-        shrinkageDays: 0,
-      });
+      managerStats.set(managerId, { name: managerName, teamDays: 0, shrinkageDays: 0 });
     }
     const stats = managerStats.get(managerId)!;
 
-    if (type === "LEAVE") {
+    if (type === 'LEAVE') {
       plannedLeaveCount++;
       stats.shrinkageDays++;
-    } else if (type === "TRAINING") {
+    } else if (type === 'TRAINING') {
       trainingCount++;
       stats.shrinkageDays++;
-    } else if (type === "WEEK_OFF" || type === "HOLIDAY") {
+    } else if (type === 'WEEK_OFF' || type === 'HOLIDAY') {
       // Not counted in shrinkage
     } else {
       totalPlanned++;
@@ -847,13 +775,9 @@ export async function generateWeeklyShrinkageReport(
     }
   }
 
-  const totalShrinkage =
-    plannedLeaveCount + unplannedAbsenceCount + trainingCount;
+  const totalShrinkage = plannedLeaveCount + unplannedAbsenceCount + trainingCount;
   const totalPossible = totalPlanned + plannedLeaveCount + trainingCount;
-  const shrinkagePct =
-    totalPossible > 0
-      ? Math.round((totalShrinkage / totalPossible) * 100 * 10) / 10
-      : 0;
+  const shrinkagePct = totalPossible > 0 ? Math.round((totalShrinkage / totalPossible) * 100 * 10) / 10 : 0;
 
   const managerRanking = [...managerStats.entries()]
     .filter(([_, s]) => s.teamDays > 0)
@@ -861,10 +785,7 @@ export async function generateWeeklyShrinkageReport(
       managerId: id,
       managerName: s.name,
       teamSize: s.teamDays,
-      shrinkagePct:
-        s.teamDays > 0
-          ? Math.round((s.shrinkageDays / s.teamDays) * 100 * 10) / 10
-          : 0,
+      shrinkagePct: s.teamDays > 0 ? Math.round((s.shrinkageDays / s.teamDays) * 100 * 10) / 10 : 0,
     }))
     .sort((a, b) => b.shrinkagePct - a.shrinkagePct);
 
@@ -874,22 +795,10 @@ export async function generateWeeklyShrinkageReport(
     weekStart: weekStartDate,
     weekEnd: weekEndStr,
     shrinkageBreakdown: {
-      plannedLeave:
-        totalPossible > 0
-          ? Math.round((plannedLeaveCount / totalPossible) * 100 * 10) / 10
-          : 0,
-      unplannedAbsence:
-        totalPossible > 0
-          ? Math.round((unplannedAbsenceCount / totalPossible) * 100 * 10) / 10
-          : 0,
-      lateEarlyOut:
-        totalPossible > 0
-          ? Math.round((lateEarlyOutCount / totalPossible) * 100 * 10) / 10
-          : 0,
-      training:
-        totalPossible > 0
-          ? Math.round((trainingCount / totalPossible) * 100 * 10) / 10
-          : 0,
+      plannedLeave: totalPossible > 0 ? Math.round((plannedLeaveCount / totalPossible) * 100 * 10) / 10 : 0,
+      unplannedAbsence: totalPossible > 0 ? Math.round((unplannedAbsenceCount / totalPossible) * 100 * 10) / 10 : 0,
+      lateEarlyOut: totalPossible > 0 ? Math.round((lateEarlyOutCount / totalPossible) * 100 * 10) / 10 : 0,
+      training: totalPossible > 0 ? Math.round((trainingCount / totalPossible) * 100 * 10) / 10 : 0,
       total: shrinkagePct,
     },
     budgetPct: 8, // Default budget - should come from workforce_mandate

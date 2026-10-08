@@ -55,13 +55,10 @@ function finiteOrZero(value: unknown): number {
 }
 
 /** JS mirror of budgetLineCeilingSql() for a row already in hand (e.g. a line locked FOR UPDATE). */
-export function budgetLineCeiling(
-  line: Readonly<Record<string, unknown>>,
-): number {
+export function budgetLineCeiling(line: Readonly<Record<string, unknown>>): number {
   const base = finiteOrZero(line.base_amount);
   if (base !== 0) return base;
-  const derived =
-    finiteOrZero(line.gross_amount) - finiteOrZero(line.tax_amount);
+  const derived = finiteOrZero(line.gross_amount) - finiteOrZero(line.tax_amount);
   if (derived !== 0) return derived;
   return finiteOrZero(line.pnl_cost_amount);
 }
@@ -79,7 +76,7 @@ export const NON_TAXABLE_TREATMENTS = new Set(["non_gst", "exempt"]);
 export function budgetCostRatio(
   _taxTreatment: unknown,
   grossAmount: number,
-  netAmount?: number,
+  netAmount?: number
 ): number {
   if (!Number.isFinite(netAmount) || !((netAmount as number) > 0)) return 1;
   if (!Number.isFinite(grossAmount) || !(grossAmount > 0)) return 1;

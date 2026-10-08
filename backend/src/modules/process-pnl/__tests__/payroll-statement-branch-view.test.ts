@@ -1,8 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import type {
-  ComponentDefinition,
-  StatementDependencies,
-} from "../pnl-statement.service.js";
+import type { ComponentDefinition, StatementDependencies } from "../pnl-statement.service.js";
 
 /**
  * Statement BRANCH view payroll attribution (audit item 4, owner rule 2026-09-23): a person's pay
@@ -20,10 +17,7 @@ import type {
  * 2026-05 = posted payroll path, 2026-06 = running-salary snapshot path.
  */
 
-type Sqlite = {
-  exec(sql: string): void;
-  prepare(sql: string): { all(...p: unknown[]): unknown[] };
-};
+type Sqlite = { exec(sql: string): void; prepare(sql: string): { all(...p: unknown[]): unknown[] } };
 let sqlite: Sqlite | null = null;
 try {
   // node:sqlite ships with Node 22.5+; on an older runtime these tests are skipped, not failed.
@@ -33,29 +27,21 @@ try {
   sqlite = null;
 }
 
-const PAYROLL_SQL =
-  /salary_prep_line|pnl_running_salary_snapshot|pnl_employee_cost_centre_override/;
+const PAYROLL_SQL = /salary_prep_line|pnl_running_salary_snapshot|pnl_employee_cost_centre_override/;
 
 function run(sql: string, params: unknown[] = []): unknown[] {
   const db = sqlite!;
   if (/information_schema\.tables/i.test(sql)) {
-    return db
-      .prepare(
-        `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?`,
-      )
-      .all(String(params[0]));
+    return db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?`).all(String(params[0]));
   }
   if (/information_schema\.columns/i.test(sql)) {
     const table = String(params[0]).replace(/[^a-z0-9_]/gi, "");
-    return (
-      db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
-    ).map((c) => ({ column_name: c.name }));
+    return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
+      .map((c) => ({ column_name: c.name }));
   }
   const text = sql.replace(/COLLATE\s+utf8mb4_unicode_ci/gi, "");
   try {
-    return db
-      .prepare(text)
-      .all(...params.map((p) => (p === undefined ? null : p)));
+    return db.prepare(text).all(...params.map((p) => (p === undefined ? null : p)));
   } catch (error) {
     // Non-payroll reads (revenue, GRN, seat billing...) use MySQL-only syntax; they are irrelevant
     // here and read as empty. A PAYROLL read that fails must fail the test, never read as zero.
@@ -125,22 +111,11 @@ INSERT INTO pnl_cost_classification_rule VALUES ('department','OPERATIONS',NULL,
 
 const TOTAL = 200000;
 
-function component(
-  key: string,
-  field: string,
-  order: number,
-): ComponentDefinition {
+function component(key: string, field: string, order: number): ComponentDefinition {
   return {
-    component_key: key,
-    display_name: key,
-    section_key: "cost",
-    parent_component_key: null,
-    display_order: order,
-    component_type: "SOURCE_ACTUAL",
-    source_field: field,
-    format_type: "CURRENCY",
-    sign_convention: "-",
-    is_subtotal: 0,
+    component_key: key, display_name: key, section_key: "cost", parent_component_key: null,
+    display_order: order, component_type: "SOURCE_ACTUAL", source_field: field, format_type: "CURRENCY",
+    sign_convention: "-", is_subtotal: 0,
   } as ComponentDefinition;
 }
 
@@ -154,113 +129,58 @@ const COMPONENTS = [
 /** Upstream process rows carry NO people cost, so every rupee on the Statement comes from payroll. */
 function processRow(processId: string, branchId: string, branchName: string) {
   return {
-    processId,
-    processName: processId,
-    branchId,
-    branchName,
-    processStatus: "profitable",
-    recognizedRevenue: 0,
-    agentSalary: 0,
-    dscPeople: 0,
-    bmcPeople: 0,
+    processId, processName: processId, branchId, branchName, processStatus: "profitable",
+    recognizedRevenue: 0, agentSalary: 0, dscPeople: 0, bmcPeople: 0,
   } as never;
 }
 
-const ROWS = [
-  processRow("P576", "B1", "NOIDA"),
-  processRow("P100", "B1", "NOIDA"),
-  processRow("P577", "B2", "NOIDA-2"),
-];
+const ROWS = [processRow("P576", "B1", "NOIDA"), processRow("P100", "B1", "NOIDA"), processRow("P577", "B2", "NOIDA-2")];
 
-const emptyActuals = async () => ({
-  byBranch: new Map(),
-  byProcess: new Map(),
-  byCostCentre: new Map(),
-});
+const emptyActuals = async () => ({ byBranch: new Map(), byProcess: new Map(), byCostCentre: new Map() });
 
 beforeAll(() => {
   if (!sqlite) return;
   sqlite.exec(SCHEMA);
-  execute.mockImplementation(async (sql: string, params?: unknown[]) => [
-    run(String(sql), params ?? []),
-    [],
-  ]);
+  execute.mockImplementation(async (sql: string, params?: unknown[]) => [run(String(sql), params ?? []), []]);
 });
 
-describe.skipIf(!sqlite)(
-  "Statement branch view: pay lands in the effective branch, once (audit item 4)",
-  () => {
-    it("people-cost resolver: byBranch follows the effective cost centre on both paths", async () => {
-      const { getStatementPeopleCost } =
-        await import("../pnl-statement.service.js");
-      for (const period of ["2026-05", "2026-06"]) {
-        const out = await getStatementPeopleCost(period);
-        const sum = (b?: Record<string, number>) =>
-          b ? Object.values(b).reduce((t, v) => t + v, 0) : 0;
-        expect(
-          sum(out.byBranch.get("B1")),
-          `${period} NOIDA = E1 (mapped) + E2`,
-        ).toBe(150000);
-        expect(
-          sum(out.byBranch.get("B2")),
-          `${period} NOIDA-2 = E3 + E4, never E1`,
-        ).toBe(50000);
-        expect(
-          [...out.byBranch.values()].reduce((t, b) => t + sum(b), 0),
-          `${period} each rupee once`,
-        ).toBe(TOTAL);
-      }
-    });
+describe.skipIf(!sqlite)("Statement branch view: pay lands in the effective branch, once (audit item 4)", () => {
+  it("people-cost resolver: byBranch follows the effective cost centre on both paths", async () => {
+    const { getStatementPeopleCost } = await import("../pnl-statement.service.js");
+    for (const period of ["2026-05", "2026-06"]) {
+      const out = await getStatementPeopleCost(period);
+      const sum = (b?: Record<string, number>) => (b ? Object.values(b).reduce((t, v) => t + v, 0) : 0);
+      expect(sum(out.byBranch.get("B1")), `${period} NOIDA = E1 (mapped) + E2`).toBe(150000);
+      expect(sum(out.byBranch.get("B2")), `${period} NOIDA-2 = E3 + E4, never E1`).toBe(50000);
+      expect([...out.byBranch.values()].reduce((t, b) => t + sum(b), 0), `${period} each rupee once`).toBe(TOTAL);
+    }
+  });
 
-    it("getStatement(viewBy=branch) columns equal Live P&L branch payroll", async () => {
-      const { getStatement, getStatementPeopleCost } =
-        await import("../pnl-statement.service.js");
-      const { getPnlReconciliation } =
-        await import("../pnl-reconciliation.service.js");
-      const deps: StatementDependencies = {
-        getComponents: async () => COMPONENTS,
-        getSummary: async () => ({
-          rows: ROWS,
-          generatedAt: "2026-09-15T00:00:00.000Z",
-          calculationEngine: "bpo_allocation_v2",
-        }),
-        getProcessSummary: async () => ({ rows: [] }),
-        getIndirectCost: emptyActuals,
-        getDriverRevenue: emptyActuals,
-        getInvoicedRevenue: emptyActuals,
-        getSeatRevenue: async () =>
-          ({
-            ...(await emptyActuals()),
-            rateMissingByKey: await emptyActuals(),
-            billableEmployees: 0,
-            rateMissingEmployees: 0,
-            unresolvedEmployees: 0,
-          }) as never,
-        getPeopleCost: getStatementPeopleCost,
-        getManualAdjustments: async () => new Map(),
-        getRevenueEstimate: emptyActuals,
-      };
-      for (const period of ["2026-05", "2026-06"]) {
-        const statement = await getStatement({ period }, "branch", deps);
-        const direct = statement.rows.find(
-          (r) => r.componentKey === "direct_cost_total",
-        )!.values;
-        expect(direct.B1, `${period} Statement NOIDA`).toBe(150000);
-        expect(direct.B2, `${period} Statement NOIDA-2`).toBe(50000);
+  it("getStatement(viewBy=branch) columns equal Live P&L branch payroll", async () => {
+    const { getStatement, getStatementPeopleCost } = await import("../pnl-statement.service.js");
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const deps: StatementDependencies = {
+      getComponents: async () => COMPONENTS,
+      getSummary: async () => ({ rows: ROWS, generatedAt: "2026-09-15T00:00:00.000Z", calculationEngine: "bpo_allocation_v2" }),
+      getProcessSummary: async () => ({ rows: [] }),
+      getIndirectCost: emptyActuals,
+      getDriverRevenue: emptyActuals,
+      getInvoicedRevenue: emptyActuals,
+      getSeatRevenue: async () => ({ ...(await emptyActuals()), rateMissingByKey: await emptyActuals(), billableEmployees: 0, rateMissingEmployees: 0, unresolvedEmployees: 0 }) as never,
+      getPeopleCost: getStatementPeopleCost,
+      getManualAdjustments: async () => new Map(),
+      getRevenueEstimate: emptyActuals,
+    };
+    for (const period of ["2026-05", "2026-06"]) {
+      const statement = await getStatement({ period }, "branch", deps);
+      const direct = statement.rows.find((r) => r.componentKey === "direct_cost_total")!.values;
+      expect(direct.B1, `${period} Statement NOIDA`).toBe(150000);
+      expect(direct.B2, `${period} Statement NOIDA-2`).toBe(50000);
 
-        const live = await getPnlReconciliation(period, {
-          asOfDate: "2026-09-15",
-        });
-        const livePay = (id: string) =>
-          live.branches.find((b) => b.branchId === id)?.payrollCost ?? 0;
-        expect(direct.B1, `${period} Statement NOIDA == Live P&L NOIDA`).toBe(
-          livePay("B1"),
-        );
-        expect(
-          direct.B2,
-          `${period} Statement NOIDA-2 == Live P&L NOIDA-2`,
-        ).toBe(livePay("B2"));
-      }
-    });
-  },
-);
+      const live = await getPnlReconciliation(period, { asOfDate: "2026-09-15" });
+      const livePay = (id: string) => live.branches.find((b) => b.branchId === id)?.payrollCost ?? 0;
+      expect(direct.B1, `${period} Statement NOIDA == Live P&L NOIDA`).toBe(livePay("B1"));
+      expect(direct.B2, `${period} Statement NOIDA-2 == Live P&L NOIDA-2`).toBe(livePay("B2"));
+    }
+  });
+});

@@ -22,11 +22,8 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 
 const {
-  assembleJoiningKit,
-  analyzeSignaturePlacement,
-  assertSignatureInsideReservedArea,
-  KIT_RESERVE_BAND,
-  KitAssemblyError,
+  assembleJoiningKit, analyzeSignaturePlacement, assertSignatureInsideReservedArea,
+  KIT_RESERVE_BAND, KitAssemblyError,
 } = await import("../joiningKitAssembly.service.js");
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "kit-test-"));
@@ -39,25 +36,18 @@ async function makePdf(name: string, pages: number): Promise<string> {
     const p = doc.addPage([595, 842]);
     p.drawText(`${name} page ${i + 1}`, { x: 56, y: 700, size: 12, font });
   }
-  const file = path.join(
-    tmp,
-    `${name}-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`,
-  );
+  const file = path.join(tmp, `${name}-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`);
   fs.writeFileSync(file, await doc.save());
   return file;
 }
 
 const OPTS = {
-  employeeName: "SHIVAM SHIV GIRI",
-  employeeCode: "MAS47814",
-  designation: "MANAGER",
-  branchName: "NOIDA-2",
+  employeeName: "SHIVAM SHIV GIRI", employeeCode: "MAS47814",
+  designation: "MANAGER", branchName: "NOIDA-2",
   dateOfJoining: new Date("2025-09-25T18:30:00Z"),
 };
 
-beforeEach(() => {
-  docRows = [];
-});
+beforeEach(() => { docRows = []; });
 
 describe("merging", () => {
   it("produces one PDF with a correct page map", async () => {
@@ -65,53 +55,23 @@ describe("merging", () => {
     const b = await makePdf("nda", 3);
     const c = await makePdf("it", 1);
     docRows = [
-      {
-        id: "c1",
-        document_code: "EMPLOYMENT_CONTRACT",
-        document_name: "Employment Agreement",
-        file_id: "f1",
-        storage_path: a,
-      },
-      {
-        id: "c2",
-        document_code: "NDA_CONFIDENTIALITY",
-        document_name: "NDA",
-        file_id: "f2",
-        storage_path: b,
-      },
-      {
-        id: "c3",
-        document_code: "IT_COMPLIANCE",
-        document_name: "IT Compliance",
-        file_id: "f3",
-        storage_path: c,
-      },
+      { id: "c1", document_code: "EMPLOYMENT_CONTRACT", document_name: "Employment Agreement", file_id: "f1", storage_path: a },
+      { id: "c2", document_code: "NDA_CONFIDENTIALITY", document_name: "NDA", file_id: "f2", storage_path: b },
+      { id: "c3", document_code: "IT_COMPLIANCE", document_name: "IT Compliance", file_id: "f3", storage_path: c },
     ];
 
     const kit = await assembleJoiningKit("emp-1", OPTS);
 
     // 2 + 3 + 1 source pages, plus the consolidated consent page.
     expect(kit.totalPages).toBe(7);
-    expect(kit.items.map((i) => [i.pageFrom, i.pageTo])).toEqual([
-      [1, 2],
-      [3, 5],
-      [6, 6],
-    ]);
+    expect(kit.items.map((i) => [i.pageFrom, i.pageTo])).toEqual([[1, 2], [3, 5], [6, 6]]);
     expect(kit.buffer.subarray(0, 5).toString("latin1")).toBe("%PDF-");
     expect(kit.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("hashes each source document so the signature's scope is provable", async () => {
     const a = await makePdf("contract", 1);
-    docRows = [
-      {
-        id: "c1",
-        document_code: "EMPLOYMENT_CONTRACT",
-        document_name: "Employment Agreement",
-        file_id: "f1",
-        storage_path: a,
-      },
-    ];
+    docRows = [{ id: "c1", document_code: "EMPLOYMENT_CONTRACT", document_name: "Employment Agreement", file_id: "f1", storage_path: a }];
     const kit = await assembleJoiningKit("emp-1", OPTS);
     expect(kit.items[0].sourceSha256).toMatch(/^[0-9a-f]{64}$/);
     // The hash must be of the source document, not of the merged kit.
@@ -122,15 +82,7 @@ describe("merging", () => {
     // Empty AcroForm fields named *_signature are what a field-binding provider
     // latches onto; the EPF forms are handed over unflattened today.
     const a = await makePdf("contract", 1);
-    docRows = [
-      {
-        id: "c1",
-        document_code: "EMPLOYMENT_CONTRACT",
-        document_name: "Employment Agreement",
-        file_id: "f1",
-        storage_path: a,
-      },
-    ];
+    docRows = [{ id: "c1", document_code: "EMPLOYMENT_CONTRACT", document_name: "Employment Agreement", file_id: "f1", storage_path: a }];
     const kit = await assembleJoiningKit("emp-1", OPTS);
     const loaded = await PDFDocument.load(kit.buffer);
     expect(loaded.getForm().getFields().length).toBe(0);
@@ -140,20 +92,8 @@ describe("merging", () => {
     const a = await makePdf("contract", 1);
     const b = await makePdf("nda", 1);
     docRows = [
-      {
-        id: "c1",
-        document_code: "EMPLOYMENT_CONTRACT",
-        document_name: "Employment Agreement",
-        file_id: "f1",
-        storage_path: a,
-      },
-      {
-        id: "c2",
-        document_code: "NDA_CONFIDENTIALITY",
-        document_name: "NDA and Confidentiality",
-        file_id: "f2",
-        storage_path: b,
-      },
+      { id: "c1", document_code: "EMPLOYMENT_CONTRACT", document_name: "Employment Agreement", file_id: "f1", storage_path: a },
+      { id: "c2", document_code: "NDA_CONFIDENTIALITY", document_name: "NDA and Confidentiality", file_id: "f2", storage_path: b },
     ];
     const kit = await assembleJoiningKit("emp-1", OPTS);
     const text = kit.buffer.toString("latin1");
@@ -168,57 +108,25 @@ describe("refusing to merge something misleading", () => {
   it("blocks when a document has no file on disk", async () => {
     // A partial kit would let the consent page name a document the employee
     // never actually saw.
-    docRows = [
-      {
-        id: "c1",
-        document_code: "EMPLOYMENT_CONTRACT",
-        document_name: "Employment Agreement",
-        file_id: null,
-        storage_path: "/nope/missing.pdf",
-      },
-    ];
-    await expect(assembleJoiningKit("emp-1", OPTS)).rejects.toMatchObject({
-      code: "draft_missing",
-    });
+    docRows = [{ id: "c1", document_code: "EMPLOYMENT_CONTRACT", document_name: "Employment Agreement", file_id: null, storage_path: "/nope/missing.pdf" }];
+    await expect(assembleJoiningKit("emp-1", OPTS)).rejects.toMatchObject({ code: "draft_missing" });
   });
 
   it("names the documents that are missing", async () => {
-    docRows = [
-      {
-        id: "c1",
-        document_code: "NDA_CONFIDENTIALITY",
-        document_name: "NDA and Confidentiality",
-        file_id: null,
-        storage_path: "/nope/missing.pdf",
-      },
-    ];
-    await expect(assembleJoiningKit("emp-1", OPTS)).rejects.toThrow(
-      /NDA and Confidentiality/,
-    );
+    docRows = [{ id: "c1", document_code: "NDA_CONFIDENTIALITY", document_name: "NDA and Confidentiality", file_id: null, storage_path: "/nope/missing.pdf" }];
+    await expect(assembleJoiningKit("emp-1", OPTS)).rejects.toThrow(/NDA and Confidentiality/);
   });
 
   it("blocks when there are no eSign documents at all", async () => {
     docRows = [];
-    await expect(assembleJoiningKit("emp-1", OPTS)).rejects.toBeInstanceOf(
-      KitAssemblyError,
-    );
+    await expect(assembleJoiningKit("emp-1", OPTS)).rejects.toBeInstanceOf(KitAssemblyError);
   });
 
   it("blocks on a file that is not a readable PDF", async () => {
     const bad = path.join(tmp, "not-a-pdf.pdf");
     fs.writeFileSync(bad, "this is not a pdf");
-    docRows = [
-      {
-        id: "c1",
-        document_code: "EMPLOYMENT_CONTRACT",
-        document_name: "Employment Agreement",
-        file_id: "f1",
-        storage_path: bad,
-      },
-    ];
-    await expect(assembleJoiningKit("emp-1", OPTS)).rejects.toMatchObject({
-      code: "unreadable_document",
-    });
+    docRows = [{ id: "c1", document_code: "EMPLOYMENT_CONTRACT", document_name: "Employment Agreement", file_id: "f1", storage_path: bad }];
+    await expect(assembleJoiningKit("emp-1", OPTS)).rejects.toMatchObject({ code: "unreadable_document" });
   });
 });
 

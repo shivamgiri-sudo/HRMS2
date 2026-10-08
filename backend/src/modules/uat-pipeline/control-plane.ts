@@ -29,8 +29,7 @@ const CONTROL_PLANE_DIR = "uat";
 function findRepoRoot(): string {
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 10; i++) {
-    if (existsSync(join(dir, CONTROL_PLANE_DIR, "protected-paths.json")))
-      return dir;
+    if (existsSync(join(dir, CONTROL_PLANE_DIR, "protected-paths.json"))) return dir;
     const parent = resolve(dir, "..");
     if (parent === dir) break;
     dir = parent;
@@ -39,7 +38,7 @@ function findRepoRoot(): string {
     "[uat] Could not locate uat/protected-paths.json by walking up from " +
       dirname(fileURLToPath(import.meta.url)) +
       ". The control-plane files must ship with the application; without them the pipeline " +
-      "cannot classify risk and must not fall back to a permissive default.",
+      "cannot classify risk and must not fall back to a permissive default."
   );
 }
 
@@ -61,9 +60,7 @@ export interface LoadedControlFile<T> {
  * should take effect on the next scan rather than at the next process restart. The files
  * are a few KB, so the read cost is irrelevant next to the correctness gain.
  */
-export function readControlPlaneFile<T>(
-  filename: string,
-): LoadedControlFile<T> {
+export function readControlPlaneFile<T>(filename: string): LoadedControlFile<T> {
   const full = join(repoRoot(), CONTROL_PLANE_DIR, filename);
   let raw: string;
   try {
@@ -73,21 +70,16 @@ export function readControlPlaneFile<T>(
     throw new Error(
       `[uat] Cannot read control-plane file ${full}: ${(err as Error).message}. ` +
         "Refusing to continue: risk classification without the control plane would pass " +
-        "payroll and auth changes as safe.",
+        "payroll and auth changes as safe."
     );
   }
   let data: T;
   try {
     data = JSON.parse(raw) as T;
   } catch (err) {
-    throw new Error(
-      `[uat] ${filename} is not valid JSON: ${(err as Error).message}`,
-    );
+    throw new Error(`[uat] ${filename} is not valid JSON: ${(err as Error).message}`);
   }
-  return {
-    data,
-    sha256: createHash("sha256").update(raw, "utf8").digest("hex"),
-  };
+  return { data, sha256: createHash("sha256").update(raw, "utf8").digest("hex") };
 }
 
 // ── Glob matching ─────────────────────────────────────────────────────────────

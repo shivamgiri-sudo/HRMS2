@@ -20,17 +20,17 @@ import { readMetaLeadPrefs } from '../hiring-engine/he-smart-slots.service.js';
 import { nowIst as istNow } from '../hiring-engine/he-slots.js';
 
 export interface InterviewSlot {
-  date: string; // YYYY-MM-DD for DB storage
-  time: string; // HH:MM:00 for DB storage
-  dateLabel: string; // "Wed, 24 Sep 2026"
-  timeLabel: string; // "10:30 AM"
+  date: string;       // YYYY-MM-DD for DB storage
+  time: string;       // HH:MM:00 for DB storage
+  dateLabel: string;  // "Wed, 24 Sep 2026"
+  timeLabel: string;  // "10:30 AM"
 }
 
 const SLOT_START_HOUR = 10;
-const SLOT_START_MIN = 0;
-const SLOT_END_HOUR = 18; // up to but not including 18:00
-const SLOT_DURATION = 30; // minutes
-const DAYS_AHEAD = 1; // start from tomorrow
+const SLOT_START_MIN  = 0;
+const SLOT_END_HOUR   = 18;   // up to but not including 18:00
+const SLOT_DURATION   = 30;   // minutes
+const DAYS_AHEAD      = 1;    // start from tomorrow
 
 /** Days 1–6 = Mon–Sat (0 = Sunday, excluded) */
 function isWorkingDay(date: Date): boolean {
@@ -43,47 +43,34 @@ function addMinutes(date: Date, mins: number): Date {
 
 function toIST(date: Date): Date {
   // Convert UTC to IST (+5:30)
-  return new Date(date.getTime() + 5.5 * 3600 * 1000);
+  return new Date(date.getTime() + (5.5 * 3600 * 1000));
 }
 
 function formatDate(date: Date): string {
-  const d = String(date.getDate()).padStart(2, "0");
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
+  const d = String(date.getDate()).padStart(2, '0');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const m = months[date.getMonth()];
   const y = date.getFullYear();
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const wd = days[date.getDay()];
   return `${wd}, ${d} ${m} ${y}`;
 }
 
 function formatTime(h: number, m: number): string {
-  const ampm = h < 12 ? "AM" : "PM";
+  const ampm = h < 12 ? 'AM' : 'PM';
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${String(h12).padStart(2, "0")}:${String(m).padStart(2, "0")} ${ampm}`;
+  return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
 function toDbDate(date: Date): string {
   const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
 
 function toDbTime(h: number, m: number): string {
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
 }
 
 /**
@@ -98,18 +85,16 @@ async function getBookedSlots(branchName: string): Promise<Set<string>> {
       WHERE jr.branch_name = ?
         AND ml.interview_date IS NOT NULL
         AND ml.interview_time IS NOT NULL`,
-    [branchName],
+    [branchName]
   );
   const booked = new Set<string>();
   for (const r of rows) {
-    const d =
-      r.interview_date instanceof Date
-        ? toDbDate(r.interview_date)
-        : String(r.interview_date).substring(0, 10);
-    const t =
-      typeof r.interview_time === "string"
-        ? r.interview_time.substring(0, 5)
-        : String(r.interview_time).substring(0, 5);
+    const d = r.interview_date instanceof Date
+      ? toDbDate(r.interview_date)
+      : String(r.interview_date).substring(0, 10);
+    const t = typeof r.interview_time === 'string'
+      ? r.interview_time.substring(0, 5)
+      : String(r.interview_time).substring(0, 5);
     booked.add(`${d}|${t}`);
   }
   return booked;
@@ -146,7 +131,7 @@ async function assignSmart(leadId: string, booked: Set<string>): Promise<Intervi
  */
 export async function assignInterviewSlot(
   leadId: string,
-  branchName: string,
+  branchName: string
 ): Promise<InterviewSlot> {
   const booked = await getBookedSlots(branchName);
 
@@ -185,7 +170,7 @@ export async function assignInterviewSlot(
     }
 
     const dateKey = toDbDate(cursor);
-    const timeKey = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    const timeKey = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     const slotKey = `${dateKey}|${timeKey}`;
 
     if (!booked.has(slotKey)) {
@@ -200,19 +185,14 @@ export async function assignInterviewSlot(
       };
 
       // Write back to DB (best-effort — failure must not block the outreach)
-      await db
-        .execute(
-          `UPDATE meta_lead_raw
+      await db.execute(
+        `UPDATE meta_lead_raw
             SET interview_date = ?, interview_time = ?, interview_slot_assigned_at = NOW()
           WHERE id = ?`,
-          [slot.date, slot.time, leadId],
-        )
-        .catch((e: unknown) =>
-          console.warn(
-            "[meta] assignInterviewSlot write failed",
-            e instanceof Error ? e.message : e,
-          ),
-        );
+        [slot.date, slot.time, leadId]
+      ).catch((e: unknown) =>
+        console.warn('[meta] assignInterviewSlot write failed', e instanceof Error ? e.message : e)
+      );
 
       return slot;
     }

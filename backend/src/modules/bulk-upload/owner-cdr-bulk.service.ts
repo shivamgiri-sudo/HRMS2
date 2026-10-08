@@ -1,9 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Owner's "Owner CDR" export -- writes into db_masmis.Owner_cdr
@@ -25,23 +22,16 @@ import {
 function normalizeKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
-function getByColumn(
-  data: Record<string, unknown>,
-  ...columnNames: string[]
-): string {
+function getByColumn(data: Record<string, unknown>, ...columnNames: string[]): string {
   const normalized: Record<string, unknown> = {};
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const col of columnNames) {
     const v = normalized[normalizeKey(col)];
-    if (v !== undefined && v !== null && String(v).trim() !== "")
-      return String(v).trim();
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
   }
   return "";
 }
-function n(
-  data: Record<string, unknown>,
-  ...columnNames: string[]
-): string | null {
+function n(data: Record<string, unknown>, ...columnNames: string[]): string | null {
   const v = getByColumn(data, ...columnNames);
   return v || null;
 }
@@ -62,16 +52,13 @@ export async function importOwnerCdrBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0)
-    return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
   const toInsert: ChunkInsertRow[] = [];
 
-  const uploadedByInt = /^\d+$/.test(importedByUserId)
-    ? Number(importedByUserId)
-    : null;
+  const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
   for (const row of batchRows) {
     const data =
@@ -82,52 +69,27 @@ export async function importOwnerCdrBatch(
     const uid = getByColumn(data, "UID");
     if (!uid) {
       const msg = `Row ${row.row_no}: "UID" is required`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     toInsert.push({
-      rowId: row.id,
-      rowNo: row.row_no,
+      rowId: row.id, rowNo: row.row_no,
       values: [
-        uid,
-        n(data, "Date", "report_date"),
-        n(data, "Agent"),
-        n(data, "Email ID"),
-        n(data, "Intercom ID"),
-        n(data, "Group"),
-        n(data, "Department"),
-        n(data, "Login Based Calling"),
-        n(data, "Average Calls/Day"),
-        n(data, "Average C2C Calls/Day - Outbound Answered"),
-        n(data, "Average Inbound Calls/Day"),
-        n(data, "Call Handling Rate"),
-        n(data, "Total Calls"),
-        n(data, "Inbound Calls Offered"),
-        n(data, "Outbound Click to Call Attempted"),
-        n(data, "Calls Handled"),
-        n(data, "Inbound Calls Answered"),
-        n(data, "Inbound Calls Missed"),
-        n(data, "Outbound Click to Call Answered"),
-        n(data, "Available Duration"),
-        n(data, "In-Call Duration"),
-        n(data, "Break Duration"),
-        n(data, "Inbound In-Call Duration"),
-        n(data, "Outbound In-Call Duration"),
-        n(data, "Average Call Handling Duration"),
+        uid, n(data, "Date", "report_date"), n(data, "Agent"), n(data, "Email ID"),
+        n(data, "Intercom ID"), n(data, "Group"), n(data, "Department"),
+        n(data, "Login Based Calling"), n(data, "Average Calls/Day"),
+        n(data, "Average C2C Calls/Day - Outbound Answered"), n(data, "Average Inbound Calls/Day"),
+        n(data, "Call Handling Rate"), n(data, "Total Calls"), n(data, "Inbound Calls Offered"),
+        n(data, "Outbound Click to Call Attempted"), n(data, "Calls Handled"),
+        n(data, "Inbound Calls Answered"), n(data, "Inbound Calls Missed"),
+        n(data, "Outbound Click to Call Answered"), n(data, "Available Duration"),
+        n(data, "In-Call Duration"), n(data, "Break Duration"), n(data, "Inbound In-Call Duration"),
+        n(data, "Outbound In-Call Duration"), n(data, "Average Call Handling Duration"),
         n(data, "Average Inbound Call Handling Duration"),
-        n(data, "Average Outbound Call Handling Duration"),
-        n(data, "Not Connected"),
-        n(data, "Connected"),
-        n(data, "TL Name"),
-        n(data, "Average Talk time"),
-        n(data, "Month"),
-        n(data, "Day"),
-        n(data, "last"),
-        n(data, "AM"),
-        uploadedByInt,
-        batchId,
+        n(data, "Average Outbound Call Handling Duration"), n(data, "Not Connected"),
+        n(data, "Connected"), n(data, "TL Name"), n(data, "Average Talk time"),
+        n(data, "Month"), n(data, "Day"), n(data, "last"), n(data, "AM"),
+        uploadedByInt, batchId,
       ],
     });
   }
@@ -143,8 +105,7 @@ export async function importOwnerCdrBatch(
         avg_call_handling_duration, avg_inbound_call_handling_duration,
         avg_outbound_call_handling_duration, not_connected, connected, tl_name,
         avg_talk_time, month, day, last_val, am, uploaded_by, upload_batch_id)`,
-    placeholderGroup:
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     rows: toInsert,
   });
   errorUpdates.push(...inserted.errorUpdates);
@@ -161,26 +122,17 @@ export async function importOwnerCdrBatch(
   }
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

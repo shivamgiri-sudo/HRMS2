@@ -18,21 +18,10 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { resolveEmployeeDocumentAccessContext } from "./employeeJoiningDocuments.service.js";
 import { auditAppointmentLetter } from "../letters/appointmentLetterAudit.js";
-import {
-  loadAcceptedCopy,
-  type AcceptedCopyFile,
-} from "../letters/appointmentLetterSignedCopy.service.js";
+import { loadAcceptedCopy, type AcceptedCopyFile } from "../letters/appointmentLetterSignedCopy.service.js";
 
 /** Roles that may open an appointment letter (mirrors VIEW_ROLES in appointmentLetter.routes.ts). */
-const LETTER_ROLES = new Set([
-  "super_admin",
-  "admin",
-  "payroll",
-  "payroll_hr",
-  "payroll_head",
-  "hr",
-  "branch_head",
-]);
+const LETTER_ROLES = new Set(["super_admin", "admin", "payroll", "payroll_hr", "payroll_head", "hr", "branch_head"]);
 
 export type SignedAppointmentLetterItem = {
   issue_id: string;
@@ -46,11 +35,9 @@ export type SignedAppointmentLetterItem = {
 
 type LetterAccess = { isSelf: boolean; isAdmin: boolean; roles: string[] };
 
-const mayOpenLetter = (a: LetterAccess) =>
-  a.isSelf || a.isAdmin || a.roles.some((r) => LETTER_ROLES.has(r));
+const mayOpenLetter = (a: LetterAccess) => a.isSelf || a.isAdmin || a.roles.some((r) => LETTER_ROLES.has(r));
 /** The employee must not keep a letter the company has withdrawn; HR keeps seeing it as a record. */
-const hidesRevoked = (a: LetterAccess) =>
-  a.isSelf && !a.isAdmin && !a.roles.some((r) => LETTER_ROLES.has(r));
+const hidesRevoked = (a: LetterAccess) => a.isSelf && !a.isAdmin && !a.roles.some((r) => LETTER_ROLES.has(r));
 
 const isoOrNull = (value: unknown): string | null => {
   if (!value) return null;
@@ -76,22 +63,13 @@ export async function listSignedAppointmentLetters(
     [employeeId],
   );
   return (rows as RowDataPacket[])
-    .filter(
-      (r) =>
-        !(
-          hidesRevoked(access) &&
-          (r.revoked_at || String(r.status) === "revoked")
-        ),
-    )
+    .filter((r) => !(hidesRevoked(access) && (r.revoked_at || String(r.status) === "revoked")))
     .map((r) => ({
       issue_id: String(r.id),
       letter_number: String(r.letter_number),
-      status:
-        r.revoked_at || String(r.status) === "revoked" ? "revoked" : "issued",
+      status: r.revoked_at || String(r.status) === "revoked" ? "revoked" : "issued",
       accepted_at: isoOrNull(r.completed_at),
-      sha256_short: r.signed_file_sha256
-        ? String(r.signed_file_sha256).slice(0, 12)
-        : null,
+      sha256_short: r.signed_file_sha256 ? String(r.signed_file_sha256).slice(0, 12) : null,
     }));
 }
 
@@ -105,12 +83,8 @@ export async function getSignedAppointmentLetterForAccess(params: {
   actorUserId: string;
   inline: boolean;
 }): Promise<AcceptedCopyFile> {
-  const access = await resolveEmployeeDocumentAccessContext(
-    params.actorUserId,
-    params.employeeId,
-  );
-  if (!mayOpenLetter(access))
-    throw httpError("Not authorized to open this document", 403);
+  const access = await resolveEmployeeDocumentAccessContext(params.actorUserId, params.employeeId);
+  if (!mayOpenLetter(access)) throw httpError("Not authorized to open this document", 403);
 
   // employee_id in the WHERE is the row-scope: an issue id from another employee's
   // page must not be readable through this employee's URL.
@@ -120,26 +94,13 @@ export async function getSignedAppointmentLetterForAccess(params: {
   );
   const letter = (rows as RowDataPacket[])[0];
   if (!letter) throw httpError("Appointment letter not found", 404);
-  if (
-    hidesRevoked(access) &&
-    (letter.revoked_at || String(letter.status) === "revoked")
-  ) {
+  if (hidesRevoked(access) && (letter.revoked_at || String(letter.status) === "revoked")) {
     throw httpError("Appointment letter not found", 404);
   }
 
-  const file = await loadAcceptedCopy(
-    params.issueId,
-    String(letter.letter_number),
-  );
-  await auditAppointmentLetter(
-    params.issueId,
-    "SIGNED_COPY_VIEWED",
-    params.actorUserId,
-    {
-      transactionId: file.transactionId,
-      inline: params.inline,
-      via: "employee_documents",
-    },
-  );
+  const file = await loadAcceptedCopy(params.issueId, String(letter.letter_number));
+  await auditAppointmentLetter(params.issueId, "SIGNED_COPY_VIEWED", params.actorUserId, {
+    transactionId: file.transactionId, inline: params.inline, via: "employee_documents",
+  });
   return file;
 }

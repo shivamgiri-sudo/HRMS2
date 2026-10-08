@@ -3,27 +3,13 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
 const DAY_NAMES: Record<string, number> = {
-  sunday: 0,
-  sun: 0,
-  "0": 0,
-  monday: 1,
-  mon: 1,
-  "1": 1,
-  tuesday: 2,
-  tue: 2,
-  "2": 2,
-  wednesday: 3,
-  wed: 3,
-  "3": 3,
-  thursday: 4,
-  thu: 4,
-  "4": 4,
-  friday: 5,
-  fri: 5,
-  "5": 5,
-  saturday: 6,
-  sat: 6,
-  "6": 6,
+  sunday: 0, sun: 0, "0": 0,
+  monday: 1, mon: 1, "1": 1,
+  tuesday: 2, tue: 2, "2": 2,
+  wednesday: 3, wed: 3, "3": 3,
+  thursday: 4, thu: 4, "4": 4,
+  friday: 5, fri: 5, "5": 5,
+  saturday: 6, sat: 6, "6": 6,
 };
 
 function parseDay(val: string | undefined): number | null {
@@ -78,18 +64,17 @@ const CHUNK_SIZE = 200;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size)
-    out.push(items.slice(i, i + size));
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
 }
 
 export async function importWeekOffPreferenceBatch(
   batchId: string,
-  userId: string,
+  userId: string
 ): Promise<{ imported: number; skipped: number; errors: string[] }> {
   const [batchRows] = await db.execute<BatchRow[]>(
     "SELECT id, row_no, normalized_data FROM upload_batch_row WHERE upload_batch_id = ? AND row_status IN ('valid','pending') ORDER BY row_no ASC",
-    [batchId],
+    [batchId]
   );
 
   if (batchRows.length === 0) {
@@ -103,19 +88,11 @@ export async function importWeekOffPreferenceBatch(
   const employeeCodes = new Set<string>();
 
   for (const batchRow of batchRows) {
-    const raw = (
-      typeof batchRow.normalized_data === "string"
-        ? JSON.parse(batchRow.normalized_data)
-        : batchRow.normalized_data
-    ) as Record<string, string>;
+    const raw = (typeof batchRow.normalized_data === "string"
+      ? JSON.parse(batchRow.normalized_data)
+      : batchRow.normalized_data) as Record<string, string>;
 
-    const {
-      employee_code,
-      week_start_date,
-      preferred_day_1,
-      preferred_day_2,
-      reason,
-    } = raw;
+    const { employee_code, week_start_date, preferred_day_1, preferred_day_2, reason } = raw;
 
     if (!employee_code || !week_start_date || preferred_day_1 === undefined) {
       const msg = `Row ${batchRow.row_no}: missing employee_code, week_start_date or preferred_day_1`;
@@ -135,12 +112,8 @@ export async function importWeekOffPreferenceBatch(
     }
 
     parsed.push({
-      rowId: batchRow.id,
-      rowNo: batchRow.row_no,
-      employeeCode: employee_code,
-      weekStartDate: week_start_date,
-      day1,
-      day2: parseDay(preferred_day_2) ?? null,
+      rowId: batchRow.id, rowNo: batchRow.row_no, employeeCode: employee_code,
+      weekStartDate: week_start_date, day1, day2: parseDay(preferred_day_2) ?? null,
       reason: reason ?? null,
     });
     employeeCodes.add(employee_code);
@@ -153,14 +126,12 @@ export async function importWeekOffPreferenceBatch(
     const [rows] = await db.execute<EmployeeRow[]>(
       `SELECT id, employee_code, process_id, branch_id FROM employees
        WHERE employee_code IN (${codes.map(() => "?").join(",")}) AND employment_status = 'active'`,
-      codes,
+      codes
     );
     for (const r of rows) employeeMap.set(r.employee_code, r);
   }
 
-  const resolved: Array<
-    ParsedRow & { employeeId: string; processId: string; branchId: string }
-  > = [];
+  const resolved: Array<ParsedRow & { employeeId: string; processId: string; branchId: string }> = [];
   for (const row of parsed) {
     const emp = employeeMap.get(row.employeeCode);
     if (!emp) {
@@ -170,12 +141,7 @@ export async function importWeekOffPreferenceBatch(
       skipped++;
       continue;
     }
-    resolved.push({
-      ...row,
-      employeeId: emp.id,
-      processId: emp.process_id,
-      branchId: emp.branch_id,
-    });
+    resolved.push({ ...row, employeeId: emp.id, processId: emp.process_id, branchId: emp.branch_id });
   }
 
   // submission_order is a running MAX+1 per (week_start_date, process_id) —
@@ -194,13 +160,10 @@ export async function importWeekOffPreferenceBatch(
        WHERE week_start_date IN (${weekDates.map(() => "?").join(",")})
          AND process_id IN (${processIds.map(() => "?").join(",")})
        GROUP BY week_start_date, process_id`,
-      [...weekDates, ...processIds],
+      [...weekDates, ...processIds]
     );
     for (const r of rows) {
-      groupMax.set(
-        `${String(r.week_start_date).slice(0, 10)}|${r.process_id}`,
-        Number(r.max_order),
-      );
+      groupMax.set(`${String(r.week_start_date).slice(0, 10)}|${r.process_id}`, Number(r.max_order));
     }
   }
 
@@ -210,16 +173,9 @@ export async function importWeekOffPreferenceBatch(
     const nextOrder = (groupMax.get(key) ?? 0) + 1;
     groupMax.set(key, nextOrder);
     prepared.push({
-      rowId: row.rowId,
-      prefId: randomUUID(),
-      employeeId: row.employeeId,
-      processId: row.processId,
-      branchId: row.branchId,
-      weekStartDate: row.weekStartDate,
-      day1: row.day1,
-      day2: row.day2,
-      reason: row.reason,
-      submissionOrder: nextOrder,
+      rowId: row.rowId, prefId: randomUUID(), employeeId: row.employeeId,
+      processId: row.processId, branchId: row.branchId, weekStartDate: row.weekStartDate,
+      day1: row.day1, day2: row.day2, reason: row.reason, submissionOrder: nextOrder,
     });
   }
 
@@ -231,22 +187,10 @@ export async function importWeekOffPreferenceBatch(
   // alone is retried row-by-row so only the actually-bad row ends up marked
   // as an error — every other row in the batch still lands.
   for (const rowsInChunk of chunk(prepared, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk
-      .map(() => "(?,?,?,?,?,?,?,?,?,?,'submitted',?,?)")
-      .join(", ");
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,'submitted',?,?)").join(", ");
     const params = rowsInChunk.flatMap((r) => [
-      r.prefId,
-      r.employeeId,
-      r.processId,
-      r.branchId,
-      r.weekStartDate,
-      r.day1,
-      r.day2,
-      r.day1,
-      r.day2,
-      r.reason,
-      r.submissionOrder,
-      userId,
+      r.prefId, r.employeeId, r.processId, r.branchId, r.weekStartDate,
+      r.day1, r.day2, r.day1, r.day2, r.reason, r.submissionOrder, userId,
     ]);
 
     try {
@@ -276,7 +220,7 @@ export async function importWeekOffPreferenceBatch(
            preferred_day_2 = VALUES(preferred_day_2),
            reason = VALUES(reason),
            status = 'submitted'`,
-        params,
+        params
       );
       for (const r of rowsInChunk) {
         importedRowUpdates.push({ rowId: r.rowId, prefId: r.prefId });
@@ -297,20 +241,8 @@ export async function importWeekOffPreferenceBatch(
                preferred_day_2 = VALUES(preferred_day_2),
                reason = VALUES(reason),
                status = 'submitted'`,
-            [
-              r.prefId,
-              r.employeeId,
-              r.processId,
-              r.branchId,
-              r.weekStartDate,
-              r.day1,
-              r.day2,
-              r.day1,
-              r.day2,
-              r.reason,
-              r.submissionOrder,
-              userId,
-            ],
+            [r.prefId, r.employeeId, r.processId, r.branchId, r.weekStartDate,
+             r.day1, r.day2, r.day1, r.day2, r.reason, r.submissionOrder, userId]
           );
           importedRowUpdates.push({ rowId: r.rowId, prefId: r.prefId });
           imported++;
@@ -340,32 +272,24 @@ export async function importWeekOffPreferenceBatch(
               created_entity_type = 'week_off_preference',
               created_entity_id = CASE id ${cases} END
        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...caseParams, ...ids],
+      [...caseParams, ...ids]
     );
   }
   if (errorUpdates.length > 0) {
     const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
-    const caseParams = errorUpdates.flatMap((u) => [
-      u.rowId,
-      JSON.stringify([u.message]),
-    ]);
+    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...caseParams, ...ids],
+      [...caseParams, ...ids]
     );
   }
 
   await db.execute(
     `UPDATE upload_batch SET batch_status=?, imported_rows=?, imported_by=?, imported_at=NOW()
      WHERE id=?`,
-    [
-      errors.length > 0 ? "imported_with_errors" : "imported",
-      imported,
-      userId,
-      batchId,
-    ],
+    [errors.length > 0 ? "imported_with_errors" : "imported", imported, userId, batchId]
   );
 
   return { imported, skipped, errors };

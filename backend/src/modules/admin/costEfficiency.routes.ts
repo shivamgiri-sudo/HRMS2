@@ -13,21 +13,15 @@
  *   GET /api/admin/cost-efficiency/dashboard
  */
 
-import { Router, Request, Response, NextFunction } from "express";
-import { requireRole } from "../../middleware/requireRole.js";
-import { CostEfficiencyService } from "./costEfficiency.service.js";
-import { logger } from "../../logger.js";
+import { Router, Request, Response, NextFunction } from 'express';
+import { requireRole } from '../../middleware/requireRole.js';
+import { CostEfficiencyService } from './costEfficiency.service.js';
+import { logger } from '../../logger.js';
 
 const router = Router();
 
 // Middleware: Require HR or Finance leadership role
-const requireCostAccess = requireRole(
-  "super_admin",
-  "hr",
-  "finance",
-  "finance_head",
-  "accounts_head",
-);
+const requireCostAccess = requireRole('super_admin', 'hr', 'finance', 'finance_head', 'accounts_head');
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helper: Query Parameter Extraction
@@ -51,15 +45,12 @@ function getQueryParams(req: Request) {
 // ──────────────────────────────────────────────────────────────────────────
 
 router.get(
-  "/agents",
+  '/agents',
   requireCostAccess,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { daysBack, limit } = getQueryParams(req);
-      const data = await CostEfficiencyService.getAgentCostEfficiency(
-        daysBack,
-        limit,
-      );
+      const data = await CostEfficiencyService.getAgentCostEfficiency(daysBack, limit);
 
       res.json({
         success: true,
@@ -73,7 +64,7 @@ router.get(
         data,
       });
     } catch (error) {
-      logger.error("Error in GET /agents:", error);
+      logger.error('Error in GET /agents:', error);
       next(error);
     }
   },
@@ -84,7 +75,7 @@ router.get(
 // ──────────────────────────────────────────────────────────────────────────
 
 router.get(
-  "/processes",
+  '/processes',
   requireCostAccess,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -103,7 +94,7 @@ router.get(
         data,
       });
     } catch (error) {
-      logger.error("Error in GET /processes:", error);
+      logger.error('Error in GET /processes:', error);
       next(error);
     }
   },
@@ -114,20 +105,14 @@ router.get(
 // ──────────────────────────────────────────────────────────────────────────
 
 router.get(
-  "/opportunities",
+  '/opportunities',
   requireCostAccess,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { daysBack, topN } = getQueryParams(req);
-      const data = await CostEfficiencyService.getSavingsOpportunities(
-        topN,
-        daysBack,
-      );
+      const data = await CostEfficiencyService.getSavingsOpportunities(topN, daysBack);
 
-      const totalSavings = data.reduce(
-        (sum, row) => sum + (row.potential_monthly_savings || 0),
-        0,
-      );
+      const totalSavings = data.reduce((sum, row) => sum + (row.potential_monthly_savings || 0), 0);
 
       res.json({
         success: true,
@@ -143,7 +128,7 @@ router.get(
         data,
       });
     } catch (error) {
-      logger.error("Error in GET /opportunities:", error);
+      logger.error('Error in GET /opportunities:', error);
       next(error);
     }
   },
@@ -154,17 +139,16 @@ router.get(
 // ──────────────────────────────────────────────────────────────────────────
 
 router.get(
-  "/salary-quality",
+  '/salary-quality',
   requireCostAccess,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { daysBack } = getQueryParams(req);
-      const data =
-        await CostEfficiencyService.getSalaryQualityCorrelation(daysBack);
+      const data = await CostEfficiencyService.getSalaryQualityCorrelation(daysBack);
 
       res.json({
         success: true,
-        message: "Retrieved salary-quality correlation analysis",
+        message: 'Retrieved salary-quality correlation analysis',
         meta: {
           daysBack,
           quartiles: data.length,
@@ -173,7 +157,7 @@ router.get(
         data,
       });
     } catch (error) {
-      logger.error("Error in GET /salary-quality:", error);
+      logger.error('Error in GET /salary-quality:', error);
       next(error);
     }
   },
@@ -184,7 +168,7 @@ router.get(
 // ──────────────────────────────────────────────────────────────────────────
 
 router.get(
-  "/forecast",
+  '/forecast',
   requireCostAccess,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -193,7 +177,7 @@ router.get(
 
       res.json({
         success: true,
-        message: "Retrieved annual cost forecast",
+        message: 'Retrieved annual cost forecast',
         meta: {
           daysBack,
           projectionBasis: `${daysBack}-day trend annualized`,
@@ -202,7 +186,7 @@ router.get(
         data: data[0] || null,
       });
     } catch (error) {
-      logger.error("Error in GET /forecast:", error);
+      logger.error('Error in GET /forecast:', error);
       next(error);
     }
   },
@@ -213,7 +197,7 @@ router.get(
 // ──────────────────────────────────────────────────────────────────────────
 
 router.get(
-  "/dashboard",
+  '/dashboard',
   requireCostAccess,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -222,7 +206,7 @@ router.get(
 
       res.json({
         success: true,
-        message: "Retrieved comprehensive cost efficiency dashboard",
+        message: 'Retrieved comprehensive cost efficiency dashboard',
         meta: {
           daysBack,
           timestamp: new Date().toISOString(),
@@ -230,7 +214,7 @@ router.get(
         data: dashboard,
       });
     } catch (error) {
-      logger.error("Error in GET /dashboard:", error);
+      logger.error('Error in GET /dashboard:', error);
       next(error);
     }
   },
@@ -241,7 +225,7 @@ router.get(
 // ──────────────────────────────────────────────────────────────────────────
 
 router.get(
-  "/export/:report",
+  '/export/:report',
   requireCostAccess,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -252,32 +236,25 @@ router.get(
       let filename;
 
       switch (report) {
-        case "agents":
-          data = await CostEfficiencyService.getAgentCostEfficiency(
-            daysBack,
-            500,
-          );
-          filename = `agent-cost-efficiency-${new Date().toISOString().split("T")[0]}.csv`;
+        case 'agents':
+          data = await CostEfficiencyService.getAgentCostEfficiency(daysBack, 500);
+          filename = `agent-cost-efficiency-${new Date().toISOString().split('T')[0]}.csv`;
           break;
 
-        case "processes":
+        case 'processes':
           data = await CostEfficiencyService.getProcessROI(daysBack, 100);
-          filename = `process-roi-${new Date().toISOString().split("T")[0]}.csv`;
+          filename = `process-roi-${new Date().toISOString().split('T')[0]}.csv`;
           break;
 
-        case "opportunities":
-          data = await CostEfficiencyService.getSavingsOpportunities(
-            50,
-            daysBack,
-          );
-          filename = `savings-opportunities-${new Date().toISOString().split("T")[0]}.csv`;
+        case 'opportunities':
+          data = await CostEfficiencyService.getSavingsOpportunities(50, daysBack);
+          filename = `savings-opportunities-${new Date().toISOString().split('T')[0]}.csv`;
           break;
 
         default:
           return res.status(400).json({
             success: false,
-            message:
-              "Invalid report type. Use: agents, processes, opportunities",
+            message: 'Invalid report type. Use: agents, processes, opportunities',
           });
       }
 
@@ -285,19 +262,16 @@ router.get(
       if (data.length === 0) {
         return res.status(400).json({
           success: false,
-          message: "No data available for export",
+          message: 'No data available for export',
         });
       }
 
       const csv = convertToCSV(data);
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${filename}"`,
-      );
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.send(csv);
     } catch (error) {
-      logger.error("Error in GET /export:", error);
+      logger.error('Error in GET /export:', error);
       next(error);
     }
   },
@@ -308,28 +282,28 @@ router.get(
 // ──────────────────────────────────────────────────────────────────────────
 
 function convertToCSV(data: Record<string, unknown>[]): string {
-  if (!data || data.length === 0) return "";
+  if (!data || data.length === 0) return '';
 
   const headers = Object.keys(data[0]);
   const csv = [
-    headers.join(","),
+    headers.join(','),
     ...data.map((row) =>
       headers
         .map((header) => {
           const value = row[header];
           // Escape quotes and wrap in quotes if contains comma
-          if (value === null || value === undefined) return "";
+          if (value === null || value === undefined) return '';
           const stringValue = String(value);
-          if (stringValue.includes(",") || stringValue.includes('"')) {
+          if (stringValue.includes(',') || stringValue.includes('"')) {
             return `"${stringValue.replace(/"/g, '""')}"`;
           }
           return stringValue;
         })
-        .join(","),
+        .join(','),
     ),
   ];
 
-  return csv.join("\n");
+  return csv.join('\n');
 }
 
 export default router;

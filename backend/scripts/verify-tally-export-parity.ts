@@ -23,9 +23,7 @@ async function main() {
   const from = process.argv[3];
   const to = process.argv[4];
   if (!bankAccountId) {
-    console.log(
-      "Usage: verify-tally-export-parity.ts <bankAccountId> [from] [to]",
-    );
+    console.log("Usage: verify-tally-export-parity.ts <bankAccountId> [from] [to]");
     process.exit(1);
   }
 
@@ -37,20 +35,12 @@ async function main() {
   ]);
 
   console.log(`\n=== Tally export parity: bank account ${bankAccountId} ===`);
-  console.log(
-    `Existing (bank-ledger-based):  ${oldResult.entryCount} vouchers, total ${money(oldResult.totalDebit)}, isFinal=${oldResult.isFinal}`,
-  );
-  console.log(
-    `New (journal-based):           ${newResult.entryCount} vouchers, total ${money(newResult.totalDebit)}, isFinal=${newResult.isFinal}`,
-  );
+  console.log(`Existing (bank-ledger-based):  ${oldResult.entryCount} vouchers, total ${money(oldResult.totalDebit)}, isFinal=${oldResult.isFinal}`);
+  console.log(`New (journal-based):           ${newResult.entryCount} vouchers, total ${money(newResult.totalDebit)}, isFinal=${newResult.isFinal}`);
 
   if (oldResult.entryCount !== newResult.entryCount) {
-    console.log(
-      `\nMISMATCH: entry counts differ by ${Math.abs(oldResult.entryCount - newResult.entryCount)}.`,
-    );
-    console.log(
-      `Expected if this range includes vouchers released before Journal Task 3 went live (they have no journal_entry yet — see Phase 6's backfill) or after it but not yet backfilled.`,
-    );
+    console.log(`\nMISMATCH: entry counts differ by ${Math.abs(oldResult.entryCount - newResult.entryCount)}.`);
+    console.log(`Expected if this range includes vouchers released before Journal Task 3 went live (they have no journal_entry yet — see Phase 6's backfill) or after it but not yet backfilled.`);
   }
   const totalDiff = Math.abs(oldResult.totalDebit - newResult.totalDebit);
   if (totalDiff > 0.01) {
@@ -61,7 +51,4 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main().catch((err) => { console.error(err); process.exit(1); });

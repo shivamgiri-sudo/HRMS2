@@ -15,8 +15,7 @@
  * misfire on ordinary English questions, which are the overwhelming majority.
  */
 
-export type DetectedLangCode =
-  "hi" | "te" | "ta" | "bn" | "gu" | "kn" | "ml" | "pa";
+export type DetectedLangCode = 'hi' | 'te' | 'ta' | 'bn' | 'gu' | 'kn' | 'ml' | 'pa';
 
 export interface DetectedLang {
   code: DetectedLangCode;
@@ -41,14 +40,14 @@ interface ScriptRange {
  * whereas a wrong guess in the other direction would not.
  */
 const SCRIPT_RANGES: ScriptRange[] = [
-  { code: "hi", name: "हिंदी", rtl: false, start: 0x0900, end: 0x097f },
-  { code: "bn", name: "বাংলা", rtl: false, start: 0x0980, end: 0x09ff },
-  { code: "pa", name: "ਪੰਜਾਬੀ", rtl: false, start: 0x0a00, end: 0x0a7f },
-  { code: "gu", name: "ગુજરાતી", rtl: false, start: 0x0a80, end: 0x0aff },
-  { code: "ta", name: "தமிழ்", rtl: false, start: 0x0b80, end: 0x0bff },
-  { code: "te", name: "తెలుగు", rtl: false, start: 0x0c00, end: 0x0c7f },
-  { code: "kn", name: "ಕನ್ನಡ", rtl: false, start: 0x0c80, end: 0x0cff },
-  { code: "ml", name: "മലയാളം", rtl: false, start: 0x0d00, end: 0x0d7f },
+  { code: 'hi', name: 'हिंदी', rtl: false, start: 0x0900, end: 0x097F },
+  { code: 'bn', name: 'বাংলা', rtl: false, start: 0x0980, end: 0x09FF },
+  { code: 'pa', name: 'ਪੰਜਾਬੀ', rtl: false, start: 0x0A00, end: 0x0A7F },
+  { code: 'gu', name: 'ગુજરાતી', rtl: false, start: 0x0A80, end: 0x0AFF },
+  { code: 'ta', name: 'தமிழ்', rtl: false, start: 0x0B80, end: 0x0BFF },
+  { code: 'te', name: 'తెలుగు', rtl: false, start: 0x0C00, end: 0x0C7F },
+  { code: 'kn', name: 'ಕನ್ನಡ', rtl: false, start: 0x0C80, end: 0x0CFF },
+  { code: 'ml', name: 'മലയാളം', rtl: false, start: 0x0D00, end: 0x0D7F },
 ];
 
 /**
@@ -64,9 +63,7 @@ const DETECTION_THRESHOLD = 0.3;
  * English, romanised, or too mixed for any single script to clear the threshold.
  */
 export function detectLanguage(text: string): DetectedLang | null {
-  const chars = [...String(text ?? "")].filter(
-    (char) => char.trim().length > 0,
-  );
+  const chars = [...String(text ?? '')].filter((char) => char.trim().length > 0);
   if (chars.length === 0) return null;
 
   const counts = new Map<DetectedLangCode, number>();

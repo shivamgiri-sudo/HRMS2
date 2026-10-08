@@ -15,9 +15,7 @@ import { randomUUID } from "crypto";
 import { db } from "../src/db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 async function main() {
   const [procRows] = await db.execute<Ref[]>(
@@ -43,41 +41,11 @@ async function main() {
   );
   console.log(`Created data source REGINALD_ABC_SALES (${sourceId})`);
 
-  const fields: Array<{
-    name: string;
-    display: string;
-    column: string;
-    fn: string;
-    lob: string;
-  }> = [
-    {
-      name: "abcd_sales_count",
-      display: "Abandoned Cart Sales Count",
-      column: "id",
-      fn: "COUNT",
-      lob: "ABCD",
-    },
-    {
-      name: "abcd_revenue",
-      display: "Abandoned Cart Revenue",
-      column: "amount",
-      fn: "SUM",
-      lob: "ABCD",
-    },
-    {
-      name: "rept_sales_count",
-      display: "Repeat Sales Count",
-      column: "id",
-      fn: "COUNT",
-      lob: "REPT",
-    },
-    {
-      name: "rept_revenue",
-      display: "Repeat Revenue",
-      column: "amount",
-      fn: "SUM",
-      lob: "REPT",
-    },
+  const fields: Array<{ name: string; display: string; column: string; fn: string; lob: string }> = [
+    { name: "abcd_sales_count", display: "Abandoned Cart Sales Count", column: "id", fn: "COUNT", lob: "ABCD" },
+    { name: "abcd_revenue", display: "Abandoned Cart Revenue", column: "amount", fn: "SUM", lob: "ABCD" },
+    { name: "rept_sales_count", display: "Repeat Sales Count", column: "id", fn: "COUNT", lob: "REPT" },
+    { name: "rept_revenue", display: "Repeat Revenue", column: "amount", fn: "SUM", lob: "REPT" },
   ];
   for (const f of fields) {
     await db.execute(
@@ -85,56 +53,19 @@ async function main() {
          (id, data_source_id, field_name, display_name, source_column, aggregate_fn,
           source_expression, filter_json, unit, description, active_status)
        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, 1)`,
-      [
-        randomUUID(),
-        sourceId,
-        f.name,
-        f.display,
-        f.column,
-        f.fn,
+      [randomUUID(), sourceId, f.name, f.display, f.column, f.fn,
         JSON.stringify([{ op: "eq", value: f.lob, column: "lob" }]),
-        f.fn === "SUM" ? "currency" : "count",
-      ],
+        f.fn === "SUM" ? "currency" : "count"],
     );
     console.log(`  field ${f.name} created`);
   }
 
-  const metrics: Array<{
-    code: string;
-    name: string;
-    unit: string;
-    formula: string;
-  }> = [
-    {
-      code: "REGINALD_ABCD_SALES_COUNT",
-      name: "Reginald Abandoned Cart Sales Count",
-      unit: "count",
-      formula: "abcd_sales_count",
-    },
-    {
-      code: "REGINALD_ABCD_REVENUE",
-      name: "Reginald Abandoned Cart Revenue",
-      unit: "currency",
-      formula: "abcd_revenue",
-    },
-    {
-      code: "REGINALD_ABCD_AOV",
-      name: "Reginald Abandoned Cart Average Order Value",
-      unit: "currency",
-      formula: "SAFE_DIV(abcd_revenue, abcd_sales_count)",
-    },
-    {
-      code: "REGINALD_REPT_SALES_COUNT",
-      name: "Reginald Repeat Sales Count",
-      unit: "count",
-      formula: "rept_sales_count",
-    },
-    {
-      code: "REGINALD_REPT_REVENUE",
-      name: "Reginald Repeat Revenue",
-      unit: "currency",
-      formula: "rept_revenue",
-    },
+  const metrics: Array<{ code: string; name: string; unit: string; formula: string }> = [
+    { code: "REGINALD_ABCD_SALES_COUNT", name: "Reginald Abandoned Cart Sales Count", unit: "count", formula: "abcd_sales_count" },
+    { code: "REGINALD_ABCD_REVENUE", name: "Reginald Abandoned Cart Revenue", unit: "currency", formula: "abcd_revenue" },
+    { code: "REGINALD_ABCD_AOV", name: "Reginald Abandoned Cart Average Order Value", unit: "currency", formula: "SAFE_DIV(abcd_revenue, abcd_sales_count)" },
+    { code: "REGINALD_REPT_SALES_COUNT", name: "Reginald Repeat Sales Count", unit: "count", formula: "rept_sales_count" },
+    { code: "REGINALD_REPT_REVENUE", name: "Reginald Repeat Revenue", unit: "currency", formula: "rept_revenue" },
   ];
   for (const m of metrics) {
     const metricId = randomUUID();
@@ -153,19 +84,12 @@ async function main() {
        VALUES (?, ?, 'process', ?, ?, ?, 'sum', 'raw', CURDATE(), 1, 'demo-super-admin-id')`,
       [defId, metricId, processId, sourceId, m.formula],
     );
-    console.log(
-      `Created metric ${m.code} (${metricId}) + definition (${defId})`,
-    );
+    console.log(`Created metric ${m.code} (${metricId}) + definition (${defId})`);
   }
 
-  console.log(
-    "\nDone. 1 data source, 4 fields, 5 metrics + definitions created.",
-  );
+  console.log("\nDone. 1 data source, 4 fields, 5 metrics + definitions created.");
 }
 
 main()
   .then(() => process.exit(0))
-  .catch((e) => {
-    console.error("FAILED", e);
-    process.exit(1);
-  });
+  .catch((e) => { console.error("FAILED", e); process.exit(1); });

@@ -74,18 +74,12 @@ describe("new-join-export honours month/year quick-filters over date_of_joining"
 describe("left-employee-export sources the last working day from exit_request first", () => {
   it("prefers exit_request's confirmed/proposed LWD over employees.date_of_leaving/date_of_exit", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
-    await leftEmployeeExport(
-      { from: "2026-01-01", to: "2026-12-31" },
-      SCOPE,
-      OPTIONS,
-    );
+    await leftEmployeeExport({ from: "2026-01-01", to: "2026-12-31" }, SCOPE, OPTIONS);
     const sql = String(mockExecute.mock.calls[0][0]);
     expect(sql).toContain(
       "COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_leaving, e.date_of_exit)",
     );
     // The old employees-only form must not remain as the filter/display source.
-    expect(sql).not.toMatch(
-      /BETWEEN \? AND \?[\s\S]*COALESCE\(e\.date_of_leaving, e\.date_of_exit\)\s*BETWEEN/,
-    );
+    expect(sql).not.toMatch(/BETWEEN \? AND \?[\s\S]*COALESCE\(e\.date_of_leaving, e\.date_of_exit\)\s*BETWEEN/);
   });
 });

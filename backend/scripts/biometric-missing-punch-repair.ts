@@ -57,10 +57,7 @@ function parseArgs(argv: string[]): Args {
     );
   }
 
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(out.from) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(out.to)
-  ) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(out.from) || !/^\d{4}-\d{2}-\d{2}$/.test(out.to)) {
     throw new Error("--from and --to must be YYYY-MM-DD");
   }
 
@@ -77,27 +74,17 @@ function toNumber(value: unknown): number {
 }
 
 async function loadQueueRows(from: string, to: string): Promise<QueueRow[]> {
-  const filePath = path.resolve(
-    "logs",
-    `night_shift_remaining_queue_${from}_to_${to}.json`,
-  );
+  const filePath = path.resolve("logs", `night_shift_remaining_queue_${from}_to_${to}.json`);
   const raw = await readFile(filePath, "utf8").catch(() => null);
   if (!raw) {
-    throw new Error(
-      `Queue file not found: ${filePath}. Run night-shift:export-remaining first.`,
-    );
+    throw new Error(`Queue file not found: ${filePath}. Run night-shift:export-remaining first.`);
   }
 
   const parsed = JSON.parse(raw) as { rows?: QueueRow[] };
-  return (parsed.rows ?? []).filter(
-    (row) => row.action_bucket === "BIOMETRIC_MISSING_PUNCH_REVIEW",
-  );
+  return (parsed.rows ?? []).filter((row) => row.action_bucket === "BIOMETRIC_MISSING_PUNCH_REVIEW");
 }
 
-async function latestRunIdForMonth(
-  db: any,
-  runMonth: string,
-): Promise<string | null> {
+async function latestRunIdForMonth(db: any, runMonth: string): Promise<string | null> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT id
        FROM salary_prep_run
@@ -135,17 +122,11 @@ async function loadCandidates(
       continue;
     }
 
-    if (
-      String(adr.attendance_status ?? "") !== "missing_punch" ||
-      String(adr.attendance_source ?? "") !== "biometric"
-    ) {
+    if (String(adr.attendance_status ?? "") !== "missing_punch" || String(adr.attendance_source ?? "") !== "biometric") {
       continue;
     }
 
-    const recomputed = await attendanceEngineService.processEmployee(
-      row.employee_id,
-      row.start_date,
-    );
+    const recomputed = await attendanceEngineService.processEmployee(row.employee_id, row.start_date);
     if (recomputed.source !== "dialler" || recomputed.rawMinutes < 240) {
       continue;
     }
@@ -155,31 +136,18 @@ async function loadCandidates(
       employee_code: row.employee_code,
       employee_name: row.employee_name,
       start_date: row.start_date,
-      before_status: adr.attendance_status
-        ? String(adr.attendance_status)
-        : null,
-      before_source: adr.attendance_source
-        ? String(adr.attendance_source)
-        : null,
-      before_raw_minutes:
-        adr.raw_minutes === null ? null : toNumber(adr.raw_minutes),
+      before_status: adr.attendance_status ? String(adr.attendance_status) : null,
+      before_source: adr.attendance_source ? String(adr.attendance_source) : null,
+      before_raw_minutes: adr.raw_minutes === null ? null : toNumber(adr.raw_minutes),
       is_locked: adr.is_locked === null ? null : toNumber(adr.is_locked),
-      regularization_id: adr.regularization_id
-        ? String(adr.regularization_id)
-        : null,
+      regularization_id: adr.regularization_id ? String(adr.regularization_id) : null,
       override_by: adr.override_by ? String(adr.override_by) : null,
       recomputed_status: String(recomputed.status),
       recomputed_source: String(recomputed.source),
       recomputed_source_system: String(recomputed.sourceSystem),
       recomputed_raw_minutes: toNumber(recomputed.rawMinutes),
-      recomputed_dialler_minutes:
-        recomputed.diallerMinutes === null
-          ? null
-          : toNumber(recomputed.diallerMinutes),
-      recomputed_biometric_minutes:
-        recomputed.biometricMinutes === null
-          ? null
-          : toNumber(recomputed.biometricMinutes),
+      recomputed_dialler_minutes: recomputed.diallerMinutes === null ? null : toNumber(recomputed.diallerMinutes),
+      recomputed_biometric_minutes: recomputed.biometricMinutes === null ? null : toNumber(recomputed.biometricMinutes),
     });
 
     if (limit > 0 && candidates.length >= limit) {
@@ -190,26 +158,13 @@ async function loadCandidates(
   return candidates;
 }
 
-async function applyCandidate(
-  attendanceEngineService: any,
-  row: CandidateRow,
-): Promise<"repaired" | "skipped"> {
-  if (
-    Number(row.is_locked ?? 0) === 1 ||
-    row.regularization_id ||
-    row.override_by
-  ) {
+async function applyCandidate(attendanceEngineService: any, row: CandidateRow): Promise<"repaired" | "skipped"> {
+  if (Number(row.is_locked ?? 0) === 1 || row.regularization_id || row.override_by) {
     return "skipped";
   }
 
-  const recomputed = await attendanceEngineService.processEmployee(
-    row.employee_id,
-    row.start_date,
-  );
-  await attendanceEngineService.upsertDailyRecord(
-    recomputed,
-    "biometric_missing_punch_repair",
-  );
+  const recomputed = await attendanceEngineService.processEmployee(row.employee_id, row.start_date);
+  await attendanceEngineService.upsertDailyRecord(recomputed, "biometric_missing_punch_repair");
   return "repaired";
 }
 
@@ -218,32 +173,18 @@ async function main() {
   const runMonth = args.runMonth ?? args.from.slice(0, 7);
   const queueRows = await loadQueueRows(args.from, args.to);
   const { db, closePool } = await import("../src/db/mysql.js");
-  const { attendanceEngineService } =
-    await import("../src/modules/wfm/attendance-engine.service.js");
-  const { calculatePayrollRunScoped } =
-    await import("../src/modules/payroll/payrollCalculate.service.js");
+  const { attendanceEngineService } = await import("../src/modules/wfm/attendance-engine.service.js");
+  const { calculatePayrollRunScoped } = await import("../src/modules/payroll/payrollCalculate.service.js");
 
   try {
     const runId = await latestRunIdForMonth(db, runMonth);
-    const candidates = await loadCandidates(
-      db,
-      attendanceEngineService,
-      queueRows,
-      args.limit,
-    );
+    const candidates = await loadCandidates(db, attendanceEngineService, queueRows, args.limit);
     const protectedRows = candidates.filter(
-      (row) =>
-        Number(row.is_locked ?? 0) === 1 ||
-        Boolean(row.regularization_id) ||
-        Boolean(row.override_by),
+      (row) => Number(row.is_locked ?? 0) === 1 || Boolean(row.regularization_id) || Boolean(row.override_by),
     );
-    const repairableRows = candidates.filter(
-      (row) => !protectedRows.includes(row),
-    );
+    const repairableRows = candidates.filter((row) => !protectedRows.includes(row));
 
-    console.log(
-      `Biometric missing-punch engine repair audit - ${args.from} to ${args.to}`,
-    );
+    console.log(`Biometric missing-punch engine repair audit - ${args.from} to ${args.to}`);
     console.log(`Run month: ${runMonth}`);
     console.log(`Run id: ${runId ?? "not found"}`);
     console.table([
@@ -283,23 +224,15 @@ async function main() {
     ]);
 
     if (args.recalc && runId && affectedEmployeeIds.size > 0) {
-      const recalc = await calculatePayrollRunScoped(
-        runId,
-        "biometric_missing_punch_repair",
-        {
-          employeeIds: Array.from(affectedEmployeeIds),
-        },
-      );
+      const recalc = await calculatePayrollRunScoped(runId, "biometric_missing_punch_repair", {
+        employeeIds: Array.from(affectedEmployeeIds),
+      });
       console.log("Payroll recalculation result:");
       console.dir(recalc, { depth: null });
     } else if (args.recalc) {
-      console.log(
-        "No repaired employees, so payroll recalculation was skipped.",
-      );
+      console.log("No repaired employees, so payroll recalculation was skipped.");
     } else {
-      console.log(
-        "ADR repair applied. Payroll recalculation not run because --recalc was not passed.",
-      );
+      console.log("ADR repair applied. Payroll recalculation not run because --recalc was not passed.");
     }
   } finally {
     await closePool();

@@ -10,13 +10,10 @@ const dir = dirname(fileURLToPath(import.meta.url));
 const read = (f: string) => readFileSync(resolve(dir, "..", f), "utf8");
 
 describe("auth lookups keep the identifier column bare so indexes apply", () => {
-  it.each(["auth.service.ts", "auth.routes.ts"])(
-    "%s has no LOWER()/UPPER() around identity columns",
-    (f) => {
-      const src = read(f);
-      expect(src).not.toMatch(/LOWER\((au\.)?email\)\s*=\s*LOWER\(\?\)/);
-      expect(src).not.toMatch(/LOWER\(official_email\)\s*=\s*LOWER\(\?\)/);
-      expect(src).not.toMatch(/UPPER\(e\.employee_code\)\s*=\s*UPPER\(\?\)/);
-    },
-  );
+  it.each(["auth.service.ts", "auth.routes.ts"])("%s has no LOWER()/UPPER() around identity columns", (f) => {
+    const src = read(f);
+    expect(src).not.toMatch(/LOWER\((au\.)?email\)\s*=\s*LOWER\(\?\)/);
+    expect(src).not.toMatch(/LOWER\(official_email\)\s*=\s*LOWER\(\?\)/);
+    expect(src).not.toMatch(/UPPER\(e\.employee_code\)\s*=\s*UPPER\(\?\)/);
+  });
 });

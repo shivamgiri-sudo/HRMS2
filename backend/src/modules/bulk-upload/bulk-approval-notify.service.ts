@@ -28,8 +28,7 @@ import type { ApprovalStage, BatchRecord } from "./bulk-approval.service.js";
 import { buildAppLink } from "../../shared/appLink.js";
 
 /** What happened, in the creator's terms. */
-export type CreatorEvent =
-  "rejected" | "rows_discarded" | "approved" | "partially_applied";
+export type CreatorEvent = "rejected" | "rows_discarded" | "approved" | "partially_applied";
 
 export interface DiscardedLine {
   rowNo: number;
@@ -107,11 +106,8 @@ const HEADLINE: Record<CreatorEvent, string> = {
 
 function escapeHtml(value: string): string {
   return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function buildHtml(params: {
@@ -147,15 +143,7 @@ function buildHtml(params: {
        <div style="overflow-x:auto">
          <table style="border-collapse:collapse;font-size:12px;width:100%">
            <thead><tr>
-             ${[
-               "Row #",
-               "Employee Code",
-               "Employee",
-               "Process",
-               "Reporting Manager",
-               "Amount",
-               "Reason",
-             ]
+             ${["Row #", "Employee Code", "Employee", "Process", "Reporting Manager", "Amount", "Reason"]
                .map(
                  (h) =>
                    `<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left">${h}</th>`,
@@ -249,13 +237,10 @@ export async function notifyBatchCreator(params: {
 }): Promise<{ email: boolean; inbox: boolean; sms: boolean }> {
   const outcome = { email: false, inbox: false, sms: false };
 
-  const creator = await resolveCreator(params.batch.uploaded_by).catch(
-    () => null,
-  );
+  const creator = await resolveCreator(params.batch.uploaded_by).catch(() => null);
   if (!creator) return outcome;
 
-  const typeLabel =
-    TYPE_LABEL[params.batch.upload_type_code] ?? params.batch.upload_type_code;
+  const typeLabel = TYPE_LABEL[params.batch.upload_type_code] ?? params.batch.upload_type_code;
   const stageLabel = STAGE_LABEL[params.stage];
   const lines = params.lines ?? [];
 
@@ -268,9 +253,7 @@ export async function notifyBatchCreator(params: {
       [params.actorUserId],
     )
     .catch(() => [[]] as unknown as [RowDataPacket[]]);
-  const actorName = String(
-    (actorRows as RowDataPacket[])[0]?.display ?? stageLabel,
-  );
+  const actorName = String((actorRows as RowDataPacket[])[0]?.display ?? stageLabel);
 
   const summaryLine =
     params.event === "rows_discarded"
@@ -286,8 +269,7 @@ export async function notifyBatchCreator(params: {
         html: buildHtml({
           creatorName: creator.name,
           batchNo: params.batch.upload_batch_no,
-          typeLabel,
-          stageLabel,
+          typeLabel, stageLabel,
           event: params.event,
           actorName,
           reason: params.reason,
@@ -305,9 +287,7 @@ export async function notifyBatchCreator(params: {
       });
       outcome.email = true;
     } catch (err) {
-      logger.warn(
-        `[bulk-upload] creator email failed for ${params.batch.upload_batch_no}: ${String(err)}`,
-      );
+      logger.warn(`[bulk-upload] creator email failed for ${params.batch.upload_batch_no}: ${String(err)}`);
     }
   }
 
@@ -315,10 +295,7 @@ export async function notifyBatchCreator(params: {
   try {
     await inboxService.createItem({
       user_id: creator.userId,
-      type:
-        params.event === "approved"
-          ? "bulk_upload_approved"
-          : "bulk_upload_returned",
+      type: params.event === "approved" ? "bulk_upload_approved" : "bulk_upload_returned",
       title: summaryLine,
       description: params.reason ?? undefined,
       entity_type: "upload_batch",
@@ -328,9 +305,7 @@ export async function notifyBatchCreator(params: {
     });
     outcome.inbox = true;
   } catch (err) {
-    logger.warn(
-      `[bulk-upload] creator inbox item failed for ${params.batch.upload_batch_no}: ${String(err)}`,
-    );
+    logger.warn(`[bulk-upload] creator inbox item failed for ${params.batch.upload_batch_no}: ${String(err)}`);
   }
 
   // 3. SMS — only for the cases the creator has to act on. An approval needs no SMS.
@@ -339,9 +314,7 @@ export async function notifyBatchCreator(params: {
       await sendCreatorSms(creator, typeLabel, params.reason ?? summaryLine);
       outcome.sms = Boolean(creator.mobile);
     } catch (err) {
-      logger.warn(
-        `[bulk-upload] creator SMS failed for ${params.batch.upload_batch_no}: ${String(err)}`,
-      );
+      logger.warn(`[bulk-upload] creator SMS failed for ${params.batch.upload_batch_no}: ${String(err)}`);
     }
   }
 

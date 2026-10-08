@@ -56,36 +56,34 @@
  *   node backend/scripts/rebuild-salary-package-from-dbbill.mjs --dry-run
  *   node backend/scripts/rebuild-salary-package-from-dbbill.mjs
  */
-import { connect } from "./lib/db-connect.mjs";
-import { num, PAID_ROW_FILTER } from "./lib/dbbill-salary-mapping.mjs";
-import crypto from "crypto";
+import { connect } from './lib/db-connect.mjs';
+import { num, PAID_ROW_FILTER } from './lib/dbbill-salary-mapping.mjs';
+import crypto from 'crypto';
 
-const arg = (n, fb) =>
-  process.argv.find((a) => a.startsWith(`--${n}=`))?.split("=")[1] ?? fb;
-const DRY_RUN = process.argv.includes("--dry-run");
-const HRMS_HOST = arg("hrms-host", null);
-const BILL_HOST = arg("bill-host", null);
-const log = (m) =>
-  process.stdout.write(`[${new Date().toLocaleTimeString("en-IN")}] ${m}\n`);
+const arg = (n, fb) => process.argv.find(a => a.startsWith(`--${n}=`))?.split('=')[1] ?? fb;
+const DRY_RUN   = process.argv.includes('--dry-run');
+const HRMS_HOST = arg('hrms-host', null);
+const BILL_HOST = arg('bill-host', null);
+const log = (m) => process.stdout.write(`[${new Date().toLocaleTimeString('en-IN')}] ${m}\n`);
 
 /** db_bill entitlement column -> salary_component_assignments column. */
 const PKG = [
-  ["Basic", "basic"],
-  ["HRA", "hra"],
-  ["Bonus", "bonus"],
-  ["Conv", "conveyance"],
-  ["Portfolio", "portfolio"],
-  ["MedicalAllowance", "medical_allowance"],
-  ["LTA", "lta"],
-  ["SpecialAllowance", "special_allowance"],
-  ["OtherAllowance", "other_allowance"],
-  ["PLI1", "pli"],
+  ['Basic',            'basic'],
+  ['HRA',              'hra'],
+  ['Bonus',            'bonus'],
+  ['Conv',             'conveyance'],
+  ['Portfolio',        'portfolio'],
+  ['MedicalAllowance', 'medical_allowance'],
+  ['LTA',              'lta'],
+  ['SpecialAllowance', 'special_allowance'],
+  ['OtherAllowance',   'other_allowance'],
+  ['PLI1',             'pli'],
 ];
 
 async function main() {
-  log(`Rebuild salary package to db_bill parity${DRY_RUN ? " [DRY-RUN]" : ""}`);
-  const hrms = await connect("mas_hrms", { host: HRMS_HOST, log });
-  const bill = await connect("db_bill", { host: BILL_HOST, log });
+  log(`Rebuild salary package to db_bill parity${DRY_RUN ? ' [DRY-RUN]' : ''}`);
+  const hrms = await connect('mas_hrms', { host: HRMS_HOST, log });
+  const bill = await connect('db_bill',  { host: BILL_HOST, log });
 
   // Most recent entitlement row per employee. MySQL 5.5: no window functions.
   const [bRows] = await bill.query(`
@@ -108,27 +106,17 @@ async function main() {
   // Sanity: the identity must hold on every source row before anything is copied.
   let identityFail = 0;
   for (const r of bMap.values()) {
-    const parts = PKG.filter(([, c]) => c !== "pli").reduce(
-      (s, [b]) => s + num(r[b]),
-      0,
-    );
+    const parts = PKG.filter(([, c]) => c !== 'pli').reduce((s, [b]) => s + num(r[b]), 0);
     if (Math.abs(parts - num(r.Gross)) > 1) identityFail++;
   }
   if (identityFail > 0) {
-    log(
-      `  ABORT: ${identityFail} db_bill package(s) fail Gross = sum(parts). Not copying an inconsistent source.`,
-    );
-    await hrms.end();
-    await bill.end();
-    return;
+    log(`  ABORT: ${identityFail} db_bill package(s) fail Gross = sum(parts). Not copying an inconsistent source.`);
+    await hrms.end(); await bill.end(); return;
   }
-  log(
-    `  identity Gross = sum(parts) holds on all ${bMap.size} source packages`,
-  );
+  log(`  identity Gross = sum(parts) holds on all ${bMap.size} source packages`);
 
   const [emps] = await hrms.query(
-    `SELECT id, TRIM(employee_code) AS code FROM employees WHERE active_status = 1`,
-  );
+    `SELECT id, TRIM(employee_code) AS code FROM employees WHERE active_status = 1`);
   log(`  mas_hrms active employees: ${emps.length}`);
 
   const [existing] = await hrms.query(`
@@ -140,17 +128,11 @@ async function main() {
     byEmp.get(r.employee_id).push(r);
   }
 
-  let inserted = 0,
-    superseded = 0,
-    alreadyExact = 0,
-    noSource = [];
+  let inserted = 0, superseded = 0, alreadyExact = 0, noSource = [];
 
   for (const emp of emps) {
     const b = bMap.get(emp.code);
-    if (!b) {
-      noSource.push(emp.code);
-      continue;
-    }
+    if (!b) { noSource.push(emp.code); continue; }
 
     const vals = {};
     for (const [bc, hc] of PKG) vals[hc] = num(b[bc]);
@@ -158,37 +140,27 @@ async function main() {
     const effective = String(b.SalayDate).slice(0, 10);
 
     const rows = byEmp.get(emp.id) ?? [];
-    const actives = rows.filter((r) => r.status === "active");
+    const actives = rows.filter(r => r.status === 'active');
 
     // Always collapse to exactly ONE active row, whether or not the values already
     // agree. Leaving the extras in place is the defect, not a saving: 837 employees
     // carry four rows all marked 'active', so "the current package" resolves only by
     // query ordering, and the calculator's own ORDER BY effective_date DESC is the
     // only reason it happens to pick a sane one today. Other readers do not order.
-    const exact =
-      actives.length === 1 &&
-      Math.abs(num(actives[0].gross) - gross) <= 1 &&
-      (await (async () => {
+    const exact = actives.length === 1 && Math.abs(num(actives[0].gross) - gross) <= 1
+      && await (async () => {
         const [chk] = await hrms.query(
           `SELECT basic,hra,bonus,conveyance,portfolio,medical_allowance,lta,special_allowance,other_allowance,pli
-             FROM salary_component_assignments WHERE id = ?`,
-          [actives[0].id],
-        );
+             FROM salary_component_assignments WHERE id = ?`, [actives[0].id]);
         const c = chk[0] ?? {};
         return PKG.every(([, hc]) => Math.abs(num(c[hc]) - vals[hc]) <= 1);
-      })());
+      })();
 
-    if (exact) {
-      alreadyExact++;
-      continue;
-    }
+    if (exact) { alreadyExact++; continue; }
 
     for (const r of actives) {
-      if (!DRY_RUN)
-        await hrms.query(
-          `UPDATE salary_component_assignments SET status='superseded' WHERE id = ?`,
-          [r.id],
-        );
+      if (!DRY_RUN) await hrms.query(
+        `UPDATE salary_component_assignments SET status='superseded' WHERE id = ?`, [r.id]);
       superseded++;
     }
     if (!DRY_RUN) {
@@ -198,40 +170,20 @@ async function main() {
             medical_allowance, lta, special_allowance, other_allowance, pli, gross,
             status, approval_reference)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active','db_bill parity rebuild')`,
-        [
-          crypto.randomUUID(),
-          emp.id,
-          effective,
-          vals.basic,
-          vals.hra,
-          vals.bonus,
-          vals.conveyance,
-          vals.portfolio,
-          vals.medical_allowance,
-          vals.lta,
-          vals.special_allowance,
-          vals.other_allowance,
-          vals.pli,
-          gross,
-        ],
-      );
+        [crypto.randomUUID(), emp.id, effective, vals.basic, vals.hra, vals.bonus,
+         vals.conveyance, vals.portfolio, vals.medical_allowance, vals.lta,
+         vals.special_allowance, vals.other_allowance, vals.pli, gross]);
     }
     inserted++;
   }
 
-  log("");
-  log(`${DRY_RUN ? "WOULD WRITE" : "WROTE"}:`);
+  log('');
+  log(`${DRY_RUN ? 'WOULD WRITE' : 'WROTE'}:`);
   log(`  packages set to db_bill values .... ${inserted}`);
   log(`  old rows marked superseded ........ ${superseded}`);
   log(`  already exact, untouched .......... ${alreadyExact}`);
-  log(
-    `  active emps with NO db_bill row ... ${noSource.length}  (left untouched)`,
-  );
-  if (noSource.length) log(`    e.g. ${noSource.slice(0, 12).join(", ")}`);
-  await hrms.end();
-  await bill.end();
+  log(`  active emps with NO db_bill row ... ${noSource.length}  (left untouched)`);
+  if (noSource.length) log(`    e.g. ${noSource.slice(0, 12).join(', ')}`);
+  await hrms.end(); await bill.end();
 }
-main().catch((e) => {
-  console.error("FATAL:", e.message);
-  process.exit(1);
-});
+main().catch(e => { console.error('FATAL:', e.message); process.exit(1); });

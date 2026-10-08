@@ -82,20 +82,13 @@ async function ownExitOrStatus(userId: string, exitId: string): Promise<{ privil
 async function logExitStatusChange(
   req: AuthenticatedRequest,
   newStatus: string,
-  summary: string,
+  summary: string
 ): Promise<void> {
   await db.execute(
     `INSERT INTO exit_approval_log
        (id, exit_request_id, stage, action, action_by, action_by_role, discussion_remarks, created_at)
      VALUES (?, ?, ?, 'status_update', ?, ?, ?, NOW())`,
-    [
-      randomUUID(),
-      req.params.exitId,
-      newStatus,
-      req.authUser!.id,
-      req.authUser!.role ?? null,
-      summary,
-    ],
+    [randomUUID(), req.params.exitId, newStatus, req.authUser!.id, req.authUser!.role ?? null, summary]
   );
 }
 
@@ -154,12 +147,7 @@ resignationRouter.post(
     if (actingOnSelf) {
       const emp = await getEmployeeForUser(userId);
       if (!emp) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "Forbidden: no employee record linked to your account",
-          });
+        return res.status(403).json({ success: false, message: "Forbidden: no employee record linked to your account" });
       }
       // Acting on yourself is always a voluntary resignation. Without this an employee could post
       // exitType 'involuntary' (which lands at 'exited' at once and deactivates them), choose an
@@ -186,7 +174,7 @@ resignationRouter.post(
       exitDate: req.body.exitDate ?? req.body.last_working_day,
     };
     return exitController.createExitRequest(req, res);
-  }),
+  })
 );
 
 // ── "Before you go" (employee self-service) ───────────────────────────────────
@@ -241,41 +229,28 @@ resignationRouter.post(
   "/:exitId/discussion",
   requireRole("admin", "hr", "manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { discussion_type, outcome, remarks, employee_sentiment } =
-      req.body as {
-        discussion_type: "manager" | "hr";
-        outcome?: string;
-        remarks?: string;
-        employee_sentiment?: string;
-      };
+    const { discussion_type, outcome, remarks, employee_sentiment } = req.body as {
+      discussion_type: "manager" | "hr";
+      outcome?: string;
+      remarks?: string;
+      employee_sentiment?: string;
+    };
     if (!discussion_type) {
-      return res
-        .status(400)
-        .json({ success: false, message: "discussion_type is required" });
+      return res.status(400).json({ success: false, message: "discussion_type is required" });
     }
     const id = randomUUID();
     await db.execute(
       `INSERT INTO resignation_discussion
          (id, exit_request_id, discussion_type, discussed_by, outcome, remarks, employee_sentiment, discussion_date)
        VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE())`,
-      [
-        id,
-        req.params.exitId,
-        discussion_type,
-        req.authUser!.id,
-        outcome ?? null,
-        remarks ?? null,
-        employee_sentiment ?? null,
-      ],
+      [id, req.params.exitId, discussion_type, req.authUser!.id, outcome ?? null, remarks ?? null, employee_sentiment ?? null]
     );
     const [rows] = await db.execute(
       `SELECT * FROM resignation_discussion WHERE id = ? LIMIT 1`,
-      [id],
+      [id]
     );
-    return res
-      .status(201)
-      .json({ success: true, data: (rows as any[])[0] ?? null });
-  }),
+    return res.status(201).json({ success: true, data: (rows as any[])[0] ?? null });
+  })
 );
 
 // GET /:exitId/discussions — list discussions for an exit request
@@ -295,10 +270,10 @@ resignationRouter.get(
        LEFT JOIN employees discussed_emp ON discussed_emp.user_id = discussed_user.id AND discussed_emp.active_status = 1
        WHERE rd.exit_request_id = ?
        ORDER BY rd.discussion_date DESC, rd.created_at DESC`,
-      [req.params.exitId],
+      [req.params.exitId]
     );
     return res.json({ success: true, data: rows });
-  }),
+  })
 );
 
 // POST /:exitId/discussion/:discId/note — add a note to a discussion
@@ -308,19 +283,17 @@ resignationRouter.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { note_text } = req.body as { note_text?: string };
     if (!note_text?.trim()) {
-      return res
-        .status(400)
-        .json({ success: false, message: "note_text is required" });
+      return res.status(400).json({ success: false, message: "note_text is required" });
     }
     const id = randomUUID();
     await db.execute(
       `INSERT INTO resignation_discussion_note
          (id, discussion_id, note, noted_by)
        VALUES (?, ?, ?, ?)`,
-      [id, req.params.discId, note_text, req.authUser!.id],
+      [id, req.params.discId, note_text, req.authUser!.id]
     );
     return res.status(201).json({ success: true, data: { id } });
-  }),
+  })
 );
 
 // POST /:exitId/manager-discussion — forces discussion_type='manager'
@@ -338,34 +311,22 @@ resignationRouter.post(
       `INSERT INTO resignation_discussion
          (id, exit_request_id, discussion_type, discussed_by, outcome, remarks, employee_sentiment, discussion_date)
        VALUES (?, ?, 'manager', ?, ?, ?, ?, CURDATE())`,
-      [
-        id,
-        req.params.exitId,
-        req.authUser!.id,
-        outcome ?? null,
-        remarks ?? null,
-        employee_sentiment ?? null,
-      ],
+      [id, req.params.exitId, req.authUser!.id, outcome ?? null, remarks ?? null, employee_sentiment ?? null]
     );
-    const [rows] = await db.execute(
-      `SELECT * FROM resignation_discussion WHERE id = ? LIMIT 1`,
-      [id],
-    );
+    const [rows] = await db.execute(`SELECT * FROM resignation_discussion WHERE id = ? LIMIT 1`, [id]);
     // Trigger work item for branch_head — non-blocking
     try {
       await db.execute(
         `INSERT INTO work_item
            (id, item_type, title, module_code, entity_type, entity_id, assigned_to_role, priority, status, created_by, created_at)
          VALUES (UUID(), 'RESIGNATION_MANAGER_DISCUSSION', 'Manager discussion pending', 'exit', 'exit_request', ?, 'branch_head', 'high', 'pending', ?, NOW())`,
-        [req.params.exitId, req.authUser!.id],
+        [req.params.exitId, req.authUser!.id]
       );
     } catch (_wiErr) {
       // work_item insert failure must not block main response
     }
-    return res
-      .status(201)
-      .json({ success: true, data: (rows as any[])[0] ?? null });
-  }),
+    return res.status(201).json({ success: true, data: (rows as any[])[0] ?? null });
+  })
 );
 
 // POST /:exitId/hr-discussion — forces discussion_type='hr'
@@ -383,34 +344,22 @@ resignationRouter.post(
       `INSERT INTO resignation_discussion
          (id, exit_request_id, discussion_type, discussed_by, outcome, remarks, employee_sentiment, discussion_date)
        VALUES (?, ?, 'hr', ?, ?, ?, ?, CURDATE())`,
-      [
-        id,
-        req.params.exitId,
-        req.authUser!.id,
-        outcome ?? null,
-        remarks ?? null,
-        employee_sentiment ?? null,
-      ],
+      [id, req.params.exitId, req.authUser!.id, outcome ?? null, remarks ?? null, employee_sentiment ?? null]
     );
-    const [rows] = await db.execute(
-      `SELECT * FROM resignation_discussion WHERE id = ? LIMIT 1`,
-      [id],
-    );
+    const [rows] = await db.execute(`SELECT * FROM resignation_discussion WHERE id = ? LIMIT 1`, [id]);
     // Trigger work item for hr — non-blocking
     try {
       await db.execute(
         `INSERT INTO work_item
            (id, item_type, title, module_code, entity_type, entity_id, assigned_to_role, priority, status, created_by, created_at)
          VALUES (UUID(), 'RESIGNATION_HR_DISCUSSION', 'HR discussion pending', 'exit', 'exit_request', ?, 'hr', 'high', 'pending', ?, NOW())`,
-        [req.params.exitId, req.authUser!.id],
+        [req.params.exitId, req.authUser!.id]
       );
     } catch (_wiErr) {
       // work_item insert failure must not block main response
     }
-    return res
-      .status(201)
-      .json({ success: true, data: (rows as any[])[0] ?? null });
-  }),
+    return res.status(201).json({ success: true, data: (rows as any[])[0] ?? null });
+  })
 );
 
 // ── Retention Offer Routes ────────────────────────────────────────────────────
@@ -425,9 +374,7 @@ resignationRouter.post(
       offer_details?: Record<string, unknown>;
     };
     if (!offer_type) {
-      return res
-        .status(400)
-        .json({ success: false, message: "offer_type is required" });
+      return res.status(400).json({ success: false, message: "offer_type is required" });
     }
     const id = randomUUID();
     await db.execute(
@@ -437,22 +384,11 @@ resignationRouter.post(
       `INSERT INTO retention_offer
          (id, exit_request_id, offer_type, offer_details, offered_by, offer_date, employee_response)
        VALUES (?, ?, ?, ?, ?, NOW(), 'pending')`,
-      [
-        id,
-        req.params.exitId,
-        offer_type,
-        JSON.stringify(offer_details ?? {}),
-        req.authUser!.id,
-      ],
+      [id, req.params.exitId, offer_type, JSON.stringify(offer_details ?? {}), req.authUser!.id]
     );
-    const [rows] = await db.execute(
-      `SELECT * FROM retention_offer WHERE id = ? LIMIT 1`,
-      [id],
-    );
-    return res
-      .status(201)
-      .json({ success: true, data: (rows as any[])[0] ?? null });
-  }),
+    const [rows] = await db.execute(`SELECT * FROM retention_offer WHERE id = ? LIMIT 1`, [id]);
+    return res.status(201).json({ success: true, data: (rows as any[])[0] ?? null });
+  })
 );
 
 // GET /:exitId/retention-offers — list retention offers for an exit request
@@ -476,10 +412,10 @@ resignationRouter.get(
        LEFT JOIN employees offered_emp ON offered_emp.user_id = offered_user.id AND offered_emp.active_status = 1
        WHERE ro.exit_request_id = ?
        ORDER BY ro.offer_date DESC`,
-      [req.params.exitId],
+      [req.params.exitId]
     );
     return res.json({ success: true, data: rows });
-  }),
+  })
 );
 
 // PATCH /:exitId/retention-offer/:offerId/respond — employee responds to offer
@@ -491,12 +427,7 @@ resignationRouter.patch(
       response_remarks?: string;
     };
     if (!["accept", "reject"].includes(employee_response)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "employee_response must be 'accept' or 'reject'",
-        });
+      return res.status(400).json({ success: false, message: "employee_response must be 'accept' or 'reject'" });
     }
     // Was gated only by router-level requireAuth with no ownership check at all — any
     // authenticated user who knew/guessed exitId+offerId could accept or reject someone
@@ -506,34 +437,23 @@ resignationRouter.patch(
     const isPrivileged = await hasRole(userId, "admin", "hr", "manager");
     if (!isPrivileged) {
       const emp = await getEmployeeForUser(userId);
-      if (!emp)
-        return res.status(403).json({ success: false, message: "Forbidden" });
-      const [check] = (await db.execute(
+      if (!emp) return res.status(403).json({ success: false, message: "Forbidden" });
+      const [check] = await db.execute(
         `SELECT id FROM exit_request WHERE id = ? AND employee_id = ? LIMIT 1`,
-        [req.params.exitId, emp.id],
-      )) as any[];
+        [req.params.exitId, emp.id]
+      ) as any[];
       if (!(check as any[]).length) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "You may only respond to your own retention offer",
-          });
+        return res.status(403).json({ success: false, message: "You may only respond to your own retention offer" });
       }
     }
     await db.execute(
       `UPDATE retention_offer
        SET employee_response = ?, response_date = NOW(), response_remarks = ?
        WHERE id = ? AND exit_request_id = ?`,
-      [
-        employee_response,
-        response_remarks ?? null,
-        req.params.offerId,
-        req.params.exitId,
-      ],
+      [employee_response, response_remarks ?? null, req.params.offerId, req.params.exitId]
     );
     return res.json({ success: true, message: `Offer ${employee_response}ed` });
-  }),
+  })
 );
 
 // ── Lifecycle Status Routes ───────────────────────────────────────────────────
@@ -565,28 +485,22 @@ resignationRouter.post(
     // rewrite above exists to prevent on the forward path.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
-      [req.params.exitId],
+      [req.params.exitId]
     );
     const current = (rows as RowDataPacket[])[0];
-    if (!current)
-      return res
-        .status(404)
-        .json({ success: false, message: "Exit request not found" });
+    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
     const transition = assertValidExitTransition(current.status, "accepted");
-    if (!transition.ok)
-      return res
-        .status(409)
-        .json({ success: false, message: transition.message });
+    if (!transition.ok) return res.status(409).json({ success: false, message: transition.message });
 
     const data = await exitService.updateExitStatus(
       req.params.exitId,
       "accepted",
       "Resignation accepted",
       req.authUser!.id,
-      current.status,
+      current.status
     );
     return res.json({ success: true, data, message: "Resignation accepted" });
-  }),
+  })
 );
 
 // POST /:exitId/withdraw — the employee withdraws their own resignation; HR/admin/manager may
@@ -634,36 +548,20 @@ resignationRouter.post(
     // is now a real branch of the FSM in exit.secure.routes.ts, off 'accepted').
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
-      [req.params.exitId],
+      [req.params.exitId]
     );
     const current = (rows as RowDataPacket[])[0];
-    if (!current)
-      return res
-        .status(404)
-        .json({ success: false, message: "Exit request not found" });
-    const transition = assertValidExitTransition(
-      current.status,
-      "clearance_pending",
-    );
-    if (!transition.ok)
-      return res
-        .status(409)
-        .json({ success: false, message: transition.message });
+    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+    const transition = assertValidExitTransition(current.status, "clearance_pending");
+    if (!transition.ok) return res.status(409).json({ success: false, message: transition.message });
 
     await db.execute(
       `UPDATE exit_request SET status = 'clearance_pending', updated_at = NOW() WHERE id = ?`,
-      [req.params.exitId],
+      [req.params.exitId]
     );
-    await logExitStatusChange(
-      req,
-      "clearance_pending",
-      "Status updated to clearance_pending",
-    );
-    return res.json({
-      success: true,
-      message: "Status updated to clearance_pending",
-    });
-  }),
+    await logExitStatusChange(req, "clearance_pending", "Status updated to clearance_pending");
+    return res.json({ success: true, message: "Status updated to clearance_pending" });
+  })
 );
 
 // POST /:exitId/mark-fnf-pending — move to fnf_pending
@@ -675,33 +573,20 @@ resignationRouter.post(
     // (delta-audit 2026-08-14, Stage 5g).
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
-      [req.params.exitId],
+      [req.params.exitId]
     );
     const current = (rows as RowDataPacket[])[0];
-    if (!current)
-      return res
-        .status(404)
-        .json({ success: false, message: "Exit request not found" });
+    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
     const transition = assertValidExitTransition(current.status, "fnf_pending");
-    if (!transition.ok)
-      return res
-        .status(409)
-        .json({ success: false, message: transition.message });
+    if (!transition.ok) return res.status(409).json({ success: false, message: transition.message });
 
     await db.execute(
       `UPDATE exit_request SET status = 'fnf_pending', updated_at = NOW() WHERE id = ?`,
-      [req.params.exitId],
+      [req.params.exitId]
     );
-    await logExitStatusChange(
-      req,
-      "fnf_pending",
-      "Status updated to fnf_pending",
-    );
-    return res.json({
-      success: true,
-      message: "Status updated to fnf_pending",
-    });
-  }),
+    await logExitStatusChange(req, "fnf_pending", "Status updated to fnf_pending");
+    return res.json({ success: true, message: "Status updated to fnf_pending" });
+  })
 );
 
 // POST /:exitId/close — close the exit request
@@ -727,28 +612,22 @@ resignationRouter.post(
     // closed chain (delta-audit 2026-08-14, Stage 5g, user-approved).
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
-      [req.params.exitId],
+      [req.params.exitId]
     );
     const current = (rows as RowDataPacket[])[0];
-    if (!current)
-      return res
-        .status(404)
-        .json({ success: false, message: "Exit request not found" });
+    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
     const transition = assertValidExitTransition(current.status, "closed");
-    if (!transition.ok)
-      return res
-        .status(409)
-        .json({ success: false, message: transition.message });
+    if (!transition.ok) return res.status(409).json({ success: false, message: transition.message });
 
     await db.execute(
       `UPDATE exit_request
        SET status = 'closed', updated_at = NOW()
        WHERE id = ?`,
-      [req.params.exitId],
+      [req.params.exitId]
     );
     await logExitStatusChange(req, "closed", "Exit request closed");
     return res.json({ success: true, message: "Exit request closed" });
-  }),
+  })
 );
 
 // ── Audit & List Routes ───────────────────────────────────────────────────────
@@ -817,10 +696,10 @@ resignationRouter.get(
           WHERE era.exit_request_id = ?
        ) trail
        ORDER BY performed_at ASC`,
-      [req.params.exitId, req.params.exitId],
+      [req.params.exitId, req.params.exitId]
     );
     return res.json({ success: true, data: rows });
-  }),
+  })
 );
 
 // GET /my — employee's own exit request(s)
@@ -829,12 +708,7 @@ resignationRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const emp = await getEmployeeForUser(req.authUser!.id);
     if (!emp) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "No employee record linked to your account",
-        });
+      return res.status(403).json({ success: false, message: "No employee record linked to your account" });
     }
     // effective_lwd / within_lwd let the page show "Withdraw" exactly when the server will allow
     // it, computed by MySQL rather than the phone's clock. Additive columns; SELECT * unchanged.
@@ -856,7 +730,7 @@ resignationRouter.get(
       [emp.id, req.authUser!.id, emp.employee_code]
     );
     return res.json({ success: true, data: rows });
-  }),
+  })
 );
 
 // GET / — list all exit requests (admin/hr/branch_head/operations_head)
@@ -864,12 +738,7 @@ resignationRouter.get(
   "/",
   requireRole("admin", "hr", "branch_head", "operations_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const {
-      status,
-      branchId,
-      limit = "100",
-      offset = "0",
-    } = req.query as Record<string, string>;
+    const { status, branchId, limit = "100", offset = "0" } = req.query as Record<string, string>;
     const params: unknown[] = [];
     const rowScope = await employeeScopeSql(req.authUser!, "e");
     let where = `(${rowScope.sql})`;
@@ -885,8 +754,8 @@ resignationRouter.get(
        WHERE ${where}
        ORDER BY er.created_at DESC
        ${sqlLimitOffset(limit, offset, { defaultLimit: 100 })}`,
-      params,
+      params
     );
     return res.json({ success: true, data: rows });
-  }),
+  })
 );

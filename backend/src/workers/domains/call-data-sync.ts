@@ -1,4 +1,4 @@
-import { dialerQuery } from "../../db/dialerDb.js";
+import { dialerQuery } from '../../db/dialerDb.js';
 
 export interface InboundCall {
   employee_code: string;
@@ -48,12 +48,8 @@ export class CallDataSync {
   /**
    * Get inbound calls for employee on specific date (last 3 months only)
    */
-  async getInboundCalls(
-    employeeCode: string,
-    date: string,
-  ): Promise<InboundCall[]> {
-    return dialerQuery<InboundCall>(
-      `
+  async getInboundCalls(employeeCode: string, date: string): Promise<InboundCall[]> {
+    return dialerQuery<InboundCall>(`
       SELECT
         AgentId as employee_code,
         AgentName as employee_name,
@@ -72,20 +68,14 @@ export class CallDataSync {
         AND CallDate = DATE(?)
         AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
       ORDER BY Time ASC
-    `,
-      [employeeCode, date],
-    );
+    `, [employeeCode, date]);
   }
 
   /**
    * Get outbound calls for employee on specific date (last 3 months only)
    */
-  async getOutboundCalls(
-    employeeCode: string,
-    date: string,
-  ): Promise<OutboundCall[]> {
-    return dialerQuery<OutboundCall>(
-      `
+  async getOutboundCalls(employeeCode: string, date: string): Promise<OutboundCall[]> {
+    return dialerQuery<OutboundCall>(`
       SELECT
         Agent as employee_code,
         StartTime as call_start,
@@ -103,21 +93,15 @@ export class CallDataSync {
         AND CallDate = DATE(?)
         AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
       ORDER BY StartTime ASC
-    `,
-      [employeeCode, date],
-    );
+    `, [employeeCode, date]);
   }
 
   /**
    * Get daily call summary for employee (last 3 months only)
    */
-  async getDailySummary(
-    employeeCode: string,
-    date: string,
-  ): Promise<CallSummary> {
+  async getDailySummary(employeeCode: string, date: string): Promise<CallSummary> {
     // Inbound summary
-    const inboundResults = await dialerQuery(
-      `
+    const inboundResults = await dialerQuery(`
       SELECT
         COUNT(*) as total_calls,
         SUM(CAST(COALESCE(CallDurationSecond, 0) AS UNSIGNED)) as total_duration_sec,
@@ -127,13 +111,10 @@ export class CallDataSync {
       WHERE AgentId = ?
         AND CallDate = DATE(?)
         AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
-    `,
-      [employeeCode, date],
-    );
+    `, [employeeCode, date]);
 
     // Outbound summary
-    const outboundResults = await dialerQuery(
-      `
+    const outboundResults = await dialerQuery(`
       SELECT
         COUNT(*) as total_calls,
         SUM(CAST(COALESCE(CallDuration, 0) AS UNSIGNED)) as total_duration_sec,
@@ -143,9 +124,7 @@ export class CallDataSync {
       WHERE Agent = ?
         AND CallDate = DATE(?)
         AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
-    `,
-      [employeeCode, date],
-    );
+    `, [employeeCode, date]);
 
     const inbound = inboundResults[0] || {
       total_calls: 0,
@@ -181,8 +160,7 @@ export class CallDataSync {
    * Get call volume by hour for employee (last 3 months only)
    */
   async getCallVolumeByHour(employeeCode: string, date: string) {
-    return dialerQuery(
-      `
+    return dialerQuery(`
       SELECT
         HOUR(Time) as hour,
         COUNT(*) as call_count,
@@ -193,17 +171,14 @@ export class CallDataSync {
         AND CallDate >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
       GROUP BY HOUR(Time)
       ORDER BY hour ASC
-    `,
-      [employeeCode, date],
-    );
+    `, [employeeCode, date]);
   }
 
   /**
    * Get disposition breakdown for employee (last 3 months only)
    */
   async getDispositionBreakdown(employeeCode: string, date: string) {
-    return dialerQuery(
-      `
+    return dialerQuery(`
       SELECT
         Disposition as disposition,
         COUNT(*) as count
@@ -214,8 +189,6 @@ export class CallDataSync {
         AND Disposition IS NOT NULL
       GROUP BY Disposition
       ORDER BY count DESC
-    `,
-      [employeeCode, date],
-    );
+    `, [employeeCode, date]);
   }
 }

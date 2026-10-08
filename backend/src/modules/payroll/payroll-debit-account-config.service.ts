@@ -32,19 +32,14 @@ export interface DebitAccountConfig {
 
 /** Read the current debit account number. Cached briefly since every export row would otherwise re-query it. */
 export async function getDebitAccountNumber(): Promise<string> {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS)
-    return cache.account_number;
+  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.account_number;
   try {
     const [rows] = await db.query<any[]>(
       `SELECT debit_account_number, bank_name FROM payroll_debit_account_config WHERE id = 1 LIMIT 1`,
     );
     const row = (rows as any[])[0];
     const value = String(row?.debit_account_number ?? "").trim();
-    cache = {
-      account_number: value || FALLBACK_DEBIT_ACCOUNT,
-      bank_name: row?.bank_name ?? null,
-      at: Date.now(),
-    };
+    cache = { account_number: value || FALLBACK_DEBIT_ACCOUNT, bank_name: row?.bank_name ?? null, at: Date.now() };
     return cache.account_number;
   } catch {
     // Table not migrated yet, or a transient DB hiccup — a bank-file export must never break
@@ -61,12 +56,7 @@ export async function getDebitAccountConfig(): Promise<DebitAccountConfig> {
   );
   const row = (rows as any[])[0];
   if (!row) {
-    return {
-      debit_account_number: FALLBACK_DEBIT_ACCOUNT,
-      bank_name: null,
-      updated_by: null,
-      updated_at: null,
-    };
+    return { debit_account_number: FALLBACK_DEBIT_ACCOUNT, bank_name: null, updated_by: null, updated_at: null };
   }
   return {
     debit_account_number: String(row.debit_account_number ?? ""),

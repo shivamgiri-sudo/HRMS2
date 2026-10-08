@@ -1,8 +1,8 @@
-import { db } from "../../db/mysql.js";
-import { DomainSyncBase } from "./domain-sync-base.js";
-import { encryptAccountForSync } from "../../shared/syncPiiEncryption.js";
+import { db } from '../../db/mysql.js';
+import { DomainSyncBase } from './domain-sync-base.js';
+import { encryptAccountForSync } from '../../shared/syncPiiEncryption.js';
 
-const SYNC_MAP_ID = "a1000000-0000-0000-0000-000000000002";
+const SYNC_MAP_ID = 'a1000000-0000-0000-0000-000000000002';
 
 interface LegacyBank {
   id: number;
@@ -18,13 +18,10 @@ interface LegacyBank {
 
 export class BankDetailSyncHandler extends DomainSyncBase {
   constructor() {
-    super("bank_detail", SYNC_MAP_ID);
+    super('bank_detail', SYNC_MAP_ID);
   }
 
-  protected async fetchBatch(
-    lastWatermark: string,
-    batchSize: number,
-  ): Promise<LegacyBank[]> {
+  protected async fetchBatch(lastWatermark: string, batchSize: number): Promise<LegacyBank[]> {
     const pool = await this.getLegacy();
     const [rows] = await pool.execute<any[]>(
       `SELECT id, EmpCode, AcNo, AcBank, AcBranch, IFSCCode, AccHolder,
@@ -35,43 +32,31 @@ export class BankDetailSyncHandler extends DomainSyncBase {
          AND IFSCCode IS NOT NULL AND IFSCCode != ''
        ORDER BY COALESCE(lastUpdated, EntryDate) ASC
        LIMIT ?`,
-      [lastWatermark, lastWatermark, batchSize],
+      [lastWatermark, lastWatermark, batchSize]
     );
     return rows as LegacyBank[];
   }
 
   protected extractWatermark(rows: LegacyBank[]): string | null {
-    const last = [...rows].reverse().find((r) => r.lastUpdated || r.EntryDate);
+    const last = [...rows].reverse().find(r => r.lastUpdated || r.EntryDate);
     if (!last) return null;
     const d = new Date((last.lastUpdated ?? last.EntryDate)!);
     d.setSeconds(d.getSeconds() + 1);
-    return d.toISOString().slice(0, 19).replace("T", " ");
+    return d.toISOString().slice(0, 19).replace('T', ' ');
   }
 
   protected async processBatch(rows: LegacyBank[]): Promise<{
-    inserted: number;
-    updated: number;
-    skipped: number;
-    failed: number;
+    inserted: number; updated: number; skipped: number; failed: number;
   }> {
     const empMap = await this.loadEmployeeMap();
-    let inserted = 0,
-      updated = 0,
-      skipped = 0,
-      failed = 0;
+    let inserted = 0, updated = 0, skipped = 0, failed = 0;
 
     for (const row of rows) {
       const empId = this.resolveEmployeeId(empMap, row.EmpCode);
-      if (!empId) {
-        skipped++;
-        continue;
-      }
+      if (!empId) { skipped++; continue; }
 
       const acNo = row.AcNo?.trim() ?? null;
-      if (!acNo) {
-        skipped++;
-        continue;
-      }
+      if (!acNo) { skipped++; continue; }
 
       // Refuses under the all-zeros dev key and returns null, rather than writing ciphertext
       // production could never decrypt. A refusal deliberately no longer skips the row: the
@@ -79,12 +64,8 @@ export class BankDetailSyncHandler extends DomainSyncBase {
       // carrying plaintext with no ciphertext is recoverable — resolveAccountNumber() falls
       // back to account_number — where a missing bank account is not.
       let acNoEnc: string | null;
-      try {
-        acNoEnc = encryptAccountForSync(acNo, "bank-detail-sync");
-      } catch {
-        skipped++;
-        continue;
-      }
+      try { acNoEnc = encryptAccountForSync(acNo, 'bank-detail-sync'); }
+      catch { skipped++; continue; }
 
       try {
         const [res] = await db.execute<any>(
@@ -115,13 +96,13 @@ export class BankDetailSyncHandler extends DomainSyncBase {
              updated_at          = NOW()`,
           [
             empId,
-            Buffer.from(acNo, "utf8"),
+            Buffer.from(acNo, 'utf8'),
             acNoEnc,
-            row.AcBank?.trim() ?? null,
+            row.AcBank?.trim()   ?? null,
             row.AcBranch?.trim() ?? null,
             row.IFSCCode?.trim() ?? null,
             row.AccHolder?.trim() ?? null,
-          ],
+          ]
         );
         if (res.affectedRows === 1) inserted++;
         else updated++;

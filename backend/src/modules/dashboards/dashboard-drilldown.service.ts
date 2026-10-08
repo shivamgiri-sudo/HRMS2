@@ -4,14 +4,8 @@ import { type DashboardScope, buildScopeWhere, buildScopeWhereEmployees } from "
 import { PAYABLE_BANK_SQL, PAN_ABSENT_SQL, PAN_INVALID_SQL } from "./dashboard-metric.service.js";
 import { LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from "../../shared/attendanceStatus.js";
 import {
-  drillAttendanceStatus,
-  drillLatecoming,
-  drillUnplannedLeave,
-  drillPipStatus,
-  drillQualityBaseline,
-  drillAttrition,
-  drillShrinkage,
-  drillRevenue,
+  drillAttendanceStatus, drillLatecoming, drillUnplannedLeave, drillPipStatus,
+  drillQualityBaseline, drillAttrition, drillShrinkage, drillRevenue,
 } from "./performance-scorecard-drilldown.js";
 import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
 import { raisedOnOrAfterCutoffSql } from "./pendency-cutoff.js";
@@ -39,11 +33,7 @@ export interface DrilldownResult {
  * One handler already did this properly (the document-compliance one); this makes the
  * rest match it rather than leaving the disclosure to whoever remembered.
  */
-function capNote(
-  returned: number,
-  cap: number,
-  noun: string,
-): string | undefined {
+function capNote(returned: number, cap: number, noun: string): string | undefined {
   return returned >= cap
     ? `Showing the first ${cap} ${noun}. More exist — open the full report for the complete list.`
     : undefined;
@@ -164,7 +154,8 @@ const candidateScopeJoin = (candidateIdExpr: string) =>
  * from a tile that excludes them returns more rows than the tile counted.
  */
 const GENUINE_CANDIDATE_SQL = excludeEmployeeShapedCandidatesSql("cand");
-const DEAD_CANDIDATE_SQL = `LOWER(COALESCE(cand.status, '')) IN ('rejected', 'no show', 'inactive')`;
+const DEAD_CANDIDATE_SQL =
+  `LOWER(COALESCE(cand.status, '')) IN ('rejected', 'no show', 'inactive')`;
 
 function sourceUnavailable(err: unknown): never {
   throw Object.assign(err as Error, { errorCode: "SOURCE_UNAVAILABLE" });
@@ -176,15 +167,9 @@ function sourceUnavailable(err: unknown): never {
  * getHiringAlertMetrics and to /api/manpower-risk/cost-center, so the tile, the drawer and the
  * Headcount & Shortage board always agree.
  */
-async function drillHiringAlert(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillHiringAlert(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params } = buildScopeWhere(
-      scope,
-      "wm.branch_id",
-      "wm.process_id",
-    );
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "wm.branch_id", "wm.process_id");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT b.branch_name  AS branchName,
               p.process_name AS processName,
@@ -220,9 +205,7 @@ async function drillHiringAlert(
       })),
       totalCount: (rows as any[]).reduce((a, r) => a + Number(r.count), 0),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
@@ -262,9 +245,7 @@ async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
       })),
       totalCount: (rows as any[]).reduce((a, r) => a + Number(r.count), 0),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── ONBOARDING ──────────────────────────────────────────────────────────────
@@ -299,14 +280,13 @@ async function drillOnboarding(
     // getOnboardingMetrics uses for its own `pending` count: genuine candidate, not
     // already rejected/no-show, and not already converted to an employee. Without it
     // the "Onboarding Pending" drawer listed 507 rows behind a tile reading 461.
-    const pendingActionableSql =
-      bucket === "pending"
-        ? ` AND ${GENUINE_CANDIDATE_SQL}
+    const pendingActionableSql = bucket === "pending"
+      ? ` AND ${GENUINE_CANDIDATE_SQL}
           AND NOT (${DEAD_CANDIDATE_SQL})
           AND b.employee_id IS NULL
           AND b.converted_at IS NULL
           AND ${raisedOnOrAfterCutoffSql("b.created_at")}`
-        : "";
+      : "";
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cand.full_name AS candidateName,
@@ -336,9 +316,7 @@ async function drillOnboarding(
       totalCount,
       note: capNote(totalCount, 200, "candidates"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── ATTENDANCE: today's exceptions ──────────────────────────────────────────
@@ -362,11 +340,7 @@ async function drillAttendance(scope: DashboardScope, filters?: Record<string, u
     );
     const day = (dayRows as any[])[0]?.record_date;
     if (!day) {
-      return {
-        metricCode: "ATTENDANCE",
-        records: [],
-        note: "No attendance day has usable records",
-      };
+      return { metricCode: "ATTENDANCE", records: [], note: "No attendance day has usable records" };
     }
 
     // Whitelisted lookup (never interpolated from the request): a tile such as "Absent" or "Late" opens only its own rows.
@@ -401,15 +375,11 @@ async function drillAttendance(scope: DashboardScope, filters?: Record<string, u
       totalCount: rows.length,
       note: `Exceptions for ${String(day)} (latest day with attendance records)`,
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── PAYROLL_READINESS ───────────────────────────────────────────────────────
-async function drillPayrollReadiness(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillPayrollReadiness(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     // Counts only, never per-employee bank/PAN/UAN values: this drilldown is reachable
@@ -443,9 +413,7 @@ async function drillPayrollReadiness(
       totalCount: (rows as any[]).reduce((a, r) => a + Number(r.total), 0),
       note: "Aggregated counts only — individual payroll identifiers are not exposed here",
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── TAT ─────────────────────────────────────────────────────────────────────
@@ -453,11 +421,7 @@ async function drillTat(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     // task_tat_instance has branch_id but no process_id, so process-level narrowing is
     // not expressible here; branch scope still applies.
-    const { sql: scopeSql, params } = buildScopeWhere(
-      scope,
-      "t.branch_id",
-      "t.branch_id",
-    );
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "t.branch_id", "t.branch_id");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT t.id AS taskId,
               t.task_type AS taskType,
@@ -490,15 +454,11 @@ async function drillTat(scope: DashboardScope): Promise<DrilldownResult> {
       totalCount: rows.length,
       note: capNote(rows.length, 100, "overdue tasks"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── NAME_MISMATCH ───────────────────────────────────────────────────────────
-async function drillNameMismatch(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
     // Real columns: overall_match_status, blocks_employee_code, mismatch_sources,
@@ -531,19 +491,13 @@ async function drillNameMismatch(
       totalCount: rows.length,
       note: capNote(rows.length, 100, "mismatches"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── INCENTIVE ───────────────────────────────────────────────────────────────
 async function drillIncentive(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params } = buildScopeWhere(
-      scope,
-      "b.branch_id",
-      "b.process_id",
-    );
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "b.branch_id", "b.process_id");
     // batch_ref (not batch_name), status (not batch_status); the approval step table
     // uses status/step_number and has no step_name.
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -576,15 +530,11 @@ async function drillIncentive(scope: DashboardScope): Promise<DrilldownResult> {
       totalCount: rows.length,
       note: capNote(rows.length, 100, "incentive batches"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── RESIGNATION ─────────────────────────────────────────────────────────────
-async function drillResignation(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillResignation(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     // exit_request has no branch_id/process_id — scope through the employee.
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
@@ -620,9 +570,7 @@ async function drillResignation(
       totalCount: rows.length,
       note: capNote(rows.length, 100, "resignations"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── BGV ─────────────────────────────────────────────────────────────────────
@@ -670,9 +618,7 @@ async function drillBgv(scope: DashboardScope): Promise<DrilldownResult> {
       totalCount: rows.length,
       note: capNote(rows.length, 100, "BGV checks"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── DPDP ────────────────────────────────────────────────────────────────────
@@ -698,15 +644,11 @@ async function drillDpdp(_scope: DashboardScope): Promise<DrilldownResult> {
       totalCount: (rows as any[]).reduce((a, r) => a + Number(r.count), 0),
       note: "Aggregate only — DPDP requests carry no branch/process link to scope by",
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── APPOINTMENT_ESIGN ───────────────────────────────────────────────────────
-async function drillAppointmentEsign(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillAppointmentEsign(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -735,15 +677,11 @@ async function drillAppointmentEsign(
       totalCount: rows.length,
       note: capNote(rows.length, 100, "pending e-signatures"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── JOINING_DOC_ESIGN ───────────────────────────────────────────────────────
-async function drillJoiningDocEsign(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillJoiningDocEsign(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     // Rows key on employee_id when the joiner has converted, candidate_id before that.
     // Scope through the employee, which is the only reliable branch/process link.
@@ -776,15 +714,11 @@ async function drillJoiningDocEsign(
       totalCount: rows.length,
       note: capNote(rows.length, 100, "joining documents"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── ATTENDANCE_EXCEPTIONS: open reconciliation issues by type ───────────────
-async function drillAttendanceExceptions(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillAttendanceExceptions(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     // Date column is issue_date; open-ness is resolved_at IS NULL. There is no
     // created_at and no status column on this table.
@@ -819,15 +753,11 @@ async function drillAttendanceExceptions(
       })),
       totalCount: (rows as any[]).reduce((a, r) => a + Number(r.count), 0),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── DOC_COMPLIANCE: active employees with the weakest document coverage ────
-async function drillDocCompliance(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillDocCompliance(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     // Ordered so employees with nothing on file surface first — those are the
@@ -864,20 +794,13 @@ async function drillDocCompliance(
         verifiedCount: Number(r.verifiedCount),
       })),
       totalCount: rows.length,
-      note:
-        rows.length === 100
-          ? "Showing the first 100 employees with no verified document"
-          : undefined,
+      note: rows.length === 100 ? "Showing the first 100 employees with no verified document" : undefined,
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── BIOMETRIC_ACTIVITY: punch coverage on the latest complete day ──────────
-async function drillBiometricActivity(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillBiometricActivity(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     // Anchored strictly before today: today's partial day would read as mass early
@@ -920,15 +843,11 @@ async function drillBiometricActivity(
       totalCount: rows.length,
       note: capNote(rows.length, 100, "records"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── SALARY_COMPONENTS: component split of the latest run ───────────────────
-async function drillSalaryComponents(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillSalaryComponents(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -969,15 +888,11 @@ async function drillSalaryComponents(
       })),
       totalCount: rows.length,
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── RECRUITER_ACTIVITY: funnel per recruiter, last 30 days ─────────────────
-async function drillRecruiterActivity(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillRecruiterActivity(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     // Grouped by recruiter_name_snapshot, the only recruiter identifier populated on
     // more than 10 of 16,857 rows. It is a denormalised name, not an FK, so it can
@@ -1018,15 +933,11 @@ async function drillRecruiterActivity(
       totalCount: (rows as any[]).reduce((a, r) => a + Number(r.leads), 0),
       note: "Recruiter identified by name snapshot — the activity table carries no usable recruiter foreign key",
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── TRAINING_PROGRESS: course completion from the synced LMS snapshot ──────
-async function drillTrainingProgress(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillTrainingProgress(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     // Reads the snapshot inside mas_hrms, never the deployed LMS (CLAUDE.md boundary).
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
@@ -1056,16 +967,13 @@ async function drillTrainingProgress(
         completed: Number(r.completed),
         inProgress: Number(r.inProgress),
         notStarted: Number(r.notStarted),
-        avgCompletionPct:
-          r.avgCompletionPct === null ? null : Number(r.avgCompletionPct),
+        avgCompletionPct: r.avgCompletionPct === null ? null : Number(r.avgCompletionPct),
         syncedAt: r.syncedAt,
       })),
       totalCount: rows.length,
       note: capNote(rows.length, 50, "records"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── RECRUITER_PIPELINE: live candidate pipeline per recruiter scope ─────────
@@ -1076,8 +984,7 @@ async function drillRecruiterPipeline(
   try {
     const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
     const join = candidateScopeJoin("c.id");
-    const statusFilter =
-      typeof filters?.status === "string" ? filters.status : null;
+    const statusFilter = typeof filters?.status === "string" ? filters.status : null;
     const statusSql = statusFilter ? ` AND c.status = ?` : "";
     const statusParams = statusFilter ? [statusFilter] : [];
 
@@ -1114,15 +1021,11 @@ async function drillRecruiterPipeline(
       totalCount: rows.length,
       note: capNote(rows.length, 200, "candidates"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }
 
 // ─── LEAVE_APPROVALS: pending requests awaiting a decision ──────────────────
-async function drillLeaveApprovals(
-  scope: DashboardScope,
-): Promise<DrilldownResult> {
+async function drillLeaveApprovals(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -1174,7 +1077,5 @@ async function drillLeaveApprovals(
       totalCount: rows.length,
       note: capNote(rows.length, 100, "leave requests"),
     };
-  } catch (err) {
-    sourceUnavailable(err);
-  }
+  } catch (err) { sourceUnavailable(err); }
 }

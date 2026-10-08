@@ -56,7 +56,7 @@ export interface OrgTreeResponse {
  */
 export async function buildOrgTree(
   employeeRows: RowDataPacket[],
-  ctx: UserOrgContext,
+  ctx: UserOrgContext
 ): Promise<OrgTreeNode[]> {
   const employeeMap = new Map<string, OrgTreeNode>();
   const childrenMap = new Map<string, string[]>();
@@ -67,8 +67,7 @@ export async function buildOrgTree(
       id: row.id,
       employee_code: row.employee_code,
       employee_code_masked: maskEmployeeCode(row.employee_code),
-      display_name:
-        row.full_name || `${row.first_name} ${row.last_name || ""}`.trim(),
+      display_name: row.full_name || `${row.first_name} ${row.last_name || ""}`.trim(),
       first_name: row.first_name,
       last_name: row.last_name,
       designation: row.designation_name,
@@ -92,16 +91,10 @@ export async function buildOrgTree(
     };
 
     // Add warnings
-    if (
-      !row.reporting_manager_id &&
-      !isCLevelDesignation(row.designation_name)
-    ) {
+    if (!row.reporting_manager_id && !isCLevelDesignation(row.designation_name)) {
       node.warnings.push("No reporting manager assigned");
     }
-    if (
-      row.reporting_manager_id &&
-      !employeeRows.find((e) => e.id === row.reporting_manager_id)
-    ) {
+    if (row.reporting_manager_id && !employeeRows.find((e) => e.id === row.reporting_manager_id)) {
       node.warnings.push("Reporting manager not in scope");
     }
     if (!row.designation_id) {
@@ -127,9 +120,7 @@ export async function buildOrgTree(
     const manager = employeeMap.get(managerId);
     if (manager) {
       manager.direct_report_count = childIds.length;
-      manager.children = childIds
-        .map((id) => employeeMap.get(id)!)
-        .filter(Boolean);
+      manager.children = childIds.map((id) => employeeMap.get(id)!).filter(Boolean);
     }
   }
 
@@ -172,7 +163,7 @@ function calculateTotalReports(node: OrgTreeNode): number {
 function detectAndBreakCycles(
   node: OrgTreeNode,
   globalVisited: Set<string>,
-  pathVisited: Set<string>,
+  pathVisited: Set<string>
 ): void {
   if (pathVisited.has(node.id)) {
     // Circular reference detected — break it
@@ -232,12 +223,7 @@ export function buildEdgeList(nodes: OrgTreeNode[]): Array<{
   target: string;
   relationship_type: string;
 }> {
-  const edges: Array<{
-    id: string;
-    source: string;
-    target: string;
-    relationship_type: string;
-  }> = [];
+  const edges: Array<{ id: string; source: string; target: string; relationship_type: string }> = [];
   const visited = new Set<string>();
 
   function traverse(node: OrgTreeNode) {
@@ -288,10 +274,7 @@ export function flattenTree(nodes: OrgTreeNode[]): OrgTreeNode[] {
 /**
  * Search org tree by name or employee code.
  */
-export function searchOrgTree(
-  nodes: OrgTreeNode[],
-  query: string,
-): OrgTreeNode[] {
+export function searchOrgTree(nodes: OrgTreeNode[], query: string): OrgTreeNode[] {
   const lowerQuery = query.toLowerCase().trim();
   if (!lowerQuery) return [];
 
@@ -302,27 +285,20 @@ export function searchOrgTree(
       node.employee_code.toLowerCase().includes(lowerQuery) ||
       node.designation?.toLowerCase().includes(lowerQuery) ||
       node.branch?.toLowerCase().includes(lowerQuery) ||
-      node.process?.toLowerCase().includes(lowerQuery),
+      node.process?.toLowerCase().includes(lowerQuery)
   );
 }
 
 /**
  * Get reporting chain for an employee (upward to root).
  */
-export async function getReportingChain(employeeId: string): Promise<
-  Array<{
-    id: string;
-    name: string;
-    designation: string | null;
-    employee_code: string;
-  }>
-> {
-  const chain: Array<{
-    id: string;
-    name: string;
-    designation: string | null;
-    employee_code: string;
-  }> = [];
+export async function getReportingChain(employeeId: string): Promise<Array<{
+  id: string;
+  name: string;
+  designation: string | null;
+  employee_code: string;
+}>> {
+  const chain: Array<{ id: string; name: string; designation: string | null; employee_code: string }> = [];
   const visited = new Set<string>();
   let currentId: string | null = employeeId;
 
@@ -335,7 +311,7 @@ export async function getReportingChain(employeeId: string): Promise<
          LEFT JOIN designation_master d ON d.id = e.designation_id
         WHERE e.id = ? AND e.active_status = 1
         LIMIT 1`,
-      [currentId],
+      [currentId]
     );
 
     if (rows.length === 0) break;

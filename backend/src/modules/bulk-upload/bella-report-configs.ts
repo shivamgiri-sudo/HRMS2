@@ -101,17 +101,8 @@ export const BELLA_REPORT_CONFIGS: BellaReportConfig[] = [];
 // the template adds one required "LOB" column. Without it, an ABC upload and an
 // Upgrade upload for the same date would collide on the dedup key.
 const TARGET_HEADERS = [
-  "Date",
-  "Data",
-  "Workable Data",
-  "Required Data",
-  "Capped Data at 110%",
-  "Conversion",
-  "Target Sale",
-  "Prepaid %",
-  "RTO%",
-  "Revenue",
-  "LOB",
+  "Date", "Data", "Workable Data", "Required Data", "Capped Data at 110%", "Conversion",
+  "Target Sale", "Prepaid %", "RTO%", "Revenue", "LOB",
 ];
 
 export const BELLA_TARGET_PLAN_CONFIG: BellaReportConfig = {
@@ -141,8 +132,6 @@ export const BELLA_TARGET_PLAN_CONFIG: BellaReportConfig = {
 };
 BELLA_REPORT_CONFIGS.push(BELLA_TARGET_PLAN_CONFIG);
 
-export function getBellaConfigByRpc(
-  rpcName: string,
-): BellaReportConfig | undefined {
+export function getBellaConfigByRpc(rpcName: string): BellaReportConfig | undefined {
   return BELLA_REPORT_CONFIGS.find((c) => c.rpcName === rpcName);
 }

@@ -43,21 +43,14 @@ describe("describeDbError falls back rather than saying UNKNOWN", () => {
 
   it("uses name and errno when the message is empty", () => {
     // Observed for real: AggregateError, code ECONNREFUSED, message "".
-    const err = Object.assign(new Error(""), {
-      name: "AggregateError",
-      errno: -4078,
-    });
+    const err = Object.assign(new Error(""), { name: "AggregateError", errno: -4078 });
     const out = describeDbError(err);
     expect(out).toContain("AggregateError");
     expect(out).toContain("-4078");
   });
 
   it("still prefers code when both code and message exist", () => {
-    const out = describeDbError(
-      Object.assign(new Error("connect ECONNREFUSED"), {
-        code: "ECONNREFUSED",
-      }),
-    );
+    const out = describeDbError(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
     expect(out).toContain("ECONNREFUSED");
   });
 
@@ -69,8 +62,6 @@ describe("describeDbError falls back rather than saying UNKNOWN", () => {
   });
 
   it("describes a non-object throw rather than discarding it", () => {
-    expect(describeDbError("connection reset by peer")).toContain(
-      "connection reset by peer",
-    );
+    expect(describeDbError("connection reset by peer")).toContain("connection reset by peer");
   });
 });

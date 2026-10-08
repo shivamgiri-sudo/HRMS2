@@ -13,11 +13,7 @@ function stripQuotes(v) {
 async function connectWithFallback(hosts, cfg, label) {
   for (const host of hosts) {
     try {
-      const conn = await mysql.createConnection({
-        ...cfg,
-        host,
-        connectTimeout: 8000,
-      });
+      const conn = await mysql.createConnection({ ...cfg, host, connectTimeout: 8000 });
       await conn.query("SELECT 1");
       console.log(`[${label}] connected via ${host}`);
       return conn;
@@ -42,35 +38,22 @@ async function main() {
     port: Number(process.env.BILL_DB_PORT || 3306),
   };
 
-  const hrms = await connectWithFallback(
-    ["192.168.10.6", "122.184.128.90"],
-    hrmsCfg,
-    "mas_hrms",
-  );
-  const bill = await connectWithFallback(
-    ["192.168.10.22", "14.97.30.236"],
-    billCfg,
-    "db_bill",
-  );
+  const hrms = await connectWithFallback(["192.168.10.6", "122.184.128.90"], hrmsCfg, "mas_hrms");
+  const bill = await connectWithFallback(["192.168.10.22", "14.97.30.236"], billCfg, "db_bill");
 
   const out = {};
 
   // 1. Row counts
-  const [[invCount]] = await hrms.query(
-    "SELECT COUNT(*) n FROM client_invoice",
-  );
-  const [[cnCount]] = await hrms.query(
-    "SELECT COUNT(*) n FROM client_credit_note",
-  );
+  const [[invCount]] = await hrms.query("SELECT COUNT(*) n FROM client_invoice");
+  const [[cnCount]] = await hrms.query("SELECT COUNT(*) n FROM client_credit_note");
   out.client_invoice_count = invCount.n;
   out.client_credit_note_count = cnCount.n;
 
   // 2. Staging error counts
-  let stagingInvErr = null,
-    stagingCnErr = null;
+  let stagingInvErr = null, stagingCnErr = null;
   try {
     const [[r]] = await hrms.query(
-      "SELECT COUNT(*) n FROM client_invoice_migration_staging WHERE validation_status='error'",
+      "SELECT COUNT(*) n FROM client_invoice_migration_staging WHERE validation_status='error'"
     );
     stagingInvErr = r.n;
   } catch (e) {
@@ -78,7 +61,7 @@ async function main() {
   }
   try {
     const [[r]] = await hrms.query(
-      "SELECT COUNT(*) n FROM client_credit_note_migration_staging WHERE validation_status='error'",
+      "SELECT COUNT(*) n FROM client_credit_note_migration_staging WHERE validation_status='error'"
     );
     stagingCnErr = r.n;
   } catch (e) {
@@ -90,7 +73,7 @@ async function main() {
   // Also grab error message breakdown for invoices + credit notes, if column exists
   try {
     const [rows] = await hrms.query(
-      "SELECT validation_error, COUNT(*) n FROM client_invoice_migration_staging WHERE validation_status='error' GROUP BY validation_error ORDER BY n DESC",
+      "SELECT validation_error, COUNT(*) n FROM client_invoice_migration_staging WHERE validation_status='error' GROUP BY validation_error ORDER BY n DESC"
     );
     out.staging_invoice_error_breakdown = rows;
   } catch (e) {
@@ -98,7 +81,7 @@ async function main() {
   }
   try {
     const [rows] = await hrms.query(
-      "SELECT validation_error, COUNT(*) n FROM client_credit_note_migration_staging WHERE validation_status='error' GROUP BY validation_error ORDER BY n DESC",
+      "SELECT validation_error, COUNT(*) n FROM client_credit_note_migration_staging WHERE validation_status='error' GROUP BY validation_error ORDER BY n DESC"
     );
     out.staging_credit_note_error_breakdown = rows;
   } catch (e) {
@@ -109,32 +92,25 @@ async function main() {
   const [[legacyInv]] = await bill.query("SELECT COUNT(*) n FROM tbl_invoice");
   out.legacy_tbl_invoice_count = legacyInv.n;
   try {
-    const [[legacyCn]] = await bill.query(
-      "SELECT COUNT(*) n FROM tbl_credit_note",
-    );
+    const [[legacyCn]] = await bill.query("SELECT COUNT(*) n FROM tbl_credit_note");
     out.legacy_tbl_credit_note_count = legacyCn.n;
   } catch (e) {
     out.legacy_tbl_credit_note_count = `ERR: ${e.code || e.message}`;
   }
 
   // 4. billing_client_name backfill
-  const [[ccTotal]] = await hrms.query(
-    "SELECT COUNT(*) n FROM cost_centre_master",
-  );
+  const [[ccTotal]] = await hrms.query("SELECT COUNT(*) n FROM cost_centre_master");
   const [[ccMissing]] = await hrms.query(
-    "SELECT COUNT(*) n FROM cost_centre_master WHERE billing_client_name IS NULL OR billing_client_name = ''",
+    "SELECT COUNT(*) n FROM cost_centre_master WHERE billing_client_name IS NULL OR billing_client_name = ''"
   );
   out.cost_centre_total = ccTotal.n;
   out.cost_centre_missing_billing_client_name = ccMissing.n;
 
-  let ccActiveTotal = null,
-    ccActiveMissing = null;
+  let ccActiveTotal = null, ccActiveMissing = null;
   try {
-    const [[a]] = await hrms.query(
-      "SELECT COUNT(*) n FROM cost_centre_master WHERE active_status = 1",
-    );
+    const [[a]] = await hrms.query("SELECT COUNT(*) n FROM cost_centre_master WHERE active_status = 1");
     const [[b]] = await hrms.query(
-      "SELECT COUNT(*) n FROM cost_centre_master WHERE active_status = 1 AND (billing_client_name IS NULL OR billing_client_name = '')",
+      "SELECT COUNT(*) n FROM cost_centre_master WHERE active_status = 1 AND (billing_client_name IS NULL OR billing_client_name = '')"
     );
     ccActiveTotal = a.n;
     ccActiveMissing = b.n;
@@ -146,7 +122,7 @@ async function main() {
 
   // 5. branch_master gst_state_code nulls
   const [branchNulls] = await hrms.query(
-    "SELECT id, branch_name, branch_code FROM branch_master WHERE gst_state_code IS NULL",
+    "SELECT id, branch_name, branch_code FROM branch_master WHERE gst_state_code IS NULL"
   );
   out.branches_missing_gst_state_code = branchNulls;
 
@@ -180,7 +156,7 @@ async function main() {
     try {
       const [[legacyRow]] = await bill.query(
         "SELECT id, grnd, cost_center, cost_client_tally_name FROM tbl_invoice WHERE id = ?",
-        [row.legacy_id],
+        [row.legacy_id]
       );
       out.spot_check.push({ hrms: row, legacy: legacyRow || null });
     } catch (e) {

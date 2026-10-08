@@ -6,18 +6,11 @@ import { db } from "../../db/mysql.js";
 import { resolveBranchScope } from "./reporting.scope.js";
 
 export const reportingLeaveBalanceRouter = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 function scopeSql(scope: { isSuperAdmin: boolean; branchIds: string[] }) {
-  if (scope.isSuperAdmin || scope.branchIds.length === 0)
-    return { sql: "1=1", params: [] as unknown[] };
-  return {
-    sql: `e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`,
-    params: scope.branchIds as unknown[],
-  };
+  if (scope.isSuperAdmin || scope.branchIds.length === 0) return { sql: "1=1", params: [] as unknown[] };
+  return { sql: `e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`, params: scope.branchIds as unknown[] };
 }
 
 /**
@@ -33,63 +26,41 @@ function scopeSql(scope: { isSuperAdmin: boolean; branchIds: string[] }) {
 async function hasRealManagementScope(userId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM user_assignment_scope WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-    [userId],
+    [userId]
   );
   return rows.length > 0;
 }
 
-reportingLeaveBalanceRouter.get(
-  "/leave-balances",
-  requireAuth,
-  h(async (req: any, res: any) => {
-    const year = Number(req.query.year ?? new Date().getFullYear());
-    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "year must be between 2000 and 2100",
-        });
-    }
+reportingLeaveBalanceRouter.get("/leave-balances", requireAuth, h(async (req: any, res: any) => {
+  const year = Number(req.query.year ?? new Date().getFullYear());
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+    return res.status(400).json({ success: false, message: "year must be between 2000 and 2100" });
+  }
 
-    const scope = await resolveBranchScope(req.authUser!.id);
-    const sc = scopeSql(scope);
-    const extraConds: string[] = [];
-    const extraParams: unknown[] = [];
+  const scope = await resolveBranchScope(req.authUser!.id);
+  const sc = scopeSql(scope);
+  const extraConds: string[] = [];
+  const extraParams: unknown[] = [];
 
-    if (
-      !scope.isSuperAdmin &&
-      !(await hasRealManagementScope(req.authUser!.id))
-    ) {
-      // Plain individual contributor: resolveBranchScope's own branch fallback
-      // must not expose every colleague's leave balance — restrict to self.
-      const self = await getEmployeeForUser(req.authUser!.id);
-      if (!self)
-        return res
-          .status(403)
-          .json({ success: false, message: "No employee record" });
-      extraConds.push("e.id = ?");
-      extraParams.push(self.id);
-    }
+  if (!scope.isSuperAdmin && !(await hasRealManagementScope(req.authUser!.id))) {
+    // Plain individual contributor: resolveBranchScope's own branch fallback
+    // must not expose every colleague's leave balance — restrict to self.
+    const self = await getEmployeeForUser(req.authUser!.id);
+    if (!self) return res.status(403).json({ success: false, message: "No employee record" });
+    extraConds.push("e.id = ?");
+    extraParams.push(self.id);
+  }
 
-    if (req.query.branchId) {
-      extraConds.push("e.branch_id = ?");
-      extraParams.push(String(req.query.branchId));
-    }
-    if (req.query.processId) {
-      extraConds.push("e.process_id = ?");
-      extraParams.push(String(req.query.processId));
-    }
-    if (req.query.costCentreId || req.query.costCenterId) {
-      extraConds.push("e.cost_centre_id = ?");
-      extraParams.push(
-        String(req.query.costCentreId ?? req.query.costCenterId),
-      );
-    }
+  if (req.query.branchId) { extraConds.push("e.branch_id = ?"); extraParams.push(String(req.query.branchId)); }
+  if (req.query.processId) { extraConds.push("e.process_id = ?"); extraParams.push(String(req.query.processId)); }
+  if (req.query.costCentreId || req.query.costCenterId) {
+    extraConds.push("e.cost_centre_id = ?");
+    extraParams.push(String(req.query.costCentreId ?? req.query.costCenterId));
+  }
 
-    const extraSql = extraConds.length ? `AND ${extraConds.join(" AND ")}` : "";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.id AS employee_id,
+  const extraSql = extraConds.length ? `AND ${extraConds.join(" AND ")}` : "";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id AS employee_id,
             e.employee_code,
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
             COALESCE(NULLIF(TRIM(dm.dept_name), ''), 'Unassigned') AS department_name,
@@ -115,61 +86,47 @@ reportingLeaveBalanceRouter.get(
         AND ${sc.sql}
         ${extraSql}
       ORDER BY e.employee_code, lt.leave_name`,
-      [year, ...sc.params, ...extraParams],
-    );
+    [year, ...sc.params, ...extraParams],
+  );
 
-    const leaveTypes = Array.from(
-      new Set(rows.map((row) => String(row.leave_name))),
-    );
-    const records = new Map<
-      string,
-      {
-        employeeId: string;
-        employeeCode: string;
-        employeeName: string;
-        department: string;
-        branch: string;
-        process: string;
-        costCentre: string;
-        balances: Array<{
-          leaveType: string;
-          total: number;
-          used: number;
-          remaining: number;
-        }>;
-      }
-    >();
+  const leaveTypes = Array.from(new Set(rows.map((row) => String(row.leave_name))));
+  const records = new Map<string, {
+    employeeId: string;
+    employeeCode: string;
+    employeeName: string;
+    department: string;
+    branch: string;
+    process: string;
+    costCentre: string;
+    balances: Array<{ leaveType: string; total: number; used: number; remaining: number }>;
+  }>();
 
-    for (const row of rows) {
-      const employeeId = String(row.employee_id);
-      if (!records.has(employeeId)) {
-        records.set(employeeId, {
-          employeeId,
-          employeeCode: String(row.employee_code ?? ""),
-          employeeName: String(row.employee_name ?? ""),
-          department: String(row.department_name ?? "Unassigned"),
-          branch: String(row.branch_name ?? "Unassigned"),
-          process: String(row.process_name ?? "Unassigned"),
-          costCentre: String(row.cost_centre_name ?? "Unassigned"),
-          balances: [],
-        });
-      }
-      const total = Number(row.total_days ?? 0);
-      const used = Number(row.used_days ?? 0);
-      records.get(employeeId)!.balances.push({
-        leaveType: String(row.leave_name),
-        total,
-        used,
-        // Floored at 0 to match leaveService.getBalance(), the canonical UI path —
-        // this report could otherwise show a negative balance the UI shows as 0
-        // for the same employee/type. (2026-08-13 audit)
-        remaining: Math.max(0, total - used),
+  for (const row of rows) {
+    const employeeId = String(row.employee_id);
+    if (!records.has(employeeId)) {
+      records.set(employeeId, {
+        employeeId,
+        employeeCode: String(row.employee_code ?? ""),
+        employeeName: String(row.employee_name ?? ""),
+        department: String(row.department_name ?? "Unassigned"),
+        branch: String(row.branch_name ?? "Unassigned"),
+        process: String(row.process_name ?? "Unassigned"),
+        costCentre: String(row.cost_centre_name ?? "Unassigned"),
+        balances: [],
       });
     }
-
-    return res.json({
-      success: true,
-      data: { year, leaveTypes, records: Array.from(records.values()) },
+    const total = Number(row.total_days ?? 0);
+    const used = Number(row.used_days ?? 0);
+    records.get(employeeId)!.balances.push({
+      leaveType: String(row.leave_name),
+      total,
+      used,
+      // Floored at 0 to match leaveService.getBalance(), the canonical UI path —
+      // this report could otherwise show a negative balance the UI shows as 0
+      // for the same employee/type. (2026-08-13 audit)
+      remaining: Math.max(0, total - used),
     });
-  }),
-);
+  }
+
+  return res.json({ success: true, data: { year, leaveTypes, records: Array.from(records.values()) } });
+}));

@@ -21,7 +21,12 @@ function shuffle(chars: string[]): string[] {
 
 export function generateTemporaryPassword(length = 14): string {
   const safeLength = Math.max(12, length);
-  const chars = [pick(UPPER), pick(LOWER), pick(NUMBER), pick(SPECIAL)];
+  const chars = [
+    pick(UPPER),
+    pick(LOWER),
+    pick(NUMBER),
+    pick(SPECIAL),
+  ];
   while (chars.length < safeLength) {
     chars.push(pick(ALL));
   }

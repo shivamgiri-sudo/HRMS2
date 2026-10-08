@@ -23,25 +23,16 @@ import mysql from "mysql2/promise";
 const WRITE = process.argv.includes("--write");
 
 const rawConn = await mysql.createConnection({
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
 });
 const conn = {
   query: async (...args) => {
     for (let a = 1; a <= 6; a++) {
-      try {
-        return await rawConn.query(...args);
-      } catch (err) {
-        if (
-          (err.code === "ER_LOCK_DEADLOCK" ||
-            err.code === "ER_LOCK_WAIT_TIMEOUT") &&
-          a < 6
-        ) {
-          await new Promise((r) => setTimeout(r, 1000 * a));
-          continue;
+      try { return await rawConn.query(...args); }
+      catch (err) {
+        if ((err.code === "ER_LOCK_DEADLOCK" || err.code === "ER_LOCK_WAIT_TIMEOUT") && a < 6) {
+          await new Promise((r) => setTimeout(r, 1000 * a)); continue;
         }
         throw err;
       }
@@ -62,23 +53,11 @@ async function backfill(addressType, prefix) {
                WHERE ea.employee_id = e.id AND ea.address_type = ?
             )
         AND cop.${prefix}_city <> '' AND cop.${prefix}_state <> '' AND cop.${prefix}_pincode <> ''`,
-    [addressType],
+    [addressType]
   );
 
-  console.log(
-    `\n=== ${addressType} address: ${rows.length} employee(s) recoverable ===`,
-  );
-  console.table(
-    rows
-      .slice(0, 10)
-      .map((r) => ({
-        code: r.employee_code,
-        line1: r.line1 || "(none)",
-        city: r.city,
-        state: r.state,
-        pincode: r.pincode,
-      })),
-  );
+  console.log(`\n=== ${addressType} address: ${rows.length} employee(s) recoverable ===`);
+  console.table(rows.slice(0, 10).map(r => ({ code: r.employee_code, line1: r.line1 || "(none)", city: r.city, state: r.state, pincode: r.pincode })));
 
   if (!WRITE) return rows.length;
 
@@ -87,15 +66,7 @@ async function backfill(addressType, prefix) {
     await conn.query(
       `INSERT INTO employee_address (id, employee_id, address_type, address_line1, address_line2, city, state, pincode, country)
        VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, 'India')`,
-      [
-        r.employee_id,
-        addressType,
-        (r.line1 || "").trim(),
-        r.line2 || null,
-        r.city,
-        r.state,
-        r.pincode,
-      ],
+      [r.employee_id, addressType, (r.line1 || "").trim(), r.line2 || null, r.city, r.state, r.pincode]
     );
     written++;
   }
@@ -107,9 +78,7 @@ const currentCount = await backfill("current", "present");
 const permanentCount = await backfill("permanent", "permanent");
 
 if (!WRITE) {
-  console.log(
-    `\nDRY RUN — would write ${currentCount} current + ${permanentCount} permanent address rows. Re-run with --write to apply.`,
-  );
+  console.log(`\nDRY RUN — would write ${currentCount} current + ${permanentCount} permanent address rows. Re-run with --write to apply.`);
 }
 
 await conn.end();

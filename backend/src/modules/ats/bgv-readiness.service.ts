@@ -5,14 +5,9 @@
  * Supports role-based requirements and manual review workflow
  */
 
-import { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import {
-  getBgvRequirementsByDesignation,
-  BgvRequirements,
-  isLateralFromExperienceLabel,
-  DOCUMENT_TYPE_MAPPINGS,
-} from "./bgv-config.js";
+import { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { getBgvRequirementsByDesignation, BgvRequirements, isLateralFromExperienceLabel, DOCUMENT_TYPE_MAPPINGS } from './bgv-config.js';
 
 export interface BgvCheck {
   check_type: string;
@@ -35,7 +30,7 @@ export interface BgvReadinessResult {
   blockers: Array<{
     check_type: string;
     reason: string;
-    severity: "critical" | "warning";
+    severity: 'critical' | 'warning';
   }>;
   warnings: string[];
   requirements: BgvRequirements;
@@ -49,16 +44,15 @@ export interface BgvReadinessResult {
  */
 export async function checkBgvReadiness(
   candidateId: string,
-  designationId: string,
+  designationId: string
 ): Promise<BgvReadinessResult> {
   // Get designation name to determine requirements
   const [designationRows] = await db.execute<RowDataPacket[]>(
     `SELECT designation_name FROM designation_master WHERE id = ? LIMIT 1`,
-    [designationId],
+    [designationId]
   );
 
-  const designationName =
-    (designationRows[0] as any)?.designation_name ?? "Unknown";
+  const designationName = (designationRows[0] as any)?.designation_name ?? 'Unknown';
   const requirements = getBgvRequirementsByDesignation(designationName);
 
   // Get candidate data to check if lateral hire.
@@ -70,11 +64,9 @@ export async function checkBgvReadiness(
   // isLateralFromExperienceLabel for what that error did to offer approvals.
   const [candidateRows] = await db.execute<RowDataPacket[]>(
     `SELECT c.experience FROM ats_candidate c WHERE c.id = ? LIMIT 1`,
-    [candidateId],
+    [candidateId]
   );
-  const lateral = isLateralFromExperienceLabel(
-    (candidateRows[0] as any)?.experience,
-  );
+  const lateral = isLateralFromExperienceLabel((candidateRows[0] as any)?.experience);
 
   // Get BGV checks
   const [checks] = await db.execute<RowDataPacket[]>(
@@ -87,7 +79,7 @@ export async function checkBgvReadiness(
        result_summary
      FROM candidate_bgv_check
      WHERE candidate_id = ?`,
-    [candidateId],
+    [candidateId]
   );
 
   // Get BGV report
@@ -99,14 +91,14 @@ export async function checkBgvReadiness(
        hr_remarks
      FROM candidate_bgv_report
      WHERE candidate_id = ? LIMIT 1`,
-    [candidateId],
+    [candidateId]
   );
 
   const report = reportRows[0] as BgvReport | undefined;
   const bgvChecks = checks as BgvCheck[];
 
   // Validate each required check
-  const blockers: BgvReadinessResult["blockers"] = [];
+  const blockers: BgvReadinessResult['blockers'] = [];
   const warnings: string[] = [];
   const checksCompleted: string[] = [];
   const checksPending: string[] = [];
@@ -114,105 +106,95 @@ export async function checkBgvReadiness(
 
   // Check PAN
   if (requirements.pan) {
-    const panCheck = bgvChecks.find((c) => c.check_type === "pan");
-    if (!panCheck || panCheck.status !== "verified") {
+    const panCheck = bgvChecks.find(c => c.check_type === 'pan');
+    if (!panCheck || panCheck.status !== 'verified') {
       blockers.push({
-        check_type: "pan",
-        reason: "PAN verification not completed",
-        severity: "critical",
+        check_type: 'pan',
+        reason: 'PAN verification not completed',
+        severity: 'critical',
       });
-      checksPending.push("pan");
+      checksPending.push('pan');
     } else if (panCheck.is_auto_approved === 1) {
-      warnings.push(
-        "PAN verification was auto-approved - real verification recommended",
-      );
+      warnings.push('PAN verification was auto-approved - real verification recommended');
       manualReviewRequired = true;
-      checksCompleted.push("pan");
+      checksCompleted.push('pan');
     } else {
-      checksCompleted.push("pan");
+      checksCompleted.push('pan');
     }
   }
 
   // Check Aadhaar
   if (requirements.aadhaar) {
-    const aadhaarCheck = bgvChecks.find(
-      (c) => c.check_type === "aadhaar_offline" || c.check_type === "aadhaar",
-    );
-    if (!aadhaarCheck || aadhaarCheck.status !== "verified") {
+    const aadhaarCheck = bgvChecks.find(c => c.check_type === 'aadhaar_offline' || c.check_type === 'aadhaar');
+    if (!aadhaarCheck || aadhaarCheck.status !== 'verified') {
       blockers.push({
-        check_type: "aadhaar",
-        reason: "Aadhaar verification not completed",
-        severity: "critical",
+        check_type: 'aadhaar',
+        reason: 'Aadhaar verification not completed',
+        severity: 'critical',
       });
-      checksPending.push("aadhaar");
+      checksPending.push('aadhaar');
     } else if (aadhaarCheck.is_auto_approved === 1) {
-      warnings.push(
-        "Aadhaar verification was auto-approved - real verification recommended",
-      );
+      warnings.push('Aadhaar verification was auto-approved - real verification recommended');
       manualReviewRequired = true;
-      checksCompleted.push("aadhaar");
+      checksCompleted.push('aadhaar');
     } else {
-      checksCompleted.push("aadhaar");
+      checksCompleted.push('aadhaar');
     }
   }
 
   // Check Bank Account
   if (requirements.bank) {
-    const bankCheck = bgvChecks.find((c) => c.check_type === "bank");
-    if (!bankCheck || bankCheck.status !== "verified") {
+    const bankCheck = bgvChecks.find(c => c.check_type === 'bank');
+    if (!bankCheck || bankCheck.status !== 'verified') {
       blockers.push({
-        check_type: "bank",
-        reason: "Bank account verification not completed",
-        severity: "critical",
+        check_type: 'bank',
+        reason: 'Bank account verification not completed',
+        severity: 'critical',
       });
-      checksPending.push("bank");
+      checksPending.push('bank');
     } else if (bankCheck.is_auto_approved === 1) {
-      warnings.push(
-        "Bank verification was auto-approved - penny drop recommended",
-      );
+      warnings.push('Bank verification was auto-approved - penny drop recommended');
       manualReviewRequired = true;
-      checksCompleted.push("bank");
+      checksCompleted.push('bank');
     } else {
-      checksCompleted.push("bank");
+      checksCompleted.push('bank');
     }
   }
 
   // Check UAN/Employment (optional for freshers)
   if (requirements.uan_employment) {
-    const uanCheck = bgvChecks.find((c) => c.check_type === "employment");
-    if (!uanCheck || uanCheck.status !== "verified") {
+    const uanCheck = bgvChecks.find(c => c.check_type === 'employment');
+    if (!uanCheck || uanCheck.status !== 'verified') {
       if (lateral) {
         // Mandatory for lateral hires
         blockers.push({
-          check_type: "employment",
-          reason: "Employment history verification required for lateral hires",
-          severity: "critical",
+          check_type: 'employment',
+          reason: 'Employment history verification required for lateral hires',
+          severity: 'critical',
         });
-        checksPending.push("employment");
+        checksPending.push('employment');
       } else {
         // Warning only for freshers
-        warnings.push(
-          "Employment history not verified (acceptable for freshers)",
-        );
-        checksPending.push("employment");
+        warnings.push('Employment history not verified (acceptable for freshers)');
+        checksPending.push('employment');
       }
     } else {
-      checksCompleted.push("employment");
+      checksCompleted.push('employment');
     }
   }
 
   // Check Criminal Record
   if (requirements.criminal) {
-    const criminalCheck = bgvChecks.find((c) => c.check_type === "criminal");
-    if (!criminalCheck || criminalCheck.status !== "verified") {
+    const criminalCheck = bgvChecks.find(c => c.check_type === 'criminal');
+    if (!criminalCheck || criminalCheck.status !== 'verified') {
       blockers.push({
-        check_type: "criminal",
-        reason: "Criminal record check required for this role",
-        severity: "critical",
+        check_type: 'criminal',
+        reason: 'Criminal record check required for this role',
+        severity: 'critical',
       });
-      checksPending.push("criminal");
+      checksPending.push('criminal');
     } else {
-      checksCompleted.push("criminal");
+      checksCompleted.push('criminal');
     }
   }
 
@@ -220,36 +202,31 @@ export async function checkBgvReadiness(
   if (requirements.aml) {
     // AML not in standard checks, check in separate verification
     // For now, mark as warning if not found
-    warnings.push(
-      "AML verification required for finance/senior roles - verify manually",
-    );
+    warnings.push('AML verification required for finance/senior roles - verify manually');
     manualReviewRequired = true;
   }
 
   // Check mandatory documents
   if (requirements.documents) {
-    const documentBlockers = await checkMandatoryDocuments(
-      candidateId,
-      lateral,
-    );
+    const documentBlockers = await checkMandatoryDocuments(candidateId, lateral);
     blockers.push(...documentBlockers);
   }
 
   // Check overall BGV report
   if (report) {
     if (report.is_auto_approved === 1) {
-      warnings.push("BGV report was auto-approved - manual review required");
+      warnings.push('BGV report was auto-approved - manual review required');
       manualReviewRequired = true;
     }
 
-    if (report.overall_status === "negative") {
+    if (report.overall_status === 'negative') {
       blockers.push({
-        check_type: "overall",
-        reason: "BGV report marked as negative",
-        severity: "critical",
+        check_type: 'overall',
+        reason: 'BGV report marked as negative',
+        severity: 'critical',
       });
-    } else if (report.overall_status === "refer") {
-      warnings.push("BGV report marked for manual review");
+    } else if (report.overall_status === 'refer') {
+      warnings.push('BGV report marked for manual review');
       manualReviewRequired = true;
     }
   }
@@ -257,7 +234,7 @@ export async function checkBgvReadiness(
   // Determine readiness
   // Employee creation proceeds even with blockers (manual review workflow)
   // But we return blockers for HR visibility
-  const ready = blockers.filter((b) => b.severity === "critical").length === 0;
+  const ready = blockers.filter(b => b.severity === 'critical').length === 0;
 
   return {
     ready,
@@ -275,19 +252,9 @@ export async function checkBgvReadiness(
  */
 async function checkMandatoryDocuments(
   candidateId: string,
-  isLateral: boolean,
-): Promise<
-  Array<{
-    check_type: string;
-    reason: string;
-    severity: "critical" | "warning";
-  }>
-> {
-  const blockers: Array<{
-    check_type: string;
-    reason: string;
-    severity: "critical" | "warning";
-  }> = [];
+  isLateral: boolean
+): Promise<Array<{ check_type: string; reason: string; severity: 'critical' | 'warning' }>> {
+  const blockers: Array<{ check_type: string; reason: string; severity: 'critical' | 'warning' }> = [];
 
   // Get uploaded documents.
   //
@@ -298,84 +265,71 @@ async function checkMandatoryDocuments(
     `SELECT document_type, file_url
      FROM ats_candidate_documents
      WHERE candidate_id = ?`,
-    [candidateId],
+    [candidateId]
   );
 
-  const uploadedTypes = new Set(
-    (docs as any[]).map((d) => d.document_type?.toLowerCase()),
-  );
+  const uploadedTypes = new Set((docs as any[]).map(d => d.document_type?.toLowerCase()));
 
   // Check PAN card
   if (!hasDocumentType(uploadedTypes, DOCUMENT_TYPE_MAPPINGS.pan_card)) {
     blockers.push({
-      check_type: "document_pan",
-      reason: "PAN card not uploaded",
-      severity: "critical",
+      check_type: 'document_pan',
+      reason: 'PAN card not uploaded',
+      severity: 'critical',
     });
   }
 
   // Check Aadhaar card
   if (!hasDocumentType(uploadedTypes, DOCUMENT_TYPE_MAPPINGS.aadhaar_card)) {
     blockers.push({
-      check_type: "document_aadhaar",
-      reason: "Aadhaar card not uploaded",
-      severity: "critical",
+      check_type: 'document_aadhaar',
+      reason: 'Aadhaar card not uploaded',
+      severity: 'critical',
     });
   }
 
   // Check Bank proof
   if (!hasDocumentType(uploadedTypes, DOCUMENT_TYPE_MAPPINGS.bank_proof)) {
     blockers.push({
-      check_type: "document_bank",
-      reason: "Bank statement/cancelled cheque not uploaded",
-      severity: "critical",
+      check_type: 'document_bank',
+      reason: 'Bank statement/cancelled cheque not uploaded',
+      severity: 'critical',
     });
   }
 
   // Check Photo
   if (!hasDocumentType(uploadedTypes, DOCUMENT_TYPE_MAPPINGS.photo)) {
     blockers.push({
-      check_type: "document_photo",
-      reason: "Passport-size photo not uploaded",
-      severity: "critical",
+      check_type: 'document_photo',
+      reason: 'Passport-size photo not uploaded',
+      severity: 'critical',
     });
   }
 
   // Check Educational certificates
-  if (
-    !hasDocumentType(
-      uploadedTypes,
-      DOCUMENT_TYPE_MAPPINGS.educational_certificates,
-    )
-  ) {
+  if (!hasDocumentType(uploadedTypes, DOCUMENT_TYPE_MAPPINGS.educational_certificates)) {
     blockers.push({
-      check_type: "document_education",
-      reason: "Educational certificates not uploaded",
-      severity: "critical",
+      check_type: 'document_education',
+      reason: 'Educational certificates not uploaded',
+      severity: 'critical',
     });
   }
 
   // Check Address proof
   if (!hasDocumentType(uploadedTypes, DOCUMENT_TYPE_MAPPINGS.address_proof)) {
     blockers.push({
-      check_type: "document_address",
-      reason: "Address proof not uploaded",
-      severity: "critical",
+      check_type: 'document_address',
+      reason: 'Address proof not uploaded',
+      severity: 'critical',
     });
   }
 
   // Check Previous employment letters (only for laterals)
-  if (
-    isLateral &&
-    !hasDocumentType(
-      uploadedTypes,
-      DOCUMENT_TYPE_MAPPINGS.previous_employment_letters,
-    )
-  ) {
+  if (isLateral && !hasDocumentType(uploadedTypes, DOCUMENT_TYPE_MAPPINGS.previous_employment_letters)) {
     blockers.push({
-      check_type: "document_employment",
-      reason: "Previous employment letters required for lateral hires",
-      severity: "critical",
+      check_type: 'document_employment',
+      reason: 'Previous employment letters required for lateral hires',
+      severity: 'critical',
     });
   }
 
@@ -385,10 +339,7 @@ async function checkMandatoryDocuments(
 /**
  * Helper to check if document type exists in uploaded set
  */
-function hasDocumentType(
-  uploadedTypes: Set<string>,
-  validTypes: string[],
-): boolean {
+function hasDocumentType(uploadedTypes: Set<string>, validTypes: string[]): boolean {
   for (const type of validTypes) {
     if (uploadedTypes.has(type.toLowerCase())) {
       return true;
@@ -401,24 +352,18 @@ function hasDocumentType(
  * Get human-readable BGV readiness summary
  */
 export function getBgvReadinessSummary(result: BgvReadinessResult): string {
-  if (
-    result.ready &&
-    result.blockers.length === 0 &&
-    result.warnings.length === 0
-  ) {
-    return "BGV checks complete and verified";
+  if (result.ready && result.blockers.length === 0 && result.warnings.length === 0) {
+    return 'BGV checks complete and verified';
   }
 
   if (result.manualReviewRequired) {
-    return `Manual BGV review required: ${result.warnings.join(", ")}`;
+    return `Manual BGV review required: ${result.warnings.join(', ')}`;
   }
 
   if (result.blockers.length > 0) {
-    const criticalCount = result.blockers.filter(
-      (b) => b.severity === "critical",
-    ).length;
-    return `${criticalCount} critical BGV checks pending: ${result.blockers.map((b) => b.check_type).join(", ")}`;
+    const criticalCount = result.blockers.filter(b => b.severity === 'critical').length;
+    return `${criticalCount} critical BGV checks pending: ${result.blockers.map(b => b.check_type).join(', ')}`;
   }
 
-  return "BGV in progress";
+  return 'BGV in progress';
 }

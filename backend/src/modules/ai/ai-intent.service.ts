@@ -1,82 +1,37 @@
-import type { Pool } from "mysql2/promise";
-import type { RowDataPacket } from "mysql2";
-import { getEmployeeForUser } from "../../shared/accessGuard.js";
+import type { Pool } from 'mysql2/promise';
+import type { RowDataPacket } from 'mysql2';
+import { getEmployeeForUser } from '../../shared/accessGuard.js';
 
 export type IntentKey =
-  | "salary_breakup"
-  | "leave_balance"
-  | "attendance_summary"
-  | "pending_actions"
-  | "unknown";
+  | 'salary_breakup'
+  | 'leave_balance'
+  | 'attendance_summary'
+  | 'pending_actions'
+  | 'unknown';
 
 const INTENT_PATTERNS: Array<{ intent: IntentKey; keywords: string[] }> = [
   {
-    intent: "salary_breakup",
-    keywords: [
-      "salary",
-      "payslip",
-      "breakup",
-      "ctc",
-      "pay slip",
-      "earnings",
-      "deduction",
-      "take home",
-      "net pay",
-      "gross",
-      "in hand",
-      "salary slip",
-      "my pay",
-      "how much i earn",
-    ],
+    intent: 'salary_breakup',
+    keywords: ['salary', 'payslip', 'breakup', 'ctc', 'pay slip', 'earnings',
+               'deduction', 'take home', 'net pay', 'gross', 'in hand',
+               'salary slip', 'my pay', 'how much i earn'],
   },
   {
-    intent: "leave_balance",
-    keywords: [
-      "leave balance",
-      "leave remaining",
-      "how many leaves",
-      "leave left",
-      "pl balance",
-      "el balance",
-      "cl balance",
-      "sick leave",
-      "casual leave",
-      "privilege leave",
-      "annual leave",
-      "my leaves",
-      "leave available",
-    ],
+    intent: 'leave_balance',
+    keywords: ['leave balance', 'leave remaining', 'how many leaves', 'leave left',
+               'pl balance', 'el balance', 'cl balance', 'sick leave', 'casual leave',
+               'privilege leave', 'annual leave', 'my leaves', 'leave available'],
   },
   {
-    intent: "attendance_summary",
-    keywords: [
-      "attendance",
-      "present",
-      "absent",
-      "late",
-      "punch",
-      "clocked",
-      "how many days",
-      "attendance percentage",
-      "late marks",
-      "lwp",
-      "leave without pay",
-      "attendance this month",
-      "my attendance",
-    ],
+    intent: 'attendance_summary',
+    keywords: ['attendance', 'present', 'absent', 'late', 'punch', 'clocked',
+               'how many days', 'attendance percentage', 'late marks', 'lwp',
+               'leave without pay', 'attendance this month', 'my attendance'],
   },
   {
-    intent: "pending_actions",
-    keywords: [
-      "pending",
-      "pending approval",
-      "pending requests",
-      "action",
-      "my inbox",
-      "work inbox",
-      "approvals",
-      "what is pending",
-    ],
+    intent: 'pending_actions',
+    keywords: ['pending', 'pending approval', 'pending requests', 'action',
+               'my inbox', 'work inbox', 'approvals', 'what is pending'],
   },
 ];
 
@@ -85,12 +40,12 @@ export function detectIntent(question: string): IntentKey {
   for (const { intent, keywords } of INTENT_PATTERNS) {
     if (keywords.some((kw) => q.includes(kw))) return intent;
   }
-  return "unknown";
+  return 'unknown';
 }
 
 async function fetchSalaryBreakup(
   employeeId: string,
-  db: Pool,
+  db: Pool
 ): Promise<Record<string, unknown>> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -106,7 +61,7 @@ async function fetchSalaryBreakup(
        AND spr.status != 'draft'
      ORDER BY spr.run_month DESC
      LIMIT 1`,
-    [employeeId],
+    [employeeId]
   );
   if (!rows.length) return { salary_data_available: false };
   const r = rows[0];
@@ -137,7 +92,7 @@ async function fetchSalaryBreakup(
 
 async function fetchLeaveBalance(
   employeeId: string,
-  db: Pool,
+  db: Pool
 ): Promise<Record<string, unknown>> {
   const year = new Date().getFullYear();
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -147,7 +102,7 @@ async function fetchLeaveBalance(
      JOIN leave_type_master lt ON lt.id = lbl.leave_type_id
      WHERE lbl.employee_id = ? AND lbl.balance_year = ?
      ORDER BY lt.leave_name ASC`,
-    [employeeId, year],
+    [employeeId, year]
   );
   if (!rows.length) return { leave_data_available: false };
   const balances = rows.map((r) => ({
@@ -158,8 +113,8 @@ async function fetchLeaveBalance(
     available: Math.max(
       0,
       Number(r.allocated_days ?? 0) +
-        Number(r.adjusted_days ?? 0) -
-        Number(r.used_days ?? 0),
+      Number(r.adjusted_days ?? 0) -
+      Number(r.used_days ?? 0)
     ),
   }));
   return {
@@ -172,10 +127,10 @@ async function fetchLeaveBalance(
 
 async function fetchAttendanceSummary(
   employeeId: string,
-  db: Pool,
+  db: Pool
 ): Promise<Record<string, unknown>> {
   const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        SUM(status = 'present') AS present_days,
@@ -191,14 +146,13 @@ async function fetchAttendanceSummary(
      WHERE employee_id = ?
        AND DATE_FORMAT(record_date, '%Y-%m') = ?
        AND record_date <= CURDATE()`,
-    [employeeId, currentMonth],
+    [employeeId, currentMonth]
   );
   if (!rows.length) return { attendance_data_available: false };
   const r = rows[0];
   const presentDays = Number(r.present_days ?? 0);
   const workingDays = Number(r.working_days ?? 1);
-  const attPct =
-    workingDays > 0 ? Math.round((presentDays / workingDays) * 1000) / 10 : 0;
+  const attPct = workingDays > 0 ? Math.round((presentDays / workingDays) * 1000) / 10 : 0;
   return {
     attendance_data_available: true,
     attendance_month: currentMonth,
@@ -217,10 +171,10 @@ async function fetchAttendanceSummary(
 export async function detectAndEnrich(
   question: string,
   userId: string,
-  db: Pool,
+  db: Pool
 ): Promise<{ intent: IntentKey; data: Record<string, unknown> }> {
   const intent = detectIntent(question);
-  if (intent === "unknown") return { intent, data: {} };
+  if (intent === 'unknown') return { intent, data: {} };
 
   const emp = await getEmployeeForUser(userId);
   if (!emp) return { intent, data: { employee_not_found: true } };
@@ -228,16 +182,16 @@ export async function detectAndEnrich(
   let data: Record<string, unknown> = {};
   try {
     switch (intent) {
-      case "salary_breakup":
+      case 'salary_breakup':
         data = await fetchSalaryBreakup(emp.id, db);
         break;
-      case "leave_balance":
+      case 'leave_balance':
         data = await fetchLeaveBalance(emp.id, db);
         break;
-      case "attendance_summary":
+      case 'attendance_summary':
         data = await fetchAttendanceSummary(emp.id, db);
         break;
-      case "pending_actions":
+      case 'pending_actions':
         data = { pending_actions_hint: true };
         break;
     }

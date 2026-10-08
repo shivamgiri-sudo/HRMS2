@@ -1,10 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import {
-  chunkedMasmisInsert,
-  type ChunkInsertRow,
-} from "./masmis-chunked-insert.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Owner's own "Incentive" sheet -- per-agent monthly target/
@@ -13,33 +10,13 @@ import {
  */
 
 export const HOUSING_OWNER_INCENTIVE_HEADERS = [
-  "Agent Name",
-  "Report_Period",
-  "Band",
-  "Partner Name",
-  "Team leader",
-  "Total Target Without GST",
-  "Total Revenue without GST",
-  "Achievement %",
-  "Stage",
-  "Status",
-  "Target With GST",
-  "Sale Value with GST",
-  "Achieved %",
-  "Monthly incentive",
-  "Week1_Target",
-  "Week1_Achievement",
-  "Week1_Achi_Pct",
-  "Week1_Min_Earning",
-  "Week2_Target",
-  "Week2_Achievement",
-  "Week2_Achi_Pct",
-  "Week2_Min_Earning",
-  "Week3_Target",
-  "Week3_Achievement",
-  "Week3_Achi_Pct",
-  "Week3_Min_Earning",
-  "Final",
+  "Agent Name", "Report_Period", "Band", "Partner Name", "Team leader",
+  "Total Target Without GST", "Total Revenue without GST", "Achievement %",
+  "Stage", "Status", "Target With GST", "Sale Value with GST", "Achieved %",
+  "Monthly incentive", "Week1_Target", "Week1_Achievement", "Week1_Achi_Pct",
+  "Week1_Min_Earning", "Week2_Target", "Week2_Achievement", "Week2_Achi_Pct",
+  "Week2_Min_Earning", "Week3_Target", "Week3_Achievement", "Week3_Achi_Pct",
+  "Week3_Min_Earning", "Final",
 ] as const;
 
 /**
@@ -47,23 +24,14 @@ export const HOUSING_OWNER_INCENTIVE_HEADERS = [
  * codes -- "0x17" (#REF!), "0x2a" (#N/A), and their siblings -- instead of
  * a value. These are dropped to NULL, never guessed at or coerced to 0.
  */
-const ERROR_CODES = new Set([
-  "0x00",
-  "0x07",
-  "0x0f",
-  "0x17",
-  "0x1d",
-  "0x24",
-  "0x2a",
-]);
+const ERROR_CODES = new Set(["0x00", "0x07", "0x0f", "0x17", "0x1d", "0x24", "0x2a"]);
 
 export function isErrorCode(raw: unknown): boolean {
   return typeof raw === "string" && ERROR_CODES.has(raw.trim().toLowerCase());
 }
 
 export function parseNullableDecimal(raw: unknown): number | null {
-  if (raw === null || raw === undefined || raw === "" || isErrorCode(raw))
-    return null;
+  if (raw === null || raw === undefined || raw === "" || isErrorCode(raw)) return null;
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
 }
@@ -90,9 +58,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 export async function importHousingOwnerIncentiveBatch(
   batchId: string,
@@ -143,28 +109,21 @@ export async function importHousingOwnerIncentiveBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Housing Owner" process found to attach this row to`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const agentName = cleanText(data["Agent Name"]);
     const reportPeriod = data["Report_Period"];
     if (!agentName || !isValidPeriod(reportPeriod)) {
       const msg = `Row ${row.row_no}: "Agent Name" and "Report_Period" (YYYY-MM) are both required -- together they are this row's identity`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     toInsert.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        reportPeriod,
-        agentName,
+        randomUUID(), processId, reportPeriod, agentName,
         cleanText(data["Band"]),
         cleanText(data["Partner Name"]),
         cleanText(data["Team leader"]),
@@ -205,8 +164,7 @@ export async function importHousingOwnerIncentiveBatch(
         week2_target, week2_achievement, week2_achi_pct, week2_min_earning,
         week3_target, week3_achievement, week3_achi_pct, week3_min_earning,
         final_incentive, data_source, source_reference, created_by)`,
-    placeholderGroup:
-      "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
        band = VALUES(band),
        status = VALUES(status),
@@ -221,26 +179,17 @@ export async function importHousingOwnerIncentiveBatch(
   const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
-    const cases = errorUpdates
-      .map(() => "WHEN ? THEN CAST(? AS JSON)")
-      .join(" ");
+    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
         WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [
-        ...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]),
-        ...ids,
-      ],
+      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
 
   const finalStatus =
-    errorRows === 0
-      ? "imported"
-      : importedRows === 0
-        ? "validation_failed"
-        : "imported_with_errors";
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],

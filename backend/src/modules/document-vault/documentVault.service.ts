@@ -2,8 +2,7 @@ import crypto from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 
-export type VaultAccessLevel =
-  "public" | "internal" | "pii" | "payroll" | "confidential";
+export type VaultAccessLevel = "public" | "internal" | "pii" | "payroll" | "confidential";
 
 export interface VaultItem {
   id: string;
@@ -35,9 +34,7 @@ export interface RegisterUploadInput {
 }
 
 /** Record a newly uploaded file in the vault inventory. Called immediately after multer saves the file. */
-export async function registerUpload(
-  input: RegisterUploadInput,
-): Promise<string> {
+export async function registerUpload(input: RegisterUploadInput): Promise<string> {
   const id = crypto.randomUUID();
   await db.execute(
     `INSERT INTO document_vault_inventory
@@ -57,35 +54,30 @@ export async function registerUpload(
       input.accessLevel ?? "internal",
       input.ownerEmployeeId ?? null,
       input.ownerCandidateId ?? null,
-    ],
+    ]
   );
   return id;
 }
 
 /** Look up a vault item by its stored UUID filename. */
-export async function findByStoredFilename(
-  storedFilename: string,
-): Promise<VaultItem | null> {
+export async function findByStoredFilename(storedFilename: string): Promise<VaultItem | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, uploaded_by_user, category, stored_filename, original_filename,
             mime_type, file_size_bytes, sha256_hash, access_level,
             owner_employee_id, owner_candidate_id, is_soft_deleted, created_at
      FROM document_vault_inventory WHERE stored_filename = ? AND is_soft_deleted = 0`,
-    [storedFilename],
+    [storedFilename]
   );
   return rows.length > 0 ? (rows[0] as VaultItem) : null;
 }
 
 /** Soft-delete a vault item (preserves audit history). */
-export async function softDelete(
-  storedFilename: string,
-  deletedByUser: string,
-): Promise<void> {
+export async function softDelete(storedFilename: string, deletedByUser: string): Promise<void> {
   await db.execute<ResultSetHeader>(
     `UPDATE document_vault_inventory
         SET is_soft_deleted = 1, deleted_at = NOW(), deleted_by = ?
       WHERE stored_filename = ? AND is_soft_deleted = 0`,
-    [deletedByUser, storedFilename],
+    [deletedByUser, storedFilename]
   );
 }
 
@@ -129,7 +121,7 @@ export async function issueDownloadToken(opts: {
       opts.purpose ?? "download",
       opts.maxUses ?? DEFAULT_MAX_USES,
       expiresAt,
-    ],
+    ]
   );
 
   return { rawToken, tokenId: id, expiresAt };
@@ -146,16 +138,14 @@ export interface ResolvedToken {
  * Returns resolved token if valid, null otherwise.
  * Increments use_count atomically; denies if expired, revoked, or exhausted.
  */
-export async function consumeDownloadToken(
-  rawToken: string,
-): Promise<ResolvedToken | null> {
+export async function consumeDownloadToken(rawToken: string): Promise<ResolvedToken | null> {
   const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, vault_item_id, issued_to, max_uses, use_count, expires_at, revoked_at
        FROM document_download_token
       WHERE token_hash = ?`,
-    [tokenHash],
+    [tokenHash]
   );
 
   if (rows.length === 0) return null;
@@ -168,7 +158,7 @@ export async function consumeDownloadToken(
     `UPDATE document_download_token
         SET use_count = use_count + 1, last_used_at = NOW()
       WHERE id = ? AND use_count < max_uses`,
-    [row.id],
+    [row.id]
   );
 
   return {
@@ -208,6 +198,6 @@ export async function logDocumentAccess(opts: {
       opts.ipAddress ?? null,
       opts.userAgent ?? null,
       opts.tokenId ?? null,
-    ],
+    ]
   );
 }

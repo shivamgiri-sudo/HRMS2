@@ -20,22 +20,13 @@
  *   Repeat: unique/repeat by phone number per day
  */
 
-import type { RowDataPacket } from "mysql2";
-import { dialerQuery } from "../../db/dialerDb.js";
-import {
-  n,
-  pct,
-  round,
-  fmtSec,
-  fmtDateTime,
-  finalMetric,
-  parseRange,
-  type MetricResult,
-} from "./dialler-utils.js";
-import { resolveEmployeeNames, codeKey } from "./employee-names.js";
+import type { RowDataPacket } from 'mysql2';
+import { dialerQuery } from '../../db/dialerDb.js';
+import { n, pct, round, fmtSec, fmtDateTime, finalMetric, parseRange, type MetricResult } from './dialler-utils.js';
+import { resolveEmployeeNames, codeKey } from './employee-names.js';
 
-const CDR_TABLE = "cdr_in_10_4";
-const APR_TABLE = "vicidial_agent_log_10_4";
+const CDR_TABLE = 'cdr_in_10_4';
+const APR_TABLE = 'vicidial_agent_log_10_4';
 /**
  * The APR table carries two campaigns: INBOUND (the agents answering this
  * dashboard's calls) and BLABLIBL (Bla Bli Blu's outbound team). Without this
@@ -43,10 +34,10 @@ const APR_TABLE = "vicidial_agent_log_10_4";
  * 1–15 Sep 2026: INBOUND holds exactly the six agents in cdr_in_10_4, BLABLIBL
  * the three outbound agents the business flagged (e.g. MAS62353, MAS61459).
  */
-const INBOUND_CAMPAIGN = "INBOUND";
-const DISPO_TABLE = "data_master_in";
+const INBOUND_CAMPAIGN = 'INBOUND';
+const DISPO_TABLE = 'data_master_in';
 const CLIENT_ID = 487;
-const NO_AGENT = "Inbound No Agent";
+const NO_AGENT = 'Inbound No Agent';
 
 const HANDLED_EXPR = `(AgentName IS NOT NULL AND AgentName != '' AND LOWER(TRIM(AgentName)) != '${NO_AGENT.toLowerCase()}')`;
 
@@ -69,13 +60,10 @@ const CDR_SELECT = `
 `;
 
 function buildFullRow(r: RowDataPacket): MetricResult & {
-  talkSecTotal: number;
-  talkTime: string;
-  acwSecTotal: number;
-  acwTime: string;
+  talkSecTotal: number; talkTime: string;
+  acwSecTotal: number; acwTime: string;
   callDurationSec: number;
-  abandonRate: number;
-  within20Rate: number;
+  abandonRate: number; within20Rate: number;
 } {
   const offered = n(r.offered);
   const handled = n(r.handled);
@@ -89,17 +77,7 @@ function buildFullRow(r: RowDataPacket): MetricResult & {
   const talkSecTotal = n(r.talkSecTotal);
   const acwSecTotal = n(r.acwSecTotal);
 
-  const base = finalMetric({
-    offered,
-    handled,
-    calls20,
-    abndWithin,
-    handledTalkSec,
-    handledAcwSec,
-    holdSec,
-    holdCount,
-    loginCount,
-  });
+  const base = finalMetric({ offered, handled, calls20, abndWithin, handledTalkSec, handledAcwSec, holdSec, holdCount, loginCount });
   return {
     ...base,
     talkSecTotal: Math.round(talkSecTotal),
@@ -119,96 +97,60 @@ export interface InboundSummary extends ReturnType<typeof buildFullRow> {
   to: string;
   dailyAverage: number;
   healthScore: number;
-  healthStatus: "Healthy" | "Watch" | "Critical" | "No Data";
+  healthStatus: 'Healthy' | 'Watch' | 'Critical' | 'No Data';
   generatedAt: string;
 }
 
-export async function getInboundSummary(rawFilters: {
-  from?: string;
-  to?: string;
-}): Promise<InboundSummary> {
+export async function getInboundSummary(rawFilters: { from?: string; to?: string }): Promise<InboundSummary> {
   const { from, to } = parseRange(rawFilters);
 
   const [overallRows, dayRows] = await Promise.all([
-    dialerQuery<RowDataPacket>(
-      `SELECT ${CDR_SELECT} FROM ${CDR_TABLE} WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)`,
-      [from, to],
-    ),
-    dialerQuery<RowDataPacket>(
-      `SELECT DATE(CallDate) AS date, COUNT(*) AS offered FROM ${CDR_TABLE} WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY) GROUP BY DATE(CallDate)`,
-      [from, to],
-    ),
+    dialerQuery<RowDataPacket>(`SELECT ${CDR_SELECT} FROM ${CDR_TABLE} WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)`, [from, to]),
+    dialerQuery<RowDataPacket>(`SELECT DATE(CallDate) AS date, COUNT(*) AS offered FROM ${CDR_TABLE} WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY) GROUP BY DATE(CallDate)`, [from, to]),
   ]);
 
   const r = overallRows[0] ?? {};
   const row = buildFullRow(r);
-  const activeDays = (dayRows || []).filter((d) => n(d.offered) > 0).length;
+  const activeDays = (dayRows || []).filter(d => n(d.offered) > 0).length;
   const dailyAverage = activeDays > 0 ? round(row.offered / activeDays, 1) : 0;
 
   // Health score: SL 35% + AL 30% + Within20 15% + AbandonScore 20%
   let healthScore = 0;
   if (row.offered > 0) {
-    const target = (v: number, t: number) =>
-      Math.min(100, t > 0 ? (v * 100) / t : 0);
-    const abandScore =
-      row.abandonRate <= 5 ? 100 : Math.max(0, 100 - (row.abandonRate - 5) * 8);
+    const target = (v: number, t: number) => Math.min(100, t > 0 ? (v * 100) / t : 0);
+    const abandScore = row.abandonRate <= 5 ? 100 : Math.max(0, 100 - (row.abandonRate - 5) * 8);
     healthScore = Math.round(
-      target(row.sl, 80) * 0.35 +
-        target(row.al, 80) * 0.3 +
-        target(row.within20Rate, 80) * 0.15 +
-        abandScore * 0.2,
+      target(row.sl, 80) * 0.35 + target(row.al, 80) * 0.30 + target(row.within20Rate, 80) * 0.15 + abandScore * 0.20
     );
   }
-  const healthStatus: InboundSummary["healthStatus"] =
-    row.offered === 0
-      ? "No Data"
-      : healthScore >= 90
-        ? "Healthy"
-        : healthScore >= 75
-          ? "Watch"
-          : "Critical";
+  const healthStatus: InboundSummary['healthStatus'] = row.offered === 0 ? 'No Data'
+    : healthScore >= 90 ? 'Healthy'
+    : healthScore >= 75 ? 'Watch'
+    : 'Critical';
 
-  return {
-    ...row,
-    from,
-    to,
-    dailyAverage,
-    healthScore,
-    healthStatus,
-    generatedAt: new Date().toISOString(),
-  };
+  return { ...row, from, to, dailyAverage, healthScore, healthStatus, generatedAt: new Date().toISOString() };
 }
 
 // ── Monthly aggregation (matrix) ──────────────────────────────────────────────
 
-export type InboundMonthRow = ReturnType<typeof buildFullRow> & {
-  month: string;
-};
+export type InboundMonthRow = ReturnType<typeof buildFullRow> & { month: string };
 
-export async function getInboundMonthly(rawFilters: {
-  from?: string;
-  to?: string;
-}): Promise<InboundMonthRow[]> {
+export async function getInboundMonthly(rawFilters: { from?: string; to?: string }): Promise<InboundMonthRow[]> {
   const { from, to } = parseRange(rawFilters);
   const sql = `SELECT DATE_FORMAT(CallDate, '%Y-%m') AS month, ${CDR_SELECT} FROM ${CDR_TABLE} WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY) GROUP BY month ORDER BY month`;
   const rows = await dialerQuery<RowDataPacket>(sql, [from, to]);
-  return rows
-    .filter((r) => n(r.offered) > 0)
-    .map((r) => ({ month: String(r.month ?? ""), ...buildFullRow(r) }));
+  return rows.filter(r => n(r.offered) > 0).map(r => ({ month: String(r.month ?? ''), ...buildFullRow(r) }));
 }
 
 // ── Day-wise breakdown (matrix) ───────────────────────────────────────────────
 
 export type InboundDayRow = ReturnType<typeof buildFullRow> & { date: string };
 
-export async function getInboundDaily(rawFilters: {
-  from?: string;
-  to?: string;
-}): Promise<InboundDayRow[]> {
+export async function getInboundDaily(rawFilters: { from?: string; to?: string }): Promise<InboundDayRow[]> {
   const { from, to } = parseRange(rawFilters);
   const sql = `SELECT DATE(CallDate) AS date, ${CDR_SELECT} FROM ${CDR_TABLE} WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY) GROUP BY DATE(CallDate) ORDER BY date`;
   const rows = await dialerQuery<RowDataPacket>(sql, [from, to]);
-  return rows.map((r) => ({ date: String(r.date ?? ""), ...buildFullRow(r) }));
+  return rows.map(r => ({ date: String(r.date ?? ''), ...buildFullRow(r) }));
 }
 
 // ── Hourly slot breakdown (full slot table with all GAS columns) ──────────────
@@ -220,14 +162,9 @@ export interface InboundSlotRow extends ReturnType<typeof buildFullRow> {
   repeatPct: number;
 }
 
-export async function getInboundHourly(rawFilters: {
-  date?: string;
-}): Promise<InboundSlotRow[]> {
+export async function getInboundHourly(rawFilters: { date?: string }): Promise<InboundSlotRow[]> {
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-  const date =
-    rawFilters.date && dateRe.test(rawFilters.date)
-      ? rawFilters.date
-      : new Date().toISOString().slice(0, 10);
+  const date = rawFilters.date && dateRe.test(rawFilters.date) ? rawFilters.date : new Date().toISOString().slice(0, 10);
 
   // Main slot aggregates
   const sql = `
@@ -242,13 +179,13 @@ export async function getInboundHourly(rawFilters: {
   `;
   const rows = await dialerQuery<RowDataPacket>(sql, [date]);
 
-  return rows.map((r) => {
+  return rows.map(r => {
     const base = buildFullRow(r);
     const phoneCalls = n(r.handled);
     const uniquePhones = n(r.uniquePhones);
     const repeatCalls = Math.max(0, phoneCalls - uniquePhones);
     return {
-      slot: String(r.slot ?? ""),
+      slot: String(r.slot ?? ''),
       ...base,
       repeatCalls,
       repeatPct: phoneCalls > 0 ? pct(repeatCalls, phoneCalls) : 0,
@@ -284,10 +221,7 @@ export interface InboundAgentRow {
   wbTime: string;
 }
 
-export async function getInboundAgents(rawFilters: {
-  from?: string;
-  to?: string;
-}): Promise<InboundAgentRow[]> {
+export async function getInboundAgents(rawFilters: { from?: string; to?: string }): Promise<InboundAgentRow[]> {
   const { from, to } = parseRange(rawFilters);
 
   // CDR and APR are joined on the employee code: cdr_in_10_4.AgentId holds the
@@ -295,8 +229,7 @@ export async function getInboundAgents(rawFilters: {
   // on AgentName, a display name ("Parag Mukherjee") that never equals a code,
   // so every APR column in this table read zero.
   const [cdrRows, aprRows] = await Promise.all([
-    dialerQuery<RowDataPacket>(
-      `
+    dialerQuery<RowDataPacket>(`
       SELECT AgentId AS agentId,
         MAX(AgentName) AS agentName,
         COUNT(*) AS offered,
@@ -309,11 +242,8 @@ export async function getInboundAgents(rawFilters: {
       WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
         AND ${HANDLED_EXPR}
       GROUP BY AgentId ORDER BY handled DESC LIMIT 200
-    `,
-      [from, to],
-    ),
-    dialerQuery<RowDataPacket>(
-      `
+    `, [from, to]),
+    dialerQuery<RowDataPacket>(`
       SELECT user,
         SUM(wait_sec) AS waitSec, SUM(talk_sec) AS talkSec,
         SUM(dispo_sec) AS dispoSec, SUM(pause_sec) AS pauseSec,
@@ -324,34 +254,24 @@ export async function getInboundAgents(rawFilters: {
       FROM ${APR_TABLE}
       WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND UPPER(campaign_id) = ?
       GROUP BY user LIMIT 200
-    `,
-      [from, to, INBOUND_CAMPAIGN],
-    ),
+    `, [from, to, INBOUND_CAMPAIGN]),
   ]);
 
   // Build APR map keyed by user (uppercase trimmed)
   const aprMap: Record<string, RowDataPacket> = {};
-  for (const r of aprRows)
-    aprMap[
-      String(r.user ?? "")
-        .toUpperCase()
-        .trim()
-    ] = r;
+  for (const r of aprRows) aprMap[String(r.user ?? '').toUpperCase().trim()] = r;
 
-  return cdrRows.map((r) => {
-    const agentName = String(r.agentName ?? "");
+  return cdrRows.map(r => {
+    const agentName = String(r.agentName ?? '');
     const offered = n(r.offered);
     const handled = n(r.handled);
     const calls20 = n(r.calls20);
     const handledTalkSec = n(r.handledTalkSec);
     const handledAcwSec = n(r.handledAcwSec);
     const holdSec = n(r.holdSec);
-    const ahtSec =
-      handled > 0
-        ? Math.round((handledTalkSec + holdSec + handledAcwSec) / handled)
-        : 0;
+    const ahtSec = handled > 0 ? Math.round((handledTalkSec + holdSec + handledAcwSec) / handled) : 0;
 
-    const agentId = String(r.agentId ?? "");
+    const agentId = String(r.agentId ?? '');
     const apr = aprMap[agentId.toUpperCase().trim()] ?? null;
     const waitSec = apr ? n(apr.waitSec) : 0;
     const aprTalkSec = apr ? n(apr.talkSec) : 0;
@@ -366,15 +286,12 @@ export async function getInboundAgents(rawFilters: {
     return {
       agentId,
       agentName,
-      offered,
-      handled,
-      calls20,
+      offered, handled, calls20,
       talkSec: Math.round(handledTalkSec),
       talk: fmtSec(handledTalkSec),
       sl: pct(calls20, handled),
       al: pct(handled, offered),
-      ahtSec,
-      aht: fmtSec(ahtSec),
+      ahtSec, aht: fmtSec(ahtSec),
       aprCalls,
       netLoginSec: Math.round(netLoginSec),
       netLoginTime: fmtSec(netLoginSec),
@@ -396,28 +313,18 @@ export interface AprAgentRow {
   /** Employee name from HRMS; null when the code has no HRMS record. */
   agentName: string | null;
   aprCalls: number;
-  netLoginSec: number;
-  netLoginTime: string;
-  talkSec: number;
-  talk: string;
-  waitSec: number;
-  wait: string;
-  dispoSec: number;
-  dispo: string;
-  pauseSec: number;
-  pause: string;
-  lbTime: string;
-  tbTime: string;
-  wbTime: string;
+  netLoginSec: number; netLoginTime: string;
+  talkSec: number; talk: string;
+  waitSec: number; wait: string;
+  dispoSec: number; dispo: string;
+  pauseSec: number; pause: string;
+  lbTime: string; tbTime: string; wbTime: string;
   utilization: number;
   loginStart: string;
   logout: string;
 }
 
-export async function getInboundApr(rawFilters: {
-  from?: string;
-  to?: string;
-}): Promise<AprAgentRow[]> {
+export async function getInboundApr(rawFilters: { from?: string; to?: string }): Promise<AprAgentRow[]> {
   const { from, to } = parseRange(rawFilters);
   const sql = `
     SELECT user,
@@ -432,41 +339,23 @@ export async function getInboundApr(rawFilters: {
     WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND UPPER(campaign_id) = ?
     GROUP BY user ORDER BY talkSec DESC LIMIT 200
   `;
-  const rows = await dialerQuery<RowDataPacket>(sql, [
-    from,
-    to,
-    INBOUND_CAMPAIGN,
-  ]);
-  const names = await resolveEmployeeNames(
-    rows.map((r) => String(r.user ?? "")),
-  );
-  return rows.map((r) => {
-    const waitSec = n(r.waitSec),
-      talkSec = n(r.talkSec),
-      dispoSec = n(r.dispoSec),
-      pauseSec = n(r.pauseSec);
-    const lbSec = n(r.lbSec),
-      tbSec = n(r.tbSec),
-      wbSec = n(r.wbSec);
+  const rows = await dialerQuery<RowDataPacket>(sql, [from, to, INBOUND_CAMPAIGN]);
+  const names = await resolveEmployeeNames(rows.map(r => String(r.user ?? '')));
+  return rows.map(r => {
+    const waitSec = n(r.waitSec), talkSec = n(r.talkSec), dispoSec = n(r.dispoSec), pauseSec = n(r.pauseSec);
+    const lbSec = n(r.lbSec), tbSec = n(r.tbSec), wbSec = n(r.wbSec);
     const netLoginSec = waitSec + talkSec + dispoSec + pauseSec;
-    const user = String(r.user ?? "");
+    const user = String(r.user ?? '');
     return {
       user,
       agentName: names.get(codeKey(user)) ?? null,
       aprCalls: n(r.aprCalls),
-      netLoginSec: Math.round(netLoginSec),
-      netLoginTime: fmtSec(netLoginSec),
-      talkSec: Math.round(talkSec),
-      talk: fmtSec(talkSec),
-      waitSec: Math.round(waitSec),
-      wait: fmtSec(waitSec),
-      dispoSec: Math.round(dispoSec),
-      dispo: fmtSec(dispoSec),
-      pauseSec: Math.round(pauseSec),
-      pause: fmtSec(pauseSec),
-      lbTime: fmtSec(lbSec),
-      tbTime: fmtSec(tbSec),
-      wbTime: fmtSec(wbSec),
+      netLoginSec: Math.round(netLoginSec), netLoginTime: fmtSec(netLoginSec),
+      talkSec: Math.round(talkSec), talk: fmtSec(talkSec),
+      waitSec: Math.round(waitSec), wait: fmtSec(waitSec),
+      dispoSec: Math.round(dispoSec), dispo: fmtSec(dispoSec),
+      pauseSec: Math.round(pauseSec), pause: fmtSec(pauseSec),
+      lbTime: fmtSec(lbSec), tbTime: fmtSec(tbSec), wbTime: fmtSec(wbSec),
       utilization: netLoginSec > 0 ? pct(waitSec + talkSec, netLoginSec) : 0,
       loginStart: fmtDateTime(r.loginStart),
       logout: fmtDateTime(r.logout),
@@ -477,21 +366,10 @@ export async function getInboundApr(rawFilters: {
 // ── Disposition breakdown with sub-dispositions (Category1 + Category2) ───────
 
 export interface DispositionTotals {
-  complaint: number;
-  query: number;
-  request: number;
-  sales: number;
-  other: number;
-  total: number;
+  complaint: number; query: number; request: number; sales: number; other: number; total: number;
 }
-export interface DispositionDayRow extends DispositionTotals {
-  date: string;
-}
-export interface SubDispositionRow {
-  scenario: string;
-  subDisposition: string;
-  count: number;
-}
+export interface DispositionDayRow extends DispositionTotals { date: string }
+export interface SubDispositionRow { scenario: string; subDisposition: string; count: number }
 export interface InboundDisposition {
   totals: DispositionTotals;
   daily: DispositionDayRow[];
@@ -501,17 +379,14 @@ export interface InboundDisposition {
 
 function dispositionKey(sc: string): keyof DispositionTotals {
   const s = sc.toLowerCase().trim();
-  if (s === "complaint") return "complaint";
-  if (s === "query") return "query";
-  if (s === "request") return "request";
-  if (s === "sale done" || s === "sale" || s === "sales") return "sales";
-  return "other";
+  if (s === 'complaint') return 'complaint';
+  if (s === 'query') return 'query';
+  if (s === 'request') return 'request';
+  if (s === 'sale done' || s === 'sale' || s === 'sales') return 'sales';
+  return 'other';
 }
 
-export async function getInboundDisposition(rawFilters: {
-  from?: string;
-  to?: string;
-}): Promise<InboundDisposition> {
+export async function getInboundDisposition(rawFilters: { from?: string; to?: string }): Promise<InboundDisposition> {
   const { from, to } = parseRange(rawFilters);
 
   const [mainRows, subRows] = await Promise.all([
@@ -520,53 +395,31 @@ export async function getInboundDisposition(rawFilters: {
     // The daily rows are keyed and then sorted by that string, which sorts
     // alphabetically by weekday name — Fri, Mon, Sat, Sun, Thu... — scrambling
     // the day-wise disposition charts. An ISO string sorts chronologically.
-    dialerQuery<RowDataPacket>(
-      `
+    dialerQuery<RowDataPacket>(`
       SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date, LOWER(TRIM(Category1)) AS scenario, COUNT(*) AS cnt
       FROM ${DISPO_TABLE}
       WHERE ClientId = ? AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
       GROUP BY date, LOWER(TRIM(Category1)) ORDER BY date
-    `,
-      [CLIENT_ID, from, to],
-    ),
-    dialerQuery<RowDataPacket>(
-      `
+    `, [CLIENT_ID, from, to]),
+    dialerQuery<RowDataPacket>(`
       SELECT LOWER(TRIM(Category1)) AS scenario, TRIM(Category2) AS subDispo, COUNT(*) AS cnt
       FROM ${DISPO_TABLE}
       WHERE ClientId = ? AND CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
         AND Category2 IS NOT NULL AND Category2 != ''
       GROUP BY LOWER(TRIM(Category1)), TRIM(Category2)
       ORDER BY scenario, cnt DESC
-    `,
-      [CLIENT_ID, from, to],
-    ),
+    `, [CLIENT_ID, from, to]),
   ]);
 
   const dailyMap: Record<string, DispositionDayRow> = {};
-  const totals: DispositionTotals = {
-    complaint: 0,
-    query: 0,
-    request: 0,
-    sales: 0,
-    other: 0,
-    total: 0,
-  };
+  const totals: DispositionTotals = { complaint: 0, query: 0, request: 0, sales: 0, other: 0, total: 0 };
   let rowCount = 0;
 
   for (const r of mainRows) {
-    const date = String(r.date ?? "");
-    const key = dispositionKey(String(r.scenario ?? ""));
+    const date = String(r.date ?? '');
+    const key = dispositionKey(String(r.scenario ?? ''));
     const cnt = n(r.cnt);
-    if (!dailyMap[date])
-      dailyMap[date] = {
-        date,
-        complaint: 0,
-        query: 0,
-        request: 0,
-        sales: 0,
-        other: 0,
-        total: 0,
-      };
+    if (!dailyMap[date]) dailyMap[date] = { date, complaint: 0, query: 0, request: 0, sales: 0, other: 0, total: 0 };
     dailyMap[date][key] += cnt;
     dailyMap[date].total += cnt;
     totals[key] += cnt;
@@ -574,9 +427,9 @@ export async function getInboundDisposition(rawFilters: {
     rowCount += cnt;
   }
 
-  const subDisposition: SubDispositionRow[] = subRows.map((r) => ({
-    scenario: String(r.scenario ?? ""),
-    subDisposition: String(r.subDispo ?? ""),
+  const subDisposition: SubDispositionRow[] = subRows.map(r => ({
+    scenario: String(r.scenario ?? ''),
+    subDisposition: String(r.subDispo ?? ''),
     count: n(r.cnt),
   }));
 
@@ -612,15 +465,11 @@ export interface RepeatAnalysis {
   totals: { total: number; unique: number; repeat: number; repeatPct: number };
 }
 
-export async function getInboundRepeat(rawFilters: {
-  from?: string;
-  to?: string;
-}): Promise<RepeatAnalysis> {
+export async function getInboundRepeat(rawFilters: { from?: string; to?: string }): Promise<RepeatAnalysis> {
   const { from, to } = parseRange(rawFilters);
 
   const [dayRows, agentRows] = await Promise.all([
-    dialerQuery<RowDataPacket>(
-      `
+    dialerQuery<RowDataPacket>(`
       SELECT DATE(CallDate) AS date,
         COUNT(*) AS total,
         COUNT(DISTINCT PhoneNumber) AS uniquePhones
@@ -628,11 +477,8 @@ export async function getInboundRepeat(rawFilters: {
       WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
         AND ${HANDLED_EXPR}
       GROUP BY DATE(CallDate) ORDER BY date
-    `,
-      [from, to],
-    ),
-    dialerQuery<RowDataPacket>(
-      `
+    `, [from, to]),
+    dialerQuery<RowDataPacket>(`
       SELECT AgentName AS agentName,
         COUNT(*) AS total,
         COUNT(DISTINCT PhoneNumber) AS uniquePhones
@@ -640,51 +486,26 @@ export async function getInboundRepeat(rawFilters: {
       WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
         AND ${HANDLED_EXPR}
       GROUP BY AgentName ORDER BY total DESC LIMIT 100
-    `,
-      [from, to],
-    ),
+    `, [from, to]),
   ]);
 
-  const daily: RepeatDayRow[] = dayRows.map((r) => {
-    const total = n(r.total),
-      unique = n(r.uniquePhones);
+  const daily: RepeatDayRow[] = dayRows.map(r => {
+    const total = n(r.total), unique = n(r.uniquePhones);
     const repeat = Math.max(0, total - unique);
-    return {
-      date: String(r.date ?? ""),
-      total,
-      unique,
-      repeat,
-      repeatPct: pct(repeat, total),
-    };
+    return { date: String(r.date ?? ''), total, unique, repeat, repeatPct: pct(repeat, total) };
   });
 
-  const agents: RepeatAgentRow[] = agentRows.map((r) => {
-    const total = n(r.total),
-      unique = n(r.uniquePhones);
+  const agents: RepeatAgentRow[] = agentRows.map(r => {
+    const total = n(r.total), unique = n(r.uniquePhones);
     const repeat = Math.max(0, total - unique);
-    return {
-      agentName: String(r.agentName ?? ""),
-      total,
-      unique,
-      repeat,
-      repeatPct: pct(repeat, total),
-    };
+    return { agentName: String(r.agentName ?? ''), total, unique, repeat, repeatPct: pct(repeat, total) };
   });
 
-  const tot = daily.reduce(
-    (acc, d) => ({ total: acc.total + d.total, unique: acc.unique + d.unique }),
-    { total: 0, unique: 0 },
-  );
+  const tot = daily.reduce((acc, d) => ({ total: acc.total + d.total, unique: acc.unique + d.unique }), { total: 0, unique: 0 });
   const totalRepeat = Math.max(0, tot.total - tot.unique);
 
   return {
-    daily,
-    agents,
-    totals: {
-      total: tot.total,
-      unique: tot.unique,
-      repeat: totalRepeat,
-      repeatPct: pct(totalRepeat, tot.total),
-    },
+    daily, agents,
+    totals: { total: tot.total, unique: tot.unique, repeat: totalRepeat, repeatPct: pct(totalRepeat, tot.total) },
   };
 }

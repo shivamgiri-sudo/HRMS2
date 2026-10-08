@@ -37,32 +37,20 @@ function roundQuantity(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 10_000) / 10_000;
 }
 
-export async function lockActiveBudgetLine(
-  connection: PoolConnection,
-  lineId: string,
-) {
+export async function lockActiveBudgetLine(connection: PoolConnection, lineId: string) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT l.*, h.status AS budget_status, h.branch_id, h.period_code
        FROM finance_budget_line l
        JOIN finance_budget_header h ON h.id = l.budget_id
       WHERE l.id = ?
       FOR UPDATE`,
-    [lineId],
+    [lineId]
   );
 
   const line = rows[0];
-  if (!line)
-    throw refuse(
-      404,
-      "BUDGET_LINE_NOT_FOUND",
-      "Approved budget line not found",
-    );
+  if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Approved budget line not found");
   if (String(line.budget_status) !== "active") {
-    throw refuse(
-      409,
-      "BUDGET_NOT_ACTIVE",
-      "GRN can only use a fully approved active budget",
-    );
+    throw refuse(409, "BUDGET_NOT_ACTIVE", "GRN can only use a fully approved active budget");
   }
   return line;
 }
@@ -75,14 +63,14 @@ function availability(line: RowDataPacket) {
     // Was pnl_cost_amount (base + non-recoverable GST), which let a line with non-recoverable GST
     // carry that GST's worth of extra ex-GST spend before refusing.
     amount: roundMoney(
-      budgetLineCeiling(line) -
-        Number(line.reserved_amount ?? 0) -
-        Number(line.consumed_amount ?? 0),
+      budgetLineCeiling(line)
+      - Number(line.reserved_amount ?? 0)
+      - Number(line.consumed_amount ?? 0)
     ),
     quantity: roundQuantity(
-      Number(line.quantity ?? 0) -
-        Number(line.reserved_quantity ?? 0) -
-        Number(line.consumed_quantity ?? 0),
+      Number(line.quantity ?? 0)
+      - Number(line.reserved_quantity ?? 0)
+      - Number(line.consumed_quantity ?? 0)
     ),
   };
 }
@@ -99,29 +87,17 @@ function availability(line: RowDataPacket) {
  * Falls back to gross when no net is supplied (conservative: charges the inclusive figure
  * rather than silently consuming zero if the caller did not supply a net).
  */
-function consumptionBasis(
-  line: RowDataPacket,
-  grossAmount: number,
-  netAmount?: number,
-): number {
+function consumptionBasis(line: RowDataPacket, grossAmount: number, netAmount?: number): number {
   const ratio = budgetCostRatio(line.tax_treatment, grossAmount, netAmount);
   return ratio >= 1 ? grossAmount : roundMoney(netAmount as number);
 }
 
 function validatePositive(amount: number, quantity: number) {
   if (!Number.isFinite(amount) || amount <= 0) {
-    throw refuse(
-      400,
-      "GRN_AMOUNT_INVALID",
-      "GRN gross amount must be greater than zero",
-    );
+    throw refuse(400, "GRN_AMOUNT_INVALID", "GRN gross amount must be greater than zero");
   }
   if (!Number.isFinite(quantity) || quantity <= 0) {
-    throw refuse(
-      400,
-      "GRN_QUANTITY_INVALID",
-      "GRN quantity must be greater than zero",
-    );
+    throw refuse(400, "GRN_QUANTITY_INVALID", "GRN quantity must be greater than zero");
   }
 }
 
@@ -133,7 +109,7 @@ export const budgetConsumptionService = {
     quantityInput: number,
     /** The invoice's taxable value. Used instead of amountInput when the budget line is
      *  non-taxable, so like is compared with like. */
-    netAmountInput?: number,
+    netAmountInput?: number
   ) {
     const quantity = roundQuantity(quantityInput);
     const line = await lockActiveBudgetLine(connection, lineId);
@@ -141,15 +117,7 @@ export const budgetConsumptionService = {
     // GRN. release()/consume()/reverseConsumption() below correct or complete a GRN reserved
     // before closure and must keep working regardless of the head's current closure state.
     await budgetClosureService.assertSubheadOpen(
-      connection,
-      String(line.budget_id),
-      String(line.head),
-      line.sub_head ? String(line.sub_head) : null,
-    );
-    const amount = consumptionBasis(
-      line,
-      roundMoney(amountInput),
-      netAmountInput,
+      connection, String(line.budget_id), String(line.head), line.sub_head ? String(line.sub_head) : null
     );
     if (line.cost_centre_id) {
       await budgetClosureService.assertCostCentreOpen(connection, String(line.budget_id), String(line.cost_centre_id));
@@ -158,10 +126,8 @@ export const budgetConsumptionService = {
     validatePositive(amount, quantity);
     const available = availability(line);
     if (amount > available.amount + 0.01) {
-      throw refuse(
-        409,
-        "GRN_EXCEEDS_BUDGET_AMOUNT",
-        `GRN exceeds available budget amount by ${(amount - available.amount).toFixed(2)}`,
+      throw refuse(409, "GRN_EXCEEDS_BUDGET_AMOUNT",
+        `GRN exceeds available budget amount by ${(amount - available.amount).toFixed(2)}`
       );
     }
     // Quantity deliberately does not refuse — see the banner at the top of this file.
@@ -171,7 +137,7 @@ export const budgetConsumptionService = {
           SET reserved_amount = reserved_amount + ?,
               reserved_quantity = reserved_quantity + ?
         WHERE id = ?`,
-      [amount, quantity, lineId],
+      [amount, quantity, lineId]
     );
   },
 
@@ -180,23 +146,15 @@ export const budgetConsumptionService = {
     lineId: string,
     amountInput: number,
     quantityInput: number,
-    netAmountInput?: number,
+    netAmountInput?: number
   ) {
     const quantity = roundQuantity(quantityInput);
     const line = await lockActiveBudgetLine(connection, lineId);
-    const amount = consumptionBasis(
-      line,
-      roundMoney(amountInput),
-      netAmountInput,
-    );
+    const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
     validatePositive(amount, quantity);
     const reservedAmount = Number(line.reserved_amount ?? 0);
     if (reservedAmount + 0.01 < amount) {
-      throw refuse(
-        409,
-        "RESERVATION_INSUFFICIENT",
-        "Reserved budget amount is lower than the GRN amount",
-      );
+      throw refuse(409, "RESERVATION_INSUFFICIENT", "Reserved budget amount is lower than the GRN amount");
     }
     // Quantity deliberately does not refuse — see the banner at the top of this file.
 
@@ -207,7 +165,7 @@ export const budgetConsumptionService = {
               consumed_amount = consumed_amount + ?,
               consumed_quantity = consumed_quantity + ?
         WHERE id = ?`,
-      [amount, quantity, amount, quantity, lineId],
+      [amount, quantity, amount, quantity, lineId]
     );
   },
 
@@ -220,22 +178,14 @@ export const budgetConsumptionService = {
      *  charged, so if reserve() used the net figure on a non-taxable line and release() used the
      *  gross, the release would exceed the reservation and throw "Cannot release more budget
      *  amount than is reserved" — turning a return or a rejection into a hard failure. */
-    netAmountInput?: number,
+    netAmountInput?: number
   ) {
     const quantity = roundQuantity(quantityInput);
     const line = await lockActiveBudgetLine(connection, lineId);
-    const amount = consumptionBasis(
-      line,
-      roundMoney(amountInput),
-      netAmountInput,
-    );
+    const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
     validatePositive(amount, quantity);
     if (Number(line.reserved_amount ?? 0) + 0.01 < amount) {
-      throw refuse(
-        409,
-        "RELEASE_EXCEEDS_RESERVED",
-        "Cannot release more budget amount than is reserved",
-      );
+      throw refuse(409, "RELEASE_EXCEEDS_RESERVED", "Cannot release more budget amount than is reserved");
     }
     // Quantity deliberately does not refuse — see the banner at the top of this file.
 
@@ -244,7 +194,7 @@ export const budgetConsumptionService = {
           SET reserved_amount = GREATEST(0, reserved_amount - ?),
               reserved_quantity = GREATEST(0, reserved_quantity - ?)
         WHERE id = ?`,
-      [amount, quantity, lineId],
+      [amount, quantity, lineId]
     );
   },
 
@@ -257,22 +207,14 @@ export const budgetConsumptionService = {
     amountInput: number,
     quantityInput: number,
     /** Symmetric with consume(), for the same reason release() needs one. */
-    netAmountInput?: number,
+    netAmountInput?: number
   ) {
     const quantity = roundQuantity(quantityInput);
     const line = await lockActiveBudgetLine(connection, lineId);
-    const amount = consumptionBasis(
-      line,
-      roundMoney(amountInput),
-      netAmountInput,
-    );
+    const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
     validatePositive(amount, quantity);
     if (Number(line.consumed_amount ?? 0) + 0.01 < amount) {
-      throw refuse(
-        409,
-        "REVERSAL_EXCEEDS_CONSUMED",
-        "Cannot reverse more budget amount than is consumed",
-      );
+      throw refuse(409, "REVERSAL_EXCEEDS_CONSUMED", "Cannot reverse more budget amount than is consumed");
     }
     // Quantity deliberately does not refuse — see the banner at the top of this file.
 
@@ -281,7 +223,7 @@ export const budgetConsumptionService = {
           SET consumed_amount = GREATEST(0, consumed_amount - ?),
               consumed_quantity = GREATEST(0, consumed_quantity - ?)
         WHERE id = ?`,
-      [amount, quantity, lineId],
+      [amount, quantity, lineId]
     );
   },
 };

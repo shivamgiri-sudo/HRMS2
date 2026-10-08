@@ -21,10 +21,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = resolve(process.cwd(), "scripts");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 const MAPPING = "lib/dbbill-salary-mapping.mjs";
-const IMPORTERS = [
-  "sync-salary-gap-from-dbbill.mjs",
-  "resync-diff-months-salary.mjs",
-];
+const IMPORTERS = ["sync-salary-gap-from-dbbill.mjs", "resync-diff-months-salary.mjs"];
 
 /** Strip comments so prose naming a retired column is not a false match. */
 const code = (src: string) =>
@@ -33,15 +30,9 @@ const code = (src: string) =>
 /** Parse the COMPONENT_MAP tuples out of the module without importing it. */
 function componentMap(): Array<[string, string, string, string]> {
   const src = read(MAPPING);
-  const body = src.slice(
-    src.indexOf("export const COMPONENT_MAP"),
-    src.indexOf("];", src.indexOf("export const COMPONENT_MAP")),
-  );
-  return [
-    ...body.matchAll(
-      /\[\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)"\s*\]/g,
-    ),
-  ].map((m) => [m[1], m[2], m[3], m[4]] as [string, string, string, string]);
+  const body = src.slice(src.indexOf("export const COMPONENT_MAP"), src.indexOf("];", src.indexOf("export const COMPONENT_MAP")));
+  return [...body.matchAll(/\[\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)"\s*\]/g)]
+    .map((m) => [m[1], m[2], m[3], m[4]] as [string, string, string, string]);
 }
 
 const COMPONENT_TYPES = ["earning", "deduction", "employer_cost"];
@@ -67,10 +58,7 @@ describe("db_bill salary mapping", () => {
 
   it("every component_type is a member of the live column enum", () => {
     for (const [codeName, , type] of map) {
-      expect(
-        COMPONENT_TYPES,
-        `${codeName} has component_type '${type}'`,
-      ).toContain(type);
+      expect(COMPONENT_TYPES, `${codeName} has component_type '${type}'`).toContain(type);
     }
   });
 
@@ -89,9 +77,7 @@ describe("db_bill salary mapping", () => {
     // could tell the employee what the deduction was for.
     const codes = map.map(([c]) => c);
     for (const required of ["SHSH", "SHORT_COLL", "PLI"]) {
-      expect(codes, `${required} is missing from COMPONENT_MAP`).toContain(
-        required,
-      );
+      expect(codes, `${required} is missing from COMPONENT_MAP`).toContain(required);
     }
   });
 
@@ -107,22 +93,16 @@ describe("db_bill salary mapping", () => {
     for (const entitlement of Object.keys(MUST_USE_EARNED)) {
       // `r.Basic` / `br.HRA` style property reads. The `1`-suffixed names are fine.
       const bad = new RegExp(`\\b(?:r|br|s)\\.${entitlement}\\b(?!1)`);
-      expect(
-        bad.test(src),
-        `${file} reads entitlement column ${entitlement}`,
-      ).toBe(false);
+      expect(bad.test(src), `${file} reads entitlement column ${entitlement}`).toBe(false);
     }
   });
 
-  it.each(IMPORTERS)(
-    "%s defines no second copy of the component map",
-    (file) => {
-      const src = code(read(file));
-      // A literal tuple list would mean the map drifted out of the shared module again.
-      expect(src).not.toMatch(/\[\s*'BASIC'\s*,\s*'Basic'/);
-      expect(src).toContain("dbbill-salary-mapping.mjs");
-    },
-  );
+  it.each(IMPORTERS)("%s defines no second copy of the component map", (file) => {
+    const src = code(read(file));
+    // A literal tuple list would mean the map drifted out of the shared module again.
+    expect(src).not.toMatch(/\[\s*'BASIC'\s*,\s*'Basic'/);
+    expect(src).toContain("dbbill-salary-mapping.mjs");
+  });
 
   it.each(IMPORTERS)("%s uses no INSERT IGNORE on a money table", (file) => {
     expect(code(read(file))).not.toMatch(/INSERT IGNORE INTO salary_prep/);

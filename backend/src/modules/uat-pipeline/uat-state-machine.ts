@@ -40,11 +40,7 @@
 import type { PoolConnection } from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import type {
-  ActorKind,
-  TransitionContext,
-  UatStatus,
-} from "./uat-pipeline.types.js";
+import type { ActorKind, TransitionContext, UatStatus } from "./uat-pipeline.types.js";
 
 export const LEGAL_TRANSITIONS: Record<UatStatus, UatStatus[]> = {
   submitted: ["scanning"],
@@ -57,21 +53,9 @@ export const LEGAL_TRANSITIONS: Record<UatStatus, UatStatus[]> = {
 
   // The hub. `merged` is reachable from here because in Phase 1 every fix is engineered
   // by hand and lands through an ordinary reviewed PR.
-  triaged: [
-    "validating",
-    "awaiting_governance",
-    "rejected",
-    "invalid",
-    "merged",
-    "closed",
-  ],
+  triaged: ["validating", "awaiting_governance", "rejected", "invalid", "merged", "closed"],
 
-  validating: [
-    "validation_failed",
-    "invalid",
-    "checklist_failed",
-    "checklist_passed",
-  ],
+  validating: ["validation_failed", "invalid", "checklist_failed", "checklist_passed"],
   validation_failed: ["triaged", "rejected", "closed"],
   invalid: ["triaged", "closed"],
   checklist_failed: ["triaged", "rejected", "closed"],
@@ -133,11 +117,11 @@ export class IllegalTransitionError extends Error {
   readonly statusCode = 409;
   constructor(
     readonly from: UatStatus,
-    readonly to: UatStatus,
+    readonly to: UatStatus
   ) {
     super(
       `Illegal UAT status transition ${from} -> ${to}. Legal from ${from}: ` +
-        (LEGAL_TRANSITIONS[from]?.join(", ") || "(terminal)"),
+        (LEGAL_TRANSITIONS[from]?.join(", ") || "(terminal)")
     );
     this.name = "IllegalTransitionError";
   }
@@ -166,7 +150,7 @@ export async function transition(
   feedbackId: string,
   to: UatStatus,
   ctx: TransitionContext = {},
-  existing?: PoolConnection,
+  existing?: PoolConnection
 ): Promise<{ from: UatStatus; to: UatStatus }> {
   const conn = existing ?? (await db.getConnection());
   const ownsTransaction = !existing;
@@ -175,12 +159,10 @@ export async function transition(
 
     const [rows] = await conn.execute<StatusRow[]>(
       "SELECT status FROM uat_feedback WHERE id = ? FOR UPDATE",
-      [feedbackId],
+      [feedbackId]
     );
     if (rows.length === 0) {
-      const err = new Error(`UAT feedback ${feedbackId} not found`) as Error & {
-        statusCode?: number;
-      };
+      const err = new Error(`UAT feedback ${feedbackId} not found`) as Error & { statusCode?: number };
       err.statusCode = 404;
       throw err;
     }
@@ -197,11 +179,10 @@ export async function transition(
 
     await conn.execute(
       "UPDATE uat_feedback SET status = ?, status_reason = ? WHERE id = ?",
-      [to, ctx.reason ?? null, feedbackId],
+      [to, ctx.reason ?? null, feedbackId]
     );
 
-    const actorKind: ActorKind =
-      ctx.actorKind ?? (ctx.actorUserId ? "user" : "system");
+    const actorKind: ActorKind = ctx.actorKind ?? (ctx.actorUserId ? "user" : "system");
     await conn.execute(
       `INSERT INTO uat_feedback_event
          (feedback_id, event_type, from_status, to_status, actor_user_id, actor_kind, detail_json, message)
@@ -216,7 +197,7 @@ export async function transition(
         // The message is a system-generated summary. It must never contain feedback prose:
         // this table is retained immutably and is kept PII-free by construction.
         `status ${from} -> ${to}`,
-      ],
+      ]
     );
 
     if (ownsTransaction) await conn.commit();
@@ -243,11 +224,10 @@ export async function recordEvent(
   feedbackId: string,
   eventType: string,
   ctx: TransitionContext & { message?: string } = {},
-  existing?: PoolConnection,
+  existing?: PoolConnection
 ): Promise<void> {
   const exec = existing ?? db;
-  const actorKind: ActorKind =
-    ctx.actorKind ?? (ctx.actorUserId ? "user" : "system");
+  const actorKind: ActorKind = ctx.actorKind ?? (ctx.actorUserId ? "user" : "system");
   await exec.execute(
     `INSERT INTO uat_feedback_event
        (feedback_id, event_type, actor_user_id, actor_kind, detail_json, message)
@@ -259,6 +239,6 @@ export async function recordEvent(
       actorKind,
       ctx.detail ? JSON.stringify(ctx.detail) : null,
       ctx.message ?? null,
-    ],
+    ]
   );
 }

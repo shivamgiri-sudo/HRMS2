@@ -30,19 +30,14 @@ export async function getMagicalScript(filters: MagicalScriptFilters) {
   const { clientId, startDate, endDate } = filters;
   const now = new Date();
   const end = endDate ?? now.toISOString().slice(0, 10);
-  const start =
-    startDate ??
-    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const start = startDate ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 
   const clientClause = clientId ? ` AND d.client_id = ?` : "";
   const clientParams: (string | number)[] = clientId ? [clientId] : [];
 
   // Top objections with resolution rates
   const objections = await querySource<{
-    objection: string;
-    call_count: number;
-    handled_count: number;
-    resolution_rate: number;
+    objection: string; call_count: number; handled_count: number; resolution_rate: number;
   }>(
     `SELECT
       d.NotInterestedBucketReason AS objection,
@@ -56,26 +51,17 @@ export async function getMagicalScript(filters: MagicalScriptFilters) {
        ${clientClause}
      GROUP BY d.NotInterestedBucketReason
      ORDER BY call_count DESC LIMIT 8`,
-    [start, end, ...clientParams],
+    [start, end, ...clientParams]
   );
 
   // Rebuttal matrix from tbl_obj
   const rebuttals = await querySource<{
-    OBJECTION: string;
-    RECOMMENDED_REBUTTAL: string;
-    FREQUENCY: number;
+    OBJECTION: string; RECOMMENDED_REBUTTAL: string; FREQUENCY: number;
   }>(
     `SELECT OBJECTION, RECOMMENDED_REBUTTAL, FREQUENCY
      FROM db_external.tbl_obj
-     ORDER BY FREQUENCY DESC LIMIT 30`,
-  ).catch(
-    () =>
-      [] as {
-        OBJECTION: string;
-        RECOMMENDED_REBUTTAL: string;
-        FREQUENCY: number;
-      }[],
-  );
+     ORDER BY FREQUENCY DESC LIMIT 30`
+  ).catch(() => [] as { OBJECTION: string; RECOMMENDED_REBUTTAL: string; FREQUENCY: number }[]);
 
   // Map rebuttals by objection keyword
   const rebuttalMap = new Map<string, string>();
@@ -85,7 +71,7 @@ export async function getMagicalScript(filters: MagicalScriptFilters) {
     }
   }
 
-  const objectionGuide: ObjectionPattern[] = objections.map((o) => {
+  const objectionGuide: ObjectionPattern[] = objections.map(o => {
     const key = (o.objection ?? "").toLowerCase();
     let top_rebuttal: string | undefined;
     for (const [k, v] of rebuttalMap.entries()) {
@@ -104,16 +90,14 @@ export async function getMagicalScript(filters: MagicalScriptFilters) {
 
   // Overall quality stats for context
   const [stats] = await querySource<{
-    total: number;
-    conversion: number;
-    avg_talk_time: number;
+    total: number; conversion: number; avg_talk_time: number;
   }>(
     `SELECT COUNT(*) AS total,
       ROUND(SUM(CASE WHEN SaleDone='1' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) AS conversion,
       ROUND(AVG(LengthSec),0) AS avg_talk_time
      FROM db_external.CallDetails d
      WHERE d.CallDate BETWEEN ? AND ?${clientClause}`,
-    [start, end, ...clientParams],
+    [start, end, ...clientParams]
   );
 
   // Generate rule-based call flow stages
@@ -127,10 +111,9 @@ export async function getMagicalScript(filters: MagicalScriptFilters) {
       title: "Opening & Introduction",
       goal: "Build rapport and establish trust in the first 10 seconds",
       script: `"Good [morning/afternoon], am I speaking with [Customer Name]? This is [Agent Name] calling from MAS Callnet on behalf of [Brand]. I have a special offer that I believe will genuinely benefit you — do you have just 2 minutes?"`,
-      tip:
-        conversionRate < 15
-          ? "⚠ Low conversion detected. Focus on a confident, warm opening — avoid scripted tone. Use the customer's name immediately."
-          : "Opening quality is the biggest driver of conversion. Match your energy to the customer's pace.",
+      tip: conversionRate < 15
+        ? "⚠ Low conversion detected. Focus on a confident, warm opening — avoid scripted tone. Use the customer's name immediately."
+        : "Opening quality is the biggest driver of conversion. Match your energy to the customer's pace.",
     },
     {
       stage: 2,
@@ -144,10 +127,9 @@ export async function getMagicalScript(filters: MagicalScriptFilters) {
       title: "Value Proposition & Offer Presentation",
       goal: "Present the offer clearly and connect it to the customer's stated need",
       script: `"Based on what you just told me, [Product] is a perfect fit because [specific reason matching their need]. Today we have an exclusive [COD/Easy Payment] option available — [price/terms]. This is specifically available for [time/stock] only."`,
-      tip:
-        avgTalkTime > 400
-          ? "⚠ Average call time is high. Keep the pitch under 90 seconds — customers disengage after 2 minutes of monologue."
-          : "Keep your pitch benefit-led, not feature-led. One strong benefit beats five features.",
+      tip: avgTalkTime > 400
+        ? "⚠ Average call time is high. Keep the pitch under 90 seconds — customers disengage after 2 minutes of monologue."
+        : "Keep your pitch benefit-led, not feature-led. One strong benefit beats five features.",
     },
     {
       stage: 4,
@@ -186,7 +168,7 @@ export async function getMagicalScript(filters: MagicalScriptFilters) {
       conversion_rate: conversionRate,
       avg_talk_time_sec: avgTalkTime,
       objection_types_found: objectionGuide.length,
-      rebuttal_coverage: objectionGuide.filter((o) => o.top_rebuttal).length,
+      rebuttal_coverage: objectionGuide.filter(o => o.top_rebuttal).length,
     },
   };
 }

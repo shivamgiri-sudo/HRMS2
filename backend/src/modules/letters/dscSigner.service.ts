@@ -18,10 +18,7 @@ import { SignPdf } from "@signpdf/signpdf";
 import { P12Signer } from "@signpdf/signer-p12";
 import { pdflibAddPlaceholder } from "@signpdf/placeholder-pdf-lib";
 import { PDFDocument } from "pdf-lib";
-import {
-  getActiveCertificate,
-  type ActiveCertificate,
-} from "./dscConfig.service.js";
+import { getActiveCertificate, type ActiveCertificate } from "./dscConfig.service.js";
 
 /** Text stamped on any letter signed with a self-signed certificate. */
 export const SELF_SIGNED_NOTICE =
@@ -74,16 +71,13 @@ export async function requireSigningCertificate(): Promise<ActiveCertificate> {
  * `reason`, `location` and `contactInfo` land in the signature dictionary, which
  * is what a PDF reader shows when the signature is inspected.
  */
-export async function signPdfAsCompany(
-  pdfBytes: Buffer,
-  opts: {
-    reason: string;
-    location?: string;
-    contactInfo?: string;
-    /** Where the visible widget sits. Defaults to the reserved band at the page foot. */
-    rect?: [number, number, number, number];
-  },
-): Promise<SignedPdfResult> {
+export async function signPdfAsCompany(pdfBytes: Buffer, opts: {
+  reason: string;
+  location?: string;
+  contactInfo?: string;
+  /** Where the visible widget sits. Defaults to the reserved band at the page foot. */
+  rect?: [number, number, number, number];
+}): Promise<SignedPdfResult> {
   const cert = await requireSigningCertificate();
 
   // The placeholder reserves the byte range the signature is written into. Its

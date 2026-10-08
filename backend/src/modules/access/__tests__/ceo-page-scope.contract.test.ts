@@ -31,14 +31,7 @@ describe("role page exclusions", () => {
   it("every other role keeps it — they are measured on KPIs", () => {
     // The exclusion must stay surgical. Agents, team leaders, QA and ops staff all
     // have real KPI data and the page is meaningful for them.
-    for (const role of [
-      "employee",
-      "team_leader",
-      "qa",
-      "manager",
-      "process_manager",
-      "wfm",
-    ]) {
+    for (const role of ["employee", "team_leader", "qa", "manager", "process_manager", "wfm"]) {
       expect(getRolePageCodes(role), `${role} lost MY_KPI`).toContain("MY_KPI");
     }
   });
@@ -51,21 +44,14 @@ describe("role page exclusions", () => {
     }
     // And the executive pages are untouched.
     expect(ceoPages).toEqual(
-      expect.arrayContaining([
-        "CEO_DASHBOARD",
-        "OPERATIONS_KPI",
-        "REPORTS_CENTER",
-      ]),
+      expect.arrayContaining(["CEO_DASHBOARD", "OPERATIONS_KPI", "REPORTS_CENTER"]),
     );
   });
 
   it("keeps the exclusion list small and deliberate", () => {
     // This is for pages that are structurally meaningless to a role, not general
     // permission tuning — that belongs in role_page_access.
-    const total = Object.values(ROLE_EXCLUDED_PAGE_CODES).reduce(
-      (n, list) => n + list.length,
-      0,
-    );
+    const total = Object.values(ROLE_EXCLUDED_PAGE_CODES).reduce((n, list) => n + list.length, 0);
     expect(total).toBeLessThanOrEqual(5);
   });
 
@@ -76,32 +62,22 @@ describe("role page exclusions", () => {
       resolve(process.cwd(), "sql/1027_ceo_my_kpi_revoke.sql"),
       "utf8",
     );
-    expect(migration).toMatch(
-      /UPDATE role_page_access[\s\S]*?can_view\s*=\s*0/,
-    );
+    expect(migration).toMatch(/UPDATE role_page_access[\s\S]*?can_view\s*=\s*0/);
     expect(migration).toMatch(/role_key\s*=\s*'ceo'/);
     expect(migration).toMatch(/page_code\s*=\s*'MY_KPI'/);
     // Must not touch the other 23 roles that legitimately hold it: every UPDATE
     // has to be constrained by role_key, not by page_code alone.
-    const updates = [
-      ...migration.matchAll(/UPDATE role_page_access[\s\S]*?;/g),
-    ].map((m) => m[0]);
+    const updates = [...migration.matchAll(/UPDATE role_page_access[\s\S]*?;/g)].map((m) => m[0]);
     expect(updates.length).toBeGreaterThan(0);
     for (const stmt of updates) {
-      expect(
-        stmt,
-        "an UPDATE not scoped by role_key would revoke MY_KPI for all 24 roles",
-      ).toMatch(/role_key\s*=\s*'ceo'/);
+      expect(stmt, "an UPDATE not scoped by role_key would revoke MY_KPI for all 24 roles")
+        .toMatch(/role_key\s*=\s*'ceo'/);
     }
     expect(migration).not.toMatch(/\bDELETE FROM\b/i);
   });
 
   it("is manifested, or the revoke can never run", () => {
-    expect(
-      readFileSync(
-        resolve(process.cwd(), "src/db/runPendingMigrations.ts"),
-        "utf8",
-      ),
-    ).toContain('"1027_ceo_my_kpi_revoke.sql"');
+    expect(readFileSync(resolve(process.cwd(), "src/db/runPendingMigrations.ts"), "utf8"))
+      .toContain('"1027_ceo_my_kpi_revoke.sql"');
   });
 });

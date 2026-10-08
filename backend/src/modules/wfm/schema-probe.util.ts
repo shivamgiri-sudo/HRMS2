@@ -10,12 +10,7 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
-type Executor = {
-  execute<T extends RowDataPacket[] = RowDataPacket[]>(
-    sql: string,
-    params?: unknown[],
-  ): Promise<[T, unknown]>;
-};
+type Executor = { execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]> };
 
 const tableExistsCache = new Map<string, boolean>();
 const tableColumnsCache = new Map<string, Set<string>>();
@@ -28,32 +23,24 @@ const tableColumnsCache = new Map<string, Set<string>>();
 // metadata, unlike a row's data, doesn't change within a transaction's
 // lifetime, so there's no correctness reason to prefer one over the other —
 // this is a test/consistency convenience, not a snapshot-isolation need.
-export async function hasTable(
-  table: string,
-  executor: Executor = db,
-): Promise<boolean> {
+export async function hasTable(table: string, executor: Executor = db): Promise<boolean> {
   if (tableExistsCache.has(table)) return tableExistsCache.get(table)!;
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1`,
-    [table],
+    [table]
   );
   const exists = rows.length > 0;
   tableExistsCache.set(table, exists);
   return exists;
 }
 
-export async function tableColumns(
-  table: string,
-  executor: Executor = db,
-): Promise<Set<string>> {
+export async function tableColumns(table: string, executor: Executor = db): Promise<Set<string>> {
   if (tableColumnsCache.has(table)) return tableColumnsCache.get(table)!;
   const [rows] = await executor.execute<RowDataPacket[]>(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
-    [table],
+    [table]
   );
-  const cols = new Set(
-    (rows as RowDataPacket[]).map((r) => String(r.COLUMN_NAME)),
-  );
+  const cols = new Set((rows as RowDataPacket[]).map((r) => String(r.COLUMN_NAME)));
   tableColumnsCache.set(table, cols);
   return cols;
 }

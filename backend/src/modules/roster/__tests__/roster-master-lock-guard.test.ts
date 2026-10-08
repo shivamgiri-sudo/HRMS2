@@ -33,9 +33,7 @@ const TEMPLATE_ROW = {
   process_id: "proc-1",
   pattern_type: "fixed",
   cycle_days: 1,
-  pattern_json: JSON.stringify({
-    days: [{ day_number: 1, is_week_off: false, shift_template_id: "shift-1" }],
-  }),
+  pattern_json: JSON.stringify({ days: [{ day_number: 1, is_week_off: false, shift_template_id: "shift-1" }] }),
   is_active: 1,
 };
 
@@ -57,16 +55,10 @@ describe("roster-master.service.ts generateRoster — attendance/payroll lock gu
     let insertCalled = false;
     execute.mockImplementation(async (sql: string) => {
       const text = String(sql);
-      if (text.includes("SELECT * FROM roster_template"))
-        return [[TEMPLATE_ROW], []];
-      if (text.includes("SELECT id FROM wfm_roster_assignment"))
-        return [[], []]; // no existing assignment
-      if (text.includes("SELECT is_locked FROM attendance_daily_record"))
-        return [[{ is_locked: 1 }], []];
-      if (text.includes("INSERT INTO wfm_roster_assignment")) {
-        insertCalled = true;
-        return [{ affectedRows: 1 }, []];
-      }
+      if (text.includes("SELECT * FROM roster_template")) return [[TEMPLATE_ROW], []];
+      if (text.includes("SELECT id FROM wfm_roster_assignment")) return [[], []]; // no existing assignment
+      if (text.includes("SELECT is_locked FROM attendance_daily_record")) return [[{ is_locked: 1 }], []];
+      if (text.includes("INSERT INTO wfm_roster_assignment")) { insertCalled = true; return [{ affectedRows: 1 }, []]; }
       return [[], []];
     });
 
@@ -82,16 +74,10 @@ describe("roster-master.service.ts generateRoster — attendance/payroll lock gu
     let insertCalled = false;
     execute.mockImplementation(async (sql: string) => {
       const text = String(sql);
-      if (text.includes("SELECT * FROM roster_template"))
-        return [[TEMPLATE_ROW], []];
-      if (text.includes("SELECT id FROM wfm_roster_assignment"))
-        return [[], []];
-      if (text.includes("SELECT is_locked FROM attendance_daily_record"))
-        return [[{ is_locked: 0 }], []];
-      if (text.includes("INSERT INTO wfm_roster_assignment")) {
-        insertCalled = true;
-        return [{ affectedRows: 1 }, []];
-      }
+      if (text.includes("SELECT * FROM roster_template")) return [[TEMPLATE_ROW], []];
+      if (text.includes("SELECT id FROM wfm_roster_assignment")) return [[], []];
+      if (text.includes("SELECT is_locked FROM attendance_daily_record")) return [[{ is_locked: 0 }], []];
+      if (text.includes("INSERT INTO wfm_roster_assignment")) { insertCalled = true; return [{ affectedRows: 1 }, []]; }
       return [[], []];
     });
 
@@ -106,16 +92,10 @@ describe("roster-master.service.ts generateRoster — attendance/payroll lock gu
     let insertCalled = false;
     execute.mockImplementation(async (sql: string) => {
       const text = String(sql);
-      if (text.includes("SELECT * FROM roster_template"))
-        return [[TEMPLATE_ROW], []];
-      if (text.includes("SELECT id FROM wfm_roster_assignment"))
-        return [[], []];
-      if (text.includes("SELECT is_locked FROM attendance_daily_record"))
-        return [[], []]; // no row
-      if (text.includes("INSERT INTO wfm_roster_assignment")) {
-        insertCalled = true;
-        return [{ affectedRows: 1 }, []];
-      }
+      if (text.includes("SELECT * FROM roster_template")) return [[TEMPLATE_ROW], []];
+      if (text.includes("SELECT id FROM wfm_roster_assignment")) return [[], []];
+      if (text.includes("SELECT is_locked FROM attendance_daily_record")) return [[], []]; // no row
+      if (text.includes("INSERT INTO wfm_roster_assignment")) { insertCalled = true; return [{ affectedRows: 1 }, []]; }
       return [[], []];
     });
 

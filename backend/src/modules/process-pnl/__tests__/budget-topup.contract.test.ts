@@ -14,9 +14,7 @@ describe("budget top-up request workflow", () => {
   it("registers migration 1061 in the manifest", () => {
     const sql = read("sql/1061_finance_budget_topup_request.sql");
     const runner = read("src/db/runPendingMigrations.ts");
-    expect(sql).toContain(
-      "CREATE TABLE IF NOT EXISTS finance_budget_topup_request",
-    );
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS finance_budget_topup_request");
     expect(sql).toContain("fk_budget_topup_line");
     expect(sql).toContain("fk_budget_topup_header");
     expect(sql).toContain("utf8mb4_unicode_ci");
@@ -38,12 +36,8 @@ describe("budget top-up request workflow", () => {
     const reviewIdx = routes.indexOf("budgetTopupService.review(");
     expect(createIdx).toBeGreaterThan(-1);
     expect(reviewIdx).toBeGreaterThan(-1);
-    expect(routes.slice(createIdx - 900, createIdx)).toContain(
-      "assertFinanceRecordBranch",
-    );
-    expect(routes.slice(reviewIdx - 900, reviewIdx)).toContain(
-      "assertFinanceRecordBranch",
-    );
+    expect(routes.slice(createIdx - 900, createIdx)).toContain("assertFinanceRecordBranch");
+    expect(routes.slice(reviewIdx - 900, reviewIdx)).toContain("assertFinanceRecordBranch");
   });
 
   it("applies the increase under the same row lock GRN consumption uses, only at finance_head", () => {
@@ -67,19 +61,11 @@ describe("budget top-up request workflow", () => {
     // Reuses the one function that produced every other amount on the line.
     expect(service).toContain("calculateBudgetLine");
     for (const column of [
-      "base_amount = ?",
-      "tax_amount = ?",
-      "gross_amount = ?",
-      "recoverable_tax_amount = ?",
-      "pnl_cost_amount = ?",
-      "cgst_amount = ?",
-      "sgst_amount = ?",
-      "igst_amount = ?",
+      "base_amount = ?", "tax_amount = ?", "gross_amount = ?",
+      "recoverable_tax_amount = ?", "pnl_cost_amount = ?",
+      "cgst_amount = ?", "sgst_amount = ?", "igst_amount = ?",
     ]) {
-      expect(
-        service,
-        `${column} must be rewritten when a top-up is applied`,
-      ).toContain(column);
+      expect(service, `${column} must be rewritten when a top-up is applied`).toContain(column);
     }
   });
 
@@ -91,9 +77,7 @@ describe("budget top-up request workflow", () => {
   });
 
   it("exports lockActiveBudgetLine from budget-consumption.service.ts for reuse", () => {
-    const service = read(
-      "src/modules/process-pnl/budget-consumption.service.ts",
-    );
+    const service = read("src/modules/process-pnl/budget-consumption.service.ts");
     expect(service).toContain("export async function lockActiveBudgetLine");
   });
 
@@ -110,9 +94,7 @@ describe("budget top-up request workflow", () => {
     expect(makerCheckerIdx).toBeLessThan(rejectDispatchIdx);
     // Checks actor vs request submitter, not role names
     expect(service).toContain("request.requested_by");
-    expect(
-      service.slice(makerCheckerIdx - 100, makerCheckerIdx + 200),
-    ).toContain("actorId");
+    expect(service.slice(makerCheckerIdx - 100, makerCheckerIdx + 200)).toContain("actorId");
   });
 
   /**
@@ -125,14 +107,10 @@ describe("budget top-up request workflow", () => {
    */
   it("every refusal carries a statusCode, so production does not mask it as a reference id", () => {
     const service = read("src/modules/process-pnl/budget-topup.service.ts");
-    const code = service
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\/\/.*$/gm, "");
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     // A single bare throw here is a message the reviewer will never see.
-    expect(
-      code,
-      "a bare `throw new Error()` is masked by errorHandler.ts in production",
-    ).not.toMatch(/throw new Error\(/);
+    expect(code, "a bare `throw new Error()` is masked by errorHandler.ts in production")
+      .not.toMatch(/throw new Error\(/);
     // The refusals go through the shared helper, which is where the two fields errorHandler.ts
     // reads are now set — this service held a local copy until the same fix was swept across the
     // sibling budget services and the one definition moved to finance-error.ts.
@@ -165,7 +143,7 @@ describe("budget top-up request workflow", () => {
       expect(idx, `${codeName} must exist`).toBeGreaterThan(-1);
       expect(
         service.slice(idx - 120, idx + 40),
-        `${codeName} must be thrown with HTTP ${status}`,
+        `${codeName} must be thrown with HTTP ${status}`
       ).toContain(status);
     }
   });
@@ -177,11 +155,8 @@ describe("budget top-up request workflow", () => {
    */
   it("the panel disables BOTH review buttons for the request's own submitter", () => {
     const panel = fs.readFileSync(
-      path.resolve(
-        backendRoot,
-        "../src/components/finance/budget/BudgetTopupPanel.tsx",
-      ),
-      "utf8",
+      path.resolve(backendRoot, "../src/components/finance/budget/BudgetTopupPanel.tsx"),
+      "utf8"
     );
     expect(panel).toContain("const isOwnRequest =");
     // Anchor on the mutate() call sites, not the mutationFn's `decision: "approve" | "reject"`
@@ -192,11 +167,11 @@ describe("budget top-up request workflow", () => {
     expect(rejectIdx).toBeGreaterThan(-1);
     expect(
       panel.slice(approveIdx - 500, approveIdx),
-      "Approve must be disabled for the submitter",
+      "Approve must be disabled for the submitter"
     ).toContain("isOwnRequest(request)");
     expect(
       panel.slice(rejectIdx - 500, rejectIdx),
-      "Reject must be disabled for the submitter — the backend refuses it identically",
+      "Reject must be disabled for the submitter — the backend refuses it identically"
     ).toContain("isOwnRequest(request)");
     // A disabled button is silent on touch devices, so the reason must also be on screen.
     expect(panel).toContain("You raised this request, so you cannot review it");

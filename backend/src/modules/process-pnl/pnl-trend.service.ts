@@ -1,9 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  getDbBillHistory,
-  getDbBillHistoryByProcess,
-} from "./pnl-trend-history.service.js";
+import { getDbBillHistory, getDbBillHistoryByProcess } from "./pnl-trend-history.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
 import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
@@ -101,11 +98,7 @@ export interface PnlTrendResult {
    * (db_bill's own process labelling can't be cross-checked against branch), same restriction as
    * companyHistory.
    */
-  processHistoryRevenue: {
-    processId: string;
-    processName: string;
-    months: { period: string; revenue: number }[];
-  }[];
+  processHistoryRevenue: { processId: string; processName: string; months: { period: string; revenue: number }[] }[];
 }
 
 const TREND_HOT_MONTHS = 4;
@@ -114,35 +107,25 @@ const HISTORY_TTL_MS = 6 * 60 * 60 * 1000;
 const HOT_COST_TTL_MS = 5 * 60 * 1000;
 const REAL_MONTHS_TTL_MS = 10 * 60 * 1000;
 const swrStore = new Map<string, { at: number; value: Promise<unknown> }>();
-const swrEnabled =
-  process.env.VITEST !== "true" && process.env.NODE_ENV !== "test";
+const swrEnabled = process.env.VITEST !== "true" && process.env.NODE_ENV !== "test";
 
 /**
  * Stale-while-revalidate: an expired entry is returned at once and refreshed in the background, so
  * a user never waits on a slow scan after the first one. A failed load is never cached, and a failed
  * refresh keeps the old value.
  */
-function swrCache<T>(
-  key: string,
-  ttlMs: number,
-  load: () => Promise<T>,
-): Promise<T> {
+function swrCache<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
   if (!swrEnabled) return load();
   const hit = swrStore.get(key);
   if (hit) {
     if (Date.now() - hit.at > ttlMs) {
       swrStore.set(key, { at: Date.now(), value: hit.value });
-      void load()
-        .then((fresh) =>
-          swrStore.set(key, { at: Date.now(), value: Promise.resolve(fresh) }),
-        )
-        .catch(() => undefined);
+      void load().then((fresh) => swrStore.set(key, { at: Date.now(), value: Promise.resolve(fresh) })).catch(() => undefined);
     }
     return hit.value as Promise<T>;
   }
   const value = load();
-  if (swrStore.size >= 50)
-    swrStore.delete(swrStore.keys().next().value as string);
+  if (swrStore.size >= 50) swrStore.delete(swrStore.keys().next().value as string);
   swrStore.set(key, { at: Date.now(), value });
   value.catch(() => swrStore.delete(key));
   return value;
@@ -160,29 +143,20 @@ async function getRealMonths(): Promise<string[]> {
       GROUP BY period_code
      HAVING COUNT(*) >= ?
       ORDER BY period_code`,
-    [REAL_MONTH_ROW_THRESHOLD],
+    [REAL_MONTH_ROW_THRESHOLD]
   );
   return rows.map((r) => String(r.period_code));
 }
 
 export async function getPnlTrend(
-  filters: {
-    branchId?: string;
-    processId?: string;
-    processIds?: string[];
-  } = {},
+  filters: { branchId?: string; processId?: string; processIds?: string[] } = {},
 ): Promise<PnlTrendResult> {
   // A process LIST (the page's Client / Search filters resolved to process ids, audit item 19) is
   // applied exactly like the single processId — both queries are already per-process. An empty
   // list matches nothing (the resolver never sends one; it sends a no-match sentinel instead).
-  const processList =
-    filters.processIds ?? (filters.processId ? [filters.processId] : null);
+  const processList = filters.processIds ?? (filters.processId ? [filters.processId] : null);
   const narrowed = Boolean(filters.branchId) || processList !== null;
-  const realMonths = await swrCache(
-    "real-months",
-    REAL_MONTHS_TTL_MS,
-    getRealMonths,
-  );
+  const realMonths = await swrCache("real-months", REAL_MONTHS_TTL_MS, getRealMonths);
   if (realMonths.length === 0) {
     return {
       realMonths: [],
@@ -207,12 +181,7 @@ export async function getPnlTrend(
   }
 
   const branchClause = filters.branchId ? "AND ccm.branch_id = ?" : "";
-  const processClause =
-    processList === null
-      ? ""
-      : processList.length
-        ? "AND pm.id IN (?)"
-        : "AND 1 = 0";
+  const processClause = processList === null ? "" : processList.length ? "AND pm.id IN (?)" : "AND 1 = 0";
   const revenueParams: unknown[] = [realMonths];
   if (filters.branchId) revenueParams.push(filters.branchId);
   if (processList?.length) revenueParams.push(processList);
@@ -228,7 +197,7 @@ export async function getPnlTrend(
          ON bips.cost_centre_code COLLATE utf8mb4_unicode_ci = ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
       WHERE bips.period_code IN (?) ${branchClause} ${processClause} AND ${notDialDeskProcessSql("pm", "pbm")}
       GROUP BY pm.id, pm.process_name, bips.period_code`,
-    revenueParams,
+    revenueParams
   );
 
   const costParams: unknown[] = [realMonths];
@@ -261,7 +230,7 @@ export async function getPnlTrend(
   const runCost = async (months: string[]): Promise<RowDataPacket[]> => {
     // Hint overrides the API session's max_execution_time: years of salary lines, cached for hours.
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT /*+ MAX_EXECUTION_TIME(900000) */ pm.id AS processId, pm.process_name AS processName,
+    `SELECT /*+ MAX_EXECUTION_TIME(900000) */ pm.id AS processId, pm.process_name AS processName,
             sr.run_month AS period,
             SUM(${peopleCostSql("spl")}) AS cost,
             COUNT(DISTINCT spl.employee_id) AS headcount
@@ -273,7 +242,7 @@ export async function getPnlTrend(
        LEFT JOIN branch_master pbm ON pbm.id = pm.branch_id
       WHERE sr.run_month IN (?) ${branchClause ? `AND ${costAttr.effectiveBranchExpr} = ?` : ""} ${processClause} AND ${notDialDeskProcessSql("pm", "pbm")}
       GROUP BY pm.id, pm.process_name, sr.run_month`,
-      [months, ...costParams.slice(1)],
+    [months, ...costParams.slice(1)]
     );
     return rows;
   };
@@ -281,15 +250,8 @@ export async function getPnlTrend(
   // over a minute on the production database — the endpoint 504'd at the gateway. Only the last few
   // months can still move; the rest is served from a long-lived cache (see swrCache).
   const hotMonths = realMonths.slice(-TREND_HOT_MONTHS);
-  const coldMonths = realMonths.slice(
-    0,
-    Math.max(0, realMonths.length - TREND_HOT_MONTHS),
-  );
-  const coldKey = JSON.stringify({
-    b: filters.branchId ?? null,
-    p: processList ? [...processList].sort() : null,
-    m: coldMonths.length,
-  });
+  const coldMonths = realMonths.slice(0, Math.max(0, realMonths.length - TREND_HOT_MONTHS));
+  const coldKey = JSON.stringify({ b: filters.branchId ?? null, p: processList ? [...processList].sort() : null, m: coldMonths.length });
   const [coldCost, hotCost] = await Promise.all([
     coldMonths.length ? swrCache(`cold-cost:${coldKey}`, HISTORY_TTL_MS, () => runCost(coldMonths)) : Promise.resolve([] as RowDataPacket[]),
     // Cached too (2026-09-30): this read scans every salary line of the recent months (>60s on production,
@@ -320,18 +282,12 @@ export async function getPnlTrend(
   };
 
   for (const row of revenueRows) {
-    const bucket = ensure(
-      String(row.processId),
-      String(row.processName ?? "Unnamed process"),
-    );
+    const bucket = ensure(String(row.processId), String(row.processName ?? "Unnamed process"));
     const month = ensureMonth(bucket, String(row.period));
     month.revenue += n(row.revenue);
   }
   for (const row of costRows) {
-    const bucket = ensure(
-      String(row.processId),
-      String(row.processName ?? "Unnamed process"),
-    );
+    const bucket = ensure(String(row.processId), String(row.processName ?? "Unnamed process"));
     const month = ensureMonth(bucket, String(row.period));
     month.cost += n(row.cost);
     month.headcount += n(row.headcount);
@@ -341,21 +297,9 @@ export async function getPnlTrend(
   const companyMap = new Map<string, PnlTrendMonth>();
   for (const [processId, entry] of byProcess) {
     const months = realMonths.map((period) => {
-      const m = entry.months.get(period) ?? {
-        period,
-        revenue: 0,
-        cost: 0,
-        margin: 0,
-        headcount: 0,
-      };
+      const m = entry.months.get(period) ?? { period, revenue: 0, cost: 0, margin: 0, headcount: 0 };
       m.margin = m.revenue - m.cost;
-      const c = companyMap.get(period) ?? {
-        period,
-        revenue: 0,
-        cost: 0,
-        margin: 0,
-        headcount: 0,
-      };
+      const c = companyMap.get(period) ?? { period, revenue: 0, cost: 0, margin: 0, headcount: 0 };
       c.revenue += m.revenue;
       c.cost += m.cost;
       c.margin += m.margin;
@@ -368,13 +312,7 @@ export async function getPnlTrend(
   processes.sort((a, b) => a.processName.localeCompare(b.processName));
 
   const company: PnlTrendMonth[] = realMonths.map((p) => {
-    const m = companyMap.get(p) ?? {
-      period: p,
-      revenue: 0,
-      cost: 0,
-      margin: 0,
-      headcount: 0,
-    };
+    const m = companyMap.get(p) ?? { period: p, revenue: 0, cost: 0, margin: 0, headcount: 0 };
     return { ...m, source: "mas_hrms" as const };
   });
 
@@ -387,17 +325,12 @@ export async function getPnlTrend(
     revenueRealRange: null,
     costRealRange: null,
     overlapRange: null,
-    caveat:
-      "Historical db_bill trend is only available on the unfiltered company view (no branch/process filter).",
+    caveat: "Historical db_bill trend is only available on the unfiltered company view (no branch/process filter).",
   };
 
   if (!narrowed) {
     try {
-      const history = await swrCache(
-        `dbbill-history:${realMonths.length}`,
-        HISTORY_TTL_MS,
-        () => getDbBillHistory(new Set(realMonths)),
-      );
+      const history = await swrCache(`dbbill-history:${realMonths.length}`, HISTORY_TTL_MS, () => getDbBillHistory(new Set(realMonths)));
       companyHistory = history.months;
       historyDataStatus = {
         available: history.months.length > 0,
@@ -426,40 +359,21 @@ export async function getPnlTrend(
   let processHistoryRevenue: PnlTrendResult["processHistoryRevenue"] = [];
   if (!narrowed) {
     try {
-      const [processRows] = await db.query<RowDataPacket[]>(
-        `SELECT pm.id, pm.process_name FROM process_master pm LEFT JOIN branch_master pbm ON pbm.id = pm.branch_id WHERE ${notDialDeskProcessSql("pm", "pbm")}`,
-      );
+      const [processRows] = await db.query<RowDataPacket[]>(`SELECT pm.id, pm.process_name FROM process_master pm LEFT JOIN branch_master pbm ON pbm.id = pm.branch_id WHERE ${notDialDeskProcessSql("pm", "pbm")}`);
       const byNormalizedName = new Map<string, { id: string; name: string }>();
       for (const row of processRows) {
-        const norm = String(row.process_name ?? "")
-          .trim()
-          .toUpperCase();
+        const norm = String(row.process_name ?? "").trim().toUpperCase();
         if (norm && !byNormalizedName.has(norm)) {
-          byNormalizedName.set(norm, {
-            id: String(row.id),
-            name: String(row.process_name),
-          });
+          byNormalizedName.set(norm, { id: String(row.id), name: String(row.process_name) });
         }
       }
-      const historyByProcess = await swrCache(
-        "dbbill-history-by-process",
-        HISTORY_TTL_MS,
-        () => getDbBillHistoryByProcess(),
-      );
+      const historyByProcess = await swrCache("dbbill-history-by-process", HISTORY_TTL_MS, () => getDbBillHistoryByProcess());
       for (const entry of historyByProcess) {
-        const match = byNormalizedName.get(
-          entry.processName.trim().toUpperCase(),
-        );
+        const match = byNormalizedName.get(entry.processName.trim().toUpperCase());
         if (!match) continue; // db_bill cost_process value has no process_master counterpart
-        processHistoryRevenue.push({
-          processId: match.id,
-          processName: match.name,
-          months: entry.months,
-        });
+        processHistoryRevenue.push({ processId: match.id, processName: match.name, months: entry.months });
       }
-      processHistoryRevenue.sort((a, b) =>
-        a.processName.localeCompare(b.processName),
-      );
+      processHistoryRevenue.sort((a, b) => a.processName.localeCompare(b.processName));
     } catch (error) {
       // Leave processHistoryRevenue empty rather than fail the whole trend response — this is an
       // additive enrichment, not a required field.
@@ -512,17 +426,9 @@ function buildYoy(monthsIn: PnlTrendMonth[]): PnlTrendYoyYear[] {
       return { month: Number(m.period.split("-")[1]), cumulativeMargin: cum };
     });
     const monthNumbers = new Set(points.map((p) => p.month));
-    const complete =
-      monthNumbers.size === 12 &&
-      Array.from({ length: 12 }, (_, i) => i + 1).every((mo) =>
-        monthNumbers.has(mo),
-      );
+    const complete = monthNumbers.size === 12 && Array.from({ length: 12 }, (_, i) => i + 1).every((mo) => monthNumbers.has(mo));
     const sources = new Set(list.map((m) => m.source));
-    const source: "mas_hrms" | "db_bill" | "mixed" =
-      sources.size > 1
-        ? "mixed"
-        : ((sources.values().next().value as
-            "mas_hrms" | "db_bill" | undefined) ?? "db_bill");
+    const source: "mas_hrms" | "db_bill" | "mixed" = sources.size > 1 ? "mixed" : ((sources.values().next().value as "mas_hrms" | "db_bill" | undefined) ?? "db_bill");
     years.push({ year, points, complete, source });
   }
   years.sort((a, b) => a.year - b.year);

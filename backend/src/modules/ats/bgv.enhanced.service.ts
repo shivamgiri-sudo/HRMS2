@@ -1,6 +1,6 @@
-import { db } from "../../db/mysql.js";
-import { RowDataPacket, ResultSetHeader } from "mysql2/promise";
-import { logSensitiveAction } from "../../shared/auditLog.js";
+import { db } from '../../db/mysql.js';
+import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import { logSensitiveAction } from '../../shared/auditLog.js';
 
 /**
  * BGV Enhanced Service
@@ -9,16 +9,9 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 
 export interface BGVRequest {
   candidate_id: string;
-  verification_type:
-    | "aadhaar"
-    | "pan"
-    | "education"
-    | "employment"
-    | "address"
-    | "criminal"
-    | "name_match";
+  verification_type: 'aadhaar' | 'pan' | 'education' | 'employment' | 'address' | 'criminal' | 'name_match';
   document_number?: string;
-  verification_method: "manual" | "digilocker" | "api";
+  verification_method: 'manual' | 'digilocker' | 'api';
   initiated_by: string;
   remarks?: string;
 }
@@ -35,10 +28,7 @@ function nameMatches(expected: string, actual: string): boolean {
   const left = normalizeName(expected);
   const right = normalizeName(actual);
   if (!left || !right) return false;
-  return (
-    left === right ||
-    left.split(" ").sort().join(" ") === right.split(" ").sort().join(" ")
-  );
+  return left === right || left.split(" ").sort().join(" ") === right.split(" ").sort().join(" ");
 }
 
 async function ensureBgvRecord(candidateId: string): Promise<string> {
@@ -63,7 +53,7 @@ export interface BGVStatus {
   mobile: string;
   email: string;
   current_stage: string;
-  verification_status: "pending" | "in_progress" | "verified" | "failed";
+  verification_status: 'pending' | 'in_progress' | 'verified' | 'failed';
   aadhaar_status: string | null;
   pan_status: string | null;
   education_status: string | null;
@@ -111,7 +101,7 @@ export async function getPendingBGVRequests(): Promise<BGVStatus[]> {
     LEFT JOIN ats_bgv_verification bgv ON bgv.candidate_id = c.id
     WHERE c.current_stage = 'bgv_pending'
     AND c.active_status = 1
-    ORDER BY c.created_at DESC`,
+    ORDER BY c.created_at DESC`
   );
 
   return results as BGVStatus[];
@@ -139,11 +129,11 @@ export async function getBGVDetails(candidateId: string): Promise<{
     FROM ats_candidate c
     LEFT JOIN ats_bgv_verification bgv ON bgv.candidate_id = c.id
     WHERE c.id = ?`,
-    [candidateId],
+    [candidateId]
   );
 
   if (candidateRes.length === 0) {
-    throw new Error("Candidate not found");
+    throw new Error('Candidate not found');
   }
 
   // Get verification details
@@ -160,7 +150,7 @@ export async function getBGVDetails(candidateId: string): Promise<{
     LEFT JOIN employees e ON e.id = vd.initiated_by
     WHERE vd.candidate_id = ?
     ORDER BY vd.created_at DESC`,
-    [candidateId],
+    [candidateId]
   );
 
   return {
@@ -184,23 +174,23 @@ export async function initiateBGVVerification(input: BGVRequest): Promise<{
 
     // Check if candidate exists and is in correct stage
     const [candidateRes] = await conn.execute<RowDataPacket[]>(
-      "SELECT id, current_stage FROM ats_candidate WHERE id = ?",
-      [input.candidate_id],
+      'SELECT id, current_stage FROM ats_candidate WHERE id = ?',
+      [input.candidate_id]
     );
 
     if (candidateRes.length === 0) {
-      throw new Error("Candidate not found");
+      throw new Error('Candidate not found');
     }
 
     const candidate = candidateRes[0];
-    if (candidate.current_stage !== "bgv_pending") {
-      throw new Error("Candidate is not in BGV pending stage");
+    if (candidate.current_stage !== 'bgv_pending') {
+      throw new Error('Candidate is not in BGV pending stage');
     }
 
     // Check if BGV record exists
     const [bgvRes] = await conn.execute<RowDataPacket[]>(
-      "SELECT id FROM ats_bgv_verification WHERE candidate_id = ?",
-      [input.candidate_id],
+      'SELECT id FROM ats_bgv_verification WHERE candidate_id = ?',
+      [input.candidate_id]
     );
 
     let bgvId: string;
@@ -211,15 +201,15 @@ export async function initiateBGVVerification(input: BGVRequest): Promise<{
         `INSERT INTO ats_bgv_verification (
           candidate_id, verification_status, overall_progress
         ) VALUES (?, 'in_progress', 0)`,
-        [input.candidate_id],
+        [input.candidate_id]
       );
       bgvId = insertRes.insertId.toString();
     } else {
       bgvId = bgvRes[0].id;
       // Update status to in_progress
       await conn.execute(
-        "UPDATE ats_bgv_verification SET verification_status = ? WHERE id = ?",
-        ["in_progress", bgvId],
+        'UPDATE ats_bgv_verification SET verification_status = ? WHERE id = ?',
+        ['in_progress', bgvId]
       );
     }
 
@@ -237,7 +227,7 @@ export async function initiateBGVVerification(input: BGVRequest): Promise<{
         input.document_number || null,
         input.initiated_by,
         input.remarks || null,
-      ],
+      ]
     );
 
     // Update specific status column in BGV record.
@@ -245,17 +235,13 @@ export async function initiateBGVVerification(input: BGVRequest): Promise<{
     // doc-check columns do. name_match writes via runNameMatchCheck() instead.
     const statusColumn = `${input.verification_type}_status`;
     const VALID_BGV_STATUS_COLUMNS = [
-      "aadhaar_status",
-      "pan_status",
-      "education_status",
-      "employment_status",
-      "address_status",
-      "criminal_status",
+      'aadhaar_status', 'pan_status', 'education_status',
+      'employment_status', 'address_status', 'criminal_status',
     ];
     if (VALID_BGV_STATUS_COLUMNS.includes(statusColumn)) {
       await conn.execute(
         `UPDATE ats_bgv_verification SET ${statusColumn} = ? WHERE id = ?`,
-        ["in_progress", bgvId],
+        ['in_progress', bgvId]
       );
     }
 
@@ -263,7 +249,7 @@ export async function initiateBGVVerification(input: BGVRequest): Promise<{
 
     return {
       success: true,
-      message: "BGV verification initiated successfully",
+      message: 'BGV verification initiated successfully',
       verification_id: detailRes.insertId.toString(),
     };
   } catch (error: unknown) {
@@ -279,8 +265,8 @@ export async function initiateBGVVerification(input: BGVRequest): Promise<{
  */
 export async function updateVerificationStatus(
   verificationId: string,
-  status: "verified" | "failed",
-  remarks?: string,
+  status: 'verified' | 'failed',
+  remarks?: string
 ): Promise<{ success: boolean; message: string }> {
   const conn = await db.getConnection();
 
@@ -289,12 +275,12 @@ export async function updateVerificationStatus(
 
     // Get verification detail
     const [detailRes] = await conn.execute<RowDataPacket[]>(
-      "SELECT bgv_id, candidate_id, verification_type FROM ats_bgv_verification_details WHERE id = ?",
-      [verificationId],
+      'SELECT bgv_id, candidate_id, verification_type FROM ats_bgv_verification_details WHERE id = ?',
+      [verificationId]
     );
 
     if (detailRes.length === 0) {
-      throw new Error("Verification not found");
+      throw new Error('Verification not found');
     }
 
     const detail = detailRes[0];
@@ -304,14 +290,14 @@ export async function updateVerificationStatus(
       `UPDATE ats_bgv_verification_details
        SET status = ?, verified_at = NOW(), remarks = ?
        WHERE id = ?`,
-      [status, remarks || null, verificationId],
+      [status, remarks || null, verificationId]
     );
 
     // Update status column in BGV record
     const statusColumn = `${detail.verification_type}_status`;
     await conn.execute(
       `UPDATE ats_bgv_verification SET ${statusColumn} = ? WHERE id = ?`,
-      [status, detail.bgv_id],
+      [status, detail.bgv_id]
     );
 
     // Calculate overall progress
@@ -321,18 +307,16 @@ export async function updateVerificationStatus(
         COUNT(*) as total_count
        FROM ats_bgv_verification_details
        WHERE bgv_id = ?`,
-      [detail.bgv_id],
+      [detail.bgv_id]
     );
 
     const progress = progressRes[0];
-    const overallProgress = Math.round(
-      (progress.verified_count / progress.total_count) * 100,
-    );
+    const overallProgress = Math.round((progress.verified_count / progress.total_count) * 100);
 
     // Update overall progress
     await conn.execute(
-      "UPDATE ats_bgv_verification SET overall_progress = ? WHERE id = ?",
-      [overallProgress, detail.bgv_id],
+      'UPDATE ats_bgv_verification SET overall_progress = ? WHERE id = ?',
+      [overallProgress, detail.bgv_id]
     );
 
     // Check if all verifications are complete
@@ -340,7 +324,7 @@ export async function updateVerificationStatus(
       `SELECT COUNT(*) as pending_count
        FROM ats_bgv_verification_details
        WHERE bgv_id = ? AND status IN ('pending', 'in_progress')`,
-      [detail.bgv_id],
+      [detail.bgv_id]
     );
 
     if (allVerifiedRes[0].pending_count === 0) {
@@ -349,25 +333,24 @@ export async function updateVerificationStatus(
         `SELECT COUNT(*) as failed_count
          FROM ats_bgv_verification_details
          WHERE bgv_id = ? AND status = 'failed'`,
-        [detail.bgv_id],
+        [detail.bgv_id]
       );
 
-      const finalStatus = failedRes[0].failed_count > 0 ? "failed" : "verified";
+      const finalStatus = failedRes[0].failed_count > 0 ? 'failed' : 'verified';
 
       // Update BGV record
       await conn.execute(
         `UPDATE ats_bgv_verification
          SET verification_status = ?, completed_at = NOW()
          WHERE id = ?`,
-        [finalStatus, detail.bgv_id],
+        [finalStatus, detail.bgv_id]
       );
 
       // Update candidate stage
-      const nextStage =
-        finalStatus === "verified" ? "bgv_verified" : "bgv_failed";
+      const nextStage = finalStatus === 'verified' ? 'bgv_verified' : 'bgv_failed';
       await conn.execute(
-        "UPDATE ats_candidate SET current_stage = ? WHERE id = ?",
-        [nextStage, detail.candidate_id],
+        'UPDATE ats_candidate SET current_stage = ? WHERE id = ?',
+        [nextStage, detail.candidate_id]
       );
     }
 
@@ -375,7 +358,7 @@ export async function updateVerificationStatus(
 
     return {
       success: true,
-      message: "Verification status updated successfully",
+      message: 'Verification status updated successfully',
     };
   } catch (error: unknown) {
     await conn.rollback();
@@ -385,12 +368,9 @@ export async function updateVerificationStatus(
   }
 }
 
-export async function runNameMatchCheck(
-  candidateId: string,
-  actorUserId: string,
-): Promise<{
+export async function runNameMatchCheck(candidateId: string, actorUserId: string): Promise<{
   success: boolean;
-  status: "verified" | "manual_review";
+  status: 'verified' | 'manual_review';
   result: Record<string, unknown>;
 }> {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -420,20 +400,16 @@ export async function runNameMatchCheck(
     [candidateId],
   );
   const row = rows[0];
-  if (!row)
-    throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
+  if (!row) throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
 
-  const baseline = String(row.profile_name ?? row.candidate_name ?? "").trim();
+  const baseline = String(row.profile_name ?? row.candidate_name ?? '').trim();
   const checks = [
-    { source: "aadhaar", value: row.aadhaar_name ?? row.full_name_aadhaar },
-    { source: "pan", value: row.pan_name },
-    {
-      source: "bank",
-      value: row.bank_verified_name ?? row.account_holder_name,
-    },
-    { source: "education", value: row.education_name },
+    { source: 'aadhaar', value: row.aadhaar_name ?? row.full_name_aadhaar },
+    { source: 'pan', value: row.pan_name },
+    { source: 'bank', value: row.bank_verified_name ?? row.account_holder_name },
+    { source: 'education', value: row.education_name },
   ].map((item) => {
-    const value = String(item.value ?? "").trim();
+    const value = String(item.value ?? '').trim();
     return {
       source: item.source,
       available: Boolean(value),
@@ -441,7 +417,7 @@ export async function runNameMatchCheck(
     };
   });
   const hasMismatch = checks.some((item) => item.matched === false);
-  const status = hasMismatch ? "manual_review" : "verified";
+  const status = hasMismatch ? 'manual_review' : 'verified';
   const result = {
     baseline_name: baseline,
     checks,
@@ -458,9 +434,7 @@ export async function runNameMatchCheck(
       candidateId,
       status,
       actorUserId,
-      hasMismatch
-        ? "Name mismatch requires HR manual review"
-        : "Name match verified",
+      hasMismatch ? 'Name mismatch requires HR manual review' : 'Name match verified',
       JSON.stringify(result),
     ],
   );
@@ -474,9 +448,9 @@ export async function runNameMatchCheck(
 
   await logSensitiveAction({
     actor_user_id: actorUserId,
-    action_type: "bgv_name_match_checked",
-    module_key: "ats_bgv",
-    entity_type: "ats_bgv_verification_details",
+    action_type: 'bgv_name_match_checked',
+    module_key: 'ats_bgv',
+    entity_type: 'ats_bgv_verification_details',
     entity_id: candidateId,
     change_summary: result,
   });
@@ -490,9 +464,7 @@ export async function overrideNameMatchReview(params: {
   reason: string;
 }): Promise<{ success: boolean }> {
   if (!params.reason.trim()) {
-    throw Object.assign(new Error("Override reason is required"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error('Override reason is required'), { statusCode: 400 });
   }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, result_data
@@ -503,10 +475,7 @@ export async function overrideNameMatchReview(params: {
     [params.candidateId],
   );
   const detail = rows[0];
-  if (!detail)
-    throw Object.assign(new Error("Name match review not found"), {
-      statusCode: 404,
-    });
+  if (!detail) throw Object.assign(new Error('Name match review not found'), { statusCode: 404 });
 
   await db.execute(
     `UPDATE ats_bgv_verification_details
@@ -521,9 +490,9 @@ export async function overrideNameMatchReview(params: {
 
   await logSensitiveAction({
     actor_user_id: params.actorUserId,
-    action_type: "bgv_name_match_hr_override",
-    module_key: "ats_bgv",
-    entity_type: "ats_bgv_verification_details",
+    action_type: 'bgv_name_match_hr_override',
+    module_key: 'ats_bgv',
+    entity_type: 'ats_bgv_verification_details',
     entity_id: String(detail.id),
     reason: params.reason.trim(),
     change_summary: {
@@ -557,7 +526,7 @@ export async function getBGVStatistics(): Promise<{
         THEN DATEDIFF(completed_at, created_at)
         ELSE NULL
       END) as avg_completion_time_days
-    FROM ats_bgv_verification`,
+    FROM ats_bgv_verification`
   );
 
   return {
@@ -565,8 +534,6 @@ export async function getBGVStatistics(): Promise<{
     in_progress: results[0]?.in_progress || 0,
     verified: results[0]?.verified || 0,
     failed: results[0]?.failed || 0,
-    avg_completion_time_days: Math.round(
-      results[0]?.avg_completion_time_days || 0,
-    ),
+    avg_completion_time_days: Math.round(results[0]?.avg_completion_time_days || 0),
   };
 }

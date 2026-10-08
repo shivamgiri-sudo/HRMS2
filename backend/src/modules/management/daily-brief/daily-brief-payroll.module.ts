@@ -25,10 +25,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import {
-  PAYROLL_ROLES,
-  normalizeRoleInputs,
-} from "../../../platform/policy/roles.js";
+import { PAYROLL_ROLES, normalizeRoleInputs } from "../../../platform/policy/roles.js";
 import { CLOSED_RUN_STATUSES_SQL } from "../../payroll/run-status.js";
 import { payrollGovernanceService } from "../../payroll/payroll-governance.service.js";
 import { payrollBranchReadinessService } from "../../payroll/payroll-branch-readiness.service.js";
@@ -39,9 +36,7 @@ import { PAYROLL_MAX_RUNS_PER_BRIEF } from "./daily-brief-editorial-constants.js
 // Role gate
 // ---------------------------------------------------------------------------
 
-const PAYROLL_ROLE_SET = new Set(
-  PAYROLL_ROLES.map((role) => String(role).toLowerCase()),
-);
+const PAYROLL_ROLE_SET = new Set(PAYROLL_ROLES.map((role) => String(role).toLowerCase()));
 
 /**
  * Whether `role` is entitled to payroll readiness detail. Uses the same
@@ -52,9 +47,7 @@ const PAYROLL_ROLE_SET = new Set(
  *
  * Fails CLOSED: an unrecognised or empty role string returns false, never true.
  */
-export function isPayrollEntitledRole(
-  role: string | null | undefined,
-): boolean {
+export function isPayrollEntitledRole(role: string | null | undefined): boolean {
   if (!role || typeof role !== "string" || role.trim() === "") return false;
   const normalized = normalizeRoleInputs([role]);
   return normalized.some((r) => PAYROLL_ROLE_SET.has(String(r).toLowerCase()));
@@ -94,11 +87,7 @@ export interface PayrollReadinessModuleResult {
 function notApplicableResult(detail: string): PayrollReadinessModuleResult {
   return {
     applicable: false,
-    sourceHealth: {
-      module: "payroll_readiness_detail",
-      state: "NOT_APPLICABLE",
-      detail,
-    },
+    sourceHealth: { module: "payroll_readiness_detail", state: "NOT_APPLICABLE", detail },
     runs: [],
     pendingApprovalsCount: 0,
   };
@@ -122,9 +111,7 @@ export async function buildPayrollReadinessModule(
   reportingDate: string,
 ): Promise<PayrollReadinessModuleResult> {
   if (!isPayrollEntitledRole(recipientRole)) {
-    return notApplicableResult(
-      `Role '${recipientRole}' is not payroll-entitled (see PAYROLL_ROLES).`,
-    );
+    return notApplicableResult(`Role '${recipientRole}' is not payroll-entitled (see PAYROLL_ROLES).`);
   }
 
   try {
@@ -145,19 +132,13 @@ export async function buildPayrollReadinessModule(
     const clauses = [`LOWER(spr.status) NOT IN (${CLOSED_RUN_STATUSES_SQL})`];
     const params: unknown[] = [];
     if (branchIds.length > 0 || processIds.length > 0) {
-      const scopeClauses = [
-        "(spr.branch_id IS NULL AND spr.process_id IS NULL)",
-      ];
+      const scopeClauses = ["(spr.branch_id IS NULL AND spr.process_id IS NULL)"];
       if (branchIds.length > 0) {
-        scopeClauses.push(
-          `spr.branch_id IN (${branchIds.map(() => "?").join(",")})`,
-        );
+        scopeClauses.push(`spr.branch_id IN (${branchIds.map(() => "?").join(",")})`);
         params.push(...branchIds);
       }
       if (processIds.length > 0) {
-        scopeClauses.push(
-          `spr.process_id IN (${processIds.map(() => "?").join(",")})`,
-        );
+        scopeClauses.push(`spr.process_id IN (${processIds.map(() => "?").join(",")})`);
         params.push(...processIds);
       }
       clauses.push(`(${scopeClauses.join(" OR ")})`);
@@ -191,11 +172,7 @@ export async function buildPayrollReadinessModule(
     if (runRows.length === 0) {
       return {
         applicable: true,
-        sourceHealth: {
-          module: "payroll_readiness_detail",
-          state: "NO_DATA",
-          asOfDate: reportingDate,
-        },
+        sourceHealth: { module: "payroll_readiness_detail", state: "NO_DATA", asOfDate: reportingDate },
         runs: [],
         pendingApprovalsCount: 0,
       };
@@ -205,12 +182,8 @@ export async function buildPayrollReadinessModule(
     let pendingApprovalsCount = 0;
 
     for (const row of runRows) {
-      const financeApproved = Boolean(
-        row.finance_approved_at || row.finance_approved_by,
-      );
-      const ceoAcknowledged = Boolean(
-        row.ceo_acknowledged_at || row.ceo_acknowledged_by,
-      );
+      const financeApproved = Boolean(row.finance_approved_at || row.finance_approved_by);
+      const ceoAcknowledged = Boolean(row.ceo_acknowledged_at || row.ceo_acknowledged_by);
       if (!financeApproved || !ceoAcknowledged) pendingApprovalsCount += 1;
 
       // Reuse the canonical readiness gate rather than recomputing category logic.
@@ -236,19 +209,10 @@ export async function buildPayrollReadinessModule(
       // recomputing it. Best-effort: a failure here degrades to empty gap lists rather
       // than failing the whole run summary, since blockerCount above already fails closed
       // for the calculation-readiness half of the picture.
-      let branchReadinessGaps = {
-        blockedBranches: [] as string[],
-        readyBranches: [] as string[],
-      };
+      let branchReadinessGaps = { blockedBranches: [] as string[], readyBranches: [] as string[] };
       try {
-        const validation =
-          await payrollBranchReadinessService.validatePayrollRunCreation(
-            row.run_month,
-          );
-        branchReadinessGaps = {
-          blockedBranches: validation.blocked,
-          readyBranches: validation.ready,
-        };
+        const validation = await payrollBranchReadinessService.validatePayrollRunCreation(row.run_month);
+        branchReadinessGaps = { blockedBranches: validation.blocked, readyBranches: validation.ready };
       } catch {
         // best-effort, consistent with payrollBranchReadinessService's own internal fallbacks
       }
@@ -271,11 +235,7 @@ export async function buildPayrollReadinessModule(
 
     return {
       applicable: true,
-      sourceHealth: {
-        module: "payroll_readiness_detail",
-        state: "AVAILABLE",
-        asOfDate: reportingDate,
-      },
+      sourceHealth: { module: "payroll_readiness_detail", state: "AVAILABLE", asOfDate: reportingDate },
       runs,
       pendingApprovalsCount,
     };
@@ -326,9 +286,7 @@ export async function buildPayrollOperationalHint(
           AND resolved_at IS NULL`,
       [reportingDate, ...teamEmployeeIds],
     );
-    const openCount = Number(
-      (rows[0] as { open_count?: unknown } | undefined)?.open_count ?? 0,
-    );
+    const openCount = Number((rows[0] as { open_count?: unknown } | undefined)?.open_count ?? 0);
     if (!Number.isFinite(openCount) || openCount <= 0) return null;
 
     return `${openCount} unresolved attendance record${openCount === 1 ? "" : "s"} may block payroll readiness for your team.`;

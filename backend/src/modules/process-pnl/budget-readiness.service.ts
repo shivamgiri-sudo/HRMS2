@@ -1,20 +1,13 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  listActiveCostCentres,
-  getMonthlyDrivers,
-  type CostCentreOption,
-} from "./branch-budget-allocation.service.js";
+import { listActiveCostCentres, getMonthlyDrivers, type CostCentreOption } from "./branch-budget-allocation.service.js";
 import { getBranchMeterConsumption } from "./meter.service.js";
 import { getCostCentreGradeWeightedCost } from "./grade-engine.service.js";
 
 // Structurally identical to the Executor interfaces used across this session's other
 // process-pnl services — same dependency-injection pattern for testability.
 interface Executor {
-  execute<T extends RowDataPacket[] = RowDataPacket[]>(
-    sql: string,
-    params?: unknown[],
-  ): Promise<[T, unknown]>;
+  execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]>;
 }
 
 /**
@@ -72,76 +65,51 @@ export interface SharingMethodReadiness {
 export async function checkSharingMethodReadiness(
   branchId: string,
   periodCode: string,
-  executor: Executor = db,
+  executor: Executor = db
 ): Promise<SharingMethodReadiness[]> {
   const costCentres = await listActiveCostCentres(branchId, executor);
 
-  function toReadiness(
-    method: WeightedSharingMethod,
-    missing: CostCentreOption[],
-  ): SharingMethodReadiness {
+  function toReadiness(method: WeightedSharingMethod, missing: CostCentreOption[]): SharingMethodReadiness {
     return {
       method,
       label: METHOD_LABELS[method],
       ready: costCentres.length > 0 && missing.length === 0,
-      missingCostCentres: missing.map((cc) => ({
-        id: cc.id,
-        name: cc.costCentreName,
-      })),
+      missingCostCentres: missing.map((cc) => ({ id: cc.id, name: cc.costCentreName })),
     };
   }
 
   if (costCentres.length === 0) {
-    return (Object.keys(METHOD_LABELS) as WeightedSharingMethod[]).map(
-      (method) => toReadiness(method, []),
-    );
+    return (Object.keys(METHOD_LABELS) as WeightedSharingMethod[]).map((method) => toReadiness(method, []));
   }
 
   const drivers = await getMonthlyDrivers(branchId, periodCode, executor);
   const driverByCostCentre = new Map(drivers.map((d) => [d.costCentreId, d]));
 
-  const missingManpower = costCentres.filter(
-    (cc) => (driverByCostCentre.get(cc.id)?.plannedHeadcount ?? 0) <= 0,
-  );
-  const missingRevenue = costCentres.filter(
-    (cc) => (driverByCostCentre.get(cc.id)?.calculatedPlannedRevenue ?? 0) <= 0,
-  );
+  const missingManpower = costCentres.filter((cc) => (driverByCostCentre.get(cc.id)?.plannedHeadcount ?? 0) <= 0);
+  const missingRevenue = costCentres.filter((cc) => (driverByCostCentre.get(cc.id)?.calculatedPlannedRevenue ?? 0) <= 0);
 
   // Meter-wise is ready as soon as ANY cost centre is metered: an unmetered cost centre simply
   // carries no share of a metered cost. Reporting "not ready" while computeLineAllocations
   // allocates the line happily would contradict the engine. The unmetered cost centres are still
   // listed, as information rather than a blocker.
-  const meterConsumption = await getBranchMeterConsumption(
-    branchId,
-    periodCode,
-    executor,
-  );
+  const meterConsumption = await getBranchMeterConsumption(branchId, periodCode, executor);
   const unmetered = costCentres.filter((cc) => !meterConsumption.has(cc.id));
   const meterReady = meterConsumption.size > 0;
 
   const missingGrade: CostCentreOption[] = [];
   for (const cc of costCentres) {
-    const cost = await getCostCentreGradeWeightedCost(
-      cc.id,
-      periodCode,
-      executor,
-    );
+    const cost = await getCostCentreGradeWeightedCost(cc.id, periodCode, executor);
     if (!cost) missingGrade.push(cc);
   }
 
-  const simpleDriverReadiness = (
-    Object.keys(SIMPLE_DRIVER_FIELDS) as (keyof typeof SIMPLE_DRIVER_FIELDS)[]
-  ).map((method) =>
-    toReadiness(
+  const simpleDriverReadiness = (Object.keys(SIMPLE_DRIVER_FIELDS) as (keyof typeof SIMPLE_DRIVER_FIELDS)[])
+    .map((method) => toReadiness(
       method,
       costCentres.filter((cc) => {
         const driver = driverByCostCentre.get(cc.id);
-        return (
-          !driver || Number(driver[SIMPLE_DRIVER_FIELDS[method]] ?? 0) <= 0
-        );
-      }),
-    ),
-  );
+        return !driver || Number(driver[SIMPLE_DRIVER_FIELDS[method]] ?? 0) <= 0;
+      })
+    ));
 
   return [
     toReadiness("total_manpower", missingManpower),
@@ -167,11 +135,11 @@ export interface BudgetException {
  */
 export async function checkBudgetExceptions(
   budgetId: string,
-  executor: Executor = db,
+  executor: Executor = db
 ): Promise<BudgetException[]> {
   const [headerRows] = await executor.execute<RowDataPacket[]>(
     `SELECT branch_id, period_code FROM finance_budget_header WHERE id = ? LIMIT 1`,
-    [budgetId],
+    [budgetId]
   );
   const header = headerRows[0];
   if (!header) return [];
@@ -182,7 +150,7 @@ export async function checkBudgetExceptions(
     `SELECT id, item_name, allocation_driver
        FROM finance_budget_line
       WHERE budget_id = ? AND planning_level = 'branch'`,
-    [budgetId],
+    [budgetId]
   );
   if (lines.length === 0) return [];
 
@@ -197,7 +165,7 @@ export async function checkBudgetExceptions(
     if (method === "manual") {
       const [allocRows] = await executor.execute<RowDataPacket[]>(
         `SELECT SUM(allocation_percentage) AS total FROM finance_budget_line_allocation WHERE budget_line_id = ?`,
-        [lineId],
+        [lineId]
       );
       const total = Number(allocRows[0]?.total ?? 0);
       if (Math.abs(total - 100) > 0.01) {
@@ -211,20 +179,11 @@ export async function checkBudgetExceptions(
       continue;
     }
 
-    const normalizedMethod = (
-      method === "agent_headcount" ? "total_manpower" : method
-    ) as WeightedSharingMethod;
+    const normalizedMethod = (method === "agent_headcount" ? "total_manpower" : method) as WeightedSharingMethod;
     if (!(normalizedMethod in METHOD_LABELS)) continue;
 
-    if (!readiness)
-      readiness = await checkSharingMethodReadiness(
-        branchId,
-        periodCode,
-        executor,
-      );
-    const methodReadiness = readiness.find(
-      (r) => r.method === normalizedMethod,
-    );
+    if (!readiness) readiness = await checkSharingMethodReadiness(branchId, periodCode, executor);
+    const methodReadiness = readiness.find((r) => r.method === normalizedMethod);
     if (methodReadiness && !methodReadiness.ready) {
       exceptions.push({
         lineId,

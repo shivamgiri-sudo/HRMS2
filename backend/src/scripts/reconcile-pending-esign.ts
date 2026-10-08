@@ -21,9 +21,7 @@ import { syncEsignStatus } from "../modules/integrations/luckpay/luckpay-status.
 const argv = process.argv.slice(2);
 const apply = argv.includes("--apply");
 const limit = Number(argv[argv.indexOf("--limit") + 1]) || 25;
-const employeeId = argv.includes("--employee")
-  ? argv[argv.indexOf("--employee") + 1]
-  : null;
+const employeeId = argv.includes("--employee") ? argv[argv.indexOf("--employee") + 1] : null;
 
 const TERMINAL = ["signed", "completed", "failed", "expired", "cancelled"];
 
@@ -55,21 +53,17 @@ async function main() {
     return;
   }
 
-  console.log(
-    `${rows.length} open transaction(s)${apply ? "" : "  [DRY RUN - no provider calls]"}\n`,
-  );
+  console.log(`${rows.length} open transaction(s)${apply ? "" : "  [DRY RUN - no provider calls]"}\n`);
   for (const r of rows) {
     console.log(
       `  ${String(r.employee_code).padEnd(10)} ${String(r.document_code).padEnd(24)} ` +
-        `status=${String(r.status).padEnd(9)} checklist=${String(r.checklist_status ?? "-").padEnd(18)} ` +
-        `signedFiles=${r.signed_files}  ref=${r.provider_reference_id}`,
+      `status=${String(r.status).padEnd(9)} checklist=${String(r.checklist_status ?? "-").padEnd(18)} ` +
+      `signedFiles=${r.signed_files}  ref=${r.provider_reference_id}`,
     );
   }
 
   if (!apply) {
-    console.log(
-      "\nRe-run with --apply to query the provider and store any signed artefacts.",
-    );
+    console.log("\nRe-run with --apply to query the provider and store any signed artefacts.");
     await db.end();
     return;
   }
@@ -92,21 +86,15 @@ async function main() {
         console.log(`  FAILED     ${label}  ${outcome.message ?? ""}`);
       } else {
         stillPending += 1;
-        console.log(
-          `  PENDING    ${label}  provider=${outcome.providerStatus ?? outcome.state}`,
-        );
+        console.log(`  PENDING    ${label}  provider=${outcome.providerStatus ?? outcome.state}`);
       }
     } catch (error) {
       failed += 1;
-      console.log(
-        `  ERROR      ${label}  ${error instanceof Error ? error.message : String(error)}`,
-      );
+      console.log(`  ERROR      ${label}  ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  console.log(
-    `\nrecovered=${recovered} stillPending=${stillPending} failed=${failed}`,
-  );
+  console.log(`\nrecovered=${recovered} stillPending=${stillPending} failed=${failed}`);
   await db.end();
 }
 

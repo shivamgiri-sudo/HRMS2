@@ -39,9 +39,7 @@ describe("manual quality upload", () => {
     // information_schema lookup returns nothing => table absent
     mockExecute.mockResolvedValue([[], []]);
 
-    await expect(
-      importQualityRows([ROW] as never, "user-1"),
-    ).rejects.toMatchObject({
+    await expect(importQualityRows([ROW] as never, "user-1")).rejects.toMatchObject({
       statusCode: 501,
       code: "QUALITY_AUDIT_STORAGE_ABSENT",
     });
@@ -50,7 +48,7 @@ describe("manual quality upload", () => {
   it("names the real source so the reader knows where quality data lives", async () => {
     mockExecute.mockResolvedValue([[], []]);
     await expect(importQualityRows([ROW] as never, "user-1")).rejects.toThrow(
-      /db_audit\.call_quality_assessment/,
+      /db_audit\.call_quality_assessment/
     );
   });
 

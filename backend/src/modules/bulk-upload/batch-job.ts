@@ -46,8 +46,7 @@ const RETAIN_MS = 30 * 60 * 1000;
 function sweep(): void {
   const cutoff = Date.now() - RETAIN_MS;
   for (const [key, job] of jobs) {
-    if (job.phase !== "running" && (job.finishedAt ?? 0) < cutoff)
-      jobs.delete(key);
+    if (job.phase !== "running" && (job.finishedAt ?? 0) < cutoff) jobs.delete(key);
   }
 }
 
@@ -95,13 +94,8 @@ export async function beat(batchId: string): Promise<void> {
  */
 export async function clearBeat(batchId: string): Promise<void> {
   try {
-    await db.execute(
-      `UPDATE upload_batch SET job_heartbeat_at = NULL WHERE id = ?`,
-      [batchId],
-    );
-  } catch {
-    /* as above */
-  }
+    await db.execute(`UPDATE upload_batch SET job_heartbeat_at = NULL WHERE id = ?`, [batchId]);
+  } catch { /* as above */ }
 }
 
 export function startBatchJob(
@@ -111,21 +105,14 @@ export function startBatchJob(
   onFailure?: (err: unknown) => Promise<void>,
 ): BatchJobState {
   sweep();
-  const job: BatchJobState = {
-    batchId,
-    kind,
-    phase: "running",
-    startedAt: Date.now(),
-  };
+  const job: BatchJobState = { batchId, kind, phase: "running", startedAt: Date.now() };
   jobs.set(batchId, job);
 
   void (async () => {
     await beat(batchId);
     // unref() so a running job never holds the process open at shutdown — if we are going down,
     // the heartbeat stopping is exactly the signal we want to leave behind.
-    const ticker = setInterval(() => {
-      void beat(batchId);
-    }, HEARTBEAT_MS);
+    const ticker = setInterval(() => { void beat(batchId); }, HEARTBEAT_MS);
     (ticker as unknown as { unref?: () => void }).unref?.();
     try {
       job.result = await work();
@@ -133,12 +120,9 @@ export function startBatchJob(
     } catch (err) {
       job.phase = "failed";
       job.error = (err as Error)?.message ?? String(err);
-      job.statusCode =
-        Number((err as { statusCode?: unknown })?.statusCode ?? 0) || 500;
+      job.statusCode = Number((err as { statusCode?: unknown })?.statusCode ?? 0) || 500;
       if (onFailure) {
-        await onFailure(err).catch(() => {
-          /* the original error is what matters */
-        });
+        await onFailure(err).catch(() => { /* the original error is what matters */ });
       }
     } finally {
       clearInterval(ticker);
@@ -191,12 +175,7 @@ export async function readBatchProgress(
     const r = (rows as RowDataPacket[])[0] ?? {};
     const succeeded = Number(r.succeeded ?? 0);
     const failed = Number(r.failed ?? 0);
-    return {
-      total: Number(r.total ?? 0),
-      processed: succeeded + failed,
-      succeeded,
-      failed,
-    };
+    return { total: Number(r.total ?? 0), processed: succeeded + failed, succeeded, failed };
   }
 
   if (kind === "approve") {
@@ -222,10 +201,7 @@ export async function readBatchProgress(
     } catch (err: unknown) {
       // The lock table arrives with migration 1522; before it is applied there is
       // simply no applied-count to report, which is not a reason to fail the poll.
-      if (
-        String((err as { code?: unknown })?.code ?? "") !== "ER_NO_SUCH_TABLE"
-      )
-        throw err;
+      if (String((err as { code?: unknown })?.code ?? "") !== "ER_NO_SUCH_TABLE") throw err;
       [rows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total, SUM(row_status IN ('error','failed')) AS failed
            FROM upload_batch_row WHERE upload_batch_id = ? AND created_entity_id IS NOT NULL`,
@@ -237,12 +213,7 @@ export async function readBatchProgress(
     const failed = Number(r.failed ?? 0);
     const succeeded = Number(r.succeeded ?? 0);
     // Belt and suspenders: processed can never exceed total, whatever the numbers say.
-    return {
-      total,
-      processed: Math.min(succeeded + failed, total),
-      succeeded,
-      failed,
-    };
+    return { total, processed: Math.min(succeeded + failed, total), succeeded, failed };
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -281,10 +252,7 @@ export async function readBatchProgress(
  * at all; ceiling of 6 because beyond that the limit stops being the bottleneck and row-lock
  * contention starts to be — and contention is what was failing these batches, not throughput.
  */
-export const BULK_ROW_CONCURRENCY = Math.max(
-  2,
-  Math.min(6, Math.floor(env.DB_POOL_MAX / 3)),
-);
+export const BULK_ROW_CONCURRENCY = Math.max(2, Math.min(6, Math.floor(env.DB_POOL_MAX / 3)));
 
 /** Run `task` over `items` with at most `limit` in flight, results in input order. */
 export async function mapWithConcurrency<T, R>(
@@ -294,16 +262,13 @@ export async function mapWithConcurrency<T, R>(
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
-  const workers = Array.from(
-    { length: Math.max(1, Math.min(limit, items.length)) },
-    async () => {
-      for (;;) {
-        const index = next++;
-        if (index >= items.length) return;
-        results[index] = await task(items[index], index);
-      }
-    },
-  );
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      results[index] = await task(items[index], index);
+    }
+  });
   await Promise.all(workers);
   return results;
 }

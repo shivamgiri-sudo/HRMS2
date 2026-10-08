@@ -13,14 +13,9 @@ function toNum(val: unknown): number {
  * Parse a YYYY-MM period string into first/last day boundaries.
  * Defaults to the current calendar month if absent or malformed.
  */
-function parsePeriod(period?: string): {
-  periodStart: string;
-  periodEnd: string;
-  label: string;
-} {
+function parsePeriod(period?: string): { periodStart: string; periodEnd: string; label: string } {
   const now = new Date();
-  const match =
-    typeof period === "string" ? period.match(/^(\d{4})-(\d{2})$/) : null;
+  const match = typeof period === "string" ? period.match(/^(\d{4})-(\d{2})$/) : null;
   const year = match ? parseInt(match[1], 10) : now.getFullYear();
   const month = match ? parseInt(match[2], 10) : now.getMonth() + 1;
 
@@ -41,10 +36,7 @@ function parsePeriod(period?: string): {
  *
  * Returns per-employee WFM compliance metrics for the given month.
  */
-export async function getEmployeeWfmCompliance(
-  req: Request,
-  res: Response,
-): Promise<Response> {
+export async function getEmployeeWfmCompliance(req: Request, res: Response): Promise<Response> {
   const { employeeId, period } = req.query as Record<string, string>;
 
   if (!employeeId) {
@@ -64,7 +56,7 @@ export async function getEmployeeWfmCompliance(
        LEFT JOIN process_master p ON p.id = e.process_id
        WHERE e.id = ?
        LIMIT 1`,
-      [employeeId],
+      [employeeId]
     );
     if ((empRows as RowDataPacket[]).length === 0) {
       return res.status(404).json({ error: "Employee not found" });
@@ -82,7 +74,7 @@ export async function getEmployeeWfmCompliance(
        LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
        WHERE wra.employee_id = ?
          AND wra.roster_date BETWEEN ? AND ?`,
-      [employeeId, periodStart, periodEnd],
+      [employeeId, periodStart, periodEnd]
     );
     const rosterEntries = rosterRows as RowDataPacket[];
     const totalRostered = rosterEntries.length;
@@ -113,7 +105,7 @@ export async function getEmployeeWfmCompliance(
        FROM wfm_attendance_session was
        WHERE was.employee_id = ?
          AND was.session_date BETWEEN ? AND ?`,
-      [employeeId, periodStart, periodEnd],
+      [employeeId, periodStart, periodEnd]
     );
     const sessions = sessionRows as RowDataPacket[];
     const sessionCount = sessions.length;
@@ -121,10 +113,9 @@ export async function getEmployeeWfmCompliance(
     // Build a map keyed by session_date for quick roster cross-reference
     const sessionByDate = new Map<string, RowDataPacket>();
     for (const s of sessions) {
-      const dateKey =
-        typeof s.session_date === "string"
-          ? s.session_date.slice(0, 10)
-          : new Date(s.session_date).toISOString().slice(0, 10);
+      const dateKey = typeof s.session_date === "string"
+        ? s.session_date.slice(0, 10)
+        : new Date(s.session_date).toISOString().slice(0, 10);
       sessionByDate.set(dateKey, s);
     }
 
@@ -136,10 +127,9 @@ export async function getEmployeeWfmCompliance(
     let totalActualMinutes = 0;
 
     for (const roster of rosterEntries) {
-      const dateKey =
-        typeof roster.roster_date === "string"
-          ? roster.roster_date.slice(0, 10)
-          : new Date(roster.roster_date).toISOString().slice(0, 10);
+      const dateKey = typeof roster.roster_date === "string"
+        ? roster.roster_date.slice(0, 10)
+        : new Date(roster.roster_date).toISOString().slice(0, 10);
       const session = sessionByDate.get(dateKey);
       if (!session) continue;
 
@@ -163,21 +153,16 @@ export async function getEmployeeWfmCompliance(
 
     const scheduleAdherencePct =
       totalRostered > 0 ? (onTimeCount / totalRostered) * 100 : null;
-    const avgLateByMinutes =
-      lateCount > 0 ? totalLateMinutes / lateCount : null;
+    const avgLateByMinutes = lateCount > 0 ? totalLateMinutes / lateCount : null;
     const occupancyPct =
-      totalRequiredMinutes > 0
-        ? (totalActualMinutes / totalRequiredMinutes) * 100
-        : null;
+      totalRequiredMinutes > 0 ? (totalActualMinutes / totalRequiredMinutes) * 100 : null;
     const totalLoginHours = totalActualMinutes / 60;
 
     // ── Break compliance ──────────────────────────────────────────────────────
     let breakCompliancePct: number | null = null;
     let avgExcessBreakMinutes: number | null = null;
 
-    const sessionIds = sessions
-      .map((s) => s.session_id as string)
-      .filter(Boolean);
+    const sessionIds = sessions.map((s) => s.session_id as string).filter(Boolean);
 
     if (sessionIds.length > 0) {
       const placeholders = sessionIds.map(() => "?").join(", ");
@@ -187,14 +172,11 @@ export async function getEmployeeWfmCompliance(
          WHERE session_id IN (${placeholders})
            AND employee_id = ?
          GROUP BY session_id`,
-        [...sessionIds, employeeId],
+        [...sessionIds, employeeId]
       );
       const breakBySession = new Map<string, number>();
       for (const br of breakRows as RowDataPacket[]) {
-        breakBySession.set(
-          String(br.session_id),
-          toNum(br.total_break_minutes),
-        );
+        breakBySession.set(String(br.session_id), toNum(br.total_break_minutes));
       }
 
       const BREAK_BUDGET = 30;
@@ -213,10 +195,8 @@ export async function getEmployeeWfmCompliance(
         }
       }
 
-      breakCompliancePct =
-        sessionCount > 0 ? (compliantSessions / sessionCount) * 100 : null;
-      avgExcessBreakMinutes =
-        excessCount > 0 ? totalExcess / excessCount : null;
+      breakCompliancePct = sessionCount > 0 ? (compliantSessions / sessionCount) * 100 : null;
+      avgExcessBreakMinutes = excessCount > 0 ? totalExcess / excessCount : null;
     }
 
     return res.json({
@@ -225,23 +205,17 @@ export async function getEmployeeWfmCompliance(
       metrics: {
         session_count: sessionCount,
         total_rostered: totalRostered,
-        schedule_adherence_pct:
-          scheduleAdherencePct !== null ? round2(scheduleAdherencePct) : null,
-        avg_late_by_minutes:
-          avgLateByMinutes !== null ? round2(avgLateByMinutes) : null,
+        schedule_adherence_pct: scheduleAdherencePct !== null ? round2(scheduleAdherencePct) : null,
+        avg_late_by_minutes: avgLateByMinutes !== null ? round2(avgLateByMinutes) : null,
         occupancy_pct: occupancyPct !== null ? round2(occupancyPct) : null,
-        break_compliance_pct:
-          breakCompliancePct !== null ? round2(breakCompliancePct) : null,
-        avg_excess_break_minutes:
-          avgExcessBreakMinutes !== null ? round2(avgExcessBreakMinutes) : null,
+        break_compliance_pct: breakCompliancePct !== null ? round2(breakCompliancePct) : null,
+        avg_excess_break_minutes: avgExcessBreakMinutes !== null ? round2(avgExcessBreakMinutes) : null,
         total_login_hours: round2(totalLoginHours),
       },
     });
   } catch (err: unknown) {
     console.error("[wfm-compliance] getEmployeeWfmCompliance error:", err);
-    return res
-      .status(500)
-      .json({ error: "Failed to compute employee WFM compliance" });
+    return res.status(500).json({ error: "Failed to compute employee WFM compliance" });
   }
 }
 
@@ -253,10 +227,7 @@ export async function getEmployeeWfmCompliance(
  *
  * Returns aggregate + per-employee breakdown for the branch.
  */
-export async function getBranchWfmCompliance(
-  req: Request,
-  res: Response,
-): Promise<Response> {
+export async function getBranchWfmCompliance(req: Request, res: Response): Promise<Response> {
   const { branchId, period, processId } = req.query as Record<string, string>;
 
   if (!branchId) {
@@ -281,7 +252,7 @@ export async function getBranchWfmCompliance(
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
        WHERE ${empConds.join(" AND ")}`,
-      empParams,
+      empParams
     );
     const employees = empRows as RowDataPacket[];
     if (employees.length === 0) {
@@ -316,7 +287,7 @@ export async function getBranchWfmCompliance(
        LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
        WHERE wra.employee_id IN (${empPlaceholders})
          AND wra.roster_date BETWEEN ? AND ?`,
-      [...employeeIds, periodStart, periodEnd],
+      [...employeeIds, periodStart, periodEnd]
     );
 
     // ── Attendance sessions for all employees ─────────────────────────────────
@@ -329,14 +300,12 @@ export async function getBranchWfmCompliance(
        FROM wfm_attendance_session was
        WHERE was.employee_id IN (${empPlaceholders})
          AND was.session_date BETWEEN ? AND ?`,
-      [...employeeIds, periodStart, periodEnd],
+      [...employeeIds, periodStart, periodEnd]
     );
     const allSessions = sessionRows as RowDataPacket[];
 
     // ── Break log for all sessions ────────────────────────────────────────────
-    const allSessionIds = allSessions
-      .map((s) => s.session_id as string)
-      .filter(Boolean);
+    const allSessionIds = allSessions.map((s) => s.session_id as string).filter(Boolean);
     const breakBySession = new Map<string, number>();
 
     if (allSessionIds.length > 0) {
@@ -346,13 +315,10 @@ export async function getBranchWfmCompliance(
          FROM wfm_break_log
          WHERE session_id IN (${bPlaceholders})
          GROUP BY session_id`,
-        allSessionIds,
+        allSessionIds
       );
       for (const br of breakRows as RowDataPacket[]) {
-        breakBySession.set(
-          String(br.session_id),
-          toNum(br.total_break_minutes),
-        );
+        breakBySession.set(String(br.session_id), toNum(br.total_break_minutes));
       }
     }
 
@@ -409,10 +375,9 @@ export async function getBranchWfmCompliance(
       // Session map by date
       const sessionByDate = new Map<string, RowDataPacket>();
       for (const s of empSessions) {
-        const dk =
-          typeof s.session_date === "string"
-            ? s.session_date.slice(0, 10)
-            : new Date(s.session_date).toISOString().slice(0, 10);
+        const dk = typeof s.session_date === "string"
+          ? s.session_date.slice(0, 10)
+          : new Date(s.session_date).toISOString().slice(0, 10);
         sessionByDate.set(dk, s);
       }
 
@@ -423,10 +388,9 @@ export async function getBranchWfmCompliance(
       let actMin = 0;
 
       for (const r of empRoster) {
-        const dk =
-          typeof r.roster_date === "string"
-            ? r.roster_date.slice(0, 10)
-            : new Date(r.roster_date).toISOString().slice(0, 10);
+        const dk = typeof r.roster_date === "string"
+          ? r.roster_date.slice(0, 10)
+          : new Date(r.roster_date).toISOString().slice(0, 10);
         const s = sessionByDate.get(dk);
         if (!s) continue;
 
@@ -459,8 +423,7 @@ export async function getBranchWfmCompliance(
         }
       }
 
-      const adherence =
-        totalRostered > 0 ? (onTime / totalRostered) * 100 : null;
+      const adherence = totalRostered > 0 ? (onTime / totalRostered) * 100 : null;
 
       perEmployeeResults.push({
         employee_id: eid,
@@ -471,8 +434,7 @@ export async function getBranchWfmCompliance(
         schedule_adherence_pct: adherence !== null ? round2(adherence) : null,
         avg_late_by_minutes: lateC > 0 ? round2(lateMin / lateC) : null,
         occupancy_pct: reqMin > 0 ? round2((actMin / reqMin) * 100) : null,
-        break_compliance_pct:
-          sessionCount > 0 ? round2((compliant / sessionCount) * 100) : null,
+        break_compliance_pct: sessionCount > 0 ? round2((compliant / sessionCount) * 100) : null,
         total_login_hours: round2(actMin / 60),
       });
 
@@ -493,9 +455,7 @@ export async function getBranchWfmCompliance(
     const aggregate = {
       total_employees: employees.length,
       schedule_adherence_pct:
-        aggTotalRostered > 0
-          ? round2((aggOnTimeCount / aggTotalRostered) * 100)
-          : null,
+        aggTotalRostered > 0 ? round2((aggOnTimeCount / aggTotalRostered) * 100) : null,
       avg_late_by_minutes:
         aggLateCount > 0 ? round2(aggLateMinutes / aggLateCount) : null,
       occupancy_pct:
@@ -529,9 +489,7 @@ export async function getBranchWfmCompliance(
     });
   } catch (err: unknown) {
     console.error("[wfm-compliance] getBranchWfmCompliance error:", err);
-    return res
-      .status(500)
-      .json({ error: "Failed to compute branch WFM compliance" });
+    return res.status(500).json({ error: "Failed to compute branch WFM compliance" });
   }
 }
 

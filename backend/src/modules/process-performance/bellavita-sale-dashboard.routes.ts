@@ -1,26 +1,14 @@
 import { Router, type NextFunction, type Response } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import {
-  getBellavitaSaleDashboard,
-  currentMonthRange,
-  getBellavitaSaleDateLobMatrix,
-} from "./bellavita-sale-dashboard.service.js";
-import {
-  getBellavitaAgentPerformance,
-  getBellavitaAgentDetail,
-} from "./bellavita-agent-performance.service.js";
+import { getBellavitaSaleDashboard, currentMonthRange, getBellavitaSaleDateLobMatrix } from "./bellavita-sale-dashboard.service.js";
+import { getBellavitaAgentPerformance, getBellavitaAgentDetail } from "./bellavita-agent-performance.service.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { TARGET_ADMIN_ROLES } from "./dashboard-monthly-target.shared.js";
 
 const router = Router();
-const h =
-  (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: NextFunction) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
+  (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -31,112 +19,64 @@ router.use(requireAuth);
  * already reach it rather than inventing a narrower list.
  */
 const VIEWER_ROLES = [
-  "admin",
-  "ceo",
-  "coo",
-  "manager",
-  "process_manager",
-  "operations_manager",
-  "branch_head",
-  "qa",
-  "quality_analyst",
-  "tq_head",
+  "admin", "ceo", "coo", "manager", "process_manager", "operations_manager",
+  "branch_head", "qa", "quality_analyst", "tq_head",
 ];
 
-router.get(
-  "/bellavita-sale-dashboard",
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    // Defaults to the current month (1st .. today) when from/to are absent
-    // or malformed -- getBellavitaSaleDashboard applies the same fallback
-    // itself, so an invalid query string can never 500 or silently scan an
-    // unbounded range.
-    const from = String(req.query.from ?? "");
-    const to = String(req.query.to ?? "");
-    const lob = req.query.lob ? String(req.query.lob).slice(0, 60) : undefined;
-    const empId = req.query.empId
-      ? String(req.query.empId).slice(0, 60)
-      : undefined;
-    // Role lookup is independent of the dashboard payload -- run both together.
-    const [data, canSetTarget] = await Promise.all([
-      getBellavitaSaleDashboard(from, to, lob, empId),
-      hasAnyRole(req.authUser!.id, ...TARGET_ADMIN_ROLES),
-    ]);
-    res.json({ success: true, data: { ...data, canSetTarget } });
-  }),
-);
+router.get("/bellavita-sale-dashboard", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  // Defaults to the current month (1st .. today) when from/to are absent
+  // or malformed -- getBellavitaSaleDashboard applies the same fallback
+  // itself, so an invalid query string can never 500 or silently scan an
+  // unbounded range.
+  const from = String(req.query.from ?? "");
+  const to = String(req.query.to ?? "");
+  const lob = req.query.lob ? String(req.query.lob).slice(0, 60) : undefined;
+  const empId = req.query.empId ? String(req.query.empId).slice(0, 60) : undefined;
+  // Role lookup is independent of the dashboard payload -- run both together.
+  const [data, canSetTarget] = await Promise.all([
+    getBellavitaSaleDashboard(from, to, lob, empId),
+    hasAnyRole(req.authUser!.id, ...TARGET_ADMIN_ROLES),
+  ]);
+  res.json({ success: true, data: { ...data, canSetTarget } });
+}));
 
-router.get(
-  "/bellavita-sale-dashboard/date-lob-matrix",
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    const data = await getBellavitaSaleDateLobMatrix(
-      String(req.query.from ?? ""),
-      String(req.query.to ?? ""),
-    );
-    res.json({ success: true, data });
-  }),
-);
+router.get("/bellavita-sale-dashboard/date-lob-matrix", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getBellavitaSaleDateLobMatrix(String(req.query.from ?? ""), String(req.query.to ?? ""));
+  res.json({ success: true, data });
+}));
 
 // Retired: Bellavita targets are automatic now (bellavita-auto-targets.shared.ts) -- Repeat / Chat /
 // Inbound from their fixed monthly figures, Abandon Cart from its date-wise conv% x allocation x 500
 // table -- so there is nothing to set. Kept as an explicit 410 (not deleted) so an old client gets a
 // clear answer instead of a silent 404, and so no manual value can be written that nothing reads.
-router.put(
-  "/bellavita-sale-dashboard/monthly-target",
-  requireRole(...TARGET_ADMIN_ROLES),
-  (_req, res) => {
-    res
-      .status(410)
-      .json({
-        success: false,
-        error:
-          "Bellavita targets are automatic and can no longer be set by hand.",
-      });
-  },
-);
+router.put("/bellavita-sale-dashboard/monthly-target", requireRole(...TARGET_ADMIN_ROLES), (_req, res) => {
+  res.status(410).json({ success: false, error: "Bellavita targets are automatic and can no longer be set by hand." });
+});
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-router.get(
-  "/bellavita-agent-performance",
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    const fallback = currentMonthRange();
-    const fromInput = String(req.query.from ?? "");
-    const toInput = String(req.query.to ?? "");
-    const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
-    const to = DATE_RE.test(toInput) ? toInput : fallback.to;
-    const lob = req.query.lob ? String(req.query.lob).slice(0, 60) : undefined;
-    const data = await getBellavitaAgentPerformance(from, to, lob);
-    res.json({ success: true, data, from, to });
-  }),
-);
+router.get("/bellavita-agent-performance", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const fallback = currentMonthRange();
+  const fromInput = String(req.query.from ?? "");
+  const toInput = String(req.query.to ?? "");
+  const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
+  const to = DATE_RE.test(toInput) ? toInput : fallback.to;
+  const lob = req.query.lob ? String(req.query.lob).slice(0, 60) : undefined;
+  const data = await getBellavitaAgentPerformance(from, to, lob);
+  res.json({ success: true, data, from, to });
+}));
 
-router.get(
-  "/bellavita-agent-performance/agent-detail",
-  requireRole(...VIEWER_ROLES),
-  h(async (req, res) => {
-    const empId = String(req.query.empId ?? "").trim();
-    if (!empId)
-      return res
-        .status(400)
-        .json({ success: false, error: "empId is required" });
-    const fallback = currentMonthRange();
-    const fromInput = String(req.query.from ?? "");
-    const toInput = String(req.query.to ?? "");
-    const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
-    const to = DATE_RE.test(toInput) ? toInput : fallback.to;
-    const data = await getBellavitaAgentDetail(empId, from, to);
-    if (!data)
-      return res
-        .status(404)
-        .json({
-          success: false,
-          error: "No records for this agent in the chosen date range",
-        });
-    res.json({ success: true, data });
-  }),
-);
+router.get("/bellavita-agent-performance/agent-detail", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const empId = String(req.query.empId ?? "").trim();
+  if (!empId) return res.status(400).json({ success: false, error: "empId is required" });
+  const fallback = currentMonthRange();
+  const fromInput = String(req.query.from ?? "");
+  const toInput = String(req.query.to ?? "");
+  const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
+  const to = DATE_RE.test(toInput) ? toInput : fallback.to;
+  const data = await getBellavitaAgentDetail(empId, from, to);
+  if (!data) return res.status(404).json({ success: false, error: "No records for this agent in the chosen date range" });
+  res.json({ success: true, data });
+}));
 
 export { router as bellavitaSaleDashboardRouter };

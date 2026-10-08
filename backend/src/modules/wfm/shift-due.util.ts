@@ -24,12 +24,12 @@
  */
 
 export function timeToMinutesLocal(t: string): number {
-  const parts = t.split(":").map(Number);
+  const parts = t.split(':').map(Number);
   return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
 }
 
 export function todayLocalDateStr(now: Date = new Date()): string {
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
 export function currentMinutesOfDayLocal(now: Date = new Date()): number {
@@ -49,7 +49,7 @@ export function isShiftDueYet(
   shiftStartTime: string | null | undefined,
   rosterDate: string,
   graceMinutes = 5,
-  now: Date = new Date(),
+  now: Date = new Date()
 ): boolean {
   if (!shiftStartTime) return true;
   if (rosterDate !== todayLocalDateStr(now)) return true;

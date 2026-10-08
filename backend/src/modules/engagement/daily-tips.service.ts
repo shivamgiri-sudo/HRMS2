@@ -8,25 +8,17 @@
  * - Archive of past tips browsable
  */
 
-import { randomUUID } from "crypto";
+import { randomUUID } from 'crypto';
 import { sqlLimit, sqlLimitOffset } from "../../db/pagination.js";
-import { db } from "../../db/mysql.js";
-import { addPoints } from "./gamification.service.js";
-import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import { db } from '../../db/mysql.js';
+import { addPoints } from './gamification.service.js';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type TipCategory =
-  | "productivity"
-  | "tech"
-  | "communication"
-  | "company"
-  | "industry"
-  | "wellness"
-  | "fun_fact"
-  | "general";
+export type TipCategory = 'productivity' | 'tech' | 'communication' | 'company' | 'industry' | 'wellness' | 'fun_fact' | 'general';
 
 export interface DailyTip {
   id: string;
@@ -71,15 +63,13 @@ interface TipReadRow extends RowDataPacket {
 /**
  * Get today's tip with read status for an employee
  */
-export async function getTodayTip(
-  employeeId: string,
-): Promise<TipReadStatus | null> {
-  const today = new Date().toISOString().split("T")[0];
+export async function getTodayTip(employeeId: string): Promise<TipReadStatus | null> {
+  const today = new Date().toISOString().split('T')[0];
 
   // Get today's tip
   const [tipRows] = await db.execute<TipRow[]>(
     `SELECT * FROM daily_tip WHERE tip_date = ?`,
-    [today],
+    [today]
   );
 
   if (tipRows.length === 0) {
@@ -91,7 +81,7 @@ export async function getTodayTip(
   // Check if already read
   const [readRows] = await db.execute<TipReadRow[]>(
     `SELECT * FROM daily_tip_read WHERE tip_id = ? AND employee_id = ?`,
-    [tip.id, employeeId],
+    [tip.id, employeeId]
   );
 
   const readRecord = readRows[0];
@@ -107,18 +97,15 @@ export async function getTodayTip(
 /**
  * Mark tip as read and award points
  */
-export async function markTipAsRead(
-  employeeId: string,
-  tipId: string,
-): Promise<ReadTipResult> {
+export async function markTipAsRead(employeeId: string, tipId: string): Promise<ReadTipResult> {
   // Get the tip
   const [tipRows] = await db.execute<TipRow[]>(
     `SELECT * FROM daily_tip WHERE id = ?`,
-    [tipId],
+    [tipId]
   );
 
   if (tipRows.length === 0) {
-    throw new Error("Tip not found");
+    throw new Error('Tip not found');
   }
 
   const tip = tipRows[0];
@@ -126,7 +113,7 @@ export async function markTipAsRead(
   // Check if already read
   const [existingRows] = await db.execute<TipReadRow[]>(
     `SELECT * FROM daily_tip_read WHERE tip_id = ? AND employee_id = ?`,
-    [tipId, employeeId],
+    [tipId, employeeId]
   );
 
   if (existingRows.length > 0) {
@@ -144,16 +131,16 @@ export async function markTipAsRead(
   await db.execute<ResultSetHeader>(
     `INSERT INTO daily_tip_read (id, tip_id, employee_id, points_awarded, read_at)
      VALUES (?, ?, ?, ?, NOW())`,
-    [readId, tipId, employeeId, pointsToAward],
+    [readId, tipId, employeeId, pointsToAward]
   );
 
   // Award points
   await addPoints(
     employeeId,
     pointsToAward,
-    "tip_read",
+    'tip_read',
     `Read daily tip: ${tip.title}`,
-    readId,
+    readId
   );
 
   return {
@@ -171,23 +158,23 @@ export async function getTipArchive(
     category?: TipCategory;
     limit?: number;
     offset?: number;
-  } = {},
+  } = {}
 ): Promise<{ tips: DailyTip[]; total: number }> {
   const { category, limit = 20, offset = 0 } = options;
-  const today = new Date().toISOString().split("T")[0];
+  const today = new Date().toISOString().split('T')[0];
 
-  let whereClause = "WHERE tip_date <= ?";
+  let whereClause = 'WHERE tip_date <= ?';
   const params: (string | number)[] = [today];
 
   if (category) {
-    whereClause += " AND category = ?";
+    whereClause += ' AND category = ?';
     params.push(category);
   }
 
   // Get total count
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) as total FROM daily_tip ${whereClause}`,
-    params,
+    params
   );
   const total = countRows[0]?.total || 0;
 
@@ -196,7 +183,7 @@ export async function getTipArchive(
     `SELECT * FROM daily_tip ${whereClause}
      ORDER BY tip_date DESC
      ${sqlLimitOffset(limit, offset)}`,
-    params,
+    params
   );
 
   return { tips: tipRows, total };
@@ -207,7 +194,7 @@ export async function getTipArchive(
  */
 export async function getReadHistory(
   employeeId: string,
-  limit: number = 30,
+  limit: number = 30
 ): Promise<Array<DailyTip & { read_at: string }>> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT t.*, tr.read_at
@@ -216,7 +203,7 @@ export async function getReadHistory(
      WHERE tr.employee_id = ?
      ORDER BY tr.read_at DESC
      ${sqlLimit(limit)}`,
-    [employeeId],
+    [employeeId]
   );
 
   return rows as Array<DailyTip & { read_at: string }>;
@@ -235,7 +222,7 @@ export async function createTip(
     learn_more_url?: string;
     source?: string;
   },
-  createdBy: string,
+  createdBy: string
 ): Promise<DailyTip> {
   const tipId = randomUUID();
 
@@ -252,12 +239,12 @@ export async function createTip(
       data.learn_more_url || null,
       data.source || null,
       createdBy,
-    ],
+    ]
   );
 
   const [rows] = await db.execute<TipRow[]>(
     `SELECT * FROM daily_tip WHERE id = ?`,
-    [tipId],
+    [tipId]
   );
 
   return rows[0];
@@ -276,44 +263,44 @@ export async function updateTip(
     media_url: string | null;
     learn_more_url: string | null;
     source: string | null;
-  }>,
+  }>
 ): Promise<DailyTip | null> {
   const updates: string[] = [];
   const params: (string | null)[] = [];
 
   if (data.tip_date !== undefined) {
-    updates.push("tip_date = ?");
+    updates.push('tip_date = ?');
     params.push(data.tip_date);
   }
   if (data.category !== undefined) {
-    updates.push("category = ?");
+    updates.push('category = ?');
     params.push(data.category);
   }
   if (data.title !== undefined) {
-    updates.push("title = ?");
+    updates.push('title = ?');
     params.push(data.title);
   }
   if (data.content !== undefined) {
-    updates.push("content = ?");
+    updates.push('content = ?');
     params.push(data.content);
   }
   if (data.media_url !== undefined) {
-    updates.push("media_url = ?");
+    updates.push('media_url = ?');
     params.push(data.media_url);
   }
   if (data.learn_more_url !== undefined) {
-    updates.push("learn_more_url = ?");
+    updates.push('learn_more_url = ?');
     params.push(data.learn_more_url);
   }
   if (data.source !== undefined) {
-    updates.push("source = ?");
+    updates.push('source = ?');
     params.push(data.source);
   }
 
   if (updates.length === 0) {
     const [rows] = await db.execute<TipRow[]>(
       `SELECT * FROM daily_tip WHERE id = ?`,
-      [tipId],
+      [tipId]
     );
     return rows[0] || null;
   }
@@ -321,13 +308,13 @@ export async function updateTip(
   params.push(tipId);
 
   await db.execute<ResultSetHeader>(
-    `UPDATE daily_tip SET ${updates.join(", ")} WHERE id = ?`,
-    params,
+    `UPDATE daily_tip SET ${updates.join(', ')} WHERE id = ?`,
+    params
   );
 
   const [rows] = await db.execute<TipRow[]>(
     `SELECT * FROM daily_tip WHERE id = ?`,
-    [tipId],
+    [tipId]
   );
 
   return rows[0] || null;
@@ -340,12 +327,12 @@ export async function deleteTip(tipId: string): Promise<boolean> {
   // Delete read records first
   await db.execute<ResultSetHeader>(
     `DELETE FROM daily_tip_read WHERE tip_id = ?`,
-    [tipId],
+    [tipId]
   );
 
   const [result] = await db.execute<ResultSetHeader>(
     `DELETE FROM daily_tip WHERE id = ?`,
-    [tipId],
+    [tipId]
   );
 
   return result.affectedRows > 0;
@@ -361,15 +348,15 @@ export async function getTipStats(): Promise<{
   avgReadsPerTip: number;
 }> {
   const [totalRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as total FROM daily_tip`,
+    `SELECT COUNT(*) as total FROM daily_tip`
   );
 
   const [readRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as total FROM daily_tip_read`,
+    `SELECT COUNT(*) as total FROM daily_tip_read`
   );
 
   const [categoryRows] = await db.execute<RowDataPacket[]>(
-    `SELECT category, COUNT(*) as count FROM daily_tip GROUP BY category`,
+    `SELECT category, COUNT(*) as count FROM daily_tip GROUP BY category`
   );
 
   const totalTips = totalRows[0]?.total || 0;

@@ -12,10 +12,7 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
-  pingDb: vi.fn(),
-}));
+vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
 // Authentication is MySQL JWT. This suite signed in through
 // supabaseAuthClient.auth.getUser, which the request path no longer consults —
 // so every request 401'd and the permission boundary these tests exist to
@@ -30,9 +27,7 @@ vi.mock("../src/shared/accessGuard.js", () => ({
   // Other application routers are mounted while this suite imports app.ts.
   // Return a valid pass-through middleware so lifecycle route registration
   // remains intact; roster endpoints under test do not rely on this guard.
-  selfOrAdminHr: vi.fn(
-    () => (_req: unknown, _res: unknown, next: () => void) => next(),
-  ),
+  selfOrAdminHr: vi.fn(() => (_req: unknown, _res: unknown, next: () => void) => next()),
 }));
 // Branch scoping (owner ruling 2026-10-01): a role/process mapping alone is no longer enough, the process must also
 // sit inside the caller's own branch / assigned scope. Faithful stand-in for the DB-backed check: only
@@ -66,11 +61,7 @@ vi.mock("../src/modules/roster/roster.governance.service.js", () => ({
 
 import { app } from "../src/app.js";
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
-import {
-  getEmployeeForUser,
-  hasProcessScope,
-  hasRole,
-} from "../src/shared/accessGuard.js";
+import { getEmployeeForUser, hasProcessScope, hasRole } from "../src/shared/accessGuard.js";
 import { rosterGovernanceService as service } from "../src/modules/roster/roster.governance.service.js";
 import { authService } from "../src/modules/auth/auth.service.js";
 import { db } from "../src/db/mysql.js";
@@ -86,23 +77,14 @@ const mockVerify = authService.verifyAccessToken as ReturnType<typeof vi.fn>;
 const isRole = hasRole as ReturnType<typeof vi.fn>;
 const inScope = hasProcessScope as ReturnType<typeof vi.fn>;
 const employeeForUser = getEmployeeForUser as ReturnType<typeof vi.fn>;
-const svc = service as {
-  [K in keyof typeof service]: ReturnType<typeof vi.fn>;
-};
+const svc = service as { [K in keyof typeof service]: ReturnType<typeof vi.fn> };
 // Deliberately NOT "mock-token-admin": authMiddleware maps that to the built-in
 // demo user demo-admin-id, which authenticates the request as someone other than
 // the user these tests assert about. Every expectation here names "user-1", so
 // the token must fall through to authService.verifyAccessToken, which is mocked
 // to return exactly that user.
 const AUTH = { Authorization: "Bearer test.jwt.token" };
-const cycle = {
-  id: "cycle-1",
-  process_id: "process-1",
-  branch_id: "branch-1",
-  week_start_date: "2026-06-01",
-  week_end_date: "2026-06-07",
-  status: "draft",
-};
+const cycle = { id: "cycle-1", process_id: "process-1", branch_id: "branch-1", week_start_date: "2026-06-01", week_end_date: "2026-06-07", status: "draft" };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -123,63 +105,25 @@ describe("weekly roster ownership", () => {
   it("allows a mapped Process Manager to create a weekly cycle", async () => {
     inScope.mockResolvedValue(true);
     svc.createCycle.mockResolvedValue(cycle);
-    const result = await request(app)
-      .post("/api/roster-gov/cycles")
-      .set(AUTH)
-      .send({
-        process_id: "process-1",
-        branch_id: "branch-1",
-        week_start_date: "2026-06-01",
-        week_end_date: "2026-06-07",
-      });
+    const result = await request(app).post("/api/roster-gov/cycles").set(AUTH).send({
+      process_id: "process-1", branch_id: "branch-1", week_start_date: "2026-06-01", week_end_date: "2026-06-07",
+    });
     expect(result.status).toBe(201);
-    expect(inScope).toHaveBeenCalledWith(
-      "user-1",
-      "process-1",
-      "branch-1",
-      "manager",
-      "wfm",
-    );
+    expect(inScope).toHaveBeenCalledWith("user-1", "process-1", "branch-1", "manager", "wfm");
     expect(svc.createCycle).toHaveBeenCalled();
   });
 
   it("allows mapped WFM/Process Manager ownership to advance draft-to-publish state", async () => {
     inScope.mockResolvedValue(true);
     svc.advanceCycleStatus.mockResolvedValue({ ...cycle, status: "published" });
-    const result = await request(app)
-      .post("/api/roster-gov/cycles/cycle-1/status")
-      .set(AUTH)
-      .send({ status: "published" });
+    const result = await request(app).post("/api/roster-gov/cycles/cycle-1/status").set(AUTH).send({ status: "published" });
     expect(result.status).toBe(200);
-    expect(svc.advanceCycleStatus).toHaveBeenCalledWith(
-      "cycle-1",
-      "published",
-      "user-1",
-      expect.anything(),
-    );
+    expect(svc.advanceCycleStatus).toHaveBeenCalledWith("cycle-1", "published", "user-1", expect.anything());
   });
 
   it("denies a user without mapped roster ownership from creating or publishing", async () => {
-    expect(
-      (
-        await request(app)
-          .post("/api/roster-gov/cycles")
-          .set(AUTH)
-          .send({
-            process_id: "process-2",
-            week_start_date: "2026-06-01",
-            week_end_date: "2026-06-07",
-          })
-      ).status,
-    ).toBe(403);
-    expect(
-      (
-        await request(app)
-          .post("/api/roster-gov/cycles/cycle-1/status")
-          .set(AUTH)
-          .send({ status: "published" })
-      ).status,
-    ).toBe(403);
+    expect((await request(app).post("/api/roster-gov/cycles").set(AUTH).send({ process_id: "process-2", week_start_date: "2026-06-01", week_end_date: "2026-06-07" })).status).toBe(403);
+    expect((await request(app).post("/api/roster-gov/cycles/cycle-1/status").set(AUTH).send({ status: "published" })).status).toBe(403);
     expect(svc.createCycle).not.toHaveBeenCalled();
     expect(svc.advanceCycleStatus).not.toHaveBeenCalled();
   });
@@ -196,14 +140,7 @@ describe("weekly roster ownership", () => {
   it("allows super_admin override without a process-scope record", async () => {
     actAs("super_admin");
     svc.createCycle.mockResolvedValue(cycle);
-    const result = await request(app)
-      .post("/api/roster-gov/cycles")
-      .set(AUTH)
-      .send({
-        process_id: "process-1",
-        week_start_date: "2026-06-01",
-        week_end_date: "2026-06-07",
-      });
+    const result = await request(app).post("/api/roster-gov/cycles").set(AUTH).send({ process_id: "process-1", week_start_date: "2026-06-01", week_end_date: "2026-06-07" });
     expect(result.status).toBe(201);
     expect(svc.createCycle).toHaveBeenCalled();
   });
@@ -212,38 +149,18 @@ describe("weekly roster ownership", () => {
 describe("shift master ownership", () => {
   it("allows mapped WFM to create a process shift template", async () => {
     inScope.mockResolvedValue(true);
-    svc.createShiftTemplate.mockResolvedValue({
-      id: "shift-1",
-      process_id: "process-1",
-      shift_code: "DAY",
+    svc.createShiftTemplate.mockResolvedValue({ id: "shift-1", process_id: "process-1", shift_code: "DAY" });
+    const result = await request(app).post("/api/roster-gov/shifts/templates").set(AUTH).send({
+      process_id: "process-1", shift_code: "DAY", shift_name: "Day", start_time: "09:00", end_time: "18:00", effective_from: "2026-06-01",
     });
-    const result = await request(app)
-      .post("/api/roster-gov/shifts/templates")
-      .set(AUTH)
-      .send({
-        process_id: "process-1",
-        shift_code: "DAY",
-        shift_name: "Day",
-        start_time: "09:00",
-        end_time: "18:00",
-        effective_from: "2026-06-01",
-      });
     expect(result.status).toBe(201);
     expect(inScope).toHaveBeenCalledWith("user-1", "process-1", null, "wfm");
   });
 
   it("does not let an ordinary employee create a shift template", async () => {
-    const result = await request(app)
-      .post("/api/roster-gov/shifts/templates")
-      .set(AUTH)
-      .send({
-        process_id: "process-1",
-        shift_code: "DAY",
-        shift_name: "Day",
-        start_time: "09:00",
-        end_time: "18:00",
-        effective_from: "2026-06-01",
-      });
+    const result = await request(app).post("/api/roster-gov/shifts/templates").set(AUTH).send({
+      process_id: "process-1", shift_code: "DAY", shift_name: "Day", start_time: "09:00", end_time: "18:00", effective_from: "2026-06-01",
+    });
     expect(result.status).toBe(403);
     expect(svc.createShiftTemplate).not.toHaveBeenCalled();
   });
@@ -252,37 +169,14 @@ describe("shift master ownership", () => {
 describe("supervisor accountability without roster truth editing", () => {
   it("allows a mapped TL/Assistant Manager monitor to raise a coverage action", async () => {
     inScope.mockResolvedValue(true);
-    svc.createCoverageAction.mockResolvedValue({
-      id: "action-1",
-      cycle_id: "cycle-1",
-      status: "open",
-    });
-    const result = await request(app)
-      .post("/api/roster-gov/coverage-actions")
-      .set(AUTH)
-      .send({
-        cycle_id: "cycle-1",
-        action_date: "2026-06-02",
-        coverage_gap: 2,
-      });
+    svc.createCoverageAction.mockResolvedValue({ id: "action-1", cycle_id: "cycle-1", status: "open" });
+    const result = await request(app).post("/api/roster-gov/coverage-actions").set(AUTH).send({ cycle_id: "cycle-1", action_date: "2026-06-02", coverage_gap: 2 });
     expect(result.status).toBe(201);
-    expect(svc.createCoverageAction).toHaveBeenCalledWith(
-      expect.objectContaining({ process_id: "process-1" }),
-      "user-1",
-      expect.anything(),
-    );
+    expect(svc.createCoverageAction).toHaveBeenCalledWith(expect.objectContaining({ process_id: "process-1" }), "user-1", expect.anything());
   });
 
   it("does not allow a supervisor without owner scope to change published roster truth", async () => {
-    const result = await request(app)
-      .post("/api/roster-gov/cycles/cycle-1/changes")
-      .set(AUTH)
-      .send({
-        employee_id: "emp-1",
-        change_type: "shift_change",
-        reason: "request",
-        change_date: "2026-06-02",
-      });
+    const result = await request(app).post("/api/roster-gov/cycles/cycle-1/changes").set(AUTH).send({ employee_id: "emp-1", change_type: "shift_change", reason: "request", change_date: "2026-06-02" });
     expect(result.status).toBe(403);
     expect(svc.logRosterChange).not.toHaveBeenCalled();
   });
@@ -292,9 +186,7 @@ describe("employee self-service and safe client publishing data", () => {
   it("returns only the mapped employee roster when user has no monitor scope", async () => {
     employeeForUser.mockResolvedValue({ id: "emp-1", employee_code: "E001" });
     svc.getAssignments.mockResolvedValue([{ id: "a-1", employee_id: "emp-1" }]);
-    const result = await request(app)
-      .get("/api/roster-gov/cycles/cycle-1/assignments")
-      .set(AUTH);
+    const result = await request(app).get("/api/roster-gov/cycles/cycle-1/assignments").set(AUTH);
     expect(result.status).toBe(200);
     expect(svc.getAssignments).toHaveBeenCalledWith("cycle-1", "emp-1");
   });
@@ -302,16 +194,9 @@ describe("employee self-service and safe client publishing data", () => {
   it("allows employees to acknowledge their own published roster", async () => {
     employeeForUser.mockResolvedValue({ id: "emp-1", employee_code: "E001" });
     svc.acknowledgeRoster.mockResolvedValue({ acknowledged: 7 });
-    const result = await request(app)
-      .post("/api/roster-gov/cycles/cycle-1/acknowledge")
-      .set(AUTH);
+    const result = await request(app).post("/api/roster-gov/cycles/cycle-1/acknowledge").set(AUTH);
     expect(result.status).toBe(200);
-    expect(svc.acknowledgeRoster).toHaveBeenCalledWith(
-      "cycle-1",
-      "emp-1",
-      "user-1",
-      expect.anything(),
-    );
+    expect(svc.acknowledgeRoster).toHaveBeenCalledWith("cycle-1", "emp-1", "user-1", expect.anything());
   });
 
   it("exposes only aggregate published roster data to authorised internal publisher views", async () => {

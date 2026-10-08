@@ -11,26 +11,18 @@
 // Accessible to: wfm, hr, admin, super_admin, ceo, payroll, process_manager, branch_head
 // (payroll included because `salary_payable_days_mismatch` blocks a payroll run).
 
-import { Router } from "express";
-import {
-  requireAuth,
-  requireWriteAccess,
-} from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import { logSensitiveAction } from "../../shared/auditLog.js";
-import {
-  resolveUserBusinessScope,
-  buildEmployeeScopeCondition,
-} from "../../shared/enterpriseScope.js";
+import { Router } from 'express';
+import { requireAuth, requireWriteAccess } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { logSensitiveAction } from '../../shared/auditLog.js';
+import { resolveUserBusinessScope, buildEmployeeScopeCondition } from '../../shared/enterpriseScope.js';
 
 export const attendanceExceptionsRouter = Router();
 
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 // Aligned with the page gate: role_page_access grants WFM_LIVE_TRACKER (this route's
 // pageCode) to super_admin, admin, wfm, branch_wfm, manager, process_manager and
@@ -39,21 +31,13 @@ const h =
 // because they are org-wide roles and payroll owns salary_payable_days_mismatch, which
 // blocks a payroll run. Row-level scoping still applies to every one of them.
 const VIEW_ROLES = [
-  "wfm",
-  "branch_wfm",
-  "hr",
-  "admin",
-  "super_admin",
-  "ceo",
-  "payroll",
-  "manager",
-  "process_manager",
-  "branch_head",
+  'wfm', 'branch_wfm', 'hr', 'admin', 'super_admin', 'ceo', 'payroll',
+  'manager', 'process_manager', 'branch_head',
   // payroll_head is a distinct role_key from 'payroll' — requireRole does a literal match
   // with no alias expansion, so listing 'payroll' does not admit it. Added for the
   // Attendance Lookup drawer's Exceptions tab, which shows one employee's exceptions to
   // the person correcting their attendance.
-  "payroll_head",
+  'payroll_head',
 ] as const;
 
 /**
@@ -61,44 +45,37 @@ const VIEW_ROLES = [
  * statement that the underlying data problem has been dealt with, and a payroll month is
  * signed off on the back of it. Payroll Head owns that call, Super Admin overrides.
  */
-const RESOLVE_ROLES = ["super_admin", "payroll_head"] as const;
+const RESOLVE_ROLES = ['super_admin', 'payroll_head'] as const;
 
 const MIN_RESOLVE_REASON = 10;
 
 // Mirrors the live ENUM (migrations 535 / 536 / 542 / 543).
 const ISSUE_TYPES = new Set([
-  "unmapped_cosec_user",
-  "missing_ibd",
-  "zero_minute_attendance",
-  "missing_punch_with_usable_source",
-  "missing_adr",
-  "apr_missing_adr",
-  "apr_minutes_mismatch",
-  "apr_source_fallback_when_apr_exists",
-  "approved_regularization_missing_adr",
-  "salary_payable_days_mismatch",
-  "dialler_source_without_evidence",
-  "inactive_cosec_user_activity",
+  'unmapped_cosec_user',
+  'missing_ibd',
+  'zero_minute_attendance',
+  'missing_punch_with_usable_source',
+  'missing_adr',
+  'apr_missing_adr',
+  'apr_minutes_mismatch',
+  'apr_source_fallback_when_apr_exists',
+  'approved_regularization_missing_adr',
+  'salary_payable_days_mismatch',
+  'dialler_source_without_evidence',
+  'inactive_cosec_user_activity',
 ]);
 
 // The ENUM has exactly two values — there is no 'info', despite what
 // dashboard-drilldown.service.ts's ORDER BY suggests.
-const SEVERITIES = new Set(["blocker", "warning"]);
-const AUTO_FIX_STATUSES = new Set([
-  "not_attempted",
-  "fixed",
-  "skipped",
-  "failed",
-]);
-const STATUSES = new Set(["open", "resolved", "all"]);
+const SEVERITIES = new Set(['blocker', 'warning']);
+const AUTO_FIX_STATUSES = new Set(['not_attempted', 'fixed', 'skipped', 'failed']);
+const STATUSES = new Set(['open', 'resolved', 'all']);
 
 const EXPORT_ROW_CAP = 5000;
 
 function asArray(value: unknown): string[] {
   if (value === undefined || value === null) return [];
-  return (Array.isArray(value) ? value : [value])
-    .map((v) => String(v))
-    .filter(Boolean);
+  return (Array.isArray(value) ? value : [value]).map((v) => String(v)).filter(Boolean);
 }
 
 attendanceExceptionsRouter.use(requireAuth);
@@ -116,10 +93,7 @@ attendanceExceptionsRouter.use(requireAuth);
  * Note we deliberately do NOT filter on emp.active_status: an exception against a
  * since-deactivated employee is still a real payroll blocker.
  */
-async function buildWhere(
-  req: any,
-  opts: { ignoreStatus?: boolean } = {},
-): Promise<{
+async function buildWhere(req: any, opts: { ignoreStatus?: boolean } = {}): Promise<{
   sql: string;
   params: unknown[];
   scopeIsGlobal: boolean;
@@ -127,24 +101,17 @@ async function buildWhere(
   to: string | null;
 }> {
   const {
-    fromDate,
-    toDate,
-    status = "open",
-    severity,
-    autoFixStatus,
-    branchId,
-    processId,
-    employeeId,
-    search,
+    fromDate, toDate, status = 'open', severity, autoFixStatus,
+    branchId, processId, employeeId, search,
   } = req.query;
 
   const scope = await resolveUserBusinessScope(req.authUser);
   const scopeCondition = buildEmployeeScopeCondition(scope, {
-    employeeId: "emp.id",
-    branchId: "emp.branch_id",
-    processId: "emp.process_id",
-    departmentId: "emp.department_id",
-    managerEmployeeId: "emp.reporting_manager_id",
+    employeeId: 'emp.id',
+    branchId: 'emp.branch_id',
+    processId: 'emp.process_id',
+    departmentId: 'emp.department_id',
+    managerEmployeeId: 'emp.reporting_manager_id',
   });
   // Two distinct routes to an unrestricted view, and both must count as org-wide or the
   // "unassigned rows are excluded" footnote below tells the viewer something untrue:
@@ -155,8 +122,7 @@ async function buildWhere(
   // Checking only the string missed case 2 (confirmed live: demo-manager-id sees all
   // 5,687 rows yet would have been reported as scoped).
   const scopeIsGlobal =
-    scopeCondition.sql === "1=1" ||
-    scope.assignments.some((a) => a.scopeType === "all");
+    scopeCondition.sql === '1=1' || scope.assignments.some((a) => a.scopeType === 'all');
 
   const conds: string[] = [];
   const params: unknown[] = [];
@@ -165,13 +131,13 @@ async function buildWhere(
   // query would scan the whole table. Default to the same 30-day window the dashboard
   // metric uses, so tile counts and page counts agree.
   if (fromDate) {
-    conds.push("ari.issue_date >= ?");
+    conds.push('ari.issue_date >= ?');
     params.push(fromDate);
   } else {
-    conds.push("ari.issue_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
+    conds.push('ari.issue_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)');
   }
   if (toDate) {
-    conds.push("ari.issue_date <= ?");
+    conds.push('ari.issue_date <= ?');
     params.push(toDate);
   }
 
@@ -187,36 +153,34 @@ async function buildWhere(
   // open_total still equals the status=open list total, because that bucket is itself
   // defined as resolved_at IS NULL.
   if (!opts.ignoreStatus) {
-    if (statusKey === "open") conds.push("ari.resolved_at IS NULL");
-    if (statusKey === "resolved") conds.push("ari.resolved_at IS NOT NULL");
+    if (statusKey === 'open') conds.push('ari.resolved_at IS NULL');
+    if (statusKey === 'resolved') conds.push('ari.resolved_at IS NOT NULL');
   }
 
-  const issueTypes = asArray(req.query.issueType).filter((t) =>
-    ISSUE_TYPES.has(t),
-  );
+  const issueTypes = asArray(req.query.issueType).filter((t) => ISSUE_TYPES.has(t));
   if (issueTypes.length) {
-    conds.push(`ari.issue_type IN (${issueTypes.map(() => "?").join(",")})`);
+    conds.push(`ari.issue_type IN (${issueTypes.map(() => '?').join(',')})`);
     params.push(...issueTypes);
   }
 
   if (severity && SEVERITIES.has(String(severity))) {
-    conds.push("ari.severity = ?");
+    conds.push('ari.severity = ?');
     params.push(severity);
   }
   if (autoFixStatus && AUTO_FIX_STATUSES.has(String(autoFixStatus))) {
-    conds.push("ari.auto_fix_status = ?");
+    conds.push('ari.auto_fix_status = ?');
     params.push(autoFixStatus);
   }
   if (branchId) {
-    conds.push("emp.branch_id = ?");
+    conds.push('emp.branch_id = ?');
     params.push(branchId);
   }
   if (processId) {
-    conds.push("emp.process_id = ?");
+    conds.push('emp.process_id = ?');
     params.push(processId);
   }
   if (employeeId) {
-    conds.push("ari.employee_id = ?");
+    conds.push('ari.employee_id = ?');
     params.push(employeeId);
   }
   if (search) {
@@ -236,7 +200,7 @@ async function buildWhere(
   params.push(...scopeCondition.params);
 
   return {
-    sql: `WHERE ${conds.join(" AND ")}`,
+    sql: `WHERE ${conds.join(' AND ')}`,
     params,
     scopeIsGlobal,
     from: fromDate ? String(fromDate) : null,
@@ -268,10 +232,10 @@ const ROW_ORDER = `ORDER BY FIELD(ari.severity, 'blocker', 'warning'), ari.issue
 // ── List individual exceptions ────────────────────────────────────────────────
 
 attendanceExceptionsRouter.get(
-  "/",
+  '/',
   requireRole(...VIEW_ROLES),
   h(async (req, res) => {
-    const { page = "1", limit = "50" } = req.query;
+    const { page = '1', limit = '50' } = req.query;
     const pg = Math.max(1, Number(page) || 1);
     const lim = Math.min(200, Math.max(1, Number(limit) || 50));
     const offset = (pg - 1) * lim;
@@ -296,7 +260,7 @@ attendanceExceptionsRouter.get(
 // ── KPI summary + per-type breakdown ──────────────────────────────────────────
 
 attendanceExceptionsRouter.get(
-  "/summary",
+  '/summary',
   requireRole(...VIEW_ROLES),
   h(async (req, res) => {
     const where = await buildWhere(req, { ignoreStatus: true });
@@ -343,9 +307,7 @@ attendanceExceptionsRouter.get(
         // Unmapped biometric users have no employee and therefore no branch. Reporting
         // the figure to a scoped viewer would leak an org-wide count they cannot see
         // rows for, so it is exposed only to roles that already see everything.
-        unassigned_total: where.scopeIsGlobal
-          ? Number(r.unassigned_total ?? 0)
-          : null,
+        unassigned_total: where.scopeIsGlobal ? Number(r.unassigned_total ?? 0) : null,
         scope_is_global: where.scopeIsGlobal,
         by_type: (byType as any[]).map((row) => ({
           issue_type: row.issue_type,
@@ -361,16 +323,16 @@ attendanceExceptionsRouter.get(
 // ── CSV export ────────────────────────────────────────────────────────────────
 
 function escapeCSV(value: unknown): string {
-  if (value === null || value === undefined) return "";
+  if (value === null || value === undefined) return '';
   const str = String(value);
-  if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
     return `"${str.replace(/"/g, '""')}"`;
   }
   return str;
 }
 
 attendanceExceptionsRouter.get(
-  ["/export", "/export.csv"],
+  ['/export', '/export.csv'],
   requireRole(...VIEW_ROLES),
   h(async (req, res) => {
     const where = await buildWhere(req);
@@ -385,75 +347,43 @@ attendanceExceptionsRouter.get(
     const out = truncated ? all.slice(0, EXPORT_ROW_CAP) : all;
 
     const header = [
-      "issue_date",
-      "employee_code",
-      "employee_name",
-      "branch_name",
-      "process_name",
-      "issue_type",
-      "severity",
-      "age_days",
-      "cosec_user_id",
-      "source_minutes",
-      "hrms_minutes",
-      "adr_status",
-      "auto_fix_status",
-      "auto_fix_reason",
-      "first_detected_at",
-      "last_detected_at",
-      "resolved_at",
-    ].join(",");
+      'issue_date', 'employee_code', 'employee_name', 'branch_name', 'process_name',
+      'issue_type', 'severity', 'age_days', 'cosec_user_id',
+      'source_minutes', 'hrms_minutes', 'adr_status',
+      'auto_fix_status', 'auto_fix_reason',
+      'first_detected_at', 'last_detected_at', 'resolved_at',
+    ].join(',');
 
-    const body = out
-      .map((row) =>
-        [
-          escapeCSV(row.issue_date),
-          escapeCSV(row.employee_code),
-          escapeCSV(row.employee_name),
-          escapeCSV(row.branch_name),
-          escapeCSV(row.process_name),
-          escapeCSV(row.issue_type),
-          escapeCSV(row.severity),
-          escapeCSV(row.age_days),
-          escapeCSV(row.cosec_user_id),
-          escapeCSV(row.source_minutes),
-          escapeCSV(row.hrms_minutes),
-          escapeCSV(row.adr_status),
-          escapeCSV(row.auto_fix_status),
-          escapeCSV(row.auto_fix_reason),
-          escapeCSV(row.first_detected_at),
-          escapeCSV(row.last_detected_at),
-          escapeCSV(row.resolved_at),
-        ].join(","),
-      )
-      .join("\n");
+    const body = out.map((row) => [
+      escapeCSV(row.issue_date), escapeCSV(row.employee_code), escapeCSV(row.employee_name),
+      escapeCSV(row.branch_name), escapeCSV(row.process_name),
+      escapeCSV(row.issue_type), escapeCSV(row.severity), escapeCSV(row.age_days),
+      escapeCSV(row.cosec_user_id),
+      escapeCSV(row.source_minutes), escapeCSV(row.hrms_minutes), escapeCSV(row.adr_status),
+      escapeCSV(row.auto_fix_status), escapeCSV(row.auto_fix_reason),
+      escapeCSV(row.first_detected_at), escapeCSV(row.last_detected_at), escapeCSV(row.resolved_at),
+    ].join(',')).join('\n');
 
     // A silently truncated export reads as complete, so say so in a header the UI shows.
-    if (truncated) res.setHeader("X-Export-Truncated", "true");
-    res.setHeader("X-Export-Row-Count", String(out.length));
-    res.setHeader(
-      "Access-Control-Expose-Headers",
-      "X-Export-Truncated, X-Export-Row-Count",
-    );
+    if (truncated) res.setHeader('X-Export-Truncated', 'true');
+    res.setHeader('X-Export-Row-Count', String(out.length));
+    res.setHeader('Access-Control-Expose-Headers', 'X-Export-Truncated, X-Export-Row-Count');
 
     void logSensitiveAction({
       actor_user_id: req.authUser?.id,
-      actor_role: req.authUser?.role ?? "unknown",
-      action_type: "ATTENDANCE_EXCEPTIONS_EXPORTED",
-      module_key: "attendance",
-      entity_type: "attendance_reconciliation_issue",
+      actor_role: req.authUser?.role ?? 'unknown',
+      action_type: 'ATTENDANCE_EXCEPTIONS_EXPORTED',
+      module_key: 'attendance',
+      entity_type: 'attendance_reconciliation_issue',
       entity_id: `export_${Date.now()}`,
-      reason: `Exported ${out.length} attendance exception rows${truncated ? ` (truncated at ${EXPORT_ROW_CAP})` : ""}`,
+      reason: `Exported ${out.length} attendance exception rows${truncated ? ` (truncated at ${EXPORT_ROW_CAP})` : ''}`,
       new_value_json: { row_count: out.length, truncated, filters: req.query },
       req,
     });
 
     const stamp = new Date().toISOString().slice(0, 10);
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="attendance-exceptions-${stamp}.csv"`,
-    );
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="attendance-exceptions-${stamp}.csv"`);
     return res.send(`${header}\n${body}`);
   }),
 );
@@ -496,15 +426,13 @@ async function getExceptionForWrite(id: string) {
 async function callerMayWrite(req: any, row: any): Promise<boolean> {
   const scope = await resolveUserBusinessScope(req.authUser);
   const condition = buildEmployeeScopeCondition(scope, {
-    employeeId: "emp.id",
-    branchId: "emp.branch_id",
-    processId: "emp.process_id",
-    departmentId: "emp.department_id",
-    managerEmployeeId: "emp.reporting_manager_id",
+    employeeId: 'emp.id',
+    branchId: 'emp.branch_id',
+    processId: 'emp.process_id',
+    departmentId: 'emp.department_id',
+    managerEmployeeId: 'emp.reporting_manager_id',
   });
-  const isGlobal =
-    condition.sql === "1=1" ||
-    scope.assignments.some((a) => a.scopeType === "all");
+  const isGlobal = condition.sql === '1=1' || scope.assignments.some((a) => a.scopeType === 'all');
   if (isGlobal) return true;
   if (!row.employee_id) return false;
 
@@ -518,11 +446,11 @@ async function callerMayWrite(req: any, row: any): Promise<boolean> {
 }
 
 attendanceExceptionsRouter.post(
-  "/:id/resolve",
+  '/:id/resolve',
   requireWriteAccess,
   requireRole(...RESOLVE_ROLES),
   h(async (req, res) => {
-    const reason = String(req.body?.reason ?? "").trim();
+    const reason = String(req.body?.reason ?? '').trim();
     if (reason.length < MIN_RESOLVE_REASON) {
       return res.status(400).json({
         success: false,
@@ -531,22 +459,12 @@ attendanceExceptionsRouter.post(
     }
 
     const row = await getExceptionForWrite(String(req.params.id));
-    if (!row)
-      return res
-        .status(404)
-        .json({ success: false, error: "Exception not found" });
+    if (!row) return res.status(404).json({ success: false, error: 'Exception not found' });
     if (row.resolved_at) {
-      return res
-        .status(409)
-        .json({ success: false, error: "This exception is already resolved." });
+      return res.status(409).json({ success: false, error: 'This exception is already resolved.' });
     }
     if (!(await callerMayWrite(req, row))) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "This employee is outside your assigned scope.",
-        });
+      return res.status(403).json({ success: false, error: 'This employee is outside your assigned scope.' });
     }
 
     await db.execute(
@@ -558,22 +476,14 @@ attendanceExceptionsRouter.post(
 
     void logSensitiveAction({
       actor_user_id: req.authUser?.id,
-      actor_role: req.authUser?.role ?? "unknown",
-      action_type: "ATTENDANCE_EXCEPTION_RESOLVED",
-      module_key: "attendance",
-      entity_type: "attendance_reconciliation_issue",
+      actor_role: req.authUser?.role ?? 'unknown',
+      action_type: 'ATTENDANCE_EXCEPTION_RESOLVED',
+      module_key: 'attendance',
+      entity_type: 'attendance_reconciliation_issue',
       entity_id: row.id,
       reason,
-      old_value_json: {
-        resolved_at: null,
-        issue_type: row.issue_type,
-        severity: row.severity,
-      },
-      new_value_json: {
-        resolved_at: "now",
-        employee_code: row.employee_code,
-        issue_date: row.issue_date,
-      },
+      old_value_json: { resolved_at: null, issue_type: row.issue_type, severity: row.severity },
+      new_value_json: { resolved_at: 'now', employee_code: row.employee_code, issue_date: row.issue_date },
       req,
     });
 
@@ -582,11 +492,11 @@ attendanceExceptionsRouter.post(
 );
 
 attendanceExceptionsRouter.post(
-  "/:id/reopen",
+  '/:id/reopen',
   requireWriteAccess,
   requireRole(...RESOLVE_ROLES),
   h(async (req, res) => {
-    const reason = String(req.body?.reason ?? "").trim();
+    const reason = String(req.body?.reason ?? '').trim();
     if (reason.length < MIN_RESOLVE_REASON) {
       return res.status(400).json({
         success: false,
@@ -595,22 +505,12 @@ attendanceExceptionsRouter.post(
     }
 
     const row = await getExceptionForWrite(String(req.params.id));
-    if (!row)
-      return res
-        .status(404)
-        .json({ success: false, error: "Exception not found" });
+    if (!row) return res.status(404).json({ success: false, error: 'Exception not found' });
     if (!row.resolved_at) {
-      return res
-        .status(409)
-        .json({ success: false, error: "This exception is already open." });
+      return res.status(409).json({ success: false, error: 'This exception is already open.' });
     }
     if (!(await callerMayWrite(req, row))) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "This employee is outside your assigned scope.",
-        });
+      return res.status(403).json({ success: false, error: 'This employee is outside your assigned scope.' });
     }
 
     await db.execute(
@@ -622,16 +522,13 @@ attendanceExceptionsRouter.post(
 
     void logSensitiveAction({
       actor_user_id: req.authUser?.id,
-      actor_role: req.authUser?.role ?? "unknown",
-      action_type: "ATTENDANCE_EXCEPTION_REOPENED",
-      module_key: "attendance",
-      entity_type: "attendance_reconciliation_issue",
+      actor_role: req.authUser?.role ?? 'unknown',
+      action_type: 'ATTENDANCE_EXCEPTION_REOPENED',
+      module_key: 'attendance',
+      entity_type: 'attendance_reconciliation_issue',
       entity_id: row.id,
       reason,
-      old_value_json: {
-        resolved_at: row.resolved_at,
-        review_notes: row.review_notes,
-      },
+      old_value_json: { resolved_at: row.resolved_at, review_notes: row.review_notes },
       new_value_json: { resolved_at: null },
       req,
     });

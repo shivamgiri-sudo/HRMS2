@@ -38,19 +38,11 @@ const UNSUPPORTED_GRN_TYPES: Record<string, string> = {
  * correctly wherever it is called from.
  */
 export function assertGrnTypeSupported(grnType: unknown, action: string): void {
-  const type = String(grnType ?? "")
-    .trim()
-    .toLowerCase();
+  const type = String(grnType ?? "").trim().toLowerCase();
   const reason = UNSUPPORTED_GRN_TYPES[type];
   if (!reason) return;
-  throw Object.assign(
-    new Error(`${reason} ${action} is blocked. Contact Finance Admin.`),
-    {
-      statusCode: 409,
-      code:
-        type === "salary"
-          ? "SALARY_GRN_NOT_SUPPORTED"
-          : "PROVISION_GRN_NOT_SUPPORTED",
-    },
-  );
+  throw Object.assign(new Error(`${reason} ${action} is blocked. Contact Finance Admin.`), {
+    statusCode: 409,
+    code: type === "salary" ? "SALARY_GRN_NOT_SUPPORTED" : "PROVISION_GRN_NOT_SUPPORTED",
+  });
 }

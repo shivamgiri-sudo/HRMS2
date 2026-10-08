@@ -4,9 +4,7 @@ try {
   const dbModule = await import("../db/mysql.js");
   db = dbModule.db;
 } catch {
-  console.error(
-    "[LeaveMonthlyCreditWorker] Database module not found - worker will not run",
-  );
+  console.error("[LeaveMonthlyCreditWorker] Database module not found - worker will not run");
   process.exit(1);
 }
 
@@ -54,23 +52,19 @@ let intervalRef: ReturnType<typeof setInterval> | undefined;
  */
 export async function creditMonthlyLeaves(
   creditYear: number,
-  creditMonth: number,
+  creditMonth: number
 ): Promise<void> {
-  console.log(
-    `[LeaveMonthlyWorker] Running monthly leave credit for ${creditYear}-${String(creditMonth).padStart(2, "0")}`,
-  );
+  console.log(`[LeaveMonthlyWorker] Running monthly leave credit for ${creditYear}-${String(creditMonth).padStart(2, '0')}`);
 
   // Resolve leave type IDs
   const [ltRows]: any = await db.execute(
-    `SELECT id, leave_code FROM leave_type_master WHERE leave_code IN ('CL', 'ML', 'EL') AND active_status = 1`,
+    `SELECT id, leave_code FROM leave_type_master WHERE leave_code IN ('CL', 'ML', 'EL') AND active_status = 1`
   );
   const leaveTypeMap: Record<string, string> = {};
   for (const r of ltRows) leaveTypeMap[r.leave_code] = r.id;
 
-  if (!leaveTypeMap["CL"] || !leaveTypeMap["ML"] || !leaveTypeMap["EL"]) {
-    console.error(
-      "[LeaveMonthlyWorker] CL, ML, or EL leave type missing — aborting",
-    );
+  if (!leaveTypeMap['CL'] || !leaveTypeMap['ML'] || !leaveTypeMap['EL']) {
+    console.error('[LeaveMonthlyWorker] CL, ML, or EL leave type missing — aborting');
     return;
   }
 
@@ -80,7 +74,7 @@ export async function creditMonthlyLeaves(
   // period with a later salary start).
   const [employees]: any = await db.execute(
     `SELECT id, COALESCE(salary_start_date, date_of_joining) AS accrual_start_date
-     FROM employees WHERE active_status = 1 AND employment_status = 'active'`,
+     FROM employees WHERE active_status = 1 AND employment_status = 'active'`
   );
 
   // Load CL/ML schedule for this month (whole-number credits via leave_credit_schedule)
@@ -89,11 +83,10 @@ export async function creditMonthlyLeaves(
      FROM leave_credit_schedule lcs
      JOIN leave_type_master lt ON lt.leave_code = lcs.leave_code AND lt.active_status = 1
      WHERE lcs.month = ?`,
-    [creditMonth],
+    [creditMonth]
   );
 
-  let credited = 0,
-    skipped = 0;
+  let credited = 0, skipped = 0;
 
   for (const emp of employees) {
     try {
@@ -103,15 +96,14 @@ export async function creditMonthlyLeaves(
         // prorateMonthlyCredit(), which turned a joiner's first CL credit into a fraction —
         // 24-Aug joiners ended up holding 0.3 Casual Leave, a balance that cannot be applied
         // for, because leave is taken in whole or half days. See isAccruingInMonth().
-        if (!isAccruingInMonth(emp.accrual_start_date, creditMonth, creditYear))
-          continue;
+        if (!isAccruingInMonth(emp.accrual_start_date, creditMonth, creditYear)) continue;
         const daysToCredit = Number(schedule.credit_days);
         if (!(daysToCredit > 0)) continue;
 
         // Idempotency check
         const [exists]: any = await db.execute(
           `SELECT 1 FROM leave_el_credit_log WHERE employee_id=? AND leave_type_id=? AND credit_year=? AND credit_month=? AND credit_type='monthly' LIMIT 1`,
-          [emp.id, schedule.leave_type_id, creditYear, creditMonth],
+          [emp.id, schedule.leave_type_id, creditYear, creditMonth]
         );
         if (exists.length > 0) continue;
 
@@ -120,88 +112,56 @@ export async function creditMonthlyLeaves(
           `INSERT INTO leave_balance_ledger (id, employee_id, leave_type_id, balance_year, allocated_days, used_days, adjusted_days)
            VALUES (UUID(), ?, ?, ?, ?, 0, 0)
            ON DUPLICATE KEY UPDATE allocated_days = allocated_days + ?`,
-          [
-            emp.id,
-            schedule.leave_type_id,
-            creditYear,
-            daysToCredit,
-            daysToCredit,
-          ],
+          [emp.id, schedule.leave_type_id, creditYear, daysToCredit, daysToCredit]
         );
 
         // Audit log
         await db.execute(
           `INSERT INTO leave_el_credit_log (id, employee_id, leave_type_id, credit_year, credit_month, credit_date, days_credited, months_served, credit_type)
            VALUES (UUID(), ?, ?, ?, ?, CURDATE(), ?, 0, 'monthly')`,
-          [
-            emp.id,
-            schedule.leave_type_id,
-            creditYear,
-            creditMonth,
-            daysToCredit,
-          ],
+          [emp.id, schedule.leave_type_id, creditYear, creditMonth, daysToCredit]
         );
       }
 
       // Credit EL (1.5/month to accrual ledger, unchanged logic)
-      if (!leaveTypeMap["EL"]) {
+      if (!leaveTypeMap['EL']) {
         continue;
       }
-      const elRate = 1.5;
-      const elDaysToCredit =
-        prorateMonthlyCredit(emp.accrual_start_date, creditMonth, creditYear) *
-        elRate;
+      const elRate = 1.500;
+      const elDaysToCredit = prorateMonthlyCredit(emp.accrual_start_date, creditMonth, creditYear) * elRate;
       if (elDaysToCredit > 0) {
         const elRoundedDays = Math.round(elDaysToCredit * 1000) / 1000;
 
         // Idempotency check for EL
         const [elExists]: any = await db.execute(
           `SELECT 1 FROM leave_el_credit_log WHERE employee_id=? AND leave_type_id=? AND credit_year=? AND credit_month=? AND credit_type='monthly' LIMIT 1`,
-          [emp.id, leaveTypeMap["EL"], creditYear, creditMonth],
+          [emp.id, leaveTypeMap['EL'], creditYear, creditMonth]
         );
         if (elExists.length === 0) {
           await db.execute(
             `INSERT INTO leave_el_accrual_ledger (id, employee_id, accrual_year, accrued_days, last_credited_month)
              VALUES (UUID(), ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE accrued_days = accrued_days + ?, last_credited_month = ?`,
-            [
-              emp.id,
-              creditYear,
-              elRoundedDays,
-              creditMonth,
-              elRoundedDays,
-              creditMonth,
-            ],
+            [emp.id, creditYear, elRoundedDays, creditMonth, elRoundedDays, creditMonth]
           );
 
           // EL audit log
           await db.execute(
             `INSERT INTO leave_el_credit_log (id, employee_id, leave_type_id, credit_year, credit_month, credit_date, days_credited, months_served, credit_type)
              VALUES (UUID(), ?, ?, ?, ?, CURDATE(), ?, 0, 'monthly')`,
-            [
-              emp.id,
-              leaveTypeMap["EL"],
-              creditYear,
-              creditMonth,
-              elRoundedDays,
-            ],
+            [emp.id, leaveTypeMap['EL'], creditYear, creditMonth, elRoundedDays]
           );
         }
       }
 
       credited++;
     } catch (err: any) {
-      console.error(
-        `[LeaveMonthlyWorker] Error for employee ${emp.id}:`,
-        err.message,
-      );
+      console.error(`[LeaveMonthlyWorker] Error for employee ${emp.id}:`, err.message);
       skipped++;
     }
   }
 
-  console.log(
-    `[LeaveMonthlyWorker] Done — credited: ${credited}, skipped: ${skipped}`,
-  );
+  console.log(`[LeaveMonthlyWorker] Done — credited: ${credited}, skipped: ${skipped}`);
 }
 
 // ── Catch-up Logic ───────────────────────────────────────────────────────────
@@ -224,7 +184,7 @@ export async function creditMonthlyLeaves(
 async function runCatchUp(year: number, upToMonth: number): Promise<void> {
   const [scheduleRows]: any = await db.execute(
     `SELECT DISTINCT month FROM leave_credit_schedule WHERE month <= ? ORDER BY month`,
-    [upToMonth],
+    [upToMonth]
   );
 
   for (const { month } of scheduleRows) {
@@ -235,13 +195,13 @@ async function runCatchUp(year: number, upToMonth: number): Promise<void> {
        JOIN leave_type_master lt ON lt.id = l.leave_type_id
        JOIN leave_credit_schedule lcs ON lcs.leave_code = lt.leave_code AND lcs.month = ?
        WHERE l.credit_year = ? AND l.credit_month = ? AND l.credit_type = 'monthly'`,
-      [month, year, month],
+      [month, year, month]
     );
     if (Number(ran[0]?.cnt ?? 0) === 0) continue;
 
     // (b) Any active employee whose accrual start (salary_start_date, falling
     // back to date_of_joining) is strictly before this month and has no entry?
-    const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+    const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
     const [result]: any = await db.execute(
       `SELECT COUNT(*) AS gap
        FROM employees e
@@ -261,14 +221,12 @@ async function runCatchUp(year: number, upToMonth: number): Promise<void> {
                SELECT leave_code FROM leave_credit_schedule WHERE month = ?
              )
          )`,
-      [monthStart, year, month, month],
+      [monthStart, year, month, month]
     );
 
     const gap = Number(result[0]?.gap ?? 0);
     if (gap > 0) {
-      console.log(
-        `[LeaveMonthlyWorker] Catch-up: ${gap} employees missed ${year}-${String(month).padStart(2, "0")} — back-filling`,
-      );
+      console.log(`[LeaveMonthlyWorker] Catch-up: ${gap} employees missed ${year}-${String(month).padStart(2, '0')} — back-filling`);
       await creditMonthlyLeaves(year, month);
     }
   }
@@ -283,7 +241,7 @@ async function runCatchUp(year: number, upToMonth: number): Promise<void> {
  */
 async function checkAndRun(): Promise<void> {
   const now = new Date();
-  const creditYear = now.getFullYear();
+  const creditYear  = now.getFullYear();
   const creditMonth = now.getMonth() + 1;
 
   // Back-fill past months that have gaps (safe: idempotent, skips already-credited)
@@ -292,7 +250,7 @@ async function checkAndRun(): Promise<void> {
     try {
       await runCatchUp(creditYear, catchUpUpto);
     } catch (err: any) {
-      console.error("[LeaveMonthlyWorker] Catch-up error:", err.message);
+      console.error('[LeaveMonthlyWorker] Catch-up error:', err.message);
     }
   }
 
@@ -301,12 +259,10 @@ async function checkAndRun(): Promise<void> {
     try {
       await creditMonthlyLeaves(creditYear, creditMonth);
     } catch (err: any) {
-      console.error("[LeaveMonthlyWorker] Monthly credit error:", err.message);
+      console.error('[LeaveMonthlyWorker] Monthly credit error:', err.message);
     }
   } else {
-    console.log(
-      `[LeaveMonthlyWorker] Day ${now.getDate()} — not 1st, skipping new credit`,
-    );
+    console.log(`[LeaveMonthlyWorker] Day ${now.getDate()} — not 1st, skipping new credit`);
   }
 }
 
@@ -315,9 +271,7 @@ async function checkAndRun(): Promise<void> {
  */
 export async function startWorker(): Promise<void> {
   console.log("[LeaveMonthlyCreditWorker] Starting...");
-  console.log(
-    `[LeaveMonthlyCreditWorker] Check interval: every ${CHECK_INTERVAL_MS / (60 * 60 * 1000)} hours`,
-  );
+  console.log(`[LeaveMonthlyCreditWorker] Check interval: every ${CHECK_INTERVAL_MS / (60 * 60 * 1000)} hours`);
 
   // Run immediately on startup (handles the case where the process restarted on the 1st)
   await checkAndRun();
@@ -345,7 +299,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export {
-  startWorker as startLeaveMonthlyWorker,
-  stopWorker as stopLeaveMonthlyWorker,
-};
+export { startWorker as startLeaveMonthlyWorker, stopWorker as stopLeaveMonthlyWorker };

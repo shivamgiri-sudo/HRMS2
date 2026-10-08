@@ -34,13 +34,13 @@ type Executor = { execute: typeof db.execute };
 async function nextSequenceValue(
   kind: "proforma" | "bill" | "credit_note",
   scopeKey: string,
-  executor: Executor = db,
+  executor: Executor = db
 ): Promise<number> {
   const [result] = await executor.execute<ResultSetHeader>(
     `INSERT INTO client_invoice_number_sequence (kind, scope_key, \`last_value\`, updated_at)
      VALUES (?, ?, LAST_INSERT_ID(1), NOW())
      ON DUPLICATE KEY UPDATE \`last_value\` = LAST_INSERT_ID(\`last_value\` + 1), updated_at = NOW()`,
-    [kind, scopeKey],
+    [kind, scopeKey]
   );
   return result.insertId;
 }
@@ -53,10 +53,7 @@ async function nextSequenceValue(
  * into the pool separately — the same pool-level-execute-inside-an-open-transaction hazard
  * mintBillNumber's docstring below describes. Callers outside a transaction omit it.
  */
-async function mintProformaNumber(
-  stateCode: string,
-  conn?: Executor,
-): Promise<string> {
+async function mintProformaNumber(stateCode: string, conn?: Executor): Promise<string> {
   const n = await nextSequenceValue("proforma", "GLOBAL", conn);
   return `PI/${stateCode}/${n}`;
 }
@@ -74,12 +71,7 @@ async function mintProformaNumber(
  * connections the transaction itself is holding, rather than failing fast on the same
  * connection). Callers outside a transaction omit it and fall back to the pool, unchanged.
  */
-async function mintBillNumber(
-  stateCode: string,
-  companyName: string,
-  financeYear: string,
-  conn?: Executor,
-): Promise<string> {
+async function mintBillNumber(stateCode: string, companyName: string, financeYear: string, conn?: Executor): Promise<string> {
   const scopeKey = `${stateCode}|${companyName}|${financeYear}`;
   const n = await nextSequenceValue("bill", scopeKey, conn);
   const idx = n < 10 ? `0${n}` : String(n);
@@ -97,12 +89,7 @@ async function mintBillNumber(
  * `createCreditNote` (client-billing-credit-note.service.ts) now passes its own open-transaction
  * `conn` through here, closing the pool-starvation hazard this docstring used to flag.
  */
-async function mintCreditNoteNumber(
-  stateCode: string,
-  companyName: string,
-  financeYear: string,
-  conn?: Executor,
-): Promise<string> {
+async function mintCreditNoteNumber(stateCode: string, companyName: string, financeYear: string, conn?: Executor): Promise<string> {
   const scopeKey = `${stateCode}|${companyName}|${financeYear}`;
   const n = await nextSequenceValue("credit_note", scopeKey, conn);
   const idx = n < 10 ? `0${n}` : String(n);
@@ -110,8 +97,4 @@ async function mintCreditNoteNumber(
   return `CN-${stateCode}-${idx}/${fyShort}`;
 }
 
-export const clientBillingNumberingService = {
-  mintProformaNumber,
-  mintBillNumber,
-  mintCreditNoteNumber,
-};
+export const clientBillingNumberingService = { mintProformaNumber, mintBillNumber, mintCreditNoteNumber };

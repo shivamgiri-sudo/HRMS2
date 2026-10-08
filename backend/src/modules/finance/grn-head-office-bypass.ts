@@ -36,9 +36,7 @@ const HEAD_OFFICE_NAME_PATTERNS = [
  */
 const headOfficeBranchCache = new Map<string, boolean>();
 
-export async function isHeadOfficeBranch(
-  branchId: string | null | undefined,
-): Promise<boolean> {
+export async function isHeadOfficeBranch(branchId: string | null | undefined): Promise<boolean> {
   if (!branchId) return false;
 
   const cached = headOfficeBranchCache.get(branchId);
@@ -46,12 +44,10 @@ export async function isHeadOfficeBranch(
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1`,
-    [branchId],
+    [branchId]
   );
   const branchName = String((rows[0] as any)?.branch_name ?? "").trim();
-  const isHeadOffice = HEAD_OFFICE_NAME_PATTERNS.some((pattern) =>
-    pattern.test(branchName),
-  );
+  const isHeadOffice = HEAD_OFFICE_NAME_PATTERNS.some((pattern) => pattern.test(branchName));
 
   headOfficeBranchCache.set(branchId, isHeadOffice);
   return isHeadOffice;
@@ -60,10 +56,7 @@ export async function isHeadOfficeBranch(
 /**
  * Checks if the actor has finance_head role.
  */
-export function isFinanceHead(
-  actorRole: string,
-  userRoles?: string[],
-): boolean {
+export function isFinanceHead(actorRole: string, userRoles?: string[]): boolean {
   const allRoles = [actorRole, ...(userRoles ?? [])]
     .filter((r): r is string => Boolean(r))
     .map((r) => r.toLowerCase());
@@ -80,7 +73,7 @@ export function isFinanceHead(
 export async function qualifiesForHeadOfficeBypass(
   branchId: string | null | undefined,
   actorRole: string,
-  userRoles?: string[],
+  userRoles?: string[]
 ): Promise<boolean> {
   if (!isFinanceHead(actorRole, userRoles)) return false;
   return await isHeadOfficeBranch(branchId);
@@ -96,11 +89,13 @@ export async function qualifiesForHeadOfficeBypass(
  * This is checked at Accounts Head approval time to determine whether to skip
  * Finance Head and go directly to final status.
  */
-export async function shouldSkipFinanceHeadOnAccountsApproval(grn: {
-  branch_id?: string | null;
-  submitted_by?: string | null;
-  created_by?: string | null;
-}): Promise<boolean> {
+export async function shouldSkipFinanceHeadOnAccountsApproval(
+  grn: {
+    branch_id?: string | null;
+    submitted_by?: string | null;
+    created_by?: string | null;
+  }
+): Promise<boolean> {
   if (!grn.branch_id) return false;
   if (!(await isHeadOfficeBranch(grn.branch_id))) return false;
 
@@ -110,11 +105,9 @@ export async function shouldSkipFinanceHeadOnAccountsApproval(grn: {
 
   const [roleRows] = await db.execute<RowDataPacket[]>(
     `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
-    [submitterId],
+    [submitterId]
   );
-  const allRoles = roleRows.map((row) =>
-    String((row as any).role_key ?? "").toLowerCase(),
-  );
+  const allRoles = roleRows.map((row) => String((row as any).role_key ?? "").toLowerCase());
 
   return allRoles.includes("finance_head");
 }

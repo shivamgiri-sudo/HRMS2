@@ -18,18 +18,9 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
-  loadStagedRows,
-  resolveEmployees,
-  resolveSingleBranch,
-  linkRowToEntity,
-  markRowFailed,
-  markPendingApproval,
-  lockEntities,
-  BulkUploadError,
-  normalizeMonth,
-  type ImportOutcome,
-  type ApplyOutcome,
-  type BatchRecord,
+  loadStagedRows, resolveEmployees, resolveSingleBranch, linkRowToEntity,
+  markRowFailed, markPendingApproval, lockEntities, BulkUploadError, normalizeMonth,
+  type ImportOutcome, type ApplyOutcome, type BatchRecord,
 } from "./bulk-approval.service.js";
 import { withBulkLockRetry } from "./lock-retry.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
@@ -40,11 +31,7 @@ async function loadDeductionTypes(): Promise<Set<string>> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT deduction_code FROM payroll_deduction_type WHERE active_status = 1",
   );
-  return new Set(
-    (rows as RowDataPacket[]).map((r) =>
-      String(r.deduction_code).trim().toUpperCase(),
-    ),
-  );
+  return new Set((rows as RowDataPacket[]).map((r) => String(r.deduction_code).trim().toUpperCase()));
 }
 
 export async function importDeductionBatch(
@@ -52,13 +39,9 @@ export async function importDeductionBatch(
   userId: string,
 ): Promise<ImportOutcome> {
   const rows = await loadStagedRows(batchId);
-  if (rows.length === 0)
-    throw new BulkUploadError("This batch has no rows left to import.", 400);
+  if (rows.length === 0) throw new BulkUploadError("This batch has no rows left to import.", 400);
 
-  const employees = await resolveEmployees(
-    rows.map((r) => r.data.employee_code ?? ""),
-    { includeInactive: true },
-  );
+  const employees = await resolveEmployees(rows.map((r) => r.data.employee_code ?? ""), { includeInactive: true });
   const types = await loadDeductionTypes();
   const errors: string[] = [];
   let staged = 0;
@@ -83,9 +66,7 @@ export async function importDeductionBatch(
       employeeIds,
     );
     for (const r of dupRows as RowDataPacket[]) {
-      existingDupKeys.add(
-        `${r.employee_id}|${String(r.deduction_type_code).toUpperCase()}|${r.run_month}`,
-      );
+      existingDupKeys.add(`${r.employee_id}|${String(r.deduction_type_code).toUpperCase()}|${r.run_month}`);
     }
   }
 
@@ -97,8 +78,7 @@ export async function importDeductionBatch(
 
     let validationError: string | null = null;
     if (!d.employee_code) validationError = "employee_code is required";
-    else if (!emp)
-      validationError = `employee_code "${d.employee_code}" is not in the employee master`;
+    else if (!emp) validationError = `employee_code "${d.employee_code}" is not in the employee master`;
     else if (!typeCode) validationError = "deduction_type_code is required";
     else if (!types.has(typeCode)) {
       validationError =
@@ -111,8 +91,7 @@ export async function importDeductionBatch(
     } else if (!Number.isFinite(amount) || amount <= 0) {
       validationError = `amount must be a number greater than 0 (got "${d.amount}")`;
     } else if (!d.description || d.description.trim().length < 5) {
-      validationError =
-        "description is required and must be at least 5 characters";
+      validationError = "description is required and must be at least 5 characters";
     }
 
     if (!validationError) d.run_month = normalizeMonth(d.run_month) as string;
@@ -140,17 +119,9 @@ export async function importDeductionBatch(
             run_month, status, created_by, branch_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?, ?)`,
         [
-          id,
-          emp.id,
-          d.description.trim(),
-          typeCode,
-          amount,
-          d.is_prorated === "1" || d.is_prorated?.toLowerCase() === "true"
-            ? 1
-            : 0,
-          d.run_month,
-          userId,
-          emp.branch_id,
+          id, emp.id, d.description.trim(), typeCode, amount,
+          d.is_prorated === "1" || d.is_prorated?.toLowerCase() === "true" ? 1 : 0,
+          d.run_month, userId, emp.branch_id,
         ],
       );
       await linkRowToEntity(row.rowId, ENTITY_TYPE, id);
@@ -227,53 +198,49 @@ export async function applyDeductionBatch(
   // what made a large deduction batch take minutes of almost pure waiting.
   // BULK_ROW_CONCURRENCY is derived from the real pool size, so this overlaps without
   // crowding out live traffic.
-  const outcomes = await mapWithConcurrency(
-    rows,
-    BULK_ROW_CONCURRENCY,
-    async (row) => {
-      try {
-        // Guarded on the current status so a replayed approval cannot resurrect a row
-        // a later action deactivated. lockEntity used to run INSIDE this same retry
-        // closure: if IT hit a transient lock (a busy moment on bulk_upload_locked_entity,
-        // written by every row of every concurrent batch), the retry re-ran the UPDATE
-        // too — which then failed its own guard ("no longer pending approval", since the
-        // first attempt had already flipped the status) and reported a row that had
-        // genuinely activated as an error. Locking now happens after the loop, batched,
-        // decoupled entirely from whether the domain UPDATE itself needed a retry.
-        const [res] = await withBulkLockRetry(() =>
-          db.execute<ResultSetHeader>(
-            `UPDATE employee_deduction_entries
+  const outcomes = await mapWithConcurrency(rows, BULK_ROW_CONCURRENCY, async (row) => {
+    try {
+      // Guarded on the current status so a replayed approval cannot resurrect a row
+      // a later action deactivated. lockEntity used to run INSIDE this same retry
+      // closure: if IT hit a transient lock (a busy moment on bulk_upload_locked_entity,
+      // written by every row of every concurrent batch), the retry re-ran the UPDATE
+      // too — which then failed its own guard ("no longer pending approval", since the
+      // first attempt had already flipped the status) and reported a row that had
+      // genuinely activated as an error. Locking now happens after the loop, batched,
+      // decoupled entirely from whether the domain UPDATE itself needed a retry.
+      const [res] = await withBulkLockRetry(() =>
+        db.execute<ResultSetHeader>(
+          `UPDATE employee_deduction_entries
               SET status = 'active', updated_at = NOW()
             WHERE id = ? AND status = 'pending_approval'`,
-            [row.created_entity_id],
-          ),
-        );
-        if (res.affectedRows === 0) {
-          throw new Error("deduction entry is no longer pending approval");
-        }
-        void logSensitiveAction({
-          actor_user_id: approverUserId,
-          actor_role: "branch_head",
-          action_type: "DEDUCTION_APPROVED",
-          module_key: "payroll",
-          entity_type: ENTITY_TYPE,
-          entity_id: row.created_entity_id,
-          reason: remarks ?? undefined,
-          old_value_json: { status: "pending_approval" },
-          new_value_json: {
-            status: "active",
-            via_bulk_upload: true,
-            upload_batch_no: batch.upload_batch_no,
-          },
-        });
-        return { ok: true as const, entityId: row.created_entity_id };
-      } catch (err) {
-        const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
-        await markRowFailed(row.id, msg);
-        return { ok: false as const, msg };
+          [row.created_entity_id],
+        ),
+      );
+      if (res.affectedRows === 0) {
+        throw new Error("deduction entry is no longer pending approval");
       }
-    },
-  );
+      void logSensitiveAction({
+        actor_user_id: approverUserId,
+        actor_role: "branch_head",
+        action_type: "DEDUCTION_APPROVED",
+        module_key: "payroll",
+        entity_type: ENTITY_TYPE,
+        entity_id: row.created_entity_id,
+        reason: remarks ?? undefined,
+        old_value_json: { status: "pending_approval" },
+        new_value_json: {
+          status: "active",
+          via_bulk_upload: true,
+          upload_batch_no: batch.upload_batch_no,
+        },
+      });
+      return { ok: true as const, entityId: row.created_entity_id };
+    } catch (err) {
+      const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
+      await markRowFailed(row.id, msg);
+      return { ok: false as const, msg };
+    }
+  });
 
   // Tallied after the fact rather than with counters mutated from inside the tasks, so the
   // error order follows row order regardless of the order the tasks happened to finish in.
@@ -321,55 +288,47 @@ export async function reapplyDeductionBatch(
       ORDER BY ubr.row_no ASC`,
     [batch.id, ENTITY_TYPE],
   );
-  const rows = rawRows as Array<{
-    id: string;
-    row_no: number;
-    created_entity_id: string;
-  }>;
+  const rows = rawRows as Array<{ id: string; row_no: number; created_entity_id: string }>;
 
-  const outcomes = await mapWithConcurrency(
-    rows,
-    BULK_ROW_CONCURRENCY,
-    async (row) => {
-      try {
-        const [res] = await withBulkLockRetry(() =>
-          db.execute<ResultSetHeader>(
-            `UPDATE employee_deduction_entries
+  const outcomes = await mapWithConcurrency(rows, BULK_ROW_CONCURRENCY, async (row) => {
+    try {
+      const [res] = await withBulkLockRetry(() =>
+        db.execute<ResultSetHeader>(
+          `UPDATE employee_deduction_entries
               SET status = 'active', updated_at = NOW()
             WHERE id = ? AND status = 'pending_approval'`,
-            [row.created_entity_id],
-          ),
-        );
-        if (res.affectedRows === 0) {
-          throw new Error("deduction entry is no longer pending approval");
-        }
-        await db.execute(
-          `UPDATE upload_batch_row SET row_status = 'imported', error_messages = NULL WHERE id = ?`,
-          [row.id],
-        );
-        void logSensitiveAction({
-          actor_user_id: approverUserId,
-          actor_role: "branch_head",
-          action_type: "DEDUCTION_APPROVED",
-          module_key: "payroll",
-          entity_type: ENTITY_TYPE,
-          entity_id: row.created_entity_id,
-          reason: remarks ?? undefined,
-          old_value_json: { status: "pending_approval" },
-          new_value_json: {
-            status: "active",
-            via_bulk_upload: true,
-            upload_batch_no: batch.upload_batch_no,
-          },
-        });
-        return { ok: true as const, entityId: row.created_entity_id };
-      } catch (err) {
-        const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
-        await markRowFailed(row.id, msg);
-        return { ok: false as const, msg };
+          [row.created_entity_id],
+        ),
+      );
+      if (res.affectedRows === 0) {
+        throw new Error("deduction entry is no longer pending approval");
       }
-    },
-  );
+      await db.execute(
+        `UPDATE upload_batch_row SET row_status = 'imported', error_messages = NULL WHERE id = ?`,
+        [row.id],
+      );
+      void logSensitiveAction({
+        actor_user_id: approverUserId,
+        actor_role: "branch_head",
+        action_type: "DEDUCTION_APPROVED",
+        module_key: "payroll",
+        entity_type: ENTITY_TYPE,
+        entity_id: row.created_entity_id,
+        reason: remarks ?? undefined,
+        old_value_json: { status: "pending_approval" },
+        new_value_json: {
+          status: "active",
+          via_bulk_upload: true,
+          upload_batch_no: batch.upload_batch_no,
+        },
+      });
+      return { ok: true as const, entityId: row.created_entity_id };
+    } catch (err) {
+      const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
+      await markRowFailed(row.id, msg);
+      return { ok: false as const, msg };
+    }
+  });
 
   const toLock: string[] = [];
   const errors: string[] = [];
@@ -431,16 +390,11 @@ export async function rejectDeductionBatch(
         entity_type: ENTITY_TYPE,
         entity_id: row.created_entity_id,
         reason: remarks,
-        new_value_json: {
-          status: "inactive",
-          upload_batch_no: batch.upload_batch_no,
-        },
+        new_value_json: { status: "inactive", upload_batch_no: batch.upload_batch_no },
       });
       applied++;
     } catch (err) {
-      errors.push(
-        `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`,
-      );
+      errors.push(`Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`);
       failed++;
     }
   }

@@ -35,12 +35,8 @@ vi.mock("../src/modules/process/process.repository.js", () => ({
 // true` also keeps the handler off its self-heal branch, which would otherwise fire a live
 // schema check from a unit test.
 vi.mock("../src/db/runPendingMigrations.js", () => ({
-  verifySchemaVersion: vi
-    .fn()
-    .mockResolvedValue({ valid: true, pendingCount: 0 }),
-  getMigrationHealth: vi
-    .fn()
-    .mockResolvedValue({ applied: 0, pending: 0, failed: 0 }),
+  verifySchemaVersion: vi.fn().mockResolvedValue({ valid: true, pendingCount: 0 }),
+  getMigrationHealth: vi.fn().mockResolvedValue({ applied: 0, pending: 0, failed: 0 }),
   getSchemaVerificationState: vi.fn(() => ({
     state: "verified" as const,
     appliedCount: 0,
@@ -170,9 +166,7 @@ describe("GET /api/processes — auth guard", () => {
   });
 
   it("returns 401 when token is invalid", async () => {
-    const res = await request(app)
-      .get("/api/processes")
-      .set({ Authorization: "Bearer bad-invalid-jwt-here" });
+    const res = await request(app).get("/api/processes").set({ Authorization: "Bearer bad-invalid-jwt-here" });
     expect(res.status).toBe(401);
   });
 });
@@ -198,18 +192,14 @@ describe("GET /api/processes", () => {
 
   it("filters by activeStatus query param", async () => {
     mockRepo.list.mockResolvedValueOnce([]);
-    await request(app)
-      .get("/api/processes?activeStatus=active")
-      .set(authHeader());
+    await request(app).get("/api/processes?activeStatus=active").set(authHeader());
     expect(mockRepo.list).toHaveBeenCalledWith(
-      expect.objectContaining({ activeStatus: "active" }),
+      expect.objectContaining({ activeStatus: "active" })
     );
   });
 
   it("returns 400 for invalid activeStatus value", async () => {
-    const res = await request(app)
-      .get("/api/processes?activeStatus=bad")
-      .set(authHeader());
+    const res = await request(app).get("/api/processes?activeStatus=bad").set(authHeader());
     expect(res.status).toBe(400);
   });
 });
@@ -226,18 +216,14 @@ describe("GET /api/processes/:id", () => {
 
   it("returns process by id", async () => {
     mockRepo.getById.mockResolvedValueOnce(fakeProcess);
-    const res = await request(app)
-      .get("/api/processes/proc-1")
-      .set(authHeader());
+    const res = await request(app).get("/api/processes/proc-1").set(authHeader());
     expect(res.status).toBe(200);
     expect(res.body.data.id).toBe("proc-1");
   });
 
   it("returns 500 when process not found", async () => {
     mockRepo.getById.mockResolvedValueOnce(null);
-    const res = await request(app)
-      .get("/api/processes/missing")
-      .set(authHeader());
+    const res = await request(app).get("/api/processes/missing").set(authHeader());
     expect(res.status).toBe(500);
     expect(res.body.message).toMatch(/Process not found/i);
   });
@@ -323,10 +309,7 @@ describe("PATCH /api/processes/:id/status", () => {
 
   it("deactivates process", async () => {
     mockRepo.getById.mockResolvedValueOnce(fakeProcess);
-    mockRepo.updateStatus.mockResolvedValueOnce({
-      ...fakeProcess,
-      active_status: false,
-    });
+    mockRepo.updateStatus.mockResolvedValueOnce({ ...fakeProcess, active_status: false });
 
     const res = await request(app)
       .patch("/api/processes/proc-1/status")

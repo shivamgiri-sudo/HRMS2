@@ -22,14 +22,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute } }));
 
-const { listJoiningControlRoomQueue } =
-  await import("../joining-control-room.service.js");
+const { listJoiningControlRoomQueue } = await import("../joining-control-room.service.js");
 
 /** 50 ids, the queue's page size — the count is the whole point of the first contract. */
-const IDS = Array.from(
-  { length: 50 },
-  (_, i) => `cand-${String(i).padStart(3, "0")}`,
-);
+const IDS = Array.from({ length: 50 }, (_, i) => `cand-${String(i).padStart(3, "0")}`);
 
 function sqlOf(call: unknown[]) {
   return String(call[0]).replace(/\s+/g, " ").trim();
@@ -55,22 +51,16 @@ describe("the queue reads its page in a fixed number of queries", () => {
 
   it("selects every candidate of the page in a single IN, with one bind per id", async () => {
     await listJoiningControlRoomQueue();
-    const snapshot = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("c.id IN ("),
-    )!;
+    const snapshot = execute.mock.calls.find(([sql]) => String(sql).includes("c.id IN ("))!;
     expect(snapshot).toBeDefined();
     expect(snapshot[1]).toHaveLength(IDS.length);
     // One placeholder per id — never a re-interpolated literal.
-    expect(sqlOf(snapshot)).toContain(
-      `c.id IN (${IDS.map(() => "?").join(",")})`,
-    );
+    expect(sqlOf(snapshot)).toContain(`c.id IN (${IDS.map(() => "?").join(",")})`);
   });
 
   it("never issues the single-candidate form while building the page", async () => {
     await listJoiningControlRoomQueue();
-    const singles = execute.mock.calls.filter(([sql]) =>
-      String(sql).includes("WHERE c.id = ?"),
-    );
+    const singles = execute.mock.calls.filter(([sql]) => String(sql).includes("WHERE c.id = ?"));
     expect(singles).toHaveLength(0);
   });
 
@@ -87,21 +77,13 @@ describe("the queue reads its page in a fixed number of queries", () => {
 describe("the queue's ordering stays inside one table per arm", () => {
   it("no longer orders on a COALESCE spanning the joined tables", async () => {
     await listJoiningControlRoomQueue();
-    const queue = sqlOf(
-      execute.mock.calls.find(([sql]) =>
-        String(sql).includes("SELECT candidate_id FROM ("),
-      )!,
-    );
+    const queue = sqlOf(execute.mock.calls.find(([sql]) => String(sql).includes("SELECT candidate_id FROM ("))!);
     expect(queue).not.toContain("ORDER BY COALESCE(p.updated_at");
   });
 
   it("orders each arm by its own table's own column", async () => {
     await listJoiningControlRoomQueue();
-    const queue = sqlOf(
-      execute.mock.calls.find(([sql]) =>
-        String(sql).includes("SELECT candidate_id FROM ("),
-      )!,
-    );
+    const queue = sqlOf(execute.mock.calls.find(([sql]) => String(sql).includes("SELECT candidate_id FROM ("))!);
     // The profile arm tie-breaks on p.candidate_id, not c.id. Same value (it is the join
     // condition) so the ordering is identical, but only the profile-side column can sit in an
     // index on that table: an InnoDB secondary index suffixes the PRIMARY KEY, and this table's
@@ -118,21 +100,13 @@ describe("the queue's ordering stays inside one table per arm", () => {
     // lands inside a tie group — measured live inside a group of three sharing one timestamp.
     // Without this the page could return a different 50 on each call for unchanged data.
     await listJoiningControlRoomQueue();
-    const queue = sqlOf(
-      execute.mock.calls.find(([sql]) =>
-        String(sql).includes("SELECT candidate_id FROM ("),
-      )!,
-    );
+    const queue = sqlOf(execute.mock.calls.find(([sql]) => String(sql).includes("SELECT candidate_id FROM ("))!);
     expect(queue).toContain("ORDER BY sort_key DESC, candidate_id DESC");
   });
 
   it("keeps every arm capped, so no arm can sort the whole table", async () => {
     await listJoiningControlRoomQueue();
-    const queue = sqlOf(
-      execute.mock.calls.find(([sql]) =>
-        String(sql).includes("SELECT candidate_id FROM ("),
-      )!,
-    );
+    const queue = sqlOf(execute.mock.calls.find(([sql]) => String(sql).includes("SELECT candidate_id FROM ("))!);
     // Four arms plus the outer sort.
     expect(queue.match(/LIMIT 50/g)).toHaveLength(5);
   });
@@ -141,17 +115,13 @@ describe("the queue's ordering stays inside one table per arm", () => {
 describe("the search filter binds once per arm", () => {
   it("passes no bindings when no search term is given", async () => {
     await listJoiningControlRoomQueue();
-    const queue = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("SELECT candidate_id FROM ("),
-    )!;
+    const queue = execute.mock.calls.find(([sql]) => String(sql).includes("SELECT candidate_id FROM ("))!;
     expect(queue[1]).toEqual([]);
   });
 
   it("repeats the four LIKE bindings once for each of the four arms", async () => {
     await listJoiningControlRoomQueue("kumar");
-    const queue = execute.mock.calls.find(([sql]) =>
-      String(sql).includes("SELECT candidate_id FROM ("),
-    )!;
+    const queue = execute.mock.calls.find(([sql]) => String(sql).includes("SELECT candidate_id FROM ("))!;
     // 4 columns searched x 4 arms. A mismatch here surfaces as a bind-count error at runtime,
     // which is exactly the failure this locks down.
     expect(queue[1]).toHaveLength(16);

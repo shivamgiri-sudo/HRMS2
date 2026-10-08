@@ -34,11 +34,8 @@ const ALLOCATION_ID = "1d9fff3c-d3c9-4595-bfec-ff5671e675aa";
 
 async function main() {
   const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
   });
   const connection = await pool.getConnection();
   try {
@@ -46,37 +43,30 @@ async function main() {
 
     const [lineRows] = await connection.execute(
       `SELECT id, consumed_amount FROM finance_budget_line WHERE id = ? FOR UPDATE`,
-      [LINE_ID],
+      [LINE_ID]
     );
     const line = lineRows[0];
     if (!line) throw new Error("budget line vanished");
 
     const [backingRows] = await connection.execute(
       `SELECT lifecycle_status, pnl_cost_amount FROM grn_cost_allocation WHERE budget_line_id = ? AND id <> ?`,
-      [LINE_ID, ALLOCATION_ID],
+      [LINE_ID, ALLOCATION_ID]
     );
     const otherConsumed = backingRows
       .filter((r) => r.lifecycle_status === "consumed")
       .reduce((s, r) => s + Number(r.pnl_cost_amount), 0);
-    const targetConsumed =
-      Math.round((otherConsumed + Number.EPSILON) * 100) / 100;
+    const targetConsumed = Math.round((otherConsumed + Number.EPSILON) * 100) / 100;
 
     console.log(`Current consumed_amount: ${line.consumed_amount}`);
-    console.log(
-      `Real backing (excl. row 184, sum of other 'consumed' rows): ${targetConsumed}`,
-    );
-    console.log(
-      `${APPLY ? "APPLYING" : "WOULD APPLY"}: set consumed_amount = ${targetConsumed}, delete allocation ${ALLOCATION_ID}`,
-    );
+    console.log(`Real backing (excl. row 184, sum of other 'consumed' rows): ${targetConsumed}`);
+    console.log(`${APPLY ? "APPLYING" : "WOULD APPLY"}: set consumed_amount = ${targetConsumed}, delete allocation ${ALLOCATION_ID}`);
 
     if (APPLY) {
       await connection.execute(
         `UPDATE finance_budget_line SET consumed_amount = ? WHERE id = ?`,
-        [targetConsumed, LINE_ID],
+        [targetConsumed, LINE_ID]
       );
-      await connection.execute(`DELETE FROM grn_cost_allocation WHERE id = ?`, [
-        ALLOCATION_ID,
-      ]);
+      await connection.execute(`DELETE FROM grn_cost_allocation WHERE id = ?`, [ALLOCATION_ID]);
       await connection.commit();
       console.log("APPLIED.");
     } else {

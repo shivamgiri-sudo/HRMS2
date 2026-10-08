@@ -29,28 +29,20 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const providersDir = path.resolve(__dirname, "../providers");
-const dispatchSrc = fs.readFileSync(
-  path.resolve(__dirname, "../dispatch.service.ts"),
-  "utf8",
-);
+const dispatchSrc = fs.readFileSync(path.resolve(__dirname, "../dispatch.service.ts"), "utf8");
 
-const read = (rel: string) =>
-  fs.readFileSync(path.join(providersDir, rel), "utf8");
+const read = (rel: string) => fs.readFileSync(path.join(providersDir, rel), "utf8");
 
 describe("provider capability check", () => {
   it("is declared OPTIONAL on the interface", () => {
     // Optional is what makes this incapable of touching email: a provider that
     // does not implement it is treated as configured.
-    expect(read("provider.interface.ts")).toMatch(
-      /isConfigured\?\(\): boolean;/,
-    );
+    expect(read("provider.interface.ts")).toMatch(/isConfigured\?\(\): boolean;/);
   });
 
   it("no EMAIL provider implements it — the working channel is untouchable", () => {
     for (const f of fs.readdirSync(path.join(providersDir, "email"))) {
-      expect(read(`email/${f}`), `${f} must not opt in`).not.toContain(
-        "isConfigured",
-      );
+      expect(read(`email/${f}`), `${f} must not opt in`).not.toContain("isConfigured");
     }
   });
 
@@ -69,52 +61,35 @@ describe("provider capability check", () => {
       "whatsapp/local-whatsapp.provider.ts",
     ];
     for (const rel of expected) {
-      expect(read(rel), `${rel} does not report configuration`).toContain(
-        "isConfigured()",
-      );
+      expect(read(rel), `${rel} does not report configuration`).toContain("isConfigured()");
     }
   });
 
   it("each check requires the credential that actually gates sending", () => {
     // SmartPing's live failure was literally "username is required".
-    expect(read("sms/smartping.provider.ts")).toContain(
-      "this.username && this.password",
-    );
-    expect(read("sms/twilio-sms.provider.ts")).toContain(
-      "Boolean(sid && tok && this.sid)",
-    );
-    expect(read("whatsapp/meta.provider.ts")).toContain(
-      "this.accessToken && this.phoneNumberId",
-    );
+    expect(read("sms/smartping.provider.ts")).toContain("this.username && this.password");
+    expect(read("sms/twilio-sms.provider.ts")).toContain("Boolean(sid && tok && this.sid)");
+    expect(read("whatsapp/meta.provider.ts")).toContain("this.accessToken && this.phoneNumberId");
     // The base URL is the gating credential for the self-hosted bridge, not the API key: a
     // bridge on a private network legitimately runs unauthenticated, but there is no send
     // without somewhere to send to.
-    expect(read("whatsapp/local-whatsapp.provider.ts")).toContain(
-      "Boolean(this.endpoint)",
-    );
+    expect(read("whatsapp/local-whatsapp.provider.ts")).toContain("Boolean(this.endpoint)");
   });
 });
 
 describe("dispatch skips unconfigured channels", () => {
-  const code = dispatchSrc
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
+  const code = dispatchSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
   it("checks before building a dispatch_log row", () => {
     // Scoped to send(). There is a second INSERT INTO dispatch_log in
     // recordUndeliverable, which sits earlier in the class, so searching the
     // whole file finds that one and compares against the wrong statement.
-    const sendBody = code.slice(
-      code.indexOf("async send(dto: SendMessageDTO)"),
-    );
+    const sendBody = code.slice(code.indexOf("async send(dto: SendMessageDTO)"));
     const guard = sendBody.indexOf("channelUnconfigured(channel)");
     const insert = sendBody.indexOf("INSERT INTO dispatch_log");
     expect(guard, "guard missing from send()").toBeGreaterThan(-1);
     expect(insert, "message insert missing from send()").toBeGreaterThan(-1);
-    expect(
-      guard,
-      "the row is written before the check, so noise is still logged",
-    ).toBeLessThan(insert);
+    expect(guard, "the row is written before the check, so noise is still logged").toBeLessThan(insert);
   });
 
   it("counts the skip as failed rather than pretending it was sent", () => {
@@ -128,9 +103,7 @@ describe("dispatch skips unconfigured channels", () => {
     expect(body).toContain("catch");
     expect(body).toMatch(/catch[\s\S]{0,80}return false/);
     // A provider that does not implement the method is configured by default.
-    expect(body).toMatch(
-      /typeof provider\.isConfigured !== 'function'[\s\S]{0,40}return false/,
-    );
+    expect(body).toMatch(/typeof provider\.isConfigured !== 'function'[\s\S]{0,40}return false/);
   });
 
   it("warns once per channel, not once per message", () => {

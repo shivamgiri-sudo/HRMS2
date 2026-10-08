@@ -3,10 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const repoRoot = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../../..",
-);
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../..");
 
 function source(path: string) {
   return readFileSync(resolve(repoRoot, path), "utf8");
@@ -14,15 +11,11 @@ function source(path: string) {
 
 describe("P&L Master & Control Center UI contract", () => {
   const page = source("src/pages/finance/PnlMasterControlCenterPage.tsx");
-  const routeBridge = source(
-    "src/pages/finance/ProcessPnlConfigurationPage.tsx",
-  );
+  const routeBridge = source("src/pages/finance/ProcessPnlConfigurationPage.tsx");
   const hook = source("src/hooks/useBpoPnlConfiguration.ts");
 
   it("keeps the existing configuration route connected to the master center", () => {
-    expect(routeBridge).toContain(
-      'export { default } from "./PnlMasterControlCenterPage"',
-    );
+    expect(routeBridge).toContain('export { default } from "./PnlMasterControlCenterPage"');
   });
 
   it("provides the governed master workspaces required by Finance", () => {

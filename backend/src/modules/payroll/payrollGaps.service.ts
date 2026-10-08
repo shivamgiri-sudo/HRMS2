@@ -34,7 +34,7 @@ export async function checkTdsConfigExists(): Promise<boolean> {
       // is_active matters here: a slab switched off is not configuration a
       // projection may rely on, and counting it made this gate report "configured"
       // for rates nobody intended to apply.
-      "SELECT COUNT(*) AS cnt FROM statutory_config WHERE config_key LIKE 'tds_slab_%' AND is_active = 1",
+      "SELECT COUNT(*) AS cnt FROM statutory_config WHERE config_key LIKE 'tds_slab_%' AND is_active = 1"
     );
     const cnt: number = (rows as any[])[0]?.cnt ?? 0;
     return Number(cnt) > 0;
@@ -51,15 +51,15 @@ export const payrollGapsService = {
    * Falls back to 26 when no holiday master entry exists for the month/branch.
    */
   async calculateWorkingDaysFromHolidays(
-    month: string, // format: YYYY-MM
-    branchId?: string,
+    month: string,  // format: YYYY-MM
+    branchId?: string
   ): Promise<number> {
     const [year, mon] = month.split("-").map(Number);
     if (!year || !mon) return 26;
 
     try {
       const start = `${month}-01`;
-      const end = `${month}-${new Date(year, mon, 0).getDate().toString().padStart(2, "0")}`;
+      const end   = `${month}-${new Date(year, mon, 0).getDate().toString().padStart(2, "0")}`;
 
       const conds = ["holiday_date BETWEEN ? AND ?", "active_status = 1"];
       const params: unknown[] = [start, end];
@@ -72,7 +72,7 @@ export const payrollGapsService = {
         `SELECT COUNT(*) AS holiday_count
            FROM leave_holiday_master
           WHERE ${conds.join(" AND ")}`,
-        params,
+        params
       );
 
       const holidayCount: number = (rows as any[])[0]?.holiday_count ?? 0;
@@ -99,7 +99,7 @@ export const payrollGapsService = {
     lwpDays: number,
     ctcAnnual: number,
     workingDays: number,
-    lwpBasis: "ctc_annual" | "eligible_gross" | "basic_only" | undefined,
+    lwpBasis: "ctc_annual" | "eligible_gross" | "basic_only" | undefined
   ): LwpDeduction {
     if (lwpBasis === undefined) {
       return {
@@ -189,4 +189,5 @@ export const payrollGapsService = {
       note: `Projected from statutory_config slabs at an effective rate of ${result.effective_rate}%.`,
     };
   },
+
 };

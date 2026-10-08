@@ -27,35 +27,27 @@ function yesterday(date: string): string {
 }
 
 async function main() {
-  const date =
-    readArg("date") ??
-    process.env.PERFORMANCE_PREVIEW_DATE ??
-    yesterday(todayInIndia());
-  const yearMonth =
-    readArg("year-month") ??
-    process.env.PERFORMANCE_PREVIEW_MONTH ??
-    date.slice(0, 7);
+  const date = readArg("date") ?? process.env.PERFORMANCE_PREVIEW_DATE ?? yesterday(todayInIndia());
+  const yearMonth = readArg("year-month") ?? process.env.PERFORMANCE_PREVIEW_MONTH ?? date.slice(0, 7);
   const result = await previewPerformanceSources({ date, yearMonth });
 
   console.log("Performance source preview - read only");
   console.log(`Date: ${result.date}`);
   console.log(`Month: ${result.yearMonth}`);
-  console.table(
-    Object.values(result.sources).map((source) => ({
-      source: source.key,
-      connector: source.connectorKey,
-      configured: source.configured,
-      active: source.active,
-      credentials: source.hasCredentials,
-      lastTestOk: source.lastTestOk,
-      ok: source.ok,
-      sourceRows: source.sourceRows,
-      mappedRows: source.mappedRows,
-      unmappedRows: source.unmappedRows,
-      metricFactsPreviewed: source.metrics.length,
-      errors: source.errors.join(" | "),
-    })),
-  );
+  console.table(Object.values(result.sources).map((source) => ({
+    source: source.key,
+    connector: source.connectorKey,
+    configured: source.configured,
+    active: source.active,
+    credentials: source.hasCredentials,
+    lastTestOk: source.lastTestOk,
+    ok: source.ok,
+    sourceRows: source.sourceRows,
+    mappedRows: source.mappedRows,
+    unmappedRows: source.unmappedRows,
+    metricFactsPreviewed: source.metrics.length,
+    errors: source.errors.join(" | "),
+  })));
 
   for (const source of Object.values(result.sources)) {
     if (source.metrics.length > 0) {
@@ -64,23 +56,16 @@ async function main() {
     }
     if (source.unmappedIdentifiers.length > 0) {
       console.log(`\n${source.key} unmapped identifiers sample`);
-      console.table(
-        source.unmappedIdentifiers.map((identifier) => ({ identifier })),
-      );
+      console.table(source.unmappedIdentifiers.map((identifier) => ({ identifier })));
     }
   }
 
-  console.log(
-    "\nPreview completed. No INSERT, UPDATE, DELETE, ALTER or DROP statement was executed by this command.",
-  );
+  console.log("\nPreview completed. No INSERT, UPDATE, DELETE, ALTER or DROP statement was executed by this command.");
 }
 
 main()
   .catch((error) => {
-    console.error(
-      "Performance source preview failed:",
-      error instanceof Error ? error.message : error,
-    );
+    console.error("Performance source preview failed:", error instanceof Error ? error.message : error);
     process.exitCode = 1;
   })
   .finally(async () => {

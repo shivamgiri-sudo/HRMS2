@@ -37,29 +37,16 @@ import { getSeatRevenueForecast } from "../pnl-seat-revenue-forecast.service.js"
 function fixture() {
   execute.mockImplementation(async (sql: unknown) => {
     const text = String(sql);
-    if (text.includes("FROM pnl_running_salary_snapshot"))
-      return [[{ period_code: "2026-08" }], []];
+    if (text.includes("FROM pnl_running_salary_snapshot")) return [[{ period_code: "2026-08" }], []];
     // Checked before the seat-rate branch: the coverage query mentions cost_centre_seat_rate inside
     // an EXISTS subquery, so a looser match order hands it the per-cost-centre fixture instead.
-    if (text.includes("AS staffed"))
-      return [[{ staffed: 4, seat_billed: 1 }], []];
+    if (text.includes("AS staffed")) return [[{ staffed: 4, seat_billed: 1 }], []];
     if (text.includes("FROM cost_centre_seat_rate")) {
-      return [
-        [
-          {
-            cost_centre_id: "cc-1",
-            cost_centre_name: "Noida OB",
-            branch_name: "NOIDA",
-            process_id: "proc-1",
-            process_name: null,
-            seat_rate_monthly: "30000.00",
-            active_headcount: 12,
-            billable_seats: 10,
-            unclassified: 2,
-          },
-        ],
-        [],
-      ];
+      return [[{
+        cost_centre_id: "cc-1", cost_centre_name: "Noida OB", branch_name: "NOIDA",
+        process_id: "proc-1", process_name: null, seat_rate_monthly: "30000.00",
+        active_headcount: 12, billable_seats: 10, unclassified: 2,
+      }], []];
     }
     return [[], []];
   });
@@ -75,9 +62,7 @@ beforeEach(() => {
 describe("projection arithmetic", () => {
   it("projects billable seats at their rate, and earns it pro rata through the month", async () => {
     fixture();
-    const result = await getSeatRevenueForecast("2026-09", {
-      asOfDate: "2026-09-03",
-    });
+    const result = await getSeatRevenueForecast("2026-09", { asOfDate: "2026-09-03" });
 
     expect(result.daysInMonth).toBe(30);
     expect(result.daysElapsed).toBe(3);
@@ -89,16 +74,12 @@ describe("projection arithmetic", () => {
 
   it("treats a month already past as fully earned, and one not yet begun as nothing earned", async () => {
     fixture();
-    const past = await getSeatRevenueForecast("2026-08", {
-      asOfDate: "2026-09-03",
-    });
+    const past = await getSeatRevenueForecast("2026-08", { asOfDate: "2026-09-03" });
     expect(past.daysElapsed).toBe(past.daysInMonth);
     expect(past.earnedToDate).toBe(past.projectedMonthEnd);
 
     fixture();
-    const future = await getSeatRevenueForecast("2026-11", {
-      asOfDate: "2026-09-03",
-    });
+    const future = await getSeatRevenueForecast("2026-11", { asOfDate: "2026-09-03" });
     expect(future.daysElapsed).toBe(0);
     expect(future.earnedToDate).toBe(0);
     // The month-end projection still stands — it is what the month would bill if staffed as today.
@@ -107,9 +88,7 @@ describe("projection arithmetic", () => {
 
   it("never earns more than the month, even if the as-of date runs past its end", async () => {
     fixture();
-    const result = await getSeatRevenueForecast("2026-09", {
-      asOfDate: "2026-09-30",
-    });
+    const result = await getSeatRevenueForecast("2026-09", { asOfDate: "2026-09-30" });
     expect(result.daysElapsed).toBe(30);
     expect(result.earnedToDate).toBe(result.projectedMonthEnd);
   });
@@ -119,10 +98,7 @@ describe("query shape", () => {
   it("looks the cost centre's process up once through the shared lookup, not per employee row", async () => {
     fixture();
     await getSeatRevenueForecast("2026-09", { asOfDate: "2026-09-03" });
-    const sql =
-      execute.mock.calls
-        .map((c) => String(c[0]))
-        .find((t) => t.includes("FROM cost_centre_seat_rate")) ?? "";
+    const sql = execute.mock.calls.map((c) => String(c[0])).find((t) => t.includes("FROM cost_centre_seat_rate")) ?? "";
     // A correlated employees subquery in the select list re-runs for every joined employee and took
     // /pnl/daily-trend past the 120s gateway limit in production.
     expect(sql).not.toMatch(/SELECT e2\.process_id/);
@@ -133,9 +109,7 @@ describe("query shape", () => {
 describe("honesty about reach", () => {
   it("excludes unclassified staff from seats and reports them separately", async () => {
     fixture();
-    const result = await getSeatRevenueForecast("2026-09", {
-      asOfDate: "2026-09-03",
-    });
+    const result = await getSeatRevenueForecast("2026-09", { asOfDate: "2026-09-03" });
     // 12 active, 10 billable — the 2 unclassified are not quietly billed.
     expect(result.costCentres[0].activeHeadcount).toBe(12);
     expect(result.billableSeats).toBe(10);
@@ -145,9 +119,7 @@ describe("honesty about reach", () => {
 
   it("reports what share of staffed cost centres it can actually speak for", async () => {
     fixture();
-    const result = await getSeatRevenueForecast("2026-09", {
-      asOfDate: "2026-09-03",
-    });
+    const result = await getSeatRevenueForecast("2026-09", { asOfDate: "2026-09-03" });
     expect(result.coverage).toEqual({
       seatBilledCostCentres: 1,
       notSeatBilledCostCentres: 3,
@@ -158,38 +130,24 @@ describe("honesty about reach", () => {
 
   it("names the period the agent classification came from rather than implying it is current", async () => {
     fixture();
-    const result = await getSeatRevenueForecast("2026-09", {
-      asOfDate: "2026-09-03",
-    });
+    const result = await getSeatRevenueForecast("2026-09", { asOfDate: "2026-09-03" });
     // September has no snapshot yet; the classification is August's and must say so.
     expect(result.classificationPeriod).toBe("2026-08");
   });
 
   it("aggregates to process so a process-scoped adjustment is not pre-filled with company totals", async () => {
     fixture();
-    const result = await getSeatRevenueForecast("2026-09", {
-      asOfDate: "2026-09-03",
-    });
+    const result = await getSeatRevenueForecast("2026-09", { asOfDate: "2026-09-03" });
     expect(result.byProcess).toEqual([
-      {
-        processId: "proc-1",
-        processName: null,
-        billableSeats: 10,
-        projectedMonthEnd: 300000,
-        earnedToDate: 30000,
-      },
+      { processId: "proc-1", processName: null, billableSeats: 10, projectedMonthEnd: 300000, earnedToDate: 30000 },
     ]);
   });
 });
 
 describe("degrades safely", () => {
   it("returns an empty forecast, not an error, when seat rates are not configured", async () => {
-    tableExists.mockImplementation(
-      async (t: string) => t !== "cost_centre_seat_rate",
-    );
-    const result = await getSeatRevenueForecast("2026-09", {
-      asOfDate: "2026-09-03",
-    });
+    tableExists.mockImplementation(async (t: string) => t !== "cost_centre_seat_rate");
+    const result = await getSeatRevenueForecast("2026-09", { asOfDate: "2026-09-03" });
     expect(result.projectedMonthEnd).toBe(0);
     expect(result.costCentres).toEqual([]);
     expect(result.coverage.seatBilledCostCentres).toBe(0);

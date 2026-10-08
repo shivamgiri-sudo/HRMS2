@@ -1,14 +1,10 @@
-import { db } from "../../db/mysql.js";
-import { RowDataPacket } from "mysql2/promise";
-import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
-import {
-  canonicalChannel,
-  CANONICAL_CHANNEL_LABEL,
-} from "./ats-source-channel-model.js";
+import { db } from '../../db/mysql.js';
+import { RowDataPacket } from 'mysql2/promise';
+import { excludeEmployeeShapedCandidatesSql } from './ats-reporting-scope.js';
+import { canonicalChannel, CANONICAL_CHANNEL_LABEL } from "./ats-source-channel-model.js";
 
-const EXCLUDE_EMPLOYEE_SHAPED =
-  excludeEmployeeShapedCandidatesSql("ats_candidate");
-const EXCLUDE_EMPLOYEE_SHAPED_C = excludeEmployeeShapedCandidatesSql("c");
+const EXCLUDE_EMPLOYEE_SHAPED = excludeEmployeeShapedCandidatesSql('ats_candidate');
+const EXCLUDE_EMPLOYEE_SHAPED_C = excludeEmployeeShapedCandidatesSql('c');
 
 /**
  * ATS Command Centre Service
@@ -160,8 +156,9 @@ export async function getDashboardMetrics(scope?: CandidateScopeArg, cScope?: Ca
 
   const totalCandidates = totalRes[0]?.total || 0;
   const selectedCandidates = selectedRes[0]?.selected || 0;
-  const conversionRate =
-    totalCandidates > 0 ? (selectedCandidates / totalCandidates) * 100 : 0;
+  const conversionRate = totalCandidates > 0
+    ? (selectedCandidates / totalCandidates) * 100
+    : 0;
 
   return {
     total_candidates: totalCandidates,
@@ -205,12 +202,8 @@ export async function getSourceMetrics(scope?: CandidateScopeArg): Promise<Sourc
    * conversion_rate is recomputed from the merged totals rather than averaged from the rows —
    * averaging percentages across groups of different sizes is its own error.
    */
-  const merged = new Map<
-    string,
-    { label: string; total: number; selected: number; merged_from: string[] }
-  >();
-  const unmapped: Array<{ channel: string; total: number; selected: number }> =
-    [];
+  const merged = new Map<string, { label: string; total: number; selected: number; merged_from: string[] }>();
+  const unmapped: Array<{ channel: string; total: number; selected: number }> = [];
 
   for (const row of results as Array<Record<string, unknown>>) {
     const raw = row.source_channel == null ? "" : String(row.source_channel);
@@ -223,12 +216,7 @@ export async function getSourceMetrics(scope?: CandidateScopeArg): Promise<Sourc
       continue;
     }
     const key = canonical;
-    const entry = merged.get(key) ?? {
-      label: CANONICAL_CHANNEL_LABEL[canonical],
-      total: 0,
-      selected: 0,
-      merged_from: [],
-    };
+    const entry = merged.get(key) ?? { label: CANONICAL_CHANNEL_LABEL[canonical], total: 0, selected: 0, merged_from: [] };
     entry.total += total;
     entry.selected += selected;
     if (raw) entry.merged_from.push(raw);
@@ -238,12 +226,7 @@ export async function getSourceMetrics(scope?: CandidateScopeArg): Promise<Sourc
   // An unrecognised channel is still shown, under its raw name, rather than being dropped —
   // otherwise the chart's total silently stops matching the candidate count.
   for (const u of unmapped) {
-    merged.set(`raw:${u.channel}`, {
-      label: u.channel || "Unspecified",
-      total: u.total,
-      selected: u.selected,
-      merged_from: [u.channel],
-    });
+    merged.set(`raw:${u.channel}`, { label: u.channel || "Unspecified", total: u.total, selected: u.selected, merged_from: [u.channel] });
   }
 
   return [...merged.entries()]
@@ -251,8 +234,7 @@ export async function getSourceMetrics(scope?: CandidateScopeArg): Promise<Sourc
       source_channel: e.label,
       total_candidates: e.total,
       selected_count: e.selected,
-      conversion_rate:
-        e.total > 0 ? Number(((e.selected / e.total) * 100).toFixed(2)) : 0,
+      conversion_rate: e.total > 0 ? Number(((e.selected / e.total) * 100).toFixed(2)) : 0,
       merged_from: e.merged_from,
     }))
     .sort((a, b) => b.total_candidates - a.total_candidates);
@@ -290,9 +272,7 @@ export async function getBranchMetrics(cScope?: CandidateScopeArg): Promise<Bran
  * Get recruiter performance
  */
 function getIstDateString(offsetDays = 0): string {
-  const d = new Date(
-    Date.now() + (5.5 * 60 - offsetDays * 24 * 60) * 60 * 1000,
-  );
+  const d = new Date(Date.now() + (5.5 * 60 - offsetDays * 24 * 60) * 60 * 1000);
   return d.toISOString().slice(0, 10);
 }
 

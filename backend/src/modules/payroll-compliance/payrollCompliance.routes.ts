@@ -3,20 +3,14 @@ import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { z } from "zod";
 import { db } from "../../db/mysql.js";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { guardEmployee, requireRunInScope } from "../payroll/payroll-branch-scope.js";
 import { payrollComplianceService } from "./payrollCompliance.service.js";
 import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 
 const router = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
@@ -32,11 +26,10 @@ router.get("/runs/:runId/compliance-issues", requireRole("admin", "hr", "finance
        LEFT JOIN employees e ON e.id = pci.employee_id
       WHERE pci.run_id = ?
       ORDER BY FIELD(pci.severity,'blocking','critical','warning','info'), pci.created_at DESC`,
-      [req.params.runId],
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    [req.params.runId]
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 router.put("/employees/:employeeId/component-snapshot", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   if (!(await guardEmployee(req, res, req.params.employeeId))) return;
@@ -77,19 +70,18 @@ router.get("/employees/:employeeId/component-snapshot", requireRole("admin", "hr
     `SELECT * FROM payroll_employee_component_snapshot
       WHERE employee_id = ?
       ORDER BY effective_from DESC, component_type, component_code`,
-      [req.params.employeeId],
-    );
-    await payrollComplianceService.logSensitiveAccess({
-      actorUserId: req.authUser?.id,
-      employeeId: req.params.employeeId,
-      moduleKey: "payroll",
-      actionKey: "COMPONENT_SNAPSHOT_VIEW",
-      purpose: "Payroll component verification",
-      req,
-    });
-    return res.json({ success: true, data: rows });
-  }),
-);
+    [req.params.employeeId]
+  );
+  await payrollComplianceService.logSensitiveAccess({
+    actorUserId: req.authUser?.id,
+    employeeId: req.params.employeeId,
+    moduleKey: "payroll",
+    actionKey: "COMPONENT_SNAPSHOT_VIEW",
+    purpose: "Payroll component verification",
+    req,
+  });
+  return res.json({ success: true, data: rows });
+}));
 
 /**
  * DISABLED FOR FIRST RELEASE — owner ruling 2026-08-16 (decision 3).
@@ -111,84 +103,66 @@ router.get("/employees/:employeeId/component-snapshot", requireRole("admin", "hr
  * code, taxability, PF/ESIC impact, effective run, reversal, payslip component reconciliation
  * and gross/net reconciliation — never simply adding the amount to net pay.
  */
-router.post(
-  "/lines/:lineId/manual-adjustment",
-  requireRole("admin", "finance", "payroll"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    return res.status(503).json({
-      success: false,
-      code: "MANUAL_ADJUSTMENT_DISABLED",
-      message:
-        "Manual payroll adjustments are disabled for this release. They were never applied to net pay by any " +
-        "calculation path, so recording one would create a payroll correction that does not exist. Raise the " +
-        "correction through payroll recalculation instead.",
-    });
-  }),
-);
+router.post("/lines/:lineId/manual-adjustment", requireRole("admin", "finance", "payroll"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  return res.status(503).json({
+    success: false,
+    code: "MANUAL_ADJUSTMENT_DISABLED",
+    message:
+      "Manual payroll adjustments are disabled for this release. They were never applied to net pay by any " +
+      "calculation path, so recording one would create a payroll correction that does not exist. Raise the " +
+      "correction through payroll recalculation instead.",
+  });
+}));
 
 /** Preserved for phase 2 — see the ruling above. Not routed. */
-export const manualAdjustmentHandlerForPhase2 = h(
-  async (req: AuthenticatedRequest, res: Response) => {
-    const schema = z.object({
-      adjustmentType: z.enum([
-        "earning",
-        "deduction",
-        "lwp_override",
-        "attendance_override",
-        "statutory_override",
-      ]),
-      componentCode: z.string().min(1).max(80),
-      componentName: z.string().min(1).max(160),
-      amount: z.number(),
-      reason: z.string().min(8).max(700),
-    });
-    const body = schema.parse(req.body);
-    const [lineRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, run_id, employee_id FROM salary_prep_line WHERE id = ? LIMIT 1",
-      [req.params.lineId],
-    );
-    const line = lineRows[0] as any;
-    if (!line)
-      return res
-        .status(404)
-        .json({ success: false, message: "Payroll line not found" });
+export const manualAdjustmentHandlerForPhase2 = h(async (req: AuthenticatedRequest, res: Response) => {
+  const schema = z.object({
+    adjustmentType: z.enum(["earning", "deduction", "lwp_override", "attendance_override", "statutory_override"]),
+    componentCode: z.string().min(1).max(80),
+    componentName: z.string().min(1).max(160),
+    amount: z.number(),
+    reason: z.string().min(8).max(700),
+  });
+  const body = schema.parse(req.body);
+  const [lineRows] = await db.execute<RowDataPacket[]>("SELECT id, run_id, employee_id FROM salary_prep_line WHERE id = ? LIMIT 1", [req.params.lineId]);
+  const line = lineRows[0] as any;
+  if (!line) return res.status(404).json({ success: false, message: "Payroll line not found" });
 
-    const data = await payrollComplianceService.addManualAdjustment({
-      runId: line.run_id,
-      lineId: line.id,
-      employeeId: line.employee_id,
-      adjustmentType: body.adjustmentType,
-      componentCode: body.componentCode,
-      componentName: body.componentName,
-      amount: body.amount,
-      reason: body.reason,
-      actorUserId: req.authUser?.id ?? null,
-    });
-    // Root-caused 2026-08-14: the message this route returned claimed
-    // recalculating the run applies this adjustment to final net pay. It does
-    // not — salary_prep_line_adjustment (what addManualAdjustment writes to) is
-    // never read by payroll/payrollCalculate.service.ts, the only calculation
-    // engine actually wired to POST /runs/:id/calculate (the sole other reader
-    // is payroll-compliance/payrollCalculate.service.ts, which is dead code —
-    // it throws immediately if called, pinned by its own
-    // dead-payroll-engine.test.ts). The record above is genuinely saved,
-    // audited and permissioned correctly; it just does not yet change what
-    // anyone is paid. Verified live: 0 rows exist in salary_prep_line_adjustment
-    // in production, so this has not yet cost anyone real money — but the false
-    // claim below would have, the first time it was used and trusted. Wiring
-    // this into the calculation engine is a payroll-arithmetic change and is
-    // deliberately not made here without separate Payroll/Engineering sign-off.
-    return res.json({
-      success: true,
-      data,
-      message:
-        "Manual adjustment saved and audited, but it is NOT applied to net pay by any current calculation path — " +
-        "recalculating this run will NOT reflect it. This is a known gap (payroll-compliance readiness), not the " +
-        "intended behaviour. Do not treat this as a completed correction to the employee's pay until Payroll/Engineering " +
-        "confirms this adjustment has actually reached salary_prep_line.net_salary.",
-    });
-  },
-);
+  const data = await payrollComplianceService.addManualAdjustment({
+    runId: line.run_id,
+    lineId: line.id,
+    employeeId: line.employee_id,
+    adjustmentType: body.adjustmentType,
+    componentCode: body.componentCode,
+    componentName: body.componentName,
+    amount: body.amount,
+    reason: body.reason,
+    actorUserId: req.authUser?.id ?? null,
+  });
+  // Root-caused 2026-08-14: the message this route returned claimed
+  // recalculating the run applies this adjustment to final net pay. It does
+  // not — salary_prep_line_adjustment (what addManualAdjustment writes to) is
+  // never read by payroll/payrollCalculate.service.ts, the only calculation
+  // engine actually wired to POST /runs/:id/calculate (the sole other reader
+  // is payroll-compliance/payrollCalculate.service.ts, which is dead code —
+  // it throws immediately if called, pinned by its own
+  // dead-payroll-engine.test.ts). The record above is genuinely saved,
+  // audited and permissioned correctly; it just does not yet change what
+  // anyone is paid. Verified live: 0 rows exist in salary_prep_line_adjustment
+  // in production, so this has not yet cost anyone real money — but the false
+  // claim below would have, the first time it was used and trusted. Wiring
+  // this into the calculation engine is a payroll-arithmetic change and is
+  // deliberately not made here without separate Payroll/Engineering sign-off.
+  return res.json({
+    success: true,
+    data,
+    message:
+      "Manual adjustment saved and audited, but it is NOT applied to net pay by any current calculation path — " +
+      "recalculating this run will NOT reflect it. This is a known gap (payroll-compliance readiness), not the " +
+      "intended behaviour. Do not treat this as a completed correction to the employee's pay until Payroll/Engineering " +
+      "confirms this adjustment has actually reached salary_prep_line.net_salary.",
+  });
+});
 
 router.get("/runs/:runId/components", requireRole("admin", "hr", "finance", "payroll"), requireRunInScope("runId"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -197,69 +171,68 @@ router.get("/runs/:runId/components", requireRole("admin", "hr", "finance", "pay
        JOIN employees e ON e.id = splc.employee_id
       WHERE splc.run_id = ?
       ORDER BY e.employee_code, FIELD(splc.component_type,'earning','deduction','employer_cost'), splc.component_code`,
-      [req.params.runId],
-    );
-    return res.json({ success: true, data: rows });
-  }),
-);
+    [req.params.runId]
+  );
+  return res.json({ success: true, data: rows });
+}));
 
 router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "finance", "payroll", "ceo"), requireRunInScope("runId"), h(async (req: AuthenticatedRequest, res: Response) => {
   const registerType = req.params.registerType;
   const allowed = new Set(["salary", "pf", "esic", "pt", "tds", "bank", "variance"]);
   if (!allowed.has(registerType)) return res.status(400).json({ success: false, message: "Invalid register type" });
 
-    let sql = "";
-    if (registerType === "salary") {
-      sql = `SELECT spl.employee_code, e.full_name, spl.working_days, spl.present_days, spl.lwp_days,
+  let sql = "";
+  if (registerType === "salary") {
+    sql = `SELECT spl.employee_code, e.full_name, spl.working_days, spl.present_days, spl.lwp_days,
                   spl.gross_before_lwp, spl.gross_salary, spl.total_deductions, spl.net_salary,
                   spl.lwp_deduction, spl.advance_recovery, spl.manual_adjustment_total
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
             WHERE spl.run_id = ? ORDER BY spl.employee_code`;
-    } else if (registerType === "pf") {
-      sql = `SELECT spl.employee_code, e.full_name, spl.basic, spl.pf_employee, spl.pf_employer
+  } else if (registerType === "pf") {
+    sql = `SELECT spl.employee_code, e.full_name, spl.basic, spl.pf_employee, spl.pf_employer
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
             WHERE spl.run_id = ? AND (spl.pf_employee > 0 OR spl.pf_employer > 0)
             ORDER BY spl.employee_code`;
-    } else if (registerType === "esic") {
-      sql = `SELECT spl.employee_code, e.full_name, spl.gross_salary, spl.esic_employee, spl.esic_employer
+  } else if (registerType === "esic") {
+    sql = `SELECT spl.employee_code, e.full_name, spl.gross_salary, spl.esic_employee, spl.esic_employer
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
             WHERE spl.run_id = ? AND (spl.esic_employee > 0 OR spl.esic_employer > 0)
             ORDER BY spl.employee_code`;
-    } else if (registerType === "pt") {
-      // PT (Professional Tax) removed from active payroll 2026-09-11 by explicit
-      // stakeholder decision — it is no longer computed/deducted for any employee
-      // or state. This register is kept read-only for historical runs where
-      // spl.professional_tax > 0 was already recorded (audit access); it will
-      // return empty for every run processed after the removal.
-      sql = `SELECT spl.employee_code, e.full_name, b.state AS state_code, spl.gross_salary, spl.professional_tax
+  } else if (registerType === "pt") {
+    // PT (Professional Tax) removed from active payroll 2026-09-11 by explicit
+    // stakeholder decision — it is no longer computed/deducted for any employee
+    // or state. This register is kept read-only for historical runs where
+    // spl.professional_tax > 0 was already recorded (audit access); it will
+    // return empty for every run processed after the removal.
+    sql = `SELECT spl.employee_code, e.full_name, b.state AS state_code, spl.gross_salary, spl.professional_tax
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE spl.run_id = ? AND spl.professional_tax > 0
             ORDER BY b.state, spl.employee_code`;
-    } else if (registerType === "tds") {
-      sql = `SELECT spl.employee_code, e.full_name, spl.gross_before_lwp, spl.tds_amount, spl.calculation_notes
+  } else if (registerType === "tds") {
+    sql = `SELECT spl.employee_code, e.full_name, spl.gross_before_lwp, spl.tds_amount, spl.calculation_notes
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
             WHERE spl.run_id = ? AND spl.tds_amount > 0
             ORDER BY spl.employee_code`;
-    } else if (registerType === "bank") {
-      // Bank advice file. Three separate faults were fixed here:
-      //
-      // 1. It joined `employee_bank_details` (plural), which does not exist, so
-      //    the file could never be produced at all.
-      // 2. account_number is varbinary(500). Selected raw it serialises to JSON
-      //    as {"type":"Buffer","data":[...]}, not a number — so even a perfectly
-      //    good account came out unusable. CAST to CHAR.
-      // 3. 6,070 of the 12,768 active accounts are stored in Excel scientific
-      //    notation ("3.03801E+13"), which is not a recoverable account number —
-      //    the significant digits are gone, not hidden. Exporting those into a
-      //    payment file would send money nowhere or, worse, somewhere wrong.
-      //    They are flagged rather than dropped: an employee silently missing
-      //    from a payment file is harder to notice than one marked unpayable.
-      //
-      // is_primary pins one row per employee. Today every active row is primary
-      // (12,768 of 12,768, none duplicated), but a second account added later
-      // would otherwise duplicate a payment line.
-      sql = `SELECT spl.employee_code, e.full_name, ebd.bank_name,
+  } else if (registerType === "bank") {
+    // Bank advice file. Three separate faults were fixed here:
+    //
+    // 1. It joined `employee_bank_details` (plural), which does not exist, so
+    //    the file could never be produced at all.
+    // 2. account_number is varbinary(500). Selected raw it serialises to JSON
+    //    as {"type":"Buffer","data":[...]}, not a number — so even a perfectly
+    //    good account came out unusable. CAST to CHAR.
+    // 3. 6,070 of the 12,768 active accounts are stored in Excel scientific
+    //    notation ("3.03801E+13"), which is not a recoverable account number —
+    //    the significant digits are gone, not hidden. Exporting those into a
+    //    payment file would send money nowhere or, worse, somewhere wrong.
+    //    They are flagged rather than dropped: an employee silently missing
+    //    from a payment file is harder to notice than one marked unpayable.
+    //
+    // is_primary pins one row per employee. Today every active row is primary
+    // (12,768 of 12,768, none duplicated), but a second account added later
+    // would otherwise duplicate a payment line.
+    sql = `SELECT spl.employee_code, e.full_name, ebd.bank_name,
                   ebd.account_number_enc, ebd.account_number AS account_number_legacy,
                   ebd.ifsc_code, spl.net_salary
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
@@ -267,65 +240,53 @@ router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "fi
                     ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
             WHERE spl.run_id = ?
             ORDER BY spl.employee_code`;
-    } else {
-      sql = `SELECT spl.employee_code, e.full_name, spl.net_salary, spl.manual_adjustment_total, spl.calculation_notes
+  } else {
+    sql = `SELECT spl.employee_code, e.full_name, spl.net_salary, spl.manual_adjustment_total, spl.calculation_notes
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
             WHERE spl.run_id = ? AND ABS(spl.manual_adjustment_total) > 0
             ORDER BY spl.employee_code`;
-    }
+  }
 
-    const [rows] = await db.execute<RowDataPacket[]>(sql, [req.params.runId]);
-    await db.execute(
-      `INSERT INTO payroll_register_export_log (id, run_id, register_type, filter_json, generated_by, row_count)
+  const [rows] = await db.execute<RowDataPacket[]>(sql, [req.params.runId]);
+  await db.execute(
+    `INSERT INTO payroll_register_export_log (id, run_id, register_type, filter_json, generated_by, row_count)
      VALUES (UUID(), ?, ?, ?, ?, ?)`,
-      [
-        req.params.runId,
-        `${registerType}_register`,
-        JSON.stringify(req.query ?? {}),
-        req.authUser?.id ?? null,
-        rows.length,
-      ],
+    [req.params.runId, `${registerType}_register`, JSON.stringify(req.query ?? {}), req.authUser?.id ?? null, rows.length]
+  );
+
+  // A bank advice file is only as good as the accounts in it. Surface the
+  // unpayable rows in the response rather than leaving whoever generates the
+  // file to discover them at the bank.
+  if (registerType === "bank") {
+    // Resolve encrypted account numbers and compute status in JS
+    const VALID_ACCOUNT_RE = /^[0-9]{6,20}$/;
+    const SCIENTIFIC_RE = /[Ee][+-]/;
+    (rows as RowDataPacket[]).forEach((r: any) => {
+      const acct = resolveAccountNumber({ account_number_enc: r.account_number_enc, account_number: r.account_number_legacy });
+      r.account_number = acct ?? "";
+      if (!acct || acct === "") r.account_number_status = "missing";
+      else if (SCIENTIFIC_RE.test(acct)) r.account_number_status = "corrupt_scientific_notation";
+      else if (!VALID_ACCOUNT_RE.test(acct)) r.account_number_status = "unrecognised_format";
+      else r.account_number_status = "ok";
+    });
+    const unpayable = (rows as RowDataPacket[]).filter(
+      (r) => String(r.account_number_status ?? "ok") !== "ok",
     );
-
-    // A bank advice file is only as good as the accounts in it. Surface the
-    // unpayable rows in the response rather than leaving whoever generates the
-    // file to discover them at the bank.
-    if (registerType === "bank") {
-      // Resolve encrypted account numbers and compute status in JS
-      const VALID_ACCOUNT_RE = /^[0-9]{6,20}$/;
-      const SCIENTIFIC_RE = /[Ee][+-]/;
-      (rows as RowDataPacket[]).forEach((r: any) => {
-        const acct = resolveAccountNumber({
-          account_number_enc: r.account_number_enc,
-          account_number: r.account_number_legacy,
-        });
-        r.account_number = acct ?? "";
-        if (!acct || acct === "") r.account_number_status = "missing";
-        else if (SCIENTIFIC_RE.test(acct))
-          r.account_number_status = "corrupt_scientific_notation";
-        else if (!VALID_ACCOUNT_RE.test(acct))
-          r.account_number_status = "unrecognised_format";
-        else r.account_number_status = "ok";
-      });
-      const unpayable = (rows as RowDataPacket[]).filter(
-        (r) => String(r.account_number_status ?? "ok") !== "ok",
+    if (unpayable.length) {
+      console.warn(
+        `[payroll] bank register for run ${req.params.runId}: ${unpayable.length} of ${rows.length} rows have an unusable account number`,
       );
-      if (unpayable.length) {
-        console.warn(
-          `[payroll] bank register for run ${req.params.runId}: ${unpayable.length} of ${rows.length} rows have an unusable account number`,
-        );
-      }
-      return res.json({
-        success: true,
-        data: rows,
-        count: rows.length,
-        unpayableCount: unpayable.length,
-        unpayableEmployeeCodes: unpayable.map((r) => String(r.employee_code)),
-      });
     }
+    return res.json({
+      success: true,
+      data: rows,
+      count: rows.length,
+      unpayableCount: unpayable.length,
+      unpayableEmployeeCodes: unpayable.map((r) => String(r.employee_code)),
+    });
+  }
 
-    return res.json({ success: true, data: rows, count: rows.length });
-  }),
-);
+  return res.json({ success: true, data: rows, count: rows.length });
+}));
 
 export { router as payrollComplianceRouter };

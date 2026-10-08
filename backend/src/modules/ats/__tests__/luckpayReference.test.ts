@@ -39,9 +39,7 @@ describe("compactProviderReference", () => {
 
   it("does not collide across rapid successive calls", () => {
     // Penny drops for a branch intake can be issued within the same millisecond.
-    const seen = new Set(
-      Array.from({ length: 2000 }, () => compactProviderReference("PD")),
-    );
+    const seen = new Set(Array.from({ length: 2000 }, () => compactProviderReference("PD")));
     expect(seen.size).toBe(2000);
   });
 

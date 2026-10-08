@@ -1,11 +1,7 @@
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import {
-  scoreQaAudit,
-  type QaFormParameter,
-  type QaParameterScore,
-} from "./qa-audit-scoring.js";
+import { scoreQaAudit, type QaFormParameter, type QaParameterScore } from "./qa-audit-scoring.js";
 
 /**
  * Capture and storage for manually scored QA audits.
@@ -29,11 +25,7 @@ export type SubmitAuditInput = {
   callReference?: string | null;
   evidenceUrl?: string | null;
   remarks?: string | null;
-  scores: Array<{
-    formParameterId: string;
-    score: number | null;
-    notApplicable?: boolean;
-  }>;
+  scores: Array<{ formParameterId: string; score: number | null; notApplicable?: boolean }>;
   /** Leave as draft so an auditor can finish later. */
   submit?: boolean;
 };
@@ -50,10 +42,7 @@ export type SubmittedAudit = {
 };
 
 export class QaAuditError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode = 400,
-  ) {
+  constructor(message: string, readonly statusCode = 400) {
     super(message);
   }
 }
@@ -73,10 +62,7 @@ async function loadForm(formId: string): Promise<{
   if (form.status !== "active") {
     // A draft form has not been agreed and a retired one no longer reflects how
     // the process is measured. Neither should produce a score that counts.
-    throw new QaAuditError(
-      `Audit form is ${form.status}, so it cannot be scored against`,
-      409,
-    );
+    throw new QaAuditError(`Audit form is ${form.status}, so it cannot be scored against`, 409);
   }
 
   const [paramRows] = await db.execute<RowDataPacket[]>(
@@ -84,8 +70,7 @@ async function loadForm(formId: string): Promise<{
       WHERE form_id = ? AND active_status = 1`,
     [formId],
   );
-  if (!paramRows.length)
-    throw new QaAuditError("Audit form has no active parameters", 409);
+  if (!paramRows.length) throw new QaAuditError("Audit form has no active parameters", 409);
 
   return {
     processId: String(form.process_id),
@@ -98,9 +83,7 @@ async function loadForm(formId: string): Promise<{
   };
 }
 
-export async function submitQaAudit(
-  input: SubmitAuditInput,
-): Promise<SubmittedAudit> {
+export async function submitQaAudit(input: SubmitAuditInput): Promise<SubmittedAudit> {
   const form = await loadForm(input.formId);
 
   // Marks come from the client; everything they are worth comes from the form.
@@ -141,22 +124,10 @@ export async function submitQaAudit(
           status, remarks, submitted_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        auditId,
-        input.formId,
-        form.versionNo,
-        input.employeeId,
-        form.processId,
-        input.auditDate,
-        input.callReference ?? null,
-        input.evidenceUrl ?? null,
-        input.auditorUserId,
-        computed.totalScore,
-        computed.maxScore,
-        computed.qualityPercentage,
-        computed.fatalTriggered ? 1 : 0,
-        status,
-        input.remarks ?? null,
-        status === "submitted" ? new Date() : null,
+        auditId, input.formId, form.versionNo, input.employeeId, form.processId, input.auditDate,
+        input.callReference ?? null, input.evidenceUrl ?? null, input.auditorUserId,
+        computed.totalScore, computed.maxScore, computed.qualityPercentage, computed.fatalTriggered ? 1 : 0,
+        status, input.remarks ?? null, status === "submitted" ? new Date() : null,
       ],
     );
 
@@ -166,14 +137,7 @@ export async function submitQaAudit(
         `INSERT INTO qa_audit_parameter_score
            (id, audit_id, form_parameter_id, score, not_applicable, remark)
          VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          randomUUID(),
-          auditId,
-          s.formParameterId,
-          s.score,
-          s.notApplicable ? 1 : 0,
-          null,
-        ],
+        [randomUUID(), auditId, s.formParameterId, s.score, s.notApplicable ? 1 : 0, null],
       );
     }
 

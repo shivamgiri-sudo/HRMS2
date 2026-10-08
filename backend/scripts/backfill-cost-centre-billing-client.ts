@@ -34,11 +34,8 @@ const CO = "COLLATE utf8mb4_unicode_ci";
 
 async function main() {
   const hrms = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
   });
 
   try {
@@ -54,117 +51,74 @@ async function main() {
     const [ccRows] = await hrms.query<any[]>(
       `SELECT id, cost_centre_code, active_status, billing_flag,
               client_name AS process_name_today, billing_client_name AS current_value
-         FROM cost_centre_master`,
+         FROM cost_centre_master`
     );
     const [invRows] = await hrms.query<any[]>(
       `SELECT cost_centre_code, bill_client, invoice_date
          FROM billing_invoice_snapshot
-        WHERE bill_client IS NOT NULL AND TRIM(bill_client) <> ''`,
+        WHERE bill_client IS NOT NULL AND TRIM(bill_client) <> ''`
     );
 
-    const key = (value: unknown) =>
-      String(value ?? "")
-        .trim()
-        .toLowerCase();
-    const byCostCentre = new Map<
-      string,
-      { newest: string; date: string; clients: Set<string> }
-    >();
+    const key = (value: unknown) => String(value ?? "").trim().toLowerCase();
+    const byCostCentre = new Map<string, { newest: string; date: string; clients: Set<string> }>();
     for (const inv of invRows) {
       const k = key(inv.cost_centre_code);
       if (!k) continue;
       const client = String(inv.bill_client).trim();
       const date = String(inv.invoice_date ?? "");
       const entry = byCostCentre.get(k);
-      if (!entry)
-        byCostCentre.set(k, {
-          newest: client,
-          date,
-          clients: new Set([client]),
-        });
+      if (!entry) byCostCentre.set(k, { newest: client, date, clients: new Set([client]) });
       else {
         entry.clients.add(client);
-        if (date > entry.date) {
-          entry.newest = client;
-          entry.date = date;
-        }
+        if (date > entry.date) { entry.newest = client; entry.date = date; }
       }
     }
 
     const resolved = ccRows.map((r) => {
       const hit = byCostCentre.get(key(r.cost_centre_code));
-      return {
-        ...r,
-        resolved_client: hit?.newest ?? null,
-        distinct_clients: hit ? hit.clients.size : 0,
-      };
+      return { ...r, resolved_client: hit?.newest ?? null, distinct_clients: hit ? hit.clients.size : 0 };
     });
 
-    const toWrite = resolved.filter(
-      (r) => r.resolved_client && !r.current_value,
-    );
+    const toWrite = resolved.filter((r) => r.resolved_client && !r.current_value);
     const multi = resolved.filter((r) => Number(r.distinct_clients) > 1);
     const unresolved = resolved.filter((r) => !r.resolved_client);
 
-    const activeBilling = (rows: any[]) =>
-      rows.filter((r) => r.active_status === 1 && Number(r.billing_flag) === 1)
-        .length;
+    const activeBilling = (rows: any[]) => rows.filter((r) => r.active_status === 1 && Number(r.billing_flag) === 1).length;
 
     console.log(`\nCost centres                       : ${resolved.length}`);
-    console.log(
-      `  would be given a client          : ${toWrite.length}  (active+billing: ${activeBilling(toWrite)})`,
-    );
-    console.log(
-      `  no invoice names a client        : ${unresolved.length}  (active+billing: ${activeBilling(unresolved)})`,
-    );
-    console.log(
-      `  already populated                : ${resolved.filter((r) => r.current_value).length}`,
-    );
+    console.log(`  would be given a client          : ${toWrite.length}  (active+billing: ${activeBilling(toWrite)})`);
+    console.log(`  no invoice names a client        : ${unresolved.length}  (active+billing: ${activeBilling(unresolved)})`);
+    console.log(`  already populated                : ${resolved.filter((r) => r.current_value).length}`);
 
     console.log("\nSample — what the page shows today vs what it would show:");
-    console.table(
-      toWrite.slice(0, 8).map((r) => ({
-        cost_centre: r.cost_centre_code,
-        shown_as_client_today: r.process_name_today,
-        real_client: r.resolved_client,
-      })),
-    );
+    console.table(toWrite.slice(0, 8).map((r) => ({
+      cost_centre: r.cost_centre_code,
+      shown_as_client_today: r.process_name_today,
+      real_client: r.resolved_client,
+    })));
 
     if (multi.length) {
-      console.log(
-        `\n⚠️ ${multi.length} cost centre(s) have billed MORE THAN ONE client — newest invoice used:`,
-      );
-      console.table(
-        multi.map((r) => ({
-          cost_centre: r.cost_centre_code,
-          distinct_clients: r.distinct_clients,
-          newest: r.resolved_client,
-        })),
-      );
+      console.log(`\n⚠️ ${multi.length} cost centre(s) have billed MORE THAN ONE client — newest invoice used:`);
+      console.table(multi.map((r) => ({
+        cost_centre: r.cost_centre_code, distinct_clients: r.distinct_clients, newest: r.resolved_client,
+      })));
     }
 
     if (!APPLY) {
-      console.log(
-        "\nDRY RUN — nothing written. Re-run with --apply to commit.",
-      );
+      console.log("\nDRY RUN — nothing written. Re-run with --apply to commit.");
       return;
     }
 
     for (const row of toWrite) {
       await hrms.execute(
         `UPDATE cost_centre_master SET billing_client_name = ? WHERE id = ? AND billing_client_name IS NULL`,
-        [String(row.resolved_client).trim(), String(row.id)],
+        [String(row.resolved_client).trim(), String(row.id)]
       );
     }
-    console.log(
-      `\nAPPLIED — ${toWrite.length} cost centre(s) given their real billing client.`,
-    );
+    console.log(`\nAPPLIED — ${toWrite.length} cost centre(s) given their real billing client.`);
   } finally {
     await hrms.end();
   }
 }
 
-main().catch((error) => {
-  console.error("FAILED:", error);
-  process.exit(1);
-});
+main().catch((error) => { console.error("FAILED:", error); process.exit(1); });

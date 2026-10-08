@@ -24,9 +24,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute: dbExecute, query: dbExecute },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute, query: dbExecute } }));
 vi.mock("../../../shared/cost-centre-sync.js", () => ({
   syncCostCentreRelatedTables: vi.fn().mockResolvedValue(undefined),
 }));
@@ -47,19 +45,8 @@ function withFullOrphanBacklog() {
   dbExecute.mockImplementation(async (sql: unknown, params: unknown[]) => {
     const text = String(sql);
     if (/SUM\(CASE WHEN client_id IS NULL/i.test(text)) {
-      return [
-        [
-          {
-            total: 406,
-            orphaned: 406,
-            missing_client: 406,
-            missing_lob: 406,
-            missing_branch: 0,
-            missing_process: 384,
-          },
-        ],
-        [],
-      ];
+      return [[{ total: 406, orphaned: 406, missing_client: 406, missing_lob: 406,
+                 missing_branch: 0, missing_process: 384 }], []];
     }
     if (/SELECT client_id FROM process_master WHERE id = \?/i.test(text)) {
       return [[{ client_id: null }], []];
@@ -70,8 +57,7 @@ function withFullOrphanBacklog() {
     if (/SELECT company_name FROM branch_master/i.test(text)) {
       return [[{ company_name: "Mas Callnet India Pvt Ltd" }], []];
     }
-    if (/INSERT INTO cost_centre_master/i.test(text))
-      return [{ affectedRows: 1 }, []];
+    if (/INSERT INTO cost_centre_master/i.test(text)) return [{ affectedRows: 1 }, []];
     if (/FROM cost_centre_master WHERE id/i.test(text)) {
       return [[{ id: "new-id", ...VALID }], []];
     }
@@ -80,13 +66,8 @@ function withFullOrphanBacklog() {
 }
 
 function insertCall() {
-  const call = dbExecute.mock.calls.find(([sql]) =>
-    /INSERT INTO cost_centre_master/i.test(String(sql)),
-  );
-  return {
-    sql: String(call?.[0] ?? ""),
-    params: (call?.[1] ?? []) as unknown[],
-  };
+  const call = dbExecute.mock.calls.find(([sql]) => /INSERT INTO cost_centre_master/i.test(String(sql)));
+  return { sql: String(call?.[0] ?? ""), params: (call?.[1] ?? []) as unknown[] };
 }
 
 beforeEach(() => {
@@ -129,16 +110,10 @@ describe("creating a cost centre in HRMS", () => {
 
   it("still refuses a record that is itself incomplete", async () => {
     // The gate that matters: this record, not the other 406.
-    for (const missing of [
-      "client_id",
-      "lob_id",
-      "branch_id",
-      "process_id",
-    ] as const) {
+    for (const missing of ["client_id", "lob_id", "branch_id", "process_id"] as const) {
       dbExecute.mockClear();
-      await expect(
-        costCentreService.create({ ...VALID, [missing]: "" }),
-      ).rejects.toThrow(/required/i);
+      await expect(costCentreService.create({ ...VALID, [missing]: "" }))
+        .rejects.toThrow(/required/i);
       expect(insertCall().sql).toBe("");
     }
   });
@@ -170,13 +145,7 @@ describe("creating a cost centre in HRMS", () => {
   it("carries every relationship the form collected into the row", async () => {
     await costCentreService.create({ ...VALID, department_id: "dept-1" });
     const { params } = insertCall();
-    for (const v of [
-      "client-1",
-      "lob-1",
-      "branch-noida",
-      "process-1",
-      "dept-1",
-    ]) {
+    for (const v of ["client-1", "lob-1", "branch-noida", "process-1", "dept-1"]) {
       expect(params).toContain(v);
     }
   });
@@ -185,37 +154,24 @@ describe("creating a cost centre in HRMS", () => {
 describe("re-assigning a cost centre keeps the client text in step with the FK", () => {
   it("update() re-points client_name whenever client_id is supplied", async () => {
     await costCentreService.update("cc-1", { client_id: "client-2" });
-    const call = dbExecute.mock.calls.find(([sql]) =>
-      /UPDATE cost_centre_master SET/i.test(String(sql)),
-    );
+    const call = dbExecute.mock.calls.find(([sql]) => /UPDATE cost_centre_master SET/i.test(String(sql)));
     expect(String(call?.[0])).toMatch(/client_name = CASE/);
   });
 
   it("update() leaves client_name alone when no client is supplied", async () => {
     await costCentreService.update("cc-1", { cost_centre_name: "Renamed" });
-    const call = dbExecute.mock.calls.find(([sql]) =>
-      /UPDATE cost_centre_master SET/i.test(String(sql)),
-    );
+    const call = dbExecute.mock.calls.find(([sql]) => /UPDATE cost_centre_master SET/i.test(String(sql)));
     // The CASE is always present; what matters is that a null client_id selects the
     // "keep what is there" branch rather than blanking the column.
-    expect(String(call?.[0])).toMatch(
-      /WHEN NULLIF\(\?, ''\) IS NULL THEN client_name/,
-    );
+    expect(String(call?.[0])).toMatch(/WHEN NULLIF\(\?, ''\) IS NULL THEN client_name/);
   });
 
   it("migrate() carries client_name across with client_id", async () => {
     await costCentreService.migrate("cc-1", {
-      client_id: "client-2",
-      lob_id: "lob-1",
-      branch_id: "branch-noida",
-      process_id: "process-1",
+      client_id: "client-2", lob_id: "lob-1", branch_id: "branch-noida", process_id: "process-1",
     });
-    const call = dbExecute.mock.calls.find(([sql]) =>
-      /UPDATE cost_centre_master SET/i.test(String(sql)),
-    );
-    expect(String(call?.[0])).toMatch(
-      /client_name = COALESCE\(\(SELECT cl\.client_name/,
-    );
+    const call = dbExecute.mock.calls.find(([sql]) => /UPDATE cost_centre_master SET/i.test(String(sql)));
+    expect(String(call?.[0])).toMatch(/client_name = COALESCE\(\(SELECT cl\.client_name/);
   });
 });
 
@@ -223,10 +179,8 @@ describe("the migration banner reports which relationship is missing", () => {
   it("counts each field separately instead of naming all four", async () => {
     const counts = await costCentreService.countOrphanedRecords();
     expect(counts).toMatchObject({
-      total: 406,
-      orphaned: 406,
-      missingClient: 406,
-      missingLob: 406,
+      total: 406, orphaned: 406,
+      missingClient: 406, missingLob: 406,
       // Branch is complete — the old message claimed otherwise and sent people looking.
       missingBranch: 0,
       missingProcess: 384,

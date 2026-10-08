@@ -19,12 +19,7 @@
  * 'divorced' would misrecord someone's marital status.
  */
 
-export const MARITAL_STATUSES = [
-  "single",
-  "married",
-  "divorced",
-  "widowed",
-] as const;
+export const MARITAL_STATUSES = ["single", "married", "divorced", "widowed"] as const;
 
 export type MaritalStatus = (typeof MARITAL_STATUSES)[number];
 

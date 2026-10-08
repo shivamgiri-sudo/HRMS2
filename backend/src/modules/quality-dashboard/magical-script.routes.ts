@@ -5,10 +5,8 @@ import { getMagicalScript } from "./magical-script.service.js";
 import { requireClientInScope } from "../call-master/call-master.scope.js";
 
 const router = Router();
-const h =
-  (fn: (req: Request, res: Response) => Promise<unknown>) =>
-  (req: Request, res: Response, next: (e?: unknown) => void) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
+  (req: Request, res: Response, next: (e?: unknown) => void) => fn(req, res).catch(next);
 
 router.use(
   requireAuth,
@@ -19,18 +17,10 @@ router.use(
 router.get(
   "/",
   h(async (req, res) => {
-    const { clientId, processId, startDate, endDate } = req.query as Record<
-      string,
-      string
-    >;
-    const data = await getMagicalScript({
-      clientId,
-      processId,
-      startDate,
-      endDate,
-    });
+    const { clientId, processId, startDate, endDate } = req.query as Record<string, string>;
+    const data = await getMagicalScript({ clientId, processId, startDate, endDate });
     res.json({ data });
-  }),
+  })
 );
 
 export { router as magicalScriptRouter };

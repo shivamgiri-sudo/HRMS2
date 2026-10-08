@@ -50,19 +50,11 @@ export type VerificationResult =
  * concurrent issuances cannot mint the same number; the UNIQUE on
  * (letter_year, letter_seq) is the backstop if they somehow do.
  */
-export async function allocateLetterNumber(
-  conn: PoolConnection,
-  when: Date = new Date(),
-): Promise<{
-  letterNumber: string;
-  letterSeq: number;
-  letterYear: number;
+export async function allocateLetterNumber(conn: PoolConnection, when: Date = new Date()): Promise<{
+  letterNumber: string; letterSeq: number; letterYear: number;
 }> {
   const letterYear = Number(
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Kolkata",
-      year: "numeric",
-    }).format(when),
+    new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric" }).format(when),
   );
   const [rows] = await conn.execute<RowDataPacket[]>(
     `SELECT COALESCE(MAX(letter_seq), 0) AS max_seq
@@ -95,31 +87,25 @@ export function verificationUrl(baseUrl: string, token: string): string {
  * "never existed" from "deleted" — there is nothing useful in that difference
  * and it would let someone probe for valid numbers.
  */
-export async function verifyAppointmentLetter(
-  token: string,
-): Promise<VerificationResult> {
+export async function verifyAppointmentLetter(token: string): Promise<VerificationResult> {
   if (!token || token.length < 20) return { found: false };
 
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT letter_number, employee_name, employee_code, designation, branch_name,
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT letter_number, employee_name, employee_code, designation, branch_name,
             date_of_joining, issued_at, signed_by_name, signed_by_designation,
             is_ca_issued, employee_esign_status, status, revoked_at
        FROM appointment_letter_issue
       WHERE verify_token_hash = ?
       LIMIT 1`,
-      [sha256(token)],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    [sha256(token)],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
 
   const r = (rows as RowDataPacket[])[0];
   if (!r) return { found: false };
 
   const revoked = Boolean(r.revoked_at) || String(r.status) === "revoked";
   const caIssued = Number(r.is_ca_issued) === 1;
-  const accepted = ["signed", "completed"].includes(
-    String(r.employee_esign_status ?? ""),
-  );
+  const accepted = ["signed", "completed"].includes(String(r.employee_esign_status ?? ""));
 
   const statement = revoked
     ? "This appointment letter has been REVOKED by Mas Callnet India Pvt. Ltd. and should not be relied upon."

@@ -15,14 +15,8 @@ import { join, resolve } from "node:path";
  * nothing about the route. Behaviour is verified against the running backend instead.
  */
 const ROOT = resolve(__dirname, "../../../..");
-const routes = readFileSync(
-  join(ROOT, "src/modules/leave/leave.routes.ts"),
-  "utf8",
-);
-const service = readFileSync(
-  join(ROOT, "src/modules/leave/leave.service.ts"),
-  "utf8",
-);
+const routes = readFileSync(join(ROOT, "src/modules/leave/leave.routes.ts"), "utf8");
+const service = readFileSync(join(ROOT, "src/modules/leave/leave.service.ts"), "utf8");
 
 /**
  * Isolate one route's handler.
@@ -41,8 +35,7 @@ const service = readFileSync(
  */
 function handlerFor(path: string): string {
   const start = routes.indexOf(`leaveRouter.get("${path}"`);
-  if (start === -1)
-    throw new Error(`GET ${path} is not registered on leaveRouter`);
+  if (start === -1) throw new Error(`GET ${path} is not registered on leaveRouter`);
   const next = routes.indexOf("\nleaveRouter.", start + 1);
   return routes.slice(start, next === -1 ? undefined : next);
 }
@@ -72,15 +65,9 @@ describe("GET /leave/requests/my", () => {
     // What is worth keeping from that fix is the reason it existed: indexOf() returns -1 for a
     // missing marker and slice(start, -1) does not throw — it quietly returns everything but the
     // last character. That is why the failure pointed at a handler 20 lines away.
-    expect(handlerFor("/requests/my")).toContain(
-      'leaveRouter.get("/requests/my"',
-    );
-    expect(handlerFor("/requests/my")).not.toContain(
-      'leaveRouter.get("/balance/:employeeId"',
-    );
-    expect(() => handlerFor("/requests/does-not-exist")).toThrow(
-      /is not registered/,
-    );
+    expect(handlerFor("/requests/my")).toContain('leaveRouter.get("/requests/my"');
+    expect(handlerFor("/requests/my")).not.toContain('leaveRouter.get("/balance/:employeeId"');
+    expect(() => handlerFor("/requests/does-not-exist")).toThrow(/is not registered/);
   });
 
   it("forces employeeId to the caller, so the result cannot widen with the caller's role", () => {
@@ -96,9 +83,7 @@ describe("GET /leave/requests/my", () => {
 
   it("answers a login with no employee record with an empty feed, not an error", () => {
     const handler = handlerFor("/requests/my");
-    expect(handler).toMatch(
-      /if \(!callerEmp\) return res\.json\(\{\s*success: true, data: \[\], total: 0/,
-    );
+    expect(handler).toMatch(/if \(!callerEmp\) return res\.json\(\{\s*success: true, data: \[\], total: 0/);
   });
 
   it("still sits behind the router's authentication", () => {
@@ -113,9 +98,7 @@ describe("leaveService.listRequests", () => {
     // leave_request stores only leave_type_id and leave_type_code. The feed reads
     // `req.leave_type ?? req.type ?? "Leave"`, so without a name every entry read "Leave".
     expect(service).toContain("lt.leave_name AS leave_type");
-    expect(service).toContain(
-      "LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id",
-    );
+    expect(service).toContain("LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id");
   });
 
   it("keeps every existing field, so the join cannot break current callers", () => {

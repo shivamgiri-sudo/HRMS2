@@ -27,9 +27,7 @@ import { applyCompanySeal } from "../src/modules/employees/companySeal.service.j
 
 const [codeArg, outArg] = process.argv.slice(2);
 if (!codeArg) {
-  console.error(
-    "Usage: npx tsx scripts/verify-document-pack.ts <employee code> [output dir]",
-  );
+  console.error('Usage: npx tsx scripts/verify-document-pack.ts <employee code> [output dir]');
   process.exit(1);
 }
 const OUT = path.resolve(outArg || path.join(process.cwd(), "document-pack"));
@@ -53,19 +51,13 @@ async function extractText(bytes: Uint8Array): Promise<string> {
       let raw = Buffer.from(stream.contents);
       const filter = stream.dict.get(PDFName.of("Filter"));
       if (filter && String(filter).includes("FlateDecode")) {
-        try {
-          raw = zlib.inflateSync(raw);
-        } catch {
-          continue;
-        }
+        try { raw = zlib.inflateSync(raw); } catch { continue; }
       }
       const text = raw.toString("latin1");
       // PDFKit emits TJ arrays of hex strings, one byte per character for the
       // standard fonts it uses here — not the (…) Tj form.
       for (const match of text.matchAll(/<([0-9A-Fa-f\s]+)>/g)) {
-        out += Buffer.from(match[1].replace(/\s/g, ""), "hex").toString(
-          "latin1",
-        );
+        out += Buffer.from(match[1].replace(/\s/g, ""), "hex").toString("latin1");
       }
       // Literal strings too, in case a future change stops hex-encoding them.
       for (const match of text.matchAll(/\(((?:\\.|[^\\()])*)\)\s*T[Jj]/g)) {
@@ -89,10 +81,7 @@ async function main() {
        FROM employees WHERE employee_code = ? LIMIT 1`,
     [codeArg],
   );
-  if (!employee) {
-    console.error(`No employee with code ${codeArg}`);
-    process.exit(1);
-  }
+  if (!employee) { console.error(`No employee with code ${codeArg}`); process.exit(1); }
   console.log(`Pack for ${employee.full_name} (${employee.employee_code})\n`);
 
   const context = await buildSourceContext(String(employee.id));
@@ -110,8 +99,7 @@ async function main() {
   for (const template of templates as RowDataPacket[]) {
     const code = String(template.document_code);
     const [maps] = await db.query<RowDataPacket[]>(
-      `SELECT * FROM document_template_field_map WHERE template_id = ?`,
-      [template.id],
+      `SELECT * FROM document_template_field_map WHERE template_id = ?`, [template.id],
     );
     const fieldMaps = maps as RowDataPacket[];
     const values = fieldMaps.map((map) => ({
@@ -122,9 +110,7 @@ async function main() {
     }));
 
     const local = path.resolve(
-      process.cwd(),
-      "private-storage",
-      "document-templates",
+      process.cwd(), "private-storage", "document-templates",
       path.basename(String(template.template_storage_path ?? "")),
     );
 
@@ -133,21 +119,10 @@ async function main() {
     let checked = 0;
 
     if (String(template.fill_mode) === "acroform") {
-      if (!fs.existsSync(local)) {
-        problems.push(`${code}: template file missing`);
-        continue;
-      }
-      bytes = Buffer.from(
-        await applyCompanySeal(
-          await fillAcroFormPdf({
-            templatePath: local,
-            fieldMaps,
-            values,
-            flatten: false,
-          }),
-          code,
-        ),
-      );
+      if (!fs.existsSync(local)) { problems.push(`${code}: template file missing`); continue; }
+      bytes = Buffer.from(await applyCompanySeal(
+        await fillAcroFormPdf({ templatePath: local, fieldMaps, values, flatten: false }), code,
+      ));
       // Read every non-empty value back out of the finished PDF by field name.
       const form = (await PDFDocument.load(bytes)).getForm();
       for (const value of values) {
@@ -155,10 +130,7 @@ async function main() {
         checked++;
         try {
           const field = form.getField(value.pdf_field_name);
-          const anyField = field as unknown as {
-            getText?: () => string | undefined;
-            isChecked?: () => boolean;
-          };
+          const anyField = field as unknown as { getText?: () => string | undefined; isChecked?: () => boolean };
           if (value.field_type === "checkbox") {
             // A checkbox is correct either way; what matters is that the
             // discriminant selected exactly the boxes it should.
@@ -166,26 +138,16 @@ async function main() {
           } else {
             const actual = anyField.getText?.() ?? "";
             // Transforms mean the box holds a slice of the source value.
-            if (
-              actual &&
-              (value.value_text.includes(actual) || actual === value.value_text)
-            )
-              verified++;
-            else
-              problems.push(
-                `${code}.${value.pdf_field_name}: expected part of "${value.value_text}", got "${actual}"`,
-              );
+            if (actual && (value.value_text.includes(actual) || actual === value.value_text)) verified++;
+            else problems.push(`${code}.${value.pdf_field_name}: expected part of "${value.value_text}", got "${actual}"`);
           }
         } catch {
-          problems.push(
-            `${code}.${value.pdf_field_name}: field not present in the PDF`,
-          );
+          problems.push(`${code}.${value.pdf_field_name}: field not present in the PDF`);
         }
       }
     } else {
       bytes = await renderJoiningDocumentPdf(
-        code,
-        Object.fromEntries(values.map((v) => [v.field_key, v.value_text])),
+        code, Object.fromEntries(values.map((v) => [v.field_key, v.value_text])),
       );
       // Search the rendered text for each value that should have been placed.
       // PDFKit expresses inter-word spacing as kerning adjustments rather than
@@ -200,15 +162,10 @@ async function main() {
         if (!value.value_text || seen.has(value.value_text)) continue;
         seen.add(value.value_text);
         checked++;
-        if (squashedText.includes(squash(displayValue(value.value_text))))
-          verified++;
-        else
-          problems.push(
-            `${code}: "${displayValue(value.value_text)}" (${value.field_key}) not found in the rendered text`,
-          );
+        if (squashedText.includes(squash(displayValue(value.value_text)))) verified++;
+        else problems.push(`${code}: "${displayValue(value.value_text)}" (${value.field_key}) not found in the rendered text`);
       }
-      if (squashedText.includes("{{"))
-        problems.push(`${code}: an unreplaced {{token}} reached the PDF`);
+      if (squashedText.includes("{{")) problems.push(`${code}: an unreplaced {{token}} reached the PDF`);
     }
 
     fs.writeFileSync(path.join(OUT, `${code}.pdf`), bytes);
@@ -216,14 +173,10 @@ async function main() {
     totalChecked += checked;
     totalVerified += verified;
     const mark = verified === checked ? "OK " : "!! ";
-    console.log(
-      `${mark}${code.padEnd(24)} ${String(bytes.length).padStart(7)}B  pages=${pages}  verified ${verified}/${checked} values in the finished PDF`,
-    );
+    console.log(`${mark}${code.padEnd(24)} ${String(bytes.length).padStart(7)}B  pages=${pages}  verified ${verified}/${checked} values in the finished PDF`);
   }
 
-  console.log(
-    `\n${totalVerified}/${totalChecked} values confirmed present in the generated documents.`,
-  );
+  console.log(`\n${totalVerified}/${totalChecked} values confirmed present in the generated documents.`);
   if (problems.length) {
     console.log(`\n${problems.length} problem(s):`);
     for (const p of problems.slice(0, 25)) console.log(`  - ${p}`);

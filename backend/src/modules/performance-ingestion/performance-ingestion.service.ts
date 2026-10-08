@@ -117,9 +117,7 @@ function dateOnly(value: unknown): string | null {
   }
 
   const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime())
-    ? null
-    : parsed.toISOString().slice(0, 10);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
 }
 
 function timestampIso(value: unknown): string | null {
@@ -136,9 +134,7 @@ function field(row: SourceRow, name?: string): unknown {
   if (!name) return undefined;
   if (Object.prototype.hasOwnProperty.call(row, name)) return row[name];
   const target = name.trim().toLowerCase();
-  const found = Object.keys(row).find(
-    (key) => key.trim().toLowerCase() === target,
-  );
+  const found = Object.keys(row).find((key) => key.trim().toLowerCase() === target);
   return found ? row[found] : undefined;
 }
 
@@ -159,22 +155,16 @@ async function loadDataset(
     [idOrKey, idOrKey],
   );
   if (!rows[0]) {
-    throw Object.assign(
-      new Error("Performance dataset not found or inactive"),
-      {
-        statusCode: 404,
-      },
-    );
+    throw Object.assign(new Error("Performance dataset not found or inactive"), {
+      statusCode: 404,
+    });
   }
 
   const dataset = datasetFromRow(rows[0]);
   if (requireApproved && dataset.approvalStatus !== "active") {
-    throw Object.assign(
-      new Error("Dataset must be approved before publishing"),
-      {
-        statusCode: 409,
-      },
-    );
+    throw Object.assign(new Error("Dataset must be approved before publishing"), {
+      statusCode: 409,
+    });
   }
   if (!dataset.mapping.metrics?.length) {
     throw Object.assign(new Error("Dataset has no metric bindings"), {
@@ -230,16 +220,10 @@ async function mapEmployee(
   eventDate: string,
   cache?: MappingCache,
 ): Promise<MappedEmployee> {
-  if (!cache)
-    return mapEmployeeUncached(sourceKey, externalIdentifier, eventDate);
+  if (!cache) return mapEmployeeUncached(sourceKey, externalIdentifier, eventDate);
   const key = JSON.stringify([sourceKey, externalIdentifier, eventDate]);
   if (cache.employee.has(key)) return cache.employee.get(key)!;
-  const result = await mapEmployeeUncached(
-    sourceKey,
-    externalIdentifier,
-    eventDate,
-    cache,
-  );
+  const result = await mapEmployeeUncached(sourceKey, externalIdentifier, eventDate, cache);
   cache.employee.set(key, result);
   return result;
 }
@@ -276,8 +260,7 @@ async function mapEmployeeUncached(
   }
 
   // The fallback does not depend on the event date, so it is memoised by identifier alone.
-  if (cache?.fallback.has(externalIdentifier))
-    return cache.fallback.get(externalIdentifier)!;
+  if (cache?.fallback.has(externalIdentifier)) return cache.fallback.get(externalIdentifier)!;
   const [fallback] = await db.execute<RowDataPacket[]>(
     `SELECT id AS employee_id, process_id, branch_id
        FROM employees
@@ -295,12 +278,8 @@ async function mapEmployeeUncached(
       ? null
       : {
           employeeId: String(fallback[0].employee_id),
-          processId: fallback[0].process_id
-            ? String(fallback[0].process_id)
-            : null,
-          branchId: fallback[0].branch_id
-            ? String(fallback[0].branch_id)
-            : null,
+          processId: fallback[0].process_id ? String(fallback[0].process_id) : null,
+          branchId: fallback[0].branch_id ? String(fallback[0].branch_id) : null,
         };
   cache?.fallback.set(externalIdentifier, resolved);
   return resolved;
@@ -314,11 +293,7 @@ async function mapProcess(
 ): Promise<{ processId: string; branchId: string | null } | null> {
   const key = JSON.stringify([sourceKey, externalProcess, eventDate]);
   if (cache?.process.has(key)) return cache.process.get(key)!;
-  const result = await mapProcessUncached(
-    sourceKey,
-    externalProcess,
-    eventDate,
-  );
+  const result = await mapProcessUncached(sourceKey, externalProcess, eventDate);
   cache?.process.set(key, result);
   return result;
 }
@@ -389,8 +364,7 @@ async function insertRawRecord(
 ): Promise<number> {
   const externalIdentifier = text(field(row, mapping.employeeIdentifierField));
   const externalProcess = text(field(row, mapping.externalProcessField));
-  const sourceRecordKey =
-    text(field(row, mapping.sourceRecordKeyField)) || null;
+  const sourceRecordKey = text(field(row, mapping.sourceRecordKeyField)) || null;
   const [result] = await db.execute<ResultSetHeader>(
     `INSERT INTO performance_raw_record
        (run_id, source_record_key, source_event_date,
@@ -456,25 +430,23 @@ async function recordMappingException(input: {
     | "invalid_value";
   detail: string;
 }): Promise<void> {
-  await db
-    .execute(
-      `INSERT INTO integration_mapping_exception
+  await db.execute(
+    `INSERT INTO integration_mapping_exception
        (id, integration_run_id, source_system, source_entity,
         external_identifier, exception_type, exception_detail, status)
      VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'open')
      ON DUPLICATE KEY UPDATE
        exception_detail = VALUES(exception_detail),
        updated_at = NOW()`,
-      [
-        input.runId,
-        input.dataset.datasetKey,
-        input.dataset.sourceEntity ?? input.dataset.datasetName,
-        input.externalIdentifier,
-        input.exceptionType,
-        input.detail.slice(0, 1000),
-      ],
-    )
-    .catch(() => undefined);
+    [
+      input.runId,
+      input.dataset.datasetKey,
+      input.dataset.sourceEntity ?? input.dataset.datasetName,
+      input.externalIdentifier,
+      input.exceptionType,
+      input.detail.slice(0, 1000),
+    ],
+  ).catch(() => undefined);
 }
 
 function addFact(
@@ -509,8 +481,7 @@ function addFact(
     current.template = nextKey >= currentKey ? fact : current.template;
   }
   current.sum += fact.actualValue;
-  current.weightedSum +=
-    fact.actualValue * Math.max(0, fact.sourceRecordCount ?? 1);
+  current.weightedSum += fact.actualValue * Math.max(0, fact.sourceRecordCount ?? 1);
   current.count += 1;
   current.numerator += fact.numeratorValue ?? 0;
   current.denominator += fact.denominatorValue ?? 0;
@@ -536,21 +507,19 @@ function finalFacts(
       actual = item.count ? item.sum / item.count : 0;
     }
     if (item.aggregation === "weighted_average") {
-      actual =
-        item.recordCount > 0
-          ? item.weightedSum / item.recordCount
-          : item.count
-            ? item.sum / item.count
-            : 0;
+      actual = item.recordCount > 0
+        ? item.weightedSum / item.recordCount
+        : item.count
+          ? item.sum / item.count
+          : 0;
     }
     if (item.aggregation === "ratio") {
-      actual =
-        item.denominator > 0
-          ? (item.numerator / item.denominator) *
-            (multiplierByMetric.get(item.template.metricCode) ?? 100)
-          : item.count
-            ? item.sum / item.count
-            : 0;
+      actual = item.denominator > 0
+        ? (item.numerator / item.denominator) *
+          (multiplierByMetric.get(item.template.metricCode) ?? 100)
+        : item.count
+          ? item.sum / item.count
+          : 0;
     }
 
     return {
@@ -566,7 +535,7 @@ function finalFacts(
           : item.template.denominatorValue,
       calculationMultiplier:
         item.aggregation === "ratio"
-          ? (multiplierByMetric.get(item.template.metricCode) ?? 100)
+          ? multiplierByMetric.get(item.template.metricCode) ?? 100
           : item.template.calculationMultiplier,
       sourceRecordCount: item.recordCount,
     };
@@ -596,7 +565,10 @@ async function saveReconciliation(
 
 async function updateRun(
   runId: string,
-  result: Omit<IngestionRunResult, "runId" | "mode" | "sample" | "issues">,
+  result: Omit<
+    IngestionRunResult,
+    "runId" | "mode" | "sample" | "issues"
+  >,
 ): Promise<void> {
   await db.execute(
     `UPDATE performance_ingestion_run
@@ -656,9 +628,7 @@ async function ensureNoActiveRun(datasetId: string): Promise<void> {
   }
 }
 
-function publicationBlockedError(
-  message: string,
-): Error & { statusCode: number } {
+function publicationBlockedError(message: string): Error & { statusCode: number } {
   return Object.assign(new Error(message), { statusCode: 409 });
 }
 
@@ -765,7 +735,9 @@ export const performanceIngestionService = {
       const mappingCache = createMappingCache();
 
       for (const row of rows) {
-        const eventDate = dateOnly(field(row, dataset.mapping.eventDateField));
+        const eventDate = dateOnly(
+          field(row, dataset.mapping.eventDateField),
+        );
         const sourceEventTimestamp = timestampIso(
           field(row, dataset.mapping.sourceEventTimestampField),
         );
@@ -885,7 +857,8 @@ export const performanceIngestionService = {
               severity: "error",
               fieldName: dataset.mapping.externalProcessField,
               invalidValue: externalProcess,
-              message: "External process is not mapped to an HRMS process",
+              message:
+                "External process is not mapped to an HRMS process",
             };
             invalidRows += 1;
             await recordIssues(runId, [issue], issues);
@@ -949,9 +922,7 @@ export const performanceIngestionService = {
 
           const value = numberOrNull(field(row, binding.valueField));
           const numerator = numberOrNull(field(row, binding.numeratorField));
-          const denominator = numberOrNull(
-            field(row, binding.denominatorField),
-          );
+          const denominator = numberOrNull(field(row, binding.denominatorField));
           const aggregation = binding.aggregation ?? metric.aggregation;
           const ratioMultiplier = Number(binding.ratioMultiplier ?? 100);
           const derived =

@@ -57,26 +57,18 @@ export async function getRosterGrid(filters: GridFilters): Promise<GridRow[]> {
      LEFT JOIN wfm_shift_template st ON st.id = wra.shift_template_id
      WHERE ${conds.join(" AND ")}
      ORDER BY e.full_name, wra.roster_date`,
-    params,
+    params
   );
 
   // LOB names by parameterised id lookup (never JOIN lob_master: mixed collations).
-  const lobIds = [
-    ...new Set(
-      (rows as RowDataPacket[])
-        .map((r) => r.lob_id)
-        .filter(Boolean)
-        .map(String),
-    ),
-  ];
+  const lobIds = [...new Set((rows as RowDataPacket[]).map((r) => r.lob_id).filter(Boolean).map(String))];
   const lobNames = new Map<string, string>();
   if (lobIds.length) {
     const [lobRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, lob_name FROM lob_master WHERE id IN (${lobIds.map(() => "?").join(", ")})`,
-      lobIds,
+      lobIds
     );
-    for (const l of lobRows ?? [])
-      lobNames.set(String(l.id), String(l.lob_name));
+    for (const l of lobRows ?? []) lobNames.set(String(l.id), String(l.lob_name));
   }
 
   return (rows as RowDataPacket[]).map((r) => ({
@@ -87,13 +79,9 @@ export async function getRosterGrid(filters: GridFilters): Promise<GridRow[]> {
     rosterDate: String(r.roster_date),
     assignmentId: r.assignment_id ? String(r.assignment_id) : null,
     shiftTemplateId: r.shift_template_id ? String(r.shift_template_id) : null,
-    shiftTemplateName: r.shift_template_name
-      ? String(r.shift_template_name)
-      : null,
+    shiftTemplateName: r.shift_template_name ? String(r.shift_template_name) : null,
     isWeekOff: Number(r.is_week_off) === 1,
-    finalRosterStatus: r.final_roster_status
-      ? String(r.final_roster_status)
-      : null,
+    finalRosterStatus: r.final_roster_status ? String(r.final_roster_status) : null,
   }));
 }
 
@@ -115,12 +103,10 @@ export interface ShiftTemplateTimes {
  * Returns null when the id matches no template, so the caller can refuse the write instead of
  * assigning a shift that does not exist.
  */
-export async function getShiftTemplateTimes(
-  shiftTemplateId: string,
-): Promise<ShiftTemplateTimes | null> {
+export async function getShiftTemplateTimes(shiftTemplateId: string): Promise<ShiftTemplateTimes | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT start_time, end_time FROM wfm_shift_template WHERE id = ? LIMIT 1",
-    [shiftTemplateId],
+    [shiftTemplateId]
   );
   const row = rows[0];
   if (!row || row.start_time == null || row.end_time == null) return null;

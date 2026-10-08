@@ -107,17 +107,15 @@ describe("reporting-manager writers record effective-dated history", () => {
     expect(
       offenders,
       `These files change employees.reporting_manager_id without calling recordManagerChange().\n` +
-        `Every such write must append an effective-dated row, or attrition and shrinkage silently\n` +
-        `re-attribute that employee's entire history to whoever holds the pointer today:\n  ` +
-        offenders.join("\n  "),
+      `Every such write must append an effective-dated row, or attrition and shrinkage silently\n` +
+      `re-attribute that employee's entire history to whoever holds the pointer today:\n  ` +
+      offenders.join("\n  "),
     ).toEqual([]);
   });
 
   it("still finds the known writers — the detector itself must not rot", () => {
     // If this drops to zero the regex has stopped matching and the guard above passes vacuously.
-    const writers = sourceFiles(SRC).filter((f) =>
-      WRITES_MANAGER.test(readFileSync(f, "utf8")),
-    );
+    const writers = sourceFiles(SRC).filter((f) => WRITES_MANAGER.test(readFileSync(f, "utf8")));
     expect(writers.length).toBeGreaterThanOrEqual(5);
   });
 });

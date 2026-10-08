@@ -64,25 +64,15 @@ export interface DispatchBlock {
  * `eventCode` is optional: callers that do not identify their event still get
  * the global stop, which is the one that matters in an incident.
  */
-export async function getDispatchBlock(
-  eventCode?: string,
-): Promise<DispatchBlock> {
+export async function getDispatchBlock(eventCode?: string): Promise<DispatchBlock> {
   const blocks = await loadBlocks();
   if (blocks.size === 0) return { blocked: false };
 
   if (blocks.has("global")) {
-    return {
-      blocked: true,
-      scope: "global",
-      reason: blocks.get("global") ?? null,
-    };
+    return { blocked: true, scope: "global", reason: blocks.get("global") ?? null };
   }
   if (eventCode && blocks.has(eventCode)) {
-    return {
-      blocked: true,
-      scope: eventCode,
-      reason: blocks.get(eventCode) ?? null,
-    };
+    return { blocked: true, scope: eventCode, reason: blocks.get(eventCode) ?? null };
   }
   return { blocked: false };
 }

@@ -62,14 +62,12 @@ describe("every UAT page has a runtime path that resolves it", () => {
 
   it("all four page codes are seeded into page_catalog", () => {
     // Without an ACTIVE catalog row, even the super_admin all-pages rule yields nothing.
-    const missing = UAT_PAGE_CODES.filter(
-      (code) => !catalogSql.includes(`'${code}'`),
-    );
+    const missing = UAT_PAGE_CODES.filter((code) => !catalogSql.includes(`'${code}'`));
     expect(
       missing,
       `page_catalog seed missing for: ${missing.join(", ")}. ` +
         `super_admin resolves pages from ACTIVE page_catalog rows, so an unseeded code is ` +
-        `invisible to every role including super_admin.`,
+        `invisible to every role including super_admin.`
     ).toEqual([]);
   });
 
@@ -80,7 +78,7 @@ describe("every UAT page has a runtime path that resolves it", () => {
     expect(
       COMMON_USER_PAGE_CODES as readonly string[],
       "UAT_FEEDBACK must stay in COMMON_USER_PAGE_CODES or gain per-role grant seeds — " +
-        "otherwise UAT reporters cannot open the form they are meant to file from.",
+        "otherwise UAT reporters cannot open the form they are meant to file from."
     ).toContain("UAT_FEEDBACK");
   });
 
@@ -94,7 +92,7 @@ describe("every UAT page has a runtime path that resolves it", () => {
           `role_page_access row for it. rbacPageMatrix.ts is NOT read at runtime for role ` +
           `grants — add the seed to ${GRANT_SQL}. Do not fix this by running ` +
           `apply-rbac-page-matrix.mjs --apply: it deactivates every grant absent from the ` +
-          `matrix, of which 132 are live.`,
+          `matrix, of which 132 are live.`
       ).toBe(true);
     }
   });
@@ -108,7 +106,7 @@ describe("every UAT page has a runtime path that resolves it", () => {
       grantSql.includes("UAT_CHECKLIST_ADMIN"),
       "UAT_CHECKLIST_ADMIN must not be granted to a role: it reaches super_admin through " +
         "the all-active-pages rule by design (segregation of duties). If this is being " +
-        "changed on purpose, change the comment in rbacPageMatrix.ts too.",
+        "changed on purpose, change the comment in rbacPageMatrix.ts too."
     ).toBe(false);
   });
 
@@ -125,7 +123,7 @@ describe("every UAT page has a runtime path that resolves it", () => {
     expect(
       /ON\s+DUPLICATE\s+KEY\s+UPDATE/i.test(grantSql),
       "Use INSERT IGNORE. ON DUPLICATE KEY UPDATE re-activates the row on every run, which " +
-        "would reverse any later revocation each time the backend restarts.",
+        "would reverse any later revocation each time the backend restarts."
     ).toBe(false);
     expect(/INSERT\s+IGNORE/i.test(grantSql)).toBe(true);
   });

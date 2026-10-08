@@ -1022,10 +1022,10 @@ export async function lateArrivalSummary(
   // before the day's roster was finalised and fell back to employees.working_hours_start.
   clauses.push(
     `(UPPER(COALESCE(wra.assignment_type,'')) NOT IN ('WEEK_OFF','LEAVE','HOLIDAY')` +
-      ` AND COALESCE(wra.is_week_off, 0) = 0` +
-      ` AND adr.clock_in_time IS NOT NULL` +
-      ` AND COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)) IS NOT NULL` +
-      ` AND TIME(adr.clock_in_time) > COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)))`,
+    ` AND COALESCE(wra.is_week_off, 0) = 0` +
+    ` AND adr.clock_in_time IS NOT NULL` +
+    ` AND COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)) IS NOT NULL` +
+    ` AND TIME(adr.clock_in_time) > COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)))`,
   );
 
   if (options.mode === "worker" && options.cursor != null) {

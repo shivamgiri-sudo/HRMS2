@@ -15,20 +15,12 @@ import { describe, expect, it } from "vitest";
  * generateDraft's many other dependencies (plan/control/prefs/shrinkage/blackout loading).
  */
 describe("generateDraft preserves locked assignments on regeneration", () => {
-  const source = readFileSync(
-    resolve(__dirname, "../auto-roster-synced.service.ts"),
-    "utf-8",
-  );
+  const source = readFileSync(resolve(__dirname, "../auto-roster-synced.service.ts"), "utf-8");
 
   function cleanupBlock(): string {
-    const start = source.indexOf(
-      "async generateDraft(planId: string, actorId: string) {",
-    );
+    const start = source.indexOf("async generateDraft(planId: string, actorId: string) {");
     expect(start, "generateDraft not found").toBeGreaterThan(-1);
-    const end = source.indexOf(
-      "const processName = await getProcessName",
-      start,
-    );
+    const end = source.indexOf("const processName = await getProcessName", start);
     expect(end, "end of cleanup block not found").toBeGreaterThan(start);
     return source.slice(start, end);
   }
@@ -49,9 +41,7 @@ describe("generateDraft preserves locked assignments on regeneration", () => {
 
   it("still refuses to regenerate a published/locked plan outright (unchanged guard)", () => {
     const block = cleanupBlock();
-    expect(block).toMatch(
-      /\["published", "locked"\]\.includes\(String\(control\.approval_status\)\)/,
-    );
+    expect(block).toMatch(/\["published", "locked"\]\.includes\(String\(control\.approval_status\)\)/);
     expect(block).toMatch(/statusCode: 409/);
   });
 });

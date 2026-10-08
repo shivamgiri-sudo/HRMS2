@@ -56,10 +56,7 @@ const emptyActuals = () => ({
 
 /** Actuals map shaped exactly like the live bug: one process has its own entry, the branch also
  *  carries a total, but the OTHER process has nothing at process grain. */
-function actualsWithOneProcessAndBranch(
-  ownAmount: number,
-  branchAmount: number,
-) {
+function actualsWithOneProcessAndBranch(ownAmount: number, branchAmount: number) {
   return {
     byBranch: new Map([[BRANCH_ID, branchAmount]]),
     byProcess: new Map([[PROC_WITH_DATA, ownAmount]]),
@@ -80,35 +77,19 @@ function seatActuals(ownAmount: number, branchAmount: number) {
 
 function component(key: string, field: string, order: number) {
   return {
-    component_key: key,
-    display_name: key,
-    section_key: "cost",
-    parent_component_key: null,
-    display_order: order,
-    component_type: "SOURCE_ACTUAL",
-    source_field: field,
-    format_type: "CURRENCY",
-    sign_convention: "+",
-    is_subtotal: 0,
-    active_status: 1,
+    component_key: key, display_name: key, section_key: "cost",
+    parent_component_key: null, display_order: order, component_type: "SOURCE_ACTUAL",
+    source_field: field, format_type: "CURRENCY", sign_convention: "+",
+    is_subtotal: 0, active_status: 1,
   };
 }
 
 function row(processId: string) {
   return {
-    processId,
-    processName: processId,
-    branchId: BRANCH_ID,
-    branchName: "Branch B2",
+    processId, processName: processId, branchId: BRANCH_ID, branchName: "Branch B2",
     processStatus: "active",
-    recognizedRevenue: 0,
-    agentSalary: 0,
-    dscSalary: 0,
-    bmcSalary: 0,
-    dscPeople: 0,
-    bmcPeople: 0,
-    dscNonPeople: 0,
-    bmcNonPeople: 0,
+    recognizedRevenue: 0, agentSalary: 0, dscSalary: 0, bmcSalary: 0,
+    dscPeople: 0, bmcPeople: 0, dscNonPeople: 0, bmcNonPeople: 0,
     activeHc: 5,
   };
 }
@@ -127,28 +108,19 @@ async function buildStatement() {
     }),
     // The live bug's exact shape: PROC_WITH_DATA has its own entry, PROC_NO_DATA has none, and
     // the branch total (which must never leak onto PROC_NO_DATA) is large.
-    getIndirectCost: async () =>
-      actualsWithOneProcessAndBranch(OWN_IDC, BRANCH_WIDE_IDC),
+    getIndirectCost: async () => actualsWithOneProcessAndBranch(OWN_IDC, BRANCH_WIDE_IDC),
     getDriverRevenue: async () => emptyActuals(),
     getInvoicedRevenue: async () => emptyActuals(),
     getSeatRevenue: async () => seatActuals(OWN_SEAT, BRANCH_WIDE_SEAT),
     // Same shape for the people-cost snapshot: PROC_WITH_DATA has its own bucket, PROC_NO_DATA
     // has none, only a branch-wide bucket exists.
-    getPeopleCost: async () =>
-      ({
-        byBranch: new Map([
-          [BRANCH_ID, { agent_salary: 400_000, dsc_people: 0, bmc_people: 0 }],
-        ]),
-        byProcess: new Map([
-          [
-            PROC_WITH_DATA,
-            { agent_salary: 60_000, dsc_people: 0, bmc_people: 0 },
-          ],
-        ]),
-        coverageByBranch: new Map(),
-        coverageByProcess: new Map(),
-        asOfDate: null,
-      }) as never,
+    getPeopleCost: async () => ({
+      byBranch: new Map([[BRANCH_ID, { agent_salary: 400_000, dsc_people: 0, bmc_people: 0 }]]),
+      byProcess: new Map([[PROC_WITH_DATA, { agent_salary: 60_000, dsc_people: 0, bmc_people: 0 }]]),
+      coverageByBranch: new Map(),
+      coverageByProcess: new Map(),
+      asOfDate: null,
+    }) as never,
     getProcessSummary: async () => ({ rows: [] }),
   } as never);
 }
@@ -167,9 +139,7 @@ describe("P&L Statement idc/people/seat branch-broadcast (regression, 2026-09-01
 
   it("gives a process with no per-process seat entry its OWN 0, never the whole branch's seat revenue", async () => {
     const statement = await buildStatement();
-    const seatRow = statement.rows.find(
-      (r) => r.componentKey === "seat_revenue_earned",
-    )!;
+    const seatRow = statement.rows.find((r) => r.componentKey === "seat_revenue_earned")!;
     expect(seatRow.values[PROC_WITH_DATA]).toBe(OWN_SEAT);
     expect(seatRow.values[PROC_NO_DATA]).toBe(0);
     expect(seatRow.values[PROC_NO_DATA]).not.toBe(BRANCH_WIDE_SEAT);
@@ -177,9 +147,7 @@ describe("P&L Statement idc/people/seat branch-broadcast (regression, 2026-09-01
 
   it("gives a process with no per-process people snapshot the upstream row figure, never the whole branch's snapshot", async () => {
     const statement = await buildStatement();
-    const agentRow = statement.rows.find(
-      (r) => r.componentKey === "agent_salary",
-    )!;
+    const agentRow = statement.rows.find((r) => r.componentKey === "agent_salary")!;
     // PROC_WITH_DATA: snapshot present for this process -> uses the snapshot's own figure.
     expect(agentRow.values[PROC_WITH_DATA]).toBe(60_000);
     // PROC_NO_DATA: no snapshot entry of its own -> falls back to the canonical row's own
@@ -194,10 +162,7 @@ describe("P&L Statement idc/people/seat branch-broadcast (regression, 2026-09-01
   it("process-view idc sum no longer exceeds the real total (the live NOIDA overstatement shape)", async () => {
     const statement = await buildStatement();
     const idcRow = statement.rows.find((r) => r.componentKey === "total_idc")!;
-    const processSum = Object.values(idcRow.values).reduce(
-      (a, v) => a + Number(v ?? 0),
-      0,
-    );
+    const processSum = Object.values(idcRow.values).reduce((a, v) => a + Number(v ?? 0), 0);
     // Only PROC_WITH_DATA's own figure should be counted; PROC_NO_DATA contributes 0, not a
     // second copy of the branch total.
     expect(processSum).toBe(OWN_IDC);

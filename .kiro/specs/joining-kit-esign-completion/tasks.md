@@ -13,7 +13,7 @@ Implementation language is **TypeScript** throughout (backend Node/Express + MyS
 - `[OPERATIONAL]` — performed against the deployed environment or the server; no repository change
 - `[DATA CHECK]` — a verification read against production data
 
-**No migration task exists, and none is needed.** The design's Migrations section establishes that every column written already exists (`1042_esign_transaction_poll_state.sql`, `346_employee_joining_document_pack.sql`, `1049_joining_document_esign_kit.sql`) and that the one new _value_, `abandoned_unresolved`, lands in a `VARCHAR` status column with no enum constraint. If implementation discovers a column that is actually absent, stop and raise it rather than adding a migration silently.
+**No migration task exists, and none is needed.** The design's Migrations section establishes that every column written already exists (`1042_esign_transaction_poll_state.sql`, `346_employee_joining_document_pack.sql`, `1049_joining_document_esign_kit.sql`) and that the one new *value*, `abandoned_unresolved`, lands in a `VARCHAR` status column with no enum constraint. If implementation discovers a column that is actually absent, stop and raise it rather than adding a migration silently.
 
 ## Tasks
 
@@ -275,14 +275,14 @@ Implementation language is **TypeScript** throughout (backend Node/Express + MyS
   - The order below is the design's Rollout Order. **9.5 must precede 9.6.** `GIVE_UP_AFTER_DAYS` is measured from `initiated_at`, not from when the worker started, so enabling the worker first neither resolves MAS47814 nor buys time — `claimBatch` would already have excluded a 2026-08-01 transaction, and the abandonment sweep would write 26 `abandoned_unresolved` rows on the first tick
   - [x] 9.1 [OPERATIONAL] Record the `LUCKPAY_WEBHOOK_SECRET` confirmation in the Deployment_Checklist
     - Confirm operationally that `LUCKPAY_WEBHOOK_SECRET` is set in the production environment and record it in the Deployment_Checklist
-    - Not reachable from any test: the value is absent from `org_settings` and from the repository, so it exists only in the deployed environment. Its presence is currently _inferred_ from the startup guard not having fired — this task replaces the inference with a check
+    - Not reachable from any test: the value is absent from `org_settings` and from the repository, so it exists only in the deployed environment. Its presence is currently *inferred* from the startup guard not having fired — this task replaces the inference with a check
     - _Requirements: 2.7_
   - [x] 9.2 [OPERATIONAL] Deploy tasks 1-5 with `ESIGN_RECONCILIATION_ENABLED` still `false`
     - The write path becomes correct and the tracker becomes truthful about existing data before anything new is written
     - Confirm the flag is still `false` in the deployed `backend/.env` after the deploy
     - _Requirements: 4.1, 5.1, 6.1, 7.1, 9.1, 10.1, 2.1_
   - [x] 9.3 [DATA CHECK] Verify on MAS63411 using the now-eSign-aware bulk verify
-    - Its 5 `esign_completed` rows already carry `signature_mode = 'aadhaar_esign_verified'` and `completed_at`, but `verification_status` is NULL on all 9 — they are _past_ completions, so the forward write does not reach them
+    - Its 5 `esign_completed` rows already carry `signature_mode = 'aadhaar_esign_verified'` and `completed_at`, but `verification_status` is NULL on all 9 — they are *past* completions, so the forward write does not reach them
     - Clear them with bulk-verify from the tracker (task 2.1), then confirm `verified_count = 5`, `overdue_count = 4`, and an eSign denominator of 9
     - Requires no provider call. This is the acceptance test for 9.2
     - _Requirements: 4.5, 6.4_
@@ -319,20 +319,20 @@ Implementation language is **TypeScript** throughout (backend Node/Express + MyS
 
 ## Requirements Coverage
 
-| Requirement                                                                                           | Tasks                                                                                         |
-| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| 1 — the pull path runs                                                                                | 5.1, 5.2, 5.3, 5.4, 5.5, 5.6*, 5.7, 5.8*, 9.6                                                 |
-| 2 — webhook hardened and documented                                                                   | 4.1, 4.2*, 4.3, 4.4, 4.5*, 4.6*, 4.7*, 9.1                                                    |
-| 3 — 26 stranded kits resolved                                                                         | 1.4 (3.3, 3.4 — the verification write the runner reuses), 7.1, 7.2, 7.3, 7.5, 7.6*, 9.4, 9.5 |
-| 4 — completion writes verification state                                                              | 1.1, 1.2*, 1.3*, 1.4, 1.5*, 1.6*, 2.4*, 9.3                                                   |
-| 5 — bulk verification reaches eSigned rows                                                            | 2.1, 2.2*, 2.3*, 2.4*                                                                         |
-| 6 — every surface recognises every live eSign state (Tracker_Service **and** Employee_Documents_Page) | 3.1, 3.2*, 3.3*, 3.4, 3.5, 3.8, 9.3                                                           |
-| 7 — tiles agree with rows                                                                             | 3.6, 3.7*, 3.10, 3.14                                                                         |
-| 8 — absent reads as absent                                                                            | 3.8, 3.9*, 3.13*, 3.14                                                                        |
-| 9 — pagination is real                                                                                | 3.10, 3.11, 3.12*, 3.14                                                                       |
-| 10 — visible without manual refresh                                                                   | 3.15                                                                                          |
-| 11 — provider spend inside budget                                                                     | 5.1, 5.5, 5.6*, 5.7, 7.1, 7.6*, 9.4                                                           |
-| 12 — backfilled signatures attributable                                                               | 1.4, 7.4, 7.6*, 9.5                                                                           |
+| Requirement | Tasks |
+|---|---|
+| 1 — the pull path runs | 5.1, 5.2, 5.3, 5.4, 5.5, 5.6*, 5.7, 5.8*, 9.6 |
+| 2 — webhook hardened and documented | 4.1, 4.2*, 4.3, 4.4, 4.5*, 4.6*, 4.7*, 9.1 |
+| 3 — 26 stranded kits resolved | 1.4 (3.3, 3.4 — the verification write the runner reuses), 7.1, 7.2, 7.3, 7.5, 7.6*, 9.4, 9.5 |
+| 4 — completion writes verification state | 1.1, 1.2*, 1.3*, 1.4, 1.5*, 1.6*, 2.4*, 9.3 |
+| 5 — bulk verification reaches eSigned rows | 2.1, 2.2*, 2.3*, 2.4* |
+| 6 — every surface recognises every live eSign state (Tracker_Service **and** Employee_Documents_Page) | 3.1, 3.2*, 3.3*, 3.4, 3.5, 3.8, 9.3 |
+| 7 — tiles agree with rows | 3.6, 3.7*, 3.10, 3.14 |
+| 8 — absent reads as absent | 3.8, 3.9*, 3.13*, 3.14 |
+| 9 — pagination is real | 3.10, 3.11, 3.12*, 3.14 |
+| 10 — visible without manual refresh | 3.15 |
+| 11 — provider spend inside budget | 5.1, 5.5, 5.6*, 5.7, 7.1, 7.6*, 9.4 |
+| 12 — backfilled signatures attributable | 1.4, 7.4, 7.6*, 9.5 |
 
 ## Task Dependency Graph
 
@@ -340,22 +340,7 @@ Implementation language is **TypeScript** throughout (backend Node/Express + MyS
 {
   "waves": [
     { "id": 0, "tasks": ["1.1", "1.4", "3.1", "4.1", "5.1"] },
-    {
-      "id": 1,
-      "tasks": [
-        "1.2",
-        "1.3",
-        "1.5",
-        "1.6",
-        "2.1",
-        "3.2",
-        "3.3",
-        "3.4",
-        "4.2",
-        "4.3",
-        "5.2"
-      ]
-    },
+    { "id": 1, "tasks": ["1.2", "1.3", "1.5", "1.6", "2.1", "3.2", "3.3", "3.4", "4.2", "4.3", "5.2"] },
     { "id": 2, "tasks": ["2.2", "2.3", "2.4", "3.5", "3.6", "4.4", "5.3"] },
     { "id": 3, "tasks": ["3.7", "3.8", "4.5", "4.6", "4.7", "5.4"] },
     { "id": 4, "tasks": ["3.9", "3.10", "5.5"] },

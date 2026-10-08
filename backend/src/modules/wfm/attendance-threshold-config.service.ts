@@ -5,17 +5,16 @@
 // scoped to branch + Pay_Month rather than the six Rule_Dimensions and therefore resolved by
 // a separate, simpler precedence (design.md: "Ceiling resolution").
 
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
 import {
   resolveRule,
   type DimensionScopedRule,
   type EmployeeAttributes,
   type RuleDimension,
-} from "./attendance-source-rule-resolver.js";
+} from './attendance-source-rule-resolver.js';
 
-export type ThresholdKind =
-  "apr_corroboration" | "variance_tolerance" | "floor_absence_ceiling";
+export type ThresholdKind = 'apr_corroboration' | 'variance_tolerance' | 'floor_absence_ceiling';
 
 // requirements.md decision A2 (480/60) and Requirement 10 acceptance criterion 10.4 (60).
 export const DEFAULT_THRESHOLD_MINUTES: Record<ThresholdKind, number> = {
@@ -58,7 +57,7 @@ async function loadActiveWindowedRules(
   if (ruleRows.length === 0) return [];
 
   const ruleIds = ruleRows.map((r) => r.id);
-  const placeholders = ruleIds.map(() => "?").join(",");
+  const placeholders = ruleIds.map(() => '?').join(',');
   const [dimRows] = await db.execute<DimensionValueRow[]>(
     `SELECT rule_id, dimension, value_id
        FROM attendance_threshold_rule_dimension_value
@@ -66,10 +65,7 @@ async function loadActiveWindowedRules(
     ruleIds,
   );
 
-  const dimensionsByRule = new Map<
-    string,
-    Partial<Record<RuleDimension, Set<string>>>
-  >();
+  const dimensionsByRule = new Map<string, Partial<Record<RuleDimension, Set<string>>>>();
   for (const row of dimRows) {
     const existing = dimensionsByRule.get(row.rule_id) ?? {};
     const set = existing[row.dimension] ?? new Set<string>();
@@ -146,8 +142,8 @@ async function queryCeiling(
     `SELECT ceiling_value
        FROM attendance_dual_review_ceiling
       WHERE active_status = 1
-        AND branch_id ${branchId === null ? "IS NULL" : "= ?"}
-        AND pay_month ${payMonth === null ? "IS NULL" : "= ?"}
+        AND branch_id ${branchId === null ? 'IS NULL' : '= ?'}
+        AND pay_month ${payMonth === null ? 'IS NULL' : '= ?'}
       LIMIT 1`,
     [branchId, payMonth].filter((v) => v !== null),
   );

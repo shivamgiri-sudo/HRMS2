@@ -30,35 +30,22 @@ async function buildToDisk(dir: string) {
 }
 
 /** Mirrors formatValueForField: a checkbox with checked_when keeps its raw value. */
-function storedValue(
-  raw: unknown,
-  fieldType?: string,
-  checkedWhen?: string | null,
-) {
+function storedValue(raw: unknown, fieldType?: string, checkedWhen?: string | null) {
   if (raw == null) return "";
-  if (fieldType === "checkbox")
-    return checkedWhen ? String(raw) : raw ? "Yes" : "";
+  if (fieldType === "checkbox") return checkedWhen ? String(raw) : raw ? "Yes" : "";
   return String(raw);
 }
 
 describe("EPF nomination form (Form 2)", () => {
   it("TC-NOM-01: every mapped field exists in the PDF, and nothing is orphaned", async () => {
-    const form = (
-      await PDFDocument.load(await buildEpfNominationPdf())
-    ).getForm();
+    const form = (await PDFDocument.load(await buildEpfNominationPdf())).getForm();
     const inPdf = form.getFields().map((f) => f.getName());
     const mapped = epfNominationFieldMaps().map((m) => m.pdf_field_name);
 
     const missing = mapped.filter((n) => !inPdf.includes(n));
-    expect(
-      missing,
-      `maps would point at nothing: ${missing.join(", ")}`,
-    ).toEqual([]);
+    expect(missing, `maps would point at nothing: ${missing.join(", ")}`).toEqual([]);
     const orphaned = inPdf.filter((n) => !mapped.includes(n));
-    expect(
-      orphaned,
-      `fields nothing ever fills: ${orphaned.join(", ")}`,
-    ).toEqual([]);
+    expect(orphaned, `fields nothing ever fills: ${orphaned.join(", ")}`).toEqual([]);
     expect(new Set(inPdf).size).toBe(inPdf.length);
     expect([...EPF_NOMINATION_FIELD_NAMES].sort()).toEqual([...inPdf].sort());
   });
@@ -93,25 +80,17 @@ describe("EPF nomination form (Form 2)", () => {
   it("TC-NOM-02b: Part A nominee boxes never read the declared family", () => {
     // The converse mistake: filling a PF nomination from the pension family
     // would nominate people the member never nominated.
-    const partA = epfNominationFieldMaps().filter((m) =>
-      /^nominee_\d+_/.test(m.pdf_field_name),
-    );
+    const partA = epfNominationFieldMaps().filter((m) => /^nominee_\d+_/.test(m.pdf_field_name));
     expect(partA.length).toBeGreaterThanOrEqual(20);
     for (const map of partA) {
-      expect(
-        map.source_path,
-        `${map.pdf_field_name} must read a nominee`,
-      ).toMatch(/^nominee\.n[1-4]_/);
+      expect(map.source_path, `${map.pdf_field_name} must read a nominee`).toMatch(/^nominee\.n[1-4]_/);
     }
   });
 
   it("TC-NOM-03: a real nominee lands in the Part A row", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nom-"));
     try {
-      const maps = epfNominationFieldMaps().map((m) => ({
-        ...m,
-        mapping_mode: "acroform",
-      }));
+      const maps = epfNominationFieldMaps().map((m) => ({ ...m, mapping_mode: "acroform" }));
       // What buildSourceContext produces for an employee with one PF nominee.
       const source: Record<string, unknown> = {
         "epf.employee_name": "KAMAL SINGH RAWAT",
@@ -122,10 +101,8 @@ describe("EPF nomination form (Form 2)", () => {
         "epf.marital_status": "Married",
         "epf.uan_masked": "100987654321",
         "epf.branch_name_snapshot": "NOIDA-2",
-        "employee.permanent_address":
-          "H.No. 214, Sector 12, Noida, Uttar Pradesh, 201301",
-        "employee.current_address":
-          "Flat 9B, Sector 62, Noida, Uttar Pradesh, 201309",
+        "employee.permanent_address": "H.No. 214, Sector 12, Noida, Uttar Pradesh, 201301",
+        "employee.current_address": "Flat 9B, Sector 62, Noida, Uttar Pradesh, 201309",
         "nominee.n1_name": "RAMESH SINGH RAWAT",
         "nominee.n1_relationship": "Father",
         "nominee.n1_date_of_birth": "1966-11-02",
@@ -137,39 +114,21 @@ describe("EPF nomination form (Form 2)", () => {
       };
       const values = maps.map((m) => ({
         field_key: m.field_key,
-        value_text: storedValue(
-          source[String(m.source_path ?? "")],
-          m.field_type,
-          m.checked_when,
-        ),
+        value_text: storedValue(source[String(m.source_path ?? "")], m.field_type, m.checked_when),
       }));
 
-      const out = await fillAcroFormPdf({
-        templatePath: await buildToDisk(dir),
-        fieldMaps: maps,
-        values,
-      });
+      const out = await fillAcroFormPdf({ templatePath: await buildToDisk(dir), fieldMaps: maps, values });
       const form = (await PDFDocument.load(out)).getForm();
 
-      expect(form.getTextField("member_name").getText()).toBe(
-        "KAMAL SINGH RAWAT",
-      );
+      expect(form.getTextField("member_name").getText()).toBe("KAMAL SINGH RAWAT");
       expect(form.getTextField("dob_day").getText()).toBe("07");
       expect(form.getTextField("dob_year").getText()).toBe("1994");
-      expect(form.getTextField("permanent_address").getText()).toContain(
-        "Sector 12",
-      );
-      expect(form.getTextField("temporary_address").getText()).toContain(
-        "Sector 62",
-      );
+      expect(form.getTextField("permanent_address").getText()).toContain("Sector 12");
+      expect(form.getTextField("temporary_address").getText()).toContain("Sector 62");
 
       // The nominee row — the whole point of this form.
-      expect(form.getTextField("nominee_1_name").getText()).toBe(
-        "RAMESH SINGH RAWAT",
-      );
-      expect(form.getTextField("nominee_1_relationship").getText()).toBe(
-        "Father",
-      );
+      expect(form.getTextField("nominee_1_name").getText()).toBe("RAMESH SINGH RAWAT");
+      expect(form.getTextField("nominee_1_relationship").getText()).toBe("Father");
       expect(form.getTextField("nominee_1_share").getText()).toBe("100");
       // A major nominee must not carry a guardian.
       expect(form.getTextField("nominee_1_guardian").getText() ?? "").toBe("");
@@ -178,9 +137,7 @@ describe("EPF nomination form (Form 2)", () => {
       expect(form.getCheckBox("relationship_husband").isChecked()).toBe(false);
       expect(form.getCheckBox("gender_male").isChecked()).toBe(true);
       expect(form.getCheckBox("marital_status_married").isChecked()).toBe(true);
-      expect(form.getCheckBox("marital_status_unmarried").isChecked()).toBe(
-        false,
-      );
+      expect(form.getCheckBox("marital_status_unmarried").isChecked()).toBe(false);
 
       // This member declared no family, so Part B stays empty for them to
       // complete at signing — and in particular the Part A nominee above does
@@ -195,10 +152,7 @@ describe("EPF nomination form (Form 2)", () => {
   it("TC-NOM-04: a declared family lands in the Part B rows", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nom-"));
     try {
-      const maps = epfNominationFieldMaps().map((m) => ({
-        ...m,
-        mapping_mode: "acroform",
-      }));
+      const maps = epfNominationFieldMaps().map((m) => ({ ...m, mapping_mode: "acroform" }));
       // What buildSourceContext produces once the candidate has declared a
       // family during onboarding. The nominee is deliberately a different person
       // from every family member, so any bleed between the parts is visible.
@@ -221,43 +175,27 @@ describe("EPF nomination form (Form 2)", () => {
       };
       const values = maps.map((m) => ({
         field_key: m.field_key,
-        value_text: storedValue(
-          source[String(m.source_path ?? "")],
-          m.field_type,
-          m.checked_when,
-        ),
+        value_text: storedValue(source[String(m.source_path ?? "")], m.field_type, m.checked_when),
       }));
 
-      const out = await fillAcroFormPdf({
-        templatePath: await buildToDisk(dir),
-        fieldMaps: maps,
-        values,
-      });
+      const out = await fillAcroFormPdf({ templatePath: await buildToDisk(dir), fieldMaps: maps, values });
       const form = (await PDFDocument.load(out)).getForm();
 
       expect(form.getTextField("family_1_name").getText()).toBe("SUNITA RAWAT");
-      expect(form.getTextField("family_1_relationship").getText()).toBe(
-        "Spouse",
-      );
-      expect(form.getTextField("family_1_address").getText()).toContain(
-        "Sector 12",
-      );
+      expect(form.getTextField("family_1_relationship").getText()).toBe("Spouse");
+      expect(form.getTextField("family_1_address").getText()).toContain("Sector 12");
       expect(form.getTextField("family_2_name").getText()).toBe("AARAV RAWAT");
       // An undeclared row stays blank rather than repeating an earlier member.
       expect(form.getTextField("family_3_name").getText() ?? "").toBe("");
 
       // The EPS date splits across its three boxes via the transform rules.
-      expect(form.getTextField("eps_nominee_name").getText()).toBe(
-        "SUNITA RAWAT",
-      );
+      expect(form.getTextField("eps_nominee_name").getText()).toBe("SUNITA RAWAT");
       expect(form.getTextField("eps_nominee_dob_day").getText()).toBe("21");
       expect(form.getTextField("eps_nominee_dob_month").getText()).toBe("05");
       expect(form.getTextField("eps_nominee_dob_year").getText()).toBe("1996");
 
       // Part A is untouched by any of it: the nominee is still the nominee.
-      expect(form.getTextField("nominee_1_name").getText()).toBe(
-        "RAMESH SINGH RAWAT",
-      );
+      expect(form.getTextField("nominee_1_name").getText()).toBe("RAMESH SINGH RAWAT");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -266,24 +204,14 @@ describe("EPF nomination form (Form 2)", () => {
   it("TC-NOM-04: unused nominee rows stay blank rather than repeating row 1", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nom2-"));
     try {
-      const maps = epfNominationFieldMaps().map((m) => ({
-        ...m,
-        mapping_mode: "acroform",
-      }));
+      const maps = epfNominationFieldMaps().map((m) => ({ ...m, mapping_mode: "acroform" }));
       const values = maps.map((m) => ({
         field_key: m.field_key,
-        value_text:
-          m.field_key === "nominee_1_name" ? "RAMESH SINGH RAWAT" : "",
+        value_text: m.field_key === "nominee_1_name" ? "RAMESH SINGH RAWAT" : "",
       }));
-      const out = await fillAcroFormPdf({
-        templatePath: await buildToDisk(dir),
-        fieldMaps: maps,
-        values,
-      });
+      const out = await fillAcroFormPdf({ templatePath: await buildToDisk(dir), fieldMaps: maps, values });
       const form = (await PDFDocument.load(out)).getForm();
-      expect(form.getTextField("nominee_1_name").getText()).toBe(
-        "RAMESH SINGH RAWAT",
-      );
+      expect(form.getTextField("nominee_1_name").getText()).toBe("RAMESH SINGH RAWAT");
       for (const n of [2, 3, 4]) {
         expect(form.getTextField(`nominee_${n}_name`).getText() ?? "").toBe("");
       }

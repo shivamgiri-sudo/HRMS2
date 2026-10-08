@@ -35,7 +35,7 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
 
 (async () => {
   const startDate = `${monthArg}-01`;
-  const endDate = `${monthArg}-31`;
+  const endDate   = `${monthArg}-31`;
 
   // Find attendance rows for APR-scoped employees (process_id-mapped) who
   // have biometric-source records but zero APR feed coverage in the month.
@@ -60,7 +60,7 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
            AND a.ReportDate BETWEEN DATE_SUB(?, INTERVAL 30 DAY) AND ?
        )
      ORDER BY adr.record_date, adr.employee_id`,
-    [startDate, endDate, endDate, endDate],
+    [startDate, endDate, endDate, endDate]
   );
 
   console.log(`APR biometric-fallback rows to reprocess: ${rows.length}`);
@@ -68,8 +68,7 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
   if (isDryRun) {
     console.log("\nDRY RUN — not writing to DB.");
     const byEmp: Record<string, number> = {};
-    for (const r of rows)
-      byEmp[r.employee_code] = (byEmp[r.employee_code] ?? 0) + 1;
+    for (const r of rows) byEmp[r.employee_code] = (byEmp[r.employee_code] ?? 0) + 1;
     for (const [code, cnt] of Object.entries(byEmp).sort()) {
       console.log(`  ${code}: ${cnt} day(s)`);
     }
@@ -81,34 +80,20 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
 
   await runConcurrent(rows, async (row) => {
     try {
-      const result = await attendanceEngineService.processEmployee(
-        row.employee_id,
-        row.record_date,
-      );
-      await attendanceEngineService.upsertDailyRecord(
-        result,
-        "system:apr-absent-fix",
-      );
+      const result = await attendanceEngineService.processEmployee(row.employee_id, row.record_date);
+      await attendanceEngineService.upsertDailyRecord(result, 'system:apr-absent-fix');
       const wasSame = result.status === row.attendance_status;
       if (!wasSame) {
         results.fixed++;
-        console.log(
-          `  FIXED  ${row.record_date}  ${row.employee_code}  ${row.attendance_status} → ${result.status}`,
-        );
+        console.log(`  FIXED  ${row.record_date}  ${row.employee_code}  ${row.attendance_status} → ${result.status}`);
       } else {
         results.unchanged++;
-        console.log(
-          `  KEPT   ${row.record_date}  ${row.employee_code}  → ${result.status}`,
-        );
+        console.log(`  KEPT   ${row.record_date}  ${row.employee_code}  → ${result.status}`);
       }
     } catch (e: any) {
       results.failed++;
-      results.errors.push(
-        `${row.record_date}/${row.employee_code}: ${e?.message}`,
-      );
-      console.error(
-        `  FAIL   ${row.record_date}  ${row.employee_code}  ${e?.message}`,
-      );
+      results.errors.push(`${row.record_date}/${row.employee_code}: ${e?.message}`);
+      console.error(`  FAIL   ${row.record_date}  ${row.employee_code}  ${e?.message}`);
     }
   });
 
@@ -116,14 +101,11 @@ async function runConcurrent<T>(items: T[], fn: (item: T) => Promise<void>) {
   console.log(`  Fixed:     ${results.fixed}`);
   console.log(`  Unchanged: ${results.unchanged}`);
   console.log(`  Failed:    ${results.failed}`);
-  if (results.errors.length)
-    console.log("  Errors:", results.errors.slice(0, 10).join("\n  "));
+  if (results.errors.length) console.log("  Errors:", results.errors.slice(0, 10).join("\n  "));
 
   await db.end();
 })().catch(async (e) => {
   console.error("FATAL", e?.message ?? e);
-  try {
-    await db.end();
-  } catch {}
+  try { await db.end(); } catch { }
   process.exit(1);
 });

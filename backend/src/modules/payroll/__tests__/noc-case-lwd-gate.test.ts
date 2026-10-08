@@ -22,11 +22,7 @@ const { dbExecute, getConnectionMock, connExecute } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../db/mysql.js", () => ({
-  db: {
-    execute: dbExecute,
-    query: dbExecute,
-    getConnection: getConnectionMock,
-  },
+  db: { execute: dbExecute, query: dbExecute, getConnection: getConnectionMock },
 }));
 
 const EMP_ID = "emp-1";
@@ -41,12 +37,10 @@ const EMP_ID = "emp-1";
 function primeDb(lwd: string | null) {
   dbExecute.mockReset();
   dbExecute
-    .mockResolvedValueOnce([[]]) // 1. no existing case
-    .mockResolvedValueOnce([
-      [{ id: EMP_ID, employee_code: "MAS1", full_name: "Test Employee" }],
-    ]) // 2. employee snapshot
-    .mockResolvedValueOnce([[{ id: "exit-1" }]]) // 3. exit_request lookup
-    .mockResolvedValueOnce([[{ lwd }]]); // 4. LWD resolver
+    .mockResolvedValueOnce([[]])                                        // 1. no existing case
+    .mockResolvedValueOnce([[{ id: EMP_ID, employee_code: "MAS1", full_name: "Test Employee" }]]) // 2. employee snapshot
+    .mockResolvedValueOnce([[{ id: "exit-1" }]])                        // 3. exit_request lookup
+    .mockResolvedValueOnce([[{ lwd }]]);                                // 4. LWD resolver
 
   getConnectionMock.mockReset();
   connExecute.mockReset().mockResolvedValue([{ affectedRows: 1 }]);
@@ -70,28 +64,18 @@ describe("openCase — NOC cannot be initiated before the last working day", () 
     primeDb(null);
 
     await expect(
-      openCase({
-        employeeId: EMP_ID,
-        initiatorRole: "hr",
-        initiatedByUserId: "u1",
-      }),
+      openCase({ employeeId: EMP_ID, initiatorRole: "hr", initiatedByUserId: "u1" }),
     ).rejects.toMatchObject({ statusCode: 409, code: "NOC_LWD_NOT_KNOWN" });
     expect(getConnectionMock).not.toHaveBeenCalled();
   });
 
   it("refuses when the last working day is still in the future", async () => {
     const { openCase } = await loadService();
-    const future = new Date(Date.now() + 30 * 86400000)
-      .toISOString()
-      .slice(0, 10);
+    const future = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     primeDb(future);
 
     await expect(
-      openCase({
-        employeeId: EMP_ID,
-        initiatorRole: "hr",
-        initiatedByUserId: "u1",
-      }),
+      openCase({ employeeId: EMP_ID, initiatorRole: "hr", initiatedByUserId: "u1" }),
     ).rejects.toMatchObject({ statusCode: 409, code: "NOC_LWD_NOT_REACHED" });
     expect(getConnectionMock).not.toHaveBeenCalled();
   });
@@ -101,11 +85,7 @@ describe("openCase — NOC cannot be initiated before the last working day", () 
     const today = new Date().toISOString().slice(0, 10);
     primeDb(today);
 
-    const result = await openCase({
-      employeeId: EMP_ID,
-      initiatorRole: "hr",
-      initiatedByUserId: "u1",
-    });
+    const result = await openCase({ employeeId: EMP_ID, initiatorRole: "hr", initiatedByUserId: "u1" });
     expect(result.created).toBe(true);
     expect(getConnectionMock).toHaveBeenCalled();
   });

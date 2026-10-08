@@ -15,8 +15,7 @@ describe("Migration Governance", () => {
     });
 
     it("should preserve semicolons inside string literals", () => {
-      const sql =
-        "INSERT INTO t (col) VALUES ('value; with; semicolons'); SELECT 1;";
+      const sql = "INSERT INTO t (col) VALUES ('value; with; semicolons'); SELECT 1;";
       const result = splitSql(sql);
       expect(result).toHaveLength(2);
       expect(result[0]).toContain("value; with; semicolons");
@@ -66,7 +65,7 @@ describe("Migration Governance", () => {
     });
 
     it("should handle escaped quotes in strings", () => {
-      const sql = 'SELECT \'it\'\'s escaped\'; SELECT "also ""escaped"";';
+      const sql = "SELECT 'it''s escaped'; SELECT \"also \"\"escaped\"\";";
       const result = splitSql(sql);
       expect(result).toHaveLength(2);
       expect(result[0]).toContain("it''s");
@@ -101,7 +100,7 @@ describe("Migration Governance", () => {
   describe("Migration Manifest Validation", () => {
     it("should register all numbered migration SQL files in manifest", async () => {
       // Get the manifest from the module
-      const module = (await import("../runPendingMigrations.js")) as any;
+      const module = await import("../runPendingMigrations.js") as any;
       const manifest: string[] = module.MIGRATION_MANIFEST ?? [];
 
       // Read actual SQL files from backend/sql directory
@@ -110,20 +109,13 @@ describe("Migration Governance", () => {
 
       // Filter to numbered migrations (e.g., 001_xxx.sql, 530_xxx.sql)
       // Exclude: 000_run_all.sql, seed files, etc.
-      const numberedMigrations = files.filter(
-        (f) => /^\d{3,4}_/.test(f) && f !== "000_run_all.sql",
-      );
+      const numberedMigrations = files.filter((f) => /^\d{3,4}_/.test(f) && f !== "000_run_all.sql");
 
       // Find migrations missing from manifest
-      const missingFromManifest = numberedMigrations.filter(
-        (f) => !manifest.includes(f),
-      );
+      const missingFromManifest = numberedMigrations.filter((f) => !manifest.includes(f));
 
       if (missingFromManifest.length > 0) {
-        console.error(
-          "SQL files NOT registered in MIGRATION_MANIFEST:",
-          missingFromManifest,
-        );
+        console.error("SQL files NOT registered in MIGRATION_MANIFEST:", missingFromManifest);
       }
 
       // Critical hardening migrations MUST be present
@@ -142,7 +134,7 @@ describe("Migration Governance", () => {
     });
 
     it("should have no duplicate entries in manifest", async () => {
-      const module = (await import("../runPendingMigrations.js")) as any;
+      const module = await import("../runPendingMigrations.js") as any;
       const manifest: string[] = module.MIGRATION_MANIFEST ?? [];
 
       const seen = new Set<string>();
@@ -159,13 +151,11 @@ describe("Migration Governance", () => {
     });
 
     it("should have all manifest entries exist as files", async () => {
-      const module = (await import("../runPendingMigrations.js")) as any;
+      const module = await import("../runPendingMigrations.js") as any;
       const manifest: string[] = module.MIGRATION_MANIFEST ?? [];
       const sqlDir = path.resolve(__dirname, "../../../sql");
 
-      const missingFiles = manifest.filter(
-        (f) => !fs.existsSync(path.join(sqlDir, f)),
-      );
+      const missingFiles = manifest.filter((f) => !fs.existsSync(path.join(sqlDir, f)));
 
       if (missingFiles.length > 0) {
         console.error("Manifest entries with missing files:", missingFiles);

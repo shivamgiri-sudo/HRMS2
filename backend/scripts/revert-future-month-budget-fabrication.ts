@@ -23,11 +23,8 @@ const CUTOFF_PERIOD = "2026-08";
 
 async function main() {
   const conn = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
   });
 
   try {
@@ -35,54 +32,39 @@ async function main() {
       `SELECT id, branch_id, period_code, gross_budget_amount
          FROM finance_budget_header
         WHERE created_by = ? AND period_code > ?`,
-      [REMEDIATION_USER, CUTOFF_PERIOD],
+      [REMEDIATION_USER, CUTOFF_PERIOD]
     );
     console.log(`Future-month headers to revert: ${headers.length}`);
     console.table(headers);
 
-    if (!headers.length) {
-      console.log("Nothing to revert.");
-      return;
-    }
+    if (!headers.length) { console.log("Nothing to revert."); return; }
     const headerIds = headers.map((h) => h.id);
 
     const [allocRows] = await conn.query<any[]>(
       `SELECT gca.id, gca.grn_request_id, gca.amount_with_tax
          FROM grn_cost_allocation gca
         WHERE gca.created_by = ? AND gca.budget_id IN (?)`,
-      [REMEDIATION_USER, headerIds],
+      [REMEDIATION_USER, headerIds]
     );
-    console.log(
-      `grn_cost_allocation rows to delete: ${allocRows.length}, total ${allocRows.reduce((s, r) => s + Number(r.amount_with_tax), 0).toFixed(2)}`,
-    );
+    console.log(`grn_cost_allocation rows to delete: ${allocRows.length}, total ${allocRows.reduce((s, r) => s + Number(r.amount_with_tax), 0).toFixed(2)}`);
 
     const [lineRows] = await conn.query<any[]>(
       `SELECT id FROM finance_budget_line WHERE budget_id IN (?)`,
-      [headerIds],
+      [headerIds]
     );
     console.log(`finance_budget_line rows to delete: ${lineRows.length}`);
 
-    if (!APPLY) {
-      console.log("\nDRY RUN — nothing written. Pass --apply to write.");
-      return;
-    }
+    if (!APPLY) { console.log("\nDRY RUN — nothing written. Pass --apply to write."); return; }
 
     await conn.beginTransaction();
     try {
       if (allocRows.length) {
-        await conn.query(`DELETE FROM grn_cost_allocation WHERE id IN (?)`, [
-          allocRows.map((r) => r.id),
-        ]);
+        await conn.query(`DELETE FROM grn_cost_allocation WHERE id IN (?)`, [allocRows.map((r) => r.id)]);
       }
       if (lineRows.length) {
-        await conn.query(
-          `DELETE FROM finance_budget_line WHERE budget_id IN (?)`,
-          [headerIds],
-        );
+        await conn.query(`DELETE FROM finance_budget_line WHERE budget_id IN (?)`, [headerIds]);
       }
-      await conn.query(`DELETE FROM finance_budget_header WHERE id IN (?)`, [
-        headerIds,
-      ]);
+      await conn.query(`DELETE FROM finance_budget_header WHERE id IN (?)`, [headerIds]);
       await conn.commit();
       console.log("\nREVERTED.");
     } catch (error) {
@@ -94,7 +76,4 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error("FATAL", e);
-  process.exit(1);
-});
+main().catch((e) => { console.error("FATAL", e); process.exit(1); });

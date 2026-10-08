@@ -80,21 +80,20 @@ function buildMapsLink(ctx: LeadContext): string {
   if (ctx.branchAddress) {
     return `https://maps.google.com/?q=${encodeURIComponent(ctx.branchAddress)}`;
   }
-  return "";
+  return '';
 }
 
 function buildSalaryString(ctx: LeadContext): string {
   if (ctx.salaryMin && ctx.salaryMax) {
-    return `₹${ctx.salaryMin.toLocaleString("en-IN")} – ₹${ctx.salaryMax.toLocaleString("en-IN")} per month`;
+    return `₹${ctx.salaryMin.toLocaleString('en-IN')} – ₹${ctx.salaryMax.toLocaleString('en-IN')} per month`;
   }
-  if (ctx.salaryMin)
-    return `₹${ctx.salaryMin.toLocaleString("en-IN")} per month`;
-  return "";
+  if (ctx.salaryMin) return `₹${ctx.salaryMin.toLocaleString('en-IN')} per month`;
+  return '';
 }
 
 function buildWhatsAppBody(ctx: LeadContext, slot?: InterviewSlot): string {
-  const role = ctx.designation ?? "a position";
-  const firstName = ctx.name.split(" ")[0];
+  const role = ctx.designation ?? 'a position';
+  const firstName = ctx.name.split(' ')[0];
   const mapsLink = buildMapsLink(ctx);
   const salary = buildSalaryString(ctx);
 
@@ -115,7 +114,7 @@ function buildWhatsAppBody(ctx: LeadContext, slot?: InterviewSlot): string {
   }
 
   if (ctx.branchAddress) {
-    body += `🏢 Full Address: ${ctx.branchAddress.replace(/\n/g, ", ")}\n`;
+    body += `🏢 Full Address: ${ctx.branchAddress.replace(/\n/g, ', ')}\n`;
   }
 
   if (mapsLink) {
@@ -136,18 +135,12 @@ function buildWhatsAppBody(ctx: LeadContext, slot?: InterviewSlot): string {
 
 function buildEmailHtml(ctx: LeadContext, slot?: InterviewSlot): string {
   const esc = (v: string | null) =>
-    (v ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  const role = esc(ctx.designation) || "a position";
-  const firstName = esc(ctx.name.split(" ")[0]);
+    (v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const role = esc(ctx.designation) || 'a position';
+  const firstName = esc(ctx.name.split(' ')[0]);
   const mapsLink = buildMapsLink(ctx);
   const salary = buildSalaryString(ctx);
-  const address = ctx.branchAddress
-    ? ctx.branchAddress.replace(/\n/g, "<br>")
-    : null;
+  const address = ctx.branchAddress ? ctx.branchAddress.replace(/\n/g, '<br>') : null;
 
   return `<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.6;max-width:600px;margin:0 auto">
 <div style="background:#1e40af;padding:20px 24px;border-radius:8px 8px 0 0">
@@ -160,27 +153,19 @@ function buildEmailHtml(ctx: LeadContext, slot?: InterviewSlot): string {
 
   <p>To proceed with the recruitment process, please complete your assessment and confirm your interview slot through the link below.</p>
 
-${
-  ctx.bmiUrl
-    ? `  <p style="margin:20px 0">
+${ctx.bmiUrl ? `  <p style="margin:20px 0">
     <a href="${esc(ctx.bmiUrl)}" style="background:#1e40af;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block;font-weight:bold">👉 Complete Assessment &amp; Confirm Interview</a>
   </p>
-  <p style="color:#666;font-size:13px">Please note: completing the assessment is an important step in the selection process.</p>`
-    : ""
-}
+  <p style="color:#666;font-size:13px">Please note: completing the assessment is an important step in the selection process.</p>` : ''}
 
   <table style="width:100%;margin:20px 0;border-collapse:collapse">
-${
-  slot
-    ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px;width:130px"><strong>📅 Interview Date</strong></td><td style="padding:8px 12px"><strong>${esc(slot.dateLabel)}</strong></td></tr>
-    <tr><td style="padding:8px 12px"><strong>🕒 Interview Time</strong></td><td style="padding:8px 12px"><strong>${esc(slot.timeLabel)}</strong></td></tr>`
-    : ""
-}
-${ctx.branchCity || ctx.branch ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>📍 Location</strong></td><td style="padding:8px 12px">${esc(ctx.branchCity ?? ctx.branch)}</td></tr>` : ""}
-${address ? `    <tr><td style="padding:8px 12px"><strong>🏢 Full Address</strong></td><td style="padding:8px 12px">${address}</td></tr>` : ""}
-${mapsLink ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>🗺️ Google Maps</strong></td><td style="padding:8px 12px"><a href="${mapsLink}" style="color:#1e40af">View on Google Maps</a></td></tr>` : ""}
+${slot ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px;width:130px"><strong>📅 Interview Date</strong></td><td style="padding:8px 12px"><strong>${esc(slot.dateLabel)}</strong></td></tr>
+    <tr><td style="padding:8px 12px"><strong>🕒 Interview Time</strong></td><td style="padding:8px 12px"><strong>${esc(slot.timeLabel)}</strong></td></tr>` : ''}
+${ctx.branchCity || ctx.branch ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>📍 Location</strong></td><td style="padding:8px 12px">${esc(ctx.branchCity ?? ctx.branch)}</td></tr>` : ''}
+${address ? `    <tr><td style="padding:8px 12px"><strong>🏢 Full Address</strong></td><td style="padding:8px 12px">${address}</td></tr>` : ''}
+${mapsLink ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>🗺️ Google Maps</strong></td><td style="padding:8px 12px"><a href="${mapsLink}" style="color:#1e40af">View on Google Maps</a></td></tr>` : ''}
     <tr><td style="padding:8px 12px"><strong>💼 Role</strong></td><td style="padding:8px 12px">${role}</td></tr>
-${salary ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>💰 Salary</strong></td><td style="padding:8px 12px">${esc(salary)}</td></tr>` : ""}
+${salary ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius:4px"><strong>💰 Salary</strong></td><td style="padding:8px 12px">${esc(salary)}</td></tr>` : ''}
   </table>
 
   <p>We recommend completing the process at the earliest to avoid missing your opportunity.</p>
@@ -216,14 +201,14 @@ async function loadLeadContext(
        LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
        LEFT JOIN ats_candidate ac ON ac.id = ml.ats_candidate_id
       WHERE ml.id = ? LIMIT 1`,
-    [leadId],
+    [leadId]
   );
   const row = rows[0];
   if (!row) return null;
   return {
     ctx: {
       id: String(row.id),
-      name: (row.parsed_name as string | null) ?? "Candidate",
+      name: (row.parsed_name as string | null) ?? 'Candidate',
       phone: (row.parsed_phone as string | null) ?? null,
       email: (row.parsed_email as string | null) ?? null,
       designation: (row.designation_name as string | null) ?? null,
@@ -245,14 +230,8 @@ async function loadLeadContext(
       approvalStatus: (row.approval_status as string | null) ?? null,
       activeStatus: (row.active_status as number | null) ?? null,
       closedAt: (row.closed_at as string | null) ?? null,
-      requestedHeadcount:
-        row.requested_headcount !== null
-          ? Number(row.requested_headcount)
-          : null,
-      fulfilledHeadcount:
-        row.fulfilled_headcount !== null
-          ? Number(row.fulfilled_headcount)
-          : null,
+      requestedHeadcount: row.requested_headcount !== null ? Number(row.requested_headcount) : null,
+      fulfilledHeadcount: row.fulfilled_headcount !== null ? Number(row.fulfilled_headcount) : null,
     }),
   };
 }
@@ -300,26 +279,17 @@ export async function buildNotifyPreview(leadId: string): Promise<{
 
 export async function notifyQualifiedLead(
   leadId: string,
-  options: { force?: boolean; skipVoice?: boolean } = {},
+  options: { force?: boolean; skipVoice?: boolean } = {}
 ): Promise<OutreachOutcome> {
-  const outcome: OutreachOutcome = {
-    leadId,
-    attempted: [],
-    succeeded: [],
-    skipped: [],
-    failed: [],
-  };
+  const outcome: OutreachOutcome = { leadId, attempted: [], succeeded: [], skipped: [], failed: [] };
 
   const loaded = await loadLeadContext(leadId);
   if (!loaded) {
-    outcome.skipped.push({ channel: "all", reason: "Lead not found" });
+    outcome.skipped.push({ channel: 'all', reason: 'Lead not found' });
     return outcome;
   }
   if (!loaded.qualified) {
-    outcome.skipped.push({
-      channel: "all",
-      reason: "Lead is not qualified; outreach refused",
-    });
+    outcome.skipped.push({ channel: 'all', reason: 'Lead is not qualified; outreach refused' });
     return outcome;
   }
   // STOP is honoured in every mode and force does not override it. A lookup error fails open unless the pipeline owns sends (then it fails closed).
@@ -363,10 +333,7 @@ export async function notifyQualifiedLead(
   // Shortlisting is against the batch requisition: a closed or fully-staffed batch cannot take
   // more candidates, so refuse outreach outright (force does not override this).
   if (loaded.closedReason) {
-    outcome.skipped.push({
-      channel: "all",
-      reason: `Outreach refused: ${loaded.closedReason}`,
-    });
+    outcome.skipped.push({ channel: 'all', reason: `Outreach refused: ${loaded.closedReason}` });
     return outcome;
   }
   // Location: a lead whose own answer says they are elsewhere ("Gujarat" for a Noida branch, "No Noida location") is not invited to walk in. An answer that
@@ -381,10 +348,7 @@ export async function notifyQualifiedLead(
   // Re-notifying is a real recruiter need, but it must be explicit. Without this guard a webhook
   // redelivery or a page refresh could message the same candidate repeatedly.
   if (loaded.alreadySent && !options.force) {
-    outcome.skipped.push({
-      channel: "all",
-      reason: "Already notified; pass force=true to re-send",
-    });
+    outcome.skipped.push({ channel: 'all', reason: 'Already notified; pass force=true to re-send' });
     return outcome;
   }
 
@@ -395,10 +359,7 @@ export async function notifyQualifiedLead(
   let slot: InterviewSlot | undefined;
   if (ctx.branch) {
     slot = await assignInterviewSlot(ctx.id, ctx.branch).catch((e: unknown) => {
-      console.warn(
-        "[meta] assignInterviewSlot failed",
-        e instanceof Error ? e.message : e,
-      );
+      console.warn('[meta] assignInterviewSlot failed', e instanceof Error ? e.message : e);
       return undefined;
     });
   }
@@ -426,67 +387,38 @@ export async function notifyQualifiedLead(
     try {
       // DB config first, env second — same resolution order as dispatch.service.ts, so a provider
       // switched in the admin panel takes effect here too instead of this path quietly using env.
-      const dbConfig = await providerConfigService.loadActiveConfig("whatsapp");
-      const provider = await providerFactory.getProviderAsync(
-        "whatsapp",
-        dbConfig,
-      );
-      const configured =
-        typeof provider.isConfigured === "function"
-          ? provider.isConfigured()
-          : true;
+      const dbConfig = await providerConfigService.loadActiveConfig('whatsapp');
+      const provider = await providerFactory.getProviderAsync('whatsapp', dbConfig);
+      const configured = typeof provider.isConfigured === 'function' ? provider.isConfigured() : true;
       if (!configured) {
-        outcome.skipped.push({
-          channel: "whatsapp",
-          reason: `${provider.getName()} has no credentials configured`,
-        });
+        outcome.skipped.push({ channel: 'whatsapp', reason: `${provider.getName()} has no credentials configured` });
       } else {
-        outcome.attempted.push("whatsapp");
-        const res = await provider.send(
-          ctx.phone,
-          "Shortlisted",
-          buildWhatsAppBody(ctx, slot),
-        );
-        if (res.success) outcome.succeeded.push("whatsapp");
-        else
-          outcome.failed.push({
-            channel: "whatsapp",
-            error: res.error ?? "unknown error",
-          });
+        outcome.attempted.push('whatsapp');
+        const res = await provider.send(ctx.phone, 'Shortlisted', buildWhatsAppBody(ctx, slot));
+        if (res.success) outcome.succeeded.push('whatsapp');
+        else outcome.failed.push({ channel: 'whatsapp', error: res.error ?? 'unknown error' });
       }
     } catch (err) {
-      outcome.failed.push({
-        channel: "whatsapp",
-        error: err instanceof Error ? err.message : String(err),
-      });
+      outcome.failed.push({ channel: 'whatsapp', error: err instanceof Error ? err.message : String(err) });
     }
   }
 
   // ── Email ──
   if (!ctx.email) {
-    outcome.skipped.push({
-      channel: "email",
-      reason: "Lead has no email address",
-    });
+    outcome.skipped.push({ channel: 'email', reason: 'Lead has no email address' });
   } else if (!emailService.isConfigured()) {
-    outcome.skipped.push({
-      channel: "email",
-      reason: "Email provider is not configured",
-    });
+    outcome.skipped.push({ channel: 'email', reason: 'Email provider is not configured' });
   } else {
-    outcome.attempted.push("email");
+    outcome.attempted.push('email');
     try {
       await emailService.send({
         to: ctx.email,
-        subject: `Congratulations ${ctx.name.split(" ")[0]}! Shortlisted for ${ctx.designation ?? "a position"} at Mas Callnet`,
+        subject: `Congratulations ${ctx.name.split(' ')[0]}! Shortlisted for ${ctx.designation ?? 'a position'} at Mas Callnet`,
         html: buildEmailHtml(ctx, slot),
       });
-      outcome.succeeded.push("email");
+      outcome.succeeded.push('email');
     } catch (err) {
-      outcome.failed.push({
-        channel: "email",
-        error: err instanceof Error ? err.message : String(err),
-      });
+      outcome.failed.push({ channel: 'email', error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -500,54 +432,38 @@ export async function notifyQualifiedLead(
     !outcome.succeeded.includes('whatsapp') &&
     isWassengerConfigured()
   ) {
-    outcome.attempted.push("whatsapp_wassenger");
+    outcome.attempted.push('whatsapp_wassenger');
     try {
       // Use the full interview message (with slot + address + maps) when we have it;
       // fall back to the legacy bilingual message when slot assignment failed.
-      const waBody =
-        slot || ctx.branchAddress ? buildWhatsAppBody(ctx, slot) : null;
+      const waBody = slot || ctx.branchAddress
+        ? buildWhatsAppBody(ctx, slot)
+        : null;
       const res = waBody
         ? await (async () => {
-            const { sendCustomMessage } =
-              await import("./wassenger.provider.js");
+            const { sendCustomMessage } = await import('./wassenger.provider.js');
             return sendCustomMessage(ctx.phone!, waBody);
           })()
-        : await sendShortlistMessage(
-            ctx.phone,
-            ctx.name,
-            ctx.designation,
-            ctx.branch,
-            ctx.id,
-          );
+        : await sendShortlistMessage(ctx.phone, ctx.name, ctx.designation, ctx.branch, ctx.id);
 
       if (res.success) {
-        outcome.succeeded.push("whatsapp_wassenger");
+        outcome.succeeded.push('whatsapp_wassenger');
         // Save the actual message text as an outbound HR message so it renders
         // as a green bubble in the inbox, not a system notification pill.
-        const sentText =
-          waBody ??
-          `Hi ${ctx.name.split(" ")[0]}! Your profile has been shortlisted for ${ctx.designation ?? "a position"} at Mas Callnet India Pvt. Ltd. Please visit our office for interview. — Mas Callnet HR Team`;
+        const sentText = waBody ?? `Hi ${ctx.name.split(' ')[0]}! Your profile has been shortlisted for ${ctx.designation ?? 'a position'} at Mas Callnet India Pvt. Ltd. Please visit our office for interview. — Mas Callnet HR Team`;
         await saveLeadMessage({
           leadId: ctx.id,
-          direction: "outbound",
+          direction: 'outbound',
           messageText: sentText,
-          senderType: "hr",
-          senderName: "HR Team",
+          senderType: 'hr',
+          senderName: 'HR Team',
           wassengerMessageId: res.messageId ?? null,
-        }).catch(() => {
-          /* best-effort */
-        });
+        }).catch(() => { /* best-effort */ });
       } else {
-        outcome.failed.push({
-          channel: "whatsapp_wassenger",
-          error: res.error ?? "unknown error",
-        });
+        outcome.failed.push({ channel: 'whatsapp_wassenger', error: res.error ?? 'unknown error' });
       }
     } catch (err) {
-      outcome.failed.push({
-        channel: "whatsapp_wassenger",
-        error: err instanceof Error ? err.message : String(err),
-      });
+      outcome.failed.push({ channel: 'whatsapp_wassenger', error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -560,28 +476,22 @@ export async function notifyQualifiedLead(
     !outcome.succeeded.includes('whatsapp_wassenger') &&
     isWhatsAppWebConfigured()
   ) {
-    outcome.attempted.push("whatsapp_web");
+    outcome.attempted.push('whatsapp_web');
     try {
       const res = await sendWhatsAppNotification(
         ctx.phone,
         ctx.name,
         ctx.designation,
         ctx.branch,
-        ctx.id,
+        ctx.id
       );
       if (res.success) {
-        outcome.succeeded.push("whatsapp_web");
+        outcome.succeeded.push('whatsapp_web');
       } else {
-        outcome.failed.push({
-          channel: "whatsapp_web",
-          error: res.error ?? "unknown error",
-        });
+        outcome.failed.push({ channel: 'whatsapp_web', error: res.error ?? 'unknown error' });
       }
     } catch (err) {
-      outcome.failed.push({
-        channel: "whatsapp_web",
-        error: err instanceof Error ? err.message : String(err),
-      });
+      outcome.failed.push({ channel: 'whatsapp_web', error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -590,17 +500,11 @@ export async function notifyQualifiedLead(
   // is far more likely to treat it as spam. Priority: Vapi.ai (AI conversation, Hindi/English)
   // → legacy VOICEBOT_TRIGGER_URL (simple HTTP trigger).
   if (options.skipVoice) {
-    outcome.skipped.push({
-      channel: "voice",
-      reason: "Voice call skipped by caller (bulk send)",
-    });
+    outcome.skipped.push({ channel: 'voice', reason: 'Voice call skipped by caller (bulk send)' });
   } else if (!ctx.phone) {
-    outcome.skipped.push({
-      channel: "voice",
-      reason: "Lead has no phone number",
-    });
+    outcome.skipped.push({ channel: 'voice', reason: 'Lead has no phone number' });
   } else if (isVapiConfigured()) {
-    outcome.attempted.push("voice");
+    outcome.attempted.push('voice');
     const res = await triggerVapiCallWithInlineScript({
       phone: ctx.phone,
       name: ctx.name,
@@ -608,51 +512,37 @@ export async function notifyQualifiedLead(
       branch: ctx.branch,
       referenceId: ctx.id,
     });
-    if (res.status === "triggered") {
-      outcome.succeeded.push("voice");
+    if (res.status === 'triggered') {
+      outcome.succeeded.push('voice');
       await db.execute(
         `UPDATE meta_lead_raw SET voice_call_status = 'triggered', voice_called_at = NOW() WHERE id = ?`,
-        [ctx.id],
+        [ctx.id]
       );
     } else {
-      outcome.failed.push({
-        channel: "voice",
-        error: res.detail ?? res.status,
-      });
+      outcome.failed.push({ channel: 'voice', error: res.detail ?? res.status });
       await db.execute(
         `UPDATE meta_lead_raw SET voice_call_status = ?, voice_call_outcome = ? WHERE id = ?`,
-        [res.status, res.detail, ctx.id],
+        [res.status, res.detail, ctx.id]
       );
     }
   } else if (isVoicebotConfigured()) {
-    outcome.attempted.push("voice");
-    const res = await triggerVoiceCall({
-      phone: ctx.phone,
-      name: ctx.name,
-      referenceId: ctx.id,
-    });
-    if (res.status === "triggered") {
-      outcome.succeeded.push("voice");
+    outcome.attempted.push('voice');
+    const res = await triggerVoiceCall({ phone: ctx.phone, name: ctx.name, referenceId: ctx.id });
+    if (res.status === 'triggered') {
+      outcome.succeeded.push('voice');
       await db.execute(
         `UPDATE meta_lead_raw SET voice_call_status = 'triggered', voice_called_at = NOW() WHERE id = ?`,
-        [ctx.id],
+        [ctx.id]
       );
     } else {
-      outcome.failed.push({
-        channel: "voice",
-        error: res.detail ?? res.status,
-      });
+      outcome.failed.push({ channel: 'voice', error: res.detail ?? res.status });
       await db.execute(
         `UPDATE meta_lead_raw SET voice_call_status = ?, voice_call_outcome = ? WHERE id = ?`,
-        [res.status, res.detail, ctx.id],
+        [res.status, res.detail, ctx.id]
       );
     }
   } else {
-    outcome.skipped.push({
-      channel: "voice",
-      reason:
-        "No voice provider configured (VAPI_API_KEY or VOICEBOT_TRIGGER_URL)",
-    });
+    outcome.skipped.push({ channel: 'voice', reason: 'No voice provider configured (VAPI_API_KEY or VOICEBOT_TRIGGER_URL)' });
   }
 
   // Only stamp notification_sent_at when a channel genuinely landed. The dashboard's "Notified"
@@ -660,7 +550,7 @@ export async function notifyQualifiedLead(
   if (outcome.succeeded.length > 0) {
     await db.execute(
       `UPDATE meta_lead_raw SET notification_sent_at = NOW(), notification_channels = ? WHERE id = ?`,
-      [JSON.stringify(outcome.succeeded), ctx.id],
+      [JSON.stringify(outcome.succeeded), ctx.id]
     );
   }
 
@@ -675,10 +565,10 @@ export async function notifyQualifiedLead(
  */
 export async function recordWalkInConfirmation(
   phone: string,
-  reply: "confirmed" | "reschedule" | "not_interested" | "unknown",
+  reply: 'confirmed' | 'reschedule' | 'not_interested' | 'unknown'
 ): Promise<{ found: boolean; leadId: string | null; name: string | null }> {
   // Normalise phone: strip country code prefix and non-digits, keep 10-digit Indian mobile
-  const digits = phone.replace(/\D/g, "");
+  const digits = phone.replace(/\D/g, '');
   const mobile = digits.length > 10 ? digits.slice(-10) : digits;
 
   // A phone can appear on several leads (one per campaign). Route the reply to the conversation
@@ -691,46 +581,35 @@ export async function recordWalkInConfirmation(
                (notification_sent_at IS NOT NULL) DESC,
                COALESCE(notification_sent_at, created_at) DESC
       LIMIT 1`,
-    [mobile],
+    [mobile]
   );
 
   const row = rows[0];
   if (!row) return { found: false, leadId: null, name: null };
 
   const statusCol =
-    reply === "confirmed"
-      ? "walkin_confirmed"
-      : reply === "reschedule"
-        ? "walkin_reschedule_requested"
-        : reply === "not_interested"
-          ? "walkin_declined"
-          : null;
+    reply === 'confirmed' ? 'walkin_confirmed'
+    : reply === 'reschedule' ? 'walkin_reschedule_requested'
+    : reply === 'not_interested' ? 'walkin_declined'
+    : null;
 
   if (statusCol) {
     await db.execute(
       `UPDATE meta_lead_raw SET ${statusCol} = 1, walkin_reply_at = NOW(), walkin_reply = ? WHERE id = ?`,
-      [reply, row.id],
+      [reply, row.id]
     );
   }
 
-  return {
-    found: true,
-    leadId: String(row.id),
-    name: (row.parsed_name as string | null) ?? "Candidate",
-  };
+  return { found: true, leadId: String(row.id), name: (row.parsed_name as string | null) ?? 'Candidate' };
 }
 
 /** Record a voice-bot callback outcome against the lead it referenced. */
-export async function recordVoiceCallback(
-  referenceId: string,
-  status: string,
-  outcomeText: string | null,
-): Promise<boolean> {
+export async function recordVoiceCallback(referenceId: string, status: string, outcomeText: string | null): Promise<boolean> {
   const [res] = await db.execute(
     `UPDATE meta_lead_raw
         SET voice_call_status = ?, voice_call_outcome = ?, voice_called_at = COALESCE(voice_called_at, NOW())
       WHERE id = ?`,
-    [status.slice(0, 50), outcomeText, referenceId],
+    [status.slice(0, 50), outcomeText, referenceId]
   );
   return (res as { affectedRows?: number }).affectedRows === 1;
 }

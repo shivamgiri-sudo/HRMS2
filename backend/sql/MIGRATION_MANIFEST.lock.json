@@ -1476,7 +1476,6 @@
     "review_only_cleanup_test_demo_hrms2.sql",
     "revoke_salary_revision_employee_grant.sql",
     "setup-dialer-kpi-metrics.sql",
-    "verify_ats_fix.sql",
-    "migrations/1932_satya_retracker_raw.sql"
+    "verify_ats_fix.sql"
   ]
 }

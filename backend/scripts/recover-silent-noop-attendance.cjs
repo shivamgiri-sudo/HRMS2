@@ -24,22 +24,13 @@ require("dotenv").config();
 
 const ACTOR = "a4a4902e-6222-11f1-adb1-00155d0ab410"; // shivam.giri@teammas.in
 const APPLY = process.env.APPLY === "1";
-const argDays =
-  Number(
-    (process.argv.find((a) => a.startsWith("--days=")) || "").split("=")[1],
-  ) || 90;
+const argDays = Number((process.argv.find((a) => a.startsWith("--days=")) || "").split("=")[1]) || 90;
 
 const LEGACY = { P: "present", A: "absent", HD: "half_day" };
 const UNMAPPED = ["OD", "DH", "T"];
 const CALENDAR = ["holiday", "week_off", "week_off_worked"];
 // lwp_value must never disagree with the status it belongs to.
-const LWP_FOR = {
-  present: 0,
-  late: 0,
-  leave_approved: 0,
-  half_day: 0.5,
-  absent: 1,
-};
+const LWP_FOR = { present: 0, late: 0, leave_approved: 0, half_day: 0.5, absent: 1 };
 
 const REASON =
   "Recovery: an approved correction was discarded because the day was locked and the " +
@@ -49,10 +40,8 @@ const REASON =
 
 async function main() {
   const c = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
     port: +(process.env.DB_PORT || 3306),
   });
 
@@ -89,29 +78,17 @@ async function main() {
   const paysMore = plan.filter((p) => LWP_FOR[p.got] > p.lwp).length;
   const paysLess = plan.filter((p) => LWP_FOR[p.got] < p.lwp).length;
 
-  console.log(
-    `${APPLY ? "APPLY" : "DRY RUN"} — ${plan.length} silently discarded corrections ` +
-      `in the last ${argDays} days`,
-  );
+  console.log(`${APPLY ? "APPLY" : "DRY RUN"} — ${plan.length} silently discarded corrections ` +
+    `in the last ${argDays} days`);
   console.log("\n  moves:");
   for (const [k, n] of Object.entries(moves).sort((a, b) => b[1] - a[1])) {
     console.log(`    ${String(n).padStart(4)}  ${k}`);
   }
-  console.log(
-    `\n  increases pay for ${paysMore}, reduces pay for ${paysLess} ` +
-      `(a correction may legitimately mark someone absent)`,
-  );
+  console.log(`\n  increases pay for ${paysMore}, reduces pay for ${paysLess} ` +
+    `(a correction may legitimately mark someone absent)`);
 
-  if (!plan.length) {
-    console.log("\nNothing to recover.");
-    await c.end();
-    return;
-  }
-  if (!APPLY) {
-    console.log("\nNo changes written. Re-run with APPLY=1 to write.");
-    await c.end();
-    return;
-  }
+  if (!plan.length) { console.log("\nNothing to recover."); await c.end(); return; }
+  if (!APPLY) { console.log("\nNo changes written. Re-run with APPLY=1 to write."); await c.end(); return; }
 
   await c.beginTransaction();
   let n = 0;
@@ -131,17 +108,7 @@ async function main() {
                 status_changed_at     = NOW(),
                 updated_at            = NOW()
           WHERE id = ? AND attendance_status = ?`,
-        [
-          p.wanted,
-          p.lwp,
-          p.reg_id,
-          ACTOR,
-          REASON,
-          REASON,
-          ACTOR,
-          p.adr_id,
-          p.got,
-        ],
+        [p.wanted, p.lwp, p.reg_id, ACTOR, REASON, REASON, ACTOR, p.adr_id, p.got],
       );
       n += res.affectedRows;
     }
@@ -149,17 +116,7 @@ async function main() {
       `INSERT INTO sensitive_action_log
          (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, acted_at, reason)
        VALUES (UUID(), ?, 'ATTENDANCE_CORRECTION_RECOVERED', 'wfm', 'attendance_daily_record', NULL, ?, NOW(), ?)`,
-      [
-        ACTOR,
-        JSON.stringify({
-          scope: `last ${argDays} days`,
-          rows_recovered: n,
-          moves,
-          paysMore,
-          paysLess,
-        }),
-        REASON,
-      ],
+      [ACTOR, JSON.stringify({ scope: `last ${argDays} days`, rows_recovered: n, moves, paysMore, paysLess }), REASON],
     );
     await c.commit();
     console.log(`\nCommitted. rows updated = ${n}`);
@@ -171,7 +128,4 @@ async function main() {
   await c.end();
 }
 
-main().catch((e) => {
-  console.error("ERR", e.message);
-  process.exit(1);
-});
+main().catch((e) => { console.error("ERR", e.message); process.exit(1); });

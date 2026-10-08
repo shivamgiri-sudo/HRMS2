@@ -19,10 +19,7 @@ import { db } from "../../db/mysql.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { sendOnboardingTokenEmail } from "./ats.email.service.js";
 import { env } from "../../config/env.js";
-import {
-  triggerOnboardingStuck,
-  triggerJoiningDocsIncomplete,
-} from "../work-inbox/work-inbox.triggers.js";
+import { triggerOnboardingStuck, triggerJoiningDocsIncomplete } from "../work-inbox/work-inbox.triggers.js";
 import { canonicalBranch } from "./ats-vocabulary.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { runRequisitionDeadlineSweep } from "../job-requisition/job-requisition-deadline.service.js";
@@ -73,7 +70,7 @@ export async function runOnboardingIncompleteReminders(): Promise<void> {
          ob.reminder_sent_at IS NULL
          OR DATEDIFF(NOW(), ob.reminder_sent_at) >= 3
        )
-     LIMIT 100`,
+     LIMIT 100`
   );
 
   for (const row of rows) {
@@ -81,24 +78,22 @@ export async function runOnboardingIncompleteReminders(): Promise<void> {
       // Compose the link from the stored raw token, matching how it is built
       // when first issued (ats.onboarding.service.ts).
       const onboardingLink = row.onboarding_token
-        ? `${env.FRONTEND_URL || "http://localhost:5173"}/onboard-full?token=${row.onboarding_token}`
+        ? `${env.FRONTEND_URL || 'http://localhost:5173'}/onboard-full?token=${row.onboarding_token}`
         : null;
 
       if (row.email && onboardingLink) {
         await sendOnboardingTokenEmail({
           candidateId: row.candidate_id as string,
           to: row.email as string,
-          candidateName: (row.full_name ?? "Candidate") as string,
+          candidateName: (row.full_name ?? 'Candidate') as string,
           onboardingLink,
-        }).catch((e: unknown) =>
-          console.warn("[onboarding-reminder email]", e),
-        );
+        }).catch((e: unknown) => console.warn('[onboarding-reminder email]', e));
       }
 
       // Mark reminder sent
       await db.execute(
         `UPDATE ats_onboarding_bridge SET reminder_sent_at = NOW() WHERE id = ?`,
-        [row.bridge_id],
+        [row.bridge_id]
       );
 
       // ONBOARDING_STUCK was a registered Work Inbox item_type with zero producers
@@ -112,48 +107,36 @@ export async function runOnboardingIncompleteReminders(): Promise<void> {
       // free-text (sometimes an id, sometimes a name, sometimes a code — see
       // branch-head-scope.ts), and a wrong branch scope on a work item is worse than no
       // branch scope on one that's still assigned_to_role: "hr" and visible either way.
-      await triggerOnboardingStuck(
-        row.candidate_id as string,
-        (row.full_name ?? "Candidate") as string,
-      ).catch((e: unknown) =>
-        console.warn(
-          `[onboarding-reminder] work-item creation failed for ${row.candidate_id as string}:`,
-          e,
-        ),
-      );
+      await triggerOnboardingStuck(row.candidate_id as string, (row.full_name ?? "Candidate") as string)
+        .catch((e: unknown) => console.warn(`[onboarding-reminder] work-item creation failed for ${row.candidate_id as string}:`, e));
 
       // Recruiter inbox nudge
       if (row.recruiter_employee_id) {
         const [userRows] = await db.execute<RowDataPacket[]>(
           `SELECT user_id AS id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
-          [row.recruiter_employee_id],
+          [row.recruiter_employee_id]
         );
         const userId = userRows[0]?.id as string | null;
         if (userId) {
           await inboxService.createItem({
             user_id: userId,
-            type: "onboarding_overdue",
-            title: `Onboarding Incomplete: ${row.full_name ?? "Candidate"}`,
-            description: `${row.full_name ?? "Candidate"} has not completed their onboarding form in 3+ days. Follow up to avoid a joining delay.`,
-            entity_type: "ats_candidate",
+            type: 'onboarding_overdue',
+            title: `Onboarding Incomplete: ${row.full_name ?? 'Candidate'}`,
+            description: `${row.full_name ?? 'Candidate'} has not completed their onboarding form in 3+ days. Follow up to avoid a joining delay.`,
+            entity_type: 'ats_candidate',
             entity_id: row.candidate_id as string,
-            action_url: "/ats/onboarding-bridge",
-            priority: "high",
+            action_url: '/ats/onboarding-bridge',
+            priority: 'high',
           });
         }
       }
     } catch (err) {
-      console.warn(
-        `[onboarding-reminder] failed for candidate ${row.candidate_id as string}:`,
-        err,
-      );
+      console.warn(`[onboarding-reminder] failed for candidate ${row.candidate_id as string}:`, err);
     }
   }
 
   if (rows.length > 0) {
-    console.log(
-      `[ats-reminders] onboarding incomplete: notified ${rows.length} candidate(s)`,
-    );
+    console.log(`[ats-reminders] onboarding incomplete: notified ${rows.length} candidate(s)`);
   }
 }
 
@@ -176,7 +159,7 @@ export async function runJoiningDocsIncompleteReminders(): Promise<void> {
         AND c.mandatory = 1
         AND c.status NOT IN ('verified','signed_verified','completed','esign_completed','wet_signed_uploaded')
       GROUP BY e.id, full_name, e.branch_id
-      LIMIT 200`,
+      LIMIT 200`
   );
 
   for (const row of rows) {
@@ -184,20 +167,15 @@ export async function runJoiningDocsIncompleteReminders(): Promise<void> {
       await triggerJoiningDocsIncomplete(
         row.employee_id as string,
         (row.full_name ?? "Employee") as string,
-        (row.branch_id as string | null) ?? undefined,
+        (row.branch_id as string | null) ?? undefined
       );
     } catch (err) {
-      console.warn(
-        `[joining-docs-reminder] failed for employee ${row.employee_id as string}:`,
-        err,
-      );
+      console.warn(`[joining-docs-reminder] failed for employee ${row.employee_id as string}:`, err);
     }
   }
 
   if (rows.length > 0) {
-    console.log(
-      `[ats-reminders] joining docs incomplete: notified ${rows.length} employee(s)`,
-    );
+    console.log(`[ats-reminders] joining docs incomplete: notified ${rows.length} employee(s)`);
   }
 }
 
@@ -213,7 +191,7 @@ async function runJoiningDateReminders(): Promise<void> {
      WHERE jr.approval_status = 'approved'
        AND DATE(jr.target_joining_date) = DATE(NOW() + INTERVAL 2 DAY)
        AND jr.active_status = 1
-     LIMIT 50`,
+     LIMIT 50`
   );
 
   for (const row of jrRows) {
@@ -221,26 +199,21 @@ async function runJoiningDateReminders(): Promise<void> {
       // Notify HR/recruiter who raised the requisition
       await inboxService.createItem({
         user_id: row.requested_by as string,
-        type: "joining_date_approaching",
+        type: 'joining_date_approaching',
         title: `Joining Date in 2 Days: ${row.requisition_code as string}`,
-        description: `${row.designation_name as string} at ${row.branch_name as string} — joining date is ${(row.target_joining_date as Date)?.toISOString().slice(0, 10) ?? "soon"}. ${(row.requested_headcount as number) - (row.fulfilled_headcount as number)} positions still open.`,
-        entity_type: "job_requisition",
+        description: `${row.designation_name as string} at ${row.branch_name as string} — joining date is ${(row.target_joining_date as Date)?.toISOString().slice(0, 10) ?? 'soon'}. ${(row.requested_headcount as number) - (row.fulfilled_headcount as number)} positions still open.`,
+        entity_type: 'job_requisition',
         entity_id: row.id as string,
-        action_url: "/recruitment/job-requisition",
-        priority: "urgent",
+        action_url: '/recruitment/job-requisition',
+        priority: 'urgent',
       });
     } catch (err) {
-      console.warn(
-        `[joining-reminder] failed for requisition ${row.id as string}:`,
-        err,
-      );
+      console.warn(`[joining-reminder] failed for requisition ${row.id as string}:`, err);
     }
   }
 
   if (jrRows.length > 0) {
-    console.log(
-      `[ats-reminders] joining date in 2 days: notified for ${jrRows.length} requisition(s)`,
-    );
+    console.log(`[ats-reminders] joining date in 2 days: notified for ${jrRows.length} requisition(s)`);
   }
 }
 
@@ -255,7 +228,7 @@ async function runRequisitionApprovalNudge(): Promise<void> {
      WHERE jr.approval_status = 'pending_approval'
        AND DATEDIFF(NOW(), jr.updated_at) >= 2
        AND jr.active_status = 1
-     LIMIT 50`,
+     LIMIT 50`
   );
 
   for (const row of rows) {
@@ -277,44 +250,36 @@ async function runRequisitionApprovalNudge(): Promise<void> {
              OR b.branch_code = ?
            )
          LIMIT 20`,
-        [row.branch_name, row.branch_name],
+        [row.branch_name, row.branch_name]
       );
 
       await Promise.allSettled(
         (approvers as RowDataPacket[]).map((u) =>
           inboxService.createItem({
             user_id: u.id as string,
-            type: "requisition_approval_overdue",
+            type: 'requisition_approval_overdue',
             title: `Approval Overdue: ${row.requisition_code as string}`,
             description: `${row.designation_name as string} at ${row.branch_name as string} has been waiting for approval for 2+ days.`,
-            entity_type: "job_requisition",
+            entity_type: 'job_requisition',
             entity_id: row.id as string,
-            action_url: "/recruitment/job-requisition",
-            priority: "high",
-          }),
-        ),
+            action_url: '/recruitment/job-requisition',
+            priority: 'high',
+          })
+        )
       );
     } catch (err) {
-      console.warn(
-        `[approval-nudge] failed for requisition ${row.id as string}:`,
-        err,
-      );
+      console.warn(`[approval-nudge] failed for requisition ${row.id as string}:`, err);
     }
   }
 
   if (rows.length > 0) {
-    console.log(
-      `[ats-reminders] approval nudge: sent for ${rows.length} overdue requisition(s)`,
-    );
+    console.log(`[ats-reminders] approval nudge: sent for ${rows.length} overdue requisition(s)`);
   }
 }
 
 // ── 4. Daily Hiring Report ───────────────────────────────────────────────────
 
-export async function runDailyHiringReport(
-  forDate?: string,
-  testEmail?: string,
-): Promise<any> {
+export async function runDailyHiringReport(forDate?: string, testEmail?: string): Promise<any> {
   // Was a hardcoded ['NOIDA', 'NOIDA-2', 'AHMEDABAD-JALDARSHAN']. branch_master carries
   // SIX active branches (verified 2026-08-27), so Delhi Office, HEAD OFFICE and
   // NOIDA-DIALDESK were silently absent from a report whose whole purpose is to be
@@ -342,21 +307,15 @@ export async function runDailyHiringReport(
         WHERE applied_for_branch IS NOT NULL AND applied_for_branch <> ''`,
     );
     const candidateCanonicalBranches = new Set(
-      (candidateBranchRows as any[]).map((r) =>
-        canonicalBranch(r.applied_for_branch),
-      ),
+      (candidateBranchRows as any[]).map((r) => canonicalBranch(r.applied_for_branch)),
     );
     BRANCHES = (branchRows as any[])
       .map((r) => String(r.branch_name))
       .filter((name) => candidateCanonicalBranches.has(name));
-    if (BRANCHES.length === 0)
-      throw new Error("no active branches with candidates");
+    if (BRANCHES.length === 0) throw new Error('no active branches with candidates');
   } catch (e) {
-    console.error(
-      "[ats-daily-report] branch lookup failed, using the original fixed list:",
-      (e as Error).message,
-    );
-    BRANCHES = ["NOIDA", "NOIDA-2", "AHMEDABAD-JALDARSHAN"];
+    console.error('[ats-daily-report] branch lookup failed, using the original fixed list:', (e as Error).message);
+    BRANCHES = ['NOIDA', 'NOIDA-2', 'AHMEDABAD-JALDARSHAN'];
   }
   const targetDate = forDate || getCurrentDateIST();
   console.log(`[ats-daily-report] Generating report for date: ${targetDate}`);
@@ -366,23 +325,13 @@ export async function runDailyHiringReport(
   // different (and, for SLA, unmeasured) definition of every number — is gone, so a manual trigger, the
   // public test routes and the 6 PM scheduler can no longer send it. BRANCHES above still decides which
   // branches are in scope.
-  const { buildBranchActivityReports, sendBranchActivityReports } =
-    await import("./branch-activity-report/index.js");
+  const { buildBranchActivityReports, sendBranchActivityReports } = await import('./branch-activity-report/index.js');
 
-  if (testEmail === "preview") {
+  if (testEmail === 'preview') {
     const built = await buildBranchActivityReports(targetDate);
     const reports = built
-      .filter((r) =>
-        BRANCHES.some((b) => b.toLowerCase() === r.branch.toLowerCase()),
-      )
-      .map((r) => ({
-        branchName: r.branch,
-        subject: r.subject,
-        ftd: r.data.overall.ftd,
-        wtd: r.data.overall.wtd,
-        mtd: r.data.overall.mtd,
-        html: r.html,
-      }));
+      .filter((r) => BRANCHES.some((b) => b.toLowerCase() === r.branch.toLowerCase()))
+      .map((r) => ({ branchName: r.branch, subject: r.subject, ftd: r.data.overall.ftd, wtd: r.data.overall.wtd, mtd: r.data.overall.mtd, html: r.html }));
     return { reports, targetDate };
   }
 
@@ -390,58 +339,22 @@ export async function runDailyHiringReport(
   // branch activity report scheduler, which has its own enable / dry-run switches and per-day idempotency.
   // Doing it here as well would mail every branch twice, so this path only builds and logs.
   if (!testEmail) {
-    const results = await sendBranchActivityReports({
-      reportDate: targetDate,
-      branches: BRANCHES,
-      dryRun: true,
-    });
-    return {
-      success: false,
-      error:
-        "Not sent: scheduled delivery is owned by the branch activity report scheduler (ATS_BRANCH_ACTIVITY_REPORT_*).",
-      stats: { branches: results.length },
-    };
+    const results = await sendBranchActivityReports({ reportDate: targetDate, branches: BRANCHES, dryRun: true });
+    return { success: false, error: 'Not sent: scheduled delivery is owned by the branch activity report scheduler (ATS_BRANCH_ACTIVITY_REPORT_*).', stats: { branches: results.length } };
   }
 
   // An explicit recipient is an on-demand test: every branch email goes to that one company address only.
   if (!COMPANY_ADDRESS.test(testEmail.trim())) {
-    return {
-      success: false,
-      error:
-        "Recipient must be a company address (@teammas.in / @teammas.co.in).",
-      stats: { branches: 0 },
-    };
+    return { success: false, error: 'Recipient must be a company address (@teammas.in / @teammas.co.in).', stats: { branches: 0 } };
   }
-  const results = await sendBranchActivityReports({
-    reportDate: targetDate,
-    branches: BRANCHES,
-    dryRun: false,
-    redirectTo: [testEmail.trim()],
-  });
-  const sent = results.filter((r) => r.status === "sent");
+  const results = await sendBranchActivityReports({ reportDate: targetDate, branches: BRANCHES, dryRun: false, redirectTo: [testEmail.trim()] });
+  const sent = results.filter((r) => r.status === 'sent');
   return {
     success: sent.length > 0,
-    messageId: sent
-      .map((r) => r.messageId)
-      .filter(Boolean)
-      .join(","),
+    messageId: sent.map((r) => r.messageId).filter(Boolean).join(','),
     recipients: testEmail.trim(),
-    stats: {
-      branches: results.length,
-      sent: sent.length,
-      failed: results.filter((r) => r.status === "failed").length,
-    },
-    ...(sent.length === 0
-      ? {
-          error:
-            results
-              .map(
-                (r) =>
-                  `${r.branch}: ${r.status}${r.reason ? ` (${r.reason})` : ""}`,
-              )
-              .join("; ") || "no branch had activity",
-        }
-      : {}),
+    stats: { branches: results.length, sent: sent.length, failed: results.filter((r) => r.status === 'failed').length },
+    ...(sent.length === 0 ? { error: results.map((r) => `${r.branch}: ${r.status}${r.reason ? ` (${r.reason})` : ''}`).join('; ') || 'no branch had activity' } : {}),
   };
 }
 
@@ -463,10 +376,10 @@ export function startAtsRemindersScheduler(): void {
   // Run onboarding + joining-docs reminders at 9 PM IST daily
   const runEvening = () => {
     runOnboardingIncompleteReminders().catch((e: unknown) =>
-      console.error("[ats-reminders] onboarding job error:", e),
+      console.error('[ats-reminders] onboarding job error:', e)
     );
     runJoiningDocsIncompleteReminders().catch((e: unknown) =>
-      console.error("[ats-reminders] joining-docs job error:", e),
+      console.error('[ats-reminders] joining-docs job error:', e)
     );
     setTimeout(runEvening, 24 * HOUR_MS);
   };
@@ -478,19 +391,13 @@ export function startAtsRemindersScheduler(): void {
       runJoiningDateReminders(),
       runRequisitionApprovalNudge(),
       runRequisitionDeadlineSweep(),
-    ]).catch((e: unknown) =>
-      console.error("[ats-reminders] morning job error:", e),
-    );
+    ]).catch((e: unknown) => console.error('[ats-reminders] morning job error:', e));
     setTimeout(runMorning, 24 * HOUR_MS);
   };
   setTimeout(runMorning, getNextRunDelay(8));
 
   // Mark started (use dummy interval to satisfy the guard)
-  _timer = setInterval(() => {
-    /* keepalive */
-  }, 24 * HOUR_MS);
+  _timer = setInterval(() => {/* keepalive */}, 24 * HOUR_MS);
 
-  console.log(
-    "[ats-reminders] scheduler started (evening 9 PM + morning 8 AM)",
-  );
+  console.log('[ats-reminders] scheduler started (evening 9 PM + morning 8 AM)');
 }

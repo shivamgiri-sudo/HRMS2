@@ -10,12 +10,8 @@ describe("assessment mapping policy", () => {
   it("normalizes supported process names without guessing unknown processes", () => {
     expect(normalizeAssessmentProcess("Inbound Customer Care")).toBe("inbound");
     expect(normalizeAssessmentProcess("Outbound Sales")).toBe("outbound");
-    expect(normalizeAssessmentProcess("Back Office Data Entry")).toBe(
-      "backoffice",
-    );
-    expect(normalizeAssessmentProcess("KYC Document Verification")).toBe(
-      "document",
-    );
+    expect(normalizeAssessmentProcess("Back Office Data Entry")).toBe("backoffice");
+    expect(normalizeAssessmentProcess("KYC Document Verification")).toBe("document");
     expect(normalizeAssessmentProcess("Email Support")).toBe("email");
     expect(normalizeAssessmentProcess("Team Leader")).toBeNull();
     expect(normalizeAssessmentProcess("Unknown Specialist Process")).toBeNull();
@@ -23,9 +19,7 @@ describe("assessment mapping policy", () => {
 
   it("normalizes role levels conservatively", () => {
     expect(normalizeAssessmentRole("Executive")).toBe("executive");
-    expect(normalizeAssessmentRole("Team Leader - Operations")).toBe(
-      "team_leader",
-    );
+    expect(normalizeAssessmentRole("Team Leader - Operations")).toBe("team_leader");
     expect(normalizeAssessmentRole("Quality Auditor")).toBe("quality_auditor");
   });
 
@@ -38,24 +32,9 @@ describe("assessment mapping policy", () => {
   it("calculates remaining assessment time only for an active attempt", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-16T10:00:00.000Z"));
-    expect(
-      getRemainingSeconds({
-        status: "in_progress",
-        expires_at: "2026-07-16T10:05:00.000Z",
-      }),
-    ).toBe(300);
-    expect(
-      getRemainingSeconds({
-        status: "assigned",
-        expires_at: "2026-07-16T10:05:00.000Z",
-      }),
-    ).toBeNull();
-    expect(
-      getRemainingSeconds({
-        status: "in_progress",
-        expires_at: "2026-07-16T09:59:00.000Z",
-      }),
-    ).toBe(0);
+    expect(getRemainingSeconds({ status: "in_progress", expires_at: "2026-07-16T10:05:00.000Z" })).toBe(300);
+    expect(getRemainingSeconds({ status: "assigned", expires_at: "2026-07-16T10:05:00.000Z" })).toBeNull();
+    expect(getRemainingSeconds({ status: "in_progress", expires_at: "2026-07-16T09:59:00.000Z" })).toBe(0);
     vi.useRealTimers();
   });
 });

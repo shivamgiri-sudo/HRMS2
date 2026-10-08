@@ -4,13 +4,7 @@ import { db } from "../../db/mysql.js";
 import { flushDalmiaRows } from "./dalmia-chunk-import.js";
 import type { ChunkInsertRow } from "./masmis-chunked-insert.js";
 import {
-  canonicalizeRow,
-  cleanText,
-  parseClockTime,
-  parseDurationSeconds,
-  parseFlexibleDate,
-  parseLooseNumber,
-  parsePercent,
+  canonicalizeRow, cleanText, parseClockTime, parseDurationSeconds, parseFlexibleDate, parseLooseNumber, parsePercent,
 } from "./dalmia-import-helpers.js";
 
 /**
@@ -37,39 +31,10 @@ import {
  */
 
 export const DALMIA_APR_HEADERS = [
-  "Unique ID",
-  "Week",
-  "Date",
-  "Emp_Name",
-  "NOIID",
-  "No. of Calls/Chat",
-  "LOB",
-  "Login Time",
-  "WAIT",
-  "TALK",
-  "DISPO",
-  "PAUSE",
-  "ACHT",
-  "Lunch",
-  "Tea",
-  "Tea1",
-  "Washr",
-  "Team Briefing AUX",
-  "Net Pause",
-  "Avg Dispo",
-  "Total Break",
-  "Actual Login Hrs",
-  "Downtime",
-  "Login",
-  "Logout",
-  "Net Login Hrs+DN+Briefing",
-  "Utilization",
-  "Attendance",
-  "Week 1",
-  "MTD",
-  "Unique Count",
-  "Attendence 2",
-  "Capping",
+  "Unique ID", "Week", "Date", "Emp_Name", "NOIID", "No. of Calls/Chat", "LOB", "Login Time", "WAIT", "TALK", "DISPO",
+  "PAUSE", "ACHT", "Lunch", "Tea", "Tea1", "Washr", "Team Briefing AUX", "Net Pause", "Avg Dispo", "Total Break",
+  "Actual Login Hrs", "Downtime", "Login", "Logout", "Net Login Hrs+DN+Briefing", "Utilization", "Attendance",
+  "Week 1", "MTD", "Unique Count", "Attendence 2", "Capping",
 ] as const;
 
 interface BatchRow extends RowDataPacket {
@@ -77,9 +42,7 @@ interface BatchRow extends RowDataPacket {
   row_no: number;
   normalized_data: string | Record<string, unknown>;
 }
-interface Ref extends RowDataPacket {
-  id: string;
-}
+interface Ref extends RowDataPacket { id: string }
 
 const secInt = (raw: unknown): number | null => {
   const n = parseDurationSeconds(raw);
@@ -91,10 +54,7 @@ const intOrNull = (raw: unknown): number | null => {
 };
 
 /** The sheet's two "Attendance" columns: a number (1.00) and a status letter (P / A / WO ...), in either order. */
-export function splitAttendance(
-  first: unknown,
-  second: unknown,
-): { days: number | null; status: string | null } {
+export function splitAttendance(first: unknown, second: unknown): { days: number | null; status: string | null } {
   let days: number | null = null;
   let status: string | null = null;
   for (const v of [first, second]) {
@@ -117,8 +77,7 @@ export async function importDalmiaAprBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0)
-    return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
 
   const [procRows] = await db.execute<Ref[]>(
     "SELECT id FROM process_master WHERE process_name = 'Dalmia Cement' AND active_status = 1 LIMIT 1",
@@ -135,126 +94,43 @@ export async function importDalmiaAprBatch(
         ? JSON.parse(row.normalized_data)
         : ((row.normalized_data ?? {}) as Record<string, unknown>);
     const data = canonicalizeRow(raw, DALMIA_APR_HEADERS);
-    const fail = (msg: string) => {
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-    };
+    const fail = (msg: string) => { errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) }); };
 
-    if (!processId) {
-      fail(
-        `Row ${row.row_no}: no active "Dalmia Cement" process found to attach this row to`,
-      );
-      continue;
-    }
+    if (!processId) { fail(`Row ${row.row_no}: no active "Dalmia Cement" process found to attach this row to`); continue; }
 
     const reportDate = parseFlexibleDate(data["Date"]);
     const empId = cleanText(data["NOIID"]);
     if (!reportDate || !empId) {
-      fail(
-        `Row ${row.row_no}: a readable "Date" and "NOIID" (employee id) are both required -- together they are this row's identity`,
-      );
+      fail(`Row ${row.row_no}: a readable "Date" and "NOIID" (employee id) are both required -- together they are this row's identity`);
       continue;
     }
-    const uniqueId = (
-      cleanText(data["Unique ID"]) ?? `${reportDate}|${empId}`
-    ).slice(0, 60);
+    const uniqueId = (cleanText(data["Unique ID"]) ?? `${reportDate}|${empId}`).slice(0, 60);
     const att = splitAttendance(data["Attendance"], raw["Attendance_1"]);
 
     insertRows.push({
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        randomUUID(),
-        processId,
-        uniqueId,
-        reportDate,
-        cleanText(data["Week"]),
-        cleanText(data["Emp_Name"]),
-        empId,
-        intOrNull(data["No. of Calls/Chat"]),
-        cleanText(data["LOB"]),
-        secInt(data["Login Time"]),
-        secInt(data["WAIT"]),
-        secInt(data["TALK"]),
-        secInt(data["DISPO"]),
-        secInt(data["PAUSE"]),
+        randomUUID(), processId, uniqueId, reportDate,
+        cleanText(data["Week"]), cleanText(data["Emp_Name"]), empId, intOrNull(data["No. of Calls/Chat"]), cleanText(data["LOB"]),
+        secInt(data["Login Time"]), secInt(data["WAIT"]), secInt(data["TALK"]), secInt(data["DISPO"]), secInt(data["PAUSE"]),
         intOrNull(data["ACHT"]),
-        secInt(data["Lunch"]),
-        secInt(data["Tea"]),
-        secInt(data["Tea1"]),
-        secInt(data["Washr"]),
-        secInt(data["Team Briefing AUX"]),
-        secInt(data["Net Pause"]),
-        intOrNull(data["Avg Dispo"]),
-        secInt(data["Total Break"]),
-        secInt(data["Actual Login Hrs"]),
-        secInt(data["Downtime"]),
-        parseClockTime(data["Login"]),
-        parseClockTime(data["Logout"]),
-        secInt(data["Net Login Hrs+DN+Briefing"]),
-        parsePercent(data["Utilization"]),
-        att.days,
-        att.status,
-        cleanText(data["Week 1"]),
-        cleanText(data["MTD"]),
-        intOrNull(data["Unique Count"]),
-        intOrNull(data["Attendence 2"]),
-        secInt(data["Capping"]),
-        "bulk_upload",
-        batchId,
-        importedByUserId,
+        secInt(data["Lunch"]), secInt(data["Tea"]), secInt(data["Tea1"]), secInt(data["Washr"]),
+        secInt(data["Team Briefing AUX"]), secInt(data["Net Pause"]), intOrNull(data["Avg Dispo"]), secInt(data["Total Break"]),
+        secInt(data["Actual Login Hrs"]), secInt(data["Downtime"]),
+        parseClockTime(data["Login"]), parseClockTime(data["Logout"]),
+        secInt(data["Net Login Hrs+DN+Briefing"]), parsePercent(data["Utilization"]),
+        att.days, att.status, cleanText(data["Week 1"]), cleanText(data["MTD"]),
+        intOrNull(data["Unique Count"]), intOrNull(data["Attendence 2"]), secInt(data["Capping"]),
+        "bulk_upload", batchId, importedByUserId,
       ],
     });
   }
 
   return flushDalmiaRows({
-    batchId,
-    table: "db_masmis.dalmia_apr_raw",
-    columns: [
-      "id",
-      "process_id",
-      "unique_id",
-      "report_date",
-      "week_label",
-      "emp_name",
-      "emp_id",
-      "calls_chats",
-      "lob",
-      "login_time_sec",
-      "wait_sec",
-      "talk_sec",
-      "dispo_sec",
-      "pause_sec",
-      "acht_sec",
-      "lunch_sec",
-      "tea_sec",
-      "tea1_sec",
-      "washroom_sec",
-      "team_briefing_aux_sec",
-      "net_pause_sec",
-      "avg_dispo_sec",
-      "total_break_sec",
-      "actual_login_sec",
-      "downtime_sec",
-      "login_clock",
-      "logout_clock",
-      "net_login_incl_dn_briefing_sec",
-      "utilization_pct",
-      "attendance_days",
-      "attendance_status",
-      "week_bucket",
-      "period_label",
-      "unique_count",
-      "attendance_2",
-      "capping_sec",
-      "data_source",
-      "source_reference",
-      "created_by",
-    ],
-    suffix:
-      "ON DUPLICATE KEY UPDATE report_date = VALUES(report_date), week_label = VALUES(week_label), emp_name = VALUES(emp_name), calls_chats = VALUES(calls_chats), lob = VALUES(lob), login_time_sec = VALUES(login_time_sec), wait_sec = VALUES(wait_sec), talk_sec = VALUES(talk_sec), dispo_sec = VALUES(dispo_sec), pause_sec = VALUES(pause_sec), acht_sec = VALUES(acht_sec), lunch_sec = VALUES(lunch_sec), tea_sec = VALUES(tea_sec), tea1_sec = VALUES(tea1_sec), washroom_sec = VALUES(washroom_sec), team_briefing_aux_sec = VALUES(team_briefing_aux_sec), net_pause_sec = VALUES(net_pause_sec), avg_dispo_sec = VALUES(avg_dispo_sec), total_break_sec = VALUES(total_break_sec), actual_login_sec = VALUES(actual_login_sec), downtime_sec = VALUES(downtime_sec), login_clock = VALUES(login_clock), logout_clock = VALUES(logout_clock), net_login_incl_dn_briefing_sec = VALUES(net_login_incl_dn_briefing_sec), utilization_pct = VALUES(utilization_pct), attendance_days = VALUES(attendance_days), attendance_status = VALUES(attendance_status), week_bucket = VALUES(week_bucket), period_label = VALUES(period_label), unique_count = VALUES(unique_count), attendance_2 = VALUES(attendance_2), capping_sec = VALUES(capping_sec), source_reference = VALUES(source_reference)",
-    rows: insertRows,
-    errorUpdates,
-    errors,
+    batchId, table: "db_masmis.dalmia_apr_raw",
+    columns: ["id","process_id","unique_id","report_date","week_label","emp_name","emp_id","calls_chats","lob","login_time_sec","wait_sec","talk_sec","dispo_sec","pause_sec","acht_sec","lunch_sec","tea_sec","tea1_sec","washroom_sec","team_briefing_aux_sec","net_pause_sec","avg_dispo_sec","total_break_sec","actual_login_sec","downtime_sec","login_clock","logout_clock","net_login_incl_dn_briefing_sec","utilization_pct","attendance_days","attendance_status","week_bucket","period_label","unique_count","attendance_2","capping_sec","data_source","source_reference","created_by"],
+    suffix: "ON DUPLICATE KEY UPDATE report_date = VALUES(report_date), week_label = VALUES(week_label), emp_name = VALUES(emp_name), calls_chats = VALUES(calls_chats), lob = VALUES(lob), login_time_sec = VALUES(login_time_sec), wait_sec = VALUES(wait_sec), talk_sec = VALUES(talk_sec), dispo_sec = VALUES(dispo_sec), pause_sec = VALUES(pause_sec), acht_sec = VALUES(acht_sec), lunch_sec = VALUES(lunch_sec), tea_sec = VALUES(tea_sec), tea1_sec = VALUES(tea1_sec), washroom_sec = VALUES(washroom_sec), team_briefing_aux_sec = VALUES(team_briefing_aux_sec), net_pause_sec = VALUES(net_pause_sec), avg_dispo_sec = VALUES(avg_dispo_sec), total_break_sec = VALUES(total_break_sec), actual_login_sec = VALUES(actual_login_sec), downtime_sec = VALUES(downtime_sec), login_clock = VALUES(login_clock), logout_clock = VALUES(logout_clock), net_login_incl_dn_briefing_sec = VALUES(net_login_incl_dn_briefing_sec), utilization_pct = VALUES(utilization_pct), attendance_days = VALUES(attendance_days), attendance_status = VALUES(attendance_status), week_bucket = VALUES(week_bucket), period_label = VALUES(period_label), unique_count = VALUES(unique_count), attendance_2 = VALUES(attendance_2), capping_sec = VALUES(capping_sec), source_reference = VALUES(source_reference)",
+    rows: insertRows, errorUpdates, errors,
   });
 }

@@ -9,11 +9,7 @@ interface CacheEntry {
 const _cache = new Map<string, CacheEntry>();
 const TTL_MS = 60_000;
 
-function cacheKey(
-  domainKey: string,
-  sectionKey: string,
-  configKey: string,
-): string {
+function cacheKey(domainKey: string, sectionKey: string, configKey: string): string {
   return `${domainKey}:${sectionKey}:${configKey}`;
 }
 
@@ -21,7 +17,7 @@ export async function getPolicyValue(
   domainKey: string,
   sectionKey: string,
   configKey: string,
-  fallback: string,
+  fallback: string
 ): Promise<string> {
   const key = cacheKey(domainKey, sectionKey, configKey);
   const now = Date.now();
@@ -37,7 +33,7 @@ export async function getPolicyValue(
        WHERE domain_key = ? AND section_key = ? AND config_key = ?
          AND active_status = 1 AND effective_from <= CURDATE()
        ORDER BY effective_from DESC LIMIT 1`,
-      [domainKey, sectionKey, configKey],
+      [domainKey, sectionKey, configKey]
     );
     const value = rows[0]?.config_value ?? fallback;
     _cache.set(key, { value, expiresAt: now + TTL_MS });
@@ -58,7 +54,7 @@ export function invalidatePolicyCache(domainKey: string): void {
 export function invalidatePolicyCacheKey(
   domainKey: string,
   sectionKey: string,
-  configKey: string,
+  configKey: string
 ): void {
   _cache.delete(cacheKey(domainKey, sectionKey, configKey));
 }

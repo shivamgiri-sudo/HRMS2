@@ -117,34 +117,20 @@ const STATUS_OPTIONS = [
 ];
 
 const AUTO_CLOSE_CHECK_INTERVAL_MS = 15_000;
-const autoCloseState = new Map<
-  string,
-  { lastRunAt: number; promise: Promise<void> | null }
->();
+const autoCloseState = new Map<string, { lastRunAt: number; promise: Promise<void> | null }>();
 const HARD_MAX_DAILY_BREAK_MINUTES = 60;
 const HARD_MAX_SINGLE_BREAK_MINUTES = 30;
 const MINIMUM_SHIFT_COMPLETION_MINUTES = 9 * 60;
 
 function normalizeJsonArray(value: unknown): string[] {
   if (!value) return [];
-  if (Array.isArray(value))
-    return value
-      .map(String)
-      .map((item) => item.trim())
-      .filter(Boolean);
+  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
   if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value);
-      if (Array.isArray(parsed))
-        return parsed
-          .map(String)
-          .map((item) => item.trim())
-          .filter(Boolean);
+      if (Array.isArray(parsed)) return parsed.map(String).map((item) => item.trim()).filter(Boolean);
     } catch {
-      return value
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
+      return value.split(",").map((item) => item.trim()).filter(Boolean);
     }
   }
   return [];
@@ -162,8 +148,7 @@ function getIstParts(date = new Date()) {
     hourCycle: "h23", // NOT hour12:false — that selects h24 and renders midnight as "24"
   });
   const parts = formatter.formatToParts(date);
-  const pick = (type: string) =>
-    parts.find((part) => part.type === type)?.value ?? "";
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
   return {
     year: pick("year"),
     month: pick("month"),
@@ -376,10 +361,7 @@ function normalizePunchStamp(value: unknown) {
   if (value == null) return null;
   const raw = String(value).trim();
   if (!raw) return null;
-  return raw
-    .replace("T", " ")
-    .replace(/\+05:30$/, "")
-    .slice(0, 19);
+  return raw.replace("T", " ").replace(/\+05:30$/, "").slice(0, 19);
 }
 
 function resolveRealtimePunchWindow(shiftDate: string, isNightShift = false) {
@@ -413,16 +395,9 @@ function resolveRealtimePunchWindow(shiftDate: string, isNightShift = false) {
   return null;
 }
 
-function queryWithTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  label: string,
-): Promise<T> {
+function queryWithTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
-      timeoutMs,
-    );
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -446,10 +421,8 @@ function generateDeskToken() {
 
 function requestIp(req: Request) {
   const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string" && forwarded.trim())
-    return forwarded.split(",")[0]!.trim();
-  if (Array.isArray(forwarded) && forwarded[0])
-    return String(forwarded[0]).split(",")[0]!.trim();
+  if (typeof forwarded === "string" && forwarded.trim()) return forwarded.split(",")[0]!.trim();
+  if (Array.isArray(forwarded) && forwarded[0]) return String(forwarded[0]).split(",")[0]!.trim();
   return req.ip ?? "";
 }
 
@@ -461,8 +434,7 @@ function requestFingerprint(req: Request) {
 function minutesBetween(start: string, end: string) {
   const startMs = new Date(start.replace(" ", "T") + "+05:30").getTime();
   const endMs = new Date(end.replace(" ", "T") + "+05:30").getTime();
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs)
-    return { seconds: 0, minutes: 0 };
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return { seconds: 0, minutes: 0 };
   const seconds = Math.max(0, Math.round((endMs - startMs) / 1000));
   return {
     seconds,
@@ -481,18 +453,14 @@ function csvEscape(value: unknown) {
   const normalized = Array.isArray(value)
     ? value.join(", ")
     : typeof value === "boolean"
-      ? value
-        ? "Yes"
-        : "No"
+      ? (value ? "Yes" : "No")
       : String(value);
-  return `"${normalized.replace(/"/g, '""')}"`;
+  return `"${normalized.replace(/"/g, "\"\"")}"`;
 }
 
 function buildCsv(columns: string[], rows: Array<Record<string, unknown>>) {
   const header = columns.map(csvEscape).join(",");
-  const body = rows
-    .map((row) => columns.map((column) => csvEscape(row[column])).join(","))
-    .join("\n");
+  const body = rows.map((row) => columns.map((column) => csvEscape(row[column])).join(",")).join("\n");
   return body ? `${header}\n${body}\n` : `${header}\n`;
 }
 
@@ -504,52 +472,30 @@ function formatCsvDateTime(value: unknown) {
 
 function normalizeStringArrayInput(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return Array.from(
-    new Set(value.map((item) => String(item).trim()).filter(Boolean)),
-  );
+  return Array.from(new Set(value.map((item) => String(item).trim()).filter(Boolean)));
 }
 
-function kioskProcessIds(
-  kiosk: Pick<KioskDevice, "allowed_process_ids" | "process_id">,
-): string[] {
+function kioskProcessIds(kiosk: Pick<KioskDevice, "allowed_process_ids" | "process_id">): string[] {
   const mapped = normalizeJsonArray(kiosk.allowed_process_ids);
-  return mapped.length > 0
-    ? mapped
-    : [kiosk.process_id].filter(Boolean).map(String);
+  return mapped.length > 0 ? mapped : [kiosk.process_id].filter(Boolean).map(String);
 }
 
 function normalizeBreakSettings(settings: BreakSettingsRow) {
   const perBreakLimit = Math.min(
     HARD_MAX_SINGLE_BREAK_MINUTES,
-    Math.max(
-      1,
-      Number(
-        settings.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES,
-      ),
-    ),
+    Math.max(1, Number(settings.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES)),
   );
   const dailyLimit = Math.min(
     HARD_MAX_DAILY_BREAK_MINUTES,
-    Math.max(
-      1,
-      Number(
-        settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES,
-      ),
-    ),
+    Math.max(1, Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES)),
   );
   const longBreakThreshold = Math.min(
     perBreakLimit,
-    Math.max(
-      1,
-      Number(settings.long_break_min_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES),
-    ),
+    Math.max(1, Number(settings.long_break_min_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES)),
   );
   const miniBreakMax = Math.min(
     Math.max(1, perBreakLimit - 1),
-    Math.max(
-      1,
-      Number(settings.mini_break_max_minutes ?? Math.max(1, perBreakLimit - 1)),
-    ),
+    Math.max(1, Number(settings.mini_break_max_minutes ?? Math.max(1, perBreakLimit - 1))),
   );
 
   return {
@@ -561,26 +507,13 @@ function normalizeBreakSettings(settings: BreakSettingsRow) {
   } as BreakSettingsRow;
 }
 
-function assertEmployeeWithinKioskScope(
-  kiosk: KioskDevice,
-  employee: EmployeeContext,
-) {
-  if (
-    kiosk.branch_id &&
-    employee.branch_id &&
-    kiosk.branch_id !== employee.branch_id
-  ) {
+function assertEmployeeWithinKioskScope(kiosk: KioskDevice, employee: EmployeeContext) {
+  if (kiosk.branch_id && employee.branch_id && kiosk.branch_id !== employee.branch_id) {
     throw reject(403, "This kiosk cannot act on employees from another branch");
   }
   const allowedProcesses = kioskProcessIds(kiosk);
-  if (
-    allowedProcesses.length > 0 &&
-    (!employee.process_id || !allowedProcesses.includes(employee.process_id))
-  ) {
-    throw reject(
-      403,
-      "This kiosk cannot act on employees from another process",
-    );
+  if (allowedProcesses.length > 0 && (!employee.process_id || !allowedProcesses.includes(employee.process_id))) {
+    throw reject(403, "This kiosk cannot act on employees from another process");
   }
 }
 
@@ -614,9 +547,7 @@ async function writeBreakAudit(params: {
         params.oldValue ? JSON.stringify(params.oldValue) : null,
         params.newValue ? JSON.stringify(params.newValue) : null,
         params.req ? requestIp(params.req) : null,
-        params.req
-          ? String(params.req.headers["user-agent"] ?? "").slice(0, 512)
-          : null,
+        params.req ? String(params.req.headers["user-agent"] ?? "").slice(0, 512) : null,
       ],
     );
   } catch (error) {
@@ -647,7 +578,7 @@ async function getSettings(branchId: string | null, processId: string | null) {
       LIMIT 1`,
     [branchId, processId],
   );
-  const raw = (rows as unknown[] as BreakSettingsRow[])[0] ?? {
+  const raw = ((rows as unknown[]) as BreakSettingsRow[])[0] ?? {
     mini_break_max_minutes: 10,
     long_break_min_minutes: 30,
     active_break_alert_minutes: 30,
@@ -683,11 +614,7 @@ async function getBreakUsageSummary(employeeId: string, shiftDate: string) {
   };
 }
 
-async function getBiometricSnapshot(
-  employeeId: string,
-  employeeCode: string,
-  shiftDate: string,
-) {
+async function getBiometricSnapshot(employeeId: string, employeeCode: string, shiftDate: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
         COALESCE(ibd.first_punch, bal.first_punch_in) AS punch_in,
@@ -741,10 +668,7 @@ async function getBiometricSnapshot(
         };
       }
     } catch (error) {
-      console.error(
-        "[break-management] realtime biometric snapshot fallback:",
-        error instanceof Error ? error.message : String(error),
-      );
+      console.error("[break-management] realtime biometric snapshot fallback:", error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -776,9 +700,7 @@ async function queryNcosecPunchWindow(
 
   const employeeIdsByUserId = new Map<string, string[]>();
   for (const employee of employees) {
-    const rawUserId = String(
-      employee.cosecUserId ?? employee.employeeCode ?? "",
-    ).trim();
+    const rawUserId = String(employee.cosecUserId ?? employee.employeeCode ?? "").trim();
     if (!rawUserId) continue;
     const bucket = employeeIdsByUserId.get(rawUserId) ?? [];
     bucket.push(employee.employeeId);
@@ -805,8 +727,7 @@ async function queryNcosecPunchWindow(
       idParams.push(`@${key}`);
     });
 
-    const result = await queryWithTimeout(
-      request.query(`
+    const result = await queryWithTimeout(request.query(`
       SELECT
         CAST(${userIdColumn} AS NVARCHAR(100)) AS user_id,
         CONVERT(CHAR(19), MIN(${dateTimeColumn}), 120) AS first_punch,
@@ -818,10 +739,7 @@ async function queryNcosecPunchWindow(
         AND ${dateTimeColumn} <= @dateEnd
         AND CAST(${userIdColumn} AS NVARCHAR(100)) IN (${idParams.join(", ")})
       GROUP BY CAST(${userIdColumn} AS NVARCHAR(100))
-    `),
-      15000,
-      `[break-management] realtime NCOSEC overlay (${userIds.length} users)`,
-    );
+    `), 15000, `[break-management] realtime NCOSEC overlay (${userIds.length} users)`);
 
     const livePunches = new Map<string, LivePunchSnapshot>();
     for (const row of result.recordset ?? []) {
@@ -849,18 +767,13 @@ async function queryNcosecPunchWindow(
 
     return livePunches;
   } catch (error) {
-    console.error(
-      "[break-management] realtime NCOSEC overlay failed:",
-      error instanceof Error ? error.message : String(error),
-    );
+    console.error("[break-management] realtime NCOSEC overlay failed:", error instanceof Error ? error.message : String(error));
     return new Map<string, LivePunchSnapshot>();
   }
 }
 
 function classifyBreak(durationMinutes: number, settings: BreakSettingsRow) {
-  return durationMinutes >= Number(settings.long_break_min_minutes ?? 10)
-    ? "LONG"
-    : "MINI";
+  return durationMinutes >= Number(settings.long_break_min_minutes ?? 10) ? "LONG" : "MINI";
 }
 
 function resolveCompletedBreakStatus(input: {
@@ -870,22 +783,8 @@ function resolveCompletedBreakStatus(input: {
   settings: BreakSettingsRow;
 }) {
   if (input.noBiometricPunchFlag) return "EXCEPTION" as const;
-  if (
-    input.durationMinutes >
-    Number(
-      input.settings.active_break_alert_minutes ??
-        HARD_MAX_SINGLE_BREAK_MINUTES,
-    )
-  )
-    return "EXCEPTION" as const;
-  if (
-    input.totalBreakMinutesAfterClose >
-    Number(
-      input.settings.daily_total_allowed_minutes ??
-        HARD_MAX_DAILY_BREAK_MINUTES,
-    )
-  )
-    return "EXCEPTION" as const;
+  if (input.durationMinutes > Number(input.settings.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES)) return "EXCEPTION" as const;
+  if (input.totalBreakMinutesAfterClose > Number(input.settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES)) return "EXCEPTION" as const;
   return "COMPLETED" as const;
 }
 
@@ -895,14 +794,8 @@ function resolveShiftWorkedMinutes(row: {
   biometric_punch_out_time?: unknown;
 }) {
   if (row.biometric_punch_in_time && row.biometric_punch_out_time) {
-    const punchIn = new Date(
-      String(row.biometric_punch_in_time).replace(" ", "T") +
-        (String(row.biometric_punch_in_time).includes("+") ? "" : "+05:30"),
-    );
-    const punchOut = new Date(
-      String(row.biometric_punch_out_time).replace(" ", "T") +
-        (String(row.biometric_punch_out_time).includes("+") ? "" : "+05:30"),
-    );
+    const punchIn = new Date(String(row.biometric_punch_in_time).replace(" ", "T") + (String(row.biometric_punch_in_time).includes("+") ? "" : "+05:30"));
+    const punchOut = new Date(String(row.biometric_punch_out_time).replace(" ", "T") + (String(row.biometric_punch_out_time).includes("+") ? "" : "+05:30"));
     if (!Number.isNaN(punchIn.getTime()) && !Number.isNaN(punchOut.getTime())) {
       const diff = Math.floor((punchOut.getTime() - punchIn.getTime()) / 60000);
       if (diff > 0) return diff;
@@ -941,36 +834,22 @@ function isShiftEndReached(
 
 function deriveStatus(row: any, settings: BreakSettingsRow, shiftDate: string) {
   const activeMinutes = row.active_break_start_time
-    ? minutesBetween(row.active_break_start_time, currentIstDateTime().dateTime)
-        .minutes
+    ? minutesBetween(row.active_break_start_time, currentIstDateTime().dateTime).minutes
     : 0;
   const completedBreakMinutes = Number(row.total_break_minutes ?? 0);
   const totalBreakMinutes = completedBreakMinutes + activeMinutes;
-  const dailyLimit = Number(
-    settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES,
-  );
-  const isExceeded =
-    Boolean(row.active_break_id) && totalBreakMinutes > dailyLimit;
+  const dailyLimit = Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES);
+  const isExceeded = Boolean(row.active_break_id) && totalBreakMinutes > dailyLimit;
   const workedMinutes = resolveShiftWorkedMinutes(row);
 
   if (row.leave_name) {
     return { label: "Leave", tone: "leave", activeMinutes, isExceeded };
   }
-  if (
-    Number(row.is_week_off) === 1 ||
-    String(row.roster_status ?? "")
-      .toLowerCase()
-      .includes("week off")
-  ) {
+  if (Number(row.is_week_off) === 1 || String(row.roster_status ?? "").toLowerCase().includes("week off")) {
     return { label: "W/O", tone: "weekoff", activeMinutes, isExceeded };
   }
   if (row.active_break_id) {
-    return {
-      label: isExceeded ? "Break Exceeded" : "On Break",
-      tone: isExceeded ? "danger" : "warning",
-      activeMinutes,
-      isExceeded,
-    };
+    return { label: isExceeded ? "Break Exceeded" : "On Break", tone: isExceeded ? "danger" : "warning", activeMinutes, isExceeded };
   }
   if (row.biometric_punch_in_time && row.biometric_punch_out_time) {
     if (row.shift_end_time) {
@@ -980,12 +859,7 @@ function deriveStatus(row: any, settings: BreakSettingsRow, shiftDate: string) {
       }
     } else if (workedMinutes >= MINIMUM_SHIFT_COMPLETION_MINUTES) {
       // No roster: fall back to 9-hour minimum
-      return {
-        label: "Shift Completed",
-        tone: "completed",
-        activeMinutes,
-        isExceeded,
-      };
+      return { label: "Shift Completed", tone: "completed", activeMinutes, isExceeded };
     }
   }
   if (row.biometric_punch_in_time) {
@@ -994,19 +868,8 @@ function deriveStatus(row: any, settings: BreakSettingsRow, shiftDate: string) {
   return { label: "No Punch Found", tone: "muted", activeMinutes, isExceeded };
 }
 
-async function rebuildDailySummary(
-  employeeId: string,
-  employeeCode: string,
-  shiftDate: string,
-  branchId: string | null,
-  processId: string | null,
-  managerId: string | null,
-) {
-  const biometric = await getBiometricSnapshot(
-    employeeId,
-    employeeCode,
-    shiftDate,
-  );
+async function rebuildDailySummary(employeeId: string, employeeCode: string, shiftDate: string, branchId: string | null, processId: string | null, managerId: string | null) {
+  const biometric = await getBiometricSnapshot(employeeId, employeeCode, shiftDate);
   const [sessionRows] = await db.execute<RowDataPacket[]>(
     `SELECT
         SUM(COALESCE(duration_seconds, 0)) AS total_break_seconds,
@@ -1024,29 +887,25 @@ async function rebuildDailySummary(
     [employeeId, shiftDate],
   );
 
-  const [rosterRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT roster_status, is_week_off
+  const [rosterRows] = await db.execute<RowDataPacket[]>(
+    `SELECT roster_status, is_week_off
        FROM wfm_roster_assignment
       WHERE employee_id = ?
         AND roster_date = ?
       LIMIT 1`,
-      [employeeId, shiftDate],
-    )
-    .catch(() => [[] as RowDataPacket[], []]);
+    [employeeId, shiftDate],
+  ).catch(() => [[] as RowDataPacket[], []]);
 
-  const [leaveRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT lt.leave_name
+  const [leaveRows] = await db.execute<RowDataPacket[]>(
+    `SELECT lt.leave_name
        FROM leave_request lr
        LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
       WHERE lr.employee_id = ?
         AND lr.status = 'approved'
         AND ? BETWEEN lr.from_date AND lr.to_date
       LIMIT 1`,
-      [employeeId, shiftDate],
-    )
-    .catch(() => [[] as RowDataPacket[], []]);
+    [employeeId, shiftDate],
+  ).catch(() => [[] as RowDataPacket[], []]);
 
   const totals = (sessionRows as any[])[0] ?? {};
   const rosterStatus = (rosterRows as any[])[0]?.roster_status ?? null;
@@ -1059,14 +918,9 @@ async function rebuildDailySummary(
   });
   const attendanceStatus = leaveName
     ? "Leave"
-    : isWeekOff ||
-        String(rosterStatus ?? "")
-          .toLowerCase()
-          .includes("week off")
+    : (isWeekOff || String(rosterStatus ?? "").toLowerCase().includes("week off"))
       ? "W/O"
-      : biometric.punchIn &&
-          biometric.punchOut &&
-          workedMinutes >= MINIMUM_SHIFT_COMPLETION_MINUTES
+      : biometric.punchIn && biometric.punchOut && workedMinutes >= MINIMUM_SHIFT_COMPLETION_MINUTES
         ? "Shift Completed"
         : biometric.punchIn
           ? "On Duty"
@@ -1159,10 +1013,7 @@ async function sendBreakAlertIfNeeded(sessionId: string) {
   const session = (rows as any[])[0];
   if (!session) return;
 
-  const settings = await getSettings(
-    session.branch_id ?? null,
-    session.process_id ?? null,
-  );
+  const settings = await getSettings(session.branch_id ?? null, session.process_id ?? null);
   const threshold = Number(settings.active_break_alert_minutes ?? 10);
   const actual = Number(session.duration_minutes ?? 0);
   if (actual < threshold) return;
@@ -1250,11 +1101,7 @@ async function autoCloseEligibleBreaks(shiftDate: string, force = false) {
   }
 
   const now = Date.now();
-  if (
-    !force &&
-    currentState &&
-    now - currentState.lastRunAt < AUTO_CLOSE_CHECK_INTERVAL_MS
-  ) {
+  if (!force && currentState && now - currentState.lastRunAt < AUTO_CLOSE_CHECK_INTERVAL_MS) {
     return;
   }
 
@@ -1283,27 +1130,13 @@ async function autoCloseEligibleBreaks(shiftDate: string, force = false) {
 
     for (const row of rows as any[]) {
       if (!row.punch_out || !row.break_start_time) continue;
-      const start = new Date(
-        String(row.break_start_time).replace(" ", "T") + "+05:30",
-      ).getTime();
-      const end = new Date(
-        String(row.punch_out).replace(" ", "T") + "+05:30",
-      ).getTime();
-      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
-        continue;
-      const settings = await getSettings(
-        row.branch_id ?? null,
-        row.process_id ?? null,
-      );
+      const start = new Date(String(row.break_start_time).replace(" ", "T") + "+05:30").getTime();
+      const end = new Date(String(row.punch_out).replace(" ", "T") + "+05:30").getTime();
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+      const settings = await getSettings(row.branch_id ?? null, row.process_id ?? null);
       if (!Number(settings.auto_close_on_biometric_punch_out ?? 1)) continue;
-      const duration = minutesBetween(
-        String(row.break_start_time),
-        String(row.punch_out),
-      );
-      const usage = await getBreakUsageSummary(
-        String(row.employee_id),
-        shiftDate,
-      );
+      const duration = minutesBetween(String(row.break_start_time), String(row.punch_out));
+      const usage = await getBreakUsageSummary(String(row.employee_id), shiftDate);
       const completedStatus = resolveCompletedBreakStatus({
         durationMinutes: duration.minutes,
         totalBreakMinutesAfterClose: usage.totalBreakMinutes + duration.minutes,
@@ -1332,14 +1165,7 @@ async function autoCloseEligibleBreaks(shiftDate: string, force = false) {
           row.id,
         ],
       );
-      await rebuildDailySummary(
-        row.employee_id,
-        row.employee_code,
-        shiftDate,
-        row.branch_id ?? null,
-        row.process_id ?? null,
-        row.manager_id ?? null,
-      );
+      await rebuildDailySummary(row.employee_id, row.employee_code, shiftDate, row.branch_id ?? null, row.process_id ?? null, row.manager_id ?? null);
       await sendBreakAlertIfNeeded(row.id);
       await writeBreakAudit({
         entityType: "break_session",
@@ -1352,10 +1178,7 @@ async function autoCloseEligibleBreaks(shiftDate: string, force = false) {
     }
   })();
 
-  autoCloseState.set(shiftDate, {
-    lastRunAt: currentState?.lastRunAt ?? 0,
-    promise: task,
-  });
+  autoCloseState.set(shiftDate, { lastRunAt: currentState?.lastRunAt ?? 0, promise: task });
   try {
     await task;
   } finally {
@@ -1363,11 +1186,7 @@ async function autoCloseEligibleBreaks(shiftDate: string, force = false) {
   }
 }
 
-async function recordManualDeskPunch(
-  employee: EmployeeContext,
-  shiftDate: string,
-  mode: "IN" | "OUT",
-) {
+async function recordManualDeskPunch(employee: EmployeeContext, shiftDate: string, mode: "IN" | "OUT") {
   const now = currentIstDateTime().dateTime;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_code, cosec_user_id, first_punch_in, last_punch_out, total_punches, raw_minutes, source_system
@@ -1404,24 +1223,15 @@ async function recordManualDeskPunch(
            (id, employee_id, employee_code, cosec_user_id, punch_date, first_punch_in, last_punch_out,
             total_punches, raw_minutes, source_system, migrated_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, NULL, 1, 0, 'manual_kiosk', NOW(), NOW())`,
-        [
-          randomUUID(),
-          employee.id,
-          employee.employee_code,
-          employee.employee_code,
-          shiftDate,
-          now,
-        ],
+        [randomUUID(), employee.id, employee.employee_code, employee.employee_code, shiftDate, now],
       );
     }
     return { actionTime: now, action: "PUNCH_IN" as const };
   }
 
   const currentPunchIn = String(existing?.first_punch_in ?? "").trim();
-  if (!currentPunchIn)
-    throw reject(409, "Punch in is not available for this employee");
-  if (existing?.last_punch_out)
-    throw reject(409, "Punch out is already available for this employee");
+  if (!currentPunchIn) throw reject(409, "Punch in is not available for this employee");
+  if (existing?.last_punch_out) throw reject(409, "Punch out is already available for this employee");
 
   const duration = minutesBetween(currentPunchIn, now);
   await db.execute(
@@ -1450,7 +1260,7 @@ async function validateKiosk(kioskCode: string, token: string, req: Request) {
       LIMIT 1`,
     [kioskCode],
   );
-  const device = (rows as unknown[] as KioskDevice[])[0];
+  const device = ((rows as unknown[]) as KioskDevice[])[0];
   if (!device || !device.is_active) {
     throw reject(403, "Kiosk device is not active");
   }
@@ -1464,18 +1274,10 @@ async function validateKiosk(kioskCode: string, token: string, req: Request) {
     throw reject(403, "This IP is not allowed for the selected kiosk");
   }
 
-  const allowedFingerprints = normalizeJsonArray(
-    device.allowed_device_fingerprints,
-  );
+  const allowedFingerprints = normalizeJsonArray(device.allowed_device_fingerprints);
   const fingerprint = requestFingerprint(req);
-  if (
-    allowedFingerprints.length > 0 &&
-    !allowedFingerprints.includes(fingerprint)
-  ) {
-    throw reject(
-      403,
-      "This device fingerprint is not allowed for the selected kiosk",
-    );
+  if (allowedFingerprints.length > 0 && !allowedFingerprints.includes(fingerprint)) {
+    throw reject(403, "This device fingerprint is not allowed for the selected kiosk");
   }
 
   await db.execute(
@@ -1506,17 +1308,7 @@ async function loadDeskEmployees(
     "e.active_status = 1",
     "LOWER(COALESCE(e.employment_status, 'active')) = 'active'",
   ];
-  const params: unknown[] = [
-    shiftDate,
-    shiftDate,
-    shiftDate,
-    shiftDate,
-    shiftDate,
-    shiftDate,
-    shiftDate,
-    shiftDate,
-    shiftDate,
-  ];
+  const params: unknown[] = [shiftDate, shiftDate, shiftDate, shiftDate, shiftDate, shiftDate, shiftDate, shiftDate, shiftDate];
 
   if (kiosk.branch_id) {
     where.push("e.branch_id = ?");
@@ -1528,9 +1320,7 @@ async function loadDeskEmployees(
 
   const allowedProcesses = kioskProcessIds(kiosk);
   if (allowedProcesses.length > 0) {
-    where.push(
-      `e.process_id IN (${allowedProcesses.map(() => "?").join(", ")})`,
-    );
+    where.push(`e.process_id IN (${allowedProcesses.map(() => "?").join(", ")})`);
     params.push(...allowedProcesses);
   } else if (filters.process_id) {
     where.push("e.process_id = ?");
@@ -1804,20 +1594,11 @@ async function loadDeskEmployees(
     }, settings, shiftDate);
     const completedBreakMinutes = Number(row.total_break_minutes ?? 0);
     const currentBreakMinutes = row.active_break_id ? status.activeMinutes : 0;
-    const totalBreakMinutesOverall =
-      completedBreakMinutes + currentBreakMinutes;
-    const dailyBreakLimitMinutes = Number(
-      settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES,
-    );
-    const remainingDailyBreakMinutes = Math.max(
-      0,
-      dailyBreakLimitMinutes - totalBreakMinutesOverall,
-    );
+    const totalBreakMinutesOverall = completedBreakMinutes + currentBreakMinutes;
+    const dailyBreakLimitMinutes = Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES);
+    const remainingDailyBreakMinutes = Math.max(0, dailyBreakLimitMinutes - totalBreakMinutesOverall);
     const shiftDurationMinutes = punchIn
-      ? minutesBetween(
-          String(punchIn),
-          String(punchOut ?? currentIstDateTime().dateTime),
-        ).minutes
+      ? minutesBetween(String(punchIn), String(punchOut ?? currentIstDateTime().dateTime)).minutes
       : 0;
     const todaySessions = sessionsByEmployee.get(String(row.id)) ?? [];
     return {
@@ -1854,17 +1635,12 @@ async function loadDeskEmployees(
       total_break_minutes: completedBreakMinutes,
       mini_break_count: Number(row.mini_break_count ?? 0),
       long_break_count: Number(row.long_break_count ?? 0),
-      total_break_count: todaySessions.filter(
-        (session) => session?.status !== "CANCELLED",
-      ).length,
+      total_break_count: todaySessions.filter((session) => session?.status !== "CANCELLED").length,
       total_break_minutes_overall: totalBreakMinutesOverall,
       remaining_daily_break_minutes: remainingDailyBreakMinutes,
       daily_break_limit_minutes: dailyBreakLimitMinutes,
-      per_break_limit_minutes: Number(
-        settings.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES,
-      ),
-      last_break_reason:
-        row.active_break_reason ?? row.last_break_reason ?? null,
+      per_break_limit_minutes: Number(settings.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES),
+      last_break_reason: row.active_break_reason ?? row.last_break_reason ?? null,
       active_break_id: row.active_break_id ?? null,
       active_break_start_time: row.active_break_start_time ?? null,
       active_break_minutes: status.activeMinutes,
@@ -1879,11 +1655,9 @@ async function loadDeskEmployees(
       safe_actions: {
         can_punch_in: !punchIn,
         can_punch_out: Boolean(punchIn) && !Boolean(punchOut),
-        can_start_break:
-          status.label === "On Duty" && remainingDailyBreakMinutes > 0,
+        can_start_break: status.label === "On Duty" && remainingDailyBreakMinutes > 0,
         can_end_break: Boolean(row.active_break_id),
-        exception_start_allowed:
-          !punchIn && Boolean(settings.allow_break_without_biometric),
+        exception_start_allowed: !punchIn && Boolean(settings.allow_break_without_biometric),
       },
     };
   });
@@ -1916,56 +1690,26 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
   if (!includeAll) mapped = mapped.slice(0, safeLimit(filters.limit));
 
   const counters = {
-    entered: mapped.filter((row) => Boolean(row.biometric_punch_in_time))
-      .length,
+    entered: mapped.filter((row) => Boolean(row.biometric_punch_in_time)).length,
     onDuty: mapped.filter((row) => row.current_status === "On Duty").length,
     onBreak: mapped.filter((row) => row.current_status === "On Break").length,
-    breakExceeded: mapped.filter(
-      (row) => row.current_status === "Break Exceeded",
-    ).length,
-    miniBreaksToday: mapped.reduce(
-      (sum, row) => sum + Number(row.mini_break_count ?? 0),
-      0,
-    ),
-    longBreaksToday: mapped.reduce(
-      (sum, row) => sum + Number(row.long_break_count ?? 0),
-      0,
-    ),
-    totalBreaksToday: mapped.reduce(
-      (sum, row) => sum + Number(row.total_break_count ?? 0),
-      0,
-    ),
-    totalBreakMinutesToday: mapped.reduce(
-      (sum, row) =>
-        sum +
-        Number(
-          (row as any).total_break_minutes_overall ??
-            row.total_break_minutes ??
-            0,
-        ),
-      0,
-    ),
-    totalShiftMinutesToday: mapped.reduce(
-      (sum, row) => sum + Number(row.shift_duration_minutes ?? 0),
-      0,
-    ),
-    noPunchFound: mapped.filter(
-      (row) => row.current_status === "No Punch Found",
-    ).length,
-    shiftCompleted: mapped.filter(
-      (row) => row.current_status === "Shift Completed",
-    ).length,
+    breakExceeded: mapped.filter((row) => row.current_status === "Break Exceeded").length,
+    miniBreaksToday: mapped.reduce((sum, row) => sum + Number(row.mini_break_count ?? 0), 0),
+    longBreaksToday: mapped.reduce((sum, row) => sum + Number(row.long_break_count ?? 0), 0),
+    totalBreaksToday: mapped.reduce((sum, row) => sum + Number(row.total_break_count ?? 0), 0),
+    totalBreakMinutesToday: mapped.reduce((sum, row) => sum + Number((row as any).total_break_minutes_overall ?? row.total_break_minutes ?? 0), 0),
+    totalShiftMinutesToday: mapped.reduce((sum, row) => sum + Number(row.shift_duration_minutes ?? 0), 0),
+    noPunchFound: mapped.filter((row) => row.current_status === "No Punch Found").length,
+    shiftCompleted: mapped.filter((row) => row.current_status === "Shift Completed").length,
   };
 
   const filteredByStatus = filters.status
     ? mapped.filter((row) => row.current_status === filters.status)
     : mapped;
 
-  const [syncRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT MAX(updated_at) AS last_sync_time FROM integration_biometric_daily`,
-    )
-    .catch(() => [[] as RowDataPacket[], []]);
+  const [syncRows] = await db.execute<RowDataPacket[]>(
+    `SELECT MAX(updated_at) AS last_sync_time FROM integration_biometric_daily`,
+  ).catch(() => [[] as RowDataPacket[], []]);
 
   return {
     shiftDate,
@@ -1976,38 +1720,18 @@ async function fetchDeskRows(kiosk: KioskDevice, filters: DeskFilters, includeAl
   };
 }
 
-async function fetchSingleDeskEmployee(
-  kiosk: KioskDevice,
-  employeeId: string,
-  shiftDate: string,
-  includeRealtime = true,
-) {
-  const data = await fetchDeskRows(
-    kiosk,
-    { date: shiftDate, employee_id: employeeId, limit: 1 },
-    false,
-    includeRealtime,
-  );
+async function fetchSingleDeskEmployee(kiosk: KioskDevice, employeeId: string, shiftDate: string, includeRealtime = true) {
+  const data = await fetchDeskRows(kiosk, { date: shiftDate, employee_id: employeeId, limit: 1 }, false, includeRealtime);
   return data.employees.find((row) => row.employee_id === employeeId) ?? null;
 }
 
 async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
   const branchWhere = kiosk.branch_id ? "AND e.branch_id = ?" : "";
   const allowedProcesses = kioskProcessIds(kiosk);
-  const processWhere =
-    allowedProcesses.length > 0
-      ? `AND e.process_id IN (${allowedProcesses.map(() => "?").join(", ")})`
-      : "";
+  const processWhere = allowedProcesses.length > 0 ? `AND e.process_id IN (${allowedProcesses.map(() => "?").join(", ")})` : "";
   const scopeParams = [kiosk.branch_id, ...allowedProcesses].filter(Boolean);
 
-  const [
-    branchRows,
-    processRows,
-    departmentRows,
-    designationRows,
-    managerRows,
-    shiftRows,
-  ] = await Promise.all([
+  const [branchRows, processRows, departmentRows, designationRows, managerRows, shiftRows] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT DISTINCT e.branch_id AS value, bm.branch_name AS label
          FROM employees e
@@ -2076,8 +1800,7 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
       .catch(() => [[] as RowDataPacket[], []]),
   ]);
 
-  const mapRows = (value: any) =>
-    (value[0] as any[]).filter((row) => row?.value && row?.label);
+  const mapRows = (value: any) => (value[0] as any[]).filter((row) => row?.value && row?.label);
   return {
     branches: mapRows(branchRows),
     processes: mapRows(processRows),
@@ -2085,20 +1808,12 @@ async function filterOptionsForKiosk(kiosk: KioskDevice, shiftDate: string) {
     designations: mapRows(designationRows),
     managers: mapRows(managerRows),
     shifts: mapRows(shiftRows),
-    statuses: STATUS_OPTIONS.map((status) => ({
-      value: status,
-      label: status,
-    })),
-    breakReasons: BREAK_REASONS.map((reason) => ({
-      value: reason,
-      label: reason,
-    })),
+    statuses: STATUS_OPTIONS.map((status) => ({ value: status, label: status })),
+    breakReasons: BREAK_REASONS.map((reason) => ({ value: reason, label: reason })),
   };
 }
 
-async function getEmployeeContext(
-  employeeId: string,
-): Promise<EmployeeContext | null> {
+async function getEmployeeContext(employeeId: string): Promise<EmployeeContext | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
         e.id,
@@ -2119,26 +1834,13 @@ async function getEmployeeContext(
 }
 
 export const breakManagementService = {
-  async validatePublicKioskAccess(
-    kioskCode: string,
-    token: string,
-    req: Request,
-  ) {
+  async validatePublicKioskAccess(kioskCode: string, token: string, req: Request) {
     return validateKiosk(kioskCode, token, req);
   },
 
-  async getDeskBootstrap(
-    kioskCode: string,
-    token: string,
-    req: Request,
-    date?: string | null,
-  ) {
+  async getDeskBootstrap(kioskCode: string, token: string, req: Request, date?: string | null) {
     const kiosk = await validateKiosk(kioskCode, token, req);
-    const rows = await fetchDeskRows(
-      kiosk,
-      { date: date ?? undefined, limit: 500 },
-      true,
-    );
+    const rows = await fetchDeskRows(kiosk, { date: date ?? undefined, limit: 500 }, true);
     return {
       kiosk: {
         kiosk_code: kiosk.kiosk_code,
@@ -2156,12 +1858,7 @@ export const breakManagementService = {
     };
   },
 
-  async listDeskEmployees(
-    kioskCode: string,
-    token: string,
-    req: Request,
-    filters: DeskFilters,
-  ) {
+  async listDeskEmployees(kioskCode: string, token: string, req: Request, filters: DeskFilters) {
     const kiosk = await validateKiosk(kioskCode, token, req);
     const data = await fetchDeskRows(kiosk, filters, false, false);
     return {
@@ -2172,73 +1869,36 @@ export const breakManagementService = {
     };
   },
 
-  async startBreak(
-    kioskCode: string,
-    token: string,
-    req: Request,
-    payload: {
-      employee_id: string;
-      break_reason: string;
-      exception_reason?: string | null;
-      manager_approval_required?: boolean;
-      date?: string | null;
-    },
-  ) {
+  async startBreak(kioskCode: string, token: string, req: Request, payload: {
+    employee_id: string;
+    break_reason: string;
+    exception_reason?: string | null;
+    manager_approval_required?: boolean;
+    date?: string | null;
+  }) {
     const kiosk = await validateKiosk(kioskCode, token, req);
     const employee = await getEmployeeContext(payload.employee_id);
     if (!employee) throw reject(404, "Employee not found or inactive");
     assertEmployeeWithinKioskScope(kiosk, employee);
 
-    const shiftDate = await resolveShiftDateSmart(
-      employee.id,
-      payload.date ?? null,
-    );
-    const settings = await getSettings(
-      employee.branch_id ?? kiosk.branch_id,
-      employee.process_id ?? kiosk.process_id,
-    );
+    const shiftDate = await resolveShiftDateSmart(employee.id, payload.date ?? null);
+    const settings = await getSettings(employee.branch_id ?? kiosk.branch_id, employee.process_id ?? kiosk.process_id);
     const [existingRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM break_sessions WHERE employee_id = ? AND shift_date = ? AND status = 'ACTIVE' LIMIT 1`,
       [employee.id, shiftDate],
     );
-    if ((existingRows as any[]).length > 0)
-      throw reject(409, "This employee already has an active break");
+    if ((existingRows as any[]).length > 0) throw reject(409, "This employee already has an active break");
 
-    const biometric = await getBiometricSnapshot(
-      employee.id,
-      employee.employee_code,
-      shiftDate,
-    );
+    const biometric = await getBiometricSnapshot(employee.id, employee.employee_code, shiftDate);
     const usage = await getBreakUsageSummary(employee.id, shiftDate);
-    if (
-      !biometric.punchIn &&
-      !Number(settings.allow_break_without_biometric ?? 0)
-    ) {
-      throw reject(
-        409,
-        "No biometric punch found. Exception start is disabled for this kiosk.",
-      );
+    if (!biometric.punchIn && !Number(settings.allow_break_without_biometric ?? 0)) {
+      throw reject(409, "No biometric punch found. Exception start is disabled for this kiosk.");
     }
-    if (
-      !biometric.punchIn &&
-      Number(settings.require_exception_reason ?? 1) &&
-      !String(payload.exception_reason ?? "").trim()
-    ) {
-      throw reject(
-        400,
-        "Exception reason is required when biometric punch is missing",
-      );
+    if (!biometric.punchIn && Number(settings.require_exception_reason ?? 1) && !String(payload.exception_reason ?? "").trim()) {
+      throw reject(400, "Exception reason is required when biometric punch is missing");
     }
-    if (
-      usage.totalBreakMinutes >=
-      Number(
-        settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES,
-      )
-    ) {
-      throw reject(
-        409,
-        `Daily break limit of ${settings.daily_total_allowed_minutes} minutes has already been used`,
-      );
+    if (usage.totalBreakMinutes >= Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES)) {
+      throw reject(409, `Daily break limit of ${settings.daily_total_allowed_minutes} minutes has already been used`);
     }
 
     const now = currentIstDateTime().dateTime;
@@ -2294,12 +1954,7 @@ export const breakManagementService = {
       req,
     });
 
-    const latestEmployee = await fetchSingleDeskEmployee(
-      kiosk,
-      employee.id,
-      shiftDate,
-      true,
-    );
+    const latestEmployee = await fetchSingleDeskEmployee(kiosk, employee.id, shiftDate, true);
     return {
       session_id: sessionId,
       shift_date: shiftDate,
@@ -2307,21 +1962,13 @@ export const breakManagementService = {
     };
   },
 
-  async endBreak(
-    kioskCode: string,
-    token: string,
-    req: Request,
-    payload: {
-      break_session_id?: string | null;
-      employee_id: string;
-      date?: string | null;
-    },
-  ) {
+  async endBreak(kioskCode: string, token: string, req: Request, payload: {
+    break_session_id?: string | null;
+    employee_id: string;
+    date?: string | null;
+  }) {
     const kiosk = await validateKiosk(kioskCode, token, req);
-    const shiftDate = await resolveShiftDateSmart(
-      payload.employee_id,
-      payload.date ?? null,
-    );
+    const shiftDate = await resolveShiftDateSmart(payload.employee_id, payload.date ?? null);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT *
          FROM break_sessions
@@ -2341,18 +1988,11 @@ export const breakManagementService = {
     const employee = await getEmployeeContext(payload.employee_id);
     if (!employee) throw reject(404, "Employee not found");
     assertEmployeeWithinKioskScope(kiosk, employee);
-    const settings = await getSettings(
-      employee.branch_id ?? kiosk.branch_id,
-      employee.process_id ?? kiosk.process_id,
-    );
+    const settings = await getSettings(employee.branch_id ?? kiosk.branch_id, employee.process_id ?? kiosk.process_id);
     const endedAt = currentIstDateTime().dateTime;
     const duration = minutesBetween(String(session.break_start_time), endedAt);
     const breakType = classifyBreak(duration.minutes, settings);
-    const biometric = await getBiometricSnapshot(
-      employee.id,
-      employee.employee_code,
-      shiftDate,
-    );
+    const biometric = await getBiometricSnapshot(employee.id, employee.employee_code, shiftDate);
     const usage = await getBreakUsageSummary(employee.id, shiftDate);
     const completedStatus = resolveCompletedBreakStatus({
       durationMinutes: duration.minutes,
@@ -2409,12 +2049,7 @@ export const breakManagementService = {
       req,
     });
 
-    const latestEmployee = await fetchSingleDeskEmployee(
-      kiosk,
-      employee.id,
-      shiftDate,
-      true,
-    );
+    const latestEmployee = await fetchSingleDeskEmployee(kiosk, employee.id, shiftDate, true);
     return {
       session_id: session.id,
       shift_date: shiftDate,
@@ -2424,23 +2059,15 @@ export const breakManagementService = {
     };
   },
 
-  async punchIn(
-    kioskCode: string,
-    token: string,
-    req: Request,
-    payload: {
-      employee_id: string;
-      date?: string | null;
-    },
-  ) {
+  async punchIn(kioskCode: string, token: string, req: Request, payload: {
+    employee_id: string;
+    date?: string | null;
+  }) {
     const kiosk = await validateKiosk(kioskCode, token, req);
     const employee = await getEmployeeContext(payload.employee_id);
     if (!employee) throw reject(404, "Employee not found or inactive");
     assertEmployeeWithinKioskScope(kiosk, employee);
-    const shiftDate = await resolveShiftDateSmart(
-      employee.id,
-      payload.date ?? null,
-    );
+    const shiftDate = await resolveShiftDateSmart(employee.id, payload.date ?? null);
     const result = await recordManualDeskPunch(employee, shiftDate, "IN");
     await rebuildDailySummary(
       employee.id,
@@ -2460,12 +2087,7 @@ export const breakManagementService = {
       newValue: { punch_in_time: result.actionTime, source: "manual_kiosk" },
       req,
     });
-    const latestEmployee = await fetchSingleDeskEmployee(
-      kiosk,
-      employee.id,
-      shiftDate,
-      true,
-    );
+    const latestEmployee = await fetchSingleDeskEmployee(kiosk, employee.id, shiftDate, true);
     return {
       shift_date: shiftDate,
       action_time: result.actionTime,
@@ -2473,23 +2095,15 @@ export const breakManagementService = {
     };
   },
 
-  async punchOut(
-    kioskCode: string,
-    token: string,
-    req: Request,
-    payload: {
-      employee_id: string;
-      date?: string | null;
-    },
-  ) {
+  async punchOut(kioskCode: string, token: string, req: Request, payload: {
+    employee_id: string;
+    date?: string | null;
+  }) {
     const kiosk = await validateKiosk(kioskCode, token, req);
     const employee = await getEmployeeContext(payload.employee_id);
     if (!employee) throw reject(404, "Employee not found or inactive");
     assertEmployeeWithinKioskScope(kiosk, employee);
-    const shiftDate = await resolveShiftDateSmart(
-      employee.id,
-      payload.date ?? null,
-    );
+    const shiftDate = await resolveShiftDateSmart(employee.id, payload.date ?? null);
     const result = await recordManualDeskPunch(employee, shiftDate, "OUT");
     await rebuildDailySummary(
       employee.id,
@@ -2509,12 +2123,7 @@ export const breakManagementService = {
       newValue: { punch_out_time: result.actionTime, source: "manual_kiosk" },
       req,
     });
-    const latestEmployee = await fetchSingleDeskEmployee(
-      kiosk,
-      employee.id,
-      shiftDate,
-      true,
-    );
+    const latestEmployee = await fetchSingleDeskEmployee(kiosk, employee.id, shiftDate, true);
     return {
       shift_date: shiftDate,
       action_time: result.actionTime,
@@ -2522,12 +2131,7 @@ export const breakManagementService = {
     };
   },
 
-  async getLiveStatus(
-    kioskCode: string,
-    token: string,
-    req: Request,
-    filters: DeskFilters,
-  ) {
+  async getLiveStatus(kioskCode: string, token: string, req: Request, filters: DeskFilters) {
     const kiosk = await validateKiosk(kioskCode, token, req);
     const data = await fetchDeskRows(kiosk, filters, false, true);
     return {
@@ -2687,38 +2291,15 @@ export const breakManagementService = {
       resolveShiftDate(filters.date_from ?? null),
       resolveShiftDate(filters.date_to ?? filters.date_from ?? null),
     ];
-    if (filters.branch_id) {
-      where.push("bs.branch_id = ?");
-      params.push(filters.branch_id);
-    }
-    if (filters.process_id) {
-      where.push("bs.process_id = ?");
-      params.push(filters.process_id);
-    }
-    if (filters.department_id) {
-      where.push("bs.department_id = ?");
-      params.push(filters.department_id);
-    }
-    if (filters.manager_id) {
-      where.push("bs.manager_id = ?");
-      params.push(filters.manager_id);
-    }
-    if (filters.employee_id) {
-      where.push("bs.employee_id = ?");
-      params.push(filters.employee_id);
-    }
-    if (filters.break_type) {
-      where.push("bs.break_type = ?");
-      params.push(filters.break_type);
-    }
-    if (filters.status) {
-      where.push("bs.status = ?");
-      params.push(filters.status);
-    }
-    if (filters.exception_status === "yes")
-      where.push("bs.no_biometric_punch_flag = 1");
-    if (filters.exception_status === "no")
-      where.push("bs.no_biometric_punch_flag = 0");
+    if (filters.branch_id) { where.push("bs.branch_id = ?"); params.push(filters.branch_id); }
+    if (filters.process_id) { where.push("bs.process_id = ?"); params.push(filters.process_id); }
+    if (filters.department_id) { where.push("bs.department_id = ?"); params.push(filters.department_id); }
+    if (filters.manager_id) { where.push("bs.manager_id = ?"); params.push(filters.manager_id); }
+    if (filters.employee_id) { where.push("bs.employee_id = ?"); params.push(filters.employee_id); }
+    if (filters.break_type) { where.push("bs.break_type = ?"); params.push(filters.break_type); }
+    if (filters.status) { where.push("bs.status = ?"); params.push(filters.status); }
+    if (filters.exception_status === "yes") where.push("bs.no_biometric_punch_flag = 1");
+    if (filters.exception_status === "no") where.push("bs.no_biometric_punch_flag = 0");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -2761,9 +2342,7 @@ export const breakManagementService = {
 
     if (filters.search?.trim()) {
       const query = `%${filters.search.trim()}%`;
-      where.push(
-        "(kd.kiosk_code LIKE ? OR kd.kiosk_name LIKE ? OR bm.branch_name LIKE ? OR pm.process_name LIKE ?)",
-      );
+      where.push("(kd.kiosk_code LIKE ? OR kd.kiosk_name LIKE ? OR bm.branch_name LIKE ? OR pm.process_name LIKE ?)");
       params.push(query, query, query, query);
     }
     if (filters.branch_id) {
@@ -2771,9 +2350,7 @@ export const breakManagementService = {
       params.push(filters.branch_id);
     }
     if (filters.process_id) {
-      where.push(
-        "(kd.process_id = ? OR JSON_CONTAINS(COALESCE(kd.allowed_process_ids, JSON_ARRAY()), JSON_QUOTE(?)))",
-      );
+      where.push("(kd.process_id = ? OR JSON_CONTAINS(COALESCE(kd.allowed_process_ids, JSON_ARRAY()), JSON_QUOTE(?)))");
       params.push(filters.process_id, filters.process_id);
     }
     if (filters.status === "active") where.push("kd.is_active = 1");
@@ -2830,9 +2407,7 @@ export const breakManagementService = {
         ...row,
         allowed_process_ids: normalizeJsonArray(row.allowed_process_ids),
         allowed_ip_list: normalizeJsonArray(row.allowed_ip_list),
-        allowed_device_fingerprints: normalizeJsonArray(
-          row.allowed_device_fingerprints,
-        ),
+        allowed_device_fingerprints: normalizeJsonArray(row.allowed_device_fingerprints),
         token_configured: true,
         desk_url: `/break-desk?kiosk=${encodeURIComponent(String(row.kiosk_code ?? ""))}`,
       })),
@@ -2851,10 +2426,7 @@ export const breakManagementService = {
     kiosk_id?: string;
   }) {
     const mode = filters.mode === "summary" ? "summary" : "detailed";
-    const kioskData = await this.listKioskDevices({
-      ...filters,
-      limit: safeLimit(filters.limit ?? 2000, 2000),
-    });
+    const kioskData = await this.listKioskDevices({ ...filters, limit: safeLimit(filters.limit ?? 2000, 2000) });
     const generatedAtIst = currentIstDateTime().dateTime;
     const generatedOnDate = currentIstDateTime().date;
 
@@ -2864,21 +2436,14 @@ export const breakManagementService = {
         kiosk_code: row.kiosk_code,
         kiosk_name: row.kiosk_name,
         kiosk_status: row.is_active ? "Active" : "Inactive",
-        mapping_status:
-          row.branch_id && (row.allowed_process_ids?.length || row.process_id)
-            ? "Branch + Process locked"
-            : "Mapping incomplete",
+        mapping_status: row.branch_id && (row.allowed_process_ids?.length || row.process_id) ? "Branch + Process locked" : "Mapping incomplete",
         branch_name: row.branch_name ?? "",
         primary_process_name: row.process_name ?? "",
         allowed_process_names: row.allowed_process_names ?? "",
         scoped_employee_count: Number(row.scoped_employee_count ?? 0),
-        allowed_ip_count: Array.isArray(row.allowed_ip_list)
-          ? row.allowed_ip_list.length
-          : 0,
+        allowed_ip_count: Array.isArray(row.allowed_ip_list) ? row.allowed_ip_list.length : 0,
         allowed_ip_list: row.allowed_ip_list ?? [],
-        device_lock_count: Array.isArray(row.allowed_device_fingerprints)
-          ? row.allowed_device_fingerprints.length
-          : 0,
+        device_lock_count: Array.isArray(row.allowed_device_fingerprints) ? row.allowed_device_fingerprints.length : 0,
         device_fingerprints: row.allowed_device_fingerprints ?? [],
         last_used_at_ist: formatCsvDateTime(row.last_used_at),
         created_by_name: row.created_by_name ?? "",
@@ -2886,27 +2451,24 @@ export const breakManagementService = {
       }));
       return {
         fileName: `break-desk-kiosk-summary-${generatedOnDate}.csv`,
-        csv: buildCsv(
-          [
-            "report_generated_at_ist",
-            "kiosk_code",
-            "kiosk_name",
-            "kiosk_status",
-            "mapping_status",
-            "branch_name",
-            "primary_process_name",
-            "allowed_process_names",
-            "scoped_employee_count",
-            "allowed_ip_count",
-            "allowed_ip_list",
-            "device_lock_count",
-            "device_fingerprints",
-            "last_used_at_ist",
-            "created_by_name",
-            "desk_url",
-          ],
-          rows,
-        ),
+        csv: buildCsv([
+          "report_generated_at_ist",
+          "kiosk_code",
+          "kiosk_name",
+          "kiosk_status",
+          "mapping_status",
+          "branch_name",
+          "primary_process_name",
+          "allowed_process_names",
+          "scoped_employee_count",
+          "allowed_ip_count",
+          "allowed_ip_list",
+          "device_lock_count",
+          "device_fingerprints",
+          "last_used_at_ist",
+          "created_by_name",
+          "desk_url",
+        ], rows),
       };
     }
 
@@ -2918,9 +2480,7 @@ export const breakManagementService = {
     const detailedRows: Array<Record<string, unknown>> = [];
 
     if (targetKioskIds.length > 0) {
-      const sessionWhere: string[] = [
-        `bs.kiosk_device_id IN (${targetKioskIds.map(() => "?").join(", ")})`,
-      ];
+      const sessionWhere: string[] = [`bs.kiosk_device_id IN (${targetKioskIds.map(() => "?").join(", ")})`];
       const sessionParams: unknown[] = [...targetKioskIds];
 
       if (filters.date_from) {
@@ -2989,8 +2549,7 @@ export const breakManagementService = {
           shift_date: row.shift_date ?? "",
           break_start_time: formatCsvDateTime(row.break_start_time),
           break_end_time: formatCsvDateTime(row.break_end_time),
-          duration_minutes:
-            row.duration_minutes != null ? Number(row.duration_minutes) : "",
+          duration_minutes: row.duration_minutes != null ? Number(row.duration_minutes) : "",
           break_type: row.break_type ?? "",
           session_status: row.session_status ?? "",
           break_reason: row.break_reason ?? "",
@@ -3004,9 +2563,7 @@ export const breakManagementService = {
           department_name: row.department_name ?? "",
           manager_name: row.manager_name ?? "",
           employment_status: row.employment_status ?? "",
-          employee_active_status: Number(row.active_status ?? 0)
-            ? "Active"
-            : "Inactive",
+          employee_active_status: Number(row.active_status ?? 0) ? "Active" : "Inactive",
         });
       }
     }
@@ -3020,55 +2577,43 @@ export const breakManagementService = {
 
     return {
       fileName: `break-desk-sessions-detailed-${generatedOnDate}.csv`,
-      csv: buildCsv(
-        [
-          "report_generated_at_ist",
-          "kiosk_code",
-          "kiosk_name",
-          "kiosk_status",
-          "kiosk_branch_name",
-          "allowed_process_names",
-          "shift_date",
-          "break_start_time",
-          "break_end_time",
-          "duration_minutes",
-          "break_type",
-          "session_status",
-          "break_reason",
-          "exception_reason",
-          "no_biometric_flag",
-          "start_source",
-          "employee_code",
-          "employee_name",
-          "employee_branch_name",
-          "employee_process_name",
-          "department_name",
-          "manager_name",
-          "employment_status",
-          "employee_active_status",
-        ],
-        detailedRows,
-      ),
+      csv: buildCsv([
+        "report_generated_at_ist",
+        "kiosk_code",
+        "kiosk_name",
+        "kiosk_status",
+        "kiosk_branch_name",
+        "allowed_process_names",
+        "shift_date",
+        "break_start_time",
+        "break_end_time",
+        "duration_minutes",
+        "break_type",
+        "session_status",
+        "break_reason",
+        "exception_reason",
+        "no_biometric_flag",
+        "start_source",
+        "employee_code",
+        "employee_name",
+        "employee_branch_name",
+        "employee_process_name",
+        "department_name",
+        "manager_name",
+        "employment_status",
+        "employee_active_status",
+      ], detailedRows),
     };
   },
 
-  async createKioskDevice(
-    input: Record<string, unknown>,
-    performedById: string,
-    req: Request,
-  ) {
+  async createKioskDevice(input: Record<string, unknown>, performedById: string, req: Request) {
     const id = randomUUID();
     const token = String(input.token ?? generateDeskToken()).trim();
     const branchId = String(input.branch_id ?? "") || null;
-    const allowedProcessIds = normalizeStringArrayInput(
-      input.allowed_process_ids,
-    );
-    const processId =
-      String(input.process_id ?? allowedProcessIds[0] ?? "") || null;
+    const allowedProcessIds = normalizeStringArrayInput(input.allowed_process_ids);
+    const processId = String(input.process_id ?? allowedProcessIds[0] ?? "") || null;
     const allowedIps = normalizeStringArrayInput(input.allowed_ip_list);
-    const allowedFingerprints = normalizeStringArrayInput(
-      input.allowed_device_fingerprints,
-    );
+    const allowedFingerprints = normalizeStringArrayInput(input.allowed_device_fingerprints);
 
     await db.execute(
       `INSERT INTO break_kiosk_devices
@@ -3082,13 +2627,7 @@ export const breakManagementService = {
         branchId,
         processId,
         hashToken(token),
-        JSON.stringify(
-          allowedProcessIds.length > 0
-            ? allowedProcessIds
-            : processId
-              ? [processId]
-              : [],
-        ),
+        JSON.stringify(allowedProcessIds.length > 0 ? allowedProcessIds : (processId ? [processId] : [])),
         JSON.stringify(allowedIps),
         JSON.stringify(allowedFingerprints),
         input.is_active === false ? 0 : 1,
@@ -3107,12 +2646,7 @@ export const breakManagementService = {
         kiosk_name: String(input.kiosk_name).trim(),
         branch_id: branchId,
         process_id: processId,
-        allowed_process_ids:
-          allowedProcessIds.length > 0
-            ? allowedProcessIds
-            : processId
-              ? [processId]
-              : [],
+        allowed_process_ids: allowedProcessIds.length > 0 ? allowedProcessIds : (processId ? [processId] : []),
         allowed_ip_list: allowedIps,
         allowed_device_fingerprints: allowedFingerprints,
         is_active: input.is_active !== false,
@@ -3128,12 +2662,7 @@ export const breakManagementService = {
     };
   },
 
-  async updateKioskDevice(
-    id: string,
-    input: Record<string, unknown>,
-    performedById: string,
-    req: Request,
-  ) {
+  async updateKioskDevice(id: string, input: Record<string, unknown>, performedById: string, req: Request) {
     const [existingRows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM break_kiosk_devices WHERE id = ? LIMIT 1`,
       [id],
@@ -3142,15 +2671,10 @@ export const breakManagementService = {
     if (!existing) throw reject(404, "Break desk ID not found");
 
     const branchId = String(input.branch_id ?? "") || null;
-    const allowedProcessIds = normalizeStringArrayInput(
-      input.allowed_process_ids,
-    );
-    const processId =
-      String(input.process_id ?? allowedProcessIds[0] ?? "") || null;
+    const allowedProcessIds = normalizeStringArrayInput(input.allowed_process_ids);
+    const processId = String(input.process_id ?? allowedProcessIds[0] ?? "") || null;
     const allowedIps = normalizeStringArrayInput(input.allowed_ip_list);
-    const allowedFingerprints = normalizeStringArrayInput(
-      input.allowed_device_fingerprints,
-    );
+    const allowedFingerprints = normalizeStringArrayInput(input.allowed_device_fingerprints);
 
     await db.execute(
       `UPDATE break_kiosk_devices
@@ -3169,13 +2693,7 @@ export const breakManagementService = {
         String(input.kiosk_name).trim(),
         branchId,
         processId,
-        JSON.stringify(
-          allowedProcessIds.length > 0
-            ? allowedProcessIds
-            : processId
-              ? [processId]
-              : [],
-        ),
+        JSON.stringify(allowedProcessIds.length > 0 ? allowedProcessIds : (processId ? [processId] : [])),
         JSON.stringify(allowedIps),
         JSON.stringify(allowedFingerprints),
         input.is_active === false ? 0 : 1,
@@ -3196,9 +2714,7 @@ export const breakManagementService = {
         process_id: existing.process_id,
         allowed_process_ids: normalizeJsonArray(existing.allowed_process_ids),
         allowed_ip_list: normalizeJsonArray(existing.allowed_ip_list),
-        allowed_device_fingerprints: normalizeJsonArray(
-          existing.allowed_device_fingerprints,
-        ),
+        allowed_device_fingerprints: normalizeJsonArray(existing.allowed_device_fingerprints),
         is_active: Boolean(existing.is_active),
       },
       newValue: {
@@ -3206,12 +2722,7 @@ export const breakManagementService = {
         kiosk_name: String(input.kiosk_name).trim(),
         branch_id: branchId,
         process_id: processId,
-        allowed_process_ids:
-          allowedProcessIds.length > 0
-            ? allowedProcessIds
-            : processId
-              ? [processId]
-              : [],
+        allowed_process_ids: allowedProcessIds.length > 0 ? allowedProcessIds : (processId ? [processId] : []),
         allowed_ip_list: allowedIps,
         allowed_device_fingerprints: allowedFingerprints,
         is_active: input.is_active !== false,
@@ -3222,12 +2733,7 @@ export const breakManagementService = {
     return { id };
   },
 
-  async rotateKioskToken(
-    id: string,
-    tokenInput: string | undefined,
-    performedById: string,
-    req: Request,
-  ) {
+  async rotateKioskToken(id: string, tokenInput: string | undefined, performedById: string, req: Request) {
     const [existingRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, kiosk_code FROM break_kiosk_devices WHERE id = ? LIMIT 1`,
       [id],
@@ -3279,10 +2785,7 @@ export const breakManagementService = {
     );
     const activeCount = Number((activeRows as any[])[0]?.active_count ?? 0);
     if (activeCount > 0) {
-      throw reject(
-        409,
-        "This desk ID cannot be deleted while active break sessions are running",
-      );
+      throw reject(409, "This desk ID cannot be deleted while active break sessions are running");
     }
 
     await db.execute(`DELETE FROM break_kiosk_devices WHERE id = ?`, [id]);
@@ -3309,11 +2812,7 @@ export const breakManagementService = {
     };
   },
 
-  async saveSettings(
-    input: Record<string, unknown>,
-    performedById: string,
-    req: Request,
-  ) {
+  async saveSettings(input: Record<string, unknown>, performedById: string, req: Request) {
     const id = String(input.id ?? randomUUID());
     const branchId = String(input.branch_id ?? "") || null;
     const processId = String(input.process_id ?? "") || null;
@@ -3322,31 +2821,18 @@ export const breakManagementService = {
       branch_id: branchId,
       process_id: processId,
       mini_break_max_minutes: Number(input.mini_break_max_minutes ?? 10),
-      long_break_min_minutes: Number(
-        input.long_break_min_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES,
-      ),
-      active_break_alert_minutes: Number(
-        input.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES,
-      ),
-      daily_total_allowed_minutes: Number(
-        input.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES,
-      ),
+      long_break_min_minutes: Number(input.long_break_min_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES),
+      active_break_alert_minutes: Number(input.active_break_alert_minutes ?? HARD_MAX_SINGLE_BREAK_MINUTES),
+      daily_total_allowed_minutes: Number(input.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES),
       max_long_break_count: Number(input.max_long_break_count ?? 2),
       escalation_after_minutes: Number(input.escalation_after_minutes ?? 10),
-      auto_close_on_biometric_punch_out: input.auto_close_on_biometric_punch_out
-        ? 1
-        : 0,
-      allow_break_without_biometric: input.allow_break_without_biometric
-        ? 1
-        : 0,
-      require_exception_reason:
-        input.require_exception_reason !== false ? 1 : 0,
+      auto_close_on_biometric_punch_out: input.auto_close_on_biometric_punch_out ? 1 : 0,
+      allow_break_without_biometric: input.allow_break_without_biometric ? 1 : 0,
+      require_exception_reason: input.require_exception_reason !== false ? 1 : 0,
       alert_reporting_manager: input.alert_reporting_manager !== false ? 1 : 0,
       alert_hr: input.alert_hr ? 1 : 0,
       alert_wfm: input.alert_wfm ? 1 : 0,
-      alert_cc_list_json: JSON.stringify(
-        Array.isArray(input.alert_cc_list) ? input.alert_cc_list : [],
-      ),
+      alert_cc_list_json: JSON.stringify(Array.isArray(input.alert_cc_list) ? input.alert_cc_list : []),
     } as BreakSettingsRow);
     await db.execute(
       `INSERT INTO break_settings
@@ -3427,31 +2913,19 @@ export const breakManagementService = {
   },
 
   async syncBiometricNow() {
-    const [rows] = await db
-      .execute<RowDataPacket[]>(
-        `SELECT MAX(updated_at) AS last_sync_time, COUNT(*) AS imported_days FROM integration_biometric_daily`,
-      )
-      .catch(() => [[] as RowDataPacket[], []]);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(updated_at) AS last_sync_time, COUNT(*) AS imported_days FROM integration_biometric_daily`,
+    ).catch(() => [[] as RowDataPacket[], []]);
     return {
       status: "accepted",
-      message:
-        "Break module linked to existing biometric sync pipeline. Current page refreshed from the latest imported biometric snapshot.",
+      message: "Break module linked to existing biometric sync pipeline. Current page refreshed from the latest imported biometric snapshot.",
       snapshot: (rows as any[])[0] ?? {},
     };
   },
 
   // Bulk action: Start breaks for multiple employees
-  async bulkStartBreak(
-    kiosk: string,
-    token: string,
-    req: any,
-    body: { employee_ids: string[]; break_reason: string; date?: string },
-  ) {
-    const { kioskData, shiftDate } = await this.validateKiosk(
-      kiosk,
-      token,
-      body.date,
-    );
+  async bulkStartBreak(kiosk: string, token: string, req: any, body: { employee_ids: string[]; break_reason: string; date?: string }) {
+    const { kioskData, shiftDate } = await this.validateKiosk(kiosk, token, body.date);
 
     const connection = await db.getConnection();
     try {
@@ -3470,10 +2944,7 @@ export const breakManagementService = {
           results.push(data.employee);
         } catch (err) {
           // Continue with other employees if one fails
-          console.error(
-            `Failed to start break for employee ${employeeId}:`,
-            err,
-          );
+          console.error(`Failed to start break for employee ${employeeId}:`, err);
         }
       }
 
@@ -3492,17 +2963,8 @@ export const breakManagementService = {
   },
 
   // Bulk action: End breaks for multiple employees
-  async bulkEndBreak(
-    kiosk: string,
-    token: string,
-    req: any,
-    body: { employee_ids: string[]; date?: string },
-  ) {
-    const { kioskData, shiftDate } = await this.validateKiosk(
-      kiosk,
-      token,
-      body.date,
-    );
+  async bulkEndBreak(kiosk: string, token: string, req: any, body: { employee_ids: string[]; date?: string }) {
+    const { kioskData, shiftDate } = await this.validateKiosk(kiosk, token, body.date);
 
     const connection = await db.getConnection();
     try {
@@ -3537,17 +2999,8 @@ export const breakManagementService = {
   },
 
   // Bulk action: Punch in multiple employees
-  async bulkPunchIn(
-    kiosk: string,
-    token: string,
-    req: any,
-    body: { employee_ids: string[]; date?: string },
-  ) {
-    const { kioskData, shiftDate } = await this.validateKiosk(
-      kiosk,
-      token,
-      body.date,
-    );
+  async bulkPunchIn(kiosk: string, token: string, req: any, body: { employee_ids: string[]; date?: string }) {
+    const { kioskData, shiftDate } = await this.validateKiosk(kiosk, token, body.date);
 
     const connection = await db.getConnection();
     try {
@@ -3582,17 +3035,8 @@ export const breakManagementService = {
   },
 
   // Bulk action: Punch out multiple employees
-  async bulkPunchOut(
-    kiosk: string,
-    token: string,
-    req: any,
-    body: { employee_ids: string[]; date?: string },
-  ) {
-    const { kioskData, shiftDate } = await this.validateKiosk(
-      kiosk,
-      token,
-      body.date,
-    );
+  async bulkPunchOut(kiosk: string, token: string, req: any, body: { employee_ids: string[]; date?: string }) {
+    const { kioskData, shiftDate } = await this.validateKiosk(kiosk, token, body.date);
 
     const connection = await db.getConnection();
     try {
@@ -3639,26 +3083,11 @@ export const breakManagementService = {
     const conditions: string[] = ["bds.shift_date >= ?", "bds.shift_date <= ?"];
     const values: any[] = [params.date_from, params.date_to];
 
-    if (params.branch_id) {
-      conditions.push("bds.branch_id = ?");
-      values.push(params.branch_id);
-    }
-    if (params.process_id) {
-      conditions.push("bds.process_id = ?");
-      values.push(params.process_id);
-    }
-    if (params.department_id) {
-      conditions.push("e.department_id = ?");
-      values.push(params.department_id);
-    }
-    if (params.manager_id) {
-      conditions.push("bds.manager_id = ?");
-      values.push(params.manager_id);
-    }
-    if (params.employee_id) {
-      conditions.push("bds.employee_id = ?");
-      values.push(params.employee_id);
-    }
+    if (params.branch_id) { conditions.push("bds.branch_id = ?"); values.push(params.branch_id); }
+    if (params.process_id) { conditions.push("bds.process_id = ?"); values.push(params.process_id); }
+    if (params.department_id) { conditions.push("e.department_id = ?"); values.push(params.department_id); }
+    if (params.manager_id) { conditions.push("bds.manager_id = ?"); values.push(params.manager_id); }
+    if (params.employee_id) { conditions.push("bds.employee_id = ?"); values.push(params.employee_id); }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const limit = params.limit ?? 2000;
@@ -3734,31 +3163,15 @@ export const breakManagementService = {
     const summary = {
       total_rows: data.length,
       total_employees: new Set(data.map((r) => r.employee_id)).size,
-      total_break_minutes: data.reduce(
-        (sum, r) => sum + (Number(r.total_break_minutes) || 0),
-        0,
-      ),
-      total_break_sessions: data.reduce(
-        (sum, r) => sum + (Number(r.total_break_count) || 0),
-        0,
-      ),
-      avg_break_minutes_per_day:
-        data.length > 0
-          ? Math.round(
-              data.reduce(
-                (sum, r) => sum + (Number(r.total_break_minutes) || 0),
-                0,
-              ) / data.length,
-            )
-          : 0,
-      exceeded_count: data.filter(
-        (r) => (Number(r.exceeded_break_count) || 0) > 0,
-      ).length,
-      present_count: data.filter((r) => r.attendance_status === "Present")
-        .length,
+      total_break_minutes: data.reduce((sum, r) => sum + (Number(r.total_break_minutes) || 0), 0),
+      total_break_sessions: data.reduce((sum, r) => sum + (Number(r.total_break_count) || 0), 0),
+      avg_break_minutes_per_day: data.length > 0
+        ? Math.round(data.reduce((sum, r) => sum + (Number(r.total_break_minutes) || 0), 0) / data.length)
+        : 0,
+      exceeded_count: data.filter((r) => (Number(r.exceeded_break_count) || 0) > 0).length,
+      present_count: data.filter((r) => r.attendance_status === "Present").length,
       absent_count: data.filter((r) => r.attendance_status === "Absent").length,
-      half_day_count: data.filter((r) => r.attendance_status === "Half Day")
-        .length,
+      half_day_count: data.filter((r) => r.attendance_status === "Half Day").length,
     };
 
     return { rows: data, summary };

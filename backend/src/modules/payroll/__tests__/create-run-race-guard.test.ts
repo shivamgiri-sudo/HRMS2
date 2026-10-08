@@ -49,9 +49,7 @@ vi.mock("../../../db/mysql.js", () => ({ db: mockDb }));
 // unchanged, and already covered by its own test suite; mocking it here
 // isolates exactly the race-guard logic this fix touches.
 vi.mock("../payroll-branch-readiness.service.js", () => ({
-  payrollBranchReadinessService: {
-    validatePayrollRunCreation: vi.fn(async () => ({ blocked: [] })),
-  },
+  payrollBranchReadinessService: { validatePayrollRunCreation: vi.fn(async () => ({ blocked: [] })) },
 }));
 
 const { payrollService } = await import("../payroll.service.js");
@@ -64,13 +62,10 @@ beforeEach(() => {
 /** Every conn.execute call, matched by a distinctive SQL fragment, in the order the fix issues them. */
 function wireConn(opts: { lockAcquired: boolean; duplicateExists: boolean }) {
   mockConn.execute.mockImplementation(async (sql: string) => {
-    if (/GET_LOCK/.test(sql))
-      return [[{ acquired: opts.lockAcquired ? 1 : 0 }], []];
+    if (/GET_LOCK/.test(sql)) return [[{ acquired: opts.lockAcquired ? 1 : 0 }], []];
     if (/RELEASE_LOCK/.test(sql)) return [[{ released: 1 }], []];
-    if (/SELECT id FROM salary_prep_run/.test(sql))
-      return [opts.duplicateExists ? [{ id: "existing-run" }] : [], []];
-    if (/INSERT INTO salary_prep_run/.test(sql))
-      return [{ affectedRows: 1 }, []];
+    if (/SELECT id FROM salary_prep_run/.test(sql)) return [opts.duplicateExists ? [{ id: "existing-run" }] : [], []];
+    if (/INSERT INTO salary_prep_run/.test(sql)) return [{ affectedRows: 1 }, []];
     return [[], []];
   });
 }
@@ -79,15 +74,10 @@ describe("createRun's lock-guarded duplicate check", () => {
   it("refuses to proceed when the lock cannot be acquired, without attempting insert", async () => {
     wireConn({ lockAcquired: false, duplicateExists: false });
     await expect(
-      payrollService.createRun(
-        { runMonth: "2026-09", branchFilter: null, processFilter: null } as any,
-        "u1",
-      ),
+      payrollService.createRun({ runMonth: "2026-09", branchFilter: null, processFilter: null } as any, "u1"),
     ).rejects.toThrow(/Another request is creating a payroll run/);
 
-    const insertCalls = mockConn.execute.mock.calls.filter(([sql]) =>
-      /INSERT INTO salary_prep_run/.test(sql),
-    );
+    const insertCalls = mockConn.execute.mock.calls.filter(([sql]) => /INSERT INTO salary_prep_run/.test(sql));
     expect(insertCalls).toHaveLength(0);
     expect(mockConn.beginTransaction).not.toHaveBeenCalled();
     expect(mockConn.release).toHaveBeenCalled(); // connection must never leak even when the lock is refused
@@ -96,32 +86,22 @@ describe("createRun's lock-guarded duplicate check", () => {
   it("acquires the lock, finds a duplicate inside the transaction, rolls back, and releases the lock", async () => {
     wireConn({ lockAcquired: true, duplicateExists: true });
     await expect(
-      payrollService.createRun(
-        { runMonth: "2026-09", branchFilter: null, processFilter: null } as any,
-        "u1",
-      ),
+      payrollService.createRun({ runMonth: "2026-09", branchFilter: null, processFilter: null } as any, "u1"),
     ).rejects.toThrow(/already exists/);
 
     expect(mockConn.beginTransaction).toHaveBeenCalled();
     expect(mockConn.rollback).toHaveBeenCalled();
     expect(mockConn.commit).not.toHaveBeenCalled();
-    const insertCalls = mockConn.execute.mock.calls.filter(([sql]) =>
-      /INSERT INTO salary_prep_run/.test(sql),
-    );
+    const insertCalls = mockConn.execute.mock.calls.filter(([sql]) => /INSERT INTO salary_prep_run/.test(sql));
     expect(insertCalls).toHaveLength(0); // must never insert once a duplicate is seen
-    const releaseLockCalls = mockConn.execute.mock.calls.filter(([sql]) =>
-      /RELEASE_LOCK/.test(sql),
-    );
+    const releaseLockCalls = mockConn.execute.mock.calls.filter(([sql]) => /RELEASE_LOCK/.test(sql));
     expect(releaseLockCalls).toHaveLength(1); // lock released even on the error path
     expect(mockConn.release).toHaveBeenCalled();
   });
 
   it("acquires the lock, sees no duplicate, inserts, commits, and releases both the lock and the connection", async () => {
     wireConn({ lockAcquired: true, duplicateExists: false });
-    mockDb.execute.mockResolvedValue([
-      [{ id: "new-run-id", run_month: "2026-09" }],
-      [],
-    ]); // getRun() readback
+    mockDb.execute.mockResolvedValue([[{ id: "new-run-id", run_month: "2026-09" }], []]); // getRun() readback
 
     const result = await payrollService.createRun(
       { runMonth: "2026-09", branchFilter: null, processFilter: null } as any,
@@ -130,13 +110,9 @@ describe("createRun's lock-guarded duplicate check", () => {
 
     expect(mockConn.commit).toHaveBeenCalled();
     expect(mockConn.rollback).not.toHaveBeenCalled();
-    const insertCalls = mockConn.execute.mock.calls.filter(([sql]) =>
-      /INSERT INTO salary_prep_run/.test(sql),
-    );
+    const insertCalls = mockConn.execute.mock.calls.filter(([sql]) => /INSERT INTO salary_prep_run/.test(sql));
     expect(insertCalls).toHaveLength(1);
-    const releaseLockCalls = mockConn.execute.mock.calls.filter(([sql]) =>
-      /RELEASE_LOCK/.test(sql),
-    );
+    const releaseLockCalls = mockConn.execute.mock.calls.filter(([sql]) => /RELEASE_LOCK/.test(sql));
     expect(releaseLockCalls).toHaveLength(1);
     expect(mockConn.release).toHaveBeenCalled();
     expect(result).toBeDefined();
@@ -149,21 +125,14 @@ describe("createRun's lock-guarded duplicate check", () => {
     wireConn({ lockAcquired: true, duplicateExists: false });
     mockDb.execute.mockResolvedValue([[{ id: "new-run-id" }], []]);
 
-    await payrollService.createRun(
-      { runMonth: "2026-09", branchFilter: null, processFilter: null } as any,
-      "u1",
-    );
+    await payrollService.createRun({ runMonth: "2026-09", branchFilter: null, processFilter: null } as any, "u1");
 
     // getConnection is called exactly once for the whole guarded sequence —
     // not once per statement — which is what makes the single-session lock
     // meaningful.
     expect(mockDb.getConnection).toHaveBeenCalledTimes(1);
-    const lockCall = mockConn.execute.mock.calls.find(([sql]) =>
-      /GET_LOCK/.test(sql),
-    );
-    const insertCall = mockConn.execute.mock.calls.find(([sql]) =>
-      /INSERT INTO salary_prep_run/.test(sql),
-    );
+    const lockCall = mockConn.execute.mock.calls.find(([sql]) => /GET_LOCK/.test(sql));
+    const insertCall = mockConn.execute.mock.calls.find(([sql]) => /INSERT INTO salary_prep_run/.test(sql));
     expect(lockCall).toBeDefined();
     expect(insertCall).toBeDefined();
   });

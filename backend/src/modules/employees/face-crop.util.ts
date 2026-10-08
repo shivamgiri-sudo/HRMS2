@@ -17,8 +17,7 @@ async function detectFaceBboxDownscaled(imagePath: string) {
   const width = meta.width ?? 0;
   const height = meta.height ?? 0;
   const longest = Math.max(width, height);
-  if (!longest || longest <= DETECTION_MAX_SIDE)
-    return detectFaceBbox(imagePath);
+  if (!longest || longest <= DETECTION_MAX_SIDE) return detectFaceBbox(imagePath);
 
   const scale = longest / DETECTION_MAX_SIDE;
   const dir = await mkdtemp(path.join(tmpdir(), "facedet-"));
@@ -26,14 +25,7 @@ async function detectFaceBboxDownscaled(imagePath: string) {
     const small = path.join(dir, "small.jpg");
     await writeFile(
       small,
-      await sharp(imagePath)
-        .resize({
-          width: DETECTION_MAX_SIDE,
-          height: DETECTION_MAX_SIDE,
-          fit: "inside",
-        })
-        .jpeg({ quality: 85 })
-        .toBuffer(),
+      await sharp(imagePath).resize({ width: DETECTION_MAX_SIDE, height: DETECTION_MAX_SIDE, fit: "inside" }).jpeg({ quality: 85 }).toBuffer(),
     );
     const box = await detectFaceBbox(small);
     if (!box) return null;
@@ -81,9 +73,7 @@ const VERTICAL_BIAS_RATIO = 0.12;
  * whole image if no face is detected (e.g. a poor-quality capture), so the
  * activation pipeline that calls this can stay non-blocking.
  */
-export async function cropFaceForProfilePhoto(
-  imagePath: string,
-): Promise<Buffer> {
+export async function cropFaceForProfilePhoto(imagePath: string): Promise<Buffer> {
   const bbox = await detectFaceBboxDownscaled(imagePath);
   const source = sharp(imagePath);
   const metadata = await source.metadata();
@@ -136,10 +126,7 @@ function computeSquareCropRegion(
   return { left, top, width: side, height: side };
 }
 
-function centerSquareCropRegion(
-  imageWidth: number,
-  imageHeight: number,
-): CropRegion {
+function centerSquareCropRegion(imageWidth: number, imageHeight: number): CropRegion {
   const side = Math.min(imageWidth, imageHeight);
   const left = Math.round((imageWidth - side) / 2);
   const top = Math.round((imageHeight - side) / 2);

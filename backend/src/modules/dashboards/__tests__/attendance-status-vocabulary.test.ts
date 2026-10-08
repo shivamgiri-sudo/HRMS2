@@ -40,10 +40,7 @@ function sourceOf(rel: string): string {
 describe("attendance status vocabulary", () => {
   it("every declared present status is a real ENUM member", () => {
     for (const status of PRESENT_STATUSES) {
-      expect(
-        ENUM.has(status),
-        `'${status}' is not an attendance_status ENUM member`,
-      ).toBe(true);
+      expect(ENUM.has(status), `'${status}' is not an attendance_status ENUM member`).toBe(true);
     }
   });
 
@@ -78,9 +75,7 @@ describe("attendance status vocabulary", () => {
     const offenders: string[] = [];
     for (const { rel, text } of files) {
       // Find quoted literals compared against attendance_status.
-      for (const match of text.matchAll(
-        /attendance_status[^;]{0,400}?'([a-z_]+)'/g,
-      )) {
+      for (const match of text.matchAll(/attendance_status[^;]{0,400}?'([a-z_]+)'/g)) {
         const status = match[1];
         if (!ENUM.has(status) && !TOLERATED_NON_MEMBERS.has(status)) {
           offenders.push(`${rel}: '${status}'`);
@@ -96,10 +91,7 @@ describe("attendance status vocabulary", () => {
   });
 
   it("does not count lateness via attendance_status", () => {
-    for (const rel of [
-      "../dashboard-metric.service.ts",
-      "../dashboard.routes.ts",
-    ]) {
+    for (const rel of ["../dashboard-metric.service.ts", "../dashboard.routes.ts"]) {
       const text = sourceOf(rel);
       expect(
         /attendance_status\s*=\s*'late'/.test(text),
@@ -116,10 +108,7 @@ describe("attendance status vocabulary", () => {
     // present until the nightly job caught up. Without `record_date < CURDATE()` in BOTH
     // the candidate scan and the busiest-day subquery, that regresses silently — the
     // number stays plausible-looking, so only this assertion catches it.
-    const occurrences =
-      LATEST_COMPLETE_ATTENDANCE_DATE_SQL.match(
-        /record_date\s*<\s*CURDATE\(\)/g,
-      ) ?? [];
+    const occurrences = LATEST_COMPLETE_ATTENDANCE_DATE_SQL.match(/record_date\s*<\s*CURDATE\(\)/g) ?? [];
     expect(
       occurrences.length,
       "LATEST_COMPLETE_ATTENDANCE_DATE_SQL must exclude today in both the candidate " +

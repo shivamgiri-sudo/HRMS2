@@ -1,6 +1,6 @@
-import { Router, type Request, type Response } from "express";
-import { requireAuth } from "../../middleware/authMiddleware.js";
-import { requireRole } from "../../middleware/requireRole.js";
+import { Router, type Request, type Response } from 'express';
+import { requireAuth } from '../../middleware/authMiddleware.js';
+import { requireRole } from '../../middleware/requireRole.js';
 import {
   getDashboardMetrics,
   getSourceMetrics,
@@ -21,31 +21,18 @@ const scopeOf = (req: Request, alias?: string) => resolveCandidateScope((req as 
 export const commandCentreRouter = Router();
 
 function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unexpected error";
+  return error instanceof Error ? error.message : 'Unexpected error';
 }
 
 // Accessible to all management/supervisory roles (view-only analytics)
 commandCentreRouter.use(requireAuth);
-commandCentreRouter.use(
-  requireRole(
-    "super_admin",
-    "admin",
-    "ceo",
-    "hr",
-    "manager",
-    "process_manager",
-    "branch_head",
-    "recruiter",
-    "tl",
-    "team_leader",
-    "qa",
-    "wfm",
-    "trainer",
-    "payroll",
-    "finance",
-    "assistant_manager",
-  ),
-);
+commandCentreRouter.use(requireRole(
+  'super_admin', 'admin', 'ceo',
+  'hr', 'manager', 'process_manager', 'branch_head',
+  'recruiter', 'tl', 'team_leader',
+  'qa', 'wfm', 'trainer', 'payroll', 'finance',
+  'assistant_manager'
+));
 
 // ── 1. Get dashboard metrics ──────────────────────────────────────────────────
 commandCentreRouter.get('/metrics', async (req: Request, res: Response) => {
@@ -53,9 +40,7 @@ commandCentreRouter.get('/metrics', async (req: Request, res: Response) => {
     const metrics = await getDashboardMetrics(await scopeOf(req), await scopeOf(req, 'c'));
     return res.json({ success: true, data: metrics });
   } catch (error: unknown) {
-    return res
-      .status(500)
-      .json({ success: false, message: getErrorMessage(error) });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -65,9 +50,7 @@ commandCentreRouter.get('/sources', async (req: Request, res: Response) => {
     const sources = await getSourceMetrics(await scopeOf(req));
     return res.json({ success: true, data: sources });
   } catch (error: unknown) {
-    return res
-      .status(500)
-      .json({ success: false, message: getErrorMessage(error) });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -77,14 +60,12 @@ commandCentreRouter.get('/branches', async (req: Request, res: Response) => {
     const branches = await getBranchMetrics(await scopeOf(req, 'c'));
     return res.json({ success: true, data: branches });
   } catch (error: unknown) {
-    return res
-      .status(500)
-      .json({ success: false, message: getErrorMessage(error) });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
 // ── 4. Get recruiter performance ──────────────────────────────────────────────
-commandCentreRouter.get("/recruiters", async (req: Request, res: Response) => {
+commandCentreRouter.get('/recruiters', async (req: Request, res: Response) => {
   try {
     const fromDate = req.query.from_date as string | undefined;
     const toDate = req.query.to_date as string | undefined;
@@ -92,22 +73,18 @@ commandCentreRouter.get("/recruiters", async (req: Request, res: Response) => {
     const performance = await getRecruiterPerformance(fromDate, toDate, await scopeOf(req));
     return res.json({ success: true, data: performance });
   } catch (error: unknown) {
-    return res
-      .status(500)
-      .json({ success: false, message: getErrorMessage(error) });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
 // ── 5. Get timeline data ──────────────────────────────────────────────────────
-commandCentreRouter.get("/timeline", async (req: Request, res: Response) => {
+commandCentreRouter.get('/timeline', async (req: Request, res: Response) => {
   try {
     const days = parseInt(req.query.days as string) || 30;
     const timeline = await getTimelineData(days, await scopeOf(req));
     return res.json({ success: true, data: timeline });
   } catch (error: unknown) {
-    return res
-      .status(500)
-      .json({ success: false, message: getErrorMessage(error) });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -117,9 +94,7 @@ commandCentreRouter.get('/stages', async (req: Request, res: Response) => {
     const stages = await getStageDistribution(await scopeOf(req));
     return res.json({ success: true, data: stages });
   } catch (error: unknown) {
-    return res
-      .status(500)
-      .json({ success: false, message: getErrorMessage(error) });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -129,9 +104,7 @@ commandCentreRouter.get('/roles', async (req: Request, res: Response) => {
     const roles = await getRoleMetrics(await scopeOf(req));
     return res.json({ success: true, data: roles });
   } catch (error: unknown) {
-    return res
-      .status(500)
-      .json({ success: false, message: getErrorMessage(error) });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });
 
@@ -141,8 +114,6 @@ commandCentreRouter.get('/experience', async (req: Request, res: Response) => {
     const experience = await getExperienceDistribution(await scopeOf(req));
     return res.json({ success: true, data: experience });
   } catch (error: unknown) {
-    return res
-      .status(500)
-      .json({ success: false, message: getErrorMessage(error) });
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 });

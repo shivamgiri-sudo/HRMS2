@@ -43,14 +43,7 @@ export interface ImpactIndex {
 const SOURCE_ROOTS = ["backend/src", "src"];
 const SOURCE_EXT = new Set([".ts", ".tsx"]);
 const SKIP_DIRS = new Set([
-  "node_modules",
-  "dist",
-  "build",
-  ".git",
-  "coverage",
-  "__snapshots__",
-  ".next",
-  ".turbo",
+  "node_modules", "dist", "build", ".git", "coverage", "__snapshots__", ".next", ".turbo",
 ]);
 
 // Rebuilt when older than this. The repository changes under a running dev server, and a
@@ -87,12 +80,7 @@ const API_LITERAL_RE = /["'`](\/api\/[A-Za-z0-9_\-/:.]*)["'`]/g;
  * Handles: "@/x" (frontend alias -> src/x), relative paths, the ".js" -> ".ts" rewrite the
  * backend's ESM+TS setup requires, extensionless specifiers, and directory index files.
  */
-function resolveSpecifier(
-  fromFile: string,
-  spec: string,
-  root: string,
-  known: Set<string>,
-): string | null {
+function resolveSpecifier(fromFile: string, spec: string, root: string, known: Set<string>): string | null {
   let base: string;
   if (spec.startsWith("@/")) {
     base = join(root, "src", spec.slice(2));
@@ -125,9 +113,7 @@ function parseRoutes(root: string, known: Set<string>): Map<string, string> {
 
   let files: string[] = [];
   try {
-    files = readdirSync(routesDir).filter(
-      (f) => f.endsWith(".tsx") || f.endsWith(".ts"),
-    );
+    files = readdirSync(routesDir).filter((f) => f.endsWith(".tsx") || f.endsWith(".ts"));
   } catch {
     return map;
   }
@@ -184,10 +170,7 @@ function parseRoutes(root: string, known: Set<string>): Map<string, string> {
         .map((x) => x[1])
         .find((name) => componentByName.has(name));
       if (comp) {
-        map.set(
-          routePath.startsWith("/") ? routePath : `/${routePath}`,
-          componentByName.get(comp)!,
-        );
+        map.set(routePath.startsWith("/") ? routePath : `/${routePath}`, componentByName.get(comp)!);
       }
     }
   }
@@ -195,8 +178,7 @@ function parseRoutes(root: string, known: Set<string>): Map<string, string> {
 }
 
 export function buildImpactIndex(force = false): ImpactIndex {
-  if (!force && cached && Date.now() - cached.builtAt < MAX_AGE_MS)
-    return cached;
+  if (!force && cached && Date.now() - cached.builtAt < MAX_AGE_MS) return cached;
 
   const root = repoRoot();
   const abs: string[] = [];
@@ -265,12 +247,8 @@ export function directDependencies(file: string, index: ImpactIndex): string[] {
   return [...(index.forward.get(normalisePath(file)) ?? [])];
 }
 
-export function componentForRoute(
-  route: string,
-  index: ImpactIndex,
-): string | null {
-  if (index.routeToComponent.has(route))
-    return index.routeToComponent.get(route)!;
+export function componentForRoute(route: string, index: ImpactIndex): string | null {
+  if (index.routeToComponent.has(route)) return index.routeToComponent.get(route)!;
   // Try the parameterised form: /employee-stat-card/123 -> /employee-stat-card/:id
   for (const [pattern, file] of index.routeToComponent) {
     if (!pattern.includes(":")) continue;
@@ -281,10 +259,7 @@ export function componentForRoute(
 }
 
 /** Backend router files whose path plausibly serves one of the given /api literals. */
-export function backendFilesForApiPaths(
-  apiPaths: string[],
-  index: ImpactIndex,
-): string[] {
+export function backendFilesForApiPaths(apiPaths: string[], index: ImpactIndex): string[] {
   const out = new Set<string>();
   for (const api of apiPaths) {
     const segment = api.replace(/^\/api\//, "").split("/")[0];

@@ -45,9 +45,7 @@ export interface WorkItemInput {
 
 export type WorkItemOutcome = "created" | "refreshed";
 
-export async function upsertOpenWorkItem(
-  input: WorkItemInput,
-): Promise<WorkItemOutcome> {
+export async function upsertOpenWorkItem(input: WorkItemInput): Promise<WorkItemOutcome> {
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM work_item
       WHERE item_type = ? AND entity_type = ? AND entity_id = ?
@@ -59,10 +57,7 @@ export async function upsertOpenWorkItem(
   if (existing[0]) {
     const id = String((existing[0] as { id: unknown }).id);
     if (input.description == null) {
-      await db.execute<ResultSetHeader>(
-        "UPDATE work_item SET updated_at = NOW() WHERE id = ?",
-        [id],
-      );
+      await db.execute<ResultSetHeader>("UPDATE work_item SET updated_at = NOW() WHERE id = ?", [id]);
     } else {
       await db.execute<ResultSetHeader>(
         "UPDATE work_item SET description = ?, updated_at = NOW() WHERE id = ?",

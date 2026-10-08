@@ -17,32 +17,26 @@ async function main() {
          HAVING COUNT(*) > 1
        ) t
       GROUP BY check_type
-      ORDER BY total_dupe_rows DESC`,
+      ORDER BY total_dupe_rows DESC`
   );
 
   const rows = groupCounts as any[];
   if (!rows.length) {
-    console.log(
-      "No duplicate (candidate_id, check_type) groups found. Nothing to clean up.",
-    );
+    console.log("No duplicate (candidate_id, check_type) groups found. Nothing to clean up.");
     process.exit(0);
   }
 
   console.log("=== By check_type ===");
-  console.log(
-    "check_type            candidates_with_dupes   total_rows_across_those_groups   extra_rows_to_remove",
-  );
+  console.log("check_type            candidates_with_dupes   total_rows_across_those_groups   extra_rows_to_remove");
   let totalExtra = 0;
   for (const r of rows) {
     const extra = Number(r.total_dupe_rows) - Number(r.candidates_with_dupes);
     totalExtra += extra;
     console.log(
-      `${String(r.check_type).padEnd(22)} ${String(r.candidates_with_dupes).padEnd(23)} ${String(r.total_dupe_rows).padEnd(32)} ${extra}`,
+      `${String(r.check_type).padEnd(22)} ${String(r.candidates_with_dupes).padEnd(23)} ${String(r.total_dupe_rows).padEnd(32)} ${extra}`
     );
   }
-  console.log(
-    `\nTotal extra rows a cleanup would remove (keeping the most-recently-updated row per group): ${totalExtra}`,
-  );
+  console.log(`\nTotal extra rows a cleanup would remove (keeping the most-recently-updated row per group): ${totalExtra}`);
 
   console.log("\n=== By candidate ===");
   const [byCandidate] = await db.execute(
@@ -55,7 +49,7 @@ async function main() {
          HAVING COUNT(*) > 1
        ) t
       GROUP BY candidate_id
-      ORDER BY extra_rows DESC`,
+      ORDER BY extra_rows DESC`
   );
   const candRows = byCandidate as any[];
   const ids = candRows.map((r) => r.candidate_id);
@@ -63,7 +57,7 @@ async function main() {
   const [names] = ids.length
     ? await db.execute(
         `SELECT id, candidate_code, full_name FROM ats_candidate WHERE id IN (${placeholders})`,
-        ids,
+        ids
       )
     : [[]];
   const nameById = new Map((names as any[]).map((n) => [n.id, n]));
@@ -73,7 +67,7 @@ async function main() {
     const n = nameById.get(r.candidate_id);
     console.log(
       `  ${r.candidate_id}  ${n?.candidate_code ?? "?"}  ${n?.full_name ?? "?"}  ` +
-        `check_types=[${r.types}]  extra_rows=${r.extra_rows}`,
+      `check_types=[${r.types}]  extra_rows=${r.extra_rows}`
     );
   }
 

@@ -23,9 +23,7 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 
 const { getAgingReport, getPayment } = vi.hoisted(() => ({
-  getAgingReport: vi.fn(async () => ({
-    rows: [{ bucket: "0-30", amount: 1000 }],
-  })),
+  getAgingReport: vi.fn(async () => ({ rows: [{ bucket: "0-30", amount: 1000 }] })),
   getPayment: vi.fn(async () => null),
 }));
 vi.mock("../vendor-payment.service.js", () => ({
@@ -40,22 +38,12 @@ vi.mock("../vendor-payment-ledger.service.js", () => ({
   vendorPaymentLedgerService: { listTransactions: vi.fn(async () => []) },
 }));
 
-const actor = {
-  id: "u-finance-head",
-  role: "finance_head",
-  roles: ["finance_head"],
-};
+const actor = { id: "u-finance-head", role: "finance_head", roles: ["finance_head"] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../../middleware/authMiddleware.js")
-    >();
+  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.authUser = actor;
-      next();
-    },
+    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
   };
 });
 
@@ -64,11 +52,7 @@ import { vendorPaymentRouter } from "../vendor-payment.routes.js";
 function app() {
   const a = express();
   a.use(express.json());
-  a.use((req: any, _res, next) => {
-    req.authUser = actor;
-    req.userRoles = actor.roles;
-    next();
-  });
+  a.use((req: any, _res, next) => { req.authUser = actor; req.userRoles = actor.roles; next(); });
   a.use("/api/finance", vendorPaymentRouter);
   return a;
 }
@@ -92,14 +76,9 @@ describe("GET /vendor-payments/aging", () => {
   });
 
   it("still resolves a real vendor-payment id through the :id handler", async () => {
-    getPayment.mockResolvedValueOnce({
-      id: "real-id-123",
-      vendor_name: "Acme",
-    });
+    getPayment.mockResolvedValueOnce({ id: "real-id-123", vendor_name: "Acme" });
 
-    const res = await request(app()).get(
-      "/api/finance/vendor-payments/real-id-123",
-    );
+    const res = await request(app()).get("/api/finance/vendor-payments/real-id-123");
 
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual({ id: "real-id-123", vendor_name: "Acme" });

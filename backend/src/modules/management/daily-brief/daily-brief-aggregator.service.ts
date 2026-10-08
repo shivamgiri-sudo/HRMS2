@@ -57,39 +57,20 @@ import {
   buildKpiPerformanceModule,
   type KpiPerformanceModuleResult,
 } from "./daily-brief-kpi.module.js";
-import {
-  buildQualityModule,
-  type QualityModuleResult,
-} from "./daily-brief-quality.module.js";
+import { buildQualityModule, type QualityModuleResult } from "./daily-brief-quality.module.js";
 import {
   buildPositiveSignals,
   buildOperationalPositiveSignals,
 } from "./daily-brief-positive-signals.module.js";
-import {
-  buildRosterModule,
-  type RosterModuleResult,
-  type RosterScopeIds,
-} from "./daily-brief-roster.module.js";
-import {
-  buildPeopleRiskModule,
-  type PeopleRiskModuleResult,
-} from "./daily-brief-people-risk.module.js";
-import {
-  buildHelpdeskModule,
-  type HelpdeskModuleResult,
-} from "./daily-brief-helpdesk.module.js";
+import { buildRosterModule, type RosterModuleResult, type RosterScopeIds } from "./daily-brief-roster.module.js";
+import { buildPeopleRiskModule, type PeopleRiskModuleResult } from "./daily-brief-people-risk.module.js";
+import { buildHelpdeskModule, type HelpdeskModuleResult } from "./daily-brief-helpdesk.module.js";
 import {
   buildRecruitmentModule,
   type RecruitmentModuleResult,
 } from "./daily-brief-recruitment.module.js";
-import {
-  buildExitModule,
-  type ExitModuleResult,
-} from "./daily-brief-exit.module.js";
-import {
-  buildTrainingModule,
-  type TrainingModuleResult,
-} from "./daily-brief-training.module.js";
+import { buildExitModule, type ExitModuleResult } from "./daily-brief-exit.module.js";
+import { buildTrainingModule, type TrainingModuleResult } from "./daily-brief-training.module.js";
 import {
   buildPayrollOperationalHint,
   buildPayrollReadinessModule,
@@ -132,12 +113,7 @@ async function buildAttendanceSummary(
   if (teamEmployeeIds.length === 0) {
     return {
       summary: emptyAttendance(businessDate),
-      health: {
-        module: "attendance",
-        state: "NOT_APPLICABLE",
-        detail: "No team members in scope",
-        asOfDate: businessDate,
-      },
+      health: { module: "attendance", state: "NOT_APPLICABLE", detail: "No team members in scope", asOfDate: businessDate },
     };
   }
   const placeholders = teamEmployeeIds.map(() => "?").join(",");
@@ -167,10 +143,7 @@ async function buildAttendanceSummary(
       missingPunch: numberValue(row.missing_punch),
       lateCount: numberValue(row.late_count),
       expectedToWork,
-      attendancePct:
-        expectedToWork > 0
-          ? Number(((attendedDays / expectedToWork) * 100).toFixed(2))
-          : null,
+      attendancePct: expectedToWork > 0 ? Number(((attendedDays / expectedToWork) * 100).toFixed(2)) : null,
     };
     const total = numberValue(row.total);
     return {
@@ -201,12 +174,7 @@ async function buildHygieneIssues(
   if (teamEmployeeIds.length === 0) {
     return {
       issues: [],
-      health: {
-        module: "hygiene",
-        state: "NOT_APPLICABLE",
-        detail: "No team members in scope",
-        asOfDate: businessDate,
-      },
+      health: { module: "hygiene", state: "NOT_APPLICABLE", detail: "No team members in scope", asOfDate: businessDate },
     };
   }
   const placeholders = teamEmployeeIds.map(() => "?").join(",");
@@ -230,11 +198,7 @@ async function buildHygieneIssues(
     }));
     return {
       issues,
-      health: {
-        module: "hygiene",
-        state: issues.length > 0 ? "AVAILABLE" : "NO_DATA",
-        asOfDate: businessDate,
-      },
+      health: { module: "hygiene", state: issues.length > 0 ? "AVAILABLE" : "NO_DATA", asOfDate: businessDate },
     };
   } catch (err) {
     return {
@@ -266,11 +230,7 @@ async function buildPriorityActions(
   if (teamEmployeeIds.length === 0) {
     return {
       actions: [],
-      health: {
-        module: "actions",
-        state: "NOT_APPLICABLE",
-        detail: "No team members in scope",
-      },
+      health: { module: "actions", state: "NOT_APPLICABLE", detail: "No team members in scope" },
     };
   }
   const placeholders = teamEmployeeIds.map(() => "?").join(",");
@@ -297,10 +257,7 @@ async function buildPriorityActions(
     }));
     return {
       actions,
-      health: {
-        module: "actions",
-        state: actions.length > 0 ? "AVAILABLE" : "NO_DATA",
-      },
+      health: { module: "actions", state: actions.length > 0 ? "AVAILABLE" : "NO_DATA" },
     };
   } catch (err) {
     return {
@@ -325,10 +282,7 @@ async function buildPayrollReadinessSignal(
 ): Promise<{ signal: BriefSignal | null; health: SourceHealth }> {
   const payrollEligible = await hasRole(userId, ...(PAYROLL_ROLES as string[]));
   if (!payrollEligible) {
-    return {
-      signal: null,
-      health: { module: "payroll_readiness", state: "NOT_APPLICABLE" },
-    };
+    return { signal: null, health: { module: "payroll_readiness", state: "NOT_APPLICABLE" } };
   }
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -339,16 +293,8 @@ async function buildPayrollReadinessSignal(
     );
     const openCount = numberValue(rows[0]?.open_count);
     return {
-      signal: {
-        key: "payroll_readiness",
-        label: "Open payroll readiness items",
-        value: openCount,
-        unit: "count",
-      },
-      health: {
-        module: "payroll_readiness",
-        state: openCount > 0 ? "AVAILABLE" : "NO_DATA",
-      },
+      signal: { key: "payroll_readiness", label: "Open payroll readiness items", value: openCount, unit: "count" },
+      health: { module: "payroll_readiness", state: openCount > 0 ? "AVAILABLE" : "NO_DATA" },
     };
   } catch (err) {
     return {
@@ -393,18 +339,8 @@ function emptyKpiResult(): KpiPerformanceModuleResult {
   return {
     employeeSignals: [],
     performanceAlerts: { unacknowledgedCount: 0, items: [] },
-    coaching: {
-      dueOrOverdueCount: 0,
-      completedD1Count: 0,
-      dueOrOverdue: [],
-      completedD1: [],
-    },
-    trainingNeeds: {
-      openedD1Count: 0,
-      resolvedD1Count: 0,
-      openedD1: [],
-      resolvedD1: [],
-    },
+    coaching: { dueOrOverdueCount: 0, completedD1Count: 0, dueOrOverdue: [], completedD1: [] },
+    trainingNeeds: { openedD1Count: 0, resolvedD1Count: 0, openedD1: [], resolvedD1: [] },
     sourceHealth: [],
   };
 }
@@ -438,9 +374,7 @@ interface RosterPayrollScope {
  * flagged in the integration report. A failure here degrades to an empty scope
  * (both modules already treat "no scope" as their own NOT_APPLICABLE, never a crash).
  */
-async function resolveRosterPayrollScope(
-  recipient: RecipientInfo,
-): Promise<RosterPayrollScope> {
+async function resolveRosterPayrollScope(recipient: RecipientInfo): Promise<RosterPayrollScope> {
   try {
     const ids = [recipient.employeeId, ...recipient.teamEmployeeIds];
     if (ids.length === 0) return { branchIds: [], processIds: [] };
@@ -454,10 +388,7 @@ async function resolveRosterPayrollScope(
       if (r.branch_id) branchIds.add(String(r.branch_id));
       if (r.process_id) processIds.add(String(r.process_id));
     }
-    return {
-      branchIds: Array.from(branchIds),
-      processIds: Array.from(processIds),
-    };
+    return { branchIds: Array.from(branchIds), processIds: Array.from(processIds) };
   } catch {
     return { branchIds: [], processIds: [] };
   }
@@ -503,21 +434,12 @@ function buildAttentionSignals(params: {
         employeeId: alert.employeeId,
         source: "kpi_performance",
         category: alert.alertType,
-        priority:
-          alert.severity === "critical" || alert.severity === "high"
-            ? alert.severity
-            : "medium",
-        kind:
-          alert.severity === "critical" || alert.severity === "high"
-            ? "business_risk"
-            : "anomaly",
+        priority: alert.severity === "critical" || alert.severity === "high" ? alert.severity : "medium",
+        kind: alert.severity === "critical" || alert.severity === "high" ? "business_risk" : "anomaly",
       });
     }
     for (const s of params.kpi.employeeSignals) {
-      if (
-        s.observation === "below_min_threshold" ||
-        s.observation === "below_target"
-      ) {
+      if (s.observation === "below_min_threshold" || s.observation === "below_target") {
         out.push({
           key: `kpi_${s.employeeId}_${s.metricId}`,
           label: `${s.metricName}: ${s.note}`,
@@ -554,12 +476,7 @@ function buildAttentionSignals(params: {
       unit: "count",
       source: "roster_forecast",
       category: "roster_shortage",
-      priority:
-        params.roster.worstSeverity === "critical"
-          ? "critical"
-          : params.roster.worstSeverity === "high"
-            ? "high"
-            : "medium",
+      priority: params.roster.worstSeverity === "critical" ? "critical" : params.roster.worstSeverity === "high" ? "high" : "medium",
       kind: "business_risk",
     });
   }
@@ -591,10 +508,7 @@ function buildAttentionSignals(params: {
     });
   }
 
-  if (
-    params.recruitment &&
-    numberValue(params.recruitment.candidatesStuckBeyondThreshold?.value) > 0
-  ) {
+  if (params.recruitment && numberValue(params.recruitment.candidatesStuckBeyondThreshold?.value) > 0) {
     out.push({
       key: "recruitment_stuck",
       label: params.recruitment.candidatesStuckBeyondThreshold!.label,
@@ -608,9 +522,7 @@ function buildAttentionSignals(params: {
   }
 
   if (params.exit) {
-    const managerPending = numberValue(
-      params.exit.managerDiscussionsPending?.value,
-    );
+    const managerPending = numberValue(params.exit.managerDiscussionsPending?.value);
     if (managerPending > 0) {
       out.push({
         key: "exit_manager_discussion",
@@ -626,10 +538,7 @@ function buildAttentionSignals(params: {
     }
   }
 
-  if (
-    params.training &&
-    numberValue(params.training.overdueMandatoryTraining?.value) > 0
-  ) {
+  if (params.training && numberValue(params.training.overdueMandatoryTraining?.value) > 0) {
     out.push({
       key: "training_overdue",
       label: params.training.overdueMandatoryTraining!.label,
@@ -642,10 +551,7 @@ function buildAttentionSignals(params: {
     });
   }
 
-  if (
-    params.payrollPendingApprovalsCount &&
-    params.payrollPendingApprovalsCount > 0
-  ) {
+  if (params.payrollPendingApprovalsCount && params.payrollPendingApprovalsCount > 0) {
     out.push({
       key: "payroll_pending_approvals",
       label: "Payroll run(s) pending finance/CEO sign-off",
@@ -667,26 +573,21 @@ export async function buildManagerDailyBrief(
   businessDate: string,
   generatedAtIST: string,
 ): Promise<ManagerDailyBrief> {
-  const roles = recipient.allRoles?.length
-    ? recipient.allRoles
-    : [recipient.role];
+  const roles = recipient.allRoles?.length ? recipient.allRoles : [recipient.role];
   const config: RoleModuleConfig = resolveModulesForRoles(roles);
   const gatingRole = canonicalRoleForModuleGating(recipient.role);
 
-  const [attendanceResult, hygieneResult, actionsResult, payrollSignalResult] =
-    await Promise.all([
-      buildAttendanceSummary(recipient.teamEmployeeIds, businessDate),
-      buildHygieneIssues(recipient.teamEmployeeIds, businessDate),
-      buildPriorityActions(recipient.teamEmployeeIds),
-      recipient.userId
-        ? buildPayrollReadinessSignal(recipient.userId)
-        : Promise.resolve<{ signal: BriefSignal | null; health: SourceHealth }>(
-            {
-              signal: null,
-              health: { module: "payroll_readiness", state: "NOT_APPLICABLE" },
-            },
-          ),
-    ]);
+  const [attendanceResult, hygieneResult, actionsResult, payrollSignalResult] = await Promise.all([
+    buildAttendanceSummary(recipient.teamEmployeeIds, businessDate),
+    buildHygieneIssues(recipient.teamEmployeeIds, businessDate),
+    buildPriorityActions(recipient.teamEmployeeIds),
+    recipient.userId
+      ? buildPayrollReadinessSignal(recipient.userId)
+      : Promise.resolve<{ signal: BriefSignal | null; health: SourceHealth }>({
+          signal: null,
+          health: { module: "payroll_readiness", state: "NOT_APPLICABLE" },
+        }),
+  ]);
 
   // ---------------------------------------------------------------------------
   // Security gate: hasRole(...PAYROLL_ROLES) is checked HERE, independent of the
@@ -705,56 +606,28 @@ export async function buildManagerDailyBrief(
 
   const moduleCalls = await Promise.allSettled([
     config.kpi
-      ? safeModule("kpi_performance", () =>
-          buildKpiPerformanceModule(recipient.teamEmployeeIds, businessDate),
-        )
+      ? safeModule("kpi_performance", () => buildKpiPerformanceModule(recipient.teamEmployeeIds, businessDate))
       : Promise.resolve({ value: null, crashHealth: null }),
     config.quality
-      ? safeModule("quality", () =>
-          buildQualityModule(
-            recipient.teamEmployeeIds,
-            businessDate,
-            config.quality!,
-          ),
-        )
+      ? safeModule("quality", () => buildQualityModule(recipient.teamEmployeeIds, businessDate, config.quality!))
       : Promise.resolve({ value: null, crashHealth: null }),
     config.roster
-      ? safeModule("roster", () =>
-          buildRosterModule(scopeIds as RosterScopeIds, businessDate),
-        )
+      ? safeModule("roster", () => buildRosterModule(scopeIds as RosterScopeIds, businessDate))
       : Promise.resolve({ value: null, crashHealth: null }),
     config.peopleRisk
-      ? safeModule("people_risk", () =>
-          buildPeopleRiskModule(
-            recipient.teamEmployeeIds,
-            gatingRole,
-            businessDate,
-          ),
-        )
+      ? safeModule("people_risk", () => buildPeopleRiskModule(recipient.teamEmployeeIds, gatingRole, businessDate))
       : Promise.resolve({ value: null, crashHealth: null }),
     config.helpdesk
-      ? safeModule("helpdesk", () =>
-          buildHelpdeskModule(
-            recipient.teamEmployeeIds,
-            businessDate,
-            config.helpdesk!,
-          ),
-        )
+      ? safeModule("helpdesk", () => buildHelpdeskModule(recipient.teamEmployeeIds, businessDate, config.helpdesk!))
       : Promise.resolve({ value: null, crashHealth: null }),
     config.recruitment
       ? safeModule("recruitment", () =>
           buildRecruitmentModule(
             config.recruitment === "hr"
               ? { hrScope: true }
-              : {
-                  teamEmployeeIds: [
-                    recipient.employeeId,
-                    ...recipient.teamEmployeeIds,
-                  ],
-                },
+              : { teamEmployeeIds: [recipient.employeeId, ...recipient.teamEmployeeIds] },
             businessDate,
-          ),
-        )
+          ))
       : Promise.resolve({ value: null, crashHealth: null }),
     config.exit
       ? safeModule("exit", () =>
@@ -764,23 +637,18 @@ export async function buildManagerDailyBrief(
               : { teamEmployeeIds: recipient.teamEmployeeIds },
             gatingRole,
             businessDate,
-          ),
-        )
+          ))
       : Promise.resolve({ value: null, crashHealth: null }),
     config.training
-      ? safeModule("training_progress", () =>
-          buildTrainingModule(recipient.teamEmployeeIds, businessDate),
-        )
+      ? safeModule("training_progress", () => buildTrainingModule(recipient.teamEmployeeIds, businessDate))
       : Promise.resolve({ value: null, crashHealth: null }),
     payrollEntitled
       ? safeModule("payroll_readiness_detail", () =>
-          buildPayrollReadinessModule(recipient.role, scopeIds, businessDate),
-        )
+          buildPayrollReadinessModule(recipient.role, scopeIds, businessDate))
       : Promise.resolve({ value: null, crashHealth: null }),
     !payrollEntitled
       ? safeModule("payroll_operational_hint", () =>
-          buildPayrollOperationalHint(recipient.teamEmployeeIds, businessDate),
-        )
+          buildPayrollOperationalHint(recipient.teamEmployeeIds, businessDate))
       : Promise.resolve({ value: null, crashHealth: null }),
   ]);
 
@@ -788,16 +656,9 @@ export async function buildManagerDailyBrief(
   // here is a "fulfilled" settlement carrying either a value or a crashHealth — this
   // unwraps them, treating an unexpected top-level rejection (should not happen given
   // safeModule, but defended anyway) the same way a module-level ERROR would be.
-  function unwrap<T>(
-    idx: number,
-    moduleName: string,
-  ): { value: T | null; crashHealth: SourceHealth | null } {
+  function unwrap<T>(idx: number, moduleName: string): { value: T | null; crashHealth: SourceHealth | null } {
     const settled = moduleCalls[idx];
-    if (settled.status === "fulfilled")
-      return settled.value as {
-        value: T | null;
-        crashHealth: SourceHealth | null;
-      };
+    if (settled.status === "fulfilled") return settled.value as { value: T | null; crashHealth: SourceHealth | null };
     return {
       value: null,
       crashHealth: {
@@ -816,10 +677,7 @@ export async function buildManagerDailyBrief(
   const recruitmentOut = unwrap<RecruitmentModuleResult>(5, "recruitment");
   const exitOut = unwrap<ExitModuleResult>(6, "exit");
   const trainingOut = unwrap<TrainingModuleResult>(7, "training_progress");
-  const payrollDetailOut = unwrap<PayrollReadinessModuleResult>(
-    8,
-    "payroll_readiness_detail",
-  );
+  const payrollDetailOut = unwrap<PayrollReadinessModuleResult>(8, "payroll_readiness_detail");
   const payrollHintOut = unwrap<string | null>(9, "payroll_operational_hint");
 
   // ---------------------------------------------------------------------------
@@ -851,18 +709,12 @@ export async function buildManagerDailyBrief(
     recruitment: recruitmentOut.value,
     exit: exitOut.value,
     training: trainingOut.value,
-    payrollPendingApprovalsCount:
-      payrollDetailOut.value?.pendingApprovalsCount ?? null,
+    payrollPendingApprovalsCount: payrollDetailOut.value?.pendingApprovalsCount ?? null,
   });
-  const attention = rankSignals(dedupeSignals(attentionCandidates)).slice(
-    0,
-    BRIEF_CAP_ATTENTION_MAX,
-  );
+  const attention = rankSignals(dedupeSignals(attentionCandidates)).slice(0, BRIEF_CAP_ATTENTION_MAX);
 
   const performanceExceptionsTop5 = capList(
-    attentionCandidates.filter(
-      (s) => s.source === "kpi_performance" || s.source === "quality",
-    ),
+    attentionCandidates.filter((s) => s.source === "kpi_performance" || s.source === "quality"),
     BRIEF_CAP_PERFORMANCE_EXCEPTIONS_TOP,
   );
 
@@ -871,33 +723,15 @@ export async function buildManagerDailyBrief(
     hygieneResult.health,
     actionsResult.health,
     payrollSignalResult.health,
-    ...(kpiOut.value?.sourceHealth ??
-      (kpiOut.crashHealth ? [kpiOut.crashHealth] : [])),
-    ...(qualityOut.value?.sourceHealth ??
-      (qualityOut.crashHealth ? [qualityOut.crashHealth] : [])),
-    ...(rosterOut.value?.sourceHealth ??
-      (rosterOut.crashHealth ? [rosterOut.crashHealth] : [])),
-    ...(peopleRiskOut.value
-      ? [peopleRiskOut.value.sourceHealth]
-      : peopleRiskOut.crashHealth
-        ? [peopleRiskOut.crashHealth]
-        : []),
-    ...(helpdeskOut.value
-      ? [helpdeskOut.value.sourceHealth]
-      : helpdeskOut.crashHealth
-        ? [helpdeskOut.crashHealth]
-        : []),
-    ...(recruitmentOut.value?.sourceHealth ??
-      (recruitmentOut.crashHealth ? [recruitmentOut.crashHealth] : [])),
-    ...(exitOut.value?.sourceHealth ??
-      (exitOut.crashHealth ? [exitOut.crashHealth] : [])),
-    ...(trainingOut.value?.sourceHealth ??
-      (trainingOut.crashHealth ? [trainingOut.crashHealth] : [])),
-    ...(payrollDetailOut.value
-      ? [payrollDetailOut.value.sourceHealth]
-      : payrollDetailOut.crashHealth
-        ? [payrollDetailOut.crashHealth]
-        : []),
+    ...(kpiOut.value?.sourceHealth ?? (kpiOut.crashHealth ? [kpiOut.crashHealth] : [])),
+    ...(qualityOut.value?.sourceHealth ?? (qualityOut.crashHealth ? [qualityOut.crashHealth] : [])),
+    ...(rosterOut.value?.sourceHealth ?? (rosterOut.crashHealth ? [rosterOut.crashHealth] : [])),
+    ...(peopleRiskOut.value ? [peopleRiskOut.value.sourceHealth] : peopleRiskOut.crashHealth ? [peopleRiskOut.crashHealth] : []),
+    ...(helpdeskOut.value ? [helpdeskOut.value.sourceHealth] : helpdeskOut.crashHealth ? [helpdeskOut.crashHealth] : []),
+    ...(recruitmentOut.value?.sourceHealth ?? (recruitmentOut.crashHealth ? [recruitmentOut.crashHealth] : [])),
+    ...(exitOut.value?.sourceHealth ?? (exitOut.crashHealth ? [exitOut.crashHealth] : [])),
+    ...(trainingOut.value?.sourceHealth ?? (trainingOut.crashHealth ? [trainingOut.crashHealth] : [])),
+    ...(payrollDetailOut.value ? [payrollDetailOut.value.sourceHealth] : payrollDetailOut.crashHealth ? [payrollDetailOut.crashHealth] : []),
     ...(payrollHintOut.crashHealth ? [payrollHintOut.crashHealth] : []),
   ];
 
@@ -934,8 +768,7 @@ export async function buildManagerDailyBrief(
 }
 
 // Exported for the exclusion-list unit test that pins this module to the shared vocabulary.
-export const _EXPECTED_TO_WORK_EXCLUSIONS_FOR_TEST =
-  EXPECTED_TO_WORK_EXCLUSIONS;
+export const _EXPECTED_TO_WORK_EXCLUSIONS_FOR_TEST = EXPECTED_TO_WORK_EXCLUSIONS;
 
 // ---------------------------------------------------------------------------
 // Executive rollup path (spec §29) — Gap 2 of this integration pass.
@@ -994,18 +827,14 @@ export async function buildExecutiveDailyBrief(
 
   const [rollup, payrollEntitled] = await Promise.all([
     buildExecutiveRollupModule(scope, businessDate),
-    recipient.userId
-      ? hasRole(recipient.userId, ...(PAYROLL_ROLES as string[]))
-      : Promise.resolve(false),
+    recipient.userId ? hasRole(recipient.userId, ...(PAYROLL_ROLES as string[])) : Promise.resolve(false),
   ]);
 
   let payrollReadinessDetail: PayrollReadinessModuleResult | undefined;
   const sourceHealth: SourceHealth[] = [...rollup.sourceHealth];
   if (payrollEntitled) {
-    const { value, crashHealth } = await safeModule(
-      "payroll_readiness_detail",
-      () => buildPayrollReadinessModule(recipient.role, scope, businessDate),
-    );
+    const { value, crashHealth } = await safeModule("payroll_readiness_detail", () =>
+      buildPayrollReadinessModule(recipient.role, scope, businessDate));
     if (value) {
       payrollReadinessDetail = value;
       sourceHealth.push(value.sourceHealth);

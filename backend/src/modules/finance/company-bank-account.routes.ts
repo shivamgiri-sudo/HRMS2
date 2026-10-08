@@ -1,16 +1,9 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  requireAuth,
-  requireWriteAccess,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import {
-  companyBankAccountService,
-  CompanyBankAccountError,
-} from "./company-bank-account.service.js";
+import { companyBankAccountService, CompanyBankAccountError } from "./company-bank-account.service.js";
 import { bankLedgerService } from "./bank-ledger.service.js";
 import { tallyExportService } from "./tally-export.service.js";
 import { assertBankAccountInScope, assertBranchInScope, callerBranchScope } from "./finance-branch-guard.js";
@@ -20,11 +13,7 @@ import { assertBankAccountInScope, assertBranchInScope, callerBranchScope } from
  * imprest.routes.ts / gst-export.routes.ts convention of never sharing bare /api/finance with
  * grnRouter's ":id"-shaped routes.
  */
-export const BANK_ACCOUNT_WRITE_ROLES = [
-  "finance_head",
-  "accounts_head",
-  "super_admin",
-] as const;
+export const BANK_ACCOUNT_WRITE_ROLES = ["finance_head", "accounts_head", "super_admin"] as const;
 export const BANK_ACCOUNT_READ_ROLES = [
   ...BANK_ACCOUNT_WRITE_ROLES,
   "ceo",
@@ -43,15 +32,11 @@ const h =
 function actor(req: AuthenticatedRequest) {
   const id = req.authUser?.id;
   if (!id) throw new Error("Authenticated user is required");
-  return {
-    id,
-    role: String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown"),
-  };
+  return { id, role: String(req.authUser?.role ?? req.userRoles?.[0] ?? "unknown") };
 }
 
 const fail = (res: any, error: unknown, fallback: string) => {
-  const statusCode =
-    error instanceof CompanyBankAccountError ? error.statusCode : 400;
+  const statusCode = error instanceof CompanyBankAccountError ? error.statusCode : 400;
   res.status(statusCode).json({
     success: false,
     error: error instanceof Error ? error.message : fallback,
@@ -135,10 +120,7 @@ companyBankAccountRouter.get(
       to: req.query.to ? String(req.query.to) : undefined,
     });
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="bank-ledger-${req.params.id}.csv"`,
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="bank-ledger-${req.params.id}.csv"`);
     res.send(csv);
   }),
 );
@@ -175,10 +157,7 @@ companyBankAccountRouter.post(
   requireRole(...BANK_ACCOUNT_WRITE_ROLES),
   h(async (req, res) => {
     try {
-      const data = await companyBankAccountService.create(
-        req.body,
-        actor(req).id,
-      );
+      const data = await companyBankAccountService.create(req.body, actor(req).id);
       res.status(201).json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to create the bank account");
@@ -192,11 +171,7 @@ companyBankAccountRouter.put(
   requireRole(...BANK_ACCOUNT_WRITE_ROLES),
   h(async (req, res) => {
     try {
-      const data = await companyBankAccountService.update(
-        req.params.id,
-        req.body,
-        actor(req).id,
-      );
+      const data = await companyBankAccountService.update(req.params.id, req.body, actor(req).id);
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to update the bank account");
@@ -229,11 +204,7 @@ companyBankAccountRouter.post(
   requireRole(...BANK_ACCOUNT_WRITE_ROLES),
   h(async (req, res) => {
     try {
-      const data = await companyBankAccountService.setActiveStatus(
-        req.params.id,
-        true,
-        actor(req).id,
-      );
+      const data = await companyBankAccountService.setActiveStatus(req.params.id, true, actor(req).id);
       res.json({ success: true, data });
     } catch (error) {
       fail(res, error, "Unable to reactivate the bank account");

@@ -14,12 +14,7 @@ import {
   isGreen,
 } from "../src/modules/payroll/payroll-readiness-categories.service.js";
 
-const SYNTHETIC_RUN_CREATORS = [
-  "test-auto-gen",
-  "codex-e2e",
-  "smoke-test",
-  "demo-seed",
-];
+const SYNTHETIC_RUN_CREATORS = ["test-auto-gen", "codex-e2e", "smoke-test", "demo-seed"];
 
 async function activeMonths(): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -38,22 +33,16 @@ async function runIdFor(month: string): Promise<string | null> {
       ORDER BY created_at DESC LIMIT 1`,
     [month, ...SYNTHETIC_RUN_CREATORS],
   );
-  return (
-    ((rows[0] as RowDataPacket | undefined)?.id as string | undefined) ?? null
-  );
+  return ((rows[0] as RowDataPacket | undefined)?.id as string | undefined) ?? null;
 }
 
 async function main() {
-  const requested = process.argv
-    .slice(2)
-    .filter((a) => /^\d{4}-\d{2}$/.test(a));
+  const requested = process.argv.slice(2).filter((a) => /^\d{4}-\d{2}$/.test(a));
   const months = requested.length > 0 ? requested : await activeMonths();
 
   for (const month of months) {
     const runId = await runIdFor(month);
-    console.log(
-      `\n${"=".repeat(78)}\n${month}  run=${runId ?? "(none)"}\n${"=".repeat(78)}`,
-    );
+    console.log(`\n${"=".repeat(78)}\n${month}  run=${runId ?? "(none)"}\n${"=".repeat(78)}`);
     if (!runId) {
       console.log("  no non-synthetic run for this month");
       continue;
@@ -75,9 +64,7 @@ async function main() {
     console.log("\n  CHECKS");
     for (const c of result.checks) {
       const mark = isGreen(c.state) ? " " : "!";
-      console.log(
-        `  ${mark} [${c.severity}] ${c.code.padEnd(46)} ${c.state.padEnd(15)} n=${c.affectedEmployees}`,
-      );
+      console.log(`  ${mark} [${c.severity}] ${c.code.padEnd(46)} ${c.state.padEnd(15)} n=${c.affectedEmployees}`);
       if (!isGreen(c.state)) console.log(`      ${c.message}`);
     }
   }

@@ -26,33 +26,20 @@ import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.resolve(
-  __dirname,
-  "..",
-  "..",
-  "..",
-  "scripts",
-  "statutory-blind-index-backfill.ts",
-);
+const SCRIPT = path.resolve(__dirname, "..", "..", "..", "scripts", "statutory-blind-index-backfill.ts");
 const source = fs.readFileSync(SCRIPT, "utf8");
-const code = source
-  .replace(/\/\*[\s\S]*?\*\//g, "")
-  .replace(/^\s*\/\/.*$/gm, "");
+const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("blind-index verify compares like with like", () => {
   it("counts distinct plaintext under BINARY, matching the HMAC's case sensitivity", () => {
-    expect(code).toMatch(
-      /COUNT\(DISTINCT\s+BINARY\s+TRIM\([^)]*\)\)\s*AS\s+distinct_plain\b/i,
-    );
+    expect(code).toMatch(/COUNT\(DISTINCT\s+BINARY\s+TRIM\([^)]*\)\)\s*AS\s+distinct_plain\b/i);
   });
 
   it("no longer compares a case-folded distinct count against the index", () => {
     // The exact defect: COUNT(DISTINCT TRIM(col)) with no BINARY, aliased to the value the
     // pass/fail comparison uses. The (?!_) matters — distinct_plain_ci is deliberately
     // case-folded, because it is what makes the case-variant count computable.
-    expect(code).not.toMatch(
-      /COUNT\(DISTINCT\s+TRIM\([^)]*\)\)\s*AS\s+distinct_plain(?!_)/i,
-    );
+    expect(code).not.toMatch(/COUNT\(DISTINCT\s+TRIM\([^)]*\)\)\s*AS\s+distinct_plain(?!_)/i);
   });
 
   it("still reports rows the run failed to index", () => {

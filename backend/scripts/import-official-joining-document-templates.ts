@@ -5,15 +5,9 @@ import { randomUUID } from "crypto";
 import { db } from "../src/db/mysql.js";
 import { ensureDefaultTemplateFieldMaps } from "../src/modules/employees/universalDigitalFormFill.service.js";
 
-const TEMPLATE_STORAGE_ROOT = path.resolve(
-  process.cwd(),
-  "private-storage",
-  "document-templates",
-);
+const TEMPLATE_STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "document-templates");
 const SYSTEM_ACTOR_ID = "00000000-0000-0000-0000-000000000000";
-const DEFAULT_NDA_PATH = path.resolve(
-  "C:\\Users\\ADMIN\\Downloads\\NDA format - Updated.docx",
-);
+const DEFAULT_NDA_PATH = path.resolve("C:\\Users\\ADMIN\\Downloads\\NDA format - Updated.docx");
 
 type TemplateImport = {
   documentCode: string;
@@ -40,8 +34,7 @@ const imports: TemplateImport[] = [
 function mimeTypeFromName(fileName: string) {
   const ext = path.extname(fileName).toLowerCase();
   if (ext === ".pdf") return "application/pdf";
-  if (ext === ".docx")
-    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (ext === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   return "application/octet-stream";
 }
 
@@ -57,14 +50,7 @@ async function ensureTemplate(row: TemplateImport) {
       `INSERT INTO employee_joining_document_template
          (id, document_code, document_name, document_category, template_version, requires_candidate_esign, requires_hr_upload, requires_hr_verification, is_mandatory, active_status)
        VALUES (?, ?, ?, ?, 'v1', ?, ?, 1, 1, 1)`,
-      [
-        id,
-        row.documentCode,
-        row.documentName,
-        row.category,
-        row.requiresCandidateEsign ? 1 : 0,
-        row.requiresHrUpload ? 1 : 0,
-      ],
+      [id, row.documentCode, row.documentName, row.category, row.requiresCandidateEsign ? 1 : 0, row.requiresHrUpload ? 1 : 0],
     );
   }
   return id;
@@ -77,7 +63,7 @@ async function main() {
     if (!fs.existsSync(item.sourceFile)) {
       throw new Error(
         `Original template file is missing: ${item.sourceFile}. ` +
-          `Set NDA_TEMPLATE_PATH to the server-local DOCX path before running this script.`,
+        `Set NDA_TEMPLATE_PATH to the server-local DOCX path before running this script.`,
       );
     }
 
@@ -122,9 +108,7 @@ async function main() {
       fileBuffer,
     });
 
-    console.log(
-      `${item.documentCode}: imported ${path.basename(item.sourceFile)} with ${maps.length} field maps`,
-    );
+    console.log(`${item.documentCode}: imported ${path.basename(item.sourceFile)} with ${maps.length} field maps`);
   }
 
   await db.end();

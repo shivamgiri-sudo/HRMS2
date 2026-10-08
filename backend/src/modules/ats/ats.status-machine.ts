@@ -45,20 +45,20 @@ import { db } from "../../db/mysql.js";
 
 // Round-by-round progression actually written by the recruiter flow.
 const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  Applied: ["Arrival", "Round 1- HR Screening"],
-  Arrival: ["Round 1- HR Screening"],
-  "Round 1- HR Screening": ["Interview - Skill Test", "Round 2- Op's"],
+  "Applied":                ["Arrival", "Round 1- HR Screening"],
+  "Arrival":                ["Round 1- HR Screening"],
+  "Round 1- HR Screening":  ["Interview - Skill Test", "Round 2- Op's"],
   "Interview - Skill Test": ["Round 2- Op's"],
-  "Round 2- Op's": ["Round 3- Client", "Selection Discussion"],
-  "Round 3- Client": ["Selection Discussion"],
+  "Round 2- Op's":          ["Round 3- Client", "Selection Discussion"],
+  "Round 3- Client":        ["Selection Discussion"],
   // Terminal for this machine: the outcome (Selected/Rejected/Waiting) is
   // carried on `status`, not `current_stage`, from here on. Progressing to an
   // actual employee happens through offer approval and employee-code
   // generation, not through this endpoint.
-  "Selection Discussion": [],
+  "Selection Discussion":   [],
   // Set only by employee-code generation (employee-creation-orchestrator);
   // nothing should move a candidate further after that.
-  Onboarded: [],
+  "Onboarded":              [],
 };
 
 const TERMINAL_STAGES = new Set(["Onboarded"]);
@@ -106,9 +106,7 @@ export async function transitionCandidateState(
   }
 
   const fromStage: string = candidate.current_stage ?? "Applied";
-  const currentStatus = String(candidate.status ?? "")
-    .trim()
-    .toLowerCase();
+  const currentStatus = String(candidate.status ?? "").trim().toLowerCase();
 
   if (BLOCKING_STATUSES.has(currentStatus)) {
     return {
@@ -121,11 +119,9 @@ export async function transitionCandidateState(
     const trimmed = s.trim();
     const alias = STAGE_ALIASES[trimmed.toLowerCase()];
     if (alias) return alias;
-    return (
-      Object.keys(ALLOWED_TRANSITIONS).find(
-        (k) => k.toLowerCase() === trimmed.toLowerCase(),
-      ) ?? trimmed
-    );
+    return Object.keys(ALLOWED_TRANSITIONS).find(
+      (k) => k.toLowerCase() === trimmed.toLowerCase(),
+    ) ?? trimmed;
   };
 
   const normFrom = normalizeStage(fromStage);

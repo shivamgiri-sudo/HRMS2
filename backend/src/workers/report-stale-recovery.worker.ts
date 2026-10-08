@@ -1,17 +1,10 @@
-import type { RowDataPacket } from "mysql2";
-import { db } from "../db/mysql.js";
-import {
-  withWorkerLock,
-  registerTimer,
-  unregisterTimer,
-} from "./worker-utils.js";
-import { deleteReportFile } from "../modules/reporting/report-file-storage.js";
-import {
-  recordReportAuditEvent,
-  REPORT_AUDIT_EVENTS,
-} from "../modules/reporting/report-audit.service.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../db/mysql.js';
+import { withWorkerLock, registerTimer, unregisterTimer } from './worker-utils.js';
+import { deleteReportFile } from '../modules/reporting/report-file-storage.js';
+import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from '../modules/reporting/report-audit.service.js';
 
-const WORKER_NAME = "report-stale-recovery";
+const WORKER_NAME = 'report-stale-recovery';
 const INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 // Must exceed the generation job timeout (REPORT_JOB_TIMEOUT_MINUTES, default 12) so a report that is
 // still legitimately running is never requeued underneath itself.
@@ -21,12 +14,10 @@ const STALE_SENDING_MINUTES = 5;
 let intervalTimer: NodeJS.Timeout | null = null;
 
 function isMissingReportTableError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    String((error as { code?: unknown }).code ?? "") === "ER_NO_SUCH_TABLE"
-  );
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && String((error as { code?: unknown }).code ?? '') === 'ER_NO_SUCH_TABLE';
 }
 
 async function reportRecoveryTablesAvailable(): Promise<boolean> {
@@ -35,9 +26,7 @@ async function reportRecoveryTablesAvailable(): Promise<boolean> {
     return true;
   } catch (error) {
     if (isMissingReportTableError(error)) {
-      console.warn(
-        `[${WORKER_NAME}] reporting tables missing - worker disabled until reporting schema is migrated`,
-      );
+      console.warn(`[${WORKER_NAME}] reporting tables missing - worker disabled until reporting schema is migrated`);
       return false;
     }
     throw error;
@@ -53,14 +42,10 @@ async function runRecovery(): Promise<void> {
     `SELECT id, request_reference, retry_count FROM report_request
      WHERE status = 'PROCESSING'
        AND processing_started_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
-    [STALE_PROCESSING_MINUTES],
+    [STALE_PROCESSING_MINUTES]
   );
 
-  for (const row of staleProc as Array<{
-    id: string;
-    request_reference: string;
-    retry_count: number;
-  }>) {
+  for (const row of staleProc as Array<{ id: string; request_reference: string; retry_count: number }>) {
     const maxRetries = 3;
     if (row.retry_count < maxRetries) {
       await db.execute(
@@ -68,17 +53,14 @@ async function runRecovery(): Promise<void> {
          SET status = 'QUEUED', retry_count = retry_count + 1, last_retry_at = NOW(),
              failure_stage = 'stale_recovery', failure_message = 'Recovered from stale PROCESSING state'
          WHERE id = ?`,
-        [row.id],
+        [row.id]
       );
       await recordReportAuditEvent({
         reportRequestId: row.id,
         eventType: REPORT_AUDIT_EVENTS.STALE_JOB_RECOVERED,
-        actorType: "system",
+        actorType: 'system',
         message: `Stale PROCESSING request ${row.request_reference} reset to QUEUED`,
-        metadataJson: {
-          reason: "stale_processing",
-          retryCount: row.retry_count + 1,
-        },
+        metadataJson: { reason: 'stale_processing', retryCount: row.retry_count + 1 },
       });
       recoveredCount++;
     } else {
@@ -88,14 +70,14 @@ async function runRecovery(): Promise<void> {
              failure_stage = 'stale_recovery', failure_code = 'STALE_PROCESSING',
              failure_message = 'Request was stuck in PROCESSING state and has exceeded max retries'
          WHERE id = ?`,
-        [row.id],
+        [row.id]
       );
       await recordReportAuditEvent({
         reportRequestId: row.id,
         eventType: REPORT_AUDIT_EVENTS.GENERATION_FAILED,
-        actorType: "system",
+        actorType: 'system',
         message: `Stale PROCESSING request ${row.request_reference} failed (max retries exceeded)`,
-        errorCode: "STALE_PROCESSING",
+        errorCode: 'STALE_PROCESSING',
       });
     }
   }
@@ -105,23 +87,20 @@ async function runRecovery(): Promise<void> {
     `SELECT id, report_request_id FROM report_email_delivery
      WHERE status = 'SENDING'
        AND sending_started_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
-    [STALE_SENDING_MINUTES],
+    [STALE_SENDING_MINUTES]
   );
 
-  for (const row of staleSend as Array<{
-    id: string;
-    report_request_id: string;
-  }>) {
+  for (const row of staleSend as Array<{ id: string; report_request_id: string }>) {
     await db.execute(
       `UPDATE report_email_delivery SET status = 'QUEUED', next_retry_at = NOW() WHERE id = ?`,
-      [row.id],
+      [row.id]
     );
     await recordReportAuditEvent({
       reportRequestId: row.report_request_id,
       eventType: REPORT_AUDIT_EVENTS.STALE_JOB_RECOVERED,
-      actorType: "system",
+      actorType: 'system',
       deliveryId: row.id,
-      message: "Stale SENDING delivery row reset to QUEUED",
+      message: 'Stale SENDING delivery row reset to QUEUED',
     });
     recoveredCount++;
   }
@@ -139,7 +118,7 @@ async function runRecovery(): Promise<void> {
          SELECT 1 FROM report_email_delivery red
          WHERE red.report_request_id = rr.id
            AND red.status IN ('QUEUED', 'SENDING', 'SENT')
-       )`,
+       )`
   );
 
   for (const row of orphaned as Array<{
@@ -155,9 +134,9 @@ async function runRecovery(): Promise<void> {
   }>) {
     // Skip if file expired
     if (row.expires_at && new Date(row.expires_at) < new Date()) continue;
-    if (row.deletion_status === "deleted") continue;
+    if (row.deletion_status === 'deleted') continue;
 
-    const { randomUUID } = await import("crypto");
+    const { randomUUID } = await import('crypto');
     const deliveryId = randomUUID();
     const emailSubject = `HRMS Report Ready: ${row.report_name_snapshot}`;
 
@@ -168,28 +147,27 @@ async function runRecovery(): Promise<void> {
           attachment_filename, attachment_size_bytes, status, queued_at)
        VALUES (?,?,1,?, ?,?,?, ?,?,'QUEUED',NOW())`,
       [
-        deliveryId,
-        row.id,
+        deliveryId, row.id,
         row.official_email,
         row.requested_by_employee_id ?? null,
         row.requested_by_employee_code ?? null,
         emailSubject,
         row.original_filename ?? null,
         row.file_size_bytes ?? null,
-      ],
+      ]
     );
 
     await db.execute(
       `UPDATE report_request SET email_queued_at = NOW() WHERE id = ?`,
-      [row.id],
+      [row.id]
     );
 
     await recordReportAuditEvent({
       reportRequestId: row.id,
       eventType: REPORT_AUDIT_EVENTS.EMAIL_QUEUED,
-      actorType: "system",
+      actorType: 'system',
       deliveryId,
-      message: "Orphaned GENERATED request: re-queued email delivery",
+      message: 'Orphaned GENERATED request: re-queued email delivery',
     });
     recoveredCount++;
   }
@@ -199,39 +177,36 @@ async function runRecovery(): Promise<void> {
     `SELECT id FROM report_generated_file
      WHERE expires_at <= NOW()
        AND (deletion_status IS NULL OR deletion_status != 'deleted')
-     LIMIT 50`,
+     LIMIT 50`
   );
 
   for (const row of expired as Array<{ id: string }>) {
     const [linkRows] = await db.execute<RowDataPacket[]>(
       `SELECT report_request_id FROM report_generated_file WHERE id = ?`,
-      [row.id],
+      [row.id]
     );
-    const requestId = (linkRows[0] as { report_request_id: string } | undefined)
-      ?.report_request_id;
+    const requestId = (linkRows[0] as { report_request_id: string } | undefined)?.report_request_id;
 
     await deleteReportFile(row.id);
 
     if (requestId) {
       await db.execute(
         `UPDATE report_request SET status = 'EXPIRED' WHERE id = ? AND status IN ('EMAILED', 'GENERATED')`,
-        [requestId],
+        [requestId]
       );
       await recordReportAuditEvent({
         reportRequestId: requestId,
         eventType: REPORT_AUDIT_EVENTS.FILE_DELETED,
-        actorType: "system",
+        actorType: 'system',
         fileId: row.id,
-        message: "Report file deleted after retention period expired",
+        message: 'Report file deleted after retention period expired',
       });
     }
     expiredCount++;
   }
 
   if (recoveredCount > 0 || expiredCount > 0) {
-    console.log(
-      `[${WORKER_NAME}] Recovery complete: ${recoveredCount} jobs recovered, ${expiredCount} files expired/deleted`,
-    );
+    console.log(`[${WORKER_NAME}] Recovery complete: ${recoveredCount} jobs recovered, ${expiredCount} files expired/deleted`);
   }
 }
 

@@ -18,9 +18,7 @@ const mockDb = { execute: vi.fn() };
 vi.mock("../../../db/mysql.js", () => ({ db: mockDb }));
 
 const mockLogSensitiveAction = vi.fn(async () => {});
-vi.mock("../../../shared/auditLog.js", () => ({
-  logSensitiveAction: mockLogSensitiveAction,
-}));
+vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: mockLogSensitiveAction }));
 
 vi.mock("../../leave/leave.service.js", () => ({
   leaveService: { lapseUnresolvedLeaves: vi.fn(async () => {}) },
@@ -47,11 +45,7 @@ function run(overrides: Partial<Record<string, unknown>> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockDb.execute.mockImplementation(async (sql: string) => {
-    if (
-      /FROM salary_prep_run/.test(sql) &&
-      /window_close_date IS NOT NULL/.test(sql)
-    )
-      return [[], []];
+    if (/FROM salary_prep_run/.test(sql) && /window_close_date IS NOT NULL/.test(sql)) return [[], []];
     if (/FROM salary_prep_line WHERE run_id/.test(sql)) return [[], []];
     return [[{ affectedRows: 1 }], []];
   });
@@ -60,11 +54,7 @@ beforeEach(() => {
 describe("runPayrollWindowClosure records whether an auto-closed run had any approval", () => {
   it("flags had_no_approval and uses the distinct action_type when nothing was ever approved", async () => {
     mockDb.execute.mockImplementation(async (sql: string) => {
-      if (
-        /FROM salary_prep_run/.test(sql) &&
-        /window_close_date IS NOT NULL/.test(sql)
-      )
-        return [[run()], []];
+      if (/FROM salary_prep_run/.test(sql) && /window_close_date IS NOT NULL/.test(sql)) return [[run()], []];
       if (/FROM salary_prep_line WHERE run_id/.test(sql)) return [[], []];
       return [[{ affectedRows: 1 }], []];
     });
@@ -73,40 +63,27 @@ describe("runPayrollWindowClosure records whether an auto-closed run had any app
 
     expect(mockLogSensitiveAction).toHaveBeenCalledTimes(1);
     const entry = mockLogSensitiveAction.mock.calls[0][0];
-    expect(entry.action_type).toBe(
-      "payroll_window_auto_closed_without_approval",
-    );
+    expect(entry.action_type).toBe("payroll_window_auto_closed_without_approval");
     expect(entry.change_summary.had_no_approval).toBe(true);
   });
 
   it("still locks the run the same way regardless of approval state — this fix changes visibility, not behaviour", async () => {
     mockDb.execute.mockImplementation(async (sql: string) => {
-      if (
-        /FROM salary_prep_run/.test(sql) &&
-        /window_close_date IS NOT NULL/.test(sql)
-      )
-        return [[run()], []];
+      if (/FROM salary_prep_run/.test(sql) && /window_close_date IS NOT NULL/.test(sql)) return [[run()], []];
       if (/FROM salary_prep_line WHERE run_id/.test(sql)) return [[], []];
       return [[{ affectedRows: 1 }], []];
     });
 
     await runPayrollWindowClosure();
 
-    const updateCall = mockDb.execute.mock.calls.find(([sql]) =>
-      /UPDATE salary_prep_run/.test(sql),
-    );
+    const updateCall = mockDb.execute.mock.calls.find(([sql]) => /UPDATE salary_prep_run/.test(sql));
     expect(updateCall).toBeDefined();
-    expect(updateCall![0]).toMatch(
-      /SET status = 'locked', auto_closed_at = NOW\(\), closed_by = 'system'/,
-    );
+    expect(updateCall![0]).toMatch(/SET status = 'locked', auto_closed_at = NOW\(\), closed_by = 'system'/);
   });
 
   it("uses the ordinary action_type and had_no_approval=false when the run was properly approved", async () => {
     mockDb.execute.mockImplementation(async (sql: string) => {
-      if (
-        /FROM salary_prep_run/.test(sql) &&
-        /window_close_date IS NOT NULL/.test(sql)
-      )
+      if (/FROM salary_prep_run/.test(sql) && /window_close_date IS NOT NULL/.test(sql))
         return [[run({ finance_approved_by: "finance-user" })], []];
       if (/FROM salary_prep_line WHERE run_id/.test(sql)) return [[], []];
       return [[{ affectedRows: 1 }], []];
@@ -121,10 +98,7 @@ describe("runPayrollWindowClosure records whether an auto-closed run had any app
 
   it("a single approval marker (any one of the four) is enough to count as approved", async () => {
     mockDb.execute.mockImplementation(async (sql: string) => {
-      if (
-        /FROM salary_prep_run/.test(sql) &&
-        /window_close_date IS NOT NULL/.test(sql)
-      )
+      if (/FROM salary_prep_run/.test(sql) && /window_close_date IS NOT NULL/.test(sql))
         return [[run({ validated_by: "head-payroll-user" })], []];
       if (/FROM salary_prep_line WHERE run_id/.test(sql)) return [[], []];
       return [[{ affectedRows: 1 }], []];
@@ -132,8 +106,6 @@ describe("runPayrollWindowClosure records whether an auto-closed run had any app
 
     await runPayrollWindowClosure();
 
-    expect(
-      mockLogSensitiveAction.mock.calls[0][0].change_summary.had_no_approval,
-    ).toBe(false);
+    expect(mockLogSensitiveAction.mock.calls[0][0].change_summary.had_no_approval).toBe(false);
   });
 });

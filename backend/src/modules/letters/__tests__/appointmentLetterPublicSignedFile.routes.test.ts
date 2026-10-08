@@ -27,48 +27,32 @@ vi.mock("../../../db/mysql.js", () => ({
     execute: vi.fn(async (sql: string, params: unknown[] = []) => {
       const text = String(sql);
       state.calls.push({ sql: text, params });
-      if (text.includes("FROM appointment_letter_issue"))
-        return [state.letter ? [state.letter] : []];
-      if (text.includes("FROM appointment_letter_esign_transaction"))
-        return [state.txRows];
+      if (text.includes("FROM appointment_letter_issue")) return [state.letter ? [state.letter] : []];
+      if (text.includes("FROM appointment_letter_esign_transaction")) return [state.txRows];
       return [[]];
     }),
   },
 }));
-vi.mock("../../../config/env.js", () => ({
-  env: { LUCKPAY_PROVIDER_ENABLED: true, FRONTEND_URL: "https://hrms.test" },
-}));
+vi.mock("../../../config/env.js", () => ({ env: { LUCKPAY_PROVIDER_ENABLED: true, FRONTEND_URL: "https://hrms.test" } }));
 vi.mock("../appointmentLetterEsign.service.js", () => ({
   appointmentLetterStorageRoot: () => STORE,
   syncAppointmentEsignForIssue: vi.fn(async () => ({ changed: false })),
   startAppointmentEsign: vi.fn(),
 }));
 
-const { publicAppointmentLetterRouter } =
-  await import("../appointmentLetterPublic.routes.js");
+const { publicAppointmentLetterRouter } = await import("../appointmentLetterPublic.routes.js");
 
 const app = express();
 app.use("/api/public/appointment-letter", publicAppointmentLetterRouter);
-app.use(
-  (
-    err: Error,
-    _req: express.Request,
-    res: express.Response,
-    _next: express.NextFunction,
-  ) => {
-    res.status(500).json({ success: false, message: err.message });
-  },
-);
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  res.status(500).json({ success: false, message: err.message });
+});
 
 const TOKEN = "b2".repeat(24);
 const ORIGINAL = Buffer.from("%PDF company-signed original");
 const ACCEPTED = Buffer.from("%PDF employee-signed copy");
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
-const acceptedPath = path.join(
-  STORE,
-  "emp-1",
-  "MCN-AL-2026-000002-accepted.pdf",
-);
+const acceptedPath = path.join(STORE, "emp-1", "MCN-AL-2026-000002-accepted.pdf");
 const originalPath = path.join(STORE, "emp-1", "MCN-AL-2026-000002.pdf");
 
 fs.mkdirSync(path.join(STORE, "emp-1"), { recursive: true });
@@ -77,30 +61,13 @@ fs.writeFileSync(originalPath, ORIGINAL);
 afterAll(() => fs.rmSync(TMP, { recursive: true, force: true }));
 
 const letter = (over: Record<string, unknown> = {}) => ({
-  id: "issue-2",
-  letter_number: "MCN-AL-2026-000002",
-  employee_id: "emp-1",
-  employee_name: "A B",
-  employee_code: "MAS1",
-  designation: "EXECUTIVE",
-  branch_name: "NOIDA",
-  date_of_joining: null,
-  company_signed_at: null,
-  signed_by_name: null,
-  employee_esign_status: "signed",
-  employee_esign_at: new Date("2026-09-24T05:30:00Z"),
-  signed_file_path: originalPath,
-  file_sha256: null,
-  status: "issued",
-  revoked_at: null,
-  ...over,
+  id: "issue-2", letter_number: "MCN-AL-2026-000002", employee_id: "emp-1", employee_name: "A B", employee_code: "MAS1",
+  designation: "EXECUTIVE", branch_name: "NOIDA", date_of_joining: null, company_signed_at: null, signed_by_name: null,
+  employee_esign_status: "signed", employee_esign_at: new Date("2026-09-24T05:30:00Z"),
+  signed_file_path: originalPath, file_sha256: null, status: "issued", revoked_at: null, ...over,
 });
 const tx = (over: Record<string, unknown> = {}) => ({
-  id: "tx-1",
-  signed_file_path: acceptedPath,
-  signed_file_sha256: sha(ACCEPTED),
-  completed_at: new Date("2026-09-24T05:30:00Z"),
-  ...over,
+  id: "tx-1", signed_file_path: acceptedPath, signed_file_sha256: sha(ACCEPTED), completed_at: new Date("2026-09-24T05:30:00Z"), ...over,
 });
 
 const URL = `/api/public/appointment-letter/${TOKEN}/signed-file`;
@@ -113,20 +80,15 @@ beforeEach(() => {
 
 describe("public signed-file endpoint", () => {
   it("serves the employee-signed copy (not the original) for a valid token on a signed letter", async () => {
-    const res = await request(app)
-      .get(URL)
-      .buffer(true)
-      .parse((r, cb) => {
-        const chunks: Buffer[] = [];
-        r.on("data", (c: Buffer) => chunks.push(c));
-        r.on("end", () => cb(null, Buffer.concat(chunks)));
-      });
+    const res = await request(app).get(URL).buffer(true).parse((r, cb) => {
+      const chunks: Buffer[] = [];
+      r.on("data", (c: Buffer) => chunks.push(c));
+      r.on("end", () => cb(null, Buffer.concat(chunks)));
+    });
     expect(res.status).toBe(200);
     expect(Buffer.compare(res.body as Buffer, ACCEPTED)).toBe(0);
     expect(res.headers["content-type"]).toBe("application/pdf");
-    expect(res.headers["content-disposition"]).toBe(
-      'attachment; filename="MCN-AL-2026-000002-accepted.pdf"',
-    );
+    expect(res.headers["content-disposition"]).toBe('attachment; filename="MCN-AL-2026-000002-accepted.pdf"');
   });
 
   it("is never cached and never leaks the token in a Referer", async () => {
@@ -137,18 +99,11 @@ describe("public signed-file endpoint", () => {
   });
 
   it("404s when the employee has not signed yet, and never reads a file", async () => {
-    state.letter = letter({
-      employee_esign_status: "sent",
-      employee_esign_at: null,
-    });
+    state.letter = letter({ employee_esign_status: "sent", employee_esign_at: null });
     const res = await request(app).get(URL);
     expect(res.status).toBe(404);
     expect(res.body.code).toBe("LETTER_NOT_SIGNED");
-    expect(
-      state.calls.some((c) =>
-        c.sql.includes("appointment_letter_esign_transaction"),
-      ),
-    ).toBe(false);
+    expect(state.calls.some((c) => c.sql.includes("appointment_letter_esign_transaction"))).toBe(false);
   });
 
   it("404s (and does NOT hand back the original) when signed but the signed file was never retrieved", async () => {
@@ -164,11 +119,7 @@ describe("public signed-file endpoint", () => {
     const res = await request(app).get(URL);
     expect(res.status).toBe(410);
     expect(res.body.code).toBe("LETTER_REVOKED");
-    expect(
-      state.calls.some((c) =>
-        c.sql.includes("appointment_letter_esign_transaction"),
-      ),
-    ).toBe(false);
+    expect(state.calls.some((c) => c.sql.includes("appointment_letter_esign_transaction"))).toBe(false);
   });
 
   it("410s a letter whose status is revoked even if revoked_at is empty", async () => {
@@ -184,21 +135,14 @@ describe("public signed-file endpoint", () => {
   });
 
   it("a malformed token never reaches SQL", async () => {
-    const res = await request(app).get(
-      "/api/public/appointment-letter/short/signed-file",
-    );
+    const res = await request(app).get("/api/public/appointment-letter/short/signed-file");
     expect(res.status).toBe(404);
     expect(state.calls).toHaveLength(0);
   });
 
   it("refuses a recorded path outside the storage root", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    state.txRows = [
-      tx({
-        signed_file_path: path.join(TMP, "elsewhere.pdf"),
-        signed_file_sha256: null,
-      }),
-    ];
+    state.txRows = [tx({ signed_file_path: path.join(TMP, "elsewhere.pdf"), signed_file_sha256: null })];
     const res = await request(app).get(URL);
     expect(res.status).toBe(404);
     warn.mockRestore();
@@ -215,16 +159,9 @@ describe("public signed-file endpoint", () => {
   });
 
   it("the existing /file endpoint is untouched: still inline, still the company-signed letter before signing", async () => {
-    state.letter = letter({
-      employee_esign_status: "not_sent",
-      employee_esign_at: null,
-    });
-    const res = await request(app).get(
-      `/api/public/appointment-letter/${TOKEN}/file`,
-    );
+    state.letter = letter({ employee_esign_status: "not_sent", employee_esign_at: null });
+    const res = await request(app).get(`/api/public/appointment-letter/${TOKEN}/file`);
     expect(res.status).toBe(200);
-    expect(res.headers["content-disposition"]).toBe(
-      'inline; filename="MCN-AL-2026-000002.pdf"',
-    );
+    expect(res.headers["content-disposition"]).toBe('inline; filename="MCN-AL-2026-000002.pdf"');
   });
 });

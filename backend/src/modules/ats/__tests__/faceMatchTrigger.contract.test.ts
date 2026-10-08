@@ -49,9 +49,7 @@ describe("face match fires on the documents candidates really upload", () => {
     expect(
       SOURCE,
       "nothing re-attempts the comparison when the Aadhaar or PAN image is uploaded second",
-    ).toMatch(
-      /faceMatchOnIdDocumentUpload|reattemptFaceMatch|triggerFaceMatchForExistingSelfie/,
-    );
+    ).toMatch(/faceMatchOnIdDocumentUpload|reattemptFaceMatch|triggerFaceMatchForExistingSelfie/);
   });
 });
 
@@ -64,18 +62,15 @@ describe("face match records why it could not run", () => {
     // A bare `if (!docs[0]) return;` is the shape that made an unchecked
     // candidate look identical to a checked one.
     expect(body).not.toMatch(/if\s*\(!docs\[0\]\)\s*return;/);
-    expect(body, "the reason it declined must be recorded somewhere").toMatch(
-      /recordFaceMatchSkipped|photo_match/,
-    );
+    expect(body, "the reason it declined must be recorded somewhere").toMatch(/recordFaceMatchSkipped|photo_match/);
   });
 
   it("does not return silently when the models are unavailable", () => {
     const at = SOURCE.indexOf("async function triggerFaceMatch");
     const body = SOURCE.slice(at, SOURCE.indexOf("\nasync function", at + 10));
     const modelGuard = body.slice(body.indexOf("isModelAvailable"));
-    expect(
-      modelGuard,
-      "an absent model must not read as a clean candidate",
-    ).toMatch(/recordFaceMatchSkipped/);
+    expect(modelGuard, "an absent model must not read as a clean candidate").toMatch(
+      /recordFaceMatchSkipped/,
+    );
   });
 });

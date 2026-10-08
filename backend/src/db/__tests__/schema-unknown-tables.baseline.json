@@ -233,5 +233,7 @@
   "modules/wfm/mismatch-escalation.service.ts": [
     "attendance_mismatch_escalation"
   ],
-  "workers/bulk-import.worker.ts": ["bulk_import_queue"]
+  "workers/bulk-import.worker.ts": [
+    "bulk_import_queue"
+  ]
 }

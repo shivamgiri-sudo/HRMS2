@@ -42,11 +42,7 @@ beforeEach(() => {
 
 describe("enumerateDates", () => {
   it("is inclusive of both ends", () => {
-    expect(enumerateDates("2026-06-01", "2026-06-03")).toEqual([
-      "2026-06-01",
-      "2026-06-02",
-      "2026-06-03",
-    ]);
+    expect(enumerateDates("2026-06-01", "2026-06-03")).toEqual(["2026-06-01", "2026-06-02", "2026-06-03"]);
   });
 
   it("returns a single day when from === to", () => {
@@ -55,18 +51,13 @@ describe("enumerateDates", () => {
 
   it("crosses a month boundary without dropping or duplicating a day", () => {
     expect(enumerateDates("2026-01-30", "2026-02-02")).toEqual([
-      "2026-01-30",
-      "2026-01-31",
-      "2026-02-01",
-      "2026-02-02",
+      "2026-01-30", "2026-01-31", "2026-02-01", "2026-02-02",
     ]);
   });
 
   it("handles a leap day", () => {
     expect(enumerateDates("2024-02-28", "2024-03-01")).toEqual([
-      "2024-02-28",
-      "2024-02-29",
-      "2024-03-01",
+      "2024-02-28", "2024-02-29", "2024-03-01",
     ]);
   });
 });
@@ -74,18 +65,9 @@ describe("enumerateDates", () => {
 describe("planRegularizationRestore — restore ladder", () => {
   it("restores exactly from the snapshot when one exists", () => {
     const plan = planRegularizationRestore(
-      REG_ID,
-      DATE,
-      {
-        attendance_status: "present",
-        lwp_value: 0,
-        regularization_id: REG_ID,
-        is_locked: 1,
-      },
-      {
-        row_existed: 1,
-        snapshot: { attendance_status: "absent", lwp_value: 1 },
-      },
+      REG_ID, DATE,
+      { attendance_status: "present", lwp_value: 0, regularization_id: REG_ID, is_locked: 1 },
+      { row_existed: 1, snapshot: { attendance_status: "absent", lwp_value: 1 } }
     );
     expect(plan.mode).toBe("snapshot");
     expect(plan.restoredStatus).toBe("absent");
@@ -94,33 +76,22 @@ describe("planRegularizationRestore — restore ladder", () => {
 
   it("DELETES the row when the snapshot says none existed before", () => {
     const plan = planRegularizationRestore(
-      REG_ID,
-      DATE,
-      {
-        attendance_status: "present",
-        lwp_value: 0,
-        regularization_id: REG_ID,
-        is_locked: 1,
-      },
-      { row_existed: 0, snapshot: null },
+      REG_ID, DATE,
+      { attendance_status: "present", lwp_value: 0, regularization_id: REG_ID, is_locked: 1 },
+      { row_existed: 0, snapshot: null }
     );
     expect(plan.mode).toBe("delete");
   });
 
   it("falls back to old_attendance_status when there is no snapshot", () => {
     const plan = planRegularizationRestore(
-      REG_ID,
-      DATE,
+      REG_ID, DATE,
       {
-        attendance_status: "present",
-        lwp_value: 0,
-        regularization_id: REG_ID,
-        is_locked: 1,
-        old_attendance_status: "half_day",
-        old_lwp_value: 0.5,
+        attendance_status: "present", lwp_value: 0, regularization_id: REG_ID, is_locked: 1,
+        old_attendance_status: "half_day", old_lwp_value: 0.5,
         status_change_reason: "Regularization approved: WFH",
       },
-      undefined,
+      undefined
     );
     expect(plan.mode).toBe("partial");
     expect(plan.restoredStatus).toBe("half_day");
@@ -132,53 +103,34 @@ describe("planRegularizationRestore — restore ladder", () => {
     // in 112,609 rows), so a NULL old_attendance_status can only mean the INSERT
     // branch ran — no row existed. 23 of 25 live approved regularizations are this shape.
     const plan = planRegularizationRestore(
-      REG_ID,
-      DATE,
+      REG_ID, DATE,
       {
-        attendance_status: "present",
-        lwp_value: 0,
-        regularization_id: REG_ID,
-        is_locked: 1,
-        old_attendance_status: null,
-        old_lwp_value: null,
+        attendance_status: "present", lwp_value: 0, regularization_id: REG_ID, is_locked: 1,
+        old_attendance_status: null, old_lwp_value: null,
         status_change_reason: "Regularization approved: work_from_home",
       },
-      undefined,
+      undefined
     );
     expect(plan.mode).toBe("delete");
   });
 
   it("re-derives when nothing identifies the approval as the writer", () => {
     const plan = planRegularizationRestore(
-      REG_ID,
-      DATE,
+      REG_ID, DATE,
       {
-        attendance_status: "present",
-        lwp_value: 0,
-        regularization_id: REG_ID,
-        is_locked: 0,
-        old_attendance_status: null,
-        status_change_reason: "some other process",
+        attendance_status: "present", lwp_value: 0, regularization_id: REG_ID, is_locked: 0,
+        old_attendance_status: null, status_change_reason: "some other process",
       },
-      undefined,
+      undefined
     );
     expect(plan.mode).toBe("rederive");
   });
 
   it("never touches a row a later correction owns", () => {
     const plan = planRegularizationRestore(
-      REG_ID,
-      DATE,
-      {
-        attendance_status: "present",
-        lwp_value: 0,
-        regularization_id: "some-other-reg",
-        is_locked: 1,
-      },
-      {
-        row_existed: 1,
-        snapshot: { attendance_status: "absent", lwp_value: 1 },
-      },
+      REG_ID, DATE,
+      { attendance_status: "present", lwp_value: 0, regularization_id: "some-other-reg", is_locked: 1 },
+      { row_existed: 1, snapshot: { attendance_status: "absent", lwp_value: 1 } }
     );
     expect(plan.mode).toBe("skip_owned");
     expect(plan.restoredStatus).toBe("present"); // unchanged
@@ -186,18 +138,9 @@ describe("planRegularizationRestore — restore ladder", () => {
 
   it("never touches a locked row it does not own", () => {
     const plan = planRegularizationRestore(
-      REG_ID,
-      DATE,
-      {
-        attendance_status: "present",
-        lwp_value: 0,
-        regularization_id: null,
-        is_locked: 1,
-      },
-      {
-        row_existed: 1,
-        snapshot: { attendance_status: "absent", lwp_value: 1 },
-      },
+      REG_ID, DATE,
+      { attendance_status: "present", lwp_value: 0, regularization_id: null, is_locked: 1 },
+      { row_existed: 1, snapshot: { attendance_status: "absent", lwp_value: 1 } }
     );
     expect(plan.mode).toBe("skip_locked");
   });
@@ -208,10 +151,7 @@ describe("planLeaveRestore — restore ladder", () => {
     const plan = planLeaveRestore(
       DATE,
       { attendance_status: "leave_approved", lwp_value: 0, is_locked: 0 },
-      {
-        row_existed: 1,
-        snapshot: { attendance_status: "week_off", lwp_value: 0 },
-      },
+      { row_existed: 1, snapshot: { attendance_status: "week_off", lwp_value: 0 } }
     );
     expect(plan.mode).toBe("snapshot");
     expect(plan.restoredStatus).toBe("week_off");
@@ -221,7 +161,7 @@ describe("planLeaveRestore — restore ladder", () => {
     const plan = planLeaveRestore(
       DATE,
       { attendance_status: "leave_approved", lwp_value: 0, is_locked: 0 },
-      { row_existed: 0, snapshot: null },
+      { row_existed: 0, snapshot: null }
     );
     expect(plan.mode).toBe("delete");
   });
@@ -233,7 +173,7 @@ describe("planLeaveRestore — restore ladder", () => {
     const plan = planLeaveRestore(
       DATE,
       { attendance_status: "leave_approved", lwp_value: 0, is_locked: 0 },
-      undefined,
+      undefined
     );
     expect(plan.mode).toBe("rederive");
     expect(plan.restoredStatus).not.toBe("absent");
@@ -244,10 +184,7 @@ describe("planLeaveRestore — restore ladder", () => {
     const plan = planLeaveRestore(
       DATE,
       { attendance_status: "leave_approved", lwp_value: 0, is_locked: 1 },
-      {
-        row_existed: 1,
-        snapshot: { attendance_status: "present", lwp_value: 0 },
-      },
+      { row_existed: 1, snapshot: { attendance_status: "present", lwp_value: 0 } }
     );
     expect(plan.mode).toBe("skip_locked");
   });
@@ -256,10 +193,7 @@ describe("planLeaveRestore — restore ladder", () => {
     const plan = planLeaveRestore(
       DATE,
       { attendance_status: "present", lwp_value: 0, is_locked: 0 },
-      {
-        row_existed: 1,
-        snapshot: { attendance_status: "absent", lwp_value: 1 },
-      },
+      { row_existed: 1, snapshot: { attendance_status: "absent", lwp_value: 1 } }
     );
     expect(plan.mode).toBe("skip_owned");
   });
@@ -287,38 +221,19 @@ describe("payroll closed statuses", () => {
 
 describe("discardService.previewLeave", () => {
   const leaveRow = {
-    id: "lr-1",
-    employee_id: "emp-1",
-    leave_type_id: "lt-1",
-    from_date: "2026-07-01",
-    to_date: "2026-07-03",
-    total_days: 3,
-    status: "approved",
-    leave_name: "Casual Leave",
-    employee_code: "MAS1",
-    employee_name: "Test User",
+    id: "lr-1", employee_id: "emp-1", leave_type_id: "lt-1",
+    from_date: "2026-07-01", to_date: "2026-07-03", total_days: 3,
+    status: "approved", leave_name: "Casual Leave",
+    employee_code: "MAS1", employee_name: "Test User",
   };
 
-  function mockPreview(
-    overrides: { leave?: any; run?: any[]; balance?: any } = {},
-  ) {
+  function mockPreview(overrides: { leave?: any; run?: any[]; balance?: any } = {}) {
     exec.mockImplementation((sql: string) => {
-      if (sql.includes("FROM leave_request"))
-        return [[overrides.leave ?? leaveRow], []];
+      if (sql.includes("FROM leave_request")) return [[overrides.leave ?? leaveRow], []];
       if (sql.includes("FROM employees")) return [[{ branch_id: "b1" }], []];
-      if (sql.includes("FROM salary_prep_run"))
-        return [overrides.run ?? [], []];
+      if (sql.includes("FROM salary_prep_run")) return [overrides.run ?? [], []];
       if (sql.includes("FROM leave_balance_ledger")) {
-        return [
-          [
-            overrides.balance ?? {
-              allocated_days: 12,
-              adjusted_days: 0,
-              used_days: 5,
-            },
-          ],
-          [],
-        ];
+        return [[overrides.balance ?? { allocated_days: 12, adjusted_days: 0, used_days: 5 }], []];
       }
       if (sql.includes("FROM attendance_daily_record")) return [[], []];
       if (sql.includes("FROM attendance_state_snapshot")) return [[], []];
@@ -332,8 +247,8 @@ describe("discardService.previewLeave", () => {
     mockPreview();
     const preview = await discardService.previewLeave("lr-1", actor);
     expect(preview.leave?.daysToRestore).toBe(3);
-    expect(preview.leave?.balanceBefore).toBe(7); // 12 + 0 - 5
-    expect(preview.leave?.balanceAfter).toBe(10); // 7 + 3
+    expect(preview.leave?.balanceBefore).toBe(7);  // 12 + 0 - 5
+    expect(preview.leave?.balanceAfter).toBe(10);  // 7 + 3
     expect(preview.blockers).toHaveLength(0);
   });
 
@@ -346,41 +261,31 @@ describe("discardService.previewLeave", () => {
   it("blocks when the payroll month is FINALIZED", async () => {
     mockPreview({ run: [{ run_month: "2026-07", status: "FINALIZED" }] });
     const preview = await discardService.previewLeave("lr-1", actor);
-    expect(preview.blockers.map((b) => b.code)).toContain(
-      "PAYROLL_MONTH_CLOSED",
-    );
+    expect(preview.blockers.map((b) => b.code)).toContain("PAYROLL_MONTH_CLOSED");
     expect(preview.payroll[0].isClosed).toBe(true);
   });
 
   it("blocks when the payroll month is approved (recalc would revert the sign-off)", async () => {
     mockPreview({ run: [{ run_month: "2026-07", status: "approved" }] });
     const preview = await discardService.previewLeave("lr-1", actor);
-    expect(preview.blockers.map((b) => b.code)).toContain(
-      "PAYROLL_MONTH_CLOSED",
-    );
+    expect(preview.blockers.map((b) => b.code)).toContain("PAYROLL_MONTH_CLOSED");
   });
 
   it("does not block a draft or processing month", async () => {
     mockPreview({ run: [{ run_month: "2026-07", status: "processing" }] });
     const preview = await discardService.previewLeave("lr-1", actor);
-    expect(preview.blockers.map((b) => b.code)).not.toContain(
-      "PAYROLL_MONTH_CLOSED",
-    );
+    expect(preview.blockers.map((b) => b.code)).not.toContain("PAYROLL_MONTH_CLOSED");
     expect(preview.payroll[0].isClosed).toBe(false);
   });
 
   it("blocks when any run for the month is closed, even if another is open", async () => {
     // 2026-03 really does carry both an 'approved' and a 'FINALIZED' run.
-    mockPreview({
-      run: [
-        { run_month: "2026-07", status: "approved" },
-        { run_month: "2026-07", status: "FINALIZED" },
-      ],
-    });
+    mockPreview({ run: [
+      { run_month: "2026-07", status: "approved" },
+      { run_month: "2026-07", status: "FINALIZED" },
+    ] });
     const preview = await discardService.previewLeave("lr-1", actor);
-    expect(preview.blockers.map((b) => b.code)).toContain(
-      "PAYROLL_MONTH_CLOSED",
-    );
+    expect(preview.blockers.map((b) => b.code)).toContain("PAYROLL_MONTH_CLOSED");
   });
 
   it("warns rather than crashing when no balance ledger row exists", async () => {
@@ -397,9 +302,7 @@ describe("discardService.previewLeave", () => {
 
   it("throws 404 when the leave does not exist", async () => {
     exec.mockResolvedValue([[], []]);
-    await expect(
-      discardService.previewLeave("missing", actor),
-    ).rejects.toMatchObject({ statusCode: 404 });
+    await expect(discardService.previewLeave("missing", actor)).rejects.toMatchObject({ statusCode: 404 });
   });
 });
 
@@ -409,27 +312,15 @@ describe("discardService.discardLeave", () => {
   it("refuses to run when the preview is blocked, and opens no transaction", async () => {
     exec.mockImplementation((sql: string) => {
       if (sql.includes("FROM leave_request")) {
-        return [
-          [
-            {
-              id: "lr-1",
-              employee_id: "emp-1",
-              leave_type_id: "lt-1",
-              from_date: "2026-07-01",
-              to_date: "2026-07-01",
-              total_days: 1,
-              status: "pending",
-            },
-          ],
-          [],
-        ];
+        return [[{ id: "lr-1", employee_id: "emp-1", leave_type_id: "lt-1",
+                   from_date: "2026-07-01", to_date: "2026-07-01", total_days: 1,
+                   status: "pending" }], []];
       }
       if (sql.includes("FROM employees")) return [[{ branch_id: "b1" }], []];
       return [[], []];
     });
-    await expect(
-      discardService.discardLeave("lr-1", actor, "wrong employee entirely"),
-    ).rejects.toMatchObject({ statusCode: 409, code: "NOT_APPROVED" });
+    await expect(discardService.discardLeave("lr-1", actor, "wrong employee entirely"))
+      .rejects.toMatchObject({ statusCode: 409, code: "NOT_APPROVED" });
     expect(getConnection).not.toHaveBeenCalled();
   });
 });

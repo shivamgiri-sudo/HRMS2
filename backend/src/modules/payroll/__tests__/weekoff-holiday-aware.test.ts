@@ -17,12 +17,7 @@ import { calculateWeekoffEligibility } from "../weekoff-eligibility.service.js";
 
 vi.mock("../../policy-engine/policy-engine.cache.js", () => ({
   // Force the documented default slab table, independent of live policy rows.
-  getPolicyValue: async (
-    _d: string,
-    _k: string,
-    _s: string,
-    fallback: string,
-  ) => fallback,
+  getPolicyValue: async (_d: string, _k: string, _s: string, fallback: string) => fallback,
 }));
 
 const AUG = "2026-08"; // 31 days, 5 Sundays -> 26 working days
@@ -61,12 +56,7 @@ describe("holidays do not count against full-attendance week-off eligibility", (
     // A count that is negative, absurd, or non-finite must not drive availableWorkingDays to
     // zero, where `paidBase >= available` is true for everyone regardless of attendance.
     for (const bad of [-5, 999, Number.NaN, Number.POSITIVE_INFINITY]) {
-      const granted = await calculateWeekoffEligibility(
-        "e1",
-        3,
-        AUG,
-        bad as number,
-      );
+      const granted = await calculateWeekoffEligibility("e1", 3, AUG, bad as number);
       expect(granted).toBe(0); // 3 paid days earns nothing on the slab, whatever the input
     }
   });
@@ -91,8 +81,6 @@ describe("the holiday count is per employee, never a flat month figure", () => {
     // this is full entitlement. Owner confirmed 2026-09-30 that the live rule stands.
     expect(await calculateWeekoffEligibility("joiner", 24, AUG, 1)).toBe(5);
     // A branch the holidays were not declared for -> 26 available -> short by two.
-    expect(await calculateWeekoffEligibility("other-branch", 24, AUG, 0)).toBe(
-      4,
-    );
+    expect(await calculateWeekoffEligibility("other-branch", 24, AUG, 0)).toBe(4);
   });
 });

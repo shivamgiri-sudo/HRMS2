@@ -8,7 +8,7 @@ import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 // ---------------------------------------------------------------------------
 function getMonthsInRange(
   fromDate: string,
-  toDate: string,
+  toDate: string
 ): Array<{ year: number; month: number }> {
   const from = new Date(fromDate);
   const to = new Date(toDate);
@@ -47,16 +47,9 @@ async function checkMonthlyCapExceeded(
   fromDate: string,
   toDate: string,
   requestedDays: number,
-  excludeRequestId?: string,
-): Promise<{
-  exceeded: boolean;
-  monthBreached: string | null;
-  usedDays: number;
-  cap: number;
-}> {
-  const CAP = Number(
-    await getPolicyValue("leave", "cl_ml_policy", "monthly_cap_days", "1"),
-  );
+  excludeRequestId?: string
+): Promise<{ exceeded: boolean; monthBreached: string | null; usedDays: number; cap: number }> {
+  const CAP = Number(await getPolicyValue("leave", "cl_ml_policy", "monthly_cap_days", "1"));
   const months = getMonthsInRange(fromDate, toDate);
 
   for (const { year, month } of months) {
@@ -78,17 +71,7 @@ async function checkMonthlyCapExceeded(
     //   employee_id                            → (5)
     //   overlap window LAST_DAY(y-m)           → year, month  (6-7)
     //   overlap window y-m-01                  → year, month  (8-9)
-    const params: unknown[] = [
-      year,
-      month,
-      year,
-      month,
-      employeeId,
-      year,
-      month,
-      year,
-      month,
-    ];
+    const params: unknown[] = [year, month, year, month, employeeId, year, month, year, month];
     if (excludeRequestId) params.push(excludeRequestId);
 
     // Count only the calendar days that each existing request overlaps with
@@ -134,21 +117,13 @@ async function checkCLMLInSameMonth(
   employeeId: string,
   fromDate: string,
   toDate: string,
-  excludeRequestId?: string,
+  excludeRequestId?: string
 ): Promise<{ hasConflict: boolean; conflictMonth: string | null }> {
   const months = getMonthsInRange(fromDate, toDate);
 
   for (const { year, month } of months) {
     const excludeClause = excludeRequestId ? "AND lr.id != ?" : "";
-    const params: unknown[] = [
-      employeeId,
-      year,
-      month,
-      year,
-      month,
-      year,
-      month,
-    ];
+    const params: unknown[] = [employeeId, year, month, year, month, year, month];
     if (excludeRequestId) params.push(excludeRequestId);
 
     const sql = `
@@ -185,21 +160,13 @@ async function checkELInSameMonth(
   employeeId: string,
   fromDate: string,
   toDate: string,
-  excludeRequestId?: string,
+  excludeRequestId?: string
 ): Promise<{ hasConflict: boolean; conflictMonth: string | null }> {
   const months = getMonthsInRange(fromDate, toDate);
 
   for (const { year, month } of months) {
     const excludeClause = excludeRequestId ? "AND lr.id != ?" : "";
-    const params: unknown[] = [
-      employeeId,
-      year,
-      month,
-      year,
-      month,
-      year,
-      month,
-    ];
+    const params: unknown[] = [employeeId, year, month, year, month, year, month];
     if (excludeRequestId) params.push(excludeRequestId);
 
     const sql = `
@@ -243,7 +210,7 @@ async function checkELInSameMonth(
 async function checkELOccurrences(
   employeeId: string,
   fromDate: string,
-  toDate: string,
+  toDate: string
 ): Promise<{ count: number; isException: boolean }> {
   const fromYear = new Date(fromDate).getFullYear();
   const toYear = new Date(toDate).getFullYear();
@@ -262,11 +229,9 @@ async function checkELOccurrences(
         AND lr.from_date <= ?
         AND lr.to_date   >= ?
     `;
-    const [rows] = await db.execute<RowDataPacket[]>(sql, [
-      employeeId,
-      `${year}-12-31`,
-      `${year}-01-01`,
-    ]);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      sql, [employeeId, `${year}-12-31`, `${year}-01-01`]
+    );
     const count = Number(rows[0]?.cnt ?? 0);
     maxCount = Math.max(maxCount, count);
     // isException = would become the 3rd application (count >= 2 existing) in this year
@@ -279,10 +244,7 @@ async function checkELOccurrences(
 // ---------------------------------------------------------------------------
 // checkELSingleGoCap
 // ---------------------------------------------------------------------------
-function checkELSingleGoCap(requestedDays: number): {
-  exceeded: boolean;
-  cap: number;
-} {
+function checkELSingleGoCap(requestedDays: number): { exceeded: boolean; cap: number } {
   const CAP = 12;
   return { exceeded: requestedDays > CAP, cap: CAP };
 }
@@ -320,7 +282,7 @@ function checkELSingleGoCap(requestedDays: number): {
 function isAccruingInMonth(
   joinDate: string,
   creditMonth: number,
-  creditYear: number,
+  creditYear: number
 ): boolean {
   const parsed = new Date(joinDate);
   const joinYear = parsed.getFullYear();
@@ -337,7 +299,7 @@ function isAccruingInMonth(
 function prorateMonthlyCredit(
   joinDate: string,
   creditMonth: number,
-  creditYear: number,
+  creditYear: number
 ): number {
   const parsed = new Date(joinDate);
   const joinYear = parsed.getFullYear();
@@ -345,10 +307,7 @@ function prorateMonthlyCredit(
   const joinDay = parsed.getDate();
 
   // Already employed for the full credit month
-  if (
-    joinYear < creditYear ||
-    (joinYear === creditYear && joinMonth < creditMonth)
-  ) {
+  if (joinYear < creditYear || (joinYear === creditYear && joinMonth < creditMonth)) {
     return 1.0;
   }
 
@@ -369,7 +328,7 @@ function prorateMonthlyCredit(
 // ---------------------------------------------------------------------------
 function prorateAnnualCredit(
   joinDate: string,
-  creditYear: number,
+  creditYear: number
 ): { daysToCredit: number; monthsServed: number } {
   const parsed = new Date(joinDate);
   const joinYear = parsed.getFullYear();
@@ -389,7 +348,7 @@ function prorateAnnualCredit(
     monthsServed = 0;
   }
 
-  const daysToCredit = Math.round(((18 * monthsServed) / 12) * 100) / 100;
+  const daysToCredit = Math.round((18 * monthsServed) / 12 * 100) / 100;
 
   return { daysToCredit, monthsServed };
 }
@@ -407,14 +366,8 @@ function prorateAnnualCredit(
 // (still exported, still has zero callers) rather than removed outright.
 async function getCombinedCLMLBalance(
   employeeId: string,
-  year: number,
-): Promise<{
-  available: number;
-  clAllocated: number;
-  clUsed: number;
-  mlAllocated: number;
-  mlUsed: number;
-}> {
+  year: number
+): Promise<{ available: number; clAllocated: number; clUsed: number; mlAllocated: number; mlUsed: number }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT lt.leave_code,
             COALESCE(lbl.allocated_days, 0) AS allocated_days,
@@ -426,24 +379,21 @@ async function getCombinedCLMLBalance(
        AND lbl.employee_id = ?
        AND lbl.balance_year = ?
      WHERE lt.leave_code IN ('CL', 'ML') AND lt.active_status = 1`,
-    [employeeId, year],
+    [employeeId, year]
   );
 
-  let clAllocated = 0,
-    clUsed = 0,
-    mlAllocated = 0,
-    mlUsed = 0;
+  let clAllocated = 0, clUsed = 0, mlAllocated = 0, mlUsed = 0;
   for (const row of rows as RowDataPacket[]) {
-    if (row.leave_code === "CL") {
+    if (row.leave_code === 'CL') {
       clAllocated = Number(row.allocated_days) + Number(row.adjusted_days);
       clUsed = Number(row.used_days);
-    } else if (row.leave_code === "ML") {
+    } else if (row.leave_code === 'ML') {
       mlAllocated = Number(row.allocated_days) + Number(row.adjusted_days);
       mlUsed = Number(row.used_days);
     }
   }
 
-  const available = clAllocated - clUsed + (mlAllocated - mlUsed);
+  const available = (clAllocated - clUsed) + (mlAllocated - mlUsed);
   return { available, clAllocated, clUsed, mlAllocated, mlUsed };
 }
 
@@ -456,19 +406,15 @@ async function getCombinedCLMLBalance(
 // duplicated in leave.secure.routes.ts (the authorization check) with no
 // second caller; now also used by leave.service.ts's submit-time
 // notification so the two never disagree about who the escalation goes to.
-async function getExceptionApproverRole(
-  leaveTypeId: string | null,
-): Promise<string> {
+async function getExceptionApproverRole(leaveTypeId: string | null): Promise<string> {
   if (!leaveTypeId) return "branch_head";
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT exception_approver_role FROM leave_policy_config WHERE leave_type_id = ? LIMIT 1`,
-      [leaveTypeId],
+      [leaveTypeId]
     );
     const role = (rows[0] as any)?.exception_approver_role;
-    return typeof role === "string" && role.trim()
-      ? role.trim()
-      : "branch_head";
+    return typeof role === "string" && role.trim() ? role.trim() : "branch_head";
   } catch {
     return "branch_head";
   }

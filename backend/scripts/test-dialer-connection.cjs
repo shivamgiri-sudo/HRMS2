@@ -5,7 +5,7 @@
  * SAFE: Only SELECT queries, no modifications
  */
 
-const mysql = require("mysql2/promise");
+const mysql = require('mysql2/promise');
 
 function requiredEnv(name) {
   const value = process.env[name] && process.env[name].trim();
@@ -14,34 +14,34 @@ function requiredEnv(name) {
 }
 
 const config = {
-  host: requiredEnv("DIALER_DB_HOST"),
+  host: requiredEnv('DIALER_DB_HOST'),
   port: Number(process.env.DIALER_DB_PORT || 3306),
-  user: requiredEnv("DIALER_DB_USER"),
-  password: requiredEnv("DIALER_DB_PASSWORD"),
-  database: requiredEnv("DIALER_DB_NAME"),
+  user: requiredEnv('DIALER_DB_USER'),
+  password: requiredEnv('DIALER_DB_PASSWORD'),
+  database: requiredEnv('DIALER_DB_NAME'),
 };
 
 async function testDialerConnection() {
-  console.log("=".repeat(80));
-  console.log("DIALER DB CONNECTION TEST (READ-ONLY)");
-  console.log("=".repeat(80));
+  console.log('='.repeat(80));
+  console.log('DIALER DB CONNECTION TEST (READ-ONLY)');
+  console.log('='.repeat(80));
 
   const conn = await mysql.createConnection(config);
 
   try {
     // Test 1: Basic connection
-    console.log("\n✅ Connected to dialer_db");
+    console.log('\n✅ Connected to dialer_db');
 
     // Test 2: Set read-only
-    await conn.query("SET SESSION TRANSACTION READ ONLY");
-    console.log("✅ Session set to READ-ONLY");
+    await conn.query('SET SESSION TRANSACTION READ ONLY');
+    console.log('✅ Session set to READ-ONLY');
 
     // Test 3: Check views exist
     const [views] = await conn.execute(`
       SHOW TABLES LIKE 'vw_%'
     `);
     console.log(`\n📊 Found ${views.length} views:`);
-    views.forEach((v) => console.log(`   - ${Object.values(v)[0]}`));
+    views.forEach(v => console.log(`   - ${Object.values(v)[0]}`));
 
     // Test 4: Sample inbound call data
     const [inbound] = await conn.execute(`
@@ -57,7 +57,7 @@ async function testDialerConnection() {
       LIMIT 10
     `);
 
-    console.log("\n📞 Sample inbound call data (last 7 days, top 10):");
+    console.log('\n📞 Sample inbound call data (last 7 days, top 10):');
     console.table(inbound);
 
     // Test 5: Sample agent activity
@@ -75,7 +75,7 @@ async function testDialerConnection() {
       LIMIT 10
     `);
 
-    console.log("\n📊 Sample agent activity (last 7 days, top 10):");
+    console.log('\n📊 Sample agent activity (last 7 days, top 10):');
     console.table(agentLog);
 
     // Test 6: Current active agents
@@ -99,24 +99,20 @@ async function testDialerConnection() {
     }
 
     // Test 7: Verify no write access (should fail)
-    console.log("\n🔒 Testing READ-ONLY enforcement...");
+    console.log('\n🔒 Testing READ-ONLY enforcement...');
     try {
-      await conn.execute("INSERT INTO call_logs (id) VALUES (999999)");
-      console.error(
-        "❌ SECURITY BREACH: Write operation succeeded! (Should have failed)",
-      );
+      await conn.execute('INSERT INTO call_logs (id) VALUES (999999)');
+      console.error('❌ SECURITY BREACH: Write operation succeeded! (Should have failed)');
     } catch (error) {
-      console.log(
-        "✅ Write operation blocked as expected:",
-        error.message.substring(0, 80),
-      );
+      console.log('✅ Write operation blocked as expected:', error.message.substring(0, 80));
     }
 
-    console.log("\n" + "=".repeat(80));
-    console.log("✅ ALL TESTS PASSED - CONNECTION READY FOR HRMS INTEGRATION");
-    console.log("=".repeat(80));
+    console.log('\n' + '='.repeat(80));
+    console.log('✅ ALL TESTS PASSED - CONNECTION READY FOR HRMS INTEGRATION');
+    console.log('='.repeat(80));
+
   } catch (error) {
-    console.error("\n❌ Test failed:", error.message);
+    console.error('\n❌ Test failed:', error.message);
     throw error;
   } finally {
     await conn.end();

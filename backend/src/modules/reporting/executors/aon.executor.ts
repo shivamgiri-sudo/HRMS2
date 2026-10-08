@@ -61,12 +61,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type {
-  ExecFilters,
-  ExecScope,
-  ExecOptions,
-  ExecResult,
-} from "./types.js";
+import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -83,7 +78,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params,
+    params
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -99,8 +94,7 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  * recent joiners), so this is a safe substitution today and correctly future-proofed as more
  * employees get a real salary_start_date set going forward.
  */
-export const AON_REFERENCE_JOIN_DATE_SQL =
-  "COALESCE(e.salary_start_date, e.date_of_joining)";
+export const AON_REFERENCE_JOIN_DATE_SQL = "COALESCE(e.salary_start_date, e.date_of_joining)";
 
 /**
  * The bucket expression, parameterised only by the reference date.
@@ -160,8 +154,7 @@ const ACTIVE = "e.active_status = 1";
  * have a date_of_joining on or after 2025-08-01 (verified live 2026-08-15). The excluded
  * count is reported to the caller rather than left implicit.
  */
-const RELIABLE_POPULATION =
-  "(e.active_status = 1 OR e.date_of_exit IS NOT NULL)";
+const RELIABLE_POPULATION = "(e.active_status = 1 OR e.date_of_exit IS NOT NULL)";
 
 /**
  * Exits whose tenure is arithmetically possible.
@@ -198,7 +191,7 @@ const POSSIBLE_TENURE = "e.date_of_exit >= e.date_of_joining";
 export async function aonBucketHeadcount(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -243,11 +236,7 @@ export async function aonBucketHeadcount(
     const paged = await fetchPageWithTotal(base, params, options, query, count);
     const total = paged.total;
     const rows = paged.rows as Record<string, unknown>[];
-    return {
-      rows,
-      rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: total > rows.length,
-    };
+    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
   } catch (err) {
     rethrowReportSchemaError("aon-bucket-headcount", err, base);
   }
@@ -300,15 +289,11 @@ function atRiskBucketSql(asOf: string, joinDateCol: string): string {
 export async function aonBucketAttrition(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const today = new Date();
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const twelveMonthsAgo = new Date(
-    today.getFullYear() - 1,
-    today.getMonth(),
-    today.getDate(),
-  );
+  const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
 
   const from = dateParam(filters.from, iso(twelveMonthsAgo));
   const to = dateParam(filters.to, iso(today));
@@ -321,7 +306,7 @@ export async function aonBucketAttrition(
     "e.date_of_exit IS NOT NULL",
     "e.date_of_joining IS NOT NULL",
     POSSIBLE_TENURE,
-    "e.date_of_exit BETWEEN ? AND ?",
+    "e.date_of_exit BETWEEN ? AND ?"
   );
   params.push(from, to);
 
@@ -547,11 +532,7 @@ export async function aonBucketAttrition(
     const paged = await fetchPageWithTotal(base, params, options, query, count);
     const total = paged.total;
     const rows = paged.rows as Record<string, unknown>[];
-    return {
-      rows,
-      rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: total > rows.length,
-    };
+    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
   } catch (err) {
     rethrowReportSchemaError("aon-bucket-attrition", err, base);
   }
@@ -576,15 +557,11 @@ export async function aonBucketAttrition(
 export async function overallAttritionRate(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const today = new Date();
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const twelveMonthsAgo = new Date(
-    today.getFullYear() - 1,
-    today.getMonth(),
-    today.getDate(),
-  );
+  const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
   const from = dateParam(filters.from, iso(twelveMonthsAgo));
   const to = dateParam(filters.to, iso(today));
 
@@ -601,10 +578,7 @@ export async function overallAttritionRate(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push(
-    `${AON_REFERENCE_JOIN_DATE_SQL} IS NOT NULL`,
-    RELIABLE_POPULATION,
-  );
+  clauses.push(`${AON_REFERENCE_JOIN_DATE_SQL} IS NOT NULL`, RELIABLE_POPULATION);
   const scopeSql = clauses.join(" AND ");
 
   /*
@@ -675,11 +649,7 @@ export async function overallAttritionRate(
 
   try {
     const rows = await query(base, finalParams);
-    return {
-      rows: rows as Record<string, unknown>[],
-      rowCount: rows.length,
-      isTruncated: false,
-    };
+    return { rows: rows as Record<string, unknown>[], rowCount: rows.length, isTruncated: false };
   } catch (err) {
     rethrowReportSchemaError("aon-overall-attrition-rate", err, base);
   }
@@ -720,7 +690,7 @@ export async function overallAttritionRate(
 export async function aonBucketShrinkage(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const today = new Date();
   const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -739,7 +709,7 @@ export async function aonBucketShrinkage(
   clauses.push(
     "e.date_of_joining IS NOT NULL",
     "adr.record_date >= ?",
-    "adr.record_date < DATE_ADD(?, INTERVAL 1 DAY)",
+    "adr.record_date < DATE_ADD(?, INTERVAL 1 DAY)"
   );
   params.push(from, toInclusive);
 
@@ -807,11 +777,7 @@ export async function aonBucketShrinkage(
     const paged = await fetchPageWithTotal(base, params, options, query, count);
     const total = paged.total;
     const rows = paged.rows as Record<string, unknown>[];
-    return {
-      rows,
-      rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: total > rows.length,
-    };
+    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
   } catch (err) {
     rethrowReportSchemaError("aon-bucket-shrinkage", err, base);
   }
@@ -844,15 +810,11 @@ export async function aonBucketShrinkage(
 export async function aonCohortSurvival(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const today = new Date();
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const twelveMonthsAgo = new Date(
-    today.getFullYear() - 1,
-    today.getMonth(),
-    1,
-  );
+  const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), 1);
 
   const from = dateParam(filters.from, iso(twelveMonthsAgo));
   const to = dateParam(filters.to, iso(today));
@@ -869,7 +831,7 @@ export async function aonCohortSurvival(
     // understating that month's survival.
     `(e.date_of_exit IS NULL OR ${POSSIBLE_TENURE})`,
     "e.date_of_joining >= ?",
-    "e.date_of_joining <= ?",
+    "e.date_of_joining <= ?"
   );
   params.push(from, to);
 
@@ -922,11 +884,7 @@ export async function aonCohortSurvival(
     const paged = await fetchPageWithTotal(base, params, options, query, count);
     const total = paged.total;
     const rows = paged.rows as Record<string, unknown>[];
-    return {
-      rows,
-      rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: total > rows.length,
-    };
+    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
   } catch (err) {
     rethrowReportSchemaError("aon-cohort-survival", err, base);
   }
@@ -1029,10 +987,7 @@ const DEEP_DIVE_DIMENSIONS: Record<
     join: "LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id",
     idExpr: "mgr.id",
   },
-  gender: {
-    label: "Gender",
-    expr: "COALESCE(NULLIF(TRIM(e.gender), ''), 'UNASSIGNED')",
-  },
+  gender: { label: "Gender", expr: "COALESCE(NULLIF(TRIM(e.gender), ''), 'UNASSIGNED')" },
   age_band: {
     label: "Age Band",
     expr: `CASE
@@ -1077,25 +1032,17 @@ const DEEP_DIVE_DIMENSIONS: Record<
 export async function attritionDeepDive(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const today = new Date();
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const twelveMonthsAgo = new Date(
-    today.getFullYear() - 1,
-    today.getMonth(),
-    today.getDate(),
-  );
+  const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
 
   const from = dateParam(filters.from, iso(twelveMonthsAgo));
   const to = dateParam(filters.to, iso(today));
 
-  const requested =
-    typeof filters.dimension === "string" ? filters.dimension : "";
-  const key = Object.prototype.hasOwnProperty.call(
-    DEEP_DIVE_DIMENSIONS,
-    requested,
-  )
+  const requested = typeof filters.dimension === "string" ? filters.dimension : "";
+  const key = Object.prototype.hasOwnProperty.call(DEEP_DIVE_DIMENSIONS, requested)
     ? requested
     : "source";
   const dim = DEEP_DIVE_DIMENSIONS[key];
@@ -1108,7 +1055,7 @@ export async function attritionDeepDive(
     "e.date_of_exit IS NOT NULL",
     "e.date_of_joining IS NOT NULL",
     POSSIBLE_TENURE,
-    "e.date_of_exit BETWEEN ? AND ?",
+    "e.date_of_exit BETWEEN ? AND ?"
   );
   params.push(from, to);
 
@@ -1177,11 +1124,7 @@ export async function attritionDeepDive(
     const paged = await fetchPageWithTotal(base, params, options, query, count);
     const total = paged.total;
     const rows = paged.rows as Record<string, unknown>[];
-    return {
-      rows,
-      rowCount: options.includeTotal ? total : rows.length,
-      isTruncated: total > rows.length,
-    };
+    return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
   } catch (err) {
     rethrowReportSchemaError("attrition-deep-dive", err, base);
   }

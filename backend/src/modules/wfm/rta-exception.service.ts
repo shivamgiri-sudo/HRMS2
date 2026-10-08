@@ -1,5 +1,5 @@
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
 
 export interface RtaException {
   id: number;
@@ -35,9 +35,9 @@ type RtaExceptionRow = RowDataPacket & {
 };
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
-  OPEN: ["ACKNOWLEDGED", "ESCALATED"],
-  ACKNOWLEDGED: ["ACTIONED", "ESCALATED"],
-  ACTIONED: ["RESOLVED", "ESCALATED"],
+  OPEN: ['ACKNOWLEDGED', 'ESCALATED'],
+  ACKNOWLEDGED: ['ACTIONED', 'ESCALATED'],
+  ACTIONED: ['RESOLVED', 'ESCALATED'],
   RESOLVED: [],
   ESCALATED: [],
 };
@@ -67,28 +67,28 @@ export const rtaExceptionService = {
     state?: string;
     employeeId?: string;
   }): Promise<RtaException[]> {
-    let query = "SELECT e.* FROM wfm_rta_exception e WHERE 1=1";
+    let query = 'SELECT e.* FROM wfm_rta_exception e WHERE 1=1';
     const params: (string | undefined)[] = [];
 
     if (filters.date) {
-      query += " AND e.exception_date = ?";
+      query += ' AND e.exception_date = ?';
       params.push(filters.date);
     }
 
     if (filters.employeeId) {
-      query += " AND e.employee_id = ?";
+      query += ' AND e.employee_id = ?';
       params.push(filters.employeeId);
     }
 
     if (filters.state) {
-      query += " AND e.exception_state = ?";
+      query += ' AND e.exception_state = ?';
       params.push(filters.state);
     }
 
     // Note: processId filter is not directly on this table — skip for now
     // as indicated in the brief
 
-    query += " ORDER BY e.created_at DESC";
+    query += ' ORDER BY e.created_at DESC';
 
     const [rows] = await db.execute<RtaExceptionRow[]>(query, params);
     return (rows as RtaExceptionRow[]).map(mapRow);
@@ -119,13 +119,13 @@ export const rtaExceptionService = {
 
     // Fetch and return the created record
     const [rows] = await db.execute<RtaExceptionRow[]>(
-      "SELECT * FROM wfm_rta_exception WHERE id = ?",
-      [insertId],
+      'SELECT * FROM wfm_rta_exception WHERE id = ?',
+      [insertId]
     );
 
     const row = (rows as RtaExceptionRow[])[0];
     if (!row) {
-      throw new Error("Failed to retrieve created exception");
+      throw new Error('Failed to retrieve created exception');
     }
 
     return mapRow(row);
@@ -139,7 +139,7 @@ export const rtaExceptionService = {
       regularizationId?: string;
       rosterAmendmentId?: string;
       ownerId: string;
-    },
+    }
   ): Promise<RtaException> {
     const query = `
       UPDATE wfm_rta_exception
@@ -165,13 +165,13 @@ export const rtaExceptionService = {
 
     // Fetch and return the updated record
     const [rows] = await db.execute<RtaExceptionRow[]>(
-      "SELECT * FROM wfm_rta_exception WHERE id = ?",
-      [id],
+      'SELECT * FROM wfm_rta_exception WHERE id = ?',
+      [id]
     );
 
     const row = (rows as RtaExceptionRow[])[0];
     if (!row) {
-      throw new Error("Exception not found");
+      throw new Error('Exception not found');
     }
 
     return mapRow(row);
@@ -180,13 +180,13 @@ export const rtaExceptionService = {
   async updateState(id: number, newState: string): Promise<RtaException> {
     // Get current state
     const [rows] = await db.execute<RtaExceptionRow[]>(
-      "SELECT * FROM wfm_rta_exception WHERE id = ?",
-      [id],
+      'SELECT * FROM wfm_rta_exception WHERE id = ?',
+      [id]
     );
 
     const row = (rows as RtaExceptionRow[])[0];
     if (!row) {
-      throw new Error("Exception not found");
+      throw new Error('Exception not found');
     }
 
     const currentState = row.exception_state;
@@ -194,28 +194,26 @@ export const rtaExceptionService = {
     // Validate transition
     const validTransitions = VALID_TRANSITIONS[currentState] || [];
     if (!validTransitions.includes(newState)) {
-      const error = new Error(
-        `Cannot transition from ${currentState} to ${newState}`,
-      );
+      const error = new Error(`Cannot transition from ${currentState} to ${newState}`);
       (error as any).statusCode = 400;
       throw error;
     }
 
     // Update state
     await db.execute(
-      "UPDATE wfm_rta_exception SET exception_state = ? WHERE id = ?",
-      [newState, id],
+      'UPDATE wfm_rta_exception SET exception_state = ? WHERE id = ?',
+      [newState, id]
     );
 
     // Fetch and return the updated record
     const [updatedRows] = await db.execute<RtaExceptionRow[]>(
-      "SELECT * FROM wfm_rta_exception WHERE id = ?",
-      [id],
+      'SELECT * FROM wfm_rta_exception WHERE id = ?',
+      [id]
     );
 
     const updatedRow = (updatedRows as RtaExceptionRow[])[0];
     if (!updatedRow) {
-      throw new Error("Exception not found after update");
+      throw new Error('Exception not found after update');
     }
 
     return mapRow(updatedRow);

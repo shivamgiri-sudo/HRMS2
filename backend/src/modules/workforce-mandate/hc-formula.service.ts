@@ -56,10 +56,7 @@ interface HcFormulaResult {
 
 // ── Live counter queries ──────────────────────────────────────────────────────
 
-export async function fetchActiveHc(
-  processId: string,
-  branchId: string | null,
-): Promise<number> {
+export async function fetchActiveHc(processId: string, branchId: string | null): Promise<number> {
   const conds = ["e.process_id = ?", "e.active_status = 1"];
   const params: unknown[] = [processId];
   if (branchId) {
@@ -68,15 +65,12 @@ export async function fetchActiveHc(
   }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM employees e WHERE ${conds.join(" AND ")}`,
-    params,
+    params
   );
   return toNum((rows as RowDataPacket[])[0]?.cnt);
 }
 
-async function fetchOnNoticeHc(
-  processId: string,
-  branchId: string | null,
-): Promise<number> {
+async function fetchOnNoticeHc(processId: string, branchId: string | null): Promise<number> {
   const branchCond = branchId ? " AND e.branch_id = ?" : "";
   const params: unknown[] = [processId, ...(branchId ? [branchId] : [])];
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -85,15 +79,12 @@ async function fetchOnNoticeHc(
      JOIN employees e ON e.id = er.employee_id
      WHERE e.process_id = ?${branchCond}
        AND er.status IN ('accepted', 'notice_serving')`,
-    params,
+    params
   );
   return toNum((rows as RowDataPacket[])[0]?.cnt);
 }
 
-async function fetchLongLeaveHc(
-  processId: string,
-  branchId: string | null,
-): Promise<number> {
+async function fetchLongLeaveHc(processId: string, branchId: string | null): Promise<number> {
   const branchCond = branchId ? " AND e.branch_id = ?" : "";
   const params: unknown[] = [processId, ...(branchId ? [branchId] : [])];
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -104,7 +95,7 @@ async function fetchLongLeaveHc(
        AND lr.status = 'approved'
        AND lr.to_date >= CURDATE()
        AND lr.total_days >= 5`,
-    params,
+    params
   );
   return toNum((rows as RowDataPacket[])[0]?.cnt);
 }
@@ -115,7 +106,7 @@ async function fetchInTrainingHc(processId: string): Promise<number> {
      FROM ats_candidate
      WHERE applied_for_process = ?
        AND current_stage IN ('Applied', 'Screened', 'Selected', 'Onboarding')`,
-    [processId],
+    [processId]
   );
   return toNum((rows as RowDataPacket[])[0]?.cnt);
 }
@@ -127,7 +118,7 @@ async function fetchInTrainingHc(processId: string): Promise<number> {
 export async function fetchRolling30dAttritionRate(
   processId: string,
   branchId: string | null,
-  activeHc: number,
+  activeHc: number
 ): Promise<number> {
   if (activeHc === 0) return 0;
   const branchCond = branchId ? " AND e.branch_id = ?" : "";
@@ -138,7 +129,7 @@ export async function fetchRolling30dAttritionRate(
      WHERE e.process_id = ?${branchCond}
        AND e.date_of_exit >= DATE_SUB(NOW(), INTERVAL 30 DAY)
        AND e.date_of_exit IS NOT NULL`,
-    params,
+    params
   );
   const exits = toNum((rows as RowDataPacket[])[0]?.cnt);
   return round2((exits / activeHc) * 100);
@@ -155,7 +146,7 @@ export async function fetchRolling30dAttritionRate(
 export async function fetchRolling60dShrinkagePct(
   processId: string,
   branchId: string | null,
-  fallbackShrinkagePct: number,
+  fallbackShrinkagePct: number
 ): Promise<number> {
   const branchCond = branchId ? " AND e.branch_id = ?" : "";
   const params: unknown[] = [processId, ...(branchId ? [branchId] : [])];
@@ -169,7 +160,7 @@ export async function fetchRolling60dShrinkagePct(
      JOIN employees e ON e.id = adr.employee_id
      WHERE e.process_id = ?${branchCond}
        AND adr.record_date >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)`,
-    params,
+    params
   );
   const r = (rows as RowDataPacket[])[0];
   const empDays = toNum(r?.emp_days);
@@ -192,10 +183,7 @@ export async function fetchRolling60dShrinkagePct(
  * Returns BPO HC formula output for each active mandate in scope.
  * If no processId given, returns all active mandates.
  */
-export async function getHcFormula(
-  req: Request,
-  res: Response,
-): Promise<Response> {
+export async function getHcFormula(req: Request, res: Response): Promise<Response> {
   const { processId, branchId } = req.query as Record<string, string>;
 
   try {
@@ -221,15 +209,12 @@ export async function getHcFormula(
        LEFT JOIN branch_master b  ON b.id = wm.branch_id
        WHERE ${conds.join(" AND ")}
        ORDER BY wm.effective_from DESC, wm.process_id ASC`,
-      params,
+      params
     );
     const mandates = mandateRows as RowDataPacket[];
 
     if (mandates.length === 0) {
-      return res.json({
-        data: [],
-        message: "No active mandates found for scope",
-      });
+      return res.json({ data: [], message: "No active mandates found for scope" });
     }
 
     // ── Compute formula for each mandate ──────────────────────────────────────
@@ -238,19 +223,23 @@ export async function getHcFormula(
         const pid = String(m.process_id);
         const bid = m.branch_id ? String(m.branch_id) : null;
 
-        const mandatedHc = toNum(m.mandated_hc);
-        const shrinkagePct = toNum(m.shrinkage_pct);
+        const mandatedHc      = toNum(m.mandated_hc);
+        const shrinkagePct    = toNum(m.shrinkage_pct);
         const attritionBufPct = toNum(m.attrition_buffer_pct);
-        const trainingBufPct = toNum(m.training_buffer_pct);
+        const trainingBufPct  = toNum(m.training_buffer_pct);
 
         // Live counts (run in parallel for performance)
-        const [activeHc, onNoticeHc, longLeaveHc, inTrainingHc] =
-          await Promise.all([
-            fetchActiveHc(pid, bid),
-            fetchOnNoticeHc(pid, bid),
-            fetchLongLeaveHc(pid, bid),
-            fetchInTrainingHc(pid),
-          ]);
+        const [
+          activeHc,
+          onNoticeHc,
+          longLeaveHc,
+          inTrainingHc,
+        ] = await Promise.all([
+          fetchActiveHc(pid, bid),
+          fetchOnNoticeHc(pid, bid),
+          fetchLongLeaveHc(pid, bid),
+          fetchInTrainingHc(pid),
+        ]);
 
         // Derived rates (depend on activeHc for attrition denominator)
         const [rolling30dAttrition, rolling60dShrinkage] = await Promise.all([
@@ -262,14 +251,12 @@ export async function getHcFormula(
         // Required Staffed HC = mandated_hc × (1 + shrinkage/100) / (1 - attrition/100 - training/100)
         const denominator = 1 - attritionBufPct / 100 - trainingBufPct / 100;
         const safeDenominator = denominator > 0 ? denominator : 0.01; // guard division by zero
-        const requiredStaffedHc = round2(
-          (mandatedHc * (1 + shrinkagePct / 100)) / safeDenominator,
-        );
+        const requiredStaffedHc = round2(mandatedHc * (1 + shrinkagePct / 100) / safeDenominator);
 
         // Available Production HC = active_hc - on_notice_hc - long_leave_hc - in_training_hc
         const availableProductionHc = Math.max(
           0,
-          activeHc - onNoticeHc - longLeaveHc - inTrainingHc,
+          activeHc - onNoticeHc - longLeaveHc - inTrainingHc
         );
 
         const netGap = round2(requiredStaffedHc - availableProductionHc);
@@ -317,7 +304,7 @@ export async function getHcFormula(
             risk_signal: computeRiskSignal(coveragePct),
           },
         };
-      }),
+      })
     );
 
     return res.json({ data: results });

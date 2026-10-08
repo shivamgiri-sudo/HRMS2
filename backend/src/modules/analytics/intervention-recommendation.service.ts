@@ -13,28 +13,18 @@
  *   outcome, outcome_date
  */
 
-import { Request, Response } from "express";
-import { v4 as uuidv4 } from "uuid";
-import type { RowDataPacket, ResultSetHeader } from "mysql2";
-import { db as pool } from "../../db/mysql.js";
-import { lobWhere, readLobFilter } from "../../shared/lobFilter.js";
-import { writeAuditLog } from "../../shared/auditLog.js";
+import { Request, Response } from 'express';
+import { v4 as uuidv4 } from 'uuid';
+import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { db as pool } from '../../db/mysql.js';
+import { lobWhere, readLobFilter } from '../../shared/lobFilter.js';
+import { writeAuditLog } from '../../shared/auditLog.js';
+import { buildCasesQuery, getSummaryExtras, parseRecommendations } from './intervention-cases.service.js';
 import {
-  buildCasesQuery,
-  getSummaryExtras,
-  parseRecommendations,
-} from "./intervention-cases.service.js";
-import {
-  NON_WORKING_STATUSES,
-  clampLimit,
-  isValidDateOnly,
-  normalizeOwner,
-  normalizeTier,
-  pctOf,
-  tierFromScore,
-} from "./intervention-calc.js";
+  NON_WORKING_STATUSES, clampLimit, isValidDateOnly, normalizeOwner, normalizeTier, pctOf, tierFromScore,
+} from './intervention-calc.js';
 
-const NON_WORKING_SQL = NON_WORKING_STATUSES.map((x) => `'${x}'`).join(",");
+const NON_WORKING_SQL = NON_WORKING_STATUSES.map((x) => `'${x}'`).join(',');
 
 /**
  * Optional branch / process / LOB narrowing, on the employee alias `e`. Purely additive: an
@@ -48,16 +38,10 @@ export function buildInterventionEmployeeFilter(
 ): { sql: string; params: string[] } {
   const parts: string[] = [];
   const params: string[] = [];
-  const branchId = typeof q.branchId === "string" ? q.branchId.trim() : "";
-  const processId = typeof q.processId === "string" ? q.processId.trim() : "";
-  if (branchId) {
-    parts.push("AND e.branch_id = ?");
-    params.push(branchId);
-  }
-  if (processId) {
-    parts.push("AND e.process_id = ?");
-    params.push(processId);
-  }
+  const branchId = typeof q.branchId === 'string' ? q.branchId.trim() : '';
+  const processId = typeof q.processId === 'string' ? q.processId.trim() : '';
+  if (branchId) { parts.push('AND e.branch_id = ?'); params.push(branchId); }
+  if (processId) { parts.push('AND e.process_id = ?'); params.push(processId); }
   const l = lobWhere(lob);
   if (l.sql) { parts.push(l.sql); params.push(...l.params); }
   if (scope) { parts.push(`AND ${scope.sql}`); params.push(...(scope.params as string[])); }
@@ -145,80 +129,69 @@ interface Rule {
 const RULES: Rule[] = [
   {
     condition: (s) => s.prediction_score >= 75 && s.aon_days <= 30,
-    priority: "immediate",
-    owner: "hr_admin",
-    action:
-      "Schedule 1:1 retention conversation within 24h. Review joining experience and commute.",
-    reason: "Critical risk in first 30 days — highest early attrition window",
-    signal: "critical_early_tenure",
+    priority: 'immediate',
+    owner: 'hr_admin',
+    action: 'Schedule 1:1 retention conversation within 24h. Review joining experience and commute.',
+    reason: 'Critical risk in first 30 days — highest early attrition window',
+    signal: 'critical_early_tenure'
   },
   {
     condition: (s) => s.quality_velocity < -15,
-    priority: "within_48h",
-    owner: "manager",
-    action:
-      "Assign quality coach for 2-week intensive support. Review recent audit feedback.",
-    reason: "Rapid quality decline detected",
-    signal: "rapid_quality_decline",
+    priority: 'within_48h',
+    owner: 'manager',
+    action: 'Assign quality coach for 2-week intensive support. Review recent audit feedback.',
+    reason: 'Rapid quality decline detected',
+    signal: 'rapid_quality_decline'
   },
   {
     condition: (s) => s.manager_risk_score > 70 && s.team_30d_exits >= 3,
-    priority: "within_48h",
-    owner: "process_head",
-    action:
-      "Escalate manager effectiveness review to Process Head. Investigate team health.",
-    reason: "High-risk manager with multiple recent exits from same team",
-    signal: "manager_driven_risk",
+    priority: 'within_48h',
+    owner: 'process_head',
+    action: 'Escalate manager effectiveness review to Process Head. Investigate team health.',
+    reason: 'High-risk manager with multiple recent exits from same team',
+    signal: 'manager_driven_risk'
   },
   {
     condition: (s) => s.att_pct < 75,
-    priority: "within_48h",
-    owner: "manager",
-    action:
-      "Issue attendance warning and schedule counselling. Check for personal circumstances.",
-    reason: "Attendance below 75% — high burnout/resignation signal",
-    signal: "low_attendance",
+    priority: 'within_48h',
+    owner: 'manager',
+    action: 'Issue attendance warning and schedule counselling. Check for personal circumstances.',
+    reason: 'Attendance below 75% — high burnout/resignation signal',
+    signal: 'low_attendance'
   },
   {
     condition: (s) =>
-      s.source_normalised === "Walk-in" &&
-      s.aon_days <= 30 &&
-      !s.has_quality_data,
-    priority: "this_week",
-    owner: "wfm",
-    action:
-      "Confirm biometric enrolment. Assign buddy/mentor. Check transport access.",
-    reason:
-      "New walk-in hire without quality data — likely biometric gap or early quit risk",
-    signal: "walkin_onboarding_risk",
+      s.source_normalised === 'Walk-in' && s.aon_days <= 30 && !s.has_quality_data,
+    priority: 'this_week',
+    owner: 'wfm',
+    action: 'Confirm biometric enrolment. Assign buddy/mentor. Check transport access.',
+    reason: 'New walk-in hire without quality data — likely biometric gap or early quit risk',
+    signal: 'walkin_onboarding_risk'
   },
   {
     condition: (s) => s.active_pip && s.quality_velocity < -5,
-    priority: "within_48h",
-    owner: "hr_admin",
-    action:
-      "Review PIP checkpoint urgently. Consider timeline extension or managed exit path.",
-    reason: "PIP active and quality still declining",
-    signal: "pip_with_decline",
+    priority: 'within_48h',
+    owner: 'hr_admin',
+    action: 'Review PIP checkpoint urgently. Consider timeline extension or managed exit path.',
+    reason: 'PIP active and quality still declining',
+    signal: 'pip_with_decline'
   },
   {
     condition: (s) => s.ctc < 12000 && s.aon_days > 90,
-    priority: "this_week",
-    owner: "hr_admin",
-    action:
-      "Flag for compensation review in next salary cycle. Compare to process average CTC.",
-    reason: "Low CTC with tenure past 90 days — salary dissatisfaction signal",
-    signal: "low_ctc_tenure",
+    priority: 'this_week',
+    owner: 'hr_admin',
+    action: 'Flag for compensation review in next salary cycle. Compare to process average CTC.',
+    reason: 'Low CTC with tenure past 90 days — salary dissatisfaction signal',
+    signal: 'low_ctc_tenure'
   },
   {
     condition: (s) => s.dialer_drop_pct > 25,
-    priority: "this_week",
-    owner: "wfm",
-    action:
-      "Check dialer allocation and schedule compliance. Rule out technical issues.",
-    reason: "Dialer hours dropped >25% vs personal baseline",
-    signal: "dialer_disengagement",
-  },
+    priority: 'this_week',
+    owner: 'wfm',
+    action: 'Check dialer allocation and schedule compliance. Rule out technical issues.',
+    reason: 'Dialer hours dropped >25% vs personal baseline',
+    signal: 'dialer_disengagement'
+  }
 ];
 
 // ---------------------------------------------------------------------------
@@ -594,17 +567,17 @@ const SIGNALS_QUERY = `
  * @returns           The stored recommendation object
  */
 export async function generateRecommendationsForEmployee(
-  employeeId: string,
+  employeeId: string
 ): Promise<object> {
   // Bind ? in order: att_cte, quality_cte, dialer_cte, team_exit_cte (×2),
   // manager_risk_cte, final WHERE
   const [rows] = await pool.query<SignalsRow[]>(SIGNALS_QUERY, [
-    employeeId, // att_cte
-    employeeId, // quality_cte
-    employeeId, // dialer_cte
-    employeeId, // team_exit_cte base join
-    employeeId, // manager_risk_cte base join
-    employeeId, // final WHERE e.id = ?
+    employeeId,  // att_cte
+    employeeId,  // quality_cte
+    employeeId,  // dialer_cte
+    employeeId,  // team_exit_cte base join
+    employeeId,  // manager_risk_cte base join
+    employeeId   // final WHERE e.id = ?
   ]);
 
   if (rows.length === 0) {
@@ -614,29 +587,29 @@ export async function generateRecommendationsForEmployee(
   const row = rows[0];
 
   const signals: Signals = {
-    prediction_score: row.prediction_score ?? 0,
-    aon_days: row.aon_days ?? 0,
-    quality_velocity: row.quality_velocity ?? 0,
+    prediction_score:  row.prediction_score ?? 0,
+    aon_days:          row.aon_days ?? 0,
+    quality_velocity:  row.quality_velocity ?? 0,
     manager_risk_score: row.manager_risk_score ?? 0,
-    team_30d_exits: row.team_30d_exits ?? 0,
-    att_pct: row.att_pct ?? 100,
-    source_normalised: row.source_normalised ?? "",
-    has_quality_data: row.has_quality_data === 1,
-    active_pip: row.active_pip === 1,
-    ctc: row.ctc ?? 99999,
-    dialer_drop_pct: row.dialer_drop_pct ?? 0,
+    team_30d_exits:    row.team_30d_exits ?? 0,
+    att_pct:           row.att_pct ?? 100,
+    source_normalised: row.source_normalised ?? '',
+    has_quality_data:  row.has_quality_data === 1,
+    active_pip:        row.active_pip === 1,
+    ctc:               row.ctc ?? 99999,
+    dialer_drop_pct:   row.dialer_drop_pct ?? 0
   };
 
   // Apply rules in order; all matching rules are included
-  const matched: Recommendation[] = RULES.filter((rule) =>
-    rule.condition(signals),
-  ).map(({ signal, priority, owner, action, reason }) => ({
-    signal,
-    priority,
-    owner,
-    action,
-    reason,
-  }));
+  const matched: Recommendation[] = RULES
+    .filter((rule) => rule.condition(signals))
+    .map(({ signal, priority, owner, action, reason }) => ({
+      signal,
+      priority,
+      owner,
+      action,
+      reason
+    }));
 
   // The SQL's own risk_tier CASE omits some score terms (quality-average, late-mark) that
   // prediction_score includes, so the two could disagree. Derive the tier from the score.
@@ -663,15 +636,15 @@ export async function generateRecommendationsForEmployee(
     employeeId,
     riskTier,
     signals.prediction_score,
-    recommendationsJson,
+    recommendationsJson
   ]);
 
   return {
-    employee_id: employeeId,
-    risk_tier: riskTier,
+    employee_id:      employeeId,
+    risk_tier:        riskTier,
     prediction_score: signals.prediction_score,
-    recommendations: matched,
-    generated_at: new Date().toISOString(),
+    recommendations:  matched,
+    generated_at:     new Date().toISOString()
   };
 }
 
@@ -692,13 +665,7 @@ export async function getPendingInterventions(req: Request, res: Response) {
     const rawOwner = (req.query.owner as string | undefined)?.trim();
     const owner = normalizeOwner(rawOwner);
     if (rawOwner && !owner) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error:
-            "Invalid owner. Must be one of: hr_admin, manager, wfm, process_head",
-        });
+      return res.status(400).json({ success: false, error: 'Invalid owner. Must be one of: hr_admin, manager, wfm, process_head' });
     }
     const tier = normalizeTier(req.query.tier);
     const limit = clampLimit(req.query.limit);
@@ -707,38 +674,20 @@ export async function getPendingInterventions(req: Request, res: Response) {
     const empFilter = buildInterventionEmployeeFilter(req.query, lob, (req as Request & { employeeScope?: { sql: string; params: unknown[] } | null }).employeeScope);
 
     // Open cases only: newest case per employee, employee still active (see bucketWhere).
-    const { sql, params } = buildCasesQuery({
-      bucket: "open",
-      tier,
-      owner,
-      limit,
-      emp: empFilter,
-    });
+    const { sql, params } = buildCasesQuery({ bucket: 'open', tier, owner, limit, emp: empFilter });
     const [rows] = await pool.query<PendingInterventionRow[]>(sql, params);
-    const data = rows.map((row) => ({
-      ...row,
-      recommendations: parseRecommendations(row.recommendations),
-    }));
+    const data = rows.map((row) => ({ ...row, recommendations: parseRecommendations(row.recommendations) }));
 
     res.json({
       success: true,
       count: data.length,
-      filters: {
-        owner,
-        tier,
-        limit,
-        branchId: req.query.branchId ?? null,
-        processId: req.query.processId ?? null,
-        lobId: req.query.lobId ?? null,
-      },
+      filters: { owner, tier, limit, branchId: req.query.branchId ?? null, processId: req.query.processId ?? null, lobId: req.query.lobId ?? null },
       data,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error("Error in getPendingInterventions:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to fetch pending interventions" });
+    console.error('Error in getPendingInterventions:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch pending interventions' });
   }
 }
 
@@ -757,67 +706,49 @@ export async function markInterventionActioned(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const { outcome, outcome_date, notes } = req.body as {
-      outcome?: "retained" | "exited" | "pending";
+      outcome?: 'retained' | 'exited' | 'pending';
       outcome_date?: string;
       notes?: string;
     };
 
-    const actorId =
-      (req as Request & { authUser?: { id: string } }).authUser?.id ?? null;
+    const actorId = (req as Request & { authUser?: { id: string } }).authUser?.id ?? null;
 
     if (!id) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Missing recommendation id" });
+      return res.status(400).json({ success: false, error: 'Missing recommendation id' });
     }
 
-    const validOutcomes = ["retained", "exited", "pending"];
+    const validOutcomes = ['retained', 'exited', 'pending'];
     if (outcome && !validOutcomes.includes(outcome)) {
       return res.status(400).json({
         success: false,
-        error: `Invalid outcome. Must be one of: ${validOutcomes.join(", ")}`,
+        error: `Invalid outcome. Must be one of: ${validOutcomes.join(', ')}`
       });
     }
-    if (
-      outcome_date !== undefined &&
-      outcome_date !== null &&
-      outcome_date !== "" &&
-      !isValidDateOnly(outcome_date)
-    ) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          error: "outcome_date must be a valid YYYY-MM-DD date",
-        });
+    if (outcome_date !== undefined && outcome_date !== null && outcome_date !== '' && !isValidDateOnly(outcome_date)) {
+      return res.status(400).json({ success: false, error: 'outcome_date must be a valid YYYY-MM-DD date' });
     }
-    const cleanNotes =
-      typeof notes === "string" ? notes.trim().slice(0, 2000) : "";
+    const cleanNotes = typeof notes === 'string' ? notes.trim().slice(0, 2000) : '';
 
     // COALESCE keeps the FIRST actioner/time: a later outcome update must not rewrite who acted
     // or when (that skewed avg_days_to_action).
     const setClauses: string[] = [
-      "action_taken    = 1",
-      "action_taken_at = COALESCE(action_taken_at, NOW())",
-      "action_taken_by = COALESCE(action_taken_by, ?)",
+      'action_taken    = 1',
+      'action_taken_at = COALESCE(action_taken_at, NOW())',
+      'action_taken_by = COALESCE(action_taken_by, ?)'
     ];
     const params: (string | null)[] = [actorId];
 
     if (outcome) {
-      setClauses.push("outcome = ?");
+      setClauses.push('outcome = ?');
       params.push(outcome);
-      if (outcome === "pending") {
-        setClauses.push("outcome_date = NULL");
+      if (outcome === 'pending') {
+        setClauses.push('outcome_date = NULL');
       } else {
-        setClauses.push("outcome_date = ?");
-        params.push(
-          outcome_date && isValidDateOnly(outcome_date)
-            ? outcome_date
-            : new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10),
-        ); // IST calendar date
+        setClauses.push('outcome_date = ?');
+        params.push(outcome_date && isValidDateOnly(outcome_date) ? outcome_date : new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)); // IST calendar date
       }
     } else if (outcome_date) {
-      setClauses.push("outcome_date = ?");
+      setClauses.push('outcome_date = ?');
       params.push(outcome_date);
     }
 
@@ -825,7 +756,7 @@ export async function markInterventionActioned(req: Request, res: Response) {
 
     const sql = `
       UPDATE mas_hrms.employee_retention_recommendation
-      SET ${setClauses.join(", ")}
+      SET ${setClauses.join(', ')}
       WHERE id = ?
     `;
 
@@ -834,40 +765,34 @@ export async function markInterventionActioned(req: Request, res: Response) {
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        error: `Recommendation not found: ${id}`,
+        error: `Recommendation not found: ${id}`
       });
     }
 
     if (actorId) {
       await writeAuditLog({
         actor_user_id: actorId,
-        action_type: "intervention_action_taken",
-        module_key: "wfm_roster",
-        entity_type: "employee_retention_recommendation",
+        action_type: 'intervention_action_taken',
+        module_key: 'wfm_roster',
+        entity_type: 'employee_retention_recommendation',
         entity_id: id,
-        metadata: {
-          notes: cleanNotes || null,
-          outcome: outcome ?? null,
-          outcome_date: outcome_date ?? null,
-        },
+        metadata: { notes: cleanNotes || null, outcome: outcome ?? null, outcome_date: outcome_date ?? null },
         req,
       });
     }
 
     res.json({
       success: true,
-      message: "Intervention marked as actioned",
+      message: 'Intervention marked as actioned',
       id,
       outcome: outcome ?? null,
       outcome_date: outcome_date ?? null,
       actioned_by: actorId,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error("Error in markInterventionActioned:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to update intervention" });
+    console.error('Error in markInterventionActioned:', error);
+    res.status(500).json({ success: false, error: 'Failed to update intervention' });
   }
 }
 
@@ -892,7 +817,7 @@ export async function getInterventionOutcomes(req: Request, res: Response) {
     const employeeScope = empFilter.sql
       ? `
       WHERE employee_id IN (SELECT e.id FROM mas_hrms.employees e WHERE 1=1 ${empFilter.sql})`
-      : "";
+      : '';
     const sql = `
       SELECT
         COUNT(*)                                               AS total_generated,
@@ -917,30 +842,28 @@ export async function getInterventionOutcomes(req: Request, res: Response) {
     const row = rows[0];
 
     const retained = row?.retained_count ?? 0;
-    const exited = row?.exited_count ?? 0;
+    const exited   = row?.exited_count   ?? 0;
     const resolved = retained + exited;
     const retentionSuccessRate = pctOf(retained, resolved);
     const extras = await getSummaryExtras(empFilter);
 
     res.json({
       success: true,
-      analysis_type: "INTERVENTION_OUTCOMES",
+      analysis_type: 'INTERVENTION_OUTCOMES',
       data: {
-        total_generated: row?.total_generated ?? 0,
-        action_taken_count: row?.action_taken_count ?? 0,
-        retained_count: retained,
-        exited_count: exited,
-        pending_count: row?.pending_count ?? 0,
+        total_generated:        row?.total_generated       ?? 0,
+        action_taken_count:     row?.action_taken_count    ?? 0,
+        retained_count:         retained,
+        exited_count:           exited,
+        pending_count:          row?.pending_count         ?? 0,
         retention_success_rate: retentionSuccessRate,
-        avg_days_to_action: row?.avg_days_to_action ?? null,
-        ...extras,
+        avg_days_to_action:     row?.avg_days_to_action    ?? null,
+        ...extras
       },
-      timestamp: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error("Error in getInterventionOutcomes:", error);
-    res
-      .status(500)
-      .json({ success: false, error: "Failed to fetch intervention outcomes" });
+    console.error('Error in getInterventionOutcomes:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch intervention outcomes' });
   }
 }

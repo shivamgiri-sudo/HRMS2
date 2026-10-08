@@ -4,7 +4,7 @@
  * two checks it runs actually catch. Off-peak hour, same setTimeout-reschedule pattern as
  * tenure.cron.ts and the other schedulers started from server.ts.
  */
-import { reconcileEmployeeCodeDrift } from "./employee-code-reconciliation.service.js";
+import { reconcileEmployeeCodeDrift } from './employee-code-reconciliation.service.js';
 
 const RUN_HOUR = 3;
 let nextRun: NodeJS.Timeout | undefined;
@@ -27,7 +27,7 @@ export function startEmployeeCodeReconciliationScheduler(): void {
         );
       }
     } catch (error) {
-      console.error("[employee-code-reconciliation] sweep failed", error);
+      console.error('[employee-code-reconciliation] sweep failed', error);
     } finally {
       nextRun = undefined;
       startEmployeeCodeReconciliationScheduler();

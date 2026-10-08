@@ -1,10 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import {
-  buildEmployeeScopeCondition,
-  type PeopleExperienceScope,
-} from "./people-experience.scope.js";
+import { buildEmployeeScopeCondition, type PeopleExperienceScope } from "./people-experience.scope.js";
 import { tableExists, scalar } from "../../shared/dbHelpers.js";
 
 type FilterMap = Record<string, string | undefined>;
@@ -13,14 +10,7 @@ function clamp(value: number, min = 0, max = 100): number {
   return Math.max(min, Math.min(max, Number.isFinite(value) ? value : 0));
 }
 
-function riskLabel(
-  score: number,
-):
-  | "highly_engaged"
-  | "stable"
-  | "watchlist"
-  | "attrition_risk"
-  | "critical_people_risk" {
+function riskLabel(score: number): "highly_engaged" | "stable" | "watchlist" | "attrition_risk" | "critical_people_risk" {
   if (score >= 82) return "highly_engaged";
   if (score >= 65) return "stable";
   if (score >= 45) return "watchlist";
@@ -28,10 +18,7 @@ function riskLabel(
   return "critical_people_risk";
 }
 
-function filterCondition(
-  filters: FilterMap,
-  alias = "e",
-): { sql: string; params: unknown[] } {
+function filterCondition(filters: FilterMap, alias = "e"): { sql: string; params: unknown[] } {
   const clauses: string[] = [];
   const params: unknown[] = [];
   for (const [key, column] of Object.entries({
@@ -49,10 +36,7 @@ function filterCondition(
   return { sql: clauses.length ? clauses.join(" AND ") : "1 = 1", params };
 }
 
-async function scopedEmployees(
-  scope: PeopleExperienceScope,
-  filters: FilterMap,
-) {
+async function scopedEmployees(scope: PeopleExperienceScope, filters: FilterMap) {
   const scoped = buildEmployeeScopeCondition(scope, "e");
   const filtered = filterCondition(filters, "e");
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -79,19 +63,13 @@ async function scopedEmployees(
         AND ${filtered.sql}
       ORDER BY e.full_name
       LIMIT 5000`,
-    [...scoped.params, ...filtered.params],
+    [...scoped.params, ...filtered.params]
   );
-  return rows as Array<
-    RowDataPacket & { id: string; branch_name?: string; process_name?: string }
-  >;
+  return rows as Array<RowDataPacket & { id: string; branch_name?: string; process_name?: string }>;
 }
 
 async function latestHealthForEmployees(employeeIds: string[]) {
-  if (
-    employeeIds.length === 0 ||
-    !(await tableExists("people_experience_health_snapshot"))
-  )
-    return new Map<string, any>();
+  if (employeeIds.length === 0 || !(await tableExists("people_experience_health_snapshot"))) return new Map<string, any>();
   const placeholders = employeeIds.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT px.*
@@ -102,7 +80,7 @@ async function latestHealthForEmployees(employeeIds: string[]) {
          WHERE employee_id IN (${placeholders})
          GROUP BY employee_id
        ) latest ON latest.employee_id = px.employee_id AND latest.snapshot_date = px.snapshot_date`,
-    employeeIds,
+    employeeIds
   );
   return new Map(rows.map((row: any) => [String(row.employee_id), row]));
 }
@@ -123,8 +101,7 @@ async function latestHealthForEmployees(employeeIds: string[]) {
  *
  * Column mapping: submitted_at -> COALESCE(response_time, response_date); mood -> response_value.
  */
-const PULSE_WINDOW_SQL =
-  "COALESCE(pr.response_time, pr.response_date) >= DATE_SUB(NOW(), INTERVAL ? DAY)";
+const PULSE_WINDOW_SQL = "COALESCE(pr.response_time, pr.response_date) >= DATE_SUB(NOW(), INTERVAL ? DAY)";
 
 /**
  * `response_value` is varchar(50) and holds whatever the question's response_type produced — a
@@ -135,10 +112,7 @@ const PULSE_WINDOW_SQL =
 const PULSE_NUMERIC_SQL = "pr.response_value REGEXP '^[0-9]+(\\\\.[0-9]+)?$'";
 
 /** Average pulse rating over `days`, or null when the employee has no numeric response at all. */
-async function pulseAverage(
-  employeeId: string,
-  days: number,
-): Promise<number | null> {
+async function pulseAverage(employeeId: string, days: number): Promise<number | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT AVG(CAST(pr.response_value AS DECIMAL(10,2))) AS score
        FROM pulse_response pr
@@ -157,27 +131,19 @@ async function calculateEmployeeSnapshot(employee: any) {
   // fabricated number into 20% of their engagement score. The weight is redistributed below.
   // The eight lookups below are independent of each other — run them concurrently.
   const attendanceTableExists = tableExists("attendance_daily_record");
-  const [
-    pulseAvg,
-    pulses,
-    kudosReceived,
-    kudosGiven,
-    surveyResponses,
-    openTickets,
-    openGrievances,
-  ] = await Promise.all([
+  const [pulseAvg, pulses, kudosReceived, kudosGiven, surveyResponses, openTickets, openGrievances] = await Promise.all([
     pulseAverage(employeeId, 90),
     scalar(
       `SELECT COUNT(*) AS cnt FROM pulse_response pr WHERE pr.employee_id = ? AND ${PULSE_WINDOW_SQL}`,
-      [employeeId, 90],
+      [employeeId, 90]
     ),
     scalar(
       "SELECT COUNT(*) AS cnt FROM kudos_transaction WHERE receiver_id = ? AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
-      [employeeId],
+      [employeeId]
     ),
     scalar(
       "SELECT COUNT(*) AS cnt FROM kudos_transaction WHERE sender_id = ? AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
-      [employeeId],
+      [employeeId]
     ),
     scalar(
       "SELECT COUNT(DISTINCT survey_id) AS cnt FROM survey_response WHERE employee_id = ? AND COALESCE(response_date, created_at) >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
@@ -185,11 +151,11 @@ async function calculateEmployeeSnapshot(employee: any) {
     ),
     scalar(
       "SELECT COUNT(*) AS cnt FROM helpdesk_ticket WHERE employee_id = ? AND status NOT IN ('resolved','closed','cancelled')",
-      [employeeId],
+      [employeeId]
     ),
     scalar(
       "SELECT COUNT(*) AS cnt FROM grievance WHERE employee_id = ? AND status NOT IN ('resolved','closed')",
-      [employeeId],
+      [employeeId]
     ),
   ]);
 
@@ -198,11 +164,11 @@ async function calculateEmployeeSnapshot(employee: any) {
     const [days, absent] = await Promise.all([
       scalar(
         "SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)",
-        [employeeId],
+        [employeeId]
       ),
       scalar(
         "SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND LOWER(attendance_status) IN ('absent','a','lwp')",
-        [employeeId],
+        [employeeId]
       ),
     ]);
     attendanceScore = days > 0 ? clamp(100 - (absent / days) * 100) : 72;
@@ -211,9 +177,7 @@ async function calculateEmployeeSnapshot(employee: any) {
   const pulseScore = pulseAvg === null ? null : clamp((pulseAvg / 5) * 100);
   const recognitionScore = clamp(kudosReceived * 10 + kudosGiven * 5);
   const participationScore = clamp(surveyResponses * 20 + pulses * 8);
-  const supportFrictionScore = clamp(
-    100 - openTickets * 12 - openGrievances * 25,
-  );
+  const supportFrictionScore = clamp(100 - openTickets * 12 - openGrievances * 25);
   const performanceScore = 70;
   const careerGrowthScore = 65;
 
@@ -234,43 +198,26 @@ async function calculateEmployeeSnapshot(employee: any) {
     [supportFrictionScore, 0.18],
     [careerGrowthScore, 0.07],
   ];
-  const present = weighted.filter(([value]) => value !== null) as Array<
-    [number, number]
-  >;
+  const present = weighted.filter(([value]) => value !== null) as Array<[number, number]>;
   const weightTotal = present.reduce((sum, [, weight]) => sum + weight, 0);
-  const engagementScore =
-    weightTotal > 0
-      ? clamp(
-          present.reduce((sum, [value, weight]) => sum + value * weight, 0) /
-            weightTotal,
-        )
-      : 0;
+  const engagementScore = weightTotal > 0
+    ? clamp(present.reduce((sum, [value, weight]) => sum + value * weight, 0) / weightTotal)
+    : 0;
 
   const drivers: string[] = [];
   if (pulseScore !== null && pulseScore < 45) drivers.push("Low pulse mood");
   if (recognitionScore < 25) drivers.push("Low recognition activity");
-  if (openTickets > 0)
-    drivers.push(`${openTickets} unresolved support ticket(s)`);
+  if (openTickets > 0) drivers.push(`${openTickets} unresolved support ticket(s)`);
   if (openGrievances > 0) drivers.push("Open grievance");
   if (attendanceScore < 65) drivers.push("Attendance instability");
 
-  const recommendedActions =
-    engagementScore < 40
-      ? [
-          "HR check-in within 48 hours",
-          "Manager 1:1",
-          "Resolve support blockers",
-        ]
-      : engagementScore < 60
-        ? ["Manager 1:1 within 7 days", "Recognition/appreciation touchpoint"]
-        : ["Continue monitoring"];
-  const signals = [
-    pulses,
-    kudosReceived + kudosGiven,
-    surveyResponses,
-    openTickets + openGrievances,
-    attendanceScore !== 72 ? 1 : 0,
-  ].filter((v) => Number(v) > 0).length;
+  const recommendedActions = engagementScore < 40
+    ? ["HR check-in within 48 hours", "Manager 1:1", "Resolve support blockers"]
+    : engagementScore < 60
+      ? ["Manager 1:1 within 7 days", "Recognition/appreciation touchpoint"]
+      : ["Continue monitoring"];
+  const signals = [pulses, kudosReceived + kudosGiven, surveyResponses, openTickets + openGrievances, attendanceScore !== 72 ? 1 : 0]
+    .filter((v) => Number(v) > 0).length;
   const confidence = signals >= 5 ? 90 : signals >= 3 ? 65 : 35;
 
   return {
@@ -298,36 +245,15 @@ async function calculateEmployeeSnapshot(employee: any) {
 
 /** Compute snapshots 20 employees at a time so the fan-out cannot flood the connection pool. */
 async function snapshotsInChunks(employees: any[], chunk = 20) {
-  const out: Array<
-    readonly [string, Awaited<ReturnType<typeof calculateEmployeeSnapshot>>]
-  > = [];
+  const out: Array<readonly [string, Awaited<ReturnType<typeof calculateEmployeeSnapshot>>]> = [];
   for (let i = 0; i < employees.length; i += chunk) {
-    out.push(
-      ...(await Promise.all(
-        employees
-          .slice(i, i + chunk)
-          .map(
-            async (employee) =>
-              [
-                String(employee.id),
-                await calculateEmployeeSnapshot(employee),
-              ] as const,
-          ),
-      )),
-    );
+    out.push(...await Promise.all(employees.slice(i, i + chunk).map(async (employee) => [String(employee.id), await calculateEmployeeSnapshot(employee)] as const)));
   }
   return out;
 }
 
-export async function scanPeopleExperience(
-  scope: PeopleExperienceScope,
-  filters: FilterMap = {},
-  limit = 500,
-) {
-  const employees = (await scopedEmployees(scope, filters)).slice(
-    0,
-    Math.min(limit, 2000),
-  );
+export async function scanPeopleExperience(scope: PeopleExperienceScope, filters: FilterMap = {}, limit = 500) {
+  const employees = (await scopedEmployees(scope, filters)).slice(0, Math.min(limit, 2000));
   const results: Awaited<ReturnType<typeof calculateEmployeeSnapshot>>[] = [];
   for (const employee of employees) {
     const snapshot = await calculateEmployeeSnapshot(employee);
@@ -366,17 +292,14 @@ export async function scanPeopleExperience(
         snapshot.component_scores.career_growth,
         JSON.stringify(snapshot.top_risk_drivers),
         JSON.stringify(snapshot.recommended_actions),
-      ],
+      ]
     );
     results.push(snapshot);
   }
   return { scanned: results.length, results };
 }
 
-export async function getPeopleExperienceCommandCenter(
-  scope: PeopleExperienceScope,
-  filters: FilterMap = {},
-) {
+export async function getPeopleExperienceCommandCenter(scope: PeopleExperienceScope, filters: FilterMap = {}) {
   const employees = await scopedEmployees(scope, filters);
   const employeeIds = employees.map((employee: any) => String(employee.id));
   const health = await latestHealthForEmployees(employeeIds);
@@ -385,23 +308,20 @@ export async function getPeopleExperienceCommandCenter(
     ? new Map(await snapshotsInChunks(employees.slice(0, 200)))
     : new Map<string, any>();
 
-  const healthFor = (id: string) =>
-    health.get(id) ??
-    computed.get(id) ?? {
-      engagement_score: 70,
-      data_confidence_score: 20,
-      risk_label: "stable",
-      top_risk_drivers_json: "[]",
-      recommended_actions_json: '["Continue monitoring"]',
-      support_open_count: 0,
-      grievance_open_count: 0,
-    };
+  const healthFor = (id: string) => health.get(id) ?? computed.get(id) ?? {
+    engagement_score: 70,
+    data_confidence_score: 20,
+    risk_label: "stable",
+    top_risk_drivers_json: "[]",
+    recommended_actions_json: "[\"Continue monitoring\"]",
+    support_open_count: 0,
+    grievance_open_count: 0,
+  };
 
   const rows = employees.map((employee: any) => {
     const h = healthFor(String(employee.id));
     const drivers = h.top_risk_drivers ?? safeJson(h.top_risk_drivers_json, []);
-    const actions =
-      h.recommended_actions ?? safeJson(h.recommended_actions_json, []);
+    const actions = h.recommended_actions ?? safeJson(h.recommended_actions_json, []);
     return {
       employee_id: employee.id,
       employee_name: employee.full_name,
@@ -410,9 +330,7 @@ export async function getPeopleExperienceCommandCenter(
       process_name: employee.process_name,
       department_name: employee.department_name,
       manager_name: employee.manager_name,
-      tenure_days: employee.date_of_joining
-        ? daysSince(employee.date_of_joining)
-        : null,
+      tenure_days: employee.date_of_joining ? daysSince(employee.date_of_joining) : null,
       engagement_score: Number(h.engagement_score ?? 70),
       data_confidence_score: Number(h.data_confidence_score ?? 20),
       risk_label: h.risk_label ?? "stable",
@@ -420,9 +338,7 @@ export async function getPeopleExperienceCommandCenter(
       top_risk_drivers: drivers,
       recommended_action: actions[0] ?? "Continue monitoring",
       support_open_count: Number(h.support_open_count ?? 0),
-      grievance_flag: scope.canSeeConfidentialGrievanceIdentity
-        ? Number(h.grievance_open_count ?? 0) > 0
-        : undefined,
+      grievance_flag: scope.canSeeConfidentialGrievanceIdentity ? Number(h.grievance_open_count ?? 0) > 0 : undefined,
       owner: employee.manager_name ?? "HR",
       due_date: dueDateForRisk(h.risk_label),
       action_status: "open",
@@ -430,27 +346,16 @@ export async function getPeopleExperienceCommandCenter(
   });
 
   const total = rows.length;
-  const avgScore = total
-    ? Math.round(
-        rows.reduce((sum, row) => sum + row.engagement_score, 0) / total,
-      )
-    : 0;
+  const avgScore = total ? Math.round(rows.reduce((sum, row) => sum + row.engagement_score, 0) / total) : 0;
   const watchlist = rows.filter((row) => row.risk_label === "watchlist").length;
-  const attritionRisk = rows.filter((row) =>
-    ["attrition_risk", "critical_people_risk"].includes(row.risk_label),
-  ).length;
-  const highlyEngaged = rows.filter(
-    (row) => row.risk_label === "highly_engaged",
-  ).length;
+  const attritionRisk = rows.filter((row) => ["attrition_risk", "critical_people_risk"].includes(row.risk_label)).length;
+  const highlyEngaged = rows.filter((row) => row.risk_label === "highly_engaged").length;
 
   const scopedEmployeeFilter = employeeIds.length
     ? `employee_id IN (${employeeIds.map(() => "?").join(",")})`
     : "1 = 0";
   const supportParams = employeeIds;
-  const openTickets = await scalar(
-    `SELECT COUNT(*) FROM helpdesk_ticket WHERE ${scopedEmployeeFilter} AND status NOT IN ('resolved','closed','cancelled')`,
-    supportParams,
-  );
+  const openTickets = await scalar(`SELECT COUNT(*) FROM helpdesk_ticket WHERE ${scopedEmployeeFilter} AND status NOT IN ('resolved','closed','cancelled')`, supportParams);
   const breachedTickets = await scalar(
     `SELECT COUNT(*) FROM helpdesk_ticket
       WHERE ${scopedEmployeeFilter}
@@ -461,29 +366,24 @@ export async function getPeopleExperienceCommandCenter(
           OR (priority = 'medium' AND TIMESTAMPDIFF(HOUR, created_at, NOW()) > 48)
           OR (priority = 'low' AND TIMESTAMPDIFF(HOUR, created_at, NOW()) > 72)
         )`,
-    supportParams,
+    supportParams
   );
-  const openGrievances = await scalar(
-    `SELECT COUNT(*) FROM grievance WHERE ${scopedEmployeeFilter} AND status NOT IN ('resolved','closed')`,
-    supportParams,
-  );
+  const openGrievances = await scalar(`SELECT COUNT(*) FROM grievance WHERE ${scopedEmployeeFilter} AND status NOT IN ('resolved','closed')`, supportParams);
   const criticalGrievances = await scalar(
     `SELECT COUNT(*) FROM grievance WHERE ${scopedEmployeeFilter} AND status NOT IN ('resolved','closed') AND category IN ('harassment','safety','security','discrimination')`,
-    supportParams,
+    supportParams
   );
   const kudosMonth = await scalar(
     `SELECT COUNT(*) FROM kudos_transaction WHERE receiver_id IN (${employeeIds.length ? employeeIds.map(() => "?").join(",") : "NULL"}) AND sent_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')`,
-    supportParams,
+    supportParams
   );
   const pulseResponses = await scalar(
     `SELECT COUNT(DISTINCT pr.employee_id) FROM pulse_response pr
       WHERE pr.employee_id IN (${employeeIds.length ? employeeIds.map(() => "?").join(",") : "NULL"})
         AND COALESCE(pr.response_time, pr.response_date) >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
-    supportParams,
+    supportParams
   );
-  const pulseParticipation = total
-    ? Math.round((pulseResponses / total) * 100)
-    : 0;
+  const pulseParticipation = total ? Math.round((pulseResponses / total) * 100) : 0;
   const eNps = await calculateEnps(employeeIds);
 
   return {
@@ -499,50 +399,27 @@ export async function getPeopleExperienceCommandCenter(
       open_support_tickets: openTickets,
       sla_breached_tickets: breachedTickets,
       open_grievances: scope.canManageGrievances ? openGrievances : undefined,
-      critical_grievances: scope.canManageGrievances
-        ? criticalGrievances
-        : undefined,
+      critical_grievances: scope.canManageGrievances ? criticalGrievances : undefined,
       pending_manager_actions: await countOpenActions(employeeIds),
       pulse_participation_rate: pulseParticipation,
       enps_score: eNps,
       kudos_given_this_month: kudosMonth,
-      recognition_coverage_percentage: total
-        ? Math.round(
-            (new Set(
-              rows
-                .filter(
-                  (row) => row.recommended_action !== "Continue monitoring",
-                )
-                .map((row) => row.employee_id),
-            ).size /
-              total) *
-              100,
-          )
-        : 0,
+      recognition_coverage_percentage: total ? Math.round((new Set(rows.filter((row) => row.recommended_action !== "Continue monitoring").map((row) => row.employee_id)).size / total) * 100) : 0,
     },
     heatmap: buildHeatmap(rows),
     watchlist: rows
-      .filter((row) =>
-        ["watchlist", "attrition_risk", "critical_people_risk"].includes(
-          row.risk_label,
-        ),
-      )
+      .filter((row) => ["watchlist", "attrition_risk", "critical_people_risk"].includes(row.risk_label))
       .sort((a, b) => a.engagement_score - b.engagement_score)
       .slice(0, 100),
     support_health: await supportHealth(employeeIds),
-    grievance_health: scope.canManageGrievances
-      ? await grievanceHealth(employeeIds)
-      : { restricted: true },
+    grievance_health: scope.canManageGrievances ? await grievanceHealth(employeeIds) : { restricted: true },
     recognition_health: await recognitionHealth(employeeIds),
     pulse_health: await pulseHealth(employeeIds, total),
     action_queue: await listActions(scope, filters),
   };
 }
 
-export async function listActions(
-  scope: PeopleExperienceScope,
-  filters: FilterMap = {},
-) {
+export async function listActions(scope: PeopleExperienceScope, filters: FilterMap = {}) {
   if (!(await tableExists("people_experience_action"))) return [];
   const employees = await scopedEmployees(scope, filters);
   if (employees.length === 0) return [];
@@ -554,27 +431,21 @@ export async function listActions(
       WHERE a.employee_id IN (${ids.map(() => "?").join(",")})
       ORDER BY FIELD(a.priority, 'critical','high','medium','low'), a.due_date ASC
       LIMIT 200`,
-    ids,
+    ids
   );
   return rows;
 }
 
 export async function createAction(scope: PeopleExperienceScope, body: any) {
   if (!body?.employee_id || !body?.action_type) {
-    throw Object.assign(new Error("employee_id and action_type required"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error("employee_id and action_type required"), { statusCode: 400 });
   }
   const condition = buildEmployeeScopeCondition(scope, "e");
   const [allowed] = await db.execute<RowDataPacket[]>(
     `SELECT e.id FROM employees e WHERE e.id = ? AND ${condition.sql} LIMIT 1`,
-    [body.employee_id, ...condition.params],
+    [body.employee_id, ...condition.params]
   );
-  if (allowed.length === 0)
-    throw Object.assign(
-      new Error("Employee outside your people-experience scope"),
-      { statusCode: 403 },
-    );
+  if (allowed.length === 0) throw Object.assign(new Error("Employee outside your people-experience scope"), { statusCode: 403 });
   const id = randomUUID();
   await db.execute(
     `INSERT INTO people_experience_action
@@ -588,27 +459,17 @@ export async function createAction(scope: PeopleExperienceScope, body: any) {
       body.action_type,
       body.priority ?? "medium",
       body.owner_user_id ?? scope.userId,
-      body.due_date ??
-        dueDateForRisk(
-          body.priority === "critical" ? "critical_people_risk" : "watchlist",
-        ),
+      body.due_date ?? dueDateForRisk(body.priority === "critical" ? "critical_people_risk" : "watchlist"),
       body.notes ?? null,
-    ],
+    ]
   );
   return { id };
 }
 
-export async function updateActionStatus(
-  scope: PeopleExperienceScope,
-  id: string,
-  body: any,
-) {
+export async function updateActionStatus(scope: PeopleExperienceScope, id: string, body: any) {
   const actions = await listActions(scope);
   if (!actions.some((action: any) => action.id === id)) {
-    throw Object.assign(
-      new Error("Action outside your people-experience scope"),
-      { statusCode: 403 },
-    );
+    throw Object.assign(new Error("Action outside your people-experience scope"), { statusCode: 403 });
   }
   await db.execute(
     `UPDATE people_experience_action
@@ -617,18 +478,14 @@ export async function updateActionStatus(
             completed_at = CASE WHEN ? = 'completed' THEN NOW() ELSE completed_at END,
             updated_at = NOW()
       WHERE id = ?`,
-    [body.status ?? null, body.notes ?? null, body.status ?? null, id],
+    [body.status ?? null, body.notes ?? null, body.status ?? null, id]
   );
   return { id, status: body.status ?? "updated" };
 }
 
 function safeJson(value: any, fallback: any) {
   if (Array.isArray(value)) return value;
-  try {
-    return value ? JSON.parse(String(value)) : fallback;
-  } catch {
-    return fallback;
-  }
+  try { return value ? JSON.parse(String(value)) : fallback; } catch { return fallback; }
 }
 
 function daysSince(dateValue: string | Date) {
@@ -638,14 +495,7 @@ function daysSince(dateValue: string | Date) {
 }
 
 function dueDateForRisk(risk: string) {
-  const days =
-    risk === "critical_people_risk"
-      ? 1
-      : risk === "attrition_risk"
-        ? 2
-        : risk === "watchlist"
-          ? 7
-          : 14;
+  const days = risk === "critical_people_risk" ? 1 : risk === "attrition_risk" ? 2 : risk === "watchlist" ? 7 : 14;
   const date = new Date();
   date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
@@ -656,24 +506,14 @@ function buildHeatmap(rows: any[]) {
     const map = new Map<string, any>();
     for (const row of rows) {
       const name = row[key] ?? "Unassigned";
-      const existing = map.get(name) ?? {
-        label: name,
-        healthy: 0,
-        watchlist: 0,
-        risk: 0,
-        total: 0,
-        dimension: label,
-      };
+      const existing = map.get(name) ?? { label: name, healthy: 0, watchlist: 0, risk: 0, total: 0, dimension: label };
       existing.total += 1;
-      if (row.risk_label === "highly_engaged" || row.risk_label === "stable")
-        existing.healthy += 1;
+      if (row.risk_label === "highly_engaged" || row.risk_label === "stable") existing.healthy += 1;
       else if (row.risk_label === "watchlist") existing.watchlist += 1;
       else existing.risk += 1;
       map.set(name, existing);
     }
-    return [...map.values()]
-      .sort((a, b) => b.risk - a.risk || b.watchlist - a.watchlist)
-      .slice(0, 12);
+    return [...map.values()].sort((a, b) => b.risk - a.risk || b.watchlist - a.watchlist).slice(0, 12);
   };
   return {
     branch: group("branch_name", "Branch"),
@@ -683,30 +523,23 @@ function buildHeatmap(rows: any[]) {
 }
 
 async function supportHealth(employeeIds: string[]) {
-  if (employeeIds.length === 0)
-    return { total_open: 0, by_category: [], by_priority: [], by_status: [] };
+  if (employeeIds.length === 0) return { total_open: 0, by_category: [], by_priority: [], by_status: [] };
   const placeholders = employeeIds.map(() => "?").join(",");
   const [category] = await db.execute<RowDataPacket[]>(
     `SELECT category AS label, COUNT(*) AS value FROM helpdesk_ticket WHERE employee_id IN (${placeholders}) GROUP BY category`,
-    employeeIds,
+    employeeIds
   );
   const [priority] = await db.execute<RowDataPacket[]>(
     `SELECT priority AS label, COUNT(*) AS value FROM helpdesk_ticket WHERE employee_id IN (${placeholders}) GROUP BY priority`,
-    employeeIds,
+    employeeIds
   );
   const [status] = await db.execute<RowDataPacket[]>(
     `SELECT status AS label, COUNT(*) AS value FROM helpdesk_ticket WHERE employee_id IN (${placeholders}) GROUP BY status`,
-    employeeIds,
+    employeeIds
   );
   return {
-    total_open: await scalar(
-      `SELECT COUNT(*) FROM helpdesk_ticket WHERE employee_id IN (${placeholders}) AND status NOT IN ('resolved','closed','cancelled')`,
-      employeeIds,
-    ),
-    sla_breached: await scalar(
-      `SELECT COUNT(*) FROM helpdesk_ticket WHERE employee_id IN (${placeholders}) AND status NOT IN ('resolved','closed','cancelled') AND TIMESTAMPDIFF(HOUR, created_at, NOW()) > 48`,
-      employeeIds,
-    ),
+    total_open: await scalar(`SELECT COUNT(*) FROM helpdesk_ticket WHERE employee_id IN (${placeholders}) AND status NOT IN ('resolved','closed','cancelled')`, employeeIds),
+    sla_breached: await scalar(`SELECT COUNT(*) FROM helpdesk_ticket WHERE employee_id IN (${placeholders}) AND status NOT IN ('resolved','closed','cancelled') AND TIMESTAMPDIFF(HOUR, created_at, NOW()) > 48`, employeeIds),
     by_category: category,
     by_priority: priority,
     by_status: status,
@@ -714,43 +547,26 @@ async function supportHealth(employeeIds: string[]) {
 }
 
 async function grievanceHealth(employeeIds: string[]) {
-  if (employeeIds.length === 0)
-    return { open: 0, anonymous: 0, critical: 0, by_category: [] };
+  if (employeeIds.length === 0) return { open: 0, anonymous: 0, critical: 0, by_category: [] };
   const placeholders = employeeIds.map(() => "?").join(",");
   const [category] = await db.execute<RowDataPacket[]>(
     `SELECT category AS label, COUNT(*) AS value FROM grievance WHERE employee_id IN (${placeholders}) GROUP BY category`,
-    employeeIds,
+    employeeIds
   );
   return {
-    open: await scalar(
-      `SELECT COUNT(*) FROM grievance WHERE employee_id IN (${placeholders}) AND status NOT IN ('resolved','closed')`,
-      employeeIds,
-    ),
-    anonymous: await scalar(
-      `SELECT COUNT(*) FROM grievance WHERE employee_id IN (${placeholders}) AND is_anonymous = 1`,
-      employeeIds,
-    ),
-    critical: await scalar(
-      `SELECT COUNT(*) FROM grievance WHERE employee_id IN (${placeholders}) AND category IN ('harassment','safety','security','discrimination')`,
-      employeeIds,
-    ),
+    open: await scalar(`SELECT COUNT(*) FROM grievance WHERE employee_id IN (${placeholders}) AND status NOT IN ('resolved','closed')`, employeeIds),
+    anonymous: await scalar(`SELECT COUNT(*) FROM grievance WHERE employee_id IN (${placeholders}) AND is_anonymous = 1`, employeeIds),
+    critical: await scalar(`SELECT COUNT(*) FROM grievance WHERE employee_id IN (${placeholders}) AND category IN ('harassment','safety','security','discrimination')`, employeeIds),
     by_category: category,
   };
 }
 
 async function recognitionHealth(employeeIds: string[]) {
-  if (employeeIds.length === 0)
-    return { kudos_given: 0, kudos_received: 0, zero_recognition_90d: 0 };
+  if (employeeIds.length === 0) return { kudos_given: 0, kudos_received: 0, zero_recognition_90d: 0 };
   const placeholders = employeeIds.map(() => "?").join(",");
   return {
-    kudos_given: await scalar(
-      `SELECT COUNT(*) FROM kudos_transaction WHERE sender_id IN (${placeholders}) AND sent_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
-      employeeIds,
-    ),
-    kudos_received: await scalar(
-      `SELECT COUNT(*) FROM kudos_transaction WHERE receiver_id IN (${placeholders}) AND sent_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
-      employeeIds,
-    ),
+    kudos_given: await scalar(`SELECT COUNT(*) FROM kudos_transaction WHERE sender_id IN (${placeholders}) AND sent_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`, employeeIds),
+    kudos_received: await scalar(`SELECT COUNT(*) FROM kudos_transaction WHERE receiver_id IN (${placeholders}) AND sent_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`, employeeIds),
     zero_recognition_90d: await scalar(
       `SELECT COUNT(*) FROM employees e
         WHERE e.id IN (${placeholders})
@@ -758,14 +574,13 @@ async function recognitionHealth(employeeIds: string[]) {
             SELECT 1 FROM kudos_transaction kt
              WHERE kt.receiver_id = e.id AND kt.sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
           )`,
-      employeeIds,
+      employeeIds
     ),
   };
 }
 
 async function pulseHealth(employeeIds: string[], total: number) {
-  if (employeeIds.length === 0)
-    return { response_rate: 0, average_mood_score: null, enps_score: 0 };
+  if (employeeIds.length === 0) return { response_rate: 0, average_mood_score: null, enps_score: 0 };
   const placeholders = employeeIds.map(() => "?").join(",");
   const responses = await scalar(
     `SELECT COUNT(DISTINCT pr.employee_id) FROM pulse_response pr
@@ -783,12 +598,10 @@ async function pulseHealth(employeeIds: string[], total: number) {
     employeeIds,
   );
   const moodRaw = (moodRows[0] as { score?: unknown } | undefined)?.score;
-  const averageMood =
-    moodRaw === null || moodRaw === undefined ? null : Number(moodRaw);
+  const averageMood = moodRaw === null || moodRaw === undefined ? null : Number(moodRaw);
   return {
     response_rate: total ? Math.round((responses / total) * 100) : 0,
-    average_mood_score:
-      averageMood !== null && Number.isFinite(averageMood) ? averageMood : null,
+    average_mood_score: averageMood !== null && Number.isFinite(averageMood) ? averageMood : null,
     enps_score: await calculateEnps(employeeIds),
   };
 }
@@ -806,25 +619,18 @@ async function calculateEnps(employeeIds: string[]) {
        -- survey_response has no submitted_at (response_date / created_at); this was a 500 on every call.
        AND COALESCE(response_date, created_at) >= DATE_SUB(NOW(), INTERVAL 180 DAY)
        AND response_value IS NOT NULL`,
-    employeeIds,
+    employeeIds
   );
   const row: any = rows[0] ?? {};
   const total = Number(row.total ?? 0);
   if (!total) return 0;
-  return Math.round(
-    (Number(row.promoters ?? 0) / total - Number(row.detractors ?? 0) / total) *
-      100,
-  );
+  return Math.round(((Number(row.promoters ?? 0) / total) - (Number(row.detractors ?? 0) / total)) * 100);
 }
 
 async function countOpenActions(employeeIds: string[]) {
-  if (
-    employeeIds.length === 0 ||
-    !(await tableExists("people_experience_action"))
-  )
-    return 0;
+  if (employeeIds.length === 0 || !(await tableExists("people_experience_action"))) return 0;
   return scalar(
     `SELECT COUNT(*) FROM people_experience_action WHERE employee_id IN (${employeeIds.map(() => "?").join(",")}) AND status IN ('open','in_progress','overdue')`,
-    employeeIds,
+    employeeIds
   );
 }

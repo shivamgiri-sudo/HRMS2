@@ -19,8 +19,7 @@ import { describe, expect, it } from "vitest";
  */
 
 const modulesDir = path.resolve(__dirname, "../..");
-const read = (rel: string) =>
-  fs.readFileSync(path.join(modulesDir, rel), "utf8");
+const read = (rel: string) => fs.readFileSync(path.join(modulesDir, rel), "utf8");
 
 const DEAD = "process-pnl/finance-expense-master.routes.ts";
 const LIVE = "finance/grn.routes.ts";
@@ -39,17 +38,13 @@ describe("the duplicate expense-master router", () => {
     const importers = allSources()
       .filter((f) => !f.endsWith("finance-expense-master.routes.ts"))
       .filter((f) => !f.includes("__tests__"))
-      .filter((f) =>
-        /financeExpenseMasterRouter|finance-expense-master\.routes/.test(
-          fs.readFileSync(f, "utf8"),
-        ),
-      )
+      .filter((f) => /financeExpenseMasterRouter|finance-expense-master\.routes/.test(fs.readFileSync(f, "utf8")))
       .map((f) => f.replace(modulesDir, "modules"));
     expect(
       importers,
-      "if this router is now mounted, retire the inline copies in grn.routes.ts in the same " +
-        "change — two routers answering the same paths means Express serves whichever " +
-        "registered first, and the other becomes silently dead in its turn",
+      "if this router is now mounted, retire the inline copies in grn.routes.ts in the same "
+        + "change — two routers answering the same paths means Express serves whichever "
+        + "registered first, and the other becomes silently dead in its turn"
     ).toEqual([]);
   });
 
@@ -61,16 +56,10 @@ describe("the duplicate expense-master router", () => {
     // If grn.routes.ts ever stops serving these, the comment becomes a wrong signpost.
     const live = read(LIVE);
     for (const route of [
-      '"/expense-masters"',
-      '"/expense-heads"',
-      '"/expense-sub-heads"',
-      '"/expense-heads/:id"',
-      '"/expense-sub-heads/:id"',
+      '"/expense-masters"', '"/expense-heads"', '"/expense-sub-heads"',
+      '"/expense-heads/:id"', '"/expense-sub-heads/:id"',
     ]) {
-      expect(
-        live,
-        `${route} must still be served from grn.routes.ts`,
-      ).toContain(route);
+      expect(live, `${route} must still be served from grn.routes.ts`).toContain(route);
     }
   });
 
@@ -79,15 +68,9 @@ describe("the duplicate expense-master router", () => {
     // duplicate and becomes a misleading record of what the rules are.
     const dead = read(DEAD);
     const live = read(LIVE);
-    expect(dead).toContain(
-      'const WRITE_ROLES = ["super_admin", "finance_head"] as const',
-    );
-    expect(live).toContain(
-      'const EXPENSE_MASTER_WRITE_ROLES: RoleKey[] = ["super_admin", "finance_head"]',
-    );
+    expect(dead).toContain('const WRITE_ROLES = ["super_admin", "finance_head"] as const');
+    expect(live).toContain('const EXPENSE_MASTER_WRITE_ROLES: RoleKey[] = ["super_admin", "finance_head"]');
     expect(dead).toContain('const EDIT_ROLES = ["super_admin"] as const');
-    expect(live).toContain(
-      'const EXPENSE_MASTER_EDIT_ROLES: RoleKey[] = ["super_admin"]',
-    );
+    expect(live).toContain('const EXPENSE_MASTER_EDIT_ROLES: RoleKey[] = ["super_admin"]');
   });
 });

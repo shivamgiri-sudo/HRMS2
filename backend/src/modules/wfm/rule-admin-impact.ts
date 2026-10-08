@@ -57,14 +57,14 @@ import {
   type EliminationStep,
   type EmployeeAttributes,
   type RuleDimension,
-} from "./attendance-source-rule-resolver.js";
+} from './attendance-source-rule-resolver.js';
 
 // ---------------------------------------------------------------------------------------------
 // Vocabulary
 // ---------------------------------------------------------------------------------------------
 
 /** requirements.md decision A9: the enum stays `enum('dialler','biometric')`; no third value. */
-export type AttendanceSource = "dialler" | "biometric";
+export type AttendanceSource = 'dialler' | 'biometric';
 
 /**
  * One Attendance_Source_Rule as the administration screen holds it in memory. Extends the
@@ -99,21 +99,15 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 function assertCivilDate(value: string, label: string): void {
   if (!DATE_PATTERN.test(value)) {
     // programmer error
-    throw new RangeError(
-      `${label} must be a 'YYYY-MM-DD' civil date, received ${JSON.stringify(value)}`,
-    );
+    throw new RangeError(`${label} must be a 'YYYY-MM-DD' civil date, received ${JSON.stringify(value)}`);
   }
 }
 
 /** criteria 1.6, 2.2: inclusive both ends; a null effective-to never closes. */
-export function isWithinEffectiveWindow(
-  rule: AdminRule,
-  date: string,
-): boolean {
-  assertCivilDate(date, "date");
+export function isWithinEffectiveWindow(rule: AdminRule, date: string): boolean {
+  assertCivilDate(date, 'date');
   assertCivilDate(rule.effectiveFrom, `rule ${rule.id} effectiveFrom`);
-  if (rule.effectiveTo !== null)
-    assertCivilDate(rule.effectiveTo, `rule ${rule.id} effectiveTo`);
+  if (rule.effectiveTo !== null) assertCivilDate(rule.effectiveTo, `rule ${rule.id} effectiveTo`);
   if (rule.effectiveFrom > date) return false;
   if (rule.effectiveTo !== null && rule.effectiveTo < date) return false;
   return true;
@@ -124,13 +118,8 @@ export function isWithinEffectiveWindow(
  * callers push them into SQL — so a pure caller has to apply them itself, and this is the one
  * place that does.
  */
-export function activeRulesInWindow<T extends AdminRule>(
-  rules: readonly T[],
-  date: string,
-): T[] {
-  return rules.filter(
-    (rule) => rule.active && isWithinEffectiveWindow(rule, date),
-  );
+export function activeRulesInWindow<T extends AdminRule>(rules: readonly T[], date: string): T[] {
+  return rules.filter((rule) => rule.active && isWithinEffectiveWindow(rule, date));
 }
 
 /**
@@ -155,10 +144,7 @@ export function computeSpecificityCount(rule: DimensionScopedRule): number {
  * candidacy semantics. Effective window and active state are NOT considered here — callers apply
  * `activeRulesInWindow` first, so this function answers only "do the dimensions match".
  */
-export function ruleMatchesEmployee(
-  rule: AdminRule,
-  employee: ActiveEmployee,
-): boolean {
+export function ruleMatchesEmployee(rule: AdminRule, employee: ActiveEmployee): boolean {
   return resolveRule([rule], employee.attributes).winner !== null;
 }
 
@@ -209,9 +195,7 @@ export function intersectPopulations(
  */
 export interface RuleListRow {
   readonly id: string;
-  readonly dimensionValues: Readonly<
-    Record<RuleDimension, readonly string[] | null>
-  >;
+  readonly dimensionValues: Readonly<Record<RuleDimension, readonly string[] | null>>;
   readonly attendanceSource: AttendanceSource;
   readonly effectiveFrom: string;
   readonly effectiveTo: string | null;
@@ -224,9 +208,7 @@ export function describeRule(rule: AdminRule): RuleListRow {
   for (const dimension of DIMENSION_PRIORITY_ORDER) {
     const constraint = rule.dimensionValues[dimension];
     dimensionValues[dimension] =
-      constraint && constraint.size > 0
-        ? Object.freeze([...constraint].sort())
-        : null;
+      constraint && constraint.size > 0 ? Object.freeze([...constraint].sort()) : null;
   }
   return Object.freeze({
     id: rule.id,
@@ -261,9 +243,9 @@ export function describeRule(rule: AdminRule): RuleListRow {
  * matching every filter value.
  */
 export type DimensionFilter =
-  | { readonly kind: "constrains_value"; readonly valueId: string }
-  | { readonly kind: "constrains_any_value" }
-  | { readonly kind: "unconstrained" };
+  | { readonly kind: 'constrains_value'; readonly valueId: string }
+  | { readonly kind: 'constrains_any_value' }
+  | { readonly kind: 'unconstrained' };
 
 /**
  * criterion 12.2. Every supplied member is a conjunction: a filter naming two dimensions, a
@@ -283,19 +265,15 @@ export interface RuleListFilter {
   readonly inWindowOn?: string | null;
 }
 
-function matchesDimensionFilter(
-  rule: AdminRule,
-  dimension: RuleDimension,
-  filter: DimensionFilter,
-): boolean {
+function matchesDimensionFilter(rule: AdminRule, dimension: RuleDimension, filter: DimensionFilter): boolean {
   const constraint = rule.dimensionValues[dimension];
   const constrained = constraint !== undefined && constraint.size > 0;
   switch (filter.kind) {
-    case "unconstrained":
+    case 'unconstrained':
       return !constrained;
-    case "constrains_any_value":
+    case 'constrains_any_value':
       return constrained;
-    case "constrains_value":
+    case 'constrains_value':
       return constrained && constraint.has(filter.valueId);
   }
 }
@@ -309,42 +287,28 @@ function matchesDimensionFilter(
  * same descending-specificity, latest-first shape the resolver's tie-break uses, so the row an
  * administrator reads at the top of the list is the row that decides.
  */
-export function listRules(
-  rules: readonly AdminRule[],
-  filter: RuleListFilter = {},
-): RuleListRow[] {
+export function listRules(rules: readonly AdminRule[], filter: RuleListFilter = {}): RuleListRow[] {
   const dimensionFilters = filter.dimensions ?? {};
   const kept = rules.filter((rule) => {
-    if (
-      filter.attendanceSource != null &&
-      rule.attendanceSource !== filter.attendanceSource
-    ) {
+    if (filter.attendanceSource != null && rule.attendanceSource !== filter.attendanceSource) {
       return false;
     }
     if (filter.active != null && rule.active !== filter.active) return false;
-    if (
-      filter.inWindowOn != null &&
-      !isWithinEffectiveWindow(rule, filter.inWindowOn)
-    )
-      return false;
+    if (filter.inWindowOn != null && !isWithinEffectiveWindow(rule, filter.inWindowOn)) return false;
     for (const dimension of DIMENSION_PRIORITY_ORDER) {
       const dimensionFilter = dimensionFilters[dimension];
-      if (
-        dimensionFilter &&
-        !matchesDimensionFilter(rule, dimension, dimensionFilter)
-      )
-        return false;
+      if (dimensionFilter && !matchesDimensionFilter(rule, dimension, dimensionFilter)) return false;
     }
     return true;
   });
 
-  return kept.map(describeRule).sort((a, b) => {
-    if (a.specificityCount !== b.specificityCount)
-      return b.specificityCount - a.specificityCount;
-    if (a.effectiveFrom !== b.effectiveFrom)
-      return a.effectiveFrom < b.effectiveFrom ? 1 : -1;
-    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-  });
+  return kept
+    .map(describeRule)
+    .sort((a, b) => {
+      if (a.specificityCount !== b.specificityCount) return b.specificityCount - a.specificityCount;
+      if (a.effectiveFrom !== b.effectiveFrom) return a.effectiveFrom < b.effectiveFrom ? 1 : -1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -358,8 +322,7 @@ export function listRules(
  * failed either test; the preview does, because an administrator asking "why did this rule not
  * decide" is very often asking about a rule that is retired or not yet in force.
  */
-export type PreviewEliminationStep =
-  EliminationStep | "inactive" | "outside_effective_window";
+export type PreviewEliminationStep = EliminationStep | 'inactive' | 'outside_effective_window';
 
 export interface PreviewCandidate {
   readonly rule: RuleListRow;
@@ -398,15 +361,15 @@ export function previewRuleResolution(
   employee: ActiveEmployee,
   date: string,
 ): ResolutionPreview {
-  assertCivilDate(date, "date");
+  assertCivilDate(date, 'date');
 
   const preResolverStep = new Map<string, PreviewEliminationStep>();
   const candidateRules: AdminRule[] = [];
   for (const rule of rules) {
     if (!rule.active) {
-      preResolverStep.set(rule.id, "inactive");
+      preResolverStep.set(rule.id, 'inactive');
     } else if (!isWithinEffectiveWindow(rule, date)) {
-      preResolverStep.set(rule.id, "outside_effective_window");
+      preResolverStep.set(rule.id, 'outside_effective_window');
     } else {
       candidateRules.push(rule);
     }
@@ -424,8 +387,7 @@ export function previewRuleResolution(
     .map((rule) =>
       Object.freeze({
         rule: describeRule(rule),
-        eliminatedAtStep:
-          preResolverStep.get(rule.id) ?? resolverStep.get(rule.id) ?? null,
+        eliminatedAtStep: preResolverStep.get(rule.id) ?? resolverStep.get(rule.id) ?? null,
       }),
     );
 
@@ -497,21 +459,12 @@ export interface SubmissionImpactInput {
  * insertion: going from "no rule decided this employee" to a decided source is the largest change
  * there is, and reporting it as no change would hide a broken store behind a reassuring zero.
  */
-export function analyseSubmissionImpact(
-  input: SubmissionImpactInput,
-): SubmissionImpact {
-  const { proposedRule, existingRules, activeEmployees, evaluationDate } =
-    input;
-  assertCivilDate(evaluationDate, "evaluationDate");
+export function analyseSubmissionImpact(input: SubmissionImpactInput): SubmissionImpact {
+  const { proposedRule, existingRules, activeEmployees, evaluationDate } = input;
+  assertCivilDate(evaluationDate, 'evaluationDate');
 
-  const live =
-    proposedRule.active &&
-    isWithinEffectiveWindow(proposedRule, evaluationDate);
-  const matchedIds = matchedPopulation(
-    proposedRule,
-    activeEmployees,
-    evaluationDate,
-  );
+  const live = proposedRule.active && isWithinEffectiveWindow(proposedRule, evaluationDate);
+  const matchedIds = matchedPopulation(proposedRule, activeEmployees, evaluationDate);
   const matchedIdSet = new Set(matchedIds);
 
   const before = activeRulesInWindow(existingRules, evaluationDate);
@@ -524,10 +477,8 @@ export function analyseSubmissionImpact(
     if (!matchedIdSet.has(employee.employeeId)) continue;
     const beforeWinner = resolveRule(before, employee.attributes).winner;
     const afterWinner = resolveRule(after, employee.attributes).winner;
-    const beforeSource =
-      beforeWinner === null ? null : beforeWinner.attendanceSource;
-    const afterSource =
-      afterWinner === null ? null : afterWinner.attendanceSource;
+    const beforeSource = beforeWinner === null ? null : beforeWinner.attendanceSource;
+    const afterSource = afterWinner === null ? null : afterWinner.attendanceSource;
     if (beforeSource !== afterSource) {
       changes.push(
         Object.freeze({
@@ -540,9 +491,7 @@ export function analyseSubmissionImpact(
       );
     }
   }
-  changes.sort((a, b) =>
-    a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0,
-  );
+  changes.sort((a, b) => (a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0));
 
   return Object.freeze({
     evaluatedOn: evaluationDate,
@@ -558,11 +507,11 @@ export function analyseSubmissionImpact(
 /** Why a deactivation cannot be previewed or applied at all. */
 export type DeactivationRefusalCode =
   /** No rule in the supplied store carries the requested id. */
-  | "rule_not_found"
+  | 'rule_not_found'
   /** criterion 1.11: the System_Default_Rule is mandatory (criterion 1.10). */
-  | "system_default_rule_mandatory"
+  | 'system_default_rule_mandatory'
   /** The rule is already inactive, so there is nothing to deactivate and nothing to confirm. */
-  | "rule_already_inactive";
+  | 'rule_already_inactive';
 
 export interface DeactivationRefusal {
   readonly code: DeactivationRefusalCode;
@@ -607,11 +556,9 @@ export interface DeactivationImpactInput {
  * denominator for the change count — a deactivation that decides 200 people and moves 3 of them is
  * a different decision from one that decides 3 and moves 3.
  */
-export function analyseDeactivationImpact(
-  input: DeactivationImpactInput,
-): DeactivationImpact {
+export function analyseDeactivationImpact(input: DeactivationImpactInput): DeactivationImpact {
   const { ruleId, existingRules, activeEmployees, evaluationDate } = input;
-  assertCivilDate(evaluationDate, "evaluationDate");
+  assertCivilDate(evaluationDate, 'evaluationDate');
 
   const empty = (refusal: DeactivationRefusal): DeactivationImpact =>
     Object.freeze({
@@ -621,33 +568,30 @@ export function analyseDeactivationImpact(
       changedEmployeeCount: 0,
       changes: Object.freeze([]),
       currentlyDecidedEmployeeCount: 0,
-      refusal: Object.freeze({
-        ...refusal,
-        criteria: Object.freeze([...refusal.criteria]),
-      }),
+      refusal: Object.freeze({ ...refusal, criteria: Object.freeze([...refusal.criteria]) }),
     });
 
   const target = existingRules.find((rule) => rule.id === ruleId);
   if (target === undefined) {
     return empty({
-      code: "rule_not_found",
+      code: 'rule_not_found',
       message: `No Attendance_Source_Rule with id ${ruleId} is present in the supplied rule set.`,
-      criteria: ["12.5"],
+      criteria: ['12.5'],
     });
   }
   if (computeSpecificityCount(target) === 0) {
     return empty({
-      code: "system_default_rule_mandatory",
+      code: 'system_default_rule_mandatory',
       message:
-        "This rule constrains no Rule_Dimension and is therefore the System_Default_Rule; a System_Default_Rule is mandatory and cannot be deactivated.",
-      criteria: ["1.10", "1.11", "12.5"],
+        'This rule constrains no Rule_Dimension and is therefore the System_Default_Rule; a System_Default_Rule is mandatory and cannot be deactivated.',
+      criteria: ['1.10', '1.11', '12.5'],
     });
   }
   if (!target.active) {
     return empty({
-      code: "rule_already_inactive",
+      code: 'rule_already_inactive',
       message: `Attendance_Source_Rule ${ruleId} is already inactive.`,
-      criteria: ["12.5"],
+      criteria: ['12.5'],
     });
   }
 
@@ -661,8 +605,7 @@ export function analyseDeactivationImpact(
     if (beforeWinner === null || beforeWinner.id !== ruleId) continue;
     currentlyDecided += 1;
     const afterWinner = resolveRule(after, employee.attributes).winner;
-    const afterSource =
-      afterWinner === null ? null : afterWinner.attendanceSource;
+    const afterSource = afterWinner === null ? null : afterWinner.attendanceSource;
     if (beforeWinner.attendanceSource !== afterSource) {
       changes.push(
         Object.freeze({
@@ -675,9 +618,7 @@ export function analyseDeactivationImpact(
       );
     }
   }
-  changes.sort((a, b) =>
-    a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0,
-  );
+  changes.sort((a, b) => (a.employeeId < b.employeeId ? -1 : a.employeeId > b.employeeId ? 1 : 0));
 
   return Object.freeze({
     ruleId,
@@ -763,13 +704,10 @@ function constrains(rule: AdminRule, dimension: RuleDimension): boolean {
 export function analyseCostCentreProcessContradiction(
   input: ContradictionInput,
 ): CostCentreProcessContradiction {
-  const { proposedRule, existingRules, activeEmployees, evaluationDate } =
-    input;
-  assertCivilDate(evaluationDate, "evaluationDate");
+  const { proposedRule, existingRules, activeEmployees, evaluationDate } = input;
+  assertCivilDate(evaluationDate, 'evaluationDate');
 
-  const notApplicable = (
-    submittedCount: number,
-  ): CostCentreProcessContradiction =>
+  const notApplicable = (submittedCount: number): CostCentreProcessContradiction =>
     Object.freeze({
       applicable: false,
       evaluatedOn: evaluationDate,
@@ -782,70 +720,50 @@ export function analyseCostCentreProcessContradiction(
       confirmationRequired: false,
     });
 
-  if (!constrains(proposedRule, "cost_centre")) return notApplicable(0);
+  if (!constrains(proposedRule, 'cost_centre')) return notApplicable(0);
 
-  const submittedPopulation = matchedPopulation(
-    proposedRule,
-    activeEmployees,
-    evaluationDate,
-  );
+  const submittedPopulation = matchedPopulation(proposedRule, activeEmployees, evaluationDate);
   if (submittedPopulation.length === 0) return notApplicable(0);
 
   const intersecting: IntersectingProcessScopedRule[] = [];
   for (const existing of existingRules) {
     if (existing.id === proposedRule.id) continue;
     if (!existing.active) continue;
-    if (!constrains(existing, "process")) continue;
+    if (!constrains(existing, 'process')) continue;
 
-    const existingPopulation = matchedPopulation(
-      existing,
-      activeEmployees,
-      evaluationDate,
-    );
-    const shared = intersectPopulations(
-      submittedPopulation,
-      existingPopulation,
-    );
+    const existingPopulation = matchedPopulation(existing, activeEmployees, evaluationDate);
+    const shared = intersectPopulations(submittedPopulation, existingPopulation);
     if (shared.length === 0) continue;
 
     intersecting.push(
       Object.freeze({
         rule: describeRule(existing),
-        attendanceSourceDiffers:
-          existing.attendanceSource !== proposedRule.attendanceSource,
+        attendanceSourceDiffers: existing.attendanceSource !== proposedRule.attendanceSource,
         intersectingEmployeeCount: shared.length,
         intersectingEmployeeIds: Object.freeze(shared),
       }),
     );
   }
-  intersecting.sort((a, b) =>
-    a.rule.id < b.rule.id ? -1 : a.rule.id > b.rule.id ? 1 : 0,
-  );
+  intersecting.sort((a, b) => (a.rule.id < b.rule.id ? -1 : a.rule.id > b.rule.id ? 1 : 0));
 
-  const differing = intersecting.filter(
-    (entry) => entry.attendanceSourceDiffers,
-  );
-  const unionIds = [
-    ...new Set(
-      differing.flatMap((entry) => [...entry.intersectingEmployeeIds]),
-    ),
-  ].sort();
+  const differing = intersecting.filter((entry) => entry.attendanceSourceDiffers);
+  const unionIds = [...new Set(differing.flatMap((entry) => [...entry.intersectingEmployeeIds]))].sort();
 
   const warning =
     differing.length === 0
       ? null
       : `This rule constrains cost centre and states Attendance_Source '${proposedRule.attendanceSource}'. ` +
-        `${differing.length} active process-scoped rule${differing.length === 1 ? "" : "s"} ` +
-        `state${differing.length === 1 ? "s" : ""} a different Attendance_Source over an overlapping ` +
-        `population of ${unionIds.length} active employee${unionIds.length === 1 ? "" : "s"}: ` +
+        `${differing.length} active process-scoped rule${differing.length === 1 ? '' : 's'} ` +
+        `state${differing.length === 1 ? 's' : ''} a different Attendance_Source over an overlapping ` +
+        `population of ${unionIds.length} active employee${unionIds.length === 1 ? '' : 's'}: ` +
         differing
           .map(
             (entry) =>
               `${entry.rule.id} ('${entry.rule.attendanceSource}', ${entry.intersectingEmployeeCount} shared)`,
           )
-          .join(", ") +
-        ". A cost centre already implies a process, so this rule wins the tie-break under " +
-        "Dimension_Priority_Order and overrides them. Confirm before saving.";
+          .join(', ') +
+        '. A cost centre already implies a process, so this rule wins the tie-break under ' +
+        'Dimension_Priority_Order and overrides them. Confirm before saving.';
 
   return Object.freeze({
     applicable: true,
@@ -881,19 +799,19 @@ export const MINUTES_IN_A_CALENDAR_DAY = 1440;
 export const MAX_ROLLING_WINDOW_DAYS = 366;
 
 export type ThresholdViolationCode =
-  | "not_an_integer"
-  | "negative"
-  | "not_positive"
-  | "exceeds_calendar_day"
-  | "exceeds_max_rolling_window"
-  | "half_day_exceeds_full_day"
-  | "grace_exceeds_full_day"
-  | "floor_ceiling_exceeds_corroboration_threshold"
-  | "repeat_threshold_exceeds_rolling_window"
-  | "empty_dimension_value_set"
-  | "blank_dimension_value"
-  | "blank_branch_id"
-  | "duplicate_branch_ceiling";
+  | 'not_an_integer'
+  | 'negative'
+  | 'not_positive'
+  | 'exceeds_calendar_day'
+  | 'exceeds_max_rolling_window'
+  | 'half_day_exceeds_full_day'
+  | 'grace_exceeds_full_day'
+  | 'floor_ceiling_exceeds_corroboration_threshold'
+  | 'repeat_threshold_exceeds_rolling_window'
+  | 'empty_dimension_value_set'
+  | 'blank_dimension_value'
+  | 'blank_branch_id'
+  | 'duplicate_branch_ceiling';
 
 export interface ThresholdViolation {
   /** Dotted path of the offending member, e.g. `dayThresholds.halfDayMinutes`. */
@@ -934,8 +852,7 @@ export interface ThresholdConfigSubmission {
     readonly graceMinutes?: number | null;
   } | null;
   /** criteria 6.10, 12.7. Default 100. Scoped to branch, not to the six Rule_Dimensions. */
-  readonly dualReviewCeilingsByBranch?:
-    readonly BranchDualReviewCeiling[] | null;
+  readonly dualReviewCeilingsByBranch?: readonly BranchDualReviewCeiling[] | null;
 }
 
 export interface ThresholdConfigValidation {
@@ -949,17 +866,13 @@ interface NumericRule {
   readonly field: string;
   readonly value: number | null | undefined;
   /** `positive` rejects 0; `non_negative` accepts it. */
-  readonly sign: "positive" | "non_negative";
+  readonly sign: 'positive' | 'non_negative';
   readonly max: number | null;
   readonly maxCode: ThresholdViolationCode;
   readonly criteria: readonly string[];
 }
 
-function checkNumeric(
-  rule: NumericRule,
-  violations: ThresholdViolation[],
-  unconfigured: string[],
-): number | null {
+function checkNumeric(rule: NumericRule, violations: ThresholdViolation[], unconfigured: string[]): number | null {
   const { field, value, sign, max, maxCode, criteria } = rule;
   if (value === null || value === undefined) {
     unconfigured.push(field);
@@ -971,7 +884,7 @@ function checkNumeric(
     violations.push(
       Object.freeze({
         field,
-        code: "not_an_integer" as const,
+        code: 'not_an_integer' as const,
         message: `${field} must be a whole number, received ${String(value)}.`,
         criteria: Object.freeze([...criteria]),
       }),
@@ -982,18 +895,18 @@ function checkNumeric(
     violations.push(
       Object.freeze({
         field,
-        code: "negative" as const,
+        code: 'negative' as const,
         message: `${field} must not be negative, received ${value}.`,
         criteria: Object.freeze([...criteria]),
       }),
     );
     return null;
   }
-  if (sign === "positive" && value === 0) {
+  if (sign === 'positive' && value === 0) {
     violations.push(
       Object.freeze({
         field,
-        code: "not_positive" as const,
+        code: 'not_positive' as const,
         message: `${field} must be greater than zero; a zero value is discarded by every consumer and the default would silently apply instead.`,
         criteria: Object.freeze([...criteria]),
       }),
@@ -1020,12 +933,7 @@ function orderingViolation(
   message: string,
   criteria: readonly string[],
 ): ThresholdViolation {
-  return Object.freeze({
-    field,
-    code,
-    message,
-    criteria: Object.freeze([...criteria]),
-  });
+  return Object.freeze({ field, code, message, criteria: Object.freeze([...criteria]) });
 }
 
 /**
@@ -1066,60 +974,60 @@ export function validateThresholdConfiguration(
 
   const apr = checkNumeric(
     {
-      field: "aprCorroborationThresholdMinutes",
+      field: 'aprCorroborationThresholdMinutes',
       value: submission.aprCorroborationThresholdMinutes,
-      sign: "positive",
+      sign: 'positive',
       max: MINUTES_IN_A_CALENDAR_DAY,
-      maxCode: "exceeds_calendar_day",
-      criteria: ["5.5", "12.7"],
+      maxCode: 'exceeds_calendar_day',
+      criteria: ['5.5', '12.7'],
     },
     violations,
     unconfigured,
   );
   checkNumeric(
     {
-      field: "varianceToleranceMinutes",
+      field: 'varianceToleranceMinutes',
       value: submission.varianceToleranceMinutes,
-      sign: "positive",
+      sign: 'positive',
       max: MINUTES_IN_A_CALENDAR_DAY,
-      maxCode: "exceeds_calendar_day",
-      criteria: ["6.2", "12.7"],
+      maxCode: 'exceeds_calendar_day',
+      criteria: ['6.2', '12.7'],
     },
     violations,
     unconfigured,
   );
   const floorCeiling = checkNumeric(
     {
-      field: "floorAbsencePatternCeilingMinutes",
+      field: 'floorAbsencePatternCeilingMinutes',
       value: submission.floorAbsencePatternCeilingMinutes,
-      sign: "positive",
+      sign: 'positive',
       max: MINUTES_IN_A_CALENDAR_DAY,
-      maxCode: "exceeds_calendar_day",
-      criteria: ["10.4", "12.7"],
+      maxCode: 'exceeds_calendar_day',
+      criteria: ['10.4', '12.7'],
     },
     violations,
     unconfigured,
   );
   const repeatCount = checkNumeric(
     {
-      field: "repeatThresholdCount",
+      field: 'repeatThresholdCount',
       value: submission.repeatThresholdCount,
-      sign: "positive",
+      sign: 'positive',
       max: null,
-      maxCode: "exceeds_calendar_day",
-      criteria: ["10.7", "10.8", "12.7"],
+      maxCode: 'exceeds_calendar_day',
+      criteria: ['10.7', '10.8', '12.7'],
     },
     violations,
     unconfigured,
   );
   const windowDays = checkNumeric(
     {
-      field: "rollingWindowDays",
+      field: 'rollingWindowDays',
       value: submission.rollingWindowDays,
-      sign: "positive",
+      sign: 'positive',
       max: MAX_ROLLING_WINDOW_DAYS,
-      maxCode: "exceeds_max_rolling_window",
-      criteria: ["10.7", "10.8", "12.7"],
+      maxCode: 'exceeds_max_rolling_window',
+      criteria: ['10.7', '10.8', '12.7'],
     },
     violations,
     unconfigured,
@@ -1127,28 +1035,28 @@ export function validateThresholdConfiguration(
 
   const day = submission.dayThresholds ?? null;
   if (day === null) {
-    unconfigured.push("dayThresholds");
+    unconfigured.push('dayThresholds');
   }
   const fullDay = checkNumeric(
     {
-      field: "dayThresholds.fullDayMinutes",
+      field: 'dayThresholds.fullDayMinutes',
       value: day === null ? null : day.fullDayMinutes,
-      sign: "positive",
+      sign: 'positive',
       max: MINUTES_IN_A_CALENDAR_DAY,
-      maxCode: "exceeds_calendar_day",
-      criteria: ["1.14", "12.7"],
+      maxCode: 'exceeds_calendar_day',
+      criteria: ['1.14', '12.7'],
     },
     violations,
     day === null ? [] : unconfigured,
   );
   const halfDay = checkNumeric(
     {
-      field: "dayThresholds.halfDayMinutes",
+      field: 'dayThresholds.halfDayMinutes',
       value: day === null ? null : day.halfDayMinutes,
-      sign: "positive",
+      sign: 'positive',
       max: MINUTES_IN_A_CALENDAR_DAY,
-      maxCode: "exceeds_calendar_day",
-      criteria: ["1.14", "12.7"],
+      maxCode: 'exceeds_calendar_day',
+      criteria: ['1.14', '12.7'],
     },
     violations,
     day === null ? [] : unconfigured,
@@ -1156,12 +1064,12 @@ export function validateThresholdConfiguration(
   // grace_minutes 0 is a real configuration: no lateness allowance at all.
   const grace = checkNumeric(
     {
-      field: "dayThresholds.graceMinutes",
+      field: 'dayThresholds.graceMinutes',
       value: day === null ? null : day.graceMinutes,
-      sign: "non_negative",
+      sign: 'non_negative',
       max: MINUTES_IN_A_CALENDAR_DAY,
-      maxCode: "exceeds_calendar_day",
-      criteria: ["1.14", "12.7"],
+      maxCode: 'exceeds_calendar_day',
+      criteria: ['1.14', '12.7'],
     },
     violations,
     day === null ? [] : unconfigured,
@@ -1170,40 +1078,40 @@ export function validateThresholdConfiguration(
   if (fullDay !== null && halfDay !== null && halfDay > fullDay) {
     violations.push(
       orderingViolation(
-        "dayThresholds.halfDayMinutes",
-        "half_day_exceeds_full_day",
+        'dayThresholds.halfDayMinutes',
+        'half_day_exceeds_full_day',
         `half_day_minutes (${halfDay}) must not exceed full_day_minutes (${fullDay}).`,
-        ["1.14", "12.7"],
+        ['1.14', '12.7'],
       ),
     );
   }
   if (fullDay !== null && grace !== null && grace > fullDay) {
     violations.push(
       orderingViolation(
-        "dayThresholds.graceMinutes",
-        "grace_exceeds_full_day",
+        'dayThresholds.graceMinutes',
+        'grace_exceeds_full_day',
         `grace_minutes (${grace}) must not exceed full_day_minutes (${fullDay}); a longer allowance than the working day can never mark anyone late.`,
-        ["1.14", "12.7"],
+        ['1.14', '12.7'],
       ),
     );
   }
   if (apr !== null && floorCeiling !== null && floorCeiling > apr) {
     violations.push(
       orderingViolation(
-        "floorAbsencePatternCeilingMinutes",
-        "floor_ceiling_exceeds_corroboration_threshold",
+        'floorAbsencePatternCeilingMinutes',
+        'floor_ceiling_exceeds_corroboration_threshold',
         `Floor_Absence_Pattern_Ceiling (${floorCeiling}) must not exceed APR_Corroboration_Threshold (${apr}); a day at or above the threshold is corroborated and cannot also be the floor-absence pattern.`,
-        ["5.2", "10.3", "12.7"],
+        ['5.2', '10.3', '12.7'],
       ),
     );
   }
   if (repeatCount !== null && windowDays !== null && repeatCount > windowDays) {
     violations.push(
       orderingViolation(
-        "repeatThresholdCount",
-        "repeat_threshold_exceeds_rolling_window",
+        'repeatThresholdCount',
+        'repeat_threshold_exceeds_rolling_window',
         `The repeat threshold (${repeatCount} occurrences) must not exceed the rolling window (${windowDays} days); at most one occurrence is counted per date, so this can never fire.`,
-        ["10.7", "10.8", "12.7"],
+        ['10.7', '10.8', '12.7'],
       ),
     );
   }
@@ -1216,22 +1124,20 @@ export function validateThresholdConfiguration(
       violations.push(
         orderingViolation(
           `dimensionValues.${dimension}`,
-          "empty_dimension_value_set",
+          'empty_dimension_value_set',
           `${dimension} is present with no value; leave the dimension out to mean "matches every value" rather than supplying an empty set.`,
-          ["1.4", "12.7"],
+          ['1.4', '12.7'],
         ),
       );
       continue;
     }
-    if (
-      values.some((value) => typeof value !== "string" || value.trim() === "")
-    ) {
+    if (values.some((value) => typeof value !== 'string' || value.trim() === '')) {
       violations.push(
         orderingViolation(
           `dimensionValues.${dimension}`,
-          "blank_dimension_value",
+          'blank_dimension_value',
           `${dimension} carries a blank value; every constrained value must be a non-empty identifier.`,
-          ["1.8", "12.7"],
+          ['1.8', '12.7'],
         ),
       );
     }
@@ -1239,27 +1145,25 @@ export function validateThresholdConfiguration(
 
   const ceilings = submission.dualReviewCeilingsByBranch ?? null;
   if (ceilings === null) {
-    unconfigured.push("dualReviewCeilingsByBranch");
+    unconfigured.push('dualReviewCeilingsByBranch');
   } else {
     const seen = new Set<string>();
     ceilings.forEach((entry, index) => {
       const field = `dualReviewCeilingsByBranch[${index}]`;
-      if (typeof entry.branchId !== "string" || entry.branchId.trim() === "") {
+      if (typeof entry.branchId !== 'string' || entry.branchId.trim() === '') {
         violations.push(
-          orderingViolation(
-            `${field}.branchId`,
-            "blank_branch_id",
-            `${field}.branchId must be a non-empty branch identifier.`,
-            ["6.10", "12.7"],
-          ),
+          orderingViolation(`${field}.branchId`, 'blank_branch_id', `${field}.branchId must be a non-empty branch identifier.`, [
+            '6.10',
+            '12.7',
+          ]),
         );
       } else if (seen.has(entry.branchId)) {
         violations.push(
           orderingViolation(
             `${field}.branchId`,
-            "duplicate_branch_ceiling",
+            'duplicate_branch_ceiling',
             `Branch ${entry.branchId} carries more than one Dual_Review_Ceiling in this submission; the resolved ceiling would depend on row order.`,
-            ["6.10", "12.7"],
+            ['6.10', '12.7'],
           ),
         );
       } else {
@@ -1271,10 +1175,10 @@ export function validateThresholdConfiguration(
         {
           field: `${field}.ceiling`,
           value: entry.ceiling,
-          sign: "non_negative",
+          sign: 'non_negative',
           max: null,
-          maxCode: "exceeds_calendar_day",
-          criteria: ["6.10", "12.7"],
+          maxCode: 'exceeds_calendar_day',
+          criteria: ['6.10', '12.7'],
         },
         violations,
         [],

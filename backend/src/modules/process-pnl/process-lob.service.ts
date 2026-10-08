@@ -69,8 +69,7 @@ export interface SaveEmployeeLobAssignmentInput {
   allocationPct: number;
   effectiveFrom: string;
   effectiveTo?: string | null;
-  assignmentSource?:
-    "manual" | "roster" | "timesheet" | "bulk_upload" | "system";
+  assignmentSource?: "manual" | "roster" | "timesheet" | "bulk_upload" | "system";
   status?: "draft" | "approved" | "inactive";
 }
 
@@ -237,7 +236,7 @@ function dateRangeOverlaps(
   existingFrom: string,
   existingTo: string | null,
   nextFrom: string,
-  nextTo: string | null,
+  nextTo: string | null
 ) {
   const existingEnd = existingTo ?? "9999-12-31";
   const nextEnd = nextTo ?? "9999-12-31";
@@ -253,16 +252,9 @@ async function listColumns(tableName: string): Promise<Set<string>> {
            FROM information_schema.columns
           WHERE table_schema = DATABASE()
             AND table_name = ?`,
-        [tableName],
+        [tableName]
       )
-        .then(
-          (rows) =>
-            new Set(
-              rows.map((row) =>
-                String(row.column_name ?? (row as any).COLUMN_NAME),
-              ),
-            ),
-        )
+        .then((rows) => new Set(rows.map((row) => String(row.column_name ?? (row as any).COLUMN_NAME))))
         // Evict on failure, as the otherwise-identical copies in bpo-pnl.service.ts and
         // process-pnl.service.ts already do. Without it a rejected promise stays in the cache
         // for the lifetime of the process, so one transient information_schema failure makes
@@ -271,7 +263,7 @@ async function listColumns(tableName: string): Promise<Set<string>> {
         .catch((error) => {
           columnCache.delete(tableName);
           throw error;
-        }),
+        })
     );
   }
   return columnCache.get(tableName)!;
@@ -291,10 +283,8 @@ async function ensureFoundation() {
   }
   if (missing.length) {
     throw Object.assign(
-      new Error(
-        `Process LOB P&L foundation is unavailable: ${missing.join(", ")}. Run migration 421 first.`,
-      ),
-      { statusCode: 503 },
+      new Error(`Process LOB P&L foundation is unavailable: ${missing.join(", ")}. Run migration 421 first.`),
+      { statusCode: 503 }
     );
   }
 }
@@ -302,8 +292,7 @@ async function ensureFoundation() {
 function numericOrNull(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0)
-    throw new Error("Numeric values must be zero or greater");
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error("Numeric values must be zero or greater");
   return parsed;
 }
 
@@ -334,33 +323,15 @@ function defaultDirectData(): DirectLobData {
 
 function addCostComponent(target: DirectLobData, type: string, amount: number) {
   switch (type) {
-    case "depreciation":
-      target.depreciation += amount;
-      break;
-    case "amortization":
-      target.amortization += amount;
-      break;
-    case "finance_cost":
-      target.financeCost += amount;
-      break;
-    case "tax":
-      target.tax += amount;
-      break;
-    case "other_operating_cost":
-      target.otherOperatingCost += amount;
-      break;
-    case "other_operating_income":
-      target.otherOperatingIncome += amount;
-      break;
-    case "non_operating_income":
-      target.nonOperatingIncome += amount;
-      break;
-    case "exceptional_cost":
-      target.exceptionalCost += amount;
-      break;
-    case "exceptional_income":
-      target.exceptionalIncome += amount;
-      break;
+    case "depreciation": target.depreciation += amount; break;
+    case "amortization": target.amortization += amount; break;
+    case "finance_cost": target.financeCost += amount; break;
+    case "tax": target.tax += amount; break;
+    case "other_operating_cost": target.otherOperatingCost += amount; break;
+    case "other_operating_income": target.otherOperatingIncome += amount; break;
+    case "non_operating_income": target.nonOperatingIncome += amount; break;
+    case "exceptional_cost": target.exceptionalCost += amount; break;
+    case "exceptional_income": target.exceptionalIncome += amount; break;
   }
 }
 
@@ -386,41 +357,29 @@ export function deliveryDataStatus(
   rules: Array<{ billingModel: string }>,
 ): "available" | "missing" | "not_required" {
   if (hasDeliveryData) return "available";
-  return rules.some((rule) => rule.billingModel !== "fixed_monthly")
-    ? "missing"
-    : "not_required";
+  return rules.some((rule) => rule.billingModel !== "fixed_monthly") ? "missing" : "not_required";
 }
 
 export function allocateAmountByWeights(
   amount: number,
-  weights: Map<string, number>,
+  weights: Map<string, number>
 ): { allocated: Map<string, number>; unallocated: number } {
   const allocated = new Map<string, number>();
-  const positive = [...weights.entries()].map(
-    ([key, value]) => [key, Math.max(0, n(value))] as const,
-  );
+  const positive = [...weights.entries()].map(([key, value]) => [key, Math.max(0, n(value))] as const);
   const total = positive.reduce((result, [, value]) => result + value, 0);
   if (Math.abs(amount) < 0.000001) return { allocated, unallocated: 0 };
   if (total <= 0) return { allocated, unallocated: amount };
   let assigned = 0;
   positive.forEach(([key, value], index) => {
-    const share =
-      index === positive.length - 1
-        ? amount - assigned
-        : amount * (value / total);
+    const share = index === positive.length - 1 ? amount - assigned : amount * (value / total);
     allocated.set(key, share);
     assigned += share;
   });
   return { allocated, unallocated: amount - assigned };
 }
 
-function planDriver(plans: LobPlanRow[]): {
-  driver: SharedCostDriver;
-  conflict: boolean;
-} {
-  const approved = plans.filter(
-    (plan) => plan.status === "approved" || plan.status === "locked",
-  );
+function planDriver(plans: LobPlanRow[]): { driver: SharedCostDriver; conflict: boolean } {
+  const approved = plans.filter((plan) => plan.status === "approved" || plan.status === "locked");
   const drivers = new Set(approved.map((plan) => plan.shared_cost_driver));
   return {
     driver: approved[0]?.shared_cost_driver ?? "contracted_seats",
@@ -432,7 +391,7 @@ function weightsFor(
   lobs: LobRow[],
   plans: Map<string, LobPlanRow>,
   direct: Map<string, DirectLobData>,
-  driver: SharedCostDriver,
+  driver: SharedCostDriver
 ) {
   const weights = new Map<string, number>();
   for (const lob of lobs) {
@@ -440,38 +399,21 @@ function weightsFor(
     const data = direct.get(lob.id) ?? defaultDirectData();
     let value = 0;
     switch (driver) {
-      case "billable_seats":
-        value = n(plan?.billable_seats);
-        break;
-      case "occupied_seats":
-        value = n(plan?.occupied_seats);
-        break;
-      case "active_hc":
-        value = data.agentHeadcount + data.dscHeadcount;
-        break;
-      case "revenue":
-        value = data.revenue.earnedRevenue;
-        break;
-      case "equal":
-        value = 1;
-        break;
-      case "manual":
-        value = n(plan?.manual_allocation_pct);
-        break;
+      case "billable_seats": value = n(plan?.billable_seats); break;
+      case "occupied_seats": value = n(plan?.occupied_seats); break;
+      case "active_hc": value = data.agentHeadcount + data.dscHeadcount; break;
+      case "revenue": value = data.revenue.earnedRevenue; break;
+      case "equal": value = 1; break;
+      case "manual": value = n(plan?.manual_allocation_pct); break;
       case "contracted_seats":
-      default:
-        value = n(plan?.contracted_seats);
-        break;
+      default: value = n(plan?.contracted_seats); break;
     }
     weights.set(lob.id, value);
   }
   return weights;
 }
 
-async function listEffectiveLobs(
-  processId: string,
-  period: string,
-): Promise<LobRow[]> {
+async function listEffectiveLobs(processId: string, period: string): Promise<LobRow[]> {
   const { start, end } = monthRange(period);
   return queryRows<LobRow>(
     `SELECT l.*, p.process_name, p.client_id, cm.client_name,
@@ -489,7 +431,7 @@ async function listEffectiveLobs(
         AND l.effective_from <= ?
         AND (l.effective_to IS NULL OR l.effective_to >= ?)
       ORDER BY l.lob_code`,
-    [processId, end, start],
+    [processId, end, start]
   );
 }
 
@@ -499,19 +441,13 @@ async function loadPlans(processId: string, period: string) {
        FROM process_lob_monthly_plan p
        JOIN process_lob_master l ON l.id = p.process_lob_id
       WHERE l.process_id = ? AND p.period_code = ?`,
-    [processId, period],
+    [processId, period]
   );
   return new Map(rows.map((row) => [String(row.process_lob_id), row]));
 }
 
-async function loadRevenueData(
-  processId: string,
-  period: string,
-  lobIds: string[],
-) {
-  const direct = new Map<string, DirectLobData>(
-    lobIds.map((id) => [id, defaultDirectData()]),
-  );
+async function loadRevenueData(processId: string, period: string, lobIds: string[]) {
+  const direct = new Map<string, DirectLobData>(lobIds.map((id) => [id, defaultDirectData()]));
   if (!lobIds.length) return direct;
   const placeholders = lobIds.map(() => "?").join(",");
   const { start, end } = monthRange(period);
@@ -526,7 +462,7 @@ async function loadRevenueData(
           AND status = 'approved'
           AND effective_from <= ?
           AND (effective_to IS NULL OR effective_to >= ?)`,
-      [processId, ...lobIds, end, start],
+      [processId, ...lobIds, end, start]
     ),
     queryRows<LobDeliveryRow>(
       `SELECT process_lob_id, metric_key,
@@ -547,7 +483,7 @@ async function loadRevenueData(
           AND period_code = ?
           AND status IN ('validated','locked')
         GROUP BY process_lob_id, metric_key`,
-      [processId, ...lobIds, period],
+      [processId, ...lobIds, period]
     ),
     queryRows<LobRevenueComponentRow>(
       `SELECT process_lob_id, component_type, direction, amount_inr
@@ -556,7 +492,7 @@ async function loadRevenueData(
           AND process_lob_id IN (${placeholders})
           AND period_code = ?
           AND status = 'approved'`,
-      [processId, ...lobIds, period],
+      [processId, ...lobIds, period]
     ),
   ]);
 
@@ -596,36 +532,20 @@ async function loadRevenueData(
         amountInr: n(row.amount_inr),
       }));
     const item = direct.get(lobId)!;
-    item.revenue = calculateRevenue(
-      ruleInputs,
-      deliveryInputs,
-      componentInputs,
-    );
+    item.revenue = calculateRevenue(ruleInputs, deliveryInputs, componentInputs);
     item.hasDeliveryData = deliveryInputs.length > 0;
-    item.freshness =
-      deliveries
-        .filter((row) => String(row.process_lob_id) === lobId && row.updated_at)
-        .map((row) => String(row.updated_at))
-        .sort()
-        .at(-1) ?? null;
+    item.freshness = deliveries
+      .filter((row) => String(row.process_lob_id) === lobId && row.updated_at)
+      .map((row) => String(row.updated_at))
+      .sort()
+      .at(-1) ?? null;
   }
   return direct;
 }
 
-async function loadPayrollCosts(
-  processId: string,
-  period: string,
-  direct: Map<string, DirectLobData>,
-) {
-  if (
-    !(await tableExists("salary_prep_run")) ||
-    !(await tableExists("salary_prep_line"))
-  ) {
-    return {
-      available: false,
-      assignedCost: 0,
-      source: "salary tables unavailable",
-    };
+async function loadPayrollCosts(processId: string, period: string, direct: Map<string, DirectLobData>) {
+  if (!(await tableExists("salary_prep_run")) || !(await tableExists("salary_prep_line"))) {
+    return { available: false, assignedCost: 0, source: "salary tables unavailable" };
   }
   // Every run in the month — a fourth rival strategy for the same question, and a fourth answer.
   // Note this one ordered FIELD(...) ASCENDING while bpo-pnl.service.ts ordered the identical
@@ -638,12 +558,7 @@ async function loadPayrollCosts(
     `SELECT id FROM salary_prep_run WHERE run_month = ? AND ${nonVoidRunSql()}`,
     [period]
   );
-  if (!runs.length)
-    return {
-      available: false,
-      assignedCost: 0,
-      source: "salary run unavailable",
-    };
+  if (!runs.length) return { available: false, assignedCost: 0, source: "salary run unavailable" };
   const runIds = runs.map((row) => String(row.id));
 
   const salaryColumns = await listColumns("salary_prep_line");
@@ -664,7 +579,7 @@ async function loadPayrollCosts(
         AND a.effective_from <= ?
         AND (a.effective_to IS NULL OR a.effective_to >= ?)
       GROUP BY a.process_lob_id, a.cost_bucket`,
-    [...runIds, processId, end, start],
+    [...runIds, processId, end, start]
   );
   let assignedCost = 0;
   for (const row of rows) {
@@ -683,11 +598,7 @@ async function loadPayrollCosts(
   return { available: true, assignedCost, source: "salary_prep_line" };
 }
 
-async function loadGrnCosts(
-  processId: string,
-  period: string,
-  direct: Map<string, DirectLobData>,
-) {
+async function loadGrnCosts(processId: string, period: string, direct: Map<string, DirectLobData>) {
   if (!(await tableExists("grn_cost_allocation"))) {
     return { available: false, source: "grn allocation unavailable" };
   }
@@ -700,7 +611,7 @@ async function loadGrnCosts(
        FROM vw_process_lob_grn_allocation
       WHERE process_id = ? AND period_code = ? AND process_lob_id IS NOT NULL
       GROUP BY process_lob_id, pnl_bucket`,
-    [processId, period],
+    [processId, period]
   );
   for (const row of rows) {
     const item = direct.get(String(row.process_lob_id));
@@ -711,20 +622,15 @@ async function loadGrnCosts(
     else addCostComponent(item, row.pnl_bucket, amount);
     item.grnGrossAmount += n(row.gross_amount);
     item.grnAllocationCount += n(row.allocation_count);
-    item.freshness =
-      [item.freshness, row.freshness]
-        .filter((value): value is string => Boolean(value))
-        .sort()
-        .at(-1) ?? null;
+    item.freshness = [item.freshness, row.freshness]
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) ?? null;
   }
   return { available: true, source: "vw_process_lob_grn_allocation" };
 }
 
-async function loadCostComponents(
-  processId: string,
-  period: string,
-  direct: Map<string, DirectLobData>,
-) {
+async function loadCostComponents(processId: string, period: string, direct: Map<string, DirectLobData>) {
   if (!(await tableExists("process_pnl_cost_component"))) return;
   const rows = await queryRows<LobCostComponentRow>(
     `SELECT process_lob_id, cost_type, SUM(amount_inr) amount_inr
@@ -732,7 +638,7 @@ async function loadCostComponents(
       WHERE process_id = ? AND period_code = ?
         AND process_lob_id IS NOT NULL AND status = 'approved'
       GROUP BY process_lob_id, cost_type`,
-    [processId, period],
+    [processId, period]
   );
   for (const row of rows) {
     const item = direct.get(String(row.process_lob_id));
@@ -744,7 +650,7 @@ function allocationForPool(
   amount: number,
   lobs: LobRow[],
   weights: Map<string, number>,
-  target: Map<string, number>,
+  target: Map<string, number>
 ) {
   const result = allocateAmountByWeights(amount, weights);
   for (const lob of lobs) target.set(lob.id, result.allocated.get(lob.id) ?? 0);
@@ -752,9 +658,7 @@ function allocationForPool(
 }
 
 export const processLobService = {
-  async listLobs(
-    filters: { processId?: string; includeInactive?: boolean } = {},
-  ) {
+  async listLobs(filters: { processId?: string; includeInactive?: boolean } = {}) {
     await ensureFoundation();
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -776,69 +680,41 @@ export const processLobService = {
          LEFT JOIN cost_centre_master ccm ON ccm.id = l.cost_centre_id
          ${where}
         ORDER BY cm.client_name, p.process_name, l.lob_code`,
-      params,
+      params
     );
   },
 
   async saveLob(input: SaveProcessLobInput, actorUserId: string) {
     await ensureFoundation();
     const processId = String(input.processId ?? "").trim();
-    const lobCode = String(input.lobCode ?? "")
-      .trim()
-      .toUpperCase();
+    const lobCode = String(input.lobCode ?? "").trim().toUpperCase();
     const lobName = String(input.lobName ?? "").trim();
     if (!processId || !lobCode || !lobName || !input.effectiveFrom) {
-      throw Object.assign(
-        new Error(
-          "Process, LOB code, LOB name and effective-from date are required",
-        ),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("Process, LOB code, LOB name and effective-from date are required"), { statusCode: 400 });
     }
     if (!/^[A-Z0-9_-]{2,64}$/.test(lobCode)) {
-      throw Object.assign(
-        new Error(
-          "LOB code may contain only letters, numbers, underscore and hyphen",
-        ),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("LOB code may contain only letters, numbers, underscore and hyphen"), { statusCode: 400 });
     }
     if (input.effectiveTo && input.effectiveTo < input.effectiveFrom) {
-      throw Object.assign(
-        new Error("Effective-to date cannot precede effective-from date"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("Effective-to date cannot precede effective-from date"), { statusCode: 400 });
     }
-    const processRows = await queryRows<RowDataPacket>(
-      "SELECT id FROM process_master WHERE id = ? LIMIT 1",
-      [processId],
-    );
-    if (!processRows[0])
-      throw Object.assign(new Error("Process not found"), { statusCode: 404 });
+    const processRows = await queryRows<RowDataPacket>("SELECT id FROM process_master WHERE id = ? LIMIT 1", [processId]);
+    if (!processRows[0]) throw Object.assign(new Error("Process not found"), { statusCode: 404 });
 
     const id = input.id?.trim() || randomUUID();
     const conflicts = await queryRows<RowDataPacket>(
       `SELECT id, effective_from, effective_to
          FROM process_lob_master
         WHERE process_id = ? AND UPPER(lob_code) = ? AND id <> ?`,
-      [processId, lobCode, id],
+      [processId, lobCode, id]
     );
-    if (
-      conflicts.some((row) =>
-        dateRangeOverlaps(
-          String(row.effective_from).slice(0, 10),
-          row.effective_to ? String(row.effective_to).slice(0, 10) : null,
-          input.effectiveFrom,
-          input.effectiveTo ?? null,
-        ),
-      )
-    ) {
-      throw Object.assign(
-        new Error(
-          "An overlapping LOB with this code already exists for the process",
-        ),
-        { statusCode: 409 },
-      );
+    if (conflicts.some((row) => dateRangeOverlaps(
+      String(row.effective_from).slice(0, 10),
+      row.effective_to ? String(row.effective_to).slice(0, 10) : null,
+      input.effectiveFrom,
+      input.effectiveTo ?? null
+    ))) {
+      throw Object.assign(new Error("An overlapping LOB with this code already exists for the process"), { statusCode: 409 });
     }
 
     const approvalStatus = input.approvalStatus ?? "draft";
@@ -870,7 +746,7 @@ export const processLobService = {
         actorUserId,
         approvalStatus === "approved" ? actorUserId : null,
         approvalStatus === "approved" ? new Date() : null,
-      ],
+      ]
     );
     return { id };
   },
@@ -890,34 +766,25 @@ export const processLobService = {
          LEFT JOIN branch_master bm ON bm.id = pm.branch_id
         WHERE p.period_code = ? ${processFilter}
         ORDER BY pm.process_name, l.lob_code`,
-      params,
+      params
     );
   },
 
   async savePlan(input: SaveLobPlanInput, actorUserId: string) {
     await ensureFoundation();
     const periodCode = normalizePeriod(input.periodCode);
-    if (!input.processLobId)
-      throw Object.assign(new Error("LOB is required"), { statusCode: 400 });
+    if (!input.processLobId) throw Object.assign(new Error("LOB is required"), { statusCode: 400 });
     const lobRows = await queryRows<RowDataPacket>(
       "SELECT id, process_id, active_status FROM process_lob_master WHERE id = ? LIMIT 1",
-      [input.processLobId],
+      [input.processLobId]
     );
-    if (!lobRows[0])
-      throw Object.assign(new Error("LOB not found"), { statusCode: 404 });
-    if (Number(lobRows[0].active_status) !== 1)
-      throw Object.assign(
-        new Error("Inactive LOB cannot receive a monthly plan"),
-        { statusCode: 400 },
-      );
+    if (!lobRows[0]) throw Object.assign(new Error("LOB not found"), { statusCode: 404 });
+    if (Number(lobRows[0].active_status) !== 1) throw Object.assign(new Error("Inactive LOB cannot receive a monthly plan"), { statusCode: 400 });
 
     const driver = input.sharedCostDriver ?? "contracted_seats";
     const manualPct = numericOrNull(input.manualAllocationPct);
     if (driver === "manual" && (manualPct == null || manualPct > 100)) {
-      throw Object.assign(
-        new Error("Manual allocation requires a percentage between 0 and 100"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("Manual allocation requires a percentage between 0 and 100"), { statusCode: 400 });
     }
     const status = input.status ?? "draft";
     const id = input.id?.trim() || randomUUID();
@@ -958,7 +825,7 @@ export const processLobService = {
         actorUserId,
         status === "approved" || status === "locked" ? actorUserId : null,
         status === "approved" || status === "locked" ? new Date() : null,
-      ],
+      ]
     );
     return { id, periodCode };
   },
@@ -977,35 +844,21 @@ export const processLobService = {
           AND a.effective_from <= ?
           AND (a.effective_to IS NULL OR a.effective_to >= ?)
         ORDER BY e.employee_code, a.effective_from`,
-      [processId, end, start],
+      [processId, end, start]
     );
   },
 
-  async saveAssignment(
-    input: SaveEmployeeLobAssignmentInput,
-    actorUserId: string,
-  ) {
+  async saveAssignment(input: SaveEmployeeLobAssignmentInput, actorUserId: string) {
     await ensureFoundation();
     const allocationPct = n(input.allocationPct);
     if (!input.employeeId || !input.processLobId || !input.effectiveFrom) {
-      throw Object.assign(
-        new Error("Employee, LOB and effective-from date are required"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("Employee, LOB and effective-from date are required"), { statusCode: 400 });
     }
     if (allocationPct <= 0 || allocationPct > 100) {
-      throw Object.assign(
-        new Error(
-          "Allocation percentage must be greater than 0 and not exceed 100",
-        ),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("Allocation percentage must be greater than 0 and not exceed 100"), { statusCode: 400 });
     }
     if (input.effectiveTo && input.effectiveTo < input.effectiveFrom) {
-      throw Object.assign(
-        new Error("Effective-to date cannot precede effective-from date"),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error("Effective-to date cannot precede effective-from date"), { statusCode: 400 });
     }
 
     const id = input.id?.trim() || randomUUID();
@@ -1017,44 +870,31 @@ export const processLobService = {
            FROM process_lob_master l
            JOIN employees e ON e.id = ?
           WHERE l.id = ? FOR UPDATE`,
-        [input.employeeId, input.processLobId],
+        [input.employeeId, input.processLobId]
       );
       const lob = lobRows[0];
-      if (!lob)
-        throw Object.assign(new Error("Employee or LOB not found"), {
-          statusCode: 404,
-        });
-      if (Number(lob.active_status) !== 1)
-        throw new Error("Inactive LOB cannot receive employee assignments");
-      if (
-        lob.employee_process_id &&
-        String(lob.employee_process_id) !== String(lob.process_id)
-      ) {
-        throw new Error(
-          "Employee process does not match the selected LOB process",
-        );
+      if (!lob) throw Object.assign(new Error("Employee or LOB not found"), { statusCode: 404 });
+      if (Number(lob.active_status) !== 1) throw new Error("Inactive LOB cannot receive employee assignments");
+      if (lob.employee_process_id && String(lob.employee_process_id) !== String(lob.process_id)) {
+        throw new Error("Employee process does not match the selected LOB process");
       }
       const [overlaps] = await connection.execute<RowDataPacket[]>(
         `SELECT id, allocation_pct, effective_from, effective_to
            FROM employee_lob_assignment
           WHERE employee_id = ? AND id <> ? AND status <> 'inactive'
           FOR UPDATE`,
-        [input.employeeId, id],
+        [input.employeeId, id]
       );
       const overlappingTotal = overlaps
-        .filter((row) =>
-          dateRangeOverlaps(
-            String(row.effective_from).slice(0, 10),
-            row.effective_to ? String(row.effective_to).slice(0, 10) : null,
-            input.effectiveFrom,
-            input.effectiveTo ?? null,
-          ),
-        )
+        .filter((row) => dateRangeOverlaps(
+          String(row.effective_from).slice(0, 10),
+          row.effective_to ? String(row.effective_to).slice(0, 10) : null,
+          input.effectiveFrom,
+          input.effectiveTo ?? null
+        ))
         .reduce((total, row) => total + n(row.allocation_pct), 0);
       if (overlappingTotal + allocationPct > 100.0001) {
-        throw new Error(
-          `Employee LOB allocation would total ${(overlappingTotal + allocationPct).toFixed(2)}%`,
-        );
+        throw new Error(`Employee LOB allocation would total ${(overlappingTotal + allocationPct).toFixed(2)}%`);
       }
       const status = input.status ?? "draft";
       await connection.execute(
@@ -1081,7 +921,7 @@ export const processLobService = {
           actorUserId,
           status === "approved" ? actorUserId : null,
           status === "approved" ? new Date() : null,
-        ],
+        ]
       );
       await connection.commit();
       return { id };
@@ -1099,10 +939,7 @@ export const processLobService = {
     const lobs = await listEffectiveLobs(processId, period);
     const plans = await loadPlans(processId, period);
     const planRows = [...plans.values()];
-    const manualTotal = sum(
-      planRows.filter((plan) => plan.shared_cost_driver === "manual"),
-      (plan) => n(plan.manual_allocation_pct),
-    );
+    const manualTotal = sum(planRows.filter((plan) => plan.shared_cost_driver === "manual"), (plan) => n(plan.manual_allocation_pct));
     const driver = planDriver(planRows);
     const ruleRows = await queryRows<RowDataPacket>(
       `SELECT process_lob_id, COUNT(*) count
@@ -1110,7 +947,7 @@ export const processLobService = {
         WHERE process_id = ? AND status = 'approved'
           AND process_lob_id IS NOT NULL
         GROUP BY process_lob_id`,
-      [processId],
+      [processId]
     );
     const ruleLobs = new Set(ruleRows.map((row) => String(row.process_lob_id)));
     const deliveryRows = await queryRows<RowDataPacket>(
@@ -1119,66 +956,28 @@ export const processLobService = {
         WHERE process_id = ? AND period_code = ?
           AND status IN ('validated','locked') AND process_lob_id IS NOT NULL
         GROUP BY process_lob_id`,
-      [processId, period],
+      [processId, period]
     );
-    const deliveryLobs = new Set(
-      deliveryRows.map((row) => String(row.process_lob_id)),
-    );
-    const blockers: Array<{ code: string; message: string; lobId?: string }> =
-      [];
-    if (!lobs.length)
-      blockers.push({
-        code: "NO_ACTIVE_LOB",
-        message: "No approved active LOB exists for this process and period",
-      });
-    if (driver.conflict)
-      blockers.push({
-        code: "MIXED_SHARED_DRIVERS",
-        message: "Approved LOB plans use conflicting shared-cost drivers",
-      });
+    const deliveryLobs = new Set(deliveryRows.map((row) => String(row.process_lob_id)));
+    const blockers: Array<{ code: string; message: string; lobId?: string }> = [];
+    if (!lobs.length) blockers.push({ code: "NO_ACTIVE_LOB", message: "No approved active LOB exists for this process and period" });
+    if (driver.conflict) blockers.push({ code: "MIXED_SHARED_DRIVERS", message: "Approved LOB plans use conflicting shared-cost drivers" });
     if (driver.driver === "manual" && Math.abs(manualTotal - 100) > 0.01) {
-      blockers.push({
-        code: "MANUAL_ALLOCATION_NOT_100",
-        message: `Manual shared-cost allocation totals ${manualTotal.toFixed(2)}%, not 100%`,
-      });
+      blockers.push({ code: "MANUAL_ALLOCATION_NOT_100", message: `Manual shared-cost allocation totals ${manualTotal.toFixed(2)}%, not 100%` });
     }
     for (const lob of lobs) {
-      if (!plans.has(lob.id))
-        blockers.push({
-          code: "MISSING_LOB_PLAN",
-          message: `${lob.lob_name} has no monthly plan`,
-          lobId: lob.id,
-        });
-      if (!ruleLobs.has(lob.id))
-        blockers.push({
-          code: "MISSING_LOB_REVENUE_RULE",
-          message: `${lob.lob_name} has no approved revenue rule`,
-          lobId: lob.id,
-        });
-      if (!deliveryLobs.has(lob.id))
-        blockers.push({
-          code: "MISSING_LOB_DELIVERY",
-          message: `${lob.lob_name} has no validated delivery actual`,
-          lobId: lob.id,
-        });
+      if (!plans.has(lob.id)) blockers.push({ code: "MISSING_LOB_PLAN", message: `${lob.lob_name} has no monthly plan`, lobId: lob.id });
+      if (!ruleLobs.has(lob.id)) blockers.push({ code: "MISSING_LOB_REVENUE_RULE", message: `${lob.lob_name} has no approved revenue rule`, lobId: lob.id });
+      if (!deliveryLobs.has(lob.id)) blockers.push({ code: "MISSING_LOB_DELIVERY", message: `${lob.lob_name} has no validated delivery actual`, lobId: lob.id });
     }
     return {
       period,
       processId,
       activeLobCount: lobs.length,
       plannedLobCount: planRows.length,
-      revenueRuleCoveragePct: pct(
-        lobs.filter((lob) => ruleLobs.has(lob.id)).length,
-        lobs.length,
-      ),
-      deliveryCoveragePct: pct(
-        lobs.filter((lob) => deliveryLobs.has(lob.id)).length,
-        lobs.length,
-      ),
-      planCoveragePct: pct(
-        lobs.filter((lob) => plans.has(lob.id)).length,
-        lobs.length,
-      ),
+      revenueRuleCoveragePct: pct(lobs.filter((lob) => ruleLobs.has(lob.id)).length, lobs.length),
+      deliveryCoveragePct: pct(lobs.filter((lob) => deliveryLobs.has(lob.id)).length, lobs.length),
+      planCoveragePct: pct(lobs.filter((lob) => plans.has(lob.id)).length, lobs.length),
       sharedCostDriver: driver.driver,
       manualAllocationPct: manualTotal,
       readyForClose: blockers.length === 0,
@@ -1189,24 +988,12 @@ export const processLobService = {
   async getProcessSummary(processId: string, periodCode?: string) {
     await ensureFoundation();
     const period = normalizePeriod(periodCode);
-    const processSummary = await bpoPnlAllocationOverlayService.getSummary({
-      period,
-      processId,
-    });
-    const processRow = processSummary.rows.find(
-      (row) => row.processId === processId,
-    );
-    if (!processRow)
-      throw Object.assign(new Error("Process P&L record not found"), {
-        statusCode: 404,
-      });
+    const processSummary = await bpoPnlAllocationOverlayService.getSummary({ period, processId });
+    const processRow = processSummary.rows.find((row) => row.processId === processId);
+    if (!processRow) throw Object.assign(new Error("Process P&L record not found"), { statusCode: 404 });
     const lobs = await listEffectiveLobs(processId, period);
     const plans = await loadPlans(processId, period);
-    const direct = await loadRevenueData(
-      processId,
-      period,
-      lobs.map((lob) => lob.id),
-    );
+    const direct = await loadRevenueData(processId, period, lobs.map((lob) => lob.id));
     const [payrollSource, grnSource] = await Promise.all([
       loadPayrollCosts(processId, period, direct),
       loadGrnCosts(processId, period, direct),
@@ -1224,115 +1011,45 @@ export const processLobService = {
     const allocatedFinanceCost = new Map<string, number>();
     const allocatedTax = new Map<string, number>();
 
-    const directRevenue = sum(
-      [...direct.values()],
-      (item) => item.revenue.earnedRevenue,
-    );
-    const directAgentSalary = sum(
-      [...direct.values()],
-      (item) => item.agentSalary,
-    );
+    const directRevenue = sum([...direct.values()], (item) => item.revenue.earnedRevenue);
+    const directAgentSalary = sum([...direct.values()], (item) => item.agentSalary);
     const directDscPeople = sum([...direct.values()], (item) => item.dscPeople);
-    const directDscNonPeople = sum(
-      [...direct.values()],
-      (item) => item.dscNonPeople,
-    );
-    const directBmcNonPeople = sum(
-      [...direct.values()],
-      (item) => item.bmcNonPeople,
-    );
-    const directDepreciation = sum(
-      [...direct.values()],
-      (item) => item.depreciation,
-    );
-    const directAmortization = sum(
-      [...direct.values()],
-      (item) => item.amortization,
-    );
-    const directFinanceCost = sum(
-      [...direct.values()],
-      (item) => item.financeCost,
-    );
+    const directDscNonPeople = sum([...direct.values()], (item) => item.dscNonPeople);
+    const directBmcNonPeople = sum([...direct.values()], (item) => item.bmcNonPeople);
+    const directDepreciation = sum([...direct.values()], (item) => item.depreciation);
+    const directAmortization = sum([...direct.values()], (item) => item.amortization);
+    const directFinanceCost = sum([...direct.values()], (item) => item.financeCost);
     const directTax = sum([...direct.values()], (item) => item.tax);
-    const directOtherOperatingNet = sum(
-      [...direct.values()],
-      (item) => item.otherOperatingCost - item.otherOperatingIncome,
+    const directOtherOperatingNet = sum([...direct.values()], (item) => item.otherOperatingCost - item.otherOperatingIncome);
+    const processOtherOperatingNet = processRow.totalOperatingCost - (
+      processRow.agentSalary + processRow.dsc + processRow.bmc
     );
-    const processOtherOperatingNet =
-      processRow.totalOperatingCost -
-      (processRow.agentSalary + processRow.dsc + processRow.bmc);
 
     const unallocatedPools = {
-      bmcPeople: allocationForPool(
-        processRow.bmcPeople,
-        lobs,
-        weights,
-        allocatedBmcPeople,
-      ),
-      bmcNonPeople: allocationForPool(
-        processRow.bmcNonPeople - directBmcNonPeople,
-        lobs,
-        weights,
-        allocatedBmcNonPeople,
-      ),
-      otherOperatingNet: allocationForPool(
-        processOtherOperatingNet - directOtherOperatingNet,
-        lobs,
-        weights,
-        allocatedOtherOperating,
-      ),
-      depreciation: allocationForPool(
-        processRow.depreciation - directDepreciation,
-        lobs,
-        weights,
-        allocatedDepreciation,
-      ),
-      amortization: allocationForPool(
-        processRow.amortization - directAmortization,
-        lobs,
-        weights,
-        allocatedAmortization,
-      ),
-      financeCost: allocationForPool(
-        processRow.financeCost - directFinanceCost,
-        lobs,
-        weights,
-        allocatedFinanceCost,
-      ),
-      tax: allocationForPool(
-        processRow.tax - directTax,
-        lobs,
-        weights,
-        allocatedTax,
-      ),
+      bmcPeople: allocationForPool(processRow.bmcPeople, lobs, weights, allocatedBmcPeople),
+      bmcNonPeople: allocationForPool(processRow.bmcNonPeople - directBmcNonPeople, lobs, weights, allocatedBmcNonPeople),
+      otherOperatingNet: allocationForPool(processOtherOperatingNet - directOtherOperatingNet, lobs, weights, allocatedOtherOperating),
+      depreciation: allocationForPool(processRow.depreciation - directDepreciation, lobs, weights, allocatedDepreciation),
+      amortization: allocationForPool(processRow.amortization - directAmortization, lobs, weights, allocatedAmortization),
+      financeCost: allocationForPool(processRow.financeCost - directFinanceCost, lobs, weights, allocatedFinanceCost),
+      tax: allocationForPool(processRow.tax - directTax, lobs, weights, allocatedTax),
     };
 
-    const rows: Array<
-      Record<string, unknown> & {
-        rowType: "lob" | "unallocated";
-        processLobId: string | null;
-      }
-    > = lobs.map((lob) => {
+    const rows: Array<Record<string, unknown> & { rowType: "lob" | "unallocated"; processLobId: string | null }> = lobs.map((lob) => {
       const item = direct.get(lob.id) ?? defaultDirectData();
       const plan = plans.get(lob.id);
-      const otherOperatingNet =
-        item.otherOperatingCost -
-        item.otherOperatingIncome +
-        (allocatedOtherOperating.get(lob.id) ?? 0);
+      const otherOperatingNet = item.otherOperatingCost - item.otherOperatingIncome + (allocatedOtherOperating.get(lob.id) ?? 0);
       const cost = calculateBpoCostWaterfall({
         revenue: item.revenue.earnedRevenue,
         agentSalary: item.agentSalary,
         dscPeople: item.dscPeople,
         dscNonPeople: item.dscNonPeople,
         bmcPeople: allocatedBmcPeople.get(lob.id) ?? 0,
-        bmcNonPeople:
-          item.bmcNonPeople + (allocatedBmcNonPeople.get(lob.id) ?? 0),
+        bmcNonPeople: item.bmcNonPeople + (allocatedBmcNonPeople.get(lob.id) ?? 0),
         otherOperatingCost: Math.max(0, otherOperatingNet),
         otherOperatingIncome: Math.max(0, -otherOperatingNet),
-        depreciation:
-          item.depreciation + (allocatedDepreciation.get(lob.id) ?? 0),
-        amortization:
-          item.amortization + (allocatedAmortization.get(lob.id) ?? 0),
+        depreciation: item.depreciation + (allocatedDepreciation.get(lob.id) ?? 0),
+        amortization: item.amortization + (allocatedAmortization.get(lob.id) ?? 0),
         financeCost: item.financeCost + (allocatedFinanceCost.get(lob.id) ?? 0),
         nonOperatingIncome: item.nonOperatingIncome,
         tax: item.tax + (allocatedTax.get(lob.id) ?? 0),
@@ -1379,32 +1096,21 @@ export const processLobService = {
         contribution: cost.contribution,
         ebitda: cost.ebitda,
         ebitdaMarginPct: cost.ebitdaMarginPct,
-        depreciation:
-          item.depreciation + (allocatedDepreciation.get(lob.id) ?? 0),
-        amortization:
-          item.amortization + (allocatedAmortization.get(lob.id) ?? 0),
+        depreciation: item.depreciation + (allocatedDepreciation.get(lob.id) ?? 0),
+        amortization: item.amortization + (allocatedAmortization.get(lob.id) ?? 0),
         financeCost: item.financeCost + (allocatedFinanceCost.get(lob.id) ?? 0),
         pbt: cost.pbt,
         tax: item.tax + (allocatedTax.get(lob.id) ?? 0),
         pat: cost.pat,
         revenueBudget: n(plan?.revenue_budget),
         ebitdaBudget: n(plan?.ebitda_budget),
-        ebitdaVariance:
-          plan?.ebitda_budget == null
-            ? null
-            : cost.ebitda - n(plan.ebitda_budget),
+        ebitdaVariance: plan?.ebitda_budget == null ? null : cost.ebitda - n(plan.ebitda_budget),
         sharedCostDriver: plan?.shared_cost_driver ?? driverState.driver,
-        manualAllocationPct:
-          plan?.manual_allocation_pct == null
-            ? null
-            : n(plan.manual_allocation_pct),
+        manualAllocationPct: plan?.manual_allocation_pct == null ? null : n(plan.manual_allocation_pct),
         planStatus: plan?.status ?? "missing",
         dataStatus: {
           revenue: item.revenue.rules.length ? "configured" : "missing_rule",
-          delivery: deliveryDataStatus(
-            item.hasDeliveryData,
-            item.revenue.rules,
-          ),
+          delivery: deliveryDataStatus(item.hasDeliveryData, item.revenue.rules),
           payroll: payrollSource.available ? "available" : "unavailable",
           grn: grnSource.available ? "available" : "unavailable",
         },
@@ -1416,17 +1122,9 @@ export const processLobService = {
     const agentResidual = processRow.agentSalary - directAgentSalary;
     const dscPeopleResidual = processRow.dscPeople - directDscPeople;
     const dscNonPeopleResidual = processRow.dscNonPeople - directDscNonPeople;
-    const unallocatedShared = Object.values(unallocatedPools).reduce(
-      (total, value) => total + value,
-      0,
-    );
-    const needsUnallocated = [
-      revenueResidual,
-      agentResidual,
-      dscPeopleResidual,
-      dscNonPeopleResidual,
-      unallocatedShared,
-    ].some((value) => Math.abs(value) > 0.01);
+    const unallocatedShared = Object.values(unallocatedPools).reduce((total, value) => total + value, 0);
+    const needsUnallocated = [revenueResidual, agentResidual, dscPeopleResidual, dscNonPeopleResidual, unallocatedShared]
+      .some((value) => Math.abs(value) > 0.01);
     if (needsUnallocated) {
       const unallocatedCost = calculateBpoCostWaterfall({
         revenue: revenueResidual,
@@ -1474,8 +1172,7 @@ export const processLobService = {
         bmcNonPeople: unallocatedCost.bmcNonPeople,
         directVendorCost: dscNonPeopleResidual,
         grnGrossAmount: 0,
-        sharedCost:
-          unallocatedCost.bmc + Math.max(0, unallocatedPools.otherOperatingNet),
+        sharedCost: unallocatedCost.bmc + Math.max(0, unallocatedPools.otherOperatingNet),
         contribution: unallocatedCost.contribution,
         ebitda: unallocatedCost.ebitda,
         ebitdaMarginPct: unallocatedCost.ebitdaMarginPct,
@@ -1492,19 +1189,10 @@ export const processLobService = {
         manualAllocationPct: null,
         planStatus: "exception",
         dataStatus: {
-          revenue:
-            Math.abs(revenueResidual) > 0.01
-              ? "accounting_difference"
-              : "reconciled",
+          revenue: Math.abs(revenueResidual) > 0.01 ? "accounting_difference" : "reconciled",
           delivery: "not_applicable",
-          payroll:
-            Math.abs(agentResidual + dscPeopleResidual) > 0.01
-              ? "unassigned_cost"
-              : "reconciled",
-          grn:
-            Math.abs(dscNonPeopleResidual) > 0.01
-              ? "unassigned_cost"
-              : "reconciled",
+          payroll: Math.abs(agentResidual + dscPeopleResidual) > 0.01 ? "unassigned_cost" : "reconciled",
+          grn: Math.abs(dscNonPeopleResidual) > 0.01 ? "unassigned_cost" : "reconciled",
         },
         freshness: processRow.freshness,
       });
@@ -1528,8 +1216,7 @@ export const processLobService = {
       process: processRow,
       totals,
       reconciliation: {
-        revenueVariance:
-          totals.recognizedRevenue - processRow.recognizedRevenue,
+        revenueVariance: totals.recognizedRevenue - processRow.recognizedRevenue,
         agentSalaryVariance: totals.agentSalary - processRow.agentSalary,
         dscVariance: totals.dscPeople + totals.dscNonPeople - processRow.dsc,
         bmcVariance: totals.bmcPeople + totals.bmcNonPeople - processRow.bmc,
@@ -1551,10 +1238,7 @@ export const processLobService = {
   async getPortfolio(filters: Partial<PnlQueryFilters>) {
     await ensureFoundation();
     const period = normalizePeriod(filters.period);
-    const summary = await bpoPnlAllocationOverlayService.getSummary({
-      ...filters,
-      period,
-    });
+    const summary = await bpoPnlAllocationOverlayService.getSummary({ ...filters, period });
     const counts = await queryRows<RowDataPacket>(
       `SELECT l.process_id,
               COUNT(*) lob_count,
@@ -1566,11 +1250,9 @@ export const processLobService = {
            ON p.process_lob_id = l.id AND p.period_code = ?
         WHERE l.active_status = 1 AND l.approval_status = 'approved'
         GROUP BY l.process_id`,
-      [period],
+      [period]
     );
-    const countMap = new Map(
-      counts.map((row) => [String(row.process_id), row]),
-    );
+    const countMap = new Map(counts.map((row) => [String(row.process_id), row]));
     return {
       period,
       calculationEngine: "bpo_allocation_v2",
@@ -1582,10 +1264,7 @@ export const processLobService = {
           plannedLobCount: n(meta?.planned_lob_count),
           lobContractedSeats: n(meta?.contracted_seats),
           lobBillableSeats: n(meta?.billable_seats),
-          lobPlanCoveragePct: pct(
-            n(meta?.planned_lob_count),
-            n(meta?.lob_count),
-          ),
+          lobPlanCoveragePct: pct(n(meta?.planned_lob_count), n(meta?.lob_count)),
         };
       }),
       generatedAt: new Date().toISOString(),

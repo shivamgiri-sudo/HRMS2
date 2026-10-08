@@ -23,17 +23,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const financeDir = path.resolve(__dirname, "..");
-const read = (file: string) =>
-  fs.readFileSync(path.join(financeDir, file), "utf8");
+const read = (file: string) => fs.readFileSync(path.join(financeDir, file), "utf8");
 
 const { execute, query, getConnection } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  query: vi.fn(),
-  getConnection: vi.fn(),
+  execute: vi.fn(), query: vi.fn(), getConnection: vi.fn(),
 }));
-vi.mock("../../../db/mysql.js", () => ({
-  db: { execute, query, getConnection },
-}));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, query, getConnection } }));
 vi.mock("../../../shared/auditLog.js", () => ({
   logSensitiveAction: vi.fn(async () => {}),
   writeSensitiveActionLog: vi.fn(async () => {}),
@@ -56,12 +51,8 @@ const DRAFT_GRN = {
 
 /** id, entity_type, entity_id, action, from_status, to_status, decision, actor, role, remarks, details */
 const eventShape = (params: unknown[]) => ({
-  entityType: params[1],
-  entityId: params[2],
-  action: params[3],
-  fromStatus: params[4],
-  toStatus: params[5],
-  actorRole: params[8],
+  entityType: params[1], entityId: params[2], action: params[3],
+  fromStatus: params[4], toStatus: params[5], actorRole: params[8],
 });
 
 const eventsFrom = (calls: unknown[][]) =>
@@ -79,52 +70,30 @@ beforeEach(() => {
 describe("submitting a GRN", () => {
   it("records the draft -> submitted transition on the readable workflow trail", async () => {
     execute.mockImplementation(async (sql: string) => {
-      if (/FROM grn_request/i.test(String(sql)) && /SELECT/i.test(String(sql)))
-        return [[DRAFT_GRN], []];
-      if (/UPDATE grn_request/i.test(String(sql)))
-        return [{ affectedRows: 1 } as any, []];
+      if (/FROM grn_request/i.test(String(sql)) && /SELECT/i.test(String(sql))) return [[DRAFT_GRN], []];
+      if (/UPDATE grn_request/i.test(String(sql))) return [{ affectedRows: 1 } as any, []];
       return [[], []];
     });
 
-    await grnService.submitForApproval(
-      "grn-1",
-      { remarks: "please approve" } as any,
-      "user-1",
-      "branch_admin",
-    );
+    await grnService.submitForApproval("grn-1", { remarks: "please approve" } as any, "user-1", "branch_admin");
 
     const events = eventsFrom(execute.mock.calls);
-    expect(
-      events,
-      "submit was the one chain-starting transition with no readable event",
-    ).toHaveLength(1);
+    expect(events, "submit was the one chain-starting transition with no readable event").toHaveLength(1);
     expect(events[0]).toMatchObject({
-      entityType: "grn",
-      entityId: "grn-1",
-      action: "submit",
-      fromStatus: "draft",
-      toStatus: "submitted",
-      actorRole: "branch_admin",
+      entityType: "grn", entityId: "grn-1", action: "submit",
+      fromStatus: "draft", toStatus: "submitted", actorRole: "branch_admin",
     });
   });
 
   it("writes no event when the submission itself is refused", async () => {
     execute.mockImplementation(async (sql: string) => {
-      if (
-        /FROM grn_request/i.test(String(sql)) &&
-        /SELECT/i.test(String(sql))
-      ) {
+      if (/FROM grn_request/i.test(String(sql)) && /SELECT/i.test(String(sql))) {
         return [[{ ...DRAFT_GRN, status: "submitted" }], []];
       }
       return [[], []];
     });
     await expect(
-      grnService.submitForApproval(
-        "grn-1",
-        {} as any,
-        "user-1",
-        "branch_admin",
-      ),
+      grnService.submitForApproval("grn-1", {} as any, "user-1", "branch_admin")
     ).rejects.toThrow(/cannot submit/i);
     expect(eventsFrom(execute.mock.calls)).toHaveLength(0);
   });
@@ -135,25 +104,18 @@ describe("cancelling a GRN", () => {
     // cancelGrn reads the row FOR UPDATE on the same connection it writes on, so the row has
     // to come back from the connection mock, not the pool.
     const connectionExecute = vi.fn(async (sql: string) => {
-      if (/UPDATE grn_request/i.test(String(sql)))
-        return [{ affectedRows: 1 } as any, []];
-      if (/FROM grn_request/i.test(String(sql)))
-        return [[{ ...DRAFT_GRN, status: "submitted" }], []];
+      if (/UPDATE grn_request/i.test(String(sql))) return [{ affectedRows: 1 } as any, []];
+      if (/FROM grn_request/i.test(String(sql))) return [[{ ...DRAFT_GRN, status: "submitted" }], []];
       return [[], []];
     });
     const connection = {
       execute: connectionExecute,
-      beginTransaction: vi.fn(async () => {}),
-      commit: vi.fn(async () => {}),
-      rollback: vi.fn(async () => {}),
-      release: vi.fn(() => {}),
+      beginTransaction: vi.fn(async () => {}), commit: vi.fn(async () => {}),
+      rollback: vi.fn(async () => {}), release: vi.fn(() => {}),
     };
     getConnection.mockResolvedValue(connection);
     execute.mockImplementation(async (sql: string) => {
-      if (
-        /FROM grn_request/i.test(String(sql)) &&
-        /SELECT/i.test(String(sql))
-      ) {
+      if (/FROM grn_request/i.test(String(sql)) && /SELECT/i.test(String(sql))) {
         return [[{ ...DRAFT_GRN, status: "submitted" }], []];
       }
       return [[], []];
@@ -162,23 +124,15 @@ describe("cancelling a GRN", () => {
     await grnService.cancelGrn("grn-1", "user-1", "branch_admin");
 
     const events = eventsFrom(connectionExecute.mock.calls);
-    expect(
-      events,
-      "an event on the pool could outlive a rolled-back cancellation",
-    ).toHaveLength(1);
+    expect(events, "an event on the pool could outlive a rolled-back cancellation").toHaveLength(1);
     expect(events[0]).toMatchObject({
-      entityType: "grn",
-      action: "cancel",
-      fromStatus: "submitted",
-      toStatus: "cancelled",
+      entityType: "grn", action: "cancel", fromStatus: "submitted", toStatus: "cancelled",
     });
     // Inside the transaction means before the commit, not merely on the same connection.
-    const eventIdx = connectionExecute.mock.calls.findIndex(([sql]) =>
-      /INSERT INTO finance_approval_event/i.test(String(sql)),
-    );
-    expect(connectionExecute.mock.invocationCallOrder[eventIdx]).toBeLessThan(
-      connection.commit.mock.invocationCallOrder[0],
-    );
+    const eventIdx = connectionExecute.mock.calls
+      .findIndex(([sql]) => /INSERT INTO finance_approval_event/i.test(String(sql)));
+    expect(connectionExecute.mock.invocationCallOrder[eventIdx])
+      .toBeLessThan(connection.commit.mock.invocationCallOrder[0]);
   });
 });
 
@@ -199,9 +153,7 @@ describe("raising a GRN", () => {
   });
 
   it("records the unbudgeted draft too, flagged as the path that bypasses the budget", () => {
-    const idx = service.indexOf(
-      'await writeGrnAudit("CREATE_DRAFT_UNBUDGETED", id',
-    );
+    const idx = service.indexOf('await writeGrnAudit("CREATE_DRAFT_UNBUDGETED", id');
     expect(idx).toBeGreaterThan(-1);
     const preceding = service.slice(Math.max(0, idx - 700), idx);
     expect(preceding).toContain("recordFinanceApprovalEvent");
@@ -211,12 +163,7 @@ describe("raising a GRN", () => {
   it("keeps both sinks — the security log is not replaced by the workflow trail", () => {
     // Deleting writeGrnAudit in favour of the new events would drop FINANCE telemetry that
     // production already relies on (GRN_CREATE_DRAFT, GRN_SUBMIT, GRN_CANCEL all have live rows).
-    for (const action of [
-      "CREATE_DRAFT",
-      "CREATE_DRAFT_UNBUDGETED",
-      "SUBMIT",
-      "CANCEL",
-    ]) {
+    for (const action of ["CREATE_DRAFT", "CREATE_DRAFT_UNBUDGETED", "SUBMIT", "CANCEL"]) {
       expect(service).toContain(`writeGrnAudit("${action}"`);
     }
   });
@@ -226,22 +173,12 @@ describe("every GRN lifecycle transition has a workflow event", () => {
   it("names each action exactly once in the service that owns it", () => {
     const service = read("grn.service.ts");
     // The full chain a reader of /approval-history should be able to reconstruct.
-    for (const action of [
-      "create",
-      "submit",
-      "cancel",
-      "return",
-      "resubmit",
-      "reverse",
-    ]) {
-      expect(service, `no workflow event is written for '${action}'`).toContain(
-        `action: "${action}"`,
-      );
+    for (const action of ["create", "submit", "cancel", "return", "resubmit", "reverse"]) {
+      expect(service, `no workflow event is written for '${action}'`)
+        .toContain(`action: "${action}"`);
     }
     // approve/reject are written from one conditional expression rather than a literal.
-    expect(service).toContain(
-      'action: payload.decision === "approved" ? "approve" : "reject"',
-    );
+    expect(service).toContain('action: payload.decision === "approved" ? "approve" : "reject"');
   });
 
   it("still exposes the trail through the branch-guarded read endpoint", () => {

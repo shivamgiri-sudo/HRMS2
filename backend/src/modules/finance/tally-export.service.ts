@@ -68,25 +68,11 @@ export interface VoucherExportRow {
   period_status: string | null;
 }
 
-async function fetchVoucherRows(
-  bankAccountId: string,
-  from?: string,
-  to?: string,
-): Promise<VoucherExportRow[]> {
-  const conditions: string[] = [
-    "bale.bank_account_id = ?",
-    "bale.source_type = 'voucher'",
-    "pv.status = 'released'",
-  ];
+async function fetchVoucherRows(bankAccountId: string, from?: string, to?: string): Promise<VoucherExportRow[]> {
+  const conditions: string[] = ["bale.bank_account_id = ?", "bale.source_type = 'voucher'", "pv.status = 'released'"];
   const params: unknown[] = [bankAccountId];
-  if (from) {
-    conditions.push("bale.entry_date >= ?");
-    params.push(from);
-  }
-  if (to) {
-    conditions.push("bale.entry_date <= ?");
-    params.push(to);
-  }
+  if (from) { conditions.push("bale.entry_date >= ?"); params.push(from); }
+  if (to) { conditions.push("bale.entry_date <= ?"); params.push(to); }
 
   // One payment voucher release now inserts ONE cash ledger row PER allocated GRN (Payment
   // Voucher multi-GRN support, 2026-09-10) — a voucher covering 3 GRNs of the same vendor
@@ -111,9 +97,7 @@ async function fetchVoucherRows(
 
   if ((cashRows as RowDataPacket[]).length === 0) return [];
 
-  const voucherIds = [
-    ...new Set((cashRows as RowDataPacket[]).map((r) => String(r.voucher_id))),
-  ];
+  const voucherIds = [...new Set((cashRows as RowDataPacket[]).map((r) => String(r.voucher_id)))];
   const placeholders = voucherIds.map(() => "?").join(",");
 
   // TDS withheld per voucher: sum across every GRN this voucher paid, read from
@@ -138,8 +122,7 @@ async function fetchVoucherRows(
       )
     : [[]];
   const tdsByVoucher = new Map<string, number>();
-  for (const r of tdsRows as RowDataPacket[])
-    tdsByVoucher.set(String(r.voucher_id), Number(r.tds_total ?? 0));
+  for (const r of tdsRows as RowDataPacket[]) tdsByVoucher.set(String(r.voucher_id), Number(r.tds_total ?? 0));
 
   // One TDS-memo ledger row's payable_account (e.g. "TDS Payable") per voucher — every memo row
   // for one voucher points at the same account, so any one of them names the right ledger.
@@ -154,11 +137,7 @@ async function fetchVoucherRows(
       )
     : [[]];
   const tdsLedgerByVoucher = new Map<string, string>();
-  for (const r of memoRows as RowDataPacket[])
-    tdsLedgerByVoucher.set(
-      String(r.voucher_id),
-      String((r as any).tally_ledger_name),
-    );
+  for (const r of memoRows as RowDataPacket[]) tdsLedgerByVoucher.set(String(r.voucher_id), String((r as any).tally_ledger_name));
 
   type Grouped = { rows: RowDataPacket[] };
   const grouped = new Map<string, Grouped>();
@@ -172,16 +151,11 @@ async function fetchVoucherRows(
   for (const [voucherId, { rows }] of grouped) {
     const first = rows[0];
     const netAmount = rows.reduce(
-      (sum, r) =>
-        sum +
-        (Number(r.debit_amount) > 0
-          ? Number(r.debit_amount)
-          : Number(r.credit_amount)),
+      (sum, r) => sum + (Number(r.debit_amount) > 0 ? Number(r.debit_amount) : Number(r.credit_amount)),
       0,
     );
     const tdsAmount = tdsByVoucher.get(voucherId) ?? 0;
-    const tdsLedger =
-      tdsAmount > 0 ? (tdsLedgerByVoucher.get(voucherId) ?? null) : null;
+    const tdsLedger = tdsAmount > 0 ? tdsLedgerByVoucher.get(voucherId) ?? null : null;
 
     result.push({
       voucher_id: voucherId,
@@ -200,19 +174,14 @@ async function fetchVoucherRows(
       period_status: first.period_status ? String(first.period_status) : null,
     });
   }
-  result.sort(
-    (a, b) =>
-      a.entry_date.localeCompare(b.entry_date) ||
-      a.voucher_number.localeCompare(b.voucher_number),
-  );
+  result.sort((a, b) => a.entry_date.localeCompare(b.entry_date) || a.voucher_number.localeCompare(b.voucher_number));
   return result;
 }
 
 /** Exported for unit testing the sign-convention/balancing logic without touching the DB —
  *  see __tests__/tally-export.service.test.ts. */
 export function buildVoucherXml(row: VoucherExportRow): string {
-  const voucherTypeName =
-    row.voucher_type === "receipt" ? "Receipt" : "Payment";
+  const voucherTypeName = row.voucher_type === "receipt" ? "Receipt" : "Payment";
   const isPayment = row.voucher_type !== "receipt";
 
   // debit ledger/amount, credit ledger(s)/amount — see the module header for the derivation.
@@ -244,11 +213,7 @@ ${lines.join("\n")}
       </TALLYMESSAGE>`;
 }
 
-function ledgerLine(
-  ledgerName: string,
-  isDeemedPositive: "Yes" | "No",
-  signedAmount: number,
-): string {
+function ledgerLine(ledgerName: string, isDeemedPositive: "Yes" | "No", signedAmount: number): string {
   return `          <ALLLEDGERENTRIES.LIST>
             <LEDGERNAME>${xmlEscape(ledgerName)}</LEDGERNAME>
             <ISDEEMEDPOSITIVE>${isDeemedPositive}</ISDEEMEDPOSITIVE>
@@ -283,26 +248,11 @@ function ledgerLine(
  * per-line-item multi-party vouchers are a bigger change to VoucherExportRow's shape than this
  * task attempts.
  */
-async function fetchVoucherRowsFromJournal(
-  bankAccountId: string,
-  from?: string,
-  to?: string,
-): Promise<VoucherExportRow[]> {
-  const conditions: string[] = [
-    "jel.account_type = 'bank_account'",
-    "jel.account_id = ?",
-    "je.source_type = 'payment_voucher'",
-    "je.reversed_by_entry_id IS NULL",
-  ];
+async function fetchVoucherRowsFromJournal(bankAccountId: string, from?: string, to?: string): Promise<VoucherExportRow[]> {
+  const conditions: string[] = ["jel.account_type = 'bank_account'", "jel.account_id = ?", "je.source_type = 'payment_voucher'", "je.reversed_by_entry_id IS NULL"];
   const params: unknown[] = [bankAccountId];
-  if (from) {
-    conditions.push("je.entry_date >= ?");
-    params.push(from);
-  }
-  if (to) {
-    conditions.push("je.entry_date <= ?");
-    params.push(to);
-  }
+  if (from) { conditions.push("je.entry_date >= ?"); params.push(from); }
+  if (to) { conditions.push("je.entry_date <= ?"); params.push(to); }
 
   const [voucherJournalIdRows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT je.id AS journal_entry_id
@@ -311,9 +261,7 @@ async function fetchVoucherRowsFromJournal(
       WHERE ${conditions.join(" AND ")}`,
     params,
   );
-  const journalEntryIds = (voucherJournalIdRows as RowDataPacket[]).map((r) =>
-    String(r.journal_entry_id),
-  );
+  const journalEntryIds = (voucherJournalIdRows as RowDataPacket[]).map((r) => String(r.journal_entry_id));
   if (journalEntryIds.length === 0) return [];
   const placeholders = journalEntryIds.map(() => "?").join(",");
 
@@ -347,34 +295,18 @@ async function fetchVoucherRowsFromJournal(
     grouped.get(key)!.rows.push(row);
   }
 
-  const ledgerNameOf = (row: RowDataPacket) =>
-    String(
-      row.vendor_name ?? row.payable_name ?? row.bank_name ?? row.account_id,
-    );
+  const ledgerNameOf = (row: RowDataPacket) => String(row.vendor_name ?? row.payable_name ?? row.bank_name ?? row.account_id);
 
   const result: VoucherExportRow[] = [];
   for (const { rows: entryRows } of grouped.values()) {
     const first = entryRows[0];
-    const bankLines = entryRows.filter(
-      (r) => r.account_type === "bank_account",
-    );
+    const bankLines = entryRows.filter((r) => r.account_type === "bank_account");
     const debitLines = entryRows.filter((r) => Number(r.debit_amount) > 0);
-    const otherCreditLines = entryRows.filter(
-      (r) => r.account_type !== "bank_account" && Number(r.credit_amount) > 0,
-    );
+    const otherCreditLines = entryRows.filter((r) => r.account_type !== "bank_account" && Number(r.credit_amount) > 0);
 
-    const netAmount = bankLines.reduce(
-      (sum, r) => sum + Number(r.credit_amount),
-      0,
-    );
-    const tdsAmount = otherCreditLines.reduce(
-      (sum, r) => sum + Number(r.credit_amount),
-      0,
-    );
-    const tdsLedger =
-      tdsAmount > 0 && otherCreditLines[0]
-        ? ledgerNameOf(otherCreditLines[0])
-        : null;
+    const netAmount = bankLines.reduce((sum, r) => sum + Number(r.credit_amount), 0);
+    const tdsAmount = otherCreditLines.reduce((sum, r) => sum + Number(r.credit_amount), 0);
+    const tdsLedger = tdsAmount > 0 && otherCreditLines[0] ? ledgerNameOf(otherCreditLines[0]) : null;
 
     result.push({
       voucher_id: String(first.voucher_id),
@@ -390,11 +322,7 @@ async function fetchVoucherRowsFromJournal(
       period_status: first.period_status ? String(first.period_status) : null,
     });
   }
-  result.sort(
-    (a, b) =>
-      a.entry_date.localeCompare(b.entry_date) ||
-      a.voucher_number.localeCompare(b.voucher_number),
-  );
+  result.sort((a, b) => a.entry_date.localeCompare(b.entry_date) || a.voucher_number.localeCompare(b.voucher_number));
   return result;
 }
 
@@ -429,10 +357,7 @@ ${body}
   </BODY>
 </ENVELOPE>
 `;
-    const totalDebit = rows.reduce(
-      (sum, r) => sum + r.net_amount + r.tds_amount,
-      0,
-    );
+    const totalDebit = rows.reduce((sum, r) => sum + r.net_amount + r.tds_amount, 0);
     const totalCredit = totalDebit; // every voucher is individually balanced by construction
     return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit, voucherNumbers: rows.map((r) => r.voucher_number) };
   },
@@ -452,13 +377,8 @@ ${body}
       this.buildEnvelopeFromJournal(bankAccountId, from, to, exclude),
       this.buildEnvelope(bankAccountId, from, to, exclude),
     ]);
-    const totalDiff = Math.abs(
-      journalResult.totalDebit - legacyResult.totalDebit,
-    );
-    if (
-      journalResult.entryCount !== legacyResult.entryCount ||
-      totalDiff > 0.01
-    ) {
+    const totalDiff = Math.abs(journalResult.totalDebit - legacyResult.totalDebit);
+    if (journalResult.entryCount !== legacyResult.entryCount || totalDiff > 0.01) {
       throw refuse(
         409,
         "TALLY_EXPORT_PARITY_MISMATCH",
@@ -557,10 +477,7 @@ ${body}
   </BODY>
 </ENVELOPE>
 `;
-    const totalDebit = rows.reduce(
-      (sum, r) => sum + r.net_amount + r.tds_amount,
-      0,
-    );
+    const totalDebit = rows.reduce((sum, r) => sum + r.net_amount + r.tds_amount, 0);
     const totalCredit = totalDebit;
     return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit, voucherNumbers: rows.map((r) => r.voucher_number) };
   },

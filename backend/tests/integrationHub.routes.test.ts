@@ -33,10 +33,7 @@ vi.mock("../src/modules/integration-hub/connectorRunner.js", () => ({
   executeConnector: vi.fn(),
 }));
 vi.mock("../src/middleware/requireRole.js", () => ({
-  requireRole:
-    (..._roles: string[]) =>
-    (_req: any, _res: any, next: any) =>
-      next(),
+  requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
   ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
@@ -45,12 +42,8 @@ vi.mock("../src/shared/scopeAccess.js", () => ({
   hasAnyRole: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
   getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
-  getRosterPlanScope: vi
-    .fn()
-    .mockResolvedValue({ branchId: null, processId: null }),
-  getEmployeeForUser: vi
-    .fn()
-    .mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
+  getRosterPlanScope: vi.fn().mockResolvedValue({ branchId: null, processId: null }),
+  getEmployeeForUser: vi.fn().mockResolvedValue({ id: "emp-1", employee_code: "EMP001" }),
   getUserRoles: vi.fn().mockResolvedValue([{ role_key: "admin" }]),
   hasRole: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockReturnValue({ where: "", params: [] }),
@@ -70,9 +63,7 @@ import { integrationService } from "../src/modules/integration-hub/integration.s
 import { executeConnector } from "../src/modules/integration-hub/connectorRunner.js";
 import { app } from "../src/app.js";
 
-const svc = integrationService as {
-  [K in keyof typeof integrationService]: ReturnType<typeof vi.fn>;
-};
+const svc = integrationService as { [K in keyof typeof integrationService]: ReturnType<typeof vi.fn> };
 const mockExecuteConnector = executeConnector as ReturnType<typeof vi.fn>;
 
 const AUTH = { Authorization: "Bearer mock-token-admin" };
@@ -119,18 +110,14 @@ describe("GET /api/integration-hub", () => {
 describe("GET /api/integration-hub/:key", () => {
   it("returns integration by key", async () => {
     svc.getByKey.mockResolvedValueOnce(fakeConfig);
-    const res = await request(app)
-      .get("/api/integration-hub/dialer_1")
-      .set(AUTH);
+    const res = await request(app).get("/api/integration-hub/dialer_1").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.data.integration_key).toBe("dialer_1");
   });
 
   it("returns 500 when not found", async () => {
     svc.getByKey.mockRejectedValueOnce(new Error("Integration not found"));
-    const res = await request(app)
-      .get("/api/integration-hub/missing")
-      .set(AUTH);
+    const res = await request(app).get("/api/integration-hub/missing").set(AUTH);
     expect(res.status).toBe(500);
     expect(res.body.message).toMatch(/not found/i);
   });
@@ -144,11 +131,7 @@ describe("POST /api/integration-hub", () => {
     const res = await request(app)
       .post("/api/integration-hub")
       .set(AUTH)
-      .send({
-        integrationKey: "dialer_3",
-        integrationName: "Dialer 3",
-        integrationType: "rest_pull",
-      });
+      .send({ integrationKey: "dialer_3", integrationName: "Dialer 3", integrationType: "rest_pull" });
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
   });
@@ -157,11 +140,7 @@ describe("POST /api/integration-hub", () => {
     const res = await request(app)
       .post("/api/integration-hub")
       .set(AUTH)
-      .send({
-        integrationKey: "x",
-        integrationName: "X",
-        integrationType: "bad_type",
-      });
+      .send({ integrationKey: "x", integrationName: "X", integrationType: "bad_type" });
     expect(res.status).toBe(400);
   });
 });
@@ -170,10 +149,7 @@ describe("POST /api/integration-hub", () => {
 
 describe("PUT /api/integration-hub/:key", () => {
   it("updates integration", async () => {
-    svc.update.mockResolvedValueOnce({
-      ...fakeConfig,
-      integration_name: "Updated",
-    });
+    svc.update.mockResolvedValueOnce({ ...fakeConfig, integration_name: "Updated" });
     const res = await request(app)
       .put("/api/integration-hub/dialer_1")
       .set(AUTH)
@@ -187,12 +163,7 @@ describe("PUT /api/integration-hub/:key", () => {
 
 describe("GET /api/integration-hub/runs", () => {
   it("returns paginated runs", async () => {
-    svc.listRuns.mockResolvedValueOnce({
-      data: [],
-      total: 0,
-      page: 1,
-      limit: 20,
-    });
+    svc.listRuns.mockResolvedValueOnce({ data: [], total: 0, page: 1, limit: 20 });
     const res = await request(app).get("/api/integration-hub/runs").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.data).toBeDefined();
@@ -200,9 +171,7 @@ describe("GET /api/integration-hub/runs", () => {
   });
 
   it("returns 400 for page < 1", async () => {
-    const res = await request(app)
-      .get("/api/integration-hub/runs?page=0")
-      .set(AUTH);
+    const res = await request(app).get("/api/integration-hub/runs?page=0").set(AUTH);
     expect(res.status).toBe(400);
   });
 });
@@ -233,17 +202,9 @@ describe("POST /api/integration-hub/:key/run", () => {
 describe("GET /api/integration-hub/:key/field-maps", () => {
   it("returns field maps for the integration", async () => {
     svc.listFieldMaps.mockResolvedValueOnce([
-      {
-        id: "m1",
-        integration_key: "dialer_1",
-        source_field: "emp_id",
-        target_table: "employees",
-        target_column: "employee_code",
-      },
+      { id: "m1", integration_key: "dialer_1", source_field: "emp_id", target_table: "employees", target_column: "employee_code" },
     ]);
-    const res = await request(app)
-      .get("/api/integration-hub/dialer_1/field-maps")
-      .set(AUTH);
+    const res = await request(app).get("/api/integration-hub/dialer_1/field-maps").set(AUTH);
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(1);
   });
@@ -252,11 +213,7 @@ describe("GET /api/integration-hub/:key/field-maps", () => {
 describe("Integration table and header mapping metadata", () => {
   it("returns approved target tables and columns", async () => {
     svc.getMappingCatalog.mockReturnValueOnce([
-      {
-        table: "dialer_session_log",
-        columns: ["employee_code"],
-        sync_modes: ["daily_aggregate"],
-      },
+      { table: "dialer_session_log", columns: ["employee_code"], sync_modes: ["daily_aggregate"] },
     ]);
     const res = await request(app)
       .get("/api/integration-hub/mapping-catalog")
@@ -267,10 +224,7 @@ describe("Integration table and header mapping metadata", () => {
 
   it("returns detected source table headers", async () => {
     svc.inspectSourceSchema.mockResolvedValueOnce([
-      {
-        table: "vicidial_agent_log_249",
-        columns: [{ name: "user", type: "varchar(20)" }],
-      },
+      { table: "vicidial_agent_log_249", columns: [{ name: "user", type: "varchar(20)" }] },
     ]);
     const res = await request(app)
       .get("/api/integration-hub/dialer_1/source-schema")
@@ -325,11 +279,8 @@ describe("Integration table and header mapping metadata", () => {
 describe("POST /api/integration-hub/field-maps/confirm", () => {
   it("confirms field mapping", async () => {
     svc.confirmFieldMap.mockResolvedValueOnce({
-      id: "m1",
-      integration_key: "dialer_1",
-      source_field: "emp_id",
-      target_table: "employees",
-      target_column: "employee_code",
+      id: "m1", integration_key: "dialer_1", source_field: "emp_id",
+      target_table: "employees", target_column: "employee_code",
     });
     const res = await request(app)
       .post("/api/integration-hub/field-maps/confirm")
@@ -358,12 +309,7 @@ describe("POST /api/integration-hub/field-maps/confirm", () => {
 describe("GET /api/integration-hub/:key/suggestions", () => {
   it("returns suggestions for an integration", async () => {
     svc.listSuggestions.mockResolvedValueOnce([
-      {
-        id: "s1",
-        integration_key: "dialer_1",
-        source_field: "branch_code",
-        status: "pending",
-      },
+      { id: "s1", integration_key: "dialer_1", source_field: "branch_code", status: "pending" },
     ]);
     const res = await request(app)
       .get("/api/integration-hub/dialer_1/suggestions")

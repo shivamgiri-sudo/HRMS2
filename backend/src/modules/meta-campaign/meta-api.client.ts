@@ -7,17 +7,14 @@
  * rather than throw on boot or spam the log — the same posture the communication providers take.
  */
 
-import axios, { AxiosError } from "axios";
-import type {
-  MetaLeadDetail,
-  MetaCampaignInsights,
-} from "./meta-campaign.types.js";
+import axios, { AxiosError } from 'axios';
+import type { MetaLeadDetail, MetaCampaignInsights } from './meta-campaign.types.js';
 
-const GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || "v19.0";
+const GRAPH_VERSION = process.env.META_GRAPH_API_VERSION || 'v19.0';
 const BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
 function token(): string {
-  return process.env.META_MARKETING_ACCESS_TOKEN ?? "";
+  return process.env.META_MARKETING_ACCESS_TOKEN ?? '';
 }
 
 /** True when a Graph API call can actually be attempted. */
@@ -27,38 +24,32 @@ export function isMetaConfigured(): boolean {
 
 /** The token META echoes back during webhook subscription (`hub.verify_token`). */
 export function leadVerifyToken(): string {
-  return process.env.META_LEAD_VERIFY_TOKEN ?? "";
+  return process.env.META_LEAD_VERIFY_TOKEN ?? '';
 }
 
 export class MetaApiError extends Error {
   constructor(
     message: string,
     readonly status: number | null,
-    readonly metaCode: number | null,
+    readonly metaCode: number | null
   ) {
     super(message);
-    this.name = "MetaApiError";
+    this.name = 'MetaApiError';
   }
 }
 
 function toMetaApiError(err: unknown, context: string): MetaApiError {
   if (axios.isAxiosError(err)) {
-    const ax = err as AxiosError<{
-      error?: { message?: string; code?: number };
-    }>;
+    const ax = err as AxiosError<{ error?: { message?: string; code?: number } }>;
     const metaMsg = ax.response?.data?.error?.message;
     const metaCode = ax.response?.data?.error?.code ?? null;
     return new MetaApiError(
       `${context}: ${metaMsg ?? ax.message}`,
       ax.response?.status ?? null,
-      metaCode,
+      metaCode
     );
   }
-  return new MetaApiError(
-    `${context}: ${err instanceof Error ? err.message : String(err)}`,
-    null,
-    null,
-  );
+  return new MetaApiError(`${context}: ${err instanceof Error ? err.message : String(err)}`, null, null);
 }
 
 /**
@@ -71,24 +62,16 @@ function toMetaApiError(err: unknown, context: string): MetaApiError {
  */
 export async function fetchLeadDetail(leadId: string): Promise<MetaLeadDetail> {
   if (!isMetaConfigured()) {
-    throw new MetaApiError(
-      "META_MARKETING_ACCESS_TOKEN is not configured",
-      null,
-      null,
-    );
+    throw new MetaApiError('META_MARKETING_ACCESS_TOKEN is not configured', null, null);
   }
   try {
-    const { data } = await axios.get<MetaLeadDetail>(
-      `${BASE}/${encodeURIComponent(leadId)}`,
-      {
-        params: {
-          access_token: token(),
-          fields:
-            "id,created_time,field_data,ad_id,adgroup_id,campaign_id,form_id",
-        },
-        timeout: 10000,
+    const { data } = await axios.get<MetaLeadDetail>(`${BASE}/${encodeURIComponent(leadId)}`, {
+      params: {
+        access_token: token(),
+        fields: 'id,created_time,field_data,ad_id,adgroup_id,campaign_id,form_id',
       },
-    );
+      timeout: 10000,
+    });
     return data;
   } catch (err) {
     throw toMetaApiError(err, `fetchLeadDetail(${leadId})`);
@@ -106,36 +89,27 @@ export async function fetchLeadDetail(leadId: string): Promise<MetaLeadDetail> {
 export async function fetchFormLeads(
   formId: string,
   after?: string | null,
-  limit = 100,
+  limit = 100
 ): Promise<{ leads: MetaLeadDetail[]; nextAfter: string | null }> {
   if (!isMetaConfigured()) {
-    throw new MetaApiError(
-      "META_MARKETING_ACCESS_TOKEN is not configured",
-      null,
-      null,
-    );
+    throw new MetaApiError('META_MARKETING_ACCESS_TOKEN is not configured', null, null);
   }
   try {
     const params: Record<string, string | number> = {
       access_token: token(),
-      fields: "id,created_time,field_data,ad_id,adgroup_id,campaign_id,form_id",
+      fields: 'id,created_time,field_data,ad_id,adgroup_id,campaign_id,form_id',
       limit,
     };
     if (after) params.after = after;
     const { data } = await axios.get<{
       data?: MetaLeadDetail[];
       paging?: { cursors?: { after?: string }; next?: string };
-    }>(`${BASE}/${encodeURIComponent(formId)}/leads`, {
-      params,
-      timeout: 20000,
-    });
+    }>(`${BASE}/${encodeURIComponent(formId)}/leads`, { params, timeout: 20000 });
     return {
       leads: data.data ?? [],
       // A next cursor is only meaningful when there is a next page; META returns `paging.next`
       // only while more remain, so gate the cursor on it rather than always echoing `after`.
-      nextAfter: data.paging?.next
-        ? (data.paging?.cursors?.after ?? null)
-        : null,
+      nextAfter: data.paging?.next ? (data.paging?.cursors?.after ?? null) : null,
     };
   } catch (err) {
     throw toMetaApiError(err, `fetchFormLeads(${formId})`);
@@ -149,37 +123,22 @@ export async function fetchFormLeads(
  * so an operator linking a form to a requisition can see volume before committing.
  */
 export async function fetchPageLeadForms(
-  pageId: string,
-): Promise<
-  Array<{ id: string; name: string; status: string; leadsCount: number }>
-> {
+  pageId: string
+): Promise<Array<{ id: string; name: string; status: string; leadsCount: number }>> {
   if (!isMetaConfigured()) {
-    throw new MetaApiError(
-      "META_MARKETING_ACCESS_TOKEN is not configured",
-      null,
-      null,
-    );
+    throw new MetaApiError('META_MARKETING_ACCESS_TOKEN is not configured', null, null);
   }
   try {
     const { data } = await axios.get<{
-      data?: Array<{
-        id: string;
-        name?: string;
-        status?: string;
-        leads_count?: number;
-      }>;
+      data?: Array<{ id: string; name?: string; status?: string; leads_count?: number }>;
     }>(`${BASE}/${encodeURIComponent(pageId)}/leadgen_forms`, {
-      params: {
-        access_token: token(),
-        fields: "id,name,status,leads_count",
-        limit: 200,
-      },
+      params: { access_token: token(), fields: 'id,name,status,leads_count', limit: 200 },
       timeout: 20000,
     });
     return (data.data ?? []).map((f) => ({
       id: f.id,
-      name: f.name ?? "",
-      status: f.status ?? "",
+      name: f.name ?? '',
+      status: f.status ?? '',
       leadsCount: Number(f.leads_count ?? 0),
     }));
   } catch (err) {
@@ -199,14 +158,10 @@ export async function fetchPageLeadForms(
  */
 export async function fetchCampaignInsights(
   metaCampaignId: string,
-  datePreset = "last_30d",
+  datePreset = 'last_30d'
 ): Promise<MetaCampaignInsights> {
   if (!isMetaConfigured()) {
-    throw new MetaApiError(
-      "META_MARKETING_ACCESS_TOKEN is not configured",
-      null,
-      null,
-    );
+    throw new MetaApiError('META_MARKETING_ACCESS_TOKEN is not configured', null, null);
   }
   try {
     const { data } = await axios.get<{
@@ -220,7 +175,7 @@ export async function fetchCampaignInsights(
     }>(`${BASE}/${encodeURIComponent(metaCampaignId)}/insights`, {
       params: {
         access_token: token(),
-        fields: "impressions,reach,clicks,actions,spend",
+        fields: 'impressions,reach,clicks,actions,spend',
         date_preset: datePreset,
       },
       timeout: 15000,
@@ -228,9 +183,7 @@ export async function fetchCampaignInsights(
 
     const row = data.data?.[0] ?? {};
     const leadAction = (row.actions ?? []).find(
-      (a) =>
-        a.action_type === "lead" ||
-        a.action_type === "onsite_conversion.lead_grouped",
+      (a) => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped'
     );
     return {
       impressions: Number(row.impressions ?? 0),

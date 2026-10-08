@@ -43,35 +43,20 @@ const arg = (k, d) => {
   return hit ? hit.split("=").slice(1).join("=") : d;
 };
 const PW = process.env.MYSQL_PWD ?? process.env.DB_PASSWORD;
-if (!PW) {
-  console.error("Set MYSQL_PWD (or DB_PASSWORD).");
-  process.exit(1);
-}
+if (!PW) { console.error("Set MYSQL_PWD (or DB_PASSWORD)."); process.exit(1); }
 
 const hrms = await mysql.createConnection({
-  host: arg("hrms-host", "122.184.128.90"),
-  user: arg("user", "shivam_user"),
-  password: PW,
-  database: "mas_hrms",
+  host: arg("hrms-host", "122.184.128.90"), user: arg("user", "shivam_user"),
+  password: PW, database: "mas_hrms",
 });
 const bill = await mysql.createConnection({
-  host: arg("bill-host", "14.97.30.236"),
-  user: arg("user", "shivam_user"),
-  password: PW,
-  database: "db_bill",
+  host: arg("bill-host", "14.97.30.236"), user: arg("user", "shivam_user"),
+  password: PW, database: "db_bill",
 });
 
-const norm = (s) =>
-  String(s ?? "")
-    .toUpperCase()
-    .replace(/[^A-Z ]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-const dig = (s) => String(s ?? "").replace(/\D/g, "");
-const plausible = (s) => {
-  const t = String(s ?? "").trim();
-  return t.length >= 3 && /[A-Za-z]/.test(t) && !/^\d+$/.test(t);
-};
+const norm  = (s) => String(s ?? "").toUpperCase().replace(/[^A-Z ]/g, " ").replace(/\s+/g, " ").trim();
+const dig   = (s) => String(s ?? "").replace(/\D/g, "");
+const plausible = (s) => { const t = String(s ?? "").trim(); return t.length >= 3 && /[A-Za-z]/.test(t) && !/^\d+$/.test(t); };
 
 // Every active primary bank record, with the name the file would currently print.
 const [hrRows] = await hrms.execute(
@@ -82,13 +67,13 @@ const [hrRows] = await hrms.execute(
           TRIM(COALESCE(ebd.ifsc_code,'')) AS ifsc
      FROM employee_bank_detail ebd
      JOIN employees e ON e.id = ebd.employee_id AND e.active_status = 1
-    WHERE ebd.is_primary = 1 AND ebd.active_status = 1`,
+    WHERE ebd.is_primary = 1 AND ebd.active_status = 1`
 );
 
 // Most recent db_bill credit that actually moved money, per employee.
 const [payRows] = await bill.execute(
   `SELECT EmpCode, TRIM(EmpName) AS paid_name, TRIM(COALESCE(AcNo,'')) AS acno, SalDate
-     FROM salary_data WHERE NetSalary > 0 AND TRIM(COALESCE(EmpName,'')) <> ''`,
+     FROM salary_data WHERE NetSalary > 0 AND TRIM(COALESCE(EmpName,'')) <> ''`
 );
 const paid = new Map();
 for (const r of payRows) {
@@ -97,95 +82,54 @@ for (const r of payRows) {
 }
 // IFSC from the db_bill bank master.
 const [mstRows] = await bill.execute(
-  `SELECT EmpCode, TRIM(COALESCE(IFSCCode,'')) AS ifsc FROM masjclrentry`,
+  `SELECT EmpCode, TRIM(COALESCE(IFSCCode,'')) AS ifsc FROM masjclrentry`
 );
 const billIfsc = new Map(mstRows.map((r) => [r.EmpCode, r.ifsc]));
 
-const plan = [],
-  skip = {
-    agrees: 0,
-    no_credit: 0,
-    acct_mismatch: [],
-    ifsc_mismatch: [],
-    implausible: [],
-  };
+const plan = [], skip = { agrees: 0, no_credit: 0, acct_mismatch: [], ifsc_mismatch: [], implausible: [] };
 
 for (const h of hrRows) {
-  const currentlyPrints = h.holder || h.hrms_name; // what the export emits today
+  const currentlyPrints = h.holder || h.hrms_name;   // what the export emits today
   const b = paid.get(h.employee_code);
-  if (!b) {
-    skip.no_credit++;
-    continue;
-  }
-  if (norm(b.paid_name) === norm(currentlyPrints)) {
-    skip.agrees++;
-    continue;
-  }
+  if (!b) { skip.no_credit++; continue; }
+  if (norm(b.paid_name) === norm(currentlyPrints)) { skip.agrees++; continue; }
 
-  const ha = dig(h.acct),
-    ba = dig(b.acno);
-  if (!ha || !ba || ha !== ba) {
-    skip.acct_mismatch.push(h.employee_code);
-    continue;
-  }
+  const ha = dig(h.acct), ba = dig(b.acno);
+  if (!ha || !ba || ha !== ba) { skip.acct_mismatch.push(h.employee_code); continue; }
   const bi = billIfsc.get(h.employee_code) ?? "";
-  if (!h.ifsc || !bi || h.ifsc.toUpperCase() !== bi.toUpperCase()) {
-    skip.ifsc_mismatch.push(h.employee_code);
-    continue;
-  }
-  if (!plausible(b.paid_name)) {
-    skip.implausible.push(h.employee_code);
-    continue;
-  }
+  if (!h.ifsc || !bi || h.ifsc.toUpperCase() !== bi.toUpperCase()) { skip.ifsc_mismatch.push(h.employee_code); continue; }
+  if (!plausible(b.paid_name)) { skip.implausible.push(h.employee_code); continue; }
 
-  plan.push({
-    bank_id: h.bank_id,
-    code: h.employee_code,
-    from: currentlyPrints,
-    to: b.paid_name,
-  });
+  plan.push({ bank_id: h.bank_id, code: h.employee_code, from: currentlyPrints, to: b.paid_name });
 }
 
-console.log(
-  `\n=== BENEFICIARY NAME DIVERGENCE ${APPLY ? "(APPLY)" : "(DRY RUN)"} ===\n`,
-);
+console.log(`\n=== BENEFICIARY NAME DIVERGENCE ${APPLY ? "(APPLY)" : "(DRY RUN)"} ===\n`);
 console.log(`  active primary bank records        ${hrRows.length}`);
 console.log(`  already agree with the paid name   ${skip.agrees}`);
 console.log(`  no db_bill credit (new HRMS hires) ${skip.no_credit}`);
-console.log(
-  `  skipped, account differs           ${skip.acct_mismatch.length}${skip.acct_mismatch.length ? " -> " + skip.acct_mismatch.join(",") : ""}`,
-);
-console.log(
-  `  skipped, IFSC differs              ${skip.ifsc_mismatch.length}${skip.ifsc_mismatch.length ? " -> " + skip.ifsc_mismatch.join(",") : ""}`,
-);
-console.log(
-  `  skipped, name implausible          ${skip.implausible.length}${skip.implausible.length ? " -> " + skip.implausible.join(",") : ""}`,
-);
+console.log(`  skipped, account differs           ${skip.acct_mismatch.length}${skip.acct_mismatch.length ? " -> " + skip.acct_mismatch.join(",") : ""}`);
+console.log(`  skipped, IFSC differs              ${skip.ifsc_mismatch.length}${skip.ifsc_mismatch.length ? " -> " + skip.ifsc_mismatch.join(",") : ""}`);
+console.log(`  skipped, name implausible          ${skip.implausible.length}${skip.implausible.length ? " -> " + skip.implausible.join(",") : ""}`);
 console.log(`  TO CORRECT                         ${plan.length}\n`);
 for (const p of plan)
   console.log(`    ${p.code.padEnd(11)} "${p.from}"  ->  "${p.to}"`);
 
 if (!APPLY) {
-  console.log(
-    `\n  Dry run. Re-run with --apply to write ${plan.length} row(s).\n`,
-  );
+  console.log(`\n  Dry run. Re-run with --apply to write ${plan.length} row(s).\n`);
 } else {
   const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
   const bak = `employee_bank_detail_pre_benefix_${stamp}`;
-  await hrms.execute(
-    `CREATE TABLE \`${bak}\` AS SELECT * FROM employee_bank_detail`,
-  );
+  await hrms.execute(`CREATE TABLE \`${bak}\` AS SELECT * FROM employee_bank_detail`);
   console.log(`\n  backup table: ${bak}`);
   let n = 0;
   for (const p of plan) {
     const [r] = await hrms.execute(
       `UPDATE employee_bank_detail SET account_holder_name = ?, updated_at = NOW() WHERE id = ?`,
-      [p.to, p.bank_id],
+      [p.to, p.bank_id]
     );
     n += r.affectedRows ?? 0;
   }
   console.log(`  rows updated: ${n}\n`);
 }
 
-await hrms.end();
-await bill.end();
+await hrms.end(); await bill.end();

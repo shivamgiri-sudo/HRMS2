@@ -32,18 +32,12 @@ export const wfmController = {
   async createShift(req: AuthenticatedRequest, res: Response) {
     const input = createShiftSchema.parse(req.body);
     const data = await wfmService.createShift(input, req.authUser!.id);
-    return res
-      .status(201)
-      .json({ success: true, data, message: "Shift created" });
+    return res.status(201).json({ success: true, data, message: "Shift created" });
   },
 
   async updateShift(req: AuthenticatedRequest, res: Response) {
     const input = updateShiftSchema.parse(req.body);
-    const data = await wfmService.updateShift(
-      req.params.id,
-      input,
-      req.authUser!.id,
-    );
+    const data = await wfmService.updateShift(req.params.id, input, req.authUser!.id);
     return res.json({ success: true, data, message: "Shift updated" });
   },
 
@@ -53,17 +47,9 @@ export const wfmController = {
     const { getEmployeeForUser } = await import("../../shared/accessGuard.js");
     const employee = await getEmployeeForUser(req.authUser!.id);
     if (!employee) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "No employee record for authenticated user",
-        });
+      return res.status(403).json({ success: false, message: "No employee record for authenticated user" });
     }
-    const data = await wfmService.clockIn(
-      { ...input, employeeId: employee.id },
-      req.authUser!.id,
-    );
+    const data = await wfmService.clockIn({ ...input, employeeId: employee.id }, req.authUser!.id);
     return res.status(201).json({ success: true, data, message: "Clocked in" });
   },
 
@@ -94,42 +80,21 @@ export const wfmController = {
     const { getEmployeeForUser } = await import("../../shared/accessGuard.js");
     const employee = await getEmployeeForUser(req.authUser!.id);
     if (!employee) {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          message: "No employee record for authenticated user",
-        });
+      return res.status(403).json({ success: false, message: "No employee record for authenticated user" });
     }
-    const data = await wfmService.submitRegularization(
-      { ...input, employeeId: employee.id },
-      req.authUser!.id,
-    );
-    return res
-      .status(201)
-      .json({ success: true, data, message: "Regularization submitted" });
+    const data = await wfmService.submitRegularization({ ...input, employeeId: employee.id }, req.authUser!.id);
+    return res.status(201).json({ success: true, data, message: "Regularization submitted" });
   },
 
   async listRegularizations(req: AuthenticatedRequest, res: Response) {
-    const { employeeId, status } = req.query as {
-      employeeId?: string;
-      status?: string;
-    };
+    const { employeeId, status } = req.query as { employeeId?: string; status?: string };
     const data = await wfmService.listRegularizations({ employeeId, status });
     return res.json({ success: true, data });
   },
 
   async reviewRegularization(req: AuthenticatedRequest, res: Response) {
     const input = reviewRegularizationSchema.parse(req.body);
-    const data = await wfmService.reviewRegularization(
-      req.params.id,
-      input,
-      req.authUser!.id,
-    );
-    return res.json({
-      success: true,
-      data,
-      message: `Regularization ${input.status}`,
-    });
+    const data = await wfmService.reviewRegularization(req.params.id, input, req.authUser!.id);
+    return res.json({ success: true, data, message: `Regularization ${input.status}` });
   },
 };

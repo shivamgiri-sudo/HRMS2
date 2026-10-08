@@ -44,12 +44,7 @@ import "dotenv/config";
 import mysql from "mysql2/promise";
 import { postGrnApprovalJournalEntry } from "../src/modules/finance/grn-journal-posting.service.js";
 import { journalService } from "../src/modules/finance/journal.service.js";
-import {
-  vendorGrnLines,
-  vendorAdvanceLines,
-  imprestAllocationLines,
-  generalLines,
-} from "../src/modules/finance/payment-voucher-journal-lines.js";
+import { vendorGrnLines, vendorAdvanceLines, imprestAllocationLines, generalLines } from "../src/modules/finance/payment-voucher-journal-lines.js";
 
 const APPLY = process.argv.includes("--apply");
 const DO_GRN = process.argv.includes("--grn");
@@ -58,13 +53,7 @@ const DO_VOUCHERS = process.argv.includes("--vouchers");
 // every consumed GRN with no entry is a candidate, imprest GRNs included (~39,000 at last count).
 const VENDOR_ONLY = process.argv.includes("--vendor-only");
 
-const CONSUMED_GRN_STATUSES = [
-  "pending_accounts_payment",
-  "payment_scheduled",
-  "partially_paid",
-  "paid",
-  "approved",
-];
+const CONSUMED_GRN_STATUSES = ["pending_accounts_payment", "payment_scheduled", "partially_paid", "paid", "approved"];
 
 /**
  * postGrnApprovalJournalEntry() defaults entryDate to today — correct for the live approval
@@ -78,8 +67,7 @@ function historicalEntryDate(grn: any): string {
   // Pool is created with dateStrings: true (see main()), so these arrive as plain
   // "YYYY-MM-DD..." strings already in the server's wall-clock value — a straight slice, no
   // Date object round-trip that could shift the calendar day via a UTC conversion.
-  const raw: string =
-    grn.finance_head_reviewed_at ?? grn.bill_date ?? grn.created_at;
+  const raw: string = grn.finance_head_reviewed_at ?? grn.bill_date ?? grn.created_at;
   return raw.slice(0, 10);
 }
 
@@ -92,41 +80,24 @@ async function backfillGrns(pool: mysql.Pool) {
     CONSUMED_GRN_STATUSES,
   );
 
-  console.log(
-    `\n=== GRN backfill: ${(grns as any[]).length} candidate(s) ===\n`,
-  );
+  console.log(`\n=== GRN backfill: ${(grns as any[]).length} candidate(s) ===\n`);
   let posted = 0;
   const failures: { grnNumber: string; error: string }[] = [];
 
   for (const grn of grns as any[]) {
-    if (!APPLY) {
-      console.log(
-        `  [dry run] would post journal entry for GRN ${grn.grn_number ?? grn.id}`,
-      );
-      continue;
-    }
+    if (!APPLY) { console.log(`  [dry run] would post journal entry for GRN ${grn.grn_number ?? grn.id}`); continue; }
 
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-      await postGrnApprovalJournalEntry(
-        connection,
-        grn,
-        "backfill-script",
-        historicalEntryDate(grn),
-      );
+      await postGrnApprovalJournalEntry(connection, grn, "backfill-script", historicalEntryDate(grn));
       await connection.commit();
       posted++;
       console.log(`  posted GRN ${grn.grn_number ?? grn.id}`);
     } catch (err: any) {
       await connection.rollback();
-      failures.push({
-        grnNumber: grn.grn_number ?? grn.id,
-        error: err.message ?? String(err),
-      });
-      console.error(
-        `  FAILED GRN ${grn.grn_number ?? grn.id}: ${err.message ?? err}`,
-      );
+      failures.push({ grnNumber: grn.grn_number ?? grn.id, error: err.message ?? String(err) });
+      console.error(`  FAILED GRN ${grn.grn_number ?? grn.id}: ${err.message ?? err}`);
     } finally {
       connection.release();
     }
@@ -134,9 +105,7 @@ async function backfillGrns(pool: mysql.Pool) {
 
   console.log(`\nGRN backfill: ${posted} posted, ${failures.length} failed.`);
   if (failures.length) {
-    console.log(
-      `Failures need manual attention (most likely EXPENSE_LEDGER_NOT_FOUND — run verify-head-subhead-ledger-coverage.ts):`,
-    );
+    console.log(`Failures need manual attention (most likely EXPENSE_LEDGER_NOT_FOUND — run verify-head-subhead-ledger-coverage.ts):`);
     for (const f of failures) console.log(`  ${f.grnNumber}: ${f.error}`);
   }
 }
@@ -148,17 +117,13 @@ async function backfillVouchers(pool: mysql.Pool) {
         AND NOT EXISTS (SELECT 1 FROM journal_entry je WHERE je.source_type = 'payment_voucher' AND je.source_id = v.id)`,
   );
 
-  console.log(
-    `\n=== Payment Voucher backfill: ${(vouchers as any[]).length} candidate(s) ===\n`,
-  );
+  console.log(`\n=== Payment Voucher backfill: ${(vouchers as any[]).length} candidate(s) ===\n`);
   let posted = 0;
-  const sharedAllocationWarnings: { voucherNumber: string; grnId: string }[] =
-    [];
+  const sharedAllocationWarnings: { voucherNumber: string; grnId: string }[] = [];
   const failures: { voucherNumber: string; error: string }[] = [];
 
   for (const v of vouchers as any[]) {
-    const lines: import("../src/modules/finance/journal.service.js").JournalLineInput[] =
-      [];
+    const lines: import("../src/modules/finance/journal.service.js").JournalLineInput[] = [];
 
     if (v.source_type === "vendor_grn") {
       const [allocRows] = await pool.query<any[]>(
@@ -171,10 +136,8 @@ async function backfillVouchers(pool: mysql.Pool) {
       );
       const allocations = (allocRows as any[]).length
         ? (allocRows as any[]).map((r) => ({
-            vendorId: r.vendor_id,
-            grnId: r.grn_request_id,
-            amount: Number(r.allocated_amount),
-            tds: Number(r.tds_deducted_amount ?? 0),
+            vendorId: r.vendor_id, grnId: r.grn_request_id,
+            amount: Number(r.allocated_amount), tds: Number(r.tds_deducted_amount ?? 0),
           }))
         : await (async () => {
             const [[vpt]] = await pool.query<any[]>(
@@ -182,14 +145,7 @@ async function backfillVouchers(pool: mysql.Pool) {
               [v.linked_vendor_payment_id],
             );
             return vpt
-              ? [
-                  {
-                    vendorId: (vpt as any).vendor_id,
-                    grnId: (vpt as any).grn_request_id,
-                    amount: Number(v.amount),
-                    tds: Number((vpt as any).tds_deducted_amount ?? 0),
-                  },
-                ]
+              ? [{ vendorId: (vpt as any).vendor_id, grnId: (vpt as any).grn_request_id, amount: Number(v.amount), tds: Number((vpt as any).tds_deducted_amount ?? 0) }]
               : [];
           })();
 
@@ -203,78 +159,44 @@ async function backfillVouchers(pool: mysql.Pool) {
             WHERE vendor_payment_tracking_id IN (SELECT id FROM vendor_payment_tracking WHERE grn_request_id = ?)`,
           [a.grnId],
         );
-        if (Number(n) > 1)
-          sharedAllocationWarnings.push({
-            voucherNumber: v.voucher_number ?? v.id,
-            grnId: a.grnId,
-          });
+        if (Number(n) > 1) sharedAllocationWarnings.push({ voucherNumber: v.voucher_number ?? v.id, grnId: a.grnId });
       }
 
       let tdsPayableAccountId: string | null = null;
       for (const a of allocations) {
         if (a.tds > 0 && tdsPayableAccountId === null) {
-          const [[row]] = await pool.query<any[]>(
-            `SELECT id FROM payable_account_master WHERE account_name = 'TDS Payable' LIMIT 1`,
-          );
+          const [[row]] = await pool.query<any[]>(`SELECT id FROM payable_account_master WHERE account_name = 'TDS Payable' LIMIT 1`);
           tdsPayableAccountId = row ? String((row as any).id) : "";
         }
         lines.push(
           ...vendorGrnLines({
-            vendorId: a.vendorId,
-            bankAccountId: v.bank_account_id,
-            netAmount: a.amount,
-            tdsAmount: a.tds,
+            vendorId: a.vendorId, bankAccountId: v.bank_account_id,
+            netAmount: a.amount, tdsAmount: a.tds,
             tdsPayableAccountId: a.tds > 0 ? tdsPayableAccountId : null,
           }),
         );
       }
     } else if (v.source_type === "vendor_advance") {
-      lines.push(
-        ...vendorAdvanceLines({
-          vendorId: v.linked_vendor_id,
-          bankAccountId: v.bank_account_id,
-          amount: Number(v.amount),
-        }),
-      );
+      lines.push(...vendorAdvanceLines({ vendorId: v.linked_vendor_id, bankAccountId: v.bank_account_id, amount: Number(v.amount) }));
     } else if (v.source_type === "imprest_allocation") {
-      lines.push(
-        ...imprestAllocationLines({
-          imprestFloatAccountId: v.payable_account_id,
-          bankAccountId: v.bank_account_id,
-          amount: Number(v.amount),
-        }),
-      );
+      lines.push(...imprestAllocationLines({ imprestFloatAccountId: v.payable_account_id, bankAccountId: v.bank_account_id, amount: Number(v.amount) }));
     } else if (v.source_type === "vendor_advance_application") {
       // No cash leg at all historically (Adjustment mode) and no persisted TDS figure to
       // reconstruct — genuinely nothing safe to backfill for this lane. Skipped, not failed.
       continue;
     } else {
-      lines.push(
-        ...generalLines({
-          payableAccountId: v.payable_account_id,
-          bankAccountId: v.bank_account_id,
-          amount: Number(v.amount),
-        }),
-      );
+      lines.push(...generalLines({ payableAccountId: v.payable_account_id, bankAccountId: v.bank_account_id, amount: Number(v.amount) }));
     }
 
     if (lines.length === 0) continue;
 
-    if (!APPLY) {
-      console.log(
-        `  [dry run] would post journal entry for voucher ${v.voucher_number ?? v.id} (${lines.length} lines)`,
-      );
-      continue;
-    }
+    if (!APPLY) { console.log(`  [dry run] would post journal entry for voucher ${v.voucher_number ?? v.id} (${lines.length} lines)`); continue; }
 
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
       await journalService.post(connection, {
-        entryDate:
-          v.payment_date ??
-          v.released_at ??
-          new Date().toISOString().slice(0, 10),
+        entryDate: v.payment_date ?? v.released_at ?? new Date().toISOString().slice(0, 10),
         narration: `Backfilled — Payment Voucher ${v.voucher_number ?? v.id} released (${v.source_type})`,
         sourceType: "payment_voucher",
         sourceId: v.id,
@@ -286,30 +208,18 @@ async function backfillVouchers(pool: mysql.Pool) {
       console.log(`  posted voucher ${v.voucher_number ?? v.id}`);
     } catch (err: any) {
       await connection.rollback();
-      failures.push({
-        voucherNumber: v.voucher_number ?? v.id,
-        error: err.message ?? String(err),
-      });
-      console.error(
-        `  FAILED voucher ${v.voucher_number ?? v.id}: ${err.message ?? err}`,
-      );
+      failures.push({ voucherNumber: v.voucher_number ?? v.id, error: err.message ?? String(err) });
+      console.error(`  FAILED voucher ${v.voucher_number ?? v.id}: ${err.message ?? err}`);
     } finally {
       connection.release();
     }
   }
 
-  console.log(
-    `\nPayment Voucher backfill: ${posted} posted, ${failures.length} failed.`,
-  );
+  console.log(`\nPayment Voucher backfill: ${posted} posted, ${failures.length} failed.`);
   if (sharedAllocationWarnings.length) {
-    console.log(
-      `\n${sharedAllocationWarnings.length} allocation(s) belong to a GRN that was also paid by ANOTHER voucher — TDS may be double-counted across them (see this script's header on why):`,
-    );
-    for (const w of sharedAllocationWarnings)
-      console.log(`  voucher ${w.voucherNumber}, GRN ${w.grnId}`);
-    console.log(
-      `Review these specifically — sum each affected GRN's TDS across every voucher that touched it and compare to vendor_payment_tracking.tds_deducted_amount; hand-correct with a reversing entry if it's actually double-counted.`,
-    );
+    console.log(`\n${sharedAllocationWarnings.length} allocation(s) belong to a GRN that was also paid by ANOTHER voucher — TDS may be double-counted across them (see this script's header on why):`);
+    for (const w of sharedAllocationWarnings) console.log(`  voucher ${w.voucherNumber}, GRN ${w.grnId}`);
+    console.log(`Review these specifically — sum each affected GRN's TDS across every voucher that touched it and compare to vendor_payment_tracking.tds_deducted_amount; hand-correct with a reversing entry if it's actually double-counted.`);
   }
   if (failures.length) {
     console.log(`\nFailures:`);
@@ -319,17 +229,12 @@ async function backfillVouchers(pool: mysql.Pool) {
 
 async function main() {
   if (!DO_GRN && !DO_VOUCHERS) {
-    console.log(
-      "Specify --grn and/or --vouchers. Add --apply to actually write (default is dry run).",
-    );
+    console.log("Specify --grn and/or --vouchers. Add --apply to actually write (default is dry run).");
     process.exit(1);
   }
   const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
     // Matches src/db/mysql.ts's own pool config. Without this, DATE/DATETIME columns come back
     // as JS Date objects in the driver's default (often UTC) interpretation — historicalEntryDate()
     // below would then silently shift any GRN approved before ~05:30 IST to the previous
@@ -338,17 +243,11 @@ async function main() {
     dateStrings: true,
   });
 
-  if (!APPLY)
-    console.log(
-      "DRY RUN — no writes will be made. Pass --apply to actually post.",
-    );
+  if (!APPLY) console.log("DRY RUN — no writes will be made. Pass --apply to actually post.");
   if (DO_GRN) await backfillGrns(pool);
   if (DO_VOUCHERS) await backfillVouchers(pool);
 
   await pool.end();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main().catch((err) => { console.error(err); process.exit(1); });

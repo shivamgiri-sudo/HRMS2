@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  parseDateTime,
-  cleanText,
-  BLA_BLI_BLU_AFTER_HOUR_HEADERS,
-} from "../bla-bli-blu-after-hour-bulk.service.js";
+import { parseDateTime, cleanText, BLA_BLI_BLU_AFTER_HOUR_HEADERS } from "../bla-bli-blu-after-hour-bulk.service.js";
 
 describe("parseDateTime", () => {
   it("reads the real plain-text sample", () => {

@@ -33,9 +33,8 @@ describe("worker single execution", () => {
 
   it("app.ts starts no schedulers at module scope", () => {
     // Module scope means column 1 — inside a function it would be indented.
-    const moduleScopeStarts = [
-      ...app.matchAll(/^(start[A-Za-z]*(?:Cron|Worker|Scheduler))\(/gm),
-    ].map((m) => m[1]);
+    const moduleScopeStarts = [...app.matchAll(/^(start[A-Za-z]*(?:Cron|Worker|Scheduler))\(/gm)]
+      .map((m) => m[1]);
 
     expect(
       moduleScopeStarts,
@@ -45,16 +44,11 @@ describe("worker single execution", () => {
   });
 
   it("no starter registered in all-workers.ts is also called unguarded in server.ts", () => {
-    const registered = [...workers.matchAll(/\b(start[A-Za-z]+)\b/g)].map(
-      (m) => m[1],
-    );
+    const registered = [...workers.matchAll(/\b(start[A-Za-z]+)\b/g)].map((m) => m[1]);
 
     // Everything before the WORKERS_EXTERNAL guard runs in the API unconditionally.
     const guardAt = server.indexOf("!WORKERS_EXTERNAL");
-    expect(
-      guardAt,
-      "server.ts no longer guards worker startup",
-    ).toBeGreaterThan(-1);
+    expect(guardAt, "server.ts no longer guards worker startup").toBeGreaterThan(-1);
     const beforeGuard = server.slice(0, guardAt);
 
     const doubled = [...new Set(registered)].filter((fn) =>
@@ -70,9 +64,7 @@ describe("worker single execution", () => {
 
   it("the two crons moved off app.ts are registered as workers", () => {
     for (const name of ["social-feed", "mcnmeet"]) {
-      expect(workers, `${name} missing from the WORKERS array`).toContain(
-        `name: "${name}"`,
-      );
+      expect(workers, `${name} missing from the WORKERS array`).toContain(`name: "${name}"`);
     }
   });
 });

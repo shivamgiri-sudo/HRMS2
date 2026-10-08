@@ -15,12 +15,8 @@ describe("ATS notification recipient schema", () => {
     // number failed on an intended change. What this test is actually for is the
     // three assertions below — that HR recipients come from the current role
     // table and not the retired user_role / role ones.
-    expect(
-      (helperSource.match(/JOIN user_roles ur/g) ?? []).length,
-    ).toBeGreaterThan(0);
-    expect(helperSource).toContain(
-      "ur.role_key IN ('hr', 'admin', 'super_admin')",
-    );
+    expect((helperSource.match(/JOIN user_roles ur/g) ?? []).length).toBeGreaterThan(0);
+    expect(helperSource).toContain("ur.role_key IN ('hr', 'admin', 'super_admin')");
     expect(helperSource).not.toContain("JOIN user_role ur");
     expect(helperSource).not.toContain("JOIN role r");
   });

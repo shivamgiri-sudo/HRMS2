@@ -31,9 +31,7 @@ export function startMcnmeetCron() {
       // Send 15-min reminders for upcoming meetings
       const reminderCount = await sendUpcomingMeetingReminders();
       if (reminderCount > 0) {
-        console.log(
-          `[mcnmeet-cron] Sent reminders for ${reminderCount} upcoming meeting(s)`,
-        );
+        console.log(`[mcnmeet-cron] Sent reminders for ${reminderCount} upcoming meeting(s)`);
       }
     } catch (err) {
       console.error("[mcnmeet-cron] status transition error:", err);
@@ -41,9 +39,8 @@ export function startMcnmeetCron() {
   }, INTERVAL_MS);
 
   // Don't keep process alive on shutdown
-  if (typeof initialDelay.unref === "function") initialDelay.unref();
-  if (intervalHandle && typeof intervalHandle.unref === "function")
-    intervalHandle.unref();
+  if (typeof initialDelay.unref === 'function') initialDelay.unref();
+  if (intervalHandle && typeof intervalHandle.unref === 'function') intervalHandle.unref();
 
   console.log("[mcnmeet-cron] Status transition cron started (every 5 min)");
 }
@@ -57,20 +54,18 @@ export function stopMcnmeetCron() {
 }
 
 async function transitionMeetingStatuses() {
-  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
   // Transition scheduled -> live (when start_at has passed)
   const [liveResult] = await db.execute<ResultSetHeader>(
     `UPDATE mcnmeet_meeting
      SET status = 'live', updated_at = NOW()
      WHERE status = 'scheduled' AND start_at <= ?`,
-    [now],
+    [now]
   );
 
   if (liveResult.affectedRows > 0) {
-    console.log(
-      `[mcnmeet-cron] Transitioned ${liveResult.affectedRows} meeting(s) to 'live'`,
-    );
+    console.log(`[mcnmeet-cron] Transitioned ${liveResult.affectedRows} meeting(s) to 'live'`);
   }
 
   // Transition live -> completed (when end_at has passed, or 3 hours after start if no end_at)
@@ -82,13 +77,11 @@ async function transitionMeetingStatuses() {
        (end_at IS NOT NULL AND end_at <= ?)
        OR (end_at IS NULL AND DATE_ADD(start_at, INTERVAL 3 HOUR) <= ?)
      )`,
-    [now, now],
+    [now, now]
   );
 
   if (completedResult.affectedRows > 0) {
-    console.log(
-      `[mcnmeet-cron] Transitioned ${completedResult.affectedRows} meeting(s) to 'completed'`,
-    );
+    console.log(`[mcnmeet-cron] Transitioned ${completedResult.affectedRows} meeting(s) to 'completed'`);
   }
 
   // Also mark meetings that were never started but their end time passed as completed
@@ -100,13 +93,11 @@ async function transitionMeetingStatuses() {
        (end_at IS NOT NULL AND end_at <= ?)
        OR (end_at IS NULL AND DATE_ADD(start_at, INTERVAL 3 HOUR) <= ?)
      )`,
-    [now, now],
+    [now, now]
   );
 
   if (missedResult.affectedRows > 0) {
-    console.log(
-      `[mcnmeet-cron] Marked ${missedResult.affectedRows} missed meeting(s) as 'completed'`,
-    );
+    console.log(`[mcnmeet-cron] Marked ${missedResult.affectedRows} missed meeting(s) as 'completed'`);
   }
 }
 

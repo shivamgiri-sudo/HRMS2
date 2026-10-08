@@ -1,15 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import { resolve } from "node:path";
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const modelDir = fs.mkdtempSync(resolve(os.tmpdir(), "hrms-face-lazy-"));
 const previousFaceModelsPath = process.env.FACE_MODELS_PATH;
@@ -75,25 +67,14 @@ const mockReady = mocks.ready as ReturnType<typeof vi.fn>;
 const mockMonkeyPatch = mocks.monkeyPatch as ReturnType<typeof vi.fn>;
 const mockLoadFromDisk = mocks.loadFromDisk as ReturnType<typeof vi.fn>;
 const mockDetectSingleFace = mocks.detectSingleFace as ReturnType<typeof vi.fn>;
-const mockEuclideanDistance = mocks.euclideanDistance as ReturnType<
-  typeof vi.fn
->;
+const mockEuclideanDistance = mocks.euclideanDistance as ReturnType<typeof vi.fn>;
 const mockLoadImage = mocks.loadImage as ReturnType<typeof vi.fn>;
 
 beforeAll(async () => {
   process.env.FACE_MODELS_PATH = modelDir;
-  fs.writeFileSync(
-    resolve(modelDir, "ssd_mobilenetv1_model-weights_manifest.json"),
-    "{}",
-  );
-  fs.writeFileSync(
-    resolve(modelDir, "face_landmark_68_model-weights_manifest.json"),
-    "{}",
-  );
-  fs.writeFileSync(
-    resolve(modelDir, "face_recognition_model-weights_manifest.json"),
-    "{}",
-  );
+  fs.writeFileSync(resolve(modelDir, "ssd_mobilenetv1_model-weights_manifest.json"), "{}");
+  fs.writeFileSync(resolve(modelDir, "face_landmark_68_model-weights_manifest.json"), "{}");
+  fs.writeFileSync(resolve(modelDir, "face_recognition_model-weights_manifest.json"), "{}");
 
   const faceModule = await import("../face-match.service.js");
   isModelAvailable = faceModule.isModelAvailable;
@@ -110,9 +91,7 @@ beforeEach(() => {
   mockLoadImage.mockResolvedValue({});
   mockDetectSingleFace.mockImplementation(() => ({
     withFaceLandmarks: () => ({
-      withFaceDescriptor: async () => ({
-        descriptor: new Float32Array([0.1, 0.2, 0.3]),
-      }),
+      withFaceDescriptor: async () => ({ descriptor: new Float32Array([0.1, 0.2, 0.3]) }),
     }),
   }));
 });

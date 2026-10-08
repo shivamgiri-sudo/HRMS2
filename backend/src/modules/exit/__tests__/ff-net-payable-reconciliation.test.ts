@@ -17,12 +17,9 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn() }));
 vi.mock("../exit.notifications.js", () => ({ notifyFullFinalReady: vi.fn() }));
-vi.mock("../../payroll/payrollCalculate.service.js", () => ({
-  calculateGratuity: vi.fn(),
-}));
+vi.mock("../../payroll/payrollCalculate.service.js", () => ({ calculateGratuity: vi.fn() }));
 
-const { ffService, ffComponentSum, FF_NET_TOLERANCE } =
-  await import("../ff.service.js");
+const { ffService, ffComponentSum, FF_NET_TOLERANCE } = await import("../ff.service.js");
 
 const BASE = {
   calculationDate: "2026-07-31",
@@ -46,20 +43,14 @@ describe("ffComponentSum", () => {
   });
 
   it("subtracts recoveries, so a large recovery can drive the settlement negative", () => {
-    expect(ffComponentSum({ salaryHold: 1000, noticeRecovery: 4000 })).toBe(
-      -3000,
-    );
+    expect(ffComponentSum({ salaryHold: 1000, noticeRecovery: 4000 })).toBe(-3000);
   });
 });
 
 describe("createFF rejects a net payable that disagrees with its components", () => {
   it("accepts a settlement whose net equals its components", async () => {
     await expect(
-      ffService.createFF(
-        "exit-1",
-        { ...BASE, netPayable: CORRECT_NET },
-        "user-1",
-      ),
+      ffService.createFF("exit-1", { ...BASE, netPayable: CORRECT_NET }, "user-1"),
     ).resolves.toBeDefined();
   });
 
@@ -79,19 +70,12 @@ describe("createFF rejects a net payable that disagrees with its components", ()
     // The realistic mistake — someone totals the payouts and forgets to subtract what is owed.
     const payoutsOnly = 12000 + 50000 + 8000;
     await expect(
-      ffService.createFF(
-        "exit-1",
-        { ...BASE, netPayable: payoutsOnly },
-        "user-1",
-      ),
+      ffService.createFF("exit-1", { ...BASE, netPayable: payoutsOnly }, "user-1"),
     ).rejects.toThrow(/notice recovery 15000\.00/);
   });
 
   it("rejects a settlement that omits net payable entirely while components are non-zero", async () => {
-    const { netPayable: _omitted, ...noNet } = {
-      ...BASE,
-      netPayable: undefined,
-    };
+    const { netPayable: _omitted, ...noNet } = { ...BASE, netPayable: undefined };
     await expect(ffService.createFF("exit-1", noNet, "user-1")).rejects.toThrow(
       /does not equal its own components/,
     );
@@ -99,25 +83,15 @@ describe("createFF rejects a net payable that disagrees with its components", ()
 
   it("tolerates only sub-paisa float drift, not a real discrepancy", async () => {
     await expect(
-      ffService.createFF(
-        "exit-1",
-        { ...BASE, netPayable: CORRECT_NET + FF_NET_TOLERANCE / 2 },
-        "user-1",
-      ),
+      ffService.createFF("exit-1", { ...BASE, netPayable: CORRECT_NET + FF_NET_TOLERANCE / 2 }, "user-1"),
     ).resolves.toBeDefined();
     await expect(
-      ffService.createFF(
-        "exit-1",
-        { ...BASE, netPayable: CORRECT_NET + 1 },
-        "user-1",
-      ),
+      ffService.createFF("exit-1", { ...BASE, netPayable: CORRECT_NET + 1 }, "user-1"),
     ).rejects.toThrow(/does not equal its own components/);
   });
 
   it("accepts an all-zero settlement, which is internally consistent", async () => {
-    await expect(
-      ffService.createFF("exit-1", { calculationDate: "2026-07-31" }, "user-1"),
-    ).resolves.toBeDefined();
+    await expect(ffService.createFF("exit-1", { calculationDate: "2026-07-31" }, "user-1")).resolves.toBeDefined();
   });
 
   it("names both figures in the error, so the preparer can see which side is wrong", async () => {

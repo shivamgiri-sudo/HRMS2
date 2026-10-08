@@ -87,10 +87,10 @@ export interface AttendanceRegularization {
   id: string;
   employee_id: string;
   session_date: string;
-  requested_status: "present" | "half_day" | "absent" | null;
+  requested_status: 'present' | 'half_day' | 'absent' | null;
   reason: string;
   reason_code: string | null;
-  requested_by_type: "employee" | "manager";
+  requested_by_type: 'employee' | 'manager';
   branch_id: string | null;
   supporting_note: string | null;
   status: string;
@@ -113,10 +113,5 @@ export interface PaginatedResult<T> {
   limit: number;
 }
 
-export interface ShiftListFilters {
-  activeStatus?: "active" | "inactive" | "all";
-}
-export interface RegularizationListFilters {
-  employeeId?: string;
-  status?: string;
-}
+export interface ShiftListFilters { activeStatus?: "active" | "inactive" | "all"; }
+export interface RegularizationListFilters { employeeId?: string; status?: string; }

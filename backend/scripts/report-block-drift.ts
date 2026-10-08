@@ -17,28 +17,17 @@
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  columnRefsIn,
-  brokenRefs,
-} from "../src/db/__tests__/schema-column-refs.js";
+import { columnRefsIn, brokenRefs } from "../src/db/__tests__/schema-column-refs.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(HERE, "..", "src");
-const suite = readFileSync(
-  resolve(SRC, "modules/reporting/report-suite.routes.ts"),
-  "utf8",
-);
-const catalog = readFileSync(
-  resolve(SRC, "modules/reporting/report-catalog.ts"),
-  "utf8",
-);
+const suite = readFileSync(resolve(SRC, "modules/reporting/report-suite.routes.ts"), "utf8");
+const catalog = readFileSync(resolve(SRC, "modules/reporting/report-catalog.ts"), "utf8");
 const schema = JSON.parse(
   readFileSync(resolve(HERE, "..", "sql", "schema-snapshot.json"), "utf8"),
 ) as { tables: Record<string, string[]> };
 
-const catalogued = new Set(
-  [...catalog.matchAll(/code:\s*"([a-z0-9-]+)"/g)].map((m) => m[1]),
-);
+const catalogued = new Set([...catalog.matchAll(/code:\s*"([a-z0-9-]+)"/g)].map((m) => m[1]));
 
 // Slice the switch into one source block per case label, so the extractor sees each
 // report's SQL in isolation and an alias cannot leak across reports.
@@ -61,12 +50,8 @@ for (let i = 0; i < marks.length; i++) {
 }
 
 console.log(`case blocks: ${marks.length}, catalogued: ${catalogued.size}\n`);
-console.log(
-  `REACHABLE blocks with broken refs — these are live defects (${reachable.length}):`,
-);
+console.log(`REACHABLE blocks with broken refs — these are live defects (${reachable.length}):`);
 for (const l of reachable) console.log(`  ! ${l}`);
 if (reachable.length === 0) console.log("  none");
-console.log(
-  `\nUNREACHABLE blocks with broken refs — 404 before the SQL runs (${dead.length}):`,
-);
+console.log(`\nUNREACHABLE blocks with broken refs — 404 before the SQL runs (${dead.length}):`);
 for (const l of dead) console.log(`  - ${l}`);

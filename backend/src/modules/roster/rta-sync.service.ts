@@ -41,41 +41,27 @@ export const rtaSyncService = {
     cycleId: string,
     syncType: "initial_publish" | "rerun" | "manual_resync",
     syncedBy: string,
-    req?: Request,
+    req?: Request
   ): Promise<RtaSyncResult> {
     // Load cycle
     const [cycleRows] = await db.execute<CycleRow[]>(
       "SELECT * FROM weekly_roster_cycle WHERE id = ? LIMIT 1",
-      [cycleId],
+      [cycleId]
     );
     const cycle = cycleRows[0];
-    if (!cycle)
-      throw Object.assign(new Error("Cycle not found"), { statusCode: 404 });
+    if (!cycle) throw Object.assign(new Error("Cycle not found"), { statusCode: 404 });
 
     // Only allow sync for published/acknowledged/active+ cycles
-    const syncableStatuses = [
-      "published",
-      "acknowledged",
-      "active",
-      "variance_review",
-      "attendance_locked",
-      "payroll_input_ready",
-      "closed",
-    ];
+    const syncableStatuses = ["published", "acknowledged", "active", "variance_review", "attendance_locked", "payroll_input_ready", "closed"];
     if (!syncableStatuses.includes(cycle.status)) {
-      throw Object.assign(
-        new Error(
-          `Cycle must be published before syncing to RTA (current: ${cycle.status})`,
-        ),
-        { statusCode: 409 },
-      );
+      throw Object.assign(new Error(`Cycle must be published before syncing to RTA (current: ${cycle.status})`), { statusCode: 409 });
     }
 
     const syncLogId = randomUUID();
     await db.execute(
       `INSERT INTO rta_roster_sync_log (id, cycle_id, sync_type, sync_status, synced_by)
        VALUES (?, ?, ?, 'running', ?)`,
-      [syncLogId, cycleId, syncType, syncedBy],
+      [syncLogId, cycleId, syncType, syncedBy]
     );
 
     const result: RtaSyncResult = {
@@ -102,7 +88,7 @@ export const rtaSyncService = {
          LEFT JOIN wfm_shift_template wst ON wst.id = rda.shift_template_id
          WHERE rda.cycle_id = ?
          ORDER BY rda.roster_date ASC, rda.employee_id ASC`,
-        [cycleId],
+        [cycleId]
       );
 
       for (const row of assignments) {
@@ -110,9 +96,7 @@ export const rtaSyncService = {
           await upsertReconciliationRecord(row, cycleId, result);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          result.errors.push(
-            `emp:${row.employee_id} date:${row.roster_date} — ${msg}`,
-          );
+          result.errors.push(`emp:${row.employee_id} date:${row.roster_date} — ${msg}`);
         }
       }
 
@@ -123,14 +107,13 @@ export const rtaSyncService = {
            records_updated = ?,
            completed_at = NOW()
          WHERE id = ?`,
-        [result.records_synced, result.records_updated, syncLogId],
+        [result.records_synced, result.records_updated, syncLogId]
       );
     } catch (fatalErr) {
-      const msg =
-        fatalErr instanceof Error ? fatalErr.message : String(fatalErr);
+      const msg = fatalErr instanceof Error ? fatalErr.message : String(fatalErr);
       await db.execute(
         "UPDATE rta_roster_sync_log SET sync_status = 'failed', error_details = ?, completed_at = NOW() WHERE id = ?",
-        [JSON.stringify([msg]), syncLogId],
+        [JSON.stringify([msg]), syncLogId]
       );
       throw fatalErr;
     }
@@ -156,7 +139,7 @@ export const rtaSyncService = {
   async getSyncLogs(cycleId: string): Promise<RowDataPacket[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM rta_roster_sync_log WHERE cycle_id = ? ORDER BY started_at DESC",
-      [cycleId],
+      [cycleId]
     );
     return rows;
   },
@@ -167,7 +150,7 @@ export const rtaSyncService = {
 async function upsertReconciliationRecord(
   row: DailyAssignmentRow,
   cycleId: string,
-  result: RtaSyncResult,
+  result: RtaSyncResult
 ): Promise<void> {
   // Determine attendance_status seed value
   let seedStatus: string;
@@ -205,7 +188,7 @@ async function upsertReconciliationRecord(
       plannedEnd,
       row.productive_minutes ?? null,
       seedStatus,
-    ],
+    ]
   );
 
   result.records_synced++;

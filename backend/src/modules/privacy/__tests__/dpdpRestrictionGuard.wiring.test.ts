@@ -27,18 +27,12 @@ const RESTRICTED = "11111111-2222-3333-4444-555555555555";
 function app() {
   const a = express();
   a.use("/api/employees/:employeeId", checkDpdpRestriction);
-  a.get("/api/employees/:employeeId", (_req, res) => {
-    res.json({ success: true, reached: true });
-  });
-  a.get("/api/employees/:employeeId/joining-documents", (_req, res) => {
-    res.json({ success: true, reached: true });
-  });
+  a.get("/api/employees/:employeeId", (_req, res) => { res.json({ success: true, reached: true }); });
+  a.get("/api/employees/:employeeId/joining-documents", (_req, res) => { res.json({ success: true, reached: true }); });
   return a;
 }
 
-beforeEach(() => {
-  execute.mockReset();
-});
+beforeEach(() => { execute.mockReset(); });
 
 describe("checkDpdpRestriction", () => {
   it("blocks a read for an employee under an approved restriction order", async () => {
@@ -50,9 +44,7 @@ describe("checkDpdpRestriction", () => {
 
   it("blocks the nested document routes under the same prefix", async () => {
     execute.mockResolvedValue([[{ id: "withdrawal-1" }]]);
-    const res = await request(app()).get(
-      `/api/employees/${RESTRICTED}/joining-documents`,
-    );
+    const res = await request(app()).get(`/api/employees/${RESTRICTED}/joining-documents`);
     expect(res.status).toBe(403);
   });
 

@@ -34,12 +34,8 @@ describe("recruiter notification for a META lead that registered", () => {
       path.join(backendRoot, "src/modules/ats/registration.enhanced.routes.ts"),
       "utf8",
     );
-    expect(src).toContain(
-      "SELECT 1 FROM meta_lead_raw WHERE ats_candidate_id = ?",
-    );
-    expect(src).toContain(
-      "recruiterEmail && recruiterDetails && (input.email || isMetaLead)",
-    );
+    expect(src).toContain("SELECT 1 FROM meta_lead_raw WHERE ats_candidate_id = ?");
+    expect(src).toContain("recruiterEmail && recruiterDetails && (input.email || isMetaLead)");
     expect(src).toContain("metaLead: isMetaLead");
   });
 });

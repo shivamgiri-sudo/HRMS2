@@ -1,15 +1,14 @@
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
-import { inboxService } from "../inbox/inbox.service.js";
-import { emailService } from "../communication/email.service.js";
-import { getConfiguredRecipients } from "./notification-recipients.service.js";
-import { logSensitiveAction } from "../../shared/auditLog.js";
-import { env } from "../../config/env.js";
-import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
-import { notificationGateway } from "../communication/notification.gateway.js";
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { inboxService } from '../inbox/inbox.service.js';
+import { emailService } from '../communication/email.service.js';
+import { getConfiguredRecipients } from './notification-recipients.service.js';
+import { logSensitiveAction } from '../../shared/auditLog.js';
+import { env } from '../../config/env.js';
+import { nonReactivatableSqlList } from '../exit/exitEmploymentStatus.js';
+import { notificationGateway } from '../communication/notification.gateway.js';
 
-const OFFICIAL_EMAIL_REGEX =
-  /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/;
+const OFFICIAL_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/;
 export { OFFICIAL_EMAIL_REGEX };
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -29,33 +28,17 @@ interface ProvisioningTask {
   taskCode: string;
   assignedRole: string;
   actionUrl: string;
-  titleFn: (
-    name: string,
-    code: string,
-    lwd?: string | null,
-    info?: JoinTaskInfo,
-  ) => string;
-  descFn: (
-    name: string,
-    code: string,
-    lwd?: string | null,
-    info?: JoinTaskInfo,
-  ) => string;
+  titleFn: (name: string, code: string, lwd?: string | null, info?: JoinTaskInfo) => string;
+  descFn: (name: string, code: string, lwd?: string | null, info?: JoinTaskInfo) => string;
 }
 
 function frontendUrl(path: string) {
-  const base = String(
-    env.FRONTEND_URL || process.env.APP_URL || "http://localhost:5173",
-  ).replace(/\/+$/, "");
-  const suffix = path.startsWith("/") ? path : `/${path}`;
+  const base = String(env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  const suffix = path.startsWith('/') ? path : `/${path}`;
   return `${base}${suffix}`;
 }
 
-function provisioningEmailHtml(
-  title: string,
-  description: string,
-  actionUrl: string,
-) {
+function provisioningEmailHtml(title: string, description: string, actionUrl: string) {
   return `
   <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
     <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
@@ -82,10 +65,7 @@ function provisioningEmailHtml(
 
 // ── User lookup helpers ────────────────────────────────────────────────────────
 
-async function getUsersForBranchRole(
-  roleKey: string,
-  branchId: string,
-): Promise<ResolvedUser[]> {
+async function getUsersForBranchRole(roleKey: string, branchId: string): Promise<ResolvedUser[]> {
   // Joined on uas.user_id, not uas.manager_employee_id.
   //
   // manager_employee_id is NULL on every row in this table — the SPOC is
@@ -115,10 +95,7 @@ async function getUsersForBranchRole(
        AND COALESCE(au.is_blocked, 0) = 0`,
     [roleKey, branchId],
   );
-  return (rows as any[]).map((r) => ({
-    userId: r.userId,
-    email: r.email ?? null,
-  }));
+  return (rows as any[]).map((r) => ({ userId: r.userId, email: r.email ?? null }));
 }
 
 async function getUsersForGlobalRole(roleKey: string): Promise<ResolvedUser[]> {
@@ -137,10 +114,7 @@ async function getUsersForGlobalRole(roleKey: string): Promise<ResolvedUser[]> {
        AND (e.id IS NULL OR e.active_status = 1)`,
     [roleKey],
   );
-  return (rows as any[]).map((r) => ({
-    userId: r.userId,
-    email: r.email ?? null,
-  }));
+  return (rows as any[]).map((r) => ({ userId: r.userId, email: r.email ?? null }));
 }
 
 /**
@@ -151,18 +125,16 @@ async function getUsersForGlobalRole(roleKey: string): Promise<ResolvedUser[]> {
  */
 async function reportingManagersOf(userIds: string[]): Promise<string[]> {
   if (userIds.length === 0) return [];
-  const ph = userIds.map(() => "?").join(",");
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT DISTINCT mgr_au.email
+  const ph = userIds.map(() => '?').join(',');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT mgr_au.email
        FROM employees e
        JOIN employees mgr ON mgr.id = e.reporting_manager_id AND mgr.active_status = 1
        JOIN auth_user mgr_au ON mgr_au.id = mgr.user_id
       WHERE e.user_id IN (${ph}) AND e.active_status = 1
         AND mgr_au.email IS NOT NULL`,
-      userIds,
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    userIds,
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   return (rows as RowDataPacket[]).map((r) => String(r.email)).filter(Boolean);
 }
 
@@ -174,14 +146,13 @@ async function reportingManagersOf(userIds: string[]): Promise<string[]> {
  */
 async function branchHrEmails(branchId: string | null): Promise<string[]> {
   if (!branchId) return [];
-  const [scoped] = await db
-    .execute<RowDataPacket[]>(
-      // user_id, for the same reason as above — manager_employee_id is NULL on
-      // every row, so this would have found no branch HR either.
-      // Owner directive (2026-09-16): never email an employee who is not active in the
-      // system — the employees join (LEFT, so a role holder with no employee record is not
-      // dropped) closes the same "role grant active, person has left" gap as above.
-      `SELECT DISTINCT au.email
+  const [scoped] = await db.execute<RowDataPacket[]>(
+    // user_id, for the same reason as above — manager_employee_id is NULL on
+    // every row, so this would have found no branch HR either.
+    // Owner directive (2026-09-16): never email an employee who is not active in the
+    // system — the employees join (LEFT, so a role holder with no employee record is not
+    // dropped) closes the same "role grant active, person has left" gap as above.
+    `SELECT DISTINCT au.email
        FROM user_assignment_scope uas
        JOIN auth_user au ON au.id = uas.user_id
        LEFT JOIN employees e ON e.user_id = au.id
@@ -189,42 +160,31 @@ async function branchHrEmails(branchId: string | null): Promise<string[]> {
         AND uas.active_status = 1 AND au.email IS NOT NULL
         AND COALESCE(au.is_blocked, 0) = 0
         AND (e.id IS NULL OR e.active_status = 1)`,
-      [branchId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    [branchId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const emails = (scoped as RowDataPacket[]).map((r) => String(r.email));
   if (emails.length > 0) return emails;
 
-  const [bm] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT hr_contact FROM branch_master WHERE id = ? LIMIT 1`,
-      [branchId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
-  const contact = String(bm[0]?.hr_contact ?? "").trim();
-  return contact.includes("@") ? [contact] : [];
+  const [bm] = await db.execute<RowDataPacket[]>(
+    `SELECT hr_contact FROM branch_master WHERE id = ? LIMIT 1`, [branchId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const contact = String(bm[0]?.hr_contact ?? '').trim();
+  return contact.includes('@') ? [contact] : [];
 }
 
 /** The branch head, used when no SPOC is scoped to the branch. */
-async function branchHeadUsers(
-  branchId: string | null,
-): Promise<ResolvedUser[]> {
+async function branchHeadUsers(branchId: string | null): Promise<ResolvedUser[]> {
   if (!branchId) return [];
-  const [rows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT DISTINCT e.user_id AS userId, au.email
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT e.user_id AS userId, au.email
        FROM branch_head_assignments bha
        JOIN branch_master b ON b.branch_name = bha.branch_name OR b.id = bha.branch_head_id
        JOIN employees e ON e.id = bha.branch_head_id AND e.active_status = 1
        JOIN auth_user au ON au.id = e.user_id
       WHERE b.id = ? AND bha.is_active = TRUE AND e.user_id IS NOT NULL`,
-      [branchId],
-    )
-    .catch(() => [[]] as unknown as [RowDataPacket[]]);
-  return (rows as RowDataPacket[]).map((r) => ({
-    userId: String(r.userId),
-    email: (r.email as string) ?? null,
-  }));
+    [branchId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  return (rows as RowDataPacket[]).map((r) => ({ userId: String(r.userId), email: (r.email as string) ?? null }));
 }
 
 export type TaskRecipients = {
@@ -233,7 +193,7 @@ export type TaskRecipients = {
   /** No SPOC is scoped to this branch — the task needs assigning. */
   unassigned: boolean;
   /** How `to` was arrived at, for the log and the audit trail. */
-  basis: "configured" | "branch_spoc" | "branch_head_escalation" | "none";
+  basis: 'configured' | 'branch_spoc' | 'branch_head_escalation' | 'none';
 };
 
 /**
@@ -256,27 +216,22 @@ async function resolveTaskRecipients(
     const configured = await getConfiguredRecipients(branchId, eventCode);
     if (configured) {
       return {
-        to: configured.to.map((r) => ({
-          userId: r.userId ?? "",
-          email: r.email,
-        })),
+        to: configured.to.map((r) => ({ userId: r.userId ?? '', email: r.email })),
         cc: configured.cc,
         unassigned: false,
-        basis: "configured",
+        basis: 'configured',
       };
     }
   }
 
-  const scoped = branchId
-    ? await getUsersForBranchRole(assignedRole, branchId)
-    : [];
+  const scoped = branchId ? await getUsersForBranchRole(assignedRole, branchId) : [];
 
   if (scoped.length > 0) {
     const cc = [
       ...(await reportingManagersOf(scoped.map((u) => u.userId))),
       ...(await branchHrEmails(branchId)),
     ];
-    return { to: scoped, cc, unassigned: false, basis: "branch_spoc" };
+    return { to: scoped, cc, unassigned: false, basis: 'branch_spoc' };
   }
 
   // No SPOC for this branch. Tell whoever owns the branch, and leave the task
@@ -287,17 +242,14 @@ async function resolveTaskRecipients(
       to: head,
       cc: await branchHrEmails(branchId),
       unassigned: true,
-      basis: "branch_head_escalation",
+      basis: 'branch_head_escalation',
     };
   }
-  return { to: [], cc: [], unassigned: true, basis: "none" };
+  return { to: [], cc: [], unassigned: true, basis: 'none' };
 }
 
 /** Kept for callers that still want the raw list. */
-async function resolveUsers(
-  assignedRole: string,
-  branchId: string | null,
-): Promise<ResolvedUser[]> {
+async function resolveUsers(assignedRole: string, branchId: string | null): Promise<ResolvedUser[]> {
   return (await resolveTaskRecipients(assignedRole, branchId)).to;
 }
 
@@ -314,13 +266,12 @@ async function dispatchNotifications(
 ): Promise<void> {
   // The SPOC's reporting manager and branch HR are copied so the people who
   // chase the task can see it was raised, without being asked to action it.
-  const ccList = [...new Set(cc.filter((e) => e && e.includes("@")))].filter(
-    (e) => !users.some((u) => u.email === e),
-  );
+  const ccList = [...new Set(cc.filter((e) => e && e.includes('@')))]
+    .filter((e) => !users.some((u) => u.email === e));
   // Deduplicate email recipients — one user with multiple roles should get only one email per task
   const emailsSent = new Set<string>();
 
-  console.log("[dispatchNotifications] Dispatching notifications:", {
+  console.log('[dispatchNotifications] Dispatching notifications:', {
     usersCount: users.length,
     type,
     entityId,
@@ -346,17 +297,14 @@ async function dispatchNotifications(
             type,
             title,
             description,
-            entity_type: "it_provisioning_request",
+            entity_type: 'it_provisioning_request',
             entity_id: entityId,
             action_url: actionUrl,
-            priority: "high",
+            priority: 'high',
           });
-          console.log("[dispatchNotifications] Inbox item created:", {
-            userId: user.userId,
-            entityId,
-          });
+          console.log('[dispatchNotifications] Inbox item created:', { userId: user.userId, entityId });
         } catch (err: unknown) {
-          console.error("[dispatchNotifications] inbox create failed:", {
+          console.error('[dispatchNotifications] inbox create failed:', {
             userId: user.userId,
             error: err instanceof Error ? err.message : String(err),
           });
@@ -368,30 +316,27 @@ async function dispatchNotifications(
         try {
           await emailService.send({
             to: user.email!,
-            ...(ccList.length ? { cc: ccList.join(", ") } : {}),
+            ...(ccList.length ? { cc: ccList.join(', ') } : {}),
             subject: title,
             html: provisioningEmailHtml(title, description, fullActionUrl),
             text: `${title}\n\n${description}\n\nOpen task in HRMS: ${fullActionUrl}`,
           });
-          console.log("[dispatchNotifications] Email sent:", {
-            to: user.email,
-            subject: title,
-          });
+          console.log('[dispatchNotifications] Email sent:', { to: user.email, subject: title });
         } catch (err: unknown) {
-          console.error("[dispatchNotifications] email send failed:", {
+          console.error('[dispatchNotifications] email send failed:', {
             to: user.email,
             error: err instanceof Error ? err.message : String(err),
           });
         }
       }
-    }),
+    })
   );
 
   // Keep the set in sync for the summary log below
   emailsSent.clear();
   seenEmails.forEach((e) => emailsSent.add(e));
 
-  console.log("[dispatchNotifications] Notifications dispatched:", {
+  console.log('[dispatchNotifications] Notifications dispatched:', {
     inboxItems: users.length,
     emailsSent: emailsSent.size,
   });
@@ -401,7 +346,7 @@ async function dispatchNotifications(
 
 async function createRequest(params: {
   employeeId: string;
-  requestType: "join" | "exit";
+  requestType: 'join' | 'exit';
   taskCode: string;
   assignedRole: string;
   assignedUserId?: string | null;
@@ -452,7 +397,7 @@ async function createRequest(params: {
       // because the UI renders an "Unassigned" badge and gates its reassign
       // action on exactly this status, and the list endpoint does not expose
       // assignment_exception for it to use instead.
-      params.assignmentException ? "pending_unassigned" : "pending",
+      params.assignmentException ? 'pending_unassigned' : 'pending',
       params.assignmentException ? 1 : 0,
       slaDeadline,
     ],
@@ -470,9 +415,9 @@ async function createRequest(params: {
 
   await logSensitiveAction({
     actor_user_id: params.actorUserId,
-    action_type: "it_provisioning_task_created",
-    module_key: "it_provisioning",
-    entity_type: "it_provisioning_request",
+    action_type: 'it_provisioning_task_created',
+    module_key: 'it_provisioning',
+    entity_type: 'it_provisioning_request',
     entity_id: newId,
     change_summary: {
       employee_id: params.employeeId,
@@ -490,29 +435,26 @@ async function createRequest(params: {
 
 export const JOIN_TASKS: ProvisioningTask[] = [
   {
-    taskCode: "WFM_PROCESS_ALIGNMENT",
-    assignedRole: "wfm",
-    actionUrl: "/provisioning/wfm-alignment",
-    titleFn: (name, code) =>
-      `WFM Action: Align process roster for ${name} [${code}]`,
+    taskCode: 'WFM_PROCESS_ALIGNMENT',
+    assignedRole: 'wfm',
+    actionUrl: '/provisioning/wfm-alignment',
+    titleFn: (name, code) => `WFM Action: Align process roster for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please align process, roster eligibility, shift rules, and attendance planning in WFM.`,
   },
   {
-    taskCode: "IT_EMAIL_DOMAIN_ASSET",
-    assignedRole: "it",
-    actionUrl: "/provisioning/it",
-    titleFn: (name, code) =>
-      `IT Action: Create domain account + official email for ${name} [${code}]`,
+    taskCode: 'IT_EMAIL_DOMAIN_ASSET',
+    assignedRole: 'it',
+    actionUrl: '/provisioning/it',
+    titleFn: (name, code) => `IT Action: Create domain account + official email for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please create their domain account, official email ID (@teammas.in / @teammas.co.in), and asset assignment in the HRMS portal.`,
   },
   {
-    taskCode: "ADMIN_BIOMETRIC_ID_CARD",
-    assignedRole: "admin",
-    actionUrl: "/provisioning/admin",
-    titleFn: (name, code) =>
-      `Admin Action: Biometric and ID card for ${name} [${code}]`,
+    taskCode: 'ADMIN_BIOMETRIC_ID_CARD',
+    assignedRole: 'admin',
+    actionUrl: '/provisioning/admin',
+    titleFn: (name, code) => `Admin Action: Biometric and ID card for ${name} [${code}]`,
     descFn: (name, code, _lwd, info) => {
       const details = [
         `Employee Name: ${name}`,
@@ -520,25 +462,22 @@ export const JOIN_TASKS: ProvisioningTask[] = [
         info?.doj ? `DOJ: ${info.doj}` : null,
         info?.branchName ? `Branch: ${info.branchName}` : null,
         info?.processName ? `Process/Department: ${info.processName}` : null,
-      ]
-        .filter(Boolean)
-        .join(" | ");
+      ].filter(Boolean).join(' | ');
       return `New employee ${name} (${code}) has an employee code. Please enroll biometric attendance and issue the employee ID card.\n\n${details}`;
     },
   },
   {
-    taskCode: "APPOINTMENT_LETTER_ESIGN",
-    assignedRole: "hr",
-    actionUrl: "/provisioning/appointment-letter",
-    titleFn: (name, code) =>
-      `HR Action: Appointment letter e-sign for ${name} [${code}]`,
+    taskCode: 'APPOINTMENT_LETTER_ESIGN',
+    assignedRole: 'hr',
+    actionUrl: '/provisioning/appointment-letter',
+    titleFn: (name, code) => `HR Action: Appointment letter e-sign for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please generate the appointment letter and complete e-sign tracking.`,
   },
   {
-    taskCode: "HR_BGV_INITIATION",
-    assignedRole: "hr",
-    actionUrl: "/provisioning/hr-bgv",
+    taskCode: 'HR_BGV_INITIATION',
+    assignedRole: 'hr',
+    actionUrl: '/provisioning/hr-bgv',
     titleFn: (name, code) => `HR Action: BGV initiation for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please initiate background verification with the vendor and record the outcome (Red/Green) once received. This is separate from the candidate's own DigiLocker submission.`,
@@ -554,36 +493,21 @@ export async function dispatchJoinProvisioningTasks(params: {
   triggerEventId?: string | null;
   joiningDate?: string | null; // For 24h SLA calculation
 }): Promise<void> {
-  const {
+  const { employeeId, employeeCode, employeeName, branchId, actorUserId, triggerEventId, joiningDate } = params;
+
+  console.log('[dispatchJoinProvisioningTasks] Starting join provisioning dispatch:', {
     employeeId,
     employeeCode,
     employeeName,
     branchId,
-    actorUserId,
-    triggerEventId,
     joiningDate,
-  } = params;
-
-  console.log(
-    "[dispatchJoinProvisioningTasks] Starting join provisioning dispatch:",
-    {
-      employeeId,
-      employeeCode,
-      employeeName,
-      branchId,
-      joiningDate,
-      tasksCount: JOIN_TASKS.length,
-    },
-  );
+    tasksCount: JOIN_TASKS.length,
+  });
 
   // Branch/process names and DOJ for the biometric-creation admin notification
   // (ADMIN_BIOMETRIC_ID_CARD). Best-effort: a lookup failure must not abort the
   // whole provisioning dispatch, so tasks fall back to name/code-only text.
-  let taskInfo: JoinTaskInfo = {
-    doj: joiningDate ?? null,
-    branchName: null,
-    processName: null,
-  };
+  let taskInfo: JoinTaskInfo = { doj: joiningDate ?? null, branchName: null, processName: null };
   try {
     const [[infoRow]] = await db.execute<RowDataPacket[]>(
       `SELECT b.branch_name, p.process_name, e.date_of_joining
@@ -595,47 +519,33 @@ export async function dispatchJoinProvisioningTasks(params: {
     );
     if (infoRow) {
       taskInfo = {
-        doj: infoRow.date_of_joining
-          ? String(infoRow.date_of_joining).slice(0, 10)
-          : (joiningDate ?? null),
+        doj: infoRow.date_of_joining ? String(infoRow.date_of_joining).slice(0, 10) : (joiningDate ?? null),
         branchName: infoRow.branch_name ?? null,
         processName: infoRow.process_name ?? null,
       };
     }
   } catch (err) {
-    console.warn(
-      "[dispatchJoinProvisioningTasks] Non-fatal: failed to resolve branch/process for task notifications:",
-      err,
-    );
+    console.warn('[dispatchJoinProvisioningTasks] Non-fatal: failed to resolve branch/process for task notifications:', err);
   }
 
   for (const task of JOIN_TASKS) {
-    const recipients = await resolveTaskRecipients(
-      task.assignedRole,
-      branchId,
-      task.taskCode,
-    );
+    const recipients = await resolveTaskRecipients(task.assignedRole, branchId, task.taskCode);
     const users = recipients.to;
 
-    console.log(
-      `[dispatchJoinProvisioningTasks] Resolved recipients for role ${task.assignedRole}:`,
-      {
-        role: task.assignedRole,
-        branchId,
-        basis: recipients.basis,
-        to: users.map((u) => u.email),
-        cc: recipients.cc,
-      },
-    );
+    console.log(`[dispatchJoinProvisioningTasks] Resolved recipients for role ${task.assignedRole}:`, {
+      role: task.assignedRole,
+      branchId,
+      basis: recipients.basis,
+      to: users.map(u => u.email),
+      cc: recipients.cc,
+    });
 
     // CHANGED: Create unassigned task instead of skipping
     // This ensures all mandatory tasks are visible for admin reassignment
     const isUnassigned = users.length === 0 || recipients.unassigned;
 
     if (isUnassigned) {
-      console.error(
-        `[dispatchJoinProvisioningTasks] No users found for role ${task.assignedRole} - creating unassigned task for ${task.taskCode}`,
-      );
+      console.error(`[dispatchJoinProvisioningTasks] No users found for role ${task.assignedRole} - creating unassigned task for ${task.taskCode}`);
     }
 
     const title = task.titleFn(employeeName, employeeCode, null, taskInfo);
@@ -643,7 +553,7 @@ export async function dispatchJoinProvisioningTasks(params: {
 
     const requestId = await createRequest({
       employeeId,
-      requestType: "join",
+      requestType: 'join',
       taskCode: task.taskCode,
       assignedRole: task.assignedRole,
       assignedUserId: isUnassigned ? null : (users[0]?.userId ?? null),
@@ -653,43 +563,29 @@ export async function dispatchJoinProvisioningTasks(params: {
       joiningDate: joiningDate ?? null, // For 24h SLA deadline calculation
     });
 
-    console.log(
-      "[dispatchJoinProvisioningTasks] Created provisioning request:",
-      {
-        requestId,
-        taskCode: task.taskCode,
-        role: task.assignedRole,
-        assignedTo: isUnassigned ? "UNASSIGNED" : users[0]?.userId,
-        assignmentException: isUnassigned,
-      },
-    );
+    console.log('[dispatchJoinProvisioningTasks] Created provisioning request:', {
+      requestId,
+      taskCode: task.taskCode,
+      role: task.assignedRole,
+      assignedTo: isUnassigned ? 'UNASSIGNED' : users[0]?.userId,
+      assignmentException: isUnassigned,
+    });
 
     // Notify whenever there is someone to tell. Gating on !isUnassigned would
     // silence the branch-head escalation, which is precisely the case where a
     // human most needs to hear that a task has no owner.
     if (users.length > 0) {
       await dispatchNotifications(
-        users,
-        "it_provisioning",
-        title,
-        desc,
-        requestId,
-        task.actionUrl,
-        recipients.cc,
+        users, 'it_provisioning', title, desc, requestId, task.actionUrl, recipients.cc,
       );
     }
 
-    console.log(
-      `[dispatchJoinProvisioningTasks] Dispatched notifications for ${task.taskCode}:`,
-      {
-        notificationsSent: users.length,
-      },
-    );
+    console.log(`[dispatchJoinProvisioningTasks] Dispatched notifications for ${task.taskCode}:`, {
+      notificationsSent: users.length,
+    });
   }
 
-  console.log(
-    `[dispatchJoinProvisioningTasks] Completed provisioning dispatch for ${employeeCode}`,
-  );
+  console.log(`[dispatchJoinProvisioningTasks] Completed provisioning dispatch for ${employeeCode}`);
 
   // Notify employee to upload their profile photo if missing (required for ID card)
   try {
@@ -701,7 +597,7 @@ export async function dispatchJoinProvisioningTasks(params: {
          LEFT JOIN process_master pm ON pm.id = e.process_id
          LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
         WHERE e.id = ? LIMIT 1`,
-      [employeeId],
+      [employeeId]
     );
     const emp = (empRows as any[])[0];
     if (emp && !emp.photo_url) {
@@ -709,21 +605,18 @@ export async function dispatchJoinProvisioningTasks(params: {
       if (emp.user_id) {
         await inboxService.createItem({
           user_id: emp.user_id,
-          type: "profile_photo_required",
-          title: "Upload your profile photo",
-          description:
-            "Your ID card cannot be printed until you upload a professional profile photo. Please visit your Profile page to upload it.",
-          entity_type: "employee",
+          type: 'profile_photo_required',
+          title: 'Upload your profile photo',
+          description: 'Your ID card cannot be printed until you upload a professional profile photo. Please visit your Profile page to upload it.',
+          entity_type: 'employee',
           entity_id: employeeId,
-          action_url: "/profile",
-          priority: "high",
+          action_url: '/profile',
+          priority: 'high',
         });
       } else {
         // Employee has no user_id yet (ATS-created employees before first login).
         // In-app notification cannot be delivered until user_id is assigned.
-        console.warn(
-          `[dispatchJoinProvisioningTasks] employee ${employeeId} has no user_id — profile photo inbox notification deferred until account is activated`,
-        );
+        console.warn(`[dispatchJoinProvisioningTasks] employee ${employeeId} has no user_id — profile photo inbox notification deferred until account is activated`);
       }
       // Email notification — only send once the account is active (user_id assigned).
       // Sending before activation means the employee can't log in to act on it.
@@ -732,40 +625,28 @@ export async function dispatchJoinProvisioningTasks(params: {
       if (emp.user_id) {
         const toEmail = emp.personal_email || emp.official_email || emp.email;
         if (toEmail) {
-          const photoUploadUrl = frontendUrl("/profile");
+          const photoUploadUrl = frontendUrl('/profile');
           const identityLine = [
             `Code: <strong>${employeeCode}</strong>`,
-            emp.process_name
-              ? `Process: <strong>${emp.process_name}</strong>`
-              : null,
-            emp.reporting_manager_name
-              ? `Reporting Manager: <strong>${emp.reporting_manager_name}</strong>`
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" &nbsp;|&nbsp; ");
+            emp.process_name ? `Process: <strong>${emp.process_name}</strong>` : null,
+            emp.reporting_manager_name ? `Reporting Manager: <strong>${emp.reporting_manager_name}</strong>` : null,
+          ].filter(Boolean).join(' &nbsp;|&nbsp; ');
           await emailService.send({
             to: toEmail,
-            subject:
-              "Action Required: Upload your profile photo — ID card pending",
+            subject: 'Action Required: Upload your profile photo — ID card pending',
             html: provisioningEmailHtml(
-              "Upload Your Profile Photo",
+              'Upload Your Profile Photo',
               `Dear ${employeeName},<br><span style="font-size:11.5px;color:#64748b">${identityLine}</span><br><br>Welcome to MAS Callnet! Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.<br><br>Please log in to HRMS and upload your photo from your Profile page at your earliest convenience.`,
               photoUploadUrl,
             ),
           });
         }
       } else {
-        console.warn(
-          `[dispatchJoinProvisioningTasks] employee ${employeeId} has no user_id — profile photo email deferred until account is activated via IT provisioning`,
-        );
+        console.warn(`[dispatchJoinProvisioningTasks] employee ${employeeId} has no user_id — profile photo email deferred until account is activated via IT provisioning`);
       }
     }
   } catch (err) {
-    console.warn(
-      "[dispatchJoinProvisioningTasks] Non-fatal: failed to send missing-photo notification:",
-      err,
-    );
+    console.warn('[dispatchJoinProvisioningTasks] Non-fatal: failed to send missing-photo notification:', err);
   }
 }
 
@@ -773,40 +654,36 @@ export async function dispatchJoinProvisioningTasks(params: {
 
 const EXIT_TASKS: ProvisioningTask[] = [
   {
-    taskCode: "domain_delete",
-    assignedRole: "it",
-    actionUrl: "/provisioning/it",
-    titleFn: (name, code, lwd) =>
-      `IT Action: Delete domain account for ${name} [${code}]${lwd ? ` (LWD: ${lwd})` : ""}`,
+    taskCode: 'domain_delete',
+    assignedRole: 'it',
+    actionUrl: '/provisioning/it',
+    titleFn: (name, code, lwd) => `IT Action: Delete domain account for ${name} [${code}]${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
-      `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ""}. Please delete their domain account immediately.`,
+      `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please delete their domain account immediately.`,
   },
   {
-    taskCode: "email_delete",
-    assignedRole: "it",
-    actionUrl: "/provisioning/it",
-    titleFn: (name, code, lwd) =>
-      `IT Action: Delete official email for ${name} [${code}]${lwd ? ` (LWD: ${lwd})` : ""}`,
+    taskCode: 'email_delete',
+    assignedRole: 'it',
+    actionUrl: '/provisioning/it',
+    titleFn: (name, code, lwd) => `IT Action: Delete official email for ${name} [${code}]${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
-      `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ""}. Please delete their official email ID and revoke all email access.`,
+      `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please delete their official email ID and revoke all email access.`,
   },
   {
-    taskCode: "biometric_delete",
-    assignedRole: "admin",
-    actionUrl: "/provisioning/admin",
-    titleFn: (name, code, lwd) =>
-      `Biometric: Remove ${name} [${code}] from biometric system${lwd ? ` (LWD: ${lwd})` : ""}`,
+    taskCode: 'biometric_delete',
+    assignedRole: 'admin',
+    actionUrl: '/provisioning/admin',
+    titleFn: (name, code, lwd) => `Biometric: Remove ${name} [${code}] from biometric system${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
-      `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ""}. Please remove them from the biometric attendance system.`,
+      `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please remove them from the biometric attendance system.`,
   },
   {
-    taskCode: "dialler_delete",
-    assignedRole: "wfm",
-    actionUrl: "/provisioning/wfm-alignment",
-    titleFn: (name, code, lwd) =>
-      `WFM Action: Remove ${name} [${code}] from Dialler + all external IDs${lwd ? ` (LWD: ${lwd})` : ""}`,
+    taskCode: 'dialler_delete',
+    assignedRole: 'wfm',
+    actionUrl: '/provisioning/wfm-alignment',
+    titleFn: (name, code, lwd) => `WFM Action: Remove ${name} [${code}] from Dialler + all external IDs${lwd ? ` (LWD: ${lwd})` : ''}`,
     descFn: (name, code, lwd) =>
-      `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ""}. Please remove them from the Dialler system, Client portal, and all external IDs assigned to them.`,
+      `Employee ${name} (${code}) has been exited${lwd ? ` with Last Working Day ${lwd}` : ''}. Please remove them from the Dialler system, Client portal, and all external IDs assigned to them.`,
   },
 ];
 
@@ -819,29 +696,17 @@ export async function dispatchExitProvisioningTasks(params: {
   exitRequestId: string;
   actorUserId: string;
 }): Promise<void> {
-  const {
-    employeeId,
-    employeeCode,
-    employeeName,
-    branchId,
-    lastWorkingDay,
-    exitRequestId,
-    actorUserId,
-  } = params;
+  const { employeeId, employeeCode, employeeName, branchId, lastWorkingDay, exitRequestId, actorUserId } = params;
 
   for (const task of EXIT_TASKS) {
-    const exitRecipients = await resolveTaskRecipients(
-      task.assignedRole,
-      branchId,
-      task.taskCode,
-    );
+    const exitRecipients = await resolveTaskRecipients(task.assignedRole, branchId, task.taskCode);
     const users = exitRecipients.to;
     const title = task.titleFn(employeeName, employeeCode, lastWorkingDay);
     const desc = task.descFn(employeeName, employeeCode, lastWorkingDay);
 
     const requestId = await createRequest({
       employeeId,
-      requestType: "exit",
+      requestType: 'exit',
       taskCode: task.taskCode,
       assignedRole: task.assignedRole,
       assignedUserId: users[0]?.userId ?? null,
@@ -850,13 +715,7 @@ export async function dispatchExitProvisioningTasks(params: {
     });
 
     await dispatchNotifications(
-      users,
-      "it_provisioning",
-      title,
-      desc,
-      requestId,
-      task.actionUrl,
-      exitRecipients.cc,
+      users, 'it_provisioning', title, desc, requestId, task.actionUrl, exitRecipients.cc,
     );
   }
 }
@@ -943,18 +802,15 @@ export async function reresolveUnassignedRequests(limit = 10): Promise<{
           WHERE id = ? AND status = 'pending_unassigned'`,
         [users[0]?.userId ?? null, req.id],
       );
-      if (!(res as any)?.affectedRows) {
-        stillUnassigned++;
-        continue;
-      }
+      if (!(res as any)?.affectedRows) { stillUnassigned++; continue; }
 
       assigned++;
 
       await logSensitiveAction({
-        actor_user_id: "system_reresolve",
-        action_type: "it_provisioning_reassigned",
-        module_key: "it_provisioning",
-        entity_type: "it_provisioning_request",
+        actor_user_id: 'system_reresolve',
+        action_type: 'it_provisioning_reassigned',
+        module_key: 'it_provisioning',
+        entity_type: 'it_provisioning_request',
         entity_id: String(req.id),
         change_summary: {
           employee_id: req.employee_id,
@@ -962,7 +818,7 @@ export async function reresolveUnassignedRequests(limit = 10): Promise<{
           assigned_role: req.assigned_role,
           assigned_user_id: users[0]?.userId ?? null,
           basis: recipients.basis,
-          previous_status: "pending_unassigned",
+          previous_status: 'pending_unassigned',
         },
       });
 
@@ -972,7 +828,7 @@ export async function reresolveUnassignedRequests(limit = 10): Promise<{
         // mail failure must not roll that back or abort the rest of the batch.
         await dispatchNotifications(
           users,
-          "it_provisioning",
+          'it_provisioning',
           task.titleFn(req.first_name, req.employee_code),
           task.descFn(req.first_name, req.employee_code),
           String(req.id),
@@ -1049,9 +905,7 @@ export async function notifyOverdueProvisioning(limit = 25): Promise<{
         WHERE event_code = 'provisioning_overdue' AND backfill_floor_at IS NOT NULL
         LIMIT 1`,
     );
-    floor = (row as any)?.floor
-      ? new Date((row as any).floor)
-      : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    floor = (row as any)?.floor ? new Date((row as any).floor) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   } catch {
     floor = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   }
@@ -1090,7 +944,7 @@ export async function notifyOverdueProvisioning(limit = 25): Promise<{
   for (const req of batch) {
     try {
       const result = await notificationGateway.notify({
-        eventCode: "provisioning_overdue",
+        eventCode: 'provisioning_overdue',
         // One per request per 4-hour overdue window, not once ever — the deck's requirement
         // is a repeating nag until the task closes, not a single flag. Bucketing hours_overdue
         // into 4-hour windows and folding the bucket into the dedupe key gives that for free
@@ -1105,7 +959,7 @@ export async function notifyOverdueProvisioning(limit = 25): Promise<{
           userId: req.assigned_user_id ?? undefined,
           branchId: req.branch_id ?? undefined,
         },
-        entityType: "it_provisioning_request",
+        entityType: 'it_provisioning_request',
         entityId: String(req.id),
         data: {
           employee_code: req.employee_code,
@@ -1118,12 +972,12 @@ export async function notifyOverdueProvisioning(limit = 25): Promise<{
           sla_due_at: req.sla_due_at,
           // analytics strip
           hours_overdue: req.hours_overdue,
-          unassigned: req.status === "pending_unassigned",
+          unassigned: req.status === 'pending_unassigned',
         },
         correlationId: `provisioning:${req.id}`,
       });
 
-      if (result.outcome === "sent" || result.outcome === "shadow") notified++;
+      if (result.outcome === 'sent' || result.outcome === 'shadow') notified++;
       else skipped++;
     } catch (err) {
       // One bad row must not abort the sweep; the dedupe key means the next run
@@ -1153,14 +1007,8 @@ async function getRequest(requestId: string): Promise<any> {
     [requestId],
   );
   const rec = (rows as any[])[0];
-  if (!rec)
-    throw Object.assign(new Error("Provisioning request not found"), {
-      statusCode: 404,
-    });
-  if (rec.locked)
-    throw Object.assign(new Error("Request is locked and cannot be modified"), {
-      statusCode: 403,
-    });
+  if (!rec) throw Object.assign(new Error('Provisioning request not found'), { statusCode: 404 });
+  if (rec.locked) throw Object.assign(new Error('Request is locked and cannot be modified'), { statusCode: 403 });
   return rec;
 }
 
@@ -1171,11 +1019,9 @@ export async function actionProvisioningRequest(params: {
 }): Promise<void> {
   const { requestId, actionedBy, evidenceNote } = params;
   const rec = await getRequest(requestId);
-  if (rec.status === "actioned") return;
-  if (rec.status === "waived" || rec.status === "confirmed") {
-    throw Object.assign(new Error(`Cannot action a ${rec.status} request`), {
-      statusCode: 400,
-    });
+  if (rec.status === 'actioned') return;
+  if (rec.status === 'waived' || rec.status === 'confirmed') {
+    throw Object.assign(new Error(`Cannot action a ${rec.status} request`), { statusCode: 400 });
   }
 
   await db.execute(
@@ -1188,21 +1034,17 @@ export async function actionProvisioningRequest(params: {
   // The task is done — retire the alerts that were chasing it, for every SPOC
   // it was dispatched to, not just whoever happened to action it.
   await inboxService.resolveItems({
-    entity_type: "it_provisioning_request",
+    entity_type: 'it_provisioning_request',
     entity_id: requestId,
   });
 
   await logSensitiveAction({
     actor_user_id: actionedBy,
-    action_type: "it_provisioning_actioned",
-    module_key: "it_provisioning",
-    entity_type: "it_provisioning_request",
+    action_type: 'it_provisioning_actioned',
+    module_key: 'it_provisioning',
+    entity_type: 'it_provisioning_request',
     entity_id: requestId,
-    change_summary: {
-      task_code: rec.task_code,
-      employee_id: rec.employee_id,
-      evidence_note: evidenceNote ?? null,
-    },
+    change_summary: { task_code: rec.task_code, employee_id: rec.employee_id, evidence_note: evidenceNote ?? null },
   });
 }
 
@@ -1212,11 +1054,7 @@ export async function waiveProvisioningRequest(params: {
   evidenceNote: string;
 }): Promise<void> {
   const { requestId, actionedBy, evidenceNote } = params;
-  if (!evidenceNote?.trim())
-    throw Object.assign(
-      new Error("evidence_note is required to waive a request"),
-      { statusCode: 400 },
-    );
+  if (!evidenceNote?.trim()) throw Object.assign(new Error('evidence_note is required to waive a request'), { statusCode: 400 });
 
   const rec = await getRequest(requestId);
 
@@ -1229,39 +1067,29 @@ export async function waiveProvisioningRequest(params: {
 
   // A waived task is settled too — nobody should keep being chased for it.
   await inboxService.resolveItems({
-    entity_type: "it_provisioning_request",
+    entity_type: 'it_provisioning_request',
     entity_id: requestId,
   });
 
   await logSensitiveAction({
     actor_user_id: actionedBy,
-    action_type: "it_provisioning_waived",
-    module_key: "it_provisioning",
-    entity_type: "it_provisioning_request",
+    action_type: 'it_provisioning_waived',
+    module_key: 'it_provisioning',
+    entity_type: 'it_provisioning_request',
     entity_id: requestId,
-    change_summary: {
-      task_code: rec.task_code,
-      employee_id: rec.employee_id,
-      evidence_note: evidenceNote,
-    },
+    change_summary: { task_code: rec.task_code, employee_id: rec.employee_id, evidence_note: evidenceNote },
   });
 }
 
-export async function confirmAndLockRequest(
-  requestId: string,
-  actionedBy: string,
-): Promise<void> {
+export async function confirmAndLockRequest(requestId: string, actionedBy: string): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM it_provisioning_request WHERE id = ? LIMIT 1`,
-    [requestId],
+    `SELECT * FROM it_provisioning_request WHERE id = ? LIMIT 1`, [requestId],
   );
   const rec = (rows as any[])[0];
-  if (!rec) throw Object.assign(new Error("Not found"), { statusCode: 404 });
+  if (!rec) throw Object.assign(new Error('Not found'), { statusCode: 404 });
   if (rec.locked) return;
-  if (rec.status !== "actioned") {
-    throw Object.assign(new Error("Only actioned requests can be locked"), {
-      statusCode: 400,
-    });
+  if (rec.status !== 'actioned') {
+    throw Object.assign(new Error('Only actioned requests can be locked'), { statusCode: 400 });
   }
 
   await db.execute(
@@ -1271,15 +1099,11 @@ export async function confirmAndLockRequest(
 
   await logSensitiveAction({
     actor_user_id: actionedBy,
-    action_type: "it_provisioning_confirmed_locked",
-    module_key: "it_provisioning",
-    entity_type: "it_provisioning_request",
+    action_type: 'it_provisioning_confirmed_locked',
+    module_key: 'it_provisioning',
+    entity_type: 'it_provisioning_request',
     entity_id: requestId,
-    change_summary: {
-      task_code: rec.task_code,
-      employee_id: rec.employee_id,
-      locked: 1,
-    },
+    change_summary: { task_code: rec.task_code, employee_id: rec.employee_id, locked: 1 },
   });
 }
 
@@ -1301,21 +1125,14 @@ export async function confirmAndLockRequest(
  * skips actionProvisioningRequest (which 400s on a 'confirmed' row) and
  * goes straight to the already-idempotent persistStructuredFields().
  */
-export async function reopenLockedRequest(
-  requestId: string,
-  actorUserId: string,
-  reason: string,
-): Promise<void> {
+export async function reopenLockedRequest(requestId: string, actorUserId: string, reason: string): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM it_provisioning_request WHERE id = ? LIMIT 1`,
-    [requestId],
+    `SELECT * FROM it_provisioning_request WHERE id = ? LIMIT 1`, [requestId],
   );
   const rec = (rows as any[])[0];
-  if (!rec) throw Object.assign(new Error("Not found"), { statusCode: 404 });
+  if (!rec) throw Object.assign(new Error('Not found'), { statusCode: 404 });
   if (!rec.locked) {
-    throw Object.assign(new Error("Request is not locked"), {
-      statusCode: 400,
-    });
+    throw Object.assign(new Error('Request is not locked'), { statusCode: 400 });
   }
 
   await db.execute(
@@ -1327,14 +1144,14 @@ export async function reopenLockedRequest(
   // must not clobber the original completion evidence_note.
   await logSensitiveAction({
     actor_user_id: actorUserId,
-    action_type: "it_provisioning_reopened",
-    module_key: "it_provisioning",
-    entity_type: "it_provisioning_request",
+    action_type: 'it_provisioning_reopened',
+    module_key: 'it_provisioning',
+    entity_type: 'it_provisioning_request',
     entity_id: requestId,
     employee_id: rec.employee_id,
     reason,
-    old_value_json: { status: "confirmed", locked: 1 },
-    new_value_json: { status: "actioned", locked: 0 },
+    old_value_json: { status: 'confirmed', locked: 1 },
+    new_value_json: { status: 'actioned', locked: 0 },
     change_summary: { task_code: rec.task_code, employee_id: rec.employee_id },
   });
 }
@@ -1359,16 +1176,12 @@ export async function autoLockConfirmedRequests(): Promise<{ locked: number }> {
 
   for (const rec of toLock) {
     await logSensitiveAction({
-      actor_user_id: "system",
-      action_type: "it_provisioning_auto_locked",
-      module_key: "it_provisioning",
-      entity_type: "it_provisioning_request",
+      actor_user_id: 'system',
+      action_type: 'it_provisioning_auto_locked',
+      module_key: 'it_provisioning',
+      entity_type: 'it_provisioning_request',
       entity_id: rec.id,
-      change_summary: {
-        task_code: rec.task_code,
-        employee_id: rec.employee_id,
-        locked: 1,
-      },
+      change_summary: { task_code: rec.task_code, employee_id: rec.employee_id, locked: 1 },
     });
   }
 
@@ -1398,63 +1211,41 @@ export async function listProvisioningRequests(filters: {
   // Defense-in-depth alongside the provisioning-retry job's own exclusion
   // (jobs/provisioning-retry.job.ts): stops showing already-created bogus
   // rows for legacy (db_bill-migrated) employees even without a data cleanup.
-  const conds: string[] = ["1=1", "e.legacy_emp_id IS NULL"];
+  const conds: string[] = ['1=1', 'e.legacy_emp_id IS NULL'];
   const params: unknown[] = [];
 
   if (filters.assignedRole) {
-    if (filters.assignedRole === "it") {
+    if (filters.assignedRole === 'it') {
       conds.push("ipr.assigned_role IN ('it', 'branch_it')");
     } else {
-      conds.push("ipr.assigned_role = ?");
+      conds.push('ipr.assigned_role = ?');
       params.push(filters.assignedRole);
     }
   }
-  if (filters.assignedUserId) {
-    conds.push("(ipr.assigned_user_id = ? OR ipr.assigned_user_id IS NULL)");
-    params.push(filters.assignedUserId);
-  }
-  if (filters.status) {
-    conds.push("ipr.status = ?");
-    params.push(filters.status);
-  }
-  if (filters.requestType) {
-    conds.push("ipr.request_type = ?");
-    params.push(filters.requestType);
-  }
-  if (filters.taskCode) {
-    conds.push("ipr.task_code = ?");
-    params.push(filters.taskCode);
-  }
-  if (filters.employeeId) {
-    conds.push("ipr.employee_id = ?");
-    params.push(filters.employeeId);
-  }
+  if (filters.assignedUserId) { conds.push('(ipr.assigned_user_id = ? OR ipr.assigned_user_id IS NULL)'); params.push(filters.assignedUserId); }
+  if (filters.status)       { conds.push('ipr.status = ?');        params.push(filters.status); }
+  if (filters.requestType)  { conds.push('ipr.request_type = ?');  params.push(filters.requestType); }
+  if (filters.taskCode)     { conds.push('ipr.task_code = ?');     params.push(filters.taskCode); }
+  if (filters.employeeId)   { conds.push('ipr.employee_id = ?');   params.push(filters.employeeId); }
   // "Fresh start" cutover for /provisioning/it,/admin,/wfm-alignment (2026-08-24): those three
   // pages pass this so the queue only ever shows requests created on or after the cutover date,
   // without touching or deleting any pre-cutover it_provisioning_request rows. Not sent by
   // /provisioning/appointment-letter, which still shows full history.
-  if (filters.createdFrom) {
-    conds.push("ipr.created_at >= ?");
-    params.push(filters.createdFrom);
-  }
+  if (filters.createdFrom) { conds.push('ipr.created_at >= ?'); params.push(filters.createdFrom); }
   if (filters.branchId) {
-    conds.push("e.branch_id = ?");
+    conds.push('e.branch_id = ?');
     params.push(filters.branchId);
   }
   if (filters.branchIds?.length) {
-    conds.push(
-      `e.branch_id IN (${filters.branchIds.map(() => "?").join(",")})`,
-    );
+    conds.push(`e.branch_id IN (${filters.branchIds.map(() => '?').join(',')})`);
     params.push(...filters.branchIds);
   }
   if (filters.processIds?.length) {
-    conds.push(
-      `e.process_id IN (${filters.processIds.map(() => "?").join(",")})`,
-    );
+    conds.push(`e.process_id IN (${filters.processIds.map(() => '?').join(',')})`);
     params.push(...filters.processIds);
   }
 
-  const where = conds.join(" AND ");
+  const where = conds.join(' AND ');
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ipr.*,
@@ -1497,15 +1288,11 @@ export async function getProvisioningStats(filters: {
     params.push(filters.assignedRole);
   }
   if (filters.branchIds?.length) {
-    conds.push(
-      `e.branch_id IN (${filters.branchIds.map(() => "?").join(",")})`,
-    );
+    conds.push(`e.branch_id IN (${filters.branchIds.map(() => "?").join(",")})`);
     params.push(...filters.branchIds);
   }
   if (filters.processIds?.length) {
-    conds.push(
-      `e.process_id IN (${filters.processIds.map(() => "?").join(",")})`,
-    );
+    conds.push(`e.process_id IN (${filters.processIds.map(() => "?").join(",")})`);
     params.push(...filters.processIds);
   }
   const where = conds.join(" AND ");
@@ -1566,7 +1353,6 @@ export async function getProvisioningRequest(requestId: string): Promise<any> {
      WHERE ipr.id = ? LIMIT 1`,
     [requestId],
   );
-  if (!(rows as any[]).length)
-    throw Object.assign(new Error("Not found"), { statusCode: 404 });
+  if (!(rows as any[]).length) throw Object.assign(new Error('Not found'), { statusCode: 404 });
   return (rows as any[])[0];
 }

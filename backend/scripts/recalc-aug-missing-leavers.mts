@@ -24,11 +24,9 @@ import type { RowDataPacket } from "mysql2";
 
 const RUN = "5035d780-6cb4-4bb6-a0e3-3f282fed7575";
 const MONTH = "2026-08";
-const ACTOR =
-  process.env.RECALC_ACTOR_ID || "a4a4902e-6222-11f1-adb1-00155d0ab410";
+const ACTOR = process.env.RECALC_ACTOR_ID || "a4a4902e-6222-11f1-adb1-00155d0ab410";
 const APPLY = process.argv.includes("--apply");
-const inr = (n: unknown) =>
-  "Rs " + Math.round(Number(n || 0)).toLocaleString("en-IN");
+const inr = (n: unknown) => "Rs " + Math.round(Number(n || 0)).toLocaleString("en-IN");
 
 // The engine's own eligibility rule (employment-end-date.ts), inlined so this script reports the
 // same population the recalculation will actually select.
@@ -67,54 +65,34 @@ const [rows] = await db.execute<RowDataPacket[]>(
 );
 
 console.log(`eligible for ${MONTH} with no line in the run: ${rows.length}`);
-if (!rows.length) {
-  console.log("nothing to add");
-  process.exit(0);
-}
-console.table(
-  rows.map((r) => ({ code: r.c, end: r.endd ?? "-", augDays: r.days ?? 0 })),
-);
+if (!rows.length) { console.log("nothing to add"); process.exit(0); }
+console.table(rows.map((r) => ({ code: r.c, end: r.endd ?? "-", augDays: r.days ?? 0 })));
 
 const totals = async () => {
   const [t] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) n, COALESCE(SUM(net_salary),0) net, COALESCE(SUM(final_payable_days),0) days
-       FROM salary_prep_line WHERE run_id = ?`,
-    [RUN],
-  );
+       FROM salary_prep_line WHERE run_id = ?`, [RUN]);
   return t[0];
 };
 
 const before = await totals();
-console.log(
-  `before: ${before.n} lines, ${before.days} payable days, ${inr(before.net)}`,
-);
+console.log(`before: ${before.n} lines, ${before.days} payable days, ${inr(before.net)}`);
 
-if (!APPLY) {
-  console.log("\nDRY RUN — pass --apply to recalculate.");
-  process.exit(0);
-}
+if (!APPLY) { console.log("\nDRY RUN — pass --apply to recalculate."); process.exit(0); }
 
-const res = await calculatePayrollRunScoped(RUN, ACTOR, {
-  employeeIds: rows.map((r) => String(r.id)),
-});
+const res = await calculatePayrollRunScoped(RUN, ACTOR, { employeeIds: rows.map((r) => String(r.id)) });
 console.log("engine result:", JSON.stringify(res));
 
 const after = await totals();
-console.log(
-  `after:  ${after.n} lines, ${after.days} payable days, ${inr(after.net)}`,
-);
-console.log(
-  `delta:  +${Number(after.n) - Number(before.n)} lines, ` +
-    `+${Number(after.days) - Number(before.days)} days, +${inr(Number(after.net) - Number(before.net))}`,
-);
+console.log(`after:  ${after.n} lines, ${after.days} payable days, ${inr(after.net)}`);
+console.log(`delta:  +${Number(after.n) - Number(before.n)} lines, ` +
+  `+${Number(after.days) - Number(before.days)} days, +${inr(Number(after.net) - Number(before.net))}`);
 
 const ids = rows.map((r) => String(r.id));
 const [added] = await db.execute<RowDataPacket[]>(
   `SELECT employee_code, present_days, eligible_holiday_days, final_payable_days, net_salary
      FROM salary_prep_line
     WHERE run_id = ? AND employee_id IN (${ids.map(() => "?").join(",")})
-    ORDER BY net_salary DESC`,
-  [RUN, ...ids],
-);
+    ORDER BY net_salary DESC`, [RUN, ...ids]);
 console.table(added);
 process.exit(0);

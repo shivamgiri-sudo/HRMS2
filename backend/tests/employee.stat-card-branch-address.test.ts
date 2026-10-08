@@ -25,10 +25,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
 const backendRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SECURE_ROUTES = join(
-  backendRoot,
-  "src/modules/employees/employee.secure.routes.ts",
-);
+const SECURE_ROUTES = join(backendRoot, "src/modules/employees/employee.secure.routes.ts");
 
 describe("stat-card route shadowing", () => {
   it("the UUID-scoped route mounted first wins, so the later generic route never runs", async () => {
@@ -38,12 +35,10 @@ describe("stat-card route shadowing", () => {
     );
 
     const generic = express.Router();
-    generic.get("/:id/stat-card", (_req, res) =>
-      res.json({ servedBy: "generic" }),
-    );
+    generic.get("/:id/stat-card", (_req, res) => res.json({ servedBy: "generic" }));
 
     const app = express()
-      .use("/api/employees", secure) // app.ts:355
+      .use("/api/employees", secure)   // app.ts:355
       .use("/api/employees", generic); // app.ts:359
 
     const uuid = "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
@@ -60,10 +55,7 @@ describe("employee.secure.routes.ts stat-card query", () => {
   /** The SQL of the stat-card handler that actually serves UUID requests. */
   const statCardSql = (() => {
     const start = source.indexOf("`${UUID_ROUTE}/stat-card`");
-    expect(
-      start,
-      "stat-card route not found in employee.secure.routes.ts",
-    ).toBeGreaterThan(-1);
+    expect(start, "stat-card route not found in employee.secure.routes.ts").toBeGreaterThan(-1);
     const from = source.indexOf("FROM employees e", start);
     const selectStart = source.lastIndexOf("SELECT", from);
     return source.slice(selectStart, from);
@@ -81,10 +73,7 @@ describe("employee.secure.routes.ts stat-card query", () => {
     ["branch_address", /COALESCE\(b\.address,\s*''\)\s+AS branch_address/],
     ["branch_city", /b\.city\s+AS branch_city/],
     ["branch_state", /b\.state\s+AS branch_state/],
-    [
-      "branch_hr_contact",
-      /COALESCE\(b\.hr_contact,\s*''\)\s+AS branch_hr_contact/,
-    ],
+    ["branch_hr_contact", /COALESCE\(b\.hr_contact,\s*''\)\s+AS branch_hr_contact/],
   ])("selects %s from branch_master", (_alias, pattern) => {
     expect(statCardSql).toMatch(pattern);
   });

@@ -46,13 +46,7 @@ const SEALED_DOCUMENTS: Record<string, { signatureField: string }> = {
 };
 
 export function documentAcceptsCompanySeal(documentCode: string) {
-  return Boolean(
-    SEALED_DOCUMENTS[
-      String(documentCode || "")
-        .trim()
-        .toUpperCase()
-    ],
-  );
+  return Boolean(SEALED_DOCUMENTS[String(documentCode || "").trim().toUpperCase()]);
 }
 
 function readAsset(fileName: string | null): Buffer | null {
@@ -61,8 +55,7 @@ function readAsset(fileName: string | null): Buffer | null {
   // the request, so a traversal cannot escape the uploads directory.
   const safe = path.basename(fileName);
   const full = path.join(UPLOADS_ROOT, COMPANY_ASSET_CATEGORY, safe);
-  if (!full.startsWith(path.join(UPLOADS_ROOT, COMPANY_ASSET_CATEGORY)))
-    return null;
+  if (!full.startsWith(path.join(UPLOADS_ROOT, COMPANY_ASSET_CATEGORY))) return null;
   return fs.existsSync(full) ? fs.readFileSync(full) : null;
 }
 
@@ -72,34 +65,18 @@ export async function loadCompanySeal(): Promise<CompanySeal> {
     `SELECT setting_key, setting_value FROM org_settings WHERE setting_key IN (?)`,
     [keys],
   );
-  const byKey = new Map(
-    (rows as RowDataPacket[]).map((r) => [
-      String(r.setting_key),
-      r.setting_value ? String(r.setting_value).trim() : null,
-    ]),
-  );
+  const byKey = new Map((rows as RowDataPacket[]).map((r) => [String(r.setting_key), r.setting_value ? String(r.setting_value).trim() : null]));
   return {
-    signature: readAsset(
-      byKey.get(COMPANY_SEAL_SETTING_KEYS.signature) ?? null,
-    ),
+    signature: readAsset(byKey.get(COMPANY_SEAL_SETTING_KEYS.signature) ?? null),
     stamp: readAsset(byKey.get(COMPANY_SEAL_SETTING_KEYS.stamp) ?? null),
     signatoryName: byKey.get(COMPANY_SEAL_SETTING_KEYS.signatoryName) ?? null,
-    signatoryDesignation:
-      byKey.get(COMPANY_SEAL_SETTING_KEYS.signatoryDesignation) ?? null,
+    signatoryDesignation: byKey.get(COMPANY_SEAL_SETTING_KEYS.signatoryDesignation) ?? null,
   };
 }
 
 /** PNG and JPEG only — pdf-lib embeds nothing else. */
-async function embed(
-  doc: PDFDocument,
-  bytes: Buffer,
-): Promise<PDFImage | null> {
-  const isPng =
-    bytes.length > 8 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47;
+async function embed(doc: PDFDocument, bytes: Buffer): Promise<PDFImage | null> {
+  const isPng = bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
   const isJpg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8;
   try {
     if (isPng) return await doc.embedPng(bytes);
@@ -127,12 +104,7 @@ export async function applyCompanySeal(
   documentCode: string,
   seal?: CompanySeal,
 ): Promise<Uint8Array> {
-  const target =
-    SEALED_DOCUMENTS[
-      String(documentCode || "")
-        .trim()
-        .toUpperCase()
-    ];
+  const target = SEALED_DOCUMENTS[String(documentCode || "").trim().toUpperCase()];
   if (!target) return pdfBytes;
 
   const resolved = seal ?? (await loadCompanySeal());
@@ -142,9 +114,7 @@ export async function applyCompanySeal(
     const doc = await PDFDocument.load(pdfBytes);
     const form = doc.getForm();
 
-    const field = form
-      .getFields()
-      .find((f) => f.getName() === target.signatureField);
+    const field = form.getFields().find((f) => f.getName() === target.signatureField);
     if (!field) return pdfBytes;
 
     const widget = field.acroField.getWidgets()[0];
@@ -163,9 +133,7 @@ export async function applyCompanySeal(
     });
     if (!page) return pdfBytes;
 
-    const signature = resolved.signature
-      ? await embed(doc, resolved.signature)
-      : null;
+    const signature = resolved.signature ? await embed(doc, resolved.signature) : null;
     const stamp = resolved.stamp ? await embed(doc, resolved.stamp) : null;
     if (!signature && !stamp) return pdfBytes;
 
@@ -192,11 +160,7 @@ export async function applyCompanySeal(
     }
 
     // Remove the field so the mark cannot be edited in a reader.
-    try {
-      form.removeField(field);
-    } catch {
-      /* older readers: leave as-is */
-    }
+    try { form.removeField(field); } catch { /* older readers: leave as-is */ }
 
     return await doc.save();
   } catch {

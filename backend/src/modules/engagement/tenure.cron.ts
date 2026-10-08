@@ -5,14 +5,11 @@ import { checkAutoAwards } from "./badge.service.js";
 const RUN_HOUR = 2;
 let nextRun: NodeJS.Timeout | undefined;
 
-export async function runTenureBadgeSweep(): Promise<{
-  checked: number;
-  failed: number;
-}> {
+export async function runTenureBadgeSweep(): Promise<{ checked: number; failed: number }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id
      FROM employees
-     WHERE active_status = 1 AND date_of_joining IS NOT NULL`,
+     WHERE active_status = 1 AND date_of_joining IS NOT NULL`
   );
   let failed = 0;
 
@@ -21,10 +18,7 @@ export async function runTenureBadgeSweep(): Promise<{
       await checkAutoAwards(row.id as string, "tenure");
     } catch (error) {
       failed += 1;
-      console.error(
-        `Failed to evaluate tenure badges for ${String(row.id)}`,
-        error,
-      );
+      console.error(`Failed to evaluate tenure badges for ${String(row.id)}`, error);
     }
   }
 

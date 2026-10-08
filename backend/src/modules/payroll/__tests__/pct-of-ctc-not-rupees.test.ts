@@ -21,10 +21,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const src = fs.readFileSync(
-  path.resolve(DIR, "..", "payrollCalculate.service.ts"),
-  "utf8",
-);
+const src = fs.readFileSync(path.resolve(DIR, "..", "payrollCalculate.service.ts"), "utf8");
 
 /** The loop that turns structure-template rows into rupee amounts. */
 function dictionaryLoop(): string {
@@ -46,9 +43,7 @@ describe("only `fixed` components carry a rupee amount", () => {
   });
 
   it("assigns from the row's own value, not a derived figure", () => {
-    expect(dictionaryLoop()).toMatch(
-      /compAmounts\[c\.component_code\]\s*=\s*Number\(c\.value\)/,
-    );
+    expect(dictionaryLoop()).toMatch(/compAmounts\[c\.component_code\]\s*=\s*Number\(c\.value\)/);
   });
 });
 
@@ -68,9 +63,7 @@ describe("percentages are still honoured, via the CTC path", () => {
 
 describe("an implausible component gross is caught rather than paid", () => {
   it("compares the component gross against the employee's own CTC", () => {
-    const at = src.indexOf(
-      "const ctcMonthly = Number(emp.ctc_annual ?? 0) / 12;",
-    );
+    const at = src.indexOf("const ctcMonthly = Number(emp.ctc_annual ?? 0) / 12;");
     expect(at, "CTC sanity guard not found").toBeGreaterThan(-1);
     const guard = src.slice(at, at + 900);
     expect(guard).toMatch(/fixedGross\s*<\s*ctcMonthly\s*\*\s*0\.25/);
@@ -81,27 +74,21 @@ describe("an implausible component gross is caught rather than paid", () => {
      * Refusing the line would drop the employee from the run and pay them nothing — worse than the
      * defect. The fallback pays their contracted CTC and the warning makes it visible.
      */
-    const at = src.indexOf(
-      "const ctcMonthly = Number(emp.ctc_annual ?? 0) / 12;",
-    );
+    const at = src.indexOf("const ctcMonthly = Number(emp.ctc_annual ?? 0) / 12;");
     const guard = src.slice(at, at + 900);
     expect(guard).toContain("hasFixedComponents = false");
     expect(guard).not.toMatch(/throw new/);
   });
 
   it("warns, so the run cannot complete silently on broken components", () => {
-    const at = src.indexOf(
-      "const ctcMonthly = Number(emp.ctc_annual ?? 0) / 12;",
-    );
+    const at = src.indexOf("const ctcMonthly = Number(emp.ctc_annual ?? 0) / 12;");
     const guard = src.slice(at, at + 900);
     expect(guard).toMatch(/logger\.warn/);
     expect(guard).toContain("employee_code");
   });
 
   it("does not fire on a zero CTC, where the comparison is meaningless", () => {
-    const at = src.indexOf(
-      "const ctcMonthly = Number(emp.ctc_annual ?? 0) / 12;",
-    );
+    const at = src.indexOf("const ctcMonthly = Number(emp.ctc_annual ?? 0) / 12;");
     const guard = src.slice(at, at + 900);
     expect(guard).toMatch(/ctcMonthly\s*>\s*0/);
     expect(guard).toMatch(/fixedGross\s*>\s*0/);

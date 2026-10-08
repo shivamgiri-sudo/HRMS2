@@ -24,54 +24,47 @@
  *   3 = NEFT     (PaymentNo = long UTR/transaction reference)
  */
 
-import mysql from "mysql2/promise";
-import "dotenv/config";
-import { v4 as uuidv4 } from "uuid";
+import mysql from 'mysql2/promise';
+import 'dotenv/config';
+import { v4 as uuidv4 } from 'uuid';
 
-const APPLY = process.argv.includes("--apply");
-const MIGRATION_USER = "00000000-0000-0000-0000-dbbill000001";
+const APPLY = process.argv.includes('--apply');
+const MIGRATION_USER = '00000000-0000-0000-0000-dbbill000001';
 
-type ImprestPayMode = "Cash" | "Cheque" | "NEFT" | "Other";
+type ImprestPayMode = 'Cash' | 'Cheque' | 'NEFT' | 'Other';
 function decodePayMode(code: number | null): ImprestPayMode {
-  if (code === 1) return "Cash";
-  if (code === 2) return "Cheque";
-  if (code === 3) return "NEFT";
-  return "Other";
+  if (code === 1) return 'Cash';
+  if (code === 2) return 'Cheque';
+  if (code === 3) return 'NEFT';
+  return 'Other';
 }
 
 function safeDate(v: unknown): string | null {
-  if (!v || String(v).trim() === "") return null;
+  if (!v || String(v).trim() === '') return null;
   const s = String(v).trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const dmy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (dmy)
-    return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
   return null;
 }
 
 // Format: IMP/MM/YY/NNNNN (e.g. IMP/04/17/00004 — zero-padded 5 digits for historical)
 function allocationNo(entryDate: string | null, billId: number): string {
   const d = safeDate(entryDate);
-  if (!d) return `IMP/00/00/${String(billId).padStart(5, "0")}`;
-  const [y, m] = d.split("-");
+  if (!d) return `IMP/00/00/${String(billId).padStart(5,'0')}`;
+  const [y, m] = d.split('-');
   const yy = y.slice(2);
-  return `IMP/${m}/${yy}/${String(billId).padStart(5, "0")}`;
+  return `IMP/${m}/${yy}/${String(billId).padStart(5,'0')}`;
 }
 
 async function main() {
   const hrms = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT ?? 3306),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+    host: process.env.DB_HOST, port: Number(process.env.DB_PORT ?? 3306),
+    user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
   });
   const bill = await mysql.createConnection({
-    host: process.env.BILL_DB_HOST,
-    port: Number(process.env.BILL_DB_PORT ?? 3306),
-    user: process.env.BILL_DB_USER,
-    password: process.env.BILL_DB_PASSWORD,
-    database: process.env.BILL_DB_NAME,
+    host: process.env.BILL_DB_HOST, port: Number(process.env.BILL_DB_PORT ?? 3306),
+    user: process.env.BILL_DB_USER, password: process.env.BILL_DB_PASSWORD, database: process.env.BILL_DB_NAME,
   });
 
   try {
@@ -79,80 +72,65 @@ async function main() {
 
     // Branch map
     const [branchRows] = await hrms.query<any[]>(
-      "SELECT dbbill_branch_id, hrms_branch_id FROM grn_migration_branch_map",
+      'SELECT dbbill_branch_id, hrms_branch_id FROM grn_migration_branch_map'
     );
-    const branchMap = new Map<number, string>(
-      branchRows.map((r) => [r.dbbill_branch_id, r.hrms_branch_id]),
-    );
+    const branchMap = new Map<number, string>(branchRows.map(r => [r.dbbill_branch_id, r.hrms_branch_id]));
 
     // Existing auth_users by email (for manager matching)
-    const [authRows] = await hrms.query<any[]>(
-      "SELECT id, email FROM auth_user",
-    );
+    const [authRows] = await hrms.query<any[]>('SELECT id, email FROM auth_user');
     const authByEmail = new Map<string, string>(
-      authRows.map((r) => [
-        String(r.email).toLowerCase().trim(),
-        r.id as string,
-      ]),
+      authRows.map(r => [String(r.email).toLowerCase().trim(), r.id as string])
     );
 
     // Already-migrated imprest_managers: set of bill source user+branch combos
     // We use tally_name as a proxy since we store it from db_bill
     const [existingMgrRows] = await hrms.query<any[]>(
-      "SELECT tally_name FROM imprest_manager WHERE tally_name IS NOT NULL",
+      "SELECT tally_name FROM imprest_manager WHERE tally_name IS NOT NULL"
     );
-    const existingTallyNames = new Set<string>(
-      existingMgrRows.map((r) => String(r.tally_name)),
-    );
+    const existingTallyNames = new Set<string>(existingMgrRows.map(r => String(r.tally_name)));
 
     // Already-migrated allocations
     const [existingAllocRows] = await hrms.query<any[]>(
-      "SELECT bill_source_id FROM imprest_allocation WHERE bill_source_id IS NOT NULL",
+      'SELECT bill_source_id FROM imprest_allocation WHERE bill_source_id IS NOT NULL'
     );
-    const doneBillIds = new Set<number>(
-      existingAllocRows.map((r) => r.bill_source_id as number),
-    );
+    const doneBillIds = new Set<number>(existingAllocRows.map(r => r.bill_source_id as number));
 
     // ── Load db_bill imprest_manager ───────────────────────────────────────
     const [mgrRows] = await bill.query<any[]>(
-      "SELECT * FROM imprest_manager ORDER BY Id",
+      'SELECT * FROM imprest_manager ORDER BY Id'
     );
 
     // ── Load db_bill imprest_allotment_master ──────────────────────────────
     const [allocRows] = await bill.query<any[]>(
-      "SELECT * FROM imprest_allotment_master ORDER BY Id",
+      'SELECT * FROM imprest_allotment_master ORDER BY Id'
     );
 
-    console.log("\n────────────────────────────────────────────────────────");
-    console.log(" db_bill → mas_hrms Imprest migration");
-    console.log("────────────────────────────────────────────────────────");
-    console.log(` Mode              : ${APPLY ? "APPLY" : "DRY RUN"}`);
+    console.log('\n────────────────────────────────────────────────────────');
+    console.log(' db_bill → mas_hrms Imprest migration');
+    console.log('────────────────────────────────────────────────────────');
+    console.log(` Mode              : ${APPLY ? 'APPLY' : 'DRY RUN'}`);
     console.log(` imprest_manager   : ${mgrRows.length} source rows`);
-    console.log(
-      ` imprest_allocation: ${allocRows.length} source rows (${doneBillIds.size} already done)`,
-    );
-    console.log("────────────────────────────────────────────────────────\n");
+    console.log(` imprest_allocation: ${allocRows.length} source rows (${doneBillIds.size} already done)`);
+    console.log('────────────────────────────────────────────────────────\n');
 
     // ── Phase 1: Migrate imprest_manager ──────────────────────────────────
-    let mgrInserted = 0;
-    let mgrSkipped = 0;
-    let mgrNoAuth = 0;
+    let mgrInserted  = 0;
+    let mgrSkipped   = 0;
+    let mgrNoAuth    = 0;
     // db_bill imprest_manager.Id → mas_hrms imprest_manager.id (UUID)
     const mgrIdMap = new Map<number, string>();
 
     // Populate mgrIdMap from ALREADY existing rows first (idempotency)
     const [existingFullMgrRows] = await hrms.query<any[]>(
-      "SELECT id, tally_name FROM imprest_manager WHERE tally_name IS NOT NULL",
+      "SELECT id, tally_name FROM imprest_manager WHERE tally_name IS NOT NULL"
     );
     // We can't perfectly identify by bill source since we didn't store bill_source_id on imprest_manager in 1248.
     // Use tally_name as the dedupe key (matches db_bill TallyHead).
 
     for (const mgr of mgrRows) {
-      const tallyName = String(mgr.TallyHead ?? mgr.UserName ?? "").trim();
-      const email = String(mgr.EmailId ?? "")
-        .trim()
-        .toLowerCase();
-      const branchId = branchMap.get(mgr.BranchId as number);
+      const tallyName = String(mgr.TallyHead ?? mgr.UserName ?? '').trim();
+      const email     = String(mgr.EmailId ?? '').trim().toLowerCase();
+      const branchId  = branchMap.get(mgr.BranchId as number);
 
       if (!branchId) {
         mgrSkipped++;
@@ -170,9 +148,7 @@ async function main() {
       // Skip if tally_name already present (previous run)
       if (existingTallyNames.has(tallyName)) {
         // Still need to populate mgrIdMap — find existing row
-        const existing = existingFullMgrRows.find(
-          (r) => String(r.tally_name) === tallyName,
-        );
+        const existing = existingFullMgrRows.find(r => String(r.tally_name) === tallyName);
         if (existing) mgrIdMap.set(mgr.Id as number, existing.id as string);
         mgrSkipped++;
         continue;
@@ -188,17 +164,12 @@ async function main() {
              effective_from, effective_to, active_status, created_by, created_at
            ) VALUES (?,?,?,NULL,?,?,NULL,?,?,?)`,
           [
-            mgrUuid,
-            branchId,
-            userId,
-            tallyName,
-            mgr.CreateDate
-              ? new Date(mgr.CreateDate).toISOString().split("T")[0]
-              : "2017-04-01",
+            mgrUuid, branchId, userId, tallyName,
+            mgr.CreateDate ? new Date(mgr.CreateDate).toISOString().split('T')[0] : '2017-04-01',
             mgr.Active === 1 ? 1 : 0,
             MIGRATION_USER,
             mgr.CreateDate ? new Date(mgr.CreateDate) : new Date(),
-          ],
+          ]
         );
         existingTallyNames.add(tallyName);
       }
@@ -209,57 +180,40 @@ async function main() {
     // Load final mgrIdMap for allocations (covers both new inserts + pre-existing)
     if (APPLY) {
       const [finalMgrRows] = await hrms.query<any[]>(
-        "SELECT id, tally_name FROM imprest_manager WHERE tally_name IS NOT NULL",
+        'SELECT id, tally_name FROM imprest_manager WHERE tally_name IS NOT NULL'
       );
       // Re-map using tally_name matching
       for (const mgr of mgrRows) {
-        const tallyName = String(mgr.TallyHead ?? mgr.UserName ?? "").trim();
-        const found = finalMgrRows.find(
-          (r) => String(r.tally_name) === tallyName,
-        );
+        const tallyName = String(mgr.TallyHead ?? mgr.UserName ?? '').trim();
+        const found = finalMgrRows.find(r => String(r.tally_name) === tallyName);
         if (found) mgrIdMap.set(mgr.Id as number, found.id as string);
       }
     }
 
-    console.log(
-      ` Managers: ${mgrInserted} inserted, ${mgrSkipped} skipped (${mgrNoAuth} had no matching auth_user — skipped per Q3 decision)`,
-    );
+    console.log(` Managers: ${mgrInserted} inserted, ${mgrSkipped} skipped (${mgrNoAuth} had no matching auth_user — skipped per Q3 decision)`);
 
     // ── Phase 2: Migrate imprest_allocation ───────────────────────────────
-    let allocInserted = 0;
-    let allocSkipped = 0;
+    let allocInserted  = 0;
+    let allocSkipped   = 0;
     let ledgerInserted = 0;
     // Running balance per manager for ledger entries
     const managerBalance = new Map<string, number>();
 
     for (const alloc of allocRows) {
       const billId = alloc.Id as number;
-      if (doneBillIds.has(billId)) {
-        allocSkipped++;
-        continue;
-      }
+      if (doneBillIds.has(billId)) { allocSkipped++; continue; }
 
-      const hrMgrId = mgrIdMap.get(alloc.ImprestManagerId as number);
+      const hrMgrId  = mgrIdMap.get(alloc.ImprestManagerId as number);
       const branchId = branchMap.get(alloc.BranchId as number);
 
-      if (!hrMgrId || !branchId) {
-        allocSkipped++;
-        continue;
-      }
+      if (!hrMgrId || !branchId) { allocSkipped++; continue; }
 
       const amount = parseFloat(String(alloc.Amount ?? 0)) || 0;
-      const allocDate =
-        safeDate(alloc.EntryDate) ?? safeDate(alloc.CreateDate) ?? "2017-04-01";
+      const allocDate = safeDate(alloc.EntryDate) ?? safeDate(alloc.CreateDate) ?? '2017-04-01';
       const allocNo = allocationNo(allocDate, billId);
       const payMode = decodePayMode(alloc.PaymentMode as number | null);
-      const refNo = alloc.PaymentNo
-        ? String(alloc.PaymentNo).trim() || null
-        : null;
-      const [, mm, yy] = allocNo.match(/IMP\/(\d{2})\/(\d{2})\//) ?? [
-        "",
-        "00",
-        "00",
-      ];
+      const refNo   = alloc.PaymentNo ? String(alloc.PaymentNo).trim() || null : null;
+      const [, mm, yy] = allocNo.match(/IMP\/(\d{2})\/(\d{2})\//) ?? ['','00','00'];
       const periodFull = yy ? `20${yy}-${mm}` : null;
 
       if (!APPLY) {
@@ -278,36 +232,29 @@ async function main() {
            bill_source_id
          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
-          allocId,
-          allocNo,
-          hrMgrId,
-          branchId,
-          allocDate,
-          amount,
-          payMode,
-          refNo,
+          allocId, allocNo, hrMgrId, branchId,
+          allocDate, amount, payMode, refNo,
           alloc.Remarks ? String(alloc.Remarks).trim().substring(0, 500) : null,
-          "disbursed", // all historical allocations are treated as disbursed
+          'disbursed',               // all historical allocations are treated as disbursed
           alloc.CreateDate ? new Date(alloc.CreateDate) : new Date(),
           MIGRATION_USER,
           alloc.CreateDate ? new Date(alloc.CreateDate) : new Date(),
           periodFull,
           billId,
-        ],
+        ]
       );
       allocInserted++;
       doneBillIds.add(billId);
 
       // ── imprest_transaction_ledger credit entry ────────────────────
       const prevBalance = managerBalance.get(hrMgrId) ?? 0;
-      const newBalance =
-        amount >= 0
-          ? prevBalance + amount // credit to float
-          : prevBalance + amount; // negative amount = return/adjustment (debit)
+      const newBalance  = amount >= 0
+        ? prevBalance + amount    // credit to float
+        : prevBalance + amount;   // negative amount = return/adjustment (debit)
       managerBalance.set(hrMgrId, newBalance);
 
-      const ledgerDir = amount >= 0 ? "credit" : "debit";
-      const ledgerType = amount >= 0 ? "allocation" : "return";
+      const ledgerDir = amount >= 0 ? 'credit' : 'debit';
+      const ledgerType = amount >= 0 ? 'allocation' : 'return';
 
       await hrms.execute(
         `INSERT INTO imprest_transaction_ledger (
@@ -318,23 +265,15 @@ async function main() {
            created_by, created_at
          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
-          uuidv4(),
-          hrMgrId,
-          branchId,
-          ledgerType,
-          ledgerDir,
-          Math.abs(amount),
-          newBalance,
-          "imprest_allocation",
-          allocId,
-          periodFull,
-          allocDate,
-          alloc.Remarks
-            ? String(alloc.Remarks).trim().substring(0, 499)
-            : `Float allocation ${allocNo}`,
+          uuidv4(), hrMgrId, branchId,
+          ledgerType, ledgerDir,
+          Math.abs(amount), newBalance,
+          'imprest_allocation', allocId,
+          periodFull, allocDate,
+          alloc.Remarks ? String(alloc.Remarks).trim().substring(0, 499) : `Float allocation ${allocNo}`,
           MIGRATION_USER,
           alloc.CreateDate ? new Date(alloc.CreateDate) : new Date(),
-        ],
+        ]
       );
       ledgerInserted++;
 
@@ -355,7 +294,7 @@ async function main() {
          FROM grn_request g
          WHERE g.grn_type = 'imprest'
            AND g.status != 'cancelled'
-           AND g.bill_source_id IS NOT NULL`,
+           AND g.bill_source_id IS NOT NULL`
       );
 
       for (const grn of imprestGrns) {
@@ -364,7 +303,7 @@ async function main() {
         if (!mgrId) {
           const [mgrMatchRows] = await hrms.query<any[]>(
             `SELECT id FROM imprest_manager WHERE branch_id = ? AND active_status = 1 LIMIT 1`,
-            [grn.branch_id],
+            [grn.branch_id]
           );
           mgrId = mgrMatchRows[0]?.id ?? null;
         }
@@ -384,30 +323,20 @@ async function main() {
              created_by, created_at
            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
-            uuidv4(),
-            mgrId,
-            grn.branch_id,
-            "voucher",
-            "debit",
-            amt,
-            newBalance,
-            "grn_request",
-            grn.id,
-            grn.accounting_period,
-            grn.bill_date,
-            grn.description
-              ? String(grn.description).substring(0, 499)
-              : `Imprest voucher ${grn.grn_number}`,
-            MIGRATION_USER,
-            new Date(),
-          ],
+            uuidv4(), mgrId, grn.branch_id,
+            'voucher', 'debit', amt, newBalance,
+            'grn_request', grn.id,
+            grn.accounting_period, grn.bill_date,
+            grn.description ? String(grn.description).substring(0,499) : `Imprest voucher ${grn.grn_number}`,
+            MIGRATION_USER, new Date(),
+          ]
         );
 
         // Link GRN to imprest_manager if not already linked
         if (!grn.imprest_manager_id) {
           await hrms.execute(
-            "UPDATE grn_request SET imprest_manager_id = ? WHERE id = ? AND imprest_manager_id IS NULL",
-            [mgrId, grn.id],
+            'UPDATE grn_request SET imprest_manager_id = ? WHERE id = ? AND imprest_manager_id IS NULL',
+            [mgrId, grn.id]
           );
         }
         voucherLedgerInserted++;
@@ -416,7 +345,7 @@ async function main() {
 
     // ── Report ─────────────────────────────────────────────────────────────
     console.log(`\n\n════════════════════════════════════════════════════════`);
-    console.log(` RESULTS — ${APPLY ? "APPLIED" : "DRY RUN"}`);
+    console.log(` RESULTS — ${APPLY ? 'APPLIED' : 'DRY RUN'}`);
     console.log(`════════════════════════════════════════════════════════`);
     console.log(` imprest_manager rows inserted   : ${mgrInserted}`);
     console.log(` imprest_manager rows skipped    : ${mgrSkipped}`);
@@ -426,18 +355,19 @@ async function main() {
     console.log(` ledger credit entries (alloc)   : ${ledgerInserted}`);
     console.log(` ledger debit entries (GRN)      : ${voucherLedgerInserted}`);
     if (!APPLY) {
-      console.log("\n DRY RUN complete — nothing written.");
-      console.log(" Re-run with --apply to execute.\n");
+      console.log('\n DRY RUN complete — nothing written.');
+      console.log(' Re-run with --apply to execute.\n');
     } else {
-      console.log("\n Migration complete.\n");
+      console.log('\n Migration complete.\n');
     }
+
   } finally {
     await hrms.end();
     await bill.end();
   }
 }
 
-main().catch((err) => {
-  console.error("\nMIGRATION FAILED:", err.message ?? err);
+main().catch(err => {
+  console.error('\nMIGRATION FAILED:', err.message ?? err);
   process.exit(1);
 });

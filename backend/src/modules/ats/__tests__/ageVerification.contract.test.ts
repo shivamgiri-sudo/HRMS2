@@ -13,12 +13,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 
 type Rows = Record<string, unknown>[];
-const state: {
-  bgv?: Rows;
-  docs?: Rows;
-  profile?: Rows;
-  minorUpdateFails?: boolean;
-} = {};
+const state: { bgv?: Rows; docs?: Rows; profile?: Rows; minorUpdateFails?: boolean } = {};
 
 const dbExecute = vi.fn(async (sql: string) => {
   const s = String(sql);
@@ -34,21 +29,11 @@ const dbExecute = vi.fn(async (sql: string) => {
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 
 const {
-  resolveVerifiedDob,
-  assertEmployableAge,
-  extractDobFromText,
-  ageOn,
-  MINIMUM_EMPLOYMENT_AGE,
-  persistMinorFlag,
+  resolveVerifiedDob, assertEmployableAge, extractDobFromText, ageOn,
+  MINIMUM_EMPLOYMENT_AGE, persistMinorFlag,
 } = await import("../ageVerification.service.js");
 
-beforeEach(() => {
-  state.bgv = [];
-  state.docs = [];
-  state.profile = [];
-  state.minorUpdateFails = false;
-  dbExecute.mockClear();
-});
+beforeEach(() => { state.bgv = []; state.docs = []; state.profile = []; state.minorUpdateFails = false; dbExecute.mockClear(); });
 
 /** A DOB that makes someone exactly `years` old on `on`. */
 const dobFor = (years: number, on = new Date()) =>
@@ -76,9 +61,7 @@ describe("the 18th-birthday boundary", () => {
     const v = await resolveVerifiedDob("cand-1", join);
     expect(v.age).toBe(17);
     expect(v.isMinor).toBe(true);
-    await expect(assertEmployableAge("cand-1", join)).rejects.toMatchObject({
-      code: "UNDERAGE_CANDIDATE",
-    });
+    await expect(assertEmployableAge("cand-1", join)).rejects.toMatchObject({ code: "UNDERAGE_CANDIDATE" });
   });
 
   it("still flags someone one day short of 18 when the DOB is only self-declared", async () => {
@@ -101,9 +84,7 @@ describe("the 18th-birthday boundary", () => {
 
   it("judges age on the JOINING date, not today", async () => {
     // Under 18 now, but 18 by the time employment starts — must not be blocked.
-    state.profile = [
-      { dob: dobFor(18, new Date(Date.now() + 60 * 24 * 3600 * 1000)) },
-    ];
+    state.profile = [{ dob: dobFor(18, new Date(Date.now() + 60 * 24 * 3600 * 1000)) }];
     const soon = new Date(Date.now() + 60 * 24 * 3600 * 1000);
     expect((await resolveVerifiedDob("cand-1", soon)).isMinor).toBe(false);
     expect((await resolveVerifiedDob("cand-1", new Date())).isMinor).toBe(true);
@@ -115,10 +96,7 @@ describe("source precedence", () => {
     // A candidate could otherwise type a false year to defeat the check.
     state.bgv = [{ matched_dob: "2010-05-05" }];
     state.profile = [{ dob: "1990-01-01" }];
-    const v = await resolveVerifiedDob(
-      "cand-1",
-      new Date("2026-08-01T12:00:00"),
-    );
+    const v = await resolveVerifiedDob("cand-1", new Date("2026-08-01T12:00:00"));
     expect(v.source).toBe("bgv_verified");
     expect(v.dob).toBe("2010-05-05");
     expect(v.verified).toBe(true);
@@ -126,14 +104,9 @@ describe("source precedence", () => {
   });
 
   it("falls back to OCR when there is no verified DOB", async () => {
-    state.docs = [
-      { ocr_raw_text: "Government of India\nDOB: 15/06/2009\nMale" },
-    ];
+    state.docs = [{ ocr_raw_text: "Government of India\nDOB: 15/06/2009\nMale" }];
     state.profile = [{ dob: "1990-01-01" }];
-    const v = await resolveVerifiedDob(
-      "cand-1",
-      new Date("2026-08-01T12:00:00"),
-    );
+    const v = await resolveVerifiedDob("cand-1", new Date("2026-08-01T12:00:00"));
     expect(v.source).toBe("ocr_document");
     expect(v.dob).toBe("2009-06-15");
     expect(v.verified).toBe(false);
@@ -141,10 +114,7 @@ describe("source precedence", () => {
 
   it("uses the self-declared DOB last", async () => {
     state.profile = [{ dob: "1995-03-10" }];
-    const v = await resolveVerifiedDob(
-      "cand-1",
-      new Date("2026-08-01T12:00:00"),
-    );
+    const v = await resolveVerifiedDob("cand-1", new Date("2026-08-01T12:00:00"));
     expect(v.source).toBe("self_declared");
     expect(v.verified).toBe(false);
   });
@@ -160,10 +130,7 @@ describe("source precedence", () => {
   it("surfaces a conflict between sources instead of hiding it", async () => {
     state.bgv = [{ matched_dob: "2000-01-01" }];
     state.profile = [{ dob: "1995-01-01" }];
-    const v = await resolveVerifiedDob(
-      "cand-1",
-      new Date("2026-08-01T12:00:00"),
-    );
+    const v = await resolveVerifiedDob("cand-1", new Date("2026-08-01T12:00:00"));
     expect(v.source).toBe("bgv_verified");
     expect(v.conflicts.length).toBe(1);
     expect(v.conflicts[0].source).toBe("self_declared");
@@ -238,9 +205,7 @@ describe("the block itself", () => {
   it("does not block when no DOB exists — that is a data gap, not a minor", async () => {
     // Blocking on absent data would stop every candidate whose DOB was never
     // captured, which is most of them historically.
-    await expect(assertEmployableAge("cand-1")).resolves.toMatchObject({
-      source: "none",
-    });
+    await expect(assertEmployableAge("cand-1")).resolves.toMatchObject({ source: "none" });
   });
 });
 
@@ -280,12 +245,7 @@ describe("employee creation refuses a minor whatever the DOB source", () => {
 describe("persistMinorFlag", () => {
   it("writes is_minor and does not throw on success", async () => {
     await expect(
-      persistMinorFlag("cand-1", {
-        isMinor: true,
-        age: 17,
-        source: "self_declared",
-        dob: dobFor(17),
-      } as any),
+      persistMinorFlag("cand-1", { isMinor: true, age: 17, source: "self_declared", dob: dobFor(17) } as any)
     ).resolves.toBeUndefined();
     expect(dbExecute).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE ats_candidate SET is_minor"),
@@ -296,12 +256,7 @@ describe("persistMinorFlag", () => {
   it("does not throw when the write fails — the caller must not be blocked by this", async () => {
     state.minorUpdateFails = true;
     await expect(
-      persistMinorFlag("cand-1", {
-        isMinor: false,
-        age: 25,
-        source: "self_declared",
-        dob: dobFor(25),
-      } as any),
+      persistMinorFlag("cand-1", { isMinor: false, age: 25, source: "self_declared", dob: dobFor(25) } as any)
     ).resolves.toBeUndefined();
   });
 });

@@ -1,8 +1,5 @@
 import { Router } from "express";
-import {
-  requireAuth,
-  type AuthenticatedRequest,
-} from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
@@ -11,10 +8,8 @@ import { runRankSql } from "./run-status.js";
 import { employeeScopeFor, guardEmployee } from "./payroll-branch-scope.js";
 
 export const payrollVarianceRouter = Router();
-const h =
-  (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) =>
-    fn(req, res).catch(next);
+const h = (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 payrollVarianceRouter.use(requireAuth);
 
@@ -32,27 +27,13 @@ function categorize(curr: any, prev: any): VarCategory {
   if (!prev) return "NEW_JOINER";
   if (!curr) return "LEAVER";
 
-  const gross = Math.abs(Number(curr.gross_salary) - Number(prev.gross_salary));
-  const net = Math.abs(Number(curr.net_salary) - Number(prev.net_salary));
-  const incent = Math.abs(
-    Number(curr.incentive_total ?? 0) - Number(prev.incentive_total ?? 0),
-  );
-  const pf = Math.abs(
-    Number(curr.pf_employee) +
-      Number(curr.pf_employer) -
-      (Number(prev.pf_employee) + Number(prev.pf_employer)),
-  );
-  const esic = Math.abs(
-    Number(curr.esic_employee) +
-      Number(curr.esic_employer) -
-      (Number(prev.esic_employee) + Number(prev.esic_employer)),
-  );
-  const ded = Math.abs(
-    Number(curr.total_deductions ?? 0) - Number(prev.total_deductions ?? 0),
-  );
-  const ot = Math.abs(
-    Number(curr.overtime_amount ?? 0) - Number(prev.overtime_amount ?? 0),
-  );
+  const gross  = Math.abs(Number(curr.gross_salary) - Number(prev.gross_salary));
+  const net    = Math.abs(Number(curr.net_salary)   - Number(prev.net_salary));
+  const incent = Math.abs(Number(curr.incentive_total ?? 0) - Number(prev.incentive_total ?? 0));
+  const pf     = Math.abs((Number(curr.pf_employee) + Number(curr.pf_employer)) - (Number(prev.pf_employee) + Number(prev.pf_employer)));
+  const esic   = Math.abs((Number(curr.esic_employee) + Number(curr.esic_employer)) - (Number(prev.esic_employee) + Number(prev.esic_employer)));
+  const ded    = Math.abs(Number(curr.total_deductions ?? 0) - Number(prev.total_deductions ?? 0));
+  const ot     = Math.abs(Number(curr.overtime_amount ?? 0) - Number(prev.overtime_amount ?? 0));
 
   if (net < 1) return "NO_CHANGE";
   if (incent > 100) return "INCENTIVE_CHANGE";
@@ -66,35 +47,20 @@ function categorize(curr: any, prev: any): VarCategory {
 // ─── GET /api/payroll/variance?month=YYYY-MM&compare_to=YYYY-MM ───────────────
 payrollVarianceRouter.get(
   "/",
-  requireRole(
-    "admin",
-    "super_admin",
-    "finance",
-    "payroll",
-    "payroll_head",
-    "finance_head",
-  ),
+  requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "finance_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { month, compare_to } = req.query as {
-      month?: string;
-      compare_to?: string;
-    };
+    const { month, compare_to } = req.query as { month?: string; compare_to?: string };
 
     if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "month (YYYY-MM) is required" });
+      return res.status(400).json({ success: false, message: "month (YYYY-MM) is required" });
     }
 
-    const prevMonth =
-      compare_to && /^\d{4}-(0[1-9]|1[0-2])$/.test(compare_to)
-        ? compare_to
-        : (() => {
-            const [yr, mo] = month.split("-").map(Number);
-            return mo === 1
-              ? `${yr - 1}-12`
-              : `${yr}-${String(mo - 1).padStart(2, "0")}`;
-          })();
+    const prevMonth = compare_to && /^\d{4}-(0[1-9]|1[0-2])$/.test(compare_to)
+      ? compare_to
+      : (() => {
+          const [yr, mo] = month.split("-").map(Number);
+          return mo === 1 ? `${yr - 1}-12` : `${yr}-${String(mo - 1).padStart(2, "0")}`;
+        })();
 
     // Branch scoping (owner ruling 2026-10-01): only employees inside the caller's scope.
     const varScope = await employeeScopeFor(req, "e");
@@ -179,33 +145,28 @@ payrollVarianceRouter.get(
       [prevMonth, ...varScope.params]
     );
 
-    const currMap = new Map<string, any>(
-      (currRows as any[]).map((r) => [r.employee_id, r]),
-    );
-    const prevMap = new Map<string, any>(
-      (prevRows as any[]).map((r) => [r.employee_id, r]),
-    );
+    const currMap = new Map<string, any>((currRows as any[]).map(r => [r.employee_id, r]));
+    const prevMap = new Map<string, any>((prevRows as any[]).map(r => [r.employee_id, r]));
 
     // All employee IDs across both months
     const allIds = new Set([...currMap.keys(), ...prevMap.keys()]);
 
     const rows: any[] = [];
-    let totalCurrNet = 0;
-    let totalPrevNet = 0;
-    let newJoiners = 0;
-    let leavers = 0;
-    let changed = 0;
+    let totalCurrNet  = 0;
+    let totalPrevNet  = 0;
+    let newJoiners    = 0;
+    let leavers       = 0;
+    let changed       = 0;
 
     for (const empId of allIds) {
       const curr = currMap.get(empId) ?? null;
       const prev = prevMap.get(empId) ?? null;
       const category = categorize(curr, prev);
 
-      const currNet = Number(curr?.net_salary ?? 0);
-      const prevNet = Number(prev?.net_salary ?? 0);
-      const delta = currNet - prevNet;
-      const deltaPct =
-        prevNet !== 0 ? Math.round((delta / prevNet) * 1000) / 10 : null;
+      const currNet  = Number(curr?.net_salary  ?? 0);
+      const prevNet  = Number(prev?.net_salary  ?? 0);
+      const delta    = currNet - prevNet;
+      const deltaPct = prevNet !== 0 ? Math.round((delta / prevNet) * 1000) / 10 : null;
 
       totalCurrNet += currNet;
       totalPrevNet += prevNet;
@@ -214,52 +175,39 @@ payrollVarianceRouter.get(
       else if (category !== "NO_CHANGE") changed++;
 
       rows.push({
-        employee_id: empId,
-        employee_code: (curr ?? prev)?.employee_code,
-        employee_name:
-          (curr ?? prev)?.employee_name ?? (prev as any)?.employee_name,
-        branch_name: (curr ?? prev)?.branch_name,
+        employee_id:     empId,
+        employee_code:   (curr ?? prev)?.employee_code,
+        employee_name:   (curr ?? prev)?.employee_name ?? (prev as any)?.employee_name,
+        branch_name:     (curr ?? prev)?.branch_name,
         department_name: (curr ?? prev)?.department_name,
-        designation_name: (curr ?? prev)?.designation_name,
+        designation_name:(curr ?? prev)?.designation_name,
         category,
         // Current month
-        curr_gross: curr?.gross_salary ?? null,
-        curr_net: curr?.net_salary ?? null,
-        curr_basic: curr?.basic ?? null,
-        curr_tds: curr?.tds ?? null,
-        curr_pf: curr
-          ? Number(curr.pf_employee) + Number(curr.pf_employer)
-          : null,
-        curr_esic: curr
-          ? Number(curr.esic_employee) + Number(curr.esic_employer)
-          : null,
+        curr_gross:   curr?.gross_salary  ?? null,
+        curr_net:     curr?.net_salary    ?? null,
+        curr_basic:   curr?.basic         ?? null,
+        curr_tds:     curr?.tds           ?? null,
+        curr_pf:      curr ? Number(curr.pf_employee) + Number(curr.pf_employer) : null,
+        curr_esic:    curr ? Number(curr.esic_employee) + Number(curr.esic_employer) : null,
         curr_incentive: curr?.incentive_total ?? null,
-        curr_ot: curr?.overtime_amount ?? null,
-        curr_ded: curr?.total_deductions ?? null,
+        curr_ot:      curr?.overtime_amount  ?? null,
+        curr_ded:     curr?.total_deductions ?? null,
         // Prev month
-        prev_net: prev?.net_salary ?? null,
-        prev_gross: prev?.gross_salary ?? null,
-        prev_basic: prev?.basic ?? null,
+        prev_net:     prev?.net_salary    ?? null,
+        prev_gross:   prev?.gross_salary  ?? null,
+        prev_basic:   prev?.basic         ?? null,
         // Deltas
-        delta_net: delta,
-        delta_pct: deltaPct,
+        delta_net:    delta,
+        delta_pct:    deltaPct,
       });
     }
 
     // Sort: NEW_JOINER, LEAVER, changed, NO_CHANGE
     const catOrder: Record<string, number> = {
-      NEW_JOINER: 0,
-      LEAVER: 1,
-      SALARY_CHANGE: 2,
-      INCENTIVE_CHANGE: 3,
-      OVERTIME_CHANGE: 4,
-      STATUTORY_CHANGE: 5,
-      DEDUCTION_CHANGE: 6,
-      NO_CHANGE: 7,
+      NEW_JOINER: 0, LEAVER: 1, SALARY_CHANGE: 2, INCENTIVE_CHANGE: 3,
+      OVERTIME_CHANGE: 4, STATUTORY_CHANGE: 5, DEDUCTION_CHANGE: 6, NO_CHANGE: 7,
     };
-    rows.sort(
-      (a, b) => (catOrder[a.category] ?? 9) - (catOrder[b.category] ?? 9),
-    );
+    rows.sort((a, b) => (catOrder[a.category] ?? 9) - (catOrder[b.category] ?? 9));
 
     // Category breakdown
     const breakdown: Record<string, number> = {};
@@ -275,10 +223,10 @@ payrollVarianceRouter.get(
         summary: {
           total_employees_current: currMap.size,
           total_employees_previous: prevMap.size,
-          net_bill_current: Math.round(totalCurrNet),
+          net_bill_current:  Math.round(totalCurrNet),
           net_bill_previous: Math.round(totalPrevNet),
-          delta_net_bill: Math.round(totalCurrNet - totalPrevNet),
-          new_joiners: newJoiners,
+          delta_net_bill:    Math.round(totalCurrNet - totalPrevNet),
+          new_joiners:  newJoiners,
           leavers,
           changed,
           breakdown,
@@ -286,39 +234,25 @@ payrollVarianceRouter.get(
         rows,
       },
     });
-  }),
+  })
 );
 
 // ─── GET /api/payroll/variance/employee/:id ────────────────────────────────────
 // Component-level breakdown for one employee across two months
 payrollVarianceRouter.get(
   "/employee/:employeeId",
-  requireRole(
-    "admin",
-    "super_admin",
-    "finance",
-    "payroll",
-    "payroll_head",
-    "finance_head",
-  ),
+  requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "finance_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId } = req.params;
-    const { month, compare_to } = req.query as {
-      month?: string;
-      compare_to?: string;
-    };
+    const { month, compare_to } = req.query as { month?: string; compare_to?: string };
 
     if (!month) return res.status(400).json({ success: false, message: "month is required" });
     if (!(await guardEmployee(req, res, employeeId))) return;
 
-    const prevMonth =
-      compare_to ??
-      (() => {
-        const [yr, mo] = (month as string).split("-").map(Number);
-        return mo === 1
-          ? `${yr - 1}-12`
-          : `${yr}-${String(mo - 1).padStart(2, "0")}`;
-      })();
+    const prevMonth = compare_to ?? (() => {
+      const [yr, mo] = (month as string).split("-").map(Number);
+      return mo === 1 ? `${yr - 1}-12` : `${yr}-${String(mo - 1).padStart(2, "0")}`;
+    })();
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT spr.run_month, spl.*
@@ -326,22 +260,20 @@ payrollVarianceRouter.get(
          JOIN salary_prep_run  spr ON spr.id = spl.run_id
          WHERE spl.employee_id = ? AND spr.run_month IN (?, ?)
          ORDER BY spr.run_month DESC`,
-      [employeeId, month, prevMonth],
+      [employeeId, month, prevMonth]
     );
 
     const byMonth: Record<string, any> = {};
-    (rows as any[]).forEach((r) => {
-      byMonth[r.run_month] = r;
-    });
+    (rows as any[]).forEach(r => { byMonth[r.run_month] = r; });
 
     return res.json({
       success: true,
       data: {
         month,
         compare_to: prevMonth,
-        current: byMonth[month] ?? null,
+        current:  byMonth[month] ?? null,
         previous: byMonth[prevMonth] ?? null,
       },
     });
-  }),
+  })
 );

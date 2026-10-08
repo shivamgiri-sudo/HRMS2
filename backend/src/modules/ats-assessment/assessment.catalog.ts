@@ -1,5 +1,4 @@
-export type AssessmentProcess =
-  "inbound" | "outbound" | "backoffice" | "document" | "email";
+export type AssessmentProcess = "inbound" | "outbound" | "backoffice" | "document" | "email";
 export type AssessmentRole = "executive" | "team_leader" | "quality_auditor";
 export type QuestionType = "single" | "multi" | "text";
 export type DifficultyLevel = "basic" | "intermediate" | "advanced";
@@ -139,12 +138,7 @@ const COMMON: Record<AssessmentRole, AssessmentQuestionDefinition[]> = {
       "comprehension",
       "Comprehension",
       "Why was the form returned in the previous passage?",
-      [
-        "It was late.",
-        "A mandatory field was blank.",
-        "It was fraudulent.",
-        "The customer requested it.",
-      ],
+      ["It was late.", "A mandatory field was blank.", "It was fraudulent.", "The customer requested it."],
       "A mandatory field was blank.",
       5,
       "basic",
@@ -259,12 +253,7 @@ const COMMON: Record<AssessmentRole, AssessmentQuestionDefinition[]> = {
       "quality",
       "Quality Governance",
       "A quality finding should be supported by:",
-      [
-        "Personal opinion",
-        "Clear evidence linked to the applicable standard",
-        "Past score only",
-        "A manager's assumption",
-      ],
+      ["Personal opinion", "Clear evidence linked to the applicable standard", "Past score only", "A manager's assumption"],
       "Clear evidence linked to the applicable standard",
       6,
       "basic",
@@ -316,10 +305,7 @@ const COMMON: Record<AssessmentRole, AssessmentQuestionDefinition[]> = {
   ],
 };
 
-const PROCESS_BANK: Record<
-  AssessmentProcess,
-  Record<AssessmentRole, AssessmentQuestionDefinition[]>
-> = {
+const PROCESS_BANK: Record<AssessmentProcess, Record<AssessmentRole, AssessmentQuestionDefinition[]>> = {
   inbound: {
     executive: [
       choice(
@@ -341,12 +327,7 @@ const PROCESS_BANK: Record<
         "customer_handling",
         "Inbound Customer Handling",
         "Before discussing account-specific information, the agent should:",
-        [
-          "Complete required verification.",
-          "Ask only the name.",
-          "Share limited information first.",
-          "Skip verification for repeat callers.",
-        ],
+        ["Complete required verification.", "Ask only the name.", "Share limited information first.", "Skip verification for repeat callers."],
         "Complete required verification.",
         8,
       ),
@@ -457,18 +438,7 @@ const PROCESS_BANK: Record<
         "case_study",
         "Inbound Case Study",
         "During peak hour the queue doubles, two agents are absent, and a customer escalation is waiting. Explain immediate prioritization, communication, and the post-event corrective plan.",
-        [
-          "queue",
-          "staffing",
-          "escalation",
-          "break",
-          "skill",
-          "communication",
-          "sla",
-          "customer",
-          "root cause",
-          "monitor",
-        ],
+        ["queue", "staffing", "escalation", "break", "skill", "communication", "sla", "customer", "root cause", "monitor"],
         18,
       ),
     ],
@@ -478,12 +448,7 @@ const PROCESS_BANK: Record<
         "audit",
         "Inbound Audit",
         "An agent discloses account data before mandatory verification. This is normally:",
-        [
-          "Cosmetic",
-          "Critical or fatal compliance error",
-          "No error if genuine",
-          "AHT issue",
-        ],
+        ["Cosmetic", "Critical or fatal compliance error", "No error if genuine", "AHT issue"],
         "Critical or fatal compliance error",
         9,
         "advanced",
@@ -530,16 +495,7 @@ const PROCESS_BANK: Record<
         "case_study",
         "Inbound Audit Case",
         "Verification and resolution were correct, but the agent promised an unapproved turnaround time. Explain classification, evidence, customer risk, feedback, and prevention.",
-        [
-          "promise",
-          "turnaround",
-          "policy",
-          "risk",
-          "classification",
-          "feedback",
-          "evidence",
-          "prevention",
-        ],
+        ["promise", "turnaround", "policy", "risk", "classification", "feedback", "evidence", "prevention"],
         18,
       ),
     ],
@@ -681,18 +637,7 @@ const PROCESS_BANK: Record<
         "case_study",
         "Outbound Case Study",
         "A campaign is at 70% of target with five days remaining. Prepare a recovery plan that protects consent and prevents mis-selling.",
-        [
-          "target",
-          "lead",
-          "conversion",
-          "coaching",
-          "follow-up",
-          "consent",
-          "quality",
-          "monitor",
-          "forecast",
-          "risk",
-        ],
+        ["target", "lead", "conversion", "coaching", "follow-up", "consent", "quality", "monitor", "forecast", "risk"],
         18,
       ),
     ],
@@ -702,12 +647,7 @@ const PROCESS_BANK: Record<
         "audit",
         "Outbound Audit",
         "An agent says an optional feature is mandatory. This is:",
-        [
-          "Good persuasion",
-          "Misrepresentation or mis-selling",
-          "Grammar issue",
-          "Acceptable if converted",
-        ],
+        ["Good persuasion", "Misrepresentation or mis-selling", "Grammar issue", "Acceptable if converted"],
         "Misrepresentation or mis-selling",
         9,
         "advanced",
@@ -760,17 +700,7 @@ const PROCESS_BANK: Record<
         "case_study",
         "Outbound Audit Case",
         "Explain how you would audit a high-converting agent suspected of false commitments and present findings without bias.",
-        [
-          "sample",
-          "evidence",
-          "commitment",
-          "policy",
-          "customer",
-          "bias",
-          "trend",
-          "action",
-          "validation",
-        ],
+        ["sample", "evidence", "commitment", "policy", "customer", "bias", "trend", "action", "validation"],
         18,
       ),
     ],
@@ -782,12 +712,7 @@ const PROCESS_BANK: Record<
         "accuracy",
         "Backoffice Accuracy",
         "Two records have the same ID but different dates of birth. What should you do?",
-        [
-          "Choose randomly.",
-          "Stop and follow the duplicate or mismatch exception process.",
-          "Merge silently.",
-          "Delete both.",
-        ],
+        ["Choose randomly.", "Stop and follow the duplicate or mismatch exception process.", "Merge silently.", "Delete both."],
         "Stop and follow the duplicate or mismatch exception process.",
         8,
       ),
@@ -810,12 +735,7 @@ const PROCESS_BANK: Record<
         "accuracy",
         "Backoffice Accuracy",
         "Which practice reduces data-entry errors?",
-        [
-          "Enter from memory.",
-          "Use field validation and a final source-to-entry check.",
-          "Copy the previous record.",
-          "Ignore formatting.",
-        ],
+        ["Enter from memory.", "Use field validation and a final source-to-entry check.", "Copy the previous record.", "Ignore formatting."],
         "Use field validation and a final source-to-entry check.",
         8,
       ),
@@ -911,18 +831,7 @@ const PROCESS_BANK: Record<
         "case_study",
         "Backoffice Case Study",
         "A queue has 600 pending cases, 120 due today, 15% rework, and 10% absenteeism. Build a same-day allocation and control plan.",
-        [
-          "aging",
-          "due",
-          "rework",
-          "staffing",
-          "allocation",
-          "quality",
-          "hourly",
-          "escalation",
-          "skill",
-          "sla",
-        ],
+        ["aging", "due", "rework", "staffing", "allocation", "quality", "hourly", "escalation", "skill", "sla"],
         18,
       ),
     ],
@@ -932,12 +841,7 @@ const PROCESS_BANK: Record<
         "audit",
         "Backoffice Audit",
         "A transaction has the correct name but wrong customer ID. This is usually:",
-        [
-          "Cosmetic",
-          "Critical data-integrity error",
-          "No error",
-          "Productivity issue",
-        ],
+        ["Cosmetic", "Critical data-integrity error", "No error", "Productivity issue"],
         "Critical data-integrity error",
         9,
         "advanced",
@@ -990,17 +894,7 @@ const PROCESS_BANK: Record<
         "case_study",
         "Backoffice Audit Case",
         "A process shows 8% defects, mostly from two fields. Explain sampling, validation, root cause, corrective action, and effectiveness checks.",
-        [
-          "sample",
-          "field",
-          "validation",
-          "root cause",
-          "training",
-          "system",
-          "action",
-          "trend",
-          "effectiveness",
-        ],
+        ["sample", "field", "validation", "root cause", "training", "system", "action", "trend", "effectiveness"],
         18,
       ),
     ],
@@ -1026,12 +920,7 @@ const PROCESS_BANK: Record<
         "document_review",
         "Document Review",
         "A document expiry date is in the past. The assessor should:",
-        [
-          "Ignore it.",
-          "Apply the expired-document rule and correct reason.",
-          "Edit the date.",
-          "Use another person's document.",
-        ],
+        ["Ignore it.", "Apply the expired-document rule and correct reason.", "Edit the date.", "Use another person's document."],
         "Apply the expired-document rule and correct reason.",
         8,
       ),
@@ -1142,17 +1031,7 @@ const PROCESS_BANK: Record<
         "case_study",
         "Document Case Study",
         "A policy change caused inconsistent decisions across three teams. Explain containment, calibration, impacted-case review, rework, and communication.",
-        [
-          "contain",
-          "calibration",
-          "policy",
-          "sample",
-          "rework",
-          "communication",
-          "decision",
-          "monitor",
-          "impact",
-        ],
+        ["contain", "calibration", "policy", "sample", "rework", "communication", "decision", "monitor", "impact"],
         18,
       ),
     ],
@@ -1162,12 +1041,7 @@ const PROCESS_BANK: Record<
         "audit",
         "Document Audit",
         "An assessor accepts a document where the mandatory ID number is unreadable. This is likely:",
-        [
-          "No error",
-          "False acceptance and potentially critical defect",
-          "Typing issue",
-          "Customer-service issue",
-        ],
+        ["No error", "False acceptance and potentially critical defect", "Typing issue", "Customer-service issue"],
         "False acceptance and potentially critical defect",
         9,
         "advanced",
@@ -1220,17 +1094,7 @@ const PROCESS_BANK: Record<
         "case_study",
         "Document Audit Case",
         "A valid document was rejected because the reviewer misunderstood the date format. Explain classification, evidence, customer impact, correction, and prevention.",
-        [
-          "false rejection",
-          "date",
-          "format",
-          "evidence",
-          "impact",
-          "calibration",
-          "training",
-          "prevent",
-          "rework",
-        ],
+        ["false rejection", "date", "format", "evidence", "impact", "calibration", "training", "prevent", "rework"],
         18,
       ),
     ],
@@ -1242,12 +1106,7 @@ const PROCESS_BANK: Record<
         "email_handling",
         "Email Handling",
         "Which subject line is clearest?",
-        [
-          "Hi",
-          "Regarding your request",
-          "Update on Ticket 45821 - Additional Document Required",
-          "Important message",
-        ],
+        ["Hi", "Regarding your request", "Update on Ticket 45821 - Additional Document Required", "Important message"],
         "Update on Ticket 45821 - Additional Document Required",
         8,
       ),
@@ -1298,15 +1157,7 @@ const PROCESS_BANK: Record<
         "written_response",
         "Email Drafting",
         "Draft a concise reply to a customer whose refund is delayed. Acknowledge the concern, explain that review is in progress, give the next update timeline, and avoid an unapproved promise.",
-        [
-          "sorry",
-          "concern",
-          "review",
-          "update",
-          "timeline",
-          "thank",
-          "reference",
-        ],
+        ["sorry", "concern", "review", "update", "timeline", "thank", "reference"],
         18,
       ),
     ],
@@ -1373,17 +1224,7 @@ const PROCESS_BANK: Record<
         "case_study",
         "Email Case Study",
         "A queue has 300 aged emails, mixed priorities, and rising repeat contacts. Write a recovery and quality-control plan.",
-        [
-          "aging",
-          "priority",
-          "allocation",
-          "repeat",
-          "resolution",
-          "quality",
-          "sla",
-          "monitor",
-          "staffing",
-        ],
+        ["aging", "priority", "allocation", "repeat", "resolution", "quality", "sla", "monitor", "staffing"],
         18,
       ),
     ],
@@ -1393,12 +1234,7 @@ const PROCESS_BANK: Record<
         "audit",
         "Email Audit",
         "The email is grammatically correct but gives the wrong resolution. The primary defect is:",
-        [
-          "No defect",
-          "Process or resolution accuracy defect",
-          "Formatting",
-          "Tone only",
-        ],
+        ["No defect", "Process or resolution accuracy defect", "Formatting", "Tone only"],
         "Process or resolution accuracy defect",
         9,
       ),
@@ -1407,12 +1243,7 @@ const PROCESS_BANK: Record<
         "audit",
         "Email Audit",
         "An email exposes another customer's account number. This is:",
-        [
-          "Spelling issue",
-          "Critical privacy or compliance defect",
-          "Acceptable if accidental",
-          "Template issue",
-        ],
+        ["Spelling issue", "Critical privacy or compliance defect", "Acceptable if accidental", "Template issue"],
         "Critical privacy or compliance defect",
         9,
         "advanced",
@@ -1422,12 +1253,7 @@ const PROCESS_BANK: Record<
         "audit",
         "Email Audit",
         "A reply answers one of two customer questions. The auditor should primarily assess:",
-        [
-          "Font",
-          "Completeness of resolution",
-          "Typing speed",
-          "Greeting length",
-        ],
+        ["Font", "Completeness of resolution", "Typing speed", "Greeting length"],
         "Completeness of resolution",
         9,
       ),
@@ -1451,16 +1277,7 @@ const PROCESS_BANK: Record<
         "case_study",
         "Email Audit Case",
         "Audit a polite, grammatically correct response that misses one of two requests and gives no next-step timeline. Explain defects, evidence, impact, and feedback.",
-        [
-          "incomplete",
-          "request",
-          "timeline",
-          "customer",
-          "resolution",
-          "feedback",
-          "evidence",
-          "impact",
-        ],
+        ["incomplete", "request", "timeline", "customer", "resolution", "feedback", "evidence", "impact"],
         18,
       ),
     ],
@@ -1494,10 +1311,7 @@ const ROLE_LABELS: Record<AssessmentRole, string> = {
   quality_auditor: "Quality Auditor",
 };
 
-const typingFor = (
-  process: AssessmentProcess,
-  role: AssessmentRole,
-): TypingDefinition => {
+const typingFor = (process: AssessmentProcess, role: AssessmentRole): TypingDefinition => {
   // Document/data-entry processes require the highest accuracy (98%).
   // QA auditors require 97%. All other roles require the standard 95%.
   const isDocProcess = process === "document";
@@ -1506,8 +1320,7 @@ const typingFor = (
   return {
     required: ["backoffice", "document", "email"].includes(process),
     durationSeconds: 180,
-    minNetWpm:
-      role === "team_leader" ? 35 : role === "quality_auditor" ? 32 : 30,
+    minNetWpm: role === "team_leader" ? 35 : role === "quality_auditor" ? 32 : 30,
     minAccuracy,
     maxAttempts: 2,
     passage: PASSAGES[process],
@@ -1515,50 +1328,38 @@ const typingFor = (
 };
 
 export const DEFAULT_ASSESSMENT_TEMPLATES: AssessmentTemplateDefinition[] = (
-  [
-    "inbound",
-    "outbound",
-    "backoffice",
-    "document",
-    "email",
-  ] as AssessmentProcess[]
+  ["inbound", "outbound", "backoffice", "document", "email"] as AssessmentProcess[]
 ).flatMap((process) =>
-  (["executive", "team_leader", "quality_auditor"] as AssessmentRole[]).map(
-    (role) => ({
-      code: `ATS-${process.toUpperCase()}-${role.toUpperCase()}`,
-      name: `${PROCESS_LABELS[process]} - ${ROLE_LABELS[role]} Assessment`,
-      process,
-      role,
-      experienceLevel: "any",
-      durationMinutes: role === "executive" ? 30 : 45,
-      passingPercentage: role === "executive" ? 60 : 70,
-      difficulty: role === "executive" ? "intermediate" : "advanced",
-      instructions: [
-        "The complete assessment can be submitted only once.",
-        "All questions are mandatory unless the system marks a section optional.",
-        "Typing permits a maximum of two attempts; the better submitted score is used.",
-        "Correct and incorrect typing details are displayed only after a typing attempt is submitted.",
-        "Do not copy, paste, use another device, or seek assistance during the assessment.",
-      ],
-      typing: typingFor(process, role),
-      questions: [...COMMON[role], ...PROCESS_BANK[process][role]],
-    }),
-  ),
+  (["executive", "team_leader", "quality_auditor"] as AssessmentRole[]).map((role) => ({
+    code: `ATS-${process.toUpperCase()}-${role.toUpperCase()}`,
+    name: `${PROCESS_LABELS[process]} - ${ROLE_LABELS[role]} Assessment`,
+    process,
+    role,
+    experienceLevel: "any",
+    durationMinutes: role === "executive" ? 30 : 45,
+    passingPercentage: role === "executive" ? 60 : 70,
+    difficulty: role === "executive" ? "intermediate" : "advanced",
+    instructions: [
+      "The complete assessment can be submitted only once.",
+      "All questions are mandatory unless the system marks a section optional.",
+      "Typing permits a maximum of two attempts; the better submitted score is used.",
+      "Correct and incorrect typing details are displayed only after a typing attempt is submitted.",
+      "Do not copy, paste, use another device, or seek assistance during the assessment.",
+    ],
+    typing: typingFor(process, role),
+    questions: [...COMMON[role], ...PROCESS_BANK[process][role]],
+  })),
 );
 
 export function buildDefaultTemplates() {
   return DEFAULT_ASSESSMENT_TEMPLATES;
 }
 
-export function getDefaultTemplate(
-  process: AssessmentProcess,
-  role: AssessmentRole,
-) {
+export function getDefaultTemplate(process: AssessmentProcess, role: AssessmentRole) {
   const found = DEFAULT_ASSESSMENT_TEMPLATES.find(
     (template) => template.process === process && template.role === role,
   );
-  if (!found)
-    throw new Error(`Assessment template not found for ${process}/${role}`);
+  if (!found) throw new Error(`Assessment template not found for ${process}/${role}`);
   return found;
 }
 
@@ -1569,12 +1370,7 @@ export function publicTemplate(template: AssessmentTemplateDefinition) {
     questionCount: template.questions.length,
     typing,
     questions: template.questions.map(
-      ({
-        correctAnswer: _correctAnswer,
-        keywords: _keywords,
-        explanation: _explanation,
-        ...safe
-      }) => safe,
+      ({ correctAnswer: _correctAnswer, keywords: _keywords, explanation: _explanation, ...safe }) => safe,
     ),
   };
 }

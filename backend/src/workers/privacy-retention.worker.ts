@@ -17,8 +17,7 @@ import crypto from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 
-const MODE = (process.env.PRIVACY_RETENTION_MODE ?? "dry_run") as
-  "dry_run" | "approved_actions";
+const MODE = (process.env.PRIVACY_RETENTION_MODE ?? "dry_run") as "dry_run" | "approved_actions";
 
 interface RetentionPolicy {
   id: string;
@@ -92,11 +91,10 @@ const ENTITY_QUERIES: Record<string, string> = {
  * Every column below is nullable — checked, not assumed. Adding a NOT NULL column here
  * reintroduces defect 1 and silently disables erasure again.
  */
-const ANONYMIZE_HANDLERS: Record<string, (entityId: string) => Promise<void>> =
-  {
-    ats_candidate: async (id) => {
-      await db.execute(
-        `UPDATE ats_candidate
+const ANONYMIZE_HANDLERS: Record<string, (entityId: string) => Promise<void>> = {
+  ats_candidate: async (id) => {
+    await db.execute(
+      `UPDATE ats_candidate
        SET full_name = 'ANONYMIZED', mobile = '', email = NULL,
            address = NULL, current_address = NULL, permanent_address = NULL,
            emergency_contact_mobile = NULL, father_name = NULL, photo_url = NULL,
@@ -108,19 +106,16 @@ const ANONYMIZE_HANDLERS: Record<string, (entityId: string) => Promise<void>> =
            offer_salary = NULL,
            date_of_birth = NULL, updated_at = NOW()
        WHERE id = ?`,
-        [id],
-      );
-    },
-  };
+      [id]
+    );
+  },
+};
 
-async function hasActiveHold(
-  entityType: string,
-  entityId: string,
-): Promise<boolean> {
+async function hasActiveHold(entityType: string, entityId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM dpdp_processing_hold
      WHERE entity_type = ? AND entity_id = ? AND is_active = 1 LIMIT 1`,
-    [entityType, entityId],
+    [entityType, entityId]
   );
   return rows.length > 0;
 }
@@ -128,7 +123,7 @@ async function hasActiveHold(
 async function hasApproval(runId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM privacy_retention_approval WHERE run_id = ? LIMIT 1`,
-    [runId],
+    [runId]
   );
   return rows.length > 0;
 }
@@ -140,24 +135,18 @@ export async function runRetentionWorker(): Promise<void> {
   await db.execute(
     `INSERT INTO privacy_retention_run (id, run_mode, status, triggered_by)
      VALUES (?, ?, 'started', 'cron')`,
-    [runId, runMode],
+    [runId, runMode]
   );
 
   process.stdout.write(
-    JSON.stringify({
-      level: "info",
-      module: "privacy-retention",
-      event: "RETENTION_RUN_STARTED",
-      runId,
-      runMode,
-    }) + "\n",
+    JSON.stringify({ level: "info", module: "privacy-retention", event: "RETENTION_RUN_STARTED", runId, runMode }) + "\n"
   );
 
   try {
     // Load active retention policies
     const [policies] = await db.execute<RowDataPacket[]>(
       `SELECT id, entity_type, retention_days, action_on_expiry
-       FROM data_retention_policy WHERE is_active = 1`,
+       FROM data_retention_policy WHERE is_active = 1`
     );
 
     let candidateCount = 0;
@@ -167,17 +156,12 @@ export async function runRetentionWorker(): Promise<void> {
       const queryTemplate = ENTITY_QUERIES[policy.entity_type];
       if (!queryTemplate) continue; // No handler defined yet — skip silently
 
-      const [entityRows] = await db.execute<RowDataPacket[]>(queryTemplate, [
-        policy.retention_days,
-      ]);
+      const [entityRows] = await db.execute<RowDataPacket[]>(queryTemplate, [policy.retention_days]);
 
       for (const row of entityRows) {
         const entityId: string = row.entity_id;
         const recordDate: Date | null = row.record_date ?? null;
-        const holdActive = await hasActiveHold(
-          policy.entity_type,
-          entityId,
-        ).catch(() => true); // fail safe
+        const holdActive = await hasActiveHold(policy.entity_type, entityId).catch(() => true); // fail safe
 
         const eligible = !holdActive;
         candidateCount++;
@@ -196,12 +180,10 @@ export async function runRetentionWorker(): Promise<void> {
             policy.entity_type, // table_name ≈ entity_type here
             recordDate,
             policy.retention_days,
-            policy.action_on_expiry === "notify_admin"
-              ? "anonymize"
-              : policy.action_on_expiry,
+            policy.action_on_expiry === "notify_admin" ? "anonymize" : policy.action_on_expiry,
             holdActive ? 1 : 0,
             eligible ? 1 : 0,
-          ],
+          ]
         );
 
         // Execute actions only in approved_actions mode with a valid approval record
@@ -217,7 +199,7 @@ export async function runRetentionWorker(): Promise<void> {
                 `UPDATE privacy_retention_candidate
                  SET actioned_at = NOW(), action_result = 'anonymized'
                  WHERE run_id = ? AND entity_id = ?`,
-                [runId, entityId],
+                [runId, entityId]
               );
               actionedCount++;
             } catch (err) {
@@ -225,11 +207,7 @@ export async function runRetentionWorker(): Promise<void> {
                 `UPDATE privacy_retention_candidate
                  SET action_result = 'error', error_details = ?
                  WHERE run_id = ? AND entity_id = ?`,
-                [
-                  err instanceof Error ? err.message : String(err),
-                  runId,
-                  entityId,
-                ],
+                [err instanceof Error ? err.message : String(err), runId, entityId]
               );
             }
           }
@@ -239,20 +217,13 @@ export async function runRetentionWorker(): Promise<void> {
 
     // Write disposal certificate if actions were taken
     if (actionedCount > 0) {
-      const manifest = JSON.stringify({
-        runId,
-        actionedCount,
-        generatedAt: new Date().toISOString(),
-      });
-      const certHash = crypto
-        .createHash("sha256")
-        .update(manifest)
-        .digest("hex");
+      const manifest = JSON.stringify({ runId, actionedCount, generatedAt: new Date().toISOString() });
+      const certHash = crypto.createHash("sha256").update(manifest).digest("hex");
       await db.execute(
         `INSERT INTO privacy_disposal_certificate
            (id, run_id, entity_type, records_count, disposal_type, certificate_hash)
          VALUES (UUID(), ?, 'multiple', ?, 'anonymize', ?)`,
-        [runId, actionedCount, certHash],
+        [runId, actionedCount, certHash]
       );
     }
 
@@ -261,39 +232,29 @@ export async function runRetentionWorker(): Promise<void> {
        SET status = 'completed', completed_at = NOW(),
            candidate_count = ?, actioned_count = ?
        WHERE id = ?`,
-      [candidateCount, actionedCount, runId],
+      [candidateCount, actionedCount, runId]
     );
 
     process.stdout.write(
       JSON.stringify({
-        level: "info",
-        module: "privacy-retention",
-        event: "RETENTION_RUN_COMPLETED",
-        runId,
-        runMode,
-        candidateCount,
-        actionedCount,
-      }) + "\n",
+        level: "info", module: "privacy-retention", event: "RETENTION_RUN_COMPLETED",
+        runId, runMode, candidateCount, actionedCount,
+      }) + "\n"
     );
   } catch (err) {
-    await db
-      .execute(
-        `UPDATE privacy_retention_run
+    await db.execute(
+      `UPDATE privacy_retention_run
        SET status = 'failed', completed_at = NOW(),
            error_summary = ?
        WHERE id = ?`,
-        [err instanceof Error ? err.message : String(err), runId],
-      )
-      .catch(() => {});
+      [err instanceof Error ? err.message : String(err), runId]
+    ).catch(() => {});
 
     process.stderr.write(
       JSON.stringify({
-        level: "error",
-        module: "privacy-retention",
-        event: "RETENTION_RUN_FAILED",
-        runId,
-        error: err instanceof Error ? err.message : String(err),
-      }) + "\n",
+        level: "error", module: "privacy-retention", event: "RETENTION_RUN_FAILED",
+        runId, error: err instanceof Error ? err.message : String(err),
+      }) + "\n"
     );
   }
 }
@@ -303,13 +264,8 @@ export function startRetentionCron(): void {
   setTimeout(() => {
     runRetentionWorker().catch((err) =>
       process.stderr.write(
-        JSON.stringify({
-          level: "error",
-          module: "privacy-retention",
-          event: "CRON_START_FAILED",
-          error: String(err),
-        }) + "\n",
-      ),
+        JSON.stringify({ level: "error", module: "privacy-retention", event: "CRON_START_FAILED", error: String(err) }) + "\n"
+      )
     );
   }, 30_000);
 
@@ -317,15 +273,10 @@ export function startRetentionCron(): void {
     () => {
       runRetentionWorker().catch((err) =>
         process.stderr.write(
-          JSON.stringify({
-            level: "error",
-            module: "privacy-retention",
-            event: "CRON_TICK_FAILED",
-            error: String(err),
-          }) + "\n",
-        ),
+          JSON.stringify({ level: "error", module: "privacy-retention", event: "CRON_TICK_FAILED", error: String(err) }) + "\n"
+        )
       );
     },
-    24 * 60 * 60 * 1000,
+    24 * 60 * 60 * 1000
   );
 }

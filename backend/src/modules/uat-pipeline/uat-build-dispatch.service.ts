@@ -29,13 +29,12 @@ import { recordEvent, transition } from "./uat-state-machine.js";
 import { isValidBranchSlug } from "./uat-prompt-writer.service.js";
 import type { VerifiedToken } from "./uat-oidc-verify.service.js";
 
-type UatConnection =
-  PoolConnection | Awaited<ReturnType<typeof db.getConnection>>;
+type UatConnection = PoolConnection | Awaited<ReturnType<typeof db.getConnection>>;
 
 export class DispatchError extends Error {
   constructor(
     message: string,
-    readonly statusCode: number = 409,
+    readonly statusCode: number = 409
   ) {
     super(message);
     this.name = "DispatchError";
@@ -65,22 +64,15 @@ export interface GateReport {
 export async function gateReport(conn?: UatConnection): Promise<GateReport> {
   const runner = conn ?? db;
   const [rows] = await runner.query<GateRow[]>(
-    `SELECT gate_key, title, met FROM uat_gate_status ORDER BY gate_key`,
+    `SELECT gate_key, title, met FROM uat_gate_status ORDER BY gate_key`
   );
   if (!rows.length) {
     return {
       allMet: false,
-      unmet: [
-        {
-          key: "G0",
-          title: "uat_gate_status is empty; no gate has been attested.",
-        },
-      ],
+      unmet: [{ key: "G0", title: "uat_gate_status is empty; no gate has been attested." }],
     };
   }
-  const unmet = rows
-    .filter((r) => r.met !== 1)
-    .map((r) => ({ key: r.gate_key, title: r.title }));
+  const unmet = rows.filter((r) => r.met !== 1).map((r) => ({ key: r.gate_key, title: r.title }));
   return { allMet: unmet.length === 0, unmet };
 }
 
@@ -94,33 +86,25 @@ export async function assertDispatchAllowed(feedbackId: string): Promise<void> {
     throw new DispatchError(
       "Automated builds are held. Unmet gates: " +
         gates.unmet.map((g) => `${g.key} (${g.title})`).join("; ") +
-        ". Each must be attested in uat_gate_status by a named person with evidence.",
+        ". Each must be attested in uat_gate_status by a named person with evidence."
     );
   }
 
-  const sw = await switchEnabled(
-    "builds_enabled",
-    process.env.UAT_BUILDS_ENABLED,
-  );
-  if (!sw.enabled)
-    throw new DispatchError(sw.reason ?? "Automated builds are switched off.");
+  const sw = await switchEnabled("builds_enabled", process.env.UAT_BUILDS_ENABLED);
+  if (!sw.enabled) throw new DispatchError(sw.reason ?? "Automated builds are switched off.");
 
   const prompt = await latestPrompt(feedbackId);
-  if (!prompt)
-    throw new DispatchError("There is no build prompt for this item.", 404);
+  if (!prompt) throw new DispatchError("There is no build prompt for this item.", 404);
   if (!prompt.approved_at) {
     throw new DispatchError(
-      "The build prompt has not been approved. A human reads the instructions before anything acts on them.",
+      "The build prompt has not been approved. A human reads the instructions before anything acts on them."
     );
   }
   // Re-validated at the last possible moment. The value has passed three checks already;
   // this one costs a regex and covers the case where a row was edited directly in the
   // database, which is not hypothetical in an environment with a shared DB account.
   if (!isValidBranchSlug(prompt.branch_slug)) {
-    throw new DispatchError(
-      `Stored branch slug is not valid: "${prompt.branch_slug}".`,
-      400,
-    );
+    throw new DispatchError(`Stored branch slug is not valid: "${prompt.branch_slug}".`, 400);
   }
   if (jsonArray(prompt.allowed_paths_json).length === 0) {
     throw new DispatchError("The approved prompt has an empty allowlist.", 400);
@@ -134,22 +118,20 @@ export async function assertDispatchAllowed(feedbackId: string): Promise<void> {
     .filter(Boolean);
   if (allowlisted.length === 0) {
     throw new DispatchError(
-      "No module is on the automated-build allowlist (uat_pipeline_config.allowlisted_modules is empty).",
+      "No module is on the automated-build allowlist (uat_pipeline_config.allowlisted_modules is empty)."
     );
   }
   const paths = jsonArray(prompt.allowed_paths_json);
-  const outside = paths.filter(
-    (p) => !allowlisted.some((prefix) => p.startsWith(prefix)),
-  );
+  const outside = paths.filter((p) => !allowlisted.some((prefix) => p.startsWith(prefix)));
   if (outside.length) {
     throw new DispatchError(
-      `These paths are outside the automated-build allowlist: ${outside.join(", ")}.`,
+      `These paths are outside the automated-build allowlist: ${outside.join(", ")}.`
     );
   }
 
   const cap = Number(await readConfig("daily_build_cap", "5"));
   const [today] = await db.query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS n FROM uat_build_run WHERE dispatched_at >= CURDATE()`,
+    `SELECT COUNT(*) AS n FROM uat_build_run WHERE dispatched_at >= CURDATE()`
   );
   if (Number(today[0]?.n ?? 0) >= cap) {
     throw new DispatchError(`The daily build cap of ${cap} has been reached.`);
@@ -157,11 +139,11 @@ export async function assertDispatchAllowed(feedbackId: string): Promise<void> {
 
   const maxConcurrent = Number(await readConfig("max_concurrent_builds", "1"));
   const [running] = await db.query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS n FROM uat_build_run WHERE state IN ('dispatched','running')`,
+    `SELECT COUNT(*) AS n FROM uat_build_run WHERE state IN ('dispatched','running')`
   );
   if (Number(running[0]?.n ?? 0) >= maxConcurrent) {
     throw new DispatchError(
-      `A build is already running (limit ${maxConcurrent}). Builds are deliberately serialised.`,
+      `A build is already running (limit ${maxConcurrent}). Builds are deliberately serialised.`
     );
   }
 }
@@ -199,8 +181,7 @@ export async function createBuildRun(input: {
   }
 
   const prompt = await latestPrompt(input.feedbackId);
-  if (!prompt)
-    throw new DispatchError("There is no build prompt for this item.", 404);
+  if (!prompt) throw new DispatchError("There is no build prompt for this item.", 404);
 
   const branchName = `uat/${prompt.branch_slug}-${attemptNo}`;
   const conn = await db.getConnection();
@@ -211,11 +192,11 @@ export async function createBuildRun(input: {
          (feedback_id, prompt_id, attempt_no, state, branch_name, dispatched_by, dispatched_at)
        VALUES (?,?,?,'queued',?,?,NOW())
        ON DUPLICATE KEY UPDATE id = id`,
-      [input.feedbackId, prompt.id, attemptNo, branchName, input.actorUserId],
+      [input.feedbackId, prompt.id, attemptNo, branchName, input.actorUserId]
     );
     const [rows] = await conn.execute<RowDataPacket[]>(
       `SELECT id, state FROM uat_build_run WHERE feedback_id = ? AND attempt_no = ?`,
-      [input.feedbackId, attemptNo],
+      [input.feedbackId, attemptNo]
     );
     const row = rows[0];
     if (!row) throw new DispatchError("Could not create the build run.", 500);
@@ -227,14 +208,9 @@ export async function createBuildRun(input: {
         actorUserId: input.actorUserId,
         actorKind: "user",
         message: `Build queued on branch ${branchName} (attempt ${attemptNo}).`,
-        detail: {
-          buildRunId: row.id,
-          branchName,
-          attemptNo,
-          promptSha256: prompt.prompt_sha256,
-        },
+        detail: { buildRunId: row.id, branchName, attemptNo, promptSha256: prompt.prompt_sha256 },
       },
-      conn,
+      conn
     );
     await conn.commit();
     return { buildRunId: String(row.id), branchName, attemptNo };
@@ -267,7 +243,7 @@ export async function recordCallback(
     gatesSha256?: string | null;
   },
   token: VerifiedToken,
-  conn?: UatConnection,
+  conn?: UatConnection
 ): Promise<boolean> {
   const runner = conn ?? db;
   const [res] = await runner.query(
@@ -283,7 +259,7 @@ export async function recordCallback(
       token.repository,
       token.jobWorkflowRef,
       token.sha,
-    ],
+    ]
   );
   return (res as { affectedRows?: number }).affectedRows === 1;
 }
@@ -312,14 +288,14 @@ export async function recordResult(
     gatesSha256: string;
     prUrl?: string | null;
   },
-  token: VerifiedToken,
+  token: VerifiedToken
 ): Promise<{ recorded: boolean; state: string }> {
   const canonical = sha256(JSON.stringify(input.result.gates));
   if (canonical !== input.gatesSha256) {
     throw new DispatchError(
       "The reported gate result does not hash to the value supplied with it. Refusing to " +
         "record a result the verification job did not produce.",
-      400,
+      400
     );
   }
 
@@ -329,19 +305,15 @@ export async function recordResult(
 
     const [rows] = await conn.execute<RowDataPacket[]>(
       `SELECT id, feedback_id, state FROM uat_build_run WHERE id = ? FOR UPDATE`,
-      [input.buildRunId],
+      [input.buildRunId]
     );
     if (!rows.length) throw new DispatchError("Build run not found.", 404);
     const run = rows[0];
 
     const fresh = await recordCallback(
-      {
-        buildRunId: input.buildRunId,
-        kind: "result",
-        gatesSha256: input.gatesSha256,
-      },
+      { buildRunId: input.buildRunId, kind: "result", gatesSha256: input.gatesSha256 },
       token,
-      conn,
+      conn
     );
     if (!fresh) {
       // Already recorded. A retry, not a second result.
@@ -349,11 +321,7 @@ export async function recordResult(
       return { recorded: false, state: String(run.state) };
     }
 
-    const state = input.result.passed
-      ? input.prUrl
-        ? "pr_open"
-        : "gates_passed"
-      : "gates_failed";
+    const state = input.result.passed ? (input.prUrl ? "pr_open" : "gates_passed") : "gates_failed";
 
     await conn.execute(
       `UPDATE uat_build_run
@@ -377,7 +345,7 @@ export async function recordResult(
         Number(token.runId) || null,
         token.runAttempt,
         input.buildRunId,
-      ],
+      ]
     );
 
     await recordEvent(
@@ -398,7 +366,7 @@ export async function recordResult(
           runAttempt: token.runAttempt,
         },
       },
-      conn,
+      conn
     );
 
     if (input.result.passed && input.prUrl) {
@@ -406,7 +374,7 @@ export async function recordResult(
         String(run.feedback_id),
         "pr_open",
         { actorKind: "ci", reason: `Draft PR opened: ${input.prUrl}` },
-        conn,
+        conn
       );
     } else if (!input.result.passed) {
       await transition(
@@ -414,11 +382,9 @@ export async function recordResult(
         "build_failed",
         {
           actorKind: "ci",
-          reason:
-            input.result.failureMessage ??
-            "The build did not pass verification.",
+          reason: input.result.failureMessage ?? "The build did not pass verification.",
         },
-        conn,
+        conn
       );
     }
 
@@ -449,32 +415,24 @@ export async function recordMerge(input: {
 }): Promise<{ matchesVerified: boolean }> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT verified_sha, feedback_id FROM uat_build_run WHERE id = ?`,
-    [input.buildRunId],
+    [input.buildRunId]
   );
   if (!rows.length) throw new DispatchError("Build run not found.", 404);
   const verified = rows[0].verified_sha as string | null;
   const matches = Boolean(verified) && verified === input.mergeSha;
 
-  await db.query(
-    `UPDATE uat_build_run SET merge_sha = ?, state = 'merged' WHERE id = ?`,
-    [input.mergeSha, input.buildRunId],
-  );
+  await db.query(`UPDATE uat_build_run SET merge_sha = ?, state = 'merged' WHERE id = ?`, [
+    input.mergeSha,
+    input.buildRunId,
+  ]);
 
-  await recordEvent(
-    String(rows[0].feedback_id),
-    matches ? "merged" : "merge_sha_mismatch",
-    {
-      actorKind: "ci",
-      message: matches
-        ? `Merged at the verified SHA ${input.mergeSha.slice(0, 8)}.`
-        : `MERGE SHA MISMATCH: merged ${input.mergeSha.slice(0, 8)} but only ${(verified ?? "nothing").slice(0, 8)} was verified. Something was pushed onto the pull request after verification.`,
-      detail: {
-        buildRunId: input.buildRunId,
-        mergeSha: input.mergeSha,
-        verifiedSha: verified,
-      },
-    },
-  );
+  await recordEvent(String(rows[0].feedback_id), matches ? "merged" : "merge_sha_mismatch", {
+    actorKind: "ci",
+    message: matches
+      ? `Merged at the verified SHA ${input.mergeSha.slice(0, 8)}.`
+      : `MERGE SHA MISMATCH: merged ${input.mergeSha.slice(0, 8)} but only ${(verified ?? "nothing").slice(0, 8)} was verified. Something was pushed onto the pull request after verification.`,
+    detail: { buildRunId: input.buildRunId, mergeSha: input.mergeSha, verifiedSha: verified },
+  });
 
   return { matchesVerified: matches };
 }
@@ -486,16 +444,14 @@ export async function recordMerge(input: {
  * update — the silent-stall shape again. Anything older than the threshold is surfaced on
  * /api/uat/health for reconciliation against the GitHub Actions API.
  */
-export async function staleRuns(
-  olderThanMinutes = 10,
-): Promise<RowDataPacket[]> {
+export async function staleRuns(olderThanMinutes = 10): Promise<RowDataPacket[]> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT id, feedback_id, state, branch_name, gh_workflow_run_id, dispatched_at
        FROM uat_build_run
       WHERE state IN ('queued','dispatched','running')
         AND dispatched_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)
       ORDER BY dispatched_at`,
-    [olderThanMinutes],
+    [olderThanMinutes]
   );
   return rows;
 }

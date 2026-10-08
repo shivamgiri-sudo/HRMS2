@@ -3,22 +3,22 @@
 // =====================================================
 
 export type CompanyPostStatus =
-  | "draft"
-  | "pending_approval"
-  | "borderline_flagged"
-  | "approved"
-  | "rejected"
-  | "auto_rejected"
-  | "deleted";
+  | 'draft'
+  | 'pending_approval'
+  | 'borderline_flagged'
+  | 'approved'
+  | 'rejected'
+  | 'auto_rejected'
+  | 'deleted';
 
 export type CompanyPostModerationState =
-  | "clean"
-  | "borderline"
-  | "violation"
-  | "manual_override_approved"
-  | "manual_override_rejected";
+  | 'clean'
+  | 'borderline'
+  | 'violation'
+  | 'manual_override_approved'
+  | 'manual_override_rejected';
 
-export type CompanyPostMediaType = "image";
+export type CompanyPostMediaType = 'image';
 
 export interface CompanyPostMediaDTO {
   id?: string;
@@ -37,7 +37,7 @@ export interface CreateCompanyPostMediaDTO {
 
 // festival-greeting.cron.ts has written 'festival' into post_type since it was built —
 // missing here meant the INSERT's own literal was never checked against this union.
-export type CompanyPostType = "user" | "birthday" | "anniversary" | "festival";
+export type CompanyPostType = 'user' | 'birthday' | 'anniversary' | 'festival';
 
 export interface CompanyPostDTO {
   id: string;
@@ -74,7 +74,7 @@ export interface CompanyPostDTO {
   like_count: number;
   dislike_count: number;
   comment_count: number;
-  my_reaction: "like" | "dislike" | null;
+  my_reaction: 'like' | 'dislike' | null;
   created_at: string;
   updated_at: string;
   media: CompanyPostMediaDTO[];
@@ -87,13 +87,7 @@ export interface CreateCompanyPostDTO {
 
 export interface CompanyPostFeedItemDTO extends Pick<
   CompanyPostDTO,
-  | "id"
-  | "content_text"
-  | "status"
-  | "post_type"
-  | "is_system_post"
-  | "created_at"
-  | "updated_at"
+  'id' | 'content_text' | 'status' | 'post_type' | 'is_system_post' | 'created_at' | 'updated_at'
 > {
   author_user_id: string;
   author_employee_id: string | null;
@@ -128,7 +122,7 @@ export interface CompanyPostCreatorAccessRowDTO {
 export interface ModerateCompanyPostDTO {
   post_id: string;
   actor_user_id?: string;
-  action: "approve" | "reject";
+  action: 'approve' | 'reject';
   reason?: string;
   review_notes?: string;
 }

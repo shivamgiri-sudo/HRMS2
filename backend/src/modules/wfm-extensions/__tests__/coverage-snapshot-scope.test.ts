@@ -15,29 +15,19 @@ import { describe, expect, it } from "vitest";
  * in the manual-override branch, ahead of the `return` that builds the snapshot.
  */
 describe("wfm-ext coverage/snapshot scope check", () => {
-  const source = readFileSync(
-    resolve(__dirname, "../wfm-ext.routes.ts"),
-    "utf-8",
-  );
+  const source = readFileSync(resolve(__dirname, "../wfm-ext.routes.ts"), "utf-8");
 
   function manualOverrideBranch(): string {
     const start = source.indexOf("if (input.planned_headcount !== undefined)");
     expect(start, "manual-override branch not found").toBeGreaterThan(-1);
-    const end = source.indexOf(
-      "const scope = await employeeScope(userId);",
-      start,
-    );
-    expect(end, "computed branch (end marker) not found").toBeGreaterThan(
-      start,
-    );
+    const end = source.indexOf("const scope = await employeeScope(userId);", start);
+    expect(end, "computed branch (end marker) not found").toBeGreaterThan(start);
     return source.slice(start, end);
   }
 
   it("checks the caller's scope before accepting a manually-supplied process_id/branch_id", () => {
     const branch = manualOverrideBranch();
-    expect(branch).toMatch(
-      /hasProcessScope\(userId, processId, branchId, \.\.\.WFM_SCOPE_ROLES\)/,
-    );
+    expect(branch).toMatch(/hasProcessScope\(userId, processId, branchId, \.\.\.WFM_SCOPE_ROLES\)/);
   });
 
   it("bypasses the check only for the org-wide roles (admin is branch-scoped like hr)", () => {
@@ -65,21 +55,13 @@ describe("wfm-ext coverage/snapshot scope check", () => {
  * list-scope fixes earlier the same day.
  */
 describe("GET /roster/swaps role check includes team_leader", () => {
-  const source = readFileSync(
-    resolve(__dirname, "../wfm-ext.routes.ts"),
-    "utf-8",
-  );
+  const source = readFileSync(resolve(__dirname, "../wfm-ext.routes.ts"), "utf-8");
 
   it("the list endpoint's hasRole check includes team_leader, matching the review endpoint below it", () => {
     const listStart = source.indexOf('router.get("/roster/swaps"');
-    const reviewStart = source.indexOf(
-      'router.post("/roster/swaps/:id/review"',
-    );
+    const reviewStart = source.indexOf('router.post("/roster/swaps/:id/review"');
     expect(listStart, "GET /roster/swaps not found").toBeGreaterThan(-1);
-    expect(
-      reviewStart,
-      "POST /roster/swaps/:id/review not found",
-    ).toBeGreaterThan(listStart);
+    expect(reviewStart, "POST /roster/swaps/:id/review not found").toBeGreaterThan(listStart);
 
     const listBranch = source.slice(listStart, reviewStart);
     expect(listBranch).toMatch(/hasRole\(userId,[^)]*"team_leader"/);

@@ -12,16 +12,12 @@ vi.mock("../src/db/mysql.js", () => ({
     execute: (...a: unknown[]) => execute(...a),
     getConnection: async () => ({
       execute: (...a: unknown[]) => connExecute(...a),
-      beginTransaction,
-      commit,
-      rollback,
-      release,
+      beginTransaction, commit, rollback, release,
     }),
   },
 }));
 
-const { submitQaAudit, QaAuditError } =
-  await import("../src/modules/quality-dashboard/qa-audit.service.js");
+const { submitQaAudit, QaAuditError } = await import("../src/modules/quality-dashboard/qa-audit.service.js");
 
 /**
  * The property this file exists to defend: the SERVER computes the score.
@@ -31,17 +27,11 @@ const { submitQaAudit, QaAuditError } =
  * of an audit is that the person being audited cannot set their own mark.
  */
 
-const ACTIVE_FORM = [
-  [{ process_id: "proc-1", version_no: 2, status: "active" }],
-  [],
-];
-const PARAMS = [
-  [
-    { id: "p1", max_score: 10, is_fatal: 0 },
-    { id: "p2", max_score: 10, is_fatal: 1 },
-  ],
-  [],
-];
+const ACTIVE_FORM = [[{ process_id: "proc-1", version_no: 2, status: "active" }], []];
+const PARAMS = [[
+  { id: "p1", max_score: 10, is_fatal: 0 },
+  { id: "p2", max_score: 10, is_fatal: 1 },
+], []];
 
 function mockForm() {
   execute.mockResolvedValueOnce(ACTIVE_FORM).mockResolvedValueOnce(PARAMS);
@@ -55,12 +45,8 @@ const base = {
 };
 
 beforeEach(() => {
-  execute.mockReset();
-  connExecute.mockReset();
-  beginTransaction.mockReset();
-  commit.mockReset();
-  rollback.mockReset();
-  release.mockReset();
+  execute.mockReset(); connExecute.mockReset();
+  beginTransaction.mockReset(); commit.mockReset(); rollback.mockReset(); release.mockReset();
   connExecute.mockResolvedValue([{ affectedRows: 1 }, []]);
   // mysql2's connection methods return promises, and the service chains
   // .catch() onto rollback(). Stubs returning undefined would fail for a reason
@@ -76,16 +62,10 @@ describe("the server computes the score", () => {
     mockForm();
     const result = await submitQaAudit({
       ...base,
-      scores: [
-        { formParameterId: "p1", score: 8 },
-        { formParameterId: "p2", score: 10 },
-      ],
+      scores: [{ formParameterId: "p1", score: 8 }, { formParameterId: "p2", score: 10 }],
       // A hostile or stale client might send these; they are not in the input
       // type and must have no effect even if present at runtime.
-      ...({ totalScore: 999, qualityPercentage: 100 } as Record<
-        string,
-        unknown
-      >),
+      ...( { totalScore: 999, qualityPercentage: 100 } as Record<string, unknown> ),
     } as never);
 
     expect(result.totalScore).toBe(18);
@@ -108,10 +88,7 @@ describe("the server computes the score", () => {
     mockForm();
     const result = await submitQaAudit({
       ...base,
-      scores: [
-        { formParameterId: "p1", score: 10 },
-        { formParameterId: "ghost", score: 100 },
-      ],
+      scores: [{ formParameterId: "p1", score: 10 }, { formParameterId: "ghost", score: 100 }],
     });
     expect(result.totalScore).toBe(10);
     expect(result.maxScore).toBe(10);
@@ -121,10 +98,7 @@ describe("the server computes the score", () => {
     mockForm();
     const result = await submitQaAudit({
       ...base,
-      scores: [
-        { formParameterId: "p1", score: 10 },
-        { formParameterId: "p2", score: 0 },
-      ],
+      scores: [{ formParameterId: "p1", score: 10 }, { formParameterId: "p2", score: 0 }],
     });
     expect(result.fatalTriggered).toBe(true);
     expect(result.qualityPercentage).toBe(0);
@@ -137,58 +111,38 @@ describe("marks that cannot be right are rejected, not clamped", () => {
     // total that somebody will later rely on.
     mockForm();
     await expect(
-      submitQaAudit({
-        ...base,
-        scores: [{ formParameterId: "p1", score: 50 }],
-      }),
+      submitQaAudit({ ...base, scores: [{ formParameterId: "p1", score: 50 }] }),
     ).rejects.toThrow(/exceeds the maximum/);
   });
 
   it("refuses a negative score", async () => {
     mockForm();
     await expect(
-      submitQaAudit({
-        ...base,
-        scores: [{ formParameterId: "p1", score: -5 }],
-      }),
+      submitQaAudit({ ...base, scores: [{ formParameterId: "p1", score: -5 }] }),
     ).rejects.toThrow(/cannot be negative/);
   });
 });
 
 describe("only an agreed form can produce a score", () => {
   it("refuses a draft form", async () => {
-    execute.mockResolvedValueOnce([
-      [{ process_id: "p", version_no: 1, status: "draft" }],
-      [],
-    ]);
-    await expect(submitQaAudit({ ...base, scores: [] })).rejects.toThrow(
-      /draft/,
-    );
+    execute.mockResolvedValueOnce([[{ process_id: "p", version_no: 1, status: "draft" }], []]);
+    await expect(submitQaAudit({ ...base, scores: [] })).rejects.toThrow(/draft/);
   });
 
   it("refuses a retired form", async () => {
     // A retired form no longer reflects how the process is measured.
-    execute.mockResolvedValueOnce([
-      [{ process_id: "p", version_no: 1, status: "retired" }],
-      [],
-    ]);
-    await expect(submitQaAudit({ ...base, scores: [] })).rejects.toThrow(
-      /retired/,
-    );
+    execute.mockResolvedValueOnce([[{ process_id: "p", version_no: 1, status: "retired" }], []]);
+    await expect(submitQaAudit({ ...base, scores: [] })).rejects.toThrow(/retired/);
   });
 
   it("refuses a form with no active parameters", async () => {
     execute.mockResolvedValueOnce(ACTIVE_FORM).mockResolvedValueOnce([[], []]);
-    await expect(submitQaAudit({ ...base, scores: [] })).rejects.toThrow(
-      /no active parameters/,
-    );
+    await expect(submitQaAudit({ ...base, scores: [] })).rejects.toThrow(/no active parameters/);
   });
 
   it("reports a missing form as 404 rather than a generic failure", async () => {
     execute.mockResolvedValueOnce([[], []]);
-    await expect(submitQaAudit({ ...base, scores: [] })).rejects.toMatchObject({
-      statusCode: 404,
-    });
+    await expect(submitQaAudit({ ...base, scores: [] })).rejects.toMatchObject({ statusCode: 404 });
   });
 });
 
@@ -196,13 +150,8 @@ describe("persistence", () => {
   it("records the form version it scored against", async () => {
     // Revising the form next month must not change what this audit measured.
     mockForm();
-    await submitQaAudit({
-      ...base,
-      scores: [{ formParameterId: "p1", score: 5 }],
-    });
-    const header = connExecute.mock.calls.find(([sql]) =>
-      /INSERT INTO qa_audit\b/.test(String(sql)),
-    );
+    await submitQaAudit({ ...base, scores: [{ formParameterId: "p1", score: 5 }] });
+    const header = connExecute.mock.calls.find(([sql]) => /INSERT INTO qa_audit\b/.test(String(sql)));
     expect(header?.[1]).toContain(2);
   });
 
@@ -225,9 +174,7 @@ describe("persistence", () => {
   it("can be saved as a draft without being submitted", async () => {
     mockForm();
     const result = await submitQaAudit({
-      ...base,
-      submit: false,
-      scores: [{ formParameterId: "p1", score: 5 }],
+      ...base, submit: false, scores: [{ formParameterId: "p1", score: 5 }],
     });
     expect(result.status).toBe("draft");
   });

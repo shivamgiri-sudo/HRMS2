@@ -1,32 +1,24 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getIstDateString } from "../../utils/dateUtils.js";
+import { getIstDateString } from '../../utils/dateUtils.js';
 import { letterSalaryRowsOrBlank } from "./appointmentLetterData.service.js";
 import { stripSalaryOverrides, resolveApprovedIncrementVars } from "./letterSalaryGuard.js";
 import { istDate, assertUsableName } from "./letterFormat.js";
 import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
 
 export const lettersService = {
-  async getById(
-    letterId: string,
-  ): Promise<{ id: string; employee_id: string; letter_type: string } | null> {
+  async getById(letterId: string): Promise<{ id: string; employee_id: string; letter_type: string } | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id, employee_id, letter_type FROM generated_letter WHERE id = ? LIMIT 1",
-      [letterId],
+      [letterId]
     );
-    return (
-      ((rows as RowDataPacket[])[0] as {
-        id: string;
-        employee_id: string;
-        letter_type: string;
-      }) ?? null
-    );
+    return (rows as RowDataPacket[])[0] as { id: string; employee_id: string; letter_type: string } ?? null;
   },
 
   async listTemplates() {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, template_code, template_name, letter_type, description FROM letter_template WHERE active_status = 1 ORDER BY letter_type",
+      "SELECT id, template_code, template_name, letter_type, description FROM letter_template WHERE active_status = 1 ORDER BY letter_type"
     );
     return rows as RowDataPacket[];
   },
@@ -41,14 +33,10 @@ export const lettersService = {
     // Fetch template
     const [tplRows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM letter_template WHERE template_code = ? AND active_status = 1 LIMIT 1",
-      [data.template_code],
+      [data.template_code]
     );
     const template = (tplRows as RowDataPacket[])[0] as any;
-    if (!template)
-      throw Object.assign(
-        new Error(`Template not found: ${data.template_code}`),
-        { statusCode: 404 },
-      );
+    if (!template) throw Object.assign(new Error(`Template not found: ${data.template_code}`), { statusCode: 404 });
 
     // Fetch employee data
     const [empRows] = await db.execute<RowDataPacket[]>(
@@ -62,11 +50,10 @@ export const lettersService = {
        LEFT JOIN department_master dept ON dept.id = e.department_id
        LEFT JOIN branch_master bm ON bm.id = e.branch_id
        WHERE e.id = ? LIMIT 1`,
-      [data.employee_id],
+      [data.employee_id]
     );
     const emp = (empRows as RowDataPacket[])[0] as any;
-    if (!emp)
-      throw Object.assign(new Error("Employee not found"), { statusCode: 404 });
+    if (!emp) throw Object.assign(new Error("Employee not found"), { statusCode: 404 });
 
     // Experience/relieving letter: gated on the employee having actually exited, and on the
     // same NOC clearance (noc_case) that gates F&F release — owner ruling 2026-09-16. Before
@@ -78,24 +65,18 @@ export const lettersService = {
     // app still reads (its one caller was removed from the exit-status gate in this same
     // change: NOC no longer blocks marking someone exited, only money and this letter).
     if (template.letter_type === "experience") {
-      const isExited =
-        String(emp.employment_status ?? "")
-          .trim()
-          .toLowerCase() !== "active" && Boolean(emp.date_of_exit);
+      const isExited = String(emp.employment_status ?? "").trim().toLowerCase() !== "active"
+        && Boolean(emp.date_of_exit);
       if (!isExited) {
         throw Object.assign(
-          new Error(
-            "This employee has not exited yet. An experience/relieving letter can only be issued after their exit date is recorded.",
-          ),
+          new Error("This employee has not exited yet. An experience/relieving letter can only be issued after their exit date is recorded."),
           { statusCode: 409, code: "EXPERIENCE_LETTER_NOT_EXITED" },
         );
       }
       const nocStatus = await nocReleaseStatusForEmployee(data.employee_id);
       if (nocStatus.blocked) {
         throw Object.assign(
-          new Error(
-            `Experience letter cannot be issued: ${nocStatus.reason ?? "NOC clearance is not complete."}`,
-          ),
+          new Error(`Experience letter cannot be issued: ${nocStatus.reason ?? "NOC clearance is not complete."}`),
           { statusCode: 409, code: "EXPERIENCE_LETTER_NOC_BLOCKED" },
         );
       }
@@ -108,26 +89,22 @@ export const lettersService = {
     // which print no salary at all, so a missing approval leaves the salary
     // variables BLANK rather than failing the whole letter — see
     // letterSalaryRowsOrBlank() for why blank and not zero.
-    const { rows: salaryRows } = await letterSalaryRowsOrBlank(
-      data.employee_id,
-    );
+    const { rows: salaryRows } = await letterSalaryRowsOrBlank(data.employee_id);
 
     const vars: Record<string, string> = {
-      full_name: assertUsableName(
-        emp.full_name ?? `${emp.first_name} ${emp.last_name ?? ""}`,
-      ),
-      employee_code: emp.employee_code ?? "",
-      designation: emp.designation_name ?? "",
-      department: emp.dept_name ?? "",
-      location: emp.branch_name ?? "",
-      branch_name: emp.branch_name ?? "",
-      branch_address: emp.branch_address ?? "",
+      full_name:         assertUsableName(emp.full_name ?? `${emp.first_name} ${emp.last_name ?? ""}`),
+      employee_code:     emp.employee_code ?? "",
+      designation:       emp.designation_name ?? "",
+      department:        emp.dept_name ?? "",
+      location:          emp.branch_name ?? "",
+      branch_name:       emp.branch_name ?? "",
+      branch_address:    emp.branch_address ?? "",
       branch_hr_contact: emp.branch_hr_contact ?? "",
-      date_of_joining: istDate(emp.date_of_joining),
-      date_of_exit: istDate(emp.date_of_exit),
-      issued_date: istDate(data.issued_date ?? new Date()),
-      epf_no: emp.epf_number ?? "",
-      esi_no: emp.esic_number ?? "",
+      date_of_joining:   istDate(emp.date_of_joining),
+      date_of_exit:      istDate(emp.date_of_exit),
+      issued_date:       istDate(data.issued_date ?? new Date()),
+      epf_no:            emp.epf_number ?? "",
+      esi_no:            emp.esic_number ?? "",
       ...salaryRows,
       // Typed overrides may not replace any approved salary figure; an increment letter's figures come
       // from the approved, implemented increment and win over anything typed (see letterSalaryGuard.ts).
@@ -136,32 +113,18 @@ export const lettersService = {
     };
 
     // generated_text stores a JSON blob so the renderer can re-hydrate later
-    const generatedText = JSON.stringify({
-      type: template.letter_type,
-      data: vars,
-    });
+    const generatedText = JSON.stringify({ type: template.letter_type, data: vars });
     const id = randomUUID();
 
     await db.execute(
       `INSERT INTO generated_letter
          (id, employee_id, template_id, letter_type, generated_text, generated_by, issued_date)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        data.employee_id,
-        template.id,
-        template.letter_type,
-        generatedText,
-        data.generated_by,
-        data.issued_date ?? null,
-      ],
+      [id, data.employee_id, template.id, template.letter_type, generatedText,
+       data.generated_by, data.issued_date ?? null]
     );
 
-    return {
-      id,
-      letter_type: template.letter_type as string,
-      template_code: data.template_code,
-    };
+    return { id, letter_type: template.letter_type as string, template_code: data.template_code };
   },
 
   async listAll(scope: { sql: string; params: unknown[] } = { sql: "1=1", params: [] }) {
@@ -190,15 +153,12 @@ export const lettersService = {
        JOIN letter_template lt ON lt.id = gl.template_id
        JOIN employees e ON e.id = gl.employee_id
        WHERE gl.employee_id = ? ORDER BY gl.created_at DESC`,
-      [employeeId],
+      [employeeId]
     );
     return rows as RowDataPacket[];
   },
 
   async acknowledge(letterId: string) {
-    await db.execute(
-      "UPDATE generated_letter SET acknowledged_at = NOW() WHERE id = ?",
-      [letterId],
-    );
+    await db.execute("UPDATE generated_letter SET acknowledged_at = NOW() WHERE id = ?", [letterId]);
   },
 };

@@ -13,12 +13,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type {
-  ExecFilters,
-  ExecScope,
-  ExecOptions,
-  ExecResult,
-} from "./types.js";
+import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
 import { excludeEmployeeShapedCandidatesSql } from "../../ats/ats-reporting-scope.js";
 import {
   appendScopeConditions,
@@ -78,13 +73,8 @@ function rethrowSchemaError(err: unknown, sql: string): never {
   // A genuinely absent table is what ReportSourceUnavailableError describes, so use it — its
   // message ("required table X does not exist") is then true.
   if (code === "ER_NO_SUCH_TABLE") {
-    const table =
-      /\bFROM\s+`?([a-z_][a-z0-9_]*)`?/i.exec(sql)?.[1] ?? "unknown";
-    throw new ReportSourceUnavailableError(
-      "recruitment",
-      table,
-      e.sqlMessage ?? "",
-    );
+    const table = /\bFROM\s+`?([a-z_][a-z0-9_]*)`?/i.exec(sql)?.[1] ?? "unknown";
+    throw new ReportSourceUnavailableError("recruitment", table, e.sqlMessage ?? "");
   }
 
   // A missing COLUMN is a different fault and must not borrow that wording: ats_candidate
@@ -94,7 +84,7 @@ function rethrowSchemaError(err: unknown, sql: string): never {
     throw new Error(
       `Recruitment report cannot run against this database's schema — ${code}: ` +
         `${e.sqlMessage ?? ""}. The table exists; the report asks for a column it does not have. ` +
-        `This previously returned an empty result, which read as "no candidates".`,
+        `This previously returned an empty result, which read as "no candidates".`
     );
   }
   throw err;
@@ -126,43 +116,24 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 function appendJdScopeConditions(
   scope: ExecScope,
   clauses: string[],
-  params: unknown[],
+  params: unknown[]
 ): void {
-  if (scope.branchScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("branchScope");
-  if (
-    scope.branchScope.mode === "restricted" &&
-    scope.branchScope.ids.length > 0
-  ) {
-    clauses.push(
-      `jd.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`,
-    );
+  if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
+  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
+    clauses.push(`jd.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
     params.push(...scope.branchScope.ids);
   }
-  if (scope.processScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("processScope");
-  if (
-    scope.processScope.mode === "restricted" &&
-    scope.processScope.ids.length > 0
-  ) {
-    clauses.push(
-      `jd.process_id IN (${scope.processScope.ids.map(() => "?").join(",")})`,
-    );
+  if (scope.processScope.mode === "none") throw new ReportScopeAccessDeniedError("processScope");
+  if (scope.processScope.mode === "restricted" && scope.processScope.ids.length > 0) {
+    clauses.push(`jd.process_id IN (${scope.processScope.ids.map(() => "?").join(",")})`);
     params.push(...scope.processScope.ids);
   }
-  if (scope.departmentScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("departmentScope");
-  if (
-    scope.departmentScope.mode === "restricted" &&
-    scope.departmentScope.ids.length > 0
-  ) {
-    clauses.push(
-      `jd.department_id IN (${scope.departmentScope.ids.map(() => "?").join(",")})`,
-    );
+  if (scope.departmentScope.mode === "none") throw new ReportScopeAccessDeniedError("departmentScope");
+  if (scope.departmentScope.mode === "restricted" && scope.departmentScope.ids.length > 0) {
+    clauses.push(`jd.department_id IN (${scope.departmentScope.ids.map(() => "?").join(",")})`);
     params.push(...scope.departmentScope.ids);
   }
-  if (scope.costCentreScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("costCentreScope");
+  if (scope.costCentreScope.mode === "none") throw new ReportScopeAccessDeniedError("costCentreScope");
 }
 
 /**
@@ -176,34 +147,24 @@ function appendJdScopeConditions(
 function appendCandidateScopeConditions(
   scope: ExecScope,
   clauses: string[],
-  params: unknown[],
+  params: unknown[]
 ): void {
-  if (scope.branchScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("branchScope");
-  if (
-    scope.branchScope.mode === "restricted" &&
-    scope.branchScope.ids.length > 0
-  ) {
+  if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
+  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
     clauses.push(
-      `c.applied_for_branch IN (SELECT branch_name FROM branch_master WHERE id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`,
+      `c.applied_for_branch IN (SELECT branch_name FROM branch_master WHERE id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`
     );
     params.push(...scope.branchScope.ids);
   }
-  if (scope.processScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("processScope");
-  if (
-    scope.processScope.mode === "restricted" &&
-    scope.processScope.ids.length > 0
-  ) {
+  if (scope.processScope.mode === "none") throw new ReportScopeAccessDeniedError("processScope");
+  if (scope.processScope.mode === "restricted" && scope.processScope.ids.length > 0) {
     clauses.push(
-      `c.applied_for_process IN (SELECT process_name FROM process_master WHERE id IN (${scope.processScope.ids.map(() => "?").join(",")}))`,
+      `c.applied_for_process IN (SELECT process_name FROM process_master WHERE id IN (${scope.processScope.ids.map(() => "?").join(",")}))`
     );
     params.push(...scope.processScope.ids);
   }
-  if (scope.departmentScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("departmentScope");
-  if (scope.costCentreScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("costCentreScope");
+  if (scope.departmentScope.mode === "none") throw new ReportScopeAccessDeniedError("departmentScope");
+  if (scope.costCentreScope.mode === "none") throw new ReportScopeAccessDeniedError("costCentreScope");
 }
 
 // ---------------------------------------------------------------------------
@@ -212,24 +173,18 @@ function appendCandidateScopeConditions(
 export async function recruitmentPipeline(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to = dateParam(filters.to, today);
+  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to    = dateParam(filters.to, today);
 
   const clauses: string[] = ["1 = 1"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
   appendJdScopeConditions(scope, clauses, params);
 
-  if (filters.branchId) {
-    clauses.push("jd.branch_id = ?");
-    params.push(String(filters.branchId));
-  }
-  if (filters.processId) {
-    clauses.push("jd.process_id = ?");
-    params.push(String(filters.processId));
-  }
+  if (filters.branchId)  { clauses.push("jd.branch_id = ?");  params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("jd.process_id = ?"); params.push(String(filters.processId)); }
   clauses.push("jd.created_at BETWEEN ? AND ?");
   params.push(from, to);
 
@@ -287,18 +242,11 @@ export async function recruitmentPipeline(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -307,32 +255,19 @@ export async function recruitmentPipeline(
 export async function candidateTracker(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to = dateParam(filters.to, today);
+  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to    = dateParam(filters.to, today);
 
   const clauses: string[] = ["1 = 1"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
   appendCandidateScopeConditions(scope, clauses, params);
 
-  if (filters.branchId) {
-    clauses.push(
-      "c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)",
-    );
-    params.push(String(filters.branchId));
-  }
-  if (filters.processId) {
-    clauses.push(
-      "c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)",
-    );
-    params.push(String(filters.processId));
-  }
-  if (filters.status) {
-    clauses.push("c.status = ?");
-    params.push(String(filters.status));
-  }
+  if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
+  if (filters.status)    { clauses.push("c.status = ?");  params.push(String(filters.status)); }
   clauses.push("c.created_at BETWEEN ? AND ?");
   params.push(from, to);
 
@@ -404,18 +339,11 @@ export async function candidateTracker(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -424,53 +352,29 @@ export async function candidateTracker(
 export async function sourceEffectiveness(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["1 = 1"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
 
-  if (scope.branchScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("branchScope");
-  if (
-    scope.branchScope.mode === "restricted" &&
-    scope.branchScope.ids.length > 0
-  ) {
-    clauses.push(
-      `c.applied_for_branch IN (SELECT branch_name FROM branch_master WHERE id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`,
-    );
+  if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
+  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
+    clauses.push(`c.applied_for_branch IN (SELECT branch_name FROM branch_master WHERE id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`);
     params.push(...scope.branchScope.ids);
   }
-  if (scope.processScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("processScope");
+  if (scope.processScope.mode === "none") throw new ReportScopeAccessDeniedError("processScope");
   // A "restricted" process scope threw only on "none" and was otherwise never turned into a
   // predicate, so a process-restricted viewer read every process in their branches. This is
   // the same clause recruiterProductivity already had; source-effectiveness simply lacked it.
-  if (
-    scope.processScope.mode === "restricted" &&
-    scope.processScope.ids.length > 0
-  ) {
-    clauses.push(
-      `c.applied_for_process IN (SELECT process_name FROM process_master WHERE id IN (${scope.processScope.ids.map(() => "?").join(",")}))`,
-    );
+  if (scope.processScope.mode === "restricted" && scope.processScope.ids.length > 0) {
+    clauses.push(`c.applied_for_process IN (SELECT process_name FROM process_master WHERE id IN (${scope.processScope.ids.map(() => "?").join(",")}))`);
     params.push(...scope.processScope.ids);
   }
-  if (scope.departmentScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("departmentScope");
-  if (scope.costCentreScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("costCentreScope");
+  if (scope.departmentScope.mode === "none") throw new ReportScopeAccessDeniedError("departmentScope");
+  if (scope.costCentreScope.mode === "none") throw new ReportScopeAccessDeniedError("costCentreScope");
 
-  if (filters.branchId) {
-    clauses.push(
-      "c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)",
-    );
-    params.push(String(filters.branchId));
-  }
-  if (filters.processId) {
-    clauses.push(
-      "c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)",
-    );
-    params.push(String(filters.processId));
-  }
+  if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
 
   // 29,926 of ats_candidate's 37,686 rows are legacy EMPLOYEE records. Counting them here
   // inflated every channel's application count roughly 4x and dragged every selection rate
@@ -482,7 +386,7 @@ export async function sourceEffectiveness(
   // real applied_date (37,630 rows filled against 4,903 on created_date — see the header note).
   // DATE() so a DATETIME value on the closing day is not excluded by an inclusive bound.
   const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to = dateParam(filters.to, businessToday());
+  const to   = dateParam(filters.to, businessToday());
   clauses.push("DATE(c.created_at) BETWEEN ? AND ?");
   params.push(from, to);
 
@@ -526,8 +430,7 @@ export async function sourceEffectiveness(
    * offer_status exists on the table but is filled on 0 of 38,328 rows, so it is not used —
    * reading it would have produced a column of zeros that looked like a computed result.
    */
-  const PRE_FUNNEL =
-    "LOWER(COALESCE(c.current_stage,'')) IN ('', 'applied', 'new', 'screening')";
+  const PRE_FUNNEL  = "LOWER(COALESCE(c.current_stage,'')) IN ('', 'applied', 'new', 'screening')";
   const SHORTLISTED = `NOT (${PRE_FUNNEL})`;
   const INTERVIEWED =
     "(LOWER(COALESCE(c.current_stage,'')) LIKE 'round %' " +
@@ -564,12 +467,8 @@ export async function sourceEffectiveness(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -578,50 +477,26 @@ export async function sourceEffectiveness(
 export async function recruiterProductivity(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["1 = 1"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
 
-  if (scope.branchScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("branchScope");
-  if (
-    scope.branchScope.mode === "restricted" &&
-    scope.branchScope.ids.length > 0
-  ) {
-    clauses.push(
-      `c.applied_for_branch IN (SELECT branch_name FROM branch_master WHERE id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`,
-    );
+  if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
+  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
+    clauses.push(`c.applied_for_branch IN (SELECT branch_name FROM branch_master WHERE id IN (${scope.branchScope.ids.map(() => "?").join(",")}))`);
     params.push(...scope.branchScope.ids);
   }
-  if (scope.processScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("processScope");
-  if (
-    scope.processScope.mode === "restricted" &&
-    scope.processScope.ids.length > 0
-  ) {
-    clauses.push(
-      `c.applied_for_process IN (SELECT process_name FROM process_master WHERE id IN (${scope.processScope.ids.map(() => "?").join(",")}))`,
-    );
+  if (scope.processScope.mode === "none") throw new ReportScopeAccessDeniedError("processScope");
+  if (scope.processScope.mode === "restricted" && scope.processScope.ids.length > 0) {
+    clauses.push(`c.applied_for_process IN (SELECT process_name FROM process_master WHERE id IN (${scope.processScope.ids.map(() => "?").join(",")}))`);
     params.push(...scope.processScope.ids);
   }
-  if (scope.departmentScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("departmentScope");
-  if (scope.costCentreScope.mode === "none")
-    throw new ReportScopeAccessDeniedError("costCentreScope");
+  if (scope.departmentScope.mode === "none") throw new ReportScopeAccessDeniedError("departmentScope");
+  if (scope.costCentreScope.mode === "none") throw new ReportScopeAccessDeniedError("costCentreScope");
 
-  if (filters.branchId) {
-    clauses.push(
-      "c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)",
-    );
-    params.push(String(filters.branchId));
-  }
-  if (filters.processId) {
-    clauses.push(
-      "c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)",
-    );
-    params.push(String(filters.processId));
-  }
+  if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
 
   // Same 29,926 legacy employee records as source-effectiveness. Left in, they were attributed
   // to whichever recruiter happened to sit on the imported row.
@@ -632,7 +507,7 @@ export async function recruiterProductivity(
   // Applied to created_at, this table's real applied_date, wrapped in DATE() so a DATETIME on
   // the closing day is not excluded by the inclusive upper bound.
   const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to = dateParam(filters.to, businessToday());
+  const to   = dateParam(filters.to, businessToday());
   clauses.push("DATE(c.created_at) BETWEEN ? AND ?");
   params.push(from, to);
 
@@ -737,12 +612,8 @@ export async function recruiterProductivity(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  return {
-    rows,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > rows.length,
-  };
+  const rows  = paged.rows as Record<string, unknown>[];
+  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -751,32 +622,20 @@ export async function recruiterProductivity(
 export async function offerTracker(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to = dateParam(filters.to, today);
+  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to    = dateParam(filters.to, today);
 
   const clauses: string[] = ["1 = 1"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
   appendCandidateScopeConditions(scope, clauses, params);
 
-  if (filters.branchId) {
-    clauses.push(
-      "c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)",
-    );
-    params.push(String(filters.branchId));
-  }
-  if (filters.processId) {
-    clauses.push(
-      "c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)",
-    );
-    params.push(String(filters.processId));
-  }
+  if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
   // offer_date does not exist; proxy: candidates whose current_stage reached offer
-  clauses.push(
-    "LOWER(c.current_stage) IN ('offered','offer','onboarded','joined')",
-  );
+  clauses.push("LOWER(c.current_stage) IN ('offered','offer','onboarded','joined')");
   clauses.push("c.created_at BETWEEN ? AND ?");
   params.push(from, to);
 
@@ -851,18 +710,11 @@ export async function offerTracker(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -871,24 +723,14 @@ export async function offerTracker(
 export async function joiningPending(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions,
+  options: ExecOptions
 ): Promise<ExecResult> {
   const clauses: string[] = ["1 = 1"];
-  const params: unknown[] = [];
+  const params: unknown[]  = [];
   appendCandidateScopeConditions(scope, clauses, params);
 
-  if (filters.branchId) {
-    clauses.push(
-      "c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)",
-    );
-    params.push(String(filters.branchId));
-  }
-  if (filters.processId) {
-    clauses.push(
-      "c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)",
-    );
-    params.push(String(filters.processId));
-  }
+  if (filters.branchId)  { clauses.push("c.applied_for_branch  = (SELECT branch_name  FROM branch_master  WHERE id = ? LIMIT 1)"); params.push(String(filters.branchId)); }
+  if (filters.processId) { clauses.push("c.applied_for_process = (SELECT process_name FROM process_master WHERE id = ? LIMIT 1)"); params.push(String(filters.processId)); }
   // Candidates who reached offer stage but have no confirmed joining date
   clauses.push("LOWER(c.current_stage) IN ('offered','offer')");
   clauses.push("c.offer_doj IS NULL");
@@ -967,16 +809,9 @@ export async function joiningPending(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
-  const nextCursor =
-    options.mode === "worker" && rows.length > 0
-      ? (rows[rows.length - 1]._cursor as number)
-      : null;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return {
-    rows: out,
-    rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: total > out.length,
-    nextCursor,
-  };
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }

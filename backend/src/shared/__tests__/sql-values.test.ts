@@ -43,13 +43,11 @@ describe("blankToNull", () => {
     // a valid DATETIME.
     expect(blankToNull("2026-08-08")).toBe("2026-08-08");
     expect(blankToNull("2026-08-08 10:30:00")).toBe("2026-08-08 10:30:00");
-    expect(blankToNull("2026-08-08T10:30:00.000Z")).toBe(
-      "2026-08-08T10:30:00.000Z",
-    );
+    expect(blankToNull("2026-08-08T10:30:00.000Z")).toBe("2026-08-08T10:30:00.000Z");
   });
 
   it("does not mangle non-strings", () => {
-    expect(blankToNull(0)).toBe(0); // a real numeric zero, not "absent"
+    expect(blankToNull(0)).toBe(0);          // a real numeric zero, not "absent"
     expect(blankToNull(false)).toBe(false);
     expect(blankToNull(12345.67)).toBe(12345.67);
   });
@@ -61,7 +59,7 @@ describe("blankToNull", () => {
 
   it("`?? null` is the bug, in one line", () => {
     const untouchedField = "";
-    expect(untouchedField ?? null).toBe(""); // reaches MySQL, throws
+    expect(untouchedField ?? null).toBe("");        // reaches MySQL, throws
     expect(blankToNull(untouchedField)).toBeNull(); // leaves the column alone
   });
 });
@@ -69,10 +67,7 @@ describe("blankToNull", () => {
 describe("date/decimal columns behind COALESCE are guarded at their call sites", () => {
   const sites: Array<[string, string[]]> = [
     ["modules/org/events.routes.ts", ["event_date", "end_date"]],
-    [
-      "modules/privacy/privacy.routes.ts",
-      ["notified_authority_at", "notified_principals_at"],
-    ],
+    ["modules/privacy/privacy.routes.ts", ["notified_authority_at", "notified_principals_at"]],
     ["modules/assets/assets.service.ts", ["warranty_expiry", "purchase_cost"]],
     ["modules/org/org.service.ts", ["effective_date"]],
     ["modules/business-actions/business-actions.service.ts", ["due_date"]],
@@ -92,10 +87,7 @@ describe("date/decimal columns behind COALESCE are guarded at their call sites",
           src.includes(`blankToNull(input.${col})`) ||
           src.includes(`blankToNull(o.${col})`) ||
           src.includes(`blankToNull(${camel})`);
-        expect(
-          wrapped,
-          `${col} still bound without blankToNull in ${file}`,
-        ).toBe(true);
+        expect(wrapped, `${col} still bound without blankToNull in ${file}`).toBe(true);
       }
     });
   }

@@ -26,49 +26,28 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("axios", () => ({
-  default: {
-    get: vi.fn(async () => ({ status: 200, data: { messageId: "sent-123" } })),
-  },
+  default: { get: vi.fn(async () => ({ status: 200, data: { messageId: "sent-123" } })) },
 }));
 
-const axios = (await import("axios")).default as unknown as {
-  get: ReturnType<typeof vi.fn>;
-};
+const axios = (await import("axios")).default as unknown as { get: ReturnType<typeof vi.fn> };
 const { SmartPingProvider } = await import("../smartping.provider.js");
-const { SMARTPING_DLT_REGISTRY } =
-  await import("../../../smartping-dlt-registry.js");
+const { SMARTPING_DLT_REGISTRY } = await import("../../../smartping-dlt-registry.js");
 
-const provider = new SmartPingProvider(
-  "user",
-  "pass",
-  "Ispark",
-  "1001485540000016211",
-);
+const provider = new SmartPingProvider("user", "pass", "Ispark", "1001485540000016211");
 const MOBILE = "9999746258";
 
 describe("SmartPing DLT template guard", () => {
   it("refuses a human subject line instead of firing a doomed request", async () => {
     axios.get.mockClear();
-    const res = await provider.send(
-      MOBILE,
-      "eSign link expiring — employee non-responsive",
-      "body",
-    );
+    const res = await provider.send(MOBILE, "eSign link expiring — employee non-responsive", "body");
 
     expect(res.success).toBe(false);
     expect(res.error).toMatch(/No registered DLT template/);
-    expect(
-      axios.get,
-      "it should not reach the gateway at all",
-    ).not.toHaveBeenCalled();
+    expect(axios.get, "it should not reach the gateway at all").not.toHaveBeenCalled();
   });
 
   it("says what was actually received, so the log is diagnosable", async () => {
-    const res = await provider.send(
-      MOBILE,
-      "Joining document eSign pending",
-      "body",
-    );
+    const res = await provider.send(MOBILE, "Joining document eSign pending", "body");
     expect(res.error).toContain("Joining document eSign pending");
     expect(res.error).toContain("buildSMS");
   });
@@ -78,15 +57,9 @@ describe("SmartPing DLT template guard", () => {
     const otp = SMARTPING_DLT_REGISTRY.hrms_login_otp;
     expect(otp?.dltContentId, "registry template missing").toBeTruthy();
 
-    const res = await provider.send(
-      MOBILE,
-      otp.dltContentId,
-      "Your OTP is 123456",
-    );
+    const res = await provider.send(MOBILE, otp.dltContentId, "Your OTP is 123456");
 
-    expect(res.success, "login OTP must not be broken by this guard").toBe(
-      true,
-    );
+    expect(res.success, "login OTP must not be broken by this guard").toBe(true);
     expect(axios.get).toHaveBeenCalledOnce();
   });
 
@@ -94,11 +67,7 @@ describe("SmartPing DLT template guard", () => {
     // If the shape check were too strict it would silently break real templates.
     for (const [name, tpl] of Object.entries(SMARTPING_DLT_REGISTRY)) {
       axios.get.mockClear();
-      const res = await provider.send(
-        MOBILE,
-        (tpl as { dltContentId: string }).dltContentId,
-        "x",
-      );
+      const res = await provider.send(MOBILE, (tpl as { dltContentId: string }).dltContentId, "x");
       expect(res.success, `${name} was rejected by the guard`).toBe(true);
     }
   });

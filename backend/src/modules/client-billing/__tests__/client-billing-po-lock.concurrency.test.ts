@@ -52,167 +52,123 @@ vi.unmock("../../../db/mysql.js");
 
 const RUN_LIVE = process.env.RUN_CLIENT_BILLING_MYSQL_TESTS === "1";
 
-describe.skipIf(!RUN_LIVE)(
-  "approveInvoice PO-sufficiency race (real MySQL, real concurrent connections)",
-  () => {
-    // The app's own pool (db/mysql.ts) — already configured from env.DB_*, not duplicated here.
-    // Calling approveInvoice() twice concurrently below checks out two separate physical
-    // connections from this same pool, which is what makes the row-lock race real.
-    let pool: (typeof import("../../../db/mysql.js"))["db"];
-    let clientBillingApprovalService: (typeof import("../client-billing-approval.service.js"))["clientBillingApprovalService"];
+describe.skipIf(!RUN_LIVE)("approveInvoice PO-sufficiency race (real MySQL, real concurrent connections)", () => {
+  // The app's own pool (db/mysql.ts) — already configured from env.DB_*, not duplicated here.
+  // Calling approveInvoice() twice concurrently below checks out two separate physical
+  // connections from this same pool, which is what makes the row-lock race real.
+  let pool: typeof import("../../../db/mysql.js")["db"];
+  let clientBillingApprovalService: typeof import("../client-billing-approval.service.js")["clientBillingApprovalService"];
 
-    const branchId = randomUUID();
-    const costCentreId = randomUUID();
-    const poId = randomUUID();
-    const poNumber = `TESTPO-${randomUUID().slice(0, 8)}`;
-    const invoiceAId = randomUUID();
-    const invoiceBId = randomUUID();
-    const actorId = "00000000-0000-0000-0000-000000000001";
-    const PO_BALANCE = 10000;
+  const branchId = randomUUID();
+  const costCentreId = randomUUID();
+  const poId = randomUUID();
+  const poNumber = `TESTPO-${randomUUID().slice(0, 8)}`;
+  const invoiceAId = randomUUID();
+  const invoiceBId = randomUUID();
+  const actorId = "00000000-0000-0000-0000-000000000001";
+  const PO_BALANCE = 10000;
 
-    beforeAll(async () => {
-      ({ db: pool } = await import("../../../db/mysql.js"));
-      await pool.query("SELECT 1");
+  beforeAll(async () => {
+    ({ db: pool } = await import("../../../db/mysql.js"));
+    await pool.query("SELECT 1");
 
-      ({ clientBillingApprovalService } =
-        await import("../client-billing-approval.service.js"));
+    ({ clientBillingApprovalService } = await import("../client-billing-approval.service.js"));
 
-      const [seqRows] = await pool.query<RowDataPacket[]>(
-        "SELECT COALESCE(MAX(branch_seq), 0) + 5000 AS n FROM branch_master",
-      );
-      const branchSeq = Number((seqRows[0] as { n: number }).n);
+    const [seqRows] = await pool.query<RowDataPacket[]>(
+      "SELECT COALESCE(MAX(branch_seq), 0) + 5000 AS n FROM branch_master"
+    );
+    const branchSeq = Number((seqRows[0] as { n: number }).n);
 
-      await pool.execute(
-        `INSERT INTO branch_master (id, branch_code, branch_name, gst_state_code, branch_seq, active_status)
+    await pool.execute(
+      `INSERT INTO branch_master (id, branch_code, branch_name, gst_state_code, branch_seq, active_status)
        VALUES (?, ?, ?, '09', ?, 1)`,
-        [
-          branchId,
-          `TB${branchSeq}`,
-          "PO Lock Test Branch (throwaway)",
-          branchSeq,
-        ],
-      );
-      await pool.execute(
-        `INSERT INTO cost_centre_master (id, cost_centre_code, cost_centre_name, branch_id, company_name, active_status)
+      [branchId, `TB${branchSeq}`, "PO Lock Test Branch (throwaway)", branchSeq]
+    );
+    await pool.execute(
+      `INSERT INTO cost_centre_master (id, cost_centre_code, cost_centre_name, branch_id, company_name, active_status)
        VALUES (?, ?, ?, ?, ?, 1)`,
-        [
-          costCentreId,
-          `TCC${branchSeq}`,
-          "PO Lock Test Cost Centre (throwaway)",
-          branchId,
-          "PO Lock Test Co",
-        ],
-      );
-      await pool.execute(
-        `INSERT INTO client_po_number (id, cost_centre_id, po_number, period_from, period_to, total_amount, balance_amount)
+      [costCentreId, `TCC${branchSeq}`, "PO Lock Test Cost Centre (throwaway)", branchId, "PO Lock Test Co"]
+    );
+    await pool.execute(
+      `INSERT INTO client_po_number (id, cost_centre_id, po_number, period_from, period_to, total_amount, balance_amount)
        VALUES (?, ?, ?, '2026-04-01', '2027-03-31', ?, ?)`,
-        [poId, costCentreId, poNumber, PO_BALANCE, PO_BALANCE],
-      );
-      for (const invId of [invoiceAId, invoiceBId]) {
-        await pool.execute(
-          `INSERT INTO client_invoice
+      [poId, costCentreId, poNumber, PO_BALANCE, PO_BALANCE]
+    );
+    for (const invId of [invoiceAId, invoiceBId]) {
+      await pool.execute(
+        `INSERT INTO client_invoice
            (id, cost_centre_id, invoice_status, category, finance_year, month_label, invoice_date,
             gst_type, apply_gst, total_amount, grand_total, created_by)
          VALUES (?, ?, 'proforma', 'Services', '2026-27', 'Apr-26', '2026-04-15', 'Integrated', 1, ?, ?, ?)`,
-          [invId, costCentreId, PO_BALANCE, PO_BALANCE, actorId],
-        );
-      }
-    }, 30000);
+        [invId, costCentreId, PO_BALANCE, PO_BALANCE, actorId]
+      );
+    }
+  }, 30000);
 
-    afterAll(async () => {
-      if (!pool) return;
-      await pool
-        .execute(`DELETE FROM client_po_particular WHERE po_id = ?`, [poId])
-        .catch(() => {});
-      await pool
-        .execute(
-          `DELETE FROM client_invoice_audit_log WHERE invoice_id IN (?, ?)`,
-          [invoiceAId, invoiceBId],
-        )
-        .catch(() => {});
-      await pool
-        .execute(`DELETE FROM client_invoice WHERE id IN (?, ?)`, [
-          invoiceAId,
-          invoiceBId,
-        ])
-        .catch(() => {});
-      await pool
-        .execute(`DELETE FROM client_po_number WHERE id = ?`, [poId])
-        .catch(() => {});
-      await pool
-        .execute(`DELETE FROM cost_centre_master WHERE id = ?`, [costCentreId])
-        .catch(() => {});
-      await pool
-        .execute(`DELETE FROM branch_master WHERE id = ?`, [branchId])
-        .catch(() => {});
-      // A successful approval mints a real row in the shared client_invoice_number_sequence
-      // counter table (kind='bill', scoped to this test's own throwaway company name) —
-      // delete it too so re-running this test never leaves a stray scope behind.
-      await pool
-        .execute(
-          `DELETE FROM client_invoice_number_sequence WHERE kind = 'bill' AND scope_key = ?`,
-          [`09|PO Lock Test Co|2026-27`],
-        )
-        .catch(() => {});
-      await pool.end().catch(() => {});
-    }, 30000);
+  afterAll(async () => {
+    if (!pool) return;
+    await pool.execute(`DELETE FROM client_po_particular WHERE po_id = ?`, [poId]).catch(() => {});
+    await pool.execute(`DELETE FROM client_invoice_audit_log WHERE invoice_id IN (?, ?)`, [invoiceAId, invoiceBId]).catch(() => {});
+    await pool.execute(`DELETE FROM client_invoice WHERE id IN (?, ?)`, [invoiceAId, invoiceBId]).catch(() => {});
+    await pool.execute(`DELETE FROM client_po_number WHERE id = ?`, [poId]).catch(() => {});
+    await pool.execute(`DELETE FROM cost_centre_master WHERE id = ?`, [costCentreId]).catch(() => {});
+    await pool.execute(`DELETE FROM branch_master WHERE id = ?`, [branchId]).catch(() => {});
+    // A successful approval mints a real row in the shared client_invoice_number_sequence
+    // counter table (kind='bill', scoped to this test's own throwaway company name) —
+    // delete it too so re-running this test never leaves a stray scope behind.
+    await pool
+      .execute(`DELETE FROM client_invoice_number_sequence WHERE kind = 'bill' AND scope_key = ?`, [
+        `09|PO Lock Test Co|2026-27`,
+      ])
+      .catch(() => {});
+    await pool.end().catch(() => {});
+  }, 30000);
 
-    it(
-      "racing two approvals against a PO whose balance equals exactly one invoice's total: " +
-        "exactly one succeeds, the other fails the sufficiency check, balance never goes negative",
-      async () => {
-        const [resultA, resultB] = await Promise.allSettled([
-          clientBillingApprovalService.approveInvoice({
-            invoiceId: invoiceAId,
-            poNumbers: [poNumber],
-            userId: actorId,
-          }),
-          clientBillingApprovalService.approveInvoice({
-            invoiceId: invoiceBId,
-            poNumbers: [poNumber],
-            userId: actorId,
-          }),
-        ]);
+  it(
+    "racing two approvals against a PO whose balance equals exactly one invoice's total: " +
+      "exactly one succeeds, the other fails the sufficiency check, balance never goes negative",
+    async () => {
+      const [resultA, resultB] = await Promise.allSettled([
+        clientBillingApprovalService.approveInvoice({ invoiceId: invoiceAId, poNumbers: [poNumber], userId: actorId }),
+        clientBillingApprovalService.approveInvoice({ invoiceId: invoiceBId, poNumbers: [poNumber], userId: actorId }),
+      ]);
 
-        const outcomes = [resultA, resultB];
-        const fulfilled = outcomes.filter((r) => r.status === "fulfilled");
-        const rejected = outcomes.filter((r) => r.status === "rejected");
+      const outcomes = [resultA, resultB];
+      const fulfilled = outcomes.filter((r) => r.status === "fulfilled");
+      const rejected = outcomes.filter((r) => r.status === "rejected");
 
-        // The actual bug: without FOR UPDATE, both of these come back fulfilled.
-        expect(fulfilled).toHaveLength(1);
-        expect(rejected).toHaveLength(1);
-        expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
-          statusCode: 400,
-          message: expect.stringMatching(/PO balance/),
-        });
+      // The actual bug: without FOR UPDATE, both of these come back fulfilled.
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+        statusCode: 400,
+        message: expect.stringMatching(/PO balance/),
+      });
 
-        const [poRows] = await pool.query<RowDataPacket[]>(
-          `SELECT balance_amount FROM client_po_number WHERE id = ?`,
-          [poId],
-        );
-        const finalBalance = Number(
-          (poRows[0] as { balance_amount: number }).balance_amount,
-        );
-        // The actual bug: without FOR UPDATE this goes to -10000 (both consumed the full amount).
-        expect(finalBalance).toBe(0);
+      const [poRows] = await pool.query<RowDataPacket[]>(
+        `SELECT balance_amount FROM client_po_number WHERE id = ?`,
+        [poId]
+      );
+      const finalBalance = Number((poRows[0] as { balance_amount: number }).balance_amount);
+      // The actual bug: without FOR UPDATE this goes to -10000 (both consumed the full amount).
+      expect(finalBalance).toBe(0);
 
-        const [particularRows] = await pool.query<RowDataPacket[]>(
-          `SELECT invoice_id FROM client_po_particular WHERE po_id = ?`,
-          [poId],
-        );
-        // The actual bug: without FOR UPDATE this is 2 (one particular row per approval).
-        expect(particularRows).toHaveLength(1);
+      const [particularRows] = await pool.query<RowDataPacket[]>(
+        `SELECT invoice_id FROM client_po_particular WHERE po_id = ?`,
+        [poId]
+      );
+      // The actual bug: without FOR UPDATE this is 2 (one particular row per approval).
+      expect(particularRows).toHaveLength(1);
 
-        const [invoiceRows] = await pool.query<RowDataPacket[]>(
-          `SELECT id, invoice_status FROM client_invoice WHERE id IN (?, ?)`,
-          [invoiceAId, invoiceBId],
-        );
-        const approvedCount = (
-          invoiceRows as Array<{ invoice_status: string }>
-        ).filter((r) => r.invoice_status === "approved").length;
-        expect(approvedCount).toBe(1);
-      },
-      30000,
-    );
-  },
-);
+      const [invoiceRows] = await pool.query<RowDataPacket[]>(
+        `SELECT id, invoice_status FROM client_invoice WHERE id IN (?, ?)`,
+        [invoiceAId, invoiceBId]
+      );
+      const approvedCount = (invoiceRows as Array<{ invoice_status: string }>).filter(
+        (r) => r.invoice_status === "approved"
+      ).length;
+      expect(approvedCount).toBe(1);
+    },
+    30000
+  );
+});

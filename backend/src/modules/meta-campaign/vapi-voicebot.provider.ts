@@ -17,7 +17,7 @@
  *   - Handling objections
  */
 
-import axios from "axios";
+import axios from 'axios';
 
 export interface VapiCallInput {
   phone: string;
@@ -25,11 +25,11 @@ export interface VapiCallInput {
   designation: string | null;
   branch: string | null;
   referenceId: string;
-  language?: "hi" | "en" | "hi-en";
+  language?: 'hi' | 'en' | 'hi-en';
 }
 
 export interface VapiCallResult {
-  status: "triggered" | "skipped" | "failed";
+  status: 'triggered' | 'skipped' | 'failed';
   callId: string | null;
   detail: string | null;
 }
@@ -43,8 +43,8 @@ export function isVapiConfigured(): boolean {
  * Variables: {{name}}, {{role}}, {{branch}}, {{referenceId}}
  */
 export function buildRecruitmentPrompt(input: VapiCallInput): string {
-  const role = input.designation ?? "Customer Service Executive";
-  const branch = input.branch ?? "our office";
+  const role = input.designation ?? 'Customer Service Executive';
+  const branch = input.branch ?? 'our office';
 
   return `You are a friendly recruitment assistant for MAS Callnet, a BPO company.
 You are calling ${input.name} who applied for the ${role} position at ${branch}.
@@ -91,32 +91,29 @@ If no/unsure: "Koi problem nahi. Agar aapko koi doubt ho toh WhatsApp par messag
 /**
  * Trigger a Vapi.ai outbound call with personalized script.
  */
-export async function triggerVapiCall(
-  input: VapiCallInput,
-): Promise<VapiCallResult> {
+export async function triggerVapiCall(input: VapiCallInput): Promise<VapiCallResult> {
   const apiKey = process.env.VAPI_API_KEY;
   const assistantId = process.env.VAPI_ASSISTANT_ID;
 
   if (!apiKey || !assistantId) {
     return {
-      status: "skipped",
+      status: 'skipped',
       callId: null,
-      detail: "VAPI_API_KEY or VAPI_ASSISTANT_ID not configured",
+      detail: 'VAPI_API_KEY or VAPI_ASSISTANT_ID not configured',
     };
   }
 
   // Format phone for India (+91)
-  let phone = input.phone.replace(/\D/g, "");
+  let phone = input.phone.replace(/\D/g, '');
   if (phone.length === 10) phone = `+91${phone}`;
-  else if (!phone.startsWith("+")) phone = `+${phone}`;
+  else if (!phone.startsWith('+')) phone = `+${phone}`;
 
-  const callbackUrl =
-    process.env.VAPI_CALLBACK_URL ??
-    `${process.env.BACKEND_PUBLIC_URL ?? ""}/api/meta/vapi-callback`;
+  const callbackUrl = process.env.VAPI_CALLBACK_URL
+    ?? `${process.env.BACKEND_PUBLIC_URL ?? ''}/api/meta/vapi-callback`;
 
   try {
     const { data } = await axios.post(
-      "https://api.vapi.ai/call/phone",
+      'https://api.vapi.ai/call/phone',
       {
         assistantId,
         phoneNumberId: process.env.VAPI_PHONE_NUMBER_ID, // Your Vapi phone number
@@ -128,8 +125,8 @@ export async function triggerVapiCall(
         assistantOverrides: {
           variableValues: {
             name: input.name,
-            role: input.designation ?? "Customer Service Executive",
-            branch: input.branch ?? "our office",
+            role: input.designation ?? 'Customer Service Executive',
+            branch: input.branch ?? 'our office',
             referenceId: input.referenceId,
           },
           // Or override the entire system prompt for full customization:
@@ -141,7 +138,7 @@ export async function triggerVapiCall(
         },
         metadata: {
           referenceId: input.referenceId,
-          source: "meta-campaign",
+          source: 'meta-campaign',
         },
         // Webhook for call completion
         serverUrl: callbackUrl,
@@ -149,26 +146,24 @@ export async function triggerVapiCall(
       {
         headers: {
           Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         timeout: 30000,
-      },
+      }
     );
 
     return {
-      status: "triggered",
+      status: 'triggered',
       callId: data.id ?? data.callId ?? null,
       detail: null,
     };
   } catch (err) {
     const msg = axios.isAxiosError(err)
-      ? (err.response?.data?.message ?? err.message)
-      : err instanceof Error
-        ? err.message
-        : String(err);
+      ? err.response?.data?.message ?? err.message
+      : err instanceof Error ? err.message : String(err);
 
     return {
-      status: "failed",
+      status: 'failed',
       callId: null,
       detail: msg,
     };
@@ -179,30 +174,27 @@ export async function triggerVapiCall(
  * Alternative: Use Vapi's transient assistant (no pre-created assistant needed).
  * The entire script is sent with each call - maximum flexibility.
  */
-export async function triggerVapiCallWithInlineScript(
-  input: VapiCallInput,
-): Promise<VapiCallResult> {
+export async function triggerVapiCallWithInlineScript(input: VapiCallInput): Promise<VapiCallResult> {
   const apiKey = process.env.VAPI_API_KEY;
 
   if (!apiKey) {
     return {
-      status: "skipped",
+      status: 'skipped',
       callId: null,
-      detail: "VAPI_API_KEY not configured",
+      detail: 'VAPI_API_KEY not configured',
     };
   }
 
-  let phone = input.phone.replace(/\D/g, "");
+  let phone = input.phone.replace(/\D/g, '');
   if (phone.length === 10) phone = `+91${phone}`;
-  else if (!phone.startsWith("+")) phone = `+${phone}`;
+  else if (!phone.startsWith('+')) phone = `+${phone}`;
 
-  const callbackUrl =
-    process.env.VAPI_CALLBACK_URL ??
-    `${process.env.BACKEND_PUBLIC_URL ?? ""}/api/meta/vapi-callback`;
+  const callbackUrl = process.env.VAPI_CALLBACK_URL
+    ?? `${process.env.BACKEND_PUBLIC_URL ?? ''}/api/meta/vapi-callback`;
 
   try {
     const { data } = await axios.post(
-      "https://api.vapi.ai/call/phone",
+      'https://api.vapi.ai/call/phone',
       {
         phoneNumberId: process.env.VAPI_PHONE_NUMBER_ID,
         customer: {
@@ -213,60 +205,58 @@ export async function triggerVapiCallWithInlineScript(
         assistant: {
           name: `Recruitment Call - ${input.referenceId}`,
           model: {
-            provider: "openai",
-            model: "gpt-4o-mini", // Cost-effective, fast
+            provider: 'openai',
+            model: 'gpt-4o-mini', // Cost-effective, fast
             messages: [
               {
-                role: "system",
+                role: 'system',
                 content: buildRecruitmentPrompt(input),
               },
             ],
           },
           voice: {
-            provider: "11labs",
-            voiceId: process.env.VAPI_VOICE_ID ?? "sarah", // Indian English voice
+            provider: '11labs',
+            voiceId: process.env.VAPI_VOICE_ID ?? 'sarah', // Indian English voice
           },
           // First message the AI speaks
           firstMessage: `Namaste ${input.name} ji, main MAS Callnet se bol raha hoon.`,
           // End call phrases
-          endCallPhrases: ["goodbye", "bye", "thank you bye", "alvida"],
+          endCallPhrases: ['goodbye', 'bye', 'thank you bye', 'alvida'],
           // Max call duration (seconds)
           maxDurationSeconds: 180,
           // Transcription settings
           transcriber: {
-            provider: "deepgram",
-            language: "hi", // Hindi primary
+            provider: 'deepgram',
+            language: 'hi', // Hindi primary
           },
         },
         metadata: {
           referenceId: input.referenceId,
-          source: "meta-campaign",
+          source: 'meta-campaign',
         },
         serverUrl: callbackUrl,
       },
       {
         headers: {
           Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
         timeout: 30000,
-      },
+      }
     );
 
     return {
-      status: "triggered",
+      status: 'triggered',
       callId: data.id ?? null,
       detail: null,
     };
   } catch (err) {
     const msg = axios.isAxiosError(err)
-      ? (err.response?.data?.message ?? err.message)
-      : err instanceof Error
-        ? err.message
-        : String(err);
+      ? err.response?.data?.message ?? err.message
+      : err instanceof Error ? err.message : String(err);
 
     return {
-      status: "failed",
+      status: 'failed',
       callId: null,
       detail: msg,
     };
@@ -277,7 +267,7 @@ export async function triggerVapiCallWithInlineScript(
  * Handle Vapi webhook callback when call completes.
  */
 export interface VapiCallbackPayload {
-  type: "call-ended" | "transcript" | "status-update";
+  type: 'call-ended' | 'transcript' | 'status-update';
   call?: {
     id: string;
     status: string;
@@ -295,52 +285,50 @@ export function parseVapiCallback(payload: VapiCallbackPayload): {
   duration: number | null;
   transcript: string | null;
   summary: string | null;
-  outcome: "interested" | "not_interested" | "no_answer" | "busy" | "unknown";
+  outcome: 'interested' | 'not_interested' | 'no_answer' | 'busy' | 'unknown';
 } {
   const call = payload.call;
   if (!call) {
     return {
       referenceId: null,
-      status: "unknown",
+      status: 'unknown',
       duration: null,
       transcript: null,
       summary: null,
-      outcome: "unknown",
+      outcome: 'unknown',
     };
   }
 
   // Determine outcome from transcript/summary
-  let outcome:
-    "interested" | "not_interested" | "no_answer" | "busy" | "unknown" =
-    "unknown";
-  const text = (call.transcript ?? "") + " " + (call.summary ?? "");
+  let outcome: 'interested' | 'not_interested' | 'no_answer' | 'busy' | 'unknown' = 'unknown';
+  const text = (call.transcript ?? '') + ' ' + (call.summary ?? '');
   const lower = text.toLowerCase();
 
-  if (call.endedReason === "no-answer" || lower.includes("no answer")) {
-    outcome = "no_answer";
-  } else if (call.endedReason === "busy" || lower.includes("busy")) {
-    outcome = "busy";
+  if (call.endedReason === 'no-answer' || lower.includes('no answer')) {
+    outcome = 'no_answer';
+  } else if (call.endedReason === 'busy' || lower.includes('busy')) {
+    outcome = 'busy';
   } else if (
-    lower.includes("not interested") ||
-    lower.includes("interested nahi") ||
-    lower.includes("nahi chahiye")
+    lower.includes('not interested') ||
+    lower.includes('interested nahi') ||
+    lower.includes('nahi chahiye')
   ) {
-    outcome = "not_interested";
+    outcome = 'not_interested';
   } else if (
-    lower.includes("interested") ||
-    lower.includes("aa sakta") ||
-    lower.includes("aa sakti") ||
-    lower.includes("aaunga") ||
-    lower.includes("aaungi") ||
-    lower.includes("will come") ||
-    lower.includes("yes")
+    lower.includes('interested') ||
+    lower.includes('aa sakta') ||
+    lower.includes('aa sakti') ||
+    lower.includes('aaunga') ||
+    lower.includes('aaungi') ||
+    lower.includes('will come') ||
+    lower.includes('yes')
   ) {
-    outcome = "interested";
+    outcome = 'interested';
   }
 
   return {
     referenceId: call.metadata?.referenceId ?? null,
-    status: call.status ?? "completed",
+    status: call.status ?? 'completed',
     duration: call.duration ?? null,
     transcript: call.transcript ?? null,
     summary: call.summary ?? null,

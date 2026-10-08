@@ -7,39 +7,39 @@
  * - Sorting logic (date/cq/fatal)
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from 'vitest';
 import {
   buildCQScoreQuery,
   buildWeaknessDetailQuery,
   buildCallsReviewQuery,
   buildCallDetailQuery,
   buildTotalCallsCountQuery,
-} from "../src/lib/query-builders/quality-queries.js";
+} from '../src/lib/query-builders/quality-queries.js';
 
-describe("Quality Query Builders", () => {
-  describe("buildCQScoreQuery", () => {
-    it("returns SQL query string and parameters for agent CQ score", () => {
-      const employeeCode = "EMP-STF-001";
+describe('Quality Query Builders', () => {
+  describe('buildCQScoreQuery', () => {
+    it('returns SQL query string and parameters for agent CQ score', () => {
+      const employeeCode = 'EMP-STF-001';
       const daysBack = 7;
 
       const result = buildCQScoreQuery(employeeCode, daysBack);
 
-      expect(result).toHaveProperty("query");
-      expect(result).toHaveProperty("params");
-      expect(typeof result.query).toBe("string");
+      expect(result).toHaveProperty('query');
+      expect(result).toHaveProperty('params');
+      expect(typeof result.query).toBe('string');
       expect(Array.isArray(result.params)).toBe(true);
     });
 
-    it("query contains required table and aggregation functions", () => {
-      const result = buildCQScoreQuery("EMP-STF-001", 7);
+    it('query contains required table and aggregation functions', () => {
+      const result = buildCQScoreQuery('EMP-STF-001', 7);
 
-      expect(result.query).toContain("call_quality_assessment");
-      expect(result.query).toContain("AVG(quality_percentage)");
-      expect(result.query).toContain("ROW_NUMBER()");
+      expect(result.query).toContain('call_quality_assessment');
+      expect(result.query).toContain('AVG(quality_percentage)');
+      expect(result.query).toContain('ROW_NUMBER()');
     });
 
-    it("includes employee code in parameters (no SQL injection risk)", () => {
-      const employeeCode = "EMP-STF-001";
+    it('includes employee code in parameters (no SQL injection risk)', () => {
+      const employeeCode = 'EMP-STF-001';
       const result = buildCQScoreQuery(employeeCode, 7);
 
       expect(result.params).toContain(employeeCode);
@@ -48,63 +48,63 @@ describe("Quality Query Builders", () => {
       expect(result.params.length).toBeGreaterThan(0);
     });
 
-    it("calculates weekly breakdown", () => {
-      const result = buildCQScoreQuery("EMP-STF-001", 7);
+    it('calculates weekly breakdown', () => {
+      const result = buildCQScoreQuery('EMP-STF-001', 7);
 
-      expect(result.query).toContain("DAYNAME");
-      expect(result.query).toContain("GROUP BY");
+      expect(result.query).toContain('DAYNAME');
+      expect(result.query).toContain('GROUP BY');
     });
 
-    it("respects daysBack parameter", () => {
-      const result7 = buildCQScoreQuery("EMP-STF-001", 7);
-      const result30 = buildCQScoreQuery("EMP-STF-001", 30);
+    it('respects daysBack parameter', () => {
+      const result7 = buildCQScoreQuery('EMP-STF-001', 7);
+      const result30 = buildCQScoreQuery('EMP-STF-001', 30);
 
       // Both should include INTERVAL but with different values
-      expect(result7.query).toContain("INTERVAL 7 DAY");
-      expect(result30.query).toContain("INTERVAL 30 DAY");
+      expect(result7.query).toContain('INTERVAL 7 DAY');
+      expect(result30.query).toContain('INTERVAL 30 DAY');
     });
 
-    it("includes peer average calculation", () => {
-      const result = buildCQScoreQuery("EMP-STF-001", 7);
+    it('includes peer average calculation', () => {
+      const result = buildCQScoreQuery('EMP-STF-001', 7);
 
-      expect(result.query).toContain("peer");
-      expect(result.query.toLowerCase()).toContain("peer");
+      expect(result.query).toContain('peer');
+      expect(result.query.toLowerCase()).toContain('peer');
     });
 
-    it("includes rank calculation", () => {
-      const result = buildCQScoreQuery("EMP-STF-001", 7);
+    it('includes rank calculation', () => {
+      const result = buildCQScoreQuery('EMP-STF-001', 7);
 
-      expect(result.query).toContain("rank");
-      expect(result.query.toLowerCase()).toContain("rank_position");
+      expect(result.query).toContain('rank');
+      expect(result.query.toLowerCase()).toContain('rank_position');
     });
   });
 
-  describe("buildWeaknessDetailQuery", () => {
-    it("returns SQL query and parameters for dimensional scores", () => {
-      const employeeCode = "EMP-STF-001";
+  describe('buildWeaknessDetailQuery', () => {
+    it('returns SQL query and parameters for dimensional scores', () => {
+      const employeeCode = 'EMP-STF-001';
       const result = buildWeaknessDetailQuery(employeeCode);
 
-      expect(result).toHaveProperty("query");
-      expect(result).toHaveProperty("params");
-      expect(typeof result.query).toBe("string");
+      expect(result).toHaveProperty('query');
+      expect(result).toHaveProperty('params');
+      expect(typeof result.query).toBe('string');
       expect(Array.isArray(result.params)).toBe(true);
     });
 
-    it("query targets call_quality_assessment table", () => {
-      const result = buildWeaknessDetailQuery("EMP-STF-001");
+    it('query targets call_quality_assessment table', () => {
+      const result = buildWeaknessDetailQuery('EMP-STF-001');
 
-      expect(result.query).toContain("call_quality_assessment");
+      expect(result.query).toContain('call_quality_assessment');
     });
 
-    it("includes binary flag columns for dimensions", () => {
-      const result = buildWeaknessDetailQuery("EMP-STF-001");
+    it('includes binary flag columns for dimensions', () => {
+      const result = buildWeaknessDetailQuery('EMP-STF-001');
 
-      expect(result.query).toContain("professionalism_maintained");
-      expect(result.query).toContain("active_listening");
-      expect(result.query).toContain("call_answered_within_5_seconds");
+      expect(result.query).toContain('professionalism_maintained');
+      expect(result.query).toContain('active_listening');
+      expect(result.query).toContain('call_answered_within_5_seconds');
     });
 
-    it("parameter binding prevents SQL injection", () => {
+    it('parameter binding prevents SQL injection', () => {
       const maliciousCode = "EMP-001'; DROP TABLE employees; --";
       const result = buildWeaknessDetailQuery(maliciousCode);
 
@@ -115,20 +115,20 @@ describe("Quality Query Builders", () => {
       expect(result.query).not.toContain(maliciousCode);
     });
 
-    it("includes peer average comparison", () => {
-      const result = buildWeaknessDetailQuery("EMP-STF-001");
+    it('includes peer average comparison', () => {
+      const result = buildWeaknessDetailQuery('EMP-STF-001');
 
-      expect(result.query).toContain("peer");
+      expect(result.query).toContain('peer');
     });
 
-    it("calculates gap (peer_avg - score)", () => {
-      const result = buildWeaknessDetailQuery("EMP-STF-001");
+    it('calculates gap (peer_avg - score)', () => {
+      const result = buildWeaknessDetailQuery('EMP-STF-001');
 
-      expect(result.query).toContain("gap");
+      expect(result.query).toContain('gap');
     });
 
-    it("returns multiple weakness categories (5 dimensions)", () => {
-      const result = buildWeaknessDetailQuery("EMP-STF-001");
+    it('returns multiple weakness categories (5 dimensions)', () => {
+      const result = buildWeaknessDetailQuery('EMP-STF-001');
 
       // Query should have UNION to combine 5 categories
       const unionCount = (result.query.match(/UNION ALL/g) || []).length;
@@ -136,156 +136,149 @@ describe("Quality Query Builders", () => {
     });
   });
 
-  describe("buildCallsReviewQuery", () => {
-    it("returns paginated query with LIMIT and OFFSET", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "date");
+  describe('buildCallsReviewQuery', () => {
+    it('returns paginated query with LIMIT and OFFSET', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
 
-      expect(result.query).toContain("LIMIT");
-      expect(result.query).toContain("OFFSET");
+      expect(result.query).toContain('LIMIT');
+      expect(result.query).toContain('OFFSET');
     });
 
-    it("binds the employee code and inlines a clamped LIMIT/OFFSET", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 5, "date");
+    it('binds the employee code and inlines a clamped LIMIT/OFFSET', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 5, 'date');
 
       // employeeCode stays a bound parameter — it is user input.
-      expect(result.params).toEqual(["EMP-STF-001"]);
+      expect(result.params).toEqual(['EMP-STF-001']);
       // limit/offset are no longer bound. buildCallsReviewQuery moved to
       // sqlLimitOffset(), which validates them and writes them into the SQL, because
       // mysql2 does not reliably accept placeholders in LIMIT/OFFSET on a prepared
       // statement. Safety comes from coercion and clamping instead of binding — see
       // the injection test below, which exercises exactly that.
-      expect(result.query).toContain("LIMIT 10 OFFSET 5");
+      expect(result.query).toContain('LIMIT 10 OFFSET 5');
     });
 
-    it("sorts by date (default)", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "date");
+    it('sorts by date (default)', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
 
-      expect(result.query).toContain("ORDER BY");
-      expect(result.query).toContain("CallDate");
+      expect(result.query).toContain('ORDER BY');
+      expect(result.query).toContain('CallDate');
     });
 
-    it("sorts by quality percentage (cq)", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "cq");
+    it('sorts by quality percentage (cq)', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'cq');
 
-      expect(result.query).toContain("ORDER BY");
-      expect(result.query).toContain("quality_percentage");
-      expect(result.query).toContain("ASC"); // Lower CQ first
+      expect(result.query).toContain('ORDER BY');
+      expect(result.query).toContain('quality_percentage');
+      expect(result.query).toContain('ASC'); // Lower CQ first
     });
 
-    it("sorts by fatal flag (fatal)", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "fatal");
+    it('sorts by fatal flag (fatal)', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'fatal');
 
-      expect(result.query).toContain("ORDER BY");
-      expect(result.query).toContain("CASE"); // Fatal detection logic
+      expect(result.query).toContain('ORDER BY');
+      expect(result.query).toContain('CASE'); // Fatal detection logic
     });
 
-    it("limits result to 50 records maximum", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 100, 0, "date");
+    it('limits result to 50 records maximum', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 100, 0, 'date');
 
       // Capped by sqlLimitOffset's maxLimit, and asserted in the SQL because that is
       // where the number now lives.
-      expect(result.query).toContain("LIMIT 50");
-      expect(result.query).not.toContain("LIMIT 100");
+      expect(result.query).toContain('LIMIT 50');
+      expect(result.query).not.toContain('LIMIT 100');
     });
 
-    it("validates offset is non-negative", () => {
-      expect(
-        buildCallsReviewQuery("EMP-STF-001", 10, 0, "date").query,
-      ).toContain("OFFSET 0");
+    it('validates offset is non-negative', () => {
+      expect(buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date').query).toContain('OFFSET 0');
       // A negative offset is floored rather than emitted, which would be a syntax error.
-      expect(
-        buildCallsReviewQuery("EMP-STF-001", 10, -5, "date").query,
-      ).toContain("OFFSET 0");
+      expect(buildCallsReviewQuery('EMP-STF-001', 10, -5, 'date').query).toContain('OFFSET 0');
     });
 
-    it("cannot be injected through limit or offset now that they are inlined", () => {
+    it('cannot be injected through limit or offset now that they are inlined', () => {
       // The assertion that matters most after the move off bound parameters: hostile
       // input must not reach the SQL. Number() makes each of these NaN, so sqlLimitOffset
       // falls back to its default limit and a zero offset.
       const hostile = buildCallsReviewQuery(
-        "EMP-STF-001",
-        "10; DROP TABLE call_quality_assessment" as unknown as number,
+        'EMP-STF-001',
+        '10; DROP TABLE call_quality_assessment' as unknown as number,
         "0 UNION SELECT * FROM employees" as unknown as number,
-        "date",
+        'date',
       );
 
       expect(hostile.query).not.toMatch(/DROP\s+TABLE/i);
       expect(hostile.query).not.toMatch(/UNION\s+SELECT/i);
       expect(hostile.query).toMatch(/LIMIT \d+ OFFSET \d+/);
-      expect(hostile.params).toEqual(["EMP-STF-001"]);
+      expect(hostile.params).toEqual(['EMP-STF-001']);
     });
 
-    it("returns calls from 30 days period", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "date");
+    it('returns calls from 30 days period', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
 
-      expect(result.query).toContain("30 DAY");
+      expect(result.query).toContain('30 DAY');
     });
 
-    it("filters for INBOUND campaigns only", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "date");
+    it('filters for INBOUND campaigns only', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
 
-      expect(result.query).toContain("INBOUND");
+      expect(result.query).toContain('INBOUND');
     });
 
-    it("parameter binding prevents SQL injection in sorting", () => {
+    it('parameter binding prevents SQL injection in sorting', () => {
       // sort is user-controlled, so it must never reach the SQL verbatim. It selects
       // from a fixed set of ORDER BY clauses; anything else falls back to the default.
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "date");
-      expect(result.params).toEqual(["EMP-STF-001"]);
-      expect(typeof result.query).toBe("string");
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
+      expect(result.params).toEqual(['EMP-STF-001']);
+      expect(typeof result.query).toBe('string');
 
       const hostileSort = buildCallsReviewQuery(
-        "EMP-STF-001",
-        10,
-        0,
-        "date; DROP TABLE employees" as unknown as "date",
+        'EMP-STF-001', 10, 0, "date; DROP TABLE employees" as unknown as 'date',
       );
       expect(hostileSort.query).not.toMatch(/DROP\s+TABLE/i);
-      expect(hostileSort.query).toContain("ORDER BY CallDate DESC");
+      expect(hostileSort.query).toContain('ORDER BY CallDate DESC');
     });
   });
 
-  describe("buildCallDetailQuery", () => {
-    it("returns query for single call with all fields", () => {
-      const callId = "684407";
+  describe('buildCallDetailQuery', () => {
+    it('returns query for single call with all fields', () => {
+      const callId = '684407';
       const result = buildCallDetailQuery(callId);
 
-      expect(result).toHaveProperty("query");
-      expect(result).toHaveProperty("params");
+      expect(result).toHaveProperty('query');
+      expect(result).toHaveProperty('params');
     });
 
-    it("targets call_quality_assessment table", () => {
-      const result = buildCallDetailQuery("684407");
+    it('targets call_quality_assessment table', () => {
+      const result = buildCallDetailQuery('684407');
 
-      expect(result.query).toContain("call_quality_assessment");
+      expect(result.query).toContain('call_quality_assessment');
     });
 
-    it("includes call ID in WHERE clause", () => {
-      const result = buildCallDetailQuery("684407");
+    it('includes call ID in WHERE clause', () => {
+      const result = buildCallDetailQuery('684407');
 
-      expect(result.query).toContain("WHERE");
-      expect(result.query).toContain("id");
+      expect(result.query).toContain('WHERE');
+      expect(result.query).toContain('id');
     });
 
-    it("includes sub-score calculations", () => {
-      const result = buildCallDetailQuery("684407");
+    it('includes sub-score calculations', () => {
+      const result = buildCallDetailQuery('684407');
 
       // Should calculate dimensional scores
-      expect(result.query).toContain("opening");
-      expect(result.query).toContain("soft_skills");
-      expect(result.query).toContain("hold_procedure");
-      expect(result.query).toContain("resolution");
-      expect(result.query).toContain("closing");
+      expect(result.query).toContain('opening');
+      expect(result.query).toContain('soft_skills');
+      expect(result.query).toContain('hold_procedure');
+      expect(result.query).toContain('resolution');
+      expect(result.query).toContain('closing');
     });
 
-    it("includes peer scenario comparison", () => {
-      const result = buildCallDetailQuery("684407");
+    it('includes peer scenario comparison', () => {
+      const result = buildCallDetailQuery('684407');
 
-      expect(result.query).toContain("scenario");
-      expect(result.query).toContain("peer");
+      expect(result.query).toContain('scenario');
+      expect(result.query).toContain('peer');
     });
 
-    it("parameter binding prevents injection", () => {
+    it('parameter binding prevents injection', () => {
       const maliciousId = "684407'; DELETE FROM calls; --";
       const result = buildCallDetailQuery(maliciousId);
 
@@ -294,154 +287,154 @@ describe("Quality Query Builders", () => {
       expect(result.query).not.toContain(maliciousId);
     });
 
-    it("returns recording URL field", () => {
-      const result = buildCallDetailQuery("684407");
+    it('returns recording URL field', () => {
+      const result = buildCallDetailQuery('684407');
 
-      expect(result.query).toContain("recording");
+      expect(result.query).toContain('recording');
     });
 
-    it("returns transcript field", () => {
-      const result = buildCallDetailQuery("684407");
+    it('returns transcript field', () => {
+      const result = buildCallDetailQuery('684407');
 
-      expect(result.query).toContain("transcript");
+      expect(result.query).toContain('transcript');
     });
   });
 
-  describe("buildTotalCallsCountQuery", () => {
-    it("returns count query for pagination", () => {
-      const result = buildTotalCallsCountQuery("EMP-STF-001");
+  describe('buildTotalCallsCountQuery', () => {
+    it('returns count query for pagination', () => {
+      const result = buildTotalCallsCountQuery('EMP-STF-001');
 
-      expect(result.query).toContain("COUNT(*)");
+      expect(result.query).toContain('COUNT(*)');
     });
 
-    it("includes employee code parameter", () => {
-      const result = buildTotalCallsCountQuery("EMP-STF-001");
+    it('includes employee code parameter', () => {
+      const result = buildTotalCallsCountQuery('EMP-STF-001');
 
-      expect(result.params).toContain("EMP-STF-001");
+      expect(result.params).toContain('EMP-STF-001');
     });
 
-    it("filters for 30-day period", () => {
-      const result = buildTotalCallsCountQuery("EMP-STF-001");
+    it('filters for 30-day period', () => {
+      const result = buildTotalCallsCountQuery('EMP-STF-001');
 
-      expect(result.query).toContain("30 DAY");
+      expect(result.query).toContain('30 DAY');
     });
 
-    it("filters for INBOUND campaigns", () => {
-      const result = buildTotalCallsCountQuery("EMP-STF-001");
+    it('filters for INBOUND campaigns', () => {
+      const result = buildTotalCallsCountQuery('EMP-STF-001');
 
-      expect(result.query).toContain("INBOUND");
+      expect(result.query).toContain('INBOUND');
     });
 
-    it("parameter binding safe", () => {
-      const result = buildTotalCallsCountQuery("EMP-STF-001");
+    it('parameter binding safe', () => {
+      const result = buildTotalCallsCountQuery('EMP-STF-001');
 
       expect(Array.isArray(result.params)).toBe(true);
-      expect(typeof result.query).toBe("string");
+      expect(typeof result.query).toBe('string');
     });
   });
 
-  describe("Query Structure Validation", () => {
-    it("all queries return { query, params } objects", () => {
+  describe('Query Structure Validation', () => {
+    it('all queries return { query, params } objects', () => {
       const queries = [
-        buildCQScoreQuery("EMP-STF-001", 7),
-        buildWeaknessDetailQuery("EMP-STF-001"),
-        buildCallsReviewQuery("EMP-STF-001", 10, 0, "date"),
-        buildCallDetailQuery("684407"),
-        buildTotalCallsCountQuery("EMP-STF-001"),
+        buildCQScoreQuery('EMP-STF-001', 7),
+        buildWeaknessDetailQuery('EMP-STF-001'),
+        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
+        buildCallDetailQuery('684407'),
+        buildTotalCallsCountQuery('EMP-STF-001'),
       ];
 
-      queries.forEach((q) => {
-        expect(q).toHaveProperty("query");
-        expect(q).toHaveProperty("params");
-        expect(typeof q.query).toBe("string");
+      queries.forEach(q => {
+        expect(q).toHaveProperty('query');
+        expect(q).toHaveProperty('params');
+        expect(typeof q.query).toBe('string');
         expect(Array.isArray(q.params)).toBe(true);
         expect(q.query.length).toBeGreaterThan(0);
       });
     });
 
-    it("all queries use parameterized statements (no string concat)", () => {
+    it('all queries use parameterized statements (no string concat)', () => {
       const queries = [
-        buildCQScoreQuery("EMP-STF-001", 7),
-        buildWeaknessDetailQuery("EMP-STF-001"),
-        buildCallsReviewQuery("EMP-STF-001", 10, 0, "date"),
-        buildCallDetailQuery("684407"),
-        buildTotalCallsCountQuery("EMP-STF-001"),
+        buildCQScoreQuery('EMP-STF-001', 7),
+        buildWeaknessDetailQuery('EMP-STF-001'),
+        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
+        buildCallDetailQuery('684407'),
+        buildTotalCallsCountQuery('EMP-STF-001'),
       ];
 
-      queries.forEach((q) => {
+      queries.forEach(q => {
         // Should not contain raw employee code in query string
-        expect(q.query).not.toContain("EMP-STF-001");
-        expect(q.query).not.toContain("684407");
+        expect(q.query).not.toContain('EMP-STF-001');
+        expect(q.query).not.toContain('684407');
       });
     });
 
-    it("queries target correct database tables", () => {
-      const result1 = buildCQScoreQuery("EMP-STF-001", 7);
-      const result2 = buildWeaknessDetailQuery("EMP-STF-001");
-      const result3 = buildCallsReviewQuery("EMP-STF-001", 10, 0, "date");
+    it('queries target correct database tables', () => {
+      const result1 = buildCQScoreQuery('EMP-STF-001', 7);
+      const result2 = buildWeaknessDetailQuery('EMP-STF-001');
+      const result3 = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
 
       // All should use db_audit.call_quality_assessment
-      expect(result1.query).toContain("db_audit.call_quality_assessment");
-      expect(result2.query).toContain("db_audit.call_quality_assessment");
-      expect(result3.query).toContain("db_audit.call_quality_assessment");
+      expect(result1.query).toContain('db_audit.call_quality_assessment');
+      expect(result2.query).toContain('db_audit.call_quality_assessment');
+      expect(result3.query).toContain('db_audit.call_quality_assessment');
     });
 
-    it("queries filter for INBOUND campaigns", () => {
+    it('queries filter for INBOUND campaigns', () => {
       const queries = [
-        buildCQScoreQuery("EMP-STF-001", 7),
-        buildWeaknessDetailQuery("EMP-STF-001"),
-        buildCallsReviewQuery("EMP-STF-001", 10, 0, "date"),
-        buildTotalCallsCountQuery("EMP-STF-001"),
+        buildCQScoreQuery('EMP-STF-001', 7),
+        buildWeaknessDetailQuery('EMP-STF-001'),
+        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
+        buildTotalCallsCountQuery('EMP-STF-001'),
       ];
 
-      queries.forEach((q) => {
-        expect(q.query).toContain("INBOUND");
+      queries.forEach(q => {
+        expect(q.query).toContain('INBOUND');
       });
     });
 
-    it("queries exclude empty User values", () => {
+    it('queries exclude empty User values', () => {
       const allQueries = [
-        buildCQScoreQuery("EMP-STF-001", 7),
-        buildWeaknessDetailQuery("EMP-STF-001"),
-        buildCallsReviewQuery("EMP-STF-001", 10, 0, "date"),
-        buildTotalCallsCountQuery("EMP-STF-001"),
+        buildCQScoreQuery('EMP-STF-001', 7),
+        buildWeaknessDetailQuery('EMP-STF-001'),
+        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
+        buildTotalCallsCountQuery('EMP-STF-001'),
       ];
 
       // All queries must guard against NULL users
-      allQueries.forEach((q) => {
+      allQueries.forEach(q => {
         expect(q.query).toContain("User IS NOT NULL");
       });
 
       // Queries that filter empty-string users (cq-score, calls-review, total-count)
       // weakness detail uses WHERE User = ? (parameterized) so the != '' guard is implicit
       const queriesWithNotEmpty = [
-        buildCQScoreQuery("EMP-STF-001", 7),
-        buildCallsReviewQuery("EMP-STF-001", 10, 0, "date"),
-        buildTotalCallsCountQuery("EMP-STF-001"),
+        buildCQScoreQuery('EMP-STF-001', 7),
+        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
+        buildTotalCallsCountQuery('EMP-STF-001'),
       ];
-      queriesWithNotEmpty.forEach((q) => {
+      queriesWithNotEmpty.forEach(q => {
         expect(q.query).toContain("User != ''");
       });
     });
   });
 
-  describe("Parameter Safety", () => {
-    it("no SQL injection via employee code", () => {
+  describe('Parameter Safety', () => {
+    it('no SQL injection via employee code', () => {
       const testCases = [
         "EMP-001'; DROP TABLE --",
         'EMP-001" OR 1=1 --',
         "EMP-001); DELETE FROM employees; --",
-        "EMP-001' UNION SELECT * FROM --",
+        'EMP-001\' UNION SELECT * FROM --',
       ];
 
-      testCases.forEach((maliciousCode) => {
+      testCases.forEach(maliciousCode => {
         const result = buildCQScoreQuery(maliciousCode, 7);
         expect(result.query).not.toContain(maliciousCode);
         expect(result.params).toContain(maliciousCode);
       });
     });
 
-    it("no SQL injection via call ID", () => {
+    it('no SQL injection via call ID', () => {
       const maliciousId = "684407' OR '1'='1";
       const result = buildCallDetailQuery(maliciousId);
 
@@ -449,51 +442,46 @@ describe("Quality Query Builders", () => {
       expect(result.params).toContain(maliciousId);
     });
 
-    it("no SQL injection via numeric parameters", () => {
+    it('no SQL injection via numeric parameters', () => {
       // limit/offset are inlined by sqlLimitOffset rather than bound, so "proper
       // binding" is now "proper coercion": only digits may appear after LIMIT/OFFSET.
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "date");
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
 
       expect(Array.isArray(result.params)).toBe(true);
-      expect(result.params).toEqual(["EMP-STF-001"]);
+      expect(result.params).toEqual(['EMP-STF-001']);
       expect(result.query).toMatch(/LIMIT \d+ OFFSET \d+/);
       expect(result.query).not.toMatch(/LIMIT\s+[^\d]/);
     });
   });
 
-  describe("Sorting Logic", () => {
-    it("date sort orders by CallDate DESC", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "date");
+  describe('Sorting Logic', () => {
+    it('date sort orders by CallDate DESC', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
 
-      expect(result.query).toContain("ORDER BY");
-      expect(result.query).toContain("CallDate");
-      expect(result.query).toContain("DESC");
+      expect(result.query).toContain('ORDER BY');
+      expect(result.query).toContain('CallDate');
+      expect(result.query).toContain('DESC');
     });
 
-    it("cq sort orders by quality_percentage ASC (lowest first)", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "cq");
+    it('cq sort orders by quality_percentage ASC (lowest first)', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'cq');
 
-      expect(result.query).toContain("ORDER BY");
-      expect(result.query).toContain("quality_percentage");
-      expect(result.query).toContain("ASC");
+      expect(result.query).toContain('ORDER BY');
+      expect(result.query).toContain('quality_percentage');
+      expect(result.query).toContain('ASC');
     });
 
-    it("fatal sort prioritizes calls with failures (CASE WHEN)", () => {
-      const result = buildCallsReviewQuery("EMP-STF-001", 10, 0, "fatal");
+    it('fatal sort prioritizes calls with failures (CASE WHEN)', () => {
+      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'fatal');
 
-      expect(result.query).toContain("CASE");
-      expect(result.query).toContain("quality_percentage");
-      expect(result.query).toContain("professionalism_maintained");
+      expect(result.query).toContain('CASE');
+      expect(result.query).toContain('quality_percentage');
+      expect(result.query).toContain('professionalism_maintained');
     });
 
-    it("default sort is date", () => {
-      const resultDefault = buildCallsReviewQuery("EMP-STF-001", 10, 0, "date");
-      const resultExplicit = buildCallsReviewQuery(
-        "EMP-STF-001",
-        10,
-        0,
-        "date",
-      );
+    it('default sort is date', () => {
+      const resultDefault = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
+      const resultExplicit = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
 
       expect(resultDefault.query).toEqual(resultExplicit.query);
     });

@@ -29,17 +29,13 @@ describe("F-01: backfill script assigns grn_number atomically", () => {
 
   it("script only targets non-draft rows", () => {
     const src = read("scripts/fix-grn-null-numbers.ts");
-    expect(src).toMatch(
-      /status\s*!=\s*'draft'|status\s*<>\s*'draft'|status NOT IN.*draft/i,
-    );
+    expect(src).toMatch(/status\s*!=\s*'draft'|status\s*<>\s*'draft'|status NOT IN.*draft/i);
   });
 });
 
 describe("F-02 + F-03: reclassify script", () => {
   it("script file exists", () => {
-    expect(() =>
-      read("scripts/fix-grn-legacy-status-reclassify.ts"),
-    ).not.toThrow();
+    expect(() => read("scripts/fix-grn-legacy-status-reclassify.ts")).not.toThrow();
   });
 
   it("requires --decision flag for F-02 and exits on missing or invalid value", () => {

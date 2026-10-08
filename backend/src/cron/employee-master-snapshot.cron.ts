@@ -32,20 +32,15 @@ const SCHEMA_CHANGE_RETRY_MS = 2 * 60 * 1000;
  */
 export async function schemaChangeInProgress(): Promise<boolean> {
   try {
-    const [rows] = await db.execute<
-      (RowDataPacket & { migrating: number; ddl: number })[]
-    >(
+    const [rows] = await db.execute<(RowDataPacket & { migrating: number; ddl: number })[]>(
       `SELECT IS_USED_LOCK('hrms_migration_lock') IS NOT NULL AS migrating,
               (SELECT COUNT(*) FROM information_schema.processlist
                 WHERE id <> CONNECTION_ID()
-                  AND (info LIKE 'ALTER TABLE%' OR state LIKE 'Waiting for table metadata lock%')) AS ddl`,
+                  AND (info LIKE 'ALTER TABLE%' OR state LIKE 'Waiting for table metadata lock%')) AS ddl`
     );
     return Number(rows[0]?.migrating) === 1 || Number(rows[0]?.ddl) > 0;
   } catch (error) {
-    console.warn(
-      "[CRON] employee-master-snapshot schema-change check failed, proceeding:",
-      error,
-    );
+    console.warn("[CRON] employee-master-snapshot schema-change check failed, proceeding:", error);
     return false;
   }
 }
@@ -60,16 +55,14 @@ async function runRefresh(): Promise<void> {
   // spacing given the job normally finishes in well under a minute, but a stalled db_bill
   // connection could in principle make one run long enough to collide with the next.
   if (refreshInFlight) {
-    console.warn(
-      "[CRON] employee-master-snapshot refresh already in flight, skipping this tick",
-    );
+    console.warn("[CRON] employee-master-snapshot refresh already in flight, skipping this tick");
     scheduleNext(REFRESH_INTERVAL_MS);
     return;
   }
 
   if (await schemaChangeInProgress()) {
     console.warn(
-      "[CRON] employee-master-snapshot deferred: a migration or DDL is running or waiting — retrying in 2 minutes",
+      "[CRON] employee-master-snapshot deferred: a migration or DDL is running or waiting — retrying in 2 minutes"
     );
     scheduleNext(SCHEMA_CHANGE_RETRY_MS);
     return;
@@ -80,7 +73,7 @@ async function runRefresh(): Promise<void> {
   try {
     const result = await refreshEmployeeMasterSnapshot();
     console.log(
-      `[CRON] employee-master-snapshot refresh complete: ${result.rowsWritten}/${result.rowsFetched} rows written in ${result.durationMs}ms`,
+      `[CRON] employee-master-snapshot refresh complete: ${result.rowsWritten}/${result.rowsFetched} rows written in ${result.durationMs}ms`
     );
   } catch (error) {
     console.error("[CRON] employee-master-snapshot refresh error:", error);
@@ -93,9 +86,7 @@ async function runRefresh(): Promise<void> {
 
 export async function startEmployeeMasterSnapshotScheduler(): Promise<void> {
   if (scheduler) return;
-  console.log(
-    "[CRON] Employee-master-snapshot scheduler starting (every 4 hours)",
-  );
+  console.log("[CRON] Employee-master-snapshot scheduler starting (every 4 hours)");
 
   // Every deploy restarts hrms2-workers (ensure_backend_pm2_processes in deploy.yml does a
   // fresh pm2 delete+start), and this scheduler's in-memory refreshInFlight guard resets to
@@ -117,10 +108,8 @@ export async function startEmployeeMasterSnapshotScheduler(): Promise<void> {
   // the snapshot is genuinely missing, empty, or older than the interval already allows for.
   let firstRunDelayMs = 60_000;
   try {
-    const [rows] = await db.execute<
-      (RowDataPacket & { latest: string | null; cnt: number })[]
-    >(
-      "SELECT MAX(snapshot_refreshed_at) AS latest, COUNT(*) AS cnt FROM employee_master_snapshot",
+    const [rows] = await db.execute<(RowDataPacket & { latest: string | null; cnt: number })[]>(
+      "SELECT MAX(snapshot_refreshed_at) AS latest, COUNT(*) AS cnt FROM employee_master_snapshot"
     );
     const latest = rows[0]?.latest;
     const cnt = Number(rows[0]?.cnt ?? 0);
@@ -131,17 +120,14 @@ export async function startEmployeeMasterSnapshotScheduler(): Promise<void> {
         firstRunDelayMs = remainingMs;
         console.log(
           `[CRON] employee-master-snapshot last refreshed ${Math.round(ageMs / 1000)}s ago — ` +
-            `deferring first run ${Math.round(firstRunDelayMs / 1000)}s instead of refreshing again on this restart`,
+          `deferring first run ${Math.round(firstRunDelayMs / 1000)}s instead of refreshing again on this restart`
         );
       }
     }
   } catch (error) {
     // Table missing/unreachable at boot is exactly the case that should still run soon —
     // fall through to the 60s default rather than let this check itself block startup.
-    console.warn(
-      "[CRON] employee-master-snapshot freshness check failed, using default 60s delay:",
-      error,
-    );
+    console.warn("[CRON] employee-master-snapshot freshness check failed, using default 60s delay:", error);
   }
 
   scheduleNext(firstRunDelayMs);

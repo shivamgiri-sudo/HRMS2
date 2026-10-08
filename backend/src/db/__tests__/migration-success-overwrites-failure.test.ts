@@ -75,10 +75,8 @@ describe("recording a SUCCESS over a previous FAILURE", () => {
   it("refreshes the timings to the run that actually succeeded", () => {
     const sql = buildSchemaMigrationsInsertStatement(FULL, { success: true });
     for (const col of ["start_time", "end_time", "duration_ms", "executor"]) {
-      expect(
-        sql,
-        `${col} should reflect the successful run, not the failed one`,
-      ).toContain(`${col} = VALUES(${col})`);
+      expect(sql, `${col} should reflect the successful run, not the failed one`)
+        .toContain(`${col} = VALUES(${col})`);
     }
   });
 
@@ -86,9 +84,7 @@ describe("recording a SUCCESS over a previous FAILURE", () => {
     // Every update entry is conditional on an optional column, so a minimal table could otherwise
     // yield "ON DUPLICATE KEY UPDATE " with an empty clause — a syntax error. This is the exact
     // trap the failure branch already guards with `filename = filename`.
-    const sql = buildSchemaMigrationsInsertStatement(MINIMAL, {
-      success: true,
-    });
+    const sql = buildSchemaMigrationsInsertStatement(MINIMAL, { success: true });
     expect(sql).toContain("ON DUPLICATE KEY UPDATE");
     expect(sql).not.toMatch(/ON DUPLICATE KEY UPDATE\s*$/);
     expect(sql).toContain("filename = filename");
@@ -109,9 +105,7 @@ describe("recording a FAILURE keeps working", () => {
   });
 
   it("is valid on a minimal table too", () => {
-    const sql = buildSchemaMigrationsInsertStatement(MINIMAL, {
-      success: false,
-    });
+    const sql = buildSchemaMigrationsInsertStatement(MINIMAL, { success: false });
     expect(sql).toContain("filename = filename");
   });
 });

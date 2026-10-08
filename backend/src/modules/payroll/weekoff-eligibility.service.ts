@@ -6,25 +6,12 @@
 // availableWorkingDays=26, so paidBase 24–25 was capped at 4 by the slab instead of
 // falling through to the "full attendance → all week-offs" path at line 100. Adding a
 // slab for 26–31 (max 5) covers 5-Sunday months correctly.
-const DEFAULT_SLABS_JSON =
-  '[{"from":0,"to":6,"max_weekoffs":0},{"from":7,"to":11,"max_weekoffs":1},{"from":12,"to":17,"max_weekoffs":2},{"from":18,"to":23,"max_weekoffs":3},{"from":24,"to":25,"max_weekoffs":4},{"from":26,"to":31,"max_weekoffs":5}]';
-const DEFAULT_SLABS: Array<{ from: number; to: number; max_weekoffs: number }> =
-  JSON.parse(DEFAULT_SLABS_JSON);
+const DEFAULT_SLABS_JSON = '[{"from":0,"to":6,"max_weekoffs":0},{"from":7,"to":11,"max_weekoffs":1},{"from":12,"to":17,"max_weekoffs":2},{"from":18,"to":23,"max_weekoffs":3},{"from":24,"to":25,"max_weekoffs":4},{"from":26,"to":31,"max_weekoffs":5}]';
+const DEFAULT_SLABS: Array<{ from: number; to: number; max_weekoffs: number }> = JSON.parse(DEFAULT_SLABS_JSON);
 
-async function loadWeekoffSlabs(): Promise<
-  Array<{ from: number; to: number; max_weekoffs: number }>
-> {
-  const raw = await getPolicyValue(
-    "payroll",
-    "weekoff_eligibility",
-    "slabs",
-    DEFAULT_SLABS_JSON,
-  );
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return DEFAULT_SLABS;
-  }
+async function loadWeekoffSlabs(): Promise<Array<{ from: number; to: number; max_weekoffs: number }>> {
+  const raw = await getPolicyValue("payroll", "weekoff_eligibility", "slabs", DEFAULT_SLABS_JSON);
+  try { return JSON.parse(raw); } catch { return DEFAULT_SLABS; }
 }
 
 export async function getSlabMaxWeekoffs(paidBase: number): Promise<number> {
@@ -51,14 +38,13 @@ export async function getSlabMaxWeekoffs(paidBase: number): Promise<number> {
  */
 export function findSlabMaxWeekoffs(
   paidBase: number,
-  slabs: Array<{ from: number; to: number; max_weekoffs: number }>,
+  slabs: Array<{ from: number; to: number; max_weekoffs: number }>
 ): number | undefined {
   for (let i = 0; i < slabs.length; i++) {
     const slab = slabs[i];
     const isLast = i === slabs.length - 1;
     if (isLast) {
-      if (paidBase >= slab.from && paidBase <= slab.to)
-        return slab.max_weekoffs;
+      if (paidBase >= slab.from && paidBase <= slab.to) return slab.max_weekoffs;
     } else if (paidBase >= slab.from && paidBase < slabs[i + 1].from) {
       return slab.max_weekoffs;
     }
@@ -83,7 +69,7 @@ function lastDayOfMonth(runMonth: string): number {
  */
 export async function resolveActualWeekoffCount(
   _employeeId: string,
-  runMonth: string,
+  runMonth: string
 ): Promise<number> {
   const [year, month] = runMonth.split("-").map(Number);
   const lastDay = lastDayOfMonth(runMonth);
@@ -145,9 +131,7 @@ export async function calculateWeekoffEligibility(
   // pay. Only a count that is finite and strictly inside the month's working days is applied.
   const workingDays = Math.max(0, daysInMonth - actualCount);
   const holidaysAreUsable =
-    Number.isFinite(holidayCount) &&
-    holidayCount >= 0 &&
-    holidayCount < workingDays;
+    Number.isFinite(holidayCount) && holidayCount >= 0 && holidayCount < workingDays;
   const safeHolidays = holidaysAreUsable ? holidayCount : 0;
 
   // Calculate available working days (calendar days minus weekoffs minus company holidays)

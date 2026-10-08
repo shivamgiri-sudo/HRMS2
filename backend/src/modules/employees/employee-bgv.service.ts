@@ -66,8 +66,7 @@ export interface BgvConsent {
   granted_at: string;
 }
 
-export type OverallStatus =
-  "clear" | "conditional" | "hold" | "pending" | "no_bgv_record";
+export type OverallStatus = "clear" | "conditional" | "hold" | "pending" | "no_bgv_record";
 
 export interface EmployeeBgvData {
   employeeId: string;
@@ -90,9 +89,7 @@ export interface EmployeeBgvData {
 /**
  * Get BGV status for an employee
  */
-export async function getEmployeeBgvStatus(
-  employeeId: string,
-): Promise<EmployeeBgvData> {
+export async function getEmployeeBgvStatus(employeeId: string): Promise<EmployeeBgvData> {
   // Get employee and linked candidate
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -105,7 +102,7 @@ export async function getEmployeeBgvStatus(
      FROM employees e
      WHERE e.id = ?
      LIMIT 1`,
-    [employeeId],
+    [employeeId]
   );
 
   if (!empRows.length) {
@@ -117,12 +114,10 @@ export async function getEmployeeBgvStatus(
 
   // Fallback: employees created via ATS may link via ats_onboarding_bridge instead
   if (!candidateId) {
-    const [bridgeRows] = await db
-      .execute<RowDataPacket[]>(
-        `SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1`,
-        [employeeId],
-      )
-      .catch(() => [[] as RowDataPacket[]]);
+    const [bridgeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1`,
+      [employeeId]
+    ).catch(() => [[] as RowDataPacket[]]);
     candidateId = (bridgeRows as RowDataPacket[])[0]?.candidate_id ?? null;
   }
 
@@ -133,8 +128,7 @@ export async function getEmployeeBgvStatus(
       candidateId: null,
       employeeName: employee.employee_name?.trim() || "Unknown",
       status: "no_bgv_record",
-      message:
-        "No candidate record linked to this employee. BGV data is unavailable.",
+      message: "No candidate record linked to this employee. BGV data is unavailable.",
       score: 0,
       completion_rate: 0,
       overall_status: "no_bgv_record",
@@ -165,7 +159,7 @@ export async function getEmployeeBgvStatus(
      FROM candidate_bgv_check
      WHERE candidate_id = ?
      ORDER BY updated_at DESC`,
-    [candidateId],
+    [candidateId]
   );
 
   const checks = checkRows as BgvCheck[];
@@ -187,7 +181,7 @@ export async function getEmployeeBgvStatus(
      FROM candidate_bgv_report
      WHERE candidate_id = ?
      LIMIT 1`,
-    [candidateId],
+    [candidateId]
   );
 
   const reportRow = reportRows[0];
@@ -213,7 +207,7 @@ export async function getEmployeeBgvStatus(
      WHERE candidate_id = ? AND consent_status = 'granted'
      ORDER BY granted_at DESC
      LIMIT 1`,
-    [candidateId],
+    [candidateId]
   );
 
   const consent: BgvConsent | null = consentRows[0]
@@ -230,7 +224,7 @@ export async function getEmployeeBgvStatus(
      WHERE candidate_id = ?
      ORDER BY created_at DESC
      LIMIT 1`,
-    [candidateId],
+    [candidateId]
   );
   const digiRow = digiRows[0];
 
@@ -242,17 +236,15 @@ export async function getEmployeeBgvStatus(
   // outside check_type='digilocker'). Only checks for presence — the full
   // buffer is fetched separately by getDigilockerFacePhotoBuffer when a page
   // actually needs the image.
-  const [photoRows] = await db
-    .execute<RowDataPacket[]>(
-      `SELECT 1
+  const [photoRows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1
        FROM candidate_bgv_check
       WHERE candidate_id = ? AND check_type = 'digilocker'
         AND (JSON_EXTRACT(result_json, '$.data.image') IS NOT NULL
              OR JSON_EXTRACT(result_json, '$.image') IS NOT NULL)
       LIMIT 1`,
-      [candidateId],
-    )
-    .catch(() => [[] as RowDataPacket[]]);
+    [candidateId]
+  ).catch(() => [[] as RowDataPacket[]]);
   const photoAvailable = (photoRows as RowDataPacket[]).length > 0;
 
   const digilocker: DigilockerStatus | null = digiRow
@@ -266,15 +258,8 @@ export async function getEmployeeBgvStatus(
             const docs = digiRow.returned_documents_json
               ? JSON.parse(digiRow.returned_documents_json)
               : [];
-            return Array.isArray(docs)
-              ? docs.map(
-                  (d: { type?: string; docType?: string }) =>
-                    d.type ?? d.docType ?? "doc",
-                )
-              : [];
-          } catch {
-            return [];
-          }
+            return Array.isArray(docs) ? docs.map((d: { type?: string; docType?: string }) => d.type ?? d.docType ?? "doc") : [];
+          } catch { return []; }
         })(),
         photo_available: photoAvailable,
       }
@@ -290,20 +275,16 @@ export async function getEmployeeBgvStatus(
   // view unable to drift from the BGV report screen and PDF.
   let score = reportRow?.bgv_score ?? 0;
   if (!score && checks.length > 0) {
-    score = await computeAndSaveScore(candidateId)
-      .then((r) => r.score)
-      .catch(() => 0);
+    score = await computeAndSaveScore(candidateId).then((r) => r.score).catch(() => 0);
   }
 
   // Determine missing mandatory checks
   const verifiedCheckTypes = new Set(
     checks
       .filter((c) => c.status === "verified" || c.status === "waived")
-      .map((c) => normalizeCheckType(c.check_type)),
+      .map((c) => normalizeCheckType(c.check_type))
   );
-  const missingMandatory = MANDATORY_CHECKS.filter(
-    (ct) => !verifiedCheckTypes.has(ct),
-  );
+  const missingMandatory = MANDATORY_CHECKS.filter((ct) => !verifiedCheckTypes.has(ct));
 
   // Determine overall status
   let overallStatus: OverallStatus = "pending";
@@ -313,11 +294,7 @@ export async function getEmployeeBgvStatus(
       overallStatus = "clear";
     } else if (verdict === "conditional" || verdict === "refer") {
       overallStatus = "conditional";
-    } else if (
-      verdict === "negative" ||
-      verdict === "failed" ||
-      verdict === "hold"
-    ) {
+    } else if (verdict === "negative" || verdict === "failed" || verdict === "hold") {
       overallStatus = "hold";
     }
   } else if (score >= 60 && missingMandatory.length === 0) {
@@ -328,19 +305,14 @@ export async function getEmployeeBgvStatus(
 
   // Determine readiness flags
   const employeeCreationReady = missingMandatory.length === 0 && score >= 40;
-  const payrollActivationReady =
-    missingMandatory.length === 0 && score >= 60 && overallStatus !== "hold";
+  const payrollActivationReady = missingMandatory.length === 0 && score >= 60 && overallStatus !== "hold";
 
   // Completion rate = % of total weighted checks that are verified/waived
   const totalWeight = Object.values(SCORE_WEIGHTS).reduce((a, b) => a + b, 0);
   const completedWeight = checks
-    .filter((c) => c.status === "verified" || c.status === "waived")
-    .reduce(
-      (acc, c) => acc + (SCORE_WEIGHTS[normalizeCheckType(c.check_type)] ?? 0),
-      0,
-    );
-  const completionRate =
-    totalWeight > 0 ? Math.round((completedWeight / totalWeight) * 100) : 0;
+    .filter(c => c.status === "verified" || c.status === "waived")
+    .reduce((acc, c) => acc + (SCORE_WEIGHTS[normalizeCheckType(c.check_type)] ?? 0), 0);
+  const completionRate = totalWeight > 0 ? Math.round((completedWeight / totalWeight) * 100) : 0;
 
   return {
     employeeId: employee.employee_id,
@@ -366,23 +338,19 @@ export async function getEmployeeBgvStatus(
  * falling back to ats_onboarding_bridge for employees created via ATS whose
  * employees row was never back-filled with candidate_id.
  */
-export async function resolveCandidateIdForEmployee(
-  employeeId: string,
-): Promise<string | null> {
+export async function resolveCandidateIdForEmployee(employeeId: string): Promise<string | null> {
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT candidate_id FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId],
+    [employeeId]
   );
   if (!empRows.length) return null;
 
   let candidateId = empRows[0].candidate_id ?? null;
   if (!candidateId) {
-    const [bridgeRows] = await db
-      .execute<RowDataPacket[]>(
-        `SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1`,
-        [employeeId],
-      )
-      .catch(() => [[] as RowDataPacket[]]);
+    const [bridgeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1`,
+      [employeeId]
+    ).catch(() => [[] as RowDataPacket[]]);
     candidateId = (bridgeRows as RowDataPacket[])[0]?.candidate_id ?? null;
   }
   return candidateId;
@@ -391,12 +359,10 @@ export async function resolveCandidateIdForEmployee(
 /**
  * Get employee ID from user ID (for self-view)
  */
-export async function getEmployeeIdForUser(
-  userId: string,
-): Promise<string | null> {
+export async function getEmployeeIdForUser(userId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id FROM employees e WHERE e.user_id = ? LIMIT 1`,
-    [userId],
+    [userId]
   );
   return rows[0]?.id ?? null;
 }
@@ -408,7 +374,7 @@ export async function getEmployeeIdForUser(
 export async function canViewEmployeeBgv(
   actorUserId: string,
   targetEmployeeId: string,
-  actorRoles: string[],
+  actorRoles: string[]
 ): Promise<boolean> {
   // Super admin (and an admin who also holds an org-wide role) can view all. A plain admin is
   // branch-scoped like hr (owner policy 2026-10-01) and falls through to the branch check below.
@@ -427,7 +393,7 @@ export async function canViewEmployeeBgv(
     // Get actor's scope
     const [actorRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.branch_id, e.process_id FROM employees e WHERE e.user_id = ? LIMIT 1`,
-      [actorUserId],
+      [actorUserId]
     );
     const actorScope = actorRows[0];
     if (!actorScope) return false;
@@ -435,7 +401,7 @@ export async function canViewEmployeeBgv(
     // Get target employee's scope
     const [targetRows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1`,
-      [targetEmployeeId],
+      [targetEmployeeId]
     );
     const targetScope = targetRows[0];
     if (!targetScope) return false;

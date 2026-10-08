@@ -13,13 +13,12 @@ import { sha256 } from "./control-plane.js";
 import { recordEvent } from "./uat-state-machine.js";
 import { isValidBranchSlug } from "./uat-prompt-writer.service.js";
 
-type UatConnection =
-  PoolConnection | Awaited<ReturnType<typeof db.getConnection>>;
+type UatConnection = PoolConnection | Awaited<ReturnType<typeof db.getConnection>>;
 
 export class PromptError extends Error {
   constructor(
     message: string,
-    readonly statusCode: number = 409,
+    readonly statusCode: number = 409
   ) {
     super(message);
     this.name = "PromptError";
@@ -73,21 +72,15 @@ export interface SavePromptInput {
  * leave one row, and a stale row carrying an old approval would be a signature attached to
  * text nobody signed.
  */
-export async function savePrompt(
-  input: SavePromptInput,
-  conn?: UatConnection,
-): Promise<string> {
+export async function savePrompt(input: SavePromptInput, conn?: UatConnection): Promise<string> {
   if (!isValidBranchSlug(input.branchSlug)) {
     throw new PromptError(
       `Refusing to store an invalid branch slug: "${input.branchSlug}".`,
-      400,
+      400
     );
   }
   if (!input.allowedPaths.length) {
-    throw new PromptError(
-      "Refusing to store a prompt with an empty allowlist.",
-      400,
-    );
+    throw new PromptError("Refusing to store a prompt with an empty allowlist.", 400);
   }
 
   const runner = conn ?? db;
@@ -125,25 +118,25 @@ export async function savePrompt(
       JSON.stringify(input.acceptanceCriteria),
       input.rollbackPlan.slice(0, 1000),
       input.llmCallId ?? null,
-    ],
+    ]
   );
 
   const [rows] = await runner.query<RowDataPacket[]>(
     `SELECT id FROM uat_build_prompt WHERE feedback_id = ? AND attempt_no = ?`,
-    [input.feedbackId, input.attemptNo],
+    [input.feedbackId, input.attemptNo]
   );
   return String(rows[0]?.id ?? "");
 }
 
 export async function latestPrompt(
   feedbackId: string,
-  conn?: UatConnection,
+  conn?: UatConnection
 ): Promise<PromptRow | null> {
   const runner = conn ?? db;
   const [rows] = await runner.query<PromptRow[]>(
     `SELECT * FROM uat_build_prompt WHERE feedback_id = ?
       ORDER BY attempt_no DESC LIMIT 1`,
-    [feedbackId],
+    [feedbackId]
   );
   return rows[0] ?? null;
 }
@@ -172,21 +165,18 @@ export async function decidePrompt(input: {
 
     const [fb] = await conn.execute<RowDataPacket[]>(
       `SELECT submitted_by_user_id FROM uat_feedback WHERE id = ? FOR UPDATE`,
-      [input.feedbackId],
+      [input.feedbackId]
     );
     if (!fb.length) throw new PromptError("UAT feedback not found", 404);
-    if (
-      fb[0].submitted_by_user_id &&
-      fb[0].submitted_by_user_id === input.actorUserId
-    ) {
+    if (fb[0].submitted_by_user_id && fb[0].submitted_by_user_id === input.actorUserId) {
       throw new PromptError(
-        "You cannot approve the build prompt for feedback you submitted yourself.",
+        "You cannot approve the build prompt for feedback you submitted yourself."
       );
     }
 
     const [rows] = await conn.execute<PromptRow[]>(
       `SELECT * FROM uat_build_prompt WHERE id = ? AND feedback_id = ? FOR UPDATE`,
-      [input.promptId, input.feedbackId],
+      [input.promptId, input.feedbackId]
     );
     if (!rows.length) throw new PromptError("Build prompt not found", 404);
     const row = rows[0];
@@ -194,7 +184,7 @@ export async function decidePrompt(input: {
     if (row.prompt_sha256 !== input.expectedSha) {
       throw new PromptError(
         "This prompt has been regenerated since you opened it. Re-read the current version " +
-          "before approving — your approval attaches to an exact text, not to the item.",
+          "before approving — your approval attaches to an exact text, not to the item."
       );
     }
 
@@ -214,18 +204,14 @@ export async function decidePrompt(input: {
     if (input.decision === "approved") {
       await conn.execute(
         `UPDATE uat_build_prompt SET approved_by = ?, approved_at = NOW() WHERE id = ?`,
-        [input.actorUserId, input.promptId],
+        [input.actorUserId, input.promptId]
       );
     } else {
       await conn.execute(
         `UPDATE uat_build_prompt
             SET rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
           WHERE id = ?`,
-        [
-          input.actorUserId,
-          (input.reason ?? "").slice(0, 1000) || null,
-          input.promptId,
-        ],
+        [input.actorUserId, (input.reason ?? "").slice(0, 1000) || null, input.promptId]
       );
     }
 
@@ -243,7 +229,7 @@ export async function decidePrompt(input: {
           attemptNo: row.attempt_no,
         },
       },
-      conn,
+      conn
     );
 
     await conn.commit();

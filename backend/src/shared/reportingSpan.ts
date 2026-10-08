@@ -22,10 +22,7 @@ export function spanClauseFor(employeeId: string, alias = "e"): SpanClause {
 }
 
 /** The caller's span, or null when the login has no employee record. */
-export async function reportingSpanClause(
-  userId: string,
-  alias = "e",
-): Promise<SpanClause | null> {
+export async function reportingSpanClause(userId: string, alias = "e"): Promise<SpanClause | null> {
   const employee = await getEmployeeForUser(userId);
   return employee?.id ? spanClauseFor(String(employee.id), alias) : null;
 }
@@ -42,15 +39,9 @@ export async function hasDirectReports(userId: string): Promise<boolean> {
 }
 
 /** True when the employee is one of the caller's direct reports or a report of one (TL team / AM skip level). */
-export async function isInReportingSpan(
-  userId: string,
-  employeeId: string,
-): Promise<boolean> {
+export async function isInReportingSpan(userId: string, employeeId: string): Promise<boolean> {
   const span = await reportingSpanClause(userId, "e");
   if (!span) return false;
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT 1 AS ok FROM employees e WHERE e.id = ? AND ${span.sql} LIMIT 1`,
-    [employeeId, ...span.params],
-  );
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT 1 AS ok FROM employees e WHERE e.id = ? AND ${span.sql} LIMIT 1`, [employeeId, ...span.params]);
   return rows.length > 0;
 }

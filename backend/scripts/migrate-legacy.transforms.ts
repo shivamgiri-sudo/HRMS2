@@ -161,8 +161,8 @@ export interface LegacyLeaveRow {
 export function parseLegacyDate(str: string | null | undefined): string | null {
   if (!str) return null;
   const trimmed = str.trim();
-  if (!trimmed || trimmed === "NA") return null;
-  if (trimmed.startsWith("0000")) return null;
+  if (!trimmed || trimmed === 'NA') return null;
+  if (trimmed.startsWith('0000')) return null;
 
   // MySQL datetime / ISO date: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
   const mysqlDt = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
@@ -172,7 +172,7 @@ export function parseLegacyDate(str: string | null | undefined): string | null {
   const us = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (us) {
     const [, m, d, y] = us;
-    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
   }
 
   return null;
@@ -182,13 +182,10 @@ export function parseLegacyDate(str: string | null | undefined): string | null {
  * Split a full name into first and last name on the first space.
  * "SHYAM BABU JANGIR" → { firstName: "SHYAM", lastName: "BABU JANGIR" }
  */
-export function splitName(fullName: string): {
-  firstName: string;
-  lastName: string;
-} {
+export function splitName(fullName: string): { firstName: string; lastName: string } {
   const trimmed = fullName.trim();
-  const idx = trimmed.indexOf(" ");
-  if (idx === -1) return { firstName: trimmed, lastName: "" };
+  const idx = trimmed.indexOf(' ');
+  if (idx === -1) return { firstName: trimmed, lastName: '' };
   return {
     firstName: trimmed.slice(0, idx),
     lastName: trimmed.slice(idx + 1).trim(),
@@ -199,13 +196,11 @@ export function splitName(fullName: string): {
  * Normalise a legacy gender string to the canonical enum value.
  * Anything other than "male"/"female" (case-insensitive) maps to "Other".
  */
-export function normalizeGender(
-  g: string | null | undefined,
-): "Male" | "Female" | "Other" {
-  const upper = (g ?? "").toUpperCase().trim();
-  if (upper === "MALE") return "Male";
-  if (upper === "FEMALE") return "Female";
-  return "Other";
+export function normalizeGender(g: string | null | undefined): 'Male' | 'Female' | 'Other' {
+  const upper = (g ?? '').toUpperCase().trim();
+  if (upper === 'MALE') return 'Male';
+  if (upper === 'FEMALE') return 'Female';
+  return 'Other';
 }
 
 /**
@@ -219,8 +214,8 @@ export function toMasterCode(value: string): string {
   return value
     .trim()
     .toUpperCase()
-    .replace(/\s+/g, "_")
-    .replace(/[^A-Z0-9_]/g, "")
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Z0-9_]/g, '')
     .slice(0, 50);
 }
 
@@ -229,12 +224,10 @@ export function toMasterCode(value: string): string {
  * notation in Excel exports, e.g. "1.00143E+11" or the numeric 1.00143e11.
  * Returns the integer string representation, or null for empty/null input.
  */
-export function parseUAN(
-  uan: string | number | null | undefined,
-): string | null {
+export function parseUAN(uan: string | number | null | undefined): string | null {
   if (uan == null) return null;
   const str = String(uan).trim();
-  if (str === "" || str.toLowerCase() === "null") return null;
+  if (str === '' || str.toLowerCase() === 'null') return null;
   // Scientific notation detection (e.g. "1.00143E+11")
   if (/[eE][+-]/.test(str)) {
     return String(Math.round(parseFloat(str)));
@@ -265,10 +258,10 @@ export function sumLeaveDays(row: LegacyLeaveRow): number {
  *  null/empty/anything else → "pending"
  */
 export function normalizeLeaveStatus(s: string | null | undefined): string {
-  const lower = (s ?? "").toLowerCase().trim();
-  if (lower === "approved") return "approved";
-  if (lower === "rejected" || lower === "disapproved") return "rejected";
-  return "pending";
+  const lower = (s ?? '').toLowerCase().trim();
+  if (lower === 'approved') return 'approved';
+  if (lower === 'rejected' || lower === 'disapproved') return 'rejected';
+  return 'pending';
 }
 
 /**
@@ -276,7 +269,7 @@ export function normalizeLeaveStatus(s: string | null | undefined): string {
  * Returns 0 for null, empty, or non-numeric strings.
  */
 export function toDecimal(v: string | null | undefined): number {
-  const n = parseFloat(String(v ?? ""));
+  const n = parseFloat(String(v ?? ''));
   return isNaN(n) ? 0 : n;
 }
 
@@ -285,8 +278,8 @@ export function toDecimal(v: string | null | undefined): number {
  * Anything falsy or unrecognised → 0.
  */
 export function boolFlag(v: string | null | undefined): number {
-  const lower = (v ?? "").toLowerCase().trim();
-  return lower === "yes" || lower === "1" || lower === "true" ? 1 : 0;
+  const lower = (v ?? '').toLowerCase().trim();
+  return lower === 'yes' || lower === '1' || lower === 'true' ? 1 : 0;
 }
 
 /**
@@ -300,5 +293,5 @@ export function buildAddress(
   pin: string | null,
 ): string | null {
   const parts = [addr, city, state, pin].filter(Boolean) as string[];
-  return parts.length > 0 ? parts.join(", ") : null;
+  return parts.length > 0 ? parts.join(', ') : null;
 }

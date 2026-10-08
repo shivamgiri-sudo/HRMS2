@@ -23,10 +23,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const routes = fs.readFileSync(
-  path.resolve(DIR, "../payroll-extended.routes.ts"),
-  "utf8",
-);
+const routes = fs.readFileSync(path.resolve(DIR, "../payroll-extended.routes.ts"), "utf8");
 
 /** The salary-sheet export handler only. */
 function exportHandler(): string {
@@ -42,9 +39,7 @@ describe("cost centre comes from the run, not from the employee's current postin
   });
 
   it("joins the stamp through salary_prep_line, not through employees", () => {
-    expect(exportHandler()).toContain(
-      "stamped_cc ON stamped_cc.id = spl.cost_centre_id",
-    );
+    expect(exportHandler()).toContain("stamped_cc ON stamped_cc.id = spl.cost_centre_id");
   });
 
   it("prefers the stamp over the employee's current cost centre", () => {
@@ -53,10 +48,7 @@ describe("cost centre comes from the run, not from the employee's current postin
      * would still resolve to today's posting and the stamp would be decorative.
      */
     const handler = exportHandler();
-    const coalesce = handler.slice(
-      handler.indexOf("AS CostCenter") - 200,
-      handler.indexOf("AS CostCenter"),
-    );
+    const coalesce = handler.slice(handler.indexOf("AS CostCenter") - 200, handler.indexOf("AS CostCenter"));
     expect(coalesce.indexOf("stamped_cc.cost_centre_code")).toBeLessThan(
       coalesce.indexOf("ccm.cost_centre_code"),
     );

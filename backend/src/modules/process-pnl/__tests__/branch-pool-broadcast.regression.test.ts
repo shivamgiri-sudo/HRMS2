@@ -43,78 +43,30 @@ const SHARED_POOL_AMOUNT = 100_000;
 
 function baseProcessRecord(overrides: Record<string, unknown>) {
   return {
-    processId: "",
-    processName: "",
-    clientId: null,
-    clientName: null,
-    branchId: BRANCH_ID,
-    branchName: "Branch B1",
-    billingModel: null,
-    resolvedRate: null,
-    rateSource: "missing",
-    rateType: null,
-    billingUnit: null,
-    rateEffectiveFrom: null,
-    approvalReference: null,
-    configurationStatus: "missing",
-    contractedSeats: 0,
-    billableHc: 0,
-    requiredProductiveHc: 0,
-    requiredRosterHc: 0,
-    activeHc: 0,
-    deployedHc: 0,
-    bufferTargetPct: null,
-    actualBufferPct: null,
-    revenueMtd: 0,
-    revenueForecast: 0,
-    invoicedRevenueMtd: 0,
-    collectedRevenueMtd: 0,
-    outstandingReceivable: 0,
-    receivableRisk: 0,
-    totalCommercialExposure: 0,
-    salaryMtd: 0,
-    directPeopleCost: 0,
-    directNonPeopleCost: 0,
-    directCost: 0,
-    indirectCost: 0,
-    totalCost: 0,
-    contributionMargin: 0,
-    operatingProfit: 0,
-    operatingMarginPct: null,
-    revenueBudget: null,
-    directCostBudget: null,
-    indirectCostBudget: null,
-    profitBudget: null,
-    revenueVariance: null,
-    directCostVariance: null,
-    indirectCostVariance: null,
-    operatingProfitVariance: null,
-    operatingMarginVariance: null,
-    headcountVariance: null,
-    bufferVariance: null,
-    budgetVariance: null,
-    revenueLeakage: 0,
-    revenueAtRisk: 0,
-    monthEndProjectedProfit: 0,
-    reconciliationStatus: "matched",
-    financialStatus: "actual",
-    processStatus: "profitable",
+    processId: "", processName: "", clientId: null, clientName: null,
+    branchId: BRANCH_ID, branchName: "Branch B1", billingModel: null, resolvedRate: null,
+    rateSource: "missing", rateType: null, billingUnit: null, rateEffectiveFrom: null,
+    approvalReference: null, configurationStatus: "missing",
+    contractedSeats: 0, billableHc: 0, requiredProductiveHc: 0, requiredRosterHc: 0,
+    activeHc: 0, deployedHc: 0, bufferTargetPct: null, actualBufferPct: null,
+    revenueMtd: 0, revenueForecast: 0, invoicedRevenueMtd: 0, collectedRevenueMtd: 0,
+    outstandingReceivable: 0, receivableRisk: 0, totalCommercialExposure: 0,
+    salaryMtd: 0, directPeopleCost: 0, directNonPeopleCost: 0, directCost: 0,
+    indirectCost: 0, totalCost: 0, contributionMargin: 0, operatingProfit: 0,
+    operatingMarginPct: null, revenueBudget: null, directCostBudget: null,
+    indirectCostBudget: null, profitBudget: null, revenueVariance: null,
+    directCostVariance: null, indirectCostVariance: null, operatingProfitVariance: null,
+    operatingMarginVariance: null, headcountVariance: null, bufferVariance: null,
+    budgetVariance: null, revenueLeakage: 0, revenueAtRisk: 0, monthEndProjectedProfit: 0,
+    reconciliationStatus: "matched", financialStatus: "actual", processStatus: "profitable",
     freshness: null,
     ...overrides,
   };
 }
 
 const ALL_ROWS = [
-  baseProcessRecord({
-    processId: PROC_HEAVY,
-    processName: "Heavy",
-    activeHc: 3,
-  }),
-  baseProcessRecord({
-    processId: PROC_LIGHT,
-    processName: "Light",
-    activeHc: 1,
-  }),
+  baseProcessRecord({ processId: PROC_HEAVY, processName: "Heavy", activeHc: 3 }),
+  baseProcessRecord({ processId: PROC_LIGHT, processName: "Light", activeHc: 1 }),
 ];
 
 /** Every SQL statement gets an empty result unless matched below — mirrors the blanket
@@ -122,9 +74,7 @@ const ALL_ROWS = [
  *  empty row set as "false"/"no columns", which short-circuits every other query path
  *  in buildRows() harmlessly (0 cost, 0 revenue) so only the one pool under test is
  *  non-zero. */
-function installDbMock(
-  overrides: (sql: string, params: unknown[]) => unknown[] | null,
-) {
+function installDbMock(overrides: (sql: string, params: unknown[]) => unknown[] | null) {
   execute.mockReset();
   execute.mockImplementation(async (sql: string, params?: unknown[]) => {
     const matched = overrides(sql, (params ?? []) as unknown[]);
@@ -147,9 +97,7 @@ describe("bpoPnlService.getSummary — branch pool no longer broadcasts to a pro
         // The bug, reproduced exactly: a caller that still threads processId through to
         // listProcesses() only ever sees that one process, before any pool splits.
         listProcesses: vi.fn(async (filters: { processId?: string }) =>
-          filters.processId
-            ? ALL_ROWS.filter((r) => r.processId === filters.processId)
-            : ALL_ROWS,
+          filters.processId ? ALL_ROWS.filter((r) => r.processId === filters.processId) : ALL_ROWS
         ),
         invalidateCaches: vi.fn(),
       },
@@ -161,16 +109,10 @@ describe("bpoPnlService.getSummary — branch pool no longer broadcasts to a pro
       if (sql.includes("FROM process_pnl_cost_component")) {
         // One branch-level (process_id NULL) shared pool row — the live shape for an
         // un-split "otherOperatingCost" the branch has not attributed to any one process.
-        return [
-          {
-            process_id: null,
-            branch_id: BRANCH_ID,
-            cost_type: "other_operating_cost",
-            amount_inr: SHARED_POOL_AMOUNT,
-            allocation_driver: null,
-            manual_allocation_pct: null,
-          },
-        ];
+        return [{
+          process_id: null, branch_id: BRANCH_ID, cost_type: "other_operating_cost",
+          amount_inr: SHARED_POOL_AMOUNT, allocation_driver: null, manual_allocation_pct: null,
+        }];
       }
       return [];
     });
@@ -181,36 +123,18 @@ describe("bpoPnlService.getSummary — branch pool no longer broadcasts to a pro
     // keeps this test correct even if that changes).
     bpoPnlService.invalidateCaches?.();
 
-    const heavy = await bpoPnlService.getSummary({
-      period: PERIOD,
-      branchId: BRANCH_ID,
-      processId: PROC_HEAVY,
-    });
-    const light = await bpoPnlService.getSummary({
-      period: PERIOD,
-      branchId: BRANCH_ID,
-      processId: PROC_LIGHT,
-    });
+    const heavy = await bpoPnlService.getSummary({ period: PERIOD, branchId: BRANCH_ID, processId: PROC_HEAVY });
+    const light = await bpoPnlService.getSummary({ period: PERIOD, branchId: BRANCH_ID, processId: PROC_LIGHT });
 
-    const heavyCost = heavy.rows.find(
-      (r) => r.processId === PROC_HEAVY,
-    )!.totalOperatingCost;
-    const lightCost = light.rows.find(
-      (r) => r.processId === PROC_LIGHT,
-    )!.totalOperatingCost;
+    const heavyCost = heavy.rows.find((r) => r.processId === PROC_HEAVY)!.totalOperatingCost;
+    const lightCost = light.rows.find((r) => r.processId === PROC_LIGHT)!.totalOperatingCost;
 
-    expect(
-      heavyCost,
-      "the heavier process (3/4 of branch activeHc) must draw 75% of the pool, not all of it",
-    ).toBeCloseTo(75_000, 2);
-    expect(
-      lightCost,
-      "the lighter process (1/4 of branch activeHc) must draw 25% of the pool, not all of it",
-    ).toBeCloseTo(25_000, 2);
-    expect(
-      heavyCost + lightCost,
-      "the pool must be conserved across the branch, never duplicated",
-    ).toBeCloseTo(SHARED_POOL_AMOUNT, 2);
+    expect(heavyCost, "the heavier process (3/4 of branch activeHc) must draw 75% of the pool, not all of it")
+      .toBeCloseTo(75_000, 2);
+    expect(lightCost, "the lighter process (1/4 of branch activeHc) must draw 25% of the pool, not all of it")
+      .toBeCloseTo(25_000, 2);
+    expect(heavyCost + lightCost, "the pool must be conserved across the branch, never duplicated")
+      .toBeCloseTo(SHARED_POOL_AMOUNT, 2);
   });
 });
 
@@ -218,33 +142,14 @@ describe("bpoPnlAllocationOverlayService.getSummary — GRN/legacy pool no longe
   it("splits a shared GRN-allocation-view bmc_non_people pool 75/25 by activeHc instead of handing it 100% to the requested process", async () => {
     const summaryRows = ALL_ROWS.map((row) => ({
       ...row,
-      dscPeople: 0,
-      dscNonPeople: 0,
-      dsc: 0,
-      bmcPeople: 0,
-      bmcNonPeople: 0,
-      bmc: 0,
-      agentSalary: 0,
-      recognizedRevenue: 0,
-      grnVendorActual: 0,
-      depreciation: 0,
-      amortization: 0,
-      financeCost: 0,
-      tax: 0,
-      pbt: 0,
-      ebit: 0,
-      ebitda: 0,
-      totalOperatingCost: 0,
-      contribution: 0,
-      billableHc: 0,
-      ebitdaBudget: null,
-      revenueAtRisk: 0,
-      deliveryAttainmentPct: null,
-      operatingProfit: 0,
+      dscPeople: 0, dscNonPeople: 0, dsc: 0, bmcPeople: 0, bmcNonPeople: 0, bmc: 0,
+      agentSalary: 0, recognizedRevenue: 0, grnVendorActual: 0, depreciation: 0,
+      amortization: 0, financeCost: 0, tax: 0, pbt: 0, ebit: 0, ebitda: 0,
+      totalOperatingCost: 0, contribution: 0, billableHc: 0, ebitdaBudget: null,
+      revenueAtRisk: 0, deliveryAttainmentPct: null, operatingProfit: 0,
     }));
     vi.doMock("../bpo-pnl.service.js", async (importOriginal) => {
-      const actual =
-        await importOriginal<typeof import("../bpo-pnl.service.js")>();
+      const actual = await importOriginal<typeof import("../bpo-pnl.service.js")>();
       return {
         ...actual,
         bpoPnlService: {
@@ -254,14 +159,8 @@ describe("bpoPnlAllocationOverlayService.getSummary — GRN/legacy pool no longe
               ? summaryRows.filter((r) => r.processId === filters.processId)
               : summaryRows;
             return {
-              period: PERIOD,
-              filters,
-              kpis: {},
-              costMix: {},
-              revenueMix: {},
-              alerts: [],
-              rows,
-              generatedAt: new Date().toISOString(),
+              period: PERIOD, filters, kpis: {}, costMix: {}, revenueMix: {},
+              alerts: [], rows, generatedAt: new Date().toISOString(),
             };
           }),
         },
@@ -272,60 +171,31 @@ describe("bpoPnlAllocationOverlayService.getSummary — GRN/legacy pool no longe
         return params[0] === "grn_cost_allocation" ? [{ 1: 1 }] : [];
       }
       // The view carries ex_gst_amount (sql/1852, owner rule 2026-09-24: P&L GRN is ex-GST).
-      if (
-        sql.includes("information_schema.columns") &&
-        sql.includes("ex_gst_amount")
-      )
-        return [{ 1: 1 }];
+      if (sql.includes("information_schema.columns") && sql.includes("ex_gst_amount")) return [{ 1: 1 }];
       if (sql.includes("vw_process_pnl_grn_allocation")) {
         // One branch-level (process_id NULL) GRN-allocation-view pool row, read AS amount.
-        return [
-          {
-            process_id: null,
-            branch_id: BRANCH_ID,
-            period_code: PERIOD,
-            pnl_bucket: "bmc_non_people",
-            amount: SHARED_POOL_AMOUNT,
-            allocation_count: 1,
-            freshness: null,
-          },
-        ];
+        return [{
+          process_id: null, branch_id: BRANCH_ID, period_code: PERIOD,
+          pnl_bucket: "bmc_non_people", amount: SHARED_POOL_AMOUNT,
+          allocation_count: 1, freshness: null,
+        }];
       }
       return [];
     });
 
-    const { bpoPnlAllocationOverlayService } =
-      await import("../bpo-pnl-allocation-overlay.service.js");
+    const { bpoPnlAllocationOverlayService } = await import("../bpo-pnl-allocation-overlay.service.js");
 
-    const heavy = await bpoPnlAllocationOverlayService.getSummary({
-      period: PERIOD,
-      branchId: BRANCH_ID,
-      processId: PROC_HEAVY,
-    });
-    const light = await bpoPnlAllocationOverlayService.getSummary({
-      period: PERIOD,
-      branchId: BRANCH_ID,
-      processId: PROC_LIGHT,
-    });
+    const heavy = await bpoPnlAllocationOverlayService.getSummary({ period: PERIOD, branchId: BRANCH_ID, processId: PROC_HEAVY });
+    const light = await bpoPnlAllocationOverlayService.getSummary({ period: PERIOD, branchId: BRANCH_ID, processId: PROC_LIGHT });
 
-    const heavyBmc = heavy.rows.find(
-      (r) => r.processId === PROC_HEAVY,
-    )!.bmcNonPeople;
-    const lightBmc = light.rows.find(
-      (r) => r.processId === PROC_LIGHT,
-    )!.bmcNonPeople;
+    const heavyBmc = heavy.rows.find((r) => r.processId === PROC_HEAVY)!.bmcNonPeople;
+    const lightBmc = light.rows.find((r) => r.processId === PROC_LIGHT)!.bmcNonPeople;
 
-    expect(
-      heavyBmc,
-      "the heavier process (3/4 of branch activeHc) must draw 75% of the GRN pool, not all of it",
-    ).toBeCloseTo(75_000, 2);
-    expect(
-      lightBmc,
-      "the lighter process (1/4 of branch activeHc) must draw 25% of the GRN pool, not all of it",
-    ).toBeCloseTo(25_000, 2);
-    expect(
-      heavyBmc + lightBmc,
-      "the pool must be conserved across the branch, never duplicated",
-    ).toBeCloseTo(SHARED_POOL_AMOUNT, 2);
+    expect(heavyBmc, "the heavier process (3/4 of branch activeHc) must draw 75% of the GRN pool, not all of it")
+      .toBeCloseTo(75_000, 2);
+    expect(lightBmc, "the lighter process (1/4 of branch activeHc) must draw 25% of the GRN pool, not all of it")
+      .toBeCloseTo(25_000, 2);
+    expect(heavyBmc + lightBmc, "the pool must be conserved across the branch, never duplicated")
+      .toBeCloseTo(SHARED_POOL_AMOUNT, 2);
   });
 });

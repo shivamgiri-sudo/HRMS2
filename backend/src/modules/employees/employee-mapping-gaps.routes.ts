@@ -53,7 +53,7 @@ router.get(
     }));
 
     return res.json({ gaps, total: gaps.length });
-  },
+  }
 );
 
 export default router;

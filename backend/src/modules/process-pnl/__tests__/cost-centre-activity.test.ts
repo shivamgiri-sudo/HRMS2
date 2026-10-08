@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  activityWindow,
-  ACTIVITY_WINDOW_MONTHS,
-} from "../cost-centre-activity.service.js";
+import { activityWindow, ACTIVITY_WINDOW_MONTHS } from "../cost-centre-activity.service.js";
 
 /**
  * The window the activity rule looks back over.
@@ -13,36 +10,19 @@ import {
  */
 describe("activityWindow", () => {
   it("returns the trailing three months, ending inclusive", () => {
-    expect(activityWindow("2026-08")).toEqual([
-      "2026-06",
-      "2026-07",
-      "2026-08",
-    ]);
+    expect(activityWindow("2026-08")).toEqual(["2026-06", "2026-07", "2026-08"]);
   });
 
   it("rolls back across a year boundary", () => {
-    expect(activityWindow("2026-01")).toEqual([
-      "2025-11",
-      "2025-12",
-      "2026-01",
-    ]);
-    expect(activityWindow("2026-02")).toEqual([
-      "2025-12",
-      "2026-01",
-      "2026-02",
-    ]);
+    expect(activityWindow("2026-01")).toEqual(["2025-11", "2025-12", "2026-01"]);
+    expect(activityWindow("2026-02")).toEqual(["2025-12", "2026-01", "2026-02"]);
   });
 
   it("honours a custom window length", () => {
     expect(activityWindow("2026-08", 1)).toEqual(["2026-08"]);
-    expect(activityWindow("2026-03", 6)).toEqual([
-      "2025-10",
-      "2025-11",
-      "2025-12",
-      "2026-01",
-      "2026-02",
-      "2026-03",
-    ]);
+    expect(activityWindow("2026-03", 6)).toEqual(
+      ["2025-10", "2025-11", "2025-12", "2026-01", "2026-02", "2026-03"],
+    );
   });
 
   it("returns nothing for a malformed period rather than guessing", () => {

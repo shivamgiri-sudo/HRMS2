@@ -50,10 +50,7 @@ interface NotifyContext {
   extra?: Record<string, unknown>;
 }
 
-async function send(
-  eventCode: UatNotificationEvent,
-  ctx: NotifyContext,
-): Promise<boolean> {
+async function send(eventCode: UatNotificationEvent, ctx: NotifyContext): Promise<boolean> {
   try {
     const outcome = await notificationGateway.notify({
       eventCode,
@@ -78,11 +75,7 @@ async function send(
       await recordEvent(ctx.feedbackId, "notification", {
         actorKind: "system",
         message: `notification '${eventCode}' not delivered: ${outcome.outcome}`,
-        detail: {
-          eventCode,
-          outcome: outcome.outcome,
-          reason: outcome.reason ?? null,
-        },
+        detail: { eventCode, outcome: outcome.outcome, reason: outcome.reason ?? null },
       });
     }
     return outcome.outcome === "sent";
@@ -117,14 +110,12 @@ interface ContextRow extends RowDataPacket {
  * Returns null rather than throwing when the row is gone — a notification for a deleted item
  * is a no-op, not an error worth propagating into a caller's transaction.
  */
-export async function loadNotifyContext(
-  feedbackId: string,
-): Promise<NotifyContext | null> {
+export async function loadNotifyContext(feedbackId: string): Promise<NotifyContext | null> {
   try {
     const [rows] = await db.execute<ContextRow[]>(
       `SELECT feedback_code, submitted_by_employee_id, branch_id, process_id, title
          FROM uat_feedback WHERE id = ?`,
-      [feedbackId],
+      [feedbackId]
     );
     if (rows.length === 0) return null;
     const r = rows[0];
@@ -141,44 +132,27 @@ export async function loadNotifyContext(
   }
 }
 
-export function notifyFeedbackBlocked(
-  ctx: NotifyContext & { reason: string | null },
-) {
-  return send("uat_feedback_blocked", {
-    ...ctx,
-    extra: { reason: ctx.reason },
-  });
+export function notifyFeedbackBlocked(ctx: NotifyContext & { reason: string | null }) {
+  return send("uat_feedback_blocked", { ...ctx, extra: { reason: ctx.reason } });
 }
 
-export function notifyFeedbackNeedsInfo(
-  ctx: NotifyContext & { question: string },
-) {
-  return send("uat_feedback_needs_info", {
-    ...ctx,
-    extra: { question: ctx.question },
-  });
+export function notifyFeedbackNeedsInfo(ctx: NotifyContext & { question: string }) {
+  return send("uat_feedback_needs_info", { ...ctx, extra: { question: ctx.question } });
 }
 
-export function notifyFeedbackAssigned(
-  ctx: NotifyContext & { assigneeEmployeeId: string | null },
-) {
+export function notifyFeedbackAssigned(ctx: NotifyContext & { assigneeEmployeeId: string | null }) {
   return send("uat_feedback_assigned", {
     ...ctx,
     extra: { assignee_employee_id: ctx.assigneeEmployeeId },
   });
 }
 
-export function notifyApprovalRequested(
-  ctx: NotifyContext & { requiredRole: string },
-) {
-  return send("uat_approval_requested", {
-    ...ctx,
-    extra: { required_role: ctx.requiredRole },
-  });
+export function notifyApprovalRequested(ctx: NotifyContext & { requiredRole: string }) {
+  return send("uat_approval_requested", { ...ctx, extra: { required_role: ctx.requiredRole } });
 }
 
 export function notifyApprovalDecided(
-  ctx: NotifyContext & { decision: string; requiredRole: string },
+  ctx: NotifyContext & { decision: string; requiredRole: string }
 ) {
   return send("uat_approval_decided", {
     ...ctx,
@@ -194,22 +168,12 @@ export function notifyPrReady(ctx: NotifyContext & { prUrl: string }) {
   return send("uat_pr_ready", { ...ctx, extra: { pr_url: ctx.prUrl } });
 }
 
-export function notifyDeployedForRetest(
-  ctx: NotifyContext & { environment: string },
-) {
-  return send("uat_deployed_for_retest", {
-    ...ctx,
-    extra: { environment: ctx.environment },
-  });
+export function notifyDeployedForRetest(ctx: NotifyContext & { environment: string }) {
+  return send("uat_deployed_for_retest", { ...ctx, extra: { environment: ctx.environment } });
 }
 
-export function notifyRetestFailed(
-  ctx: NotifyContext & { failureReason: string | null },
-) {
-  return send("uat_retest_failed", {
-    ...ctx,
-    extra: { failure_reason: ctx.failureReason },
-  });
+export function notifyRetestFailed(ctx: NotifyContext & { failureReason: string | null }) {
+  return send("uat_retest_failed", { ...ctx, extra: { failure_reason: ctx.failureReason } });
 }
 
 export function notifyReleased(ctx: NotifyContext & { version: string }) {

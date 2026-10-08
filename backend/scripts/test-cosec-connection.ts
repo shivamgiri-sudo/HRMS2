@@ -25,9 +25,7 @@ type SampleRow = {
 function requiredEnv(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {
-    throw new Error(
-      `${name} is required; configure it in backend/.env or the Integration Hub`,
-    );
+    throw new Error(`${name} is required; configure it in backend/.env or the Integration Hub`);
   }
   return value;
 }
@@ -64,10 +62,10 @@ async function hasColumn(
   tableName: string,
   columnName: string,
 ): Promise<boolean> {
-  const result = await pool
-    .request()
+  const result = await pool.request()
     .input("tableName", sql.NVarChar(128), tableName)
-    .input("columnName", sql.NVarChar(128), columnName).query<ColumnNameRow>(`
+    .input("columnName", sql.NVarChar(128), columnName)
+    .query<ColumnNameRow>(`
       SELECT COLUMN_NAME
       FROM INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_NAME = @tableName
@@ -107,15 +105,11 @@ async function testConnection() {
 
     if (tablesResult.recordset.length === 2) {
       console.log("Required tables found:");
-      tablesResult.recordset.forEach((row) =>
-        console.log(`  - ${row.TABLE_NAME}`),
-      );
+      tablesResult.recordset.forEach((row) => console.log(`  - ${row.TABLE_NAME}`));
       console.log();
     } else {
       console.log("Warning: Some required tables are missing.");
-      console.log(
-        `  Found: ${tablesResult.recordset.map((row) => row.TABLE_NAME).join(", ")}\n`,
-      );
+      console.log(`  Found: ${tablesResult.recordset.map((row) => row.TABLE_NAME).join(", ")}\n`);
     }
 
     console.log("[4/4] Checking recent attendance data...");
@@ -131,21 +125,13 @@ async function testConnection() {
 
     const stats = countResult.recordset[0] as StatRow;
     console.log("Recent data (last 7 days):");
-    console.log(
-      `  Total Events:   ${stats.total_events?.toLocaleString() || 0}`,
-    );
-    console.log(
-      `  Unique Users:   ${stats.unique_users?.toLocaleString() || 0}`,
-    );
+    console.log(`  Total Events:   ${stats.total_events?.toLocaleString() || 0}`);
+    console.log(`  Unique Users:   ${stats.unique_users?.toLocaleString() || 0}`);
     console.log(`  Earliest Event: ${stats.earliest_event || "N/A"}`);
     console.log(`  Latest Event:   ${stats.latest_event || "N/A"}`);
     console.log();
 
-    const includeAccessLocation = await hasColumn(
-      pool,
-      "Mx_ATDEventTrn",
-      "AccessLocationID",
-    );
+    const includeAccessLocation = await hasColumn(pool, "Mx_ATDEventTrn", "AccessLocationID");
     const locationColumn = includeAccessLocation
       ? "AccessLocationID"
       : "CAST(NULL AS NVARCHAR(100)) AS AccessLocationID";
@@ -173,9 +159,7 @@ async function testConnection() {
         console.log(`${userId} ${date} ${time} ${location}`);
       });
       if (!includeAccessLocation) {
-        console.log(
-          "\nLocation column is not present on this COSEC server schema.",
-        );
+        console.log("\nLocation column is not present on this COSEC server schema.");
       }
       console.log();
     } else {
@@ -201,9 +185,7 @@ async function testConnection() {
         console.error("\nTroubleshooting:");
         console.error("   - Verify SQL username and password");
         console.error("   - Check SQL Server authentication mode");
-        console.error(
-          "   - Ensure the user has permissions on the NCOSEC database\n",
-        );
+        console.error("   - Ensure the user has permissions on the NCOSEC database\n");
       } else if (error.message.includes("Database")) {
         console.error("\nTroubleshooting:");
         console.error("   - Verify the database name");

@@ -19,8 +19,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
-export type ArrearsStatus =
-  "draft" | "pending_approval" | "approved" | "rejected" | "paid";
+export type ArrearsStatus = "draft" | "pending_approval" | "approved" | "rejected" | "paid";
 
 export interface ArrearsPayment {
   id: string;
@@ -73,23 +72,16 @@ export const arrearsPaymentService = {
     requestedBy: string,
   ): Promise<ArrearsPayment> {
     if (!(input.amount > 0)) {
-      throw new ArrearsPaymentError(
-        422,
-        "Arrears amount must be greater than zero.",
-      );
+      throw new ArrearsPaymentError(422, "Arrears amount must be greater than zero.");
     }
     if (!input.reason?.trim()) {
-      throw new ArrearsPaymentError(
-        422,
-        "A reason is required to create an arrears payment.",
-      );
+      throw new ArrearsPaymentError(422, "A reason is required to create an arrears payment.");
     }
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM employees WHERE id = ? LIMIT 1`,
       [input.employeeId],
     );
-    if (!empRows.length)
-      throw new ArrearsPaymentError(404, "Employee not found.");
+    if (!empRows.length) throw new ArrearsPaymentError(404, "Employee not found.");
 
     const id = randomUUID();
     await db.execute(
@@ -98,14 +90,8 @@ export const arrearsPaymentService = {
           status, requested_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?)`,
       [
-        id,
-        input.employeeId,
-        input.sourceRunId ?? null,
-        input.targetRunId ?? null,
-        input.amount,
-        input.reason,
-        input.basisNote ?? null,
-        requestedBy,
+        id, input.employeeId, input.sourceRunId ?? null, input.targetRunId ?? null,
+        input.amount, input.reason, input.basisNote ?? null, requestedBy,
       ],
     );
 
@@ -117,11 +103,7 @@ export const arrearsPaymentService = {
       entity_id: id,
       employee_id: input.employeeId,
       reason: input.reason,
-      new_value_json: {
-        amount: input.amount,
-        source_run_id: input.sourceRunId,
-        target_run_id: input.targetRunId,
-      },
+      new_value_json: { amount: input.amount, source_run_id: input.sourceRunId, target_run_id: input.targetRunId },
     });
 
     return (await getById(id))!;
@@ -144,10 +126,7 @@ export const arrearsPaymentService = {
     );
     if (res.affectedRows === 0) {
       // Replay guard: another approval landed between the read above and this write.
-      throw new ArrearsPaymentError(
-        409,
-        "This payment was already actioned by someone else.",
-      );
+      throw new ArrearsPaymentError(409, "This payment was already actioned by someone else.");
     }
 
     await logSensitiveAction({
@@ -164,16 +143,9 @@ export const arrearsPaymentService = {
     return (await getById(id))!;
   },
 
-  async reject(
-    id: string,
-    rejectedBy: string,
-    reason: string,
-  ): Promise<ArrearsPayment> {
+  async reject(id: string, rejectedBy: string, reason: string): Promise<ArrearsPayment> {
     if (!reason?.trim()) {
-      throw new ArrearsPaymentError(
-        422,
-        "A reason is required to reject an arrears payment.",
-      );
+      throw new ArrearsPaymentError(422, "A reason is required to reject an arrears payment.");
     }
     const row = await getById(id);
     if (!row) throw new ArrearsPaymentError(404, "Arrears payment not found.");
@@ -190,10 +162,7 @@ export const arrearsPaymentService = {
       [rejectedBy, reason, id],
     );
     if (res.affectedRows === 0) {
-      throw new ArrearsPaymentError(
-        409,
-        "This payment was already actioned by someone else.",
-      );
+      throw new ArrearsPaymentError(409, "This payment was already actioned by someone else.");
     }
 
     await logSensitiveAction({
@@ -217,16 +186,9 @@ export const arrearsPaymentService = {
    * outside this system, and paymentReference documents it after the fact (bank ref / cheque no
    * / UTR). No table this touches is read by payrollCalculate.service.ts.
    */
-  async markPaid(
-    id: string,
-    paidBy: string,
-    paymentReference: string,
-  ): Promise<ArrearsPayment> {
+  async markPaid(id: string, paidBy: string, paymentReference: string): Promise<ArrearsPayment> {
     if (!paymentReference?.trim()) {
-      throw new ArrearsPaymentError(
-        422,
-        "A payment reference is required to mark an arrears payment paid.",
-      );
+      throw new ArrearsPaymentError(422, "A payment reference is required to mark an arrears payment paid.");
     }
     const row = await getById(id);
     if (!row) throw new ArrearsPaymentError(404, "Arrears payment not found.");
@@ -243,10 +205,7 @@ export const arrearsPaymentService = {
       [paidBy, paymentReference, id],
     );
     if (res.affectedRows === 0) {
-      throw new ArrearsPaymentError(
-        409,
-        "This payment was already actioned by someone else.",
-      );
+      throw new ArrearsPaymentError(409, "This payment was already actioned by someone else.");
     }
 
     await logSensitiveAction({
@@ -264,19 +223,11 @@ export const arrearsPaymentService = {
 
   getById,
 
-  async list(
-    filter: { employeeId?: string; status?: ArrearsStatus } = {},
-  ): Promise<ArrearsPayment[]> {
+  async list(filter: { employeeId?: string; status?: ArrearsStatus } = {}): Promise<ArrearsPayment[]> {
     const clauses: string[] = [];
     const params: unknown[] = [];
-    if (filter.employeeId) {
-      clauses.push("employee_id = ?");
-      params.push(filter.employeeId);
-    }
-    if (filter.status) {
-      clauses.push("status = ?");
-      params.push(filter.status);
-    }
+    if (filter.employeeId) { clauses.push("employee_id = ?"); params.push(filter.employeeId); }
+    if (filter.status) { clauses.push("status = ?"); params.push(filter.status); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM payroll_arrears_payment ${where} ORDER BY requested_at DESC LIMIT 500`,

@@ -34,9 +34,7 @@ export class LockedDayWriteError extends Error {
 }
 
 /** Minimal shape of the mysql2 connection/transaction handle these services pass around. */
-type Executor = {
-  execute: (sql: string, params?: unknown[]) => Promise<unknown>;
-};
+type Executor = { execute: (sql: string, params?: unknown[]) => Promise<unknown> };
 
 export interface LockedDay {
   date: string;
@@ -62,26 +60,15 @@ export async function findLockedDays(
        FROM attendance_daily_record
       WHERE employee_id = ? AND record_date IN (${placeholders}) AND is_locked = 1`,
     [employeeId, ...dates],
-  )) as [
-    Array<{
-      d: string;
-      regularization_id: string | null;
-      override_by: string | null;
-    }>,
-    unknown,
-  ];
+  )) as [Array<{ d: string; regularization_id: string | null; override_by: string | null }>, unknown];
 
   const locked: LockedDay[] = [];
   for (const r of rows) {
     const ownsIt =
-      (!!owner?.regularizationId &&
-        r.regularization_id === owner.regularizationId) ||
+      (!!owner?.regularizationId && r.regularization_id === owner.regularizationId) ||
       (!!owner?.userId && r.override_by === owner.userId);
     if (ownsIt) continue;
-    locked.push({
-      date: r.d,
-      ownedByCorrection: !!r.regularization_id || !!r.override_by,
-    });
+    locked.push({ date: r.d, ownedByCorrection: !!r.regularization_id || !!r.override_by });
   }
   return locked;
 }
@@ -94,14 +81,9 @@ export async function findLockedDays(
  * exactly how 514.5 days went unnoticed. Names the actual cause, because "already locked" sent
  * people looking for a conflicting correction that did not exist, and points at the remedy.
  */
-export function lockedDayRefusalMessage(
-  what: string,
-  locked: LockedDay[],
-): string {
+export function lockedDayRefusalMessage(what: string, locked: LockedDay[]): string {
   const dates = locked.map((l) => l.date).sort();
-  const shown =
-    dates.slice(0, 5).join(", ") +
-    (dates.length > 5 ? `, +${dates.length - 5} more` : "");
+  const shown = dates.slice(0, 5).join(", ") + (dates.length > 5 ? `, +${dates.length - 5} more` : "");
   const byCorrection = locked.some((l) => l.ownedByCorrection);
 
   if (byCorrection && locked.every((l) => l.ownedByCorrection)) {
@@ -130,9 +112,6 @@ export async function assertDaysWritable(
 ): Promise<void> {
   const locked = await findLockedDays(conn, employeeId, dates, owner);
   if (locked.length) {
-    throw new LockedDayWriteError(
-      lockedDayRefusalMessage(what, locked),
-      locked.map((l) => l.date),
-    );
+    throw new LockedDayWriteError(lockedDayRefusalMessage(what, locked), locked.map((l) => l.date));
   }
 }

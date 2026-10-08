@@ -12,18 +12,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ROUTES = readFileSync(
-  resolve(process.cwd(), "src/modules/payroll/payroll.routes.ts"),
-  "utf8",
-);
-const EXTENDED = readFileSync(
-  resolve(process.cwd(), "src/modules/payroll/payroll-extended.routes.ts"),
-  "utf8",
-);
-const SCOPE_ACCESS = readFileSync(
-  resolve(process.cwd(), "src/shared/scopeAccess.ts"),
-  "utf8",
-);
+const ROUTES = readFileSync(resolve(process.cwd(), "src/modules/payroll/payroll.routes.ts"), "utf8");
+const EXTENDED = readFileSync(resolve(process.cwd(), "src/modules/payroll/payroll-extended.routes.ts"), "utf8");
+const SCOPE_ACCESS = readFileSync(resolve(process.cwd(), "src/shared/scopeAccess.ts"), "utf8");
 
 /** Body of the handler registered at `path`, up to `len` chars. */
 function handlerAt(source: string, path: string, len = 900): string {
@@ -43,10 +34,9 @@ function resolveDelegatedHandler(source: string, slice: string, len: number): st
   const delegated = slice.match(/,\s*(\w+Handler),?\s*\)\s*;/);
   if (!delegated) return slice;
   const defIdx = source.indexOf(`const ${delegated[1]} =`);
-  return defIdx > -1
-    ? source.slice(defIdx, defIdx + Math.max(len, 6000))
-    : slice;
+  return defIdx > -1 ? source.slice(defIdx, defIdx + Math.max(len, 6000)) : slice;
 }
+
 
 describe("hasOrgWideScope is a real org-wide check, not a role check", () => {
   it("is exported from shared/scopeAccess.ts", () => {
@@ -97,10 +87,8 @@ describe("bank-file endpoints in payroll.routes.ts are gated (duplicates of the 
 
 describe("bank-file endpoints in payroll-extended.routes.ts are gated", () => {
   for (const path of [
-    "/runs/:id/neft-summary",
-    "/runs/:id/neft-export",
-    "/runs/:runId/bank-exception-report",
-    "/runs/:runId/golden-month-reconcile",
+    "/runs/:id/neft-summary", "/runs/:id/neft-export",
+    "/runs/:runId/bank-exception-report", "/runs/:runId/golden-month-reconcile",
   ]) {
     it(`${path} calls hasExportScope before querying, never the raw hasOrgWideScope`, () => {
       const body = handlerAt(EXTENDED, path);
@@ -113,9 +101,7 @@ describe("bank-file endpoints in payroll-extended.routes.ts are gated", () => {
   });
 
   it("hasExportScope demands a real scope_type='all' row and does not trust `admin`", () => {
-    const from = EXTENDED.slice(
-      EXTENDED.indexOf("async function hasExportScope"),
-    );
+    const from = EXTENDED.slice(EXTENDED.indexOf("async function hasExportScope"));
     const fn = from.slice(0, from.indexOf("\n}"));
     expect(fn).toMatch(/scope_type === "all"/);
     expect(fn).toMatch(/super_admin/);
@@ -175,10 +161,8 @@ describe("tripwire: no new ungated account-number export", () => {
     // non-null ifsc_code alone — so the preview disagreed with the file, by Rs 19,37,731 on the
     // 2026-04 run. Establishing payability honestly requires touching the columns; exposing
     // them does not, and is not done here.
-    const countLegacy = (s: string) =>
-      (s.match(/ebd\.account_number(?!_enc)\b/g) ?? []).length;
-    const countEnc = (s: string) =>
-      (s.match(/ebd\.account_number_enc\b/g) ?? []).length;
+    const countLegacy = (s: string) => (s.match(/ebd\.account_number(?!_enc)\b/g) ?? []).length;
+    const countEnc = (s: string) => (s.match(/ebd\.account_number_enc\b/g) ?? []).length;
     const legacy = countLegacy(ROUTES) + countLegacy(EXTENDED);
     const enc = countEnc(ROUTES) + countEnc(EXTENDED);
     const message =

@@ -49,12 +49,10 @@ export interface EmployeeLeaveScope {
   designationId: string | null;
 }
 
-export async function getEmployeeLeaveScope(
-  employeeId: string,
-): Promise<EmployeeLeaveScope> {
+export async function getEmployeeLeaveScope(employeeId: string): Promise<EmployeeLeaveScope> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, cost_centre_id, designation_id FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId],
+    [employeeId]
   );
   const row = (rows as RowDataPacket[])[0] as any;
   return {
@@ -68,7 +66,7 @@ export async function classifyLeaveDays(
   employeeId: string,
   scope: EmployeeLeaveScope,
   fromDate: string,
-  toDate: string,
+  toDate: string
 ): Promise<Map<string, LeaveDayClassification>> {
   const dates = enumerateDates(fromDate, toDate);
   const result = new Map<string, LeaveDayClassification>();
@@ -99,7 +97,7 @@ export async function classifyLeaveDays(
             WHERE hdm.holiday_id = lhm.id AND hdm.designation_id = ?
           )
         )`,
-    [fromDate, toDate, scope.branchId, scope.costCentreId, scope.designationId],
+    [fromDate, toDate, scope.branchId, scope.costCentreId, scope.designationId]
   );
   for (const row of holidayRows as RowDataPacket[]) {
     const d = String((row as any).holiday_date).slice(0, 10);
@@ -116,7 +114,7 @@ export async function classifyLeaveDays(
       WHERE employee_id = ?
         AND roster_date BETWEEN ? AND ?
         AND (is_week_off = 1 OR roster_status = 'Week Off')`,
-    [employeeId, fromDate, toDate],
+    [employeeId, fromDate, toDate]
   );
   for (const row of weekOffRows as RowDataPacket[]) {
     const d = String((row as any).roster_date).slice(0, 10);
@@ -141,7 +139,7 @@ export async function classifyLeaveDays(
           AND record_date IN (${nonChargeableDates.map(() => "?").join(",")})
           AND record_date < CURDATE()
           AND attendance_status IN ('absent', 'missing_punch')`,
-      [employeeId, ...nonChargeableDates],
+      [employeeId, ...nonChargeableDates]
     );
     for (const row of attendanceRows as RowDataPacket[]) {
       const d = String((row as any).record_date).slice(0, 10);
@@ -152,17 +150,13 @@ export async function classifyLeaveDays(
   return result;
 }
 
-export function countChargeableDays(
-  classification: Map<string, LeaveDayClassification>,
-): number {
+export function countChargeableDays(classification: Map<string, LeaveDayClassification>): number {
   let n = 0;
   for (const v of classification.values()) if (v === "chargeable") n++;
   return n;
 }
 
-export function chargeableDates(
-  classification: Map<string, LeaveDayClassification>,
-): string[] {
+export function chargeableDates(classification: Map<string, LeaveDayClassification>): string[] {
   return Array.from(classification.entries())
     .filter(([, v]) => v === "chargeable")
     .map(([d]) => d);

@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const execute = vi.fn();
-vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: (...a: unknown[]) => execute(...a) },
-}));
+vi.mock("../src/db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => execute(...a) } }));
 
-const { resolveProcessAtDate, resolveProcessForAgentCode } =
-  await import("../src/modules/kpi/attribution.service.js");
+const { resolveProcessAtDate, resolveProcessForAgentCode } = await import(
+  "../src/modules/kpi/attribution.service.js"
+);
 
 /**
  * The upstream quality feed stopped populating Campaign in May 2026 — every row
@@ -31,11 +30,7 @@ describe("process attribution as at a date", () => {
   it("prefers an effective-dated assignment covering the event date", async () => {
     execute.mockResolvedValueOnce(lobHit);
     const r = await resolveProcessAtDate("emp-1", "2026-03-15");
-    expect(r).toEqual({
-      processId: "proc-historic",
-      source: "lob_assignment",
-      dateAccurate: true,
-    });
+    expect(r).toEqual({ processId: "proc-historic", source: "lob_assignment", dateAccurate: true });
   });
 
   it("only counts approved assignments, never drafts", async () => {
@@ -61,21 +56,13 @@ describe("process attribution as at a date", () => {
     // where they sat on the event date if they never moved.
     execute.mockResolvedValueOnce(noRows).mockResolvedValueOnce(empHit);
     const r = await resolveProcessAtDate("emp-1", "2026-03-15");
-    expect(r).toEqual({
-      processId: "proc-current",
-      source: "employee_current",
-      dateAccurate: false,
-    });
+    expect(r).toEqual({ processId: "proc-current", source: "employee_current", dateAccurate: false });
   });
 
   it("reports unresolved rather than inventing a process", async () => {
     execute.mockResolvedValueOnce(noRows).mockResolvedValueOnce(noRows);
     const r = await resolveProcessAtDate("emp-1", "2026-03-15");
-    expect(r).toEqual({
-      processId: null,
-      source: "unresolved",
-      dateAccurate: false,
-    });
+    expect(r).toEqual({ processId: null, source: "unresolved", dateAccurate: false });
   });
 
   it("resolves a split allocation by largest share, then most recent", async () => {
@@ -83,17 +70,13 @@ describe("process attribution as at a date", () => {
     // database happened to return first is not a decision.
     execute.mockResolvedValueOnce(lobHit);
     await resolveProcessAtDate("emp-1", "2026-03-15");
-    expect(execute.mock.calls[0][0]).toMatch(
-      /ORDER BY ela\.allocation_pct DESC, ela\.effective_from DESC/,
-    );
+    expect(execute.mock.calls[0][0]).toMatch(/ORDER BY ela\.allocation_pct DESC, ela\.effective_from DESC/);
   });
 });
 
 describe("attributing an upstream quality row by agent code", () => {
   it("maps the agent code to an employee and through to a process", async () => {
-    execute
-      .mockResolvedValueOnce([[{ id: "emp-9" }], []])
-      .mockResolvedValueOnce(lobHit);
+    execute.mockResolvedValueOnce([[{ id: "emp-9" }], []]).mockResolvedValueOnce(lobHit);
     const r = await resolveProcessForAgentCode("MAS57576", "2026-07-15");
     expect(r.employeeId).toBe("emp-9");
     expect(r.processId).toBe("proc-historic");
@@ -117,10 +100,6 @@ describe("attributing an upstream quality row by agent code", () => {
   it("reports unresolved when the agent code matches nobody", async () => {
     execute.mockResolvedValueOnce(noRows);
     const r = await resolveProcessForAgentCode("QA-E2E-NOBODY", "2026-07-15");
-    expect(r).toMatchObject({
-      source: "unresolved",
-      processId: null,
-      employeeId: null,
-    });
+    expect(r).toMatchObject({ source: "unresolved", processId: null, employeeId: null });
   });
 });

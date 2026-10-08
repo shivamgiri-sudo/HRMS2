@@ -26,7 +26,7 @@ export interface SessionRevocationResult {
  */
 export async function revokeSessionsForEmployee(
   employeeId: string,
-  reason: string,
+  reason: string
 ): Promise<SessionRevocationResult> {
   const result: SessionRevocationResult = {
     userId: null,
@@ -37,10 +37,9 @@ export async function revokeSessionsForEmployee(
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT user_id FROM employees WHERE id = ? LIMIT 1",
-      [employeeId],
+      [employeeId]
     );
-    const userId =
-      (rows[0] as { user_id: string | null } | undefined)?.user_id ?? null;
+    const userId = (rows[0] as { user_id: string | null } | undefined)?.user_id ?? null;
 
     // 121 of 1,115 active employees have no login account at all, so "no
     // user_id" is the ordinary case for a floor agent, not an error.
@@ -49,7 +48,7 @@ export async function revokeSessionsForEmployee(
 
     const [tokenRes] = await db.execute<ResultSetHeader>(
       "UPDATE auth_refresh_token SET revoked = 1 WHERE user_id = ? AND revoked = 0",
-      [userId],
+      [userId]
     );
     result.refreshTokensRevoked = tokenRes?.affectedRows ?? 0;
 
@@ -58,7 +57,7 @@ export async function revokeSessionsForEmployee(
     // long after the token behind it stopped working.
     const [deviceRes] = await db.execute<ResultSetHeader>(
       "UPDATE user_device_sessions SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL",
-      [userId],
+      [userId]
     );
     result.deviceSessionsRevoked = deviceRes?.affectedRows ?? 0;
 
@@ -79,7 +78,7 @@ export async function revokeSessionsForEmployee(
         refresh_tokens_revoked: result.refreshTokensRevoked,
         device_sessions_revoked: result.deviceSessionsRevoked,
         timestamp: new Date().toISOString(),
-      }) + "\n",
+      }) + "\n"
     );
   } catch (err) {
     process.stderr.write(
@@ -91,7 +90,7 @@ export async function revokeSessionsForEmployee(
         reason,
         error: err instanceof Error ? err.message : String(err),
         timestamp: new Date().toISOString(),
-      }) + "\n",
+      }) + "\n"
     );
   }
 

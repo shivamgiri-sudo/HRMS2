@@ -22,19 +22,17 @@ for (const line of readFileSync(envPath, "utf8").split("\n")) {
   const key = raw.slice(0, eq).trim();
   let val = raw.slice(eq + 1).trim();
   // Strip surrounding quotes and unescape inner quotes
-  if (
-    (val.startsWith('"') && val.endsWith('"')) ||
-    (val.startsWith("'") && val.endsWith("'"))
-  ) {
+  if ((val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))) {
     val = val.slice(1, -1);
   }
   env[key] = val;
 }
 
 const pool = await mysql.createPool({
-  host: env.DB_HOST,
-  port: Number(env.DB_PORT) || 3306,
-  user: env.DB_USER,
+  host:     env.DB_HOST,
+  port:     Number(env.DB_PORT) || 3306,
+  user:     env.DB_USER,
   password: env.DB_PASSWORD,
   database: env.DB_NAME,
   waitForConnections: true,
@@ -55,28 +53,24 @@ async function columnsExist(conn) {
   const [rows] = await conn.query(
     `SELECT COLUMN_NAME FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employees'
-     AND COLUMN_NAME IN ('attrition_date','attrition_reason','attrition_reason_notes')`,
+     AND COLUMN_NAME IN ('attrition_date','attrition_reason','attrition_reason_notes')`
   );
-  const existing = new Set(rows.map((r) => r.COLUMN_NAME));
+  const existing = new Set(rows.map(r => r.COLUMN_NAME));
   return {
-    date: existing.has("attrition_date"),
+    date:   existing.has("attrition_date"),
     reason: existing.has("attrition_reason"),
-    notes: existing.has("attrition_reason_notes"),
+    notes:  existing.has("attrition_reason_notes"),
   };
 }
 
 function buildAlter(missing) {
   const parts = [];
   if (missing.includes("attrition_date"))
-    parts.push(
-      "ADD COLUMN attrition_date DATE NULL DEFAULT NULL AFTER date_of_leaving",
-    );
+    parts.push("ADD COLUMN attrition_date DATE NULL DEFAULT NULL AFTER date_of_leaving");
   if (missing.includes("attrition_reason"))
     parts.push(`ADD COLUMN attrition_reason ${ENUM_DEF} AFTER attrition_date`);
   if (missing.includes("attrition_reason_notes"))
-    parts.push(
-      "ADD COLUMN attrition_reason_notes VARCHAR(1000) NULL DEFAULT NULL AFTER attrition_reason",
-    );
+    parts.push("ADD COLUMN attrition_reason_notes VARCHAR(1000) NULL DEFAULT NULL AFTER attrition_reason");
   // Let MySQL pick best algorithm — INSTANT/INPLACE blocked while concurrent FULLTEXT op runs; retries until clear.
   return `ALTER TABLE employees ${parts.join(", ")}`;
 }
@@ -92,9 +86,9 @@ for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
 
     const { date, reason, notes } = await columnsExist(conn);
     const missing = [
-      ...(!date ? ["attrition_date"] : []),
+      ...(!date   ? ["attrition_date"] : []),
       ...(!reason ? ["attrition_reason"] : []),
-      ...(!notes ? ["attrition_reason_notes"] : []),
+      ...(!notes  ? ["attrition_reason_notes"] : []),
     ];
 
     if (missing.length === 0) {
@@ -102,22 +96,18 @@ for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       break;
     }
 
-    console.log(
-      `Attempt ${attempt}/${MAX_RETRIES}: adding [${missing.join(", ")}]...`,
-    );
+    console.log(`Attempt ${attempt}/${MAX_RETRIES}: adding [${missing.join(", ")}]...`);
     const sql = buildAlter(missing);
     await conn.query(sql);
 
     console.log("✓ Done.");
     break;
   } catch (err) {
-    const retryable =
-      err.code === "ER_LOCK_WAIT_TIMEOUT" ||
-      (err.sqlMessage &&
-        err.sqlMessage.includes("one FULLTEXT index creation at a time"));
+    const retryable = err.code === "ER_LOCK_WAIT_TIMEOUT" ||
+      (err.sqlMessage && err.sqlMessage.includes("one FULLTEXT index creation at a time"));
     if (retryable && attempt < MAX_RETRIES) {
       console.log(`  Lock timeout — retrying in ${RETRY_DELAY_MS / 1000}s...`);
-      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
     } else {
       console.error("✗ Failed:", err.message);
       process.exit(1);

@@ -2,8 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const read = (path: string) =>
-  readFileSync(resolve(process.cwd(), path), "utf8");
+const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
 /**
  * The Daily Attendance Report had no test at all. It was rewritten on 31-Jul to drive from
@@ -36,9 +35,7 @@ describe("daily attendance report", () => {
     const start = routes.indexOf("export async function attendanceDaily");
     expect(start, "attendanceDaily executor not found").toBeGreaterThan(-1);
     const end = routes.indexOf("ORDER BY adr.record_date DESC", start);
-    expect(end, "attendanceDaily has no terminating ORDER BY").toBeGreaterThan(
-      start,
-    );
+    expect(end, "attendanceDaily has no terminating ORDER BY").toBeGreaterThan(start);
     return routes.slice(start, end);
   })();
 
@@ -64,10 +61,7 @@ describe("daily attendance report", () => {
     const placeholders = (beforeWhere.match(/\?/g) ?? []).length;
 
     const unshift = block.slice(block.indexOf("params.unshift("));
-    const args = unshift
-      .slice(unshift.indexOf("(") + 1, unshift.indexOf(")"))
-      .split(",")
-      .filter((a) => a.trim());
+    const args = unshift.slice(unshift.indexOf("(") + 1, unshift.indexOf(")")).split(",").filter((a) => a.trim());
 
     expect(args.length).toBe(placeholders);
   });

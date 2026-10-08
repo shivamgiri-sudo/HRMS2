@@ -25,17 +25,10 @@ const { buildScopeWhereClause, hasAnyRole } = vi.hoisted(() => ({
   buildScopeWhereClause: vi.fn(async () => ({ sql: "1=1", params: [] })),
   hasAnyRole: vi.fn(async () => false),
 }));
-vi.mock("../../../shared/scopeAccess.js", () => ({
-  buildScopeWhereClause,
-  hasAnyRole,
-}));
+vi.mock("../../../shared/scopeAccess.js", () => ({ buildScopeWhereClause, hasAnyRole }));
 
 vi.mock("../../../db/mysql.js", () => ({
-  db: {
-    execute: vi.fn(async () => [[], []]),
-    query: vi.fn(),
-    getConnection: vi.fn(),
-  },
+  db: { execute: vi.fn(async () => [[], []]), query: vi.fn(), getConnection: vi.fn() },
 }));
 vi.mock("../../../shared/accessGuard.js", () => ({
   getEmployeeForUser: vi.fn(async () => ({ id: "emp-tl-1" })),
@@ -43,16 +36,10 @@ vi.mock("../../../shared/accessGuard.js", () => ({
 
 const actor = { id: "u-tl-1", role: "team_leader", roles: ["team_leader"] };
 vi.mock("../../../middleware/authMiddleware.js", async (importOriginal) => {
-  const original =
-    await importOriginal<
-      typeof import("../../../middleware/authMiddleware.js")
-    >();
+  const original = await importOriginal<typeof import("../../../middleware/authMiddleware.js")>();
   return {
     ...original,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.authUser = actor;
-      next();
-    },
+    requireAuth: (req: any, _res: any, next: any) => { req.authUser = actor; next(); },
   };
 });
 
@@ -66,9 +53,7 @@ function app() {
 }
 
 beforeEach(() => {
-  buildScopeWhereClause
-    .mockClear()
-    .mockResolvedValue({ sql: "1=1", params: [] });
+  buildScopeWhereClause.mockClear().mockResolvedValue({ sql: "1=1", params: [] });
   hasAnyRole.mockClear().mockResolvedValue(false);
 });
 

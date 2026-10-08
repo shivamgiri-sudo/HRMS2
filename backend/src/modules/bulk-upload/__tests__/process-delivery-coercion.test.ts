@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseUnits,
-  parseScore,
-  parsePeriod,
-  parseDate,
-  PROCESS_DELIVERY_HEADERS,
+  parseUnits, parseScore, parsePeriod, parseDate, PROCESS_DELIVERY_HEADERS,
 } from "../process-delivery-bulk.service.js";
 
 describe("parseUnits", () => {

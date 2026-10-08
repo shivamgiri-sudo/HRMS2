@@ -52,8 +52,7 @@ type Row = Record<string, unknown>;
 
 function isSensitive(column: string): boolean {
   // A protected sibling is not itself the raw column.
-  if (PROTECTED_SUFFIXES.some((s) => column.toLowerCase().endsWith(s)))
-    return false;
+  if (PROTECTED_SUFFIXES.some((s) => column.toLowerCase().endsWith(s))) return false;
   return SENSITIVE.some((re) => re.test(column));
 }
 
@@ -145,33 +144,20 @@ async function main(): Promise<void> {
 
   const outputIndex = process.argv.indexOf("--output");
   if (outputIndex !== -1 && process.argv[outputIndex + 1]) {
-    fs.writeFileSync(
-      process.argv[outputIndex + 1],
-      JSON.stringify(findings, null, 2),
-      "utf8",
-    );
-    console.log(
-      `[encryption-coverage] ${findings.length} finding(s) written. Keep this file out of the repository.`,
-    );
+    fs.writeFileSync(process.argv[outputIndex + 1], JSON.stringify(findings, null, 2), "utf8");
+    console.log(`[encryption-coverage] ${findings.length} finding(s) written. Keep this file out of the repository.`);
   } else {
     for (const f of findings) {
       console.log(
         `${String(f.verdict).padEnd(28)} ${String(f.table)}.${String(f.column)}  raw_rows=${f.raw_populated}` +
-          (f.protected_siblings
-            ? `  protected=${JSON.stringify(f.protected_siblings)}`
-            : "  (no protected column)"),
+          (f.protected_siblings ? `  protected=${JSON.stringify(f.protected_siblings)}` : "  (no protected column)"),
       );
     }
-    console.log(
-      `\n[encryption-coverage] ${findings.length} sensitive column(s) hold data. READ-ONLY: no value was read, nothing modified.`,
-    );
+    console.log(`\n[encryption-coverage] ${findings.length} sensitive column(s) hold data. READ-ONLY: no value was read, nothing modified.`);
   }
 }
 
 main().catch((err) => {
-  console.error(
-    "[encryption-coverage] failed:",
-    err instanceof Error ? err.message : err,
-  );
+  console.error("[encryption-coverage] failed:", err instanceof Error ? err.message : err);
   process.exitCode = 1;
 });

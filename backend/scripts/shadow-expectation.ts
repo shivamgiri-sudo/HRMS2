@@ -13,10 +13,10 @@
  * event takes ~60-75s. Do not wrap it in a short `timeout` — it gets killed mid-event and
  * looks like a hang.
  */
-import { db } from "../src/db/mysql.js";
-import { resolveRecipients } from "../src/shared/recipient-resolver.js";
-import type { RecipientSpec } from "../src/shared/recipient-resolver.types.js";
-import type { RowDataPacket } from "mysql2";
+import { db } from '../src/db/mysql.js';
+import { resolveRecipients } from '../src/shared/recipient-resolver.js';
+import type { RecipientSpec } from '../src/shared/recipient-resolver.types.js';
+import type { RowDataPacket } from 'mysql2';
 
 const SAMPLE_PER_BRANCH = Number(process.env.SAMPLE_PER_BRANCH ?? 4);
 
@@ -38,124 +38,79 @@ async function main() {
   );
   const byBranch = new Map<string, RowDataPacket[]>();
   for (const e of emps) {
-    const k = e.branch_name ?? "(no branch)";
+    const k = e.branch_name ?? '(no branch)';
     if (!byBranch.has(k)) byBranch.set(k, []);
     const arr = byBranch.get(k)!;
     if (arr.length < SAMPLE_PER_BRANCH) arr.push(e);
   }
   const sample = [...byBranch.values()].flat();
-  console.log(
-    `sampling ${sample.length} active employees across ${byBranch.size} branches\n`,
-  );
+  console.log(`sampling ${sample.length} active employees across ${byBranch.size} branches\n`);
 
   for (const ev of events) {
     let spec: RecipientSpec;
     try {
-      spec =
-        typeof ev.recipient_spec === "string"
-          ? JSON.parse(ev.recipient_spec)
-          : ev.recipient_spec;
+      spec = typeof ev.recipient_spec === 'string' ? JSON.parse(ev.recipient_spec) : ev.recipient_spec;
     } catch {
       console.log(`${ev.event_code}: UNPARSEABLE recipient_spec\n`);
       continue;
     }
 
     const drops = new Map<string, number>();
-    let deliverable = 0,
-      empty = 0,
-      threw = 0,
-      to = 0,
-      cc = 0,
-      bcc = 0;
+    let deliverable = 0, empty = 0, threw = 0, to = 0, cc = 0, bcc = 0;
     const throwCodes = new Map<string, number>();
 
     for (const e of sample) {
       try {
         const r = await resolveRecipients(spec, {
           sensitivity: ev.sensitivity,
-          context: {
-            employeeId: e.id,
-            branchId: e.branch_id,
-            processId: e.process_id,
-          },
+          context: { employeeId: e.id, branchId: e.branch_id, processId: e.process_id },
         });
-        to += r.to.length;
-        cc += r.cc.length;
-        bcc += r.bcc.length;
-        if (r.to.length) deliverable++;
-        else empty++;
-        for (const d of r.dropped)
-          drops.set(d.reason, (drops.get(d.reason) ?? 0) + 1);
+        to += r.to.length; cc += r.cc.length; bcc += r.bcc.length;
+        if (r.to.length) deliverable++; else empty++;
+        for (const d of r.dropped) drops.set(d.reason, (drops.get(d.reason) ?? 0) + 1);
       } catch (err) {
         threw++;
-        const code =
-          (err as { code?: string }).code ??
-          (err as Error).message.slice(0, 40);
+        const code = (err as { code?: string }).code ?? (err as Error).message.slice(0, 40);
         throwCodes.set(code, (throwCodes.get(code) ?? 0) + 1);
       }
     }
 
-    console.log(
-      `── ${ev.event_code}  [${ev.sensitivity}] enabled=${ev.enabled} mode=${ev.dispatch_mode}`,
-    );
-    console.log(
-      `   deliverable ${deliverable}/${sample.length}   no-To ${empty}   threw ${threw}`,
-    );
+    console.log(`── ${ev.event_code}  [${ev.sensitivity}] enabled=${ev.enabled} mode=${ev.dispatch_mode}`);
+    console.log(`   deliverable ${deliverable}/${sample.length}   no-To ${empty}   threw ${threw}`);
     console.log(`   addressees: to=${to} cc=${cc} bcc=${bcc}`);
     if (drops.size) {
-      console.log(
-        `   drops: ${[...drops.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .map(([r, n]) => `${r}=${n}`)
-          .join("  ")}`,
-      );
+      console.log(`   drops: ${[...drops.entries()].sort((a, b) => b[1] - a[1])
+        .map(([r, n]) => `${r}=${n}`).join('  ')}`);
     }
     if (throwCodes.size) {
-      console.log(
-        `   THREW: ${[...throwCodes.entries()].map(([c, n]) => `${c}=${n}`).join("  ")}`,
-      );
+      console.log(`   THREW: ${[...throwCodes.entries()].map(([c, n]) => `${c}=${n}`).join('  ')}`);
     }
     console.log();
   }
 
   // Per-branch deliverability for the highest-stakes event, since that is the go-live gate.
-  const fin = events.find((e) => e.sensitivity === "fin");
+  const fin = events.find((e) => e.sensitivity === 'fin');
   if (fin) {
-    const spec: RecipientSpec =
-      typeof fin.recipient_spec === "string"
-        ? JSON.parse(fin.recipient_spec)
-        : fin.recipient_spec;
-    console.log(
-      `=== ${fin.event_code} deliverability by branch (go-live gate) ===`,
-    );
+    const spec: RecipientSpec = typeof fin.recipient_spec === 'string'
+      ? JSON.parse(fin.recipient_spec) : fin.recipient_spec;
+    console.log(`=== ${fin.event_code} deliverability by branch (go-live gate) ===`);
     for (const [branch, list] of byBranch) {
       let ok = 0;
       for (const e of list) {
         try {
           const r = await resolveRecipients(spec, {
             sensitivity: fin.sensitivity,
-            context: {
-              employeeId: e.id,
-              branchId: e.branch_id,
-              processId: e.process_id,
-            },
+            context: { employeeId: e.id, branchId: e.branch_id, processId: e.process_id },
           });
           if (r.to.length) ok++;
-        } catch {
-          /* counted as not-deliverable */
-        }
+        } catch { /* counted as not-deliverable */ }
       }
       const pct = Math.round((ok / list.length) * 100);
-      console.log(
-        `  ${branch.padEnd(26)} ${String(ok).padStart(3)}/${String(list.length).padEnd(3)} ${pct}% ${"█".repeat(Math.round(pct / 5))}`,
-      );
+      console.log(`  ${branch.padEnd(26)} ${String(ok).padStart(3)}/${String(list.length).padEnd(3)} ${pct}% ${'█'.repeat(Math.round(pct / 5))}`);
     }
   }
 
   await db.end();
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().catch((e) => { console.error(e); process.exit(1); });

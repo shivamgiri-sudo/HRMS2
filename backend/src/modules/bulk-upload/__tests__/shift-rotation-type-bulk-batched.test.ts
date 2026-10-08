@@ -27,25 +27,13 @@ describe("importShiftRotationTypeBatch — batched rewrite", () => {
   it("groups rows by rotation type into one UPDATE per value, and flags a not-found code from the bulk existence check", async () => {
     execute.mockResolvedValueOnce([
       [
-        row("row-1", 1, {
-          employee_code: "MAS001",
-          shift_rotation_type: "frozen",
-        }),
-        row("row-2", 2, {
-          employee_code: "MAS002",
-          shift_rotation_type: "rotating",
-        }),
-        row("row-3", 3, {
-          employee_code: "GHOST",
-          shift_rotation_type: "frozen",
-        }),
+        row("row-1", 1, { employee_code: "MAS001", shift_rotation_type: "frozen" }),
+        row("row-2", 2, { employee_code: "MAS002", shift_rotation_type: "rotating" }),
+        row("row-3", 3, { employee_code: "GHOST", shift_rotation_type: "frozen" }),
       ],
       [],
     ]); // 1: SELECT upload_batch_row
-    execute.mockResolvedValueOnce([
-      [{ employee_code: "MAS001" }, { employee_code: "MAS002" }],
-      [],
-    ]); // 2: bulk existence check (GHOST absent)
+    execute.mockResolvedValueOnce([[{ employee_code: "MAS001" }, { employee_code: "MAS002" }], []]); // 2: bulk existence check (GHOST absent)
     execute.mockResolvedValueOnce([{}, []]); // 3: grouped UPDATE (frozen: MAS001)
     execute.mockResolvedValueOnce([{}, []]); // 4: grouped UPDATE (rotating: MAS002)
     execute.mockResolvedValueOnce([{}, []]); // 5: UPDATE upload_batch_row imported
@@ -59,38 +47,18 @@ describe("importShiftRotationTypeBatch — batched rewrite", () => {
     expect(result.errors[0]).toMatch(/GHOST.*not found or inactive/);
 
     const groupedUpdates = execute.mock.calls.filter(
-      ([sql]) =>
-        typeof sql === "string" &&
-        sql.startsWith("UPDATE employees SET shift_rotation_type"),
+      ([sql]) => typeof sql === "string" && sql.startsWith("UPDATE employees SET shift_rotation_type")
     );
     expect(groupedUpdates).toHaveLength(2); // one per distinct rotation type value
-    expect(
-      groupedUpdates.some(
-        (c) =>
-          (c[1] as unknown[]).includes("frozen") &&
-          (c[1] as unknown[]).includes("MAS001"),
-      ),
-    ).toBe(true);
-    expect(
-      groupedUpdates.some(
-        (c) =>
-          (c[1] as unknown[]).includes("rotating") &&
-          (c[1] as unknown[]).includes("MAS002"),
-      ),
-    ).toBe(true);
+    expect(groupedUpdates.some((c) => (c[1] as unknown[]).includes("frozen") && (c[1] as unknown[]).includes("MAS001"))).toBe(true);
+    expect(groupedUpdates.some((c) => (c[1] as unknown[]).includes("rotating") && (c[1] as unknown[]).includes("MAS002"))).toBe(true);
   });
 
   it("keeps the LAST row's rotation type when the same employee_code repeats", async () => {
     execute.mockResolvedValueOnce([
       [
-        row("row-1", 1, {
-          employee_code: "MAS001",
-          shift_rotation_type: "frozen",
-        }),
-        row("row-2", 2, {
-          employee_code: "MAS001",
-          shift_rotation_type: "weekly",
-        }), // later row, different value
+        row("row-1", 1, { employee_code: "MAS001", shift_rotation_type: "frozen" }),
+        row("row-2", 2, { employee_code: "MAS001", shift_rotation_type: "weekly" }), // later row, different value
       ],
       [],
     ]);
@@ -103,9 +71,7 @@ describe("importShiftRotationTypeBatch — batched rewrite", () => {
 
     expect(result.imported).toBe(2); // both rows are still recorded as imported...
     const groupedUpdates = execute.mock.calls.filter(
-      ([sql]) =>
-        typeof sql === "string" &&
-        sql.startsWith("UPDATE employees SET shift_rotation_type"),
+      ([sql]) => typeof sql === "string" && sql.startsWith("UPDATE employees SET shift_rotation_type")
     );
     // ...but the employees table only takes ONE effective UPDATE, and it's 'weekly' (the last row's value).
     expect(groupedUpdates).toHaveLength(1);
@@ -116,10 +82,7 @@ describe("importShiftRotationTypeBatch — batched rewrite", () => {
   it("skips invalid rotation type values and missing fields without any DB lookup", async () => {
     execute.mockResolvedValueOnce([
       [
-        row("row-1", 1, {
-          employee_code: "MAS001",
-          shift_rotation_type: "nonsense",
-        }),
+        row("row-1", 1, { employee_code: "MAS001", shift_rotation_type: "nonsense" }),
         row("row-2", 2, { employee_code: "MAS002" }), // missing shift_rotation_type
       ],
       [],
@@ -132,10 +95,6 @@ describe("importShiftRotationTypeBatch — batched rewrite", () => {
     expect(result.imported).toBe(0);
     expect(result.skipped).toBe(2);
     // Never reached the employees table at all.
-    expect(
-      execute.mock.calls.some(
-        ([sql]) => typeof sql === "string" && sql.includes("FROM employees"),
-      ),
-    ).toBe(false);
+    expect(execute.mock.calls.some(([sql]) => typeof sql === "string" && sql.includes("FROM employees"))).toBe(false);
   });
 });

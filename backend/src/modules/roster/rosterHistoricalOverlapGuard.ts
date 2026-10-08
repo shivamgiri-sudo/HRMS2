@@ -37,16 +37,14 @@ export async function assertNoHistoricalRosterOverlap(
     [weekStart, weekEnd],
   );
 
-  const overlapping = Number(
-    (rows as Array<{ overlapping?: number }>)[0]?.overlapping ?? 0,
-  );
+  const overlapping = Number((rows as Array<{ overlapping?: number }>)[0]?.overlapping ?? 0);
   if (overlapping > 0) {
     throw Object.assign(
       new Error(
         `Refusing to generate: ${overlapping} live roster assignment(s) already exist between ` +
-          `${weekStart} and ${weekEnd}. Generation would overwrite their shift with a ` +
-          `template-derived one, and attendance is derived against rosters. Roster-gov is adopted ` +
-          `going forward only — pick a cycle whose week has no existing assignments.`,
+        `${weekStart} and ${weekEnd}. Generation would overwrite their shift with a ` +
+        `template-derived one, and attendance is derived against rosters. Roster-gov is adopted ` +
+        `going forward only — pick a cycle whose week has no existing assignments.`,
       ),
       { statusCode: 409 },
     );

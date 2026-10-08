@@ -21,8 +21,7 @@ import { resolve } from "node:path";
  * that is decidable from the text without a database.
  */
 
-const MODULE_PATH =
-  "src/modules/people-experience/people-experience.service.ts";
+const MODULE_PATH = "src/modules/people-experience/people-experience.service.ts";
 const source = () => readFileSync(resolve(process.cwd(), MODULE_PATH), "utf8");
 
 describe("people-experience pulse source", () => {
@@ -35,9 +34,7 @@ describe("people-experience pulse source", () => {
   it("does not reference columns that pulse_check has never had", () => {
     const code = source();
     // Comments explain the history; SQL must not name them.
-    const sqlOnly = code
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\/\/[^\n]*/g, "");
+    const sqlOnly = code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
     // Bare identifiers only. `average_mood_score` is this module's own API field name and is
     // deliberately allowed — the banned thing is the pulse_check COLUMN, mood_score / mood_rating.
     expect(sqlOnly).not.toMatch(/(?<![\w_])mood_score(?![\w_])/);
@@ -51,9 +48,7 @@ describe("people-experience pulse source", () => {
   it("windows pulse rows on response_time/response_date, not submitted_at", () => {
     const code = source();
     expect(code).toMatch(/COALESCE\(pr\.response_time, pr\.response_date\)/);
-    const sqlOnly = code
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\/\/[^\n]*/g, "");
+    const sqlOnly = code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
     expect(sqlOnly).not.toMatch(/pulse_response[\s\S]{0,200}submitted_at/);
   });
 

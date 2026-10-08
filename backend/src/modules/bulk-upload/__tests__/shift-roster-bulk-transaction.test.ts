@@ -32,9 +32,7 @@ const lockConn = { query: vi.fn(), release: vi.fn() };
 const { getConnection } = vi.hoisted(() => ({ getConnection: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { getConnection } }));
 
-const { logRosterChange } = vi.hoisted(() => ({
-  logRosterChange: vi.fn().mockResolvedValue(undefined),
-}));
+const { logRosterChange } = vi.hoisted(() => ({ logRosterChange: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../../roster/roster-change-log.js", () => ({ logRosterChange }));
 
 import { importShiftRosterBatch } from "../shift-roster-bulk.service.js";
@@ -65,9 +63,7 @@ describe("importShiftRosterBatch transaction handling", () => {
     conn.rollback.mockReset();
     conn.release.mockReset();
     lockConn.query.mockReset();
-    lockConn.query.mockImplementation(async (sql: string) =>
-      sql.includes("GET_LOCK") ? [[{ acquired: 1 }], []] : [[], []],
-    );
+    lockConn.query.mockImplementation(async (sql: string) => (sql.includes("GET_LOCK") ? [[{ acquired: 1 }], []] : [[], []]));
     lockConn.release.mockReset();
     logRosterChange.mockClear();
     // Schema-probe caching is module-scope and would otherwise leak the first
@@ -79,28 +75,14 @@ describe("importShiftRosterBatch transaction handling", () => {
   it("begins, commits, and releases on a clean run; sets target_record_id on the imported row", async () => {
     queueRows(
       // SELECT upload_batch_row
-      [
-        {
-          id: "row-1",
-          row_no: 1,
-          normalized_data: JSON.stringify({
-            employee_code: "MAS001",
-            week_start_date: "2026-08-17",
-            mon_shift: "09:00-18:00",
-          }),
-        },
-      ],
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        employee_code: "MAS001", week_start_date: "2026-08-17",
+        mon_shift: "09:00-18:00",
+      }) }],
       // 1. Batch employee resolution (was: one SELECT per row; now one for the whole file) —
       // employee_code is now part of the SELECT list, since the batched query keys its result
       // map off it.
-      [
-        {
-          employee_code: "MAS001",
-          id: "emp-1",
-          process_id: "process-1",
-          branch_id: "branch-1",
-        },
-      ],
+      [{ employee_code: "MAS001", id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       // 2. Batch payroll-lock check (was: one SELECT per day, inside the employee's lock; now
       // one SELECT for every (employee, date) pair the whole file could touch, up front) ->
       // nothing locked
@@ -143,52 +125,24 @@ describe("importShiftRosterBatch transaction handling", () => {
     // column name threw ER_BAD_FIELD_ERROR on the live schema, rolling back every
     // batch that had at least one row succeed.
     const targetUpdateCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) =>
-        typeof sql === "string" &&
-        sql.includes(
-          "row_status='imported', created_entity_type='wfm_roster_assignment', created_entity_id=?",
-        ),
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("row_status='imported', created_entity_type='wfm_roster_assignment', created_entity_id=?"),
     );
-    expect(
-      targetUpdateCall,
-      "created_entity_id UPDATE not found",
-    ).toBeDefined();
+    expect(targetUpdateCall, "created_entity_id UPDATE not found").toBeDefined();
     expect(targetUpdateCall![1][0]).not.toBeNull();
 
     // The lock was acquired and released for this employee.
-    const getLockCall = lockConn.query.mock.calls.find(([sql]: [string]) =>
-      sql.includes("GET_LOCK"),
-    );
+    const getLockCall = lockConn.query.mock.calls.find(([sql]: [string]) => sql.includes("GET_LOCK"));
     expect(getLockCall![1]).toEqual(["roster_assign_emp-1"]);
-    expect(
-      lockConn.query.mock.calls.find(([sql]: [string]) =>
-        sql.includes("RELEASE_LOCK"),
-      ),
-    ).toBeDefined();
+    expect(lockConn.query.mock.calls.find(([sql]: [string]) => sql.includes("RELEASE_LOCK"))).toBeDefined();
   });
 
   it("uses parameterized placeholders for the batch INSERT, not string-concatenated values", async () => {
     queueRows(
-      [
-        {
-          id: "row-1",
-          row_no: 1,
-          normalized_data: JSON.stringify({
-            employee_code: "MAS001",
-            week_start_date: "2026-08-17",
-            mon_shift: "09:00-18:00",
-            notes: "o'brien's note",
-          }),
-        },
-      ],
-      [
-        {
-          employee_code: "MAS001",
-          id: "emp-1",
-          process_id: "process-1",
-          branch_id: "branch-1",
-        },
-      ], // batch employee resolution
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        employee_code: "MAS001", week_start_date: "2026-08-17",
+        mon_shift: "09:00-18:00", notes: "o'brien's note",
+      }) }],
+      [{ employee_code: "MAS001", id: "emp-1", process_id: "process-1", branch_id: "branch-1" }], // batch employee resolution
       [], // batch payroll-lock check -> nothing locked
       [],
       [],
@@ -204,9 +158,7 @@ describe("importShiftRosterBatch transaction handling", () => {
     await importShiftRosterBatch("batch-1", "user-1");
 
     const insertCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) =>
-        typeof sql === "string" &&
-        sql.includes("INSERT INTO wfm_roster_assignment"),
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("INSERT INTO wfm_roster_assignment"),
     );
     expect(insertCall, "batch INSERT not found").toBeDefined();
     const [sql, params] = insertCall!;
@@ -214,9 +166,7 @@ describe("importShiftRosterBatch transaction handling", () => {
     // 8 columns (id..shift_end_time) as placeholders, then the 3 fixed literal
     // status/source columns, then system_decision_reason's placeholder — no
     // shift_version_id/scheduled_minutes since the schema probe found neither.
-    expect(sql).toMatch(
-      /VALUES \(\?,\?,\?,\?,\?,\?,\?,\?,'published','published','bulk_upload',\?\)/,
-    );
+    expect(sql).toMatch(/VALUES \(\?,\?,\?,\?,\?,\?,\?,\?,'published','published','bulk_upload',\?\)/);
     expect(params).toContain("o'brien's note");
   });
 
@@ -230,25 +180,11 @@ describe("importShiftRosterBatch transaction handling", () => {
     // importShiftRosterBatch directly against the real DB, 0 successful imports
     // with a shift assigned.
     queueRows(
-      [
-        {
-          id: "row-1",
-          row_no: 1,
-          normalized_data: JSON.stringify({
-            employee_code: "MAS001",
-            week_start_date: "2026-08-17",
-            mon_shift: "09:00-18:00",
-          }),
-        },
-      ],
-      [
-        {
-          employee_code: "MAS001",
-          id: "emp-1",
-          process_id: "process-1",
-          branch_id: "branch-1",
-        },
-      ], // batch employee resolution
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        employee_code: "MAS001", week_start_date: "2026-08-17",
+        mon_shift: "09:00-18:00",
+      }) }],
+      [{ employee_code: "MAS001", id: "emp-1", process_id: "process-1", branch_id: "branch-1" }], // batch employee resolution
       [], // batch payroll-lock check -> nothing locked
       [],
       [],
@@ -265,9 +201,7 @@ describe("importShiftRosterBatch transaction handling", () => {
     expect(result.imported).toBe(1);
 
     const insertCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) =>
-        typeof sql === "string" &&
-        sql.includes("INSERT INTO wfm_roster_assignment"),
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("INSERT INTO wfm_roster_assignment"),
     );
     expect(insertCall, "batch INSERT not found").toBeDefined();
     const [, params] = insertCall as [string, unknown[]];
@@ -280,26 +214,12 @@ describe("importShiftRosterBatch transaction handling", () => {
   it("blocks a day on insufficient rest against an existing DB row (Area 2), with no override path in bulk upload", async () => {
     queueRows(
       // SELECT upload_batch_row -> only Monday has a shift, an overnight one
-      [
-        {
-          id: "row-1",
-          row_no: 1,
-          normalized_data: JSON.stringify({
-            employee_code: "MAS001",
-            week_start_date: "2026-08-17",
-            mon_shift: "22:00-07:00",
-          }),
-        },
-      ],
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        employee_code: "MAS001", week_start_date: "2026-08-17",
+        mon_shift: "22:00-07:00",
+      }) }],
       // 1. Batch employee resolution
-      [
-        {
-          employee_code: "MAS001",
-          id: "emp-1",
-          process_id: "process-1",
-          branch_id: "branch-1",
-        },
-      ],
+      [{ employee_code: "MAS001", id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       // 2. Batch payroll-lock check -> nothing locked
       [],
       // SELECT weekly_roster_cycle (none found)
@@ -311,30 +231,14 @@ describe("importShiftRosterBatch transaction handling", () => {
       // resolveShiftTemplate: SELECT wfm_shift_template by start/end time
       [{ id: "shift-1" }],
       // resolveRestPolicy scopes: employee, process, branch, organization
-      [],
-      [],
-      [],
-      [
-        {
-          id: "policy-1",
-          scope_type: "organization",
-          scope_id: null,
-          minimum_rest_minutes: 600,
-          allows_emergency_override: 0,
-        },
-      ],
+      [], [], [],
+      [{ id: "policy-1", scope_type: "organization", scope_id: null, minimum_rest_minutes: 600, allows_emergency_override: 0 }],
       // findAdjacentShifts: previous ends 18:00 the same day (only 4h before
       // the candidate's 22:00 start), next -> none.
       // start_time/end_time are the query's aliases now that it COALESCEs the
       // assignment's snapshot columns with the shift template's own times —
       // production roster rows carry the snapshot NULL and the times on the template.
-      [
-        {
-          roster_date: "2026-08-17",
-          start_time: "09:00:00",
-          end_time: "18:00:00",
-        },
-      ],
+      [{ roster_date: "2026-08-17", start_time: "09:00:00", end_time: "18:00:00" }],
       [],
     );
 
@@ -343,37 +247,18 @@ describe("importShiftRosterBatch transaction handling", () => {
     expect(result.errors[0]).toMatch(/only \d+min rest/);
     expect(result.errors[0]).toMatch(/does not support emergency override/);
     const insertCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) =>
-        typeof sql === "string" &&
-        sql.startsWith("INSERT INTO wfm_roster_assignment"),
+      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
     );
-    expect(
-      insertCall,
-      "a day blocked on insufficient rest must never be inserted",
-    ).toBeUndefined();
+    expect(insertCall, "a day blocked on insufficient rest must never be inserted").toBeUndefined();
   });
 
   it("blocks a day whose date is already locked for payroll (closure #2), before the rest-policy check runs", async () => {
     queueRows(
-      [
-        {
-          id: "row-1",
-          row_no: 1,
-          normalized_data: JSON.stringify({
-            employee_code: "MAS001",
-            week_start_date: "2026-08-17",
-            mon_shift: "09:00-18:00",
-          }),
-        },
-      ],
-      [
-        {
-          employee_code: "MAS001",
-          id: "emp-1",
-          process_id: "process-1",
-          branch_id: "branch-1",
-        },
-      ], // batch employee resolution
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        employee_code: "MAS001", week_start_date: "2026-08-17",
+        mon_shift: "09:00-18:00",
+      }) }],
+      [{ employee_code: "MAS001", id: "emp-1", process_id: "process-1", branch_id: "branch-1" }], // batch employee resolution
       // Batch payroll-lock check -> Monday 2026-08-17 is locked. The batch query asks about
       // every day of the week (not just Monday), but only the locked ones need to come back.
       [{ employee_id: "emp-1", record_date: "2026-08-17", is_locked: 1 }],
@@ -388,19 +273,12 @@ describe("importShiftRosterBatch transaction handling", () => {
 
     expect(result.errors[0]).toMatch(/already locked for payroll/);
     const insertCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) =>
-        typeof sql === "string" &&
-        sql.startsWith("INSERT INTO wfm_roster_assignment"),
+      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
     );
-    expect(
-      insertCall,
-      "a day blocked on a locked date must never be inserted",
-    ).toBeUndefined();
+    expect(insertCall, "a day blocked on a locked date must never be inserted").toBeUndefined();
     // resolveShiftTemplate must never run either -- the lock check short-circuits first.
     const shiftTemplateCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) =>
-        typeof sql === "string" &&
-        sql.includes("FROM wfm_shift_template WHERE start_time"),
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("FROM wfm_shift_template WHERE start_time"),
     );
     expect(shiftTemplateCall).toBeUndefined();
   });
@@ -410,9 +288,7 @@ describe("importShiftRosterBatch transaction handling", () => {
       throw new Error("connection lost");
     });
 
-    await expect(importShiftRosterBatch("batch-1", "user-1")).rejects.toThrow(
-      "connection lost",
-    );
+    await expect(importShiftRosterBatch("batch-1", "user-1")).rejects.toThrow("connection lost");
 
     expect(conn.rollback).toHaveBeenCalledTimes(1);
     expect(conn.release).toHaveBeenCalledTimes(1);

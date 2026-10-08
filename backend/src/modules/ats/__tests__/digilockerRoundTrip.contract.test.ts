@@ -29,9 +29,7 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 const ADAPTER = read("src/modules/ats/bgv-provider.adapter.ts");
 const VERIFICATION = read("src/modules/ats/bgv-verification.service.ts");
 const ONBOARDING_SERVICE = read("src/modules/ats/onboarding-full.service.ts");
-const STATUS_SERVICE = read(
-  "src/modules/integrations/luckpay/luckpay-status.service.ts",
-);
+const STATUS_SERVICE = read("src/modules/integrations/luckpay/luckpay-status.service.ts");
 
 describe("the initiate call keeps the provider's transaction id", () => {
   it("DigilockerSession can carry a provider reference", () => {
@@ -45,23 +43,14 @@ describe("the initiate call keeps the provider's transaction id", () => {
 
   it("the Luckpay adapter reads gatewayId off the initiate response", () => {
     const at = ADAPTER.indexOf('"/verifyDigilockerWithURL"');
-    expect(
-      at,
-      "the DigiLocker initiate call moved or was renamed",
-    ).toBeGreaterThan(-1);
+    expect(at, "the DigiLocker initiate call moved or was renamed").toBeGreaterThan(-1);
     const block = ADAPTER.slice(at, at + 1400);
-    expect(
-      block,
-      "gatewayId is discarded, so nothing can be polled or downloaded",
-    ).toMatch(/gatewayId/);
+    expect(block, "gatewayId is discarded, so nothing can be polled or downloaded").toMatch(/gatewayId/);
   });
 
   it("the session write records it, so the sync path can find it later", () => {
     const at = VERIFICATION.indexOf("ats_provider_transaction_log");
-    expect(
-      at,
-      "startDigilockerByToken never writes the log that syncDigilockerStatus reads",
-    ).toBeGreaterThan(-1);
+    expect(at, "startDigilockerByToken never writes the log that syncDigilockerStatus reads").toBeGreaterThan(-1);
   });
 });
 
@@ -75,9 +64,7 @@ describe("nothing queries the empty duplicate table", () => {
     ["bgv-verification.service.ts", VERIFICATION],
   ] as const) {
     it(`${name} does not read candidate_digilocker_sessions`, () => {
-      expect(source, `${name} queries the empty plural table`).not.toMatch(
-        /candidate_digilocker_sessions\b/,
-      );
+      expect(source, `${name} queries the empty plural table`).not.toMatch(/candidate_digilocker_sessions\b/);
     });
   }
 });
@@ -91,35 +78,16 @@ describe("the completion write targets columns that exist", () => {
   // neither of which exists, and was wrapped in .catch(() => undefined) — so a
   // session could never be marked completed and nothing said so.
   const LIVE_COLUMNS = [
-    "id",
-    "candidate_id",
-    "state_token",
-    "provider_key",
-    "auth_url",
-    "session_status",
-    "requested_documents_json",
-    "returned_documents_json",
-    "expires_at",
-    "created_at",
-    "updated_at",
+    "id", "candidate_id", "state_token", "provider_key", "auth_url", "session_status",
+    "requested_documents_json", "returned_documents_json", "expires_at", "created_at", "updated_at",
   ];
 
   it("the session UPDATE uses only real columns", () => {
     const at = STATUS_SERVICE.indexOf("UPDATE candidate_digilocker_session");
     expect(at).toBeGreaterThan(-1);
-    const statement = STATUS_SERVICE.slice(
-      at,
-      STATUS_SERVICE.indexOf("`", at + 10),
-    );
-    const referenced = [...statement.matchAll(/\b([a-z_]+)\s*=/g)].map(
-      (m) => m[1],
-    );
-    const unknown = referenced.filter(
-      (c) => !LIVE_COLUMNS.includes(c) && c !== "SET",
-    );
-    expect(
-      unknown,
-      `these columns do not exist on the table: ${unknown.join(", ")}`,
-    ).toEqual([]);
+    const statement = STATUS_SERVICE.slice(at, STATUS_SERVICE.indexOf("`", at + 10));
+    const referenced = [...statement.matchAll(/\b([a-z_]+)\s*=/g)].map((m) => m[1]);
+    const unknown = referenced.filter((c) => !LIVE_COLUMNS.includes(c) && c !== "SET");
+    expect(unknown, `these columns do not exist on the table: ${unknown.join(", ")}`).toEqual([]);
   });
 });

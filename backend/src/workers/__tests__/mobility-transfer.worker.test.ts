@@ -20,19 +20,10 @@ vi.mock("../../db/mysql.js", () => ({ db: mockDb }));
 // Deliberately NOT mocking applyTransferToEmployee: applyPendingTransfers calls it through
 // the module's own `mobilityService` object, so a module mock would not intercept it. The
 // real apply runs here against the mocked db, which also exercises the employee UPDATE.
-const { mobilityService } =
-  await import("../../modules/mobility/mobility.service.js");
-const { millisecondsUntilNextTransferSweep } =
-  await import("../mobility-transfer.worker.js");
+const { mobilityService } = await import("../../modules/mobility/mobility.service.js");
+const { millisecondsUntilNextTransferSweep } = await import("../mobility-transfer.worker.js");
 
-const PENDING = [
-  {
-    id: "t-1",
-    employee_id: "e-1",
-    transfer_type: "branch",
-    to_value: "Gurgaon",
-  },
-];
+const PENDING = [{ id: "t-1", employee_id: "e-1", transfer_type: "branch", to_value: "Gurgaon" }];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -45,10 +36,8 @@ beforeEach(() => {
 function arrange(claimAffected: number, branchFound = true, pending = PENDING) {
   mockDb.execute.mockImplementation(async (sql: string) => {
     if (/SELECT id, employee_id/.test(sql)) return [pending, []];
-    if (/FROM branch_master/.test(sql))
-      return [branchFound ? [{ id: "br-9" }] : [], []];
-    if (/SET applied_at = NOW\(\)/.test(sql))
-      return [{ affectedRows: claimAffected }, []];
+    if (/FROM branch_master/.test(sql)) return [branchFound ? [{ id: "br-9" }] : [], []];
+    if (/SET applied_at = NOW\(\)/.test(sql)) return [{ affectedRows: claimAffected }, []];
     return [{ affectedRows: 1 }, []];
   });
 }
@@ -59,14 +48,10 @@ describe("a deferred transfer is claimed before the employee is moved", () => {
     const applied = await mobilityService.applyPendingTransfers();
 
     expect(applied).toBe(1);
-    const claim = mockDb.execute.mock.calls.find((c: any[]) =>
-      /SET applied_at = NOW\(\)/.test(String(c[0])),
-    );
+    const claim = mockDb.execute.mock.calls.find((c: any[]) => /SET applied_at = NOW\(\)/.test(String(c[0])));
     expect(String(claim![0])).toMatch(/WHERE id = \? AND applied_at IS NULL/);
     // the employee master really was moved
-    const move = mockDb.execute.mock.calls.find((c: any[]) =>
-      /UPDATE employees SET branch_id/.test(String(c[0])),
-    );
+    const move = mockDb.execute.mock.calls.find((c: any[]) => /UPDATE employees SET branch_id/.test(String(c[0])));
     expect(move![1]).toEqual(["br-9", "e-1"]);
   });
 
@@ -75,9 +60,7 @@ describe("a deferred transfer is claimed before the employee is moved", () => {
     const applied = await mobilityService.applyPendingTransfers();
 
     expect(applied).toBe(0);
-    const move = mockDb.execute.mock.calls.find((c: any[]) =>
-      /UPDATE employees SET branch_id/.test(String(c[0])),
-    );
+    const move = mockDb.execute.mock.calls.find((c: any[]) => /UPDATE employees SET branch_id/.test(String(c[0])));
     expect(move).toBeUndefined();
   });
 });
@@ -99,14 +82,10 @@ describe("a failed apply is retried, not silently marked done", () => {
 
 describe("the sweep runs after midnight, so an effective_date of today is due", () => {
   it("schedules for 01:00 the next time that hour comes round", () => {
-    const at0000 = millisecondsUntilNextTransferSweep(
-      new Date("2026-08-16T00:00:00"),
-    );
+    const at0000 = millisecondsUntilNextTransferSweep(new Date("2026-08-16T00:00:00"));
     expect(at0000).toBe(60 * 60 * 1000);
 
-    const at0200 = millisecondsUntilNextTransferSweep(
-      new Date("2026-08-16T02:00:00"),
-    );
+    const at0200 = millisecondsUntilNextTransferSweep(new Date("2026-08-16T02:00:00"));
     expect(at0200).toBe(23 * 60 * 60 * 1000);
   });
 });

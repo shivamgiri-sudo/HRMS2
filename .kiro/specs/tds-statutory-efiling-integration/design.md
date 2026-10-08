@@ -67,34 +67,20 @@ Owns `tds_deductor` and `tds_deductor_branch`.
 
 ```ts
 interface DeductorInput {
-  tan: string; // AAAA99999A
-  deductorName: string; // <=200 chars
-  registeredAddress: string; // <=500 chars
-  responsiblePersonName: string; // <=150 chars
+  tan: string;                          // AAAA99999A
+  deductorName: string;                 // <=200 chars
+  registeredAddress: string;            // <=500 chars
+  responsiblePersonName: string;        // <=150 chars
   responsiblePersonDesignation: string; // <=100 chars
-  responsiblePersonPan: string; // AAAAA9999A
-  branchIds?: string[]; // omitted/empty = organization-wide
+  responsiblePersonPan: string;         // AAAAA9999A
+  branchIds?: string[];                 // omitted/empty = organization-wide
 }
 
-async function createDeductor(
-  input: DeductorInput,
-  actorUserId: string,
-): Promise<DeductorRecord>;
-async function updateDeductor(
-  tanId: string,
-  input: Partial<DeductorInput>,
-  actorUserId: string,
-): Promise<DeductorRecord>;
-async function deactivateDeductor(
-  tanId: string,
-  actorUserId: string,
-): Promise<void>;
-async function findActiveDeductorForScope(scope: {
-  branchId?: string;
-}): Promise<DeductorRecord | null>;
-async function listDeductors(
-  includeInactive?: boolean,
-): Promise<DeductorRecord[]>;
+async function createDeductor(input: DeductorInput, actorUserId: string): Promise<DeductorRecord>;
+async function updateDeductor(tanId: string, input: Partial<DeductorInput>, actorUserId: string): Promise<DeductorRecord>;
+async function deactivateDeductor(tanId: string, actorUserId: string): Promise<void>;
+async function findActiveDeductorForScope(scope: { branchId?: string }): Promise<DeductorRecord | null>;
+async function listDeductors(includeInactive?: boolean): Promise<DeductorRecord[]>;
 ```
 
 `findActiveDeductorForScope` is the function every downstream document-generation path (Form 16/130 Part B, Return_File_Generator, Form 27A) calls to resolve the TAN for a scope. Resolution order: an active TAN explicitly mapped to the employee's `branch_id` wins; if none is mapped to that branch, an active org-wide TAN (no branch mappings at all) applies; if neither exists, it returns `null` and every caller is contractually required to treat `null` as "no active TAN for this scope" rather than substitute a default.
@@ -112,35 +98,20 @@ Owns `tds_challan` rows with `source = 'payroll_entered'`.
 
 ```ts
 interface ChallanInput {
-  deductorId: string; // FK to tds_deductor
-  filingMonth: string; // YYYY-MM, the TDS_Deposit month this challan pays
-  bsrCode: string; // exactly 7 digits
-  challanTenderDate: string; // ISO date, within [1st of filingMonth, today]
+  deductorId: string;       // FK to tds_deductor
+  filingMonth: string;      // YYYY-MM, the TDS_Deposit month this challan pays
+  bsrCode: string;          // exactly 7 digits
+  challanTenderDate: string;// ISO date, within [1st of filingMonth, today]
   challanSerialNumber: number; // positive integer, <=5 digits
-  depositedAmount: number; // 0.01 .. 999999999.99, <=2 decimals
+  depositedAmount: number;  // 0.01 .. 999999999.99, <=2 decimals
 }
 
-function deriveCin(
-  bsrCode: string,
-  challanTenderDate: string,
-  challanSerialNumber: number,
-): string;
+function deriveCin(bsrCode: string, challanTenderDate: string, challanSerialNumber: number): string;
 // CIN = bsrCode + DDMMYYYY(challanTenderDate) + String(challanSerialNumber)
 
-async function recordChallan(
-  input: ChallanInput,
-  actorUserId: string,
-): Promise<ChallanRecord>;
-async function updateChallan(
-  id: string,
-  input: Partial<ChallanInput>,
-  actorUserId: string,
-): Promise<ChallanRecord>;
-async function listChallansForObligation(
-  deductorId: string,
-  financialYearStart: number,
-  quarter: Quarter,
-): Promise<ChallanRecord[]>;
+async function recordChallan(input: ChallanInput, actorUserId: string): Promise<ChallanRecord>;
+async function updateChallan(id: string, input: Partial<ChallanInput>, actorUserId: string): Promise<ChallanRecord>;
+async function listChallansForObligation(deductorId: string, financialYearStart: number, quarter: Quarter): Promise<ChallanRecord[]>;
 ```
 
 `deriveCin` is a pure function used identically here, in `tds-csi-import.service.ts` (to compute the CIN of a parsed CSI record), and in `tds-reconciliation.service.ts` (to compare CINs) — one implementation, imported everywhere a CIN is computed or compared, so the "case/whitespace-insensitive" comparison rule in the glossary cannot drift between call sites.
@@ -157,20 +128,10 @@ Parses an uploaded CSI text file into `tds_challan` rows with `source = 'traces_
 
 ```ts
 interface CsiParseResult {
-  records: Array<{
-    bsrCode: string;
-    challanTenderDate: string;
-    challanSerialNumber: number;
-    depositedAmount: number;
-    tan: string;
-  }>;
+  records: Array<{ bsrCode: string; challanTenderDate: string; challanSerialNumber: number; depositedAmount: number; tan: string }>;
 }
 
-function parseCsiFile(
-  fileText: string,
-  expectedTan: string,
-  dateRange: { from: string; to: string },
-): CsiParseResult;
+function parseCsiFile(fileText: string, expectedTan: string, dateRange: { from: string; to: string }): CsiParseResult;
 // Throws CsiParseError, naming the failing line number and field, on:
 //  - any line that does not match the expected CSI record structure
 //  - any parsed record whose TAN != expectedTan
@@ -179,17 +140,9 @@ function parseCsiFile(
 // nothing from that upload is persisted.
 
 async function importCsiFile(opts: {
-  deductorId: string;
-  tan: string;
-  dateRange: { from: string; to: string };
-  fileBuffer: Buffer;
-  originalFilename: string;
-  actorUserId: string;
-}): Promise<{
-  batchId: string;
-  importedCount: number;
-  skippedDuplicateCount: number;
-}>;
+  deductorId: string; tan: string; dateRange: { from: string; to: string };
+  fileBuffer: Buffer; originalFilename: string; actorUserId: string;
+}): Promise<{ batchId: string; importedCount: number; skippedDuplicateCount: number }>;
 ```
 
 `importCsiFile` enforces the 10 MB limit via multer (`limits: { fileSize: 10 * 1024 * 1024 }`, same pattern as `tds-certificate-part-a.routes.ts`'s upload limiter), calls `parseCsiFile`, then persists each parsed record as `source = 'traces_csi'`, skipping — not erroring on — any record whose derived CIN already exists as a `traces_csi` row for that deductor (Requirement 6.5's idempotence). After a successful import it calls into `tds-reconciliation.service.ts` to re-run matching for every affected `filing_month`/quarter.
@@ -201,15 +154,12 @@ Route: `POST /api/payroll/tds-challan/csi-import` (multipart upload, same role s
 Pure matching logic plus the read-side status used to gate filing.
 
 ```ts
-type ReconciliationStatus =
-  "unreconciled" | "reconciled" | "amount_discrepancy" | "unmatched";
+type ReconciliationStatus = "unreconciled" | "reconciled" | "amount_discrepancy" | "unmatched";
 
 function normalizeCin(cin: string): string; // trim + uppercase — the single place the
-// "case/whitespace-insensitive" CIN comparison rule lives
+                                             // "case/whitespace-insensitive" CIN comparison rule lives
 
-async function reconcileForDeductor(
-  deductorId: string,
-): Promise<{ updated: number }>;
+async function reconcileForDeductor(deductorId: string): Promise<{ updated: number }>;
 // For every payroll_entered challan without a terminal reconciliation status:
 //   - find a traces_csi record with normalizeCin(cin) equal
 //   - none found            -> status = 'unmatched'
@@ -217,9 +167,7 @@ async function reconcileForDeductor(
 //   - found, amounts differ -> status = 'amount_discrepancy', discrepancy stored (both amounts)
 
 async function reconciliationSummaryForObligation(
-  deductorId: string,
-  financialYearStart: number,
-  quarter: Quarter,
+  deductorId: string, financialYearStart: number, quarter: Quarter,
 ): Promise<{
   allReconciled: boolean;
   challans: Array<{ id: string; cin: string; status: ReconciliationStatus }>;
@@ -234,26 +182,15 @@ async function reconciliationSummaryForObligation(
 ```ts
 interface GenerateResult {
   fileId: string;
-  quarterlyReturnDownloadUrl: string; // via document-vault download token
-  form27aDownloadUrl: string; // via document-vault download token
+  quarterlyReturnDownloadUrl: string;   // via document-vault download token
+  form27aDownloadUrl: string;           // via document-vault download token
   formDesignation: "24Q" | "138";
-  totals: {
-    challanCount: number;
-    taxDeducted: number;
-    deducteeCount: number;
-    amountPaid: number;
-  };
-  excludedEmployees: Array<{
-    employeeId: string;
-    reason: "missing_pan" | "payroll_not_finalized";
-  }>;
+  totals: { challanCount: number; taxDeducted: number; deducteeCount: number; amountPaid: number };
+  excludedEmployees: Array<{ employeeId: string; reason: "missing_pan" | "payroll_not_finalized" }>;
 }
 
 async function generateQuarterlyReturn(
-  deductorId: string,
-  financialYearStart: number,
-  quarter: Quarter,
-  actorUserId: string,
+  deductorId: string, financialYearStart: number, quarter: Quarter, actorUserId: string,
 ): Promise<GenerateResult>;
 // Throws (no file produced, nothing persisted) when:
 //  - no active TAN for the resolved scope
@@ -273,7 +210,7 @@ async function generateQuarterlyReturn(
 - **Annexure II** (deductee/salary detail, required for Q4): one row per employee under the TAN's branch scope with a **finalized** `salary_prep_run`/`salary_prep_line` for the financial year to date (run status in the closed set already defined by `payroll-lifecycle.ts`'s `CLOSED_RUN_STATUSES`/`run-status.ts`'s case-insensitive check — reused, not reimplemented). An employee is **excluded** from Annexure II, and reported in `excludedEmployees`, when:
   - `employees.pan_number` (resolved via the same `resolvePii(pan_number_encrypted, pan_number)` pattern already used in `payroll.routes.ts`) is empty, or
   - that employee has no finalized payroll line for the quarter being filed.
-    No row is ever emitted with a blank PAN or from a provisional/draft line.
+  No row is ever emitted with a blank PAN or from a provisional/draft line.
 
 #### FVU-compatible file layout (structural, not the full NSDL byte-spec)
 
@@ -294,13 +231,7 @@ FT|<ChallanCount>|<TotalTaxDeducted>|<DeducteeCount>|<TotalAmountPaid>
 
 ```ts
 interface ParsedReturnFile {
-  challans: Array<{
-    bsrCode: string;
-    tenderDate: string;
-    serialNumber: number;
-    amount: number;
-    cin: string;
-  }>;
+  challans: Array<{ bsrCode: string; tenderDate: string; serialNumber: number; amount: number; cin: string }>;
   deductees: Array<{ pan: string; taxDeducted: number }>;
   trailerTotals: { totalTaxDeducted: number; deducteeCount: number };
 }
@@ -311,17 +242,8 @@ function parseQuarterlyReturnFile(fileText: string): ParsedReturnFile;
 // inverse pair (generate -> parse round trip), the standard property-based-testing
 // pattern for anything that serializes.
 
-function selfValidate(
-  generated: string,
-  source: { reconciledChallanTotal: number; sourceEmployeeCount: number },
-):
-  | { ok: true }
-  | {
-      ok: false;
-      reason: "tax_total_mismatch" | "deductee_count_mismatch";
-      parsed: number;
-      expected: number;
-    };
+function selfValidate(generated: string, source: { reconciledChallanTotal: number; sourceEmployeeCount: number }):
+  { ok: true } | { ok: false; reason: "tax_total_mismatch" | "deductee_count_mismatch"; parsed: number; expected: number };
 ```
 
 `generateQuarterlyReturn` always calls `parseQuarterlyReturnFile` on its own output and `selfValidate` against the same reconciled-challan sum and finalized-employee count it built the file from, **before** persisting anything (Requirement 9.4 — there is no configuration flag that skips this; the call is unconditional in the function body, not behind an `if`). A `tax_total_mismatch` beyond ₹1 or any `deductee_count_mismatch` aborts the generation with both the parsed and expected figures in the error; no vault entry, no obligation link update, no download token is created.
@@ -345,9 +267,7 @@ Routes (same `PAYROLL_ROLES` set, scoped to the TAN's branch/org scope via `hasS
 type Quarter = "Q1" | "Q2" | "Q3" | "Q4";
 
 async function initializeQuarterlyObligation(
-  deductorId: string,
-  financialYearStart: number,
-  quarter: Quarter,
+  deductorId: string, financialYearStart: number, quarter: Quarter,
 ): Promise<{ created: boolean }>;
 // Due date: Q1/Q2/Q3 -> last day of the month following quarter end; Q4 -> 31 May same year.
 // Form designation: statutoryRegimeForFinancialYear(financialYearStart) — same resolver
@@ -356,9 +276,7 @@ async function initializeQuarterlyObligation(
 // the existing initialize/:month route's own INSERT IGNORE pattern.
 
 async function markObligationFiled(
-  obligationId: string,
-  acknowledgementNumber: string,
-  actorUserId: string,
+  obligationId: string, acknowledgementNumber: string, actorUserId: string,
 ): Promise<ObligationRecord>;
 // Denies (reports every unmet condition) unless: a quarterly_return_file is linked,
 // at least one challan is associated with the obligation, every associated challan is
@@ -513,7 +431,7 @@ CREATE TABLE quarterly_return_file (
 
 ## Correctness Properties
 
-_A property is a characteristic or behavior that should hold true across all valid executions of a system—essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees._
+*A property is a characteristic or behavior that should hold true across all valid executions of a system—essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
 
 ### Property 1: TAN record round trip and branch scoping
 
@@ -807,20 +725,20 @@ For any Quarterly_Return obligation state reachable without having gone through 
 
 All new routes follow the existing project convention: `{ success: false, message }` JSON bodies with an appropriate HTTP status, produced by the shared `h()` error-wrapping helper already used in `payroll-statutory-filing.routes.ts` and `tds-certificate-part-a.routes.ts`.
 
-| Condition                                                                              | Status | Notes                                                                                   |
-| -------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------- |
-| Field-level validation failure (TAN/PAN/BSR/serial/date/amount format, missing field)  | 400    | Message names the specific field, per Requirements 1.4/1.5/3.2–3.6                      |
-| Duplicate active TAN, duplicate payroll-entered CIN                                    | 409    | Nothing persisted                                                                       |
-| Unauthorized role                                                                      | 403    | No TAN/challan/return data in the body (Requirement 12.5)                               |
-| Authentication service failure (mirrors `requireRole`'s existing fail-closed behavior) | 503    | Reused as-is, not reimplemented                                                         |
-| CSI upload: oversized, malformed structure, TAN/date-range mismatch                    | 400    | Whole upload rejected atomically; message names the failing line/field or the mismatch  |
-| Reconciliation-gate failure (generate return file, generate Form 27A, mark-as-filed)   | 409    | Body enumerates every unmet condition, not just the first                               |
-| Statutory regime unresolvable for the financial year                                   | 422    | Reuses `statutoryRegimeForFinancialYear`'s own failure, not a new resolver              |
-| Self-validation mismatch (tax total beyond ₹1, deductee count)                         | 422    | Body includes both the parsed-back and expected figures; no file is persisted or linked |
-| Missing Responsible_Person detail for Form 27A                                         | 409    | Names the missing field; existing TAN data unchanged                                    |
-| No active TAN for scope                                                                | 409    | Names the scope lacking a TAN                                                           |
-| Acknowledgement number missing or too long                                             | 400    | Distinct messages for "required" vs "exceeds maximum length"                            |
-| Obligation/deductor/challan not found                                                  | 404    |                                                                                         |
+| Condition | Status | Notes |
+|---|---|---|
+| Field-level validation failure (TAN/PAN/BSR/serial/date/amount format, missing field) | 400 | Message names the specific field, per Requirements 1.4/1.5/3.2–3.6 |
+| Duplicate active TAN, duplicate payroll-entered CIN | 409 | Nothing persisted |
+| Unauthorized role | 403 | No TAN/challan/return data in the body (Requirement 12.5) |
+| Authentication service failure (mirrors `requireRole`'s existing fail-closed behavior) | 503 | Reused as-is, not reimplemented |
+| CSI upload: oversized, malformed structure, TAN/date-range mismatch | 400 | Whole upload rejected atomically; message names the failing line/field or the mismatch |
+| Reconciliation-gate failure (generate return file, generate Form 27A, mark-as-filed) | 409 | Body enumerates every unmet condition, not just the first |
+| Statutory regime unresolvable for the financial year | 422 | Reuses `statutoryRegimeForFinancialYear`'s own failure, not a new resolver |
+| Self-validation mismatch (tax total beyond ₹1, deductee count) | 422 | Body includes both the parsed-back and expected figures; no file is persisted or linked |
+| Missing Responsible_Person detail for Form 27A | 409 | Names the missing field; existing TAN data unchanged |
+| No active TAN for scope | 409 | Names the scope lacking a TAN |
+| Acknowledgement number missing or too long | 400 | Distinct messages for "required" vs "exceeds maximum length" |
+| Obligation/deductor/challan not found | 404 | |
 
 **The reconciliation gate**, referenced from three separate routes, is implemented once in `tds-reconciliation.service.ts`'s `reconciliationSummaryForObligation` and called by all three callers (`generateQuarterlyReturn`, the Form 27A path inside it, and `markObligationFiled`) rather than reimplemented per call site — this is what Property 35 depends on holding uniformly.
 

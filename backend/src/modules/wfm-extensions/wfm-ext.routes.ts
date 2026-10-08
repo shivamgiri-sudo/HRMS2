@@ -19,15 +19,8 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 router.use(requireAuth);
 
 async function computedCoverageSnapshot(input: any, userId: string) {
-  const snapshotDate = String(input.snapshot_date ?? input.date ?? "").slice(
-    0,
-    10,
-  );
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(snapshotDate))
-    throw Object.assign(
-      new Error("snapshot_date/date is required in YYYY-MM-DD format"),
-      { statusCode: 400 },
-    );
+  const snapshotDate = String(input.snapshot_date ?? input.date ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(snapshotDate)) throw Object.assign(new Error("snapshot_date/date is required in YYYY-MM-DD format"), { statusCode: 400 });
   if (input.planned_headcount !== undefined) {
     // Manual/override snapshot: unlike the computed path below (which scopes via
     // employeeScope()), this branch took process_id/branch_id straight from the
@@ -41,19 +34,8 @@ async function computedCoverageSnapshot(input: any, userId: string) {
       // hasProcessScope requires a process id to evaluate against — it has no
       // branch-only mode — so a branch-only submission has nothing to validate
       // against and is rejected rather than let through unchecked.
-      if (
-        !processId ||
-        !(await hasProcessScope(
-          userId,
-          processId,
-          branchId,
-          ...WFM_SCOPE_ROLES,
-        ))
-      ) {
-        throw Object.assign(
-          new Error("Not authorized for this process/branch"),
-          { statusCode: 403 },
-        );
+      if (!processId || !(await hasProcessScope(userId, processId, branchId, ...WFM_SCOPE_ROLES))) {
+        throw Object.assign(new Error("Not authorized for this process/branch"), { statusCode: 403 });
       }
     }
     return {
@@ -70,14 +52,8 @@ async function computedCoverageSnapshot(input: any, userId: string) {
   const scope = await employeeScope(userId);
   const conds = ["a.roster_date = ?", `(${scope.sql})`];
   const params: unknown[] = [snapshotDate, ...scope.params];
-  if (input.process_id) {
-    conds.push("e.process_id = ?");
-    params.push(String(input.process_id));
-  }
-  if (input.branch_id) {
-    conds.push("e.branch_id = ?");
-    params.push(String(input.branch_id));
-  }
+  if (input.process_id) { conds.push("e.process_id = ?"); params.push(String(input.process_id)); }
+  if (input.branch_id) { conds.push("e.branch_id = ?"); params.push(String(input.branch_id)); }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(DISTINCT a.employee_id) AS planned_headcount,
             COUNT(DISTINCT CASE WHEN ad.attendance_status IN ('present','half_day') THEN ad.employee_id END) AS actual_headcount,
@@ -102,58 +78,27 @@ async function computedCoverageSnapshot(input: any, userId: string) {
 }
 
 // ── Roster Swap ───────────────────────────────────────────────────────────────
-router.get(
-  "/roster/swaps",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const userId = req.authUser!.id;
-    // team_leader was missing here even though the review action three routes down
-    // (POST /roster/swaps/:id/review) already grants it explicitly — the same
-    // inconsistency found across several other scope arrays in this codebase
-    // (WFM regularization, leave list scope) on 2026-08-13. hasRole (accessGuard.ts) does
-    // a literal string match with no ROLE_ALIASES expansion (unlike requireRole), so this
-    // one, unlike the requireRole-gated routes below, needed team_leader listed explicitly
-    // — a team_leader-only caller fell through to the self-only branch below and could see
-    // their own swap requests but never their team's, despite already being able to
-    // approve/reject one via the review route once they somehow had its id.
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    if (
-      await hasRole(
-        userId,
-        "admin",
-        "hr",
-        "wfm",
-        "manager",
-        "assistant_manager",
-        "tl",
-        "team_leader",
-        "branch_head",
-        "process_manager",
-      )
-    ) {
-      const scope = await employeeScope(userId);
-      return res.json({
-        success: true,
-        data: await rosterSwapService.list({
-          ...(req.query as any),
-          ...scope,
-          lob,
-        }),
-      });
-    }
-    const emp = await getEmployeeForUser(userId);
-    if (!emp)
-      return res.status(403).json({ success: false, message: "Forbidden" });
-    return res.json({
-      success: true,
-      data: await rosterSwapService.list({
-        employee_id: emp.id,
-        status: req.query.status as string | undefined,
-        lob,
-      }),
-    });
-  }),
-);
+router.get("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  // team_leader was missing here even though the review action three routes down
+  // (POST /roster/swaps/:id/review) already grants it explicitly — the same
+  // inconsistency found across several other scope arrays in this codebase
+  // (WFM regularization, leave list scope) on 2026-08-13. hasRole (accessGuard.ts) does
+  // a literal string match with no ROLE_ALIASES expansion (unlike requireRole), so this
+  // one, unlike the requireRole-gated routes below, needed team_leader listed explicitly
+  // — a team_leader-only caller fell through to the self-only branch below and could see
+  // their own swap requests but never their team's, despite already being able to
+  // approve/reject one via the review route once they somehow had its id.
+  const lob = readLobFilter(req, res);
+  if (!lob) return;
+  if (await hasRole(userId, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager")) {
+    const scope = await employeeScope(userId);
+    return res.json({ success: true, data: await rosterSwapService.list({ ...(req.query as any), ...scope, lob }) });
+  }
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return res.status(403).json({ success: false, message: "Forbidden" });
+  return res.json({ success: true, data: await rosterSwapService.list({ employee_id: emp.id, status: req.query.status as string | undefined, lob }) });
+}));
 
 router.post("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
@@ -189,23 +134,12 @@ router.post("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) 
 // Counterpart (swap_with_emp_id) accepts/declines — must precede manager
 // approval; see rosterSwapService.respond()'s docstring for why this step
 // didn't exist before round 2.
-router.post(
-  "/roster/swaps/:id/respond",
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const response = String(req.body.response ?? req.body.status ?? "");
-    if (!["accepted", "declined"].includes(response))
-      return res
-        .status(400)
-        .json({ error: "response must be accepted or declined" });
-    const result = await rosterSwapService.respond(
-      req.params.id,
-      response as "accepted" | "declined",
-      req.authUser!.id,
-      req,
-    );
-    res.json({ success: true, data: result });
-  }),
-);
+router.post("/roster/swaps/:id/respond", h(async (req: AuthenticatedRequest, res: Response) => {
+  const response = String(req.body.response ?? req.body.status ?? "");
+  if (!["accepted", "declined"].includes(response)) return res.status(400).json({ error: "response must be accepted or declined" });
+  const result = await rosterSwapService.respond(req.params.id, response as "accepted" | "declined", req.authUser!.id, req);
+  res.json({ success: true, data: result });
+}));
 
 router.post("/roster/swaps/:id/review", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader"), employeeOwnerGuard("wfm_roster_swap_request", "id", "requester_emp_id"), h(async (req: AuthenticatedRequest, res: Response) => {
   const status = String(req.body.status ?? req.body.action ?? "");
@@ -224,35 +158,11 @@ router.post("/roster/swaps/:id/review", requireRole("admin", "hr", "wfm", "manag
 }));
 
 // ── Roster Conflicts ──────────────────────────────────────────────────────────
-router.get(
-  "/roster/conflicts",
-  requireRole(
-    "admin",
-    "hr",
-    "wfm",
-    "manager",
-    "assistant_manager",
-    "team_leader",
-    "branch_head",
-    "process_manager",
-    "operations_manager",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const scope = await employeeScope(req.authUser!.id);
-    const resolved =
-      req.query.resolved !== undefined
-        ? req.query.resolved === "true"
-        : undefined;
-    res.json({
-      success: true,
-      data: await rosterConflictService.list({
-        ...(req.query as any),
-        resolved,
-        ...scope,
-      }),
-    });
-  }),
-);
+router.get("/roster/conflicts", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader", "branch_head", "process_manager", "operations_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await employeeScope(req.authUser!.id);
+  const resolved = req.query.resolved !== undefined ? req.query.resolved === "true" : undefined;
+  res.json({ success: true, data: await rosterConflictService.list({ ...(req.query as any), resolved, ...scope }) });
+}));
 
 router.post("/roster/conflicts/:id/resolve", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader"), h(async (req: AuthenticatedRequest, res: Response) => {
   const resolutionAction = typeof req.body?.resolution_action === "string" ? req.body.resolution_action.trim() : "";
@@ -276,56 +186,22 @@ router.post("/roster/conflicts/:id/resolve", requireRole("admin", "hr", "wfm", "
 }));
 
 // ── Coverage / Shrinkage Snapshots ────────────────────────────────────────────
-router.get(
-  "/coverage",
-  requireRole(
-    "admin",
-    "hr",
-    "wfm",
-    "manager",
-    "assistant_manager",
-    "team_leader",
-    "branch_head",
-    "process_manager",
-    "operations_manager",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const scope = await employeeScope(req.authUser!.id);
-    res.json(
-      await coverageService.summarize({ ...(req.query as any), ...scope }),
-    );
-  }),
-);
+router.get("/coverage", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader", "branch_head", "process_manager", "operations_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await employeeScope(req.authUser!.id);
+  res.json(await coverageService.summarize({ ...(req.query as any), ...scope }));
+}));
 
-router.post(
-  "/coverage/snapshot",
-  requireRole("admin", "hr", "wfm", "manager"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const snapshot = await computedCoverageSnapshot(req.body, req.authUser!.id);
-    await coverageService.upsertSnapshot(snapshot, req.authUser!.id, req);
-    res.json({ success: true, ok: true });
-  }),
-);
+router.post("/coverage/snapshot", requireRole("admin", "hr", "wfm", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const snapshot = await computedCoverageSnapshot(req.body, req.authUser!.id);
+  await coverageService.upsertSnapshot(snapshot, req.authUser!.id, req);
+  res.json({ success: true, ok: true });
+}));
 
 // ── Attrition ─────────────────────────────────────────────────────────────────
-router.get(
-  "/attrition/summary",
-  requireRole(
-    "admin",
-    "hr",
-    "wfm",
-    "manager",
-    "branch_head",
-    "process_manager",
-    "operations_manager",
-  ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const scope = await employeeScope(req.authUser!.id);
-    res.json(
-      await attritionService.getSummary({ ...(req.query as any), ...scope }),
-    );
-  }),
-);
+router.get("/attrition/summary", requireRole("admin", "hr", "wfm", "manager", "branch_head", "process_manager", "operations_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await employeeScope(req.authUser!.id);
+  res.json(await attritionService.getSummary({ ...(req.query as any), ...scope }));
+}));
 
 router.post("/attrition/record", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { employee_id, exit_date } = req.body;

@@ -18,10 +18,7 @@ import { describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-import {
-  narrowDashboardScope,
-  type DashboardScope,
-} from "../../../shared/dashboardScope.js";
+import { narrowDashboardScope, type DashboardScope } from "../../../shared/dashboardScope.js";
 
 function scope(overrides: Partial<DashboardScope>): DashboardScope {
   return {
@@ -68,11 +65,7 @@ describe("narrowDashboardScope", () => {
       role: "branch_head",
     });
 
-    const narrowed = await narrowDashboardScope(
-      base,
-      null,
-      "process-back-office",
-    );
+    const narrowed = await narrowDashboardScope(base, null, "process-back-office");
 
     // The regression: this used to be [], which widened visibility to every branch
     // running that process instead of just this branch head's own branch.
@@ -89,11 +82,7 @@ describe("narrowDashboardScope", () => {
       role: "process_manager",
     });
 
-    const narrowed = await narrowDashboardScope(
-      base,
-      "branch-delhi",
-      "process-a",
-    );
+    const narrowed = await narrowDashboardScope(base, "branch-delhi", "process-a");
 
     expect(narrowed.branchIds).toEqual(["branch-delhi"]);
     expect(narrowed.processIds).toEqual(["process-a"]);
@@ -104,21 +93,13 @@ describe("narrowDashboardScope", () => {
     const team = scope({ level: "TEAM_ONLY", employeeIds: ["emp-2", "emp-3"] });
     const self = scope({ level: "SELF_ONLY", employeeIds: ["emp-1"] });
 
-    expect(await narrowDashboardScope(team, "any-branch", "any-process")).toBe(
-      team,
-    );
-    expect(await narrowDashboardScope(self, "any-branch", "any-process")).toBe(
-      self,
-    );
+    expect(await narrowDashboardScope(team, "any-branch", "any-process")).toBe(team);
+    expect(await narrowDashboardScope(self, "any-branch", "any-process")).toBe(self);
   });
 
   it("still denies a branch outside a BRANCH_ALL scope's own grant", async () => {
     wireAllValid();
-    const base = scope({
-      level: "BRANCH_ALL",
-      branchIds: ["branch-mohali"],
-      role: "branch_head",
-    });
+    const base = scope({ level: "BRANCH_ALL", branchIds: ["branch-mohali"], role: "branch_head" });
 
     const narrowed = await narrowDashboardScope(base, "branch-not-mine", null);
 
@@ -129,11 +110,7 @@ describe("narrowDashboardScope", () => {
 
   it("still denies a process outside a PROCESS_ALL scope's own grant", async () => {
     wireAllValid();
-    const base = scope({
-      level: "PROCESS_ALL",
-      processIds: ["process-mine"],
-      role: "process_manager",
-    });
+    const base = scope({ level: "PROCESS_ALL", processIds: ["process-mine"], role: "process_manager" });
 
     const narrowed = await narrowDashboardScope(base, null, "process-not-mine");
 

@@ -41,11 +41,16 @@ export type DataCategory =
   | "audit"
   | "ai_context";
 
-export type PrincipalType =
-  "employee" | "candidate" | "client_user" | "portal_user";
+export type PrincipalType = "employee" | "candidate" | "client_user" | "portal_user";
 
 export type PrivacyAction =
-  "read" | "write" | "delete" | "export" | "download" | "share" | "ai_context";
+  | "read"
+  | "write"
+  | "delete"
+  | "export"
+  | "download"
+  | "share"
+  | "ai_context";
 
 export interface PrivacyContext {
   actorUserId: string;

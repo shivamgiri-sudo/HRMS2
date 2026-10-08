@@ -33,12 +33,12 @@ import type {
   AiProvider,
   AiProviderTestResult,
   SafeAiProviderConfig,
-} from "../ai-provider.types.js";
-import { pickConversationEntries } from "../ai-conversation.service.js";
+} from '../ai-provider.types.js';
+import { pickConversationEntries } from '../ai-conversation.service.js';
 
-const OFFICIAL_BASE_URL = "https://api.anthropic.com";
-const DEFAULT_MODEL = "claude-opus-5";
-const ANTHROPIC_VERSION = "2023-06-01";
+const OFFICIAL_BASE_URL = 'https://api.anthropic.com';
+const DEFAULT_MODEL = 'claude-opus-5';
+const ANTHROPIC_VERSION = '2023-06-01';
 
 /**
  * Server-side fallback. Claude Opus 5 runs safety classifiers that can decline a request
@@ -46,11 +46,11 @@ const ANTHROPIC_VERSION = "2023-06-01";
  * is a realistic trigger. "default" routes by refusal category rather than pinning a model,
  * so there is no fallback-model migration to own later.
  */
-const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
 /** Pinned to the official host: an AI base URL is an exfiltration path if it is user-settable. */
 function baseUrl(value?: string): string {
-  const candidate = String(value || OFFICIAL_BASE_URL).replace(/\/+$/, "");
+  const candidate = String(value || OFFICIAL_BASE_URL).replace(/\/+$/, '');
   return candidate === OFFICIAL_BASE_URL ? candidate : OFFICIAL_BASE_URL;
 }
 
@@ -65,7 +65,7 @@ export interface ClaudeCallInput {
   /** Shape returned by pickConversationEntries(): summaries and answers share `text`. */
   conversation: Array<{ question: string; text: string }>;
   maxOutputTokens: number;
-  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   /** When supplied, the model is constrained to this JSON Schema. */
   jsonSchema?: Record<string, unknown>;
 }
@@ -83,13 +83,13 @@ export interface ClaudeCallResult {
 export class ClaudeRefusalError extends Error {
   constructor(
     readonly category: string | null,
-    readonly explanation: string | null,
+    readonly explanation: string | null
   ) {
     super(
-      `Claude declined this request${category ? ` (${category})` : ""}. ` +
-        (explanation ?? "No further detail was returned."),
+      `Claude declined this request${category ? ` (${category})` : ''}. ` +
+        (explanation ?? 'No further detail was returned.')
     );
-    this.name = "ClaudeRefusalError";
+    this.name = 'ClaudeRefusalError';
   }
 }
 
@@ -99,13 +99,11 @@ export class ClaudeRefusalError extends Error {
  * Exported so tests can assert its shape without a network call — the parts that matter here
  * are the absent keys, and an absent key is only testable if the body is inspectable.
  */
-export function buildClaudeRequestBody(
-  input: ClaudeCallInput,
-): Record<string, unknown> {
-  const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
+export function buildClaudeRequestBody(input: ClaudeCallInput): Record<string, unknown> {
+  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
   for (const turn of input.conversation ?? []) {
-    if (turn.question) messages.push({ role: "user", content: turn.question });
-    if (turn.text) messages.push({ role: "assistant", content: turn.text });
+    if (turn.question) messages.push({ role: 'user', content: turn.question });
+    if (turn.text) messages.push({ role: 'assistant', content: turn.text });
   }
 
   // The volatile part goes AFTER the cache breakpoint, so the stable system prefix keeps
@@ -113,41 +111,36 @@ export function buildClaudeRequestBody(
   // unsorted JSON.stringify is a silent cache invalidator.
   const contextBlock = Object.keys(input.context ?? {}).length
     ? `\n\n<context>\n${stableStringify(input.context)}\n</context>`
-    : "";
-  messages.push({
-    role: "user",
-    content: `${input.userQuestion}${contextBlock}`,
-  });
+    : '';
+  messages.push({ role: 'user', content: `${input.userQuestion}${contextBlock}` });
 
   // Prefill is a 400 on this model: the last turn must be the user's.
-  if (messages[messages.length - 1]?.role !== "user") {
-    messages.push({ role: "user", content: "Continue." });
+  if (messages[messages.length - 1]?.role !== 'user') {
+    messages.push({ role: 'user', content: 'Continue.' });
   }
 
-  const outputConfig: Record<string, unknown> = {
-    effort: input.effort ?? "high",
-  };
+  const outputConfig: Record<string, unknown> = { effort: input.effort ?? 'high' };
   if (input.jsonSchema) {
-    outputConfig.format = { type: "json_schema", schema: input.jsonSchema };
+    outputConfig.format = { type: 'json_schema', schema: input.jsonSchema };
   }
 
   return {
     model: input.model,
     // Caps thinking + text together.
     max_tokens: input.maxOutputTokens,
-    thinking: { type: "adaptive" },
+    thinking: { type: 'adaptive' },
     output_config: outputConfig,
     system: [
       {
-        type: "text",
+        type: 'text',
         text: input.systemInstruction,
         // Opus 5 caches from 512 tokens. The stable prefix (checklist + registry + repo map)
         // clears that comfortably; verify with usage.cache_read_input_tokens on the 2nd call.
-        cache_control: { type: "ephemeral" },
+        cache_control: { type: 'ephemeral' },
       },
     ],
     messages,
-    fallbacks: "default",
+    fallbacks: 'default',
     // NOTE: temperature / top_p / top_k are deliberately absent — 400 on claude-opus-5.
   };
 }
@@ -155,25 +148,21 @@ export function buildClaudeRequestBody(
 /** Deterministic serialisation: an unsorted object is a silent prompt-cache invalidator. */
 export function stableStringify(value: unknown): string {
   return JSON.stringify(value, (_k, v) =>
-    v && typeof v === "object" && !Array.isArray(v)
+    v && typeof v === 'object' && !Array.isArray(v)
       ? Object.keys(v as Record<string, unknown>)
           .sort()
           .reduce<Record<string, unknown>>((acc, k) => {
             acc[k] = (v as Record<string, unknown>)[k];
             return acc;
           }, {})
-      : v,
+      : v
   );
 }
 
 interface AnthropicResponse {
   content?: Array<{ type: string; text?: string }>;
   stop_reason?: string;
-  stop_details?: {
-    type?: string;
-    category?: string | null;
-    explanation?: string | null;
-  } | null;
+  stop_details?: { type?: string; category?: string | null; explanation?: string | null } | null;
   model?: string;
   usage?: {
     input_tokens?: number;
@@ -183,8 +172,8 @@ interface AnthropicResponse {
 }
 
 export class ClaudeProvider implements AiProvider {
-  key = "claude";
-  displayName = "Anthropic Claude";
+  key = 'claude';
+  displayName = 'Anthropic Claude';
   supportsChat = true;
   supportsJson = true;
   supportsStreaming = false;
@@ -195,19 +184,19 @@ export class ClaudeProvider implements AiProvider {
     const timer = setTimeout(() => controller.abort(), input.timeoutMs);
     try {
       const res = await fetch(`${input.baseUrl}/v1/messages`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "content-type": "application/json",
-          "x-api-key": input.apiKey,
-          "anthropic-version": ANTHROPIC_VERSION,
-          "anthropic-beta": FALLBACK_BETA,
+          'content-type': 'application/json',
+          'x-api-key': input.apiKey,
+          'anthropic-version': ANTHROPIC_VERSION,
+          'anthropic-beta': FALLBACK_BETA,
         },
         body: JSON.stringify(buildClaudeRequestBody(input)),
         signal: controller.signal,
       });
 
       if (!res.ok) {
-        const detail = await res.text().catch(() => "");
+        const detail = await res.text().catch(() => '');
         throw new Error(`Claude API ${res.status}: ${detail.slice(0, 300)}`);
       }
 
@@ -216,17 +205,17 @@ export class ClaudeProvider implements AiProvider {
       // stop_reason MUST be checked before touching content. A refusal returns HTTP 200 with
       // an empty (pre-output) or partial (mid-stream) content array, so indexing content[0]
       // unconditionally throws on exactly the case that most needs a clean error.
-      if (json.stop_reason === "refusal") {
+      if (json.stop_reason === 'refusal') {
         throw new ClaudeRefusalError(
           json.stop_details?.category ?? null,
-          json.stop_details?.explanation ?? null,
+          json.stop_details?.explanation ?? null
         );
       }
 
       const answer = (json.content ?? [])
-        .filter((b) => b.type === "text")
-        .map((b) => b.text ?? "")
-        .join("")
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text ?? '')
+        .join('')
         .trim();
 
       return {
@@ -243,19 +232,16 @@ export class ClaudeProvider implements AiProvider {
     }
   }
 
-  async testConnection(
-    config: SafeAiProviderConfig,
-  ): Promise<AiProviderTestResult> {
+  async testConnection(config: SafeAiProviderConfig): Promise<AiProviderTestResult> {
     const startedAt = Date.now();
-    const model =
-      config.modelName || process.env.ANTHROPIC_DEFAULT_MODEL || DEFAULT_MODEL;
+    const model = config.modelName || process.env.ANTHROPIC_DEFAULT_MODEL || DEFAULT_MODEL;
     const apiKey = config.apiKey || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       return {
         success: false,
         latencyMs: Date.now() - startedAt,
         model,
-        error: "Anthropic API key is not configured",
+        error: 'Anthropic API key is not configured',
       };
     }
     try {
@@ -264,13 +250,13 @@ export class ClaudeProvider implements AiProvider {
         model,
         baseUrl: baseUrl(config.baseUrl),
         timeoutMs: config.timeout ?? 30_000,
-        systemInstruction: "Reply with exactly: connection successful",
-        userQuestion: "Test the connection.",
+        systemInstruction: 'Reply with exactly: connection successful',
+        userQuestion: 'Test the connection.',
         context: {},
         conversation: [],
         // Low effort for a connectivity ping: this proves the credential and the wire
         // contract, and paying for deep reasoning to do it would be silly.
-        effort: "low",
+        effort: 'low',
         maxOutputTokens: 64,
       });
       return { success: true, latencyMs: Date.now() - startedAt, model };
@@ -279,10 +265,7 @@ export class ClaudeProvider implements AiProvider {
         success: false,
         latencyMs: Date.now() - startedAt,
         model,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Claude connection test failed",
+        error: error instanceof Error ? error.message : 'Claude connection test failed',
       };
     }
   }
@@ -290,13 +273,12 @@ export class ClaudeProvider implements AiProvider {
   async generateText(request: AiGenerateRequest): Promise<AiGenerateResponse> {
     const startedAt = Date.now();
     const apiKey = request.apiKey || process.env.ANTHROPIC_API_KEY;
-    const model =
-      request.model || process.env.ANTHROPIC_DEFAULT_MODEL || DEFAULT_MODEL;
+    const model = request.model || process.env.ANTHROPIC_DEFAULT_MODEL || DEFAULT_MODEL;
     if (!apiKey) {
       return this.groundedFailure(
         startedAt,
         model,
-        "Claude is not configured. Your live HRMS and approved company answers are still available.",
+        'Claude is not configured. Your live HRMS and approved company answers are still available.'
       );
     }
 
@@ -307,18 +289,13 @@ export class ClaudeProvider implements AiProvider {
         baseUrl: OFFICIAL_BASE_URL,
         timeoutMs: Number(process.env.ANTHROPIC_TIMEOUT_MS ?? 300_000),
         systemInstruction:
-          request.systemInstruction ||
-          "You are Mira, MAS Callnet’s helpful HRMS assistant.",
+          request.systemInstruction || 'You are Mira, MAS Callnet’s helpful HRMS assistant.',
         userQuestion: request.userQuestion,
         context: request.sanitizedContext,
-        conversation: pickConversationEntries(
-          request.conversation,
-          request.conversationSummaries,
-        ),
+        conversation: pickConversationEntries(request.conversation, request.conversationSummaries),
         // request.temperature is deliberately IGNORED — see the header note.
         maxOutputTokens: request.maxOutputTokens ?? 4000,
-        effort:
-          (process.env.ANTHROPIC_EFFORT as ClaudeCallInput["effort"]) ?? "high",
+        effort: (process.env.ANTHROPIC_EFFORT as ClaudeCallInput['effort']) ?? 'high',
         jsonSchema: undefined,
       });
 
@@ -334,51 +311,42 @@ export class ClaudeProvider implements AiProvider {
         generatedAt: new Date().toISOString(),
         sourceContexts: Array.isArray(request.sanitizedContext?.source_contexts)
           ? (request.sanitizedContext.source_contexts as unknown[]).map(String)
-          : ["company_public_knowledge"],
+          : ['company_public_knowledge'],
         dataConfidence: request.sanitizedContext?.data_confidence as
-          Record<string, number> | undefined,
+          | Record<string, number>
+          | undefined,
       };
     } catch (error) {
       const refused = error instanceof ClaudeRefusalError;
-      console.error(
-        "[Claude] Generation failed:",
-        error instanceof Error ? error.message : error,
-      );
+      console.error('[Claude] Generation failed:', error instanceof Error ? error.message : error);
       return this.groundedFailure(
         startedAt,
         model,
         refused
-          ? "Claude declined to answer this one. Your live HRMS data and approved company answers are still available."
-          : "Claude is unavailable right now. Your live HRMS data and approved company answers are still available.",
-        refused,
+          ? 'Claude declined to answer this one. Your live HRMS data and approved company answers are still available.'
+          : 'Claude is unavailable right now. Your live HRMS data and approved company answers are still available.',
+        refused
       );
     }
   }
 
   async generateJson<T>(request: AiGenerateRequest): Promise<T> {
     const apiKey = request.apiKey || process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("Anthropic API key is not configured");
-    const model =
-      request.model || process.env.ANTHROPIC_DEFAULT_MODEL || DEFAULT_MODEL;
-    const schema = (request as { jsonSchema?: Record<string, unknown> })
-      .jsonSchema;
+    if (!apiKey) throw new Error('Anthropic API key is not configured');
+    const model = request.model || process.env.ANTHROPIC_DEFAULT_MODEL || DEFAULT_MODEL;
+    const schema = (request as { jsonSchema?: Record<string, unknown> }).jsonSchema;
 
     const result = await this.call({
       apiKey,
       model,
       baseUrl: OFFICIAL_BASE_URL,
       timeoutMs: Number(process.env.ANTHROPIC_TIMEOUT_MS ?? 300_000),
-      systemInstruction:
-        request.systemInstruction || "Return only the requested JSON.",
+      systemInstruction: request.systemInstruction || 'Return only the requested JSON.',
       userQuestion: request.userQuestion,
       context: request.sanitizedContext,
-      conversation: pickConversationEntries(
-        request.conversation,
-        request.conversationSummaries,
-      ),
+      conversation: pickConversationEntries(request.conversation, request.conversationSummaries),
       maxOutputTokens: request.maxOutputTokens ?? 8000,
-      effort:
-        (process.env.ANTHROPIC_EFFORT as ClaudeCallInput["effort"]) ?? "high",
+      effort: (process.env.ANTHROPIC_EFFORT as ClaudeCallInput['effort']) ?? 'high',
       jsonSchema: schema,
     });
 
@@ -389,9 +357,9 @@ export class ClaudeProvider implements AiProvider {
       return JSON.parse(result.answer) as T;
     } catch {
       throw new Error(
-        result.stopReason === "max_tokens"
-          ? "Claude response was truncated before the JSON was complete — raise max_tokens."
-          : "Claude returned text that is not valid JSON.",
+        result.stopReason === 'max_tokens'
+          ? 'Claude response was truncated before the JSON was complete — raise max_tokens.'
+          : 'Claude returned text that is not valid JSON.'
       );
     }
   }
@@ -400,7 +368,7 @@ export class ClaudeProvider implements AiProvider {
     startedAt: number,
     model: string,
     message: string,
-    safetyBlocked = false,
+    safetyBlocked = false
   ): AiGenerateResponse {
     return {
       answer: message,
@@ -410,7 +378,7 @@ export class ClaudeProvider implements AiProvider {
       safetyBlocked,
       fallbackUsed: true,
       generatedAt: new Date().toISOString(),
-      sourceContexts: ["company_public_knowledge"],
+      sourceContexts: ['company_public_knowledge'],
     };
   }
 }

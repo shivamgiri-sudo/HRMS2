@@ -63,12 +63,7 @@ export async function drainPayrollRecalcQueue(
       ${sqlLimit(batchSize)}`,
     [monthDate],
   );
-  const entries = rows as Array<{
-    id: string;
-    employee_id: string;
-    payroll_month: string;
-    reason: string;
-  }>;
+  const entries = rows as Array<{ id: string; employee_id: string; payroll_month: string; reason: string }>;
 
   let processed = 0;
   let failed = 0;
@@ -128,10 +123,7 @@ export async function drainPayrollRecalcQueue(
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.warn(
-        { employeeId: entry.employee_id, err: msg },
-        "[RecalcDrainer] failed for employee",
-      );
+      logger.warn({ employeeId: entry.employee_id, err: msg }, "[RecalcDrainer] failed for employee");
       await db.execute(
         `UPDATE payroll_recalculation_queue
             SET status = 'failed', processed_at = NOW(), error_message = ?

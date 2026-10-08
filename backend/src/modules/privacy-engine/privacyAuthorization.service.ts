@@ -29,7 +29,7 @@ function getDpdpPolicyEnabled(): boolean {
  * enforce decisions.
  */
 export async function evaluatePrivacyAccess(
-  ctx: PrivacyContext,
+  ctx: PrivacyContext
 ): Promise<PrivacyDecision> {
   const engineEnabled = getDpdpPolicyEnabled();
   const shadowMode = getDpdpPolicyShadowMode();
@@ -101,8 +101,7 @@ export async function evaluatePrivacyAccess(
     decision: shadowMode && engineEnabled ? "allow" : "allow",
     reasonCode: shadowMode ? REASON_CODES.SHADOW_MODE : REASON_CODES.ALLOWED,
     policyVersion: PRIVACY_POLICY_VERSION,
-    auditRequired:
-      ctx.requestedAction === "export" || ctx.requestedAction === "download",
+    auditRequired: ctx.requestedAction === "export" || ctx.requestedAction === "download",
   };
 
   if (engineEnabled && ctx.auditRequired !== false) {
@@ -130,9 +129,7 @@ declare module "./privacyPolicy.types.js" {
  * Check if a given principal has an approved data restriction order.
  * Used by endpoints that need a simple boolean check without full engine evaluation.
  */
-export async function hasDataRestriction(
-  principalId: string,
-): Promise<boolean> {
+export async function hasDataRestriction(principalId: string): Promise<boolean> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM dpdp_consent_withdrawal
@@ -141,7 +138,7 @@ export async function hasDataRestriction(
            SELECT e.user_id FROM employees e WHERE e.id = ? LIMIT 1
          ))
        LIMIT 1`,
-      [principalId, principalId],
+      [principalId, principalId]
     );
     return rows.length > 0;
   } catch {

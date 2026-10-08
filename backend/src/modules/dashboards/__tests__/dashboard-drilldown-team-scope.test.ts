@@ -46,16 +46,13 @@ describe("dashboard drilldowns respect TEAM_ONLY scope", () => {
   it("drillAttendance scopes by the manager's resolved team, not 1=0", async () => {
     execute.mockReset();
     execute.mockImplementation(async (sql: string) => {
-      if (sql.includes("AS record_date"))
-        return [[{ record_date: "2026-08-11" }], []];
+      if (sql.includes("AS record_date")) return [[{ record_date: "2026-08-11" }], []];
       return [[], []];
     });
 
     await getDrilldown("ATTENDANCE", teamScope, {});
 
-    const mainQueryCall = execute.mock.calls.find(([sql]) =>
-      sql.includes("attendance_daily_record a"),
-    );
+    const mainQueryCall = execute.mock.calls.find(([sql]) => sql.includes("attendance_daily_record a"));
     expect(mainQueryCall).toBeDefined();
     const [sql, params] = mainQueryCall as [string, unknown[]];
     expect(sql).toContain("e.id IN");

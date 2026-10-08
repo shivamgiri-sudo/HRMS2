@@ -37,13 +37,10 @@ const fs = require("fs");
 require("dotenv").config();
 
 const APPLY = process.argv.includes("--apply");
-const ONLY =
-  (process.argv.find((a) => a.startsWith("--only=")) || "").split("=")[1] || "";
+const ONLY = (process.argv.find((a) => a.startsWith("--only=")) || "").split("=")[1] || "";
 const DO_ORPHANS = !ONLY || ONLY === "orphans";
 const DO_PROCESS = !ONLY || ONLY === "process";
-const ROLLBACK = process.argv
-  .find((a) => a.startsWith("--rollback-out="))
-  ?.split("=")[1];
+const ROLLBACK = process.argv.find((a) => a.startsWith("--rollback-out="))?.split("=")[1];
 
 (async () => {
   const c = await mysql.createConnection({
@@ -55,9 +52,7 @@ const ROLLBACK = process.argv
   });
   const q = async (sql, p = []) => (await c.execute(sql, p))[0];
 
-  console.log(
-    `\n=== Readiness orphans + process branch — ${APPLY ? "APPLY" : "DRY RUN"} ===`,
-  );
+  console.log(`\n=== Readiness orphans + process branch — ${APPLY ? "APPLY" : "DRY RUN"} ===`);
   console.log(`    db: ${process.env.DB_NAME} @ ${process.env.DB_HOST}\n`);
 
   // ── FIX 1: orphan readiness rows ─────────────────────────────────────────
@@ -77,19 +72,15 @@ const ROLLBACK = process.argv
    AND projected_net IS NULL`;
 
   const orphans = await q(
-    `SELECT id, process_month, process_id FROM payroll_branch_readiness WHERE ${ORPHAN_PREDICATE}`,
+    `SELECT id, process_month, process_id FROM payroll_branch_readiness WHERE ${ORPHAN_PREDICATE}`
   );
   const anyOrphanShaped = await q(
     `SELECT COUNT(*) n FROM payroll_branch_readiness
-      WHERE (branch_id IS NULL OR branch_id = '') AND process_id <> ''`,
+      WHERE (branch_id IS NULL OR branch_id = '') AND process_id <> ''`
   );
-  console.log(
-    `FIX 1 — orphan readiness rows: ${anyOrphanShaped[0].n} total, ${orphans.length} provably empty and deletable`,
-  );
+  console.log(`FIX 1 — orphan readiness rows: ${anyOrphanShaped[0].n} total, ${orphans.length} provably empty and deletable`);
   if (anyOrphanShaped[0].n !== orphans.length) {
-    console.log(
-      `    !! ${anyOrphanShaped[0].n - orphans.length} orphan-shaped row(s) carry state — NOT deleting those, inspect by hand`,
-    );
+    console.log(`    !! ${anyOrphanShaped[0].n - orphans.length} orphan-shaped row(s) carry state — NOT deleting those, inspect by hand`);
   }
 
   // ── FIX 2: unambiguous process_master.branch_id ──────────────────────────
@@ -106,15 +97,11 @@ const ROLLBACK = process.argv
         AND pm.active_status = 1
       GROUP BY pm.id, pm.process_name
      HAVING COUNT(DISTINCT e.branch_id) = 1
-      ORDER BY pm.process_name`,
+      ORDER BY pm.process_name`
   );
-  console.log(
-    `\nFIX 2 — active processes with staff in exactly one branch: ${procFix.length}`,
-  );
+  console.log(`\nFIX 2 — active processes with staff in exactly one branch: ${procFix.length}`);
   for (const r of procFix) {
-    console.log(
-      `    ${String(r.process_name).padEnd(32)} -> ${r.branch_name}  (${r.active_emp} staff)`,
-    );
+    console.log(`    ${String(r.process_name).padEnd(32)} -> ${r.branch_name}  (${r.active_emp} staff)`);
   }
 
   const skipped = await q(
@@ -124,25 +111,16 @@ const ROLLBACK = process.argv
          ON CONVERT(e.process_id USING utf8mb4) = CONVERT(pm.id USING utf8mb4)
         AND e.active_status = 1 AND e.branch_id IS NOT NULL AND e.branch_id <> ''
       WHERE (pm.branch_id IS NULL OR pm.branch_id = '') AND pm.active_status = 1
-      GROUP BY pm.id, pm.process_name HAVING COUNT(DISTINCT e.branch_id) > 1`,
+      GROUP BY pm.id, pm.process_name HAVING COUNT(DISTINCT e.branch_id) > 1`
   );
-  console.log(
-    `\n    deliberately SKIPPED (genuinely multi-branch, no single correct value):`,
-  );
-  for (const r of skipped)
-    console.log(`    ${r.process_name} — ${r.n_branches} branches`);
-  console.log(
-    `    also skipped: active processes with zero staff (nothing to derive) and all inactive rows\n`,
-  );
+  console.log(`\n    deliberately SKIPPED (genuinely multi-branch, no single correct value):`);
+  for (const r of skipped) console.log(`    ${r.process_name} — ${r.n_branches} branches`);
+  console.log(`    also skipped: active processes with zero staff (nothing to derive) and all inactive rows\n`);
 
   if (!APPLY) {
     console.log("DRY RUN — nothing written. To write:");
-    console.log(
-      `  · --apply --only=orphans  → DELETE ${orphans.length} empty readiness rows`,
-    );
-    console.log(
-      `  · --apply --only=process  → UPDATE ${procFix.length} process_master.branch_id`,
-    );
+    console.log(`  · --apply --only=orphans  → DELETE ${orphans.length} empty readiness rows`);
+    console.log(`  · --apply --only=process  → UPDATE ${procFix.length} process_master.branch_id`);
     await c.end();
     return;
   }
@@ -152,26 +130,18 @@ const ROLLBACK = process.argv
     const lines = [`-- Rollback, ${new Date().toISOString()}`];
     if (DO_ORPHANS && orphans.length) {
       const full = await q(
-        `SELECT * FROM payroll_branch_readiness WHERE ${ORPHAN_PREDICATE}`,
+        `SELECT * FROM payroll_branch_readiness WHERE ${ORPHAN_PREDICATE}`
       );
-      lines.push(
-        `-- ${full.length} deleted payroll_branch_readiness rows, as INSERTs:`,
-      );
+      lines.push(`-- ${full.length} deleted payroll_branch_readiness rows, as INSERTs:`);
       for (const row of full) {
         const cols = Object.keys(row);
-        const vals = cols.map((k) =>
-          row[k] === null ? "NULL" : `'${String(row[k]).replace(/'/g, "''")}'`,
-        );
-        lines.push(
-          `INSERT INTO payroll_branch_readiness (${cols.join(",")}) VALUES (${vals.join(",")});`,
-        );
+        const vals = cols.map((k) => (row[k] === null ? "NULL" : `'${String(row[k]).replace(/'/g, "''")}'`));
+        lines.push(`INSERT INTO payroll_branch_readiness (${cols.join(",")}) VALUES (${vals.join(",")});`);
       }
     }
     if (DO_PROCESS && procFix.length) {
       lines.push(`-- restore process_master.branch_id to NULL:`);
-      lines.push(
-        `UPDATE process_master SET branch_id = NULL WHERE id IN (${procFix.map((r) => `'${r.id}'`).join(",")});`,
-      );
+      lines.push(`UPDATE process_master SET branch_id = NULL WHERE id IN (${procFix.map((r) => `'${r.id}'`).join(",")});`);
     }
     fs.writeFileSync(ROLLBACK, lines.join("\n") + "\n");
     console.log(`rollback written: ${ROLLBACK}`);
@@ -182,9 +152,7 @@ const ROLLBACK = process.argv
     let deleted = 0;
     if (DO_ORPHANS) {
       // Re-runs the guard as part of the DELETE — never deletes by id alone.
-      const [res] = await c.execute(
-        `DELETE FROM payroll_branch_readiness WHERE ${ORPHAN_PREDICATE}`,
-      );
+      const [res] = await c.execute(`DELETE FROM payroll_branch_readiness WHERE ${ORPHAN_PREDICATE}`);
       deleted = res.affectedRows;
     }
 
@@ -193,16 +161,14 @@ const ROLLBACK = process.argv
       for (const r of procFix) {
         const [res] = await c.execute(
           `UPDATE process_master SET branch_id = ? WHERE id = ? AND (branch_id IS NULL OR branch_id = '')`,
-          [r.derived_branch, r.id],
+          [r.derived_branch, r.id]
         );
         updated += res.affectedRows;
       }
     }
 
     await c.commit();
-    console.log(
-      `\nAPPLIED — deleted ${deleted} orphan readiness rows, set branch_id on ${updated} processes.`,
-    );
+    console.log(`\nAPPLIED — deleted ${deleted} orphan readiness rows, set branch_id on ${updated} processes.`);
   } catch (e) {
     await c.rollback();
     console.error("ROLLED BACK —", e.message);

@@ -8,16 +8,16 @@
  * Data is uploaded via the Bulk Upload Hub.
  */
 
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { n, pct, round, parseRange } from "./dialler-utils.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { n, pct, round, parseRange } from './dialler-utils.js';
 
 type Filters = { from?: string; to?: string };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function iso(d: unknown): string {
-  if (!d) return "";
+  if (!d) return '';
   if (d instanceof Date) return d.toISOString().slice(0, 10);
   return String(d).slice(0, 10);
 }
@@ -33,12 +33,7 @@ export interface Gs1Overview {
   auditCount: number;
   auditErrors: number;
   auditErrorRate: number;
-  daily: {
-    date: string;
-    emailTasks: number;
-    dataKartTasks: number;
-    approvalSku: number;
-  }[];
+  daily: { date: string; emailTasks: number; dataKartTasks: number; approvalSku: number }[];
   generatedAt: string;
 }
 
@@ -116,47 +111,16 @@ export async function getGs1Overview(filters: Filters): Promise<Gs1Overview> {
   );
 
   // Merge into a single date-keyed map
-  const dayMap: Record<
-    string,
-    {
-      date: string;
-      emailTasks: number;
-      dataKartTasks: number;
-      approvalSku: number;
-    }
-  > = {};
+  const dayMap: Record<string, { date: string; emailTasks: number; dataKartTasks: number; approvalSku: number }> = {};
   const touch = (d: string) => {
-    if (!dayMap[d])
-      dayMap[d] = { date: d, emailTasks: 0, dataKartTasks: 0, approvalSku: 0 };
+    if (!dayMap[d]) dayMap[d] = { date: d, emailTasks: 0, dataKartTasks: 0, approvalSku: 0 };
   };
-  for (const r of emailDaily) {
-    touch(r.date);
-    dayMap[r.date].emailTasks = n(r.emailTasks);
-  }
-  for (const r of dkDaily) {
-    touch(r.date);
-    dayMap[r.date].dataKartTasks = n(r.dataKartTasks);
-  }
-  for (const r of apprDaily) {
-    touch(r.date);
-    dayMap[r.date].approvalSku = n(r.approvalSku);
-  }
-  const daily = Object.values(dayMap).sort((a, b) =>
-    a.date.localeCompare(b.date),
-  );
+  for (const r of emailDaily) { touch(r.date); dayMap[r.date].emailTasks = n(r.emailTasks); }
+  for (const r of dkDaily)    { touch(r.date); dayMap[r.date].dataKartTasks = n(r.dataKartTasks); }
+  for (const r of apprDaily)  { touch(r.date); dayMap[r.date].approvalSku = n(r.approvalSku); }
+  const daily = Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date));
 
-  return {
-    emailTasks,
-    emailGtin,
-    dataKartTasks,
-    dataKartGtin,
-    approvalSku,
-    auditCount,
-    auditErrors,
-    auditErrorRate,
-    daily,
-    generatedAt: new Date().toISOString(),
-  };
+  return { emailTasks, emailGtin, dataKartTasks, dataKartGtin, approvalSku, auditCount, auditErrors, auditErrorRate, daily, generatedAt: new Date().toISOString() };
 }
 
 // ── 2. Email ──────────────────────────────────────────────────────────────────
@@ -225,21 +189,21 @@ export async function getGs1Email(filters: Filters): Promise<Gs1Email> {
   );
 
   return {
-    tasks: n(totals[0]?.tasks),
-    gtin: n(totals[0]?.gtin),
-    images: n(totals[0]?.images),
-    sla15Pct: round(n(totals[0]?.sla15Pct)),
-    byAnalyst: byAnalystRows.map((r) => ({
-      analyst: String(r.analyst ?? ""),
-      tasks: n(r.tasks),
-      gtin: n(r.gtin),
-      images: n(r.images),
+    tasks:     n(totals[0]?.tasks),
+    gtin:      n(totals[0]?.gtin),
+    images:    n(totals[0]?.images),
+    sla15Pct:  round(n(totals[0]?.sla15Pct)),
+    byAnalyst: byAnalystRows.map(r => ({
+      analyst:  String(r.analyst ?? ''),
+      tasks:    n(r.tasks),
+      gtin:     n(r.gtin),
+      images:   n(r.images),
       sla15Pct: round(n(r.sla15Pct)),
     })),
-    daily: dailyRows.map((r) => ({
-      date: iso(r.date),
-      tasks: n(r.tasks),
-      gtin: n(r.gtin),
+    daily: dailyRows.map(r => ({
+      date:   iso(r.date),
+      tasks:  n(r.tasks),
+      gtin:   n(r.gtin),
       images: n(r.images),
     })),
     generatedAt: new Date().toISOString(),
@@ -316,21 +280,21 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
   );
 
   return {
-    tasks: n(totals[0]?.tasks),
-    gtin: n(totals[0]?.gtin),
-    withinTatPct: round(n(totals[0]?.withinTatPct)),
+    tasks:          n(totals[0]?.tasks),
+    gtin:           n(totals[0]?.gtin),
+    withinTatPct:   round(n(totals[0]?.withinTatPct)),
     avgGtinPerTask: round(n(totals[0]?.avgGtinPerTask)),
-    byAnalyst: byAnalystRows.map((r) => ({
-      analyst: String(r.analyst ?? ""),
-      tasks: n(r.tasks),
-      gtin: n(r.gtin),
+    byAnalyst: byAnalystRows.map(r => ({
+      analyst:      String(r.analyst ?? ''),
+      tasks:        n(r.tasks),
+      gtin:         n(r.gtin),
       withinTatPct: round(n(r.withinTatPct)),
-      avgGtin: round(n(r.avgGtin)),
+      avgGtin:      round(n(r.avgGtin)),
     })),
-    daily: dailyRows.map((r) => ({
-      date: iso(r.date),
-      tasks: n(r.tasks),
-      gtin: n(r.gtin),
+    daily: dailyRows.map(r => ({
+      date:         iso(r.date),
+      tasks:        n(r.tasks),
+      gtin:         n(r.gtin),
       withinTatPct: round(n(r.withinTatPct)),
     })),
     generatedAt: new Date().toISOString(),
@@ -385,11 +349,11 @@ export async function getGs1Approval(filters: Filters): Promise<Gs1Approval> {
      WHERE audit_date BETWEEN ? AND ?`,
     [from, to],
   );
-  const totalSku = n(totals[0]?.totalSku);
+  const totalSku   = n(totals[0]?.totalSku);
   const auditCount = n(totals[0]?.auditCount);
   const auditErrors = n(totals[0]?.auditErrors);
-  const errorRate = round(pct(auditErrors, auditCount));
-  const uniqueGcp = n(totals[0]?.uniqueGcp);
+  const errorRate  = round(pct(auditErrors, auditCount));
+  const uniqueGcp  = n(totals[0]?.uniqueGcp);
 
   const [byCompanyRows] = await db.query<RowDataPacket[]>(
     `SELECT company_name                               AS company,
@@ -432,30 +396,17 @@ export async function getGs1Approval(filters: Filters): Promise<Gs1Approval> {
     auditErrors,
     errorRate,
     uniqueGcp,
-    byCompany: byCompanyRows.map((r) => {
-      const a = n(r.audits),
-        e = n(r.errors);
-      return {
-        company: String(r.company ?? ""),
-        sku: n(r.sku),
-        audits: a,
-        errors: e,
-        errorPct: round(pct(e, a)),
-      };
+    byCompany: byCompanyRows.map(r => {
+      const a = n(r.audits), e = n(r.errors);
+      return { company: String(r.company ?? ''), sku: n(r.sku), audits: a, errors: e, errorPct: round(pct(e, a)) };
     }),
-    byAnalyst: byAnalystRows.map((r) => {
-      const a = n(r.audits),
-        e = n(r.errors);
-      return {
-        analyst: String(r.analyst ?? ""),
-        audits: a,
-        errors: e,
-        errorPct: round(pct(e, a)),
-      };
+    byAnalyst: byAnalystRows.map(r => {
+      const a = n(r.audits), e = n(r.errors);
+      return { analyst: String(r.analyst ?? ''), audits: a, errors: e, errorPct: round(pct(e, a)) };
     }),
-    daily: dailyRows.map((r) => ({
-      date: iso(r.date),
-      sku: n(r.sku),
+    daily: dailyRows.map(r => ({
+      date:   iso(r.date),
+      sku:    n(r.sku),
       audits: n(r.audits),
       errors: n(r.errors),
     })),

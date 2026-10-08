@@ -1,63 +1,29 @@
 import { describe, it, expect } from "vitest";
 import {
-  inboundBuckets,
-  inboundDaily,
-  languageTable,
-  outboundBuckets,
-  outboundDispositions,
-  qrcBuckets,
-  leadsSummary,
-  leadInfo,
-  taggedInboundByDate,
-  weekOfDate,
-  languageName,
-  type IbCall,
-  type DdRow,
-  type ObRow,
+  inboundBuckets, inboundDaily, languageTable, outboundBuckets, outboundDispositions, qrcBuckets, leadsSummary, leadInfo,
+  taggedInboundByDate, weekOfDate, languageName, type IbCall, type DdRow, type ObRow,
 } from "../dalmia-dashboard.calc.js";
 import { hmsToSeconds } from "../dalmia-dashboard.service.js";
 
 const call = (o: Partial<IbCall>): IbCall => ({
-  date: "2026-09-01",
-  agentId: "MAS63039",
-  campaign: "Dalmia_Hindi",
-  phone: "9113389275",
-  disconnBy: "CALLER",
-  callDurSec: 34,
-  queueSec: 0,
-  acwSec: 2,
-  call20: 1,
-  ...o,
+  date: "2026-09-01", agentId: "MAS63039", campaign: "Dalmia_Hindi", phone: "9113389275", disconnBy: "CALLER",
+  callDurSec: 34, queueSec: 0, acwSec: 2, call20: 1, ...o,
 });
 
 describe("inbound definitions (from the workbook's Inbound View formulas)", () => {
   const calls: IbCall[] = [
-    call({ phone: "1", callDurSec: 60, acwSec: 4 }), // answered, unique
-    call({ phone: "1", callDurSec: 30, acwSec: 2 }), // answered, REPEAT (same phone, same date)
-    call({
-      phone: "2",
-      disconnBy: "ABANDON",
-      callDurSec: 0,
-      queueSec: 12,
-      call20: 0,
-    }), // abandoned inside 20s
-    call({
-      phone: "3",
-      disconnBy: "QUEUETIMEOUT",
-      callDurSec: 0,
-      queueSec: 45,
-      call20: 0,
-    }), // abandoned outside 20s
-    call({ phone: "4", agentId: "VDCL", disconnBy: "CALLER", call20: 1 }), // answered by the auto-dialer: not counted in threshold
-    call({ phone: "1", date: "2026-09-02" }), // same phone, NEW date -> unique again
+    call({ phone: "1", callDurSec: 60, acwSec: 4 }),                                   // answered, unique
+    call({ phone: "1", callDurSec: 30, acwSec: 2 }),                                   // answered, REPEAT (same phone, same date)
+    call({ phone: "2", disconnBy: "ABANDON", callDurSec: 0, queueSec: 12, call20: 0 }), // abandoned inside 20s
+    call({ phone: "3", disconnBy: "QUEUETIMEOUT", callDurSec: 0, queueSec: 45, call20: 0 }), // abandoned outside 20s
+    call({ phone: "4", agentId: "VDCL", disconnBy: "CALLER", call20: 1 }),              // answered by the auto-dialer: not counted in threshold
+    call({ phone: "1", date: "2026-09-02" }),                                           // same phone, NEW date -> unique again
   ];
-  const day1 = inboundDaily(calls, new Map([["2026-09-01", 3]])).find(
-    (d) => d.date === "2026-09-01",
-  )!;
+  const day1 = inboundDaily(calls, new Map([["2026-09-01", 3]])).find((d) => d.date === "2026-09-01")!;
 
   it("counts offered, answered, unique and repeat per date", () => {
     expect(day1.offered).toBe(5);
-    expect(day1.answered).toBe(3); // CALLER, CALLER, CALLER(VDCL)
+    expect(day1.answered).toBe(3);   // CALLER, CALLER, CALLER(VDCL)
     expect(day1.unique).toBe(4);
     expect(day1.repeat).toBe(1);
     expect(day1.abandoned).toBe(2);
@@ -66,8 +32,8 @@ describe("inbound definitions (from the workbook's Inbound View formulas)", () =
     expect(day1.alPct).toBeCloseTo(3 / 5);
     expect(day1.abnPct).toBeCloseTo(2 / 5);
     expect(day1.repeatPct).toBeCloseTo(1 / 5);
-    expect(day1.ansInThreshold).toBe(2); // the VDCL row is excluded
-    expect(day1.abnInThreshold).toBe(1); // only the 12s queue abandon
+    expect(day1.ansInThreshold).toBe(2);         // the VDCL row is excluded
+    expect(day1.abnInThreshold).toBe(1);         // only the 12s queue abandon
     expect(day1.slPct).toBeCloseTo(2 / (5 - 1)); // Ans in threshold / (Offered - Abn in threshold)
     expect(day1.achtSec).toBeCloseTo((60 + 30 + 34 + (4 + 2 + 2)) / 3); // talk + ACW of the three ANSWERED rows, over answered
   });
@@ -89,9 +55,7 @@ describe("inbound definitions (from the workbook's Inbound View formulas)", () =
     expect(weekOfDate("2026-09-29")).toBe("W-5");
   });
   it("language table: total, abandon, caller, answered (not VDCL), threshold (queue <= 20s)", () => {
-    const hindi = languageTable(calls, "MTD").find(
-      (l) => l.campaign === "Dalmia_Hindi",
-    )!;
+    const hindi = languageTable(calls, "MTD").find((l) => l.campaign === "Dalmia_Hindi")!;
     expect(hindi.total).toBe(6);
     expect(hindi.abandon).toBe(1);
     expect(hindi.caller).toBe(4);
@@ -110,30 +74,10 @@ describe("inbound definitions (from the workbook's Inbound View formulas)", () =
 
 describe("outbound (Outbound View formulas)", () => {
   const rows: ObRow[] = [
-    {
-      date: "2026-09-01",
-      mobile: "111",
-      status: "Contact",
-      remarks: "Assigned call back",
-    },
-    {
-      date: "2026-09-01",
-      mobile: "111",
-      status: "Contact",
-      remarks: "Call Disconnected after Opening",
-    },
-    {
-      date: "2026-09-01",
-      mobile: "222",
-      status: "Not Contact",
-      remarks: "Ringing not answering",
-    },
-    {
-      date: "2026-09-02",
-      mobile: "111",
-      status: "Contact",
-      remarks: "Something else",
-    },
+    { date: "2026-09-01", mobile: "111", status: "Contact", remarks: "Assigned call back" },
+    { date: "2026-09-01", mobile: "111", status: "Contact", remarks: "Call Disconnected after Opening" },
+    { date: "2026-09-01", mobile: "222", status: "Not Contact", remarks: "Ringing not answering" },
+    { date: "2026-09-02", mobile: "111", status: "Contact", remarks: "Something else" },
   ];
   it("overall, unique (distinct mobile per date), connected and rates", () => {
     const b = outboundBuckets(rows).MTD;
@@ -154,35 +98,13 @@ describe("outbound (Outbound View formulas)", () => {
 
 describe("DD: QRC, tagging and leads", () => {
   const dd = (o: Partial<DdRow>): DdRow => ({
-    date: "2026-09-01",
-    sourceOfLead: "Inbound",
-    scenario: "Connected",
-    sub1: "Query",
-    sub2: null,
-    sub3: "Cement Lead",
-    status: "Open",
-    typeOfLeads: null,
-    leads: null,
-    mt: 0,
-    converted: 0,
-    ...o,
+    date: "2026-09-01", sourceOfLead: "Inbound", scenario: "Connected", sub1: "Query", sub2: null, sub3: "Cement Lead",
+    status: "Open", typeOfLeads: null, leads: null, mt: 0, converted: 0, ...o,
   });
   const rows: DdRow[] = [
-    dd({}),
-    dd({ sub1: "Complain", sub3: "Cement Quality Issue", status: "Closed" }),
-    dd({
-      sub1: "Request",
-      sourceOfLead: "Website",
-      scenario: "Not Connected",
-      sub3: "General Enquiry",
-    }),
+    dd({}), dd({ sub1: "Complain", sub3: "Cement Quality Issue", status: "Closed" }), dd({ sub1: "Request", sourceOfLead: "Website", scenario: "Not Connected", sub3: "General Enquiry" }),
     dd({ sub1: "Wrong No", sub3: null, sourceOfLead: "WhatsApp" }),
-    dd({
-      sub2: "Institutional Sales",
-      sub3: "Institutional Sales",
-      converted: 2,
-      mt: 8.5,
-    }),
+    dd({ sub2: "Institutional Sales", sub3: "Institutional Sales", converted: 2, mt: 8.5 }),
   ];
   it("QRC counts SUB SCENARIO 1 Query / Complain / Request", () => {
     const q = qrcBuckets(rows).MTD;
@@ -202,16 +124,8 @@ describe("DD: QRC, tagging and leads", () => {
   it("lead sources: data received, connected, qualified; types (IS by SUB SCENARIO 2); status, converted and MT", () => {
     const s = leadsSummary(rows, "MTD");
     const inbound = s.sources.find((x) => x.source === "Inbound")!;
-    expect(inbound).toMatchObject({
-      dataReceived: 3,
-      connected: 3,
-      qualified: 3,
-    });
-    expect(s.sources.find((x) => x.source === "Website")).toMatchObject({
-      dataReceived: 1,
-      connected: 0,
-      qualified: 0,
-    });
+    expect(inbound).toMatchObject({ dataReceived: 3, connected: 3, qualified: 3 });
+    expect(s.sources.find((x) => x.source === "Website")).toMatchObject({ dataReceived: 1, connected: 0, qualified: 0 });
     expect(s.total).toEqual({ dataReceived: 5, connected: 4, qualified: 3 });
     expect(s.byType.find((t) => t.type === "IS")?.count).toBe(1);
     expect(s.byType.find((t) => t.type === "Retail")?.count).toBe(1);

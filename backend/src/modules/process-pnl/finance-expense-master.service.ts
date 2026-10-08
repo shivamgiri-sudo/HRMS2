@@ -15,9 +15,7 @@ function toActiveFlag(value: unknown): 0 | 1 {
   if (value === undefined || value === null) return 1;
   if (typeof value === "string") {
     const normalised = value.trim().toLowerCase();
-    return normalised === "0" || normalised === "false" || normalised === ""
-      ? 0
-      : 1;
+    return normalised === "0" || normalised === "false" || normalised === "" ? 0 : 1;
   }
   return Number(value) === 0 ? 0 : 1;
 }
@@ -85,10 +83,7 @@ export interface DeleteExpenseMasterResult {
 const usageTotal = (usage: ExpenseMasterUsage) =>
   usage.budgetLines + usage.grns + usage.coverageReviews;
 
-const addUsage = (
-  a: ExpenseMasterUsage,
-  b: ExpenseMasterUsage,
-): ExpenseMasterUsage => ({
+const addUsage = (a: ExpenseMasterUsage, b: ExpenseMasterUsage): ExpenseMasterUsage => ({
   budgetLines: a.budgetLines + b.budgetLines,
   grns: a.grns + b.grns,
   coverageReviews: a.coverageReviews + b.coverageReviews,
@@ -99,7 +94,7 @@ async function countRows(table: string, where: string, params: unknown[]) {
   if (!(await tableExists(table))) return 0;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS n FROM ${table} ${where}`,
-    params,
+    params
   );
   return Number(rows[0]?.n ?? 0);
 }
@@ -107,7 +102,7 @@ async function countRows(table: string, where: string, params: unknown[]) {
 async function headUsage(
   headId: string,
   headName: string,
-  headCode: string,
+  headCode: string
 ): Promise<ExpenseMasterUsage> {
   const nameParams = [headName, headCode];
   const nameClause = "WHERE LOWER(head) IN (LOWER(?), LOWER(?))";
@@ -117,7 +112,7 @@ async function headUsage(
     coverageReviews: await countRows(
       "finance_budget_subhead_status",
       "WHERE expense_head_id = ?",
-      [headId],
+      [headId]
     ),
   };
 }
@@ -126,7 +121,7 @@ async function subHeadUsage(
   subHeadId: string,
   subHeadName: string,
   headName: string,
-  headCode: string,
+  headCode: string
 ): Promise<ExpenseMasterUsage> {
   // Scoped to the parent head as well, because sub-head names are only unique within a head.
   const nameParams = [subHeadName, headName, headCode];
@@ -138,7 +133,7 @@ async function subHeadUsage(
     coverageReviews: await countRows(
       "finance_budget_subhead_status",
       "WHERE expense_sub_head_id = ?",
-      [subHeadId],
+      [subHeadId]
     ),
   };
 }
@@ -154,8 +149,7 @@ export interface SaveExpenseSubHeadInput {
   defaultGstType: BudgetGstType;
   defaultRecoverableTaxPct: number;
   defaultAllocationDriver?: string | null;
-  pnlTreatment?:
-    "operating_expense" | "direct_cost" | "non_operating" | "excluded";
+  pnlTreatment?: "operating_expense" | "direct_cost" | "non_operating" | "excluded";
   displayOrder?: number;
   activeStatus?: boolean;
 }
@@ -190,7 +184,7 @@ export const financeExpenseMasterService = {
          LEFT JOIN finance_expense_sub_head_master sh
            ON sh.head_id = h.id ${subHeadActiveClause}
          ${activeClause}
-        ORDER BY h.display_order, h.head_name, sh.display_order, sh.sub_head_name`,
+        ORDER BY h.display_order, h.head_name, sh.display_order, sh.sub_head_name`
     );
 
     const map = new Map<string, any>();
@@ -217,7 +211,7 @@ export const financeExpenseMasterService = {
           defaultGstRate: Number(row.default_gst_rate ?? 0),
           defaultGstType: row.default_gst_type,
           defaultRecoverableTaxPct: Number(
-            row.default_recoverable_tax_pct ?? 0,
+            row.default_recoverable_tax_pct ?? 0
           ),
           defaultAllocationDriver: row.default_allocation_driver,
           pnlTreatment: row.pnl_treatment,
@@ -260,7 +254,7 @@ export const financeExpenseMasterService = {
           activeStatus,
           actorUserId,
           input.id,
-        ],
+        ]
       );
       if (result.affectedRows !== 1) throw new Error("Expense head not found");
       return { id: input.id };
@@ -281,7 +275,7 @@ export const financeExpenseMasterService = {
         activeStatus,
         actorUserId,
         actorUserId,
-      ],
+      ]
     );
     return { id };
   },
@@ -303,9 +297,9 @@ export const financeExpenseMasterService = {
     }
     const recoverablePct = Number(input.defaultRecoverableTaxPct ?? 0);
     if (
-      !Number.isFinite(recoverablePct) ||
-      recoverablePct < 0 ||
-      recoverablePct > 100
+      !Number.isFinite(recoverablePct)
+      || recoverablePct < 0
+      || recoverablePct > 100
     ) {
       throw new Error("Recoverable GST must be between 0 and 100");
     }
@@ -320,7 +314,7 @@ export const financeExpenseMasterService = {
 
     const [heads] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM finance_expense_head_master WHERE id = ? LIMIT 1`,
-      [input.headId],
+      [input.headId]
     );
     if (!heads[0]) throw new Error("Expense head not found");
 
@@ -360,10 +354,9 @@ export const financeExpenseMasterService = {
                 updated_by = ?,
                 updated_at = NOW()
           WHERE id = ?`,
-        [...values, input.id],
+        [...values, input.id]
       );
-      if (result.affectedRows !== 1)
-        throw new Error("Expense sub-head not found");
+      if (result.affectedRows !== 1) throw new Error("Expense sub-head not found");
       return { id: input.id };
     }
 
@@ -375,7 +368,7 @@ export const financeExpenseMasterService = {
         default_recoverable_tax_pct, default_allocation_driver, pnl_treatment,
         display_order, active_status, created_by, updated_by)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, ...values.slice(0, 12), actorUserId, actorUserId],
+      [id, ...values.slice(0, 12), actorUserId, actorUserId]
     );
     return { id };
   },
@@ -390,7 +383,7 @@ export const financeExpenseMasterService = {
    */
   async deleteSubHead(
     id: string,
-    actorUserId: string,
+    actorUserId: string
   ): Promise<DeleteExpenseMasterResult> {
     if (!id) throw new Error("Sub-head id is required");
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -398,7 +391,7 @@ export const financeExpenseMasterService = {
          FROM finance_expense_sub_head_master sh
          JOIN finance_expense_head_master h ON h.id = sh.head_id
         WHERE sh.id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     const row = rows[0];
     if (!row) throw new Error("Expense sub-head not found");
@@ -407,37 +400,31 @@ export const financeExpenseMasterService = {
       id,
       String(row.sub_head_name),
       String(row.head_name),
-      String(row.head_code),
+      String(row.head_code)
     );
     const removed = usageTotal(usage) === 0;
 
     if (removed) {
       await db.execute(
         `DELETE FROM finance_expense_sub_head_master WHERE id = ?`,
-        [id],
+        [id]
       );
     } else {
       await db.execute(
         `UPDATE finance_expense_sub_head_master
             SET active_status = 0, updated_by = ?, updated_at = NOW()
           WHERE id = ?`,
-        [actorUserId, id],
+        [actorUserId, id]
       );
     }
 
     await writeAuditLog({
       actor_user_id: actorUserId,
-      action_type: removed
-        ? "expense_sub_head_deleted"
-        : "expense_sub_head_retired",
+      action_type: removed ? "expense_sub_head_deleted" : "expense_sub_head_retired",
       module_key: "finance_expense_master",
       entity_type: "finance_expense_sub_head_master",
       entity_id: id,
-      metadata: {
-        subHeadName: row.sub_head_name,
-        headName: row.head_name,
-        usage,
-      },
+      metadata: { subHeadName: row.sub_head_name, headName: row.head_name, usage },
     });
 
     return { id, name: String(row.sub_head_name), removed, usage };
@@ -453,12 +440,12 @@ export const financeExpenseMasterService = {
    */
   async deleteHead(
     id: string,
-    actorUserId: string,
+    actorUserId: string
   ): Promise<DeleteExpenseMasterResult> {
     if (!id) throw new Error("Head id is required");
     const [heads] = await db.execute<RowDataPacket[]>(
       `SELECT id, head_name, head_code FROM finance_expense_head_master WHERE id = ? LIMIT 1`,
-      [id],
+      [id]
     );
     const head = heads[0];
     if (!head) throw new Error("Expense head not found");
@@ -467,19 +454,14 @@ export const financeExpenseMasterService = {
     const headCode = String(head.head_code);
     const [subHeads] = await db.execute<RowDataPacket[]>(
       `SELECT id, sub_head_name FROM finance_expense_sub_head_master WHERE head_id = ?`,
-      [id],
+      [id]
     );
 
     let usage = await headUsage(id, headName, headCode);
     for (const sub of subHeads) {
       usage = addUsage(
         usage,
-        await subHeadUsage(
-          String(sub.id),
-          String(sub.sub_head_name),
-          headName,
-          headCode,
-        ),
+        await subHeadUsage(String(sub.id), String(sub.sub_head_name), headName, headCode)
       );
     }
     const removed = usageTotal(usage) === 0;
@@ -490,11 +472,11 @@ export const financeExpenseMasterService = {
         await connection.beginTransaction();
         await connection.execute(
           `DELETE FROM finance_expense_sub_head_master WHERE head_id = ?`,
-          [id],
+          [id]
         );
         await connection.execute(
           `DELETE FROM finance_expense_head_master WHERE id = ?`,
-          [id],
+          [id]
         );
         await connection.commit();
       } catch (error) {
@@ -508,7 +490,7 @@ export const financeExpenseMasterService = {
         `UPDATE finance_expense_head_master
             SET active_status = 0, updated_by = ?, updated_at = NOW()
           WHERE id = ?`,
-        [actorUserId, id],
+        [actorUserId, id]
       );
     }
 

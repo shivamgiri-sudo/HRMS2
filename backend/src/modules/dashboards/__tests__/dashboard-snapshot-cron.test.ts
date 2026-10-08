@@ -37,13 +37,8 @@ describe("dashboard snapshot cron window", () => {
 
     expect(fires("2026-07-31T20:30:00Z"), "02:00 IST must fire").toBe(true);
     expect(fires("2026-07-31T21:29:00Z"), "02:59 IST must fire").toBe(true);
-    expect(fires("2026-07-31T21:30:00Z"), "03:00 IST must not fire").toBe(
-      false,
-    );
-    expect(
-      fires("2026-07-31T15:00:00Z"),
-      "20:30 IST must not fire — the old buggy hour",
-    ).toBe(false);
+    expect(fires("2026-07-31T21:30:00Z"), "03:00 IST must not fire").toBe(false);
+    expect(fires("2026-07-31T15:00:00Z"), "20:30 IST must not fire — the old buggy hour").toBe(false);
   });
 
   it("does not depend on the host timezone", () => {

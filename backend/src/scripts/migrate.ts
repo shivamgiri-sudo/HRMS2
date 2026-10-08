@@ -15,11 +15,7 @@
  * Use MIGRATIONS_VERIFY_ONLY=true on the API to enforce this workflow.
  */
 
-import {
-  runPendingMigrations,
-  getMigrationHealth,
-  verifySchemaVersion,
-} from "../db/runPendingMigrations.js";
+import { runPendingMigrations, getMigrationHealth, verifySchemaVersion } from "../db/runPendingMigrations.js";
 
 const args = process.argv.slice(2);
 const showStatus = args.includes("--status");
@@ -38,18 +34,14 @@ async function main() {
     console.log(`Migrations pending: ${status.pendingCount}`);
     if (status.pendingFiles.length > 0) {
       console.log("\nPending files:");
-      status.pendingFiles.forEach((file, index) =>
-        console.log(`  ${index + 1}. ${file}`),
-      );
+      status.pendingFiles.forEach((file, index) => console.log(`  ${index + 1}. ${file}`));
     }
     console.log(`\nSchema valid: ${status.valid ? "YES" : "NO"}`);
     process.exit(status.valid ? 0 : 1);
   }
 
   if (forceRun) {
-    console.log(
-      "\n[WARN] --force flag set. Will attempt to run even if lock fails.\n",
-    );
+    console.log("\n[WARN] --force flag set. Will attempt to run even if lock fails.\n");
   }
 
   console.log("\nRunning migrations...\n");
@@ -76,19 +68,14 @@ async function main() {
 
     if (finalHealth.failed.length > 0) {
       console.log("\nFailed migrations:");
-      finalHealth.failed.forEach((failure) =>
-        console.log(`  X ${failure.filename}: ${failure.error}`),
-      );
+      finalHealth.failed.forEach((failure) => console.log(`  X ${failure.filename}: ${failure.error}`));
       process.exit(1);
     }
 
     console.log("\nMigrations completed successfully.");
     process.exit(0);
   } catch (error) {
-    console.error(
-      "\nMigration failed:",
-      error instanceof Error ? error.message : error,
-    );
+    console.error("\nMigration failed:", error instanceof Error ? error.message : error);
     process.exit(1);
   }
 }

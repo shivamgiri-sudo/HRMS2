@@ -19,9 +19,7 @@ const mockDb = {
 vi.mock("../../../db/mysql.js", () => ({ db: mockDb }));
 
 const mockLogSensitiveAction = vi.fn(async () => {});
-vi.mock("../../../shared/auditLog.js", () => ({
-  logSensitiveAction: mockLogSensitiveAction,
-}));
+vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: mockLogSensitiveAction }));
 
 const { payrollService } = await import("../payroll.service.js");
 
@@ -39,23 +37,16 @@ const EXISTING_LINE = {
 beforeEach(() => {
   vi.clearAllMocks();
   mockDb.execute.mockImplementation(async (sql: string) => {
-    if (/SELECT \* FROM salary_prep_line WHERE id/.test(sql))
-      return [[EXISTING_LINE], []];
-    if (/SELECT status FROM salary_prep_run/.test(sql))
-      return [[{ status: "draft" }], []];
-    if (/UPDATE salary_prep_line SET/.test(sql))
-      return [{ affectedRows: 1 }, []];
+    if (/SELECT \* FROM salary_prep_line WHERE id/.test(sql)) return [[EXISTING_LINE], []];
+    if (/SELECT status FROM salary_prep_run/.test(sql)) return [[{ status: "draft" }], []];
+    if (/UPDATE salary_prep_line SET/.test(sql)) return [{ affectedRows: 1 }, []];
     return [[], []];
   });
 });
 
 describe("updateLine writes an audited record of who changed what", () => {
   it("logs the actor, old value and new value for a changed field", async () => {
-    await payrollService.updateLine(
-      "line-1",
-      { presentDays: 21 } as any,
-      "actor-42",
-    );
+    await payrollService.updateLine("line-1", { presentDays: 21 } as any, "actor-42");
 
     expect(mockLogSensitiveAction).toHaveBeenCalledTimes(1);
     const entry = mockLogSensitiveAction.mock.calls[0][0];
@@ -68,11 +59,7 @@ describe("updateLine writes an audited record of who changed what", () => {
   });
 
   it("only reports fields the caller actually changed, not the whole line", async () => {
-    await payrollService.updateLine(
-      "line-1",
-      { lwpDays: 2, remarks: "corrected" } as any,
-      "actor-42",
-    );
+    await payrollService.updateLine("line-1", { lwpDays: 2, remarks: "corrected" } as any, "actor-42");
 
     const entry = mockLogSensitiveAction.mock.calls[0][0];
     expect(Object.keys(entry.new_value_json)).toEqual(["lwp_days", "remarks"]);
@@ -86,18 +73,12 @@ describe("updateLine writes an audited record of who changed what", () => {
 
   it("refuses to edit a line on a closed run before ever reaching the audit call", async () => {
     mockDb.execute.mockImplementation(async (sql: string) => {
-      if (/SELECT \* FROM salary_prep_line WHERE id/.test(sql))
-        return [[EXISTING_LINE], []];
-      if (/SELECT status FROM salary_prep_run/.test(sql))
-        return [[{ status: "FINALIZED" }], []];
+      if (/SELECT \* FROM salary_prep_line WHERE id/.test(sql)) return [[EXISTING_LINE], []];
+      if (/SELECT status FROM salary_prep_run/.test(sql)) return [[{ status: "FINALIZED" }], []];
       return [[], []];
     });
     await expect(
-      payrollService.updateLine(
-        "line-1",
-        { presentDays: 21 } as any,
-        "actor-42",
-      ),
+      payrollService.updateLine("line-1", { presentDays: 21 } as any, "actor-42"),
     ).rejects.toThrow(/Cannot edit line/);
     expect(mockLogSensitiveAction).not.toHaveBeenCalled();
   });

@@ -1,10 +1,10 @@
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
 
 const CORE_REPORTING_TABLES = [
-  "report_request",
-  "report_email_delivery",
-  "report_generated_file",
+  'report_request',
+  'report_email_delivery',
+  'report_generated_file',
 ] as const;
 
 const CACHE_TTL_MS = 60_000;
@@ -18,7 +18,7 @@ type ReportingSchemaStatus = {
 let cachedStatus: ReportingSchemaStatus | null = null;
 
 async function readReportingSchemaStatus(): Promise<ReportingSchemaStatus> {
-  const placeholders = CORE_REPORTING_TABLES.map(() => "?").join(", ");
+  const placeholders = CORE_REPORTING_TABLES.map(() => '?').join(', ');
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT table_name
        FROM information_schema.tables
@@ -28,15 +28,11 @@ async function readReportingSchemaStatus(): Promise<ReportingSchemaStatus> {
   );
 
   // MySQL information_schema returns TABLE_NAME (uppercase) on some servers — handle both
-  const present = new Set(
-    rows.map((row) => {
-      const r = row as Record<string, unknown>;
-      return String(r["table_name"] ?? r["TABLE_NAME"] ?? "").toLowerCase();
-    }),
-  );
-  const missingTables = CORE_REPORTING_TABLES.filter(
-    (tableName) => !present.has(tableName.toLowerCase()),
-  );
+  const present = new Set(rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    return String(r['table_name'] ?? r['TABLE_NAME'] ?? '').toLowerCase();
+  }));
+  const missingTables = CORE_REPORTING_TABLES.filter((tableName) => !present.has(tableName.toLowerCase()));
 
   return {
     available: missingTables.length === 0,
@@ -45,14 +41,8 @@ async function readReportingSchemaStatus(): Promise<ReportingSchemaStatus> {
   };
 }
 
-export async function getReportingSchemaStatus(
-  forceRefresh = false,
-): Promise<ReportingSchemaStatus> {
-  if (
-    !forceRefresh &&
-    cachedStatus &&
-    Date.now() - cachedStatus.checkedAt < CACHE_TTL_MS
-  ) {
+export async function getReportingSchemaStatus(forceRefresh = false): Promise<ReportingSchemaStatus> {
+  if (!forceRefresh && cachedStatus && Date.now() - cachedStatus.checkedAt < CACHE_TTL_MS) {
     return cachedStatus;
   }
 
@@ -66,11 +56,11 @@ export async function ensureReportingSchemaAvailable(): Promise<void> {
 
   throw Object.assign(
     new Error(
-      `Report request feature is temporarily unavailable because the reporting schema is not migrated on this server (${status.missingTables.join(", ")}).`,
+      `Report request feature is temporarily unavailable because the reporting schema is not migrated on this server (${status.missingTables.join(', ')}).`,
     ),
     {
       statusCode: 503,
-      code: "REPORTING_SCHEMA_MISSING",
+      code: 'REPORTING_SCHEMA_MISSING',
       missingTables: status.missingTables,
     },
   );

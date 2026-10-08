@@ -52,9 +52,7 @@ describe("appointment letter QR layout (pdfkit top-left space)", () => {
     expect(QR_BLOCK_RECT.x).toBeGreaterThanOrEqual(0);
     expect(QR_BLOCK_RECT.x + QR_BLOCK_RECT.w).toBeLessThanOrEqual(PAGE_W);
     expect(QR_BLOCK_RECT.y).toBeGreaterThanOrEqual(0);
-    expect(QR_BLOCK_RECT.y + QR_BLOCK_RECT.h).toBeLessThanOrEqual(
-      PAGE_H - RESERVE.band,
-    );
+    expect(QR_BLOCK_RECT.y + QR_BLOCK_RECT.h).toBeLessThanOrEqual(PAGE_H - RESERVE.band);
   });
 
   it("sits below the SIGNATURES rule (y~102), not on it", () => {
@@ -62,9 +60,7 @@ describe("appointment letter QR layout (pdfkit top-left space)", () => {
   });
 
   it("stays clear of the company signer text column", () => {
-    expect(QR_BLOCK_RECT.x).toBeGreaterThanOrEqual(
-      COMPANY_TEXT_LEFT + COMPANY_TEXT_MAX_WIDTH,
-    );
+    expect(QR_BLOCK_RECT.x).toBeGreaterThanOrEqual(COMPANY_TEXT_LEFT + COMPANY_TEXT_MAX_WIDTH);
   });
 
   it("is roughly 72-80pt square", () => {
@@ -84,46 +80,18 @@ describe("appointment letter renders with the relocated QR", () => {
     salaryStartDate: "2026-09-01",
     letterNumber: "APL-TEST-0001",
     verificationUrl: "https://mcnhrms.teammas.in/verify/appointment/TESTTOKEN",
-    qrPngDataUrl: await QRCode.toDataURL(
-      "https://mcnhrms.teammas.in/verify/appointment/TESTTOKEN",
-      { width: 220, margin: 1 },
-    ),
+    qrPngDataUrl: await QRCode.toDataURL("https://mcnhrms.teammas.in/verify/appointment/TESTTOKEN", { width: 220, margin: 1 }),
     letterhead: {
-      branchId: null,
-      branchName: "Test Branch",
-      addressLines: ["1 Test Road"],
-      city: "Noida",
-      state: "UP",
-      hrContact: "",
-      hasAddress: true,
+      branchId: null, branchName: "Test Branch", addressLines: ["1 Test Road"],
+      city: "Noida", state: "UP", hrContact: "", hasAddress: true,
     },
     salary: {
-      basic: 10000,
-      hra: 4000,
-      lta: zero,
-      conveyance: 1600,
-      otherAllowance: zero,
-      specialAllowance: zero,
-      bonus: zero,
-      medicalAllowance: zero,
-      portfolio: zero,
-      pli: zero,
-      gross: 15600,
-      esicEmployee: zero,
-      epfEmployee: 1200,
-      netSalary: 14400,
-      esicEmployer: zero,
-      epfEmployer: 1200,
-      adminCharges: 100,
-      ctc: 16900,
-      source: "payroll_head_approved_package",
-      sourceRef: null,
-      approvedBy: null,
-      approvedAt: null,
-      packageEffectiveFrom: null,
-      pfApplicable: true,
-      esicApplicable: false,
-      unavailableLines: [],
+      basic: 10000, hra: 4000, lta: zero, conveyance: 1600, otherAllowance: zero,
+      specialAllowance: zero, bonus: zero, medicalAllowance: zero, portfolio: zero, pli: zero,
+      gross: 15600, esicEmployee: zero, epfEmployee: 1200, netSalary: 14400,
+      esicEmployer: zero, epfEmployer: 1200, adminCharges: 100, ctc: 16900,
+      source: "payroll_head_approved_package", sourceRef: null, approvedBy: null, approvedAt: null,
+      packageEffectiveFrom: null, pfApplicable: true, esicApplicable: false, unavailableLines: [],
     },
     signerName: "Authorised Signatory",
     signerDesignation: "Director",
@@ -140,16 +108,11 @@ describe("appointment letter renders with the relocated QR", () => {
     await parser.destroy();
     expect(last.text).toContain("Aadhaar eSign area");
     expect(last.text).toContain("Scan to verify this letter");
-    expect(last.text).toContain(
-      "Verify: https://mcnhrms.teammas.in/verify/appointment/TESTTOKEN",
-    );
+    expect(last.text).toContain("Verify: https://mcnhrms.teammas.in/verify/appointment/TESTTOKEN");
   });
 
   it("omits the QR caption when there is no QR", async () => {
-    const bytes = await renderAppointmentLetterPdf({
-      ...(await input()),
-      qrPngDataUrl: null,
-    });
+    const bytes = await renderAppointmentLetterPdf({ ...(await input()), qrPngDataUrl: null });
     const parser = new PDFParse({ data: new Uint8Array(bytes) });
     const all = await parser.getText();
     await parser.destroy();
