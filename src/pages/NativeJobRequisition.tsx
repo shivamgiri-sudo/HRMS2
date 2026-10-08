@@ -1528,7 +1528,7 @@ export default function NativeJobRequisition() {
                         type="url"
                         value={formData.bmi_assessment_url}
                         onChange={(e) => field('bmi_assessment_url', e.target.value)}
-                        className="w-full min-h-[44px] px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        className="w-full min-h-11 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                         placeholder="https://…"
                       />
                       <p className="text-xs text-gray-500 mt-1">Used in candidate invites even when no ad is run.</p>

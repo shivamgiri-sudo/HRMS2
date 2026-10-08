@@ -17,10 +17,12 @@ export function validateAssessmentLink(raw: string): string | null {
   const v = raw.trim();
   if (v === '') return null;
   if (v.length > ASSESSMENT_LINK_MAX) return `Link must be at most ${ASSESSMENT_LINK_MAX} characters`;
-  if (/\s/.test(v)) return 'Link must not contain spaces';
+  if (/[^\x21-\x7e]/.test(v)) return 'Link must be plain ASCII without spaces (use punycode for non-English domains)';
+  if (!/^https:\/\//.test(v)) return 'Link must start with https://';
   let url: URL;
   try { url = new URL(v); } catch { return 'Enter a full https link, for example https://…'; }
   if (url.protocol !== 'https:' || !url.hostname) return 'Link must start with https://';
+  if (url.username || url.password) return 'Link must not contain a username or password';
   return null;
 }
 

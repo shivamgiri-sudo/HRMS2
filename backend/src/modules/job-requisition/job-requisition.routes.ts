@@ -356,6 +356,9 @@ jobRequisitionRouter.patch(
     if (!userId) {
       return res.status(401).json({ success: false, message: "User not authenticated" });
     }
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      return res.status(400).json({ success: false, message: "Request body must be a JSON object" });
+    }
 
     const data = await jobRequisitionService.updateRequisition(id, input, userId);
     return res.json({ success: true, data, message: "Requisition updated" });

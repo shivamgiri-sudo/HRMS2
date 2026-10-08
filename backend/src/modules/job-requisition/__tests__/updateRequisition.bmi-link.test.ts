@@ -62,6 +62,22 @@ describe("updateRequisition on a closed requisition", () => {
   });
 });
 
+describe("legacy non-https stored link", () => {
+  beforeEach(() => {
+    current.status = "draft";
+    vi.spyOn(svc, "getRequisition").mockImplementation(async () => ({ id: "r1", approval_status: "draft", bmi_assessment_url: "http://old.example.com/t" } as never));
+  });
+  it("an untouched legacy link (trim-equal) is not re-validated", async () => {
+    await svc.updateRequisition("r1", { bmi_assessment_url: " http://old.example.com/t ", designation_name: "A" }, "u1");
+    expect(updates()).toHaveLength(1);
+  });
+  it("a changed link must be https", async () => {
+    await expect(svc.updateRequisition("r1", { bmi_assessment_url: "http://new.example.com/t" }, "u1")).rejects.toMatchObject({ statusCode: 400 });
+    await svc.updateRequisition("r1", { bmi_assessment_url: "https://new.example.com/t" }, "u1");
+    expect(updates()).toHaveLength(1);
+  });
+});
+
 describe("updateRequisition on a draft", () => {
   it("validates the url too", async () => {
     current.status = "draft";

@@ -44,4 +44,12 @@ describe("PATCH /api/job-requisition/:id (assessment link edit)", () => {
     expect(res.status).toBe(404);
     expect(h.svc.updateRequisition).not.toHaveBeenCalled();
   });
+  it("400s a null or non-object body instead of 500", async () => {
+    const a = await app();
+    for (const body of ["null", "[1]", "\"x\""]) {
+      const res = await request(a).patch("/api/job-requisition/r1").set("Content-Type", "application/json").send(body);
+      expect(res.status, body).toBe(400);
+    }
+    expect(h.svc.updateRequisition).not.toHaveBeenCalled();
+  });
 });

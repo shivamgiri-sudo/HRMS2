@@ -671,9 +671,16 @@ export const jobRequisitionService = {
     }
 
     if ("bmi_assessment_url" in input) {
-      const link = normalizeBmiLink(input.bmi_assessment_url);
-      if (!link.ok) throw Object.assign(new Error(link.message), { statusCode: 400 });
-      input = { ...input, bmi_assessment_url: link.value };
+      // The form resends the stored link on every save: an unchanged legacy (e.g. http) link must not block it.
+      const incoming = typeof input.bmi_assessment_url === "string" ? input.bmi_assessment_url.trim() : input.bmi_assessment_url;
+      const stored = String((existing as { bmi_assessment_url?: string | null }).bmi_assessment_url ?? "").trim();
+      if (typeof incoming === "string" && incoming !== "" && incoming === stored) {
+        input = { ...input, bmi_assessment_url: incoming };
+      } else {
+        const link = normalizeBmiLink(input.bmi_assessment_url);
+        if (!link.ok) throw Object.assign(new Error(link.message), { statusCode: 400 });
+        input = { ...input, bmi_assessment_url: link.value };
+      }
     }
 
     const sets: string[] = [];

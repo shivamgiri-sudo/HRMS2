@@ -5,12 +5,31 @@ import { canEditAssessmentLink, isAssessmentLinkDirty, validateAssessmentLink } 
 
 const base = { inputId: 'al-1', value: '', savedValue: null, canEdit: true, status: 'idle' as const, message: null, onChange: () => {}, onSave: () => {} };
 
+const BAD = [
+  'http://bmi.example.com/a',
+  'javascript:alert(1)',
+  'data:text/html;base64,AAAA',
+  'ftp://x.com/a',
+  'bmi.example.com/a',
+  'https://',
+  'https:evil.com',
+  'https:\\\\evil.com/a',
+  'https://good.com@evil.com/x',
+  'https://user:pw@evil.com/x',
+  'https://bmi.example.com/a\u200bb',
+  'https://b\u043cj.example.com/a',
+  'https://bmi.example.com/a b',
+  'https://bmi.example.com/a\nb',
+  'https://bmi.example.com/a\u0000',
+  'https://' + 'a'.repeat(500) + '.com',
+];
+
 describe('assessment link model', () => {
   it('validates like the backend', () => {
     expect(validateAssessmentLink('')).toBeNull();
     expect(validateAssessmentLink('  ')).toBeNull();
     expect(validateAssessmentLink('https://bmi.example.com/a?x=1')).toBeNull();
-    for (const bad of ['http://x.com', 'javascript:alert(1)', 'data:text/html,x', 'x.com/a', 'https://x.com/a b', 'https://' + 'a'.repeat(500)]) {
+    for (const bad of BAD) {
       expect(validateAssessmentLink(bad), bad).not.toBeNull();
     }
   });
