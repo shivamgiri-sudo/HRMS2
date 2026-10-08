@@ -2,10 +2,11 @@
 import axios from "axios";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getLastMetaSyncSummary } from "../../cron/metaLeadSync.cron.js";
+import { getLastMetaSyncRecord, getLastMetaSyncSummary } from "../../cron/metaLeadSync.cron.js";
+import { newerRecord, readSyncStatus, type SyncStatusRecord } from "../meta-campaign/meta-sync-status.store.js";
 import { isMetaConfigured } from "../meta-campaign/meta-api.client.js";
 import { getPinbotQuality } from "./he-pinbot-quality.service.js";
-import { evaluateHealth, overallLevel, type HealthCheck, type HealthLevel, type HealthSnapshot } from "./he-pipeline-health.js";
+import { computeLeadIntake, evaluateHealth, overallLevel, type HealthCheck, type HealthLevel, type HealthSnapshot } from "./he-pipeline-health.js";
 
 const SNAPSHOT_TTL_MS = 60_000;
 const TOKEN_TTL_MS = 10 * 60_000;
@@ -54,20 +55,26 @@ function schedulerLikelyRunning(hasSummary: boolean): boolean {
 }
 
 export async function collectHealthSnapshot(): Promise<HealthSnapshot> {
-  const summary = await safe(() => getLastMetaSyncSummary(), null);
+  // Latest cycle outcome: the persisted row survives restarts; the in-memory record covers a failed write.
+  const memRecord = await safe(() => getLastMetaSyncRecord(), null as SyncStatusRecord | null);
+  const memSummary = await safe(() => getLastMetaSyncSummary(), null);
+  const record = newerRecord(await safe(() => readSyncStatus(), null as SyncStatusRecord | null), memRecord)
+    ?? (memSummary ? { finishedAt: memSummary.finishedAt, ok: true, imported: memSummary.imported, forms: memSummary.forms, formErrors: memSummary.formErrors, errorCode: null, lastOkAt: memSummary.finishedAt } : null);
   const metaConfigured = await safe(() => isMetaConfigured(), false);
   const tokenValid = metaConfigured ? await safe(probeToken, null) : null;
 
+  // Meta's own lead time (created_time inside raw_payload) is preferred over created_at, which is import time.
+  // created_at >= created_time, so a 16-day created_at window is a superset of every lead that can matter.
   const leads = await safe(async () => {
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT created_at, JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.created_time')) AS meta_time
+         FROM meta_lead_raw WHERE created_at >= NOW() - INTERVAL 16 DAY`);
     const [last] = await db.query<RowDataPacket[]>("SELECT MAX(created_at) AS last_at FROM meta_lead_raw");
-    const [h24] = await db.query<RowDataPacket[]>("SELECT COUNT(*) AS n FROM meta_lead_raw WHERE created_at >= NOW() - INTERVAL 24 HOUR");
-    const [prev] = await db.query<RowDataPacket[]>(
-      `SELECT COUNT(*) AS n FROM meta_lead_raw
-        WHERE created_at >= NOW() - INTERVAL 15 DAY AND created_at < NOW() - INTERVAL 1 DAY`);
+    const r = computeLeadIntake((rows ?? []).map((x) => ({ createdAt: new Date(x.created_at), metaCreatedTime: x.meta_time ?? null })));
     return {
-      lastLeadAt: last?.[0]?.last_at ? new Date(last[0].last_at) : null,
-      leadsLast24h: Number(h24?.[0]?.n ?? 0),
-      avg: Number(prev?.[0]?.n ?? 0) / 14, // zero-filled: total over the 14 days divided by 14
+      lastLeadAt: r.lastLeadAt ?? (last?.[0]?.last_at ? new Date(last[0].last_at) : null),
+      leadsLast24h: r.leadsLast24h as number | null,
+      avg: r.avgPerDay as number | null,
     };
   }, { lastLeadAt: null as Date | null, leadsLast24h: null as number | null, avg: null as number | null });
 
@@ -100,10 +107,13 @@ export async function collectHealthSnapshot(): Promise<HealthSnapshot> {
     lastLeadAt: leads.lastLeadAt,
     leadsLast24h: leads.leadsLast24h,
     avgLeadsPerDay14d: leads.avg,
-    lastSyncFinishedAt: summary ? new Date(summary.finishedAt) : null,
-    lastSyncImported: summary ? summary.imported : null,
-    formErrorsLastRun: summary ? summary.formErrors : null,
-    schedulerRunning: schedulerLikelyRunning(summary !== null),
+    lastSyncFinishedAt: record ? new Date(record.finishedAt) : null,
+    lastSyncOk: record ? record.ok : null,
+    lastSyncErrorCode: record?.errorCode ?? null,
+    lastSyncOkAt: record?.lastOkAt ? new Date(record.lastOkAt) : null,
+    lastSyncImported: record ? record.imported : null,
+    formErrorsLastRun: record && record.ok ? record.formErrors : null,
+    schedulerRunning: schedulerLikelyRunning(record !== null),
     whatsappFailed24h: wa.failed,
     whatsappSent24h: wa.sent,
     followupOverdue: overdue,

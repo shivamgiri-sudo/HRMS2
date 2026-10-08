@@ -20,6 +20,7 @@ import { isMetaConfigured } from "../modules/meta-campaign/meta-api.client.js";
 import { notifyQualifiedLead } from "../modules/meta-campaign/lead-outreach.service.js";
 import { reconcileDeliveryStatuses } from "../modules/meta-campaign/meta-messages.service.js";
 import { enqueueMetaLeadFollowup, followupHasLiveRow } from "../modules/hiring-engine/qualified-followup.service.js";
+import { readSyncStatus, safeErrorCode, writeSyncStatus, type SyncStatusRecord } from "../modules/meta-campaign/meta-sync-status.store.js";
 import { followupSkipSql, pipelineOwnsSends } from "../modules/hiring-engine/qualified-followup.policy.js";
 
 let scheduler: NodeJS.Timeout | undefined;
@@ -97,6 +98,20 @@ export type MetaSyncNowResult =
   | { status: "error"; message: string };
 
 let lastSummary: MetaSyncSummary | null = null;
+let lastRecord: SyncStatusRecord | null = null;
+
+/** Outcome (ok or error) of the latest cycle in this process; the health strip also reads the persisted copy after a restart. */
+export function getLastMetaSyncRecord(): SyncStatusRecord | null {
+  return lastRecord;
+}
+
+async function recordOutcome(rec: Omit<SyncStatusRecord, "lastOkAt">): Promise<void> {
+  // after a restart the in-memory copy is empty: carry the last good time over from the persisted one
+  const prev = rec.ok ? null : lastRecord ?? (await readSyncStatus());
+  const lastOkAt = rec.ok ? rec.finishedAt : prev?.lastOkAt ?? null;
+  lastRecord = { ...rec, lastOkAt };
+  await writeSyncStatus(lastRecord);
+}
 
 /** Result of the most recent completed run (scheduled or manual) in this process, for the UI. */
 export function getLastMetaSyncSummary(): MetaSyncSummary | null {
@@ -208,9 +223,11 @@ async function runSyncCycle(): Promise<MetaSyncNowResult> {
       outreach,
     };
     lastSummary = summary;
+    await recordOutcome({ finishedAt: summary.finishedAt, ok: true, imported: totalImported, forms: formsToPull.length, formErrors, errorCode: null });
     return { status: "ok", summary };
   } catch (err: any) {
     console.error("[meta-sync] Sync error:", err?.message ?? err);
+    await recordOutcome({ finishedAt: new Date().toISOString(), ok: false, imported: 0, forms: 0, formErrors: 0, errorCode: safeErrorCode(err) });
     return { status: "error", message: String(err?.message ?? err) };
   } finally {
     runInFlight = false;

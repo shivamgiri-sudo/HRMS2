@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../db/mysql.js", () => ({ db: { query: vi.fn().mockRejectedValue(new Error("db down")) } }));
-vi.mock("../../../cron/metaLeadSync.cron.js", () => ({ getLastMetaSyncSummary: () => { throw new Error("boom"); } }));
+vi.mock("../../../cron/metaLeadSync.cron.js", () => ({ getLastMetaSyncSummary: () => { throw new Error("boom"); }, getLastMetaSyncRecord: () => { throw new Error("boom"); } }));
 vi.mock("../../meta-campaign/meta-api.client.js", () => ({ isMetaConfigured: () => { throw new Error("boom"); } }));
 
 import { evaluateHealth, overallLevel, type HealthSnapshot } from "../he-pipeline-health.js";
@@ -43,6 +43,19 @@ describe("evaluateHealth", () => {
     expect(lvl({ lastSyncFinishedAt: ago(179) }, "sync_recent")).toBe("ok");
     expect(lvl({ schedulerRunning: false }, "sync_recent")).toBe("warn");
     expect(lvl({ lastSyncFinishedAt: null }, "sync_recent")).toBe("warn");
+  });
+  it("ruling: an erroring latest cycle is an error state, never 'No sync recorded since restart'", () => {
+    const failed = { lastSyncOk: false, lastSyncFinishedAt: ago(5), lastSyncErrorCode: "ECONNRESET" };
+    const c = evaluateHealth({ ...base, ...failed, lastSyncOkAt: ago(40) }, NOW).find((x) => x.key === "sync_recent")!;
+    expect(c.level).toBe("warn");
+    expect(c.detail).toContain("Last sync failed 5 min ago (ECONNRESET)");
+    expect(c.detail).not.toContain("since restart");
+    expect(lvl({ ...failed, lastSyncOkAt: ago(181) }, "sync_recent")).toBe("critical");
+    expect(lvl({ ...failed, lastSyncOkAt: null }, "sync_recent")).toBe("critical");
+  });
+  it("ruling: a persisted successful sync from before a restart shows as ok with its real age", () => {
+    const c = evaluateHealth({ ...base, lastSyncOk: true, lastSyncFinishedAt: ago(25) }, NOW).find((x) => x.key === "sync_recent")!;
+    expect(c).toMatchObject({ level: "ok", detail: "Last sync finished 25 min ago" });
   });
   it("form_errors", () => {
     expect(lvl({ formErrorsLastRun: 1 }, "form_errors")).toBe("warn");

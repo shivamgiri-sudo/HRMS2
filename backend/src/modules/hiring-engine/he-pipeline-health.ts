@@ -10,6 +10,11 @@ export interface HealthSnapshot {
   leadsLast24h: number | null;
   avgLeadsPerDay14d: number | null;
   lastSyncFinishedAt: Date | null;
+  /** Optional: undefined/null = unknown (treated as ok when a sync time exists). false = the latest cycle errored. */
+  lastSyncOk?: boolean | null;
+  lastSyncErrorCode?: string | null;
+  /** Finish time of the latest successful cycle, when known. */
+  lastSyncOkAt?: Date | null;
   lastSyncImported: number | null;
   formErrorsLastRun: number | null;
   schedulerRunning: boolean;
@@ -27,6 +32,55 @@ export const SYNC_STALE_MS = 3 * 60 * 60 * 1000;
 export const WA_MIN_VOLUME = 20;
 export const WA_CRITICAL_FAIL_SHARE = 0.5;
 export const WA_WARN_FAIL_SHARE = 0.2;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const BASELINE_DAYS = 14;
+/** A day with more than this multiple of the median is treated as a backfill/import spike and ignored. */
+export const BACKFILL_SPIKE_RATIO = 3;
+
+export interface LeadTimeRow { createdAt: Date; metaCreatedTime?: string | number | null }
+
+/** Lead time = Meta's own created_time when present and sane (not in the future), else our import time. */
+export function effectiveLeadTime(row: LeadTimeRow, now: Date = new Date()): Date | null {
+  const m = row.metaCreatedTime;
+  if (m !== null && m !== undefined && m !== "") {
+    let ms = NaN;
+    if (typeof m === "number") ms = m < 1e11 ? m * 1000 : m;
+    else if (/^\d+$/.test(m)) { const n = Number(m); ms = n < 1e11 ? n * 1000 : n; }
+    else ms = Date.parse(m.replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
+    if (Number.isFinite(ms) && ms <= now.getTime()) return new Date(ms);
+  }
+  return row.createdAt instanceof Date && Number.isFinite(row.createdAt.getTime()) ? row.createdAt : null;
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+/**
+ * Robust lead-intake numbers. Buckets are rolling 24 h days back from `now`: bucket 0 is the last 24 h, buckets 1..14
+ * are the 14 days before it. Baseline = median of the non-zero days after dropping days above 3x that median
+ * (backfill spikes). Zero days are ignored on purpose: an outage gap cannot be told from a quiet day. No non-zero day = 0.
+ */
+export function computeLeadIntake(rows: LeadTimeRow[], now: Date = new Date()): { lastLeadAt: Date | null; leadsLast24h: number; avgPerDay: number } {
+  const counts = new Array<number>(BASELINE_DAYS + 1).fill(0);
+  let lastLeadAt: Date | null = null;
+  for (const r of rows) {
+    const t = effectiveLeadTime(r, now);
+    if (!t) continue;
+    const age = now.getTime() - t.getTime();
+    if (age < 0 || age >= (BASELINE_DAYS + 1) * DAY_MS) continue;
+    counts[Math.floor(age / DAY_MS)]++;
+    if (!lastLeadAt || t > lastLeadAt) lastLeadAt = t;
+  }
+  const nonZero = counts.slice(1).filter((n) => n > 0);
+  if (nonZero.length === 0) return { lastLeadAt, leadsLast24h: counts[0], avgPerDay: 0 };
+  const m0 = median(nonZero);
+  const kept = nonZero.filter((n) => n <= BACKFILL_SPIKE_RATIO * m0);
+  return { lastLeadAt, leadsLast24h: counts[0], avgPerDay: median(kept) };
+}
 
 const RANK: Record<HealthLevel, number> = { ok: 0, warn: 1, critical: 2 };
 
@@ -64,7 +118,14 @@ export function evaluateHealth(s: HealthSnapshot, now: Date = new Date()): Healt
 
   let syncLevel: HealthLevel = "ok";
   let syncDetail: string;
-  if (s.lastSyncFinishedAt) {
+  if (s.lastSyncFinishedAt && s.lastSyncOk === false) {
+    // the latest cycle errored: never "no sync recorded"; warn while a good sync is recent, critical once none for 3 h
+    const okAge = s.lastSyncOkAt ? now.getTime() - s.lastSyncOkAt.getTime() : null;
+    syncLevel = okAge !== null && okAge <= SYNC_STALE_MS ? "warn" : "critical";
+    syncDetail = `Last sync failed ${ageText(now.getTime() - s.lastSyncFinishedAt.getTime())} ago`
+      + (s.lastSyncErrorCode ? ` (${s.lastSyncErrorCode})` : "")
+      + (okAge !== null ? `; last good sync ${ageText(okAge)} ago` : "; no good sync on record");
+  } else if (s.lastSyncFinishedAt) {
     const age = now.getTime() - s.lastSyncFinishedAt.getTime();
     syncDetail = `Last sync finished ${ageText(age)} ago`;
     if (!s.schedulerRunning) { syncLevel = "warn"; syncDetail += "; scheduler not running in this process"; }
