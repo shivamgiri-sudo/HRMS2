@@ -14,6 +14,8 @@ import type { DriveGroup, SourceType } from "./driveCommandTypes";
 
 const MORE = "inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 transition-colors duration-150 hover:bg-slate-100 motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 sm:min-h-8";
 
+const PRIMARY = "inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border border-blue-700 bg-blue-700 px-4 text-sm font-semibold text-white transition-colors duration-150 hover:bg-blue-800 motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:border-blue-400 dark:bg-blue-400 dark:text-slate-950 dark:hover:bg-blue-300 sm:min-h-9";
+
 export function EmptyRows({ text }: { text: string }) {
   return (
     <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-slate-300 px-4 text-center dark:border-slate-600" style={{ minHeight: 120 }}>
@@ -55,7 +57,7 @@ export default function DriveTypeSection({ type, groups, today, title, actions }
     <section aria-label={title} className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</h3>
-        {actions && <button type="button" className={BTN} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" aria-hidden /> Open a stream</button>}
+        {actions && <button type="button" className={PRIMARY} onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" aria-hidden /> Open a stream</button>}
       </div>
       {actions && <p role="status" className="text-sm text-emerald-800 empty:hidden dark:text-emerald-200">{note}</p>}
       <GroupList groups={mine} today={today} emptyText={SECTION_EMPTY[type]}

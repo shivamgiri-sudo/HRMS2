@@ -9,7 +9,7 @@ import PipelineHealthStrip from "../PipelineHealthStrip";
 import FilterBar from "./FilterBar";
 import SectionNav, { PANEL_ID, tabDomId } from "./SectionNav";
 import { filtersKey, type RequisitionOption } from "./commandData";
-import { commandHash, istTodayClient, parseCommandHash, sectionLabels, type Filters, type SectionId } from "./driveCommandModel";
+import { commandHash, defaultFilters, istTodayClient, parseCommandHash, sectionLabels, type Filters, type SectionId } from "./driveCommandModel";
 import type { DriveAnalytics } from "./driveCommandTypes";
 import { useDriveAnalytics, useFilterOptions } from "./useCommandData";
 import KpiStrip from "./charts/KpiStrip";
@@ -26,6 +26,7 @@ import { insightNavHash, type ActionTarget } from "./insightsPanelModel";
 import CreateStreamDialog from "./CreateStreamDialog";
 import { StreamDialog } from "./RowStreamActions";
 import type { SourceType } from "./driveCommandTypes";
+import SourceOverview from "./SourceOverview";
 import PlanSection from "./PlanSection";
 import FollowupPanel from "./FollowupPanel";
 import ActionQueuePanel from "./ActionQueuePanel";
@@ -70,7 +71,8 @@ export function DriveCommandView({ section, filters, analytics, loading, error, 
   const needs = section !== "plan"; // the Plan section loads its own data
   const firstLoad = needs && loading && !analytics;
   const failed = needs && !!error && !analytics;
-  const empty = !!analytics && analytics.requisitionCount === 0 && (section === "summary" || section === "live" || section === "old");
+  // Live Meta / Old Meta data explain their own zeros (and still offer Open a stream), so the generic empty box is the Summary's only.
+  const empty = !!analytics && analytics.requisitionCount === 0 && section === "summary";
   return (
     <div className="space-y-0">
       <SectionNav current={section} onSelect={onSection} />
@@ -128,7 +130,7 @@ function SummaryCharts({ analytics, insights }: { analytics: DriveAnalytics; ins
 }
 
 /** Analytics-dependent panels (gated) and panels that must not wait for analytics (children). */
-export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode, followupOpen = 0, filters?: Filters): { gated: ReactNode; always: ReactNode } {
+export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode, followupOpen = 0, filters?: Filters, onFilters?: (f: Filters) => void): { gated: ReactNode; always: ReactNode } {
   if (section === "summary") {
     // The action queue does not wait for analytics; DriveCommandView draws the Summary's always slot above the gated charts.
     return {
@@ -149,7 +151,15 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
     };
   }
   const type = section === "live" ? "meta_live" : "meta_old";
-  return { gated: analytics && <DriveTypeSection type={type} groups={analytics.groups ?? []} today={istTodayClient()} title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} actions={actions} />, always: null };
+  return {
+    gated: analytics && (
+      <div className="space-y-4">
+        <SourceOverview analytics={analytics} type={type} filters={filters ?? defaultFilters()} onFilters={onFilters} />
+        <DriveTypeSection type={type} groups={analytics.groups ?? []} today={istTodayClient()} title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} actions={actions} />
+      </div>
+    ),
+    always: null,
+  };
 }
 
 /** The code of a requisition an insight names: from the analytics rows, the scatter, or the filter options; "" when unknown. */
@@ -205,7 +215,7 @@ export default function DriveCommandCenter() {
     <PlanSection requisitionId={filters.requisitionId} groups={data?.groups ?? null} groupsLoading={loading} requisitions={requisitions}
       onPick={(id) => go("plan", { ...filters, requisitionId: id })} onChanged={reload} autoPreview={planIntent} />
   ) : null;
-  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan, followupOpen, filters);
+  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan, followupOpen, filters, (f) => go(section, f));
   return (
     <div className="space-y-3">
       <PipelineHealthStrip />

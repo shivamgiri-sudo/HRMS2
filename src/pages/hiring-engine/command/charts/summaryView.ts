@@ -32,10 +32,11 @@ export function shortLabel(s: string, max = 16): string { const v = String(s ?? 
 
 // ---- KPI strip ---------------------------------------------------------------------------------------------------------------------------
 export interface KpiView { tiles: Array<KpiTile & { present: boolean; sparkLabel: string }>; untracked: boolean; empty: boolean; table: TextTable }
-export function kpiView(a: DriveAnalytics): KpiView {
+/** `only` limits the view to one drive type (the Live Meta / Old Meta data sections). */
+export function kpiView(a: DriveAnalytics, only?: SourceType): KpiView {
   const untracked = !isTracked(a);
   const present = presentTypes(a);
-  const tiles = kpiTiles(a).map((t) => ({
+  const tiles = kpiTiles(a).filter((t) => !only || t.sourceType === only).map((t) => ({
     ...t,
     values: t.values.map((v) => (untracked && v.stage === "qualified" ? { ...v, text: DASH } : v)),
     present: present.includes(t.sourceType),

@@ -1,6 +1,6 @@
 /** KPI strip: one tile per drive type (seven stages, arrivals sparkline, change arrow as icon + words) and the cost tile (estimated figures when cost is available, otherwise the placeholder). */
 import { ArrowDown, ArrowUp, Coins, Minus } from "lucide-react";
-import type { DriveAnalytics } from "../driveCommandTypes";
+import type { DriveAnalytics, SourceType } from "../driveCommandTypes";
 import { sparklinePath } from "../driveChartModel";
 import { seriesColor, useIsDark } from "../chartTheme";
 import ChartFrame, { Note } from "./ChartFrame";
@@ -12,19 +12,21 @@ const SPARK_W = 96;
 const SPARK_H = 28;
 const ICON = { "arrow-up": ArrowUp, "arrow-down": ArrowDown, minus: Minus } as const;
 
-export default function KpiStrip({ analytics }: { analytics: DriveAnalytics }) {
+/** `only` shows that drive type's tile alone (zeros stay visible, with their reason given by the caller) and leaves out the cost tile. */
+export default function KpiStrip({ analytics, only }: { analytics: DriveAnalytics; only?: SourceType }) {
   const dark = useIsDark();
-  const v = kpiView(analytics);
-  const cost = costTiles(analytics);
+  const v = kpiView(analytics, only);
+  const cost = only ? null : costTiles(analytics);
   const note = costNoteFor(analytics) || "Cost per source arrives with Plan 5";
+  const grid = only ? "grid gap-3" : "grid gap-3 sm:grid-cols-2 xl:grid-cols-4";
   return (
     <ChartFrame
-      title="Drive types at a glance"
+      title={only ? "At a glance" : "Drive types at a glance"}
       subtitle={`${analytics?.window?.from ?? ""} to ${analytics?.window?.to ?? ""}, change in arrivals against the previous period of the same length`}
-      table={v.table} empty={v.empty} aria={v.table.caption} kind="grid"
+      table={v.table} empty={only ? false : v.empty} aria={v.table.caption} kind="grid"
       note={<div className="space-y-1">{v.untracked && <Note>{UNTRACKED_NOTE}</Note>}<Note>{CREDIT_NOTE}</Note></div>}
     >
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className={grid}>
         {v.tiles.map((t) => {
           const Icon = ICON[t.arrivalsChange.icon];
           const path = sparklinePath(t.sparkline, SPARK_W, SPARK_H);
@@ -35,7 +37,7 @@ export default function KpiStrip({ analytics }: { analytics: DriveAnalytics }) {
                 <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">{t.label}</h4>
                 {!t.present && <span className="rounded border border-slate-300 px-1.5 text-xs text-slate-700 dark:border-slate-600 dark:text-slate-200">No activity in this range</span>}
               </header>
-              <dl className="grid grid-cols-4 gap-x-2 gap-y-1">
+              <dl className={only ? "grid grid-cols-4 gap-x-2 gap-y-2 sm:grid-cols-7" : "grid grid-cols-4 gap-x-2 gap-y-1"}>
                 {t.values.map((s) => (
                   <div key={s.stage} className="min-w-0">
                     <dt className="truncate text-xs text-slate-600 dark:text-slate-300">{s.label}</dt>
@@ -76,7 +78,7 @@ export default function KpiStrip({ analytics }: { analytics: DriveAnalytics }) {
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-300">{costNoteFor(analytics)}</p>
           </article>
-        ) : (
+        ) : only ? null : (
           <article className="flex min-w-0 flex-col justify-center gap-1 rounded-lg border border-dashed border-slate-300 p-3 text-slate-600 dark:border-slate-600 dark:text-slate-300">
             <p className="flex items-center gap-1.5 text-sm font-semibold"><Coins className="h-4 w-4 shrink-0" aria-hidden /> Cost per source</p>
             <p className="text-xs">{note}</p>
