@@ -37,6 +37,10 @@ describe("POST /matches/:id/outcome-reason", () => {
     expect([r.status, r.body.message]).toEqual([404, "Not found"]);
     expect(recordOutcomeReason).not.toHaveBeenCalled();
   });
+  it("off: ceo also gets 404 (switch check precedes the role check)", async () => {
+    const r = await request(appFor("ceo")).post(url).send({ reason: "distance" });
+    expect([r.status, r.body.message]).toEqual([404, "Not found"]);
+  });
   it("ceo cannot write: 403", async () => {
     vi.stubEnv("HE_OUTCOME_REASONS", "true");
     expect((await request(appFor("ceo")).post(url).send({ reason: "distance" })).status).toBe(403);
@@ -69,6 +73,7 @@ describe("POST /matches/:id/outcome-reason", () => {
     const r = await request(appFor("hr")).post(url).send({ reason: "salary" });
     expect([r.status, r.body.message]).toEqual([500, "Could not save the reason"]);
     expect(JSON.stringify(err.mock.calls)).not.toMatch(/\d{6,}/);
+    expect(err.mock.calls[0][0]).toEqual({ code: "ER_X" });
   });
 });
 

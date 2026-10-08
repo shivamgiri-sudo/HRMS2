@@ -379,7 +379,7 @@ async function build(
       const t = await loadInsightThresholds();
       const { facts, failedSections: factFailed } = await collectInsightFacts({
         requisitionIds: ids, from: w.from, to: w.to, today, windowDays: w.days,
-        types: perType((k) => ({ current: types[k].stages, previous: types[k].previous })),
+        types: perType((k) => ({ current: types[k].stages, previous: types[k].previous, noShow: types[k].noShow, declined: types[k].declined })),
         ...(reasons ? { reasons } : {}),
         agg: inWindow, sources: sources?.byRequisition ?? [], codes: new Map(heads.map((h) => [h.id, h.code])), t, arrivals, streams: active, now,
       }, scope);

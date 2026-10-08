@@ -9,13 +9,16 @@ import { createRequestSequencer, describeError } from "./command/commandData";
 import { createInFlightGuard, type InFlightGuard } from "./command/inFlight";
 import {
   EMPTY_TEXT, NOTE_MAX, OUTCOMES_PATH, PARTIAL_TEXT, REASON_CHIPS, SECTION_TITLE, TRUNCATED_TEXT, counterText, groupByDrive, nameOf, outcomeWord, reasonBody,
-  reasonLabel, reasonPath, reasonsKnownOff, rememberReasonsEnabled, saveErrorText, savedText, slotText,
+  reasonLabel, reasonPath, reasonsKnownOff, rememberReasonsEnabled, saveErrorText, savedText, slotText, withBusy, withoutBusy,
   type OutcomeList, type OutcomeReasonCode, type OutcomeRow,
 } from "./outcomeReasonsModel";
 
 const FOCUS = "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500";
-const BTN = `inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 transition-colors duration-150 hover:bg-slate-50 motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-8 ${FOCUS} dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800`;
-const CHIP = `inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors duration-150 motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-8 ${FOCUS}`;
+const BTN = `inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 transition-colors duration-150 hover:bg-slate-50 motion-reduce:transition-none sm:min-h-8 ${FOCUS} dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800`;
+const CHIP = `inline-flex min-h-11 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors duration-150 motion-reduce:transition-none sm:min-h-8 ${FOCUS}`;
+const READY = "cursor-pointer";
+const BUSY = "cursor-wait opacity-60";
+const IDLE_OFF = "cursor-not-allowed opacity-60";
 const CHIP_ON = "border-blue-600 bg-blue-600 text-white dark:border-blue-400 dark:bg-blue-500 dark:text-slate-950";
 const CHIP_OFF = "border-slate-300 bg-white text-slate-900 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800";
 const PULSE = "animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none dark:bg-slate-800";
@@ -24,7 +27,8 @@ export interface ReasonsViewProps {
   data: OutcomeList | null | undefined;
   loading: boolean;
   error: string | null;
-  busyId?: string | null;
+  /** Rows with a save in flight: their controls get aria-disabled (not disabled), so focus stays on the tapped control. */
+  busyIds?: ReadonlySet<string>;
   status?: string | null;
   noteOpen?: Record<string, boolean>;
   noteText?: Record<string, string>;
@@ -42,7 +46,7 @@ function Heading({ id }: { id: string }) {
 }
 
 function RowView({ r, p }: { r: OutcomeRow; p: ReasonsViewProps }) {
-  const name = nameOf(r), busy = p.busyId === r.matchId, open = p.noteOpen?.[r.matchId] === true, text = p.noteText?.[r.matchId] ?? r.note ?? "";
+  const name = nameOf(r), busy = p.busyIds?.has(r.matchId) === true, open = p.noteOpen?.[r.matchId] === true, text = p.noteText?.[r.matchId] ?? r.note ?? "";
   const noteId = `note-${r.matchId}`;
   return (
     <tr className="align-top">
@@ -54,14 +58,14 @@ function RowView({ r, p }: { r: OutcomeRow; p: ReasonsViewProps }) {
           {REASON_CHIPS.map((c) => {
             const on = r.reason === c.code;
             return (
-              <button key={c.code} type="button" aria-pressed={on} disabled={busy} onClick={() => p.onPick(r, c.code)} className={`${CHIP} ${on ? CHIP_ON : CHIP_OFF}`}>
+              <button key={c.code} type="button" aria-pressed={on} aria-disabled={busy || undefined} onClick={() => { if (!busy) p.onPick(r, c.code); }} className={`${CHIP} ${on ? CHIP_ON : CHIP_OFF} ${busy ? BUSY : READY}`}>
                 {on && <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />}{c.label}
               </button>
             );
           })}
         </div>
         <div className="mt-2">
-          <button type="button" aria-expanded={open} aria-controls={noteId} onClick={() => p.onNoteToggle(r)} className={BTN}><MessageSquarePlus className="h-4 w-4" aria-hidden />Add a note</button>
+          <button type="button" aria-expanded={open} aria-controls={noteId} onClick={() => p.onNoteToggle(r)} className={`${BTN} ${READY}`}><MessageSquarePlus className="h-4 w-4" aria-hidden />Add a note</button>
           {open && (
             <div id={noteId} className="mt-2 flex flex-wrap items-end gap-2">
               <label className="text-xs font-semibold text-slate-900 dark:text-slate-100">
@@ -70,7 +74,7 @@ function RowView({ r, p }: { r: OutcomeRow; p: ReasonsViewProps }) {
                   className={`mt-1 block min-h-11 w-64 max-w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 sm:min-h-8 ${FOCUS} dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100`} />
               </label>
               <span className="pb-3 text-xs tabular-nums text-slate-700 sm:pb-1.5 dark:text-slate-200">{counterText(text.length)}</span>
-              <button type="button" disabled={busy || !r.reason} onClick={() => p.onNoteSave(r)} className={BTN}>Save note</button>
+              <button type="button" aria-disabled={busy || !r.reason || undefined} onClick={() => { if (!busy && r.reason) p.onNoteSave(r); }} className={`${BTN} ${busy ? BUSY : !r.reason ? IDLE_OFF : READY}`}>Save note</button>
               {!r.reason && <span className="pb-3 text-xs text-slate-700 sm:pb-1.5 dark:text-slate-200">Pick a reason first</span>}
             </div>
           )}
@@ -94,7 +98,7 @@ export function OutcomeReasonsView(p: ReasonsViewProps) {
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-700 dark:bg-rose-950 dark:text-rose-200">
           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1">Could not load the list: {p.error}</span>
-          <button type="button" onClick={p.onRetry} className={BTN}>Retry</button>
+          <button type="button" onClick={p.onRetry} className={`${BTN} ${READY}`}>Retry</button>
         </div>
       </section>
     );
@@ -107,10 +111,10 @@ export function OutcomeReasonsView(p: ReasonsViewProps) {
       {d.partial && (
         <p role="alert" className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />{PARTIAL_TEXT}
-          <button type="button" onClick={p.onRetry} className={BTN}>Retry</button>
+          <button type="button" onClick={p.onRetry} className={`${BTN} ${READY}`}>Retry</button>
         </p>
       )}
-      <p role="status" className="min-h-5 text-sm font-semibold text-slate-900 empty:hidden dark:text-slate-100">{p.status}</p>
+      <p role="status" className="min-h-5 text-sm font-semibold text-slate-900 dark:text-slate-100">{p.status}</p>
       {groups.length === 0 ? (
         !d.partial && (
           <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 px-4 text-sm font-semibold text-slate-800 dark:border-slate-600 dark:text-slate-100" style={{ minHeight: 96 }}>
@@ -137,7 +141,7 @@ export default function OutcomeReasons() {
   const [data, setData] = useState<OutcomeList | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(() => new Set());
   const [status, setStatus] = useState<string | null>(null);
   const [noteOpen, setNoteOpen] = useState<Record<string, boolean>>({});
   const [noteText, setNoteText] = useState<Record<string, string>>({});
@@ -166,7 +170,7 @@ export default function OutcomeReasons() {
     let g = guards.current.get(row.matchId);
     if (!g) { g = createInFlightGuard(); guards.current.set(row.matchId, g); }
     return g.run(async () => {
-      setBusyId(row.matchId); setStatus(null);
+      setBusyIds((b) => withBusy(b, row.matchId)); setStatus(null);
       try {
         const r = await hrmsApi.post<{ data?: { outcome?: "no_show" | "declined"; reason?: OutcomeReasonCode; note?: string | null } }>(reasonPath(row.matchId), reasonBody(code, note));
         const saved = r?.data;
@@ -178,13 +182,13 @@ export default function OutcomeReasons() {
       } catch (e: unknown) {
         setStatus(saveErrorText(e));
       } finally {
-        setBusyId(null);
+        setBusyIds((b) => withoutBusy(b, row.matchId));
       }
     });
   };
 
   return (
-    <OutcomeReasonsView data={data} loading={loading} error={error} busyId={busyId} status={status} noteOpen={noteOpen} noteText={noteText} expectOn={expectOn}
+    <OutcomeReasonsView data={data} loading={loading} error={error} busyIds={busyIds} status={status} noteOpen={noteOpen} noteText={noteText} expectOn={expectOn}
       onPick={(r, c) => void save(r, c, noteText[r.matchId] ?? r.note ?? "")}
       onNoteToggle={(r) => setNoteOpen((o) => ({ ...o, [r.matchId]: !o[r.matchId] }))}
       onNoteChange={(r, t) => setNoteText((n) => ({ ...n, [r.matchId]: t.slice(0, NOTE_MAX) }))}

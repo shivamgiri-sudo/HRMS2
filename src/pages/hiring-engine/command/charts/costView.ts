@@ -33,11 +33,17 @@ export function costTiles(a: DriveAnalytics): CostTile[] | null {
   });
 }
 
-/** The backend note, plus a plain warning when a cost read failed (the figures may then be too low). */
+const NONE_PREFIX = "No cost source yet";
+const NO_RATES_TEXT = "Messaging rates are not set, so only ad spend counts.";
+const READ_FAILED = "Some cost figures could not be read";
+
+/** The backend note. When a cost read failed, the "nothing is set up" notes are dropped (they would contradict the partial banner) and a plain warning is added. */
 export function costNoteFor(a: DriveAnalytics): string {
   const base = typeof a?.cost?.note === "string" ? a.cost.note : "";
   const failed = (Array.isArray(a?.failedSections) ? a.failedSections : []).some((f) => typeof f === "string" && f.startsWith("cost"));
-  return failed ? `${base} Some cost figures could not be read, so the totals may be too low.`.trim() : base;
+  if (!failed) return base;
+  const kept = base.startsWith(NONE_PREFIX) ? "" : base.split(NO_RATES_TEXT).join("").trim();
+  return kept ? `${kept} ${READ_FAILED}, so the totals may be too low.` : `${READ_FAILED}.`;
 }
 
 const COST_LABEL: Record<string, string> = {

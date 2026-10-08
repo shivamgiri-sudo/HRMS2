@@ -48,6 +48,10 @@ export function groupByDrive(rows: OutcomeRow[]): Array<{ driveId: string; title
   return out;
 }
 
+/** Rows with a save in flight. New sets each time so React sees the change. */
+export const withBusy = (s: ReadonlySet<string>, id: string): Set<string> => new Set(s).add(id);
+export const withoutBusy = (s: ReadonlySet<string>, id: string): Set<string> => { const n = new Set(s); n.delete(id); return n; };
+
 export function saveErrorText(e: unknown): string {
   const o = (e ?? {}) as { status?: unknown; message?: unknown };
   if (o.status === 409 && typeof o.message === "string" && o.message.trim()) return o.message;

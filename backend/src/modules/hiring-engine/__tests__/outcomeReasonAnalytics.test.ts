@@ -57,6 +57,13 @@ describe("outcome_reason insight", () => {
       title: 'Most no-shows from Hiring Engine say "Distance" (60%)', suggestion: "Line up people nearer the branch, or offer the nearer branch",
     });
   });
+  it("evidence names the type's total no-shows or declines in range", () => {
+    const f = base({ meta_live: empty, meta_old: empty, he: { no_show: { distance: 12, timing: 5, other: 3 }, declined: { salary: 10, other_job: 10 } } as never });
+    f.types = { meta_live: { current: zeroStages(), previous: zeroStages() }, meta_old: { current: zeroStages(), previous: zeroStages() }, he: { current: zeroStages(), previous: zeroStages(), noShow: 31, declined: 44 } };
+    const r = evaluateInsights(f, { ...INSIGHT_DEFAULTS }).filter((i) => i.rule === ("outcome_reason" as never));
+    expect(r.find((i) => i.id.includes("no_show"))?.evidence).toContainEqual({ label: "No-shows in range", value: "31" });
+    expect(r.find((i) => i.id.includes("declined"))?.evidence).toContainEqual({ label: "Declines in range", value: "44" });
+  });
   it("needs the sample and the share", () => {
     expect(run({ no_show: { distance: 12, timing: 4, other: 3 }, declined: {} })).toHaveLength(0);
     expect(run({ no_show: { distance: 7, timing: 7, other: 6 }, declined: {} })).toHaveLength(0);

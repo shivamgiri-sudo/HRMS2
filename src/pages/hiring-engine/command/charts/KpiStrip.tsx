@@ -16,7 +16,7 @@ export default function KpiStrip({ analytics }: { analytics: DriveAnalytics }) {
   const dark = useIsDark();
   const v = kpiView(analytics);
   const cost = costTiles(analytics);
-  const note = analytics?.cost?.note || "Cost per source arrives with Plan 5";
+  const note = costNoteFor(analytics) || "Cost per source arrives with Plan 5";
   return (
     <ChartFrame
       title="Drive types at a glance"

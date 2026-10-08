@@ -78,6 +78,19 @@ describe("KPI strip cost tile", () => {
     expect(costNoteFor(fixture(block(), { failedSections: ["cost:spend"] }))).toContain("Meta ad spend");
     expect(text(html)).toContain("could not be read");
   });
+  it("on a failed cost read, drops the notes that say nothing is set up (they contradict the partial banner)", () => {
+    const none = "No cost source yet: no Meta ad spend is synced for these requisitions and no messaging rates are set";
+    const failed = { partial: true, failedSections: ["cost:spend"] };
+    const a = fixture({ available: false, estimated: false, ratesConfigured: false, note: none, byType: null } as never, failed);
+    expect(costNoteFor(a)).not.toContain("No cost source yet");
+    expect(costNoteFor(a)).toContain("could not be read");
+    expect(text(render(KpiStrip, a))).not.toContain("No cost source yet");
+    expect(text(render(KpiStrip, a))).toContain("could not be read");
+    const b = fixture(block({ ratesConfigured: false, note: "Estimated: x. Messaging rates are not set, so only ad spend counts." }), failed);
+    expect(costNoteFor(b)).not.toContain("Messaging rates are not set");
+    expect(costNoteFor(b)).toContain("Estimated: x.");
+    expect(costNoteFor(fixture({ available: false, note: none } as never))).toBe(none);
+  });
   it("shows no rupee figure and no NaN for a block with only nulls", () => {
     const html = render(KpiStrip, fixture(block({ byType: { meta_live: tc(), meta_old: tc(), he: tc() } })));
     expect(html).not.toMatch(/NaN|Infinity|undefined/);

@@ -40,7 +40,7 @@ export interface RateFact { n: number; hits: number }
 type PerType<T> = Record<SourceType, T>;
 export interface InsightFacts {
   today: string; windowDays: number;
-  types: PerType<{ current: StageCounts; previous: StageCounts }>;
+  types: PerType<{ current: StageCounts; previous: StageCounts; /** Totals in range, for the reason insight evidence. */ noShow?: number; declined?: number }>;
   tomorrow: Array<{ requisitionId: string; code: string; date: string; target: number; projected: number; recommended: Array<{ streamId: string; sourceType: SourceType; invites: number }> }>;
   contact: PerType<{ inside: RateFact; outside: RateFact }>;
   reminders: PerType<{ confirmed: number; missing: number; withReminder: RateFact; withoutReminder: RateFact }>;
@@ -56,7 +56,7 @@ export interface InsightFacts {
 }
 
 /** One reason must be at least this share of the recorded reasons (and the total at least insight.min_sample) to be named. A code constant this release. */
-export const REASON_SHARE = 0.4
+export const REASON_SHARE = 0.4;
 
 export const MAX_INSIGHTS = 20;
 export const TYPE_LABEL: Record<SourceType, string> = { meta_live: "Live Meta", meta_old: "Old Meta data", he: "Hiring Engine" };
@@ -416,7 +416,8 @@ function outcomeReason({ f, ok }: Ctx): DriveInsight[] {
     out.push(mk({
       rule: "outcome_reason", severity: "info", sourceType: type, requisitionId: null, key: `${outcome}.${top.code}`,
       title: `Most ${outcome === "no_show" ? "no-shows" : "declines"} from ${TYPE_LABEL[type]} say "${OUTCOME_REASON_LABEL[top.code]}" (${pct(top.n / total)})`,
-      evidence: [{ label: outcome === "no_show" ? "No-show reasons recorded" : "Decline reasons recorded", value: str(total) }, { label: `Said "${OUTCOME_REASON_LABEL[top.code]}"`, value: str(top.n) }],
+      evidence: [{ label: outcome === "no_show" ? "No-show reasons recorded" : "Decline reasons recorded", value: str(total) }, { label: `Said "${OUTCOME_REASON_LABEL[top.code]}"`, value: str(top.n) },
+        { label: outcome === "no_show" ? "No-shows in range" : "Declines in range", value: str(num(outcome === "no_show" ? f.types?.[type]?.noShow : f.types?.[type]?.declined)) }],
       suggestion: REASON_SUGGESTION[top.code], effect: null, action: { type: "none" },
     }));
   }

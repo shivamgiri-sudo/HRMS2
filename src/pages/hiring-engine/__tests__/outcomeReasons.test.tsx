@@ -9,7 +9,7 @@ import BoardTab from "../BoardTab";
 import OutcomeReasons, { OutcomeReasonsView, type ReasonsViewProps } from "../OutcomeReasons";
 import { createInFlightGuard } from "../command/inFlight";
 import {
-  REASON_CHIPS, NOTE_MAX, groupByDrive, outcomeWord, reasonBody, saveErrorText, savedText, type OutcomeList, type OutcomeRow,
+  REASON_CHIPS, NOTE_MAX, groupByDrive, outcomeWord, reasonBody, saveErrorText, savedText, withBusy, withoutBusy, type OutcomeList, type OutcomeRow,
 } from "../outcomeReasonsModel";
 
 const row = (o: Partial<OutcomeRow> = {}): OutcomeRow => ({
@@ -86,6 +86,32 @@ describe("markup", () => {
     expect(h).toContain("Note for Asha");
     expect(h).toContain("Pick a reason first");
     expect(view(list([row({ reason: "salary" })]), { noteOpen: { m1: true } })).not.toContain("Pick a reason first");
+  });
+  it("a busy row keeps its chips focusable: aria-disabled, never the disabled attribute", () => {
+    const h = view(two, { busyIds: new Set(["m1"]), noteOpen: { m1: true } });
+    expect(h).not.toMatch(/ disabled=""/);
+    const m1 = h.slice(h.indexOf('aria-label="Reason for Asha"'), h.indexOf('aria-label="Reason for Ravi"'));
+    const m2 = h.slice(h.indexOf('aria-label="Reason for Ravi"'));
+    expect((m1.match(/aria-disabled="true"/g) ?? []).length).toBe(7);
+    expect(m2).not.toContain("aria-disabled");
+    expect(m1).toContain("cursor-wait");
+  });
+  it("Save note is aria-disabled without a reason, and the chips stay enabled", () => {
+    const h = view(list([row()]), { noteOpen: { m1: true } });
+    expect(h).not.toMatch(/ disabled=""/);
+    expect(h.slice(h.indexOf("Save note") - 900, h.indexOf("Save note"))).toContain('aria-disabled="true"');
+  });
+  it("busy ids are an immutable set", () => {
+    const a = new Set<string>();
+    const b = withBusy(a, "m1");
+    expect([a.size, b.has("m1")]).toEqual([0, true]);
+    expect(withoutBusy(b, "m1").has("m1")).toBe(false);
+    expect(b.has("m1")).toBe(true);
+  });
+  it("the status line reserves its height when empty", () => {
+    const h = view(two);
+    expect(h).toContain('role="status"');
+    expect(h).not.toContain("empty:hidden");
   });
   it("switch off renders nothing", () => {
     expect(view({ enabled: false, rows: [], truncated: false, partial: false })).toBe("");
