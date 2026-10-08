@@ -24,7 +24,8 @@ import { loadActiveStreams, toWindow, type StreamRow } from "./requisition-strea
 import { countPlannedDays, addDays, windowEnd } from "./requisition-stream.window.js";
 import type { RequisitionSourceRows } from "./he-sources-window.service.js";
 import { countedNoShow } from "./he-no-show-events.js";
-import { attributionJoinsSql, sourceTypeSql } from "./he-source-attribution.js";
+import { creditJoinsSql } from "./he-source-attribution.js";
+import { PersonFacts, TYPE_KEY_GROUP, typeKeyColsSql } from "./he-person-facts.service.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
 
 export interface InsightFactsCtx {
@@ -36,6 +37,8 @@ export interface InsightFactsCtx {
   reasons?: InsightFacts["reasons"];
   /** Live Meta cutoff of the caller's build; read from he_model_param when not given. */
   liveFrom?: string;
+  /** The caller's per-build person facts (he-person-facts.service.ts); a fresh set when not given. */
+  personFacts?: PersonFacts;
 }
 
 export const MAX_PLAN_REQUISITIONS = 20;
@@ -52,9 +55,11 @@ const typeOf = (v: unknown): SourceType | null => (SOURCE_TYPES.includes(v as So
 const batchesOf = (ids: string[]): string[][] => { const out: string[][] = []; for (let i = 0; i < ids.length; i += 200) out.push(ids.slice(i, i + 200)); return out; };
 
 // ---- SQL ---------------------------------------------------------------------------------------------------------------------------------
-// The shared source rule (he-source-attribution.ts), credit through he_match.id. requisition_stream* may not exist yet (ER_NO_SUCH_TABLE => no credit).
-const creditJoin = (streams: boolean): string => attributionJoinsSql({ streams, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id" });
-const typeCol = (streams: boolean, liveFrom: string): string => sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, ref: "d.drive_date" });
+// The shared source rule, split (he-person-facts.service.ts): each statement returns the row signals next to the lead id (credit through
+// he_match.id; requisition_stream* may not exist yet: ER_NO_SUCH_TABLE => no credit) and PersonFacts types them in JS. Message-level facts
+// come one row per message (oid) so a message of a person matched on two drives still counts once per type.
+const creditJoin = (streams: boolean): string => creditJoinsSql({ streams, match: "m", requisition: "d.requisition_id" });
+const keys = (streams: boolean, liveFrom: string): string => typeKeyColsSql({ streams, d: "d", leadId: "m.lead_id", ref: "d.drive_date", liveFrom });
 const FROM_MATCH = `FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id`;
 const DRIVE_WHERE = (n: number): string => `d.requisition_id IN (${ph(n)}) AND d.drive_date BETWEEN ? AND ?`;
@@ -65,56 +70,56 @@ const outboundJoin = (channels: string): string => `JOIN he_message o ON o.lead_
 
 // Outbound walk-in invites of matched leads with a known best hour; outside = more than the tolerance away from that hour.
 // best_hour_ist is TINYINT UNSIGNED: cast before subtracting or an hour below it overflows. The distance is circular (23h vs 00h is 1).
-const contactSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${typeCol(s, lf)} AS source_type, (LEAST(ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED)), 24 - ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED))) > ?) AS outside,
-       COUNT(DISTINCT o.id) AS n, COUNT(DISTINCT CASE WHEN ${REPLY_24H} THEN o.id END) AS hits
+const contactSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${keys(s, lf)}, o.id AS oid,
+       MAX(LEAST(ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED)), 24 - ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED))) > ?) AS outside,
+       MAX(${REPLY_24H}) AS hit
   ${FROM_MATCH}
   ${creditJoin(s)}
   ${outboundJoin("o.channel IN ('email','whatsapp') AND o.template_key LIKE 'he_walkin_invite%'")}
   JOIN he_lead_insight li ON li.lead_id = m.lead_id AND li.best_hour_ist IS NOT NULL
  WHERE ${DRIVE_WHERE(n)}
- GROUP BY 1, 2`;
+ GROUP BY ${TYPE_KEY_GROUP}, o.id`;
 
 // A reminder whose send FAILED is not a reminder (NULL status = not yet reported, still counted).
-const remindersSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${typeCol(s, lf)} AS source_type,
+const remindersSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${keys(s, lf)},
        (EXISTS (SELECT 1 FROM he_message r1 WHERE r1.lead_id = m.lead_id AND r1.drive_id = d.id AND r1.direction = 'out' AND r1.template_key LIKE 'he_reminder_1d%' AND (r1.delivery_status IS NULL OR r1.delivery_status <> 'failed'))
         OR EXISTS (SELECT 1 FROM he_message r2 WHERE r2.lead_id = m.lead_id AND r2.drive_id = d.id AND r2.direction = 'out' AND r2.template_key LIKE 'he_reminder_2h%' AND (r2.delivery_status IS NULL OR r2.delivery_status <> 'failed'))) AS has_reminder,
        COUNT(DISTINCT m.id) AS n, COUNT(DISTINCT CASE WHEN ${SHOWED} THEN m.id END) AS hits
   ${FROM_MATCH}
   ${creditJoin(s)}
  WHERE ${DRIVE_WHERE(n)} AND ${CONFIRMED_OR_LATER}
- GROUP BY 1, 2`;
+ GROUP BY ${TYPE_KEY_GROUP}, has_reminder`;
 
-const distanceSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${typeCol(s, lf)} AS source_type, (m.distance_km > ?) AS far,
+const distanceSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${keys(s, lf)}, (m.distance_km > ?) AS far,
        COUNT(DISTINCT m.id) AS n, COUNT(DISTINCT CASE WHEN ${SHOWED} THEN m.id END) AS hits
   ${FROM_MATCH}
   ${creditJoin(s)}
  WHERE ${DRIVE_WHERE(n)} AND m.distance_km IS NOT NULL AND ${CONFIRMED_OR_LATER}
- GROUP BY 1, 2`;
+ GROUP BY ${TYPE_KEY_GROUP}, far`;
 
 const WA = "o.channel = 'whatsapp'";
-const waFailedSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${typeCol(s, lf)} AS source_type, o.error_message AS err, COUNT(DISTINCT o.id) AS n
+const waFailedSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${keys(s, lf)}, o.id AS oid, MAX(o.error_message) AS err
   ${FROM_MATCH}
   ${creditJoin(s)}
   ${outboundJoin(`${WA} AND o.delivery_status = 'failed'`)}
  WHERE ${DRIVE_WHERE(n)}
- GROUP BY 1, 2`;
-const waStatusSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${typeCol(s, lf)} AS source_type,
-       COUNT(DISTINCT CASE WHEN o.delivery_status IN ('delivered','read') THEN o.id END) AS wa_delivered,
-       COUNT(DISTINCT CASE WHEN o.delivery_status = 'delivered' AND o.created_at < ? THEN o.id END) AS wa_unread
+ GROUP BY ${TYPE_KEY_GROUP}, o.id`;
+const waStatusSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${keys(s, lf)}, o.id AS oid,
+       MAX(o.delivery_status IN ('delivered','read')) AS wa_delivered, MAX(o.delivery_status = 'delivered' AND o.created_at < ?) AS wa_unread
   ${FROM_MATCH}
   ${creditJoin(s)}
   ${outboundJoin(WA)}
  WHERE ${DRIVE_WHERE(n)}
- GROUP BY 1`;
+ GROUP BY ${TYPE_KEY_GROUP}, o.id`;
 
-const languageSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${typeCol(s, lf)} AS source_type, COALESCE(li.language_pref = 'hi', 0) AS hi,
-       COUNT(DISTINCT o.id) AS n, COUNT(DISTINCT CASE WHEN ${REPLY_24H} THEN o.id END) AS hits
+const languageSql = (n: number, s: boolean, lf: string): string => `SELECT STRAIGHT_JOIN ${keys(s, lf)}, o.id AS oid, MAX(COALESCE(li.language_pref = 'hi', 0)) AS hi,
+       MAX(${REPLY_24H}) AS hit
   ${FROM_MATCH}
   ${creditJoin(s)}
   ${outboundJoin(WA)}
   LEFT JOIN he_lead_insight li ON li.lead_id = m.lead_id
  WHERE ${DRIVE_WHERE(n)}
- GROUP BY 1, 2`;
+ GROUP BY ${TYPE_KEY_GROUP}, o.id`;
 
 // Drives from today to today + 3 and their booked matches, one statement each (the same show-up facts as getControlRoom, no per-drive loop).
 const slotDrivesSql = (n: number): string => `SELECT d.id, d.requisition_id, d.drive_date, d.slot_start, d.slot_end, d.slot_minutes, d.slot_capacity
@@ -149,13 +154,20 @@ async function read(ids: string[], sqlOf: (n: number, streams: boolean, liveFrom
   return (await Promise.all(batchesOf(ids).map(one))).flat();
 }
 
-const rateGroups = (rowsIn: RowDataPacket[], flag: string): Record<SourceType, { yes: RateFact; no: RateFact }> => {
+/** Rate groups per type. A row with a message id (oid) is one message: counted once per type (hit = it got a reply); other rows carry counts. */
+const rateGroups = (rowsIn: RowDataPacket[], flag: string, pf: PersonFacts): Record<SourceType, { yes: RateFact; no: RateFact }> => {
   const out = perType(() => ({ yes: rate0(), no: rate0() }));
+  const seen = new Set<string>();
   for (const r of rowsIn) {
-    const t = typeOf(r.source_type);
+    const t = typeOf(pf.typeOf(r));
     if (!t) continue;
     const g = Number(r[flag]) === 1 ? out[t].yes : out[t].no;
-    g.n += count(r.n); g.hits += count(r.hits);
+    if (r.oid !== undefined) {
+      const k = `${t}|${String(r.oid)}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      g.n += 1; g.hits += Number(r.hit) === 1 ? 1 : 0;
+    } else { g.n += count(r.n); g.hits += count(r.hits); }
   }
   return out;
 };
@@ -189,6 +201,12 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
   const dt = [`${ctx.from} 00:00:00`, `${addDays(ctx.to, 1)} 00:00:00`];
   const upTo = ctx.to < ctx.today ? ctx.to : ctx.today;
   const lf = ctx.liveFrom ?? await loadLiveFrom();
+  const pf = ctx.personFacts ?? new PersonFacts(lf); // the build's person facts: people typed once per build
+  const typedRead = async (list: string[], sqlOf: (n: number, streams: boolean, liveFrom: string) => string, params: (b: string[]) => unknown[]): Promise<RowDataPacket[]> => {
+    const rows = await read(list, sqlOf, params, lf);
+    await pf.loadRows(rows);
+    return rows;
+  };
   const win = (b: string[]): unknown[] => [...dt, ...b, ctx.from, ctx.to];
 
   const facts: InsightFacts = {
@@ -206,22 +224,22 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
   // The groups below are independent reads; each fills only its own part of `facts`.
   const reads = [
     group("insight:contact", failed, async () => {
-      const g = rateGroups(await read(ids, contactSql, (b) => [ctx.t["insight.timing_hour_tolerance"], ...win(b)], lf), "outside");
+      const g = rateGroups(await typedRead(ids, contactSql, (b) => [ctx.t["insight.timing_hour_tolerance"], ...win(b)]), "outside", pf);
       for (const t of SOURCE_TYPES) facts.contact[t] = { inside: g[t].no, outside: g[t].yes };
     }, () => undefined),
     group("insight:reminders", failed, async () => {
-      const g = rateGroups(await read(ids, remindersSql, (b) => [...b, ctx.from, upTo], lf), "has_reminder");
+      const g = rateGroups(await typedRead(ids, remindersSql, (b) => [...b, ctx.from, upTo]), "has_reminder", pf);
       for (const t of SOURCE_TYPES) facts.reminders[t] = { confirmed: g[t].yes.n + g[t].no.n, missing: g[t].no.n, withReminder: g[t].yes, withoutReminder: g[t].no };
     }, () => undefined),
     group("insight:distance", failed, async () => {
-      const g = rateGroups(await read(ids, distanceSql, (b) => [ctx.t["insight.distance_band_km"], ...b, ctx.from, upTo], lf), "far");
+      const g = rateGroups(await typedRead(ids, distanceSql, (b) => [ctx.t["insight.distance_band_km"], ...b, ctx.from, upTo]), "far", pf);
       for (const t of SOURCE_TYPES) facts.distance[t] = { near: g[t].no, far: g[t].yes };
     }, () => undefined),
     group("insight:channel", failed, async () => {
       const unreadBefore = istAddMinutes(nowIst(now), -24 * 60);
       const [failedRows, statusRows] = await Promise.all([
-        read(ids, waFailedSql, win, lf),
-        read(ids, waStatusSql, (b) => [unreadBefore, ...win(b)], lf),
+        typedRead(ids, waFailedSql, win),
+        typedRead(ids, waStatusSql, (b) => [unreadBefore, ...win(b)]),
       ]);
       const sums = perType(() => ({ qualified: 0, reached: 0, arrived: 0 }));
       for (const r of ctx.sources) for (const row of r.rows) {
@@ -231,14 +249,21 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
         sums[t].reached += Math.max(count(row.emailed), count(row.whatsapped)); // per row: a person reached by either channel
       }
       const byCode = perType(() => ({}) as Record<string, number>);
+      const seenFailed = new Set<string>(), seenStatus = new Set<string>();
       for (const r of failedRows) {
-        const t = typeOf(r.source_type);
+        const t = typeOf(pf.typeOf(r));
         if (!t) continue;
+        if (r.oid !== undefined) { const k = `${t}|${String(r.oid)}`; if (seenFailed.has(k)) continue; seenFailed.add(k); }
         const code = metaErrorCode(r.err == null ? null : String(r.err)); // the text itself is dropped here
-        byCode[t][code] = (byCode[t][code] ?? 0) + count(r.n);
+        byCode[t][code] = (byCode[t][code] ?? 0) + (r.oid !== undefined ? 1 : count(r.n));
       }
       const wa = perType(() => ({ delivered: 0, unread: 0 }));
-      for (const r of statusRows) { const t = typeOf(r.source_type); if (t) { wa[t].delivered += count(r.wa_delivered); wa[t].unread += count(r.wa_unread); } }
+      for (const r of statusRows) {
+        const t = typeOf(pf.typeOf(r));
+        if (!t) continue;
+        if (r.oid !== undefined) { const k = `${t}|${String(r.oid)}`; if (seenStatus.has(k)) continue; seenStatus.add(k); }
+        wa[t].delivered += count(r.wa_delivered); wa[t].unread += count(r.wa_unread);
+      }
       for (const t of SOURCE_TYPES) {
         const s = sums[t];
         facts.channel[t] = {
@@ -248,7 +273,7 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
       }
     }, () => undefined),
     group("insight:language", failed, async () => {
-      const g = rateGroups(await read(ids, languageSql, win, lf), "hi");
+      const g = rateGroups(await typedRead(ids, languageSql, win), "hi", pf);
       for (const t of SOURCE_TYPES) facts.language[t] = { hi: g[t].yes, other: g[t].no };
     }, () => undefined),
     group("insight:slots", failed, async () => {

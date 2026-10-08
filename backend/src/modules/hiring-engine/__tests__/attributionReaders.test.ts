@@ -53,16 +53,18 @@ describe("every source-typed reader uses the shared rule", () => {
       agg: [], sources: [], codes: new Map([["r1", "REQ-1"]]), t: { ...INSIGHT_DEFAULTS }, arrivals: { meta_live: grid(), meta_old: grid(), he: grid() }, streams: [], now: NOW,
     } as never, { all: true } as never);
     await outcomeReasonCounts(["r1"], W.from, W.to);
-    const list = typed();
-    expect(list.length).toBeGreaterThanOrEqual(11);
+    const all = execute.mock.calls.map((c) => String(c[0]));
+    const list = all.filter((q) => /AS tm\b/.test(q));
+    expect(list.length).toBeGreaterThanOrEqual(14);
     void attribution;
     for (const q of list) {
-      // the shared rule's Meta-origin check (the person: he_lead al / hl, or the fill's pool person pl) and the cutoff
-      expect(q).toMatch(/\((al|hl|pl)\.meta_lead_id IS NOT NULL OR EXISTS \(SELECT 1 FROM he_lead_campaign alx/);
-      expect(q).toContain("TIMESTAMP '2026-10-08 00:00:00'");
+      // every typed statement returns the row signals of the shared rule (lead id, Meta credit / drive, activity against the cutoff) ...
+      expect(q).toMatch(/AS tl, \(.*\) AS tm, \(.* >= TIMESTAMP '2026-10-08 00:00:00'\) AS tr/s);
       expect(q).not.toContain("run_label IS NOT NULL");
       expect(q).not.toContain("COALESCE(rs.source_type, 'he') AS source_type");
       expect(q).not.toMatch(/qf\.source_type/);
+      // ... and never looks the person up itself: that happens once per build in the person facts statement
+      expect(q).not.toContain("FROM he_lead_campaign alx WHERE alx.lead_id = al.id");
     }
   });
 });

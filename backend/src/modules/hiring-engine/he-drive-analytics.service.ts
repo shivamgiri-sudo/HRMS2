@@ -21,7 +21,8 @@ import {
 } from "./he-drive-analytics.js";
 import { costBlock, type CostBlock } from "./he-cost.js";
 import { driveCreditSql } from "./he-drive-credit.js";
-import { LIVE_FROM_DEFAULT, attributionJoinsSql, sourceTypeSql } from "./he-source-attribution.js";
+import { LIVE_FROM_DEFAULT, creditJoinsSql } from "./he-source-attribution.js";
+import { PersonFacts, TYPE_KEY_GROUP, typeKeyColsSql } from "./he-person-facts.service.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
 import { readCostUsage } from "./he-cost.service.js";
 import { evaluateInsights, type DriveInsight } from "./he-drive-insights.js";
@@ -31,7 +32,7 @@ import { buildDriveGroups, readAgg, readDriveAggRows, type DriveGroup, type Driv
 import { getSourcesForRequisitions, type RequisitionSourceRows } from "./he-sources-window.service.js";
 import { campaignProgress, readPersonStages, type CampaignProgress, type CampaignProgressRow } from "./he-drive-persons.service.js";
 import { outcomeReasonCounts } from "./he-outcome-reason.service.js";
-import { QF_TYPE_FROM_SQL, qfTypeSql } from "./he-requisition-sources.service.js";
+import { QF_TYPE_FROM_SQL, qfTypeKeysSql } from "./he-requisition-sources.service.js";
 import { valueAddOn } from "./he-valueadd-switches.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
@@ -140,10 +141,11 @@ async function tolerant<T>(fn: () => Promise<T>, empty: T): Promise<T> {
 // ---- SQL ---------------------------------------------------------------------------------------------------------------------------------
 // Selected / joined only for people who arrived at the drive and were selected / joined on or after its drive date (he-drive-credit.ts).
 const { joined: FLAG_JOINED, selected: FLAG_SELECTED } = driveCreditSql({ m: "m", d: "d", hl: "hl", ac: "ac" });
-// The shared source rule (he-source-attribution.ts): credit through he_match.id (the credit's own drive_id is ignored), else a Meta drive or a
-// Meta-origin person (Live / Old by form fill time), else `he`. he_lead is joined by primary key as `al`.
-const creditJoin = (streams: boolean): string => attributionJoinsSql({ streams, match: "m", requisition: "d.requisition_id", lead: "al", leadId: "m.lead_id" });
-const typeCol = (streams: boolean, liveFrom: string): string => sourceTypeSql({ streams, d: "d", lead: "al", liveFrom, ref: "d.drive_date" });
+// The shared source rule, split (he-person-facts.service.ts): each statement returns the row's signals next to the lead id (credit through
+// he_match.id, the credit's own drive_id ignored; Meta-sourced drive; activity on or after the cutoff) and PersonFacts types them in JS with
+// each person's facts, read once per build.
+const creditJoin = (streams: boolean): string => creditJoinsSql({ streams, match: "m", requisition: "d.requisition_id" });
+const typeKeys = (streams: boolean, liveFrom: string): string => typeKeyColsSql({ streams, d: "d", leadId: "m.lead_id", ref: "d.drive_date", liveFrom });
 const DRIVE_MATCH = `FROM he_drive d
   JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id`;
 
@@ -151,7 +153,7 @@ const DRIVE_MATCH = `FROM he_drive d
 // whatever the table statistics say. Same predicates as the header of he-requisition-sources.service.ts; he_lead and ats_candidate by primary key only,
 // the ATS stage log and onboarding bridge by candidate id inside the credit rule.
 // The window and the previous window in one statement: cur (first column, so its parameter comes first) tells them apart.
-const outcomesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN (d.drive_date >= ?) AS cur, ${typeCol(streams, liveFrom)} AS source_type,
+const outcomesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN (d.drive_date >= ?) AS cur, ${typeKeys(streams, liveFrom)},
        COUNT(DISTINCT CASE WHEN ${FLAG_SELECTED} THEN m.id END) AS selected, COUNT(DISTINCT CASE WHEN ${FLAG_JOINED} THEN m.id END) AS joined,
        COUNT(DISTINCT CASE WHEN m.state = 'slot_released' THEN m.id END) AS slot_released
   ${DRIVE_MATCH}
@@ -159,29 +161,30 @@ const outcomesSql = (liveFrom: string) => (n: number, streams: boolean): string 
   LEFT JOIN he_lead hl ON hl.id = m.lead_id
   LEFT JOIN ats_candidate ac ON ac.id = hl.ats_candidate_id COLLATE utf8mb4_unicode_ci
  WHERE d.requisition_id IN (${ph(n)}) AND d.drive_date BETWEEN ? AND ?
- GROUP BY 1, 2`;
+ GROUP BY cur, ${TYPE_KEY_GROUP}`;
 
-// Stops typed by the person rule (qfTypeSql), never qualified_followup.source_type (the pipeline's enqueue-time type).
-const stopsSql = (n: number, liveFrom: string): string => `SELECT ${qfTypeSql(liveFrom)} AS source_type, qf.stopped_reason, COUNT(*) AS n
+// Stops typed by the person rule (follow-up row signals, qfTypeKeysSql), never qualified_followup.source_type (the pipeline's type).
+const stopsSql = (n: number, liveFrom: string): string => `SELECT ${qfTypeKeysSql(liveFrom)}, qf.stopped_reason, COUNT(*) AS n
   ${QF_TYPE_FROM_SQL}
  WHERE qf.requisition_id IN (${ph(n)}) AND qf.qualified_at >= ? AND qf.qualified_at < ? AND qf.stopped_reason IN ('opted_out','requisition_closed','no_contact_details')
- GROUP BY 1, qf.stopped_reason`;
+ GROUP BY ${TYPE_KEY_GROUP}, tx, qf.stopped_reason`;
 
 // Inbound messages of leads matched on window drives (idx_he_msg_lead); IST wall clock, so WEEKDAY() 0 = Monday and HOUR() 0-23 are IST.
-const repliesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams, liveFrom)} AS source_type, WEEKDAY(hm.created_at) AS wd, HOUR(hm.created_at) AS hr, COUNT(DISTINCT hm.id) AS n
+// One row per message and person signals (hid): a reply of a person matched on two drives counts once per type, as before.
+const repliesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeKeys(streams, liveFrom)}, hm.id AS hid, WEEKDAY(hm.created_at) AS wd, HOUR(hm.created_at) AS hr
   ${DRIVE_MATCH}
   ${creditJoin(streams)}
   JOIN he_message hm ON hm.lead_id = m.lead_id AND hm.direction = 'in' AND hm.created_at >= ? AND hm.created_at < ?
  WHERE d.requisition_id IN (${ph(n)}) AND d.drive_date BETWEEN ? AND ?
- GROUP BY 1, 2, 3`;
+ GROUP BY ${TYPE_KEY_GROUP}, hm.id`;
 
 // idx_he_event_drive (drive_id, event_type).
-const arrivalsSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams, liveFrom)} AS source_type, WEEKDAY(ev.created_at) AS wd, HOUR(ev.created_at) AS hr, COUNT(DISTINCT m.id) AS n
+const arrivalsSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeKeys(streams, liveFrom)}, WEEKDAY(ev.created_at) AS wd, HOUR(ev.created_at) AS hr, COUNT(DISTINCT m.id) AS n
   ${DRIVE_MATCH}
   ${creditJoin(streams)}
   JOIN he_lead_event ev ON ev.drive_id = d.id AND ev.lead_id = m.lead_id AND ev.event_type = 'arrived'
  WHERE d.requisition_id IN (${ph(n)}) AND d.drive_date BETWEEN ? AND ?
- GROUP BY 1, 2, 3`;
+ GROUP BY ${TYPE_KEY_GROUP}, wd, hr`;
 
 // One statement: drives in the window, plus requisitions of overlapping open / paused streams, active campaigns and the requested requisition.
 // Every id is cast to one collation so the UNION cannot mix collations; the branch filter compares under utf8mb4_unicode_ci.
@@ -212,12 +215,13 @@ const runBatched = async (ids: string[], sqlOf: (n: number, streams: boolean) =>
 
 type OutcomeRead = { outcomes: MatchOutcome[]; slotReleased: Record<SourceType, number> };
 /** Outcomes of the window [from, to] and, with `prevFrom`, of the previous window [prevFrom, from) from the same statement. */
-const readOutcomes = async (ids: string[], from: string, to: string, liveFrom: string, prevFrom?: string): Promise<OutcomeRead & { previous: MatchOutcome[] }> => {
-  const rows = await runBatched(ids, outcomesSql(liveFrom), (b) => [from, ...b, prevFrom ?? from, to]);
+const readOutcomes = async (ids: string[], from: string, to: string, facts: PersonFacts, prevFrom?: string): Promise<OutcomeRead & { previous: MatchOutcome[] }> => {
+  const rows = await runBatched(ids, outcomesSql(facts.liveFrom), (b) => [from, ...b, prevFrom ?? from, to]);
+  await facts.loadRows(rows);
   const slotReleased = perType(() => 0);
   const outcomes: MatchOutcome[] = [], previous: MatchOutcome[] = [];
   for (const r of rows) {
-    const t = String(r.source_type) as SourceType;
+    const t = facts.typeOf(r);
     if (!SOURCE_TYPES.includes(t)) continue;
     const o = { sourceType: t, selected: Number(r.selected ?? 0), joined: Number(r.joined ?? 0) };
     if (r.cur !== undefined && Number(r.cur) !== 1) { previous.push(o); continue; }
@@ -227,19 +231,34 @@ const readOutcomes = async (ids: string[], from: string, to: string, liveFrom: s
   return { outcomes, slotReleased, previous };
 };
 
-const readStops = async (ids: string[], dt: string[], liveFrom: string): Promise<Record<SourceType, Partial<Record<"opted_out" | "requisition_closed" | "no_contact_details", number>>>> => {
+const readStops = async (ids: string[], dt: string[], facts: PersonFacts): Promise<Record<SourceType, Partial<Record<"opted_out" | "requisition_closed" | "no_contact_details", number>>>> => {
   const out = perType(() => ({}) as Partial<Record<"opted_out" | "requisition_closed" | "no_contact_details", number>>);
-  const parts = await Promise.all(batchesOf(ids).map((b) => tolerant(async () => (await limitedDb.execute<RowDataPacket[]>(stopsSql(b.length, liveFrom), [...b, ...dt]))[0], [] as RowDataPacket[])));
+  const parts = await Promise.all(batchesOf(ids).map((b) => tolerant(async () => (await limitedDb.execute<RowDataPacket[]>(stopsSql(b.length, facts.liveFrom), [...b, ...dt]))[0], [] as RowDataPacket[])));
+  await facts.loadRows(parts.flat());
   for (const r of parts.flat()) {
-    const t = String(r.source_type) as SourceType;
+    const t = facts.typeOf(r);
     const k = String(r.stopped_reason) as "opted_out" | "requisition_closed" | "no_contact_details";
     if (out[t]) out[t][k] = (out[t][k] ?? 0) + Number(r.n ?? 0);
   }
   return out;
 };
 
-const toCells = (rows: RowDataPacket[]): TimingCell[] =>
-  rows.map((r) => ({ sourceType: String(r.source_type) as SourceType, weekday: Number(r.wd), hour: Number(r.hr), n: Number(r.n ?? 0) }));
+/** Timing cells typed by person facts. Rows with a message id (hid) count each message once per type; other rows carry their count. */
+const typedCells = async (rows: RowDataPacket[], facts: PersonFacts): Promise<TimingCell[]> => {
+  await facts.loadRows(rows);
+  const seen = new Set<string>();
+  const out: TimingCell[] = [];
+  for (const r of rows) {
+    const t = facts.typeOf(r);
+    if (r.hid !== undefined) {
+      const k = `${t}|${String(r.hid)}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+    }
+    out.push({ sourceType: t, weekday: Number(r.wd), hour: Number(r.hr), n: r.hid !== undefined ? 1 : Number(r.n ?? 0) });
+  }
+  return out;
+};
 
 const stageOnly = (t: TypedStageCounts): StageCounts => ({ leads: t.leads, qualified: t.qualified, invited: t.invited, confirmed: t.confirmed, arrived: t.arrived, selected: t.selected, joined: t.joined });
 const anyStage = (s: StageCounts): boolean => Object.values(s).some((v) => v > 0);
@@ -342,22 +361,26 @@ async function build(
 
   const none = ids.length === 0;
   const liveFrom = none ? LIVE_FROM_DEFAULT : await loadLiveFrom(); // one cutoff for every read of this build
+  const pf = new PersonFacts(liveFrom); // each person's facts read once for the whole build
+  // Reads that need nothing computed here start with the others (the read limiter keeps the pool safe); their results are used further down.
+  const reasonsP = !none && valueAddOn("outcome_reasons") ? sec("reasons", () => outcomeReasonCounts(ids, w.from, w.to, liveFrom, pf), null) : Promise.resolve(null);
+  const costP = !none && valueAddOn("cost_per_source") ? sec("cost", () => readCostUsage(ids, w, liveFrom, pf), null) : null;
   // The previous window comes from the same statements as the window (persons, outcomes, follow-up stages; rows tagged by cur): its tiles
   // only need leads .. joined, so no separate previous-window reads. Every read goes through the shared read limiter (he-read-limit.ts).
   const noPersons = { byType: null as Record<SourceType, PersonStageCounts> | null, campaigns: [] as CampaignProgressRow[], previous: null as Record<SourceType, PersonStageCounts> | null };
   const empty = { outcomes: [] as MatchOutcome[], slotReleased: perType(() => 0), previous: [] as MatchOutcome[] };
   const [sources, driveRows, outcomeRead, stops, repliesRows, arrivalsRows, persons] = await Promise.all([
     none ? null : sec("sources", async () => {
-      const s = await getSourcesForRequisitions(ids, w, liveFrom, prev);
+      const s = await getSourcesForRequisitions(ids, w, liveFrom, prev, pf);
       if (s.partial) failed.push("sources");
       return s;
     }, null as Awaited<ReturnType<typeof getSourcesForRequisitions>> | null),
-    none ? ([] as TaggedAggRow[]) : sec("drives", () => readDriveAggRows(ids, dFrom, dTo, liveFrom), [] as TaggedAggRow[]),
-    none ? empty : sec("outcomes", () => readOutcomes(ids, w.from, w.to, liveFrom, prev.from), empty),
-    none ? perType(() => ({})) : sec("stops", () => readStops(ids, dt, liveFrom), perType(() => ({}))),
-    none ? ([] as RowDataPacket[]) : sec("replies", async () => (await runBatched(ids, repliesSql(liveFrom), (b) => [...dt, ...b, w.from, w.to])), [] as RowDataPacket[]),
-    none ? ([] as RowDataPacket[]) : sec("arrivals", async () => (await runBatched(ids, arrivalsSql(liveFrom), (b) => [...b, w.from, w.to])), [] as RowDataPacket[]),
-    none ? noPersons : sec("persons", () => readPersonStages(ids, w, liveFrom, prev), noPersons),
+    none ? ([] as TaggedAggRow[]) : sec("drives", () => readDriveAggRows(ids, dFrom, dTo, liveFrom, pf), [] as TaggedAggRow[]),
+    none ? empty : sec("outcomes", () => readOutcomes(ids, w.from, w.to, pf, prev.from), empty),
+    none ? perType(() => ({})) : sec("stops", () => readStops(ids, dt, pf), perType(() => ({}))),
+    none ? ([] as TimingCell[]) : sec("replies", async () => typedCells(await runBatched(ids, repliesSql(liveFrom), (b) => [...dt, ...b, w.from, w.to]), pf), [] as TimingCell[]),
+    none ? ([] as TimingCell[]) : sec("arrivals", async () => typedCells(await runBatched(ids, arrivalsSql(liveFrom), (b) => [...b, w.from, w.to]), pf), [] as TimingCell[]),
+    none ? noPersons : sec("persons", () => readPersonStages(ids, w, liveFrom, prev, pf), noPersons),
   ]);
   const previous = none ? null : { stages: sources?.previousStages ?? [], outcomes: outcomeRead.previous, persons: persons.previous };
 
@@ -372,8 +395,8 @@ async function build(
     ? await sec("campaigns", () => campaignProgress(persons.campaigns, new Map(heads.map((h) => [h.id, { code: h.code, branch: h.branch }])), scope.all), [] as CampaignProgress[])
     : [];
   const daily = dailySeries(inWindow, w.from, w.to);
-  const replies = timingGrids(toCells(repliesRows));
-  const arrivals = timingGrids(toCells(arrivalsRows));
+  const replies = timingGrids(repliesRows);
+  const arrivals = timingGrids(arrivalsRows);
   const timed = SOURCE_TYPES.reduce((a, t) => a + arrivals[t].reduce((x, row) => x + row.reduce((y, c) => y + c, 0), 0), 0);
   const arrivedTotal = SOURCE_TYPES.reduce((a, t) => a + cur[t].arrived, 0);
 
@@ -410,8 +433,7 @@ async function build(
   }
 
   // reasons: recorded no-show and decline reasons per type; its own statement only while HE_OUTCOME_REASONS is on (a missing table counts zero)
-  let reasons: Awaited<ReturnType<typeof outcomeReasonCounts>> | null = null;
-  if (!none && valueAddOn("outcome_reasons")) reasons = await sec("reasons", () => outcomeReasonCounts(ids, w.from, w.to, liveFrom), null);
+  const reasons = await reasonsP;
 
   // insights: thresholds once per call, facts (own sections), then the pure rules; any throw leaves the response without insights
   let insights: DriveInsight[] = [];
@@ -419,7 +441,7 @@ async function build(
     insights = await sec("insights", async () => {
       const t = await loadInsightThresholds();
       const { facts, failedSections: factFailed } = await collectInsightFacts({
-        requisitionIds: ids, from: w.from, to: w.to, today, windowDays: w.days, liveFrom,
+        requisitionIds: ids, from: w.from, to: w.to, today, windowDays: w.days, liveFrom, personFacts: pf,
         types: perType((k) => ({ current: types[k].stages, previous: types[k].previous, noShow: types[k].noShow, declined: types[k].declined })),
         ...(reasons ? { reasons } : {}),
         agg: inWindow, sources: sources?.byRequisition ?? [], codes: new Map(heads.map((h) => [h.id, h.code])), t, arrivals, streams: active, now,
@@ -430,12 +452,12 @@ async function build(
   }
   // cost per source: its own statements only while HE_COST_PER_SOURCE is on; a failed section counts 0 and flags the result as partial
   let cost: DriveAnalytics["cost"] = { available: false, note: "Cost per source arrives with Plan 5" };
-  if (!none && valueAddOn("cost_per_source")) {
-    cost = await sec<DriveAnalytics["cost"]>("cost", async () => {
-      const c = await readCostUsage(ids, w, liveFrom);
+  if (costP) {
+    const c = await costP;
+    if (c) {
       for (const f of c.failedSections) if (!failed.includes(f)) failed.push(f);
-      return costBlock(c.usage, c.rates, perType((t) => stageOnly(cur[t])));
-    }, cost);
+      cost = costBlock(c.usage, c.rates, perType((t) => stageOnly(cur[t])));
+    }
   }
   const failedSections = [...new Set(failed)];
 

@@ -96,7 +96,7 @@ beforeEach(() => {
   mode.mockReturnValue("live"); loadActiveStreams.mockResolvedValue([]);
   reasonRows = [{ source_type: "he", outcome: "declined", reason_code: "salary", n: 1 }, { source_type: "he", outcome: "no_show", reason_code: "timing", n: 5 }];
   getSources.mockResolvedValue({ byRequisition: [{ requisitionId: "r1", rows: [srcRow("he", 20)] }], partial: false, failedSections: [] });
-  execute.mockImplementation(async (sql: string) => {
+  execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
     const q = String(sql);
     if (q.includes("he_match_outcome_reason")) {
       if (reasonRows === "missing") throw Object.assign(new Error("no table"), { code: "ER_NO_SUCH_TABLE" });
@@ -104,7 +104,8 @@ beforeEach(() => {
     }
     if (q.includes("FROM he_drive d WHERE d.drive_date BETWEEN")) return [[{ id: "r1", requisition_code: "REQ-r1", designation_name: "Agent", branch_name: "Pune", last_drive: "2026-10-12" }]];
     // events-based persons read (checked first: it also LEFT JOINs he_drive): the people of the bucket row
-    if (q.includes("AS contacted")) return [[{ requisition_id: "r1", source_type: "he", campaign_id: null, leads: driveRow.lined, qualified: 0, contacted: driveRow.invited, invited: driveRow.invited, confirmed: driveRow.confirmed, arrived: driveRow.arrived, selected: 0, joined: 0 }]];
+    if (q.includes("AS lead_rows") && Array.isArray(params) && !params.includes("2026-10-15 00:00:00")) return [[]]; // the previous window's read
+    if (q.includes("AS lead_rows")) return [[{ requisition_id: "r1", source_type: "he", campaign_id: null, leads: driveRow.lined, qualified: 0, contacted: driveRow.invited, invited: driveRow.invited, confirmed: driveRow.confirmed, arrived: driveRow.arrived, selected: 0, joined: 0 }]];
     if (q.includes("LEFT JOIN he_drive d ON")) return [[driveRow]];
     return [[]];
   });
@@ -136,12 +137,13 @@ describe("analytics with HE_OUTCOME_REASONS", () => {
   });
   it("a failing read is a named partial section and the waterfall stays as today", async () => {
     vi.stubEnv("HE_OUTCOME_REASONS", "true");
-    execute.mockImplementation(async (sql: string) => {
+    execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
       const q = String(sql);
       if (q.includes("he_match_outcome_reason")) throw Object.assign(new Error("boom"), { code: "ER_X" });
       if (q.includes("FROM he_drive d WHERE d.drive_date BETWEEN")) return [[{ id: "r1", requisition_code: "REQ-r1", designation_name: "Agent", branch_name: "Pune", last_drive: "2026-10-12" }]];
       // events-based persons read (checked first: it also LEFT JOINs he_drive): the people of the bucket row
-    if (q.includes("AS contacted")) return [[{ requisition_id: "r1", source_type: "he", campaign_id: null, leads: driveRow.lined, qualified: 0, contacted: driveRow.invited, invited: driveRow.invited, confirmed: driveRow.confirmed, arrived: driveRow.arrived, selected: 0, joined: 0 }]];
+    if (q.includes("AS lead_rows") && Array.isArray(params) && !params.includes("2026-10-15 00:00:00")) return [[]]; // the previous window's read
+    if (q.includes("AS lead_rows")) return [[{ requisition_id: "r1", source_type: "he", campaign_id: null, leads: driveRow.lined, qualified: 0, contacted: driveRow.invited, invited: driveRow.invited, confirmed: driveRow.confirmed, arrived: driveRow.arrived, selected: 0, joined: 0 }]];
     if (q.includes("LEFT JOIN he_drive d ON")) return [[driveRow]];
       return [[]];
     });

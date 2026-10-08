@@ -2,7 +2,7 @@
  * Sources read model over MANY requisitions and a day window (Plan 4 command center). Same stage definitions as the header of
  * he-requisition-sources.service.ts, with the window applied to the populations that carry a date:
  * - qualified .. joined: qualified_followup rows with qualified_at in [from 00:00:00, to+1 00:00:00) (IST wall clock), typed by the
- *   person rule (qfTypeSql); selected / joined additionally follow the drive credit rule (arrived at the drive, on or after its drive date);
+ *   person rule (qfTypeKeysSql + PersonFacts); selected / joined additionally follow the drive credit rule (arrived at the drive, on or after its drive date);
  * - leads: sourcesLeadsSql, each person once per requisition with one type (the person rule of he-source-attribution.ts) and one origin:
  *   form fills of the requisitions' campaigns imported in the window, and people lined up on drives dated in the window.
  * Streams add zero rows (origin with no data). Shares are per requisition. leads = max(leads, qualified) per row.
@@ -17,7 +17,8 @@
 import type { RowDataPacket } from "mysql2";
 import { limitedDb } from "./he-read-limit.js";
 import { logger } from "../../logger.js";
-import { STAGE_FLAGS_SQL, STAGE_FROM_SQL, computeShares, qfTypeSql, readSection, sourcesLeadsSql, type SourceCounts, type SourceRow } from "./he-requisition-sources.service.js";
+import { STAGE_FLAGS_SQL, STAGE_FROM_SQL, computeShares, qfTypeKeysSql, readSection, sourcesLeadsRows, sourcesLeadsSql, type SourceCounts, type SourceRow } from "./he-requisition-sources.service.js";
+import { PersonFacts } from "./he-person-facts.service.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import type { StreamStatus } from "./requisition-stream.service.js";
@@ -43,16 +44,16 @@ const ph = (n: number): string => Array(n).fill("?").join(",");
 
 // cur (the derived table's first column, so its parameter comes first) tells the window from the previous window.
 const stagesSql = (liveFrom: string) => (n: number): string => `
-SELECT f.cur, f.requisition_id, f.source_type, f.origin_id, MAX(f.origin_label) AS origin_label,
+SELECT f.cur, f.requisition_id, f.tl, f.tm, f.tr, f.tx, f.origin_id, MAX(f.origin_label) AS origin_label,
        COUNT(*) AS qualified, SUM(f.emailed) AS emailed, SUM(f.whatsapped) AS whatsapped, SUM(f.replied) AS replied, SUM(f.called) AS called,
        SUM(f.confirmed) AS confirmed, SUM(f.arrived) AS arrived, SUM(f.selected) AS selected, SUM(f.joined) AS joined
   FROM (
-    SELECT (qf.qualified_at >= ?) AS cur, qf.requisition_id, ${qfTypeSql(liveFrom)} AS source_type, qf.origin_id, qf.origin_label,
+    SELECT (qf.qualified_at >= ?) AS cur, qf.requisition_id, ${qfTypeKeysSql(liveFrom)}, qf.origin_id, qf.origin_label,
            ${STAGE_FLAGS_SQL}
 ${STAGE_FROM_SQL}
      WHERE qf.requisition_id IN (${ph(n)}) AND qf.qualified_at >= ? AND qf.qualified_at < ?
   ) f
- GROUP BY f.requisition_id, f.source_type, f.origin_id, f.cur`;
+ GROUP BY f.requisition_id, f.tl, f.tm, f.tr, f.tx, f.origin_id, f.cur`;
 
 const streamsSql = (n: number): string => `SELECT requisition_id, id, source_type, origin_id, origin_label, status FROM requisition_stream WHERE requisition_id IN (${ph(n)})`;
 const campaignsSql = (n: number): string => `SELECT id, requisition_id, campaign_name FROM meta_campaign WHERE requisition_id IN (${ph(n)})`;
@@ -61,7 +62,7 @@ const zero = (): SourceCounts => ({ leads: 0, qualified: 0, emailed: 0, whatsapp
 type Rows = RowDataPacket[];
 type Cell = Omit<SourceRow, "shareOfLeads" | "shareOfJoined" | "leadToJoinRate"> & { _rank: number };
 
-export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liveFrom?: string, prev?: DayWindow | null): Promise<SourcesSlice> {
+export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liveFrom?: string, prev?: DayWindow | null, facts?: PersonFacts): Promise<SourcesSlice> {
   const unique = [...new Set(ids)];
   if (!unique.length) return { byRequisition: [], partial: false, failedSections: [] };
   const failed: string[] = [];
@@ -75,6 +76,7 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liv
     return { byRequisition: unique.map((requisitionId) => ({ requisitionId, rows: [] })), partial: true, failedSections: ["window"] };
   }
   const lf = liveFrom ?? await loadLiveFrom();
+  const pf = facts ?? new PersonFacts(lf);
   const batches: string[][] = [];
   for (let i = 0; i < unique.length; i += BATCH) batches.push(unique.slice(i, i + BATCH));
 
@@ -90,7 +92,11 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liv
 
   // A missing stream table reads as no leads (tolerant), as before.
   const leadsOf = async (): Promise<Rows> => (await Promise.all(batches.map((b) => readSection<Rows>("driveLeads", failed, async () => {
-    try { return (await limitedDb.execute<Rows>(sourcesLeadsSql(b.length, lf, true), [...b, ...dt, ...b, w.from, w.to]))[0]; } catch (err) { if (noTable(err)) return []; throw err; }
+    try {
+      const rows = (await limitedDb.execute<Rows>(sourcesLeadsSql(b.length, lf, true), [...b, ...dt, ...b, w.from, w.to]))[0];
+      await pf.loadRows(rows);
+      return sourcesLeadsRows(rows, pf) as Rows;
+    } catch (err) { if (noTable(err)) return []; throw err; }
   }, [])))).flat();
   const [streams, stages, matchLeads, campaigns] = await Promise.all([
     run("streams", streamsSql, [], true),
@@ -114,15 +120,21 @@ export async function getSourcesForRequisitions(ids: string[], w: DayWindow, liv
     const c = cell(String(s.requisition_id), String(s.source_type) as SourceType, String(s.origin_id), String(s.origin_label ?? ""), 2);
     if (c) { c.streamId = String(s.id); c.streamStatus = String(s.status) as StreamStatus; }
   }
+  await readSection("stages", failed, () => pf.loadRows(stages), undefined);
   const isCur = (r: RowDataPacket): boolean => r.cur === undefined || Number(r.cur) === 1;
+  // Rows come per person signal group, so one origin can get several: counts add and the label is the greatest of them (what
+  // MAX(origin_label) gave when the SQL grouped by type).
   for (const r of stages.filter(isCur)) {
-    const c = cell(String(r.requisition_id), String(r.source_type) as SourceType, String(r.origin_id), String(r.origin_label ?? ""), 1);
-    if (c) for (const k of COUNT_KEYS) if (k !== "leads") c[k] += Number(r[k] ?? 0);
+    const label = String(r.origin_label ?? "");
+    const c = cell(String(r.requisition_id), pf.typeOf(r), String(r.origin_id), label, 1);
+    if (!c) continue;
+    if (c._rank === 1 && label > c.originLabel) c.originLabel = label;
+    for (const k of COUNT_KEYS) if (k !== "leads") c[k] += Number(r[k] ?? 0);
   }
   const previousStages: SourceRow[] = stages.filter((r) => !isCur(r)).map((r) => {
     const counts = zero();
     for (const k of COUNT_KEYS) if (k !== "leads") counts[k] = Number(r[k] ?? 0);
-    return { sourceType: String(r.source_type) as SourceType, originId: String(r.origin_id), originLabel: String(r.origin_label ?? ""), streamId: null, streamStatus: null,
+    return { sourceType: pf.typeOf(r), originId: String(r.origin_id), originLabel: String(r.origin_label ?? ""), streamId: null, streamStatus: null,
       ...counts, leads: counts.qualified, shareOfLeads: 0, shareOfJoined: 0, leadToJoinRate: 0 };
   });
   for (const c of campaigns) cell(String(c.requisition_id), "meta_live", String(c.id), String(c.campaign_name ?? ""), 3);
