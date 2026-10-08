@@ -88,7 +88,7 @@ describe("transactional answers for an owned journey", () => {
     const r = await sendTransactionalForJourney(row(), "he_walkin_confirmed", { now: ist("2026-10-12T22:30:00") });
     expect(r.status).toBe("sent");
     expect(h.send.mock.calls[0][0]).toMatchObject({ key: "he_walkin_confirmed", matchId: "M1", transactional: true, sentBy: "followup" });
-    expect(h.email).toHaveBeenCalledWith("confirmed", "M1");
+    expect(h.email).toHaveBeenCalledWith("confirmed", "M1", { sentBy: "followup" });
     h.dupT2 = true; h.send.mockClear(); h.email.mockClear();
     await sendTransactionalForJourney(row(), "he_walkin_confirmed", { now: ist("2026-10-12T22:31:00") });
     expect(h.send).not.toHaveBeenCalled();
@@ -115,7 +115,7 @@ describe("runStageB reminders", () => {
     const sc = scope(5);
     const c = await runStageB(S, "live", ist("2026-10-12T14:30:00"), sc);
     expect(sentKeys()).toEqual(["he_reminder_1d"]);
-    expect(h.email).toHaveBeenCalledWith("reminder_1d", "M1");
+    expect(h.email).toHaveBeenCalledWith("reminder_1d", "M1", { sentBy: "followup" });
     expect(h.events).toContainEqual(["L1", "reminder_1d_sent", expect.objectContaining({ driveId: "D1" })]);
     expect(find(/SET journey_state = 'reminded'/)).toHaveLength(1);
     expect(c.d1.sent).toBe(1);
@@ -168,7 +168,7 @@ describe("runStageB after the slot", () => {
     h.sel.noshow = [jrow({ m_state: "no_show", m_slot: "2026-10-12 11:00:00", no_shows: 1 })];
     await runStageB(S, "live", ist("2026-10-12T13:30:00"), scope());
     expect(sentKeys()).toEqual(["he_no_show_recovery"]);
-    expect(h.email).toHaveBeenCalledWith("no_show", "M1");
+    expect(h.email).toHaveBeenCalledWith("no_show", "M1", { sentBy: "followup" });
     expect(h.events).toContainEqual(["L1", "no_show_recovery_sent", expect.objectContaining({ driveId: "D1" })]);
     expect(find(/SET journey_state = 'reinvite_wait'/)).toHaveLength(1);
     expect(h.release).toHaveBeenCalledWith("9876543210", "F1");
@@ -226,7 +226,7 @@ describe("reschedule (T5)", () => {
     await runStageB(S, "live", ist("2026-10-12T11:00:00"), scope());
     expect(h.reserve).toHaveBeenCalledWith("M1", true);
     expect(sentKeys()).toEqual(["he_reschedule_offer"]);
-    expect(h.email).toHaveBeenCalledWith("reschedule_offer", "M1");
+    expect(h.email).toHaveBeenCalledWith("reschedule_offer", "M1", { sentBy: "followup" });
     expect(find(/UPDATE he_match SET state = 'invited' WHERE id = \?/)).toHaveLength(1);
   });
   it("second request -> human, no message", async () => {

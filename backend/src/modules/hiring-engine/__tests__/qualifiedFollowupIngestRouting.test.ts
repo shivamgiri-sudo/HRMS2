@@ -72,10 +72,11 @@ describe("reply routing for an owned journey", () => {
     expect(u.p[0]).toBe("stopped");
     expect(u.sql).toContain("stopped_reason = COALESCE(stopped_reason, 'opted_out')");
   });
-  it("two unanswered calls: no engine T9 (the worker sends it once from missed_call_due_at)", async () => {
+  it("two unanswered calls: no engine T9 (the worker sends it once from missed_call_due_at) and the journey stays in stage A", async () => {
     await recordVoiceResult({ leadId: "L1", providerCallId: "o-1", result: { answered: false } });
     await recordVoiceResult({ leadId: "L1", providerCallId: "o-2", result: { answered: false } });
     expect(h.sends).toEqual([]);
+    expect(journeyUpdates()).toHaveLength(0); // a missed call is not a reply (rig finding)
   });
   it("mode off: today's path, no journey read", async () => {
     delete process.env.QUAL_FOLLOWUP_MODE;

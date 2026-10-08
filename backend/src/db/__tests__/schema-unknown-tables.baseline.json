@@ -50,6 +50,9 @@
     "followup_person",
     "qualified_followup"
   ],
+  "modules/hiring-engine/he-followup-email.service.ts": [
+    "he_message"
+  ],
   "modules/hiring-engine/he-action-queue.service.ts": [
     "qualified_followup"
   ],

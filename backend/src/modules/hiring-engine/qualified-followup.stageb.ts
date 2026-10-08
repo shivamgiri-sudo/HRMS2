@@ -78,7 +78,7 @@ export async function sendTransactionalForJourney(row: FollowupRow, key: Transac
   if (dup.length && key !== "he_reschedule_offer") return { status: "blocked", reason: "already_sent" };
   const r = await sendTemplateToLead({ leadId: row.heLeadId, key, matchId: row.matchId, transactional: true, sentBy: "followup", redirectTo: redirectFor(s, row) });
   // Test rows: the person never sees anything (the WhatsApp went to the owner); no email to the person either.
-  if (key === "he_walkin_confirmed" && row.modeAtEnqueue !== "test") await sendFollowUpEmail("confirmed", row.matchId).catch((err: unknown) => logger.warn({ rowId: row.id, err: (err as Error).message }, "[qualified-followup] confirmation email failed"));
+  if (key === "he_walkin_confirmed" && row.modeAtEnqueue !== "test") await sendFollowUpEmail("confirmed", row.matchId, { sentBy: "followup" }).catch((err: unknown) => logger.warn({ rowId: row.id, err: (err as Error).message }, "[qualified-followup] confirmation email failed"));
   return r;
 }
 
@@ -121,7 +121,7 @@ async function reminders(s: FollowupSwitches, tag: RowTag, now: Date, o: StepSco
       if (!Number(row.extra.d1_done) && now.getTime() >= d1SendAt(row.slotAt).getTime() && now.getTime() < slot - 12 * HOUR) {
         if (await unprompted(s, tag, row, "he_reminder_1d", now, o, out.d1) && tag !== "dry_run") {
           await addEvent(row.leadId, "reminder_1d_sent", { driveId: row.driveId, channel: "whatsapp", detail: "followup" });
-          if (row.modeAtEnqueue !== "test") await sendFollowUpEmail("reminder_1d", row.matchId as string);
+          if (row.modeAtEnqueue !== "test") await sendFollowUpEmail("reminder_1d", row.matchId as string, { sentBy: "followup" });
           await db.execute("UPDATE qualified_followup SET journey_state = 'reminded' WHERE id = ? AND journey_state IN ('confirmed','engaged')", [row.id]);
         }
       } else if (!Number(row.extra.d2_done) && now.getTime() >= t4SendAt(row.slotAt).getTime()) {
@@ -147,7 +147,7 @@ async function noShows(s: FollowupSwitches, tag: RowTag, now: Date, o: StepScope
         if (!sent) continue;
         if (tag === "dry_run") continue;
         await addEvent(row.leadId, "no_show_recovery_sent", { driveId: row.driveId, channel: "whatsapp", detail: "followup" });
-        if (row.modeAtEnqueue !== "test") await sendFollowUpEmail("no_show", row.matchId as string);
+        if (row.modeAtEnqueue !== "test") await sendFollowUpEmail("no_show", row.matchId as string, { sentBy: "followup" });
       }
       if (tag === "dry_run") continue;
       await db.execute("UPDATE qualified_followup SET journey_state = 'reinvite_wait' WHERE id = ? AND journey_state NOT IN ('arrived','declined','stopped')", [row.id]);
@@ -184,7 +184,7 @@ async function reschedules(s: FollowupSwitches, tag: RowTag, now: Date, o: StepS
       const slot = await reserveSlot(row.matchId as string, true);
       if (!slot) { await addEvent(row.leadId, "needs_human_followup", { channel: "system", detail: "no free slot to reschedule into" }); out.reschedule.blocked++; continue; }
       const r = await sendTransactionalForJourney(row, "he_reschedule_offer", { now, switches: s });
-      const em = row.modeAtEnqueue === "test" ? { status: "blocked" as const } : await sendFollowUpEmail("reschedule_offer", row.matchId as string);
+      const em = row.modeAtEnqueue === "test" ? { status: "blocked" as const } : await sendFollowUpEmail("reschedule_offer", row.matchId as string, { sentBy: "followup" });
       tally(out.reschedule, r);
       if (r.status === "sent" || em.status === "sent") await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ?", [row.matchId]);
       else await db.execute("UPDATE he_match SET slot_at = NULL WHERE id = ?", [row.matchId]); // not sent on any channel: do not hold the seat

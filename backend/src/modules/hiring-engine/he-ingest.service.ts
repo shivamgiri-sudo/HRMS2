@@ -104,7 +104,8 @@ async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPl
   if (ctx.channel !== "voice" && ctx.matchId && (plan.matchState || plan.event === "opted_out")) void dequeueSuperbotForMatch(ctx.matchId);
   if (plan.humanHandoff) await addEvent(leadId, "needs_human_followup", { channel: ctx.channel, detail: "second decline / declined offered slot" });
   await mirrorToMeta(ctx.metaLeadId, plan);
-  if (owned) {
+  // Only an answer moves the journey: a call nobody picked up (or a failed / wrong-person call) is not a reply.
+  if (owned && (!plan.event.startsWith("call_") || plan.matchState !== null)) {
     const next = journeyAfterReply(owned.journeyState, plan);
     if (next !== owned.journeyState) {
       await db.execute(

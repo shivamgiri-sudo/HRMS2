@@ -88,7 +88,7 @@ ${c.contact ? row("Questions", esc(c.contact)) : ""}</table></td></tr>
   return { subject: k.subject(c), html, text };
 }
 
-export async function sendFollowUpEmail(kind: FollowKind, matchId: string, o: { dryRun?: boolean } = {}): Promise<SendResult> {
+export async function sendFollowUpEmail(kind: FollowKind, matchId: string, o: { dryRun?: boolean; sentBy?: "followup" } = {}): Promise<SendResult> {
   const [mr] = await db.execute<RowRowData>(
     `SELECT m.id, m.lead_id, m.requisition_id, m.slot_at, m.token, d.id AS drive_id, d.drive_date, d.status AS drive_status, l.full_name, l.email, l.status AS lead_status, l.mobile10,
             jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, bm.address, bm.latitude, bm.longitude
@@ -122,8 +122,8 @@ export async function sendFollowUpEmail(kind: FollowKind, matchId: string, o: { 
   try {
     const replyTo = replyToFor(m.token ? String(m.token) : null);
     const r = await emailService.send({ to, subject: mail.subject, html: mail.html, text: mail.text, ...(replyTo ? { replyTo } : {}) });
-    await db.execute("INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-      [messageId, m.lead_id, m.mobile10, "out", "email", followKey(kind), mail.subject.slice(0, 2000), r?.messageId ?? null, "sent", m.requisition_id, m.drive_id ?? null]);
+    await db.execute(`INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, requisition_id, drive_id${o.sentBy ? ", sent_by" : ""}) VALUES (?,?,?,?,?,?,?,?,?,?,?${o.sentBy ? ",?" : ""})`,
+      [messageId, m.lead_id, m.mobile10, "out", "email", followKey(kind), mail.subject.slice(0, 2000), r?.messageId ?? null, "sent", m.requisition_id, m.drive_id ?? null, ...(o.sentBy ? [o.sentBy] : [])]);
     await addEvent(String(m.lead_id), `sent_${followKey(kind)}`, { channel: "email", driveId: m.drive_id, detail: to.replace(/^(.).*(@.*)$/, "$1***$2") });
     return { status: "sent", messageId, providerMessageId: r?.messageId ?? "" };
   } catch (err) {

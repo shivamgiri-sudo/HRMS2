@@ -81,7 +81,8 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
 
   // The Meta campaign flow (lead-outreach.service) already sends its own interview invite to qualified Meta leads.
   // Never send a second first-contact invite to the same person within 3 days of that one.
-  if (FIRST_CONTACT.has(o.key) && (await metaFlowNotifiedRecently(lead.meta_lead_id))) return { status: "blocked", reason: "meta_flow_already_notified" };
+  // The unified follow-up worker owns the person (its own first step stamps notification_sent_at): the guard is for the other senders.
+  if (FIRST_CONTACT.has(o.key) && o.sentBy !== "followup" && (await metaFlowNotifiedRecently(lead.meta_lead_id))) return { status: "blocked", reason: "meta_flow_already_notified" };
   // Per-campaign channel switch (Master tab): WhatsApp off for the campaign this person came from. The STOP acknowledgement always goes.
   if (o.key !== "he_optout_ack" && !(await channelAllowed(o.leadId, "whatsapp"))) return { status: "blocked", reason: "whatsapp_off_for_campaign" };
 
