@@ -23,6 +23,7 @@ import { markFollowupCalled } from "./qualified-followup.attention.js";
 import { callResultCode } from "./qualified-followup.callresult.js";
 import { journeyAfterReply, ownedJourneyForMatch, sendTransactionalForJourney } from "./qualified-followup.stageb.js";
 import { followupMode } from "./qualified-followup.schedule.js";
+import { recordPersonOptOut } from "./followup-optout.service.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 import { recordResponseSafe } from "./candidate-response.service.js";
 import { classifyReply } from "./response-classifier.js";
@@ -92,6 +93,13 @@ async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPl
   if (plan.matchState && ctx.matchId) await db.execute("UPDATE he_match SET state = ? WHERE id = ?", [plan.matchState, ctx.matchId]);
   if (plan.revokeConsent) await revokeConsent(leadId, "whatsapp_contact");
   await addEvent(leadId, plan.event, { channel: ctx.channel, detail: ctx.detail });
+  // STOP is held for the person and ends every follow-up journey of the mobile, whatever channel it came on (never needs the webhook verified).
+  if (plan.event === "opted_out") {
+    try {
+      const [ml] = await db.execute<RowDataPacket[]>("SELECT mobile10 FROM he_lead WHERE id = ? LIMIT 1", [leadId]);
+      if (ml[0]?.mobile10) await recordPersonOptOut(String(ml[0].mobile10), { source: ctx.channel === "whatsapp" ? "pinbot" : ctx.channel === "voice" ? "call" : "web", viaIngest: true });
+    } catch (err) { logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] person opt-out record failed"); }
+  }
   // They answered somewhere else (button, reply, email tap): a call still waiting in Superbot's queue must not ring them. Best effort.
   if (ctx.channel !== "voice" && ctx.matchId && (plan.matchState || plan.event === "opted_out")) void dequeueSuperbotForMatch(ctx.matchId);
   if (plan.humanHandoff) await addEvent(leadId, "needs_human_followup", { channel: ctx.channel, detail: "second decline / declined offered slot" });
@@ -199,7 +207,7 @@ export async function recordDeliveryStatus(providerMessageId: string, status: De
 }
 
 export async function recordEmailEvent(p: { providerMessageId: string; event: EmailEvent; detail?: string }): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT id, lead_id FROM he_message WHERE provider_message_id = ? AND channel = 'email' LIMIT 1", [p.providerMessageId]);
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT id, lead_id, mobile10 FROM he_message WHERE provider_message_id = ? AND channel = 'email' LIMIT 1", [p.providerMessageId]);
   if (!rows[0]) return false;
   const leadId = rows[0].lead_id as string | null;
   const map: Record<EmailEvent, string> = { sent: "sent", delivered: "delivered", opened: "opened", clicked: "clicked", bounced: "bounced", replied: "replied", unsubscribed: "unsubscribed" };
@@ -208,6 +216,11 @@ export async function recordEmailEvent(p: { providerMessageId: string; event: Em
     await persistSignals(leadId, signalsFromEmailEvent(p.event, p.detail), String(rows[0].id));
     if (p.event === "unsubscribed") await revokeConsent(leadId, "whatsapp_contact");
     await recomputeInsight(leadId);
+  }
+  // An unsubscribe is a STOP for the person: every follow-up journey ends (it used to revoke only the WhatsApp consent).
+  if (p.event === "unsubscribed" && rows[0].mobile10) {
+    try { await recordPersonOptOut(String(rows[0].mobile10), { source: "email_unsubscribe" }); }
+    catch (err) { logger.warn({ err: (err as Error).message }, "[he-ingest] unsubscribe opt-out record failed"); }
   }
   return true;
 }

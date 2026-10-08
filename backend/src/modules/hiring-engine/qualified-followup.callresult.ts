@@ -9,6 +9,7 @@ import { db } from "../../db/mysql.js";
 import type { VoiceResult } from "./he-signals.js";
 import { matchForRef, refForMatch } from "./he-call-ref.service.js";
 import { releasePerson } from "./followup-person.service.js";
+import { recordPersonOptOut } from "./followup-optout.service.js";
 import { nextSendWindowOpen, inSendWindow, CALL_RETRY_GAP_MIN, CALL_ATTEMPTS_MAX } from "./followup-guards.js";
 import { followupRef } from "./qualified-followup.rules.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -66,9 +67,9 @@ export async function stampFollowupCallResult(o: { mobile10: string; reference: 
   for (const r of rows) {
     const id = String(r.id);
     if (o.result === "do_not_call") {
-      await db.execute(
-        `UPDATE qualified_followup SET call_state = 'called', call_result = ?, called_at = ?, stopped_reason = 'opted_out', stopped_at = NOW(), journey_state = 'stopped'
-          WHERE id = ? AND stopped_reason IS NULL`, [o.result, o.at, id]);
+      await db.execute("UPDATE qualified_followup SET call_state = 'called', call_result = ?, called_at = ? WHERE id = ?", [o.result, o.at, id]);
+      // Do-not-call is a STOP for the person: every journey of the mobile ends (Task 12).
+      await recordPersonOptOut(String(r.mobile10), { source: "call", detail: "do not call" });
       await releasePerson(String(r.mobile10), id);
     } else if (MISSES.has(o.result)) {
       const attempts = Number(r.call_attempts ?? 0) + 1;

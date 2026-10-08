@@ -35,6 +35,8 @@ export interface FollowupSwitches {
   killSwitch: boolean;
   /** policy.followup.upload_wa = 1: upload rows without opt-in may get stage A WhatsApp (D12, default off). */
   uploadWa: boolean;
+  /** True when a canary/live screen value runs as dry_run because Pinbot inbound is not verified and the owner did not acknowledge it. */
+  inboundGate: boolean;
 }
 
 const SOURCES: readonly SourceType[] = ["meta_live", "meta_old", "he"];
@@ -99,6 +101,7 @@ export function readSwitches(
     canaryCaps: caps,
     killSwitch: sendsPaused || params.get("policy.followup.paused") === 1,
     uploadWa: params.get("policy.followup.upload_wa") === 1,
+    inboundGate: false,
   };
 }
 
@@ -108,12 +111,28 @@ export async function loadFollowupSwitches(env: NodeJS.ProcessEnv = process.env)
   try {
     const [p] = await db.execute<RowDataPacket[]>("SELECT param_key, value FROM he_model_param WHERE param_key LIKE 'policy.followup.%'");
     const [c] = await db.execute<RowDataPacket[]>("SELECT source_type, requisition_id FROM followup_canary");
-    return readSwitches(env, new Map(p.map((r) => [String(r.param_key), Number(r.value)])),
-      c.map((r) => ({ sourceType: String(r.source_type) as SourceType, requisitionId: String(r.requisition_id) })));
+    const params = new Map(p.map((r) => [String(r.param_key), Number(r.value)]));
+    return applyInboundGate(readSwitches(env, params, c.map((r) => ({ sourceType: String(r.source_type) as SourceType, requisitionId: String(r.requisition_id) }))), params);
   } catch (err) {
     logger.warn({ err: (err as Error).message }, "[qualified-followup] switches unreadable; every source off");
     return readSwitches(env);
   }
+}
+
+/** Real sends (canary / live) need the Pinbot inbound loop: without it replies, STOP and receipts on WhatsApp are blind (spec 7). */
+export function switchRefusal(mode: SourceMode, inbound: { verified: boolean; acknowledged: boolean }): string | null {
+  if (mode !== "canary" && mode !== "live") return null;
+  if (inbound.verified || inbound.acknowledged) return null;
+  return "Pinbot inbound WhatsApp is not verified: verify it (a reply and a STOP from a test phone appear in the inbox) or acknowledge the risk first";
+}
+
+/** Read side of the same rule: a canary/live screen value runs as dry_run (shadow) until inbound is verified or acknowledged. */
+export function applyInboundGate(s: FollowupSwitches, params: ReadonlyMap<string, number>): FollowupSwitches {
+  const inbound = { verified: params.get("policy.followup.wa_inbound_verified") === 1, acknowledged: params.get("policy.followup.wa_inbound_ack") === 1 };
+  let gated = false;
+  const modes = { ...s.sourceModes };
+  for (const src of SOURCES) if (switchRefusal(modes[src], inbound)) { modes[src] = "dry_run"; gated = true; }
+  return gated ? { ...s, sourceModes: modes, inboundGate: true } : s;
 }
 
 /** The tag a new enrolment gets for this source; canary only for listed requisitions (others shadow as dry_run). */

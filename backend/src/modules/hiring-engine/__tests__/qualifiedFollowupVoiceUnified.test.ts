@@ -79,7 +79,8 @@ describe("stampFollowupCallResult", () => {
   it("do_not_call stops the journey as opted_out and releases the person", async () => {
     h.rows = [owned()];
     await stampFollowupCallResult({ mobile10: "9876543210", reference: null, result: "do_not_call", at: AT });
-    expect(updates()[0].sql).toContain("stopped_reason = 'opted_out'");
+    expect(updates().some((u) => u.sql.includes("stopped_reason = 'opted_out'"))).toBe(true); // recordPersonOptOut (source call)
+    expect(h.sqls.find((s) => s.sql.startsWith("INSERT INTO followup_person"))!.p).toEqual(["9876543210", "call"]);
     expect(h.release).toHaveBeenCalledWith("9876543210", "F1");
   });
   it("no follow-up row: nothing written", async () => {

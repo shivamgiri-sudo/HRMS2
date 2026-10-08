@@ -55,6 +55,7 @@ import { DRIVE_STREAM_FED, STREAM_CHECK_FAILED, driveStreamCheck } from "./he-st
 import { followupSummary } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import { getFollowupAudit, listAttention, logAttentionError, markFollowupCalled, mobileOfFollowup, retryFollowupStep, type AttentionChannel } from "./qualified-followup.attention.js";
+import { recordPersonOptOut } from "./followup-optout.service.js";
 
 export const heRouter = Router();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
@@ -124,6 +125,21 @@ heRouter.post("/qualified-followup/:id/retry", requireAuth, requireRole(...ADMIN
   } catch (err) {
     logAttentionError("retry", err);
     res.status(500).json({ success: false, message: "Could not retry the follow-up step" });
+  }
+});
+
+// HR's STOP button: the person asked not to be contacted (phone, in person). Ends every follow-up journey of the mobile; recorded with the user.
+heRouter.post("/qualified-followup/:id/opt-out", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  if (!FOLLOWUP_ID_RE.test(req.params.id)) return res.status(400).json({ success: false, message: "Invalid id" });
+  try {
+    const mobile = await mobileOfFollowup(req.params.id);
+    if (!mobile) return res.status(404).json({ success: false, message: "not_found" });
+    const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 200) : null;
+    const out = await recordPersonOptOut(mobile, { source: "hr", actor: (req as AuthenticatedRequest).authUser?.id ?? null, detail: note || null });
+    res.json({ success: true, journeysStopped: out.journeysStopped });
+  } catch (err) {
+    logAttentionError("opt-out", err);
+    res.status(500).json({ success: false, message: "Could not record the opt-out" });
   }
 });
 

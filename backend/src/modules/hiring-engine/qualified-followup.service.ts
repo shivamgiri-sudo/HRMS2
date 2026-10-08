@@ -246,13 +246,16 @@ async function liveRowFor(metaLeadId: string, openOnly: boolean): Promise<boolea
   return rows.length > 0;
 }
 
-/** STOP: the person's Hiring Engine lead is opted out, or their WhatsApp contact consent is revoked with no active grant. */
+/** STOP: the person's Hiring Engine lead is opted out, their WhatsApp contact consent is revoked with no active grant, or an opt-out is held on followup_person. */
 export async function personOptedOut(mobile10: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT 1 AS hit FROM he_lead l
       WHERE l.mobile10 = ? AND (l.status = 'opted_out'
         OR (EXISTS (SELECT 1 FROM he_consent k WHERE k.lead_id = l.id AND k.consent_type = 'whatsapp_contact' AND k.revoked_at IS NOT NULL)
             AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = l.id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NULL)))
-      LIMIT 1`, [mobile10]);
+     UNION ALL
+     -- STOP from any channel is also held per person, even when the person has no Hiring Engine record
+     SELECT 1 AS hit FROM followup_person fp WHERE fp.mobile10 = ? AND fp.opted_out_at IS NOT NULL
+      LIMIT 1`, [mobile10, mobile10]);
   return rows.length > 0;
 }

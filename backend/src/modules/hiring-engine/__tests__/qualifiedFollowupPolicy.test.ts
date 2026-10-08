@@ -134,7 +134,7 @@ describe("row-based skip", () => {
 
 describe("loadFollowupSwitches", () => {
   it("reads policy.followup.* and the canary list", async () => {
-    h.params = [{ param_key: "policy.followup.meta_live", value: 3 }, { param_key: "policy.followup.paused", value: 0 }];
+    h.params = [{ param_key: "policy.followup.meta_live", value: 3 }, { param_key: "policy.followup.paused", value: 0 }, { param_key: "policy.followup.wa_inbound_verified", value: 1 }];
     h.canary = [{ source_type: "meta_live", requisition_id: "R1" }];
     const s = await loadFollowupSwitches(live);
     expect(s.sourceModes.meta_live).toBe("canary");
