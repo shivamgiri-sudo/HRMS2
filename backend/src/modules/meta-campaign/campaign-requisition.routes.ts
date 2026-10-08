@@ -7,9 +7,11 @@ import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
-import { canAccessCampaign, canAccessRequisition, resolveBranchScope } from "./meta-access.js";
+import { canAccessCampaign, canAccessLead, canAccessRequisition, resolveBranchScope } from "./meta-access.js";
 import { addCampaignRequisition, listCampaignRequisitions, removeCampaignRequisition, setPrimaryRequisition } from "./campaign-requisition.service.js";
 import { applyRelink, previewRelink } from "./campaign-relink.service.js";
+import { campaignRoutingSummary, overrideLeadRequisition } from "./lead-routing.service.js";
+import { metaCampaignService } from "./meta-campaign.service.js";
 
 export const campaignRequisitionRouter = Router();
 
@@ -90,4 +92,23 @@ campaignRequisitionRouter.post("/campaigns/:id/relink", requireAuth, requireRole
   const r = await applyRelink({ campaignId: id, toRequisitionId: to, previewHash: b.previewHash, reason: String(b.reason ?? ""), actor: actorOf(req) });
   await audit(req, "META_CAMPAIGN_RELINK", id, { to, moved: r.moved, kept: r.kept, relinkId: r.relinkId });
   res.json({ success: true, data: r });
+}));
+
+campaignRequisitionRouter.get("/campaigns/:id/routing", requireAuth, requireRole(...READ_ROLES), handle(async (req, res) => {
+  const id = String(req.params.id);
+  if (!(await inScope(req, res, id))) return;
+  res.json({ success: true, data: await campaignRoutingSummary(id) });
+}));
+
+/** HR places a lead on one of its campaign's requisitions (B1 override); refused once the person was contacted. */
+campaignRequisitionRouter.put("/leads/:id/requisition", requireAuth, requireRole(...WRITE_ROLES), handle(async (req, res) => {
+  const id = String(req.params.id), b = body(req);
+  const requisitionId = typeof b.requisitionId === "string" ? b.requisitionId : "";
+  if (!ID.test(id) || !ID.test(requisitionId)) return void res.status(400).json({ success: false, message: "Invalid id" });
+  const scope = await resolveBranchScope(req.authUser!.id, rolesOf(req));
+  if (!(await canAccessLead(id, scope))) return void res.status(403).json({ success: false, message: "This lead belongs to another branch" });
+  if (!scope.all && !(await canAccessRequisition(requisitionId, scope))) return void res.status(403).json({ success: false, message: "Forbidden: that requisition belongs to another branch" });
+  await overrideLeadRequisition({ metaLeadId: id, requisitionId, actor: req.authUser!.id, rescreen: (leadId) => metaCampaignService.rescreenLead(leadId, { createCandidate: false }) });
+  await writeAuditLog({ actor_user_id: req.authUser!.id, action_type: "META_LEAD_REQUISITION_OVERRIDE", module_key: "meta_campaign", entity_type: "meta_lead_raw", entity_id: id, metadata: { requisitionId }, req });
+  res.json({ success: true, data: { requisitionId } });
 }));

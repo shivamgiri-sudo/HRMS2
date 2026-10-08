@@ -9,6 +9,9 @@ const h = vi.hoisted(() => ({
   svc: { add: vi.fn(async () => ({ isPrimary: false, warnings: [], offerCopy: false, templateApplied: false })), remove: vi.fn(async () => ({ newPrimary: null })), primary: vi.fn(async () => undefined), list: vi.fn(async () => []) },
   relink: { preview: vi.fn(async () => ({ campaignId: "c", previewHash: "h".repeat(64), moveIds: ["secret"], move: { total: 1 } })), apply: vi.fn(async () => ({ moved: 1, kept: 0, relinkId: "x" })) },
   audit: vi.fn(async () => undefined),
+  routing: { override: vi.fn(async () => undefined), held: vi.fn(async () => ({ counts: { hold: 1 }, held: [{ id: "l1", name: "Rig", maskedMobile: "99xxxxxx22" }] })) },
+  leadBranch: { "cccccccc-cccc-4ccc-8ccc-cccccccccccc": "NOIDA-2", "dddddddd-dddd-4ddd-8ddd-dddddddddddd": "AHMEDABAD" } as Record<string, string>,
+  rescreen: vi.fn(async () => null),
 }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1", role: h.caller.roles[0] }; req.userRoles = h.caller.roles; next(); },
@@ -21,10 +24,13 @@ vi.mock("../meta-access.js", () => ({
   resolveBranchScope: async (_u: string, roles: string[]) => (roles.includes("super_admin") || roles.includes("ceo") ? { all: true } : { all: false, branchName: h.caller.branch }),
   canAccessCampaign: async (id: string, s: any) => s.all || h.campBranch[id] === s.branchName,
   canAccessRequisition: async (id: string, s: any) => s.all || h.reqBranch[id] === s.branchName,
+  canAccessLead: async (id: string, s: any) => s.all || h.leadBranch[id] === s.branchName,
 }));
 vi.mock("../campaign-requisition.service.js", () => ({
   addCampaignRequisition: h.svc.add, removeCampaignRequisition: h.svc.remove, setPrimaryRequisition: h.svc.primary, listCampaignRequisitions: h.svc.list,
 }));
+vi.mock("../lead-routing.service.js", () => ({ overrideLeadRequisition: h.routing.override, campaignRoutingSummary: h.routing.held }));
+vi.mock("../meta-campaign.service.js", () => ({ metaCampaignService: { rescreenLead: h.rescreen } }));
 vi.mock("../campaign-relink.service.js", () => ({ previewRelink: h.relink.preview, applyRelink: h.relink.apply }));
 
 import { campaignRequisitionRouter } from "../campaign-requisition.routes.js";
@@ -79,5 +85,25 @@ describe("campaign requisition routes", () => {
   it("relink to a requisition of another branch is refused before any read", async () => {
     expect((await request(app()).get(`/api/meta/campaigns/${C1}/relink-preview?to=${R2}`)).status).toBe(403);
     expect(h.relink.preview).not.toHaveBeenCalled();
+  });
+});
+
+describe("lead placement (B1 override) and the held list", () => {
+  const L1 = "cccccccc-cccc-4ccc-8ccc-cccccccccccc", L2 = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  it("HR places a lead in scope on a requisition in scope; audited; re-screened through the service", async () => {
+    const r = await request(app()).put(`/api/meta/leads/${L1}/requisition`).send({ requisitionId: R1 });
+    expect(r.status).toBe(200);
+    expect(h.routing.override).toHaveBeenCalledWith(expect.objectContaining({ metaLeadId: L1, requisitionId: R1, actor: "u1" }));
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ action_type: "META_LEAD_REQUISITION_OVERRIDE", entity_id: L1 }));
+  });
+  it("another branch's lead is 403; a contacted lead's 409 comes through", async () => {
+    expect((await request(app()).put(`/api/meta/leads/${L2}/requisition`).send({ requisitionId: R1 })).status).toBe(403);
+    h.routing.override.mockRejectedValueOnce(Object.assign(new Error("already contacted"), { statusCode: 409 }));
+    expect((await request(app()).put(`/api/meta/leads/${L1}/requisition`).send({ requisitionId: R1 })).status).toBe(409);
+  });
+  it("the routing summary of a campaign lists held leads masked", async () => {
+    const r = await request(app()).get(`/api/meta/campaigns/${C1}/routing`);
+    expect(r.status).toBe(200);
+    expect(r.body.data.held[0].maskedMobile).toBe("99xxxxxx22");
   });
 });

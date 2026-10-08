@@ -35,6 +35,8 @@ import { loadCampaignScreeningConfig } from './campaign-screening.js';
 import { notifyQualifiedLead } from './lead-outreach.service.js';
 import { heOwnsCampaign } from '../hiring-engine/he-campaign-config.service.js';
 import { syncPrimaryLink } from './campaign-requisition.service.js';
+import { multiReqRoutingOn, routeLeadRequisition, ROUTED_SCREENING_SQL, type RoutedBy } from './lead-routing.service.js';
+import { leadContacted } from './lead-contact-lock.js';
 import { bridgeOneMetaLead } from '../hiring-engine/he-meta-bridge.service.js';
 import { enqueueMetaLeadFollowup } from '../hiring-engine/qualified-followup.service.js';
 import { followupMode } from '../hiring-engine/qualified-followup.schedule.js';
@@ -602,6 +604,7 @@ export const metaCampaignService = {
     // correctly without an operator pasting a Form ID for every batch — the form declares its own
     // requisition. Falls through to the form-ID `campaign` when absent or unresolvable.
     let campaign = campaignFromForm;
+    let routedByCode = false;
     if (parsed.routingCode) {
       const routed = await this.resolveCampaignByRoutingCode(formId, parsed.routingCode).catch(
         (e: unknown) => {
@@ -609,8 +612,29 @@ export const metaCampaignService = {
           return null;
         }
       );
-      if (routed) campaign = routed;
+      if (routed) { campaign = routed; routedByCode = true; }
     }
+
+    // WS3 B1: a campaign with several open requisitions sends the lead to the best fit (META_MULTI_REQ_ROUTING; off = not one statement more).
+    let routedBy: RoutedBy | null = null;
+    if (campaign?.id && campaign.requisition_id && !routedByCode && multiReqRoutingOn(String(campaign.id))) {
+      const r = await routeLeadRequisition({
+        campaignId: String(campaign.id), primaryRequisitionId: String(campaign.requisition_id), now: new Date(),
+        lead: { rawPayload: detail, education: parsed.education, location: parsed.location, experienceYears: parsed.experienceYears, phone: parsed.phone },
+      }).catch((e: unknown) => {
+        console.warn('[meta] best-fit routing failed; the primary requisition is used', e instanceof Error ? e.message.split('\n')[0] : e);
+        return null;
+      });
+      if (r) {
+        routedBy = r.routedBy;
+        if (r.requisitionId && r.requisitionId !== campaign.requisition_id) {
+          const [cols] = await db.execute<RowDataPacket[]>(ROUTED_SCREENING_SQL, [r.requisitionId]);
+          if (cols[0]) campaign = { ...campaign, ...cols[0] } as RowDataPacket;
+          else routedBy = 'form';
+        }
+      }
+    }
+    const heldForHr = routedBy === 'hold';
 
     // A campaign with no requisition yet ("JR pending") is screened only against its own
     // campaign-level criteria, if it has any. With none it stays 'pending' — it used to be screened
@@ -682,6 +706,8 @@ export const metaCampaignService = {
       );
     }
 
+    if (routedBy) await db.execute('UPDATE meta_lead_raw SET routed_by = ?, routed_at = NOW() WHERE id = ?', [routedBy, id]);
+
     if (campaign?.id) {
       await db.execute('UPDATE meta_campaign SET leads_count = leads_count + 1 WHERE id = ?', [campaign.id]);
     }
@@ -690,6 +716,9 @@ export const metaCampaignService = {
       await this.createCandidateFromLead(id).catch((e: unknown) =>
         console.warn('[meta] createCandidateFromLead failed', e instanceof Error ? e.message : e)
       );
+    }
+    // Held for HR (no requisition of a multi-requisition campaign fits): HR places the lead; nothing is sent automatically.
+    if (screening?.qualified && !heldForHr) {
       // A campaign handed to the Hiring Engine: the lead joins the engine's pool right away (it does the outreach, see notifyQualifiedLead).
       if (campaign?.id && (await heOwnsCampaign(campaign.id).catch(() => false))) await bridgeOneMetaLead(id);
       // Qualified-lead follow-up (a no-op while QUAL_FOLLOWUP_MODE is off, the default): fire-and-forget, fail-open so ingest is unaffected.
@@ -1347,7 +1376,9 @@ export const metaCampaignService = {
     // auto-routing existed — the 2,600+ backfilled ones sitting at pending/unlinked — get placed
     // onto their batch requisition simply by being re-parsed, with no manual form linking.
     let effectiveRequisitionId: string | null = (lead.requisition_id as string | null) ?? null;
-    if (parsed.routingCode) {
+    // WS3 review focus 2: never move a lead HR placed or one already contacted for its requisition.
+    const locked = async () => lead.routed_by === 'hr' || lead.notification_sent_at != null || (await leadContacted(leadId).catch(() => true));
+    if (parsed.routingCode && !(await locked())) {
       const routed = await this.resolveCampaignByRoutingCode(
         String(lead.meta_form_id),
         parsed.routingCode

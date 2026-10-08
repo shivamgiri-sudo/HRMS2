@@ -13,6 +13,8 @@ const h = vi.hoisted(() => ({
   enqueue: vi.fn(async () => undefined),
   bridge: vi.fn(async () => undefined),
   detail: null as unknown,
+  route: vi.fn(async (): Promise<{ requisitionId: string | null; routedBy: string; candidates: unknown[] }> => ({ requisitionId: null, routedBy: "form", candidates: [] })),
+  contacted: false,
 }));
 
 vi.mock("../../../db/mysql.js", () => {
@@ -36,6 +38,8 @@ vi.mock("../../hiring-engine/he-campaign-config.service.js", () => ({ heOwnsCamp
 vi.mock("../../hiring-engine/he-meta-bridge.service.js", () => ({ bridgeOneMetaLead: h.bridge }));
 vi.mock("../../hiring-engine/qualified-followup.service.js", () => ({ enqueueMetaLeadFollowup: h.enqueue }));
 vi.mock("../../hiring-engine/qualified-followup.schedule.js", () => ({ followupMode: () => "off" }));
+vi.mock("../lead-routing.service.js", async (orig) => ({ ...(await orig<typeof import("../lead-routing.service.js")>()), routeLeadRequisition: h.route }));
+vi.mock("../lead-contact-lock.js", async (orig) => ({ ...(await orig<typeof import("../lead-contact-lock.js")>()), leadContacted: vi.fn(async () => h.contacted) }));
 
 import { metaCampaignService } from "../meta-campaign.service.js";
 
@@ -57,6 +61,8 @@ const detail = (extra: Array<{ name: string; values: string[] }> = []) => ({
 beforeEach(() => {
   h.calls = []; vi.clearAllMocks();
   h.rows = () => [];
+  h.contacted = false;
+  delete process.env.META_MULTI_REQ_ROUTING;
 });
 
 describe("campaign link pin (before many requisitions)", () => {
@@ -94,6 +100,7 @@ describe("campaign link pin (before many requisitions)", () => {
     expect(linkSqls()).toHaveLength(0);
     expect(h.enqueue).toHaveBeenCalledTimes(1);
     expect(h.notify).toHaveBeenCalledTimes(1);
+    expect(h.route).not.toHaveBeenCalled();
   });
 
   it("re-screen retro-routes by the routing code", async () => {
@@ -105,5 +112,83 @@ describe("campaign link pin (before many requisitions)", () => {
             : /FROM job_requisition WHERE id = \?/.test(sql) ? [reqCols] : []);
     await metaCampaignService.rescreenLead("lead-x", { createCandidate: false });
     expect(shot()).toMatchSnapshot();
+  });
+});
+
+describe("best-fit routing at ingest (B1, META_MULTI_REQ_ROUTING on)", () => {
+  const ingestRows = (sql: string) => (/FROM meta_campaign mc/.test(sql) ? [{ id: CAMP, requisition_id: REQ, ...reqCols }]
+    : /FROM job_requisition WHERE id = \? LIMIT 1/.test(sql) && /AS requisition_id/.test(sql) ? [{ requisition_id: REQ2, ...reqCols, designation_name: "Day CSA" }]
+      : /SELECT \* FROM meta_lead_raw WHERE id = \?/.test(sql) ? [{ id: "x", screening_result: "qualified" }] : []);
+  const insertParams = () => h.calls.find((c) => c.sql.startsWith("INSERT INTO meta_lead_raw"))!.params;
+
+  it("routes to the best-fit requisition, screens against it and records how", async () => {
+    process.env.META_MULTI_REQ_ROUTING = CAMP;
+    h.detail = detail();
+    h.rows = ingestRows;
+    h.route.mockResolvedValueOnce({ requisitionId: REQ2, routedBy: "best_fit", candidates: [] });
+    vi.spyOn(metaCampaignService, "createCandidateFromLead").mockResolvedValue("cand" as never);
+    await metaCampaignService.ingestLead({ formId: "form-1", leadgenId: "lead-1" });
+    expect(h.route).toHaveBeenCalledWith(expect.objectContaining({ campaignId: CAMP, primaryRequisitionId: REQ }));
+    expect(insertParams()[4]).toBe(REQ2);
+    const rec = h.calls.find((c) => c.sql.startsWith("UPDATE meta_lead_raw SET routed_by = ?"))!;
+    expect(rec.params[0]).toBe("best_fit");
+    expect(h.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it("nothing fits: stays on the primary, held for HR, no follow-up and no notify", async () => {
+    process.env.META_MULTI_REQ_ROUTING = "all";
+    h.detail = detail();
+    h.rows = ingestRows;
+    h.route.mockResolvedValueOnce({ requisitionId: REQ, routedBy: "hold", candidates: [] });
+    vi.spyOn(metaCampaignService, "createCandidateFromLead").mockResolvedValue("cand" as never);
+    await metaCampaignService.ingestLead({ formId: "form-1", leadgenId: "lead-1" });
+    expect(insertParams()[4]).toBe(REQ);
+    expect(h.calls.find((c) => c.sql.startsWith("UPDATE meta_lead_raw SET routed_by = ?"))!.params[0]).toBe("hold");
+    expect(h.enqueue).not.toHaveBeenCalled();
+    expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it("a routing code on the form still wins: no best-fit evaluation", async () => {
+    process.env.META_MULTI_REQ_ROUTING = "all";
+    h.detail = detail([{ name: "requisition_code", values: ["REQ-B2"] }]);
+    h.rows = (sql) => (/FROM job_requisition WHERE UPPER/.test(sql) ? [{ id: REQ2, requisition_code: "REQ-B2" }]
+      : /SELECT id, requisition_id FROM meta_campaign WHERE meta_form_id/.test(sql) ? [{ id: CAMP, requisition_id: REQ2 }] : ingestRows(sql));
+    vi.spyOn(metaCampaignService, "createCandidateFromLead").mockResolvedValue("cand" as never);
+    await metaCampaignService.ingestLead({ formId: "form-1", leadgenId: "lead-1" });
+    expect(h.route).not.toHaveBeenCalled();
+  });
+
+  it("a routing failure never breaks ingest: the lead is stored on the primary", async () => {
+    process.env.META_MULTI_REQ_ROUTING = "all";
+    h.detail = detail();
+    h.rows = ingestRows;
+    h.route.mockRejectedValueOnce(new Error("boom"));
+    vi.spyOn(metaCampaignService, "createCandidateFromLead").mockResolvedValue("cand" as never);
+    await metaCampaignService.ingestLead({ formId: "form-1", leadgenId: "lead-1" });
+    expect(insertParams()[4]).toBe(REQ);
+    expect(h.notify).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("retro-route respects the contacted lock and HR placement (review focus 2)", () => {
+  const raw = detail([{ name: "requisition_code", values: ["REQ-B2"] }]);
+  const rows = (lead: Record<string, unknown>) => (sql: string) => (/SELECT \* FROM meta_lead_raw WHERE id = \?/.test(sql) ? [{ id: "lead-x", meta_form_id: "form-1", requisition_id: REQ, raw_payload: JSON.stringify(raw), ...lead }]
+    : /FROM job_requisition WHERE UPPER/.test(sql) ? [{ id: REQ2, requisition_code: "REQ-B2" }]
+      : /SELECT id, requisition_id FROM meta_campaign WHERE meta_form_id/.test(sql) ? [{ id: CAMP, requisition_id: REQ2 }]
+        : /FROM meta_campaign mc/.test(sql) ? [{ id: CAMP, requisition_id: REQ2, ...reqCols }]
+          : /FROM job_requisition WHERE id = \?/.test(sql) ? [reqCols] : []);
+  const moved = () => h.calls.some((c) => c.sql.startsWith("UPDATE meta_lead_raw SET campaign_id = ?, requisition_id = ?"));
+
+  it("a contacted lead is not moved", async () => {
+    h.rows = rows({});
+    h.contacted = true;
+    await metaCampaignService.rescreenLead("lead-x", { createCandidate: false });
+    expect(moved()).toBe(false);
+  });
+
+  it("a lead HR placed is not moved", async () => {
+    h.rows = rows({ routed_by: "hr" });
+    await metaCampaignService.rescreenLead("lead-x", { createCandidate: false });
+    expect(moved()).toBe(false);
   });
 });
