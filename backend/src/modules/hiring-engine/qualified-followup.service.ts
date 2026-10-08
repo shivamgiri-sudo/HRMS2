@@ -23,7 +23,7 @@ export async function enqueueQualifiedFollowup(input: EnqueueInput, mode: Follow
     if (!mobile10 || !input.requisitionId) return { status: "invalid" };
     const qualifiedAt = input.qualifiedAt ?? new Date();
     const email = input.email?.trim() || null;
-    const { emailDueAt, waDueAt } = dueTimes({ qualifiedAt, hasEmail: !!email });
+    const { emailDueAt, waDueAt } = dueTimes({ enrolledAt: qualifiedAt, hasEmail: !!email });
     // The id is generated here: with mysql2's default FOUND_ROWS flag affectedRows cannot tell a new row from an existing one.
     const id = randomUUID();
     await db.execute(

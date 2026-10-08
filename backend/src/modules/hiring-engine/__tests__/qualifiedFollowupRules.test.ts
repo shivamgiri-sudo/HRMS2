@@ -83,15 +83,13 @@ describe("decideStop", () => {
   });
 });
 
-describe("chooseWaTemplate", () => {
+describe("chooseWaTemplate (re-exported from the cadence module)", () => {
   it("cases", () => {
-    expect(chooseWaTemplate({ sourceType: "meta_live", hasSlot: true, hasBranchAddress: true, hasBmiLink: true })).toEqual({ key: "he_walkin_invite", missing: [] });
-    expect(chooseWaTemplate({ sourceType: "meta_live", hasSlot: true, hasBranchAddress: true, hasBmiLink: false })).toEqual({ key: "he_winback", missing: ["bmi_link"] });
-    expect(chooseWaTemplate({ sourceType: "meta_old", hasSlot: false, hasBranchAddress: false, hasBmiLink: false })).toEqual({ key: "he_winback", missing: ["slot", "branch_address", "bmi_link"] });
-    expect(chooseWaTemplate({ sourceType: "he", hasSlot: true, hasBranchAddress: true, hasBmiLink: false })).toEqual({ key: "he_walkin_invite", missing: [] });
-    expect(chooseWaTemplate({ sourceType: "he", hasSlot: false, hasBranchAddress: true, hasBmiLink: false }).missing).toEqual(["slot"]);
+    expect(chooseWaTemplate({ booked: true, hasBranchAddress: true, reinvite: false, t12Approved: false })).toEqual({ key: "he_walkin_invite", missing: [] });
+    expect(chooseWaTemplate({ booked: false, hasBranchAddress: false, reinvite: false, t12Approved: false })).toEqual({ key: "he_winback", missing: ["slot", "branch_address"] });
   });
 });
+
 
 describe("nextStepDue", () => {
   it.each([

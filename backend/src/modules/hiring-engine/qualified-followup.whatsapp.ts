@@ -11,6 +11,7 @@ import { displayFirstName } from "./he-name.js";
 import { emptyCounts, ensureHeLead, loadSendContext, ROW_COLUMNS, toFollowupRow, type FollowupRow, type SendContext, type StepCounts } from "./qualified-followup.context.js";
 import { rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup.policy.js";
 import { afterFailure, chooseWaTemplate, nextStepDue, nextWorkingDayIst } from "./qualified-followup.rules.js";
+import { assessmentText } from "./qualified-followup.cadence.js";
 import { withinSendWindow } from "./qualified-followup.schedule.js";
 import { bestOfferSkipSql } from "./he-best-offer.js";
 import { notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
@@ -63,14 +64,14 @@ export async function runWhatsappStep(s: FollowupSwitches, tag: RowTag, now: Dat
   return counts;
 }
 
-function buildExtra(row: FollowupRow, ctx: SendContext, key: "he_walkin_invite" | "he_winback", now: Date, placeholderSlot: boolean) {
-  const t1 = key === "he_walkin_invite";
+function buildExtra(row: FollowupRow, ctx: SendContext, key: "he_walkin_invite" | "he_winback" | "he_reinvite", now: Date, placeholderSlot: boolean) {
+  const t1 = key !== "he_winback";
   const date = t1 && ctx.slot ? ctx.slot.date : nextWorkingDayIst(now);
   return {
     role: row.roleName, branch_name: row.branchName, branch_address: ctx.branchAddress,
     drive_date: dateLabel(date),
     slot_time: ctx.slot ? timeLabel(`${ctx.slot.date}T${ctx.slot.time}`) : placeholderSlot ? "10:00 AM" : null,
-    maps_link: ctx.mapsLink, assessment_link: ctx.bmiLink,
+    maps_link: ctx.mapsLink, assessment_link: assessmentText(ctx.bmiLink),
   };
 }
 
@@ -103,7 +104,8 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   const ctx = await loadSendContext(row, { assignSlot: tag === "live", now });
   // Dry run does not assign a slot; live would when the address and BMI link exist.
   const wouldAssign = isDry && !ctx.slot && row.sourceType !== "he" && Boolean(ctx.branchAddress && ctx.bmiLink);
-  const pick = chooseWaTemplate({ sourceType: row.sourceType, hasSlot: Boolean(ctx.slot) || wouldAssign, hasBranchAddress: Boolean(ctx.branchAddress), hasBmiLink: Boolean(ctx.bmiLink) });
+  // One meaning for every source: T1 when booked with a branch address (assessment = BMI link or "given at the branch"), else T8.
+  const pick = chooseWaTemplate({ booked: Boolean(ctx.slot) || wouldAssign, hasBranchAddress: Boolean(ctx.branchAddress), reinvite: false, t12Approved: false });
   const missing = pick.missing.join(",") || null;
   const extra = buildExtra(row, ctx, pick.key, now, wouldAssign);
   const next = nextStepDue(now);
