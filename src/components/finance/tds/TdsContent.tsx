@@ -7,10 +7,10 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Download, IdCard, Percent, ReceiptText, Scale } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 
 const INR = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const rupees = (v: unknown) => `₹${INR.format(Number(v ?? 0))}`;
@@ -136,7 +136,7 @@ function RegisterTab() {
       <div className="flex flex-wrap items-end gap-3">
         <div className="w-full sm:w-auto">
           <Label htmlFor="tds-month" className="text-xs font-semibold">Month</Label>
-          <Input id="tds-month" type="month" className="h-11 w-full rounded-xl text-sm sm:h-8 sm:w-44 sm:text-xs" value={month} onChange={(e) => setMonth(e.target.value)} />
+          <MonthYearPicker value={month} onChange={setMonth} />
         </div>
         <Button type="button" variant="outline" size="sm" className="h-11 w-full cursor-pointer gap-1.5 rounded-xl sm:h-8 sm:w-auto" onClick={exportCsv} disabled={!rows.length}>
           <Download className="h-3.5 w-3.5" aria-hidden /> Export CSV
