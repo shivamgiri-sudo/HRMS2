@@ -271,7 +271,7 @@ async function build(
     return day;
   });
 
-  const checklist = await buildChecklist({ requisitionId, head: o.head, streams, open, pools, nums, checkDate, thresholds, failed, capsFor });
+  const checklist = await buildChecklist({ requisitionId, head: o.head, streams, open, pools, nums, checkDate, thresholds, failed, capsFor, today });
   const failedSections = [...new Set(failed)];
   return {
     requisitionId, code: String(o.head?.requisition_code ?? requisitionId), branch: String(o.head?.branch_name ?? ""), generatedAt: now.toISOString(), from,
@@ -282,6 +282,7 @@ async function build(
 async function buildChecklist(o: {
   requisitionId: string; head: RowDataPacket | null; streams: StreamRow[]; open: StreamRow[]; pools: Map<string, number | null>;
   nums: ReturnType<typeof dailyPlanNumbers>; checkDate: string; thresholds: InsightThresholds; failed: string[]; capsFor: (covering: StreamRow[], date: string) => Map<string, number>;
+  today: string;
 }): Promise<DrivePlan["checklist"]> {
   const { requisitionId, checkDate, failed } = o;
   const items: ChecklistItem[] = [];
@@ -290,7 +291,7 @@ async function buildChecklist(o: {
 
   // the Plan 3 stream pass as a DRY RUN: nothing is created, locked or lined up
   const preview = covering.length ? await section("preview", failed, async () => {
-    const r = await planStreamsForDay({ date: checkDate, dryRun: true, requisitionId });
+    const r = await planStreamsForDay({ date: checkDate, dryRun: true, requisitionId, today: o.today });
     if (r.failed) throw Object.assign(new Error("preview failed"), { code: "PREVIEW_FAILED" });
     return r.plans.find((p) => p.requisitionId === requisitionId) ?? null;
   }, null as StreamDayPlan | null) : null;

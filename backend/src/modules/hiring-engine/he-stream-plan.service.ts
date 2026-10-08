@@ -319,11 +319,12 @@ async function calibrate(c: Ctx, active: StreamRow[], due: StreamRow[]): Promise
 }
 
 /** Plans one day for every requisition with an open stream covering it (or only `requisitionId`). Never throws. */
-export async function planStreamsForDay(o: { date: string; dryRun: boolean; requisitionId?: string; mayCreate?: boolean }): Promise<StreamPassResult> {
+/** `today`: the IST day the auto-close is judged on (default the real clock; the read-only plan preview passes its own `now`). */
+export async function planStreamsForDay(o: { date: string; dryRun: boolean; requisitionId?: string; mayCreate?: boolean; today?: string }): Promise<StreamPassResult> {
   const out: StreamPassResult = { plans: [], closed: [] };
   try {
     // Closed as of TODAY: a stream still running today must not be closed because a later day is being planned.
-    out.closed = await autoCloseStreams(istToday(), o.dryRun);
+    out.closed = await autoCloseStreams(o.today ?? istToday(), o.dryRun);
     const closing = new Set(out.closed.map((x) => x.streamId));
     const active = await loadActiveStreams(o.requisitionId ? { requisitionId: o.requisitionId } : {});
     const due = active.filter((s) => s.status === "open" && !closing.has(s.id) && coversDay(toWindow(s), o.date));

@@ -183,7 +183,7 @@ describe("getDrivePlan", () => {
   it("runs the stream pass once, as a dry run, and never writes or locks", async () => {
     const r = ok(await getDrivePlan({ requisitionId: "r1", from: "2026-10-15", days: 3 }, ALL, NOW));
     expect(planStreamsForDay).toHaveBeenCalledTimes(1);
-    expect(planStreamsForDay).toHaveBeenCalledWith({ date: "2026-10-15", dryRun: true, requisitionId: "r1" });
+    expect(planStreamsForDay).toHaveBeenCalledWith({ date: "2026-10-15", dryRun: true, requisitionId: "r1", today: "2026-10-14" });
     for (const q of sqls()) { expect(q.trim()).toMatch(/^SELECT/i); expect(q).not.toMatch(/\b(INSERT|UPDATE|DELETE|GET_LOCK)\b/i); }
     expect(getConnection).not.toHaveBeenCalled();
     expect(r.checklist.items[0]).toEqual({ kind: "will_plan", text: "Tonight the evening pass will create the drive and line up 85 people (Label s1 60, Pool 25)" });
