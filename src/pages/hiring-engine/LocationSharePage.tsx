@@ -7,11 +7,12 @@
  * never answer for the candidate. Talks to /api/he-public/loc/:token only.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { CheckCircle2, MapPin, ShieldCheck, XCircle } from "lucide-react";
-import { ANSWERS, InterviewCard, LocationCard, RsvpCard, Shell, StatusCard, WhatsAppCard, type Answer, type Invitation } from "./InvitationParts";
+import { ClosedOpeningCard, InterviewCard, LocationCard, RsvpCard, Shell, StatusCard, StopConfirmCard, StopLink, StoppedCard, WhatsAppCard, type Answer, type Invitation } from "./InvitationParts";
+import { answerErrorText, nextTokenAfterAnswer, pageMode, preAnswer } from "./invitationModel";
 
-interface Ctx extends Invitation { demo?: boolean; open: boolean; sharing: boolean; waConsent?: boolean; optInOpen?: boolean; state?: string; rsvpOpen?: boolean }
+interface Ctx extends Invitation { kind?: "match" | "invite"; demo?: boolean; open: boolean; sharing: boolean; waConsent?: boolean; optInOpen?: boolean; state?: string; rsvpOpen?: boolean; closedReason?: string | null }
 type Phase = "loading" | "invalid" | "closed" | "ready" | "sharing" | "arrived" | "stopped" | "denied";
 
 const api = (token: string, path = "") => `/api/he-public/loc/${encodeURIComponent(token)}${path}`;
@@ -21,8 +22,11 @@ const MIN_GAP_MS = 20_000;
 export default function LocationSharePage() {
   const { token = "" } = useParams();
   const [search] = useSearchParams();
-  const pre = search.get("a");
-  const [picked, setPicked] = useState<Answer | null>(pre === "yes" || pre === "later" || pre === "no" ? pre : null);
+  const navigate = useNavigate();
+  const pre = preAnswer(search.get("a"));
+  const [picked, setPicked] = useState<Answer | null>(pre && pre !== "stop" ? pre : null);
+  const [stopAsk, setStopAsk] = useState(pre === "stop");
+  const [stopped, setStopped] = useState(false);
   const [answered, setAnswered] = useState<Answer | null>(null);
   const [editing, setEditing] = useState(false);
   const [answerBusy, setAnswerBusy] = useState(false);
@@ -110,12 +114,25 @@ export default function LocationSharePage() {
     setAnswerBusy(true); setAnswerErr(null);
     try {
       const r = await post(api(token, "/answer"), { answer: a });
-      if (r.ok) { setAnswered(a); setEditing(false); } else setAnswerErr(r.status === 403 ? "Your slot time has passed, so this can no longer be changed here." : "That did not work. Please try again.");
+      if (r.ok) {
+        setAnswered(a); setEditing(false);
+        // An invite token that booked a slot continues on the match's own link (location sharing on the day works there).
+        const next = nextTokenAfterAnswer(token, ((await r.json().catch(() => null)) as { data?: { matchToken?: string } } | null)?.data);
+        if (next) navigate(`/w/${next}`, { replace: true });
+      } else setAnswerErr(answerErrorText(r.status));
     } catch { setAnswerErr("No connection. Please try again."); }
     setAnswerBusy(false);
   };
   // Not offered once they have said they cannot come or want another time: the server refuses opt-in for a released slot.
   const showOptIn = Boolean(ctx?.optInOpen && !ctx?.waConsent && (answered == null || answered === "yes"));
+  const sendStop = async () => {
+    setAnswerBusy(true); setAnswerErr(null);
+    try {
+      const r = await post(api(token, "/answer"), { answer: "stop" });
+      if (r.ok) { stopWatch(); setStopped(true); setStopAsk(false); } else setAnswerErr(answerErrorText(r.status));
+    } catch { setAnswerErr("No connection. Please try again."); }
+    setAnswerBusy(false);
+  };
   const stop = async () => { stopWatch(); await post(api(token, "/stop")).catch(() => undefined); setPhase("stopped"); };
 
   if (phase === "loading") return <Shell><StatusCard tone="plain" icon={<MapPin className="h-6 w-6" />} title="Loading your interview…" /></Shell>;
@@ -130,6 +147,11 @@ export default function LocationSharePage() {
       onChange={() => { setAnswered(null); setEditing(true); }} />
   ) : null;
   const whatsapp = showOptIn ? <WhatsAppCard state={optIn} onOptIn={() => void optInWhatsApp()} /> : null;
+  const mode = pageMode(ctx, stopped);
+  if (mode === "stopped") return <Shell sample={ctx.demo}><StoppedCard /></Shell>;
+  if (mode === "closed_opening") return <Shell sample={ctx.demo}>{interview}<ClosedOpeningCard /></Shell>;
+  if (stopAsk) return <Shell sample={ctx.demo}>{interview}<StopConfirmCard busy={answerBusy} error={answerErr} onConfirm={() => void sendStop()} onCancel={() => setStopAsk(false)} /></Shell>;
+  const stopLink = ctx.rsvpOpen ? <StopLink onPick={() => { setAnswerErr(null); setStopAsk(true); }} /> : null;
 
   if (phase === "arrived") return <Shell sample={ctx.demo}><StatusCard tone="ok" icon={<CheckCircle2 className="h-6 w-6" />} title={`You have reached ${ctx.branchName}`}>Sharing has stopped. Please register at the reception and quote your reference {ctx.reference}. Good luck!</StatusCard></Shell>;
   if (phase === "stopped") return <Shell sample={ctx.demo}>{interview}<StatusCard tone="plain" icon={<ShieldCheck className="h-6 w-6" />} title="Sharing stopped">We are no longer using your location. See you at the branch.</StatusCard>{whatsapp}</Shell>;
@@ -137,7 +159,7 @@ export default function LocationSharePage() {
   if (phase === "closed") {
     return (
       <Shell sample={ctx.demo}>
-        {interview}{rsvp}
+        {interview}{rsvp}{stopLink}
         {!ctx.rsvpOpen && <StatusCard tone="plain" icon={<MapPin className="h-6 w-6" />} title={showOptIn ? `Hi ${ctx.firstName}, your walk-in is booked` : "Location sharing is not active right now"}>{showOptIn ? "Live location sharing opens a few hours before your time." : "It opens a few hours before your walk-in time. You can still just come to the branch on time."}</StatusCard>}
         {whatsapp}
       </Shell>
@@ -145,7 +167,7 @@ export default function LocationSharePage() {
   }
   return (
     <Shell sample={ctx.demo}>
-      {interview}{rsvp}
+      {interview}{rsvp}{stopLink}
       <LocationCard firstName={ctx.firstName} sharing={phase === "sharing"} eta={eta} error={error} onStart={() => void start()} onStop={() => void stop()} onSkip={() => setPhase("stopped")} />
       {whatsapp}
     </Shell>

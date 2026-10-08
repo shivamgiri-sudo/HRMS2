@@ -8,16 +8,20 @@ import { db } from "../../db/mysql.js";
 import { addEvent, grantConsent, hasConsent, revokeConsent } from "./he-lead.service.js";
 import { ARRIVAL_RADIUS_KM, etaMinutes, haversineKm, isValidCoord } from "./he-eta.js";
 import { displayFirstName } from "./he-name.js";
-import { recordInviteAnswer, type InviteAnswer } from "./he-ingest.service.js";
+import { recordInviteAnswer, recordInviteStop, type InviteAnswer } from "./he-ingest.service.js";
+import { DEMO_TOKEN as SHARED_DEMO_TOKEN, TOKEN_RE as SHARED_TOKEN_RE } from "./he-email-parts.js";
+import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.js";
+import { resolveAnswerToken } from "./walkin-invite.service.js";
+import { answerInviteToken } from "./walkin-invite-answer.service.js";
 
 export const LOCATION_TEXT_VERSION = "location_v1";
-const TOKEN_RE = /^[a-f0-9]{32}$/;
+const TOKEN_RE = SHARED_TOKEN_RE;
 
 /**
  * Sample-email links point at this fixed token. It serves a fake candidate ("Rahul") so HR can click through the real candidate
  * page from the test emails; every action on it is accepted and thrown away (no lead, no match, nothing written).
  */
-export const DEMO_TOKEN = "0".repeat(32);
+export const DEMO_TOKEN = SHARED_DEMO_TOKEN;
 export function demoContext(): LocationContext {
   const d = new Date(Date.now() + 86_400_000 + 5.5 * 3600_000);
   return {
@@ -46,6 +50,14 @@ export interface LocationContext {
 export async function getContextByToken(token: string): Promise<LocationContext | null> {
   if (!TOKEN_RE.test(token)) return null;
   if (token === DEMO_TOKEN) return demoContext();
+  const byToken = await matchContext("m.token", token);
+  if (byToken) return byToken;
+  // An invite token whose Yes / another time booked a match keeps working as that match (location sharing on the day, change answer).
+  const t = await resolveAnswerToken(token);
+  return t.kind === "match" ? matchContext("m.id", t.matchId) : null;
+}
+
+async function matchContext(col: "m.token" | "m.id", value: string): Promise<LocationContext | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.state, m.slot_at, l.full_name, jr.branch_name, jr.designation_name,
             ((m.state IN ('invited','confirmed','declined','slot_released') AND m.slot_at IS NOT NULL AND NOW() < m.slot_at) OR (m.state = 'no_show' AND m.slot_at > DATE_SUB(NOW(), INTERVAL 7 DAY))) AS rsvp_open, bm.address, bm.latitude, bm.longitude,
@@ -54,7 +66,7 @@ export async function getContextByToken(token: string): Promise<LocationContext 
             (m.state IN ('suggested','invited','confirmed') AND (m.slot_at IS NULL OR NOW() < DATE_ADD(m.slot_at, INTERVAL 3 HOUR))) AS optin_open, l.status AS lead_status
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id JOIN job_requisition jr ON jr.id = m.requisition_id
        LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
-      WHERE m.token = ? LIMIT 1`, [token]);
+      WHERE ${col} = ? LIMIT 1`, [value]);
   const r = rows[0];
   if (!r) return null;
   return {
@@ -126,13 +138,68 @@ export async function optInWhatsApp(token: string): Promise<"granted" | "already
   return "granted";
 }
 
-/** Candidate answered the invitation (Yes / Cannot come / Another time) on their invitation page. */
-export async function answerInvite(token: string, answer: unknown): Promise<{ ok: true; state: string } | { ok: false; reason: "invalid" | "closed" | "bad_answer" }> {
-  if (answer !== "yes" && answer !== "no" && answer !== "later") return { ok: false, reason: "bad_answer" };
-  if (token === DEMO_TOKEN) return { ok: true, state: answer === "yes" ? "confirmed" : answer === "no" ? "declined" : "slot_released" };
+export interface InviteContext {
+  kind: "invite"; firstName: string; role: string | null; branchName: string; address: string | null; mapsUrl: string | null; slotAt: string | null;
+  reference: string; docs: string[]; state: string; rsvpOpen: boolean; closedReason: string | null;
+  /** No live location or WhatsApp opt-in before a match exists (both need a booked slot). */
+  open: false; sharing: false; optInOpen: false; waConsent: false;
+}
+const INVITE_STATE: Record<string, string> = { sent: "invited", answered_yes: "invited", answered_later: "slot_released", declined: "declined", stopped: "stopped", superseded: "invited" };
+
+/** The page for a person invited without an he_match: first name, role, branch and slot only (never the mobile or email). */
+export async function getInviteContext(token: string): Promise<InviteContext | null> {
+  if (!TOKEN_RE.test(token) || token === DEMO_TOKEN) return null;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT wi.id, wi.state, wi.slot_at, wi.branch_name, (wi.slot_at IS NULL OR NOW() < wi.slot_at) AS before_slot,
+            jr.designation_name, jr.branch_name AS jr_branch, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount,
+            bm.address, bm.latitude, bm.longitude, COALESCE(l.full_name, r.parsed_name) AS full_name, l.status AS lead_status
+       FROM walkin_invite wi
+       LEFT JOIN job_requisition jr ON jr.id = wi.requisition_id
+       LEFT JOIN branch_master bm ON bm.branch_name = COALESCE(wi.branch_name, jr.branch_name) AND bm.active_status = 1
+       LEFT JOIN he_lead l ON l.mobile10 = wi.mobile10
+       LEFT JOIN meta_lead_raw r ON r.id = wi.meta_lead_id COLLATE utf8mb4_unicode_ci
+      WHERE wi.token = ? LIMIT 1`, [token]);
+  const r = rows[0];
+  if (!r) return null;
+  const closed = r.jr_branch == null ? "requisition not found" : requisitionClosedReason({
+    approvalStatus: r.approval_status ?? null, activeStatus: r.active_status ?? null, closedAt: r.closed_at ?? null,
+    requestedHeadcount: r.requested_headcount != null ? Number(r.requested_headcount) : null, fulfilledHeadcount: r.fulfilled_headcount != null ? Number(r.fulfilled_headcount) : null,
+  }) ?? (String(r.approval_status ?? "").toLowerCase() === "approved" ? null : "not approved");
+  const state = INVITE_STATE[String(r.state)] ?? "invited";
+  return {
+    kind: "invite", firstName: displayFirstName(r.full_name), role: (r.designation_name as string | null) ?? null, branchName: String(r.branch_name ?? r.jr_branch ?? ""),
+    address: (r.address as string | null) ?? null,
+    mapsUrl: r.latitude != null && r.longitude != null ? `https://maps.google.com/?q=${r.latitude},${r.longitude}` : r.address ? `https://maps.google.com/?q=${encodeURIComponent(String(r.address))}` : null,
+    slotAt: r.slot_at ? String(r.slot_at) : null, reference: `HE-${String(r.id).replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    docs: String(process.env.HE_DOCS_LIST?.trim() || "Aadhaar, PAN, 12th marksheet").split(/\s*,\s*/).filter(Boolean), state,
+    rsvpOpen: !closed && Number(r.before_slot) === 1 && (r.state === "sent" || r.state === "answered_later" || r.state === "answered_yes") && r.lead_status !== "opted_out",
+    closedReason: closed ? "This opening is closed" : null,
+    open: false, sharing: false, optInOpen: false, waConsent: false,
+  };
+}
+
+export type PublicAnswer = InviteAnswer | "stop";
+export type AnswerResult = { ok: true; state: string; matchToken?: string } | { ok: false; reason: "invalid" | "closed" | "bad_answer" };
+
+/**
+ * Candidate answered the invitation (Yes / Cannot come / Another time / Stop messages) on their invitation page. Match tokens keep
+ * today's path; invite tokens book through answerInviteToken and return the new match token. Stop is accepted after the slot too.
+ */
+export async function answerInvite(token: string, answer: unknown): Promise<AnswerResult> {
+  if (answer !== "yes" && answer !== "no" && answer !== "later" && answer !== "stop") return { ok: false, reason: "bad_answer" };
+  if (token === DEMO_TOKEN) return { ok: true, state: answer === "yes" ? "confirmed" : answer === "no" ? "declined" : answer === "stop" ? "stopped" : "slot_released" };
   const c = await getContextByToken(token);
-  if (!c) return { ok: false, reason: "invalid" };
-  if (!c.rsvpOpen) return { ok: false, reason: "closed" };
-  const r = await recordInviteAnswer(c.matchId, answer as InviteAnswer);
-  return r ? { ok: true, state: r.state } : { ok: false, reason: "invalid" };
+  if (c) {
+    if (answer === "stop") return { ok: true, state: (await recordInviteStop(c.matchId))?.state ?? "stopped" };
+    if (!c.rsvpOpen) return { ok: false, reason: "closed" };
+    const r = await recordInviteAnswer(c.matchId, answer as InviteAnswer);
+    return r ? { ok: true, state: r.state } : { ok: false, reason: "invalid" };
+  }
+  const t = await resolveAnswerToken(token);
+  if (t.kind !== "invite") return { ok: false, reason: "invalid" };
+  const ic = await getInviteContext(token);
+  if (!ic) return { ok: false, reason: "invalid" };
+  if (answer !== "stop" && !ic.rsvpOpen) return { ok: false, reason: "closed" };
+  const r = await answerInviteToken(t.invite, answer, { now: new Date(), channel: "web" });
+  return r.matchToken ? { ok: true, state: r.state, matchToken: r.matchToken } : { ok: true, state: r.state };
 }

@@ -65,9 +65,10 @@ async function sendFollowUpTemplate(leadId: string, key: TemplateKey, matchId: s
   } catch (err) { logger.warn({ leadId, key, err: (err as Error).message }, "[he-ingest] follow-up template failed"); }
 }
 
-async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPlan, ctx: { matchId: string | null; channel: string; detail: string | null; metaLeadId: string | null; replyText: string | null }): Promise<void> {
+async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPlan, ctx: { matchId: string | null; channel: string; detail: string | null; metaLeadId: string | null; replyText: string | null; ackStop?: boolean }): Promise<void> {
   // T10: acknowledge STOP while the consent still exists (the reply opened a 24h window); suppression follows below.
-  if (plan.event === "opted_out") await sendFollowUpTemplate(leadId, "he_optout_ack", ctx.matchId);
+  // A Stop tapped on the web page is acknowledged on the page itself, not by a WhatsApp message.
+  if (plan.event === "opted_out" && ctx.ackStop !== false) await sendFollowUpTemplate(leadId, "he_optout_ack", ctx.matchId);
   if (plan.leadStatus && plan.leadStatus !== current) await setLeadStatus(leadId, plan.leadStatus);
   if (plan.matchState && ctx.matchId) await db.execute("UPDATE he_match SET state = ? WHERE id = ?", [plan.matchState, ctx.matchId]);
   if (plan.revokeConsent) await revokeConsent(leadId, "whatsapp_contact");
@@ -290,4 +291,22 @@ export async function recordInviteAnswer(matchId: string, answer: InviteAnswer, 
   await refreshLeadHistoryById(String(r.lead_id));
   const [s] = await db.execute<RowDataPacket[]>("SELECT state FROM he_match WHERE id = ?", [matchId]);
   return { state: String(s[0]?.state ?? "") };
+}
+
+/** "Stop messages" tapped on the invitation page of a match: the same opt-out plan as a STOP reply, without the WhatsApp acknowledgement. */
+export async function recordInviteStop(matchId: string): Promise<{ state: string } | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, l.mobile10, l.status, l.meta_lead_id
+       FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1`, [matchId]);
+  const r = rows[0];
+  if (!r) return null;
+  const [msg] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
+  await db.execute(
+    "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, intent, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?)",
+    [msg[0].id, r.lead_id, r.mobile10, "in", "email", "Tapped: Stop messages", "opt_out", r.requisition_id, r.drive_id ?? null]);
+  const plan = planFromReply(r.status as LeadStatus, "opt_out", 0);
+  await applyPlan(String(r.lead_id), r.status as LeadStatus, plan, { matchId, channel: "web", detail: "Stop messages on the invitation page", metaLeadId: r.meta_lead_id ?? null, replyText: null, ackStop: false });
+  await recomputeInsight(String(r.lead_id));
+  await refreshLeadHistoryById(String(r.lead_id));
+  return { state: "stopped" };
 }

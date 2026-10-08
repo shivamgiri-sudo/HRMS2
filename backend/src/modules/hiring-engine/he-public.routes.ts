@@ -1,12 +1,12 @@
 /**
- * Candidate-facing, unauthenticated by design: the unguessable per-match token (128 bits) is the credential,
+ * Candidate-facing, unauthenticated by design: the unguessable per-match or per-invite token (128 bits) is the credential,
  * the link only works in the window around the candidate's own slot, and the response never contains anything
  * but the candidate's first name and the branch they were invited to. Mounted at /api/he-public.
  */
 import rateLimit from "express-rate-limit";
 import { Router } from "express";
 import { logger } from "../../logger.js";
-import { answerInvite, getContextByToken, optInWhatsApp, recordPing, startSharing, stopSharing } from "./he-location.service.js";
+import { answerInvite, getContextByToken, getInviteContext, optInWhatsApp, recordPing, startSharing, stopSharing } from "./he-location.service.js";
 
 export const hePublicRouter = Router();
 
@@ -15,7 +15,12 @@ hePublicRouter.use(rateLimit({ windowMs: 10 * 60 * 1000, max: 240, standardHeade
 hePublicRouter.get("/loc/:token", async (req, res) => {
   try {
     const c = await getContextByToken(String(req.params.token));
-    if (!c) return res.status(404).json({ success: false, message: "This link is not valid." });
+    if (!c) {
+      // A person invited without a match: same page, answers only (no location or WhatsApp opt-in until a slot is booked).
+      const ic = await getInviteContext(String(req.params.token));
+      if (!ic) return res.status(404).json({ success: false, message: "This link is not valid." });
+      return res.json({ success: true, data: { ...ic, demo: false } });
+    }
     res.json({ success: true, data: { firstName: c.firstName, branchName: c.branchName, address: c.address, slotAt: c.slotAt, open: c.open, sharing: c.sharing, state: c.state, waConsent: c.waConsent, optInOpen: c.optInOpen, role: c.role, rsvpOpen: c.rsvpOpen, reference: c.reference, mapsUrl: c.mapsUrl, docs: c.docs, demo: c.matchId === "demo" } });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-public] context failed");
@@ -70,7 +75,7 @@ hePublicRouter.post("/loc/:token/optin", async (req, res) => {
 hePublicRouter.post("/loc/:token/answer", async (req, res) => {
   try {
     const r = await answerInvite(String(req.params.token), (req.body as { answer?: unknown } | undefined)?.answer);
-    if (r.ok) return res.json({ success: true, data: { state: r.state } });
+    if (r.ok) return res.json({ success: true, data: r.matchToken ? { state: r.state, matchToken: r.matchToken } : { state: r.state } });
     res.status(r.reason === "invalid" ? 404 : r.reason === "bad_answer" ? 400 : 403).json({ success: false, reason: r.reason });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-public] answer failed");

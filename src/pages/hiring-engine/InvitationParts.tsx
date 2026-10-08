@@ -3,13 +3,15 @@
  * LocationSharePage; these only render. Mobile first: a candidate opens this from an email or WhatsApp on a phone.
  */
 import type { ReactNode } from "react";
-import { CalendarCheck, CheckCircle2, Clock, FileText, MapPin, MessageCircle, Navigation, ShieldCheck, XCircle } from "lucide-react";
+import { BellOff, CalendarCheck, CheckCircle2, Clock, FileText, MapPin, MessageCircle, Navigation, ShieldCheck, XCircle } from "lucide-react";
 
 export interface Invitation {
   firstName: string; role: string | null; branchName: string; address: string | null; slotAt: string | null;
   reference: string; mapsUrl: string | null; docs: string[];
 }
 export type Answer = "yes" | "later" | "no";
+/** "stop" is offered as a small link under the answers, never as a big button. */
+export type PageAnswer = Answer | "stop";
 
 export const ANSWERS: Array<{ k: Answer; label: string; hint: string; done: string }> = [
   { k: "yes", label: "Yes, I will come", hint: "The branch will expect you", done: "Thank you! The branch will expect you. Please reach 10 minutes early with your documents." },
@@ -186,4 +188,34 @@ export function LocationCard(p: {
       )}
     </section>
   );
+}
+
+/** Small "Stop messages" link under the answers (the email's ?a=stop lands here too). */
+export function StopLink({ onPick }: { onPick: () => void }) {
+  return (
+    <button type="button" onClick={onPick} className={`mx-auto inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm text-slate-600 underline underline-offset-2 transition-colors duration-150 hover:text-slate-900 sm:min-h-0 ${focus}`}>
+      <BellOff className="h-4 w-4" aria-hidden /> Stop messages about this job
+    </button>
+  );
+}
+
+/** One more tap before a Stop is recorded (mail scanners pre-open links). */
+export function StopConfirmCard(p: { busy: boolean; error: string | null; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <section className={card} aria-label="Stop messages">
+      <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900"><BellOff className="h-5 w-5 text-slate-600" aria-hidden /> Stop messages about this job?</h2>
+      <p className="mt-1 text-sm leading-relaxed text-slate-600">We will not send you more emails or WhatsApp messages about this walk-in.</p>
+      {p.error && <p role="alert" className="mt-2 text-sm text-rose-700">{p.error}</p>}
+      <button type="button" disabled={p.busy} onClick={p.onConfirm} className={`${primaryBtn} mt-3`}>{p.busy ? "Saving…" : "Yes, stop messages"}</button>
+      <button type="button" onClick={p.onCancel} className={`${quietBtn} mt-2`}>Keep my invitation</button>
+    </section>
+  );
+}
+
+export function StoppedCard() {
+  return <StatusCard tone="plain" icon={<BellOff className="h-6 w-6" />} title="You will not get more messages">We have stopped messages about this job. You can still walk in at your time if you change your mind.</StatusCard>;
+}
+
+export function ClosedOpeningCard() {
+  return <StatusCard tone="plain" icon={<XCircle className="h-6 w-6" />} title="This opening is closed">Thank you for your interest. We will contact you when a similar job opens.</StatusCard>;
 }
