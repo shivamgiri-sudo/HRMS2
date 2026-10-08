@@ -70,7 +70,7 @@ export function countsLine(c: Record<string, number> | undefined): string {
 }
 
 export function inboundLine(i: SwitchesView["inbound"]): { ok: boolean; text: string } {
-  const last = i.lastInboundAt ? `last reply ${i.lastInboundAt}` : "no reply received yet";
+  const last = i.lastInboundAt ? `Last reply ${i.lastInboundAt}` : "No reply received yet";
   if (i.verified) return { ok: true, text: `Verified. ${last}, ${i.inbound7d} in 7 days.` };
   return { ok: false, text: `Not verified${i.acknowledged ? " (risk acknowledged by the owner)" : ""}. ${last}, ${i.inbound7d} in 7 days.` };
 }
