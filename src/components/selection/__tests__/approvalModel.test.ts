@@ -18,6 +18,10 @@ describe("approve bar", () => {
     expect(v.approveCount).toBe(2);
     expect(v.canApprove).toBe(true);
   });
+  it("people over today's seat cap are counted in words (never in the approve list)", () => {
+    const v = approveView(state({ lastRun: { runId: "run-1", at: "2026-10-09 17:00:00", versionId: "v2", counts: { picked: 4, review: 1, capped: 12 } } }), people, new Set(), new Set(), now);
+    expect(v.runText).toBe("Last run 30 min ago: 4 shortlisted, 1 for review, 0 approved, 0 unticked; 12 more pass but are over today's seat cap");
+  });
   it("disabled with the blocker reason in words", () => {
     const v = approveView(state({ blocker: "criteria_incomplete: decide location" }), people, new Set(), new Set(), now);
     expect(v).toMatchObject({ canApprove: false, why: "Criteria incomplete: decide location, education, shift and age first" });

@@ -11,7 +11,7 @@ export function approveView(s: ApprovalState, people: RunPerson[], unticked: Rea
   const why = !s.permissions.approve ? "Only HR can approve shortlists" : s.blocker ? blockerText(s.blocker) : !s.lastRun ? "Run the shortlist first"
     : approveCount === 0 ? "Nobody is ticked" : null;
   return {
-    runText: s.lastRun ? `Last run ${relativeAgo(s.lastRun.at, now)}: ${c.picked ?? 0} shortlisted, ${c.review ?? 0} for review, ${c.approved ?? 0} approved, ${c.unticked ?? 0} unticked` : "No shortlist run yet",
+    runText: s.lastRun ? `Last run ${relativeAgo(s.lastRun.at, now)}: ${c.picked ?? 0} shortlisted, ${c.review ?? 0} for review, ${c.approved ?? 0} approved, ${c.unticked ?? 0} unticked${c.capped ? `; ${c.capped} more pass but are over today's seat cap` : ""}` : "No shortlist run yet",
     versionText: s.currentVersion ? `Criteria version ${s.currentVersion.versionNo}${s.drift ? " (changed since the last run)" : ""}` : "Criteria not saved yet",
     approveCount, canApprove: why === null, why,
     standing: s.standing.filter((x) => parseWhen(x.validUntil) > now.getTime()).map((x) => ({ id: x.id, text: `Standing approval for Live Meta until ${x.validUntil}` })),

@@ -17,6 +17,7 @@ import { istText } from "./facts-loader.service.js";
 import { buildFunnel, finalVerdict } from "./funnel.js";
 import { loadOverrides, withOverride, type OverrideActor } from "./override.service.js";
 import { evaluatePopulation, forRequisition, latestVersionId } from "./preview.service.js";
+import { applySeatCap, dailySeatCap, DEFAULT_INVITES_PER_SEAT, INVITES_PER_SEAT_KEY } from "./seat-cap.js";
 import { shortlistEnrolOn } from "./selection-switches.js";
 import type { CandidateFacts, SourceKind } from "./selection-types.js";
 
@@ -63,21 +64,58 @@ export async function approvalBlocker(requisitionId: string, now = new Date()): 
   try { await gates(requisitionId, now); return null; } catch (e) { return (e as Error).message; }
 }
 
+/** Seats left, invites per seat and today's approvals for the requisition's daily cap (D3). An unknown headcount is not capped. */
+export async function seatCapFor(requisitionId: string, now: Date): Promise<{ seatsLeft: number | null; perSeat: number; alreadyToday: number; cap: number | null }> {
+  const [r] = await db.execute<RowDataPacket[]>(
+    "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, requisition_validity, branch_name, designation_name FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
+  const req = r[0]?.requested_headcount;
+  const seatsLeft = req == null ? null : Math.max(0, Number(req) - Number(r[0]?.fulfilled_headcount ?? 0));
+  const [p] = await db.execute<RowDataPacket[]>("SELECT value FROM he_model_param WHERE param_key = ? LIMIT 1", [INVITES_PER_SEAT_KEY]);
+  const v = p[0] ? Number(p[0].value) : NaN;
+  const perSeat = Number.isFinite(v) && v > 0 ? v : DEFAULT_INVITES_PER_SEAT;
+  const [c] = await db.execute<RowDataPacket[]>(
+    "SELECT COUNT(*) AS n FROM shortlist_candidate WHERE requisition_id = ? AND status IN ('approved','enrolled') AND updated_at >= ?", [requisitionId, `${istText(now).slice(0, 10)} 00:00:00`]);
+  const alreadyToday = Number(c[0]?.n ?? 0);
+  return { seatsLeft, perSeat, alreadyToday, cap: seatsLeft === null ? null : dailySeatCap({ seatsLeft, perSeat, alreadyToday }) };
+}
+
+export type RunTrigger = "manual" | "evening" | "arrival";
+
 export async function createShortlistRun(a: { requisitionId: string; sourceKind: SourceKind; actor: OverrideActor; now?: Date }) {
-  const now = a.now ?? new Date();
   await inScope(a.actor, a.requisitionId);
+  return runShortlist({ requisitionId: a.requisitionId, sourceKind: a.sourceKind, now: a.now ?? new Date(), createdBy: a.actor.id, trigger: "manual" });
+}
+
+/**
+ * One preview run (HR's manual run, or the D4 worker's evening / arrival run): stores the decisions under the seat cap. It never
+ * approves or enrols. An evening run carries its IST day; uq_slr_evening makes a second evening run of the day a duplicate-key error.
+ */
+export async function runShortlist(a: { requisitionId: string; sourceKind: SourceKind; now: Date; createdBy: string | null; trigger: RunTrigger; eveningDate?: string }) {
+  const now = a.now;
   const pop = await evaluatePopulation({ requisitionId: a.requisitionId, sourceKind: a.sourceKind, now });
   const fun = buildFunnel(pop.people, pop.compiled);
-  const runId = randomUUID();
-  await db.execute(`INSERT INTO shortlist_run (id, requisition_id, source_kind, criteria_version_id, criteria_hash, engine_version, counts_json, created_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [runId, a.requisitionId, a.sourceKind, pop.versionId, pop.compiled.hash, pop.compiled.engineVersion,
-      JSON.stringify({ start: pop.people.length, steps: fun.steps.map((s) => [s.key, s.failedHere, s.reviewHere]), outcome: fun.outcome, partial: pop.partial }), a.actor.id]);
+  const seat = await seatCapFor(a.requisitionId, now);
   // decision log rule: picked, review and overridden people get a row; plain fails stay counts
   const keep = pop.people.filter(({ e }) => !e.systemBlock && (finalVerdict(e) !== "fail" || e.override));
-  const rows = keep.map(({ facts, e }) => {
+  const decided = keep.map(({ facts, e }) => {
     const v = finalVerdict(e);
-    const status = e.override?.kind === "exclude" ? "excluded" : v === "pass" ? "picked" : "review";
+    return { facts, e, v, score: e.score, include: e.override?.kind === "include", status: e.override?.kind === "exclude" ? "excluded" : v === "pass" ? "picked" : "review" };
+  });
+  const capped = seat.cap === null ? decided : applySeatCap(decided, seat.cap);
+  const cappedN = capped.filter((d) => d.status === "capped").length;
+  const runId = randomUUID();
+  const counts = JSON.stringify({ start: pop.people.length, steps: fun.steps.map((s) => [s.key, s.failedHere, s.reviewHere]), outcome: fun.outcome, partial: pop.partial,
+    cap: { seatsLeft: seat.seatsLeft, perSeat: seat.perSeat, alreadyToday: seat.alreadyToday, cap: seat.cap, capped: cappedN } });
+  const base = [runId, a.requisitionId, a.sourceKind, pop.versionId, pop.compiled.hash, pop.compiled.engineVersion, counts, a.createdBy];
+  // a manual run keeps its statement (works before 2148); worker runs record their trigger and evening day
+  if (a.trigger === "manual") {
+    await db.execute(`INSERT INTO shortlist_run (id, requisition_id, source_kind, criteria_version_id, criteria_hash, engine_version, counts_json, created_by)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, base);
+  } else {
+    await db.execute(`INSERT INTO shortlist_run (id, requisition_id, source_kind, criteria_version_id, criteria_hash, engine_version, counts_json, created_by, trigger_kind, evening_date)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [...base, a.trigger, a.trigger === "evening" ? a.eveningDate ?? istText(now).slice(0, 10) : null]);
+  }
+  const rows = capped.map(({ facts, e, v, status }) => {
     const review = [...(e.override?.kind === "include" ? [`HR included: ${e.override.reason}`] : []), ...(e.override?.kind === "exclude" ? [`HR excluded: ${e.override.reason}`] : []),
       ...(e.override?.kind === "include" ? [] : e.reviewReasons)];
     const results = [...e.passed, ...e.failed, ...e.unknown].filter((r) => r.mode !== "prefer").map((r) => ({ k: r.key, o: r.outcome, a: r.actualText.slice(0, 120), r: r.requiredText.slice(0, 120) }));
@@ -89,7 +127,7 @@ export async function createShortlistRun(a: { requisitionId: string; sourceKind:
     await db.execute(`INSERT INTO shortlist_candidate (run_id, requisition_id, mobile10, source_kind, sub_source, verdict, score, status, criteria_version_id, engine_version,
                         rule_results_json, review_json, override_kind, facts_hash) VALUES ${part.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}`, part.flat());
   }
-  return { runId, versionId: pop.versionId, outcome: fun.outcome, stored: rows.length, partial: pop.partial };
+  return { runId, versionId: pop.versionId, outcome: fun.outcome, stored: rows.length, capped: cappedN, partial: pop.partial };
 }
 
 export async function approveBatch(a: { requisitionId: string; sourceKind: SourceKind; runId: string; untick?: string[]; approveReview?: string[]; note?: string | null; actor: OverrideActor; now?: Date }) {

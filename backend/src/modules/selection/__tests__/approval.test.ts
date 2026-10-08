@@ -4,16 +4,21 @@ import type { Evaluated } from "../preview.service.js";
 const h = vi.hoisted(() => {
   const state = {
     req: {} as Record<string, unknown>, row: {} as Record<string, unknown>, runs: [] as Array<Record<string, unknown>>, cands: [] as Array<Record<string, unknown>>,
-    approvals: [] as Array<Record<string, unknown>>, enrol: 0, version: "v1" as string | null, people: [] as Evaluated[], outOfScope: new Set<string>(), facts: new Map<string, unknown>(), nextId: 1,
+    approvals: [] as Array<Record<string, unknown>>, enrol: 0, perSeat: null as number | null, version: "v1" as string | null, people: [] as Evaluated[], outOfScope: new Set<string>(), facts: new Map<string, unknown>(), nextId: 1,
   };
   const exec = async (sql: string, p: unknown[] = []) => {
     const s = sql.replace(/\s+/g, " ").trim();
     const S = state;
     if (s.startsWith("SELECT approval_status, active_status")) return [[S.req], []];
     if (s.startsWith("SELECT jr.id")) return [[S.row], []];
-    if (s.startsWith("SELECT value FROM he_model_param")) return [[{ value: S.enrol }], []];
+    if (s.startsWith("SELECT value FROM he_model_param")) return p[0] === "policy.shortlist.invites_per_seat" ? [S.perSeat === null ? [] : [{ value: S.perSeat }], []] : [[{ value: S.enrol }], []];
+    if (s.startsWith("SELECT COUNT(*) AS n FROM shortlist_candidate WHERE requisition_id = ? AND status IN ('approved','enrolled') AND updated_at >= ?"))
+      return [[{ n: S.cands.filter((c) => c.requisition_id === p[0] && ["approved", "enrolled"].includes(String(c.status))).length }], []];
     if (s.startsWith("SELECT mobile10, requisition_scope")) return [[], []];
-    if (s.startsWith("INSERT INTO shortlist_run")) { S.runs.push({ id: p[0], requisition_id: p[1], source_kind: p[2], criteria_version_id: p[3], created_by: p[7] }); return [{}, []]; }
+    if (s.startsWith("INSERT INTO shortlist_run")) {
+      S.runs.push({ id: p[0], requisition_id: p[1], source_kind: p[2], criteria_version_id: p[3], counts: JSON.parse(String(p[6])), created_by: p[7], trigger_kind: s.includes("trigger_kind") ? p[8] : "manual", evening_date: s.includes("evening_date") ? p[9] : null });
+      return [{}, []];
+    }
     if (s.startsWith("SELECT id, requisition_id, source_kind, criteria_version_id FROM shortlist_run")) return [S.runs.filter((r) => r.id === p[0]), []];
     if (s.startsWith("INSERT INTO shortlist_candidate") && s.includes("approval_id) VALUES")) {
       const [run_id, requisition_id, mobile10, sub_source, score, criteria_version_id, , override_kind, , approval_id] = p;
@@ -91,7 +96,7 @@ const port = () => { const calls: unknown[] = []; return { calls, enqueue: vi.fn
 
 beforeEach(() => {
   Object.assign(h.state, { req: { approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 10, fulfilled_headcount: 0, requisition_validity: "2026-10-30", branch_name: "NOIDA-2", designation_name: "CSE" },
-    row: dbRow(), runs: [], cands: [], approvals: [], enrol: 0, version: "v1", outOfScope: new Set(), facts: new Map(), nextId: 1 });
+    row: dbRow(), runs: [], cands: [], approvals: [], enrol: 0, perSeat: null, version: "v1", outOfScope: new Set(), facts: new Map(), nextId: 1 });
   h.state.people = evalAll([person(1), person(2), person(3), person(4, { age: { value: null, quality: "missing", from: "t" } }), person(5, { age: ok(50) }), person(6, { recordType: "legacy_employee" })]);
 });
 
@@ -105,6 +110,34 @@ describe("shortlist run", () => {
       [person(1).personKey, "picked", "pass"], [person(4).personKey, "review", "review"], [person(7).personKey, "picked", "pass"],
     ]);
     expect(h.state.cands[2].review_json).toEqual(["HR included: client asked for her"]);
+  });
+});
+
+describe("seat caps on preview runs (WS3 D3)", () => {
+  it("1 seat at 2 per seat: the 2 best picks stay picked (HR include first), the rest are capped and never approved; counts say so", async () => {
+    h.state.req = { ...h.state.req, requested_headcount: 5, fulfilled_headcount: 4 };
+    h.state.perSeat = 2;
+    h.state.people = evalAll([person(1), person(2), person(3), person(7, { age: ok(60) })], { [person(7).personKey]: { kind: "include", reason: "client asked", actorId: "hr", at: "t" } });
+    const r = await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
+    expect(h.state.cands.filter((c) => c.status === "picked").length).toBe(2);
+    expect(h.state.cands.find((c) => c.mobile10 === person(7).personKey)!.status).toBe("picked");
+    expect(h.state.cands.filter((c) => c.status === "capped").length).toBe(2);
+    expect(h.state.runs[0].counts).toMatchObject({ cap: { seatsLeft: 1, perSeat: 2, alreadyToday: 0, cap: 2, capped: 2 } });
+    const a = await approveBatch({ requisitionId: "r1", sourceKind: "he", runId: r.runId, actor, now: NOW });
+    expect(a.approved).toBe(2);
+    // the next run today: the cap is used up by today's approvals
+    await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
+    expect(h.state.cands.filter((c) => c.run_id === h.state.runs[1].id && c.status === "picked")).toEqual([]);
+  });
+  it("default 4 per seat; an unknown headcount is not capped", async () => {
+    h.state.req = { ...h.state.req, requested_headcount: null, fulfilled_headcount: null };
+    h.state.people = evalAll([person(1), person(2), person(3)]);
+    await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
+    expect(h.state.cands.map((c) => c.status)).toEqual(["picked", "picked", "picked"]);
+  });
+  it("a manual run keeps its statement (no trigger columns): works before migration 2148", async () => {
+    await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
+    expect(h.state.runs[0].trigger_kind).toBe("manual");
   });
 });
 
