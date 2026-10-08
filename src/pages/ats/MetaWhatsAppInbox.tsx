@@ -155,7 +155,7 @@ function ConversationItem({ conv, selected, onClick }: {
   );
 }
 
-/** Real delivery state; a clock means Wassenger has queued the message but not sent it yet. */
+/** Delivery state of older messages (the retired Wassenger gateway queued them); Pinbot receipts live with the Hiring Engine messages. */
 function DeliveryTick({ status }: { status: Message["deliveryStatus"] }) {
   switch (status) {
     case "queued":
@@ -658,7 +658,7 @@ export function MetaWhatsAppInbox() {
                     </button>
                   </div>
                   <p className="text-center text-[10px] text-[#8696a0] pb-1">
-                    Enter to send · Shift+Enter for new line · 📎 Max 20 MB · Delivered via Wassenger
+                    Enter to send · Shift+Enter for new line · Delivered via Pinbot (replies only within 24 h of the candidate's last message)
                   </p>
                 </div>
               </>
@@ -679,7 +679,7 @@ export function MetaWhatsAppInbox() {
                     Select a conversation from the left to read messages and reply to candidates.
                   </p>
                   <p className="text-[12px] text-[#8696a0]">
-                    Branch HR sees conversations from their branch only. Messages are sent and received via Wassenger.
+                    Branch HR sees conversations from their branch only. Messages are sent and received via Pinbot.
                   </p>
                 </div>
               </div>

@@ -38,8 +38,6 @@ vi.mock("../../communication/providers/provider.factory.js", () => ({ providerFa
 vi.mock("../../communication/provider-config.service.js", () => ({ providerConfigService: { loadActiveConfig: vi.fn() } }));
 vi.mock("../voicebot.provider.js", () => ({ triggerVoiceCall: vi.fn(), isVoicebotConfigured: () => false }));
 vi.mock("../vapi-voicebot.provider.js", () => ({ triggerVapiCallWithInlineScript: h.vapi, isVapiConfigured: () => true }));
-vi.mock("../whatsapp-web.provider.js", () => ({ sendWhatsAppNotification: vi.fn(), isWhatsAppWebConfigured: () => false }));
-vi.mock("../wassenger.provider.js", () => ({ sendShortlistMessage: vi.fn(), sendCustomMessage: vi.fn(), isWassengerConfigured: () => false }));
 vi.mock("../meta-messages.service.js", () => ({ saveMessage: vi.fn() }));
 vi.mock("../interview-slot.service.js", () => ({ assignInterviewSlot: vi.fn(async () => (h.slot ? { date: "2026-10-09", time: "11:00:00", dateLabel: "Fri, 9 Oct 2026", timeLabel: "11:00 AM" } : undefined)) }));
 vi.mock("../../hiring-engine/walkin-invite.service.js", async () => {
@@ -54,8 +52,8 @@ vi.mock("../../hiring-engine/walkin-invite.service.js", async () => {
   };
 });
 vi.mock("../../hiring-engine/he-campaign-config.service.js", () => ({ metaOutreachBlockedByEngine: vi.fn(async () => null) }));
-vi.mock("../../hiring-engine/qualified-followup.service.js", () => ({ followupEnrolled: vi.fn(async () => false), personOptedOut: vi.fn(async () => false) }));
-vi.mock("../../hiring-engine/qualified-followup.policy.js", () => ({ pipelineOwnsSends: () => false }));
+vi.mock("../../hiring-engine/qualified-followup.service.js", () => ({ followupEnrolled: vi.fn(async () => false), followupHasLiveRow: vi.fn(async () => false), personOptedOut: vi.fn(async () => false), enqueueMetaLeadFollowup: vi.fn(async () => ({ status: "skipped_off" })) }));
+// follow-up switches: the real policy (env off -> every source off, no query)
 
 import { notifyQualifiedLead } from "../lead-outreach.service.js";
 

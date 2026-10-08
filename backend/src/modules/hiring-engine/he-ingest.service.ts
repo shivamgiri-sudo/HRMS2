@@ -50,7 +50,7 @@ async function mirrorToMeta(metaLeadId: string | null, plan: TransitionPlan): Pr
   const resched = plan.event === "reschedule_requested" ? 1 : null;
   const declined = plan.leadStatus === "declined" || plan.leadStatus === "opted_out" ? 1 : null;
   if (confirmed == null && resched == null && declined == null) return;
-  // meta_lead_raw.walkin_reply is VARCHAR(30) holding the same keywords the Wassenger webhook writes.
+  // meta_lead_raw.walkin_reply is VARCHAR(30) holding the same keywords the (retired) Wassenger webhook used to write.
   const keyword = confirmed ? "confirmed" : resched ? "reschedule" : "not_interested";
   await db.execute(
     `UPDATE meta_lead_raw SET

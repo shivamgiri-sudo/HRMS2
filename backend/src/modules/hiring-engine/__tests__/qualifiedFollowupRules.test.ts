@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readSwitches, rowTag, pipelineOwnsSends, followupSkipSql, isTestModeRequested } from "../qualified-followup.policy.js";
+import { readSwitches, rowTag, followupSkipSql, isTestModeRequested, envCeiling } from "../qualified-followup.policy.js";
 import {
   decideStop, chooseWaTemplate, nextStepDue, isTransientError, metaErrorCode, afterFailure,
   normaliseQuality, waDailyBudget, dueSlot, DAILY_REPORT_SLOTS, CALL_FILE_SLOTS, maskMobile, followupRef, nextWorkingDayIst,
@@ -42,27 +42,21 @@ describe("test-mode flag parsing fails safe", () => {
     expect(isTestModeRequested(v)).toBe(true);
     expect(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v }).testMisconfigured).toBe(true);
     expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v }))).toBe("test");
-    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v })).toBe(false);
+    expect(envCeiling({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v })).toBe("test");
   });
   it.each(["false", "FALSE", " 0 ", "no", "Off", "", undefined])("%j does not", (v) => {
     expect(isTestModeRequested(v)).toBe(false);
     expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v }))).toBe("live");
-    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v })).toBe(true);
+    expect(envCeiling({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v })).toBe("live");
   });
 });
 
-describe("rowTag / pipelineOwnsSends / skip sql", () => {
+describe("rowTag / skip sql", () => {
   it("rowTag", () => {
     expect(rowTag(readSwitches({}))).toBeNull();
     expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "dry_run" }))).toBe("dry_run");
     expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "live" }))).toBe("live");
     expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true" }))).toBe("test");
-  });
-  it("pipelineOwnsSends", () => {
-    expect(pipelineOwnsSends({})).toBe(false);
-    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "dry_run" })).toBe(false);
-    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true" })).toBe(false);
-    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live" })).toBe(true);
   });
   it("followupSkipSql is row-based (same clause whatever the env; detailed in qualifiedFollowupPolicy.test.ts)", () => {
     const a = { mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" };

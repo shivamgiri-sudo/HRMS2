@@ -16,7 +16,6 @@
  *   everything else requireAuth + requireRole.
  */
 
-import multer from 'multer';
 import { Router } from 'express';
 import type { Response, NextFunction, Request } from 'express';
 import crypto from 'crypto';
@@ -35,26 +34,16 @@ import {
 } from './shortlist-report.service.js';
 import type { ShortlistFilters } from './shortlist-report.service.js';
 import { writeAuditLog } from '../../shared/auditLog.js';
-import { notifyQualifiedLead, buildNotifyPreview, recordVoiceCallback, recordWalkInConfirmation } from './lead-outreach.service.js';
+import { notifyQualifiedLead, buildNotifyPreview, recordVoiceCallback } from './lead-outreach.service.js';
 import { leadVerifyToken, isMetaConfigured } from './meta-api.client.js';
 import { runMetaLeadSyncNow } from '../../cron/metaLeadSync.cron.js';
 import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
 import type { VapiCallbackPayload } from './vapi-voicebot.provider.js';
 import { recordMetaVoiceResponse } from './meta-response-bridge.service.js';
 import { BULK_MAX, notifyLeadsBulk, parseLeadIds } from './meta-notify-bulk.service.js';
-import {
-  isWassengerConfigured,
-  parseWassengerWebhook,
-  parseWassengerStatusUpdate,
-  sendConfirmationAck,
-  sendShortlistMessage,
-  sendMediaMessage,
-} from './wassenger.provider.js';
 import { anyReplyProviderConfigured, sendLeadReply } from './lead-reply.js';
-import type { WassengerWebhookPayload } from './wassenger.provider.js';
 import {
   saveMessage,
-  updateDeliveryStatus,
   getThread,
   getInbox,
   getTotalUnread,
@@ -332,88 +321,8 @@ metaCampaignRouter.post('/vapi-callback', (req: Request, res: Response) => {
   return res.status(200).json({ success: true });
 });
 
-// ─────────────────────────── Wassenger WhatsApp webhook ───────────────────────────
-
-/**
- * Wassenger sends a POST here for every incoming WhatsApp message on the connected device.
- * We use it to capture walk-in confirmation replies (1 = confirm, 2 = reschedule, 3 = decline).
- *
- * Security: Wassenger supports a webhook secret header (X-Wassenger-Secret). If
- *   WASSENGER_WEBHOOK_SECRET is set we verify it; otherwise we accept all (suitable for private
- *   server without public exposure, but set the secret in production).
- */
-metaCampaignRouter.post('/wassenger-webhook', (req: Request, res: Response) => {
-  // Optional webhook secret check
-  const webhookSecret = process.env.WASSENGER_WEBHOOK_SECRET ?? '';
-  if (webhookSecret) {
-    const supplied = String(req.header('x-wassenger-secret') ?? req.header('x-api-key') ?? '');
-    const a = Buffer.from(supplied);
-    const b = Buffer.from(webhookSecret);
-    if (a.length === 0 || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      return res.status(403).json({ success: false, message: 'invalid webhook secret' });
-    }
-  }
-
-  if (!isWassengerConfigured()) {
-    return res.status(503).json({ success: false, message: 'Wassenger not configured' });
-  }
-
-  const payload = req.body as WassengerWebhookPayload;
-
-  // Delivery-state events (queued -> sent -> delivered -> read / failed) update the outbound row.
-  const statusUpdate = parseWassengerStatusUpdate(payload);
-  if (statusUpdate) {
-    void updateDeliveryStatus(statusUpdate.messageId, statusUpdate.status).catch((e: unknown) =>
-      console.error('[wassenger-webhook] status update failed', e instanceof Error ? e.message : e)
-    );
-    return res.status(200).json({ success: true, action: 'status_updated' });
-  }
-
-  const { isIncoming, phone, reply, rawBody } = parseWassengerWebhook(payload);
-
-  if (!isIncoming || !phone) {
-    // Not an incoming candidate message — ack and ignore
-    return res.status(200).json({ success: true, action: 'ignored' });
-  }
-
-  // Fire-and-forget — must return 200 fast for Wassenger
-  void (async () => {
-    try {
-      const messageText = rawBody ?? (reply === 'confirmed' ? '1' : reply === 'reschedule' ? '2' : reply === 'not_interested' ? '3' : '');
-      if (!messageText) return;
-
-      // Always find the lead first (needed for both unknown questions and walk-in replies)
-      const result = await recordWalkInConfirmation(phone, reply);
-      if (!result.found || !result.leadId) {
-        console.warn('[wassenger-webhook] no matching lead for phone', phone);
-        return;
-      }
-
-      // Persist the inbound message in the thread
-      await saveMessage({
-        leadId: result.leadId,
-        direction: 'inbound',
-        messageText,
-        senderType: 'candidate',
-        wassengerMessageId: payload.data?.id ?? null,
-      });
-
-      if (reply === 'unknown') {
-        // Freeform message / question — notify Branch HR to respond
-        await notifyBranchHrOfInboundMessage(result.leadId, result.name, messageText);
-      } else if (result.name) {
-        // Walk-in reply — send auto-ack to candidate
-        await sendConfirmationAck(phone, reply, result.name);
-      }
-
-      console.log('[wassenger-webhook] processed', { phone, reply, leadId: result.leadId });
-    } catch (e: unknown) {
-      console.error('[wassenger-webhook] failed', e instanceof Error ? e.message : e);
-    }
-  })();
-
-  return res.status(200).json({ success: true });
-});
+// The Wassenger WhatsApp webhook is gone (Wassenger retired, owner decision O7): inbound WhatsApp arrives only through Pinbot at
+// /api/he-hook/whatsapp. Historical meta_lead_messages rows stay readable.
 
 // ─────────────────────────── authenticated API ───────────────────────────
 
@@ -441,8 +350,6 @@ metaCampaignRouter.get(
         webhookVerifyTokenConfigured: Boolean(process.env.META_LEAD_VERIFY_TOKEN),
         webhookSignatureConfigured: Boolean(process.env.META_APP_SECRET),
         whatsappConfigured: Boolean(process.env.LOCAL_WHATSAPP_API_URL),
-        wassengerConfigured: isWassengerConfigured(),
-        whatsappWebConfigured: Boolean(process.env.ENABLE_WHATSAPP_WEB),
         voicebotConfigured: Boolean(process.env.VOICEBOT_TRIGGER_URL),
         vapiConfigured: isVapiConfigured(),
       },
@@ -796,7 +703,8 @@ metaCampaignRouter.post(
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
-    const data = await notifyQualifiedLead(req.params.id!, { force: req.body?.force === true });
+    // Manual Notify: when the follow-up method runs Live Meta it enrols and runs the next step now; force = a recorded HR override.
+    const data = await notifyQualifiedLead(req.params.id!, { force: req.body?.force === true, manual: true, actor: req.authUser?.id ?? null });
     return res.json({ success: true, data });
   })
 );
@@ -885,7 +793,7 @@ metaCampaignRouter.patch(
 
 /**
  * Branch HR replies to a candidate from the HRMS inbox.
- * Sends via Wassenger and persists as an outbound message.
+ * Sends via Pinbot (the only WhatsApp provider) and persists as an outbound message.
  */
 metaCampaignRouter.post(
   '/leads/:id/reply',
@@ -900,7 +808,7 @@ metaCampaignRouter.post(
     const gate = await canMessageLead(req.params.id!);
     if (!gate.allowed) return res.status(409).json({ success: false, message: gate.reason });
     if (!anyReplyProviderConfigured()) {
-      return res.status(503).json({ success: false, message: 'No WhatsApp provider is configured (Pinbot or Wassenger)' });
+      return res.status(503).json({ success: false, message: 'Pinbot (WhatsApp) is not configured' });
     }
 
     // Load the lead to get phone + name
@@ -910,14 +818,10 @@ metaCampaignRouter.post(
       return res.status(422).json({ success: false, message: 'Lead has no phone number' });
     }
 
-    // Pinbot first (the live WhatsApp channel), Wassenger as fallback — see lead-reply.ts.
     const sent = await sendLeadReply(lead.parsedPhone, text);
     if (!sent.success) {
       return res.status(502).json({ success: false, message: `WhatsApp send failed: ${sent.error ?? 'unknown error'}` });
     }
-    // Only a Wassenger id goes in wassenger_message_id: delivery reconciliation polls Wassenger by it.
-    const wassengerMsgId = sent.provider === 'wassenger' ? (sent.messageId ?? null) : null;
-
     // Persist as outbound message from HR
     const msgId = await saveMessage({
       leadId: req.params.id!,
@@ -926,72 +830,22 @@ metaCampaignRouter.post(
       senderType: 'hr',
       senderId: req.authUser!.id,
       senderName: req.authUser!.email ?? null,
-      wassengerMessageId: wassengerMsgId,
     });
 
     return res.json({ success: true, data: { messageId: msgId } });
   })
 );
 
-/** Memory storage — files are converted to base64 immediately, never written to disk. */
-const _upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
-
 /**
  * POST /api/meta/leads/:id/send-file
- * Send a file attachment (PDF, image, etc.) to a candidate via WhatsApp.
- * Multipart form field: file (required), caption (optional text).
+ * WhatsApp attachments went through Wassenger, which is retired (owner decision O7); Pinbot sends approved templates and session text
+ * only. The route answers 410 so an old screen gets a clear message.
  */
 metaCampaignRouter.post(
   '/leads/:id/send-file',
   requireAuth,
   requireRole(...INBOX_ROLES),
-  _upload.single('file'),
-  h(async (req, res) => {
-    const file = (req as Request & { file?: Express.Multer.File }).file;
-    if (!file) {
-      return res.status(400).json({ success: false, message: 'No file attached' });
-    }
-    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
-    const gate = await canMessageLead(req.params.id!);
-    if (!gate.allowed) return res.status(409).json({ success: false, message: gate.reason });
-    if (!isWassengerConfigured()) {
-      return res.status(503).json({ success: false, message: 'Wassenger is not configured' });
-    }
-
-    const lead = await metaCampaignService.getLeadDetail(req.params.id!);
-    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
-    if (!lead.parsedPhone) {
-      return res.status(422).json({ success: false, message: 'Lead has no phone number' });
-    }
-
-    const caption = String(req.body?.caption ?? '').trim();
-    const base64 = file.buffer.toString('base64');
-
-    const result = await sendMediaMessage(lead.parsedPhone, {
-      base64,
-      mimeType: file.mimetype,
-      filename: file.originalname,
-      caption: caption || undefined,
-    });
-
-    if (!result.success) {
-      return res.status(502).json({ success: false, message: result.error ?? 'Send failed' });
-    }
-
-    // Persist as outbound message from HR
-    const displayName = caption || file.originalname;
-    const msgId = await saveMessage({
-      leadId: req.params.id!,
-      direction: 'outbound',
-      messageText: `📎 ${displayName}`,
-      senderType: 'hr',
-      senderId: (req as AuthenticatedRequest).authUser!.id,
-      senderName: (req as AuthenticatedRequest).authUser!.email ?? null,
-      wassengerMessageId: result.messageId ?? null,
-    });
-
-    return res.json({ success: true, data: { messageId: msgId, wassengerMessageId: result.messageId } });
-  })
+  h(async (_req, res) => res.status(410).json({ success: false, message: 'WhatsApp attachments are not available: WhatsApp goes through Pinbot only. Send the file by email.' }))
 );
 
 // ── Calling Feedback — same dispositions as Hiring Entry ─────────────────────

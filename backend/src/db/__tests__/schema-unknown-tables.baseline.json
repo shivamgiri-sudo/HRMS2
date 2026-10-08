@@ -53,6 +53,9 @@
   "modules/hiring-engine/he-followup-email.service.ts": [
     "he_message"
   ],
+  "modules/hiring-engine/qualified-followup.runnow.ts": [
+    "qualified_followup"
+  ],
   "modules/hiring-engine/he-action-queue.service.ts": [
     "qualified_followup"
   ],

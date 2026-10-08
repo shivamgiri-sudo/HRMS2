@@ -17,7 +17,8 @@ import type { RowTag, SourceType } from "./qualified-followup.types.js";
 
 /** Shared across stage B then stage A within one tick. */
 export interface BudgetState { waLeft: number; branchLeft: Map<string, number> }
-export interface StepScope { sources: SourceType[]; budget: BudgetState; limit?: number }
+/** onlyId: HR's Notify runs one journey now; hrOverride: Notify with force (lifts the re-contact hold only). */
+export interface StepScope { sources: SourceType[]; budget: BudgetState; limit?: number; onlyId?: string; hrOverride?: boolean }
 /** shadowed (dry_run): `held` when a real row would wait (window, caps, budget): the dry row does not move on either. */
 export type GateResult = { action: "send" } | { action: "held" | "skipped" | "ended"; reason: GuardReason } | { action: "shadowed"; verdict: "would_send" | GuardReason; held: boolean };
 
@@ -25,7 +26,10 @@ export const newBudget = (waLeft: number): BudgetState => ({ waLeft: Math.max(0,
 
 /** Rows of this tick's sources, still in stage A. */
 export function scopeFilter(o: StepScope): { sql: string; params: string[] } {
-  return { sql: ` AND qf.source_type IN (${o.sources.map(() => "?").join(",")}) AND qf.journey_state IN ('enrolled','reach')`, params: [...o.sources] };
+  return {
+    sql: ` AND qf.source_type IN (${o.sources.map(() => "?").join(",")}) AND qf.journey_state IN ('enrolled','reach')${o.onlyId ? " AND qf.id = ?" : ""}`,
+    params: [...o.sources, ...(o.onlyId ? [o.onlyId] : [])],
+  };
 }
 
 const DUE: Record<Exclude<GuardStep, "call_file">, string> = { email: "email_due_at", whatsapp: "wa_due_at", call: "call_due_at" };
@@ -66,7 +70,7 @@ export async function gate(
   const facts = await loadGuardFacts({
     row, step, now, transactional: false, firstContact: o.firstContact, cadenceStep: true, stage: "A",
     killSwitch: s.killSwitch, sourcePaused: s.pausedSources.has(row.sourceType), waBudgetLeft: scope.budget.waLeft,
-    branchCapLeft: await branchCapLeft(s, tag, row, now, scope, o.firstContact), uploadWaAllowed: s.uploadWa,
+    branchCapLeft: await branchCapLeft(s, tag, row, now, scope, o.firstContact), uploadWaAllowed: s.uploadWa, hrOverride: scope.hrOverride,
   });
   const v = checkFollowupGuards(facts);
   if (tag === "dry_run") {

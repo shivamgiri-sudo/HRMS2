@@ -19,7 +19,7 @@ export async function notifyLeadsBulk(ids: string[], o: { actor: string; delayMs
   for (let i = 0; i < ids.length; i++) {
     const leadId = ids[i];
     try {
-      const out = await notifyQualifiedLead(leadId, { force: false, sourcePath: 'legacy_meta_bulk' });
+      const out = await notifyQualifiedLead(leadId, { force: false, sourcePath: 'legacy_meta_bulk', manual: true, actor: o.actor });
       if (out.succeeded.length > 0) results.push({ leadId, status: 'sent' });
       else if (out.failed.length > 0) results.push({ leadId, status: 'failed', reason: `${out.failed[0].channel}: ${out.failed[0].error}`.slice(0, 200) });
       else results.push({ leadId, status: 'skipped', ...(out.skipped[0] ? { reason: out.skipped[0].reason.slice(0, 200) } : {}) });

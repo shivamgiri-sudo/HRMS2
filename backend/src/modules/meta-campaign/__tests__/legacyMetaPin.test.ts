@@ -52,6 +52,6 @@ describe("legacy Meta outreach pin (switches off)", () => {
   });
   it("notifyNewQualifiedLeads SQL", async () => {
     await notifyNewQualifiedLeads();
-    expect(h.sqls.filter((s) => s.sql.includes("meta_lead_raw") && s.sql.startsWith("SELECT id FROM"))).toMatchSnapshot();
+    expect(h.sqls.filter((s) => s.sql.includes("FROM meta_lead_raw") && s.sql.includes("notification_sent_at IS NULL")).map((s) => ({ sql: s.sql, p: s.p.map((x) => (x instanceof Date ? "<window start>" : x)) }))).toMatchSnapshot();
   });
 });

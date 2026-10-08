@@ -24,13 +24,17 @@ exports[`single Notify route pin > in scope, with and without force 1`] = `
     [
       "lead-noida",
       {
+        "actor": "u1",
         "force": false,
+        "manual": true,
       },
     ],
     [
       "lead-noida",
       {
+        "actor": "u1",
         "force": true,
+        "manual": true,
       },
     ],
   ],

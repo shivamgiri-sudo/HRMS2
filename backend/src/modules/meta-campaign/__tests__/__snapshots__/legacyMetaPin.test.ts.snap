@@ -4,9 +4,9 @@ exports[`legacy Meta outreach pin (switches off) > notifyNewQualifiedLeads SQL 1
 [
   {
     "p": [
-      2026-10-06T21:38:58.336Z,
+      "<window start>",
     ],
-    "sql": "SELECT id FROM meta_lead_raw WHERE screening_result = 'qualified' AND notification_sent_at IS NULL AND created_at >= ? ORDER BY created_at ASC LIMIT 100",
+    "sql": "SELECT id, (SELECT JSON_EXTRACT(jr.meta_screening_config, '$.auto_notify') = CAST('false' AS JSON) FROM job_requisition jr WHERE jr.id = meta_lead_raw.requisition_id) AS auto_notify_off, JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.created_time')) AS meta_created FROM meta_lead_raw WHERE screening_result = 'qualified' AND notification_sent_at IS NULL AND created_at >= ? AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mode_at_enqueue IN ('live','canary') AND (qf.meta_lead_id = meta_lead_raw.id COLLATE utf8mb4_unicode_ci OR (qf.mobile10 = RIGHT(REGEXP_REPLACE(meta_lead_raw.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci AND qf.requisition_id = meta_lead_raw.requisition_id COLLATE utf8mb4_unicode_ci))) ORDER BY created_at ASC LIMIT 100",
   },
 ]
 `;
@@ -57,30 +57,6 @@ exports[`legacy Meta outreach pin (switches off) > notifyQualifiedLead, Pinbot n
 {
   "calls": [
     [
-      "db_provider",
-      "9876543210",
-      "Shortlisted",
-      "Hi Asha! 🎉
-
-Congratulations! Your profile has been shortlisted for the *CSE* position at *Mas Callnet India Pvt. Ltd.*
-
-To proceed, please complete your assessment and confirm your interview slot:
-👉 https://bmi.test/x
-
-📅 Date: Sat 10 Oct
-🕒 Time: 11:00 AM
-📍 Location: Noida
-🏢 Full Address: Sector 62, Noida
-🗺️ Google Maps: https://maps.google.com/?q=Sector%2062%2C%20Noida
-💼 Role: CSE
-
-We recommend completing the process at the earliest to avoid missing your opportunity.
-Looking forward to speaking with you!
-
-— Mas Callnet HR Team
-https://www.mascallnet.ai",
-    ],
-    [
       "email",
       "a@x.in",
       "Congratulations Asha! Shortlisted for CSE at Mas Callnet",
@@ -88,19 +64,21 @@ https://www.mascallnet.ai",
   ],
   "out": {
     "attempted": [
-      "whatsapp",
       "email",
     ],
     "failed": [],
     "leadId": "L1",
     "skipped": [
       {
+        "channel": "whatsapp",
+        "reason": "Pinbot is not configured",
+      },
+      {
         "channel": "voice",
         "reason": "No voice provider configured (VAPI_API_KEY or VOICEBOT_TRIGGER_URL)",
       },
     ],
     "succeeded": [
-      "whatsapp",
       "email",
     ],
   },

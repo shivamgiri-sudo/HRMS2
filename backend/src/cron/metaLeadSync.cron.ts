@@ -18,10 +18,8 @@ import { db } from "../db/mysql.js";
 import { metaCampaignService } from "../modules/meta-campaign/meta-campaign.service.js";
 import { isMetaConfigured } from "../modules/meta-campaign/meta-api.client.js";
 import { notifyQualifiedLead } from "../modules/meta-campaign/lead-outreach.service.js";
-import { reconcileDeliveryStatuses } from "../modules/meta-campaign/meta-messages.service.js";
-import { enqueueMetaLeadFollowup, followupHasLiveRow } from "../modules/hiring-engine/qualified-followup.service.js";
+import { enqueueMetaLeadFollowup } from "../modules/hiring-engine/qualified-followup.service.js";
 import { readSyncStatus, safeErrorCode, writeSyncStatus, type SyncStatusRecord } from "../modules/meta-campaign/meta-sync-status.store.js";
-import { followupSkipSql, pipelineOwnsSends } from "../modules/hiring-engine/qualified-followup.policy.js";
 
 let scheduler: NodeJS.Timeout | undefined;
 let runInFlight = false;
@@ -196,18 +194,6 @@ async function runSyncCycle(): Promise<MetaSyncNowResult> {
       console.error("[meta-sync] Heal step failed:", err?.message ?? err);
     }
 
-    // 3b. Reconcile WhatsApp delivery states. A message Wassenger merely queued is not delivered;
-    //     a growing "still queued" count means Wassenger's device/queue is stuck.
-    try {
-      const wa = await reconcileDeliveryStatuses();
-      if (wa.checked) {
-        const msg = `[meta-sync] WhatsApp delivery: ${wa.checked} checked, ${wa.updated} updated, ${wa.stillQueued} still queued`;
-        if (wa.stillQueued > 0) console.warn(`${msg} — Wassenger queue may be stuck`);
-        else console.log(msg);
-      }
-    } catch (err: any) {
-      console.error("[meta-sync] Delivery reconcile failed:", err?.message ?? err);
-    }
 
     // 4. Notify newly qualified leads within the rolling window.
     //    backfillFormLeads sets skipOutreach=true, so we do outreach here.
@@ -246,20 +232,30 @@ export async function runMetaLeadSyncNow(): Promise<MetaSyncNowResult> {
   return runSyncCycle();
 }
 
-// Live: leads already handed to the pipeline (a live row, open or stopped) are not re-selected every sync.
-const LIVE_ROW_SKIP = `
+// Leads the follow-up method owns (a live / canary row, open or stopped) are never re-selected, whatever the mode (row-based).
+const OWNED_ROW_SKIP = `
         AND NOT EXISTS (SELECT 1 FROM qualified_followup qf
-                         WHERE qf.mode_at_enqueue = 'live'
+                         WHERE qf.mode_at_enqueue IN ('live','canary')
                            AND (qf.meta_lead_id = meta_lead_raw.id COLLATE utf8mb4_unicode_ci
                                 OR (qf.mobile10 = RIGHT(REGEXP_REPLACE(meta_lead_raw.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci
                                     AND qf.requisition_id = meta_lead_raw.requisition_id COLLATE utf8mb4_unicode_ci)))`;
 
+/** A backfill import (skipOutreach) stores leads Meta created long before: never messaged by the safety net. */
+const BACKFILL_AGE_MS = 2 * 86_400_000;
+const isBackfill = (metaCreated: unknown, now = Date.now()): boolean => {
+  const t = Date.parse(String(metaCreated ?? "").replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
+  return Number.isFinite(t) && now - t > BACKFILL_AGE_MS;
+};
+
 export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped: number; failed: number }> {
   const [leads] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM meta_lead_raw
+    `SELECT id,
+            (SELECT JSON_EXTRACT(jr.meta_screening_config, '$.auto_notify') = CAST('false' AS JSON) FROM job_requisition jr WHERE jr.id = meta_lead_raw.requisition_id) AS auto_notify_off,
+            JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.created_time')) AS meta_created
+       FROM meta_lead_raw
       WHERE screening_result = 'qualified'
         AND notification_sent_at IS NULL
-        AND created_at >= ?${pipelineOwnsSends() ? LIVE_ROW_SKIP : ""}
+        AND created_at >= ?${OWNED_ROW_SKIP}
       ORDER BY created_at ASC
       LIMIT 100`,
     [notifyWindowStart()]
@@ -274,20 +270,15 @@ export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped
 
   for (const lead of leads as any[]) {
     try {
-      // Live pipeline: enqueue first; an enqueued or already-enrolled lead is handed over and not messaged from here. Any other
-      // result (invalid, not_qualified, a throw) falls through to the old flow, whose own guard fails closed on a lookup error.
-      if (pipelineOwnsSends()) {
-        const enq = await enqueueMetaLeadFollowup(lead.id).catch(() => null);
-        // `exists` may be a dry_run/test row the live worker never sends: hand over only when a live row exists (a lookup error falls to the old flow).
-        const handed = enq?.status === "enqueued" || (enq?.status === "exists" && await followupHasLiveRow(lead.id).catch(() => false));
-        if (enq && handed) {
-          skipped++;
-          console.log(`[meta-sync] Lead ${lead.id} handed to the follow-up pipeline (${enq.status})`);
-          continue;
-        }
+      // auto_notify off on the requisition, or a backfill import: never messaged from here; enrolled held for HR when the source runs (D13).
+      const autoOff = Number(lead.auto_notify_off) === 1;
+      if (autoOff || isBackfill(lead.meta_created)) {
+        await enqueueMetaLeadFollowup(lead.id, { skipOutreach: !autoOff }).catch(() => null);
+        skipped++;
+        continue;
       }
-      // notifyQualifiedLead reports refusals/skips in its outcome instead of throwing, so count
-      // by what actually landed. Counting every non-throw as "sent" hid leads that never got a message.
+      // notifyQualifiedLead decides per source mode: owned / Live Meta run by the method -> enrolled, not messaged here.
+      // It reports refusals/skips in its outcome instead of throwing, so count by what actually landed.
       const outcome = await notifyQualifiedLead(lead.id, { sourcePath: 'legacy_meta_sync' });
       if (outcome.succeeded.length > 0) sent++;
       else skipped++;

@@ -178,11 +178,6 @@ export function rowTag(s: FollowupSwitches): RowTag | null {
   return s.testMode || s.testMisconfigured ? "test" : "live";
 }
 
-/** @deprecated the engine and legacy skip by row existence (followupSkipSql); removed with the legacy retirement. */
-export function pipelineOwnsSends(env: NodeJS.ProcessEnv = process.env): boolean {
-  return followupMode(env) === "live" && !isTestModeRequested(env.QUAL_FOLLOWUP_TEST_MODE);
-}
-
 /** Row-based: a live/canary pipeline row for this person and requisition (open or stopped), or any requisition while the person's
  *  live/canary journey is in stage A/B. Independent of the current mode, so a rollback keeps those people away from other senders. */
 export function followupSkipSql(a: { mobileExpr: string; requisitionExpr: string }): string {
