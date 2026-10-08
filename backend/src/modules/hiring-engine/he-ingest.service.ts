@@ -20,6 +20,10 @@ import { recomputeInsight } from "./he-insight.service.js";
 import { sendTemplateToLead } from "./he-send.service.js";
 import type { TemplateKey } from "./he-template-catalog.js";
 import { markFollowupCalled } from "./qualified-followup.attention.js";
+import { callResultCode } from "./qualified-followup.callresult.js";
+import { journeyAfterReply, ownedJourneyForMatch, sendTransactionalForJourney } from "./qualified-followup.stageb.js";
+import { followupMode } from "./qualified-followup.schedule.js";
+import { recordPersonOptOut } from "./followup-optout.service.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 import { recordResponseSafe } from "./candidate-response.service.js";
 import { classifyReply } from "./response-classifier.js";
@@ -46,7 +50,7 @@ async function mirrorToMeta(metaLeadId: string | null, plan: TransitionPlan): Pr
   const resched = plan.event === "reschedule_requested" ? 1 : null;
   const declined = plan.leadStatus === "declined" || plan.leadStatus === "opted_out" ? 1 : null;
   if (confirmed == null && resched == null && declined == null) return;
-  // meta_lead_raw.walkin_reply is VARCHAR(30) holding the same keywords the Wassenger webhook writes.
+  // meta_lead_raw.walkin_reply is VARCHAR(30) holding the same keywords the (retired) Wassenger webhook used to write.
   const keyword = confirmed ? "confirmed" : resched ? "reschedule" : "not_interested";
   await db.execute(
     `UPDATE meta_lead_raw SET
@@ -67,29 +71,58 @@ async function sendFollowUpTemplate(leadId: string, key: TemplateKey, matchId: s
           AND (? IS NULL OR w.drive_id <=> (SELECT drive_id FROM he_match WHERE id = ?)) LIMIT 1`, [leadId, `${key}:%`, matchId, matchId]);
     if (dup.length) return;
     const r = await sendTemplateToLead({ leadId, key, matchId, transactional: true });
-    if (r.status !== "sent") logger.info({ leadId, key, status: r.status, reason: "reason" in r ? r.reason : undefined }, "[he-ingest] follow-up template not sent");
+    if (r.status === "blocked") {
+      // Visible to the report and ops reads (a blocked T2 used to be an info log only).
+      logger.warn({ leadId, key, status: r.status, reason: r.reason }, "[he-ingest] follow-up template not sent");
+      await addEvent(leadId, "followup_template_blocked", { channel: "whatsapp", detail: `${key}: ${r.reason}` });
+    } else if (r.status !== "sent") logger.warn({ leadId, key, status: r.status, error: "error" in r ? r.error : undefined }, "[he-ingest] follow-up template not sent");
   } catch (err) { logger.warn({ leadId, key, err: (err as Error).message }, "[he-ingest] follow-up template failed"); }
 }
 
 async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPlan, ctx: { matchId: string | null; channel: string; detail: string | null; metaLeadId: string | null; replyText: string | null; ackStop?: boolean }): Promise<void> {
+  // A journey of the unified follow-up booked on this match answers through it (guards, tagging, journey state). Nothing is read while
+  // QUAL_FOLLOWUP_MODE is off, so people without a journey keep exactly today's path.
+  const owned = ctx.matchId && followupMode() !== "off" ? await ownedJourneyForMatch(ctx.matchId).catch(() => null) : null;
   // T10: acknowledge STOP while the consent still exists (the reply opened a 24h window); suppression follows below.
   // A Stop tapped on the web page is acknowledged on the page itself, not by a WhatsApp message.
-  if (plan.event === "opted_out" && ctx.ackStop !== false) await sendFollowUpTemplate(leadId, "he_optout_ack", ctx.matchId);
+  if (plan.event === "opted_out" && ctx.ackStop !== false) {
+    if (owned) await sendTransactionalForJourney(owned, "he_optout_ack", { now: new Date() }).catch((err: unknown) => logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] STOP acknowledgement failed"));
+    else await sendFollowUpTemplate(leadId, "he_optout_ack", ctx.matchId);
+  }
   if (plan.leadStatus && plan.leadStatus !== current) await setLeadStatus(leadId, plan.leadStatus);
   if (plan.matchState && ctx.matchId) await db.execute("UPDATE he_match SET state = ? WHERE id = ?", [plan.matchState, ctx.matchId]);
   if (plan.revokeConsent) await revokeConsent(leadId, "whatsapp_contact");
   await addEvent(leadId, plan.event, { channel: ctx.channel, detail: ctx.detail });
+  // STOP is held for the person and ends every follow-up journey of the mobile, whatever channel it came on (never needs the webhook verified).
+  if (plan.event === "opted_out") {
+    try {
+      const [ml] = await db.execute<RowDataPacket[]>("SELECT mobile10 FROM he_lead WHERE id = ? LIMIT 1", [leadId]);
+      if (ml[0]?.mobile10) await recordPersonOptOut(String(ml[0].mobile10), { source: ctx.channel === "whatsapp" ? "pinbot" : ctx.channel === "voice" ? "call" : "web", viaIngest: true });
+    } catch (err) { logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] person opt-out record failed"); }
+  }
   // They answered somewhere else (button, reply, email tap): a call still waiting in Superbot's queue must not ring them. Best effort.
   if (ctx.channel !== "voice" && ctx.matchId && (plan.matchState || plan.event === "opted_out")) void dequeueSuperbotForMatch(ctx.matchId);
   if (plan.humanHandoff) await addEvent(leadId, "needs_human_followup", { channel: ctx.channel, detail: "second decline / declined offered slot" });
   await mirrorToMeta(ctx.metaLeadId, plan);
+  // Only an answer moves the journey: a call nobody picked up (or a failed / wrong-person call) is not a reply.
+  if (owned && (!plan.event.startsWith("call_") || plan.matchState !== null)) {
+    const next = journeyAfterReply(owned.journeyState, plan);
+    if (next !== owned.journeyState) {
+      await db.execute(
+        `UPDATE qualified_followup SET journey_state = ?, stage_a_ended_at = COALESCE(stage_a_ended_at, IF(? IN ('enrolled','reach','held_best_offer'), NOW(), NULL))${next === "stopped" ? ", stopped_reason = COALESCE(stopped_reason, 'opted_out'), stopped_at = COALESCE(stopped_at, NOW())" : ""} WHERE id = ?`,
+        [next, owned.journeyState, owned.id]);
+    }
+  }
   // T2: appointment details + reference once the candidate confirms (button, email tap or bot call).
   if (plan.matchState === "confirmed" && ctx.matchId) {
-    await sendFollowUpTemplate(leadId, "he_walkin_confirmed", ctx.matchId);
-    try { await sendFollowUpEmail("confirmed", ctx.matchId); } catch (err) { logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] confirmation email failed"); }
+    if (owned) await sendTransactionalForJourney(owned, "he_walkin_confirmed", { now: new Date() }).catch((err: unknown) => logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] confirmation failed"));
+    else {
+      await sendFollowUpTemplate(leadId, "he_walkin_confirmed", ctx.matchId);
+      try { await sendFollowUpEmail("confirmed", ctx.matchId); } catch (err) { logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] confirmation email failed"); }
+    }
   }
-  // T9: the bot could not reach them twice -> ask on WhatsApp instead.
-  if (plan.event === "call_no_answer" && ctx.matchId) {
+  // T9: the bot could not reach them twice -> ask on WhatsApp instead (a journey gets its T9 from the follow-up worker).
+  if (plan.event === "call_no_answer" && ctx.matchId && !owned) {
     const [n] = await db.execute<RowDataPacket[]>(
       "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'call_no_answer' AND created_at >= (SELECT COALESCE(MAX(created_at), '2000-01-01') FROM he_message WHERE lead_id = ? AND direction = 'out' AND template_key = 'he_walkin_invite_email')", [leadId, leadId]);
     if (Number(n[0].n) >= 2) await sendFollowUpTemplate(leadId, "he_missed_call", ctx.matchId);
@@ -175,7 +208,7 @@ export async function recordDeliveryStatus(providerMessageId: string, status: De
 }
 
 export async function recordEmailEvent(p: { providerMessageId: string; event: EmailEvent; detail?: string }): Promise<boolean> {
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT id, lead_id FROM he_message WHERE provider_message_id = ? AND channel = 'email' LIMIT 1", [p.providerMessageId]);
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT id, lead_id, mobile10 FROM he_message WHERE provider_message_id = ? AND channel = 'email' LIMIT 1", [p.providerMessageId]);
   if (!rows[0]) return false;
   const leadId = rows[0].lead_id as string | null;
   const map: Record<EmailEvent, string> = { sent: "sent", delivered: "delivered", opened: "opened", clicked: "clicked", bounced: "bounced", replied: "replied", unsubscribed: "unsubscribed" };
@@ -184,6 +217,11 @@ export async function recordEmailEvent(p: { providerMessageId: string; event: Em
     await persistSignals(leadId, signalsFromEmailEvent(p.event, p.detail), String(rows[0].id));
     if (p.event === "unsubscribed") await revokeConsent(leadId, "whatsapp_contact");
     await recomputeInsight(leadId);
+  }
+  // An unsubscribe is a STOP for the person: every follow-up journey ends (it used to revoke only the WhatsApp consent).
+  if (p.event === "unsubscribed" && rows[0].mobile10) {
+    try { await recordPersonOptOut(String(rows[0].mobile10), { source: "email_unsubscribe" }); }
+    catch (err) { logger.warn({ err: (err as Error).message }, "[he-ingest] unsubscribe opt-out record failed"); }
   }
   return true;
 }
@@ -205,6 +243,8 @@ export interface VoiceCallbackInput {
   incomplete?: boolean;
   /** Where the result came from, for the response record (one row per source + call id). */
   source?: "superbot_hook" | "superbot_report" | "vapi" | "call_import" | "voice_hook";
+  /** The reference the call carried (HRMS-... match reference, or QF-... for older follow-up rows), so the result finds its journey. */
+  reference?: string | null;
 }
 
 export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId: string; outcome: string } | null> {
@@ -242,11 +282,11 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
     if (isDuplicateKey(err)) return { leadId: l.id, outcome: "duplicate" };
     throw err;
   }
-  // A call result exists for this number, so a row waiting in a calling file or the bot queue is done (never blocks the result).
-  // A failed call (not reached) leaves the row waiting; an incomplete one reached the person.
+  // A call result for this number stamps the follow-up journey (called, or re-queued once after a miss, then T9; do-not-call stops it).
+  // Never blocks the result.
   const callMobile = (lead as { mobile10?: string | null }).mobile10;
-  if (callMobile && !r.failedReason) {
-    try { await markFollowupCalled(callMobile); }
+  if (callMobile) {
+    try { await markFollowupCalled(callMobile, undefined, { result: callResultCode(r, { incomplete: p.incomplete }), reference: p.reference ?? null, at: new Date() }); }
     catch (err) { logger.warn({ leadId: l.id, err: (err as Error).message }, "[hiring-engine] mark follow-up called failed"); }
   }
   await persistSignals(l.id, signalsFromVoice(r), p.providerCallId ?? null);

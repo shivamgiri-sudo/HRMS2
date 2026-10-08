@@ -14,7 +14,11 @@ import { whatsappRequiresOptIn } from "./he-policy.service.js";
 
 export interface RerouteSummary { considered: number; offered: number; noAlternative: number; blocked: Record<string, number>; dryRun: number }
 
-export async function offerOtherRoles(o: { dryRun?: boolean; max?: number } = {}): Promise<RerouteSummary> {
+/** scope: "all" (the engine today), "enrolled_only" (people the unified follow-up owns: its stage B), "exclude_enrolled" (the engine once it
+ *  steps aside for them). Owned = a live/canary pipeline journey for the mobile, whatever the current mode. */
+export async function offerOtherRoles(o: { dryRun?: boolean; max?: number; scope?: "all" | "enrolled_only" | "exclude_enrolled" } = {}): Promise<RerouteSummary> {
+  const owned = "EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci AND qf.mode_at_enqueue IN ('live','canary') AND qf.owner = 'pipeline')";
+  const scopeSql = o.scope === "enrolled_only" ? `\n        AND ${owned}` : o.scope === "exclude_enrolled" ? `\n        AND NOT ${owned}` : "";
   const out: RerouteSummary = { considered: 0, offered: 0, noAlternative: 0, blocked: {}, dryRun: 0 };
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT l.id, l.mobile10, l.ats_candidate_id, l.status, l.final_status, l.is_employee, l.age, l.last_attempt_date, l.walkin_count, l.last_outcome,
@@ -30,7 +34,7 @@ export async function offerOtherRoles(o: { dryRun?: boolean; max?: number } = {}
       WHERE l.status NOT IN ('opted_out','joined','dead') AND l.is_employee = 0
         AND (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)
              OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = l.id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL)))
-        AND NOT EXISTS (SELECT 1 FROM he_lead_event e WHERE e.lead_id = l.id AND e.event_type = 'other_role_offered' AND e.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY))
+        AND NOT EXISTS (SELECT 1 FROM he_lead_event e WHERE e.lead_id = l.id AND e.event_type = 'other_role_offered' AND e.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY))${scopeSql}
       LIMIT ?`, [(await whatsappRequiresOptIn()) ? 1 : 0, o.max ?? 50]);
   for (const r of rows) {
     // Someone turned down for misconduct, fake documents or the like is not offered anything else, whatever the consent policy says.

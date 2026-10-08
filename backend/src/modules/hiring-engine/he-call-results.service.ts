@@ -46,7 +46,7 @@ export async function applyCallResults(raw: Array<Record<string, unknown>>, o: {
         const [ev] = await db.execute<RowDataPacket[]>("SELECT meta_json FROM he_lead_event WHERE lead_id = ? AND event_type = 'exported_for_calling' AND meta_json IS NOT NULL AND created_at > DATE_SUB(NOW(), INTERVAL 5 DAY) ORDER BY id DESC LIMIT 1", [lead.id]);
         try { const mj = ev[0]?.meta_json; const j = typeof mj === "string" ? JSON.parse(mj) : mj; confirmedSlotAt = j?.interviewAt ?? null; } catch { confirmedSlotAt = null; }
       }
-      const res = await recordVoiceResult({ leadId: lead.id, providerCallId, startedAt: r.startedAt ?? null, result: r.voice!, summary: r.remarks ?? null, offeredSlotAt: r.newInterviewAt ?? null, confirmedSlotAt, source: "call_import" });
+      const res = await recordVoiceResult({ leadId: lead.id, providerCallId, startedAt: r.startedAt ?? null, result: r.voice!, summary: r.remarks ?? null, offeredSlotAt: r.newInterviewAt ?? null, confirmedSlotAt, source: "call_import", reference: r.referenceId ?? null });
       if (res?.outcome === "duplicate") out.duplicates++;
       else { out.applied++; await addEvent(lead.id, "call_result_imported", { channel: "voice", actor: o.userId, detail: `${r.outcome}${r.remarks ? " - " + r.remarks : ""}`.slice(0, 480) }); }
     } catch { out.failedRows.push(r.rowNo); }

@@ -35,12 +35,12 @@ describe("recordVoiceResult marks the follow-up row called", () => {
   it("calls markFollowupCalled once with the lead mobile", async () => {
     await recordVoiceResult({ leadId: "lead-1", providerCallId: "pc-1", result: {} as never, incomplete: true } as never);
     expect(markCalled).toHaveBeenCalledTimes(1);
-    expect(markCalled).toHaveBeenCalledWith("9876543210");
+    expect(markCalled).toHaveBeenCalledWith("9876543210", undefined, { result: "answered_other", reference: null, at: expect.any(Date) });
   });
-  it("does not mark when the call failed (person not reached) but still records it", async () => {
-    const out = await recordVoiceResult({ leadId: "lead-1", providerCallId: "pc-f", result: { failedReason: "no_answer" } as never } as never);
+  it("a failed call (person not reached) is stamped as a miss, so the journey can retry once and then send T9", async () => {
+    const out = await recordVoiceResult({ leadId: "lead-1", providerCallId: "pc-f", reference: "HRMS-041", result: { failedReason: "no_answer" } as never } as never);
     expect(out?.outcome).toBe("CALL_FAILED:no_answer");
-    expect(markCalled).not.toHaveBeenCalled();
+    expect(markCalled).toHaveBeenCalledWith("9876543210", undefined, { result: "failed", reference: "HRMS-041", at: expect.any(Date) });
   });
   it("does not for a duplicate provider call", async () => {
     execute.mockImplementation(async (sql: string) => {

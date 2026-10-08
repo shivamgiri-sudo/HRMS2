@@ -79,6 +79,13 @@ export async function offerHolds(rows: FollowupRow[], tag: RowTag, pausedSources
   }
 }
 
+/** Rows a best offer holds wait as held_best_offer (only from enrolled: a journey already reaching or answering is never parked). */
+export async function markHeldBestOffer(ids: ReadonlySet<string>): Promise<void> {
+  if (!ids.size) return;
+  const list = [...ids];
+  await db.execute(`UPDATE qualified_followup SET journey_state = 'held_best_offer' WHERE id IN (${list.map(() => "?").join(",")}) AND journey_state = 'enrolled'`, list);
+}
+
 /** ` AND qf.id NOT IN (?,?)` for the backfill select (ids are bound parameters). */
 export const notInIdsSql = (ids: string[]): string => ` AND qf.id NOT IN (${ids.map(() => "?").join(",")})`;
 

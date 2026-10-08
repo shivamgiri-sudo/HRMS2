@@ -402,6 +402,49 @@ exports[`ingest pin > WhatsApp "STOP" 1`] = `
     },
     {
       "p": [
+        "L1",
+      ],
+      "sql": "SELECT mobile10 FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "9876543210",
+      ],
+      "sql": "SELECT opted_out_at FROM followup_person WHERE mobile10 = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "9876543210",
+        "pinbot",
+      ],
+      "sql": "INSERT INTO followup_person (mobile10, opted_out_at, opted_out_source) VALUES (?, NOW(), ?) ON DUPLICATE KEY UPDATE opted_out_source = IF(opted_out_at IS NULL, VALUES(opted_out_source), opted_out_source), opted_out_at = COALESCE(opted_out_at, VALUES(opted_out_at))",
+    },
+    {
+      "p": [
+        "9876543210",
+      ],
+      "sql": "UPDATE qualified_followup SET stopped_reason = 'opted_out', stopped_at = NOW(), journey_state = 'stopped', call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE mobile10 = ? AND stopped_reason IS NULL",
+    },
+    {
+      "p": [
+        "9876543210",
+      ],
+      "sql": "UPDATE followup_person SET active_followup_id = NULL WHERE mobile10 = ?",
+    },
+    {
+      "p": [
+        "9876543210",
+      ],
+      "sql": "SELECT id, status FROM he_lead WHERE mobile10 = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "9876543210",
+      ],
+      "sql": "SELECT DISTINCT match_id FROM qualified_followup WHERE mobile10 = ? AND match_id IS NOT NULL",
+    },
+    {
+      "p": [
         null,
         null,
         1,

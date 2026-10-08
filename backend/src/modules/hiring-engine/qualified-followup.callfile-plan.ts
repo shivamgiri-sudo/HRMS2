@@ -89,9 +89,13 @@ export interface CallFileCandidate {
   leadStatus: string | null; consentRevoked: boolean; matchStates: string[]; rowDeclined: boolean;
   callsN: number; callsAnswered: number; callsRetryable: number; lastCallAt: string | null; metaOutcome: string | null;
   filesN: number; lastFileAt: string | null;
+  /** HR exported this person to the calling tool by hand in the last 18 h (he_lead_event exported_for_calling, not a follow-up batch). */
+  exportedRecently?: boolean;
+  /** The journey's booking (he_match), when booked: its HRMS reference goes in the file. */
+  matchId?: string | null;
 }
 
-export type CallFileSkip = "opted_out" | "confirmed" | "arrived" | "declined" | "already_reached" | "already_in_file" | "already_called";
+export type CallFileSkip = "opted_out" | "confirmed" | "arrived" | "declined" | "already_reached" | "already_in_file" | "already_called" | "already_exported";
 export type Priority = "P1" | "P2" | "P3";
 export interface PlannedRow {
   best: CallFileCandidate; siblings: CallFileCandidate[]; otherRequisitionCodes: string[];
@@ -129,6 +133,7 @@ function personGate(p: CallFileCandidate, now: number, coolDays: number): Gate {
   if (lead === "opted_out" || p.consentRevoked) return { ok: false, skip: "opted_out" };
   if (lead === "arrived" || lead === "joined" || p.matchStates.includes("arrived")) return { ok: false, skip: "arrived" };
   if (lead === "confirmed" || p.matchStates.includes("confirmed") || p.matchStates.includes("selected")) return { ok: false, skip: "confirmed" };
+  if (p.exportedRecently) return { ok: false, skip: "already_exported" };
   // A file placement and the result imported for it are the same attempt, so the larger count is the number of attempts.
   const prior = Math.max(p.filesN, p.callsN, p.metaOutcome ? 1 : 0);
   if (prior === 0) return { ok: true, attempt: 1 };

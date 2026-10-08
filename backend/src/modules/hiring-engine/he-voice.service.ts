@@ -4,6 +4,7 @@
  */
 import axios from "axios";
 import type { RowDataPacket } from "mysql2";
+import { requisitionOpenReason } from "./followup-guards.js";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { addEvent, hasConsent } from "./he-lead.service.js";
@@ -33,7 +34,7 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   const dryRun = o.dryRun !== false;
   const [mr] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.requisition_id, m.state, m.slot_at, l.full_name, l.mobile10, l.status, l.meta_lead_id, jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status,
-            jr.requested_headcount, jr.fulfilled_headcount, bm.address, d.drive_date, d.status AS drive_status
+            jr.requested_headcount, jr.fulfilled_headcount, jr.closed_at, bm.address, d.drive_date, d.status AS drive_status
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id JOIN job_requisition jr ON jr.id = m.requisition_id
        LEFT JOIN he_drive d ON d.id = m.drive_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE m.id = ? LIMIT 1`, [matchId]);
@@ -41,7 +42,9 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   if (!m) return { status: "blocked", reason: "match_not_found" };
   if (!["invited", "confirmed"].includes(String(m.state)) || !m.slot_at) return { status: "blocked", reason: "no_active_slot" };
   if (["opted_out", "arrived", "joined", "dead", "declined"].includes(String(m.status))) return { status: "blocked", reason: `lead_${m.status}` };
-  if (m.approval_status !== "approved" || !m.active_status || Number(m.fulfilled_headcount) >= Number(m.requested_headcount)) return { status: "blocked", reason: "requisition_closed" };
+  // D8, the one requisition-open rule.
+  if (requisitionOpenReason({ approvalStatus: m.approval_status ?? null, activeStatus: m.active_status == null ? null : Number(m.active_status), closedAt: m.closed_at ?? null,
+    requestedHeadcount: m.requested_headcount == null ? null : Number(m.requested_headcount), fulfilledHeadcount: m.fulfilled_headcount == null ? null : Number(m.fulfilled_headcount) })) return { status: "blocked", reason: "requisition_closed" };
   if (sendsPaused() || m.drive_status === "paused") return { status: "blocked", reason: "paused" };
   if (await metaFlowNotifiedRecently(m.meta_lead_id as string | null)) return { status: "blocked", reason: "meta_flow_already_notified" };
   const cfg = await configForLead(m.lead_id as string);

@@ -1,0 +1,504 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ingest pin, non-enrolled lead (Task 11) > WhatsApp "1" (confirm / reschedule / STOP) 1`] = `
+{
+  "emails": [
+    [
+      "confirmed",
+      "M1",
+    ],
+  ],
+  "events": [
+    [
+      "L1",
+      "confirmed",
+      {
+        "channel": "whatsapp",
+        "detail": "1",
+      },
+    ],
+  ],
+  "sends": [
+    {
+      "key": "he_walkin_confirmed",
+      "leadId": "L1",
+      "matchId": "M1",
+      "transactional": true,
+    },
+  ],
+  "sqls": [
+    {
+      "p": [
+        "wamid.p.1",
+      ],
+      "sql": "SELECT 1 FROM he_message WHERE provider_message_id = ? AND direction = 'in' LIMIT 1",
+    },
+    {
+      "p": [],
+      "sql": "SELECT UUID() AS id",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, requisition_id, drive_id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'",
+    },
+    {
+      "p": [
+        "uuid-1",
+        "L1",
+        "9876543210",
+        "in",
+        "whatsapp",
+        "1",
+        "wamid.p.1",
+        "confirm",
+        "R1",
+        "D1",
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, provider_message_id, intent, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "p": [
+        "L1",
+        "whatsapp",
+      ],
+      "sql": "SELECT id FROM he_message WHERE lead_id = ? AND direction = 'out' AND channel = ? ORDER BY created_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "OUT1",
+        "L1",
+        "whatsapp",
+      ],
+      "sql": "INSERT INTO he_message_event (message_id, lead_id, channel, event_type) VALUES (?,?,?, 'replied')",
+    },
+    {
+      "p": [
+        "confirmed",
+        "M1",
+      ],
+      "sql": "UPDATE he_match SET state = ? WHERE id = ?",
+    },
+    {
+      "p": [
+        1,
+        null,
+        null,
+        "confirmed",
+        "ML1",
+      ],
+      "sql": "UPDATE meta_lead_raw SET walkin_confirmed = COALESCE(?, walkin_confirmed), walkin_reschedule_requested = COALESCE(?, walkin_reschedule_requested), walkin_declined = COALESCE(?, walkin_declined), walkin_reply = COALESCE(?, walkin_reply), walkin_reply_at = NOW() WHERE id = ?",
+    },
+    {
+      "p": [
+        "L1",
+        "he_walkin_confirmed:%",
+        "M1",
+        "M1",
+      ],
+      "sql": "SELECT 1 FROM he_message w WHERE w.lead_id = ? AND w.direction = 'out' AND w.template_key LIKE ? AND w.delivery_status <> 'failed' AND (? IS NULL OR w.drive_id <=> (SELECT drive_id FROM he_match WHERE id = ?)) LIMIT 1",
+    },
+  ],
+}
+`;
+
+exports[`ingest pin, non-enrolled lead (Task 11) > WhatsApp "2" (confirm / reschedule / STOP) 1`] = `
+{
+  "emails": [],
+  "events": [
+    [
+      "L1",
+      "reschedule_requested",
+      {
+        "channel": "whatsapp",
+        "detail": "2",
+      },
+    ],
+  ],
+  "sends": [],
+  "sqls": [
+    {
+      "p": [
+        "wamid.p.2",
+      ],
+      "sql": "SELECT 1 FROM he_message WHERE provider_message_id = ? AND direction = 'in' LIMIT 1",
+    },
+    {
+      "p": [],
+      "sql": "SELECT UUID() AS id",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, requisition_id, drive_id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'",
+    },
+    {
+      "p": [
+        "uuid-1",
+        "L1",
+        "9876543210",
+        "in",
+        "whatsapp",
+        "2",
+        "wamid.p.2",
+        "reschedule",
+        "R1",
+        "D1",
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, provider_message_id, intent, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "p": [
+        "L1",
+        "whatsapp",
+      ],
+      "sql": "SELECT id FROM he_message WHERE lead_id = ? AND direction = 'out' AND channel = ? ORDER BY created_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "OUT1",
+        "L1",
+        "whatsapp",
+      ],
+      "sql": "INSERT INTO he_message_event (message_id, lead_id, channel, event_type) VALUES (?,?,?, 'replied')",
+    },
+    {
+      "p": [
+        "slot_released",
+        "M1",
+      ],
+      "sql": "UPDATE he_match SET state = ? WHERE id = ?",
+    },
+    {
+      "p": [
+        null,
+        1,
+        null,
+        "reschedule",
+        "ML1",
+      ],
+      "sql": "UPDATE meta_lead_raw SET walkin_confirmed = COALESCE(?, walkin_confirmed), walkin_reschedule_requested = COALESCE(?, walkin_reschedule_requested), walkin_declined = COALESCE(?, walkin_declined), walkin_reply = COALESCE(?, walkin_reply), walkin_reply_at = NOW() WHERE id = ?",
+    },
+  ],
+}
+`;
+
+exports[`ingest pin, non-enrolled lead (Task 11) > WhatsApp "STOP" (confirm / reschedule / STOP) 1`] = `
+{
+  "emails": [],
+  "events": [
+    [
+      "L1",
+      "opted_out",
+      {
+        "channel": "whatsapp",
+        "detail": "STOP",
+      },
+    ],
+  ],
+  "sends": [
+    {
+      "key": "he_optout_ack",
+      "leadId": "L1",
+      "matchId": "M1",
+      "transactional": true,
+    },
+  ],
+  "sqls": [
+    {
+      "p": [
+        "wamid.p.STOP",
+      ],
+      "sql": "SELECT 1 FROM he_message WHERE provider_message_id = ? AND direction = 'in' LIMIT 1",
+    },
+    {
+      "p": [],
+      "sql": "SELECT UUID() AS id",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, requisition_id, drive_id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'",
+    },
+    {
+      "p": [
+        "uuid-1",
+        "L1",
+        "9876543210",
+        "in",
+        "whatsapp",
+        "STOP",
+        "wamid.p.STOP",
+        "opt_out",
+        "R1",
+        "D1",
+      ],
+      "sql": "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, provider_message_id, intent, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "p": [
+        "L1",
+        "whatsapp",
+      ],
+      "sql": "SELECT id FROM he_message WHERE lead_id = ? AND direction = 'out' AND channel = ? ORDER BY created_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "OUT1",
+        "L1",
+        "whatsapp",
+      ],
+      "sql": "INSERT INTO he_message_event (message_id, lead_id, channel, event_type) VALUES (?,?,?, 'replied')",
+    },
+    {
+      "p": [
+        "L1",
+        "he_optout_ack:%",
+        "M1",
+        "M1",
+      ],
+      "sql": "SELECT 1 FROM he_message w WHERE w.lead_id = ? AND w.direction = 'out' AND w.template_key LIKE ? AND w.delivery_status <> 'failed' AND (? IS NULL OR w.drive_id <=> (SELECT drive_id FROM he_match WHERE id = ?)) LIMIT 1",
+    },
+    {
+      "p": [
+        "declined",
+        "M1",
+      ],
+      "sql": "UPDATE he_match SET state = ? WHERE id = ?",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT mobile10 FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "9876543210",
+      ],
+      "sql": "SELECT opted_out_at FROM followup_person WHERE mobile10 = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "9876543210",
+        "pinbot",
+      ],
+      "sql": "INSERT INTO followup_person (mobile10, opted_out_at, opted_out_source) VALUES (?, NOW(), ?) ON DUPLICATE KEY UPDATE opted_out_source = IF(opted_out_at IS NULL, VALUES(opted_out_source), opted_out_source), opted_out_at = COALESCE(opted_out_at, VALUES(opted_out_at))",
+    },
+    {
+      "p": [
+        "9876543210",
+      ],
+      "sql": "UPDATE qualified_followup SET stopped_reason = 'opted_out', stopped_at = NOW(), journey_state = 'stopped', call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE mobile10 = ? AND stopped_reason IS NULL",
+    },
+    {
+      "p": [
+        "9876543210",
+      ],
+      "sql": "UPDATE followup_person SET active_followup_id = NULL WHERE mobile10 = ?",
+    },
+    {
+      "p": [
+        "9876543210",
+      ],
+      "sql": "SELECT id, status FROM he_lead WHERE mobile10 = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "9876543210",
+      ],
+      "sql": "SELECT DISTINCT match_id FROM qualified_followup WHERE mobile10 = ? AND match_id IS NOT NULL",
+    },
+    {
+      "p": [
+        null,
+        null,
+        1,
+        "not_interested",
+        "ML1",
+      ],
+      "sql": "UPDATE meta_lead_raw SET walkin_confirmed = COALESCE(?, walkin_confirmed), walkin_reschedule_requested = COALESCE(?, walkin_reschedule_requested), walkin_declined = COALESCE(?, walkin_declined), walkin_reply = COALESCE(?, walkin_reply), walkin_reply_at = NOW() WHERE id = ?",
+    },
+  ],
+}
+`;
+
+exports[`ingest pin, non-enrolled lead (Task 11) > call no answer twice 1`] = `
+{
+  "emails": [],
+  "events": [
+    [
+      "L1",
+      "call_no_answer",
+      {
+        "channel": "voice",
+        "detail": "NO_ANSWER",
+      },
+    ],
+    [
+      "L1",
+      "call_no_answer",
+      {
+        "channel": "voice",
+        "detail": "NO_ANSWER",
+      },
+    ],
+  ],
+  "sends": [],
+  "sqls": [
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, mobile10, full_name, email, status, ats_candidate_id, meta_lead_id FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "na-1",
+      ],
+      "sql": "SELECT 1 FROM he_call WHERE provider_call_id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, requisition_id, drive_id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'",
+    },
+    {
+      "p": [
+        "L1",
+        "M1",
+        "na-1",
+        1,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "NO_ANSWER",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "R1",
+        "D1",
+      ],
+      "sql": "INSERT INTO he_call (lead_id, match_id, provider_call_id, attempt_no, started_at, duration_s, identity_confirmed, language_used, email_received, assessment_done, original_slot_answer, offered_slot_at, offered_slot_answer, outcome, decline_reason, sentiment, handoff_reason, transcript, summary, recording_url, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "p": [
+        "L1",
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'call_no_answer' AND created_at >= (SELECT COALESCE(MAX(created_at), '2000-01-01') FROM he_message WHERE lead_id = ? AND direction = 'out' AND template_key = 'he_walkin_invite_email')",
+    },
+    {
+      "p": [
+        "NO_ANSWER",
+        null,
+        "ML1",
+      ],
+      "sql": "UPDATE meta_lead_raw SET voice_call_outcome = ?, voice_called_at = COALESCE(?, NOW()) WHERE id = ?",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, mobile10, full_name, email, status, ats_candidate_id, meta_lead_id FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "na-2",
+      ],
+      "sql": "SELECT 1 FROM he_call WHERE provider_call_id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, requisition_id, drive_id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'",
+    },
+    {
+      "p": [
+        "L1",
+        "M1",
+        "na-2",
+        1,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "NO_ANSWER",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "R1",
+        "D1",
+      ],
+      "sql": "INSERT INTO he_call (lead_id, match_id, provider_call_id, attempt_no, started_at, duration_s, identity_confirmed, language_used, email_received, assessment_done, original_slot_answer, offered_slot_at, offered_slot_answer, outcome, decline_reason, sentiment, handoff_reason, transcript, summary, recording_url, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "p": [
+        "L1",
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'call_no_answer' AND created_at >= (SELECT COALESCE(MAX(created_at), '2000-01-01') FROM he_message WHERE lead_id = ? AND direction = 'out' AND template_key = 'he_walkin_invite_email')",
+    },
+    {
+      "p": [
+        "NO_ANSWER",
+        null,
+        "ML1",
+      ],
+      "sql": "UPDATE meta_lead_raw SET voice_call_outcome = ?, voice_called_at = COALESCE(?, NOW()) WHERE id = ?",
+    },
+  ],
+}
+`;

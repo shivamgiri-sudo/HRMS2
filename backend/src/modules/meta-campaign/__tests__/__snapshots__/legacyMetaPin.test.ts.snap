@@ -1,0 +1,86 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`legacy Meta outreach pin (switches off) > notifyNewQualifiedLeads SQL 1`] = `
+[
+  {
+    "p": [
+      "<window start>",
+    ],
+    "sql": "SELECT id, (SELECT JSON_EXTRACT(jr.meta_screening_config, '$.auto_notify') = CAST('false' AS JSON) FROM job_requisition jr WHERE jr.id = meta_lead_raw.requisition_id) AS auto_notify_off, JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.created_time')) AS meta_created FROM meta_lead_raw WHERE screening_result = 'qualified' AND notification_sent_at IS NULL AND created_at >= ? AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mode_at_enqueue IN ('live','canary') AND (qf.meta_lead_id = meta_lead_raw.id COLLATE utf8mb4_unicode_ci OR (qf.mobile10 = RIGHT(REGEXP_REPLACE(meta_lead_raw.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci AND qf.requisition_id = meta_lead_raw.requisition_id COLLATE utf8mb4_unicode_ci))) ORDER BY created_at ASC LIMIT 100",
+  },
+]
+`;
+
+exports[`legacy Meta outreach pin (switches off) > notifyQualifiedLead, Pinbot configured: provider calls 1`] = `
+{
+  "calls": [
+    [
+      "pinbot",
+      "9876543210",
+      "interview_invitation",
+      [
+        "Asha Rao",
+        "Sat 10 Oct",
+        "11:00 AM",
+        "Sector 62, Noida",
+        "https://bmi.test/x",
+      ],
+    ],
+    [
+      "email",
+      "a@x.in",
+      "Congratulations Asha! Shortlisted for CSE at Mas Callnet",
+    ],
+  ],
+  "out": {
+    "attempted": [
+      "whatsapp",
+      "email",
+    ],
+    "failed": [],
+    "leadId": "L1",
+    "skipped": [
+      {
+        "channel": "voice",
+        "reason": "No voice provider configured (VAPI_API_KEY or VOICEBOT_TRIGGER_URL)",
+      },
+    ],
+    "succeeded": [
+      "whatsapp",
+      "email",
+    ],
+  },
+}
+`;
+
+exports[`legacy Meta outreach pin (switches off) > notifyQualifiedLead, Pinbot not configured: provider calls 1`] = `
+{
+  "calls": [
+    [
+      "email",
+      "a@x.in",
+      "Congratulations Asha! Shortlisted for CSE at Mas Callnet",
+    ],
+  ],
+  "out": {
+    "attempted": [
+      "email",
+    ],
+    "failed": [],
+    "leadId": "L1",
+    "skipped": [
+      {
+        "channel": "whatsapp",
+        "reason": "Pinbot is not configured",
+      },
+      {
+        "channel": "voice",
+        "reason": "No voice provider configured (VAPI_API_KEY or VOICEBOT_TRIGGER_URL)",
+      },
+    ],
+    "succeeded": [
+      "email",
+    ],
+  },
+}
+`;

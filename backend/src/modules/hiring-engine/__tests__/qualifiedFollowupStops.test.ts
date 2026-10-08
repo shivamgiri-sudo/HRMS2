@@ -30,10 +30,11 @@ describe("runStopChecks", () => {
     execute.mockResolvedValueOnce([[facts({ consent_revoked: 1 })]]);
     expect((await runStopChecks("live")).stopped).toEqual({ opted_out: 1 });
   });
-  it("only a meta_lead_messages inbound reply stops as replied", async () => {
-    execute.mockResolvedValueOnce([[facts({ meta_replied: 1 })]]);
-    expect((await runStopChecks("live")).stopped).toEqual({ replied: 1 });
-    expect(updates()[0][1]).toEqual(["replied", "r1"]);
+  it("a reply no longer stops the row: a journey in stage A becomes engaged (stage B continues)", async () => {
+    execute.mockResolvedValueOnce([[facts({ meta_replied: 1, journey_state: "reach" })]]);
+    expect((await runStopChecks("live")).stopped).toEqual({});
+    expect(updates()[0][0]).toContain("SET journey_state = 'engaged', stage_a_ended_at = NOW()");
+    expect(updates()[0][1]).toEqual(["r1"]);
   });
   it("inactive requisition stops as requisition_closed; an open one issues no UPDATE", async () => {
     execute.mockResolvedValueOnce([[facts({ active_status: 0 })]]);

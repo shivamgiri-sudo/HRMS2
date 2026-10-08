@@ -65,7 +65,7 @@ describe("notifyLeadsBulk", () => {
     h.outcomes = { b: { leadId: "b", attempted: [], succeeded: [], skipped: [{ channel: "all", reason: "Already notified; pass force=true to re-send" }], failed: [] },
       c: { leadId: "c", attempted: ["email"], succeeded: [], skipped: [], failed: [{ channel: "email", error: "smtp down" }] }, d: new Error("boom"), a: ok("a") };
     const r = await notifyLeadsBulk(["a", "b", "c", "d"], { actor: "U1", delayMs: 0 });
-    expect(vi.mocked(notifyQualifiedLead).mock.calls).toEqual([["a", { force: false, sourcePath: "legacy_meta_bulk" }], ["b", { force: false, sourcePath: "legacy_meta_bulk" }], ["c", { force: false, sourcePath: "legacy_meta_bulk" }], ["d", { force: false, sourcePath: "legacy_meta_bulk" }]]);
+    expect(vi.mocked(notifyQualifiedLead).mock.calls).toEqual([["a", { force: false, sourcePath: "legacy_meta_bulk", manual: true, actor: expect.any(String) }], ["b", { force: false, sourcePath: "legacy_meta_bulk", manual: true, actor: expect.any(String) }], ["c", { force: false, sourcePath: "legacy_meta_bulk", manual: true, actor: expect.any(String) }], ["d", { force: false, sourcePath: "legacy_meta_bulk", manual: true, actor: expect.any(String) }]]);
     expect(r.results).toEqual([
       { leadId: "a", status: "sent" },
       { leadId: "b", status: "skipped", reason: "Already notified; pass force=true to re-send" },
@@ -100,6 +100,6 @@ describe("POST /api/meta/leads/notify-all", () => {
     const r = await request(a).post("/api/meta/leads/notify-all").send({ leadIds: ["noida-1", "noida-1", "noida-2"], force: true });
     expect(r.status).toBe(200);
     expect(r.body.data.counts).toEqual({ sent: 2, skipped: 0, failed: 0 });
-    expect(vi.mocked(notifyQualifiedLead).mock.calls.map((c) => c[1])).toEqual([{ force: false, sourcePath: "legacy_meta_bulk" }, { force: false, sourcePath: "legacy_meta_bulk" }]);
+    expect(vi.mocked(notifyQualifiedLead).mock.calls.map((c) => c[1])).toEqual([{ force: false, sourcePath: "legacy_meta_bulk", manual: true, actor: expect.any(String) }, { force: false, sourcePath: "legacy_meta_bulk", manual: true, actor: expect.any(String) }]);
   });
 });

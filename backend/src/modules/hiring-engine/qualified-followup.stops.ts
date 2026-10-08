@@ -12,7 +12,7 @@ const C = "COLLATE utf8mb4_unicode_ci";
 // the other table's key stays usable and tables with a different collation do not raise ER_CANT_AGGREGATE_2COLLATIONS.
 // Only rows that still have a step to run (a finished row has nothing left that a stop could prevent); keyset-paged by id.
 function factsSql(limit: number, paged: boolean): string {
-  return `SELECT qf.id, qf.mobile10, qf.email,
+  return `SELECT qf.id, qf.mobile10, qf.email, qf.journey_state,
        (SELECT hl.status FROM he_lead hl WHERE hl.mobile10 = qf.mobile10 ${C}
          ORDER BY (hl.status = 'opted_out') DESC, (hl.status = 'joined') DESC LIMIT 1) AS lead_status,
        EXISTS (SELECT 1 FROM he_consent hc JOIN he_lead hl2 ON hl2.id = hc.lead_id
@@ -45,9 +45,15 @@ export async function runStopChecks(tag: RowTag, limit = 500): Promise<{ checked
     for (const r of rows) {
       try {
         const reason = decideRow(r, criteria?.get(String(r.id)));
-        if (!reason) continue;
+        if (!reason) {
+          // A reply (any channel) ends stage A: no more cadence touches; stage B carries on.
+          if ((Number(r.he_replied) === 1 || Number(r.meta_replied) === 1) && (r.journey_state === "enrolled" || r.journey_state === "reach")) {
+            await db.execute("UPDATE qualified_followup SET journey_state = 'engaged', stage_a_ended_at = NOW() WHERE id = ? AND journey_state IN ('enrolled','reach')", [r.id]);
+          }
+          continue;
+        }
         await db.execute(
-          "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
+          "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), journey_state = 'stopped', call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
           [reason, r.id]);
         stopped[reason] = (stopped[reason] ?? 0) + 1;
       } catch (err) {

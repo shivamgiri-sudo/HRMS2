@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readSwitches, rowTag, pipelineOwnsSends, followupSkipSql, isTestModeRequested } from "../qualified-followup.policy.js";
+import { readSwitches, rowTag, followupSkipSql, isTestModeRequested, envCeiling } from "../qualified-followup.policy.js";
 import {
   decideStop, chooseWaTemplate, nextStepDue, isTransientError, metaErrorCode, afterFailure,
   normaliseQuality, waDailyBudget, dueSlot, DAILY_REPORT_SLOTS, CALL_FILE_SLOTS, maskMobile, followupRef, nextWorkingDayIst,
@@ -42,34 +42,27 @@ describe("test-mode flag parsing fails safe", () => {
     expect(isTestModeRequested(v)).toBe(true);
     expect(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v }).testMisconfigured).toBe(true);
     expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v }))).toBe("test");
-    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v })).toBe(false);
+    expect(envCeiling({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v })).toBe("test");
   });
   it.each(["false", "FALSE", " 0 ", "no", "Off", "", undefined])("%j does not", (v) => {
     expect(isTestModeRequested(v)).toBe(false);
     expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v }))).toBe("live");
-    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v })).toBe(true);
+    expect(envCeiling({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: v })).toBe("live");
   });
 });
 
-describe("rowTag / pipelineOwnsSends / skip sql", () => {
+describe("rowTag / skip sql", () => {
   it("rowTag", () => {
     expect(rowTag(readSwitches({}))).toBeNull();
     expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "dry_run" }))).toBe("dry_run");
     expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "live" }))).toBe("live");
     expect(rowTag(readSwitches({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true" }))).toBe("test");
   });
-  it("pipelineOwnsSends", () => {
-    expect(pipelineOwnsSends({})).toBe(false);
-    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "dry_run" })).toBe(false);
-    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true" })).toBe(false);
-    expect(pipelineOwnsSends({ QUAL_FOLLOWUP_MODE: "live" })).toBe(true);
-  });
-  it("followupSkipSql", () => {
+  it("followupSkipSql is row-based (same clause whatever the env; detailed in qualifiedFollowupPolicy.test.ts)", () => {
     const a = { mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" };
-    expect(followupSkipSql(a, {})).toBe("");
-    const q = followupSkipSql(a, { QUAL_FOLLOWUP_MODE: "live" });
+    const q = followupSkipSql(a);
     expect(q.startsWith(" AND NOT EXISTS")).toBe(true);
-    for (const frag of ["qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci", "qf.requisition_id = m.requisition_id", "qf.stopped_reason IS NULL", "mode_at_enqueue = 'live'"]) expect(q).toContain(frag);
+    for (const frag of ["qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci", "qf.requisition_id = m.requisition_id", "mode_at_enqueue IN ('live','canary')"]) expect(q).toContain(frag);
   });
 });
 
@@ -77,22 +70,20 @@ describe("decideStop", () => {
   it("order", () => {
     expect(decideStop(none)).toBeNull();
     expect(decideStop({ ...none, optedOut: true, repliedSinceQualified: true })).toBe("opted_out");
-    expect(decideStop({ ...none, repliedSinceQualified: true })).toBe("replied");
+    expect(decideStop({ ...none, repliedSinceQualified: true })).toBeNull(); // a reply ends stage A, it does not stop the journey
     expect(decideStop({ ...none, requisitionClosed: "requisition is closed" })).toBe("requisition_closed");
     expect(decideStop({ ...none, joined: true })).toBe("joined");
     expect(decideStop({ ...none, hasMobile: false, hasEmail: false })).toBe("no_contact_details");
   });
 });
 
-describe("chooseWaTemplate", () => {
+describe("chooseWaTemplate (re-exported from the cadence module)", () => {
   it("cases", () => {
-    expect(chooseWaTemplate({ sourceType: "meta_live", hasSlot: true, hasBranchAddress: true, hasBmiLink: true })).toEqual({ key: "he_walkin_invite", missing: [] });
-    expect(chooseWaTemplate({ sourceType: "meta_live", hasSlot: true, hasBranchAddress: true, hasBmiLink: false })).toEqual({ key: "he_winback", missing: ["bmi_link"] });
-    expect(chooseWaTemplate({ sourceType: "meta_old", hasSlot: false, hasBranchAddress: false, hasBmiLink: false })).toEqual({ key: "he_winback", missing: ["slot", "branch_address", "bmi_link"] });
-    expect(chooseWaTemplate({ sourceType: "he", hasSlot: true, hasBranchAddress: true, hasBmiLink: false })).toEqual({ key: "he_walkin_invite", missing: [] });
-    expect(chooseWaTemplate({ sourceType: "he", hasSlot: false, hasBranchAddress: true, hasBmiLink: false }).missing).toEqual(["slot"]);
+    expect(chooseWaTemplate({ booked: true, hasBranchAddress: true, reinvite: false, t12Approved: false })).toEqual({ key: "he_walkin_invite", missing: [] });
+    expect(chooseWaTemplate({ booked: false, hasBranchAddress: false, reinvite: false, t12Approved: false })).toEqual({ key: "he_winback", missing: ["slot", "branch_address"] });
   });
 });
+
 
 describe("nextStepDue", () => {
   it.each([

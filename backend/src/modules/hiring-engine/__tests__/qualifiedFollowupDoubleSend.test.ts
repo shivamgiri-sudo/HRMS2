@@ -36,7 +36,7 @@ vi.mock("../../../db/mysql.js", () => ({
         if (h.state.optedOutThrows) throw new Error("db down");
         return [h.state.optedOut ? [{ hit: 1 }] : []];
       }
-      if (sql.includes("SELECT id FROM meta_lead_raw") && sql.includes("notification_sent_at IS NULL")) return [[{ id: "L1" }, { id: "L2" }]];
+      if (sql.trim().startsWith("SELECT id") && sql.includes("FROM meta_lead_raw") && sql.includes("notification_sent_at IS NULL")) return [[{ id: "L1" }, { id: "L2" }]];
       if (sql.includes("COUNT(*) AS n FROM he_template")) return [[{ n: 1 }]];
       if (sql.includes("FROM he_match m JOIN he_lead l ON l.id = m.lead_id")) {
         const filtered = sql.includes("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
@@ -56,8 +56,6 @@ vi.mock("../../communication/providers/whatsapp/pinbot.provider.js", () => ({
 vi.mock("../../communication/email.service.js", () => ({ emailService: { isConfigured: () => true, send: h.emailSend } }));
 vi.mock("../../meta-campaign/voicebot.provider.js", () => ({ triggerVoiceCall: vi.fn(), isVoicebotConfigured: () => false }));
 vi.mock("../../meta-campaign/vapi-voicebot.provider.js", () => ({ triggerVapiCallWithInlineScript: vi.fn(), isVapiConfigured: () => false }));
-vi.mock("../../meta-campaign/whatsapp-web.provider.js", () => ({ sendWhatsAppNotification: vi.fn(), isWhatsAppWebConfigured: () => false }));
-vi.mock("../../meta-campaign/wassenger.provider.js", () => ({ sendShortlistMessage: vi.fn(), sendCustomMessage: vi.fn(), isWassengerConfigured: () => false }));
 vi.mock("../../meta-campaign/meta-messages.service.js", () => ({ saveMessage: vi.fn(), reconcileDeliveryStatuses: vi.fn(async () => ({ checked: 0 })) }));
 vi.mock("../../meta-campaign/interview-slot.service.js", () => ({ assignInterviewSlot: vi.fn(async () => ({ dateLabel: "Thu 8 Oct", timeLabel: "11:00 AM" })) }));
 vi.mock("../he-campaign-config.service.js", () => ({ metaOutreachBlockedByEngine: vi.fn(async () => null), heOwnsCampaign: vi.fn(async () => false) }));
@@ -129,162 +127,76 @@ describe.each(MODES)("mode $name", ({ env, owns }) => {
     const steps = enrolled && owns; // the only combination where the senders step aside
     beforeEach(() => { setEnv(env); h.state.enrolled = enrolled; h.state.enrolledLeads = new Set(enrolled ? ["enrolled"] : []); });
 
+    // Unified method (Task 14): the env alone never makes the legacy path step aside (no screen switch here); only a person the method
+    // owns (a live / canary row, open or stopped) is skipped, in every mode, force or not.
     it("notifyQualifiedLead", async () => {
+      h.state.liveRow = enrolled ? "live" : "none";
       const out = await notifyQualifiedLead("L1");
-      if (steps) {
-        expect(out.skipped).toEqual([{ channel: "all", reason: "Handled by the follow-up pipeline" }]);
+      if (enrolled) {
+        expect(out.skipped).toEqual([{ channel: "all", reason: "Handled by the follow-up method" }]);
         expect(out.attempted).toEqual([]);
+        const forced = await notifyQualifiedLead("L1", { force: true });
+        expect(forced.skipped).toEqual([{ channel: "all", reason: "Handled by the follow-up method" }]);
         expect(h.sendTemplate).not.toHaveBeenCalled();
         expect(h.emailSend).not.toHaveBeenCalled();
-        const forced = await notifyQualifiedLead("L1", { force: true });
-        expect(forced.succeeded).toContain("whatsapp");
-        expect(h.sendTemplate).toHaveBeenCalledTimes(1);
-        expect(h.emailSend).toHaveBeenCalledTimes(1);
       } else {
         expect(out.succeeded).toEqual(expect.arrayContaining(["whatsapp", "email"]));
         expect(h.sendTemplate).toHaveBeenCalledTimes(1);
         expect(h.emailSend).toHaveBeenCalledTimes(1);
-        // The pipeline is only consulted when it owns the sends.
-        if (!owns) expect(followupSql()).toHaveLength(0);
       }
     });
 
     it("notifyNewQualifiedLeads (sync)", async () => {
+      h.state.liveRow = enrolled ? "live" : "none";
       const res = await notifyNewQualifiedLeads();
-      if (owns) {
-        expect(h.enqueue).toHaveBeenCalledTimes(2);
-        expect(h.enqueue).toHaveBeenCalledWith("L1", "live");
-        // enqueue says "enqueued": handed over, nothing messaged by the old flow
-        expect(h.sendTemplate).not.toHaveBeenCalled();
-        expect(res).toEqual({ sent: 0, skipped: 2, failed: 0 });
-      } else {
-        expect(h.enqueue).not.toHaveBeenCalled();
-        expect(h.sendTemplate).toHaveBeenCalledTimes(2); // notifyQualifiedLead once per lead
-        expect(res.sent).toBe(2);
-        expect(followupSql()).toHaveLength(0);
-      }
+      expect(h.enqueue).not.toHaveBeenCalled();
+      if (enrolled) { expect(h.sendTemplate).not.toHaveBeenCalled(); expect(res).toEqual({ sent: 0, skipped: 2, failed: 0 }); }
+      else { expect(h.sendTemplate).toHaveBeenCalledTimes(2); expect(res.sent).toBe(2); }
     });
 
-    it("inviteForDrive", async () => {
+    it("inviteForDrive skips by row existence in every mode (the mock's enrolled lead = a live/canary row)", async () => {
       h.state.matches = twoMatches();
       const r = await inviteForDrive("d1", { dryRun: false, max: 10 });
       const select = h.sqls.find((s) => s.includes("FROM he_match m JOIN he_lead l"))!;
-      if (owns) {
-        expect(select).toContain("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
-        expect(select).toContain("COLLATE utf8mb4_unicode_ci");
-      } else {
-        expect(select).not.toContain("qualified_followup");
-      }
+      expect(select).toContain("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
+      expect(select).toContain("qf.mode_at_enqueue IN ('live','canary')");
+      expect(select).toContain("COLLATE utf8mb4_unicode_ci");
       const invited = h.sendInviteEmail.mock.calls.map((c) => c[0]);
-      if (steps) { expect(invited).toEqual(["m2"]); expect(r.sent).toBe(1); }
+      if (enrolled) { expect(invited).toEqual(["m2"]); expect(r.sent).toBe(1); }
       else { expect(invited).toEqual(["m1", "m2"]); expect(r.sent).toBe(2); }
     });
   });
 
-  it("whatsappFollowUps SQL carries the skip clause only when the pipeline owns sends", async () => {
+  it("whatsappFollowUps SQL carries the row-based skip clause in every mode", async () => {
     setEnv(env);
     await runFollowUps({ dryRun: false });
     const q = h.sqls.find((s) => s.includes("JOIN he_message e ON e.lead_id = m.lead_id") && s.includes("he_walkin_invite:%"))!;
-    if (owns) {
-      expect(q).toContain("JOIN he_lead l ON l.id = m.lead_id");
-      expect(q).toContain("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
-      expect(q).toContain("qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci");
-      expect(q).toContain("qf.requisition_id = m.requisition_id");
-    } else {
-      expect(q).not.toContain("qualified_followup");
-      expect(q).not.toContain("JOIN he_lead l ON"); // original SQL, no extra join
-      expect(q).toContain("FROM he_match m\n       JOIN he_message e ON");
-    }
+    expect(q).toContain("JOIN he_lead l ON l.id = m.lead_id");
+    expect(q).toContain("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
+    expect(q).toContain("qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci");
+    expect(q).toContain("qf.requisition_id = m.requisition_id");
   });
 });
 
-describe("live mode: sync falls back to the old flow only when the enqueue is not a handover", () => {
-  beforeEach(() => setEnv({ QUAL_FOLLOWUP_MODE: "live" }));
-  it.each(["invalid", "not_qualified"])("enqueue %s then notifyQualifiedLead runs (not enrolled -> sends)", async (status) => {
-    h.enqueue.mockResolvedValue({ status });
-    const res = await notifyNewQualifiedLeads();
-    expect(h.sendTemplate).toHaveBeenCalledTimes(2);
-    expect(res.sent).toBe(2);
-  });
-  it("enqueue exists + a live row (open or stopped) counts as handed over", async () => {
-    h.enqueue.mockResolvedValue({ status: "exists" });
-    h.state.liveRow = "live";
-    const res = await notifyNewQualifiedLeads();
-    expect(h.sendTemplate).not.toHaveBeenCalled();
-    expect(res).toEqual({ sent: 0, skipped: 2, failed: 0 });
-  });
-  it.each(["dry_run", "test"])("enqueue exists but the row is tagged %s: the old flow still messages the lead", async (tag) => {
-    h.enqueue.mockResolvedValue({ status: "exists" });
-    h.state.liveRow = tag;
-    const res = await notifyNewQualifiedLeads();
-    expect(h.sendTemplate).toHaveBeenCalledTimes(2);
-    expect(res.sent).toBe(2);
-  });
-  it("enqueue exists and the live-row lookup errors: falls to the old flow, never silenced", async () => {
-    h.enqueue.mockResolvedValue({ status: "exists" });
+describe("ownership lookup failure", () => {
+  it("notifyQualifiedLead fails closed with a reason (any mode)", async () => {
     h.state.hasLiveThrows = true;
-    await notifyNewQualifiedLeads();
-    expect(h.sendTemplate).toHaveBeenCalledTimes(2);
-  });
-  it("the live sync SELECT skips leads with an open live row; non-live SELECT text is unchanged", async () => {
-    await notifyNewQualifiedLeads();
-    const live = h.sqls.find((x) => x.includes("SELECT id FROM meta_lead_raw"))!;
-    expect(live).toContain("NOT EXISTS (SELECT 1 FROM qualified_followup qf");
-    expect(live).not.toContain("stopped_reason");
-    expect(live).toContain("COLLATE utf8mb4_unicode_ci");
-    setEnv({ QUAL_FOLLOWUP_MODE: "dry_run" });
-    h.sqls.length = 0;
-    await notifyNewQualifiedLeads();
-    const off = h.sqls.find((x) => x.includes("SELECT id FROM meta_lead_raw"))!;
-    expect(off).toBe(`SELECT id FROM meta_lead_raw
-      WHERE screening_result = 'qualified'
-        AND notification_sent_at IS NULL
-        AND created_at >= ?
-      ORDER BY created_at ASC
-      LIMIT 100`);
-  });
-  it("enqueue invalid and the lookup then finds an enrolled row: skipped, notification_sent_at stays untouched", async () => {
-    h.enqueue.mockResolvedValue({ status: "invalid" });
-    h.state.enrolled = true;
-    const res = await notifyNewQualifiedLeads();
-    expect(h.sendTemplate).not.toHaveBeenCalled();
-    expect(res).toEqual({ sent: 0, skipped: 2, failed: 0 });
-    expect(h.sqls.some((s) => s.includes("UPDATE meta_lead_raw SET notification_sent_at"))).toBe(false);
-  });
-  it("an enqueue that throws falls through to the old flow", async () => {
-    h.enqueue.mockRejectedValue(new Error("boom"));
-    await notifyNewQualifiedLeads();
-    expect(h.sendTemplate).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("enrolment lookup failure", () => {
-  it("live: notifyQualifiedLead fails closed with a reason", async () => {
-    setEnv({ QUAL_FOLLOWUP_MODE: "live" });
-    h.state.enrollThrows = true;
     const out = await notifyQualifiedLead("L1");
-    expect(out.skipped).toEqual([{ channel: "all", reason: "Follow-up lookup failed; pipeline owns sends" }]);
+    expect(out.skipped).toEqual([{ channel: "all", reason: "Follow-up lookup failed; outreach held" }]);
     expect(h.sendTemplate).not.toHaveBeenCalled();
     expect(h.emailSend).not.toHaveBeenCalled();
-  });
-  it.each(MODES.filter((m) => !m.owns))("$name: a failing lookup is never consulted, so outreach is not silenced", async ({ env }) => {
-    setEnv(env);
-    h.state.enrollThrows = true;
-    const out = await notifyQualifiedLead("L1");
-    expect(out.succeeded).toContain("whatsapp");
   });
   it("followupEnrolled rethrows a database error", async () => {
     h.state.enrollThrows = true;
     await expect(followupEnrolled("L1")).rejects.toThrow("db down");
   });
-  it("followupEnrolled SQL is collation-safe, parameterised and only counts open live rows", async () => {
+  it("followupEnrolled SQL is collation-safe, parameterised and counts open live / canary rows", async () => {
     await followupEnrolled("L1");
     const q = h.sqls.find((s) => s.includes("qualified_followup qf"))!;
-    expect(q).toContain("qf.mode_at_enqueue = 'live'");
+    expect(q).toContain("qf.mode_at_enqueue IN ('live','canary')");
     expect(q).toContain("qf.stopped_reason IS NULL");
     expect(q).toContain("qf.meta_lead_id = r.id COLLATE utf8mb4_unicode_ci");
     expect(q).toContain("qf.mobile10 = RIGHT(REGEXP_REPLACE(r.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci");
-    expect(q).toContain("qf.requisition_id = COALESCE(r.requisition_id, c.requisition_id) COLLATE utf8mb4_unicode_ci");
     expect(q).not.toContain("L1");
   });
 });
@@ -301,18 +213,11 @@ describe("STOP is honoured by notifyQualifiedLead in every mode and force does n
     expect(h.sendTemplate).not.toHaveBeenCalled();
     expect(h.emailSend).not.toHaveBeenCalled();
   });
-  it.each(MODES.filter((m) => !m.owns))("$name: an opt-out lookup error fails open (outreach as before)", async ({ env }) => {
+  it.each(MODES)("$name (no screen switch on): an opt-out lookup error fails open (outreach as before)", async ({ env }) => {
     setEnv(env);
     h.state.optedOutThrows = true;
     const out = await notifyQualifiedLead("L1");
     expect(out.succeeded).toContain("whatsapp");
-  });
-  it("live: an opt-out lookup error fails closed", async () => {
-    setEnv({ QUAL_FOLLOWUP_MODE: "live" });
-    h.state.optedOutThrows = true;
-    const out = await notifyQualifiedLead("L1");
-    expect(out.skipped[0]?.reason).toBe("Opt-out lookup failed; pipeline owns sends");
-    expect(h.sendTemplate).not.toHaveBeenCalled();
   });
 });
 
@@ -337,6 +242,14 @@ describe("ingest enqueue ordering", () => {
     setEnv(mode ? { QUAL_FOLLOWUP_MODE: mode } : {});
     await ingest();
     expect(order[0]).toBe("notify");
+  });
+  it("ingest passes skipOutreach to the enrolment (held_manual for backfills, D13)", async () => {
+    setEnv({ QUAL_FOLLOWUP_MODE: "dry_run" });
+    await ingest();
+    expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), { skipOutreach: false });
+    h.enqueue.mockClear();
+    await metaCampaignService.ingestLead({ formId: "f1", leadgenId: "g2", prefetchedDetail: { id: "g2", field_data: [] } as never, skipOutreach: true });
+    expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), { skipOutreach: true });
   });
   it("a rejected enqueue never breaks ingest, and notifyQualifiedLead still runs", async () => {
     setEnv({ QUAL_FOLLOWUP_MODE: "dry_run" });

@@ -52,11 +52,13 @@ import { registerPoolBridgeRoutes } from "./pool-bridge.routes.js";
 import { registerActionRoutes } from "./he-action.routes.js";
 import { registerOutcomeRoutes } from "./he-outcome.routes.js";
 import { registerResponseRoutes } from "./response.routes.js";
-import { bodyRequisitionScoped, driveScoped } from "./he-drive-scope.js";
+import { bodyRequisitionScoped, driveScoped, followupRowScoped } from "./he-drive-scope.js";
+import { registerFollowupSwitchRoutes } from "./followup-switch.routes.js";
 import { DRIVE_STREAM_FED, STREAM_CHECK_FAILED, driveStreamCheck } from "./he-stream-guard.service.js";
 import { followupSummary } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import { getFollowupAudit, listAttention, logAttentionError, markFollowupCalled, mobileOfFollowup, retryFollowupStep, type AttentionChannel } from "./qualified-followup.attention.js";
+import { recordPersonOptOut } from "./followup-optout.service.js";
 
 export const heRouter = Router();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
@@ -67,6 +69,7 @@ const VIEW_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr", 
 const ADMIN_ROLES = ["super_admin", "admin"];
 const WRITE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr"];
 registerStreamRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES, admin: ADMIN_ROLES });
+registerFollowupSwitchRoutes(heRouter, { view: VIEW_ROLES, admin: ADMIN_ROLES }); // before /qualified-followup/:id too
 registerCommandRoutes(heRouter, { view: VIEW_ROLES }); // before /qualified-followup/:id, which would answer /qualified-followup/status with 400
 registerCampaignMatrixRoutes(heRouter, { view: VIEW_ROLES });
 registerPoolBridgeRoutes(heRouter, { admin: ADMIN_ROLES });
@@ -131,7 +134,22 @@ heRouter.post("/qualified-followup/:id/retry", requireAuth, requireRole(...ADMIN
   }
 });
 
-heRouter.post("/qualified-followup/:id/mark-called", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+// HR's STOP button: the person asked not to be contacted (phone, in person). Ends every follow-up journey of the mobile; recorded with the user.
+heRouter.post("/qualified-followup/:id/opt-out", requireAuth, requireRole(...WRITE_ROLES), followupRowScoped, async (req, res) => {
+  if (!FOLLOWUP_ID_RE.test(req.params.id)) return res.status(400).json({ success: false, message: "Invalid id" });
+  try {
+    const mobile = await mobileOfFollowup(req.params.id);
+    if (!mobile) return res.status(404).json({ success: false, message: "not_found" });
+    const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 200) : null;
+    const out = await recordPersonOptOut(mobile, { source: "hr", actor: (req as AuthenticatedRequest).authUser?.id ?? null, detail: note || null });
+    res.json({ success: true, journeysStopped: out.journeysStopped });
+  } catch (err) {
+    logAttentionError("opt-out", err);
+    res.status(500).json({ success: false, message: "Could not record the opt-out" });
+  }
+});
+
+heRouter.post("/qualified-followup/:id/mark-called", requireAuth, requireRole(...WRITE_ROLES), followupRowScoped, async (req, res) => {
   if (!FOLLOWUP_ID_RE.test(req.params.id)) return res.status(400).json({ success: false, message: "Invalid id" });
   try {
     const mobile = await mobileOfFollowup(req.params.id);

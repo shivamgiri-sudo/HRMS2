@@ -9,19 +9,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-vi.mock('../src/modules/meta-campaign/wassenger.provider.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/modules/meta-campaign/wassenger.provider.js')>();
-  return {
-    ...actual,
-    isWassengerConfigured: vi.fn(() => true),
-    sendCustomMessage: vi.fn(async () => ({ success: true, messageId: 'wa-1' })),
-  };
-});
+vi.mock('../src/modules/meta-campaign/lead-reply.js', () => ({
+  anyReplyProviderConfigured: vi.fn(() => true),
+  sendLeadReply: vi.fn(async () => ({ success: true, provider: 'pinbot', messageId: 'pb-1' })),
+}));
 
 import { db } from '../src/db/mysql.js';
 import { metaCampaignRouter } from '../src/modules/meta-campaign/meta-campaign.routes.js';
 import { metaCampaignService } from '../src/modules/meta-campaign/meta-campaign.service.js';
-import { sendCustomMessage } from '../src/modules/meta-campaign/wassenger.provider.js';
+import { sendLeadReply as sendCustomMessage } from '../src/modules/meta-campaign/lead-reply.js'; // Pinbot only (Wassenger retired)
 
 const app = express().use(express.json()).use('/api/meta', metaCampaignRouter);
 
@@ -162,11 +158,11 @@ describe('reply requires shortlisting first', () => {
     expect(sendCustomMessage).not.toHaveBeenCalled();
   });
 
-  it('refuses a file for a non-shortlisted candidate', async () => {
+  it('WhatsApp attachments are gone with Wassenger (Pinbot only): 410 for everyone', async () => {
     const res = await request(app)
-      .post('/api/meta/leads/lead-rejected/send-file')
+      .post('/api/meta/leads/lead-noida/send-file')
       .set(auth('recruiter'))
       .attach('file', Buffer.from('%PDF-1.4'), 'offer.pdf');
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(410);
   });
 });

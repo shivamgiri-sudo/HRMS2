@@ -17,9 +17,9 @@ export interface StopFacts {
   criteria?: { verdict: "pass" | "fail" | "review" | string | null; booked: boolean };
 }
 
+/** A reply no longer stops the journey (unified method): it ends stage A (journey 'engaged') and stage B continues. */
 export function decideStop(f: StopFacts): StopReason | null {
   if (f.optedOut) return "opted_out";
-  if (f.repliedSinceQualified) return "replied";
   if (f.requisitionClosed) return "requisition_closed";
   if (f.joined) return "joined";
   if (!f.hasMobile && !f.hasEmail) return "no_contact_details";
@@ -31,15 +31,9 @@ export function decideStop(f: StopFacts): StopReason | null {
   return null;
 }
 
-export type MissingDetail = "slot" | "branch_address" | "bmi_link";
-
-export function chooseWaTemplate(f: { sourceType: SourceType; hasSlot: boolean; hasBranchAddress: boolean; hasBmiLink: boolean }): { key: "he_walkin_invite" | "he_winback"; missing: MissingDetail[] } {
-  const missing: MissingDetail[] = [];
-  if (!f.hasSlot) missing.push("slot");
-  if (!f.hasBranchAddress) missing.push("branch_address");
-  if (f.sourceType !== "he" && !f.hasBmiLink) missing.push("bmi_link");
-  return { key: missing.length === 0 ? "he_walkin_invite" : "he_winback", missing };
-}
+export type MissingDetail = "slot" | "branch_address";
+/** One template chooser for every source (lives in the cadence module). */
+export { chooseWaTemplate } from "./qualified-followup.cadence.js";
 
 export function nextStepDue(prev: Date, gapMin: number = FOLLOWUP_GAP_MIN): Date {
   return holdToWindow(new Date(prev.getTime() + gapMin * 60_000));

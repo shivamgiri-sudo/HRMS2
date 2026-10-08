@@ -828,7 +828,7 @@ export default function MetaLeadsPage() {
                         {notifyResults[detail.id] === 'sending' ? "Sending…" : "Send WhatsApp Notification"}
                       </button>
                       {notifyResults[detail.id] === 'failed' && (
-                        <p className="text-xs text-rose-600">Send failed — check Wassenger config and retry.</p>
+                        <p className="text-xs text-rose-600">Send failed — check the Pinbot (WhatsApp) setup and retry.</p>
                       )}
                     </div>
                   ) : (

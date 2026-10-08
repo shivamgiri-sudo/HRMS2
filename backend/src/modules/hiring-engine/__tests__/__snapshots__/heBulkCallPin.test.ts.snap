@@ -1,0 +1,364 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`manual bulk-call pin (no follow-up row, mode unset) > Prepare from campaigns SQL 1`] = `
+[
+  {
+    "p": [
+      "c1",
+      "c2",
+    ],
+    "sql": "SELECT CASE WHEN ml.interview_date IS NULL OR ml.interview_time IS NULL THEN 'no_interview_assigned' WHEN NOT (TIMESTAMP(ml.interview_date, ml.interview_time) > DATE_ADD(NOW(), INTERVAL 30 MINUTE)) THEN 'interview_date_passed' WHEN ml.walkin_declined = 1 THEN 'declined' WHEN NOT (jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount) THEN 'requisition_closed_or_filled' WHEN ml.walkin_confirmed = 1 AND 1 THEN 'already_confirmed' WHEN ml.notification_sent_at IS NULL AND 1 THEN 'invite_not_sent_yet' WHEN EXISTS (SELECT 1 FROM he_lead_event ev JOIN he_lead hl ON hl.id = ev.lead_id WHERE ev.event_type = 'exported_for_calling' AND ev.created_at > DATE_SUB(NOW(), INTERVAL 18 HOUR) AND hl.mobile10 = RIGHT(REGEXP_REPLACE(ml.parsed_phone, '[^0-9]', ''), 10)) THEN 'already_sent_to_calling_tool' ELSE 'included' END AS reason, COUNT(*) AS n FROM meta_lead_raw ml JOIN job_requisition jr ON jr.id = ml.requisition_id WHERE ml.campaign_id IN (?,?) AND ml.screening_result = 'qualified' GROUP BY reason",
+  },
+  {
+    "p": [
+      "c1",
+      "c2",
+    ],
+    "sql": "SELECT ml.parsed_name, ml.parsed_phone, ml.meta_lead_id, DATE_FORMAT(ml.interview_date, '%Y-%m-%d') AS d, TIME_FORMAT(ml.interview_time, '%H:%i') AS t, jr.designation_name, bm.address FROM meta_lead_raw ml JOIN job_requisition jr ON jr.id = ml.requisition_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE ml.campaign_id IN (?,?) AND ml.screening_result = 'qualified' AND ml.interview_date IS NOT NULL AND ml.interview_time IS NOT NULL AND TIMESTAMP(ml.interview_date, ml.interview_time) > DATE_ADD(NOW(), INTERVAL 30 MINUTE) AND ml.walkin_declined = 0 AND ml.walkin_confirmed = 0 AND ml.notification_sent_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM he_lead_event ev JOIN he_lead hl ON hl.id = ev.lead_id WHERE ev.event_type = 'exported_for_calling' AND ev.created_at > DATE_SUB(NOW(), INTERVAL 18 HOUR) AND hl.mobile10 = RIGHT(REGEXP_REPLACE(ml.parsed_phone, '[^0-9]', ''), 10)) AND jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount ORDER BY ml.interview_date, ml.interview_time, ml.id LIMIT 501",
+  },
+]
+`;
+
+exports[`manual bulk-call pin (no follow-up row, mode unset) > result import: Busy 1`] = `
+{
+  "events": [
+    [
+      "L1",
+      "call_no_answer",
+      {
+        "channel": "voice",
+        "detail": "NO_ANSWER",
+      },
+    ],
+    [
+      "L1",
+      "call_result_imported",
+      {
+        "actor": "U1",
+        "channel": "voice",
+        "detail": "NO_ANSWER",
+      },
+    ],
+  ],
+  "sqls": [
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, mobile10, full_name, email, status, ats_candidate_id, meta_lead_id FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "c-Busy",
+      ],
+      "sql": "SELECT 1 FROM he_call WHERE provider_call_id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, requisition_id, drive_id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'",
+    },
+    {
+      "p": [
+        "L1",
+        "M1",
+        "c-Busy",
+        1,
+        null,
+        30,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "NO_ANSWER",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "R1",
+        "D1",
+      ],
+      "sql": "INSERT INTO he_call (lead_id, match_id, provider_call_id, attempt_no, started_at, duration_s, identity_confirmed, language_used, email_received, assessment_done, original_slot_answer, offered_slot_at, offered_slot_answer, outcome, decline_reason, sentiment, handoff_reason, transcript, summary, recording_url, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "p": [
+        "L1",
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'call_no_answer' AND created_at >= (SELECT COALESCE(MAX(created_at), '2000-01-01') FROM he_message WHERE lead_id = ? AND direction = 'out' AND template_key = 'he_walkin_invite_email')",
+    },
+  ],
+}
+`;
+
+exports[`manual bulk-call pin (no follow-up row, mode unset) > result import: Confirmed 1`] = `
+{
+  "events": [
+    [
+      "L1",
+      "call_confirmed",
+      {
+        "channel": "voice",
+        "detail": "WALKIN_CONFIRMED_YES",
+      },
+    ],
+    [
+      "L1",
+      "call_result_imported",
+      {
+        "actor": "U1",
+        "channel": "voice",
+        "detail": "WALKIN_CONFIRMED_YES",
+      },
+    ],
+  ],
+  "sqls": [
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT meta_json FROM he_lead_event WHERE lead_id = ? AND event_type = 'exported_for_calling' AND meta_json IS NOT NULL AND created_at > DATE_SUB(NOW(), INTERVAL 5 DAY) ORDER BY id DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, mobile10, full_name, email, status, ats_candidate_id, meta_lead_id FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "c-Confirmed",
+      ],
+      "sql": "SELECT 1 FROM he_call WHERE provider_call_id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, requisition_id, drive_id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'",
+    },
+    {
+      "p": [
+        "L1",
+        "M1",
+        "c-Confirmed",
+        1,
+        null,
+        30,
+        "yes",
+        null,
+        null,
+        null,
+        "yes",
+        null,
+        null,
+        "WALKIN_CONFIRMED_YES",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "R1",
+        "D1",
+      ],
+      "sql": "INSERT INTO he_call (lead_id, match_id, provider_call_id, attempt_no, started_at, duration_s, identity_confirmed, language_used, email_received, assessment_done, original_slot_answer, offered_slot_at, offered_slot_answer, outcome, decline_reason, sentiment, handoff_reason, transcript, summary, recording_url, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "p": [
+        "confirmed",
+        "M1",
+      ],
+      "sql": "UPDATE he_match SET state = ? WHERE id = ?",
+    },
+    {
+      "p": [
+        "L1",
+        "he_walkin_confirmed:%",
+        "M1",
+        "M1",
+      ],
+      "sql": "SELECT 1 FROM he_message w WHERE w.lead_id = ? AND w.direction = 'out' AND w.template_key LIKE ? AND w.delivery_status <> 'failed' AND (? IS NULL OR w.drive_id <=> (SELECT drive_id FROM he_match WHERE id = ?)) LIMIT 1",
+    },
+  ],
+}
+`;
+
+exports[`manual bulk-call pin (no follow-up row, mode unset) > result import: DND 1`] = `
+{
+  "events": [
+    [
+      "L1",
+      "call_failed",
+      {
+        "channel": "voice",
+        "detail": "CALL_FAILED:DND",
+      },
+    ],
+    [
+      "L1",
+      "call_result_imported",
+      {
+        "actor": "U1",
+        "channel": "voice",
+        "detail": "CALL_FAILED",
+      },
+    ],
+  ],
+  "sqls": [
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, mobile10, full_name, email, status, ats_candidate_id, meta_lead_id FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "c-DND",
+      ],
+      "sql": "SELECT 1 FROM he_call WHERE provider_call_id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, requisition_id, drive_id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'",
+    },
+    {
+      "p": [
+        "L1",
+        "M1",
+        "c-DND",
+        1,
+        null,
+        30,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "CALL_FAILED:DND",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "R1",
+        "D1",
+      ],
+      "sql": "INSERT INTO he_call (lead_id, match_id, provider_call_id, attempt_no, started_at, duration_s, identity_confirmed, language_used, email_received, assessment_done, original_slot_answer, offered_slot_at, offered_slot_answer, outcome, decline_reason, sentiment, handoff_reason, transcript, summary, recording_url, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    },
+  ],
+}
+`;
+
+exports[`manual bulk-call pin (no follow-up row, mode unset) > result import: No answer 1`] = `
+{
+  "events": [
+    [
+      "L1",
+      "call_no_answer",
+      {
+        "channel": "voice",
+        "detail": "NO_ANSWER",
+      },
+    ],
+    [
+      "L1",
+      "call_result_imported",
+      {
+        "actor": "U1",
+        "channel": "voice",
+        "detail": "NO_ANSWER",
+      },
+    ],
+  ],
+  "sqls": [
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, mobile10, full_name, email, status, ats_candidate_id, meta_lead_id FROM he_lead WHERE id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "c-No answer",
+      ],
+      "sql": "SELECT 1 FROM he_call WHERE provider_call_id = ? LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT id, requisition_id, drive_id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'",
+    },
+    {
+      "p": [
+        "L1",
+        "M1",
+        "c-No answer",
+        1,
+        null,
+        30,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "NO_ANSWER",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "R1",
+        "D1",
+      ],
+      "sql": "INSERT INTO he_call (lead_id, match_id, provider_call_id, attempt_no, started_at, duration_s, identity_confirmed, language_used, email_received, assessment_done, original_slot_answer, offered_slot_at, offered_slot_answer, outcome, decline_reason, sentiment, handoff_reason, transcript, summary, recording_url, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    },
+    {
+      "p": [
+        "L1",
+        "L1",
+      ],
+      "sql": "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'call_no_answer' AND created_at >= (SELECT COALESCE(MAX(created_at), '2000-01-01') FROM he_message WHERE lead_id = ? AND direction = 'out' AND template_key = 'he_walkin_invite_email')",
+    },
+  ],
+}
+`;

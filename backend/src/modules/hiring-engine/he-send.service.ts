@@ -14,6 +14,7 @@ import { buildParams, getTemplate, renderBody, type Lang, type TemplateKey } fro
 import type { LeadStatus } from "./he-state.js";
 import { cleanName, displayFirstName } from "./he-name.js";
 import { whatsappRequiresOptIn } from "./he-policy.service.js";
+import { requisitionOpenReason } from "./followup-guards.js";
 
 const pinbot = new PinbotWhatsAppProvider();
 
@@ -45,6 +46,8 @@ export interface SendOpts {
   followupStep?: boolean;
   /** Test mode: a 10-digit number that receives the message instead of the lead. Nothing is recorded (no he_message, event, contact time or status). */
   redirectTo?: string | null;
+  /** The unified follow-up worker's sends are tagged (he_message.sent_by) so reports can tell mechanisms apart. */
+  sentBy?: "followup";
 }
 
 const FIRST_CONTACT = new Set<TemplateKey>(["he_walkin_invite", "he_winback", "he_other_role_offer"]);
@@ -79,7 +82,8 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
 
   // The Meta campaign flow (lead-outreach.service) already sends its own interview invite to qualified Meta leads.
   // Never send a second first-contact invite to the same person within 3 days of that one.
-  if (FIRST_CONTACT.has(o.key) && (await metaFlowNotifiedRecently(lead.meta_lead_id))) return { status: "blocked", reason: "meta_flow_already_notified" };
+  // The unified follow-up worker owns the person (its own first step stamps notification_sent_at): the guard is for the other senders.
+  if (FIRST_CONTACT.has(o.key) && o.sentBy !== "followup" && (await metaFlowNotifiedRecently(lead.meta_lead_id))) return { status: "blocked", reason: "meta_flow_already_notified" };
   // Per-campaign channel switch (Master tab): WhatsApp off for the campaign this person came from. The STOP acknowledgement always goes.
   if (o.key !== "he_optout_ack" && !(await channelAllowed(o.leadId, "whatsapp"))) return { status: "blocked", reason: "whatsapp_off_for_campaign" };
 
@@ -87,18 +91,20 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   if (o.matchId) {
     const [mr] = await db.execute<RowDataPacket[]>(
       `SELECT m.id, m.requisition_id, m.slot_at, m.token, m.state, d.id AS drive_id, d.drive_date, d.status AS drive_status, d.reinvite,
-              jr.designation_name, jr.branch_name, jr.bmi_assessment_url, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount,
-              bm.address, bm.latitude, bm.longitude
+              jr.designation_name, jr.branch_name, jr.bmi_assessment_url, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.closed_at,
+              bm.address, bm.latitude, bm.longitude, bm.hr_contact
          FROM he_match m LEFT JOIN he_drive d ON d.id = m.drive_id JOIN job_requisition jr ON jr.id = m.requisition_id
          LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
         WHERE m.id = ? LIMIT 1`, [o.matchId]);
     m = mr[0];
   }
-  const isOpen = (r: RowDataPacket) => r.approval_status === "approved" && Boolean(r.active_status) && Number(r.fulfilled_headcount) < Number(r.requested_headcount);
+  // D8, the one requisition-open rule (approved, active, not closed, seats left), shared with the follow-up guards.
+  const isOpen = (r: RowDataPacket) => requisitionOpenReason({ approvalStatus: r.approval_status ?? null, activeStatus: r.active_status == null ? null : Number(r.active_status), closedAt: r.closed_at ?? null,
+    requestedHeadcount: r.requested_headcount == null ? null : Number(r.requested_headcount), fulfilledHeadcount: r.fulfilled_headcount == null ? null : Number(r.fulfilled_headcount) }) === null;
   let requisitionOpen = m ? isOpen(m) : true;
   if (!m && o.requisitionId) {
     const [rr] = await db.execute<RowDataPacket[]>(
-      "SELECT approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1", [o.requisitionId]);
+      "SELECT approval_status, active_status, requested_headcount, fulfilled_headcount, closed_at FROM job_requisition WHERE id = ? LIMIT 1", [o.requisitionId]);
     requisitionOpen = rr[0] ? isOpen(rr[0]) : false;
   }
 
@@ -154,7 +160,10 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
     maps_link: lat != null && lng != null ? `https://maps.google.com/?q=${lat},${lng}` : m?.address ? `https://maps.google.com/?q=${encodeURIComponent(String(m.address))}` : null,
     assessment_link: m?.bmi_assessment_url || env("HE_ASSESSMENT_TEXT", "Given at the branch on arrival"), docs_list: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"),
     reference_id: m ? `HE-${String(m.id).replace(/-/g, "").slice(0, 6).toUpperCase()}` : null,
-    contact_name: env("HE_HR_CONTACT_NAME", ""), contact_phone: env("HE_HR_CONTACT_PHONE", ""),
+    // T2 needs both. Unset on prod, they blocked every T2 ("missing contact_name", R0 2026-10-09); the branch's HR contact, then the
+    // reception, keep the transactional confirmation going.
+    contact_name: env("HE_HR_CONTACT_NAME", "our HR team"),
+    contact_phone: env("HE_HR_CONTACT_PHONE", "") || String(m?.hr_contact ?? "").trim() || "the branch reception",
     location_token: m?.token, ...o.extra,
   };
   let params: string[];
@@ -193,8 +202,8 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   const [idr] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
   const messageId = idr[0].id as string;
   await db.execute(
-    "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, error_message, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-    [messageId, o.leadId, lead.mobile10, "out", "whatsapp", `${o.key}:${lang}`, body.slice(0, 2000), res.success ? res.message_id ?? null : null, res.success ? "sent" : "failed", res.success ? null : String(res.error ?? "").slice(0, 500), m?.requisition_id ?? o.requisitionId ?? null, m?.drive_id ?? null]);
+    `INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, error_message, requisition_id, drive_id${o.sentBy ? ", sent_by" : ""}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?${o.sentBy ? ",?" : ""})`,
+    [messageId, o.leadId, lead.mobile10, "out", "whatsapp", `${o.key}:${lang}`, body.slice(0, 2000), res.success ? res.message_id ?? null : null, res.success ? "sent" : "failed", res.success ? null : String(res.error ?? "").slice(0, 500), m?.requisition_id ?? o.requisitionId ?? null, m?.drive_id ?? null, ...(o.sentBy ? [o.sentBy] : [])]);
   if (!res.success) {
     await addEvent(o.leadId, "send_failed", { channel: "whatsapp", detail: `${o.key}: ${res.error}`, driveId: m?.drive_id });
     logger.warn({ leadId: o.leadId, key: o.key, error: res.error }, "[he-send] failed");

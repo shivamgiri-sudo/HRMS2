@@ -1,10 +1,8 @@
+import { inSendWindow, nextSendWindowOpen } from "./followup-guards.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
 
 export const FOLLOWUP_GAP_MIN = 60;
 const IST_MS = 5.5 * 3600_000;
-const DAY_MS = 86_400_000;
-const OPEN_HOUR = 9;
-const CLOSE_HOUR = 20;
 
 /** The follow-up pipeline's own type at enqueue (decides templates): unchanged on purpose. The Command Center displays people by the
  *  person rule of he-source-attribution.ts instead (which, unlike this, never calls a non-Meta upload batch Meta). */
@@ -29,28 +27,23 @@ export function istHour(d: Date): number {
   return new Date(d.getTime() + IST_MS).getUTCHours();
 }
 
+/** Mon-Sat 09:00 to under 20:00 IST (D3; one rule with the guard chain). */
 export function withinSendWindow(now: Date): boolean {
-  const h = istHour(now);
-  return h >= OPEN_HOUR && h < CLOSE_HOUR;
+  return inSendWindow(now);
 }
 
-function istMidnight(d: Date): number {
-  return Math.floor((d.getTime() + IST_MS) / DAY_MS) * DAY_MS - IST_MS;
-}
-
-/** Next 09:00 IST at or after now. */
+/** Next Mon-Sat 09:00 IST at or after now. */
 export function nextWindowOpen(now: Date): Date {
-  const day = istMidnight(now);
-  const open = day + OPEN_HOUR * 3600_000;
-  return new Date(now.getTime() < open ? open : open + DAY_MS);
+  return nextSendWindowOpen(now);
 }
 
 export function holdToWindow(t: Date): Date {
   return withinSendWindow(t) ? t : nextWindowOpen(t);
 }
 
-export function dueTimes(a: { qualifiedAt: Date; hasEmail: boolean; gapMin?: number }): { emailDueAt: Date | null; waDueAt: Date } {
+/** D3/D4: the email is held to the window; WhatsApp one gap after it (or at enrolment without email), held too. */
+export function dueTimes(a: { enrolledAt: Date; hasEmail: boolean; gapMin?: number }): { emailDueAt: Date | null; waDueAt: Date } {
   const gap = a.gapMin ?? FOLLOWUP_GAP_MIN;
-  const base = a.hasEmail ? new Date(a.qualifiedAt.getTime() + gap * 60_000) : a.qualifiedAt;
-  return { emailDueAt: a.hasEmail ? a.qualifiedAt : null, waDueAt: holdToWindow(base) };
+  const emailDueAt = a.hasEmail ? holdToWindow(a.enrolledAt) : null;
+  return { emailDueAt, waDueAt: holdToWindow(emailDueAt ? new Date(emailDueAt.getTime() + gap * 60_000) : a.enrolledAt) };
 }

@@ -28,6 +28,34 @@
     "tally_import_batch",
     "tally_import_voucher"
   ],
+  "modules/hiring-engine/followup-person.service.ts": [
+    "followup_person"
+  ],
+  "modules/hiring-engine/he-send.service.ts": [
+    "he_message"
+  ],
+  "modules/hiring-engine/qualified-followup.shadow.ts": [
+    "followup_shadow"
+  ],
+  "modules/hiring-engine/qualified-followup.stagea.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.callresult.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.stageb.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/followup-optout.service.ts": [
+    "followup_person",
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/he-followup-email.service.ts": [
+    "he_message"
+  ],
+  "modules/hiring-engine/qualified-followup.runnow.ts": [
+    "qualified_followup"
+  ],
   "modules/hiring-engine/he-action-queue.service.ts": [
     "qualified_followup"
   ],
@@ -89,7 +117,8 @@
   ],
   "modules/hiring-engine/he-ingest.service.ts": [
     "he_call",
-    "he_message"
+    "he_message",
+    "qualified_followup"
   ],
   "modules/hiring-engine/he-insight.service.ts": [
     "he_lead_insight"
@@ -151,6 +180,7 @@
     "qualified_followup"
   ],
   "modules/hiring-engine/qualified-followup.email.ts": [
+    "he_message",
     "qualified_followup"
   ],
   "modules/hiring-engine/qualified-followup.service.ts": [

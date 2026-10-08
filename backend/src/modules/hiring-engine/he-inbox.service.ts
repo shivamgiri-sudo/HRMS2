@@ -1,7 +1,7 @@
 /**
  * Hiring Engine conversations for the WhatsApp Inbox page: every candidate the engine has written to or heard from, the full thread
  * (WhatsApp and email), and a free-text reply. Messages live in he_message (Pinbot WhatsApp + engine email), separate from the Meta
- * campaign inbox (meta_lead_messages, Wassenger), so this is a second source on the same page. Branch-scoped like the Meta inbox:
+ * campaign inbox (meta_lead_messages: history, incl. the retired Wassenger gateway's), so this is a second source on the same page. Branch-scoped like the Meta inbox:
  * a branch user only sees candidates whose latest requisition is at their branch.
  *
  * WhatsApp only allows a free-text reply inside 24 hours of the candidate's last message; outside that window only an approved template

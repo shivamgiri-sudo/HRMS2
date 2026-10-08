@@ -6,6 +6,12 @@ const send = vi.hoisted(() => vi.fn());
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 vi.mock("../../communication/email.service.js", () => ({ emailService: { send } }));
+const markExported = vi.hoisted(() => vi.fn(async () => ({ marked: 0 })));
+vi.mock("../he-call-results.service.js", () => ({ markExportedForCalling: markExported }));
+vi.mock("../he-call-ref.service.js", () => ({
+  refsForMatches: vi.fn(async (ids: string[]) => new Map(ids.map((id, i) => [id, `HRMS-${String(90 + i).padStart(3, "0")}`]))),
+  existingRef: vi.fn(async () => null),
+}));
 
 import { readSwitches } from "../qualified-followup.policy.js";
 import { mapHeaders } from "../he-bulk-call.js";
@@ -378,5 +384,38 @@ describe("slots: one batch per IST slot and tag", () => {
     world({ rows: [dbRow(1, { files_n: 1, last_file_at: "2026-09-01 10:00:00" })], params: [{ param_key: "policy.callfile_cool_days", value: "20.0000" }] });
     expect(await runCallFileBatch(readSwitches(liveEnv), "live", now)).toMatchObject({ status: "sent", rows: 1 });
     expect(String(send.mock.calls[0][0].attachments[0].content)).toMatch(/,2,P1\r\n/);
+  });
+});
+
+describe("unified call file (Task 10)", () => {
+  beforeEach(() => markExported.mockClear());
+  it("file row carries the HRMS match reference of a booked journey; older rows keep QF-", async () => {
+    world({ rows: [dbRow(0, { match_id: "M1" }), dbRow(1)] });
+    await runCallFileBatch(readSwitches(liveEnv), "live", now, { slotKey: "2026-10-07 10:00" });
+    const csv = (send.mock.calls[0][0].attachments as Array<{ filename: string; content: Buffer }>).find((a) => a.filename.endsWith(".csv"))!.content.toString("utf8");
+    expect(csv).toContain(",HRMS-090,");
+    expect(csv).toContain(",QF-ID1,");
+  });
+  it("a sent batch records exported_for_calling for its people, so HR's manual Prepare skips them for 18 h", async () => {
+    world({ rows: [dbRow(0), dbRow(1)] });
+    await runCallFileBatch(readSwitches(liveEnv), "live", now, { slotKey: "2026-10-07 10:00" });
+    expect(markExported).toHaveBeenCalledWith(["9876543210", "9876543211"], expect.objectContaining({ userId: null, label: "follow-up batch 2026-10-07 10:00" }));
+  });
+  it("dry_run and test batches record no export", async () => {
+    world({ rows: [dbRow(0)] });
+    await runCallFileBatch(readSwitches({ QUAL_FOLLOWUP_MODE: "dry_run" } as NodeJS.ProcessEnv), "dry_run", now, { slotKey: "2026-10-07 10:00" });
+    expect(markExported).not.toHaveBeenCalled();
+  });
+  it("selects HR's manual exports of the last 18 h (not our own batches) and the booking's slot", async () => {
+    world({ rows: [] });
+    await runCallFileBatch(readSwitches(liveEnv), "live", now, { slotKey: "2026-10-07 12:00" });
+    const sel = calls(new RegExp(SELECT_MARK))[0][0] as string;
+    expect(sel).toContain("ev.event_type = 'exported_for_calling' AND ev.created_at > DATE_SUB(NOW(), INTERVAL 18 HOUR) AND COALESCE(ev.detail, '') NOT LIKE 'follow-up batch%'");
+    expect(sel).toContain("LEFT JOIN he_match hb ON hb.id = qf.match_id");
+  });
+  it("a manually exported person is skipped already_exported", async () => {
+    world({ rows: [dbRow(0, { exported_recently: 1 })] });
+    const r = await runCallFileBatch(readSwitches(liveEnv), "live", now, { slotKey: "2026-10-07 14:00" });
+    expect(r.summary?.skipped).toEqual({ already_exported: 1 });
   });
 });

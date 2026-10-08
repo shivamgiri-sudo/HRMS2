@@ -23,6 +23,8 @@ import type { CallFileResult } from "./qualified-followup.context.js";
 import type { FollowupSwitches, RowTag } from "./qualified-followup.policy.js";
 import { followupRef, OUTCOME_UNKNOWN_ERROR } from "./qualified-followup.rules.js";
 import type { SourceType } from "./qualified-followup.types.js";
+import { existingRef, refsForMatches } from "./he-call-ref.service.js";
+import { markExportedForCalling } from "./he-call-results.service.js";
 
 const SELECT_CAP = 5000;
 const STALE_MIN = 30;
@@ -168,8 +170,10 @@ function selectSql(paused: number): string {
               (SELECT jr.requisition_code FROM job_requisition jr WHERE jr.id = qf.requisition_id ${C} LIMIT 1) AS requisition_code,
               (SELECT mc.campaign_name FROM meta_campaign mc WHERE mc.id = qf.campaign_id ${C} LIMIT 1) AS campaign_name,
               (SELECT bm.address FROM branch_master bm WHERE bm.branch_name ${C} = qf.branch_name ${C} AND bm.active_status = 1 LIMIT 1) AS address,
-              CASE WHEN qf.source_type = 'he' THEN DATE_FORMAT(hm.slot_at, '%Y-%m-%d') ELSE mr.interview_date END AS slot_date,
-              CASE WHEN qf.source_type = 'he' THEN DATE_FORMAT(hm.slot_at, '%H:%i') ELSE mr.interview_time END AS slot_time,
+              CASE WHEN hb.id IS NOT NULL THEN DATE_FORMAT(hb.slot_at, '%Y-%m-%d') WHEN qf.source_type = 'he' THEN DATE_FORMAT(hm.slot_at, '%Y-%m-%d') ELSE mr.interview_date END AS slot_date,
+              CASE WHEN hb.id IS NOT NULL THEN DATE_FORMAT(hb.slot_at, '%H:%i') WHEN qf.source_type = 'he' THEN DATE_FORMAT(hm.slot_at, '%H:%i') ELSE mr.interview_time END AS slot_time,
+              qf.match_id,
+              EXISTS (SELECT 1 FROM he_lead_event ev WHERE ev.lead_id = hl.id AND ev.event_type = 'exported_for_calling' AND ev.created_at > DATE_SUB(NOW(), INTERVAL 18 HOUR) AND COALESCE(ev.detail, '') NOT LIKE 'follow-up batch%') AS exported_recently,
               mr.voice_call_outcome AS meta_outcome, hl.status AS lead_status,
               (EXISTS (SELECT 1 FROM he_consent k WHERE k.lead_id = hl.id AND k.consent_type = 'whatsapp_contact' AND k.revoked_at IS NOT NULL)
                  AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = hl.id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NULL)) AS consent_revoked,
@@ -186,6 +190,7 @@ function selectSql(paused: number): string {
          FROM qualified_followup qf
          LEFT JOIN meta_lead_raw mr ON mr.id ${C} = qf.meta_lead_id ${C}
          LEFT JOIN he_match hm ON hm.lead_id ${C} = qf.he_lead_id ${C} AND hm.drive_id ${C} = qf.drive_id ${C}
+         LEFT JOIN he_match hb ON hb.id = qf.match_id ${C}
          LEFT JOIN he_lead hl ON hl.mobile10 = qf.mobile10 ${C}
         WHERE qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = ? AND qf.owner = 'pipeline'
           ${paused ? `AND qf.source_type NOT IN (${Array.from({ length: paused }, () => "?").join(",")})` : ""}
@@ -204,6 +209,7 @@ function toCandidate(r: RowDataPacket): CallFileCandidate {
     matchStates: String(r.match_states ?? "").split(",").filter(Boolean), rowDeclined: n(r.row_declined) === 1,
     callsN: n(r.calls_n), callsAnswered: n(r.calls_answered), callsRetryable: n(r.calls_retryable), lastCallAt: str(r.last_call_at),
     metaOutcome: r.meta_outcome ? String(r.meta_outcome).trim() || null : null, filesN: n(r.files_n), lastFileAt: str(r.last_file_at),
+    exportedRecently: n(r.exported_recently) === 1, matchId: str(r.match_id),
   };
 }
 
@@ -219,11 +225,21 @@ async function offerRowsFor(mobiles: string[], tag: RowTag): Promise<Map<string,
   return out;
 }
 
-function toFileRow(p: PlannedRow): CallFileRow {
+/** The reference a booked journey's call carries is its match's HRMS reference (so file results and Superbot resolve the booking). */
+async function referencesFor(plan: CallFilePlan, write: boolean): Promise<Map<string, string>> {
+  const ids = plan.rows.map((r) => r.best.matchId).filter((x): x is string => !!x);
+  if (!ids.length) return new Map();
+  if (write) return refsForMatches(ids);
+  const out = new Map<string, string>();
+  for (const id of ids) { const r = await existingRef(id); if (r) out.set(id, r); }
+  return out;
+}
+
+function toFileRow(p: PlannedRow, refs: ReadonlyMap<string, string>): CallFileRow {
   const b = p.best;
   return {
     mobile10: b.mobile10, name: displayFirstName(b.fullName), role: String(b.roleName ?? ""), interviewDate: p.interviewDate, interviewTime: p.interviewTime,
-    branchAddress: b.branchAddress, referenceId: followupRef(b.id), requisitionCode: b.requisitionCode, otherRequisitions: p.otherRequisitionCodes,
+    branchAddress: b.branchAddress, referenceId: (b.matchId ? refs.get(b.matchId) : undefined) ?? followupRef(b.id), requisitionCode: b.requisitionCode, otherRequisitions: p.otherRequisitionCodes,
     branch: b.branchName, driveType: callFileDriveType(b), campaign: b.campaign, qualifiedAt: b.qualifiedAt || null,
     emailStatus: b.emailStatus, emailSentAt: b.emailSentAt, waStatus: b.waStatus, waSentAt: b.waSentAt, attempt: p.attempt, priority: p.priority,
   };
@@ -341,7 +357,8 @@ export async function runCallFileBatch(
       return { status: "empty", ...(batchId ? { batchId } : {}), rows: 0, files: 0, summary };
     }
 
-    const rows = plan.rows.map(toFileRow);
+    const refs = await referencesFor(plan, tag !== "dry_run");
+    const rows = plan.rows.map((p) => toFileRow(p, refs));
     const files = await buildCallFiles(rows, { stamp: when.replace(/[-:]/g, "").replace(" ", "-"), testPhone: tag === "test" ? s.testPhone : null });
     const summary = summarise(plan, files.length);
 
@@ -361,6 +378,14 @@ export async function runCallFileBatch(
     });
     // The mail is out: from here the rows must stay stamped whatever happens to the bookkeeping.
     await recordSent(batchId as string, rows.length);
+    // The same export record HR's manual Prepare writes and reads (18 h), so the two never put one person in two files. Test files went
+    // to the owner's number: nothing is recorded about the people.
+    if (tag !== "test") {
+      const slots: Record<string, string> = {};
+      for (const r of rows) if (r.interviewDate && r.interviewTime) slots[r.mobile10] = `${r.interviewDate} ${r.interviewTime}:00`;
+      await markExportedForCalling(rows.map((r) => r.mobile10), { userId: null, label: `follow-up batch ${o.slotKey ?? when}`, slots })
+        .catch((err: unknown) => logger.warn({ batchId, err: errText(err) }, "[qualified-followup] calling file sent; export record failed"));
+    }
     return { status: "sent", batchId: batchId as string, rows: rows.length, files: files.length, summary };
   } catch (err) {
     const msg = errText(err);

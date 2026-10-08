@@ -41,22 +41,28 @@ describe("send window", () => {
     expect(withinSendWindow(ist("2026-10-07T19:59:00"))).toBe(true);
     expect(withinSendWindow(ist("2026-10-07T20:00:00"))).toBe(false);
   });
+  it("is closed all Sunday (D3)", () => {
+    expect(withinSendWindow(ist("2026-10-11T12:00:00"))).toBe(false);
+    expect(withinSendWindow(ist("2026-10-10T19:59:00"))).toBe(true);
+  });
   it("holdToWindow", () => {
     expect(holdToWindow(ist("2026-10-07T23:30:00")).getTime()).toBe(ist("2026-10-08T09:00:00").getTime());
     expect(holdToWindow(ist("2026-10-07T08:59:00")).getTime()).toBe(ist("2026-10-07T09:00:00").getTime());
     expect(holdToWindow(ist("2026-10-07T12:00:00")).getTime()).toBe(ist("2026-10-07T12:00:00").getTime());
     expect(holdToWindow(ist("2026-10-07T20:00:00")).getTime()).toBe(ist("2026-10-08T09:00:00").getTime());
+    expect(holdToWindow(ist("2026-10-10T20:00:00")).getTime()).toBe(ist("2026-10-12T09:00:00").getTime());
+    expect(holdToWindow(ist("2026-10-11T12:00:00")).getTime()).toBe(ist("2026-10-12T09:00:00").getTime());
   });
 });
 
 describe("dueTimes", () => {
-  it("holds WhatsApp to the window but never email", () => {
-    const a = dueTimes({ qualifiedAt: ist("2026-10-07T23:30:00"), hasEmail: true });
-    expect(a.emailDueAt?.getTime()).toBe(ist("2026-10-07T23:30:00").getTime());
-    expect(a.waDueAt.getTime()).toBe(ist("2026-10-08T09:00:00").getTime());
-    expect(dueTimes({ qualifiedAt: ist("2026-10-07T10:00:00"), hasEmail: true }).waDueAt.getTime()).toBe(ist("2026-10-07T11:00:00").getTime());
-    expect(dueTimes({ qualifiedAt: ist("2026-10-07T19:30:00"), hasEmail: true }).waDueAt.getTime()).toBe(ist("2026-10-08T09:00:00").getTime());
-    const n = dueTimes({ qualifiedAt: ist("2026-10-07T10:00:00"), hasEmail: false });
+  it("holds email and WhatsApp to the window (D3), WhatsApp one gap after the email", () => {
+    const a = dueTimes({ enrolledAt: ist("2026-10-07T23:30:00"), hasEmail: true });
+    expect(a.emailDueAt?.getTime()).toBe(ist("2026-10-08T09:00:00").getTime());
+    expect(a.waDueAt.getTime()).toBe(ist("2026-10-08T10:00:00").getTime());
+    expect(dueTimes({ enrolledAt: ist("2026-10-07T10:00:00"), hasEmail: true }).waDueAt.getTime()).toBe(ist("2026-10-07T11:00:00").getTime());
+    expect(dueTimes({ enrolledAt: ist("2026-10-07T19:30:00"), hasEmail: true }).waDueAt.getTime()).toBe(ist("2026-10-08T09:00:00").getTime());
+    const n = dueTimes({ enrolledAt: ist("2026-10-07T10:00:00"), hasEmail: false });
     expect(n.emailDueAt).toBeNull();
     expect(n.waDueAt.getTime()).toBe(ist("2026-10-07T10:00:00").getTime());
   });

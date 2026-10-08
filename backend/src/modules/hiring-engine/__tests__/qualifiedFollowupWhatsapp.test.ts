@@ -90,13 +90,22 @@ describe("runWhatsappStep", () => {
     expect(String(calls(/SET wa_status = 'sending'/)[0][0])).toContain("wa_sent_at IS NULL");
   });
 
-  it("meta_old without a BMI link sends T8 with the next working day and records missing_details", async () => {
+  it("meta_old without a BMI link but with a slot sends T1 with the assessment given at the branch (one template meaning)", async () => {
     world({ row: { source_type: "meta_old" }, bmi: null });
+    await runWhatsappStep(readSwitches(liveEnv), "live", now, 100);
+    const o = sendTpl.mock.calls[0][0];
+    expect(o.key).toBe("he_walkin_invite");
+    expect(o.extra.assessment_link).toBe("given at the branch");
+    expect(finalUpdate()[1]).not.toContain("bmi_link");
+  });
+
+  it("no branch address sends T8 with the next working day and records missing_details", async () => {
+    world({ row: { source_type: "meta_old" }, address: null });
     await runWhatsappStep(readSwitches(liveEnv), "live", now, 100);
     const o = sendTpl.mock.calls[0][0];
     expect(o.key).toBe("he_winback");
     expect(o.extra.drive_date).toBe("Thu 8 Oct 2026");
-    expect(finalUpdate()[1]).toContain("bmi_link");
+    expect(finalUpdate()[1]).toContain("branch_address");
   });
 
   it("opted_out from the sender blocks with the reason", async () => {
