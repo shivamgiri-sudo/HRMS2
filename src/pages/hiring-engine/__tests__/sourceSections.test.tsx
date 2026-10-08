@@ -140,7 +140,7 @@ describe("sourceSectionModel", () => {
     expect(html).not.toContain("Joined");
     expect(html).not.toContain(">9<");
     expect(html).toContain(MAPPING_NOTE);
-    expect(MAPPING_NOTE).toContain("counted from the requisition, not credited to a drive");
+    expect(MAPPING_NOTE).toBe("Leads and Qualified are all-time form fills of each campaign; they are not credited to a drive.");
     expect(html).toContain('<th scope="col" class="px-2 py-1 font-semibold">Qualified</th>');
   });
   it("campaign mapping lists campaigns with leads, biggest first, and counts the unlinked", () => {

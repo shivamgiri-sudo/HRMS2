@@ -91,7 +91,7 @@ export function zeroNotes(a: DriveAnalytics, type: SourceType, f: Filters, now: 
 // No Joined column: the endpoint's joined comes from the requisition's onboarding records with no drive or arrival rule, so it would
 // contradict the drive-credited Selected / Joined tiles above.
 export const MAPPING_COLUMNS = ["Campaign", "Requisition", "Branch", "Status", "Leads", "Qualified"] as const;
-export const MAPPING_NOTE = "Leads and Qualified are all-time form fills of each campaign, counted from the requisition, not credited to a drive and not limited to the date range above.";
+export const MAPPING_NOTE = "Leads and Qualified are all-time form fills of each campaign; they are not credited to a drive.";
 export interface CampaignRecruitmentRow { campaignId: string; campaignName: string; status: string; requisitionCode: string | null; branchName: string | null; leads: number; qualified: number; joined?: number }
 export interface CampaignMappingRow { id: string; name: string; requisition: string; branch: string; status: string; leads: string; qualified: string }
 export interface CampaignMappingView { rows: CampaignMappingRow[]; unmapped: number; total: number; empty: boolean }
