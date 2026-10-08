@@ -54,3 +54,17 @@ describe("approval routes", () => {
     expect((await request(a).post("/api/he/shortlist/reject").send({ requisitionId: "r1", mobiles: [] })).status).toBe(400);
   });
 });
+
+describe("after a criteria change", () => {
+  it("release-held needs a follow-up id; booked-mismatch needs a requisition", async () => {
+    const a = await app();
+    expect((await request(a).post("/api/he/shortlist/release-held").send({})).status).toBe(400);
+    expect((await request(a).get("/api/he/shortlist/booked-mismatch")).status).toBe(400);
+  });
+  it.each(["recruiter", "ceo"])("%s cannot release a hold or read the list (403)", async (role) => {
+    h.user.role = role;
+    const a = await app();
+    expect((await request(a).post("/api/he/shortlist/release-held").send({ followupId: "x", reason: "y" })).status).toBe(403);
+    expect((await request(a).get("/api/he/shortlist/booked-mismatch?requisitionId=r1")).status).toBe(403);
+  });
+});

@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.js";
 import type { RowTag } from "./qualified-followup.policy.js";
+import { followupGuardOn } from "../selection/selection-switches.js";
 import { decideStop, nextStepDue, OUTCOME_UNKNOWN_ERROR, SENDING_STALE_MIN, type StopReason } from "./qualified-followup.rules.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
@@ -40,9 +41,10 @@ export async function runStopChecks(tag: RowTag, limit = 500): Promise<{ checked
   // Page until a short page comes back so every open row is reached however many there are.
   for (let page = 0; page < MAX_PAGES; page++) {
     const [rows] = await db.execute<RowDataPacket[]>(factsSql(limit, lastId !== null), lastId === null ? [tag] : [tag, lastId]);
+    const criteria = followupGuardOn() ? await criteriaFacts(rows.map((r) => String(r.id))) : null;
     for (const r of rows) {
       try {
-        const reason = decideRow(r);
+        const reason = decideRow(r, criteria?.get(String(r.id)));
         if (!reason) continue;
         await db.execute(
           "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
@@ -61,7 +63,27 @@ export async function runStopChecks(tag: RowTag, limit = 500): Promise<{ checked
   return { checked, stopped };
 }
 
-function decideRow(r: RowDataPacket): StopReason | null {
+/**
+ * Selection criteria S14 (only with SELECTION_FOLLOWUP_GUARD): the rows' criteria verdicts and whether each person is booked for a
+ * walk-in of the same requisition. A separate read, so the pinned facts statement is unchanged; any failure (e.g. before migration
+ * 2145) means no criteria facts, i.e. today's behaviour.
+ */
+async function criteriaFacts(ids: string[]): Promise<Map<string, { verdict: string | null; booked: boolean }> | null> {
+  if (!ids.length) return null;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT qf.id, qf.criteria_verdict,
+              EXISTS (SELECT 1 FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE l.mobile10 = qf.mobile10 ${C} AND m.requisition_id = qf.requisition_id ${C}
+                       AND m.state IN ('invited','confirmed') AND m.slot_at >= NOW()) AS booked
+         FROM qualified_followup qf WHERE qf.id IN (${ids.map(() => "?").join(",")}) AND qf.criteria_verdict IN ('fail','review')`, ids);
+    return new Map(rows.map((r) => [String(r.id), { verdict: r.criteria_verdict ?? null, booked: Number(r.booked) === 1 }]));
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, "[qualified-followup] criteria facts not read; criteria guard skipped this page");
+    return null;
+  }
+}
+
+function decideRow(r: RowDataPacket, criteria?: { verdict: string | null; booked: boolean }): StopReason | null {
   const stage = String(r.ats_stage ?? "").toLowerCase();
   return decideStop({
     optedOut: r.lead_status === "opted_out" || Number(r.consent_revoked) === 1,
@@ -76,6 +98,7 @@ function decideRow(r: RowDataPacket): StopReason | null {
     joined: r.lead_status === "joined" || stage === "joined" || stage === "payroll_validated",
     hasMobile: /^[6-9][0-9]{9}$/.test(String(r.mobile10 ?? "")),
     hasEmail: !!String(r.email ?? "").trim(),
+    ...(criteria ? { criteria } : {}),
   });
 }
 

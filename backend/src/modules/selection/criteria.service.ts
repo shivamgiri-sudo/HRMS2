@@ -11,6 +11,7 @@ import {
   bindColumn, CRITERIA_COLUMNS, diffColumns, loadDbRow, PATCH_TO_COLUMN, snapshotColumns, toCriteriaRow, type CriteriaColumn,
 } from "./criteria-row.js";
 import { parseSelectionRules } from "./selection-rules.schema.js";
+import { followupGuardOn } from "./selection-switches.js";
 import type { CompiledCriteria, RuleKey, SelectionRules } from "./selection-types.js";
 import { applyTemplate, CONFIG_RULE, COLUMN_RULE, type CriteriaPatch } from "./templates.js";
 
@@ -53,6 +54,8 @@ export function applyPatch(r: RequisitionCriteriaRow, patch: CriteriaPatch): Req
 }
 
 async function versionWrite(ex: Exec, a: { row: RequisitionCriteriaRow; compiled: CompiledCriteria; before: Partial<Record<CriteriaColumn, unknown>> | null; actor: Actor | null; source: string; reason: string | null }) {
+  const [prev] = await ex("SELECT id, version_no, criteria_hash, columns_json FROM job_requisition_criteria_version WHERE requisition_id = ? ORDER BY version_no DESC LIMIT 1", [a.row.id]);
+  const hashChanged = (prev as RowDataPacket[])[0]?.criteria_hash !== a.compiled.hash;
   const [m] = await ex("SELECT COALESCE(MAX(version_no), 0) AS n FROM job_requisition_criteria_version WHERE requisition_id = ? FOR UPDATE", [a.row.id]);
   const versionNo = Number((m as RowDataPacket[])[0]?.n ?? 0) + 1;
   const id = randomUUID();
@@ -67,7 +70,18 @@ async function versionWrite(ex: Exec, a: { row: RequisitionCriteriaRow; compiled
     await ex(`INSERT INTO job_requisition_criteria_audit (requisition_id, version_id, field, old_json, new_json, actor_id, actor_role, source, reason, approval_status_at_change)
      VALUES ${diff.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}`, params);
   }
-  return { id, versionNo };
+  return { id, versionNo, hashChanged };
+}
+
+/**
+ * S14: a version whose compiled criteria differ re-checks the requisition's enrolled people (only with SELECTION_FOLLOWUP_GUARD).
+ * Never for the boot backfill, and never in legacy mode: until HR saves selection rules the criteria are today's screeners, which
+ * already admitted these people (legacy drive rules send unknowns to review, which would hold people for no new reason).
+ */
+function afterVersion(requisitionId: string, v: { id: string; hashChanged: boolean }, compiled: CompiledCriteria, source: string): void {
+  if (!v.hashChanged || compiled.legacy || source === "backfill" || !followupGuardOn()) return;
+  void import("./reevaluate.service.js").then((m) => m.queueReevaluation(requisitionId, v.id))
+    .catch((e) => logger.warn({ requisitionId, err: String((e as Error).message).slice(0, 200) }, "[criteria] re-check not queued"));
 }
 
 async function liveMeta(ex: Exec, id: string): Promise<boolean> {
@@ -108,6 +122,7 @@ export async function saveRequisitionCriteria(a: { requisitionId: string; patch:
       [...changed.map((c) => bindColumn(c, snapshotColumns(next)[c])), row.id]);
     const v = await versionWrite(ex, { row: next, compiled, before, actor: a.actor, source: a.source, reason: a.reason });
     await conn.commit();
+    afterVersion(row.id, v, compiled, a.source);
     return { versionId: v.id, versionNo: v.versionNo, changed, diff, issues, compiled };
   } catch (e) {
     await conn.rollback().catch(() => {});
@@ -133,6 +148,7 @@ export async function recordCriteriaVersion(requisitionId: string, actorId: stri
     const before = latest ? (typeof latest.columns_json === "string" ? JSON.parse(latest.columns_json) : latest.columns_json) : null;
     const v = await versionWrite(ex, { row, compiled, before, actor: actorId ? { id: actorId, role: "" } : null, source, reason });
     await conn.commit();
+    afterVersion(requisitionId, v, compiled, source);
     return v.id;
   } catch (e) {
     await conn.rollback().catch(() => {});

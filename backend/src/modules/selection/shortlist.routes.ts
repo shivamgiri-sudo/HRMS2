@@ -9,6 +9,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
 import { APPROVAL_ROLES, approveBatch, approveStanding, createShortlistRun, enrolApproved, rejectPeople, revokeStanding } from "./approval.service.js";
 import { currentFollowupPort } from "./enrolment-port.js";
+import { bookedMismatch, releaseCriteriaHold } from "./reevaluate.service.js";
 import { OVERRIDE_ROLES, overrideHistory, removeOverride, setOverride, type OverrideActor } from "./override.service.js";
 import { SOURCE_KINDS, type SourceKind } from "./selection-types.js";
 
@@ -83,4 +84,16 @@ shortlistRouter.post("/enrol", requireAuth, requireRole(...APPROVAL_ROLES), hand
   if (!str(req.body?.requisitionId) || !k) return bad(res, "requisitionId and sourceKind are required");
   if (!(await jobRequisitionService.isRequisitionVisible(req.authUser!, { id: str(req.body.requisitionId) }))) return res.status(404).json({ success: false, message: "Requisition not found" });
   return res.json({ success: true, data: await enrolApproved({ requisitionId: str(req.body.requisitionId), sourceKind: k, port: currentFollowupPort }) });
+}));
+
+// ── After a criteria change (S14) ──
+shortlistRouter.post("/release-held", requireAuth, requireRole(...APPROVAL_ROLES), handle(async (req, res) => {
+  const b = req.body ?? {};
+  if (!str(b.followupId)) return bad(res, "followupId and a reason are required");
+  return res.json({ success: true, data: { released: await releaseCriteriaHold({ followupId: b.followupId, reason: str(b.reason), actor: actorOf(req) }) } });
+}));
+
+shortlistRouter.get("/booked-mismatch", requireAuth, requireRole(...OVERRIDE_ROLES), handle(async (req, res) => {
+  if (!str(req.query.requisitionId)) return bad(res, "requisitionId is required");
+  return res.json({ success: true, data: await bookedMismatch({ requisitionId: str(req.query.requisitionId), actor: actorOf(req) }) });
 }));

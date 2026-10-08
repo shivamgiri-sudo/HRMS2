@@ -4,7 +4,8 @@ import type { SourceType } from "./qualified-followup.types.js";
 const IST_MS = 5.5 * 3600_000;
 const DAY_MS = 86_400_000;
 
-export type StopReason = "opted_out" | "replied" | "requisition_closed" | "joined" | "no_contact_details";
+/** criteria_failed / criteria_review: selection criteria S14 (only with SELECTION_FOLLOWUP_GUARD); criteria_review is a hold HR can release. */
+export type StopReason = "opted_out" | "replied" | "requisition_closed" | "joined" | "no_contact_details" | "criteria_failed" | "criteria_review";
 export interface StopFacts {
   optedOut: boolean;
   repliedSinceQualified: boolean;
@@ -12,6 +13,8 @@ export interface StopFacts {
   joined: boolean;
   hasMobile: boolean;
   hasEmail: boolean;
+  /** The person's verdict against the requisition's current criteria, and whether they are booked for a walk-in (stage B). Absent = no criteria fact. */
+  criteria?: { verdict: "pass" | "fail" | "review" | string | null; booked: boolean };
 }
 
 export function decideStop(f: StopFacts): StopReason | null {
@@ -20,6 +23,11 @@ export function decideStop(f: StopFacts): StopReason | null {
   if (f.requisitionClosed) return "requisition_closed";
   if (f.joined) return "joined";
   if (!f.hasMobile && !f.hasEmail) return "no_contact_details";
+  // stage A only: a booked person keeps their date and reminders; HR sees them in the booked-mismatch list
+  if (f.criteria && !f.criteria.booked) {
+    if (f.criteria.verdict === "fail") return "criteria_failed";
+    if (f.criteria.verdict === "review") return "criteria_review";
+  }
   return null;
 }
 

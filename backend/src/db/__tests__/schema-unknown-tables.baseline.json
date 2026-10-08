@@ -262,5 +262,8 @@
     "shortlist_approval",
     "shortlist_candidate",
     "shortlist_run"
+  ],
+  "modules/selection/reevaluate.service.ts": [
+    "qualified_followup"
   ]
 }

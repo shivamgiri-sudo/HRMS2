@@ -49,7 +49,10 @@ const h = vi.hoisted(() => {
 });
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn(h.exec), getConnection: vi.fn(async () => h.conn) } }));
 vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
+const queue = vi.hoisted(() => vi.fn());
+vi.mock("../reevaluate.service.js", () => ({ queueReevaluation: queue }));
 
+import { afterEach } from "vitest";
 import { backfillCriteriaVersions, bulkSaveCriteria, copyCriteria, recordCriteriaVersion, saveRequisitionCriteria } from "../criteria.service.js";
 
 const row = (o: Record<string, unknown> = {}) => ({
@@ -185,5 +188,27 @@ describe("backfill", () => {
     expect(h.state.versions.map((v) => [v.requisition_id, v.source])).toEqual([["r1", "backfill"], ["r2", "backfill"]]);
     expect(await backfillCriteriaVersions()).toBe(0);
     expect(h.state.versions).toHaveLength(2);
+  });
+});
+
+describe("S14 re-check trigger", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  it("guard on + HR's own criteria changed -> the enrolled people are re-checked against the new version", async () => {
+    vi.stubEnv("SELECTION_FOLLOWUP_GUARD", "1");
+    h.state.reqs.set("r1", row({ meta_target_age_min: 18, selection_rules: { schema: 1, rules: { age: { mode: "must" } } } }));
+    const r = await saveRequisitionCriteria({ requisitionId: "r1", patch: { ageMin: 21 }, actor, source: "criteria_panel", reason: "x" });
+    await flush();
+    expect(queue).toHaveBeenCalledWith("r1", r.versionId);
+  });
+  it("never in legacy mode, never for the backfill, never with the guard off", async () => {
+    vi.stubEnv("SELECTION_FOLLOWUP_GUARD", "1");
+    await saveRequisitionCriteria({ requisitionId: "r1", patch: { ageMin: 21 }, actor, source: "criteria_panel", reason: "x" }); // legacy row
+    await backfillCriteriaVersions();
+    vi.stubEnv("SELECTION_FOLLOWUP_GUARD", "");
+    h.state.reqs.set("r2", row({ id: "r2", selection_rules: { schema: 1, rules: { age: { mode: "must" } } }, meta_target_age_min: 18 }));
+    await saveRequisitionCriteria({ requisitionId: "r2", patch: { ageMin: 22 }, actor, source: "criteria_panel", reason: "x" });
+    await flush();
+    expect(queue).not.toHaveBeenCalled();
   });
 });
