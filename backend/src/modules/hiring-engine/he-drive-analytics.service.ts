@@ -12,7 +12,7 @@
  * No candidate data in the result: counts, dates, ids and labels only.
  */
 import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import { limitedDb } from "./he-read-limit.js";
 import { logger } from "../../logger.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import {
@@ -107,13 +107,30 @@ export function resolveWindow(q: Pick<AnalyticsQuery, "from" | "to">, now: Date)
   return { from, to, days };
 }
 
+/** A build never waits longer than this: a section still running at the deadline is flagged (partial, never cached) and answers its
+ *  fallback; each statement is also bounded by MAX_EXECUTION_TIME (he-read-limit.ts), so the database stops it too. */
+export const BUILD_BUDGET_MS = 12_000;
+
 // Never the driver message (it can echo SQL and values): only the section and the error code.
-async function section<T>(name: string, failed: string[], fn: () => Promise<T>, fallback: T): Promise<T> {
-  try { return await fn(); } catch (err) {
+async function section<T>(name: string, failed: string[], fn: () => Promise<T>, fallback: T, deadline?: number): Promise<T> {
+  const flag = (code: unknown): T => {
     if (!failed.includes(name)) failed.push(name);
-    logger.error({ section: name, code: (err as { code?: unknown })?.code ?? "unknown" }, "[he-drive-analytics] section failed");
+    logger.error({ section: name, code: code ?? "unknown" }, "[he-drive-analytics] section failed");
     return fallback;
-  }
+  };
+  const left = deadline === undefined ? Infinity : deadline - Date.now();
+  if (left <= 0) return flag("deadline");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const run = fn();
+    if (!Number.isFinite(left)) return await run;
+    run.catch(() => undefined); // a section that loses the race must not become an unhandled rejection
+    const late = new Promise<"late">((resolve) => { timer = setTimeout(() => resolve("late"), left); });
+    const r = await Promise.race([run, late]);
+    return r === "late" ? flag("deadline") : (r as T);
+  } catch (err) {
+    return flag((err as { code?: unknown })?.code);
+  } finally { if (timer) clearTimeout(timer); }
 }
 /** A table that is not deployed yet reads as no rows (not a failed section). */
 async function tolerant<T>(fn: () => Promise<T>, empty: T): Promise<T> {
@@ -133,7 +150,8 @@ const DRIVE_MATCH = `FROM he_drive d
 // STRAIGHT_JOIN on the three he_match readers: always drive from he_drive (window + requisition) and reach he_message / he_lead_event / he_lead by key,
 // whatever the table statistics say. Same predicates as the header of he-requisition-sources.service.ts; he_lead and ats_candidate by primary key only,
 // the ATS stage log and onboarding bridge by candidate id inside the credit rule.
-const outcomesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(streams, liveFrom)} AS source_type,
+// The window and the previous window in one statement: cur (first column, so its parameter comes first) tells them apart.
+const outcomesSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT STRAIGHT_JOIN (d.drive_date >= ?) AS cur, ${typeCol(streams, liveFrom)} AS source_type,
        COUNT(DISTINCT CASE WHEN ${FLAG_SELECTED} THEN m.id END) AS selected, COUNT(DISTINCT CASE WHEN ${FLAG_JOINED} THEN m.id END) AS joined,
        COUNT(DISTINCT CASE WHEN m.state = 'slot_released' THEN m.id END) AS slot_released
   ${DRIVE_MATCH}
@@ -141,7 +159,7 @@ const outcomesSql = (liveFrom: string) => (n: number, streams: boolean): string 
   LEFT JOIN he_lead hl ON hl.id = m.lead_id
   LEFT JOIN ats_candidate ac ON ac.id = hl.ats_candidate_id COLLATE utf8mb4_unicode_ci
  WHERE d.requisition_id IN (${ph(n)}) AND d.drive_date BETWEEN ? AND ?
- GROUP BY 1`;
+ GROUP BY 1, 2`;
 
 // Stops typed by the person rule (qfTypeSql), never qualified_followup.source_type (the pipeline's enqueue-time type).
 const stopsSql = (n: number, liveFrom: string): string => `SELECT ${qfTypeSql(liveFrom)} AS source_type, qf.stopped_reason, COUNT(*) AS n
@@ -192,22 +210,26 @@ const batchesOf = (ids: string[]): string[][] => { const out: string[][] = []; f
 const runBatched = async (ids: string[], sqlOf: (n: number, streams: boolean) => string, params: (b: string[]) => unknown[]): Promise<RowDataPacket[]> =>
   (await Promise.all(batchesOf(ids).map((b) => readAgg((st) => sqlOf(b.length, st), params(b))))).flat();
 
-const readOutcomes = async (ids: string[], from: string, to: string, liveFrom: string): Promise<{ outcomes: MatchOutcome[]; slotReleased: Record<SourceType, number> }> => {
-  const rows = await runBatched(ids, outcomesSql(liveFrom), (b) => [...b, from, to]);
+type OutcomeRead = { outcomes: MatchOutcome[]; slotReleased: Record<SourceType, number> };
+/** Outcomes of the window [from, to] and, with `prevFrom`, of the previous window [prevFrom, from) from the same statement. */
+const readOutcomes = async (ids: string[], from: string, to: string, liveFrom: string, prevFrom?: string): Promise<OutcomeRead & { previous: MatchOutcome[] }> => {
+  const rows = await runBatched(ids, outcomesSql(liveFrom), (b) => [from, ...b, prevFrom ?? from, to]);
   const slotReleased = perType(() => 0);
-  const outcomes: MatchOutcome[] = [];
+  const outcomes: MatchOutcome[] = [], previous: MatchOutcome[] = [];
   for (const r of rows) {
     const t = String(r.source_type) as SourceType;
     if (!SOURCE_TYPES.includes(t)) continue;
-    outcomes.push({ sourceType: t, selected: Number(r.selected ?? 0), joined: Number(r.joined ?? 0) });
+    const o = { sourceType: t, selected: Number(r.selected ?? 0), joined: Number(r.joined ?? 0) };
+    if (r.cur !== undefined && Number(r.cur) !== 1) { previous.push(o); continue; }
+    outcomes.push(o);
     slotReleased[t] += Number(r.slot_released ?? 0);
   }
-  return { outcomes, slotReleased };
+  return { outcomes, slotReleased, previous };
 };
 
 const readStops = async (ids: string[], dt: string[], liveFrom: string): Promise<Record<SourceType, Partial<Record<"opted_out" | "requisition_closed" | "no_contact_details", number>>>> => {
   const out = perType(() => ({}) as Partial<Record<"opted_out" | "requisition_closed" | "no_contact_details", number>>);
-  const parts = await Promise.all(batchesOf(ids).map((b) => tolerant(async () => (await db.execute<RowDataPacket[]>(stopsSql(b.length, liveFrom), [...b, ...dt]))[0], [] as RowDataPacket[])));
+  const parts = await Promise.all(batchesOf(ids).map((b) => tolerant(async () => (await limitedDb.execute<RowDataPacket[]>(stopsSql(b.length, liveFrom), [...b, ...dt]))[0], [] as RowDataPacket[])));
   for (const r of parts.flat()) {
     const t = String(r.source_type) as SourceType;
     const k = String(r.stopped_reason) as "opted_out" | "requisition_closed" | "no_contact_details";
@@ -246,7 +268,7 @@ export async function getDriveAnalytics(q: AnalyticsQuery, scope: BranchScope, n
   if (!scope.all && branchIn && branchIn !== scope.branchName) return null;
   const branch = scope.all ? branchIn : scope.branchName;
   if (requisitionId) {
-    const [h] = await db.execute<RowDataPacket[]>(HEADER_SQL, [requisitionId]);
+    const [h] = await limitedDb.execute<RowDataPacket[]>(HEADER_SQL, [requisitionId]);
     if (!h[0]) return null;
     const reqBranch = String(h[0].branch_name ?? "");
     if (!scope.all && reqBranch !== scope.branchName) return null;
@@ -254,7 +276,7 @@ export async function getDriveAnalytics(q: AnalyticsQuery, scope: BranchScope, n
   }
   if (scope.all && branchIn && !requisitionId) { // an org-wide caller naming a branch that does not exist: not found, never zeros
     let exists = true; // a failing probe must not turn into a 404
-    try { exists = ((await db.execute<RowDataPacket[]>(BRANCH_SQL, [branchIn]))[0] ?? []).length > 0; } catch (err) {
+    try { exists = ((await limitedDb.execute<RowDataPacket[]>(BRANCH_SQL, [branchIn]))[0] ?? []).length > 0; } catch (err) {
       logger.error({ section: "branch", code: (err as { code?: unknown })?.code ?? "unknown" }, "[he-drive-analytics] section failed");
     }
     if (!exists) return null;
@@ -287,20 +309,22 @@ async function build(
   w: { from: string; to: string; days: number }, requisitionId: string | null, branch: string | null, scope: BranchScope, now: Date,
 ): Promise<DriveAnalytics> {
   const failed: string[] = [];
+  const deadline = Date.now() + BUILD_BUDGET_MS;
+  const sec = <T>(name: string, fn: () => Promise<T>, fallback: T): Promise<T> => section(name, failed, fn, fallback, deadline);
   const today = istToday(now);
   const prev = { from: addDays(w.from, -w.days), to: addDays(w.from, -1) };
   const dt = bounds(w.from, w.to);
   const mode = followupMode();
 
   // requisitions (+ the streams that decide which ones qualify and which windows the drive read must cover)
-  const active = await section("streams", failed, () => tolerant(() => loadActiveStreams(), [] as StreamRow[]), [] as StreamRow[]);
+  const active = await sec("streams", () => tolerant(() => loadActiveStreams(), [] as StreamRow[]), [] as StreamRow[]);
   const overlapping = active.filter((s) => windowDays({ openFrom: s.openFrom, openDays: s.openDays, add: s.add, skip: s.skip }).some((d) => inRange(d, w.from, w.to)));
   const heads: Head[] = [];
   let truncated = false;
-  await section("requisitions", failed, async () => {
+  await sec("requisitions", async () => {
     const streamIds = overlapping.map((s) => s.id);
     const params: unknown[] = [w.from, w.to, ...streamIds, ...(requisitionId ? [requisitionId] : []), ...(branch ? [branch] : []), ...(requisitionId ? [requisitionId] : [])];
-    const [rows] = await db.execute<RowDataPacket[]>(discoverSql({ streamIds: streamIds.length, branch: !!branch, requisition: !!requisitionId }), params);
+    const [rows] = await limitedDb.execute<RowDataPacket[]>(discoverSql({ streamIds: streamIds.length, branch: !!branch, requisition: !!requisitionId }), params);
     truncated = rows.length > MAX_REQUISITIONS;
     for (const r of rows.slice(0, MAX_REQUISITIONS)) heads.push({ id: String(r.id), code: String(r.requisition_code ?? ""), role: String(r.designation_name ?? ""), branch: String(r.branch_name ?? "") });
     return null;
@@ -318,38 +342,34 @@ async function build(
 
   const none = ids.length === 0;
   const liveFrom = none ? LIVE_FROM_DEFAULT : await loadLiveFrom(); // one cutoff for every read of this build
-  const empty = { outcomes: [] as MatchOutcome[], slotReleased: perType(() => 0) };
-  const noPersons = { byType: null as Record<SourceType, PersonStageCounts> | null, campaigns: [] as CampaignProgressRow[] };
-  const [sources, driveRows, outcomeRead, stops, repliesRows, arrivalsRows, previous, persons] = await Promise.all([
-    none ? null : section("sources", failed, async () => {
-      const s = await getSourcesForRequisitions(ids, w, liveFrom);
+  // The previous window comes from the same statements as the window (persons, outcomes, follow-up stages; rows tagged by cur): its tiles
+  // only need leads .. joined, so no separate previous-window reads. Every read goes through the shared read limiter (he-read-limit.ts).
+  const noPersons = { byType: null as Record<SourceType, PersonStageCounts> | null, campaigns: [] as CampaignProgressRow[], previous: null as Record<SourceType, PersonStageCounts> | null };
+  const empty = { outcomes: [] as MatchOutcome[], slotReleased: perType(() => 0), previous: [] as MatchOutcome[] };
+  const [sources, driveRows, outcomeRead, stops, repliesRows, arrivalsRows, persons] = await Promise.all([
+    none ? null : sec("sources", async () => {
+      const s = await getSourcesForRequisitions(ids, w, liveFrom, prev);
       if (s.partial) failed.push("sources");
       return s;
     }, null as Awaited<ReturnType<typeof getSourcesForRequisitions>> | null),
-    none ? ([] as TaggedAggRow[]) : section("drives", failed, () => readDriveAggRows(ids, dFrom, dTo, liveFrom), [] as TaggedAggRow[]),
-    none ? empty : section("outcomes", failed, () => readOutcomes(ids, w.from, w.to, liveFrom), empty),
-    none ? perType(() => ({})) : section("stops", failed, () => readStops(ids, dt, liveFrom), perType(() => ({}))),
-    none ? ([] as RowDataPacket[]) : section("replies", failed, async () => (await runBatched(ids, repliesSql(liveFrom), (b) => [...dt, ...b, w.from, w.to])), [] as RowDataPacket[]),
-    none ? ([] as RowDataPacket[]) : section("arrivals", failed, async () => (await runBatched(ids, arrivalsSql(liveFrom), (b) => [...b, w.from, w.to])), [] as RowDataPacket[]),
-    none ? null : section("previous", failed, async () => {
-      const [s, rows, o, p] = await Promise.all([getSourcesForRequisitions(ids, prev, liveFrom), readDriveAggRows(ids, prev.from, prev.to, liveFrom), readOutcomes(ids, prev.from, prev.to, liveFrom),
-        readPersonStages(ids, prev, liveFrom)]);
-      if (s.partial) failed.push("previous");
-      return { sources: s, rows, outcomes: o.outcomes, persons: p.byType };
-    }, null as { sources: Awaited<ReturnType<typeof getSourcesForRequisitions>>; rows: TaggedAggRow[]; outcomes: MatchOutcome[]; persons: Record<SourceType, PersonStageCounts> } | null),
-    none ? noPersons : section("persons", failed, () => readPersonStages(ids, w, liveFrom), noPersons),
+    none ? ([] as TaggedAggRow[]) : sec("drives", () => readDriveAggRows(ids, dFrom, dTo, liveFrom), [] as TaggedAggRow[]),
+    none ? empty : sec("outcomes", () => readOutcomes(ids, w.from, w.to, liveFrom, prev.from), empty),
+    none ? perType(() => ({})) : sec("stops", () => readStops(ids, dt, liveFrom), perType(() => ({}))),
+    none ? ([] as RowDataPacket[]) : sec("replies", async () => (await runBatched(ids, repliesSql(liveFrom), (b) => [...dt, ...b, w.from, w.to])), [] as RowDataPacket[]),
+    none ? ([] as RowDataPacket[]) : sec("arrivals", async () => (await runBatched(ids, arrivalsSql(liveFrom), (b) => [...b, w.from, w.to])), [] as RowDataPacket[]),
+    none ? noPersons : sec("persons", () => readPersonStages(ids, w, liveFrom, prev), noPersons),
   ]);
+  const previous = none ? null : { stages: sources?.previousStages ?? [], outcomes: outcomeRead.previous, persons: persons.previous };
 
   const flat = (list: RequisitionSourceRows[] | undefined) => (list ?? []).flatMap((r) => r.rows);
   const inWindow = driveRows.filter((r) => inRange(r.date, w.from, w.to));
   // A failed persons read leaves leads / invited / confirmed / arrived at zero (flagged), never the state buckets in disguise.
   const zeroPersons = perType((): PersonStageCounts => ({ leads: 0, invited: 0, confirmed: 0, arrived: 0 }));
   const cur = stageCountsByType(flat(sources?.byRequisition), inWindow, outcomeRead.outcomes, none ? undefined : persons.byType ?? zeroPersons);
-  const before = previous
-    ? stageCountsByType(flat(previous.sources.byRequisition), previous.rows.filter((r) => inRange(r.date, prev.from, prev.to)), previous.outcomes, previous.persons)
-    : stageCountsByType([], [], []);
+  // noShow / declined of the previous window are not part of `previous`, so it needs no drive rows.
+  const before = previous ? stageCountsByType(previous.stages, [], previous.outcomes, previous.persons ?? zeroPersons) : stageCountsByType([], [], []);
   const campaigns = persons.campaigns.length
-    ? await section("campaigns", failed, () => campaignProgress(persons.campaigns, new Map(heads.map((h) => [h.id, { code: h.code, branch: h.branch }])), scope.all), [] as CampaignProgress[])
+    ? await sec("campaigns", () => campaignProgress(persons.campaigns, new Map(heads.map((h) => [h.id, { code: h.code, branch: h.branch }])), scope.all), [] as CampaignProgress[])
     : [];
   const daily = dailySeries(inWindow, w.from, w.to);
   const replies = timingGrids(toCells(repliesRows));
@@ -391,12 +411,12 @@ async function build(
 
   // reasons: recorded no-show and decline reasons per type; its own statement only while HE_OUTCOME_REASONS is on (a missing table counts zero)
   let reasons: Awaited<ReturnType<typeof outcomeReasonCounts>> | null = null;
-  if (!none && valueAddOn("outcome_reasons")) reasons = await section("reasons", failed, () => outcomeReasonCounts(ids, w.from, w.to, liveFrom), null);
+  if (!none && valueAddOn("outcome_reasons")) reasons = await sec("reasons", () => outcomeReasonCounts(ids, w.from, w.to, liveFrom), null);
 
   // insights: thresholds once per call, facts (own sections), then the pure rules; any throw leaves the response without insights
   let insights: DriveInsight[] = [];
   if (!none) {
-    insights = await section("insights", failed, async () => {
+    insights = await sec("insights", async () => {
       const t = await loadInsightThresholds();
       const { facts, failedSections: factFailed } = await collectInsightFacts({
         requisitionIds: ids, from: w.from, to: w.to, today, windowDays: w.days, liveFrom,
@@ -411,7 +431,7 @@ async function build(
   // cost per source: its own statements only while HE_COST_PER_SOURCE is on; a failed section counts 0 and flags the result as partial
   let cost: DriveAnalytics["cost"] = { available: false, note: "Cost per source arrives with Plan 5" };
   if (!none && valueAddOn("cost_per_source")) {
-    cost = await section<DriveAnalytics["cost"]>("cost", failed, async () => {
+    cost = await sec<DriveAnalytics["cost"]>("cost", async () => {
       const c = await readCostUsage(ids, w, liveFrom);
       for (const f of c.failedSections) if (!failed.includes(f)) failed.push(f);
       return costBlock(c.usage, c.rates, perType((t) => stageOnly(cur[t])));

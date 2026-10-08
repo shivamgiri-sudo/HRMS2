@@ -14,7 +14,7 @@ vi.mock("../qualified-followup.schedule.js", () => ({ followupMode: mode }));
 vi.mock("../he-drive-insight-facts.service.js", () => ({ collectInsightFacts: async () => ({ facts: { today: "2026-10-14", windowDays: 14 }, failedSections: [] }) }));
 vi.mock("../he-insight-params.service.js", async () => ({ loadInsightThresholds: async () => ({ ...(await import("../he-drive-insights.js")).INSIGHT_DEFAULTS }) }));
 
-import { clearDriveAnalyticsCache, getDriveAnalytics, resolveWindow, type DriveAnalytics } from "../he-drive-analytics.service.js";
+import { BUILD_BUDGET_MS, clearDriveAnalyticsCache, driveAnalyticsCacheSize, getDriveAnalytics, resolveWindow, type DriveAnalytics } from "../he-drive-analytics.service.js";
 import { getDriveTrend } from "../he-drive-trend.service.js";
 import { driveCreditSql } from "../he-drive-credit.js";
 import { stripRule } from "./attributionSql.js";
@@ -141,7 +141,10 @@ describe("getDriveAnalytics", () => {
     expect(drives).toContain("2026-10-14");
     expect(callsOf("arrivals")[0][1]).toEqual(["r1", "2026-10-01", "2026-10-14"]);
     expect(callsOf("stops")[0][1]).toEqual(["r1", "2026-10-01 00:00:00", "2026-10-15 00:00:00"]);
-    expect(callsOf("outcomes")).toHaveLength(2); // window and previous window
+    // one statement for the window and the previous window (cur, the first column, tells them apart)
+    expect(callsOf("outcomes")).toHaveLength(1);
+    expect(callsOf("outcomes")[0][1]).toEqual(["2026-10-01", "r1", "2026-09-17", "2026-10-14"]);
+    expect(callsOf("outcomes")[0][0]).toContain("STRAIGHT_JOIN (d.drive_date >= ?) AS cur,");
   });
 
   it("counts selected / joined per drive only for people who arrived and were selected or joined on or after its drive date", async () => {
@@ -231,7 +234,7 @@ describe("getDriveAnalytics", () => {
       impl.persons = [personRow("he", 20, 15, 10, 6)];
       impl.fail = { outcomes: "ER_BAD_FIELD_ERROR" };
       const r = ok(await getDriveAnalytics(Q, ALL, NOW));
-      expect(r).toMatchObject({ partial: true, failedSections: ["outcomes", "previous"] }); // the previous period reads outcomes too
+      expect(r).toMatchObject({ partial: true, failedSections: ["outcomes"] }); // the previous period comes from the same statement
       expect(r.types.he.stages.invited).toBe(15);
       for (const c of logError.mock.calls) expect(JSON.stringify(c)).not.toMatch(/boom|9876543210|message/);
       expect(logError).toHaveBeenCalledWith({ section: "outcomes", code: "ER_BAD_FIELD_ERROR" }, expect.any(String));
@@ -244,7 +247,7 @@ describe("getDriveAnalytics", () => {
     it("flags a partial sources slice", async () => {
       impl.discovery = [head("r1")];
       impl.sources = { byRequisition: [{ requisitionId: "r1", rows: [] }], partial: true, failedSections: ["stages"] };
-      expect(ok(await getDriveAnalytics(Q, ALL, NOW))).toMatchObject({ partial: true, failedSections: ["sources", "previous"] });
+      expect(ok(await getDriveAnalytics(Q, ALL, NOW))).toMatchObject({ partial: true, failedSections: ["sources"] });
     });
     it("flags a failing discovery and answers with empty numbers", async () => {
       impl.fail = { discovery: "ER_LOCK_DEADLOCK" };
@@ -351,7 +354,7 @@ describe("events-based stages and per-campaign progress", () => {
     impl.discovery = [head("r1")];
     await getDriveAnalytics(Q, ALL, NOW);
     const stops = callsOf("stops")[0][0];
-    expect(stops).toContain(`SELECT ${qfTypeSql("2026-10-08")} AS source_type, qf.stopped_reason`);
+    expect(stops).toContain(`SELECT /*+ MAX_EXECUTION_TIME(8000) */ ${qfTypeSql("2026-10-08")} AS source_type, qf.stopped_reason`);
     expect(stops).not.toMatch(/qf\.source_type/);
   });
   const p = (o: Record<string, unknown>) => ({ requisition_id: "r1", source_type: "he", campaign_id: null, leads: 0, qualified: 0, contacted: 0, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0, ...o });
@@ -376,7 +379,7 @@ describe("events-based stages and per-campaign progress", () => {
       { campaignId: "c1", campaignName: "Ahmedabad ads", campaignStatus: "paused", campaignRequisitionCode: "REQ-r1", requisitionId: "r1", requisitionCode: "REQ-r1", branch: "Pune", sourceType: "meta_old",
         stages: { leads: 40, qualified: 12, contacted: 35, invited: 30, confirmed: 11, arrived: 2, selected: 1, joined: 0 } },
     ]);
-    expect(callsOf("persons")).toHaveLength(2); // window and previous window
+    expect(callsOf("persons")).toHaveLength(1); // the window and the previous window in one statement
   });
   it("a failing persons read flags its section and leaves the stages at zero", async () => {
     impl.discovery = [head("r1")];
@@ -384,6 +387,37 @@ describe("events-based stages and per-campaign progress", () => {
     const r = ok(await getDriveAnalytics(Q, ALL, NOW));
     expect(r.failedSections).toContain("persons");
     expect(r.campaigns).toEqual([]);
+  });
+});
+
+describe("a slow read never hangs the response", () => {
+  it("flags a section still running at the build deadline, answers the rest and does not cache the partial result", async () => {
+    impl.discovery = [head("r1")];
+    let release: (() => void) | null = null;
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, p: unknown[]) => {
+      if (kindOf(String(sql)) === "persons") { await new Promise<void>((r) => { release = r; }); return [[]]; }
+      return base(sql, p);
+    });
+    vi.useFakeTimers({ now: NOW, toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const pending = getDriveAnalytics(Q, ALL, NOW);
+      await vi.advanceTimersByTimeAsync(BUILD_BUDGET_MS + 1);
+      const r = ok(await pending);
+      expect(r.partial).toBe(true);
+      expect(r.failedSections).toContain("persons");
+      expect(logError).toHaveBeenCalledWith({ section: "persons", code: "deadline" }, expect.any(String));
+      expect(driveAnalyticsCacheSize()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+      (release as (() => void) | null)?.(); // frees the read slot the hung statement held
+    }
+  });
+  it("bounds the whole build at 12 seconds and every statement with MAX_EXECUTION_TIME", async () => {
+    expect(BUILD_BUDGET_MS).toBe(12_000);
+    impl.discovery = [head("r1")];
+    await getDriveAnalytics(Q, ALL, NOW);
+    for (const [q] of sqlOf()) expect(q.trimStart()).toMatch(/^SELECT \/\*\+ MAX_EXECUTION_TIME\(8000\) \*\//);
   });
 });
 

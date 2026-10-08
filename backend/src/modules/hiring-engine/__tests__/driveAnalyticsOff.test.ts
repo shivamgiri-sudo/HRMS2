@@ -28,9 +28,10 @@ beforeEach(() => {
   clearDriveAnalyticsCache();
   mode.mockReturnValue("live");
   loadActiveStreams.mockResolvedValue([]);
-  getSources.mockResolvedValue({
-    byRequisition: [{ requisitionId: "r1", rows: [srcRow("meta_live", 60, { qualified: 40, joined: 3 }), srcRow("meta_old", 30), srcRow("he", 20)] }], partial: false, failedSections: [],
-  });
+  // The mock used to answer the previous-window call with these same rows; the previous window now comes from the same call
+  // (previousStages), so it answers that with them too and the recorded output stays the same.
+  const rows = [srcRow("meta_live", 60, { qualified: 40, joined: 3 }), srcRow("meta_old", 30), srcRow("he", 20)];
+  getSources.mockResolvedValue({ byRequisition: [{ requisitionId: "r1", rows }], previousStages: rows, partial: false, failedSections: [] });
   execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
     const q = String(sql);
     // The events-based persons read (added with the attribution fix) answers the same people the drive buckets below hold, so the

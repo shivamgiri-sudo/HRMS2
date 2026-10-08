@@ -5,7 +5,7 @@
  * and created_at; both typed by the shared source rule (he-source-attribution.ts).
  */
 import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import { limitedDb } from "./he-read-limit.js";
 import { logger } from "../../logger.js";
 import { COST_DEFAULTS, parseCostRates, prorateSpend, type CostRates, type CostUsage } from "./he-cost.js";
 import { SOURCE_TYPES } from "./he-drive-analytics.js";
@@ -65,9 +65,9 @@ export async function readCostUsage(
     (await Promise.all(batchesOf(ordered).map((b) => readAgg((st) => sqlOf(b.length, st), [...b, ...extra])))).flat();
 
   await Promise.all([
-    part("cost:rates", async () => { rates = parseCostRates((await db.execute<RowDataPacket[]>(RATES_SQL))[0] as never); }),
+    part("cost:rates", async () => { rates = parseCostRates((await limitedDb.execute<RowDataPacket[]>(RATES_SQL))[0] as never); }),
     part("cost:spend", async () => {
-      const parts = await Promise.all(batchesOf(ids).map(async (b) => (await db.execute<RowDataPacket[]>(spendSql(b.length), b))[0]));
+      const parts = await Promise.all(batchesOf(ids).map(async (b) => (await limitedDb.execute<RowDataPacket[]>(spendSql(b.length), b))[0]));
       let total = 0;
       for (const r of parts.flat()) total += prorateSpend(n0(r.spend_inr), dayOf(r.last_synced_at), w.from, w.to);
       usage.meta_live.adSpend = Math.round(total * 100) / 100;

@@ -5,7 +5,7 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute, getConne
 vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 
 import { OTHER_BRANCH_CAMPAIGN, aggregatePersons, campaignProgress, personsSql, readPersonStages } from "../he-drive-persons.service.js";
-import { fillTypeSql, metaOriginSql } from "../he-source-attribution.js";
+import { fillFirstCampaignSql, fillTypeSql, metaOriginSql } from "../he-source-attribution.js";
 import { stripRule } from "./attributionSql.js";
 
 const W = { from: "2026-10-01", to: "2026-10-14" };
@@ -26,8 +26,9 @@ describe("personsSql (events-based stages, one row per person and requisition)",
     expect(sql.match(/UNION ALL/g)).toHaveLength(4);
   });
   it("form fills are typed per person (first fill decides) and carry the campaign of the person's first fill", () => {
-    expect(sql).toContain(`${fillTypeSql("r", "2026-10-08")} AS source_type, COALESCE(plf.campaign_id, r.campaign_id)`);
-    expect(flat).toContain("LEFT JOIN he_lead pl ON pl.mobile10 = RIGHT(REGEXP_REPLACE(r.parsed_phone, '[^0-9]', ''), 10) COLLATE utf8mb4_unicode_ci");
+    // the person's first-fill campaign is looked up (by uq_he_lead_mobile) for the window's fills only, not for the previous window's
+    expect(sql).toContain(`${fillTypeSql("r", "2026-10-08")} AS source_type, IF(r.created_at >= ?, ${fillFirstCampaignSql("r")}, NULL) COLLATE utf8mb4_unicode_ci AS campaign_id`);
+    expect(flat).not.toContain("LEFT JOIN he_lead pl ON");
   });
   it("activity before the cutoff is never Live: every typed part passes its own activity time", () => {
     for (const ref of ["d.drive_date", "x.last_at", "ev.created_at"]) expect(flat).toContain(`THEN IF(${ref} >= TIMESTAMP '2026-10-08 00:00:00' AND`);
@@ -45,10 +46,10 @@ describe("personsSql (events-based stages, one row per person and requisition)",
   });
   it("types every person by the shared rule and keeps ONE type and ONE campaign per person and requisition", () => {
     expect(sql).toContain(metaOriginSql("al"));
-    expect(flat).toContain("GROUP BY u.person, u.requisition_id");
+    expect(flat).toContain("GROUP BY u.cur, u.person, u.requisition_id");
     expect(flat).toContain("SUBSTRING(MIN(CONCAT(FIELD(u.source_type, 'meta_live', 'meta_old', 'he'), u.source_type)), 2) AS source_type");
     expect(flat).toContain("SUM(p.stage >= 2) AS invited, SUM(p.stage >= 3) AS confirmed, SUM(p.stage >= 4) AS arrived");
-    expect(flat).toContain("GROUP BY p.requisition_id, p.source_type, p.campaign_id");
+    expect(flat).toContain("GROUP BY p.cur, p.requisition_id, p.source_type, p.campaign_id");
   });
   it("never scans: each part starts from an index range bounded by requisition ids and the window", () => {
     const own = stripRule(sql);
@@ -59,7 +60,9 @@ describe("personsSql (events-based stages, one row per person and requisition)",
   });
   it("binds ids, window bounds and drive dates in statement order", () => {
     // fills: ids + bounds; line-ups: ids + dates; messages: ids + bounds; confirmations: bounds + ids; arrivals: ids + dates
-    expect((sql.match(/\?/g) ?? []).length).toBe(5 * 2 + 5 * 2);
+    // each part: its cur start (fills twice: type and campaign), ids, then bounds or dates
+    expect((sql.match(/\?/g) ?? []).length).toBe(5 * 2 + 5 * 2 + 6);
+    for (const part of ["(r.created_at >= ?) AS cur", "SELECT (d.drive_date >= ?), al.mobile10", "(hm.created_at >= ?) AS cur", "SELECT (ev.created_at >= ?), al.mobile10"]) expect(flat).toContain(part);
   });
 });
 
@@ -90,8 +93,24 @@ describe("readPersonStages", () => {
     expect(out.byType.he.leads).toBe(3);
     expect(execute).toHaveBeenCalledTimes(1);
     const params = execute.mock.calls[0][1] as unknown[];
-    const b = ["2026-10-01 00:00:00", "2026-10-15 00:00:00"], d = ["2026-10-01", "2026-10-14"];
-    expect(params).toEqual(["r1", ...b, "r1", ...d, "r1", ...b, ...b, "r1", "r1", ...d]);
+    const b = ["2026-10-01 00:00:00", "2026-10-15 00:00:00"], d = ["2026-10-01", "2026-10-14"], c = "2026-10-01 00:00:00";
+    expect(params).toEqual([c, c, "r1", ...b, "2026-10-01", "r1", ...d, c, "r1", ...b, c, ...b, "r1", "2026-10-01", "r1", ...d]);
+  });
+  it("reads the previous window in the same statement and splits the rows by cur (campaigns of the window only)", async () => {
+    execute.mockResolvedValue([[
+      { ...row({ source_type: "meta_old", campaign_id: "c1", leads: 4, invited: 2 }), cur: 1 },
+      { ...row({ source_type: "meta_old", campaign_id: null, leads: 9, invited: 5, confirmed: 1 }), cur: 0 },
+      { ...row({ source_type: "he", leads: 6 }), cur: 0 },
+    ]]);
+    const out = await readPersonStages(["r1"], W, "2026-10-08", { from: "2026-09-17", to: "2026-09-30" });
+    expect(execute).toHaveBeenCalledTimes(1);
+    const params = execute.mock.calls[0][1] as unknown[];
+    const b = ["2026-09-17 00:00:00", "2026-10-15 00:00:00"], d = ["2026-09-17", "2026-10-14"], c = "2026-10-01 00:00:00";
+    expect(params).toEqual([c, c, "r1", ...b, "2026-10-01", "r1", ...d, c, "r1", ...b, c, ...b, "r1", "2026-10-01", "r1", ...d]);
+    expect(out.byType.meta_old).toEqual({ leads: 4, invited: 2, confirmed: 0, arrived: 0 });
+    expect(out.previous.meta_old).toEqual({ leads: 9, invited: 5, confirmed: 1, arrived: 0 });
+    expect(out.previous.he.leads).toBe(6);
+    expect(out.campaigns.map((x) => x.campaignId)).toEqual(["c1"]);
   });
 });
 

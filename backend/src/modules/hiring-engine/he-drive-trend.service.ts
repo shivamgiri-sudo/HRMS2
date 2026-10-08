@@ -14,7 +14,7 @@
  * No candidate data in the result or in any log line: counts, dates, ids and labels only.
  */
 import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
+import { limitedDb } from "./he-read-limit.js";
 import { logger } from "../../logger.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import type { SourceType } from "./qualified-followup.types.js";
@@ -93,9 +93,9 @@ const groupsSql = (n: number, streams: boolean, liveFrom: string): string => `SE
 const noTable = (err: unknown): boolean => (err as { code?: string })?.code === "ER_NO_SUCH_TABLE";
 /** The stream-attributed read; before 2135 is applied the stream-free form (a missing table is not a failed section). */
 export async function readAgg(sqlOf: (streams: boolean) => string, params: unknown[]): Promise<RowDataPacket[]> {
-  try { return (await db.execute<RowDataPacket[]>(sqlOf(true), params))[0]; } catch (err) {
+  try { return (await limitedDb.execute<RowDataPacket[]>(sqlOf(true), params))[0]; } catch (err) {
     if (!noTable(err)) throw err;
-    return (await db.execute<RowDataPacket[]>(sqlOf(false), params))[0];
+    return (await limitedDb.execute<RowDataPacket[]>(sqlOf(false), params))[0];
   }
 }
 /** Stream reads that answer "no streams" while the stream tables do not exist yet. */
@@ -237,7 +237,7 @@ export async function getDriveTrend(
   q: { requisitionId: string; branch?: string | null; sourceType?: SourceType | null }, scope: BranchScope, now: Date = new Date(),
 ): Promise<DriveTrend | null> {
   const sourceType = q.sourceType && SOURCE_TYPES.includes(q.sourceType) ? q.sourceType : null;
-  const [h] = await db.execute<RowDataPacket[]>(HEADER_SQL, [q.requisitionId]);
+  const [h] = await limitedDb.execute<RowDataPacket[]>(HEADER_SQL, [q.requisitionId]);
   if (!h[0]) return null;
   const reqBranch = String(h[0].branch_name ?? "");
   const branch = q.branch ? q.branch : reqBranch;
@@ -271,7 +271,7 @@ export async function getDriveGroupsDetailed(now: Date = new Date()): Promise<{ 
   const failed: string[] = [];
   const active = await section("streams", failed, () => orNoStreams(() => loadActiveStreams()), [] as StreamRow[]);
   const open = active.filter((s) => s.status === "open");
-  const found = await section("drives", failed, async () => (await db.execute<RowDataPacket[]>(DISCOVER_SQL, [addDays(today, -1), addDays(today, DEFAULT_AHEAD)]))[0], [] as RowDataPacket[]);
+  const found = await section("drives", failed, async () => (await limitedDb.execute<RowDataPacket[]>(DISCOVER_SQL, [addDays(today, -1), addDays(today, DEFAULT_AHEAD)]))[0], [] as RowDataPacket[]);
   const keys = new Map<string, { requisitionId: string; branch: string }>();
   const keyOf = (r: string, b: string): string => `${r}|${b}`;
   for (const r of found) keys.set(keyOf(String(r.requisition_id), String(r.branch_name)), { requisitionId: String(r.requisition_id), branch: String(r.branch_name) });
