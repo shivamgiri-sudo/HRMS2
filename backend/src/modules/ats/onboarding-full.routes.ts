@@ -49,6 +49,7 @@ import {
   submitFullOnboarding,
   updateSectionStatus,
   uploadOnboardingDocument,
+  saveDraDetails,
   validateOnboardingToken,
 } from "./onboarding-full.service.js";
 import { canAccessCandidate } from "./candidate-access.js";
@@ -274,6 +275,12 @@ router.post("/employee-details", candidateWriteLimiter, h(async (req, res) => {
   const { token, ...input } = req.body;
   if (!token) return res.status(400).json({ success: false, message: "token required" });
   return res.json({ success: true, data: await saveEmployeeDetails(token, input, meta(req)) });
+}));
+
+router.post("/dra-details", candidateWriteLimiter, h(async (req, res) => {
+  const { token, ...input } = req.body;
+  if (!token) return res.status(400).json({ success: false, message: "token required" });
+  return res.json({ success: true, data: await saveDraDetails(token, input, meta(req)) });
 }));
 
 router.post("/bank-details", candidateWriteLimiter, h(async (req, res) => {

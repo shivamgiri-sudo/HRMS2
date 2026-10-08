@@ -9,8 +9,11 @@ import { extractFromDocument } from "./ocr.service.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import {
   evaluateDraCertificate,
+  findDetailDisagreement,
   isDraCostCentre,
   parseDraCertificateText,
+  parseIndianDate,
+  validateEnteredDetails,
   type DraStatus,
 } from "./dra-certificate.rules.js";
 
@@ -54,7 +57,11 @@ export interface DraCurrent {
   verifiedAt: string | null;
   verificationSource: string | null;
   hrNote: string | null;
-  documentId: string;
+  documentId: string | null;
+  /** True once the candidate has typed the four details (registrationNo, serialNo, securityCode, certificateDate). */
+  detailsEntered: boolean;
+  /** What was read off the document, for HR to compare with the typed values. */
+  ocr: { registrationNo: string | null; serialNo: string | null; securityCode: string | null; certificateDate: string | null };
 }
 
 const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v ? String(v) : null);
@@ -67,7 +74,12 @@ function toCurrent(r: RowDataPacket): DraCurrent {
     certificateDate: day(r.certificate_date), validUntil: day(r.valid_until), extractedName: r.extracted_name ?? null,
     nameMatchScore: r.name_match_score ?? null, photoMatchScore: r.photo_match_score ?? null,
     uploadedAt: iso(r.uploaded_at)!, verifiedAt: iso(r.verified_at), verificationSource: r.verification_source ?? null,
-    hrNote: r.hr_note ?? null, documentId: r.document_id,
+    hrNote: r.hr_note ?? null, documentId: r.document_id ?? null,
+    detailsEntered: !!r.details_entered_at,
+    ocr: {
+      registrationNo: r.ocr_registration_no ?? null, serialNo: r.ocr_serial_no ?? null,
+      securityCode: r.ocr_security_code ?? null, certificateDate: day(r.ocr_certificate_date),
+    },
   };
 }
 
@@ -96,7 +108,10 @@ export async function getDraPortalState(candidateId: string) {
 export async function draBlocksSubmission(candidateId: string): Promise<string | null> {
   if (!(await isDraRequired(candidateId))) return null;
   const cur = await getCurrentDra(candidateId);
-  if (!cur) return null;
+  if (!cur) return null; // nothing uploaded: reported with the other missing mandatory documents
+  if (!cur.detailsEntered) {
+    return "Please enter your DRA certificate details (membership / registration number, certificate serial number, certificate date and security code) before submitting.";
+  }
   const hrDecided = !!cur.verificationSource && cur.verificationSource.startsWith("hr");
   if (cur.status === "expired") return `Your DRA certificate has expired${cur.validUntil ? ` (${cur.validUntil})` : ""}. Please upload a valid certificate.`;
   if (hrDecided && (cur.status === "invalid" || cur.status === "mismatch")) {
@@ -152,7 +167,23 @@ export async function processDraUpload(candidateId: string, documentId: string):
   }
 
   try {
-    const parsed = parseDraCertificateText(text);
+    const read = parseDraCertificateText(text);
+    // What the candidate typed (kept across re-uploads) is the primary record; the document only fills gaps and is
+    // compared against it.
+    const prior = await getCurrentDra(candidateId);
+    const entered = prior?.detailsEntered
+      ? { registrationNo: prior.registrationNo, serialNo: prior.serialNo, securityCode: prior.securityCode, certificateDate: prior.certificateDate }
+      : null;
+    const parsed = {
+      ...read,
+      registrationNo: entered?.registrationNo ?? read.registrationNo,
+      serialNo: entered?.serialNo ?? read.serialNo,
+      securityCode: entered?.securityCode ?? read.securityCode,
+      certificateDate: entered?.certificateDate ?? read.certificateDate,
+    };
+    const disagreement = entered
+      ? findDetailDisagreement(entered, { registrationNo: read.registrationNo, serialNo: read.serialNo, securityCode: read.securityCode, certificateDate: read.certificateDate })
+      : null;
 
     let duplicateOf: string | null = null;
     for (const [col, val] of [["registration_no", parsed.registrationNo], ["serial_no", parsed.serialNo]] as const) {
@@ -187,21 +218,27 @@ export async function processDraUpload(candidateId: string, documentId: string):
 
     const ev = evaluateDraCertificate({
       parsed, textLength: text.replace(/\s/g, "").length, profileName,
-      today: new Date().toISOString().slice(0, 10), duplicateOf, face,
+      today: new Date().toISOString().slice(0, 10), duplicateOf, face, disagreement,
     });
 
     const conn = await db.getConnection();
     try {
       await conn.beginTransaction();
+      // A details-only row (typed before any upload) has no document and no history value: replace it. A real
+      // earlier upload is kept as history.
+      await conn.execute(`DELETE FROM candidate_dra_certificate WHERE candidate_id = ? AND is_current = 1 AND document_id IS NULL`, [candidateId]);
       await conn.execute(`UPDATE candidate_dra_certificate SET is_current = 0 WHERE candidate_id = ? AND is_current = 1`, [candidateId]);
       await conn.execute(
         `INSERT INTO candidate_dra_certificate
            (id, candidate_id, document_id, is_current, status, auto_checks_passed, registration_no, serial_no, security_code,
-            certificate_date, valid_until, extracted_name, name_match_score, photo_match_score, failure_reason, verification_source)
-         VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto_ocr')`,
+            certificate_date, valid_until, extracted_name, name_match_score, photo_match_score, failure_reason, verification_source,
+            ocr_registration_no, ocr_serial_no, ocr_security_code, ocr_certificate_date, details_entered_at)
+         VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto_ocr', ?, ?, ?, ?, ?)`,
         [randomUUID(), candidateId, documentId, ev.status, ev.autoChecksPassed ? 1 : 0, parsed.registrationNo, parsed.serialNo,
           parsed.securityCode, parsed.certificateDate, parsed.validUntil, parsed.name, ev.nameMatchScore,
-          face && face.status !== "no_face_detected" ? face.score : null, ev.reason],
+          face && face.status !== "no_face_detected" ? face.score : null, ev.reason,
+          read.registrationNo, read.serialNo, read.securityCode, read.certificateDate,
+          entered ? new Date() : null],
       );
       await conn.commit();
     } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
@@ -209,6 +246,65 @@ export async function processDraUpload(candidateId: string, documentId: string):
     cleanup();
   }
 }
+
+/**
+ * The candidate types the four details the public IIBF check needs. Works before or after the upload: before, a
+ * details-only row holds them until the certificate arrives; after, the row is updated and re-compared with what was
+ * read from the document. Changing details on a certificate HR already confirmed sends it back to Pending.
+ */
+export async function saveCandidateDraDetails(
+  candidateId: string,
+  input: { registrationNo?: string; serialNo?: string; securityCode?: string; certificateDate?: string },
+): Promise<DraCurrent> {
+  if (!(await isDraRequired(candidateId))) {
+    throw Object.assign(new Error("The DRA certificate is not applicable to this onboarding"), { statusCode: 400 });
+  }
+  const up = (v?: string) => String(v ?? "").trim().toUpperCase().replace(/\s+/g, " ") || null;
+  const details = {
+    registrationNo: up(input.registrationNo),
+    serialNo: up(input.serialNo),
+    securityCode: up(input.securityCode)?.replace(/\s/g, "") ?? null,
+    certificateDate: /^\d{4}-\d{2}-\d{2}$/.test(String(input.certificateDate ?? "")) ? String(input.certificateDate) : parseIndianDate(input.certificateDate),
+  };
+  const errs = validateEnteredDetails(details, new Date().toISOString().slice(0, 10));
+  if (errs.length) throw Object.assign(new Error(errs.join(" ")), { statusCode: 400, code: "INVALID_DRA_DETAILS" });
+
+  const cur = await getCurrentDra(candidateId);
+  if (!cur) {
+    await db.execute(
+      `INSERT INTO candidate_dra_certificate
+         (id, candidate_id, document_id, is_current, status, registration_no, serial_no, security_code, certificate_date,
+          details_entered_at, verification_source)
+       VALUES (?, ?, NULL, 1, 'pending', ?, ?, ?, ?, NOW(), 'candidate')`,
+      [randomUUID(), candidateId, details.registrationNo, details.serialNo, details.securityCode, details.certificateDate],
+    );
+    return (await getCurrentDra(candidateId))!;
+  }
+
+  const disagreement = findDetailDisagreement(details, cur.ocr);
+  const wasHrDecision = !!cur.verificationSource && cur.verificationSource.startsWith("hr");
+  const unchanged = alnumEq(cur.registrationNo, details.registrationNo) && alnumEq(cur.serialNo, details.serialNo)
+    && alnumEq(cur.securityCode, details.securityCode) && cur.certificateDate === details.certificateDate;
+  let status: DraStatus = cur.status;
+  let reason: string | null = cur.reason;
+  let source: string | null = cur.verificationSource;
+  let resetDecision = false;
+  if (disagreement) { status = "mismatch"; reason = disagreement; source = "auto_ocr"; }
+  else if (cur.status === "mismatch" && (cur.reason ?? "").startsWith("Typed details differ")) { status = "pending"; reason = null; }
+  if (wasHrDecision && !unchanged) { status = "pending"; reason = disagreement ?? null; source = disagreement ? "auto_ocr" : "candidate"; resetDecision = true; }
+  await db.execute(
+    `UPDATE candidate_dra_certificate
+        SET registration_no = ?, serial_no = ?, security_code = ?, certificate_date = ?, details_entered_at = COALESCE(details_entered_at, NOW()),
+            status = ?, failure_reason = ?, verification_source = ?
+            ${resetDecision ? ", verified_at = NULL, verified_by = NULL" : ""}
+      WHERE id = ?`,
+    [details.registrationNo, details.serialNo, details.securityCode, details.certificateDate, status, reason, source, cur.id],
+  );
+  return (await getCurrentDra(candidateId))!;
+}
+
+const alnumEq = (a: string | null, b: string | null) =>
+  String(a ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "") === String(b ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 // ── HR side ──────────────────────────────────────────────────────────────────────────────────
 

@@ -4,7 +4,7 @@ const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection: vi.fn() } }));
 
 const { findMissingMandatoryDocuments } = await import("../onboarding-full.service.js");
-const { draBlocksSubmission } = await import("../dra-certificate.service.js");
+const { draBlocksSubmission, saveCandidateDraDetails } = await import("../dra-certificate.service.js");
 
 const ID = "cand-1";
 // All the usual documents on file, so only the DRA rule can be what is missing.
@@ -47,7 +47,7 @@ describe("DRA certificate is mandatory for the SBI cost centre only", () => {
 });
 
 describe("what blocks submission after upload", () => {
-  const row = (o: Record<string, unknown>) => ({ id: "d1", status: "pending", uploaded_at: new Date(), ...o });
+  const row = (o: Record<string, unknown>) => ({ id: "d1", status: "pending", uploaded_at: new Date(), details_entered_at: new Date(), ...o });
   it("an expired certificate blocks", async () => {
     mock({ costCentre: "BSS/OB/AHMH-JD/1050", draUploaded: true, dra: row({ status: "expired", valid_until: "2025-01-01" }) });
     expect(await draBlocksSubmission(ID)).toMatch(/expired/i);
@@ -63,5 +63,38 @@ describe("what blocks submission after upload", () => {
   it("never blocks outside the SBI cost centre", async () => {
     mock({ costCentre: "BSS/OB/AHMH-JD/474", draUploaded: true, dra: row({ status: "expired" }) });
     expect(await draBlocksSubmission(ID)).toBeNull();
+  });
+});
+
+describe("candidate-typed certificate details", () => {
+  const row = (o: Record<string, unknown>) => ({ id: "d1", status: "pending", uploaded_at: new Date(), ...o });
+  const good = { registrationNo: "DRA/12345678", serialNo: "IIBF-DRA-998877", securityCode: "a1b2c3d4", certificateDate: "2024-03-14" };
+
+  it("blocks submit until the four details are typed", async () => {
+    mock({ costCentre: "BSS/OB/AHMH-JD/1050", draUploaded: true, dra: row({ details_entered_at: null }) });
+    expect(await draBlocksSubmission(ID)).toMatch(/enter your DRA certificate details/i);
+  });
+  it("rejects malformed details with the problems listed", async () => {
+    mock({ costCentre: "BSS/OB/AHMH-JD/1050", draUploaded: false });
+    await expect(saveCandidateDraDetails(ID, { ...good, securityCode: "1" })).rejects.toMatchObject({ statusCode: 400, code: "INVALID_DRA_DETAILS" });
+  });
+  it("refuses candidates the rule does not apply to", async () => {
+    mock({ costCentre: "BSS/OB/AHMH-JD/474", draUploaded: false });
+    await expect(saveCandidateDraDetails(ID, good)).rejects.toMatchObject({ statusCode: 400 });
+  });
+  it("stores a details-only row (upper-cased) when nothing is uploaded yet", async () => {
+    mock({ costCentre: "BSS/OB/AHMH-JD/1050", draUploaded: false });
+    await saveCandidateDraDetails(ID, good);
+    const insert = execute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO candidate_dra_certificate"));
+    expect(insert).toBeTruthy();
+    expect(insert![1]).toEqual([expect.any(String), ID, "DRA/12345678", "IIBF-DRA-998877", "A1B2C3D4", "2024-03-14"]);
+  });
+  it("flags a mismatch when typed details disagree with what was read from the file", async () => {
+    mock({ costCentre: "BSS/OB/AHMH-JD/1050", draUploaded: true, dra: row({
+      details_entered_at: new Date(), registration_no: "DRA/1", ocr_registration_no: "DRA/99999999", ocr_serial_no: "IIBF-DRA-998877",
+    }) });
+    await saveCandidateDraDetails(ID, good);
+    const update = execute.mock.calls.find((c) => String(c[0]).startsWith("UPDATE candidate_dra_certificate") || String(c[0]).includes("SET registration_no"));
+    expect(update![1]).toContain("mismatch");
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  findDetailDisagreement, validateEnteredDetails,
   parseDraCertificateText, parseIndianDate, nameSimilarity, evaluateDraCertificate, isDraCostCentre,
 } from "../dra-certificate.rules.js";
 
@@ -87,5 +88,30 @@ describe("isDraCostCentre", () => {
     expect(isDraCostCentre(" bss/ob/ahmh-jd/1050 ")).toBe(true);
     expect(isDraCostCentre("BSS/OB/AHMH-JD/474")).toBe(false);
     expect(isDraCostCentre(null)).toBe(false);
+  });
+});
+
+describe("candidate-typed details", () => {
+  const read = { registrationNo: "DRA/12345678", serialNo: "IIBF-DRA-998877", securityCode: "A1B2C3D4", certificateDate: "2024-03-14" };
+  it("agree regardless of spacing, case and punctuation", () => {
+    expect(findDetailDisagreement({ ...read, registrationNo: "dra 12345678", securityCode: "a1b2 c3d4" }, read)).toBeNull();
+  });
+  it("name every field that differs", () => {
+    const r = findDetailDisagreement({ ...read, serialNo: "IIBF-DRA-000000", certificateDate: "2023-01-01" }, read);
+    expect(r).toMatch(/serial no\./);
+    expect(r).toMatch(/certificate date/);
+  });
+  it("skip fields the OCR could not read", () => {
+    expect(findDetailDisagreement(read, { ...read, securityCode: null })).toBeNull();
+  });
+  it("turns a disagreement into a mismatch", () => {
+    const ok = parseDraCertificateText(SAMPLE);
+    expect(evaluateDraCertificate({ ...base, parsed: ok, disagreement: "x differs" }).status).toBe("mismatch");
+  });
+  it("validates the typed form", () => {
+    expect(validateEnteredDetails(read, "2026-10-08")).toEqual([]);
+    expect(validateEnteredDetails({ ...read, securityCode: "1" }, "2026-10-08")).toHaveLength(1);
+    expect(validateEnteredDetails({ ...read, certificateDate: "2030-01-01" }, "2026-10-08")[0]).toMatch(/future/);
+    expect(validateEnteredDetails({}, "2026-10-08")).toHaveLength(4);
   });
 });

@@ -21,7 +21,7 @@ import { hashPiiForMatch } from "../../shared/piiHash.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
-import { isDraRequired, isDraDocType, processDraUpload, getDraPortalState, draBlocksSubmission } from "./dra-certificate.service.js";
+import { isDraRequired, isDraDocType, processDraUpload, getDraPortalState, draBlocksSubmission, saveCandidateDraDetails } from "./dra-certificate.service.js";
 import { assertEmployableAge, persistMinorFlag, resolveVerifiedDob } from "./ageVerification.service.js";
 import { toStoredName } from "../../shared/nameFormat.js";
 import { propagateIdentityVerification } from "../../shared/identityVerificationPropagation.js";
@@ -1418,6 +1418,19 @@ export async function getFullOnboardingStatus(token: string) {
     esign,
     dra,
   };
+}
+
+/** Candidate types the four details needed to verify the DRA certificate on the public IIBF site. */
+export async function saveDraDetails(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
+  const tokenData = await validateOnboardingToken(token);
+  const candidateId = tokenData.candidate_id as string;
+  const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+  const saved = await saveCandidateDraDetails(candidateId, {
+    registrationNo: str(input.registrationNo), serialNo: str(input.serialNo),
+    securityCode: str(input.securityCode), certificateDate: str(input.certificateDate),
+  });
+  await logCandidateAction(candidateId, "SAVE_DRA_DETAILS", { status: saved.status }, meta);
+  return saved;
 }
 
 export async function saveEmployeeDetails(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {

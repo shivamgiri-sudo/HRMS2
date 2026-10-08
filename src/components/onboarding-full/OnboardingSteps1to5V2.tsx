@@ -33,6 +33,7 @@ import type { EmployeeForm, BankForm, StatusData, BgvStatus } from "./useOnboard
 import { PennyDropButton } from "./PennyDropButton";
 import { INDIA_STATES, citiesForState, OTHER_CITY } from "@/data/indiaStatesCities";
 import { findMissingMandatoryDocs, MANDATORY_DOCUMENT_RULES, DRA_RULE } from "./mandatoryDocuments";
+import { DraDetailsForm, type DraDetails } from "./DraDetailsForm";
 
 // ── Constants (unchanged) ─────────────────────────────────────────────────────
 
@@ -544,13 +545,14 @@ export function Step3AddressKyc({
 // ── Step 4: Document Upload (Redesigned) ──────────────────────────────────────
 
 export function Step4Documents({
-  status, token, saving, consentAccepted, onUpload, onDelete,
+  status, token, saving, consentAccepted, onUpload, onSaveDraDetails, onDelete,
 }: {
   status: StatusData | null;
   token: string;
   saving: boolean;
   consentAccepted: boolean;
   onUpload: (file: File, docType: string, docName: string, pageNo: string) => Promise<void>;
+  onSaveDraDetails?: (d: DraDetails) => Promise<void>;
   onDelete: (id: string) => void;
 }) {
   const [docType, setDocType] = useState("Aadhaar");
@@ -640,6 +642,10 @@ export function Step4Documents({
               {dra?.status === "verified" && "Your certificate has been verified."}
               {dra && ["invalid", "expired", "mismatch"].includes(dra.status) && `${dra.reason ?? "The certificate needs attention."} You can upload the correct certificate again below.`}
             </p>
+            {onSaveDraDetails && !dra?.detailsEntered && (
+              <p className="mt-1 text-xs font-bold">Also required: enter the four certificate details below, then upload the file.</p>
+            )}
+            {onSaveDraDetails && <DraDetailsForm saved={dra} onSave={onSaveDraDetails} />}
           </InfoBox>
         )}
 

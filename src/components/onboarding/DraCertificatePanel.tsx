@@ -39,6 +39,8 @@ interface Cert {
   certificateDate: string | null; validUntil: string | null; extractedName: string | null;
   nameMatchScore: number | null; photoMatchScore: number | null;
   uploadedAt: string; verifiedAt: string | null; verificationSource: string | null; hrNote: string | null;
+  detailsEntered: boolean;
+  ocr: { registrationNo: string | null; serialNo: string | null; securityCode: string | null; certificateDate: string | null };
 }
 interface Detail { current: Cert | null; history: Cert[] }
 
@@ -105,11 +107,31 @@ export function DraCertificatePanel({ candidateId, onChanged }: { candidateId: s
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <p className="mb-1 text-sm font-semibold">Confirm on the IIBF portal</p>
+        <p className="mb-1 text-sm font-semibold">Details to check on the public IIBF website</p>
         <p className="mb-3 text-xs text-slate-500">
-          Search “IIBF certificate verification” yourself (do not use a link the candidate sends) and enter these four details exactly as printed.
-          Correct any the system misread below, then record the result.
+          {c.detailsEntered ? "The candidate typed these four details; the right-hand column is what the system read off the file." : "The candidate has not typed the details yet; the right-hand column is what the system read off the file."}
+          {" "}Open the IIBF website yourself (<a className="underline" href="https://www.iibf.org.in" target="_blank" rel="noreferrer">iibf.org.in</a>; do not use a link the candidate sends), look the certificate up with these four, then record the result below.
         </p>
+        <table className="mb-3 w-full text-xs">
+          <thead><tr className="text-left text-slate-500"><th className="py-1">Detail</th><th>Typed by candidate</th><th>Read from certificate</th></tr></thead>
+          <tbody>
+            {([
+              ["Membership / Registration no.", c.registrationNo, c.ocr.registrationNo],
+              ["Certificate serial no.", c.serialNo, c.ocr.serialNo],
+              ["Security code", c.securityCode, c.ocr.securityCode],
+              ["Certificate date", c.certificateDate, c.ocr.certificateDate],
+            ] as const).map(([label, typed, read]) => {
+              const norm = (v: string | null) => (v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+              const differs = !!typed && !!read && norm(typed) !== norm(read);
+              return (
+                <tr key={label} className={differs ? "bg-rose-50 font-semibold text-rose-700" : ""}>
+                  <td className="py-1 pr-2">{label}</td><td className="pr-2">{c.detailsEntered ? typed ?? "—" : "—"}</td><td>{read ?? "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <p className="mb-2 text-xs text-slate-500">Correct any value below if needed, then record the result.</p>
         <div className="grid gap-3 md:grid-cols-3">
           {field("Membership / Registration no.", "registrationNo")}
           {field("Certificate serial no.", "serialNo")}

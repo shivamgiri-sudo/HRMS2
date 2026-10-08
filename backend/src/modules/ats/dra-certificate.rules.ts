@@ -116,6 +116,42 @@ export function nameSimilarity(a: string | null | undefined, b: string | null | 
 
 export const NAME_MATCH_MIN = 0.6;
 
+export interface DraDetails {
+  registrationNo: string | null;
+  serialNo: string | null;
+  securityCode: string | null;
+  /** ISO yyyy-mm-dd */
+  certificateDate: string | null;
+}
+
+const alnum = (v: string | null | undefined) => String(v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+/** Candidate-typed details vs what was read off the document. Only fields present on BOTH sides are compared. */
+export function findDetailDisagreement(entered: Partial<DraDetails>, read: Partial<DraDetails>): string | null {
+  const diffs: string[] = [];
+  const cmp = (label: string, a?: string | null, b?: string | null) => {
+    if (a && b && alnum(a) !== alnum(b)) diffs.push(`${label}: typed "${a}", certificate shows "${b}"`);
+  };
+  cmp("registration no.", entered.registrationNo, read.registrationNo);
+  cmp("serial no.", entered.serialNo, read.serialNo);
+  cmp("security code", entered.securityCode, read.securityCode);
+  if (entered.certificateDate && read.certificateDate && entered.certificateDate !== read.certificateDate) {
+    diffs.push(`certificate date: typed ${entered.certificateDate}, certificate shows ${read.certificateDate}`);
+  }
+  return diffs.length ? `Typed details differ from the certificate (${diffs.join("; ")}).` : null;
+}
+
+/** Light format checks on what the candidate typed. Returns the problems, empty when fine. */
+export function validateEnteredDetails(d: Partial<DraDetails>, today: string): string[] {
+  const errs: string[] = [];
+  if (alnum(d.registrationNo).length < 5) errs.push("Enter the membership / registration number exactly as printed.");
+  if (alnum(d.serialNo).length < 4) errs.push("Enter the certificate serial number exactly as printed.");
+  if (alnum(d.securityCode).length < 4) errs.push("Enter the security code printed on the certificate.");
+  if (!d.certificateDate || !/^\d{4}-\d{2}-\d{2}$/.test(d.certificateDate)) errs.push("Enter the certificate date.");
+  else if (d.certificateDate > today) errs.push("Certificate date cannot be in the future.");
+  return errs;
+}
+
 export interface DraEvaluationInput {
   parsed: DraParsed;
   /** Full text length, to tell "unreadable" from "readable but not a DRA certificate". */
@@ -125,6 +161,8 @@ export interface DraEvaluationInput {
   today: string;
   /** Another candidate already holds this registration / serial number. */
   duplicateOf?: string | null;
+  /** Set when the candidate's typed details disagree with the document (see findDetailDisagreement). */
+  disagreement?: string | null;
   /** Result of comparing the certificate photo with the live selfie, when it ran. */
   face?: { status: string; matched: boolean; score: number } | null;
 }
@@ -153,6 +191,7 @@ export function evaluateDraCertificate(i: DraEvaluationInput): DraEvaluation {
   if (i.duplicateOf) {
     return out("mismatch", `This registration / serial number is already used on another candidate's onboarding (${i.duplicateOf}).`);
   }
+  if (i.disagreement) return out("mismatch", i.disagreement);
   if (p.validUntil && p.validUntil < i.today) {
     return out("expired", `The certificate expired on ${p.validUntil}.`);
   }
