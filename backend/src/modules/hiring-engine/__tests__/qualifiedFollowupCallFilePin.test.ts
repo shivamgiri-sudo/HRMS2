@@ -21,7 +21,7 @@ beforeEach(() => {
   execute.mockReset(); send.mockReset(); send.mockResolvedValue({});
   execute.mockImplementation(async (sql: string) => {
     const q = String(sql);
-    if (q.includes("FROM qualified_followup_call_batch")) return [[]];
+    if (q.includes("FROM qualified_followup_call_batch") || q.includes("FROM he_model_param")) return [[]];
     if (q.includes("FROM qualified_followup qf")) return [[dbRow]];
     return [{ affectedRows: 1 }];
   });
@@ -31,8 +31,8 @@ describe("calling file pin", () => {
   it("batch schedule", () => {
     expect([...CALL_FILE_SLOTS]).toMatchSnapshot();
   });
-  it("SQL of one live batch, in order", async () => {
-    await runCallFileBatch(readSwitches({ QUAL_FOLLOWUP_MODE: "live" } as NodeJS.ProcessEnv), "live", new Date("2026-10-07T10:00:00+05:30"));
+  it("SQL of one live batch for a slot, in order", async () => {
+    await runCallFileBatch(readSwitches({ QUAL_FOLLOWUP_MODE: "live" } as NodeJS.ProcessEnv), "live", new Date("2026-10-07T10:00:00+05:30"), { slotKey: "2026-10-07 10:00" });
     expect(execute.mock.calls.map(([sql]) => norm(sql))).toMatchSnapshot();
   });
 });

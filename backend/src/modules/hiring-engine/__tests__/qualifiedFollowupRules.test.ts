@@ -147,7 +147,8 @@ describe("dueSlot", () => {
     expect(dueSlot(ist("2026-10-07T10:03:00"), CALL_FILE_SLOTS, new Set())).toBe("2026-10-07 10:00");
     expect(dueSlot(ist("2026-10-07T10:03:00"), CALL_FILE_SLOTS, new Set(["2026-10-07 10:00"]))).toBeNull();
     expect(dueSlot(ist("2026-10-07T09:59:00"), CALL_FILE_SLOTS, new Set())).toBeNull();
-    expect(dueSlot(ist("2026-10-07T12:01:00"), CALL_FILE_SLOTS, new Set())).toBeNull();
+    expect(dueSlot(ist("2026-10-07T12:01:00"), CALL_FILE_SLOTS, new Set())).toBe("2026-10-07 12:00");
+    expect(dueSlot(ist("2026-10-07T20:01:00"), CALL_FILE_SLOTS, new Set())).toBeNull();
     expect(dueSlot(ist("2026-10-07T14:00:00"), CALL_FILE_SLOTS, new Set())).toBe("2026-10-07 14:00");
     expect(dueSlot(ist("2026-10-07T08:31:00"), DAILY_REPORT_SLOTS, new Set())).toBe("2026-10-07 08:30");
   });

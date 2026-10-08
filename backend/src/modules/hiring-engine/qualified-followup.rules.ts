@@ -79,7 +79,8 @@ export function waDailyBudget(q: PinbotQuality | null, max: number): number {
   return Math.floor(max / 2);
 }
 
-export const CALL_FILE_SLOTS = ["10:00", "14:00", "18:00"] as const;
+/** Default calling-file batches (IST): every 2 hours inside the 09:00-20:00 window; 20:00 itself is quiet hours. Override: callFileConfig. */
+export const CALL_FILE_SLOTS = ["10:00", "12:00", "14:00", "16:00", "18:00"] as const;
 export const DAILY_REPORT_SLOTS = ["08:30"] as const;
 
 function istDate(d: Date): string {

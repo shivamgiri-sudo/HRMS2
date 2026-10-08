@@ -134,6 +134,24 @@ describe("slots", () => {
     await tick(live, at("21:00", "2026-11-03"), { runCallFileBatch: late });
     expect(late).not.toHaveBeenCalled();
   });
+  it("calling file every 2 hours: 10, 12, 14, 16 and 18 IST, never 20:00; the slot key is passed so the batch can claim it", async () => {
+    const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
+    for (const m of ["10:01", "12:01", "14:01", "16:01", "18:01", "20:01"]) await tick(live, at(m, "2026-09-20"), { runCallFileBatch });
+    expect(runCallFileBatch.mock.calls.map((c) => (c as unknown[])[3])).toEqual(
+      ["10:00", "12:00", "14:00", "16:00", "18:00"].map((t) => ({ slotKey: `2026-09-20 ${t}`, config: expect.objectContaining({ slots: expect.any(Array) }) })));
+  });
+  it("slots come from the calling-file settings (he_model_param / env override)", async () => {
+    const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
+    const callFileConfig = vi.fn(async () => ({ slots: ["11:30"], coolDays: 0, emptyNote: false }));
+    for (const m of ["10:01", "11:31", "12:01"]) await tick(live, at(m, "2026-09-21"), { runCallFileBatch, callFileConfig });
+    expect(runCallFileBatch).toHaveBeenCalledTimes(1);
+    expect((runCallFileBatch.mock.calls[0] as unknown[])[3]).toMatchObject({ slotKey: "2026-09-21 11:30" });
+  });
+  it("a slot another process already filed (already_done) is not tried again", async () => {
+    const runCallFileBatch = vi.fn(async () => ({ status: "already_done" as const, rows: 0, files: 0 }));
+    for (const m of ["10:02", "10:07"]) await tick(live, at(m, "2026-09-22"), { runCallFileBatch });
+    expect(runCallFileBatch).toHaveBeenCalledTimes(1);
+  });
   it("a failed batch leaves the slot open, capped at 3 attempts", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "failed" as const, rows: 0, files: 0, error: "smtp" }));
     for (const m of ["10:02", "10:07", "10:12", "10:17", "10:22"]) await tick(live, at(m, "2026-11-10"), { runCallFileBatch });

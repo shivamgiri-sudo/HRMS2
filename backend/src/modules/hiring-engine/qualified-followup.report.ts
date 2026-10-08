@@ -29,6 +29,8 @@ export interface DailyReportData {
   waFailuresByCode: Array<{ code: string; count: number; sample: string }>;
   /** Steps that did not send, by channel and (scrubbed) reason: shows systemic blocks. */
   blockedByReason: Array<{ channel: "email" | "whatsapp"; reason: string; count: number }>;
+  /** Calling-file batches of the window (empty ones too); null when they could not be read. */
+  callFiles: Array<{ slot: string | null; status: string; rows: number; notFiled: number; merged: number }> | null;
 }
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -130,7 +132,37 @@ export async function collectDailyReport(from: Date, to: Date, tag: RowTag): Pro
     skipped.push({ reason, count, examples });
   }
 
-  return { date: new Date(to.getTime() + IST_MS).toISOString().slice(0, 10), mode: tag, perSource, skipped, waFailuresByCode: groupWaFailures(fails.map((r) => r.wa_error)), blockedByReason };
+  return {
+    date: new Date(to.getTime() + IST_MS).toISOString().slice(0, 10), mode: tag, perSource, skipped,
+    waFailuresByCode: groupWaFailures(fails.map((r) => r.wa_error)), blockedByReason, callFiles: await collectCallFiles(f, t, tag),
+  };
+}
+
+async function collectCallFiles(f: string, t: string, tag: RowTag): Promise<DailyReportData["callFiles"]> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT slot_key, status, row_count, summary FROM qualified_followup_call_batch
+        WHERE mode_tag = ? AND created_at >= ? AND created_at < ? ORDER BY created_at LIMIT 100`, [tag, f, t]);
+    return rows.map((b) => {
+      let sm: { skipped?: Record<string, number>; merged?: number } = {};
+      try { sm = (typeof b.summary === "string" ? JSON.parse(b.summary) : b.summary) ?? {}; } catch { /* no summary */ }
+      const notFiled = Object.values(sm.skipped ?? {}).reduce((a, n) => a + (Number(n) || 0), 0);
+      return { slot: b.slot_key ? String(b.slot_key) : null, status: String(b.status), rows: Number(b.row_count ?? 0), notFiled, merged: Number(sm.merged ?? 0) };
+    });
+  } catch (err) {
+    logger.warn({ err: scrub((err as Error)?.message).slice(0, 255) }, "[qualified-followup] daily report: calling-file batches unavailable");
+    return null;
+  }
+}
+
+function callFileLines(c: DailyReportData["callFiles"]): { head: string; lines: string[] } {
+  if (c === null) return { head: "unavailable", lines: [] };
+  const rows = c.reduce((a, b) => a + (b.status === "sent" || b.status === "dry_run" || b.status === "sent_unrecorded" ? b.rows : 0), 0);
+  const notFiled = c.reduce((a, b) => a + b.notFiled, 0);
+  return {
+    head: `${c.length} batches, ${rows} people filed, ${notFiled} not filed (duplicates or stops)`,
+    lines: c.map((b) => `${b.slot ?? "manual"} ${b.status}: ${b.rows} people, ${b.notFiled} not filed (duplicates or stops), ${b.merged} merged`),
+  };
 }
 
 const stoppedText = (m: Partial<Record<StopReason, number>>) => Object.entries(m).map(([k, v]) => `${k} ${v}`).join(", ") || "-";
@@ -147,10 +179,13 @@ export function buildDailyReport(d: DailyReportData): { subject: string; html: s
     ? `<ul>${d.waFailuresByCode.map((f) => `<li><b>${esc(f.code)}</b> x${f.count}: ${esc(f.sample)}</li>`).join("")}</ul>` : "<p>None.</p>";
   const blockedHtml = d.blockedByReason.length
     ? `<ul>${d.blockedByReason.map((b) => `<li>${esc(b.channel)}: <b>${esc(b.reason)}</b> x${b.count}</li>`).join("")}</ul>` : "<p>None.</p>";
-  const html = `<h3>Qualified follow-up, last 24 hours to ${esc(d.date)} 08:30 IST (${esc(d.mode)})</h3>${table}<h3>Skipped</h3>${skipHtml}<h3>WhatsApp failures by Meta code</h3>${failHtml}<h3>Blocked or skipped by reason</h3>${blockedHtml}`;
+  const cf = callFileLines(d.callFiles);
+  const cfHtml = `<p>${esc(cf.head)}</p>${cf.lines.length ? `<ul>${cf.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}`;
+  const html = `<h3>Qualified follow-up, last 24 hours to ${esc(d.date)} 08:30 IST (${esc(d.mode)})</h3>${table}<h3>Calling files</h3>${cfHtml}<h3>Skipped</h3>${skipHtml}<h3>WhatsApp failures by Meta code</h3>${failHtml}<h3>Blocked or skipped by reason</h3>${blockedHtml}`;
   const text = [
     `Qualified follow-up, last 24 hours to ${d.date} 08:30 IST (${d.mode})`, "",
     ...d.perSource.map((p) => cells(p).map((c, i) => `${head[i]} ${c}`).join(" | ").replace(/^Source /, "")),
+    "", "Calling files", cf.head, ...cf.lines,
     "", "Skipped",
     ...d.skipped.flatMap((s) => [`${s.reason}: ${s.count}`, ...s.examples.map((e) => `  ${e.name}, ${e.mobileMasked}, ${e.requisition}`)]),
     "", "WhatsApp failures by Meta code",
