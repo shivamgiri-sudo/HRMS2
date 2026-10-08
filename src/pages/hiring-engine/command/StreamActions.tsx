@@ -43,11 +43,11 @@ export function ProblemList({ problems }: { problems: ReadinessProblem[] }) {
 }
 
 /** Client checks (shown after a first submit) and the server's answer, as one alert. */
-export function FormErrors({ errors, show, serverError }: { errors: string[]; show: boolean; serverError: { text: string; problems: ReadinessProblem[] } | null }) {
+export function FormErrors({ id, errors, show, serverError }: { id?: string; errors: string[]; show: boolean; serverError: { text: string; problems: ReadinessProblem[] } | null }) {
   const list = show ? errors : [];
   if (list.length === 0 && !serverError) return null;
   return (
-    <div role="alert" className="space-y-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-700 dark:bg-rose-950 dark:text-rose-200">
+    <div id={id} tabIndex={id ? -1 : undefined} role="alert" className="space-y-2 rounded-lg border border-rose-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-700 dark:bg-rose-950 dark:text-rose-200">
       {list.length > 0 && <ul className="list-disc space-y-0.5 pl-4">{list.map((e) => <li key={e}>{e}</li>)}</ul>}
       {serverError && <p className="flex items-start gap-2"><XCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> {serverError.text}</p>}
       {serverError && serverError.problems.length > 0 && <div className="rounded-md bg-white p-2 dark:bg-slate-900"><ProblemList problems={serverError.problems} /></div>}

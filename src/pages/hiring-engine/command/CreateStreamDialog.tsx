@@ -13,7 +13,7 @@ import { describeError } from "./commandData";
 import type { RequisitionOption } from "./commandData";
 import type { ReadinessProblem, SourceType, StreamView } from "./driveCommandTypes";
 import {
-  CAMPAIGNS_PATH, LAUNCHES_PATH, STREAMS_PATH, canOverride, createBody, createErrors, createSuccessText, defaultCreateForm, errorText, originOptions,
+  CAMPAIGNS_PATH, NO_OLD_SOURCE, STREAMS_PATH, canOverride, launchesPath, liveEmptyState, createBody, createErrors, createSuccessText, defaultCreateForm, errorText, originOptions,
   parseReadiness, presetOptions, readinessPath, toCreateForm, type CampaignOption, type CreateFormText, type LaunchOption,
 } from "./streamActionsModel";
 import { BTN, FIELD, FormErrors, LABEL, PRIMARY, ProblemList } from "./StreamActions";
@@ -28,17 +28,33 @@ export interface CreateStreamFormProps {
   form: CreateFormText; requisitions: RequisitionOption[]; lockRequisition: boolean; today: string;
   origins: Origin[]; originsLoading: boolean; originsError: string | null; readiness: ReadinessState;
   errors: string[]; showErrors: boolean; serverError: { text: string; problems: ReadinessProblem[] } | null; busy: boolean;
+  /** All campaigns (for the Live Meta empty state). */
+  campaigns?: CampaignOption[];
   onChange: (next: CreateFormText) => void; onCancel?: () => void; idPrefix: string;
 }
 
-const NO_ORIGIN: Record<SourceType, string> = {
-  meta_live: "No live campaign is linked to this requisition. Link one in the campaign settings first.",
-  meta_old: "No campaign or batch launch of this requisition among the latest 40 launches. Paste the launch drive id instead.",
-  he: "",
-};
+export const ERRORS_ID_SUFFIX = "errors";
+
+function LiveEmpty({ code, campaigns }: { code: string; campaigns: CampaignOption[] }) {
+  const v = liveEmptyState(code, campaigns);
+  return (
+    <div className="space-y-1 text-xs text-slate-700 dark:text-slate-200">
+      <p className="font-semibold">{v.message}.</p>
+      {v.others.length > 0 && (
+        <>
+          <p>Active campaigns right now:</p>
+          <ul className="list-disc space-y-0.5 pl-4">
+            {v.others.map((o) => <li key={o.id}>{o.name}: {o.linkedTo ? `linked to ${o.linkedTo}` : "not linked to any requisition"}</li>)}
+          </ul>
+        </>
+      )}
+      <p>{v.hint}.</p>
+    </div>
+  );
+}
 
 /** Presentational form (static-markup tested); the dialog wrapper holds the state and the requests. */
-export function CreateStreamForm({ form, requisitions, lockRequisition, today, origins, originsLoading, originsError, readiness, errors, showErrors, serverError, busy, onChange, onCancel, idPrefix }: CreateStreamFormProps) {
+export function CreateStreamForm({ form, requisitions, lockRequisition, today, origins, originsLoading, originsError, readiness, errors, showErrors, serverError, busy, campaigns, onChange, onCancel, idPrefix }: CreateStreamFormProps) {
   const set = (p: Partial<CreateFormText>) => onChange({ ...form, ...p });
   const id = (k: string) => `${idPrefix}-${k}`;
   const req = requisitions.find((r) => r.id === form.requisitionId);
@@ -72,21 +88,24 @@ export function CreateStreamForm({ form, requisitions, lockRequisition, today, o
       </fieldset>
 
       <div className="space-y-1">
-        <label htmlFor={id("origin")} className={LABEL}>{form.sourceType === "meta_live" ? "Campaign" : form.sourceType === "meta_old" ? "Launch to re-run" : "Pool"}</label>
+        <label htmlFor={origins.length > 0 ? id("origin") : undefined} className={LABEL}>{form.sourceType === "meta_live" ? "Campaign" : form.sourceType === "meta_old" ? "Launch to re-run" : "Pool"}</label>
         {originsLoading && <p role="status" className="text-xs text-slate-600 dark:text-slate-300">Loading the sources…</p>}
         {originsError && <p role="alert" className="text-xs text-rose-800 dark:text-rose-200">Could not load the sources: {originsError}</p>}
         {origins.length > 0 && (
           <select id={id("origin")} className={FIELD} value={form.originId} disabled={busy} onChange={(e) => set({ originId: e.target.value })}>
-            {form.sourceType !== "he" && <option value="">Pick a source</option>}
+            {form.sourceType !== "he" && <option value="">{form.sourceType === "meta_live" ? "Pick a campaign" : "Pick a drive"}</option>}
             {origins.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
           </select>
         )}
         {!originsLoading && origins.length === 0 && form.sourceType !== "he" && (
-          <p className="text-xs text-slate-700 dark:text-slate-200">{!form.requisitionId ? "Pick a requisition first." : req && !req.code ? "This requisition's code is not known here, so its sources cannot be listed; open the stream from the requisition's row." : NO_ORIGIN[form.sourceType]}</p>
+          !form.requisitionId ? <p className="text-xs text-slate-700 dark:text-slate-200">Pick a requisition first.</p>
+            : req && !req.code ? <p className="text-xs text-slate-700 dark:text-slate-200">This requisition's code is not known here, so its sources cannot be listed; open the stream from the requisition's row.</p>
+            : form.sourceType === "meta_live" ? <LiveEmpty code={req?.code ?? ""} campaigns={campaigns ?? []} />
+            : <p className="text-xs text-slate-700 dark:text-slate-200">{NO_OLD_SOURCE}. If you know the launch drive id, paste it below.</p>
         )}
         {!originsLoading && origins.length === 0 && form.sourceType === "meta_old" && form.requisitionId && (
           <div className="space-y-1">
-            <label htmlFor={id("origin-typed")} className={LABEL}>Launch drive id</label>
+            <label htmlFor={id("origin-typed")} className={LABEL}>Launch drive id (last resort)</label>
             <input id={id("origin-typed")} className={FIELD} value={form.originId} disabled={busy} maxLength={36} autoComplete="off" spellCheck={false}
               aria-invalid={form.originId !== "" && !isUuidShape(form.originId)} onChange={(e) => set({ originId: e.target.value.trim() })} />
           </div>
@@ -135,7 +154,7 @@ export function CreateStreamForm({ form, requisitions, lockRequisition, today, o
         <textarea id={id("reason")} rows={2} maxLength={255} className={`${FIELD} py-2`} value={form.reason} disabled={busy} onChange={(e) => set({ reason: e.target.value })} />
       </div>
 
-      <FormErrors errors={errors} show={showErrors} serverError={serverError} />
+      <FormErrors id={id(ERRORS_ID_SUFFIX)} errors={errors} show={showErrors} serverError={serverError} />
 
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         {onCancel && <button type="button" className={BTN} disabled={busy} onClick={onCancel}>Cancel</button>}
@@ -164,7 +183,7 @@ function CreatePanel({ requisitions: options, requisitionId, sourceType, lockReq
     return { ...d, openDays: String(d.openDays), dailyInvites: "" };
   });
   const [campaigns, setCampaigns] = useState<CampaignOption[] | null>(null);
-  const [launches, setLaunches] = useState<LaunchOption[] | null>(null);
+  const [launchSet, setLaunchSet] = useState<{ code: string; list: LaunchOption[] } | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [readiness, setReadiness] = useState<ReadinessState>({ loading: false, error: null, problems: [], neverOverride: [] });
   const [busy, setBusy] = useState(false);
@@ -173,20 +192,26 @@ function CreatePanel({ requisitions: options, requisitionId, sourceType, lockReq
 
   useEffect(() => { onBusy(busy); }, [busy, onBusy]);
   const t = form.sourceType;
+  const reqCode = (requisitions.find((r) => r.id === form.requisitionId)?.code ?? "").trim();
   useEffect(() => {
-    const need = t === "meta_live" ? campaigns === null : t === "meta_old" ? launches === null : false;
-    if (!need) return;
+    if (t !== "meta_live" || campaigns !== null) return;
     const c = new AbortController();
     setListError(null);
-    hrmsApi.get<{ data?: unknown }>(t === "meta_live" ? CAMPAIGNS_PATH : LAUNCHES_PATH, undefined, c.signal)
-      .then((r) => {
-        if (c.signal.aborted) return;
-        const list = Array.isArray(r?.data) ? r.data : [];
-        if (t === "meta_live") setCampaigns(list as CampaignOption[]); else setLaunches(list as LaunchOption[]);
-      })
-      .catch((e: unknown) => { if (!c.signal.aborted) { setListError(describeError(e)); if (t === "meta_live") setCampaigns([]); else setLaunches([]); } });
+    hrmsApi.get<{ data?: unknown }>(CAMPAIGNS_PATH, undefined, c.signal)
+      .then((r) => { if (!c.signal.aborted) setCampaigns(Array.isArray(r?.data) ? (r.data as CampaignOption[]) : []); })
+      .catch((e: unknown) => { if (!c.signal.aborted) { setListError(describeError(e)); setCampaigns([]); } });
     return () => c.abort();
-  }, [t, campaigns, launches]);
+  }, [t, campaigns]);
+  // old Meta drives are read per requisition (the route filters in SQL, so an older drive is not cut off by the latest-N limit)
+  useEffect(() => {
+    if (t !== "meta_old" || !reqCode || launchSet?.code === reqCode) return;
+    const c = new AbortController();
+    setListError(null);
+    hrmsApi.get<{ data?: unknown }>(launchesPath(reqCode), undefined, c.signal)
+      .then((r) => { if (!c.signal.aborted) setLaunchSet({ code: reqCode, list: Array.isArray(r?.data) ? (r.data as LaunchOption[]) : [] }); })
+      .catch((e: unknown) => { if (!c.signal.aborted) { setListError(describeError(e)); setLaunchSet({ code: reqCode, list: [] }); } });
+    return () => c.abort();
+  }, [t, reqCode, launchSet]);
 
   useEffect(() => {
     if (!isUuidShape(form.requisitionId || null)) { setReadiness({ loading: false, error: null, problems: [], neverOverride: [] }); return; }
@@ -203,14 +228,21 @@ function CreatePanel({ requisitions: options, requisitionId, sourceType, lockReq
   }, [form.requisitionId, t]);
 
   const req = requisitions.find((r) => r.id === form.requisitionId);
-  const origins = useMemo(() => originOptions(t, { code: req?.code ?? "" }, campaigns ?? [], launches ?? []), [t, req?.code, campaigns, launches]);
-  const originsLoading = t === "meta_live" ? campaigns === null : t === "meta_old" ? launches === null : false;
+  const origins = useMemo(() => originOptions(t, { code: req?.code ?? "" }, campaigns ?? [], launchSet?.list ?? []), [t, req?.code, campaigns, launchSet]);
+  const originsLoading = t === "meta_live" ? campaigns === null : t === "meta_old" ? !!reqCode && launchSet?.code !== reqCode : false;
   const parsed = toCreateForm(form);
-  const errors = createErrors(parsed, today, readiness.problems, readiness.neverOverride);
+  const errors = createErrors(parsed, today, readiness.problems, readiness.neverOverride, originsLoading ? undefined : origins.length);
+  const [focusTick, setFocusTick] = useState(0);
+  // a failed submit moves focus to the error list so the first problem is read and in view
+  useEffect(() => {
+    if (focusTick === 0) return;
+    const el = document.getElementById(`${idPrefix}-${ERRORS_ID_SUFFIX}`);
+    if (el) { el.focus(); el.scrollIntoView({ block: "center" }); }
+  }, [focusTick, idPrefix]);
 
   const submit = () => guard.current.run(async () => {
     setTried(true);
-    if (errors.length) return;
+    if (errors.length) { setFocusTick((n) => n + 1); return; }
     setBusy(true);
     setServerError(null);
     try {
@@ -219,6 +251,7 @@ function CreatePanel({ requisitions: options, requisitionId, sourceType, lockReq
       onCreated(r.data, createSuccessText(r.data));
     } catch (e: unknown) {
       setServerError(errorText(e, { what: "create", overrideAsked: parsed.open && parsed.override }));
+      setFocusTick((n) => n + 1);
     } finally {
       setBusy(false);
     }
@@ -226,7 +259,7 @@ function CreatePanel({ requisitions: options, requisitionId, sourceType, lockReq
 
   return (
     <form noValidate aria-busy={busy} onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-      <CreateStreamForm form={form} requisitions={requisitions} lockRequisition={lockRequisition && !!req} today={today} origins={origins} originsLoading={originsLoading}
+      <CreateStreamForm form={form} requisitions={requisitions} lockRequisition={lockRequisition && !!req} today={today} origins={origins} originsLoading={originsLoading} campaigns={campaigns ?? []}
         originsError={listError} readiness={readiness} errors={errors} showErrors={tried} serverError={serverError} busy={busy} onChange={setForm} onCancel={onCancel} idPrefix={idPrefix} />
     </form>
   );

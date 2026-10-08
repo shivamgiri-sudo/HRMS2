@@ -911,8 +911,11 @@ heRouter.post("/launch", requireAuth, requireRole(...WRITE_ROLES), async (req, r
     res.json({ success: true, data: r });
   } catch (err) { launchError(res, err, "start the launch"); }
 });
-heRouter.get("/launches", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
-  try { res.json({ success: true, data: await listLaunches() }); } catch (err) { launchError(res, err, "load the launches"); }
+heRouter.get("/launches", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  // optional ?requisition=<code>: that requisition's non-pool drives only (kinds campaign, batch, meta), up to 100
+  const q = req.query.requisition;
+  const code = typeof q === "string" && q.trim() && q.length <= 64 ? q.trim() : undefined;
+  try { res.json({ success: true, data: code ? await listLaunches(100, code) : await listLaunches() }); } catch (err) { launchError(res, err, "load the launches"); }
 });
 heRouter.get("/import-batches", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try { res.json({ success: true, data: await listBatches() }); } catch (err) { launchError(res, err, "load the upload batches"); }

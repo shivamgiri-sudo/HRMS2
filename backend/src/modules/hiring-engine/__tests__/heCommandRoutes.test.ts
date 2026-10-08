@@ -18,6 +18,7 @@ vi.mock("../he-meta-funnel.service.js", () => ({ getMetaFunnel: vi.fn(async () =
 vi.mock("../he-launch.service.js", async (importOriginal) => ({ ...(await importOriginal<object>()), listLaunches: vi.fn(async () => []), listBatches: vi.fn(async () => []) }));
 vi.mock("../he-drive-trend.service.js", async (importOriginal) => ({ ...(await importOriginal<object>()), getDriveGroupsDetailed: vi.fn() }));
 
+import { listLaunches } from "../he-launch.service.js";
 import { getDriveAnalytics } from "../he-drive-analytics.service.js";
 import { getDrivePlan } from "../he-drive-plan.service.js";
 import { getDriveGroupsDetailed } from "../he-drive-trend.service.js";
@@ -202,5 +203,21 @@ describe("GET /campaign-dashboard", () => {
     expect(execute.mock.calls.slice(sqlBefore).every((c) => /employees|roles?/i.test(String(c[0])))).toBe(true);
     const again = await request(appFor("ceo")).get("/api/he/campaign-dashboard");
     expect(again.body.data.driveGroups).toHaveLength(2);
+  });
+});
+
+describe("GET /launches", () => {
+  it("passes the optional requisition code through with a higher limit; none keeps the default", async () => {
+    vi.mocked(listLaunches).mockResolvedValue([{ driveId: "d1", kind: "meta" }] as never);
+    const r = await request(appFor("ceo")).get("/api/he/launches?requisition=RQ-1");
+    expect([r.status, r.body]).toEqual([200, { success: true, data: [{ driveId: "d1", kind: "meta" }] }]);
+    expect(vi.mocked(listLaunches).mock.calls[0]).toEqual([100, "RQ-1"]);
+    await request(appFor("ceo")).get("/api/he/launches");
+    expect(vi.mocked(listLaunches).mock.calls[1]).toEqual([]);
+  });
+  it("ignores an over-long or non-string requisition value", async () => {
+    vi.mocked(listLaunches).mockResolvedValue([] as never);
+    await request(appFor("ceo")).get(`/api/he/launches?requisition=${"x".repeat(80)}`);
+    expect(vi.mocked(listLaunches).mock.calls[0]).toEqual([]);
   });
 });
