@@ -103,6 +103,12 @@ export interface TypeCost {
 }
 export interface CostBlock { available: boolean; note: string; estimated: boolean; ratesConfigured: boolean; rates: CostRates; byType: Record<SourceType, TypeCost> | null }
 
+// backend/src/modules/hiring-engine/he-drive-persons.service.ts
+export interface CampaignProgress {
+  campaignId: string | null; campaignName: string; campaignStatus: string | null; campaignRequisitionCode: string | null;
+  requisitionId: string; requisitionCode: string; branch: string; sourceType: "meta_live" | "meta_old";
+  stages: { leads: number; qualified: number; contacted: number; invited: number; confirmed: number; arrived: number; selected: number; joined: number };
+}
 export interface TypeAnalytics { stages: StageCounts; previous: StageCounts; noShow: number; declined: number; conversions: Conversion[]; sparkline: number[] }
 export interface DriveAnalytics {
   generatedAt: string;
@@ -120,6 +126,10 @@ export interface DriveAnalytics {
   groups: DriveGroup[];
   cost: CostBlock | { available: false; note: string };
   insights: DriveInsight[];
+  /** Live Meta cutoff day (IST); Meta-origin people with an earlier form fill are Old Meta data. Absent on older servers. */
+  liveFrom?: string;
+  /** Per Meta campaign and requisition progress in the window (events-based, same rules as `types`). Absent on older servers. */
+  campaigns?: CampaignProgress[];
   requisitionCount: number;
   truncated: boolean;
   partial: boolean;

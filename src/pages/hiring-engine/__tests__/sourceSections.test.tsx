@@ -11,7 +11,7 @@ import { CampaignMappingTable } from "../command/CampaignMapping";
 import { sectionParts } from "../command/DriveCommandCenter";
 import { commandHash, defaultFilters, parseCommandHash } from "../command/driveCommandModel";
 import {
-  HISTORIC_NOTE, MAPPING_COLUMNS, MAPPING_NOTE, SHOW_ALL_TIME, atWidestRange, campaignMappingView, scopeToType, showAllTimeFilters, showHistoricNote, zeroNotes,
+  HE_META_NOTE, HISTORIC_NOTE, MAPPING_COLUMNS, MAPPING_NOTE, SHOW_ALL_TIME, atWidestRange, campaignMappingView, scopeToType, showAllTimeFilters, showHistoricNote, zeroNotes,
 } from "../command/sourceSectionModel";
 import { kpiView } from "../command/charts/summaryView";
 import { STAGES } from "../command/driveCommandTypes";
@@ -51,7 +51,23 @@ describe("source sections without streams", () => {
     expect(html).toContain("Open a stream");
     expect(html).toContain("No live Meta stream is running for this slice");
     expect(html.indexOf("data-kpi-tile")).toBeLessThan(html.indexOf("Open a stream"));
-    expect(html).toContain("not linked to a stream yet");
+    expect(html).toContain("These Live Meta leads are not on a drive yet, so there are no drive rows. Open a stream to start inviting them.");
+  });
+  it("the Hiring Engine section says, neutrally, where Meta campaign leads are", () => {
+    expect(HE_META_NOTE).toBe("Meta campaign leads are shown under Live Meta and Old Meta data.");
+    const parts = sectionParts("he", fixture(), undefined, { requisitions: [], requisitionId: null, onChanged: noop }, undefined, 0, filters, noop);
+    const html = renderToStaticMarkup(<>{parts.gated}</>);
+    expect(html).toContain(HE_META_NOTE);
+    expect(html.indexOf(HE_META_NOTE)).toBeLessThan(html.indexOf("Hiring Engine drives"));
+    for (const t of ["live", "old"] as const) expect(renderToStaticMarkup(<>{sectionParts(t, fixture(), undefined, undefined, undefined, 0, filters, noop).gated}</>)).not.toContain(HE_META_NOTE);
+  });
+  it("Live Meta in a range that ends before the cutoff says its Meta leads are under Old Meta data", () => {
+    const early = { from: "2026-09-01", to: "2026-09-30" } as typeof filters;
+    const a = fixture({ liveFrom: "2026-10-08", window: { from: "2026-09-01", to: "2026-09-30", days: 30 }, types: { ...fixture().types, meta_live: typ(sc()) } } as never);
+    const notes = zeroNotes(a, "meta_live", { ...filters, ...early }, NOW);
+    expect(notes[0]).toEqual({ id: "before-cutoff", text: "Live Meta starts with form fills on 8 Oct 2026. This range ends before that, so its Meta leads are under Old Meta data." });
+    expect(zeroNotes(fixture({ liveFrom: "2026-10-08" } as never), "meta_live", filters, NOW).map((n) => n.id)).not.toContain("before-cutoff");
+    expect(zeroNotes(a, "meta_old", { ...filters, ...early }, NOW).map((n) => n.id)).not.toContain("before-cutoff");
   });
   it("zero-lead Old Meta in the default window shows the historic note and Show all time", () => {
     const html = render(fixture(), "meta_old");

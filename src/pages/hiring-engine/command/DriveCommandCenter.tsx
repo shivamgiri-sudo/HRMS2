@@ -27,6 +27,8 @@ import CreateStreamDialog from "./CreateStreamDialog";
 import { StreamDialog } from "./RowStreamActions";
 import type { SourceType } from "./driveCommandTypes";
 import SourceOverview from "./SourceOverview";
+import { Note } from "./charts/ChartFrame";
+import { HE_META_NOTE } from "./sourceSectionModel";
 import PlanSection from "./PlanSection";
 import FollowupPanel from "./FollowupPanel";
 import ActionQueuePanel from "./ActionQueuePanel";
@@ -141,7 +143,12 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
   if (section === "plan") return { gated: null, always: plan ?? null }; // the Plan section loads its own data
   if (section === "he") {
     return {
-      gated: analytics && <DriveTypeSection type="he" groups={analytics.groups ?? []} today={istTodayClient()} title="Hiring Engine drives" actions={actions} />,
+      gated: analytics && (
+        <div className="space-y-2">
+          <Note>{HE_META_NOTE}</Note>
+          <DriveTypeSection type="he" groups={analytics.groups ?? []} today={istTodayClient()} title="Hiring Engine drives" actions={actions} />
+        </div>
+      ),
       always: (
         <section aria-labelledby="all-drives-heading" className="space-y-2">
           <h3 id="all-drives-heading" className="text-base font-bold text-slate-900 dark:text-slate-100">All drives</h3>
