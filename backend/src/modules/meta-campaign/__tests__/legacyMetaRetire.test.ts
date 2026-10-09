@@ -18,7 +18,11 @@ vi.mock("../../../db/mysql.js", () => ({
           approval_status: "approved", active_status: 1, closed_at: h.closed ? "2026-10-01 10:00:00" : null, requested_headcount: 5, fulfilled_headcount: 0, parsed_location: "Noida",
           current_address: null, permanent_address: null, branch_state: "UP", branch_address: "Sector 62, Noida", branch_city: "Noida", branch_lat: null, branch_lng: null }]];
       }
-      if (q.startsWith("SELECT id") && q.includes("FROM meta_lead_raw") && q.includes("notification_sent_at IS NULL")) return [h.sync];
+      if (q.startsWith("SELECT id") && q.includes("FROM meta_lead_raw") && q.includes("notification_sent_at IS NULL")) {
+        // The sync splits held (auto_notify off / backfill, computed in SQL) from eligible leads with HAVING on the select aliases.
+        const held = (r: any) => Number(r.auto_notify_off) === 1 || Number(r.is_backfill) === 1;
+        return [(h.sync as any[]).filter((r) => (q.includes("HAVING (auto_notify_off = 1 OR is_backfill = 1)") ? held(r) : !held(r)))];
+      }
       if (q.includes("FROM meta_lead_raw r") && q.includes("EXISTS (SELECT 1 FROM qualified_followup qf")) return [h.owned ? [{ hit: 1 }] : []];
       if (q.startsWith("SELECT requisition_id FROM meta_lead_raw WHERE id = ?")) return [[{ requisition_id: "R1" }]];
       if (q.includes("FROM he_model_param")) return [[{ param_key: "policy.followup.meta_live", value: Number(process.env.UF_META_LIVE ?? 0) }, { param_key: "policy.followup.wa_inbound_ack", value: 1 }]];
@@ -91,14 +95,14 @@ describe("legacy outreach per source mode", () => {
 
 describe("30-minute sync", () => {
   it("auto_notify = 0 campaigns are not notified; the lead is enrolled (held_manual) instead", async () => {
-    h.sync = [{ id: "L1", auto_notify_off: 1, meta_created: null }];
+    h.sync = [{ id: "L1", auto_notify_off: 1, is_backfill: 0 }];
     const r = await notifyNewQualifiedLeads();
     expect(h.calls).toEqual([]);
     expect(h.enqueue).toHaveBeenCalledWith("L1", expect.objectContaining({ skipOutreach: false }));
     expect(r).toEqual({ sent: 0, skipped: 1, failed: 0 });
   });
   it("a backfilled lead (Meta created it long before the import) is never messaged; enrolled held_manual skip_outreach", async () => {
-    h.sync = [{ id: "L1", auto_notify_off: 0, meta_created: "2026-08-01T10:00:00+0000" }];
+    h.sync = [{ id: "L1", auto_notify_off: 0, is_backfill: 1 }];
     await notifyNewQualifiedLeads();
     expect(h.calls).toEqual([]);
     expect(h.enqueue).toHaveBeenCalledWith("L1", expect.objectContaining({ skipOutreach: true }));

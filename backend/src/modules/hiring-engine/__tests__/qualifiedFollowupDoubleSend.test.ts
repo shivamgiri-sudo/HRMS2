@@ -36,7 +36,7 @@ vi.mock("../../../db/mysql.js", () => ({
         if (h.state.optedOutThrows) throw new Error("db down");
         return [h.state.optedOut ? [{ hit: 1 }] : []];
       }
-      if (sql.trim().startsWith("SELECT id") && sql.includes("FROM meta_lead_raw") && sql.includes("notification_sent_at IS NULL")) return [[{ id: "L1" }, { id: "L2" }]];
+      if (sql.trim().startsWith("SELECT id") && sql.includes("FROM meta_lead_raw") && sql.includes("notification_sent_at IS NULL")) return [sql.includes("HAVING (auto_notify_off = 1") ? [] : [{ id: "L1" }, { id: "L2" }]];
       if (sql.includes("COUNT(*) AS n FROM he_template")) return [[{ n: 1 }]];
       if (sql.includes("FROM he_match m JOIN he_lead l ON l.id = m.lead_id")) {
         const filtered = sql.includes("NOT EXISTS (SELECT 1 FROM qualified_followup qf");

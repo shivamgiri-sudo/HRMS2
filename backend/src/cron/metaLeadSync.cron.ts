@@ -242,41 +242,45 @@ const OWNED_ROW_SKIP = `
 
 /** A backfill import (skipOutreach) stores leads Meta created long before: never messaged by the safety net. */
 const BACKFILL_AGE_MS = 2 * 86_400_000;
-const isBackfill = (metaCreated: unknown, now = Date.now()): boolean => {
-  const t = Date.parse(String(metaCreated ?? "").replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
-  return Number.isFinite(t) && now - t > BACKFILL_AGE_MS;
-};
-
-export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped: number; failed: number }> {
-  const [leads] = await db.execute<RowDataPacket[]>(
-    `SELECT id,
+const META_CREATED = `JSON_UNQUOTE(JSON_EXTRACT(meta_lead_raw.raw_payload, '$.created_time'))`;
+// Meta's created_time ("2026-10-07T10:00:00+0000") in UTC; a missing / odd offset reads as UTC, an unparsable value as NULL (not a backfill).
+const META_CREATED_UTC = `CONVERT_TZ(STR_TO_DATE(LEFT(${META_CREATED}, 19), '%Y-%m-%dT%H:%i:%s'), IF(${META_CREATED} REGEXP '[+-][0-9]{4}$', CONCAT(SUBSTRING(${META_CREATED}, -5, 3), ':', RIGHT(${META_CREATED}, 2)), '+00:00'), '+00:00')`;
+const leadSelect = (filter: string): string => `SELECT id,
             (SELECT JSON_EXTRACT(jr.meta_screening_config, '$.auto_notify') = CAST('false' AS JSON) FROM job_requisition jr WHERE jr.id = meta_lead_raw.requisition_id) AS auto_notify_off,
-            JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.created_time')) AS meta_created
+            ${META_CREATED_UTC} < ? AS is_backfill
        FROM meta_lead_raw
       WHERE screening_result = 'qualified'
         AND notification_sent_at IS NULL
-        AND created_at >= ?${OWNED_ROW_SKIP}
+        AND created_at >= ?${OWNED_ROW_SKIP}${filter}
       ORDER BY created_at ASC
-      LIMIT 100`,
-    [notifyWindowStart()]
-  );
+      LIMIT 100`;
+const utcCutoff = (now: number): string => new Date(now - BACKFILL_AGE_MS).toISOString().slice(0, 19).replace("T", " ");
 
-  if (!(leads as any[]).length) return { sent: 0, skipped: 0, failed: 0 };
+export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped: number; failed: number }> {
+  const params = [utcCutoff(Date.now()), notifyWindowStart()];
+  // auto_notify off on the requisition, or a backfill import, are never messaged from here and keep notification_sent_at NULL, so
+  // they are selected apart: they must not fill the LIMIT and starve newer leads. Their own pass skips anyone already enrolled.
+  const [held] = await db.execute<RowDataPacket[]>(leadSelect(`
+        AND NOT EXISTS (SELECT 1 FROM qualified_followup q2 WHERE q2.meta_lead_id = meta_lead_raw.id COLLATE utf8mb4_unicode_ci)
+     HAVING (auto_notify_off = 1 OR is_backfill = 1)`), params);
+  const [leads] = await db.execute<RowDataPacket[]>(leadSelect(`
+     HAVING COALESCE(auto_notify_off, 0) = 0 AND COALESCE(is_backfill, 0) = 0`), params);
 
-  console.log(`[meta-sync] Triggering outreach for ${(leads as any[]).length} new qualified lead(s)...`);
   let sent = 0;
   let skipped = 0;
   let failed = 0;
+  // Enrolled held for HR when the source runs (D13); never messaged here.
+  for (const lead of held as any[]) {
+    const autoOff = Number(lead.auto_notify_off) === 1;
+    await enrolMetaArrival(lead.id, { skipOutreach: !autoOff }).catch(() => null);
+    skipped++;
+  }
 
+  if (!(leads as any[]).length) return { sent, skipped, failed };
+
+  console.log(`[meta-sync] Triggering outreach for ${(leads as any[]).length} new qualified lead(s)...`);
   for (const lead of leads as any[]) {
     try {
-      // auto_notify off on the requisition, or a backfill import: never messaged from here; enrolled held for HR when the source runs (D13).
-      const autoOff = Number(lead.auto_notify_off) === 1;
-      if (autoOff || isBackfill(lead.meta_created)) {
-        await enrolMetaArrival(lead.id, { skipOutreach: !autoOff }).catch(() => null);
-        skipped++;
-        continue;
-      }
       // notifyQualifiedLead decides per source mode: owned / Live Meta run by the method -> enrolled, not messaged here.
       // It reports refusals/skips in its outcome instead of throwing, so count by what actually landed.
       const outcome = await notifyQualifiedLead(lead.id, { sourcePath: 'legacy_meta_sync' });
