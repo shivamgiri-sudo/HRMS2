@@ -38,7 +38,7 @@ export function inEveningWindow(now: Date): boolean {
 export interface PreviewDeps {
   runShortlist: (a: Parameters<typeof runShortlist>[0]) => Promise<unknown>;
   notOpen: (requisitionId: string, now: Date) => Promise<string | null>;
-  refreshFactCache: (o: Parameters<typeof refreshFactCache>[0]) => Promise<unknown>;
+  refreshFactCache: (o: Parameters<typeof refreshFactCache>[0]) => Promise<{ complete?: boolean; nextKey?: string | null }>;
   cacheMetaLeadFacts: (ids: string[], now: Date) => Promise<number>;
 }
 const defaultDeps: PreviewDeps = {
@@ -56,6 +56,8 @@ export interface PreviewTickReport {
 }
 
 const refreshedDay = new Map<SourceKind, string>(); // in memory: a restart refreshes again at most once
+/** E4: the evening refresh pass in progress per source (cursor + start time); in memory, a restart starts the pass again. */
+const refreshPass = new Map<SourceKind, { day: string; startedAt: string; after: string | undefined }>();
 let running = false;
 const isDup = (e: unknown) => (e as { code?: string })?.code === "ER_DUP_ENTRY";
 
@@ -88,8 +90,13 @@ export async function runShortlistPreviewTick(o: { now?: Date; env?: NodeJS.Proc
       const day = istText(now).slice(0, 10);
       for (const sourceKind of SOURCES) {
         if (refreshedDay.get(sourceKind) === day) continue;
-        await d.refreshFactCache({ sourceKind, now, maxChunks: EVENING_REFRESH_MAX_CHUNKS })
-          .then(() => { refreshedDay.set(sourceKind, day); out.evening.refreshed.push(sourceKind); })
+        // E4: a bounded slice per tick that continues where the last one stopped; the day is done after a full pass.
+        const pass = refreshPass.get(sourceKind)?.day === day ? refreshPass.get(sourceKind)! : { day, startedAt: istText(now), after: undefined as string | undefined };
+        await d.refreshFactCache({ sourceKind, now, maxChunks: EVENING_REFRESH_MAX_CHUNKS, after: pass.after, passStartedAt: pass.startedAt })
+          .then((r) => {
+            if (r?.complete === false && r.nextKey) { pass.after = r.nextKey; refreshPass.set(sourceKind, pass); return; }
+            refreshPass.delete(sourceKind); refreshedDay.set(sourceKind, day); out.evening.refreshed.push(sourceKind);
+          })
           .catch((e) => { out.errors++; logger.warn({ sourceKind, err: String((e as Error).message).slice(0, 200) }, "[shortlist-preview] facts refresh failed"); });
       }
       for (const requisitionId of open) {
@@ -159,4 +166,4 @@ export function stopShortlistPreviewWorker(): void {
 }
 
 /** For tests: forget which sources were refreshed today. */
-export function resetShortlistPreviewState(): void { refreshedDay.clear(); running = false; }
+export function resetShortlistPreviewState(): void { refreshedDay.clear(); refreshPass.clear(); running = false; }

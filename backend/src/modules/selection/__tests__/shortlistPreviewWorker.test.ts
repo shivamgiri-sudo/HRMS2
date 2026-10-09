@@ -104,6 +104,23 @@ describe("evening runs", () => {
     expect(d.runShortlist).toHaveBeenCalledTimes(3);
     expect(d.refreshFactCache).toHaveBeenCalledTimes(3); // once per IST day per source
   });
+  it("E4: the evening refresh continues where it stopped on the next tick (a cursor per source) and is done for the day only after a full pass", async () => {
+    const d = deps();
+    const pages: Record<string, Array<{ complete: boolean; nextKey: string | null }>> = {
+      meta_live: [{ complete: true, nextKey: null }],
+      meta_old: [{ complete: true, nextKey: null }],
+      he: [{ complete: false, nextKey: "k1" }, { complete: false, nextKey: "k2" }, { complete: true, nextKey: null }],
+    };
+    d.refreshFactCache.mockImplementation((async (o: { sourceKind: string }) => ({ chunks: 1, ...pages[o.sourceKind].shift()! })) as never);
+    await runShortlistPreviewTick({ now: ist("2026-10-09T17:05:00"), env: ON, deps: d });
+    await runShortlistPreviewTick({ now: ist("2026-10-09T17:10:00"), env: ON, deps: d });
+    await runShortlistPreviewTick({ now: ist("2026-10-09T17:15:00"), env: ON, deps: d });
+    await runShortlistPreviewTick({ now: ist("2026-10-09T17:20:00"), env: ON, deps: d });
+    const he = d.refreshFactCache.mock.calls.map((c) => c[0] as { sourceKind: string; after?: string; passStartedAt?: string }).filter((c) => c.sourceKind === "he");
+    expect(he.map((c) => c.after ?? null)).toEqual([null, "k1", "k2"]);
+    expect(new Set(he.map((c) => c.passStartedAt)).size).toBe(1); // one pass, one start time for the stale delete
+    expect(d.refreshFactCache.mock.calls.filter((c) => (c[0] as { sourceKind: string }).sourceKind === "meta_live")).toHaveLength(1);
+  });
   it("before 17:00 and from 20:00: no evening run", async () => {
     const d = deps();
     await runShortlistPreviewTick({ now: ist("2026-10-09T16:55:00"), env: ON, deps: d });

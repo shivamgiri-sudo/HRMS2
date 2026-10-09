@@ -9,13 +9,18 @@ import type { CandidateFacts, SourceKind, SubSource } from "./selection-types.js
 
 export const factsHashOf = (f: CandidateFacts) => sha256(canonicalJson(f));
 
-export async function refreshFactCache(o: { sourceKind: SourceKind; chunk?: number; now?: Date; subSources?: SubSource[]; liveFrom?: string; maxChunks?: number }) {
+/**
+ * One refresh, or one bounded slice of a pass (E4): `after` resumes from the previous slice's nextKey and `passStartedAt` is the start
+ * of the whole pass. Stale rows (not seen in the pass) are deleted only when a complete, unfiltered pass ends.
+ */
+export async function refreshFactCache(o: { sourceKind: SourceKind; chunk?: number; now?: Date; subSources?: SubSource[]; liveFrom?: string; maxChunks?: number; after?: string; passStartedAt?: string }) {
   const now = o.now ?? new Date();
   const runAt = istText(now);
   const chunk = Math.max(1, Math.min(o.chunk ?? 2000, 5000));
-  let after: string | undefined, chunks = 0, people = 0, skippedInvalidMobile = 0;
+  let after: string | undefined = o.after, chunks = 0, people = 0, skippedInvalidMobile = 0;
+  let nextKey: string | null = null;
   for (;;) {
-    if (o.maxChunks && chunks >= o.maxChunks) break;
+    if (o.maxChunks && chunks >= o.maxChunks) { nextKey = after ?? null; break; }
     const r = await loadRawPeople({ sourceKind: o.sourceKind, subSources: o.subSources, afterKey: after, limit: chunk, liveFrom: o.liveFrom }, now);
     skippedInvalidMobile += r.skippedInvalidMobile;
     // the newest record wins when one person appears twice in a chunk (Meta: several form fills)
@@ -38,17 +43,18 @@ export async function refreshFactCache(o: { sourceKind: SourceKind; chunk?: numb
     if (!r.nextKey) break;
     after = r.nextKey;
   }
-  // a complete, unfiltered run: anyone not seen this time has left the source
+  const complete = nextKey === null;
+  // a complete, unfiltered pass: anyone not seen since the pass started has left the source
   let removed = 0;
-  if (!o.subSources?.length && !(o.maxChunks && chunks >= o.maxChunks)) {
+  if (!o.subSources?.length && complete) {
     for (;;) {
-      const [d] = await db.execute<ResultSetHeader>("DELETE FROM selection_person_fact WHERE source_kind = ? AND refreshed_at < ? LIMIT 5000", [o.sourceKind, runAt]);
+      const [d] = await db.execute<ResultSetHeader>("DELETE FROM selection_person_fact WHERE source_kind = ? AND refreshed_at < ? LIMIT 5000", [o.sourceKind, o.passStartedAt ?? runAt]);
       const n = Number((d as ResultSetHeader | undefined)?.affectedRows ?? 0);
       removed += n;
       if (n < 5000) break;
     }
   }
-  return { sourceKind: o.sourceKind, chunks, people, removed, skippedInvalidMobile };
+  return { sourceKind: o.sourceKind, chunks, people, removed, skippedInvalidMobile, complete, nextKey };
 }
 
 export async function readFactCache(o: { sourceKind: SourceKind; subSources?: SubSource[]; afterKey?: string; limit: number }) {

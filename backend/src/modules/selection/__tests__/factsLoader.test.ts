@@ -123,4 +123,18 @@ describe("fact cache", () => {
     expect(del).toHaveLength(1);
     expect(del[0][0]).toBe("DELETE FROM selection_person_fact WHERE source_kind = ? AND refreshed_at < ? LIMIT 5000");
   });
+  it("E4: a bounded pass resumes from its cursor; stale rows are deleted only after the full pass, older than the pass start", async () => {
+    h.state.heRows = Array.from({ length: 5 }, (_, i) => heRow(i, { ats_candidate_id: null, record_type: null }));
+    const start = "2026-10-09 17:00:00";
+    const a = await refreshFactCache({ sourceKind: "he", chunk: 2, now: NOW, maxChunks: 1, passStartedAt: start });
+    expect(a).toMatchObject({ chunks: 1, people: 2, complete: false, removed: 0 });
+    expect(a.nextKey).toBeTruthy();
+    const b = await refreshFactCache({ sourceKind: "he", chunk: 2, now: NOW, maxChunks: 1, after: a.nextKey!, passStartedAt: start });
+    expect(b).toMatchObject({ people: 2, complete: false });
+    const c = await refreshFactCache({ sourceKind: "he", chunk: 2, now: NOW, maxChunks: 1, after: b.nextKey!, passStartedAt: start });
+    expect(c).toMatchObject({ people: 1, complete: true, nextKey: null });
+    const del = h.state.sqls.filter(([s]) => s.startsWith("DELETE FROM selection_person_fact"));
+    expect(del).toHaveLength(1);
+    expect(del[0][1]).toEqual(["he", start]);
+  });
 });
