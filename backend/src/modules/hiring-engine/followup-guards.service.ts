@@ -33,7 +33,7 @@ export async function branchFirstContactsToday(branchPrefix: string, now: Date):
     `SELECT COUNT(*) AS n FROM qualified_followup
       WHERE mode_at_enqueue = 'canary' AND branch_name LIKE ?
         AND LEAST(COALESCE(email_sent_at, wa_sent_at), COALESCE(wa_sent_at, email_sent_at)) >= ?
-        AND LEAST(COALESCE(email_sent_at, wa_sent_at), COALESCE(wa_sent_at, email_sent_at)) < ?`, [`${branchPrefix}%`, start, end]);
+        AND LEAST(COALESCE(email_sent_at, wa_sent_at), COALESCE(wa_sent_at, email_sent_at)) < ?`, [`${branchPrefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`, start, end]);
   return Number(r[0]?.n ?? 0);
 }
 

@@ -11,6 +11,9 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import type { NextFunction } from "express";
+import type { BranchScope } from "../meta-campaign/meta-access.js";
+import { branchScopeOf } from "./he-stream.routes.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { requisitionOpenReason } from "./followup-guards.js";
 import { branchFirstContactsToday, loadRequisitionFacts, sharedWaSentToday } from "./followup-guards.service.js";
@@ -23,7 +26,8 @@ import type { SourceMode, SourceType } from "./qualified-followup.types.js";
 const SOURCES: readonly SourceType[] = ["meta_live", "meta_old", "he"];
 const MODES = Object.keys(SOURCE_MODE_CODES) as SourceMode[];
 const MODE_BY_CODE = new Map<number, SourceMode>(Object.entries(SOURCE_MODE_CODES).map(([m, c]) => [c, m as SourceMode]));
-const PREFIX_RE = /^[A-Z0-9][A-Z0-9_-]{0,39}$/;
+// No "_" or "%": the prefix is matched with LIKE (and is escaped there too).
+const PREFIX_RE = /^[A-Z0-9][A-Z0-9-]{0,39}$/;
 const REQ_ID_RE = /^[A-Za-z0-9-]{1,36}$/;
 const IST_MS = 5.5 * 3600_000;
 const C = "COLLATE utf8mb4_unicode_ci";
@@ -50,21 +54,27 @@ async function readParams(): Promise<Map<string, number>> {
   return new Map(p.map((r) => [String(r.param_key), Number(r.value)]));
 }
 
-export async function switchesView(now: Date = new Date()): Promise<Record<string, unknown>> {
+/** The switches as everyone sees them; a branch-scoped viewer (M10) sees only their own branch's canary rows, caps and journey counts. */
+export async function switchesView(now: Date = new Date(), scope: BranchScope = { all: true }): Promise<Record<string, unknown>> {
   const params = await readParams();
   const [canaryRows] = await db.execute<RowDataPacket[]>(
     `SELECT fc.source_type, fc.requisition_id, jr.requisition_code, jr.branch_name FROM followup_canary fc
        LEFT JOIN job_requisition jr ON jr.id ${C} = fc.requisition_id ${C} ORDER BY fc.added_at`);
-  const canary = canaryRows.map((r) => ({ sourceType: String(r.source_type) as SourceType, requisitionId: String(r.requisition_id), code: r.requisition_code ? String(r.requisition_code) : null, branch: r.branch_name ? String(r.branch_name) : null }));
-  const s = applyInboundGate(readSwitches(process.env, params, canary), params);
+  const allCanary = canaryRows.map((r) => ({ sourceType: String(r.source_type) as SourceType, requisitionId: String(r.requisition_id), code: r.requisition_code ? String(r.requisition_code) : null, branch: r.branch_name ? String(r.branch_name) : null }));
+  const branch = scope.all ? null : String(scope.branchName ?? "");
+  const canary = branch === null ? allCanary : allCanary.filter((c) => c.branch !== null && c.branch === branch);
+  const s = applyInboundGate(readSwitches(process.env, params, allCanary), params);
   const sources = Object.fromEntries(SOURCES.map((src) => {
     const code = params.get(`policy.followup.${src}`);
     return [src, { mode: (code !== undefined && MODE_BY_CODE.get(code)) || "off", effective: s.sourceModes[src] }];
   }));
-  const caps = await Promise.all([...s.canaryCaps].map(async ([prefix, dailyMax]) => ({ prefix, dailyMax, usedToday: await branchFirstContactsToday(prefix, now) })));
+  const capList = [...s.canaryCaps].filter(([prefix]) => branch === null || (branch !== "" && branch.toUpperCase().startsWith(prefix)));
+  const caps = await Promise.all(capList.map(async ([prefix, dailyMax]) => ({ prefix, dailyMax, usedToday: await branchFirstContactsToday(prefix, now) })));
   const quality = await getPinbotQuality();
   const inb = await waInboundHealth(now);
-  const [cnt] = await db.execute<RowDataPacket[]>("SELECT source_type, journey_state, COUNT(*) AS n FROM qualified_followup GROUP BY source_type, journey_state");
+  const [cnt] = branch === null
+    ? await db.execute<RowDataPacket[]>("SELECT source_type, journey_state, COUNT(*) AS n FROM qualified_followup GROUP BY source_type, journey_state")
+    : await db.execute<RowDataPacket[]>("SELECT source_type, journey_state, COUNT(*) AS n FROM qualified_followup WHERE branch_name = ? GROUP BY source_type, journey_state", [branch]);
   const counts: Record<string, Record<string, number>> = Object.fromEntries(SOURCES.map((src) => [src, {}]));
   for (const r of cnt) if (counts[String(r.source_type)]) counts[String(r.source_type)][String(r.journey_state)] = Number(r.n);
   return {
@@ -77,10 +87,17 @@ export async function switchesView(now: Date = new Date()): Promise<Record<strin
 
 export function registerFollowupSwitchRoutes(r: Router, roles: { view: string[]; admin: string[] }): void {
   const view = [requireAuth, requireRole(...roles.view)];
-  const admin = [requireAuth, requireRole(...roles.admin)];
+  // Every write changes sends for all branches, so it needs an org-wide user: admin is branch-scoped (meta-access ALL_BRANCH_ROLES).
+  const orgWide = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if ((await branchScopeOf(req as AuthenticatedRequest)).all) return next();
+      res.status(403).json({ success: false, message: "Only an organisation-wide user can change the follow-up switches" });
+    } catch (err) { fail(res, "check your access", err); }
+  };
+  const admin = [requireAuth, requireRole(...roles.admin), orgWide];
 
-  r.get("/qualified-followup/switches", ...view, async (_req, res) => {
-    try { res.json({ success: true, data: await switchesView() }); } catch (err) { fail(res, "load the follow-up switches", err); }
+  r.get("/qualified-followup/switches", ...view, async (req, res) => {
+    try { res.json({ success: true, data: await switchesView(new Date(), await branchScopeOf(req as AuthenticatedRequest)) }); } catch (err) { fail(res, "load the follow-up switches", err); }
   });
 
   r.put("/qualified-followup/switches/:source", ...admin, async (req, res) => {
@@ -105,7 +122,9 @@ export function registerFollowupSwitchRoutes(r: Router, roles: { view: string[];
     const { sourceType, requisitionId } = req.body ?? {};
     if (!isSource(sourceType) || typeof requisitionId !== "string" || !REQ_ID_RE.test(requisitionId)) return res.status(400).json({ success: false, message: "sourceType and requisitionId are required" });
     try {
-      const why = requisitionOpenReason(await loadRequisitionFacts(requisitionId), { endDateEnforced: true });
+      const facts = await loadRequisitionFacts(requisitionId);
+      if (!facts) return res.status(404).json({ success: false, message: "Requisition not found" });
+      const why = requisitionOpenReason(facts, { endDateEnforced: true });
       if (why) return res.status(409).json({ success: false, message: `Only an open requisition can be a canary: ${why}` });
       await db.execute("INSERT INTO followup_canary (source_type, requisition_id, added_by) VALUES (?,?,?) ON DUPLICATE KEY UPDATE added_by = VALUES(added_by)", [sourceType, requisitionId, userOf(req)]);
       await audit(req, `canary.${sourceType}`, { added: requisitionId });

@@ -69,7 +69,9 @@ describe("FollowupSwitchView", () => {
   });
   it("CEO and HR see the card read-only", () => {
     expect(canEditSwitches(["ceo"])).toBe(false);
-    expect(canEditSwitches(["hr", "admin"])).toBe(true);
+    expect(canEditSwitches(["hr", "admin"])).toBe(false); // admin is branch-scoped: the server refuses every write (403)
+    expect(canEditSwitches(["super_admin"])).toBe(true);
+    expect(canEditSwitches(["admin", "ceo"])).toBe(true); // admin role + an org-wide role
     const html = render({ canEdit: false });
     expect(html).toContain("View only");
     expect(html).not.toMatch(/<select[^>]*id="fu-mode-meta_live"(?![^>]*disabled)/);

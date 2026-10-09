@@ -25,8 +25,12 @@ const RANK: Record<SourceMode, number> = { off: 0, dry_run: 1, test: 2, canary: 
 export const SOURCE_LABEL: Record<SourceType, string> = { meta_live: "Live Meta leads", meta_old: "Old Meta data", he: "Hiring Engine pool" };
 export const MODE_LABEL: Record<SourceMode, string> = { off: "Off", dry_run: "Dry run", test: "Test", canary: "Canary", live: "Live" };
 
-const ADMIN = ["super_admin", "admin"];
-export const canEditSwitches = (roles: readonly string[] | null | undefined): boolean => (roles ?? []).some((r) => ADMIN.includes(r));
+// Writes need an admin role AND organisation-wide scope (server: followup-switch.routes orgWide; admin alone is branch-scoped).
+const ORG_WIDE = ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"];
+export const canEditSwitches = (roles: readonly string[] | null | undefined): boolean => {
+  const r = roles ?? [];
+  return r.includes("super_admin") || (r.includes("admin") && r.some((x) => ORG_WIDE.includes(x)));
+};
 
 /** What actually runs, and why it differs from the screen value. */
 export function effectiveText(mode: SourceMode, effective: SourceMode, ceiling: SourceMode): string {

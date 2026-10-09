@@ -43,7 +43,7 @@ beforeEach(() => {
     const q = String(sql);
     if (q.includes("FROM he_model_param WHERE param_key LIKE 'policy.followup.%'")) return [params];
     if (q.includes("wa_inbound_verified")) return [params.filter((p) => p.param_key === "policy.followup.wa_inbound_verified")];
-    if (q.includes("FROM followup_canary")) return [[{ source_type: "meta_live", requisition_id: REQ, requisition_code: "REQ-9", branch_name: "NOIDA-2 Sector 63" }]];
+    if (q.includes("FROM followup_canary")) return [[{ source_type: "meta_live", requisition_id: REQ, requisition_code: "REQ-9", branch_name: "NOIDA-2 Sector 63" }, { source_type: "he", requisition_id: "r-ahm", requisition_code: "REQ-A", branch_name: "AHMEDABAD" }]];
     if (q.includes("FROM job_requisition WHERE id = ?")) return [requisition ? [requisition] : []];
     if (q.includes("FROM employees e")) return [[{ branch_name: "NOIDA-2" }]];
     if (q.includes("FROM qualified_followup qf JOIN job_requisition")) return [rowBranch === null ? [] : [{ branch_name: rowBranch }]];
@@ -68,12 +68,23 @@ describe("GET /qualified-followup/switches", () => {
     expect(d.sources.meta_live).toEqual({ mode: "live", effective: "dry_run" });
     expect(d.sources.meta_old).toEqual({ mode: "off", effective: "off" });
     expect(d.sources.he).toEqual({ mode: "dry_run", effective: "dry_run" });
-    expect(d.canary).toEqual([{ sourceType: "meta_live", requisitionId: REQ, code: "REQ-9", branch: "NOIDA-2 Sector 63" }]);
+    expect(d.canary).toEqual([{ sourceType: "meta_live", requisitionId: REQ, code: "REQ-9", branch: "NOIDA-2 Sector 63" }, { sourceType: "he", requisitionId: "r-ahm", code: "REQ-A", branch: "AHMEDABAD" }]);
     expect(d.caps).toEqual(expect.arrayContaining([{ prefix: "NOIDA-2", dailyMax: 50, usedToday: 0 }, { prefix: "AHMEDABAD", dailyMax: 30, usedToday: 0 }]));
     expect(d.budget).toEqual({ max: 500, quality: "GREEN", used: 0 });
     expect(d.inbound).toMatchObject({ verified: false, acknowledged: false, inbound7d: 0 });
     expect(d.counts.meta_live).toEqual({ enrolled: 3 });
     expect(JSON.stringify(res.body)).not.toMatch(/\d{10}/);
+  });
+  it("a branch-scoped viewer (hr, admin at NOIDA-2) sees only their branch's canary rows, caps and journey counts", async () => {
+    for (const role of ["hr", "admin"]) {
+      execute.mockClear();
+      const d = (await request(appFor(role)).get("/api/he/qualified-followup/switches")).body.data;
+      expect(d.canary.map((c: { code: string }) => c.code)).toEqual([]); // "NOIDA-2 Sector 63" is not the caller's branch "NOIDA-2"
+      expect(d.caps.map((c: { prefix: string }) => c.prefix)).toEqual(["NOIDA-2"]);
+      const cnt = sqls(/GROUP BY source_type, journey_state/);
+      expect(cnt[0][0]).toContain("WHERE branch_name = ?");
+      expect(cnt[0][1]).toEqual(["NOIDA-2"]);
+    }
   });
   it("a role outside the view roles gets 403", async () => {
     expect((await request(appFor("employee")).get("/api/he/qualified-followup/switches")).status).toBe(403);
@@ -109,11 +120,27 @@ describe("PUT /qualified-followup/switches/:source", () => {
   });
   it("verified inbound: live is accepted without acknowledgement", async () => {
     params = [{ param_key: "policy.followup.wa_inbound_verified", value: 1 }];
-    expect((await request(appFor("admin")).put("/api/he/qualified-followup/switches/he").send({ mode: "live" })).status).toBe(200);
+    expect((await request(appFor("super_admin")).put("/api/he/qualified-followup/switches/he").send({ mode: "live" })).status).toBe(200);
+  });
+  it("admin is branch-scoped: every write is 403 for admin (org-wide users only), nothing written", async () => {
+    params = [{ param_key: "policy.followup.wa_inbound_verified", value: 1 }];
+    const a = appFor("admin");
+    expect((await request(a).put("/api/he/qualified-followup/switches/he").send({ mode: "live" })).status).toBe(403);
+    expect((await request(a).post("/api/he/qualified-followup/canary").send({ sourceType: "he", requisitionId: REQ })).status).toBe(403);
+    expect((await request(a).delete(`/api/he/qualified-followup/canary/he/${REQ}`)).status).toBe(403);
+    expect((await request(a).put("/api/he/qualified-followup/caps/NOIDA-2").send({ dailyMax: 5 })).status).toBe(403);
+    expect((await request(a).put("/api/he/qualified-followup/kill").send({ paused: true })).status).toBe(403);
+    expect((await request(a).put("/api/he/qualified-followup/inbound-verified").send({ verified: true })).status).toBe(403);
+    expect(sqls(/INSERT INTO he_model_param|INSERT INTO followup_canary|DELETE FROM followup_canary/)).toHaveLength(0);
   });
 });
 
 describe("canary, caps, kill switch, inbound flag", () => {
+  it("an unknown requisition cannot be a canary (404)", async () => {
+    requisition = null;
+    expect((await request(appFor("super_admin")).post("/api/he/qualified-followup/canary").send({ sourceType: "he", requisitionId: REQ })).status).toBe(404);
+    expect(sqls(/INSERT INTO followup_canary/)).toHaveLength(0);
+  });
   it("adds an open requisition to the canary list; a closed one is refused", async () => {
     const ok = await request(appFor("super_admin")).post("/api/he/qualified-followup/canary").send({ sourceType: "he", requisitionId: REQ });
     expect(ok.status).toBe(200);
@@ -133,6 +160,7 @@ describe("canary, caps, kill switch, inbound flag", () => {
     expect((await request(appFor("super_admin")).put("/api/he/qualified-followup/caps/NOIDA-2").send({ dailyMax: 1001 })).status).toBe(400);
     expect((await request(appFor("super_admin")).put("/api/he/qualified-followup/caps/NOIDA-2").send({ dailyMax: -1 })).status).toBe(400);
     expect((await request(appFor("super_admin")).put("/api/he/qualified-followup/caps/no%20ida';").send({ dailyMax: 5 })).status).toBe(400);
+    expect((await request(appFor("super_admin")).put("/api/he/qualified-followup/caps/NOIDA_2").send({ dailyMax: 5 })).status).toBe(400); // '_' is a LIKE wildcard
     expect((await request(appFor("super_admin")).put("/api/he/qualified-followup/caps/noida-2").send({ dailyMax: 20 })).status).toBe(200);
     expect(sqls(/INSERT INTO he_model_param/).map(([, p]) => p)).toEqual([["policy.followup.canary_cap.NOIDA-2", 20]]);
   });
