@@ -181,6 +181,8 @@ async function runSyncCycle(): Promise<MetaSyncNowResult> {
       );
     }
 
+    // (No WhatsApp delivery reconcile here any more: it polled the retired Wassenger gateway. Pinbot is the only WhatsApp provider
+    //  (owner decision O7) and its delivery receipts arrive through the Pinbot webhook onto he_message; intentional, 34098ec7a.)
     // 3. Heal leads the webhook/backfill left half-synced (Graph-fetch stubs, qualified leads with
     //    no ATS candidate) so they are complete before outreach.
     try {
