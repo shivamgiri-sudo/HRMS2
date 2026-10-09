@@ -50,5 +50,5 @@ export default function CriteriaSection({ requisitionId }: { requisitionId?: str
   useEffect(() => { if (requisitionId) setSelected(requisitionId); }, [requisitionId]);
   return <CriteriaSectionView items={items} permissions={permissions} onlyIncomplete={onlyIncomplete} onOnlyIncomplete={setOnlyIncomplete} selected={selected}
     onSelect={(id) => setSelected((s) => (s === id ? null : id))} loading={loading} error={error} onRetry={load} now={new Date()}
-    whyNot={permissions ? <WhyNotLookup permissions={permissions} /> : null} panel={selected ? <RequisitionCriteriaPanel requisitionId={selected} onChanged={load} /> : null} />;
+    whyNot={permissions && (permissions.export || permissions.override) ? <WhyNotLookup permissions={permissions} /> : null} panel={selected ? <RequisitionCriteriaPanel requisitionId={selected} onChanged={load} /> : null} />;
 }

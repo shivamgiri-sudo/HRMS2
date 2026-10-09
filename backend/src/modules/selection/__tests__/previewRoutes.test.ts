@@ -14,6 +14,7 @@ vi.mock("../../../middleware/requireRole.js", () => ({
 vi.mock("../../job-requisition/job-requisition.service.js", () => ({ jobRequisitionService: { isRequisitionVisible: vi.fn(async (_u: unknown, k: { id: string }) => !h.outOfScope.has(k.id)) } }));
 vi.mock("../preview.service.js", () => ({ previewRequisition: h.preview, previewCsv: h.csv }));
 vi.mock("../why-not.service.js", () => ({ whyNot: h.why }));
+vi.mock("../../meta-campaign/meta-access.js", async (orig) => ({ ...(await orig<object>()), resolveBranchScope: vi.fn(async () => ({ all: false, branchName: "NOIDA-2" })) }));
 
 async function app() {
   const { criteriaRouter } = await import("../criteria.routes.js");
@@ -69,7 +70,17 @@ describe("why-not route", () => {
   it("passes the query, the caller and an optional requisition", async () => {
     const res = await request(await app()).get("/api/job-requisition/selection/why?q=9876543210&requisitionId=r1");
     expect(res.status).toBe(200);
-    expect(h.why).toHaveBeenCalledWith("9876543210", { user: { id: "u1", role: "hr" }, requisitionId: "r1" });
+    expect(h.why).toHaveBeenCalledWith("9876543210", { user: { id: "u1", role: "hr" }, requisitionId: "r1", scope: { all: false, branchName: "NOIDA-2" } });
+  });
+  it("preview-export and override roles only: ceo and branch_head are 403; admin may look up", async () => {
+    const a = await app();
+    for (const role of ["ceo", "branch_head"]) { h.user.role = role; expect((await request(a).get("/api/job-requisition/selection/why?q=abc")).status).toBe(403); }
+    h.user.role = "admin";
+    expect((await request(a).get("/api/job-requisition/selection/why?q=abc")).status).toBe(200);
+  });
+  it("nobody in the caller's scope: an empty answer that says so", async () => {
+    const res = await request(await app()).get("/api/job-requisition/selection/why?q=abc");
+    expect(res.body).toEqual({ success: true, data: [], message: "Not found in your scope" });
   });
   it("a missing or very long query is 400; an employee is 403", async () => {
     const a = await app();

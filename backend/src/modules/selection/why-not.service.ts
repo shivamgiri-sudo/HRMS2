@@ -4,7 +4,9 @@
 // The full mobile is shown only when HR searched by that mobile; otherwise masked, first name only (S-O11).
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { isMissingSchemaError } from "../../db/db-error-classification.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import type { BranchScope } from "../meta-campaign/meta-access.js";
 import { normalizeMobile10 } from "../hiring-engine/he-phone.js";
 import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
 import { compileCriteria } from "./compile-criteria.js";
@@ -85,9 +87,32 @@ async function factsFor(m: string, now: Date): Promise<CandidateFacts[]> {
   return (await loadHePeopleByMobiles([m], now)).map((p) => normaliseFacts(p.person, now));
 }
 
-export async function whyNot(q: string, o: { user: NonNullable<AuthenticatedRequest["authUser"]>; now?: Date; requisitionId?: string }): Promise<WhyNotPerson[]> {
+/** A branch-scoped caller only sees people with a row in their branch: a Hiring Engine match, a Meta lead, a follow-up row or a walk-in
+ *  invite on one of the branch's requisitions. Anyone else is "not found in your scope" (never a masked entry or any value). */
+async function personInBranch(m: string, branchName: string): Promise<boolean> {
+  const run = (withInvites: boolean) => db.execute<RowDataPacket[]>(
+    `SELECT 1 AS hit FROM (
+       SELECT 1 AS x FROM he_lead l JOIN he_match hm ON hm.lead_id = l.id JOIN job_requisition jr ON jr.id = hm.requisition_id WHERE l.mobile10 = ? AND jr.branch_name = ?
+       UNION ALL SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = ? AND qf.branch_name = ?
+       UNION ALL SELECT 1 FROM meta_lead_raw r JOIN job_requisition jr ON jr.id = r.requisition_id WHERE r.parsed_phone IN (?, ?, ?, ?) AND jr.branch_name = ?${withInvites ? `
+       UNION ALL SELECT 1 FROM walkin_invite wi WHERE wi.mobile10 = ? AND wi.branch_name = ?` : ""}) t LIMIT 1`,
+    [m, branchName, m, branchName, ...variants(m), branchName, ...(withInvites ? [m, branchName] : [])]);
+  // Before migration 2140 there is no walkin_invite; any other failure hides the person (fail closed).
+  const [rows] = await run(true).catch((e: unknown) => (isMissingSchemaError(e) ? run(false) : Promise.reject(e))).catch(() => [[] as RowDataPacket[]] as const);
+  return rows.length > 0;
+}
+
+export async function whyNot(q: string, o: { user: NonNullable<AuthenticatedRequest["authUser"]>; now?: Date; requisitionId?: string; scope: BranchScope }): Promise<WhyNotPerson[]> {
   const now = o.now ?? new Date();
-  const { mobiles, searchedMobile } = await resolvePeople(q);
+  const found = await resolvePeople(q);
+  const { searchedMobile } = found;
+  let mobiles = found.mobiles;
+  if (!o.scope.all) {
+    const branch = o.scope.branchName;
+    const keep: typeof mobiles = [];
+    if (branch) for (const p of mobiles) if (await personInBranch(p.m, branch)) keep.push(p);
+    mobiles = keep;
+  }
   if (!mobiles.length) return [];
   const reqIds = await openRequisitionsInScope(o.user, o.requisitionId, now);
   const compiled = new Map<string, { code: string; c: ReturnType<typeof compileCriteria> }>();

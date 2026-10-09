@@ -20,6 +20,8 @@ export const criteriaRouter = Router();
 
 export { CRITERIA_READ_ROLES, PREVIEW_EXPORT_ROLES } from "./selection-roles.js";
 import { CRITERIA_READ_ROLES, PREVIEW_EXPORT_ROLES, permissionsFor } from "./selection-roles.js";
+import { OVERRIDE_ROLES } from "./override.service.js";
+import { resolveBranchScope } from "../meta-campaign/meta-access.js";
 const MAX_IDS = 200;
 
 type Handler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -71,11 +73,17 @@ criteriaRouter.post("/criteria/copy", requireAuth, requireRole(...CRITERIA_EDIT_
 }));
 
 // Why-not lookup (S11): read roles; only open requisitions in the caller's scope are evaluated (inside whyNot).
-criteriaRouter.get("/selection/why", requireAuth, requireRole(...CRITERIA_READ_ROLES), h(async (req, res) => {
+// I3: people are scoped too (only people with a row in the caller's branch, unless org-wide), and only the preview-export and override
+// roles may look a person up (not ceo / manager roles).
+const WHY_ROLES = [...new Set<string>([...PREVIEW_EXPORT_ROLES, ...OVERRIDE_ROLES])];
+criteriaRouter.get("/selection/why", requireAuth, requireRole(...WHY_ROLES), h(async (req, res) => {
   const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
   const rid = typeof req.query.requisitionId === "string" && req.query.requisitionId ? req.query.requisitionId : undefined;
   if (!q || q.length > 80) return bad(res, "q (a mobile, candidate code or at least 3 letters of a name) is required");
-  return res.json({ success: true, data: await whyNot(q, { user: req.authUser!, requisitionId: rid }) });
+  const held = (req as unknown as { userRoles?: string[] }).userRoles;
+  const scope = await resolveBranchScope(req.authUser!.id, (held?.length ? held : [String(req.authUser!.role ?? "")]).filter(Boolean));
+  const data = await whyNot(q, { user: req.authUser!, requisitionId: rid, scope });
+  return res.json({ success: true, data, ...(data.length ? {} : { message: "Not found in your scope" }) });
 }));
 
 criteriaRouter.get("/:id/criteria", requireAuth, requireRole(...CRITERIA_READ_ROLES), inScope, h(async (req, res) =>

@@ -8,7 +8,7 @@ import { selectionApi } from "./selectionApi";
 import type { Permissions, WhyNotPerson } from "./selectionTypes";
 
 export function WhyNotResults({ people, permissions, onOverride }: { people: WhyNotPerson[]; permissions: Permissions; onOverride: (p: WhyNotPerson, requisitionId: string, code: string) => void }) {
-  if (!people.length) return <p className="text-sm text-slate-600 dark:text-slate-300">Nobody found with that mobile or name in the requisitions you can see.</p>;
+  if (!people.length) return <p className="text-sm text-slate-600 dark:text-slate-300">Nobody found in your scope with that mobile, code or name.</p>;
   return (
     <ul className="space-y-3">
       {people.map((p, i) => (
