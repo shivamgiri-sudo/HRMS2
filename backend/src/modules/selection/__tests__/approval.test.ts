@@ -4,7 +4,7 @@ import type { Evaluated } from "../preview.service.js";
 const h = vi.hoisted(() => {
   const state = {
     req: {} as Record<string, unknown>, row: {} as Record<string, unknown>, runs: [] as Array<Record<string, unknown>>, cands: [] as Array<Record<string, unknown>>,
-    approvals: [] as Array<Record<string, unknown>>, enrol: 0, perSeat: null as number | null, version: "v1" as string | null, people: [] as Evaluated[], outOfScope: new Set<string>(), facts: new Map<string, unknown>(), refs: new Map<string, string>(), leads: new Map<string, string>(), nextId: 1,
+    approvals: [] as Array<Record<string, unknown>>, enrol: 0, perSeat: null as number | null, version: "v1" as string | null, people: [] as Evaluated[], outOfScope: new Set<string>(), facts: new Map<string, unknown>(), refs: new Map<string, string>(), leads: new Map<string, string>(), factKind: new Map<string, string>(), nextId: 1,
   };
   const exec = async (sql: string, p: unknown[] = []) => {
     const s = sql.replace(/\s+/g, " ").trim();
@@ -66,7 +66,12 @@ const h = vi.hoisted(() => {
       hit.forEach((c) => { c.status = "hr_rejected"; }); return [{ affectedRows: hit.length }, []];
     }
     if (s.startsWith("SELECT id, run_id, mobile10, criteria_version_id FROM shortlist_candidate")) return [S.cands.filter((c) => c.requisition_id === p[0] && c.source_kind === p[1] && c.status === "approved"), []];
-    if (s.startsWith("SELECT facts_json, source_ref FROM selection_person_fact")) return [S.facts.has(String(p[0])) ? [{ facts_json: S.facts.get(String(p[0])), source_ref: S.refs.get(String(p[0])) ?? null }] : [], []];
+    if (s.startsWith("SELECT facts_json, source_ref FROM selection_person_fact")) {
+      // the cached row's source kind (any when not set) must be one the statement asks for
+      const kind = S.factKind.get(String(p[0]));
+      const asked = s.includes("source_kind IN (?, ?)") ? [p[1], p[2]] : [p[1]];
+      return [S.facts.has(String(p[0])) && (!kind || asked.includes(kind)) ? [{ facts_json: S.facts.get(String(p[0])), source_ref: S.refs.get(String(p[0])) ?? null }] : [], []];
+    }
     if (s.startsWith("SELECT id FROM he_lead WHERE mobile10 = ?")) return [S.leads.has(String(p[0])) ? [{ id: S.leads.get(String(p[0])) }] : [], []];
     if (s.startsWith("UPDATE shortlist_candidate SET status = 'enrolled'")) { S.cands.filter((c) => c.id === p[0]).forEach((c) => { c.status = "enrolled"; }); return [{}, []]; }
     if (s.startsWith("SELECT id, status FROM shortlist_candidate WHERE run_id = ? AND mobile10 = ?")) return [S.cands.filter((c) => c.run_id === p[0] && c.mobile10 === p[1]), []];
@@ -108,7 +113,7 @@ const port = () => { const calls: unknown[] = []; return { calls, enqueue: vi.fn
 
 beforeEach(() => {
   Object.assign(h.state, { req: { approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 10, fulfilled_headcount: 0, requisition_validity: "2026-10-30", branch_name: "NOIDA-2", designation_name: "CSE" },
-    row: dbRow(), runs: [], cands: [], approvals: [], enrol: 0, perSeat: null, version: "v1", outOfScope: new Set(), facts: new Map(), refs: new Map(), leads: new Map(), nextId: 1 });
+    row: dbRow(), runs: [], cands: [], approvals: [], enrol: 0, perSeat: null, version: "v1", outOfScope: new Set(), facts: new Map(), refs: new Map(), leads: new Map(), factKind: new Map(), nextId: 1 });
   h.state.people = evalAll([person(1), person(2), person(3), person(4, { age: { value: null, quality: "missing", from: "t" } }), person(5, { age: ok(50) }), person(6, { recordType: "legacy_employee" })]);
 });
 
@@ -276,6 +281,29 @@ describe("enrol step: the person's records travel with the enrolment (rig findin
     const p = port();
     await enrolApproved({ requisitionId: "r1", sourceKind: "meta_old", port: p, now: NOW });
     expect(p.calls[0]).toMatchObject({ sourceType: "meta_old", metaLeadId: "meta-1", heLeadId: "lead-1" });
+  });
+});
+
+describe("a person approved as Live Meta who rolls into Old Meta data before the enrol step keeps their journey", () => {
+  it("the Live row was dropped from the cache (complete meta_live pass): their Old Meta facts and Meta lead are used; the journey is still the approved Live one", async () => {
+    const { runId } = await createShortlistRun({ requisitionId: "r1", sourceKind: "meta_live", actor, now: NOW });
+    await approveBatch({ requisitionId: "r1", sourceKind: "meta_live", runId, actor, now: NOW });
+    h.state.enrol = 1;
+    const m = person(1).personKey;
+    h.state.facts.set(m, JSON.stringify(person(1))); h.state.refs.set(m, "meta-1"); h.state.factKind.set(m, "meta_old"); h.state.leads.set(m, "lead-1");
+    const p = port();
+    await enrolApproved({ requisitionId: "r1", sourceKind: "meta_live", port: p, now: NOW });
+    expect(p.calls[0]).toMatchObject({ sourceType: "meta_live", mobile10: m, metaLeadId: "meta-1", heLeadId: "lead-1", fullName: person(1).firstName });
+  });
+  it("Hiring Engine rows never borrow Meta facts", async () => {
+    const { runId } = await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
+    await approveBatch({ requisitionId: "r1", sourceKind: "he", runId, actor, now: NOW });
+    h.state.enrol = 1;
+    const m = person(1).personKey;
+    h.state.facts.set(m, JSON.stringify(person(1))); h.state.refs.set(m, "meta-1"); h.state.factKind.set(m, "meta_old");
+    const p = port();
+    await enrolApproved({ requisitionId: "r1", sourceKind: "he", port: p, now: NOW });
+    expect(p.calls[0]).toMatchObject({ sourceType: "he", mobile10: m, fullName: null, metaLeadId: null });
   });
 });
 
