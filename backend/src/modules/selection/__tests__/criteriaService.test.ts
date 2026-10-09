@@ -96,6 +96,9 @@ describe("saveRequisitionCriteria", () => {
   it("salary in the patch -> 400 salary needs re-approval (runtime guard)", async () => {
     await expect(saveRequisitionCriteria({ requisitionId: "r1", patch: { salaryMax: 25000 } as never, actor, source: "criteria_panel", reason: "x" })).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/salary needs re-approval/) });
     await expect(saveRequisitionCriteria({ requisitionId: "r1", patch: { requestedHeadcount: 3 } as never, actor, source: "criteria_panel", reason: "x" })).rejects.toMatchObject({ statusCode: 400 });
+    // M7: malformed values are a 400 with a message before any database work (custom_field_rules as an object used to throw a 500)
+    await expect(saveRequisitionCriteria({ requisitionId: "r1", patch: { screeningConfig: { custom_field_rules: { field: "q" } } } as never, actor, source: "criteria_panel", reason: "x" })).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/custom_field_rules/) });
+    await expect(saveRequisitionCriteria({ requisitionId: "r1", patch: { ageMin: "old" } as never, actor, source: "criteria_panel", reason: "x" })).rejects.toMatchObject({ statusCode: 400 });
     expect(writes()).toEqual([]);
   });
   it("closed -> 409", async () => {

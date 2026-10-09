@@ -7,6 +7,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { compileCriteria, type RequisitionCriteriaRow } from "./compile-criteria.js";
 import { validateCriteria, type CriteriaIssue } from "./criteria-validate.js";
+import { patchShapeError } from "./criteria-patch-shape.js";
 import {
   bindColumn, CRITERIA_COLUMNS, diffColumns, loadDbRow, PATCH_TO_COLUMN, snapshotColumns, toCriteriaRow, type CriteriaColumn,
 } from "./criteria-row.js";
@@ -94,6 +95,8 @@ async function liveMeta(ex: Exec, id: string): Promise<boolean> {
 export async function saveRequisitionCriteria(a: { requisitionId: string; patch: CriteriaPatch; actor: Actor; source: CriteriaSource; reason: string | null; dryRun?: boolean }): Promise<SaveResult> {
   const bad = Object.keys(a.patch ?? {}).filter((k) => !PATCH_KEYS.has(k));
   if (bad.length) throw fail(400, LOCKED_HINT[bad[0]] ? `${bad.join(", ")}: ${LOCKED_HINT[bad[0]]}` : `${bad.join(", ")} cannot be changed here (needs re-approval or the requisition form)`);
+  const shape = patchShapeError(a.patch as Record<string, unknown>);
+  if (shape) throw fail(400, shape);
   if (a.patch.selectionRules !== undefined && a.patch.selectionRules !== null) {
     const p = parseSelectionRules(a.patch.selectionRules);
     if (!p.ok) throw fail(422, "selection rules are invalid", p.errors.map((text) => ({ level: "error", keys: [], text })));
