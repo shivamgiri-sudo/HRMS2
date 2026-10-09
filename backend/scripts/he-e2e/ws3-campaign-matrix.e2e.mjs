@@ -189,17 +189,19 @@ const cellOf = (m, campaignId, reqId, kind) => m.rows.find((r) => r.key === `${c
 {
   ok("bridge: HR cannot run it (403)", (await call(H.hr, "POST", "/api/he/pool/bridge-ats", { recordTypes: ["naukri_import"] })).status === 403);
   ok("bridge: CEO cannot list it (403)", (await call(H.ceo, "GET", "/api/he/pool/bridge-ats/sources")).status === 403);
-  const src = await call(H.admin, "GET", "/api/he/pool/bridge-ats/sources");
+  ok("bridge: a branch-scoped admin cannot list or run it (403, org-wide only)", (await call(H.admin, "GET", "/api/he/pool/bridge-ats/sources")).status === 403
+    && (await call(H.admin, "POST", "/api/he/pool/bridge-ats", { recordTypes: ["naukri_import"] })).status === 403);
+  const src = await call(H.super_admin, "GET", "/api/he/pool/bridge-ats/sources");
   ok("bridge: sources list the RIGW3 files with pool coverage", src.status === 200 && src.json.data.filter((s) => s.sourceDetails.startsWith("RIGW3")).length === 4, src.json?.data);
   ok("bridge: legacy / test records are never listed", !src.json.data.some((s) => s.recordType === "test" || s.recordType === "legacy_employee"));
-  const dry = (await call(H.admin, "POST", "/api/he/pool/bridge-ats", { recordTypes: ["naukri_import", "workindia_import"] })).json.data;
+  const dry = (await call(H.super_admin, "POST", "/api/he/pool/bridge-ats", { recordTypes: ["naukri_import", "workindia_import"] })).json.data;
   const w3 = dry.batches.filter((b) => b.sourceDetails.startsWith("RIGW3"));
   const sk = w3.reduce((a, b) => { for (const k of Object.keys(b.skipped)) a[k] = (a[k] ?? 0) + b.skipped[k]; return a; }, {});
   ok("bridge: dry run is the default and writes nothing", dry.dryRun === true && Number((await q("SELECT COUNT(*) n FROM he_lead WHERE mobile10 LIKE '99999004%'"))[0].n) === 0);
   ok("bridge: one batch per file (4 RIGW3 files)", w3.length === 4, w3.map((b) => b.sourceDetails));
   ok("bridge: skips legacy-linked, employee, malformed and duplicate mobiles", sk.legacy_employee === 1 && sk.employee === 1 && sk.no_mobile === 1 && sk.duplicate_mobile === 1, sk);
   ok("bridge: 6 RIGW3 people would be added", w3.reduce((s, b) => s + b.inserted, 0) === 6, w3);
-  const real = (await call(H.admin, "POST", "/api/he/pool/bridge-ats", { recordTypes: ["naukri_import", "workindia_import"], dryRun: false })).json.data;
+  const real = (await call(H.super_admin, "POST", "/api/he/pool/bridge-ats", { recordTypes: ["naukri_import", "workindia_import"], dryRun: false })).json.data;
   ok("bridge: the real run adds them and says it is preview only", real.dryRun === false && real.next_step.includes("preview"), real.totals);
   const pool = await q(`SELECT l.mobile10, l.education_rank, l.primary_source, l.email, b.label FROM he_lead l JOIN he_lead_batch lb ON lb.lead_id = l.id JOIN he_import_batch b ON b.id = lb.batch_id
                          WHERE l.mobile10 LIKE '99999004%' ORDER BY l.mobile10`);
@@ -209,7 +211,7 @@ const cellOf = (m, campaignId, reqId, kind) => m.rows.find((r) => r.key === `${c
   const prof = await q("SELECT p.last_employer FROM he_lead_profile p JOIN he_lead l ON l.id = p.lead_id WHERE l.mobile10 LIKE '99999004%'");
   ok("bridge: the 'ccc' employer placeholder is never stored", !prof.some((p) => p.last_employer === "ccc"), prof);
   ok("bridge: the test record is not in the pool", Number((await q("SELECT COUNT(*) n FROM he_lead WHERE mobile10 = '9999900409'"))[0].n) === 0);
-  const again = (await call(H.admin, "POST", "/api/he/pool/bridge-ats", { recordTypes: ["naukri_import", "workindia_import"], dryRun: false })).json.data;
+  const again = (await call(H.super_admin, "POST", "/api/he/pool/bridge-ats", { recordTypes: ["naukri_import", "workindia_import"], dryRun: false })).json.data;
   ok("bridge: a second run only enriches (idempotent)", again.totals.inserted === 0 && again.totals.enriched >= 6, again.totals);
   await new Promise((r) => setTimeout(r, 4000)); // the facts cache refresh runs in the background
   const pvw = await call(H.branch_hr_ahm, "GET", `/api/job-requisition/${R.R03}/selection/preview?source=he&sub=naukri_import&sample=50`);

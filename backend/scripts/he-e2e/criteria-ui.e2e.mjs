@@ -159,7 +159,10 @@ try {
       }
       const q = page.getByLabel("Mobile or name");
       await dismissPopups(page);
-      if (await visible(q)) {
+      const lookupShown = await visible(q);
+      // I3: the people lookup is for the preview-export / override roles only (ceo / manager roles and recruiters do not get it)
+      if (READ.has(role)) ok(`${role}: why-not lookup ${["ceo", "branch_head"].includes(role) ? "hidden" : "shown"} (I3)`, lookupShown === !["ceo", "branch_head"].includes(role), lookupShown);
+      if (lookupShown) {
         await q.fill(SEARCHED);
         await q.press("Enter"); // the app's fixed bottom bar can cover the button at the page end
         await settle(page);

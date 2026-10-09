@@ -89,7 +89,7 @@ async function variants(page, name, anchor) {
 
 const HE = new Set(["super_admin", "admin", "hr", "branch_hr_noida2", "branch_hr_ahm", "ceo"]);
 const WRITE = new Set(["super_admin", "admin", "hr", "branch_hr_noida2", "branch_hr_ahm"]);
-const BRIDGE = new Set(["super_admin", "admin"]);
+const BRIDGE = new Set(["super_admin"]); // org-wide only: a branch-scoped admin no longer sees the card (I2)
 const MAP_HEADING = "Campaign map: which drive works on which requisition";
 const b = await chromium.launch({ headless: true });
 try {

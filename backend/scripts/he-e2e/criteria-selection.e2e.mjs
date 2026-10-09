@@ -154,6 +154,10 @@ try {
   const ahmWhy = await call(S.branch_hr_ahm, "GET", "/api/job-requisition/selection/why?q=9999900113");
   ok("Ahmedabad HR: why-not shows only Ahmedabad requisitions", (ahmWhy.json?.data?.[0]?.perRequisition ?? []).every((r) => ["RIG-R03", "RIG-R04"].includes(r.code)) && ahmWhy.json.data[0].perRequisition.length > 0,
     ahmWhy.json?.data?.[0]?.perRequisition?.map((r) => r.code));
+  // I3: people are scoped too; ceo / manager roles cannot look people up
+  const ahmOther = await call(S.branch_hr_ahm, "GET", "/api/job-requisition/selection/why?q=9999900103");
+  ok("Ahmedabad HR: a NOIDA-2-only person is 'not found in your scope' (no masked entry, no values)", ahmOther.status === 200 && Array.isArray(ahmOther.json?.data) && ahmOther.json.data.length === 0 && ahmOther.json.message === "Not found in your scope", ahmOther.json);
+  ok("CEO: why-not lookup is 403 (preview-export / override roles only)", (await call(S.ceo, "GET", "/api/job-requisition/selection/why?q=9999900103")).status === 403);
   ok("Ahmedabad HR: shortlist run on NOIDA-2 -> 404", (await call(S.branch_hr_ahm, "POST", "/api/he/shortlist/run", { requisitionId: ids.R01, sourceKind: "he" })).status === 404);
 
   // ── 5. contradictory rules ──
