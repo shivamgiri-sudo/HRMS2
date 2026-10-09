@@ -1,5 +1,5 @@
 /** Compact criteria summary (S15): completeness badge, plain-language rules grouped Who / Where / ..., missing decisions, version. */
-import { AlertTriangle, CheckCircle2, CircleDashed, Lock } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDashed, Lightbulb, Lock } from "lucide-react";
 import { badgeOf, enrolmentNote, missingLinks, summaryGroups, versionLine } from "./completenessModel";
 import type { Completeness, CriteriaSummaryData } from "./selectionTypes";
 
@@ -20,18 +20,22 @@ export function CompletenessBadge({ completeness }: { completeness: Completeness
   );
 }
 
-export default function CriteriaSummary({ data, now = new Date(), onEdit }: { data: CriteriaSummaryData; now?: Date; onEdit?: (key: string) => void }) {
+/** textHint: "Criteria found in text: N suggestions" (S-O8), shown instead of "criteria incomplete" while nothing structured is decided. */
+export default function CriteriaSummary({ data, now = new Date(), onEdit, textHint }: { data: CriteriaSummaryData; now?: Date; onEdit?: (key: string) => void; textHint?: string | null }) {
   const groups = summaryGroups(data.rules);
   const blocked = enrolmentNote(data.completeness);
   const missing = missingLinks(data.completeness);
   return (
     <div className="min-w-0 space-y-2 text-sm text-slate-800 dark:text-slate-100">
       <div className="flex flex-wrap items-center gap-2">
-        <CompletenessBadge completeness={data.completeness} />
+        {textHint
+          ? <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-semibold ${TONE.warn}`}><Lightbulb className="h-3.5 w-3.5" aria-hidden="true" /><span>{textHint}</span></span>
+          : <CompletenessBadge completeness={data.completeness} />}
         <span className="text-xs text-slate-600 dark:text-slate-300">{versionLine(data.version, now)}</span>
         {data.legacy && <span className="text-xs text-slate-600 dark:text-slate-300">Today's screening rules (nothing saved in the criteria editor yet)</span>}
       </div>
-      {blocked && (
+      {textHint && <p className="text-xs text-slate-700 dark:text-slate-200">Accept or dismiss them below. Enrolment starts once location, education, shift and age are decided.</p>}
+      {blocked && !textHint && (
         <p className="flex items-center gap-1.5 text-xs font-semibold text-rose-800 dark:text-rose-200"><Lock className="h-3.5 w-3.5" aria-hidden="true" />{blocked}</p>
       )}
       {groups.length === 0 ? (

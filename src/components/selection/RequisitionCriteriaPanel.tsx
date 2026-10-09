@@ -3,6 +3,8 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
 import CriteriaSummary from "./CriteriaSummary";
+import JdSuggestionsPanel from "./JdSuggestionsPanel";
+import { textHint, type JdSuggestionsData } from "./jdSuggestionsModel";
 import { SMALL_BTN } from "./RuleRow";
 import { selectionApi } from "./selectionApi";
 import type { CriteriaResponse, Permissions, SourceKind } from "./selectionTypes";
@@ -31,6 +33,7 @@ export default function RequisitionCriteriaPanel({ requisitionId, initialTab = "
   const [tab, setTab] = useState<PanelTab>(initialTab);
   const [source, setSource] = useState<SourceKind>("meta_live");
   const [editing, setEditing] = useState<{ focus: string | null } | null>(null);
+  const [jd, setJd] = useState<JdSuggestionsData | null>(null);
   const load = useCallback(async () => {
     setError(null);
     try { setData(await selectionApi.criteria(requisitionId)); } catch (e) { if (status(e) === 403) setHidden(true); else setError(errText(e)); }
@@ -53,7 +56,8 @@ export default function RequisitionCriteriaPanel({ requisitionId, initialTab = "
         {p.edit && <button type="button" className={SMALL_BTN} onClick={() => setEditing({ focus: null })}><Pencil className="h-4 w-4" aria-hidden="true" />Edit criteria</button>}
       </div>
       {tab === "summary" && <CriteriaSummary data={{ completeness: data.completeness, rules: data.compiled.rules, legacy: data.compiled.legacy, version: data.versions[0] ? { versionNo: data.versions[0].versionNo, at: data.versions[0].createdAt, by: data.versions[0].createdBy, source: data.versions[0].source } : null }}
-        onEdit={p.edit ? (key) => setEditing({ focus: key }) : undefined} />}
+        onEdit={p.edit ? (key) => setEditing({ focus: key }) : undefined} textHint={jd ? textHint(jd) : null} />}
+      {tab === "summary" && <JdSuggestionsPanel requisitionId={requisitionId} onData={setJd} onChanged={() => { void load(); onChanged?.(); }} />}
       <Suspense fallback={SKELETON}>
         {tab === "preview" && <SelectionPreview requisitionId={requisitionId} permissions={p} />}
         {tab === "approve" && (

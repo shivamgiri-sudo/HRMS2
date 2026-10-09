@@ -44,7 +44,7 @@ export function relativeAgo(at: string, now: Date): string {
   if (min < 24 * 60) return `${Math.floor(min / 60)} h ago`;
   return `${Math.floor(min / (24 * 60))} days ago`;
 }
-const SOURCE_WORD: Record<string, string> = { criteria_panel: "in the criteria editor", form: "in the requisition form", bulk: "by a bulk edit", copy: "by a copy", template: "from a template", backfill: "when versions started" };
+const SOURCE_WORD: Record<string, string> = { criteria_panel: "in the criteria editor", form: "in the requisition form", bulk: "by a bulk edit", copy: "by a copy", template: "from a template", backfill: "when versions started", jd_suggestion: "from requisition text suggestions" };
 export function versionLine(v: VersionInfo | null, now: Date): string {
   if (!v) return "Not versioned yet";
   const ago = relativeAgo(v.at, now);
