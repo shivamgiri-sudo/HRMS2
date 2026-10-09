@@ -52,8 +52,10 @@ async function reset() {
     `DELETE FROM meta_campaign_requisition WHERE campaign_id = '${C.c1}' AND requisition_id NOT IN ('${R.R01}', '${R.R02}')`,
     `UPDATE meta_campaign_requisition SET is_primary = (requisition_id = '${R.R01}'), removed_at = NULL WHERE campaign_id = '${C.c1}'`,
     `UPDATE meta_campaign SET requisition_id = '${R.R01}' WHERE id = '${C.c1}'`,
+    // unified enrolment: Live Meta enrols only with its own screen switch (1 = dry run, capped by QUAL_FOLLOWUP_MODE); a missing row is off
+    "INSERT INTO he_model_param (param_key, value, sample) VALUES ('policy.followup.meta_live', 1, 0) ON DUPLICATE KEY UPDATE value = 1",
   ]) await q(sql);
-  execFileSync("bash", ["-c", ". /home/shuvam/he-e2e2/config.sh; rig_mysql ws3_rig < /home/shuvam/he-e2e2/seed/ws3-seed.sql"]);
+  execFileSync("bash", ["-c", `. /home/shuvam/he-e2e2/config.sh; rig_mysql ${DB} < /home/shuvam/he-e2e2/seed/ws3-seed.sql`]);
 }
 await reset();
 if (process.env.WS3_RESET_ONLY) { console.log("reset done"); await pool.end(); process.exit(0); }
@@ -86,7 +88,7 @@ const before = { qfu: Number((await q("SELECT COUNT(*) n FROM qualified_followup
 // ---------- 2. best-fit routing (primary is R02, the night-shift one) + HR placement ----------
 {
   const env = { ...process.env };
-  const out = execFileSync("bash", ["-c", `. /home/shuvam/he-e2e2/config.sh; cd /home/shuvam/wt-ws3/backend; set -a; . $RIG/backend.env.sh; DB_NAME=ws3_rig; META_MULTI_REQ_ROUTING=${C.c1}; set +a; $NODE --require $TSX_DIR/preflight.cjs --import file://$TSX_DIR/loader.mjs scripts/he-e2e/ws3-rig-ingest.ts rigform-c1 '${JSON.stringify([
+  const out = execFileSync("bash", ["-c", `. /home/shuvam/he-e2e2/config.sh; cd ${process.env.WS3_WT ?? "/home/shuvam/wt-ws3"}/backend; set -a; . $RIG/backend.env.sh; DB_NAME=${DB}; WS3_DB=${DB}; META_MULTI_REQ_ROUTING=${C.c1}; set +a; $NODE --require $TSX_DIR/preflight.cjs --import file://$TSX_DIR/loader.mjs scripts/he-e2e/ws3-rig-ingest.ts rigform-c1 '${JSON.stringify([
     { leadgenId: "ws3-rt-1", fields: { full_name: "Rig Route Day", phone_number: "+919999900421", education: "Graduate", are_you_ok_with_night_shift: "No" } },
     { leadgenId: "ws3-rt-2", fields: { full_name: "Rig Route Night", phone_number: "+919999900422", education: "10th", are_you_ok_with_night_shift: "Yes" } },
     { leadgenId: "ws3-rt-3", fields: { full_name: "Rig Route None", phone_number: "+919999900423", education: "10th", are_you_ok_with_night_shift: "No" } },

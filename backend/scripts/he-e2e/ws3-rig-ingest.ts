@@ -1,7 +1,7 @@
 // Rig helper (WS3 B1): ingest fake Live Meta leads into the isolated clone through the real ingestLead (prefetched detail, no Graph call,
 // skipOutreach so nothing is sent). Refuses any DB other than 127.0.0.1:3312 / ws3_rig.
 //   META_MULTI_REQ_ROUTING=<campaign id> tsx ws3-rig-ingest.ts <formId> '<json array of {leadgenId, fields:{...}}>'
-if (process.env.DB_HOST !== "127.0.0.1" || process.env.DB_PORT !== "3312" || process.env.DB_NAME !== "ws3_rig") { console.error("refusing: not the ws3 clone"); process.exit(2); }
+if (process.env.DB_HOST !== "127.0.0.1" || process.env.DB_PORT !== "3312" || process.env.DB_NAME !== (process.env.WS3_DB ?? "ws3_rig") || process.env.DB_NAME === "mas_hrms") { console.error("refusing: not the ws3 clone"); process.exit(2); }
 const { metaCampaignService } = await import("../../src/modules/meta-campaign/meta-campaign.service.js");
 const [formId, json] = process.argv.slice(2);
 const out: unknown[] = [];

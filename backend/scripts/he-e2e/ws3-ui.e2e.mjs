@@ -28,7 +28,8 @@ async function login(b, role) {
   const issues = { console: [], pageErrors: [], failed: [], http: [], ws3Calls: [], unmasked: [] };
   page.on("console", (m) => { if (m.type() === "error") issues.console.push(m.text().slice(0, 200)); });
   page.on("pageerror", (e) => issues.pageErrors.push(e.message.slice(0, 200)));
-  page.on("requestfailed", (r) => { if (!/favicon|hot-update|\.map$|\/@vite|ws:/.test(r.url()) && r.failure()?.errorText !== "net::ERR_ABORTED") issues.failed.push(`${r.method()} ${r.url().replace(UI, "")} ${r.failure()?.errorText}`); });
+  // only the app's own requests: a third-party host (e.g. the browser-side reverse geocoder) is outside the rig and its egress is refused
+  page.on("requestfailed", (r) => { if (r.url().startsWith(UI) && !/favicon|hot-update|\.map$|\/@vite|ws:/.test(r.url()) && r.failure()?.errorText !== "net::ERR_ABORTED") issues.failed.push(`${r.method()} ${r.url().replace(UI, "")} ${r.failure()?.errorText}`); });
   page.on("response", async (r) => {
     const u = r.url();
     if (!u.includes("/api/")) return;
