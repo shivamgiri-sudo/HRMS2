@@ -43,6 +43,7 @@ export function JdSuggestionsView(p: ViewProps) {
         <span className={MUTED}>Nothing applies until HR accepts it.</span>
       </div>
       {d.current.approvalStatus === "closed" && <p className={MUTED}>Closed requisition: read-only.</p>}
+      {write && d.current.legacy && rows.length > 0 && <p className={MUTED}>{legacyNote}</p>}
       <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Preview source">
         <span className={MUTED}>Preview:</span>
         {SOURCE_TABS.map((s) => (

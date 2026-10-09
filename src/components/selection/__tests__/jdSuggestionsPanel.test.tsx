@@ -41,6 +41,8 @@ describe("JdSuggestionsView", () => {
     expect(h).toMatch(/<input[^>]*type="number"[^>]*min="10"[^>]*max="120"/);
     expect(h).toContain("Reason (required for an approved requisition)");
     expect(h).toContain("Accept all (2)");
+    // a single Accept on a legacy requisition also leaves today's screening rules: said up front, not only in the Accept all confirmation
+    expect(h).toContain("switch to the criteria engine on the first accepted rule");
     expect(h).toContain("min-h-11");
     expect(h).toMatch(/focus-visible:ring-2/);
     // typing has no number yet: its Accept is disabled and says why
