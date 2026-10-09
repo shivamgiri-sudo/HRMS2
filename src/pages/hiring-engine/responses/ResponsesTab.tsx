@@ -15,8 +15,8 @@ import ConfirmedList from "./ConfirmedList";
 import TimelineDrawer from "./TimelineDrawer";
 import type { TimelineKey } from "./timelineModel";
 import {
-  ANSWERS, ANSWER_LABEL, CHANNELS, CHANNEL_LABEL, STATUSES, STATUS_LABEL, TYPE_OPTIONS, activeFilterCount, canWriteHe, channelCounts, defaultResponseFilters, istToday, listPath,
-  parseResponsesHash, pct, responsesHash, summaryPath, whenText, type ResponseFilters, type ResponseList, type ResponseRow, type ResponseSummary,
+  ANSWERS, ANSWER_LABEL, CHANNELS, CHANNEL_LABEL, STATUSES, STATUS_LABEL, TYPE_OPTIONS, activeFilterCount, canWriteHe, channelCounts, defaultResponseFilters, istToday, listRequest,
+  parseResponsesHash, pct, responsesHash, summaryRequest, type ApiRequest, whenText, type ResponseFilters, type ResponseList, type ResponseRow, type ResponseSummary,
 } from "./responsesModel";
 import { campaignOptions, nextDrives, type DriveOption } from "./nextDriveModel";
 
@@ -154,6 +154,9 @@ export function ResponsesView({ filters, options, summary, list, loading, error,
   );
 }
 
+// A mobile search is sent in a POST body (never in a URL).
+const send = <T,>(r: ApiRequest): Promise<T> => (r.method === "post" ? hrmsApi.post<T>(r.path, r.body) : hrmsApi.get<T>(r.path));
+
 export default function ResponsesTab() {
   const { roleKeys, isResolved } = useWorkforceAccess();
   const canWrite = isResolved && canWriteHe(roleKeys);
@@ -175,7 +178,7 @@ export default function ResponsesTab() {
     const n = ++seq.current;
     setLoading(true);
     try {
-      const [l, s] = await Promise.all([hrmsApi.get<{ data?: ResponseList }>(listPath(f, more)), more ? Promise.resolve(null) : hrmsApi.get<{ data?: ResponseSummary }>(summaryPath(f))]);
+      const [l, s] = await Promise.all([send<{ data?: ResponseList }>(listRequest(f, more)), more ? Promise.resolve(null) : send<{ data?: ResponseSummary }>(summaryRequest(f))]);
       if (n !== seq.current) return;
       setList((cur) => (more && cur ? { rows: [...cur.rows, ...(l?.data?.rows ?? [])], nextCursor: l?.data?.nextCursor ?? null } : l?.data ?? { rows: [], nextCursor: null }));
       if (s) setSummary(s.data ?? null);

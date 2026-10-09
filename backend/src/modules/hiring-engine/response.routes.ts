@@ -57,23 +57,39 @@ const bad = (res: Response, message: string) => res.status(400).json({ success: 
 
 export function registerResponseRoutes(r: Router, roles: { view: readonly string[]; write: readonly string[] }): void {
   const view = [requireAuth, requireRole(...roles.view)] as const;
-  r.get("/responses", ...view, async (req: Request, res: Response) => {
-    const f = filtersOf(req.query as Record<string, unknown>);
+  // The list and the summary read filters from the query string; a mobile search comes only in a POST body (never in a URL, so never in
+  // an access log), and a GET carrying q is refused.
+  const list = async (req: Request, res: Response, src: Record<string, unknown>) => {
+    const f = filtersOf(src);
     if (typeof f === "string") return void bad(res, f);
-    const lim = req.query.limit === undefined ? 50 : Number(req.query.limit), cursor = optStr(req.query.cursor);
+    const lim = src.limit === undefined ? 50 : Number(src.limit), cursor = optStr(src.cursor);
     if (!Number.isInteger(lim) || lim < 1 || lim > MAX_LIMIT) return void bad(res, "Invalid limit");
     if (cursor && cursor.length > 80) return void bad(res, "Invalid cursor");
     try { res.json({ success: true, data: await listResponses({ ...f, limit: lim, cursor: cursor ?? null }, await branchScopeOf(req as AuthenticatedRequest)) }); }
     catch (err) { readFail(res, err, "list"); }
-  });
+  };
+  const summary = async (req: Request, res: Response, src: Record<string, unknown>) => {
+    const f = filtersOf(src);
+    if (typeof f === "string") return void bad(res, f);
+    try { res.json({ success: true, data: await responseSummary(f, await branchScopeOf(req as AuthenticatedRequest)) }); } catch (err) { readFail(res, err, "summary"); }
+  };
+  const urlQuery = (req: Request, res: Response): Record<string, unknown> | null => {
+    if ((req.query as Record<string, unknown>).q !== undefined) { bad(res, "Send the mobile search in the request body"); return null; }
+    return req.query as Record<string, unknown>;
+  };
+  const bodyQuery = (req: Request, res: Response): Record<string, unknown> | null => {
+    const b = req.body;
+    if (!b || typeof b !== "object" || Array.isArray(b)) { bad(res, "Invalid search"); return null; }
+    for (const v of Object.values(b)) if (v !== null && v !== undefined && typeof v !== "string" && typeof v !== "number") { bad(res, "Invalid search"); return null; }
+    return b as Record<string, unknown>;
+  };
+  r.get("/responses", ...view, async (req: Request, res: Response) => { const q = urlQuery(req, res); if (q) await list(req, res, q); });
+  r.post("/responses/search", ...view, async (req: Request, res: Response) => { const q = bodyQuery(req, res); if (q) await list(req, res, q); });
   r.get("/responses/queue", ...view, async (req: Request, res: Response) => {
     try { res.json({ success: true, data: await responseQueue(await branchScopeOf(req as AuthenticatedRequest)) }); } catch (err) { readFail(res, err, "queue"); }
   });
-  r.get("/responses/summary", ...view, async (req: Request, res: Response) => {
-    const f = filtersOf(req.query as Record<string, unknown>);
-    if (typeof f === "string") return void bad(res, f);
-    try { res.json({ success: true, data: await responseSummary(f, await branchScopeOf(req as AuthenticatedRequest)) }); } catch (err) { readFail(res, err, "summary"); }
-  });
+  r.get("/responses/summary", ...view, async (req: Request, res: Response) => { const q = urlQuery(req, res); if (q) await summary(req, res, q); });
+  r.post("/responses/summary/search", ...view, async (req: Request, res: Response) => { const q = bodyQuery(req, res); if (q) await summary(req, res, q); });
   // One person's timeline by a response, match or lead id (never a mobile in the URL); exactly one key.
   r.get("/responses/timeline", ...view, async (req: Request, res: Response) => {
     const rid = optStr(req.query.responseId), mid = optStr(req.query.matchId), lid = optStr(req.query.leadId);

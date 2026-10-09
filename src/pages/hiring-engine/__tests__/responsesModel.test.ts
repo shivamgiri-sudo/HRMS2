@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  actionError, ageText, canWriteHe, channelCounts, confidenceText, confirmPrompt, defaultResponseFilters, filtersQuery, listPath, masked, parseResponsesHash, queueBuckets,
-  responsesHash, summaryPath, whenText, withoutRow, QUEUE_ACTIONS, type ResponseFilters,
+  actionError, ageText, canWriteHe, channelCounts, confidenceText, confirmPrompt, defaultResponseFilters, filtersQuery, listPath, listRequest, masked, parseResponsesHash, queueBuckets,
+  responsesHash, summaryPath, summaryRequest, whenText, withoutRow, QUEUE_ACTIONS, type ResponseFilters,
 } from "../responses/responsesModel";
 import { campaignOptions, nextDrives } from "../responses/nextDriveModel";
 
@@ -12,10 +12,22 @@ describe("filters and the URL hash", () => {
   it("defaults to the last 7 days (IST)", () => {
     expect(defaultResponseFilters(NOW)).toMatchObject({ from: "2026-10-02", to: "2026-10-08", channel: "", q: "" });
   });
-  it("round-trips through #responses?...", () => {
+  it("round-trips through #responses?... but the mobile search never enters the URL or hash", () => {
     const f: ResponseFilters = { ...defaultResponseFilters(NOW), requisitionId: RID, channel: "whatsapp", answer: "confirm", status: "needs_review", driveType: "meta_live", q: "9876543210" };
-    expect(parseResponsesHash(responsesHash(f), NOW)).toEqual(f);
-    expect(responsesHash(f)).toBe(`#responses?from=2026-10-02&to=2026-10-08&requisitionId=${RID}&driveType=meta_live&channel=whatsapp&answer=confirm&status=needs_review&q=9876543210`);
+    expect(parseResponsesHash(responsesHash(f), NOW)).toEqual({ ...f, q: "" });
+    expect(responsesHash(f)).toBe(`#responses?from=2026-10-02&to=2026-10-08&requisitionId=${RID}&driveType=meta_live&channel=whatsapp&answer=confirm&status=needs_review`);
+    expect(parseResponsesHash("#responses?q=9876543210", NOW).q).toBe("");
+  });
+  it("a search goes in a POST body, never in the request URL", () => {
+    const f: ResponseFilters = { ...defaultResponseFilters(NOW), channel: "web", q: "9876543210" };
+    const l = listRequest(f, "abc=");
+    expect(l).toEqual({ method: "post", path: "/api/he/responses/search", body: { from: "2026-10-02", to: "2026-10-08", channel: "web", q: "9876543210", cursor: "abc=", limit: 50 } });
+    expect(summaryRequest(f)).toEqual({ method: "post", path: "/api/he/responses/summary/search", body: { from: "2026-10-02", to: "2026-10-08", channel: "web", q: "9876543210" } });
+    expect(listPath(f)).not.toContain("9876543210");
+    expect(summaryPath(f)).not.toContain("9876543210");
+    const g = { ...f, q: "" };
+    expect(listRequest(g, null)).toEqual({ method: "get", path: listPath(g, null) });
+    expect(summaryRequest(g)).toEqual({ method: "get", path: summaryPath(g) });
   });
   it("unknown or malformed values fall back; reversed dates reset the range", () => {
     const f = parseResponsesHash("#responses?channel=fax&answer=maybe&requisitionId=x&from=2026-02-30&q=12", NOW);

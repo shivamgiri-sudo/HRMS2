@@ -33,15 +33,40 @@ beforeEach(() => { h.role = "hr"; h.scope = { all: false, branchName: "NOIDA-2" 
 
 describe("GET /api/he/responses", () => {
   it("passes validated filters and the caller's scope; defaults to the last 7 days", async () => {
-    const res = await request(app).get(`/api/he/responses?requisitionId=${RID}&channel=whatsapp&answer=confirm&status=applied&driveType=meta_old&q=98765%2043210&limit=20`);
+    const res = await request(app).get(`/api/he/responses?requisitionId=${RID}&channel=whatsapp&answer=confirm&status=applied&driveType=meta_old&limit=20`);
     expect(res.status).toBe(200);
     const [q, scope] = vi.mocked(listResponses).mock.calls[0];
-    expect(q).toMatchObject({ requisitionId: RID, channel: "whatsapp", answer: "confirm", status: "applied", driveType: "meta_old", mobile10: "9876543210", limit: 20, to: istToday(), from: addDays(istToday(), -6) });
+    expect(q).toMatchObject({ requisitionId: RID, channel: "whatsapp", answer: "confirm", status: "applied", driveType: "meta_old", mobile10: null, limit: 20, to: istToday(), from: addDays(istToday(), -6) });
     expect(scope).toEqual({ all: false, branchName: "NOIDA-2" });
+  });
+  it("a mobile search is never taken from the URL (access logs): GET with q is 400 and nothing is read", async () => {
+    const res = await request(app).get(`/api/he/responses?q=9876543210`);
+    expect(res.status).toBe(400);
+    expect(listResponses).not.toHaveBeenCalled();
+    expect((await request(app).get(`/api/he/responses/summary?q=9876543210`)).status).toBe(400);
+    expect(responseSummary).not.toHaveBeenCalled();
+  });
+  it("POST /responses/search takes the filters and the mobile from the body", async () => {
+    const res = await request(app).post("/api/he/responses/search").send({ requisitionId: RID, channel: "whatsapp", q: "98765 43210", limit: 20, cursor: "abc" });
+    expect(res.status).toBe(200);
+    const [q, scope] = vi.mocked(listResponses).mock.calls[0];
+    expect(q).toMatchObject({ requisitionId: RID, channel: "whatsapp", mobile10: "9876543210", limit: 20, cursor: "abc" });
+    expect(scope).toEqual({ all: false, branchName: "NOIDA-2" });
+    const s = await request(app).post("/api/he/responses/summary/search").send({ from: "2026-10-01", to: "2026-10-08", q: "9876543210" });
+    expect(s.status).toBe(200);
+    expect(vi.mocked(responseSummary).mock.calls[0][0]).toMatchObject({ from: "2026-10-01", mobile10: "9876543210" });
+    expect((await request(app).post("/api/he/responses/search").send({ q: "123" })).status).toBe(400);
+    expect((await request(app).post("/api/he/responses/search").send({ q: ["9876543210"] })).status).toBe(400);
+  });
+  it("a failed search logs no mobile", async () => {
+    const { logger } = await import("../../../logger.js");
+    vi.mocked(listResponses).mockRejectedValueOnce(Object.assign(new Error("WHERE mobile10 = '9876543210'"), { code: "ER_X" }));
+    expect((await request(app).post("/api/he/responses/search").send({ q: "9876543210" })).status).toBe(500);
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain("9876543210");
   });
   it.each([
     ["from=2026-02-30"], ["from=2026-10-09&to=2026-10-01"], ["from=2026-01-01&to=2026-10-01"], ["channel=fax"], ["answer=maybe"], ["status=x"], ["driveType=tv"],
-    [`requisitionId=abc`], ["limit=0"], ["limit=101"], ["q=123"], ["cursor=" + "x".repeat(100)],
+    [`requisitionId=abc`], ["limit=0"], ["limit=101"], ["cursor=" + "x".repeat(100)],
   ])("400 on %s", async (qs) => {
     expect((await request(app).get(`/api/he/responses?${qs}`)).status).toBe(400);
     expect(listResponses).not.toHaveBeenCalled();

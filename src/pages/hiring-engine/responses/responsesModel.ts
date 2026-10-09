@@ -1,6 +1,6 @@
 /**
  * Pure view-model of the Responses tab: response shapes (mirrors of backend response-read.service.ts), labels shown as icon + word,
- * filters <-> URL hash ("#responses?channel=whatsapp&..."), API paths, per-channel counts, the review queue's ages and buttons, and who may
+ * filters <-> URL hash ("#responses?channel=whatsapp&...", never the mobile search), API requests (a search goes in a POST body), per-channel counts, the review queue's ages and buttons, and who may
  * write (the Hiring Engine's write roles; a view-only role such as ceo sees no write button, and the server refuses it too). No DOM.
  */
 import type { SourceType } from "../command/driveCommandTypes";
@@ -92,19 +92,28 @@ export function parseResponsesHash(hash: string, now: Date = new Date()): Respon
   if ((CHANNELS as readonly string[]).includes(get("channel"))) f.channel = get("channel") as ResponseChannel;
   if ((ANSWERS as readonly string[]).includes(get("answer"))) f.answer = get("answer") as ResponseAnswer;
   if ((STATUSES as readonly string[]).includes(get("status"))) f.status = get("status") as ResponseStatus;
-  const q = get("q").replace(/\D/g, "");
-  if (q.length >= 10) f.q = q.slice(-10);
-  return f;
+  return f; // q (a mobile) is never read from the URL; it lives in memory only
 }
-/** The query string of the set filters (dates always), in a fixed order. */
+/** The query string of the set filters (dates always), in a fixed order; never the mobile search (URLs reach access logs). */
 export function filtersQuery(f: ResponseFilters): string {
   const p = new URLSearchParams();
-  for (const k of FILTER_KEYS) if (f[k]) p.set(k, String(f[k]));
+  for (const k of FILTER_KEYS) if (k !== "q" && f[k]) p.set(k, String(f[k]));
   return p.toString();
 }
+const filtersBody = (f: ResponseFilters): Record<string, string> => {
+  const b: Record<string, string> = {};
+  for (const k of FILTER_KEYS) if (f[k]) b[k] = String(f[k]);
+  return b;
+};
 export const responsesHash = (f: ResponseFilters): string => `#responses?${filtersQuery(f)}`;
 export const listPath = (f: ResponseFilters, cursor?: string | null): string => `/api/he/responses?${filtersQuery(f)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}&limit=50`;
 export const summaryPath = (f: ResponseFilters): string => `/api/he/responses/summary?${filtersQuery(f)}`;
+export type ApiRequest = { method: "get"; path: string } | { method: "post"; path: string; body: Record<string, unknown> };
+/** With a mobile search the read is a POST with the filters in the body; without one, the plain GET. */
+export const listRequest = (f: ResponseFilters, cursor?: string | null): ApiRequest =>
+  f.q ? { method: "post", path: "/api/he/responses/search", body: { ...filtersBody(f), ...(cursor ? { cursor } : {}), limit: 50 } } : { method: "get", path: listPath(f, cursor) };
+export const summaryRequest = (f: ResponseFilters): ApiRequest =>
+  f.q ? { method: "post", path: "/api/he/responses/summary/search", body: filtersBody(f) } : { method: "get", path: summaryPath(f) };
 export const QUEUE_PATH = "/api/he/responses/queue";
 export const activeFilterCount = (f: ResponseFilters): number => (["campaignId", "requisitionId", "driveId", "driveType", "channel", "answer", "status", "q"] as const).filter((k) => !!f[k]).length;
 
