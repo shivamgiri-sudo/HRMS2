@@ -53,7 +53,7 @@ function buildEmailHtml(ctx: LeadContext, slot?: InterviewSlot, answers = ''): s
   const firstName = esc(ctx.name.split(' ')[0]);
   const mapsLink = buildMapsLink(ctx);
   const salary = buildSalaryString(ctx);
-  const address = ctx.branchAddress ? ctx.branchAddress.replace(/\n/g, '<br>') : null;
+  const address = ctx.branchAddress ? esc(ctx.branchAddress).replace(/\n/g, '<br>') : null;
 
   return `<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.6;max-width:600px;margin:0 auto">
 <div style="background:#1e40af;padding:20px 24px;border-radius:8px 8px 0 0">
@@ -97,7 +97,8 @@ ${salary ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius
 }
 
 
-export const legacySubject = (ctx: LeadContext) => `Congratulations ${ctx.name.split(' ')[0]}! Shortlisted for ${ctx.designation ?? 'a position'} at Mas Callnet`;
+// A header value: CR / LF never reach it (header injection); normal values are unchanged.
+export const legacySubject = (ctx: LeadContext) => `Congratulations ${ctx.name.split(' ')[0]}! Shortlisted for ${ctx.designation ?? 'a position'} at Mas Callnet`.replace(/[\r\n]+/g, ' ');
 
 /** link null → today's email (subject + html only). Buttons only with a slot: the answer page needs a time to confirm. */
 export function buildLegacyInviteEmail(ctx: LeadContext, slot: InterviewSlot | undefined, link: InviteLink | null, o: { stopLink: boolean }): { subject: string; html: string; text?: string } {
