@@ -26,5 +26,6 @@ export function pageMode(ctx: PageCtx, stopped: boolean): "stopped" | "closed_op
 export function answerErrorText(status: number): string {
   if (status === 403) return "Your slot time has passed, so this can no longer be changed here.";
   if (status === 404) return "This link is not valid any more. Please use the latest message we sent you.";
+  if (status === 429) return "We are still saving your last answer. Please wait a minute and try again.";
   return "That did not work. Please try again.";
 }

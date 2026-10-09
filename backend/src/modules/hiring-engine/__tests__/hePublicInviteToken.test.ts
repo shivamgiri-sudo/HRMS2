@@ -30,6 +30,7 @@ vi.mock("../he-ingest.service.js", () => ({ recordInviteAnswer: h.recordInviteAn
 vi.mock("../walkin-invite-answer.service.js", () => ({ answerInviteToken: h.answerInviteToken }));
 
 import { answerInvite, getInviteContext } from "../he-location.service.js";
+import { _resetAnswerGate } from "../answer-token-gate.js";
 import { hePublicRouter } from "../he-public.routes.js";
 
 const MATCH_T = "a".repeat(32), INV_T = "b".repeat(32);
@@ -49,7 +50,7 @@ beforeAll(async () => {
 });
 afterAll(() => { server.close(); });
 beforeEach(() => {
-  h.sqls = []; h.noInviteTable = false; h.match = null; h.invite = { ...inviteRow }; h.inviteCtx = ctxRow();
+  _resetAnswerGate(); h.sqls = []; h.noInviteTable = false; h.match = null; h.invite = { ...inviteRow }; h.inviteCtx = ctxRow();
   h.recordInviteAnswer.mockClear(); h.recordInviteStop.mockClear(); h.answerInviteToken.mockClear();
 });
 
@@ -133,6 +134,26 @@ describe("routes", () => {
     expect(g.status).toBe(404);
     const a = await fetch(`${base}/loc/${"e".repeat(32)}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "yes" }) });
     expect(a.status).toBe(404);
+  });
+  it("30 concurrent answers on one token: one runs, the rest are told busy; a pool of 5 is never exhausted", async () => {
+    let inUse = 0, peak = 0;
+    const pool = { size: 5, async take() { if (inUse >= this.size) throw new Error("pool exhausted"); inUse++; peak = Math.max(peak, inUse); }, give() { inUse--; } };
+    h.answerInviteToken.mockImplementation(async () => { await pool.take(); try { await new Promise((r) => setTimeout(r, 40)); } finally { pool.give(); } return { state: "confirmed", booked: true }; });
+    const post = () => fetch(`${base}/loc/${INV_T}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "yes" }) });
+    const rs = await Promise.all(Array.from({ length: 30 }, post));
+    const codes = rs.map((r) => r.status);
+    expect(codes.filter((c) => c === 200)).toHaveLength(1);
+    expect(codes.filter((c) => c === 429)).toHaveLength(29);
+    expect(await rs.find((r) => r.status === 429)!.json()).toMatchObject({ reason: "busy" });
+    expect(peak).toBe(1);
+    h.answerInviteToken.mockImplementation(async () => ({ state: "confirmed", matchToken: "c".repeat(32), booked: true }));
+  });
+  it("at most 10 answers per token per 10 minutes", async () => {
+    const post = () => fetch(`${base}/loc/${INV_T}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "yes" }) });
+    const codes: number[] = [];
+    for (let i = 0; i < 11; i++) codes.push((await post()).status);
+    expect(codes.slice(0, 10).every((c) => c === 200)).toBe(true);
+    expect(codes[10]).toBe(429);
   });
   it("unknown answer → 400 bad_answer (unchanged)", async () => {
     const r = await fetch(`${base}/loc/${INV_T}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "maybe" }) });

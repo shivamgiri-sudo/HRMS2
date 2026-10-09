@@ -34,7 +34,11 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 vi.mock("../walkin-booking.service.js", () => ({ bookLeadOnDrive: vi.fn(async (a: unknown) => { h.log.push("book"); h.bookArgs = a; return h.book; }) }));
 vi.mock("../he-ingest.service.js", () => ({
-  recordInviteAnswer: vi.fn(async (id: string, a: string, o?: { channel?: string }) => { h.log.push(`recordInviteAnswer:${id}:${a}:${o?.channel ?? ""}`); return { state: a === "yes" ? "confirmed" : "slot_released" }; }),
+  recordInviteAnswer: vi.fn(async (id: string, a: string, o?: { channel?: string; defer?: Array<() => Promise<unknown>> }) => {
+    h.log.push(`recordInviteAnswer:${id}:${a}:${o?.channel ?? ""}`);
+    o?.defer?.push(async () => { h.log.push("send:T2"); });
+    return { state: a === "yes" ? "confirmed" : "slot_released" };
+  }),
 }));
 vi.mock("../he-lead.service.js", () => ({
   addEvent: vi.fn(async (...a: unknown[]) => { h.events.push(a); }),
@@ -47,7 +51,8 @@ vi.mock("../he-meta-bridge.service.js", () => ({ bridgeOneMetaLead: vi.fn(async 
 vi.mock("../responses.policy.js", () => ({ loadResponseSwitches: vi.fn(async () => h.switches) }));
 vi.mock("../candidate-response.service.js", () => ({ recordResponseSafe: vi.fn(async (r: Record<string, unknown>) => { h.responses.push(r); return { id: 1, created: true, dedupeOf: null, conflict: false }; }) }));
 
-import { answerInviteToken } from "../walkin-invite-answer.service.js";
+import { answerInviteToken, takeEngineLock } from "../walkin-invite-answer.service.js";
+import { db } from "../../../db/mysql.js";
 import type { WalkinInviteRow } from "../walkin-invite.service.js";
 
 const now = new Date("2026-10-08T05:00:00Z");
@@ -84,8 +89,14 @@ describe("answerInviteToken", () => {
     expect(h.log[0]).toBe("bridge");
   });
 
-  it("lock timeout twice → response recorded, needs_human_followup, nothing booked", async () => {
-    h.lockResults = [0, 0];
+  it("T2 / confirmation are sent only after the engine lock is released (recorded under the lock)", async () => {
+    await answerInviteToken(invite(), "yes", { now, channel: "web" });
+    expect(h.log.indexOf("RELEASE_LOCK")).toBeGreaterThan(-1);
+    expect(h.log.indexOf("send:T2")).toBeGreaterThan(h.log.indexOf("conn.release"));
+  });
+
+  it("lock busy three times (GET_LOCK 0, 3 tries) → response recorded, needs_human_followup, nothing booked", async () => {
+    h.lockResults = [0, 0, 0];
     const r = await answerInviteToken(invite(), "yes", { now, channel: "web" });
     expect(r).toMatchObject({ booked: false, reason: "busy" });
     expect(h.log).not.toContain("book");
@@ -148,6 +159,19 @@ describe("answerInviteToken", () => {
     expect(h.log).toContain("RELEASE_LOCK");
     expect(h.events.find((e) => e[1] === "needs_human_followup")![2]).toMatchObject({ detail: expect.stringContaining("requisition_closed") });
     expect(h.responses[0]).toMatchObject({ answer: "confirm", applied: false });
+  });
+
+  it("takeEngineLock: GET_LOCK(name, 0), the connection goes back to the pool between tries and when the statement throws", async () => {
+    h.lockResults = [0, 0, 0];
+    expect(await takeEngineLock({ sleep: async () => undefined })).toBeNull();
+    expect(h.log.filter((x) => x === "conn.release")).toHaveLength(3);
+    const sqls: string[] = [];
+    vi.mocked(db.getConnection).mockImplementationOnce(async () => ({
+      execute: vi.fn(async (q: string) => { sqls.push(q); throw new Error("connection lost"); }), release: vi.fn(() => { h.log.push("conn.release:thrown"); }),
+    }) as never);
+    await expect(takeEngineLock({ sleep: async () => undefined })).rejects.toThrow(/connection lost/);
+    expect(h.log).toContain("conn.release:thrown");
+    expect(sqls[0]).toContain("GET_LOCK('he_engine_tick', 0)");
   });
 
   it("an HR answer is passed through as channel hr", async () => {

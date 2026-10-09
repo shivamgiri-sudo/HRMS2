@@ -33,6 +33,7 @@ describe("invitation model", () => {
   it("error texts", () => {
     expect(answerErrorText(403)).toMatch(/passed/);
     expect(answerErrorText(500)).toMatch(/try again/);
+    expect(answerErrorText(429)).toBe("We are still saving your last answer. Please wait a minute and try again.");
   });
 });
 

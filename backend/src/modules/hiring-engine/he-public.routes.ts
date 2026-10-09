@@ -6,6 +6,8 @@
 import rateLimit from "express-rate-limit";
 import { Router } from "express";
 import { logger } from "../../logger.js";
+import { enterAnswerGate, leaveAnswerGate } from "./answer-token-gate.js";
+import { logText } from "./log-text.js";
 import { answerInvite, getContextByToken, getInviteContext, optInWhatsApp, recordPing, startSharing, stopSharing } from "./he-location.service.js";
 
 export const hePublicRouter = Router();
@@ -73,12 +75,19 @@ hePublicRouter.post("/loc/:token/optin", async (req, res) => {
 });
 
 hePublicRouter.post("/loc/:token/answer", async (req, res) => {
+  const token = String(req.params.token);
+  const gate = enterAnswerGate(token);
+  if (gate !== "ok") {
+    return res.status(429).json({ success: false, reason: gate, message: gate === "busy" ? "Your answer is being saved. Please try again in a moment." : "Too many answers. Please wait a few minutes." });
+  }
   try {
-    const r = await answerInvite(String(req.params.token), (req.body as { answer?: unknown } | undefined)?.answer);
+    const r = await answerInvite(token, (req.body as { answer?: unknown } | undefined)?.answer);
     if (r.ok) return res.json({ success: true, data: r.matchToken ? { state: r.state, matchToken: r.matchToken } : { state: r.state } });
     res.status(r.reason === "invalid" ? 404 : r.reason === "bad_answer" ? 400 : 403).json({ success: false, reason: r.reason });
   } catch (err) {
-    logger.error({ err: (err as Error).message }, "[he-public] answer failed");
+    logger.error({ err: logText(err) }, "[he-public] answer failed");
     res.status(500).json({ success: false });
+  } finally {
+    leaveAnswerGate(token);
   }
 });

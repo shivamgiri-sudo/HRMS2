@@ -2,13 +2,14 @@
  * An answer on an invite token (a person invited without an he_match). Yes / another time book the person on the requisition's drive
  * and then run the engine's own recordInviteAnswer, so confirmation, T2, the confirmation email, the Meta mirror, reminders and no-show
  * handling are exactly the engine's. Booking and confirming happen while holding the engine tick's named lock, so no tick can see the
- * freshly booked 'invited' match before it is confirmed (it would otherwise send T1 / follow-ups to it). Sends never run inside an open
- * transaction (bookLeadOnDrive commits before recordInviteAnswer runs).
+ * freshly booked 'invited' match before it is confirmed (it would otherwise send T1 / follow-ups to it). The candidate-facing sends (T2,
+ * confirmation email) are queued under the lock and sent after it is released; none runs inside an open transaction.
  * Cannot come books nothing; Stop opts the person out. Every answer writes one response record.
  */
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
+import { logText } from "./log-text.js";
 import { recordResponseSafe } from "./candidate-response.service.js";
 import { recordInviteAnswer } from "./he-ingest.service.js";
 import { addEvent, findLeadByMobile, revokeConsent, setLeadStatus, upsertLead } from "./he-lead.service.js";
@@ -33,15 +34,29 @@ async function ensureLead(inv: WalkinInviteRow): Promise<{ id: string; status: s
   return created ? { id: created.id, status: "new" } : null;
 }
 
-/** GET_LOCK on a dedicated connection: 5 s, one retry. Null when the engine tick still holds it. */
-async function takeEngineLock(): Promise<PoolConnection | null> {
-  const conn = (await db.getConnection()) as unknown as PoolConnection;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const [r] = await conn.execute<RowDataPacket[]>(`SELECT GET_LOCK('${ENGINE_LOCK}', 5) AS ok`);
-    if (Number(r[0]?.ok) === 1) return conn;
+/** GET_LOCK(name, 0) on a pooled connection, up to 3 tries 300 ms apart. No connection is held between tries, and a failing statement
+ *  always returns its connection to the pool. Null when the engine tick still holds the lock. */
+export async function takeEngineLock(o: { tries?: number; gapMs?: number; sleep?: (ms: number) => Promise<void> } = {}): Promise<PoolConnection | null> {
+  const tries = o.tries ?? 3, gapMs = o.gapMs ?? 300;
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let attempt = 0; attempt < tries; attempt++) {
+    if (attempt > 0) await sleep(gapMs);
+    const conn = (await db.getConnection()) as unknown as PoolConnection;
+    let ok = false;
+    try {
+      const [r] = await conn.execute<RowDataPacket[]>(`SELECT GET_LOCK('${ENGINE_LOCK}', 0) AS ok`);
+      ok = Number(r[0]?.ok) === 1;
+    } finally {
+      if (!ok) conn.release();
+    }
+    if (ok) return conn;
   }
-  conn.release();
   return null;
+}
+
+/** Runs the sends queued while the lock was held (T2, confirmation email), after it is released. Never throws. */
+async function runDeferred(sends: Array<() => Promise<unknown>>): Promise<void> {
+  for (const f of sends) await f().catch((err: unknown) => logger.warn({ err: logText(err) }, "[walkin-invite] deferred send failed"));
 }
 
 async function releaseEngineLock(conn: PoolConnection): Promise<void> {
@@ -94,6 +109,7 @@ export async function answerInviteToken(inv: WalkinInviteRow, answer: InviteToke
   let booked: Awaited<ReturnType<typeof bookLeadOnDrive>>;
   let state = "";
   let responseId: number | undefined;
+  const sends: Array<() => Promise<unknown>> = [];
   try {
     let branch = inv.branch_name;
     if (!branch) {
@@ -102,13 +118,14 @@ export async function answerInviteToken(inv: WalkinInviteRow, answer: InviteToke
     }
     booked = await bookLeadOnDrive({ leadId: lead.id, requisitionId: inv.requisition_id, branchName: branch, preferredSlotAt: inv.slot_at, now: o.now, state: "invited" });
     if (booked.status === "booked") {
-      const ra = await recordInviteAnswer(booked.matchId, answer, { channel: o.channel, actor: o.actor ?? null, inviteId: inv.id, note: o.note ?? null });
+      const ra = await recordInviteAnswer(booked.matchId, answer, { channel: o.channel, actor: o.actor ?? null, inviteId: inv.id, note: o.note ?? null, defer: sends });
       state = ra?.state ?? "";
       responseId = ra?.responseId;
     }
   } finally {
     await releaseEngineLock(lock);
   }
+  await runDeferred(sends);
   if (booked.status !== "booked") {
     await markInviteAnswered(inv.id, answer === "yes" ? "answered_yes" : "answered_later", null);
     await human(`answered ${answer} on the invitation link but no slot could be booked (${booked.reason}): call to fix a time`);
@@ -128,6 +145,7 @@ export async function answerInviteToken(inv: WalkinInviteRow, answer: InviteToke
 export async function bookAndAnswerMatch(a: { leadId: string; requisitionId: string; answer: "yes" | "later"; now: Date; actor: string; note: string }):
   Promise<{ state: string; booked: boolean; reason?: string; responseId?: number; matchId?: string }> {
   const lock = await takeEngineLock();
+  const sends: Array<() => Promise<unknown>> = [];
   if (!lock) {
     await addEvent(a.leadId, "needs_human_followup", { channel: "hr", detail: `HR recorded ${a.answer} while the engine was busy: book by hand`, actor: a.actor });
     return { state: "pending", booked: false, reason: "busy" };
@@ -139,9 +157,10 @@ export async function bookAndAnswerMatch(a: { leadId: string; requisitionId: str
       await addEvent(a.leadId, "needs_human_followup", { channel: "hr", detail: `HR recorded ${a.answer} but no slot could be booked (${booked.reason}): fix a time`, actor: a.actor });
       return { state: "unavailable", booked: false, reason: booked.reason };
     }
-    const ra = await recordInviteAnswer(booked.matchId, a.answer, { channel: "hr", actor: a.actor, note: a.note });
+    const ra = await recordInviteAnswer(booked.matchId, a.answer, { channel: "hr", actor: a.actor, note: a.note, defer: sends });
     return { state: ra?.state ?? "", booked: true, responseId: ra?.responseId, matchId: booked.matchId };
   } finally {
     await releaseEngineLock(lock);
+    await runDeferred(sends);
   }
 }
