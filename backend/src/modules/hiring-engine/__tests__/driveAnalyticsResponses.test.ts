@@ -32,6 +32,17 @@ beforeEach(() => {
     ? [[{ id: "r1", requisition_code: "REQ-r1", designation_name: "Agent", branch_name: "Pune", last_drive: "2026-10-12" }]] : [[]]));
 });
 
+describe("E8: the responses section never competes with the core sections for the read slots", () => {
+  it("starts only after every core section has finished", async () => {
+    const { getSourcesForRequisitions } = await import("../he-sources-window.service.js");
+    const order: string[] = [];
+    vi.mocked(getSourcesForRequisitions).mockImplementationOnce((async () => { await new Promise((r) => setTimeout(r, 20)); order.push("sources done"); return { byRequisition: [], previousStages: [], partial: false, failedSections: [] }; }) as never);
+    readResponseStats.mockImplementationOnce(async () => { order.push("responses start"); return stats; });
+    await getDriveAnalytics(Q, ALL, NOW);
+    expect(order).toEqual(["sources done", "responses start"]);
+  });
+});
+
 describe("drive analytics: responses", () => {
   it("adds confirmedByChannel and responseRate for the requisitions of the build and the window", async () => {
     const r = (await getDriveAnalytics(Q, ALL, NOW)) as unknown as Record<string, unknown>;

@@ -373,7 +373,8 @@ async function build(
   // Reads that need nothing computed here start with the others (the read limiter keeps the pool safe); their results are used further down.
   const reasonsP = !none && valueAddOn("outcome_reasons") ? sec("reasons", () => outcomeReasonCounts(ids, w.from, w.to, liveFrom, pf), null) : Promise.resolve(null);
   const costP = !none && valueAddOn("cost_per_source") ? sec("cost", () => readCostUsage(ids, w, liveFrom, pf), null) : null;
-  const respP = none ? Promise.resolve(null) : sec("responses", () => readResponseStats(ids, w, pf), null as ResponseStats | null);
+  // E8: the responses section is additive; it starts after the core sections below so it never takes their read slots (limiter of 4).
+  const startResp = () => (none ? Promise.resolve(null) : sec("responses", () => readResponseStats(ids, w, pf), null as ResponseStats | null));
   // The previous window comes from the same statements as the window (persons, outcomes, follow-up stages; rows tagged by cur): its tiles
   // only need leads .. joined, so no separate previous-window reads. Every read goes through the shared read limiter (he-read-limit.ts).
   const noPersons = { byType: null as Record<SourceType, PersonStages> | null, campaigns: [] as CampaignProgressRow[], requisitions: [] as RequisitionStagesRow[], previous: null as Record<SourceType, PersonStageCounts> | null };
@@ -391,6 +392,7 @@ async function build(
     none ? ([] as TimingCell[]) : sec("arrivals", async () => typedCells(await runBatched(ids, arrivalsSql(liveFrom), (b) => [...b, w.from, w.to]), pf), [] as TimingCell[]),
     none ? noPersons : sec("persons", () => readPersonStages(ids, w, liveFrom, prev, pf), noPersons),
   ]);
+  const respP = startResp();
   const previous = none ? null : { stages: sources?.previousStages ?? [], outcomes: outcomeRead.previous, persons: persons.previous };
 
   const flat = (list: RequisitionSourceRows[] | undefined) => (list ?? []).flatMap((r) => r.rows);
