@@ -303,6 +303,10 @@
     "meta_campaign_relink",
     "meta_campaign_requisition"
   ],
+  "modules/meta-campaign/campaign-successor.service.ts": [
+    "meta_campaign_relink",
+    "meta_campaign_requisition"
+  ],
   "modules/meta-campaign/campaign-requisition.service.ts": [
     "meta_campaign_requisition"
   ],
