@@ -65,15 +65,16 @@ export async function approvalBlocker(requisitionId: string, now = new Date()): 
 }
 
 /** Seats left, invites per seat and today's approvals for the requisition's daily cap (D3). An unknown headcount is not capped. */
-export async function seatCapFor(requisitionId: string, now: Date): Promise<{ seatsLeft: number | null; perSeat: number; alreadyToday: number; cap: number | null }> {
-  const [r] = await db.execute<RowDataPacket[]>(
+type SeatExec = { execute: <T extends RowDataPacket[]>(sql: string, p?: unknown[]) => Promise<[T, unknown]> };
+export async function seatCapFor(requisitionId: string, now: Date, ex: SeatExec = db as unknown as SeatExec): Promise<{ seatsLeft: number | null; perSeat: number; alreadyToday: number; cap: number | null }> {
+  const [r] = await ex.execute<RowDataPacket[]>(
     "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, requisition_validity, branch_name, designation_name FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
   const req = r[0]?.requested_headcount;
   const seatsLeft = req == null ? null : Math.max(0, Number(req) - Number(r[0]?.fulfilled_headcount ?? 0));
-  const [p] = await db.execute<RowDataPacket[]>("SELECT value FROM he_model_param WHERE param_key = ? LIMIT 1", [INVITES_PER_SEAT_KEY]);
+  const [p] = await ex.execute<RowDataPacket[]>("SELECT value FROM he_model_param WHERE param_key = ? LIMIT 1", [INVITES_PER_SEAT_KEY]);
   const v = p[0] ? Number(p[0].value) : NaN;
   const perSeat = Number.isFinite(v) && v > 0 ? v : DEFAULT_INVITES_PER_SEAT;
-  const [c] = await db.execute<RowDataPacket[]>(
+  const [c] = await ex.execute<RowDataPacket[]>(
     "SELECT COUNT(*) AS n FROM shortlist_candidate WHERE requisition_id = ? AND status IN ('approved','enrolled') AND updated_at >= ?", [requisitionId, `${istText(now).slice(0, 10)} 00:00:00`]);
   const alreadyToday = Number(c[0]?.n ?? 0);
   return { seatsLeft, perSeat, alreadyToday, cap: seatsLeft === null ? null : dailySeatCap({ seatsLeft, perSeat, alreadyToday }) };
@@ -144,16 +145,22 @@ export async function approveBatch(a: { requisitionId: string; sourceKind: Sourc
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+    // E5: approvals of one requisition are serialised and re-check today's seat cap here (two runs the same day cannot both use it).
+    await conn.execute("SELECT id FROM job_requisition WHERE id = ? FOR UPDATE", [a.requisitionId]);
+    const seat = await seatCapFor(a.requisitionId, now, conn as unknown as SeatExec);
     if (untick.length) await conn.execute(`UPDATE shortlist_candidate SET status = 'unticked' WHERE run_id = ? AND status = 'picked' AND mobile10 IN (${ph(untick.length)})`, [a.runId, ...untick]);
+    if (review.length) await conn.execute(`UPDATE shortlist_candidate SET status = 'picked' WHERE run_id = ? AND status = 'review' AND mobile10 IN (${ph(review.length)})`, [a.runId, ...review]);
     const [u] = await conn.execute<ResultSetHeader>(
-      `UPDATE shortlist_candidate SET status = 'approved', approval_id = ? WHERE run_id = ? AND (status = 'picked'${review.length ? ` OR (status = 'review' AND mobile10 IN (${ph(review.length)}))` : ""})`,
-      [id, a.runId, ...review]);
+      `UPDATE shortlist_candidate SET status = 'approved', approval_id = ? WHERE run_id = ? AND status = 'picked'${seat.cap === null ? "" : ` ORDER BY (override_kind = 'include') DESC, score DESC, id LIMIT ${Math.max(0, Math.floor(seat.cap))}`}`,
+      [id, a.runId]);
     const approved = Number(u.affectedRows ?? 0);
+    const [cp] = seat.cap === null ? [{ affectedRows: 0 }] : await conn.execute<ResultSetHeader>("UPDATE shortlist_candidate SET status = 'capped' WHERE run_id = ? AND status = 'picked'", [a.runId]);
+    const capped = Number((cp as ResultSetHeader).affectedRows ?? 0);
     await conn.execute(`INSERT INTO shortlist_approval (id, run_id, requisition_id, source_kind, criteria_version_id, mode, approved_by, approved_count, unticked_json, note)
                         VALUES (?, ?, ?, ?, ?, 'batch', ?, ?, ?, ?)`,
       [id, a.runId, a.requisitionId, a.sourceKind, current, a.actor.id, approved, JSON.stringify(untick), a.note?.slice(0, 300) ?? null]);
     await conn.commit();
-    return { approvalId: id, approved, unticked: untick.length };
+    return { approvalId: id, approved, unticked: untick.length, capped };
   } catch (e) { await conn.rollback().catch(() => {}); throw e; } finally { conn.release(); }
 }
 
@@ -265,10 +272,20 @@ export async function enrolLiveArrival(a: { requisitionId: string; facts: Candid
   const v = finalVerdict(e);
   if (v === "review") return { decision: "review_waits" as const };
   if (v === "fail") return { decision: "not_eligible" as const };
-  await db.execute(`INSERT INTO shortlist_candidate (run_id, requisition_id, mobile10, source_kind, sub_source, verdict, score, status, criteria_version_id, engine_version,
+  // E5: an arrival counts against the same daily seat cap, re-checked under the requisition's lock.
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.execute("SELECT id FROM job_requisition WHERE id = ? FOR UPDATE", [a.requisitionId]);
+    const seat = await seatCapFor(a.requisitionId, now, conn as unknown as SeatExec);
+    const [mine] = await conn.execute<RowDataPacket[]>("SELECT id, status FROM shortlist_candidate WHERE run_id = ? AND mobile10 = ? LIMIT 1", [standing.id, f.personKey]);
+    if (!mine[0] && seat.cap !== null && seat.cap <= 0) { await conn.rollback(); return { decision: "seat_cap_reached" as const }; }
+    await conn.execute(`INSERT INTO shortlist_candidate (run_id, requisition_id, mobile10, source_kind, sub_source, verdict, score, status, criteria_version_id, engine_version,
                       rule_results_json, review_json, override_kind, facts_hash, approval_id) VALUES (?, ?, ?, 'meta_live', ?, 'pass', ?, 'approved', ?, ?, '[]', NULL, ?, ?, ?)
                     ON DUPLICATE KEY UPDATE id = id`,
     [standing.id, a.requisitionId, f.personKey, f.subSource, e.score, standing.versionId, e.engineVersion, e.override?.kind ?? null, e.factsHash, standing.id]);
+    await conn.commit();
+  } catch (err) { await conn.rollback().catch(() => {}); throw err; } finally { conn.release(); }
   const [r] = await db.execute<RowDataPacket[]>("SELECT id, status FROM shortlist_candidate WHERE run_id = ? AND mobile10 = ? LIMIT 1", [standing.id, f.personKey]);
   if (!r[0] || r[0].status !== "approved") return { decision: "already_enrolled" as const };
   const refs = await leadRefs(f.personKey, "meta_live", a.arrival?.metaLeadId ?? null);

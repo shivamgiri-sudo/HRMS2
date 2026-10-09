@@ -35,11 +35,22 @@ const h = vi.hoisted(() => {
     if (s.startsWith("UPDATE shortlist_candidate SET status = 'unticked'")) {
       const [run, ...ms] = p; S.cands.filter((c) => c.run_id === run && c.status === "picked" && ms.includes(c.mobile10)).forEach((c) => { c.status = "unticked"; }); return [{}, []];
     }
+    if (s.startsWith("SELECT id FROM job_requisition WHERE id = ? FOR UPDATE")) return [[{ id: p[0] }], []];
+    if (s.startsWith("UPDATE shortlist_candidate SET status = 'picked' WHERE run_id = ? AND status = 'review'")) {
+      const [run, ...ms] = p; S.cands.filter((c) => c.run_id === run && c.status === "review" && ms.includes(c.mobile10)).forEach((c) => { c.status = "picked"; }); return [{}, []];
+    }
     if (s.startsWith("UPDATE shortlist_candidate SET status = 'approved'")) {
-      const [aid, run, ...ms] = p;
-      const hit = S.cands.filter((c) => c.run_id === run && (c.status === "picked" || (c.status === "review" && ms.includes(c.mobile10))));
+      // E5: picked rows in HR-include-first, score order, at most the seats left (LIMIT n)
+      const [aid, run] = p;
+      const lim = s.match(/LIMIT (\d+)$/)?.[1];
+      const hit = S.cands.filter((c) => c.run_id === run && c.status === "picked")
+        .sort((a, b) => Number(b.override_kind === "include") - Number(a.override_kind === "include") || Number(b.score) - Number(a.score) || Number(a.id) - Number(b.id))
+        .slice(0, lim === undefined ? undefined : Number(lim));
       hit.forEach((c) => { c.status = "approved"; c.approval_id = aid; });
       return [{ affectedRows: hit.length }, []];
+    }
+    if (s.startsWith("UPDATE shortlist_candidate SET status = 'capped' WHERE run_id = ? AND status = 'picked'")) {
+      const hit = S.cands.filter((c) => c.run_id === p[0] && c.status === "picked"); hit.forEach((c) => { c.status = "capped"; }); return [{ affectedRows: hit.length }, []];
     }
     if (s.startsWith("INSERT INTO shortlist_approval")) {
       if (s.includes("'batch'")) S.approvals.push({ id: p[0], run_id: p[1], requisition_id: p[2], source_kind: p[3], criteria_version_id: p[4], mode: "batch", approved_by: p[5], approved_count: p[6], unticked: JSON.parse(String(p[7])), note: p[8], revoked_at: null });
@@ -139,6 +150,33 @@ describe("seat caps on preview runs (WS3 D3)", () => {
   it("a manual run keeps its statement (no trigger columns): works before migration 2148", async () => {
     await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
     expect(h.state.runs[0].trigger_kind).toBe("manual");
+  });
+});
+
+describe("E5: seat caps are re-checked when approving and enrolling", () => {
+  it("two runs the same day: the second approval sees the seats the first one used (capped, never approved)", async () => {
+    h.state.req = { ...h.state.req, requested_headcount: 5, fulfilled_headcount: 4 };
+    h.state.perSeat = 2;
+    h.state.people = evalAll([person(1), person(2), person(3)]);
+    const a = await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
+    const b = await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
+    expect((await approveBatch({ requisitionId: "r1", sourceKind: "he", runId: a.runId, actor, now: NOW })).approved).toBe(2);
+    const second = await approveBatch({ requisitionId: "r1", sourceKind: "he", runId: b.runId, actor, now: NOW });
+    expect(second).toMatchObject({ approved: 0, capped: 2 });
+    expect(h.state.cands.filter((c) => c.status === "approved")).toHaveLength(2);
+    expect(h.conn.execute.mock.calls.some((c) => String(c[0]).includes("FROM job_requisition WHERE id = ? FOR UPDATE"))).toBe(true);
+  });
+  it("Live Meta arrivals under a standing approval stop at the daily cap", async () => {
+    h.state.req = { ...h.state.req, requested_headcount: 5, fulfilled_headcount: 4 };
+    h.state.perSeat = 1;
+    h.state.enrol = 1;
+    h.state.people = evalAll([person(1)]);
+    const { runId } = await createShortlistRun({ requisitionId: "r1", sourceKind: "meta_live", actor, now: NOW });
+    await approveBatch({ requisitionId: "r1", sourceKind: "meta_live", runId, actor, now: NOW });
+    await approveStanding({ requisitionId: "r1", versionId: "v1", days: 3, actor, now: NOW });
+    const p = port();
+    expect((await enrolLiveArrival({ requisitionId: "r1", facts: person(30, { sourceKind: "meta_live", subSource: "meta_live" }), port: p, now: NOW })).decision).toBe("seat_cap_reached");
+    expect(p.calls).toEqual([]);
   });
 });
 
