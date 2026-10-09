@@ -4,6 +4,8 @@
  * A reply is tied to a person by, in order: an answer token in the reply (the /w/<token> link quoted from our email, or a
  * replies+<token>@ address), In-Reply-To / References pointing at one of our sent emails, then the sender address when it
  * belongs to exactly one person. Anything else is left in the mailbox untouched (not stored). Auto-replies and bounces are skipped.
+ * The rule is kept in source_kind: inbound_email (token) and email_thread are verified; email_sender (From header only) is an
+ * unverified sender, which HR must confirm before a booking answer is applied. One failing message is skipped (never stalls the cursor).
  */
 import type { RowDataPacket } from "mysql2";
 import { randomUUID } from "node:crypto";
@@ -19,6 +21,8 @@ export interface InboundEmailConfig { host: string; port: number; secure: boolea
 export interface InboundMessage {
   uid: number; messageId: string | null; inReplyTo: string | null; references: string[]; from: string | null; to: string[];
   subject: string; text: string; autoSubmitted: string | null;
+  /** Set by the mailbox client for a message over the size cap: it was not downloaded or parsed (skipped, cursor moves past it). */
+  tooLarge?: boolean;
 }
 /** The IMAP side, injected so the poller is testable; the real one reads with BODY.PEEK (messages stay unread). */
 export interface MailboxClient {
@@ -30,6 +34,10 @@ export interface PollDeps { connect: (c: InboundEmailConfig) => Promise<MailboxC
 export interface PollResult { read: number; matched: number; recorded: number; skipped: Record<string, number> }
 
 const MAX_PER_TICK = 200;
+/** candidate_response.source_kind per matching rule; email_sender is the unverified one. */
+export const SOURCE_KIND_BY_RULE: Record<string, string> = { token: "inbound_email", thread: "email_thread", sender: "email_sender" };
+export const UNVERIFIED_SOURCE_KINDS: readonly string[] = ["email_sender"];
+const MSG_ID_MAX = 120;
 const TOKEN_IN_TEXT = /\/w\/([a-f0-9]{32})\b/g;
 const TOKEN_IN_ADDRESS = /\+([a-f0-9]{32})@/i;
 
@@ -107,27 +115,35 @@ export async function pollInboundEmail(now: Date, deps: Partial<PollDeps> = {}, 
     for (const m of msgs) {
       out.read++;
       maxUid = Math.max(maxUid, m.uid);
+      if (m.tooLarge) { skip("too_large"); continue; }
       if (isAutoReply(m)) { skip("auto_reply"); continue; }
-      const who = (await byToken(m)) ?? (await byThread(m)) ?? (await bySender(m));
-      if (!who) { skip("unknown_sender"); continue; }
-      out.matched++;
-      if (!live) continue;
-      const top = stripQuoted(m.text).slice(0, 2000);
-      const s = classifyReply(m.text, { channel: "email" });
-      const ref = (m.messageId ?? `uid:${cfg.mailbox}:${box.uidValidity}:${m.uid}`).slice(0, 120);
+      // One message failing (bad encoding, an oversized value) is counted and skipped; it never stalls the cursor.
       try {
-        await db.execute("INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, provider_message_id, intent) VALUES (?,?,?,?,?,?,?,?)",
-          [randomUUID(), who.leadId, who.mobile10, "in", "email", top, m.messageId, s.answer]);
+        const who = (await byToken(m)) ?? (await byThread(m)) ?? (await bySender(m));
+        if (!who) { skip("unknown_sender"); continue; }
+        out.matched++;
+        if (!live) continue;
+        const top = stripQuoted(m.text).slice(0, 2000);
+        const s = classifyReply(m.text, { channel: "email" });
+        const messageId = m.messageId ? m.messageId.slice(0, MSG_ID_MAX) : null;
+        const ref = (messageId ?? `uid:${cfg.mailbox}:${box.uidValidity}:${m.uid}`).slice(0, 120);
+        try {
+          await db.execute("INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, provider_message_id, intent) VALUES (?,?,?,?,?,?,?,?)",
+            [randomUUID(), who.leadId, who.mobile10, "in", "email", top, messageId, s.answer]);
+        } catch (err) {
+          if ((err as { code?: string }).code === "ER_DUP_ENTRY") { skip("duplicate"); continue; }
+          throw err;
+        }
+        const r = await recordResponseSafe({
+          occurredAt: now, channel: "email", mode: "text", answer: s.answer, suggested: { answer: s.answer, confidence: s.confidence }, status: "needs_review",
+          mobile10: who.mobile10, leadId: who.leadId, matchId: who.matchId, inviteId: who.inviteId, metaLeadId: who.metaLeadId,
+          sourceKind: SOURCE_KIND_BY_RULE[who.rule] ?? "inbound_email", sourceRef: ref, rawText: top, applied: false,
+        });
+        if (r.created) out.recorded++; else skip("duplicate");
       } catch (err) {
-        if ((err as { code?: string }).code === "ER_DUP_ENTRY") { skip("duplicate"); continue; }
-        throw err;
+        skip("error");
+        logger.warn({ uid: m.uid, err: logText(err) }, "[inbound-email] message skipped");
       }
-      const r = await recordResponseSafe({
-        occurredAt: now, channel: "email", mode: "text", answer: s.answer, suggested: { answer: s.answer, confidence: s.confidence }, status: "needs_review",
-        mobile10: who.mobile10, leadId: who.leadId, matchId: who.matchId, inviteId: who.inviteId, metaLeadId: who.metaLeadId,
-        sourceKind: "inbound_email", sourceRef: ref, rawText: top, applied: false,
-      });
-      if (r.created) out.recorded++; else skip("duplicate");
     }
     if (live && (fresh || maxUid > start)) {
       await db.execute(

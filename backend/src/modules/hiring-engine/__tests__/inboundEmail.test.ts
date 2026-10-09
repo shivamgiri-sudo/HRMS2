@@ -86,6 +86,40 @@ describe("inbound email", () => {
     const r = await pollInboundEmail(now, { connect }, live);
     expect(r).toMatchObject({ read: 4, matched: 3, recorded: 3, skipped: { unknown_sender: 1 } });
     expect(h.responses.map((x) => [x.inviteId ?? null, x.leadId ?? null, x.mobile10])).toEqual([["I1", null, "9876500000"], [null, "L2", "9876543210"], [null, "L3", "9876511111"]]);
+    // the rule is kept: token / thread are verified; a match by the From header only is an unverified sender
+    expect(h.responses.map((x) => x.sourceKind)).toEqual(["inbound_email", "email_thread", "email_sender"]);
+  });
+
+  it("I-4c: one poison message (a failing write) is skipped and the cursor still moves past it", async () => {
+    h.leadsByEmail.set("asha@x.in", [{ id: "L3", mobile10: "9876511111" }]);
+    const { db } = await import("../../../db/mysql.js");
+    const orig = vi.mocked(db.execute).getMockImplementation()!;
+    vi.mocked(db.execute).mockImplementation((async (sql: string, p: unknown[] = []) => {
+      if (sql.startsWith("INSERT INTO he_message") && String(p[6]).includes("poison")) throw Object.assign(new Error("Incorrect string value"), { code: "ER_TRUNCATED_WRONG_VALUE_FOR_FIELD" });
+      return orig(sql, p);
+    }) as never);
+    const { connect } = client([msg({ uid: 3, messageId: "<poison@x>" }), msg({ uid: 4, messageId: "<ok@x>" })]);
+    const r = await pollInboundEmail(now, { connect }, live);
+    vi.mocked(db.execute).mockImplementation(orig as never);
+    expect(r).toMatchObject({ read: 2, recorded: 1, skipped: { error: 1 } });
+    expect(cursorWrites().at(-1)!.p).toEqual(["INBOX", 7, 4]);
+  });
+
+  it("I-4c: a Message-ID longer than the column (120) is truncated, never rejected", async () => {
+    h.leadsByEmail.set("asha@x.in", [{ id: "L3", mobile10: "9876511111" }]);
+    const long = `<${"x".repeat(300)}@x>`;
+    const { connect } = client([msg({ messageId: long })]);
+    await pollInboundEmail(now, { connect }, live);
+    const ins = h.sqls.find((s) => s.sql.startsWith("INSERT INTO he_message"))!;
+    expect(String(ins.p[6]).length).toBe(120);
+  });
+
+  it("I-4a: a message the client marked too large is skipped (never parsed) and the cursor moves past it", async () => {
+    h.leadsByEmail.set("asha@x.in", [{ id: "L3", mobile10: "9876511111" }]);
+    const { connect } = client([msg({ uid: 6, tooLarge: true } as Partial<Msg>)]);
+    const r = await pollInboundEmail(now, { connect }, live);
+    expect(r).toMatchObject({ read: 1, matched: 0, skipped: { too_large: 1 } });
+    expect(cursorWrites().at(-1)!.p).toEqual(["INBOX", 7, 6]);
   });
 
   it("unknown sender is skipped and nothing is stored", async () => {

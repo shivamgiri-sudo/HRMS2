@@ -30,7 +30,7 @@ export async function collectResponsesSection(f: string, t: string, _now: Date =
          FROM candidate_response cr WHERE cr.occurred_at >= ? AND cr.occurred_at < ? GROUP BY cr.channel ORDER BY responses DESC`, [f, t]),
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n, MIN(cr.occurred_at) AS oldest FROM candidate_response cr WHERE cr.status = 'needs_review'"),
       db.execute<RowDataPacket[]>(`SELECT cr.channel, MAX(cr.occurred_at) AS last_at, COUNT(*) AS n FROM candidate_response cr
-         WHERE cr.occurred_at >= ? AND cr.source_kind IN ('he_message','meta_message','inbound_email') GROUP BY cr.channel`, [week]),
+         WHERE cr.occurred_at >= ? AND cr.source_kind IN ('he_message','meta_message','inbound_email','email_thread','email_sender') GROUP BY cr.channel`, [week]),
     ]);
     let pollerAt: string | null = null;
     try { pollerAt = str((await db.execute<RowDataPacket[]>("SELECT MAX(updated_at) AS at FROM inbound_email_cursor"))[0][0]?.at); } catch { /* poller table absent */ }
