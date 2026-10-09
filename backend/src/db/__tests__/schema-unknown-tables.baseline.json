@@ -282,6 +282,9 @@
     "job_requisition_criteria_audit",
     "job_requisition_criteria_version"
   ],
+  "modules/selection/jd-suggestions.service.ts": [
+    "job_requisition_criteria_audit"
+  ],
   "modules/selection/fact-cache.service.ts": [
     "selection_person_fact"
   ],
