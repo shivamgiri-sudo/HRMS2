@@ -95,6 +95,11 @@ describe("QueueView", () => {
     expect(html.match(/animate-spin/g)?.length).toBe(1);
     expect(html).toMatch(/aria-label="Ignore: Asha V\."[^>]*disabled|disabled=""[^>]*aria-label="Ignore: Asha V\."/);
   });
+  it("a reply matched by the sender only says so in words with an icon (M2)", () => {
+    const html = q({ data: { ...data, rows: [{ ...row(), matchedBy: "sender" }] } });
+    expect(html).toContain("Matched by sender address (not verified)");
+    expect(q()).not.toContain("Matched by sender");
+  });
   it("view-only role (ceo): no write button, the timeline stays", () => {
     const html = q({ canWrite: false });
     expect(html).not.toContain("Cannot come: Asha V.");

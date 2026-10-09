@@ -6,6 +6,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { UNVERIFIED_SOURCE_KINDS } from "./inbound-email.service.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import { recordInviteAnswer, type InviteAnswer } from "./he-ingest.service.js";
@@ -15,7 +16,7 @@ import { inviteLinkFor, resolveAnswerToken, type WalkinInviteRow } from "./walki
 import { answerInviteToken, bookAndAnswerMatch } from "./walkin-invite-answer.service.js";
 
 export class ResponseActionError extends Error {
-  constructor(public status: 400 | 404 | 409, message: string) { super(message); }
+  constructor(public status: 400 | 404 | 409, message: string, public code?: string) { super(message); }
 }
 
 export type ManualAnswer = "confirm" | "decline" | "reschedule";
@@ -80,7 +81,7 @@ export async function manualResponse(a: ManualInput, scope: BranchScope): Promis
 
 async function loadForAction(responseId: number, scope: BranchScope): Promise<RowDataPacket> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT cr.id, cr.status, cr.handled_at, cr.match_id, cr.invite_id, cr.mobile10, cr.requisition_id, cr.answer, cr.suggested_answer, jr.branch_name
+    `SELECT cr.id, cr.status, cr.handled_at, cr.match_id, cr.invite_id, cr.mobile10, cr.requisition_id, cr.answer, cr.suggested_answer, cr.source_kind, jr.branch_name
        FROM candidate_response cr LEFT JOIN job_requisition jr ON jr.id = cr.requisition_id WHERE cr.id = ? LIMIT 1`, [responseId]);
   const r = rows[0];
   if (!r || !inScope(scope, r.branch_name)) throw new ResponseActionError(404, "Reply not found");
@@ -96,21 +97,43 @@ async function claim(responseId: number, actor: string, status: string): Promise
   if (Number((u as unknown as { affectedRows?: number }).affectedRows ?? 0) !== 1) throw new ResponseActionError(409, "This reply was already handled");
 }
 
-export async function classifyResponse(a: { actor: string; responseId: number; answer: ResponseAnswer; apply: boolean }, scope: BranchScope): Promise<{ status: string; state?: string }> {
+/** Back to the queue after a failed or empty apply, so HR (or another HR) can retry. Only the claimer's own still-recorded claim. */
+async function releaseClaim(responseId: number, actor: string): Promise<void> {
+  await db.execute(
+    "UPDATE candidate_response SET handled_by = 'system', handled_at = NULL, status = 'needs_review' WHERE id = ? AND handled_by = ? AND status = 'recorded'",
+    [responseId, actor.slice(0, 60)]).catch(() => undefined);
+}
+
+export async function classifyResponse(a: { actor: string; responseId: number; answer: ResponseAnswer; apply: boolean; confirmPerson?: boolean }, scope: BranchScope): Promise<{ status: string; state?: string }> {
   if (!ANSWERS.includes(a.answer)) throw new ResponseActionError(400, "Unknown answer");
   const r = await loadForAction(a.responseId, scope);
   const applies = a.apply && (a.answer === "confirm" || a.answer === "decline" || a.answer === "reschedule");
+  // I-4b: an email matched only by its From header may be someone else: a booking answer needs HR to confirm the person first.
+  if (applies && UNVERIFIED_SOURCE_KINDS.includes(String(r.source_kind ?? "")) && a.confirmPerson !== true) {
+    throw new ResponseActionError(409, "This reply was matched by the sender's address only. Confirm it is this person before applying.", "unverified_sender");
+  }
   await claim(a.responseId, a.actor, "recorded");
   if (!applies) {
     await db.execute("UPDATE candidate_response SET status = ?, answer = ?, suggested_answer = COALESCE(suggested_answer, answer) WHERE id = ?", ["recorded", a.answer, a.responseId]);
     return { status: "recorded" };
   }
-  let invite: WalkinInviteRow | null = null;
-  if (!r.match_id && r.invite_id) {
-    const [w] = await db.execute<RowDataPacket[]>("SELECT * FROM walkin_invite WHERE id = ? LIMIT 1", [r.invite_id]);
-    invite = (w[0] as WalkinInviteRow | undefined) ?? null;
+  let out: { state?: string };
+  try {
+    let invite: WalkinInviteRow | null = null;
+    if (!r.match_id && r.invite_id) {
+      const [w] = await db.execute<RowDataPacket[]>("SELECT * FROM walkin_invite WHERE id = ? LIMIT 1", [r.invite_id]);
+      invite = (w[0] as WalkinInviteRow | undefined) ?? null;
+    }
+    out = await answerViaInvite(invite, r.match_id ? String(r.match_id) : invite?.match_id ?? null, TAP[a.answer as ManualAnswer], { actor: a.actor, note: `classified response ${a.responseId}`, at: new Date() });
+  } catch (err) {
+    await releaseClaim(a.responseId, a.actor);
+    throw err;
   }
-  const out = await answerViaInvite(invite, r.match_id ? String(r.match_id) : invite?.match_id ?? null, TAP[a.answer as ManualAnswer], { actor: a.actor, note: `classified response ${a.responseId}`, at: new Date() });
+  // Nothing was booked (engine busy, no seat): the reply goes back to the queue.
+  if (out.state === "pending" || out.state === "unavailable") {
+    await releaseClaim(a.responseId, a.actor);
+    return { status: "needs_review", state: out.state };
+  }
   await db.execute("UPDATE candidate_response SET status = ?, answer = ?, suggested_answer = COALESCE(suggested_answer, answer) WHERE id = ?", ["applied", a.answer, a.responseId]);
   return { status: "applied", state: out.state };
 }

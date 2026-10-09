@@ -17,6 +17,8 @@ export interface ResponseRow {
   leadId: string | null; matchId: string | null; requisitionId: string | null; requisitionCode: string | null; campaignName: string | null;
   driveType: SourceType | null; driveId: string | null; driveDate: string | null; slotAt: string | null; handledBy: "system" | "hr"; handledAt: string | null;
   conflict: boolean; dedupeOf: number | null; textPreview: string;
+  /** Email replies: tied by the answer link, the thread, or only the sender address (not verified). */
+  matchedBy?: "token" | "thread" | "sender" | null;
 }
 export interface ResponseList { rows: ResponseRow[]; nextCursor: string | null }
 export interface QueueCounts { total: number; under1h: number; h1to4: number; h4to24: number; over24h: number }
@@ -155,10 +157,20 @@ export const QUEUE_ACTIONS: readonly QueueAction[] = [
   { answer: "confirm", apply: true, label: "Will come" }, { answer: "decline", apply: true, label: "Cannot come" },
   { answer: "reschedule", apply: true, label: "Another time" }, { answer: "question", apply: false, label: "Question (no change)" }, { ignore: true, label: "Ignore" },
 ];
-/** A Confirm that books a slot (no booking yet for this reply) asks first. */
-export function confirmPrompt(row: Pick<ResponseRow, "matchId" | "person" | "slotAt">, a: QueueAction): string | null {
-  if (!("answer" in a) || a.answer !== "confirm" || !a.apply) return null;
+const MATCHED_BY_TEXT: Record<string, string> = { token: "Matched by the link in the reply", thread: "Matched by the email thread", sender: "Matched by sender address (not verified)" };
+export const matchedByText = (m: ResponseRow["matchedBy"]): string | null => (m ? MATCHED_BY_TEXT[m] ?? null : null);
+
+type PromptRow = Pick<ResponseRow, "matchId" | "person" | "slotAt"> & { matchedBy?: ResponseRow["matchedBy"] };
+/** A booking answer on a sender-only email match asks HR to confirm the person; a Confirm that books a slot (no booking yet) asks first. */
+export function confirmPrompt(row: PromptRow, a: QueueAction): string | null {
+  if (!("answer" in a) || !a.apply) return null;
+  if (row.matchedBy === "sender") return `This email was matched only by the sender's address. Is it really ${row.person.name} (${row.person.mobileMasked})? Apply ${a.label}?`;
+  if (a.answer !== "confirm") return null;
   return row.matchId ? null : `This books a walk-in slot for ${row.person.name}${row.slotAt ? ` (asked for ${whenText(row.slotAt)})` : ""}. Continue?`;
+}
+/** The classify request; a sender-only match carries HR's confirmation of the person (the server refuses it otherwise). */
+export function classifyBody(row: { matchedBy?: ResponseRow["matchedBy"] }, a: Extract<QueueAction, { answer: ResponseAnswer }>): { answer: ResponseAnswer; apply: boolean; confirmPerson?: true } {
+  return { answer: a.answer, apply: a.apply, ...(row.matchedBy === "sender" && a.apply ? { confirmPerson: true as const } : {}) };
 }
 export const queueBuckets = (c: QueueCounts | null | undefined): Array<{ label: string; n: number }> => [
   { label: "under 1 h", n: c?.under1h ?? 0 }, { label: "1 to 4 h", n: c?.h1to4 ?? 0 }, { label: "4 to 24 h", n: c?.h4to24 ?? 0 }, { label: "over 24 h", n: c?.over24h ?? 0 },

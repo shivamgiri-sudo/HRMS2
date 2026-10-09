@@ -115,6 +115,28 @@ describe("classifyResponse", () => {
     h.resp = null;
     await expect(classifyResponse({ actor: "U2", responseId: 8, answer: "confirm", apply: true }, all)).rejects.toMatchObject({ status: 404 });
   });
+  it("I-4b: a reply matched only by the sender address is not applied unless HR confirms the person (409, nothing claimed)", async () => {
+    h.resp = { ...h.resp!, source_kind: "email_sender" };
+    await expect(classifyResponse({ actor: "U2", responseId: 7, answer: "confirm", apply: true }, noida)).rejects.toMatchObject({ status: 409, code: "unverified_sender" });
+    expect(h.calls).toHaveLength(0);
+    expect(h.sqls.some((s) => s.sql.startsWith("UPDATE candidate_response SET handled_by"))).toBe(false);
+    // recording it as a question (nothing applied) is fine without confirmation
+    expect(await classifyResponse({ actor: "U2", responseId: 7, answer: "question", apply: true }, noida)).toEqual({ status: "recorded" });
+    h.sqls = [];
+    expect(await classifyResponse({ actor: "U2", responseId: 7, answer: "confirm", apply: true, confirmPerson: true }, noida)).toEqual({ status: "applied", state: "confirmed" });
+  });
+  it("token / thread matched replies apply without the confirmation", async () => {
+    for (const k of ["inbound_email", "email_thread", "he_message"]) {
+      h.resp = { ...h.resp!, source_kind: k };
+      expect(await classifyResponse({ actor: "U2", responseId: 7, answer: "confirm", apply: true }, noida)).toMatchObject({ status: "applied" });
+    }
+  });
+  it("the claim is released (back to needs_review) when applying throws or there is nothing to apply, so HR can retry", async () => {
+    h.resp = { ...h.resp!, match_id: null, invite_id: null };
+    await expect(classifyResponse({ actor: "U2", responseId: 7, answer: "confirm", apply: true }, noida)).rejects.toMatchObject({ status: 409 });
+    const rel = h.sqls.find((s) => s.sql.startsWith("UPDATE candidate_response SET handled_by = 'system', handled_at = NULL, status = 'needs_review'"));
+    expect(rel?.p).toEqual([7, "U2"]);
+  });
   it("no match but an invite → answerInviteToken", async () => {
     h.resp = { ...h.resp!, match_id: null, invite_id: "I1" };
     await classifyResponse({ actor: "U2", responseId: 7, answer: "decline", apply: true }, noida);

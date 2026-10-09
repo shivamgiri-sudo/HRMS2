@@ -49,7 +49,7 @@ function readFail(res: Response, err: unknown, what: string): void {
 }
 
 function fail(res: Response, err: unknown, what: string): void {
-  if (err instanceof ResponseActionError) { res.status(err.status).json({ success: false, message: err.message }); return; }
+  if (err instanceof ResponseActionError) { res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) }); return; }
   logger.error({ code: (err as { code?: unknown })?.code ?? "unknown" }, `[he-responses] ${what} failed`);
   res.status(500).json({ success: false, message: "Could not save. Please try again." });
 }
@@ -135,7 +135,7 @@ export function registerResponseRoutes(r: Router, roles: { view: readonly string
     if (!ANSWERS.includes(String(b.answer))) return void bad(res, "Unknown answer");
     try {
       const areq = req as AuthenticatedRequest;
-      res.json({ success: true, data: await classifyResponse({ actor: areq.authUser.id, responseId: Number(id), answer: b.answer as ResponseAnswer, apply: b.apply !== false }, await branchScopeOf(areq)) });
+      res.json({ success: true, data: await classifyResponse({ actor: areq.authUser.id, responseId: Number(id), answer: b.answer as ResponseAnswer, apply: b.apply !== false, confirmPerson: b.confirmPerson === true }, await branchScopeOf(areq)) });
     } catch (err) { fail(res, err, "classify"); }
   });
 

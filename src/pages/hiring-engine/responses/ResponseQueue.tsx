@@ -5,11 +5,11 @@
  * Nothing is applied automatically. Buttons only for write roles. QueueView is presentational.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, History, Inbox, Loader2 } from "lucide-react";
+import { AlertTriangle, History, Inbox, Link2, Loader2, ShieldAlert } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { BTN } from "../command/charts/ChartFrame";
 import { AnswerBadge, ChannelBadge } from "./ResponseBadges";
-import { QUEUE_ACTIONS, QUEUE_PATH, actionError, ageText, confidenceText, confirmPrompt, queueBuckets, withoutRow, type QueueAction, type ResponseQueueData, type ResponseRow } from "./responsesModel";
+import { QUEUE_ACTIONS, QUEUE_PATH, actionError, ageText, classifyBody, confidenceText, confirmPrompt, matchedByText, queueBuckets, withoutRow, type QueueAction, type ResponseQueueData, type ResponseRow } from "./responsesModel";
 
 export interface QueueViewProps {
   data: ResponseQueueData | null; loading: boolean; error: string | null; canWrite: boolean; /** The person whose reply is being saved (its row already left the list), or null. */ saving: string | null; message: string | null; nowMs?: number;
@@ -48,6 +48,11 @@ export function QueueView({ data, loading, error, canWrite, saving, message, now
                 <ChannelBadge channel={r.channel} />
                 <span className="text-xs text-slate-700 dark:text-slate-200">{ageText(r.occurredAt, nowMs)} ago{r.requisitionCode ? ` · ${r.requisitionCode}` : ""}</span>
                 {r.suggested && <span className="inline-flex items-center gap-1 text-xs text-slate-700 dark:text-slate-200"><AnswerBadge answer={r.suggested} prefix="Looks like" />{confidenceText(r.confidence)}</span>}
+                {matchedByText(r.matchedBy) && (
+                  <span className={`inline-flex items-center gap-1 text-xs ${r.matchedBy === "sender" ? "font-semibold text-amber-900 dark:text-amber-200" : "text-slate-700 dark:text-slate-200"}`}>
+                    {r.matchedBy === "sender" ? <ShieldAlert className="h-3.5 w-3.5" aria-hidden /> : <Link2 className="h-3.5 w-3.5" aria-hidden />}{matchedByText(r.matchedBy)}
+                  </span>
+                )}
               </div>
               <p className="break-words rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-900 dark:bg-slate-800 dark:text-slate-100">{r.textPreview || "(no text)"}</p>
               <div className="flex flex-wrap gap-1.5">
@@ -96,7 +101,7 @@ export default function ResponseQueue({ canWrite, onOpen, onChanged, refreshSign
     setSaving(row.person.name); setMessage(null);
     try {
       if ("ignore" in a) await hrmsApi.post(`/api/he/responses/${row.id}/ignore`, { reason: "Ignored by HR from the review queue" });
-      else await hrmsApi.post(`/api/he/responses/${row.id}/classify`, { answer: a.answer, apply: a.apply });
+      else await hrmsApi.post(`/api/he/responses/${row.id}/classify`, classifyBody(row, a));
       setMessage(`Saved: ${row.person.name}, ${a.label}.`);
       onChanged?.();
     } catch (e: unknown) {

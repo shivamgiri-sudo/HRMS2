@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  actionError, ageText, canWriteHe, channelCounts, confidenceText, confirmPrompt, defaultResponseFilters, filtersQuery, listPath, listRequest, masked, parseResponsesHash, queueBuckets,
+  actionError, ageText, classifyBody, matchedByText, canWriteHe, channelCounts, confidenceText, confirmPrompt, defaultResponseFilters, filtersQuery, listPath, listRequest, masked, parseResponsesHash, queueBuckets,
   responsesHash, summaryPath, summaryRequest, whenText, withoutRow, QUEUE_ACTIONS, type ResponseFilters,
 } from "../responses/responsesModel";
 import { campaignOptions, nextDrives } from "../responses/nextDriveModel";
@@ -40,6 +40,24 @@ describe("filters and the URL hash", () => {
     expect(filtersQuery(f)).toBe("from=2026-10-02&to=2026-10-08&channel=web");
     expect(listPath(f, "abc=")).toBe("/api/he/responses?from=2026-10-02&to=2026-10-08&channel=web&cursor=abc%3D&limit=50");
     expect(summaryPath(f)).toBe("/api/he/responses/summary?from=2026-10-02&to=2026-10-08&channel=web");
+  });
+});
+
+describe("email replies matched by the sender only (I-4b / M2)", () => {
+  const row = (matchedBy: "token" | "thread" | "sender" | null) => ({ matchId: "M1", slotAt: null, person: { name: "Asha V.", mobileMasked: "xxxxxx3210" }, matchedBy });
+  const confirm = { answer: "confirm" as const, apply: true, label: "Will come" };
+  it("says how the reply was tied to the person, in words", () => {
+    expect(matchedByText("sender")).toBe("Matched by sender address (not verified)");
+    expect(matchedByText("token")).toBe("Matched by the link in the reply");
+    expect(matchedByText("thread")).toBe("Matched by the email thread");
+    expect(matchedByText(null)).toBeNull();
+  });
+  it("applying a booking answer to a sender-only match asks HR to confirm the person, and sends confirmPerson", () => {
+    expect(confirmPrompt(row("sender"), confirm)).toBe("This email was matched only by the sender's address. Is it really Asha V. (xxxxxx3210)? Apply Will come?");
+    expect(classifyBody(row("sender"), confirm)).toEqual({ answer: "confirm", apply: true, confirmPerson: true });
+    expect(classifyBody(row("token"), confirm)).toEqual({ answer: "confirm", apply: true });
+    expect(confirmPrompt(row("token"), confirm)).toBeNull();
+    expect(confirmPrompt(row("sender"), QUEUE_ACTIONS[3])).toBeNull(); // Question changes nothing
   });
 });
 

@@ -29,6 +29,8 @@ export interface ResponseListRow {
   leadId: string | null; matchId: string | null; requisitionId: string | null; requisitionCode: string | null; campaignName: string | null;
   driveType: SourceType | null; driveId: string | null; driveDate: string | null; slotAt: string | null; handledBy: "system" | "hr"; handledAt: string | null;
   conflict: boolean; dedupeOf: number | null; textPreview: string;
+  /** How an email reply was tied to the person: an answer token, the email thread, or only the sender address (not verified). */
+  matchedBy: "token" | "thread" | "sender" | null;
 }
 
 const str = (v: unknown): string | null => (v == null || v === "" ? null : String(v));
@@ -57,7 +59,7 @@ export function decodeCursor(c: string | null | undefined): { at: string; id: nu
 }
 
 const BASE = `SELECT cr.id, cr.occurred_at, cr.channel, cr.mode, cr.answer, cr.status, cr.suggested_answer, cr.confidence, cr.mobile10, cr.lead_id, cr.match_id,
-       cr.requisition_id, cr.drive_type, cr.drive_id, cr.slot_at, cr.handled_by, cr.handled_at, cr.conflict, cr.dedupe_of, LEFT(cr.raw_text, 400) AS raw_text,
+       cr.requisition_id, cr.drive_type, cr.drive_id, cr.slot_at, cr.handled_by, cr.handled_at, cr.conflict, cr.dedupe_of, cr.source_kind, LEFT(cr.raw_text, 400) AS raw_text,
        jr.requisition_code, mc.campaign_name, d.drive_date, COALESCE(l.full_name, ml.parsed_name) AS full_name
   FROM candidate_response cr
   LEFT JOIN job_requisition jr ON jr.id = cr.requisition_id
@@ -65,6 +67,8 @@ const BASE = `SELECT cr.id, cr.occurred_at, cr.channel, cr.mode, cr.answer, cr.s
   LEFT JOIN he_drive d ON d.id = cr.drive_id
   LEFT JOIN he_lead l ON l.id = cr.lead_id
   LEFT JOIN meta_lead_raw ml ON ml.id = cr.meta_lead_id`;
+
+const MATCHED_BY: Record<string, ResponseListRow["matchedBy"]> = { inbound_email: "token", email_thread: "thread", email_sender: "sender" };
 
 function toRow(r: RowDataPacket): ResponseListRow {
   return {
@@ -75,6 +79,7 @@ function toRow(r: RowDataPacket): ResponseListRow {
     driveType: (str(r.drive_type) as SourceType | null), driveId: str(r.drive_id), driveDate: str(r.drive_date), slotAt: str(r.slot_at),
     handledBy: r.handled_by && r.handled_by !== "system" ? "hr" : "system", handledAt: str(r.handled_at),
     conflict: Number(r.conflict) === 1, dedupeOf: r.dedupe_of == null ? null : Number(r.dedupe_of), textPreview: preview(r.raw_text),
+    matchedBy: MATCHED_BY[String(r.source_kind ?? "")] ?? null,
   };
 }
 
