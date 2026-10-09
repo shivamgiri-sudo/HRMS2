@@ -59,7 +59,9 @@ export async function previewRelink(campaignId: string, toRequisitionId: string)
   if (code && code !== String(to.requisition_code ?? "").toUpperCase()) {
     warnings.push(`The lead form carries the hidden code ${code}; the next lead will point the campaign back at it unless the form is changed`);
   }
-  const previewHash = createHash("sha256").update(JSON.stringify({ campaignId, fromId, to: toRequisitionId, moveIds })).digest("hex");
+  // E9: stable on an active campaign: the requisition pair and who must stay (contacted people), not every new lead id. A new lead moves
+  // with the rest; someone contacted since the preview changes it (409 with the fresh preview).
+  const previewHash = createHash("sha256").update(JSON.stringify({ campaignId, fromId, to: toRequisitionId, stayIds: leads.filter((l) => Number(l.contacted) === 1).map((l) => String(l.id)) })).digest("hex");
   return {
     campaignId, fromRequisitionId: fromId, fromCode: from ? String(from.requisition_code ?? "") : null, fromClosedReason: from ? closedReasonOf(from) : null,
     toRequisitionId, toCode: String(to.requisition_code ?? ""), toBranch: String(to.branch_name ?? ""),
@@ -79,11 +81,17 @@ export async function applyRelink(a: { campaignId: string; toRequisitionId: stri
   const reason = String(a.reason ?? "").trim();
   if (reason.length < 3 || reason.length > 300) throw fail(400, "Give a reason (3 to 300 characters)");
   const p = await previewRelink(a.campaignId, a.toRequisitionId);
-  if (p.previewHash !== a.previewHash) throw fail(409, "The campaign's leads changed since the preview; preview again");
+  if (p.previewHash !== a.previewHash) {
+    const { moveIds: _ids, ...preview } = p;
+    throw Object.assign(fail(409, "Someone on this campaign was contacted since the preview; check the new preview"), { preview });
+  }
   const relinkId = randomUUID();
+  const tables = await optionalTables();
+  let moved = 0;
   const c = await db.getConnection();
   try {
     await c.beginTransaction();
+    await c.execute("SELECT id FROM meta_campaign WHERE id = ? FOR UPDATE", [a.campaignId]);
     await c.execute(
       `INSERT INTO meta_campaign_requisition (campaign_id, requisition_id, is_primary, sort_order, added_by) VALUES (?, ?, 1, 0, ?)
        ON DUPLICATE KEY UPDATE removed_at = NULL, removed_by = NULL, is_primary = 1`, [a.campaignId, a.toRequisitionId, a.actor.id]);
@@ -95,18 +103,21 @@ export async function applyRelink(a: { campaignId: string; toRequisitionId: stri
     await c.execute("UPDATE meta_campaign SET requisition_id = ? WHERE id = ?", [a.toRequisitionId, a.campaignId]);
     for (let i = 0; i < p.moveIds.length; i += CHUNK) {
       const ids = p.moveIds.slice(i, i + CHUNK);
-      await c.execute(
-        `UPDATE meta_lead_raw SET requisition_id = ?, routed_by = 'hr', routed_at = NOW() WHERE campaign_id = ? AND id IN (${ids.map(() => "?").join(",")})`,
+      // E9: "contacted" is re-checked here, in the transaction, for every lead: one contacted since the preview stays where it is.
+      const [u] = await c.execute(
+        `UPDATE meta_lead_raw r SET r.requisition_id = ?, r.routed_by = 'hr', r.routed_at = NOW()
+          WHERE r.campaign_id = ? AND r.id IN (${ids.map(() => "?").join(",")}) AND NOT ${isLeadContactedSql("r", tables)}`,
         [a.toRequisitionId, a.campaignId, ...ids]);
+      moved += Number((u as { affectedRows?: number }).affectedRows ?? 0);
     }
     await c.execute(
       `INSERT INTO meta_campaign_relink (id, campaign_id, from_requisition_id, to_requisition_id, leads_moved, leads_kept, preview_hash, actor_id, actor_role, reason)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [relinkId, a.campaignId, p.fromRequisitionId, a.toRequisitionId, p.moveIds.length, p.stay, p.previewHash, a.actor.id, a.actor.role || null, reason]);
+      [relinkId, a.campaignId, p.fromRequisitionId, a.toRequisitionId, moved, p.stay + (p.moveIds.length - moved), p.previewHash, a.actor.id, a.actor.role || null, reason]);
     await c.commit();
   } catch (e) {
     try { await c.rollback(); } catch { /* keep the original error */ }
     throw e;
   } finally { c.release(); }
-  return { moved: p.moveIds.length, kept: p.stay, relinkId };
+  return { moved, kept: p.stay + (p.moveIds.length - moved), relinkId };
 }

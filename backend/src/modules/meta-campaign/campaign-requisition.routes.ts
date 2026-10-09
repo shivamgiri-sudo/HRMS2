@@ -23,7 +23,7 @@ const ID = /^[0-9a-f-]{36}$/i;
 type Handler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 const handle = (fn: Handler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   fn(req, res).catch((e: { statusCode?: number; message?: string }) => {
-    if (e?.statusCode && e.statusCode < 500) return void res.status(e.statusCode).json({ success: false, message: e.message });
+    if (e?.statusCode && e.statusCode < 500) return void res.status(e.statusCode).json({ success: false, message: e.message, ...((e as { preview?: unknown }).preview ? { preview: (e as { preview?: unknown }).preview } : {}) });
     next(e);
   });
 };

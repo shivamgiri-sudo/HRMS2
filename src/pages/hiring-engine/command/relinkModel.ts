@@ -30,3 +30,10 @@ export function reasonError(reason: string): string | null {
 export function relinkBody(p: RelinkPreview, reason: string): { toRequisitionId: string; previewHash: string; reason: string; confirm: true } {
   return { toRequisitionId: p.toRequisitionId, previewHash: p.previewHash, reason: reason.trim(), confirm: true };
 }
+
+/** E9: a 409 from the relink carries the fresh preview (someone was contacted meanwhile); HR sees it and confirms again. */
+export function freshPreviewFrom(e: unknown): RelinkPreview | null {
+  const err = e as { status?: unknown; payload?: { preview?: unknown } } | null;
+  const p = err?.status === 409 ? err.payload?.preview : null;
+  return p && typeof p === "object" && typeof (p as RelinkPreview).previewHash === "string" ? (p as RelinkPreview) : null;
+}

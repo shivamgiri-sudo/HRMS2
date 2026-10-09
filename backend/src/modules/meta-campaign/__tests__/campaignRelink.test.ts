@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   reqs: [] as Array<Record<string, unknown>>,
   leads: [] as Array<{ id: string; screening_result: string; contacted: number }>,
   lastPayload: null as unknown,
+  contactedNow: new Set<string>(),
 }));
 vi.mock("../../../db/mysql.js", () => {
   const exec = async (sql: string, p: unknown[] = []) => {
@@ -16,6 +17,8 @@ vi.mock("../../../db/mysql.js", () => {
     if (s.startsWith("SELECT id, requisition_code, branch_name")) return [h.reqs.filter((r) => p.includes(r.id)), []];
     if (s.startsWith("SELECT r.id, r.screening_result")) return [h.leads, []];
     if (s.startsWith("SELECT raw_payload FROM meta_lead_raw")) return [h.lastPayload ? [{ raw_payload: h.lastPayload }] : [], []];
+    // the move re-checks "contacted" per lead inside the transaction: a lead contacted since the preview is not moved
+    if (s.startsWith("UPDATE meta_lead_raw r SET r.requisition_id = ?")) { const ids = (p as string[]).slice(2); return [{ affectedRows: ids.filter((id) => !h.contactedNow.has(id)).length }, []]; }
     return [{ affectedRows: 1 }, []];
   };
   const conn = { execute: exec, beginTransaction: async () => { h.sqls.push({ sql: "BEGIN", p: [] }); }, commit: async () => { h.sqls.push({ sql: "COMMIT", p: [] }); },
@@ -37,7 +40,7 @@ beforeEach(() => {
   h.campaign = { id: "c1", requisition_id: "rclosed", meta_form_id: "f1" };
   h.reqs = [req("rclosed", { approval_status: "closed", active_status: 0, closed_at: "2026-10-01 10:00:00" }), req("ropen"), req("rfull", { fulfilled_headcount: 10 })];
   h.leads = [{ id: "l1", screening_result: "qualified", contacted: 1 }, { id: "l2", screening_result: "qualified", contacted: 0 }, { id: "l3", screening_result: "disqualified", contacted: 0 }];
-  h.lastPayload = null;
+  h.lastPayload = null; h.contactedNow = new Set();
 });
 
 describe("relink a campaign to an open requisition (K7BK)", () => {
@@ -67,13 +70,37 @@ describe("relink a campaign to an open requisition (K7BK)", () => {
     expect(p.warnings.join(" ")).toContain("REQ-RCLOSED");
   });
 
-  it("apply needs a reason and the same lead set HR previewed", async () => {
+  it("apply needs a reason; a lead contacted since the preview makes it 409 with the fresh preview", async () => {
     const p = await previewRelink("c1", "ropen");
     await expect(applyRelink({ campaignId: "c1", toRequisitionId: "ropen", previewHash: p.previewHash, reason: "", actor })).rejects.toMatchObject({ statusCode: 400 });
-    h.leads.push({ id: "l4", screening_result: "pending", contacted: 0 });
+    h.leads[1] = { ...h.leads[1], contacted: 1 };
     h.sqls = [];
-    await expect(applyRelink({ campaignId: "c1", toRequisitionId: "ropen", previewHash: p.previewHash, reason: "K7BK closed", actor })).rejects.toMatchObject({ statusCode: 409 });
+    const err = await applyRelink({ campaignId: "c1", toRequisitionId: "ropen", previewHash: p.previewHash, reason: "K7BK closed", actor }).catch((e) => e);
+    expect(err).toMatchObject({ statusCode: 409 });
+    expect(err.preview).toMatchObject({ stay: 2, move: { total: 1 } });
+    expect(err.preview.moveIds).toBeUndefined();
     expect(writes()).toHaveLength(0);
+  });
+
+  it("E9: on an active campaign a new lead after the preview does not invalidate it (stable hash); the new lead moves too", async () => {
+    const p = await previewRelink("c1", "ropen");
+    h.leads.push({ id: "l4", screening_result: "pending", contacted: 0 });
+    expect((await previewRelink("c1", "ropen")).previewHash).toBe(p.previewHash);
+    const r = await applyRelink({ campaignId: "c1", toRequisitionId: "ropen", previewHash: p.previewHash, reason: "K7BK closed", actor });
+    expect(r.moved).toBe(3);
+  });
+
+  it("E9: 'contacted' is re-checked inside the transaction for every moved lead (a lead contacted meanwhile stays)", async () => {
+    const p = await previewRelink("c1", "ropen");
+    h.contactedNow.add("l2");
+    h.sqls = [];
+    const r = await applyRelink({ campaignId: "c1", toRequisitionId: "ropen", previewHash: p.previewHash, reason: "K7BK closed", actor });
+    expect(r).toMatchObject({ moved: 1, kept: 2 });
+    const seq = h.sqls.map((x) => x.sql);
+    const move = h.sqls.find((x) => x.sql.startsWith("UPDATE meta_lead_raw r SET r.requisition_id = ?"))!;
+    expect(seq.indexOf(move.sql)).toBeGreaterThan(seq.indexOf("BEGIN"));
+    expect(move.sql).toContain("AND NOT (r.notification_sent_at IS NOT NULL OR");
+    expect(seq.some((x) => x.startsWith("SELECT id FROM meta_campaign WHERE id = ? FOR UPDATE"))).toBe(true);
   });
 
   it("apply moves only the uncontacted leads, flips the primary and audits, in one transaction", async () => {
@@ -84,7 +111,7 @@ describe("relink a campaign to an open requisition (K7BK)", () => {
     const seq = h.sqls.map((x) => x.sql);
     const b = seq.indexOf("BEGIN"), e = seq.indexOf("COMMIT");
     const inTx = h.sqls.slice(b, e);
-    const move = inTx.find((x) => x.sql.startsWith("UPDATE meta_lead_raw SET requisition_id = ?, routed_by = 'hr'"))!;
+    const move = inTx.find((x) => x.sql.startsWith("UPDATE meta_lead_raw r SET r.requisition_id = ?, r.routed_by = 'hr'"))!;
     expect(move.p).toEqual(["ropen", "c1", "l2", "l3"]);
     expect(inTx.some((x) => x.sql.startsWith("UPDATE meta_campaign SET requisition_id = ?") && x.p[0] === "ropen")).toBe(true);
     const audit = inTx.find((x) => x.sql.startsWith("INSERT INTO meta_campaign_relink"))!;

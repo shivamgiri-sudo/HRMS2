@@ -8,7 +8,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { describeError } from "./commandData";
 import { BTN, FIELD, LABEL, PRIMARY } from "./StreamActions";
-import { previewLines, reasonError, relinkBody, relinkPath, relinkPreviewPath, type RelinkPreview } from "./relinkModel";
+import { freshPreviewFrom, previewLines, reasonError, relinkBody, relinkPath, relinkPreviewPath, type RelinkPreview } from "./relinkModel";
 
 export interface RelinkFormProps {
   campaignName: string; fromCode: string; options: Array<{ id: string; label: string }>; to: string; preview: RelinkPreview | null; reason: string; busy: boolean; error: string | null;
@@ -74,8 +74,14 @@ function RelinkPanel({ campaign, fromCode, options, onDone, onCancel }: Omit<Rel
       onPreview={() => void run(async () => { const r = await hrmsApi.get<{ data?: RelinkPreview }>(relinkPreviewPath(campaign.id, to)); setPreview(r?.data ?? null); })}
       onConfirm={() => void run(async () => {
         if (!preview) return;
-        const r = await hrmsApi.post<{ data?: { moved: number; kept: number } }>(relinkPath(campaign.id), relinkBody(preview, reason));
-        onDone(`Relinked to ${preview.toCode}: ${r?.data?.moved ?? 0} moved, ${r?.data?.kept ?? 0} stayed`);
+        try {
+          const r = await hrmsApi.post<{ data?: { moved: number; kept: number } }>(relinkPath(campaign.id), relinkBody(preview, reason));
+          onDone(`Relinked to ${preview.toCode}: ${r?.data?.moved ?? 0} moved, ${r?.data?.kept ?? 0} stayed`);
+        } catch (e) {
+          const fresh = freshPreviewFrom(e);
+          if (fresh) setPreview(fresh); // the new numbers are shown; HR confirms again
+          throw e;
+        }
       })} />
   );
 }

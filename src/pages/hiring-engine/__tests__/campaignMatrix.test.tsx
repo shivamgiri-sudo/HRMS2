@@ -7,7 +7,7 @@ vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => 
 
 import { CampaignMatrixView } from "../command/CampaignMatrix";
 import { RelinkForm } from "../command/RelinkDialog";
-import { previewLines, reasonError, relinkBody } from "../command/relinkModel";
+import { freshPreviewFrom, previewLines, reasonError, relinkBody } from "../command/relinkModel";
 import type { CampaignMatrixData, MatrixCellData, MatrixRowData } from "../command/campaignMatrixModel";
 
 const cell = (o: Partial<MatrixCellData> = {}): MatrixCellData => ({ kind: "meta_live", state: "running", reason: null, reasonText: "3 contacted in 48 h", activity48h: 3, streamId: "s1", streamStatus: "open", mapIt: null, relink: false, ...o });
@@ -80,6 +80,11 @@ describe("relink model and form", () => {
     expect(reasonError("")).toBe("Give a reason (3 to 300 characters)");
     expect(reasonError("ok fine")).toBeNull();
     expect(relinkBody(preview, " K7BK closed ")).toEqual({ toRequisitionId: "r2", previewHash: "h".repeat(64), reason: "K7BK closed", confirm: true });
+    // E9: a 409 carries the fresh preview, which replaces the stale one (HR confirms again)
+    const fresh = { ...preview, stay: 3, previewHash: "f".repeat(64) };
+    expect(freshPreviewFrom(Object.assign(new Error("x"), { status: 409, payload: { success: false, preview: fresh } }))).toEqual(fresh);
+    expect(freshPreviewFrom(Object.assign(new Error("x"), { status: 500, payload: { preview: fresh } }))).toBeNull();
+    expect(freshPreviewFrom(new Error("x"))).toBeNull();
   });
   it("the form shows the preview, the warnings, and only enables Confirm after a preview", () => {
     const before = renderToStaticMarkup(<RelinkForm campaignName="K7BK" fromCode="REQ-2609-K7BK" options={[{ id: "r2", label: "NOIDA-ONF-17" }]} to="r2" preview={null} reason="" busy={false} error={null}
