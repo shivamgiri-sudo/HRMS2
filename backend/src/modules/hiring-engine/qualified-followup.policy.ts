@@ -192,6 +192,17 @@ export function followupOwnedExpr(a: { mobileExpr: string; requisitionExpr: stri
   return `EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = ${a.mobileExpr} COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND qf.stopped_reason IS NULL AND (qf.requisition_id = ${a.requisitionExpr} COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded')))`;
 }
 
+/** Stops that keep the engine away from that person for THAT requisition: a criteria fail, a closed requisition or an opt-out
+ *  ended the journey on purpose, so neither the line-up nor a first invite may bring the person back for it. Other stops
+ *  (replied, joined, no contact details) and other requisitions are untouched. */
+export const ENGINE_BLOCKING_STOPS = ["criteria_failed", "requisition_closed", "opted_out"] as const;
+
+/** Real (live / canary) journey of this person for this requisition stopped by an ENGINE_BLOCKING_STOPS reason. Columns exist since
+ *  2133 / 2134 (no 2138 fallback needed); uq_qfu_person_req serves it. */
+export function followupStoppedSql(a: { mobileExpr: string; requisitionExpr: string }): string {
+  return ` AND NOT EXISTS (SELECT 1 FROM qualified_followup qs WHERE qs.mobile10 = ${a.mobileExpr} COLLATE utf8mb4_unicode_ci AND qs.requisition_id = ${a.requisitionExpr} COLLATE utf8mb4_unicode_ci AND qs.mode_at_enqueue IN ('live','canary') AND qs.stopped_reason IN (${ENGINE_BLOCKING_STOPS.map((r) => `'${r}'`).join(",")}))`;
+}
+
 /** The match's lead mobile, for engine statements that select he_match without joining he_lead. */
 export const LEAD_MOBILE_OF_MATCH = "(SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id)";
 

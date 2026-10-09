@@ -29,6 +29,7 @@ import { logger } from "../../logger.js";
 import { enqueueMatchedFollowups } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupStreamRef } from "./qualified-followup.types.js";
+import { followupStoppedSql } from "./qualified-followup.policy.js";
 
 /** Who a drive is lined up from. pool = everyone eligible; meta = anyone who filled a Meta form; campaign = those Meta campaigns' qualified leads; batch = those upload batches. */
 export interface DriveAudience { kind: "pool" | "meta" | "campaign" | "batch"; ids?: string[]; maxLeadAgeDays?: number | null; label?: string | null; reinvite?: boolean }
@@ -269,13 +270,15 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
                          WHERE m.lead_id = l.id AND m.slot_at >= NOW()
                            AND ((m.state IN ('invited','confirmed') AND (dd.id IS NULL OR dd.status <> 'closed')) OR m.state = 'confirmed'))
         AND NOT EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NOT NULL)
+        -- A follow-up journey for THIS requisition that was stopped on purpose (criteria failed, requisition closed, opted out) is never lined up again.
+        ${followupStoppedSql({ mobileExpr: "l.mobile10", requisitionExpr: "?" }).trim()}
         -- WHERE THE PERSON LIVES decides (RESIDENCE_SQL: city, addresses, Meta form answer, profile, recruiter-noted location). The branch they applied to
         -- and their campaign's branch say where the JOB is, so they never count. A named-but-ruled-out city ("No Noida location") does not count either.
         -- Only when the records hold NO residence text at all is a person of this very requisition trusted (the form's own ad targeting).
         ${locRe ? `AND ((${RESIDENCE_SQL} REGEXP ? AND NOT ${RESIDENCE_SQL} REGEXP ?) OR (TRIM(${RESIDENCE_SQL}) = '' AND mr.requisition_id = ?))` : ""}
         ${pre.map((c) => `AND ${c}`).join("\n        ")}
       ORDER BY (mr.requisition_id <=> ?) DESC, has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`,
-    [...aud.args, ...(o.excludeOnDrive ? [driveId, drive.requisition_id] : []), ...(locRe ? [locRe, negRe ?? "$^", req.id] : []), ...preArgs, req.id]))[0];
+    [...aud.args, ...(o.excludeOnDrive ? [driveId, drive.requisition_id] : []), req.id, ...(locRe ? [locRe, negRe ?? "$^", req.id] : []), ...preArgs, req.id]))[0];
   let leads = await selectCandidates();
   // The rollup columns decide who is an employee / already joined. Refresh any prefix whose rollup is missing or a day old
   // before trusting it, so a never-refreshed lead cannot slip through the gate.

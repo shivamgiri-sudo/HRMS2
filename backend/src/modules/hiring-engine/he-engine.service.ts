@@ -32,7 +32,7 @@ import { streamDriveIds, topUpStreamDrive, type StreamDayPlan } from "./he-strea
 import { sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 import { loadEndDateEnforced, requisitionEndedReason } from "./requisition-criteria.js";
-import { firstContactHoldSql, followupOwnedExpr, followupSkipSql, LEAD_MOBILE_OF_MATCH } from "./qualified-followup.policy.js";
+import { firstContactHoldSql, followupOwnedExpr, followupSkipSql, followupStoppedSql, LEAD_MOBILE_OF_MATCH } from "./qualified-followup.policy.js";
 import { withFollowupSchema } from "./followup-schema-guard.js";
 
 // People the unified follow-up owns (row-based, any mode) get no engine send; marking and hygiene still cover them.
@@ -156,7 +156,7 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
             (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)
               OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = m.lead_id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL))) AS has_consent
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id
-      WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out'${followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" }, legacy)}${firstContactHoldSql({ mobileExpr: "l.mobile10" }, legacy)}
+      WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out'${followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" }, legacy)}${followupStoppedSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" })}${firstContactHoldSql({ mobileExpr: "l.mobile10" }, legacy)}
       ORDER BY has_email DESC, m.score DESC LIMIT ?`, [optIn, driveId, Math.max(1, Math.min(2000, Math.floor(o.max)))]));
   const [tpl] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'");
   const waTemplateOk = Number(tpl[0]?.n ?? 0) > 0;
