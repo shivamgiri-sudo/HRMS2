@@ -3,6 +3,7 @@
 // for the source it reads the records live (capped) and says so in `partial`. Reads only.
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { csvSafe } from "../hiring-engine/qualified-followup.callfile.js";
 import { compileCriteria } from "./compile-criteria.js";
 import { applyPatch } from "./criteria.service.js";
 import { validateCriteria } from "./criteria-validate.js";
@@ -97,8 +98,9 @@ export async function previewRequisition(i: PreviewInput): Promise<PreviewResult
   };
 }
 
+// Names and reasons come from Meta / ATS: a text cell starting = + - @ TAB CR is neutralised (call-file rule); numbers stay numbers.
 const csvCell = (v: unknown) => {
-  const s = String(v ?? "");
+  const s = typeof v === "number" ? String(v) : csvSafe(String(v ?? ""));
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, "\"\"")}"` : s;
 };
 /** Every evaluated person, masked (S-O11): no full mobile, first name only. */

@@ -104,6 +104,18 @@ describe("previewCsv", () => {
     expect(csv).not.toMatch(/\b[6-9]\d{9}\b/);
     expect(lines[1]).toMatch(/^98x{6}\d{2},Name0,candidate,/);
   });
+  it("neutralises spreadsheet formulas from names and the override reason (= + - @ TAB CR), quoting where needed", async () => {
+    h.cache = [person(0, { firstName: "=cmd|' /C calc'!A0" }), person(1, { firstName: "@SUM(1)" }), person(2, { firstName: "+1" }), person(3, { firstName: "-2" }), person(4, { firstName: "\tx" })];
+    h.overrides = [{ mobile10: h.cache[0].mobile10, requisition_scope: "r1", kind: "include", reason: "=HYPERLINK(\"http://x\")", actor_id: "u1", created_at: "2026-10-09 10:00:00" }];
+    const csv = await previewCsv({ requisitionId: "r1", sourceKind: "he", now: NOW });
+    expect(csv).toContain(",'=cmd|' /C calc'!A0,");
+    expect(csv).toContain(",'@SUM(1),");
+    expect(csv).toContain(",'+1,");
+    expect(csv).toContain(",'-2,");
+    expect(csv).toContain(",'\tx,");
+    expect(csv).toContain(`"include: =HYPERLINK(""http://x"")"`); // the override cell starts with the kind, never with "="
+    for (const line of csv.trim().split("\n").slice(1)) for (const cell of line.split(",")) expect(cell).not.toMatch(/^[=+@\t\r]/);
+  });
 });
 
 describe("performance budget", () => {

@@ -61,7 +61,9 @@ export interface CallFileRow {
 export interface CallFile { filename: string; content: Buffer; contentType: string }
 
 /** Spreadsheet formula injection guard: text starting with = + - @ tab or CR is shown literally (apostrophe prefix). */
-const safe = (v: string) => (/^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
+/** A cell a spreadsheet would run as a formula (leading = + - @ TAB CR) is prefixed with an apostrophe. */
+export const csvSafe = (v: string) => (/^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
+const safe = csvSafe;
 const cell = (v: unknown) => { const s = String(v ?? "").replace(/\r?\n/g, " "); return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 const values = (r: CallFileRow, testPhone?: string | null): string[] => [
   testPhone || r.mobile10, safe(r.name), safe(r.role),
