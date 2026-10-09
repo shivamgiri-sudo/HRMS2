@@ -210,17 +210,14 @@ export async function notifyQualifiedLead(
     return outcome;
   }
   const switches = options.switches ?? (await loadFollowupSwitches());
-  const methodOn = switches.sourceModes.meta_live === 'live' || switches.sourceModes.meta_live === 'canary';
-  // STOP is honoured in every mode and force does not override it. A lookup error fails open unless the follow-up method runs Live Meta.
+  // STOP is honoured in every mode and force does not override it. A lookup error fails CLOSED: nothing is sent while STOP cannot be read.
   const mobile10 = normaliseMobile10(loaded.ctx.phone);
   if (mobile10) {
     let stop = false;
     try { stop = await personOptedOut(mobile10); } catch (e) {
-      if (methodOn) {
-        outcome.skipped.push({ channel: 'all', reason: 'Opt-out lookup failed; the follow-up method runs Live Meta' });
-        return outcome;
-      }
-      console.warn('[meta] opt-out lookup failed', e instanceof Error ? e.message : e);
+      console.warn('[meta] opt-out lookup failed; outreach held', e instanceof Error ? (e as { code?: string }).code ?? 'error' : 'error');
+      outcome.skipped.push({ channel: 'all', reason: 'Opt-out lookup failed; outreach held' });
+      return outcome;
     }
     if (stop) {
       outcome.skipped.push({ channel: 'all', reason: 'Candidate opted out (STOP)' });

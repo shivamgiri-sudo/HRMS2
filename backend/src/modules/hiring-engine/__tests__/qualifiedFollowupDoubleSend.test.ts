@@ -213,11 +213,14 @@ describe("STOP is honoured by notifyQualifiedLead in every mode and force does n
     expect(h.sendTemplate).not.toHaveBeenCalled();
     expect(h.emailSend).not.toHaveBeenCalled();
   });
-  it.each(MODES)("$name (no screen switch on): an opt-out lookup error fails open (outreach as before)", async ({ env }) => {
+  it.each(MODES)("$name: an opt-out lookup error fails CLOSED for outbound (nothing sent, held with a reason)", async ({ env }) => {
     setEnv(env);
     h.state.optedOutThrows = true;
     const out = await notifyQualifiedLead("L1");
-    expect(out.succeeded).toContain("whatsapp");
+    expect(out.skipped).toEqual([{ channel: "all", reason: "Opt-out lookup failed; outreach held" }]);
+    expect(out.succeeded).toEqual([]);
+    expect(h.sendTemplate).not.toHaveBeenCalled();
+    expect(h.emailSend).not.toHaveBeenCalled();
   });
 });
 
