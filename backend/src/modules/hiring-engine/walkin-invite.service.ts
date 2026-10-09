@@ -6,6 +6,7 @@
 import type { RowDataPacket } from "mysql2";
 import { randomBytes, randomUUID } from "node:crypto";
 import { db } from "../../db/mysql.js";
+import { isMissingSchemaError } from "../../db/db-error-classification.js";
 import { answerUrlFor, DEMO_TOKEN, TOKEN_RE } from "./he-email-parts.js";
 
 export type InviteSourcePath = "legacy_meta" | "legacy_meta_bulk" | "legacy_meta_sync" | "pipeline" | "manual";
@@ -88,7 +89,9 @@ export async function resolveAnswerToken(token: string): Promise<ResolvedToken> 
   if (token === DEMO_TOKEN) return { kind: "demo" };
   const [m] = await db.execute<RowDataPacket[]>("SELECT id FROM he_match WHERE token = ? LIMIT 1", [token]);
   if (m[0]) return { kind: "match", matchId: String(m[0].id) };
-  const [w] = await db.execute<RowDataPacket[]>("SELECT * FROM walkin_invite WHERE token = ? LIMIT 1", [token]);
+  // Before migration 2140 (no walkin_invite table) an unknown token is invalid, not a server error.
+  const [w] = await db.execute<RowDataPacket[]>("SELECT * FROM walkin_invite WHERE token = ? LIMIT 1", [token])
+    .catch((e: unknown) => { if (isMissingSchemaError(e)) return [[]] as unknown as [RowDataPacket[]]; throw e; });
   const inv = w[0] as WalkinInviteRow | undefined;
   if (!inv) return { kind: "invalid" };
   if (inv.match_id) return { kind: "match", matchId: String(inv.match_id) };

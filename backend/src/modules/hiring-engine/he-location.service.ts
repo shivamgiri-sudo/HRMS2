@@ -5,6 +5,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { isMissingSchemaError } from "../../db/db-error-classification.js";
 import { addEvent, grantConsent, hasConsent, revokeConsent } from "./he-lead.service.js";
 import { ARRIVAL_RADIUS_KM, etaMinutes, haversineKm, isValidCoord } from "./he-eta.js";
 import { displayFirstName } from "./he-name.js";
@@ -149,6 +150,7 @@ const INVITE_STATE: Record<string, string> = { sent: "invited", answered_yes: "i
 /** The page for a person invited without an he_match: first name, role, branch and slot only (never the mobile or email). */
 export async function getInviteContext(token: string): Promise<InviteContext | null> {
   if (!TOKEN_RE.test(token) || token === DEMO_TOKEN) return null;
+  // Before migration 2140 there is no walkin_invite table: an unknown token is simply not found (404), not a server error.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT wi.id, wi.state, wi.slot_at, wi.branch_name, (wi.slot_at IS NULL OR NOW() < wi.slot_at) AS before_slot,
             jr.designation_name, jr.branch_name AS jr_branch, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount,
@@ -158,7 +160,7 @@ export async function getInviteContext(token: string): Promise<InviteContext | n
        LEFT JOIN branch_master bm ON bm.branch_name = COALESCE(wi.branch_name, jr.branch_name) AND bm.active_status = 1
        LEFT JOIN he_lead l ON l.mobile10 = wi.mobile10
        LEFT JOIN meta_lead_raw r ON r.id = wi.meta_lead_id COLLATE utf8mb4_unicode_ci
-      WHERE wi.token = ? LIMIT 1`, [token]);
+      WHERE wi.token = ? LIMIT 1`, [token]).catch((e: unknown) => { if (isMissingSchemaError(e)) return [[]] as unknown as [RowDataPacket[]]; throw e; });
   const r = rows[0];
   if (!r) return null;
   const closed = r.jr_branch == null ? "requisition not found" : requisitionClosedReason({

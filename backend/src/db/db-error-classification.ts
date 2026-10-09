@@ -76,3 +76,10 @@ export function describeDbError(error: unknown): string {
   const meaningful = detail || errno || (e.code ? " (no detail)" : "");
   return `${meaningful ? described : `${label}: (no detail available)`}${sql ? ` | sql: ${sql}` : ""}`;
 }
+
+/** A table or column this code expects is not there yet (a migration not applied): ER_NO_SUCH_TABLE / ER_BAD_FIELD_ERROR. */
+export function isMissingSchemaError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, errno } = error as { code?: unknown; errno?: unknown };
+  return code === "ER_NO_SUCH_TABLE" || code === "ER_BAD_FIELD_ERROR" || errno === 1146 || errno === 1054;
+}

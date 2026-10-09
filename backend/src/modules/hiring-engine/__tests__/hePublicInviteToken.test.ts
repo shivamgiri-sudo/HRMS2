@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   match: null as Record<string, unknown> | null,
   invite: null as Record<string, unknown> | null,
   inviteCtx: null as Record<string, unknown> | null,
+  noInviteTable: false,
   recordInviteAnswer: vi.fn(async (..._a: unknown[]) => ({ state: "confirmed" })),
   recordInviteStop: vi.fn(async (..._a: unknown[]) => ({ state: "stopped" })),
   answerInviteToken: vi.fn(async (..._a: unknown[]) => ({ state: "confirmed", matchToken: "c".repeat(32), booked: true })),
@@ -15,6 +16,7 @@ vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: vi.fn(async (sql: string, p: unknown[] = []) => {
       h.sqls.push({ sql, p });
+      if (h.noInviteTable && sql.includes("walkin_invite")) throw Object.assign(new Error("Table 'mas_hrms.walkin_invite' doesn't exist"), { code: "ER_NO_SUCH_TABLE", errno: 1146 });
       if (sql.includes("WHERE m.token = ?")) return [h.match ? [h.match] : []];
       if (sql.includes("SELECT id FROM he_match WHERE token = ?")) return [[]];
       if (sql.includes("SELECT * FROM walkin_invite WHERE token = ?")) return [h.invite ? [h.invite] : []];
@@ -47,7 +49,7 @@ beforeAll(async () => {
 });
 afterAll(() => { server.close(); });
 beforeEach(() => {
-  h.sqls = []; h.match = null; h.invite = { ...inviteRow }; h.inviteCtx = ctxRow();
+  h.sqls = []; h.noInviteTable = false; h.match = null; h.invite = { ...inviteRow }; h.inviteCtx = ctxRow();
   h.recordInviteAnswer.mockClear(); h.recordInviteStop.mockClear(); h.answerInviteToken.mockClear();
 });
 
@@ -124,6 +126,13 @@ describe("routes", () => {
     expect(r.status).toBe(404);
     expect(h.recordInviteStop).not.toHaveBeenCalled();
     expect(h.answerInviteToken).not.toHaveBeenCalled();
+  });
+  it("before migration 2140 (no walkin_invite table) an unknown token is 404, never 500", async () => {
+    h.noInviteTable = true;
+    const g = await fetch(`${base}/loc/${"e".repeat(32)}`);
+    expect(g.status).toBe(404);
+    const a = await fetch(`${base}/loc/${"e".repeat(32)}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "yes" }) });
+    expect(a.status).toBe(404);
   });
   it("unknown answer → 400 bad_answer (unchanged)", async () => {
     const r = await fetch(`${base}/loc/${INV_T}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "maybe" }) });
