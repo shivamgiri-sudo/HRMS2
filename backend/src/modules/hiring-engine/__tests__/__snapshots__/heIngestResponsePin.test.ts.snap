@@ -768,7 +768,7 @@ exports[`ingest pin > tap later 1`] = `
       "p": [
         "M1",
       ],
-      "sql": "SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, l.mobile10, l.status, l.meta_lead_id FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1",
+      "sql": "SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, m.state, l.mobile10, l.status, l.meta_lead_id FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1",
     },
     {
       "p": [],
@@ -854,7 +854,7 @@ exports[`ingest pin > tap no 1`] = `
       "p": [
         "M1",
       ],
-      "sql": "SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, l.mobile10, l.status, l.meta_lead_id FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1",
+      "sql": "SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, m.state, l.mobile10, l.status, l.meta_lead_id FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1",
     },
     {
       "p": [],
@@ -952,7 +952,7 @@ exports[`ingest pin > tap yes 1`] = `
       "p": [
         "M1",
       ],
-      "sql": "SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, l.mobile10, l.status, l.meta_lead_id FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1",
+      "sql": "SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, m.state, l.mobile10, l.status, l.meta_lead_id FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1",
     },
     {
       "p": [],

@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   seenMsg: new Set<string>(),
   seenCall: new Set<string>(),
   uuid: 0,
+  matchState: "invited",
 }));
 vi.mock("../../../db/mysql.js", () => ({
   db: {
@@ -21,7 +22,7 @@ vi.mock("../../../db/mysql.js", () => ({
       if (sql.includes("INSERT INTO he_call")) { h.seenCall.add(String(p[2])); return [{ affectedRows: 1 }]; }
       if (sql.includes("FROM he_match WHERE lead_id = ? AND state IN")) return [[{ id: "M1", requisition_id: "R1", drive_id: "D1" }]];
       if (sql.includes("COUNT(*) AS n FROM he_lead_event")) return [[{ n: 0 }]];
-      if (sql.includes("FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ?")) return [[{ id: "M1", lead_id: "L1", requisition_id: "R1", drive_id: "D1", mobile10: "9876543210", status: "contacted", meta_lead_id: "ML1" }]];
+      if (sql.includes("FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ?")) return [[{ id: "M1", lead_id: "L1", requisition_id: "R1", drive_id: "D1", mobile10: "9876543210", status: "contacted", meta_lead_id: "ML1", state: h.matchState }]];
       if (sql.includes("FROM he_lead WHERE id = ?")) return [[{ id: "L1", mobile10: "9876543210", status: "contacted", meta_lead_id: "ML1" }]];
       if (sql.includes("SELECT state FROM he_match WHERE id = ?")) return [[{ state: "confirmed" }]];
       return [[]];
@@ -52,7 +53,36 @@ import { parseWhatsAppWebhook } from "../he-webhook-parse.js";
 import { heWebhookRouter } from "../he-webhook.routes.js";
 
 const confirmedVoice = { answered: true, identityConfirmed: "yes" as const, originalSlotAnswer: "yes" as const };
-beforeEach(() => { h.sqls = []; h.responses = []; h.seenMsg = new Set(); h.seenCall = new Set(); h.uuid = 0; });
+beforeEach(() => { h.sqls = []; h.responses = []; h.seenMsg = new Set(); h.seenCall = new Set(); h.uuid = 0; h.matchState = "invited"; });
+
+describe("invite answers: idempotent, and sends can wait for the lock to be released", () => {
+  it("M4: Yes again on an already confirmed match re-sends nothing (no T2, no confirmation email); the tap is recorded unapplied", async () => {
+    const { sendTemplateToLead } = await import("../he-send.service.js");
+    const { sendFollowUpEmail } = await import("../he-followup-email.service.js");
+    vi.mocked(sendTemplateToLead).mockClear(); vi.mocked(sendFollowUpEmail).mockClear();
+    h.matchState = "confirmed";
+    const r = await recordInviteAnswer("M1", "yes", { channel: "web" });
+    expect(r?.state).toBe("confirmed");
+    expect(sendTemplateToLead).not.toHaveBeenCalled();
+    expect(sendFollowUpEmail).not.toHaveBeenCalled();
+    expect(h.sqls.some((s) => s.sql.startsWith("UPDATE he_match SET state"))).toBe(false);
+    expect(h.responses.at(-1)).toMatchObject({ answer: "confirm", applied: false });
+  });
+  it("I-5: with defer, T2 and the confirmation email are queued, not sent, until the caller runs them", async () => {
+    const { sendTemplateToLead } = await import("../he-send.service.js");
+    const { sendFollowUpEmail } = await import("../he-followup-email.service.js");
+    vi.mocked(sendTemplateToLead).mockClear(); vi.mocked(sendFollowUpEmail).mockClear();
+    const defer: Array<() => Promise<unknown>> = [];
+    await recordInviteAnswer("M1", "yes", { channel: "web", defer });
+    expect(h.sqls.some((s) => s.sql.startsWith("UPDATE he_match SET state") && s.p[0] === "confirmed")).toBe(true);
+    expect(sendTemplateToLead).not.toHaveBeenCalled();
+    expect(sendFollowUpEmail).not.toHaveBeenCalled();
+    expect(defer.length).toBeGreaterThan(0);
+    for (const f of defer) await f();
+    expect(sendTemplateToLead).toHaveBeenCalledWith(expect.objectContaining({ key: "he_walkin_confirmed" }));
+    expect(sendFollowUpEmail).toHaveBeenCalledWith("confirmed", "M1");
+  });
+});
 
 describe("WhatsApp replies", () => {
   it("one response per message with channel / mode / answer / source", async () => {

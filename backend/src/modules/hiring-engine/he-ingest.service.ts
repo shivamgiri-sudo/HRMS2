@@ -9,6 +9,7 @@ import { answerCandidateQuestion, isLocationTap, sendLocationLink } from "./he-b
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
+import { logText } from "./log-text.js";
 import { normalizeMobile10 } from "./he-phone.js";
 import {
   callOutcome, signalsFromEmailEvent, signalsFromReply, signalsFromVoice,
@@ -79,7 +80,9 @@ async function sendFollowUpTemplate(leadId: string, key: TemplateKey, matchId: s
   } catch (err) { logger.warn({ leadId, key, err: (err as Error).message }, "[he-ingest] follow-up template failed"); }
 }
 
-async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPlan, ctx: { matchId: string | null; channel: string; detail: string | null; metaLeadId: string | null; replyText: string | null; ackStop?: boolean }): Promise<void> {
+async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPlan, ctx: { matchId: string | null; channel: string; detail: string | null; metaLeadId: string | null; replyText: string | null; ackStop?: boolean; defer?: Array<() => Promise<unknown>> }): Promise<void> {
+  // A caller holding a lock queues the candidate-facing sends and runs them after releasing it.
+  const send = async (fn: () => Promise<unknown>): Promise<void> => { if (ctx.defer) ctx.defer.push(fn); else await fn(); };
   // A journey of the unified follow-up booked on this match answers through it (guards, tagging, journey state). Nothing is read while
   // QUAL_FOLLOWUP_MODE is off, so people without a journey keep exactly today's path.
   const owned = ctx.matchId && followupMode() !== "off" ? await ownedJourneyForMatch(ctx.matchId).catch(() => null) : null;
@@ -115,10 +118,11 @@ async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPl
   }
   // T2: appointment details + reference once the candidate confirms (button, email tap or bot call).
   if (plan.matchState === "confirmed" && ctx.matchId) {
-    if (owned) await sendTransactionalForJourney(owned, "he_walkin_confirmed", { now: new Date() }).catch((err: unknown) => logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] confirmation failed"));
+    const matchId = ctx.matchId;
+    if (owned) await send(() => sendTransactionalForJourney(owned, "he_walkin_confirmed", { now: new Date() }).catch((err: unknown) => logger.warn({ leadId, err: logText(err) }, "[he-ingest] confirmation failed")));
     else {
-      await sendFollowUpTemplate(leadId, "he_walkin_confirmed", ctx.matchId);
-      try { await sendFollowUpEmail("confirmed", ctx.matchId); } catch (err) { logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] confirmation email failed"); }
+      await send(() => sendFollowUpTemplate(leadId, "he_walkin_confirmed", matchId));
+      await send(async () => { try { await sendFollowUpEmail("confirmed", matchId); } catch (err) { logger.warn({ leadId, err: logText(err) }, "[he-ingest] confirmation email failed"); } });
     }
   }
   // T9: the bot could not reach them twice -> ask on WhatsApp instead (a journey gets its T9 from the follow-up worker).
@@ -335,13 +339,28 @@ const ANSWER_TEXT: Record<InviteAnswer, string> = { yes: "Tapped: Yes, I will co
  * email channel, so the shortlist's Reply / Status columns, the cadence stop rule and the 360 view all see it.
  * "later" releases the slot and asks a recruiter to call with a new time.
  */
-export interface InviteAnswerOptions { channel?: "web" | "hr"; actor?: string | null; inviteId?: string | null; /** HR's note, kept on the response record. */ note?: string | null }
+export interface InviteAnswerOptions {
+  channel?: "web" | "hr"; actor?: string | null; inviteId?: string | null; /** HR's note, kept on the response record. */ note?: string | null;
+  /** When given, the candidate-facing sends (T2, confirmation email, STOP ack) are queued here for the caller to run after it releases a lock. */
+  defer?: Array<() => Promise<unknown>>;
+}
+// A repeated answer that would not change the match (a second Yes on a confirmed match) is recorded but never re-sends T2 / emails (M4).
+const ANSWER_ALREADY: Record<string, readonly string[]> = { yes: ["confirmed", "arrived", "selected"], later: ["slot_released"], no: ["declined"] };
 export async function recordInviteAnswer(matchId: string, answer: InviteAnswer, opts: InviteAnswerOptions = {}): Promise<{ state: string; responseId?: number } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, l.mobile10, l.status, l.meta_lead_id
+    `SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, m.state, l.mobile10, l.status, l.meta_lead_id
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1`, [matchId]);
   const r = rows[0];
   if (!r) return null;
+  if ((ANSWER_ALREADY[answer] ?? []).includes(String(r.state ?? ""))) {
+    const dup = await recordResponseSafe({
+      occurredAt: new Date(), channel: opts.channel ?? "web", mode: opts.channel === "hr" ? "manual" : "button", answer: answerFromInviteTap(answer),
+      mobile10: String(r.mobile10), leadId: String(r.lead_id), metaLeadId: r.meta_lead_id ?? null, matchId, inviteId: opts.inviteId ?? null,
+      sourceKind: opts.channel === "hr" ? "hr_action" : "public_answer", sourceRef: `repeat:${matchId}:${answer}:${Date.now()}`, handledBy: opts.actor ?? undefined, applied: false,
+      rawText: opts.note ?? null,
+    });
+    return dup.id ? { state: String(r.state), responseId: dup.id } : { state: String(r.state) };
+  }
   const intent = ANSWER_INTENT[answer];
   const [msg] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
   const messageId = msg[0].id as string;
@@ -353,7 +372,7 @@ export async function recordInviteAnswer(matchId: string, answer: InviteAnswer, 
   if (lastOut[0]) await db.execute("INSERT INTO he_message_event (message_id, lead_id, channel, event_type) VALUES (?,?,?, 'replied')", [lastOut[0].id, r.lead_id, "email"]);
   const [o] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'", [r.lead_id]);
   const plan = planFromReply(r.status as LeadStatus, intent, Number(o[0].n));
-  await applyPlan(String(r.lead_id), r.status as LeadStatus, plan, { matchId, channel: "email", detail: ANSWER_TEXT[answer], metaLeadId: r.meta_lead_id ?? null, replyText: null });
+  await applyPlan(String(r.lead_id), r.status as LeadStatus, plan, { matchId, channel: "email", detail: ANSWER_TEXT[answer], metaLeadId: r.meta_lead_id ?? null, replyText: null, defer: opts.defer });
   // The tap is recorded as web (the page), not email; an HR answer as hr / manual. The he_message row above is unchanged.
   const resp = await recordResponseSafe({
     occurredAt: new Date(), channel: opts.channel ?? "web", mode: opts.channel === "hr" ? "manual" : "button", answer: answerFromInviteTap(answer),
