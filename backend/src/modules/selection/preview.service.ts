@@ -73,7 +73,10 @@ export async function evaluatePopulation(i: PreviewInput): Promise<{ compiled: C
   }
   if (!raw.length) {
     const live = await loadRawPeople({ sourceKind: i.sourceKind, subSources: subs, limit: LIVE_READ_CAP }, now);
-    for (const p of live.people) raw.push({ facts: normaliseFacts(p.person, now) });
+    // one person once (several Meta form fills are one person; the newest record wins, as refreshFactCache does): a run stores one row per person
+    const byPerson = new Map<string, CandidateFacts>();
+    for (const p of live.people) { const f = normaliseFacts(p.person, now); byPerson.set(f.personKey, f); }
+    for (const facts of byPerson.values()) raw.push({ facts });
     partial.push(live.nextKey ? `facts_cache_empty_live_read_capped_at_${LIVE_READ_CAP}` : "facts_cache_empty_live_read");
   }
   const overrides = await loadOverrides(i.requisitionId);

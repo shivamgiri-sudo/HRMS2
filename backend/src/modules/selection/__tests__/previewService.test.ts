@@ -93,6 +93,13 @@ describe("previewRequisition", () => {
     expect(p.start).toBe(1);
     expect(p.partial).toEqual(["facts_cache_empty_live_read"]);
   });
+  it("the live read (empty cache) counts a person once: several Meta form fills are one person, the newest record wins (as the cache does)", async () => {
+    const fill = (ref: string, age: number) => ({ person: { sourceKind: "meta_live", subSource: "meta_live", mobile: "9876543210", ats: null, lead: { age, education_rank: 5 }, profile: null, meta: null, dra: null,
+      system: baseFacts().system, contact: { lastFirstContactAt: null } }, sourceRef: ref });
+    h.live = [fill("M1", 22), fill("M2", 23)];
+    const p = await previewRequisition({ requisitionId: "r1", sourceKind: "meta_live", now: NOW });
+    expect(p.start).toBe(1);
+  });
   it("404 for an unknown requisition", async () => {
     h.row = undefined as never;
     await expect(previewRequisition({ requisitionId: "x", sourceKind: "he", now: NOW })).rejects.toMatchObject({ statusCode: 404 });
