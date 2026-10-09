@@ -1,5 +1,5 @@
 /** WS3 E1: the requisition end date stops new outreach when enforced (env key + policy); booked people are untouched (reminders are other paths). */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ sqls: [] as Array<{ sql: string; p: unknown[] }>, policy: 1 as number | null, validity: "2026-10-08" as string | null, writes: [] as string[] }));
 vi.mock("../../../db/mysql.js", () => {
@@ -63,6 +63,9 @@ describe("stream auto-close", () => {
 });
 
 describe("engine first invites", () => {
+  // "ended" is judged against today (IST): the clock is pinned to the fixtures' day (2026-10-09).
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
+  afterEach(() => { vi.useRealTimers(); });
   it("enforced and ended: no first invite for the drive, nothing written", async () => {
     const r = await inviteForDrive("d1", { dryRun: false, max: 10 });
     expect(r.considered).toBe(0);

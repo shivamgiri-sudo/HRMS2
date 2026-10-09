@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // PIN (selection criteria S8, written before any engine change): today's drive line-up for three requisitions with no
 // selection_rules: every SQL statement + params, the ranked lead ids, and the toMatchRequisition output. Never edit.
@@ -56,6 +56,9 @@ vi.mock("../he-learn.js", () => ({ learnedBonus: () => ({ bonus: 0, reasons: [] 
 import { lineUpCandidates, toMatchRequisition } from "../he-drive.service.js";
 
 beforeEach(() => { calls.length = 0; });
+// The pin was taken on 2026-10-09; the line-up reads the clock (stale history, second pass), so the clock is pinned to that day.
+beforeAll(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-09T06:00:00Z")); });
+afterAll(() => { vi.useRealTimers(); });
 
 describe("line-up pin (no selection_rules)", () => {
   it.each(["A", "B", "C"] as const)("requisition %s: SQL, params, ranked ids", async (k) => {
