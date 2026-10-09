@@ -82,7 +82,7 @@ try {
     ok(`recruiter: ${url.split("?")[0]} -> 403`, (await call(S.recruiter, "GET", url)).status === 403);
   }
   ok("recruiter: POST /api/job-requisition/selection/why -> 403", (await why(S.recruiter, "99999")).status === 403);
-  const whyGet = await call(SA, "GET", "/api/job-requisition/selection/why?q=9999900103");
+  const whyGet = await call(S.super_admin, "GET", "/api/job-requisition/selection/why?q=9999900103");
   ok("why-not: a GET that carries the mobile in the URL is 400 and echoes nothing", whyGet.status === 400 && !whyGet.text.includes("9999900103"), whyGet.json);
   const lists = {};
   for (const role of ["super_admin", "ceo", "branch_hr_noida2", "branch_hr_ahm"]) lists[role] = (await call(S[role], "GET", "/api/job-requisition/selection/requisitions")).json?.data;
