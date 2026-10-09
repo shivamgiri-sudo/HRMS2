@@ -12,6 +12,7 @@ import { SbiCardReadinessTab } from "./SbiCardReadinessTab";
 import { SbiCardMovementTab } from "./SbiCardMovementTab";
 import { SbiCardAgentsTab } from "./SbiCardAgentsTab";
 import { SbiCardAccountsTab, SbiCardCampaignsTab, SbiCardDowntimeTab, SbiCardKpiTab } from "./SbiCardOtherTabs";
+import { SbiCardReportsTab } from "./SbiCardReportsTab";
 
 /**
  * SBI Card Collections (process SBI_CARD) dashboard.
@@ -19,10 +20,11 @@ import { SbiCardAccountsTab, SbiCardCampaignsTab, SbiCardDowntimeTab, SbiCardKpi
  * Dialer MIS / Agent MIS / Account File / Downtime Tracker; empty sections say so rather than showing zeros.
  */
 const API = "/api/process-performance/sbi-card-dashboard";
-type TabKey = "overview" | "collections" | "payout" | "files" | "movement" | "campaigns" | "agents" | "accounts" | "downtime" | "kpi";
+type TabKey = "overview" | "collections" | "payout" | "files" | "movement" | "campaigns" | "agents" | "accounts" | "downtime" | "kpi" | "reports";
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Overview" }, { key: "collections", label: "Collections Ops" }, { key: "campaigns", label: "Campaigns / Buckets" }, { key: "agents", label: "Agents & Teams" },
   { key: "accounts", label: "Accounts" }, { key: "downtime", label: "Downtime" }, { key: "files", label: "Files" }, { key: "movement", label: "Movement" }, { key: "kpi", label: "KPI Metrics" }, { key: "payout", label: "Payout" },
+  { key: "reports", label: "Reports" },
 ];
 const C = { dials: "#3b82f6", connects: "#22c55e", ptp: "#f59e0b", rate: "#7c3aed" };
 
@@ -93,7 +95,7 @@ export function SbiCardDashboard() {
           onReset={() => setRange(currentMonthRange())} />
       </div>
 
-      {tab === "kpi" ? <SbiCardKpiTab from={from} to={to} /> : tab === "payout" ? <SbiCardPayoutTab from={from} to={to} /> : tab === "files" ? <SbiCardReadinessTab from={from} to={to} /> : tab === "movement" ? <SbiCardMovementTab from={from} to={to} /> : loading ? <Spinner tone="blue" /> : error ? (
+      {tab === "reports" ? <SbiCardReportsTab /> : tab === "kpi" ? <SbiCardKpiTab from={from} to={to} /> : tab === "payout" ? <SbiCardPayoutTab from={from} to={to} /> : tab === "files" ? <SbiCardReadinessTab from={from} to={to} /> : tab === "movement" ? <SbiCardMovementTab from={from} to={to} /> : loading ? <Spinner tone="blue" /> : error ? (
         <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {error} <button type="button" onClick={() => void load()} className={`ml-2 cursor-pointer rounded font-semibold underline ${FOCUS}`}>Retry</button>
         </div>
