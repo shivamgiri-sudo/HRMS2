@@ -6,6 +6,8 @@ const h = vi.hoisted(() => ({
   ats: [] as Row[],
   leads: [] as Row[],
   employees: [] as string[],
+  exEmp: [] as Array<{ mobile10: string; clean_voluntary: number }>,
+  tx: [] as string[],
   lock: 1,
 }));
 vi.mock("../../../db/mysql.js", () => {
@@ -21,12 +23,15 @@ vi.mock("../../../db/mysql.js", () => {
       return [h.ats.filter((r) => r.record_type === rt && String(r.id) > after && (!details.length || details.includes(r.source_details))).sort((a, b) => String(a.id).localeCompare(String(b.id))).slice(0, limit), []];
     }
     if (s.startsWith("SELECT l.id, l.mobile10, l.is_employee, a.record_type AS linked_type FROM he_lead l")) return [h.leads.filter((l) => p.includes(l.mobile10)), []];
-    if (s.includes("FROM employees")) return [h.employees.filter((m) => p.includes(m)).map((m) => ({ m })), []];
+    // the employee list is read once per run, normalised in SQL (the mock returns it normalised)
+    if (s.includes("FROM employees")) return [h.employees.map((m) => ({ m })), []];
+    if (s.includes("FROM he_ex_employee")) return [h.exEmp.filter((x) => p.includes(x.mobile10) && x.clean_voluntary === 0), []];
     if (s.startsWith("SELECT id, mobile10 FROM he_lead WHERE mobile10 IN")) return [p.map((m, i) => ({ id: `lead-${String(m)}`, mobile10: m, i })), []];
     if (s.startsWith("SELECT UUID()")) return [[{ id: `batch-${h.sqls.filter((x) => x.sql.startsWith("SELECT UUID()")).length}` }], []];
     return [{ affectedRows: 1 }, []];
   };
-  const conn = { execute: exec, query: exec, release: () => undefined };
+  const conn = { execute: exec, query: exec, release: () => undefined,
+    beginTransaction: async () => { h.tx.push("begin"); }, commit: async () => { h.tx.push("commit"); }, rollback: async () => { h.tx.push("rollback"); } };
   return { db: { execute: exec, query: exec, getConnection: async () => conn } };
 });
 
@@ -38,7 +43,7 @@ const ats = (id: string, o: Row = {}): Row => ({ id, mobile: `98765${id.padStart
 const writes = () => h.sqls.filter((x) => /^(INSERT|UPDATE|DELETE)/.test(x.sql));
 const leadInsert = () => h.sqls.filter((x) => x.sql.startsWith("INSERT INTO he_lead ("));
 
-beforeEach(() => { h.sqls = []; h.leads = []; h.employees = []; h.lock = 1; h.ats = []; });
+beforeEach(() => { h.sqls = []; h.leads = []; h.employees = []; h.exEmp = []; h.tx = []; h.lock = 1; h.ats = []; });
 
 describe("bridge ATS imports into the pool (WS3 D2)", () => {
   it("dry run counts and writes nothing", async () => {
@@ -104,13 +109,45 @@ describe("bridge ATS imports into the pool (WS3 D2)", () => {
     const r = await bridgeAtsUpload({ recordTypes: ["naukri_import"], dryRun: true, actorId: "u1", chunk: 3, maxRows: 5 });
     const reads = h.sqls.filter((x) => x.sql.includes("FROM ats_candidate ac WHERE ac.record_type = ?"));
     expect(reads.map((x) => x.p[1])).toEqual(["", "3"]);
-    expect(r.totals.scanned).toBe(6);
-    expect(r.next).toEqual({ recordType: "naukri_import", afterId: "6" });
+    expect(r.totals.scanned).toBe(5); // the last read asks only for what is left under the cap
+    expect(r.next).toEqual({ recordType: "naukri_import", afterId: "5" });
     const again = await bridgeAtsUpload({ recordTypes: ["naukri_import"], dryRun: true, actorId: "u1", chunk: 3, after: r.next! });
-    expect(again.totals.scanned).toBe(1);
+    expect(again.totals.scanned).toBe(2);
     expect(again.next).toBeNull();
   });
 
+  it("E3: current employees are matched on the normalised mobile (+91 / spaces / dashes), read once per run", async () => {
+    h.ats = [ats("1"), ats("2")];
+    h.employees = ["9876500002"];
+    const r = await bridgeAtsUpload({ recordTypes: ["naukri_import"], dryRun: true, actorId: "u1" });
+    expect(r.totals.skipped.employee).toBe(1);
+    const emp = h.sqls.filter((x) => x.sql.includes("FROM employees"));
+    expect(emp).toHaveLength(1);
+    expect(emp[0].sql).toContain("RIGHT(REGEXP_REPLACE(mobile, '[^0-9]', ''), 10)");
+  });
+  it("E3: former employees not eligible for rehire (he_ex_employee, clean_voluntary = 0) are skipped; clean leavers are not", async () => {
+    h.ats = [ats("1"), ats("2")];
+    h.exEmp = [{ mobile10: "9876500001", clean_voluntary: 0 }, { mobile10: "9876500002", clean_voluntary: 1 }];
+    const r = await bridgeAtsUpload({ recordTypes: ["naukri_import"], dryRun: true, actorId: "u1" });
+    expect(r.totals.skipped.ex_employee).toBe(1);
+    expect(r.totals.inserted).toBe(1);
+  });
+  it("E3: a real run is bounded per request (resumable cursor) and each chunk is one transaction", async () => {
+    h.ats = Array.from({ length: 7 }, (_, i) => ats(String(i + 1)));
+    const r = await bridgeAtsUpload({ recordTypes: ["naukri_import"], dryRun: false, actorId: "u1", chunk: 2, maxRows: 4 });
+    expect(r.totals.scanned).toBe(4);
+    expect(r.next).toEqual({ recordType: "naukri_import", afterId: "4" });
+    expect(h.tx).toEqual(["begin", "commit", "begin", "commit", "begin", "commit"]); // two chunks + the batch counters
+    const { REAL_RUN_MAX_ROWS } = await import("../he-upload-bridge.service.js");
+    expect(REAL_RUN_MAX_ROWS).toBeLessThanOrEqual(5000);
+  });
+  it("E3: a real run never reads more than REAL_RUN_MAX_ROWS in one request, whatever maxRows asks", async () => {
+    const { REAL_RUN_MAX_ROWS } = await import("../he-upload-bridge.service.js");
+    h.ats = Array.from({ length: REAL_RUN_MAX_ROWS + 10 }, (_, i) => ats(String(i + 1).padStart(6, "0"), { mobile: `9${String(i + 1).padStart(9, "0")}` }));
+    const r = await bridgeAtsUpload({ recordTypes: ["naukri_import"], dryRun: false, actorId: "u1", maxRows: 100_000 });
+    expect(r.totals.scanned).toBe(REAL_RUN_MAX_ROWS);
+    expect(r.next).not.toBeNull();
+  });
   it("a second run while one is going is refused", async () => {
     h.lock = 0;
     await expect(bridgeAtsUpload({ recordTypes: ["naukri_import"], dryRun: false, actorId: "u1" })).rejects.toMatchObject({ statusCode: 409 });

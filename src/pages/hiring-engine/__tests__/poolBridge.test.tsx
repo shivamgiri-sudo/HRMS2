@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => undefined)), post: vi.fn() } }));
 
 import { PoolBridgeView } from "../command/PoolBridgeCard";
-import { bridgeBody, canRun, requestBody, resultRows, sourceGroups, type BridgeResult, type BridgeSource } from "../command/poolBridgeModel";
+import { bridgeBody, canRun, requestBody, resultRows, skipText, sourceGroups, type BridgeResult, type BridgeSource } from "../command/poolBridgeModel";
 
 const sources: BridgeSource[] = [
   { recordType: "naukri_import", sourceDetails: "SBI AHM_1.xlsx", rows: 155, inPool: 0 },
@@ -40,6 +40,9 @@ describe("model", () => {
     expect(canRun({ ...result, dryRun: true }, ["workindia_import"])).toBe(true);
     expect(canRun(null, ["workindia_import"])).toBe(false);
     expect(canRun({ ...result, dryRun: true }, [])).toBe(false);
+  });
+  it("former employees not eligible for rehire are named in words (E3)", () => {
+    expect(skipText({ legacy_employee: 0, test: 0, no_mobile: 0, employee: 0, ex_employee: 2, duplicate_mobile: 0 })).toBe("2 former employees not eligible for rehire");
   });
   it("result rows say what would happen per file, skips in words", () => {
     expect(resultRows(result)).toEqual([{ file: "SBI AHM_1.xlsx", source: "Naukri", scanned: 155, added: 150, enriched: 0, skipped: "3 former employees (legacy records), 2 without a valid mobile" }]);

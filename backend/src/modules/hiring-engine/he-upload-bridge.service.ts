@@ -8,8 +8,10 @@
  *  - Existing pool rows are enriched with COALESCE only (never overwritten); rows already linked to a legacy / test record and current
  *    employees are skipped.
  *  - Facts come from the selection normaliser (S6): WorkIndia's constant "Graduate" and placeholders such as "ccc" stay unknown.
- *  - Chunked by id within each record type (default 2,000), capped per call (maxRows, default 60,000) with a resume cursor; dry run
- *    counts only; one run at a time (GET_LOCK).
+ *  - Current employees are matched on the normalised mobile (read once per run); former employees not eligible for rehire
+ *    (he_ex_employee.clean_voluntary = 0, the intake rule) are skipped.
+ *  - Chunked by id within each record type (default 2,000), capped per call with a resume cursor: a dry run reads up to maxRows
+ *    (default 60,000); a real run writes at most REAL_RUN_MAX_ROWS per request, one transaction per chunk. One run at a time (GET_LOCK).
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -19,7 +21,9 @@ import type { SubSource } from "../selection/selection-types.js";
 
 export const BRIDGE_RECORD_TYPES = ["candidate", "naukri_import", "workindia_import"] as const;
 export type BridgeRecordType = (typeof BRIDGE_RECORD_TYPES)[number];
-export type SkipReason = "legacy_employee" | "test" | "no_mobile" | "employee" | "duplicate_mobile";
+export type SkipReason = "legacy_employee" | "test" | "no_mobile" | "employee" | "ex_employee" | "duplicate_mobile";
+/** A real run inside one HTTP request is bounded: the caller continues from `next`. */
+export const REAL_RUN_MAX_ROWS = 4000;
 export interface BridgeInput {
   recordTypes: BridgeRecordType[]; sourceDetails?: string[]; dryRun: boolean; actorId: string | null;
   chunk?: number; maxRows?: number; after?: { recordType: BridgeRecordType; afterId: string } | null; now?: Date;
@@ -29,7 +33,8 @@ export interface BridgeResult { dryRun: boolean; batches: BridgeBatch[]; totals:
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 const ph = (n: number) => Array.from({ length: n }, () => "?").join(",");
-const zero = (): Record<SkipReason, number> => ({ legacy_employee: 0, test: 0, no_mobile: 0, employee: 0, duplicate_mobile: 0 });
+const zero = (): Record<SkipReason, number> => ({ legacy_employee: 0, test: 0, no_mobile: 0, employee: 0, ex_employee: 0, duplicate_mobile: 0 });
+type Ex = { execute: <T extends RowDataPacket[]>(sql: string, p?: unknown[]) => Promise<[T, unknown]> };
 const LOCK = "he_upload_bridge";
 
 const ATS_SQL = (details: number) => `SELECT ac.id, ac.mobile, ac.full_name, ac.email, ac.record_type, ac.source_details, ac.education, ac.date_of_birth, ac.experience,
@@ -37,7 +42,9 @@ const ATS_SQL = (details: number) => `SELECT ac.id, ac.mobile, ac.full_name, ac.
   FROM ats_candidate ac WHERE ac.record_type = ? AND ac.id > ?${details ? ` AND ac.source_details IN (${ph(details)})` : ""} ORDER BY ac.id LIMIT ?`;
 const LEADS_SQL = (n: number) => `SELECT l.id, l.mobile10, l.is_employee, a.record_type AS linked_type FROM he_lead l LEFT JOIN ats_candidate a ON a.id = l.ats_candidate_id
  WHERE l.mobile10 IN (${ph(n)})`;
-const EMPLOYEES_SQL = (n: number) => `SELECT mobile AS m FROM employees WHERE active_status = 1 AND mobile IN (${ph(n)})`;
+// Normalised like he-master (a stored "+91 98765-43210" is the same person); read once per run.
+const EMPLOYEES_SQL = "SELECT DISTINCT RIGHT(REGEXP_REPLACE(mobile, '[^0-9]', ''), 10) AS m FROM employees WHERE active_status = 1 AND mobile IS NOT NULL AND mobile <> ''";
+const EX_EMPLOYEES_SQL = (n: number) => `SELECT mobile10 FROM he_ex_employee WHERE clean_voluntary = 0 AND mobile10 IN (${ph(n)})`;
 
 interface Person { mobile10: string; row: RowDataPacket; key: string; existing: boolean; values: unknown[]; profile: unknown[] | null }
 
@@ -60,7 +67,7 @@ export async function bridgeAtsUpload(i: BridgeInput): Promise<BridgeResult> {
   const types = [...new Set(i.recordTypes)];
   if (!types.length || types.some((t) => !(BRIDGE_RECORD_TYPES as readonly string[]).includes(t))) throw fail(400, "Pick candidate, naukri_import or workindia_import");
   const chunk = Math.max(1, Math.min(i.chunk ?? 2000, 5000));
-  const maxRows = Math.max(1, Math.min(i.maxRows ?? 60_000, 100_000));
+  const maxRows = i.dryRun ? Math.max(1, Math.min(i.maxRows ?? 60_000, 100_000)) : Math.max(1, Math.min(i.maxRows ?? REAL_RUN_MAX_ROWS, REAL_RUN_MAX_ROWS));
   const details = (i.sourceDetails ?? []).filter((d) => typeof d === "string" && d.length <= 255).slice(0, 200);
   const now = i.now ?? new Date();
   const conn = i.dryRun ? null : await db.getConnection();
@@ -71,6 +78,8 @@ export async function bridgeAtsUpload(i: BridgeInput): Promise<BridgeResult> {
     }
     const batches = new Map<string, BridgeBatch>();
     const seen = new Set<string>();
+    const [emps] = await db.execute<RowDataPacket[]>(EMPLOYEES_SQL);
+    const employees = new Set(emps.map((e) => String(e.m)));
     let scanned = 0;
     let next: BridgeResult["next"] = null;
     const startAt = i.after ? types.indexOf(i.after.recordType) : 0;
@@ -78,22 +87,24 @@ export async function bridgeAtsUpload(i: BridgeInput): Promise<BridgeResult> {
       const rt = types[t];
       let after = i.after && i.after.recordType === rt ? i.after.afterId : "";
       for (;;) {
-        const [rows] = await db.execute<RowDataPacket[]>(ATS_SQL(details.length), [rt, after, ...details, chunk]);
+        const limit = Math.min(chunk, maxRows - scanned);
+        const [rows] = await db.execute<RowDataPacket[]>(ATS_SQL(details.length), [rt, after, ...details, limit]);
         if (!rows.length) break;
         scanned += rows.length;
         after = String(rows[rows.length - 1].id);
-        await bridgeChunk(rows, { batches, seen, dryRun: i.dryRun, actorId: i.actorId, now });
-        if (rows.length < chunk) break;
+        if (conn) await inTx(conn, (ex) => bridgeChunk(rows, { batches, seen, employees, dryRun: false, actorId: i.actorId, now, ex }));
+        else await bridgeChunk(rows, { batches, seen, employees, dryRun: true, actorId: i.actorId, now, ex: db as unknown as Ex });
+        if (rows.length < limit) break;
         if (scanned >= maxRows) { next = { recordType: rt, afterId: after }; break; }
       }
     }
     const list = [...batches.values()];
-    if (!i.dryRun) {
-      for (const b of list) {
+    if (conn) {
+      await inTx(conn, async (ex) => { for (const b of list) {
         if (!b.batchId) continue;
-        await db.execute("UPDATE he_import_batch SET rows_total = rows_total + ?, created_count = created_count + ?, enriched_count = enriched_count + ?, rejected_count = rejected_count + ?, blocked_json = ? WHERE id = ?",
+        await ex.execute("UPDATE he_import_batch SET rows_total = rows_total + ?, created_count = created_count + ?, enriched_count = enriched_count + ?, rejected_count = rejected_count + ?, blocked_json = ? WHERE id = ?",
           [b.scanned, b.inserted, b.enriched, Object.values(b.skipped).reduce((a, n) => a + n, 0), JSON.stringify(b.skipped), b.batchId]);
-      }
+      } });
     }
     const totals = { scanned, inserted: 0, enriched: 0, skipped: zero() };
     for (const b of list) {
@@ -109,7 +120,12 @@ export async function bridgeAtsUpload(i: BridgeInput): Promise<BridgeResult> {
   }
 }
 
-async function bridgeChunk(rows: RowDataPacket[], s: { batches: Map<string, BridgeBatch>; seen: Set<string>; dryRun: boolean; actorId: string | null; now: Date }): Promise<void> {
+async function inTx(conn: Ex & { beginTransaction(): Promise<void>; commit(): Promise<void>; rollback(): Promise<void> }, fn: (ex: Ex) => Promise<void>): Promise<void> {
+  await conn.beginTransaction();
+  try { await fn(conn); await conn.commit(); } catch (err) { await conn.rollback().catch(() => undefined); throw err; }
+}
+
+async function bridgeChunk(rows: RowDataPacket[], s: { batches: Map<string, BridgeBatch>; seen: Set<string>; employees: Set<string>; dryRun: boolean; actorId: string | null; now: Date; ex: Ex }): Promise<void> {
   const batchOf = (row: RowDataPacket): BridgeBatch => {
     const rt = String(row.record_type), sd = row.source_details == null || String(row.source_details).trim() === "" ? "(no file name)" : String(row.source_details).trim();
     const key = `${rt}|${sd}`;
@@ -129,22 +145,24 @@ async function bridgeChunk(rows: RowDataPacket[], s: { batches: Map<string, Brid
   }
   if (!candidates.length) return;
   const mobiles = candidates.map((c) => c.m);
-  const [leads] = await db.execute<RowDataPacket[]>(LEADS_SQL(mobiles.length), mobiles);
-  const [emps] = await db.execute<RowDataPacket[]>(EMPLOYEES_SQL(mobiles.length), mobiles);
+  const [leads] = await s.ex.execute<RowDataPacket[]>(LEADS_SQL(mobiles.length), mobiles);
+  const [exRows] = await s.ex.execute<RowDataPacket[]>(EX_EMPLOYEES_SQL(mobiles.length), mobiles);
   const leadBy = new Map(leads.map((l) => [String(l.mobile10), l]));
-  const employees = new Set(emps.map((e) => String(e.m)));
+  const employees = s.employees;
+  const notRehirable = new Set(exRows.map((x) => String(x.mobile10)));
   const people: Person[] = [];
   for (const c of candidates) {
     const l = leadBy.get(c.m);
     if (l && (l.linked_type === "legacy_employee" || l.linked_type === "test")) { c.b.skipped[l.linked_type === "test" ? "test" : "legacy_employee"]++; continue; }
     if ((l && Number(l.is_employee) === 1) || employees.has(c.m)) { c.b.skipped.employee++; continue; }
+    if (notRehirable.has(c.m)) { c.b.skipped.ex_employee++; continue; }
     const v = personValues(c.row, c.m, s.now);
     people.push({ mobile10: c.m, row: c.row, key: `${c.b.recordType}|${c.b.sourceDetails}`, existing: !!l, values: v.lead, profile: v.profile });
     if (l) c.b.enriched++; else c.b.inserted++;
   }
   if (s.dryRun || !people.length) return;
 
-  await db.execute(
+  await s.ex.execute(
     `INSERT INTO he_lead (mobile10, full_name, email, age, education_rank, experience_years, primary_source, sources_json, ats_candidate_id)
      VALUES ${people.map(() => "(?,?,?,?,?,?,?,?,?)").join(",")}
      ON DUPLICATE KEY UPDATE full_name = COALESCE(he_lead.full_name, VALUES(full_name)), email = COALESCE(he_lead.email, VALUES(email)),
@@ -154,23 +172,23 @@ async function bridgeChunk(rows: RowDataPacket[], s: { batches: Map<string, Brid
        sources_json = IF(JSON_CONTAINS(COALESCE(he_lead.sources_json, JSON_ARRAY()), JSON_QUOTE(VALUES(primary_source))), he_lead.sources_json,
                          JSON_ARRAY_APPEND(COALESCE(he_lead.sources_json, JSON_ARRAY()), '$', VALUES(primary_source)))`,
     people.flatMap((p) => p.values));
-  const [ids] = await db.execute<RowDataPacket[]>(`SELECT id, mobile10 FROM he_lead WHERE mobile10 IN (${ph(people.length)})`, people.map((p) => p.mobile10));
+  const [ids] = await s.ex.execute<RowDataPacket[]>(`SELECT id, mobile10 FROM he_lead WHERE mobile10 IN (${ph(people.length)})`, people.map((p) => p.mobile10));
   const idBy = new Map(ids.map((r) => [String(r.mobile10), String(r.id)]));
 
   // one batch per source file, created the first time a person of that file is written
   for (const p of people) {
     const b = s.batches.get(p.key)!;
     if (b.batchId) continue;
-    const [u] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
+    const [u] = await s.ex.execute<RowDataPacket[]>("SELECT UUID() AS id");
     b.batchId = String(u[0].id);
-    await db.execute("INSERT INTO he_import_batch (id, label, file_name, source, consent_attested, rows_total, uploaded_by) VALUES (?,?,?,?,?,?,?)",
+    await s.ex.execute("INSERT INTO he_import_batch (id, label, file_name, source, consent_attested, rows_total, uploaded_by) VALUES (?,?,?,?,?,?,?)",
       [b.batchId, `${b.sourceDetails} (${b.recordType})`.slice(0, 160), b.sourceDetails.slice(0, 255), b.recordType.slice(0, 30), 0, 0, s.actorId]);
   }
   const links = people.map((p) => [idBy.get(p.mobile10), s.batches.get(p.key)!.batchId]).filter((x): x is [string, string] => !!x[0] && !!x[1]);
-  if (links.length) await db.execute(`INSERT IGNORE INTO he_lead_batch (lead_id, batch_id) VALUES ${links.map(() => "(?,?)").join(",")}`, links.flat());
+  if (links.length) await s.ex.execute(`INSERT IGNORE INTO he_lead_batch (lead_id, batch_id) VALUES ${links.map(() => "(?,?)").join(",")}`, links.flat());
   const prof = people.filter((p) => p.profile && idBy.has(p.mobile10));
   if (prof.length) {
-    await db.execute(
+    await s.ex.execute(
       `INSERT INTO he_lead_profile (lead_id, last_employer, last_salary, skills_text) VALUES ${prof.map(() => "(?,?,?,?)").join(",")}
        ON DUPLICATE KEY UPDATE last_employer = COALESCE(he_lead_profile.last_employer, VALUES(last_employer)),
          last_salary = COALESCE(he_lead_profile.last_salary, VALUES(last_salary)), skills_text = COALESCE(he_lead_profile.skills_text, VALUES(skills_text))`,
