@@ -1,5 +1,5 @@
 import { db } from "../../db/mysql.js";
-import { applyOverridesToItems, loadManualAgentsForRange, dojForOwner, ownerBucket } from "./process-targets.service.js";
+import { applyOverridesToItems, applyAssignmentOverridesToItems, loadManualAgentsForRange, dojForOwner, ownerBucket } from "./process-targets.service.js";
 
 export interface HousingOwnerHeadline {
   totalRevenue: number;
@@ -257,6 +257,10 @@ export async function getHousingOwnerDashboard(
     const name = normalizeName(m.name);
     if (name && !roster.has(name)) roster.set(name, { empId: m.empId, name, tlName: m.tl, am: m.group, doj: dojForOwner(m.doj), tenureDays: tenureDaysFrom(m.doj), bucket: ownerBucket(m.doj), status: m.status, target: m.monthlyTarget, mtdReported: 0 });
   }
+  // TL / AM reassignments from the Process Details page apply first -- before targets, so a TL / AM
+  // target override distributes across the agent's CURRENT (reassigned) group, and so every other
+  // use of `roster` below (current-month grouping, filter options) sees the reassigned TL / AM too.
+  await applyAssignmentOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, setTl: (r, v) => { r.tlName = v; }, setGroup: (r, v) => { r.am = v; } });
   // Targets changed on the Process Details page (agent / TL / AM level) replace the uploaded ones here, so every
   // figure below -- headline, TL/AM rows, agent rows, TQ/MQ/BQ -- uses the same effective targets.
   await applyOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, tl: (r) => r.tlName, group: (r) => r.am, active: (r) => r.status === "Active", get: (r) => r.target, set: (r, v) => { r.target = v; } });
@@ -284,7 +288,20 @@ export async function getHousingOwnerDashboard(
     cur.add(tl);
     tlByAmSets.set(am, cur);
   };
-  for (const ro of roster.values()) noteTlAm(ro.tlName, ro.am);
+  // Only Active roster rows seed the filter-option lists, so an AM/TL linked only to an inactive
+  // agent does not appear as a choosable filter value.
+  for (const ro of roster.values()) if (ro.status === "Active") noteTlAm(ro.tlName, ro.am);
+
+  // Current month: a row is grouped under the CURRENT roster's TL/AM (not whatever the row itself
+  // stored), and a row for an agent no longer on the current roster is dropped -- it does not
+  // appear under a stale name. Earlier months are untouched: there is no historical roster to
+  // resolve against, so they keep the TL/AM the row itself carries, exactly as before.
+  const curMonthStart = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-01`; })();
+  const currentGroup = (name: string, rowDate: string, rowTl: unknown, rowAm: unknown): { tl: string; am: string } | null => {
+    if (rowDate < curMonthStart) return { tl: normalizeName(rowTl) || "Unassigned", am: normalizeName(rowAm) || "Unassigned" };
+    const ro = roster.get(name);
+    return ro ? { tl: ro.tlName, am: ro.am } : null;
+  };
 
   const saleAggByName = new Map<string, SaleAgg>();
   const saleAggByAm = new Map<string, SaleAgg>();
@@ -306,8 +323,10 @@ export async function getHousingOwnerDashboard(
     }
 
     const name = normalizeName(r.agent_name);
-    noteTlAm(normalizeName(r.tl_name) || "Unassigned", normalizeName(r.am) || "Unassigned");
-    if (!rowMatches(name, r.tl_name, r.am)) continue;
+    const group = currentGroup(name, rowDate, r.tl_name, r.am);
+    if (!group) continue; // current month, agent not on the current roster
+    noteTlAm(group.tl, group.am);
+    if (!rowMatches(name, group.tl, group.am)) continue;
     const value = num(r.value);
     const count = num(r.sale_count) || 1;
 
@@ -317,17 +336,15 @@ export async function getHousingOwnerDashboard(
       cur.saleCount += count;
       saleAggByName.set(name, cur);
     }
-    const am = normalizeName(r.am) || "Unassigned";
-    const amCur = saleAggByAm.get(am) ?? { revenue: 0, saleCount: 0 };
+    const amCur = saleAggByAm.get(group.am) ?? { revenue: 0, saleCount: 0 };
     amCur.revenue += value;
     amCur.saleCount += count;
-    saleAggByAm.set(am, amCur);
+    saleAggByAm.set(group.am, amCur);
 
-    const tl = normalizeName(r.tl_name) || "Unassigned";
-    const tlCur = saleAggByTl.get(tl) ?? { revenue: 0, saleCount: 0 };
+    const tlCur = saleAggByTl.get(group.tl) ?? { revenue: 0, saleCount: 0 };
     tlCur.revenue += value;
     tlCur.saleCount += count;
-    saleAggByTl.set(tl, tlCur);
+    saleAggByTl.set(group.tl, tlCur);
 
     const pkg = String(r.package_type ?? "Unknown").trim() || "Unknown";
     const pkgCur = packageTypeMap.get(pkg) ?? { count: 0, revenue: 0 };
@@ -373,8 +390,10 @@ export async function getHousingOwnerDashboard(
     seenCdr.add(cdrKey);
 
     const name = normalizeName(r.agent);
-    noteTlAm(normalizeName(r.tl_name) || "Unassigned", normalizeName(r.am) || "Unassigned");
-    if (!rowMatches(name, r.tl_name, r.am)) continue;
+    const group = currentGroup(name, rowDate, r.tl_name, r.am);
+    if (!group) continue; // current month, agent not on the current roster
+    noteTlAm(group.tl, group.am);
+    if (!rowMatches(name, group.tl, group.am)) continue;
     const calls = num(r.total_calls);
     const connected = num(r.connected);
     const notConnected = num(r.not_connected);
@@ -383,8 +402,8 @@ export async function getHousingOwnerDashboard(
     const talkSec = hasTalk ? timeToSec(talkStr) : 0;
 
     if (name) addCdr(cdrAggByName, name, calls, connected, notConnected, talkSec, hasTalk);
-    addCdr(cdrAggByAm, normalizeName(r.am) || "Unassigned", calls, connected, notConnected, talkSec, hasTalk);
-    addCdr(cdrAggByTl, normalizeName(r.tl_name) || "Unassigned", calls, connected, notConnected, talkSec, hasTalk);
+    addCdr(cdrAggByAm, group.am, calls, connected, notConnected, talkSec, hasTalk);
+    addCdr(cdrAggByTl, group.tl, calls, connected, notConnected, talkSec, hasTalk);
 
     if (name && calls > 0) {
       const dates = agentPresentDates.get(name) ?? new Set<string>();
@@ -416,7 +435,10 @@ export async function getHousingOwnerDashboard(
     const sale = saleAggByName.get(name);
     const cdr = cdrAggByName.get(name);
 
-    const target = ro?.target ?? 0;
+    // An inactive agent carries no target: otherwise a real target with zero revenue scores a
+    // real BQ stage instead of "no target", which is how an inactive agent's AM or TL can still
+    // get a zero-activity row in the AM-wise / TL-wise tables.
+    const target = ro && ro.status === "Active" ? ro.target : 0;
     const revenue = sale?.revenue ?? 0;
     const saleCount = sale?.saleCount ?? 0;
     const totalCalls = cdr?.totalCalls ?? 0;
@@ -508,14 +530,15 @@ export async function getHousingOwnerDashboard(
   const targetByTl = new Map<string, number>();
   const activeAgentCountByAm = new Map<string, number>();
   const activeAgentCountByTl = new Map<string, number>();
+  // Inactive roster rows contribute neither target nor active-agent count -- otherwise an AM or
+  // TL linked only to an inactive agent gets a zero-activity row (e.g. "Aneesha" with no current
+  // assignment showing up with nothing in it, just because one inactive row still names her).
   for (const ro of roster.values()) {
-    if (!rosterMatches(ro)) continue;
+    if (!rosterMatches(ro) || ro.status !== "Active") continue;
     targetByAm.set(ro.am, (targetByAm.get(ro.am) ?? 0) + ro.target);
     targetByTl.set(ro.tlName, (targetByTl.get(ro.tlName) ?? 0) + ro.target);
-    if (ro.status === "Active") {
-      activeAgentCountByAm.set(ro.am, (activeAgentCountByAm.get(ro.am) ?? 0) + 1);
-      activeAgentCountByTl.set(ro.tlName, (activeAgentCountByTl.get(ro.tlName) ?? 0) + 1);
-    }
+    activeAgentCountByAm.set(ro.am, (activeAgentCountByAm.get(ro.am) ?? 0) + 1);
+    activeAgentCountByTl.set(ro.tlName, (activeAgentCountByTl.get(ro.tlName) ?? 0) + 1);
   }
 
   const byAm = toGroupRows(saleAggByAm, cdrAggByAm, targetByAm, stageCountsByAm, activeAgentCountByAm).filter((g) => isNamedGroup(g.name));
@@ -680,13 +703,20 @@ export async function getHousingOwnerEntityTrend(
     const name = normalizeName(m.name);
     if (name && !roster.has(name)) roster.set(name, { empId: m.empId, name, tlName: m.tl, am: m.group, doj: dojForOwner(m.doj), tenureDays: tenureDaysFrom(m.doj), bucket: ownerBucket(m.doj), status: m.status, target: m.monthlyTarget, mtdReported: 0 });
   }
+  await applyAssignmentOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, setTl: (r, v) => { r.tlName = v; }, setGroup: (r, v) => { r.am = v; } });
   await applyOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, tl: (r) => r.tlName, group: (r) => r.am, active: (r) => r.status === "Active", get: (r) => r.target, set: (r, v) => { r.target = v; } });
 
-  // Same roster-first precedence as getHousingOwnerDashboard's rowMatches: an
-  // agent's TL/AM comes from the roster when they're on it, else from the row itself.
-  const matchesEntity = (agentName: string, rowTl: unknown, rowAm: unknown): boolean => {
+  // Same current-month rule as getHousingOwnerDashboard: a current-month row is matched on the
+  // CURRENT roster's TL/AM, and excluded if the agent is no longer on the roster. An earlier
+  // month keeps the row's own TL/AM, as before.
+  const curMonthStart = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-01`; })();
+  const matchesEntity = (agentName: string, rowDate: string, rowTl: unknown, rowAm: unknown): boolean => {
     if (entityType === "agent") return agentName === entityName;
     const ro = roster.get(agentName);
+    if (rowDate >= curMonthStart) {
+      if (!ro) return false;
+      return entityType === "tl" ? ro.tlName === entityName : ro.am === entityName;
+    }
     const tl = ro?.tlName ?? (normalizeName(rowTl) || "Unassigned");
     const am = ro?.am ?? (normalizeName(rowAm) || "Unassigned");
     return entityType === "tl" ? tl === entityName : am === entityName;
@@ -711,7 +741,7 @@ export async function getHousingOwnerEntityTrend(
       seenSales.add(key);
     }
     const name = normalizeName(r.agent_name);
-    if (!matchesEntity(name, r.tl_name, r.am)) continue;
+    if (!matchesEntity(name, rowDate, r.tl_name, r.am)) continue;
     const value = num(r.value);
     const count = num(r.sale_count) || 1;
     const dCur = dailyRevenue.get(rowDate) ?? { revenue: 0, saleCount: 0 };
@@ -730,7 +760,7 @@ export async function getHousingOwnerEntityTrend(
     if (seenCdr.has(cdrKey)) continue;
     seenCdr.add(cdrKey);
     const name = normalizeName(r.agent);
-    if (!matchesEntity(name, r.tl_name, r.am)) continue;
+    if (!matchesEntity(name, rowDate, r.tl_name, r.am)) continue;
     const calls = num(r.total_calls);
     const connected = num(r.connected);
     const talkStr = String(r.avg_talk_time ?? "").trim();
@@ -894,6 +924,7 @@ export async function getHousingOwnerOutbound(fromInput: string, toInput: string
       vintageOf.set(name, vintage);
     }
   }
+  await applyAssignmentOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, setTl: (r, v) => { r.tl = v; }, setGroup: (r, v) => { r.am = v; } });
   await applyOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, tl: (r) => r.tl, group: (r) => r.am, active: (r) => r.status === "Active", get: (r) => r.monthlyTarget, set: (r, v) => { r.monthlyTarget = v; } });
   // Roster first, else the row's own TL / AM -- the precedence the existing endpoints use.
   // Uploaded rows carry placeholder values ("0", "-", "--") for a missing AM / TL.

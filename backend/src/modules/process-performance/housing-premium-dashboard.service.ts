@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
-import { applyOverridesToItems, loadManualAgentsForRange, dojForPremium } from "./process-targets.service.js";
+import { applyOverridesToItems, applyAssignmentOverridesToItems, loadManualAgentsForRange, dojForPremium } from "./process-targets.service.js";
 
 /**
  * Housing Premium's full MIS dashboard -- a like-for-like rebuild of the
@@ -163,6 +163,11 @@ async function loadRoster(refIso?: string): Promise<RosterAgent[]> {
       roster.push({ empId: m.empId ?? "", name, tlName: m.tl, center: m.group, doj: dojForPremium(m.doj), status: m.status, target: m.monthlyTarget, uploadedAchievement: 0, uploadedAchPct: "" });
     }
   }
+  // TL / Center reassignments from the Process Details page apply first -- before targets, so a TL /
+  // Center target override distributes across the agent's CURRENT (reassigned) group.
+  await applyAssignmentOverridesToItems("housing_premium", roster, refIso ?? todayLocal(), {
+    name: (r) => r.name, setTl: (r, v) => { r.tlName = v; }, setGroup: (r, v) => { r.center = v; },
+  });
   // Targets changed on the Process Details page (agent / TL / Center level) replace the uploaded ones, so every figure built
   // from the roster below uses the same effective targets. The month is the range's end month (default: this month).
   await applyOverridesToItems("housing_premium", roster, refIso ?? todayLocal(), {

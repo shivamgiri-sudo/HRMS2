@@ -315,7 +315,11 @@ export function AhmDashboard() {
     let alive = true;
     setLoading(true); setError("");
     const regionQ = region === "ALL" ? "" : `&region=${region}`;
-    hrmsApi.get<{ success: boolean; data: DashboardData }>(`/api/process-performance/ahm/dashboard?from=${from}&to=${to}${regionQ}`)
+    // Longer than the 30s default: an uncached range runs 11 aggregations over the whole AHM
+    // table server-side (confirmed live at ~45s before that table has more than one week's
+    // worth of data to make a typical range a small slice of it) -- the backend now caches the
+    // result for 10 minutes, so only the first load of a given range pays this cost.
+    hrmsApi.get<{ success: boolean; data: DashboardData }>(`/api/process-performance/ahm/dashboard?from=${from}&to=${to}${regionQ}`, 60000)
       .then((res) => { if (alive) { setData(res.data); setLoading(false); } })
       .catch(() => { if (alive) { setError("Could not load the AHM dashboard."); setLoading(false); } });
     return () => { alive = false; };

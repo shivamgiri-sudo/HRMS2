@@ -1,6 +1,8 @@
+import { randomUUID } from "crypto";
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
 
 /**
  * AHM "Dump" -- writes into db_masmis.ahm_dump_raw (sql/1875). One row per outlet/SKU order
@@ -90,7 +92,7 @@ interface BatchRow extends RowDataPacket {
 interface Ref extends RowDataPacket { id: string }
 
 const COLUMNS = `
-  process_id, source_region, region, state, gpi_state, zone, city_town, wd_code, wd_name,
+  id, process_id, source_region, region, state, gpi_state, zone, city_town, wd_code, wd_name,
   sales_no, survey_date, category, franchise, salesman, owner_type, outlet_id, outlet_name,
   address, phone_number, route_name, class_of_outlet, type_of_outlet, product_code,
   product_sku, product_batch, sku_mrp, survey_qty, survey_offer_qty, sales_qty,
@@ -171,7 +173,7 @@ async function importBatch(
       rowId: row.id,
       rowNo: row.row_no,
       values: [
-        processId, sourceRegion,
+        randomUUID(), processId, sourceRegion,
         str(data, "Region"), str(data, "State"), str(data, "GPI State"), str(data, "Zone"),
         str(data, "City (TOWN)", "City"), str(data, "WD Code"), str(data, "WD Name"),
         salesNo, parseAhmDateTime(data, "Survey Date"),
@@ -205,21 +207,34 @@ async function importBatch(
   for (const u of inserted.errorUpdates) errors.push(u.message);
   const errorRows = errorUpdates.length;
 
-  if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
-    const ids = errorUpdates.map((u) => u.rowId);
-    await db.execute(
-      `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
-        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+  // Chunked, not one statement for every error row: a file with tens of thousands of rejected
+  // rows (seen live on a 140k-row AHM MM import, ~13k rejects) blew past MySQL's 65535
+  // placeholder limit (3 placeholders/row here) building one giant CASE statement, and even
+  // under that limit a single huge UPDATE is liable to a lock-wait timeout against concurrent
+  // chunk inserts on the same table.
+  const ERROR_MARK_CHUNK = 500;
+  for (let offset = 0; offset < errorUpdates.length; offset += ERROR_MARK_CHUNK) {
+    const chunk = errorUpdates.slice(offset, offset + ERROR_MARK_CHUNK);
+    const cases = chunk.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
+    const ids = chunk.map((u) => u.rowId);
+    // Idempotent (sets the same end state on every id every time), so a lost deadlock/lock-wait
+    // is safe to retry -- confirmed live against this same table under real concurrent load.
+    await withDeadlockRetry(() =>
+      db.execute(
+        `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
+          WHERE id IN (${ids.map(() => "?").join(",")})`,
+        [...chunk.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      ),
     );
   }
 
   const finalStatus =
     errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
-  await db.execute(
-    `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId],
+  await withDeadlockRetry(() =>
+    db.execute(
+      `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
+      [finalStatus, importedRows, errorRows, batchId],
+    ),
   );
 
   return { importedRows, errorRows, errors };
