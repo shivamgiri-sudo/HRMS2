@@ -1,5 +1,5 @@
 /**
- * "Bring imports into the pool" (WS3 D2), admins only, in the Hiring Engine section: the Naukri / WorkIndia / ATS import files with how
+ * "Bring imports into the pool" (WS3 D2), organisation-wide admins only, in the Hiring Engine section: the Naukri / WorkIndia / ATS import files with how
  * many are already in the pool, a dry run (what would be added, enriched or skipped, per file), then the real run. Preview only: people
  * become visible to the selection preview and HR approval; nobody is contacted.
  */

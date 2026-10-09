@@ -34,15 +34,25 @@ beforeEach(() => {
 });
 
 describe("pool bridge routes (WS3 D2)", () => {
-  it("is a dry run unless dryRun is explicitly false; admins only", async () => {
-    const r = await request(appFor("admin")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"] });
+  it("is a dry run unless dryRun is explicitly false; org-wide admins only (a branch-scoped admin gets 403)", async () => {
+    const r = await request(appFor("super_admin")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"] });
     expect(r.status).toBe(200);
-    expect(h.bridge).toHaveBeenCalledWith(expect.objectContaining({ recordTypes: ["naukri_import"], dryRun: true, actorId: "u-admin" }));
+    expect(h.bridge).toHaveBeenCalledWith(expect.objectContaining({ recordTypes: ["naukri_import"], dryRun: true, actorId: "u-super_admin" }));
+    h.bridge.mockClear();
+    expect((await request(appFor("admin")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"] })).status).toBe(403);
+    expect((await request(appFor("admin")).get("/api/he/pool/bridge-ats/sources")).status).toBe(403);
+    expect(h.bridge).not.toHaveBeenCalled();
     expect(h.refresh).not.toHaveBeenCalled();
     expect((await request(appFor("hr")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"] })).status).toBe(403);
     expect((await request(appFor("ceo")).get("/api/he/pool/bridge-ats/sources")).status).toBe(403);
   });
 
+  it("sourceDetails is bounded: at most 50 entries of at most 200 characters", async () => {
+    const a = appFor("super_admin");
+    expect((await request(a).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"], sourceDetails: Array.from({ length: 51 }, (_, i) => `f${i}`) })).status).toBe(400);
+    expect((await request(a).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"], sourceDetails: ["x".repeat(201)] })).status).toBe(400);
+    expect((await request(a).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"], sourceDetails: ["SBI AHM_1.xlsx"] })).status).toBe(200);
+  });
   it("a real run refreshes the Hiring Engine facts cache in the background, so the preview sees the new people", async () => {
     const r = await request(appFor("super_admin")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import", "workindia_import"], dryRun: false });
     expect(r.status).toBe(200);
@@ -52,20 +62,20 @@ describe("pool bridge routes (WS3 D2)", () => {
   });
 
   it("validates the body", async () => {
-    expect((await request(appFor("admin")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["legacy_employee"] })).status).toBe(400);
-    expect((await request(appFor("admin")).post("/api/he/pool/bridge-ats").send({})).status).toBe(400);
-    expect((await request(appFor("admin")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"], maxRows: "x" })).status).toBe(400);
+    expect((await request(appFor("super_admin")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["legacy_employee"] })).status).toBe(400);
+    expect((await request(appFor("super_admin")).post("/api/he/pool/bridge-ats").send({})).status).toBe(400);
+    expect((await request(appFor("super_admin")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"], maxRows: "x" })).status).toBe(400);
   });
 
   it("lists the import files with their pool coverage", async () => {
-    const r = await request(appFor("admin")).get("/api/he/pool/bridge-ats/sources");
+    const r = await request(appFor("super_admin")).get("/api/he/pool/bridge-ats/sources");
     expect(r.status).toBe(200);
     expect(r.body.data[0]).toEqual({ recordType: "naukri_import", sourceDetails: "SBI AHM_1.xlsx", rows: 155, inPool: 0 });
   });
 
   it("a running bridge answers 409 with its message", async () => {
     h.bridge.mockRejectedValueOnce(Object.assign(new Error("A pool bridge run is already going; try again when it ends"), { statusCode: 409 }));
-    const r = await request(appFor("admin")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"], dryRun: false });
+    const r = await request(appFor("super_admin")).post("/api/he/pool/bridge-ats").send({ recordTypes: ["naukri_import"], dryRun: false });
     expect(r.status).toBe(409);
   });
 });

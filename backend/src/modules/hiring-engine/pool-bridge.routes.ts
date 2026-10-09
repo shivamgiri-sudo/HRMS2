@@ -1,29 +1,38 @@
 /**
- * Pool bridge routes (WS3 D2), ADMIN roles: POST /api/he/pool/bridge-ats (dry run unless `dryRun: false`) and GET /api/he/pool/bridge-ats/sources.
+ * Pool bridge routes (WS3 D2), ADMIN roles that are also organisation-wide (the import files span every branch; admin alone is branch-scoped): POST /api/he/pool/bridge-ats (dry run unless `dryRun: false`) and GET /api/he/pool/bridge-ats/sources.
  * A real run refreshes the Hiring Engine facts cache in the background so the selection preview reads the new people; nobody is contacted.
  */
-import type { Request, Response, Router } from "express";
+import type { NextFunction, Request, Response, Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logger } from "../../logger.js";
 import { BRIDGE_RECORD_TYPES, bridgeAtsUpload, bridgeSources, type BridgeRecordType } from "./he-upload-bridge.service.js";
 import { refreshFactCache } from "../selection/fact-cache.service.js";
 import type { SubSource } from "../selection/selection-types.js";
+import { branchScopeOf } from "./he-stream.routes.js";
 
 const NEXT_STEP = "People are in the pool for preview only. Open Drives > Selection criteria to preview and approve a shortlist per requisition; nothing is sent without approval.";
 const logText = (err: unknown): string => (err instanceof Error ? err.message : String(err)).split("\n")[0].replace(/\d{6,}/g, "#").slice(0, 200);
 const bad = (res: Response, message: string): void => { res.status(400).json({ success: false, message }); };
+const MAX_DETAILS = 50, MAX_DETAIL_LEN = 200;
 const intOrUndef = (v: unknown): number | undefined | null => (v == null ? undefined : Number.isInteger(v) && Number(v) > 0 ? Number(v) : null);
 
 export function registerPoolBridgeRoutes(r: Router, roles: { admin: readonly string[] }): void {
-  const admin = [requireAuth, requireRole(...roles.admin)] as const;
+  const orgWide = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if ((await branchScopeOf(req as AuthenticatedRequest)).all) return next();
+      res.status(403).json({ success: false, message: "Only an organisation-wide user can bring imports into the pool" });
+    } catch (err) { logger.error({ err: logText(err) }, "[he-bridge] scope check failed"); res.status(500).json({ success: false, message: "Could not check your access" }); }
+  };
+  const admin = [requireAuth, requireRole(...roles.admin), orgWide] as const;
 
   r.post("/pool/bridge-ats", ...admin, async (req: Request, res: Response) => {
     try {
       const b = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
       const types = Array.isArray(b.recordTypes) ? (b.recordTypes as unknown[]) : [];
       if (!types.length || types.some((t) => typeof t !== "string" || !(BRIDGE_RECORD_TYPES as readonly string[]).includes(t))) return bad(res, "Pick candidate, naukri_import or workindia_import");
-      const details = b.sourceDetails == null ? undefined : Array.isArray(b.sourceDetails) && b.sourceDetails.every((d) => typeof d === "string") ? (b.sourceDetails as string[]) : null;
+      const details = b.sourceDetails == null ? undefined
+        : Array.isArray(b.sourceDetails) && b.sourceDetails.length <= MAX_DETAILS && b.sourceDetails.every((d) => typeof d === "string" && d.length <= MAX_DETAIL_LEN) ? (b.sourceDetails as string[]) : null;
       const maxRows = intOrUndef(b.maxRows), chunk = intOrUndef(b.chunk);
       if (details === null || maxRows === null || chunk === null) return bad(res, "Invalid request");
       const after = b.after && typeof b.after === "object" ? b.after as { recordType?: unknown; afterId?: unknown } : null;

@@ -7,7 +7,8 @@ export interface BridgeResult { dryRun: boolean; batches: BridgeBatch[]; totals:
 
 export const BRIDGE_PATH = "/api/he/pool/bridge-ats";
 export const BRIDGE_SOURCES_PATH = "/api/he/pool/bridge-ats/sources";
-export const BRIDGE_ROLES = ["super_admin", "admin"] as const;
+// Org-wide only (the server refuses a branch-scoped admin with 403).
+export const BRIDGE_ROLES = ["super_admin"] as const;
 export const SOURCE_LABEL: Record<string, string> = { naukri_import: "Naukri", workindia_import: "WorkIndia", candidate: "ATS candidates" };
 const SKIP_TEXT: Record<Skip, [string, string]> = {
   legacy_employee: ["former employee (legacy record)", "former employees (legacy records)"], test: ["test record", "test records"],
