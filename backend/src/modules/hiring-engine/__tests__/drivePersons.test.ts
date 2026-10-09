@@ -91,7 +91,7 @@ describe("personType: the person rule over a person's signals, as typing each ro
     await f.load(Object.keys(people));
     const combos = [[0, 0], [0, 1], [1, 0], [1, 1]];
     for (const [tl, p] of Object.entries(people)) for (const a of combos) for (const b of combos) for (const frank of [null, 1, 2]) {
-      const rows = [a, b].map(([tm, tr]) => attributeSource({ metaOrigin: p.metaOrigin, driveSourceKind: tm ? "meta" : "pool", firstFillAt: p.first, activityAt: tr ? "2026-10-09" : "2026-10-01" }));
+      const rows = [a, b].map(([tm, tr]) => attributeSource({ metaOrigin: p.metaOrigin, driveSourceKind: tm ? "meta" : "pool", firstFillAt: p.first, activityAt: tr ? "2026-10-09" : "2026-10-01", liveFrom: "2026-10-08" }));
       const rank = Math.min(...rows.map((t) => ["meta_live", "meta_old", "he"].indexOf(t) + 1), frank ?? 3);
       const signals = { tl, frank, lead_rows: 1, any_m: Number(a[0] || b[0]), any_r: Number(a[1] || b[1]), any_mr: Number((a[0] && a[1]) || (b[0] && b[1])) };
       expect(personType(signals, f)).toBe(["meta_live", "meta_old", "he"][rank - 1]);
