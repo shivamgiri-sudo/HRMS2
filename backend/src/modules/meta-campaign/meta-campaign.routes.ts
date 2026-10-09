@@ -34,6 +34,7 @@ import {
 } from './shortlist-report.service.js';
 import type { ShortlistFilters } from './shortlist-report.service.js';
 import { writeAuditLog } from '../../shared/auditLog.js';
+import { logText } from '../hiring-engine/log-text.js';
 import { notifyQualifiedLead, buildNotifyPreview, recordVoiceCallback } from './lead-outreach.service.js';
 import { leadVerifyToken, isMetaConfigured } from './meta-api.client.js';
 import { runMetaLeadSyncNow } from '../../cron/metaLeadSync.cron.js';
@@ -243,7 +244,7 @@ metaCampaignRouter.post('/voice-callback', (req: Request, res: Response) => {
     .then((matched) => {
       if (!matched) console.warn('[meta voice-callback] no lead matched reference_id', referenceId);
       else void recordMetaVoiceResponse({ metaLeadId: referenceId, status, outcome, callId: null, source: 'meta_voice', at: new Date() })
-        .catch((e: unknown) => console.error('[meta voice-callback] response record failed', e));
+        .catch((e: unknown) => console.error('[meta voice-callback] response record failed', logText(e)));
     })
     .catch((e: unknown) => console.error('[meta voice-callback] failed', e));
 
@@ -308,7 +309,7 @@ metaCampaignRouter.post('/vapi-callback', (req: Request, res: Response) => {
         console.warn('[vapi-callback] no lead matched reference_id', parsed.referenceId);
       } else {
         void recordMetaVoiceResponse({ metaLeadId: parsed.referenceId!, status: statusMap[parsed.outcome] ?? 'completed', outcome: outcomeText, callId: payload.call?.id ? String(payload.call.id) : null, source: 'vapi', at: new Date() })
-          .catch((e: unknown) => console.error('[vapi-callback] response record failed', e));
+          .catch((e: unknown) => console.error('[vapi-callback] response record failed', logText(e)));
         console.log('[vapi-callback] recorded outcome', {
           referenceId: parsed.referenceId,
           outcome: parsed.outcome,

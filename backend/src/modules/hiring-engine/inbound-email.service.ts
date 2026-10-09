@@ -9,6 +9,7 @@ import type { RowDataPacket } from "mysql2";
 import { randomUUID } from "node:crypto";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
+import { logText } from "./log-text.js";
 import { normaliseEmail } from "../../shared/email-domains.js";
 import { recordResponseSafe } from "./candidate-response.service.js";
 import { classifyReply, stripQuoted } from "./response-classifier.js";
@@ -134,7 +135,7 @@ export async function pollInboundEmail(now: Date, deps: Partial<PollDeps> = {}, 
         [cfg.mailbox, box.uidValidity, maxUid]);
     }
   } finally {
-    await client.close().catch((err: unknown) => logger.warn({ err: (err as Error).message }, "[inbound-email] close failed"));
+    await client.close().catch((err: unknown) => logger.warn({ err: logText(err) }, "[inbound-email] close failed"));
   }
   return out;
 }

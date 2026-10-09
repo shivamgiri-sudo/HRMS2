@@ -77,7 +77,7 @@ async function sendFollowUpTemplate(leadId: string, key: TemplateKey, matchId: s
       logger.warn({ leadId, key, status: r.status, reason: r.reason }, "[he-ingest] follow-up template not sent");
       await addEvent(leadId, "followup_template_blocked", { channel: "whatsapp", detail: `${key}: ${r.reason}` });
     } else if (r.status !== "sent") logger.warn({ leadId, key, status: r.status, error: "error" in r ? r.error : undefined }, "[he-ingest] follow-up template not sent");
-  } catch (err) { logger.warn({ leadId, key, err: (err as Error).message }, "[he-ingest] follow-up template failed"); }
+  } catch (err) { logger.warn({ leadId, key, err: logText(err) }, "[he-ingest] follow-up template failed"); }
 }
 
 async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPlan, ctx: { matchId: string | null; channel: string; detail: string | null; metaLeadId: string | null; replyText: string | null; ackStop?: boolean; defer?: Array<() => Promise<unknown>> }): Promise<void> {
@@ -89,7 +89,7 @@ async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPl
   // T10: acknowledge STOP while the consent still exists (the reply opened a 24h window); suppression follows below.
   // A Stop tapped on the web page is acknowledged on the page itself, not by a WhatsApp message.
   if (plan.event === "opted_out" && ctx.ackStop !== false) {
-    if (owned) await sendTransactionalForJourney(owned, "he_optout_ack", { now: new Date() }).catch((err: unknown) => logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] STOP acknowledgement failed"));
+    if (owned) await sendTransactionalForJourney(owned, "he_optout_ack", { now: new Date() }).catch((err: unknown) => logger.warn({ leadId, err: logText(err) }, "[he-ingest] STOP acknowledgement failed"));
     else await sendFollowUpTemplate(leadId, "he_optout_ack", ctx.matchId);
   }
   if (plan.leadStatus && plan.leadStatus !== current) await setLeadStatus(leadId, plan.leadStatus);
@@ -101,7 +101,7 @@ async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPl
     try {
       const [ml] = await db.execute<RowDataPacket[]>("SELECT mobile10 FROM he_lead WHERE id = ? LIMIT 1", [leadId]);
       if (ml[0]?.mobile10) await recordPersonOptOut(String(ml[0].mobile10), { source: ctx.channel === "whatsapp" ? "pinbot" : ctx.channel === "voice" ? "call" : "web", viaIngest: true });
-    } catch (err) { logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] person opt-out record failed"); }
+    } catch (err) { logger.warn({ leadId, err: logText(err) }, "[he-ingest] person opt-out record failed"); }
   }
   // They answered somewhere else (button, reply, email tap): a call still waiting in Superbot's queue must not ring them. Best effort.
   if (ctx.channel !== "voice" && ctx.matchId && (plan.matchState || plan.event === "opted_out")) void dequeueSuperbotForMatch(ctx.matchId);
@@ -186,9 +186,9 @@ export async function recordInboundReply(p: { mobile: string; text: string; prov
   await refreshLeadHistoryById(lead.id);
   // Questions ("office kahan hai?", "kya laana hai?") get an instant answer from the invitation; the rest go to a human.
   if (channel === "whatsapp" && isLocationTap(p.text)) {
-    try { await sendLocationLink(lead.id); } catch (err) { logger.warn({ err: (err as Error).message }, "[he-ingest] location link failed"); }
+    try { await sendLocationLink(lead.id); } catch (err) { logger.warn({ err: logText(err) }, "[he-ingest] location link failed"); }
   } else if (intent === "unknown" && channel === "whatsapp") {
-    try { await answerCandidateQuestion(lead.id, p.text); } catch (err) { logger.warn({ err: (err as Error).message }, "[he-ingest] bot answer failed"); }
+    try { await answerCandidateQuestion(lead.id, p.text); } catch (err) { logger.warn({ err: logText(err) }, "[he-ingest] bot answer failed"); }
   }
 
   return { leadId: lead.id, intent };
@@ -225,7 +225,7 @@ export async function recordEmailEvent(p: { providerMessageId: string; event: Em
   // An unsubscribe is a STOP for the person: every follow-up journey ends (it used to revoke only the WhatsApp consent).
   if (p.event === "unsubscribed" && rows[0].mobile10) {
     try { await recordPersonOptOut(String(rows[0].mobile10), { source: "email_unsubscribe" }); }
-    catch (err) { logger.warn({ err: (err as Error).message }, "[he-ingest] unsubscribe opt-out record failed"); }
+    catch (err) { logger.warn({ err: logText(err) }, "[he-ingest] unsubscribe opt-out record failed"); }
   }
   return true;
 }
@@ -291,7 +291,7 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
   const callMobile = (lead as { mobile10?: string | null }).mobile10;
   if (callMobile) {
     try { await markFollowupCalled(callMobile, undefined, { result: callResultCode(r, { incomplete: p.incomplete }), reference: p.reference ?? null, at: new Date() }); }
-    catch (err) { logger.warn({ leadId: l.id, err: (err as Error).message }, "[hiring-engine] mark follow-up called failed"); }
+    catch (err) { logger.warn({ leadId: l.id, err: logText(err) }, "[hiring-engine] mark follow-up called failed"); }
   }
   await persistSignals(l.id, signalsFromVoice(r), p.providerCallId ?? null);
   const callResponse = (applied: boolean) => recordResponseSafe({

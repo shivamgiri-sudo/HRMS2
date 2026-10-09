@@ -10,6 +10,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
+import { logText } from "./log-text.js";
 
 export interface EmailButtonSwitches {
   legacyMeta: boolean; legacyMetaCampaigns: ReadonlySet<string>; testLeads: ReadonlySet<string>; pipelineMeta: boolean; stopLink: boolean;
@@ -37,7 +38,7 @@ export async function loadEmailButtonSwitches(): Promise<EmailButtonSwitches> {
       legacyMetaCampaigns: idList(st.get(CAMPAIGNS_KEY)), testLeads: idList(st.get(TEST_LEADS_KEY)),
     };
   } catch (err) {
-    logger.warn({ err: (err as Error).message }, "[email-buttons] switch read failed, buttons off");
+    logger.warn({ err: logText(err) }, "[email-buttons] switch read failed, buttons off");
     return EMAIL_BUTTONS_OFF;
   }
 }

@@ -5,6 +5,7 @@
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../db/mysql.js";
 import { logger } from "../logger.js";
+import { logText } from "../modules/hiring-engine/log-text.js";
 import { inboundEmailConfig, pollInboundEmail, type PollResult } from "../modules/hiring-engine/inbound-email.service.js";
 import { connectImap } from "../modules/hiring-engine/inbound-email.imap.js";
 
@@ -38,7 +39,7 @@ export function startInboundEmailWorker(): void {
   if (timer) return;
   if (inboundEmailConfig().mode === "off") return;
   timer = setInterval(() => {
-    runInboundEmailTick().catch((err) => logger.error({ err: (err as Error).message }, "[inbound-email] tick failed"));
+    runInboundEmailTick().catch((err) => logger.error({ err: logText(err) }, "[inbound-email] tick failed"));
   }, INTERVAL_MS);
   timer.unref();
 }
