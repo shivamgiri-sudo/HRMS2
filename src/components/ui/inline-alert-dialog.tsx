@@ -14,9 +14,12 @@ export interface InlineAlertDialogProps {
 }
 
 export function InlineAlertDialog({ title, description, className, titleClassName, descriptionClassName, cancel, onCancel, children, actions, actionsClassName }: InlineAlertDialogProps) {
+  // There is no Radix Trigger here: remember what had focus when the dialog appeared and give it back on close.
+  const [returnTo] = React.useState<HTMLElement | null>(() => (typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null));
   return (
     <AlertDialogPrimitive.Root open onOpenChange={(open) => { if (!open) onCancel(); }}>
-      <AlertDialogPrimitive.Content className={className}>
+      <AlertDialogPrimitive.Content className={className}
+        onCloseAutoFocus={(e) => { if (returnTo && returnTo.isConnected) { e.preventDefault(); returnTo.focus(); } }}>
         <AlertDialogPrimitive.Title className={titleClassName}>{title}</AlertDialogPrimitive.Title>
         {description != null && <AlertDialogPrimitive.Description asChild><div className={descriptionClassName}>{description}</div></AlertDialogPrimitive.Description>}
         {children}
