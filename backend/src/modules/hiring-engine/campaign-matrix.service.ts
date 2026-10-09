@@ -12,7 +12,7 @@ import { closedReasonOf } from "../meta-campaign/campaign-requisition.service.js
 import { compileCriteria } from "../selection/compile-criteria.js";
 import { LOAD_ROW_SQL, toCriteriaRow } from "../selection/criteria-row.js";
 import { endDateEnforcementAllowed, endDateOf, endDatePassed, seatsLeft } from "./requisition-criteria.js";
-import { fillPhoneSql, fillTypeSql } from "./he-source-attribution.js";
+import { activityTypeSql, fillPhoneSql } from "./he-source-attribution.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import { engineMode } from "./he-policy.service.js";
@@ -41,18 +41,31 @@ const REQ_EXTRA = `jr.active_status, jr.closed_at, jr.requested_headcount, jr.fu
 const reqSql = (n: number, branch: boolean): string => LOAD_ROW_SQL.replace("SELECT jr.id,", `SELECT jr.id, ${REQ_EXTRA}`)
   .replace("WHERE jr.id = ? LIMIT 1", `WHERE (jr.id IN (${n ? ph(n) : "NULL"}) OR (jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.closed_at IS NULL))${branch ? " AND jr.branch_name = ?" : ""}`);
 
-/** People contacted in 48 h per requisition, kind (shared attribution rule) and campaign of their first fill. */
-const activitySql = (n: number, liveFrom: string): string => `SELECT x.requisition_id, x.kind, x.campaign_id, COUNT(DISTINCT x.person) AS n /* activity48h */ FROM (
-    SELECT COALESCE(r.requisition_id, mc.requisition_id) ${CI} AS requisition_id, ${fillTypeSql("r", liveFrom)} AS kind, r.campaign_id ${CI} AS campaign_id, ${fillPhoneSql("r")} ${CI} AS person
-      FROM meta_lead_raw r JOIN meta_campaign mc ON mc.id = r.campaign_id ${CI}
-     WHERE r.notification_sent_at >= ? AND COALESCE(r.requisition_id, mc.requisition_id) IN (${ph(n)})
+/**
+ * People contacted in 48 h per requisition, kind (shared attribution rule, E7) and campaign. E6: index-friendly, driven by the requisition
+ * ids (idx_ml_requisition, idx_he_msg_req) and, for fills without a requisition, their campaigns' requisition (idx_ml_campaign); no
+ * function on a join key; capped in time by limitedDb's MAX_EXECUTION_TIME (a timeout makes the section "unknown", never a failure).
+ */
+const fillPerson = (r: string) => `LEFT JOIN he_lead l ON l.mobile10 = ${fillPhoneSql(r)} ${CI} LEFT JOIN meta_lead_raw lf ON lf.id = l.meta_lead_id ${CI}`;
+const activitySql = (n: number, liveFrom: string): string => {
+  const fillKind = activityTypeSql({ lead: "l", first: "lf", fill: "r", ref: "r.notification_sent_at", liveFrom });
+  return `SELECT x.requisition_id, x.kind, x.campaign_id, COUNT(DISTINCT x.person) AS n /* activity48h */ FROM (
+    SELECT r.requisition_id ${CI} AS requisition_id, ${fillKind} AS kind, r.campaign_id ${CI} AS campaign_id, ${fillPhoneSql("r")} ${CI} AS person
+      FROM meta_lead_raw r ${fillPerson("r")}
+     WHERE r.requisition_id IN (${ph(n)}) AND r.notification_sent_at >= ?
     UNION ALL
-    SELECT hm.requisition_id ${CI}, IF(f.id IS NULL, 'he', ${fillTypeSql("f", liveFrom)}), f.campaign_id ${CI}, hm.mobile10 ${CI}
+    SELECT mc.requisition_id ${CI}, ${fillKind}, r.campaign_id ${CI}, ${fillPhoneSql("r")} ${CI}
+      FROM meta_campaign mc JOIN meta_lead_raw r ON r.campaign_id = mc.id ${CI} ${fillPerson("r")}
+     WHERE mc.requisition_id IN (${ph(n)}) AND r.requisition_id IS NULL AND r.notification_sent_at >= ?
+    UNION ALL
+    SELECT hm.requisition_id ${CI}, ${activityTypeSql({ lead: "l", first: "f", fill: "f", ref: "hm.created_at", liveFrom })}, f.campaign_id ${CI}, hm.mobile10 ${CI}
       FROM he_message hm FORCE INDEX (idx_he_msg_req) LEFT JOIN he_lead l ON l.id = hm.lead_id LEFT JOIN meta_lead_raw f ON f.id = l.meta_lead_id ${CI}
      WHERE hm.requisition_id IN (${ph(n)}) AND hm.created_at >= ? AND hm.direction = 'out' AND (hm.delivery_status IS NULL OR hm.delivery_status <> 'failed')
   ) x GROUP BY x.requisition_id, x.kind, x.campaign_id`;
-const responsesSql = (n: number, liveFrom: string): string => `SELECT cr.requisition_id, IF(f.id IS NULL, 'he', ${fillTypeSql("f", liveFrom)}) AS kind, f.campaign_id, COUNT(DISTINCT cr.mobile10) AS n
-  FROM candidate_response cr LEFT JOIN he_lead l ON l.mobile10 = cr.mobile10 ${CI} LEFT JOIN meta_lead_raw f ON f.id = COALESCE(cr.meta_lead_id, l.meta_lead_id) ${CI}
+};
+const responsesSql = (n: number, liveFrom: string): string => `SELECT cr.requisition_id, ${activityTypeSql({ lead: "l", first: "lf", fill: "f", ref: "cr.occurred_at", liveFrom })} AS kind, f.campaign_id, COUNT(DISTINCT cr.mobile10) AS n
+  FROM candidate_response cr LEFT JOIN he_lead l ON l.mobile10 = cr.mobile10 ${CI} LEFT JOIN meta_lead_raw lf ON lf.id = l.meta_lead_id ${CI}
+  LEFT JOIN meta_lead_raw f ON f.id = COALESCE(cr.meta_lead_id, l.meta_lead_id) ${CI}
  WHERE cr.requisition_id IN (${ph(n)}) AND cr.occurred_at >= ? GROUP BY cr.requisition_id, kind, f.campaign_id`;
 const shortlistSql = (n: number): string => `SELECT r.requisition_id, r.source_kind, r.created_at, SUM(c.status IN ('picked','review')) AS waiting, COUNT(c.id) AS n
   FROM shortlist_run r JOIN (SELECT requisition_id, source_kind, MAX(created_at) AS m FROM shortlist_run WHERE requisition_id IN (${ph(n)}) GROUP BY requisition_id, source_kind) x
@@ -102,7 +115,7 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
   };
   const [streams, activity, responses, drives, runs] = await Promise.all([
     run(`SELECT id, requisition_id, source_type, origin_id, status FROM requisition_stream WHERE requisition_id IN (${ph(ids.length)}) ORDER BY updated_at DESC`, ids).catch((e) => { if (noTable(e)) return [] as RowDataPacket[]; throw e; }),
-    run(activitySql(ids.length, liveFrom), [since48, ...ids, ...ids, since48]),
+    optional("activity", activitySql(ids.length, liveFrom), [...ids, since48, ...ids, since48, ...ids, since48], false),
     optional("responses", responsesSql(ids.length, liveFrom), [...ids, since3d]),
     run(`SELECT requisition_id, COUNT(*) AS n FROM he_drive WHERE requisition_id IN (${ph(ids.length)}) AND drive_date BETWEEN ? AND ? AND status IN ('active', 'draft') GROUP BY requisition_id`, [...ids, today, in3]),
     optional("shortlist", shortlistSql(ids.length), ids),
@@ -112,7 +125,7 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
   const inScope = (id: string) => reqById.has(id) && (!q.requisitionId || q.requisitionId === id);
   const activeCampaign = (c: RowDataPacket) => ["active", "draft"].includes(String(c.campaign_status));
   const liveStreamFor = (cid: string, rid: string) => streams.some((s) => String(s.origin_id) === cid && String(s.requisition_id) === rid && s.source_type === "meta_live");
-  const actFor = (cid: string, rid: string) => activity.some((a) => String(a.campaign_id ?? "") === cid && String(a.requisition_id) === rid && Number(a.n) > 0);
+  const actFor = (cid: string, rid: string) => (activity ?? []).some((a) => String(a.campaign_id ?? "") === cid && String(a.requisition_id) === rid && Number(a.n) > 0);
   const pairs: Array<{ c: RowDataPacket | null; rid: string }> = [];
   const seen = new Set<string>();
   for (const c of campaigns) {
@@ -153,7 +166,7 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
       requisition: { id: rid, code: String(r.requisition_code ?? ""), branch: String(r.branch_name ?? ""), closedReason: closedReasonOf(r), endDate: endDateOf(v), endDatePassed: endDatePassed(v, istDay(now)),
         seatsLeft: seatsLeft({ requestedHeadcount: Number(r.requested_headcount ?? 0), fulfilledHeadcount: Number(r.fulfilled_headcount ?? 0) }), bmiLinkPresent: Number(r.has_bmi) === 1,
         completeness: compileCriteria(toCriteriaRow(r)).completeness },
-      streams: streamsOf, activity48h: per(activity), responses3d: responses ? per(responses) : null,
+      streams: streamsOf, activity48h: activity ? per(activity) : null, responses3d: responses ? per(responses) : null,
       drivesNext3d: Number(drives.find((d) => String(d.requisition_id) === rid)?.n ?? 0), eligible, pendingApproval: pending,
       enrolmentOn: { meta_live: cfg?.auto_notify !== false || followupMode() !== "off", meta_old: enrolHe, he: enrolHe }, enforcedEndDate: enforced,
     };

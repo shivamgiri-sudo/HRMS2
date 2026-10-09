@@ -44,7 +44,7 @@ describe("person facts, once per build", () => {
 
   it("puts the row signals next to the lead id: Meta credit / Meta drive / own Meta signal, and activity on or after the cutoff", () => {
     expect(typeKeyColsSql({ streams: true, d: "d", leadId: "m.lead_id", ref: "d.drive_date", liveFrom: "2026-10-08" }))
-      .toBe(`m.lead_id AS tl, (COALESCE(rs.source_type, 'he') <> 'he' OR ${metaDriveSql("d")}) AS tm, (d.drive_date >= TIMESTAMP '2026-10-08 00:00:00') AS tr`);
+      .toBe(`m.lead_id AS tl, (rs.source_type IN ('meta_live','meta_old') OR ${metaDriveSql("d")}) AS tm, (d.drive_date >= TIMESTAMP '2026-10-08 00:00:00') AS tr`);
     expect(typeKeyColsSql({ streams: false, d: "qd", leadId: "hl.id", ref: "qf.qualified_at", liveFrom: "2026-10-08", extraMeta: "qf.meta_lead_id IS NOT NULL" }))
       .toBe(`hl.id AS tl, (${metaDriveSql("qd")} OR qf.meta_lead_id IS NOT NULL) AS tm, (qf.qualified_at >= TIMESTAMP '2026-10-08 00:00:00') AS tr`);
   });

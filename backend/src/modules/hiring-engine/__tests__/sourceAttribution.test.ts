@@ -15,6 +15,18 @@ const OLD_FILL = "2026-09-20 09:00:00";
 const LIVE_FILL = "2026-10-08 10:00:00";
 const OCT = "2026-10-09 11:00:00", SEP = "2026-09-28 11:00:00";
 
+describe("E7: JS and SQL agree", () => {
+  it("no activity time reads as Old Meta in JS, as the SQL NULL comparison does", () => {
+    expect(attributeSource({ metaOrigin: true, firstFillAt: "2026-10-09 10:00:00", activityAt: null })).toBe("meta_old");
+    expect(attributeSource({ metaOrigin: true, firstFillAt: "2026-10-09 10:00:00" })).toBe("meta_old");
+  });
+  it("a stream credit is Meta only for the two Meta stream types, in JS and in SQL", () => {
+    expect(attributeSource({ streamType: "he", firstFillAt: "2026-10-09 10:00:00", activityAt: "2026-10-09" })).toBe("he");
+    expect(sourceTypeSql({ streams: true, d: "d", lead: "al", ref: "d.drive_date", liveFrom: "2026-10-08" })).toContain("rs.source_type IN ('meta_live','meta_old')");
+    expect(sourceTypeSql({ streams: true, d: "d", lead: "al", ref: "d.drive_date", liveFrom: "2026-10-08" })).not.toContain("<> 'he'");
+  });
+});
+
 describe("attributeSource (the display rule, pure mirror): three exclusive types", () => {
   it("a Meta-origin person whose first fill is on or after the cutoff is Live Meta for activity on or after it, whatever drive", () => {
     for (const driveSourceKind of [null, "pool", "meta", "campaign", "batch"]) {
@@ -107,7 +119,7 @@ describe("classifySource keeps the follow-up pipeline's own enqueue-time type (e
 describe("SQL fragment (mirrors attributeSource)", () => {
   const sql = sourceTypeSql({ streams: true, d: "d", lead: "al", liveFrom: "2026-10-08", ref: "d.drive_date" });
   it("Meta when a Meta stream credit, a Meta drive or a Meta-origin person; Live only for activity and first fill on or after the cutoff", () => {
-    expect(sql).toBe(`CASE WHEN COALESCE(rs.source_type, 'he') <> 'he' OR ${metaDriveSql("d")} OR ${metaOriginSql("al")} `
+    expect(sql).toBe(`CASE WHEN rs.source_type IN ('meta_live','meta_old') OR ${metaDriveSql("d")} OR ${metaOriginSql("al")} `
       + `THEN IF(d.drive_date >= TIMESTAMP '2026-10-08 00:00:00' AND ${liveFirstFillSql("al", "alf", "2026-10-08")}, 'meta_live', 'meta_old') ELSE 'he' END`);
     expect(sql).not.toContain("run_label");
   });

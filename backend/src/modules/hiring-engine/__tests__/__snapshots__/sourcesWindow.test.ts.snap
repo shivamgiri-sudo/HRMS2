@@ -66,7 +66,7 @@ SELECT 'f' AS src, MD5(f.person) AS pkey, f.requisition_id, MAX(CONCAT(4 - f.ft,
  GROUP BY pkey, f.requisition_id
 UNION ALL
 SELECT 'l', MD5(al.mobile10 COLLATE utf8mb4_unicode_ci), d.requisition_id COLLATE utf8mb4_unicode_ci, NULL,
-       m.lead_id AS tl, (COALESCE(rs.source_type, 'he') <> 'he' OR (d.source_kind IN ('meta','campaign') OR (d.source_kind = 'batch' AND EXISTS (SELECT 1 FROM he_import_batch hib WHERE hib.source = 'meta' AND JSON_CONTAINS(d.source_ids, JSON_QUOTE(hib.id)))))) AS tm, (d.drive_date >= TIMESTAMP '2026-10-08 00:00:00') AS tr,
+       m.lead_id AS tl, (rs.source_type IN ('meta_live','meta_old') OR (d.source_kind IN ('meta','campaign') OR (d.source_kind = 'batch' AND EXISTS (SELECT 1 FROM he_import_batch hib WHERE hib.source = 'meta' AND JSON_CONTAINS(d.source_ids, JSON_QUOTE(hib.id)))))) AS tm, (d.drive_date >= TIMESTAMP '2026-10-08 00:00:00') AS tr,
        rs.id, rs.origin_id, COALESCE(rs.origin_label, ''), d.id, COALESCE(d.run_label, CONCAT('Re-run ', DATE_FORMAT(d.drive_date, '%Y-%m-%d')))
   FROM he_drive d JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
   LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id

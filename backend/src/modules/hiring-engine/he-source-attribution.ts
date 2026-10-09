@@ -41,7 +41,7 @@ export interface AttributionFacts {
   metaOrigin?: boolean;
   /** The person's FIRST Meta form fill, IST wall clock 'YYYY-MM-DD HH:MM:SS'. */
   firstFillAt?: string | null;
-  /** When the activity happened (drive date or event time, IST); without it only the fill decides. */
+  /** When the activity happened (drive date or event time, IST); without it the activity reads as Old Meta (the SQL's NULL rule). */
   activityAt?: string | null;
   /** Cutoff day 'YYYY-MM-DD'; LIVE_FROM_DEFAULT when not given or invalid. */
   liveFrom?: string | null;
@@ -59,7 +59,8 @@ export function attributeSource(f: AttributionFacts): SourceType {
   const metaStream = f.streamType === "meta_live" || f.streamType === "meta_old";
   if (!(metaStream || isMetaDrive(f.driveSourceKind, f.driveBatchMeta) || f.metaOrigin)) return "he";
   const cutoff = validDay(f.liveFrom) ?? LIVE_FROM_DEFAULT;
-  const afterCutoff = !f.activityAt || f.activityAt.slice(0, 10) >= cutoff;
+  // E7: no activity time reads as before the cutoff (meta_old), exactly as the SQL's NULL comparison does.
+  const afterCutoff = !!f.activityAt && f.activityAt.slice(0, 10) >= cutoff;
   return isLiveFill(f.firstFillAt, cutoff) && afterCutoff ? "meta_live" : "meta_old";
 }
 
@@ -140,7 +141,8 @@ export interface TypeSqlOpts {
 
 /** The rule as a SQL expression yielding 'meta_live' | 'meta_old' | 'he'. The cheap signals come first; subqueries run last. */
 export function sourceTypeSql(o: TypeSqlOpts): string {
-  const credit = o.streams ? `COALESCE(${o.stream ?? "rs"}.source_type, 'he') <> 'he' OR ` : "";
+  // E7: a stream credit is Meta only for the two Meta stream types (the JS rule), never "anything but he".
+  const credit = o.streams ? `${o.stream ?? "rs"}.source_type IN ('meta_live','meta_old') OR ` : "";
   return `CASE WHEN ${credit}${metaDriveSql(o.d)} OR ${metaOriginSql(o.lead, o.extraMeta)} `
     + `THEN IF(${o.ref} >= ${cutoffSql(o.liveFrom)} AND ${liveFirstFillSql(o.lead, o.first ?? `${o.lead}f`, o.liveFrom)}, 'meta_live', 'meta_old') ELSE 'he' END`;
 }
@@ -157,6 +159,15 @@ export function fillTypeSql(r: string, liveFrom: string): string {
   return `IF(${r}.created_at >= ${c} AND ${rawFillSql(r)} >= ${c} AND IF(EXISTS (SELECT 1 FROM he_lead pl WHERE pl.mobile10 = ${phone}), `
     + `EXISTS (SELECT 1 FROM he_lead pl LEFT JOIN meta_lead_raw plf ON plf.id = pl.meta_lead_id ${CI} WHERE pl.mobile10 = ${phone} AND ${liveFirstFillSql("pl", "plf", liveFrom)}), `
     + `NOT EXISTS (SELECT 1 FROM meta_lead_raw afx WHERE afx.parsed_phone = ${r}.parsed_phone AND (afx.created_at < ${c} OR ${rawFillSql("afx")} < ${c}))), 'meta_live', 'meta_old')`;
+}
+/**
+ * E7: the shared rule for an activity row that has a person (he_lead `lead`, possibly NULL, with first-fill row `first`) and maybe a raw
+ * form fill `fill`: Meta when the person is Meta-origin or a fill is present; Live when the activity (`ref`) is on or after the cutoff and
+ * the person's first fill is Live (judged by the fill's raw rows when the person has no he_lead); otherwise Old Meta; else he.
+ */
+export function activityTypeSql(o: { lead: string; first: string; fill: string; ref: string; liveFrom: string }): string {
+  return `CASE WHEN ${metaOriginSql(o.lead, `${o.fill}.id IS NOT NULL`)} THEN IF(${o.ref} >= ${cutoffSql(o.liveFrom)} AND `
+    + `IF(${o.lead}.id IS NOT NULL, ${liveFirstFillSql(o.lead, o.first, o.liveFrom)}, ${fillTypeSql(o.fill, o.liveFrom)} = 'meta_live'), 'meta_live', 'meta_old') ELSE 'he' END`;
 }
 export const fillPhoneSql = (r: string): string => `RIGHT(REGEXP_REPLACE(${r}.parsed_phone, '[^0-9]', ''), 10)`;
 /** Campaign of the first fill of the person behind raw fill `r` (their he_lead's meta_lead_id row), else the fill's own campaign. */

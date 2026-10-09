@@ -16,7 +16,7 @@ import type { RowDataPacket } from "mysql2";
 import { limitedDb } from "./he-read-limit.js";
 import { readAgg } from "./he-drive-trend.service.js";
 import { PersonFacts, TYPE_KEY_GROUP, typeKeyColsSql } from "./he-person-facts.service.js";
-import { creditJoinsSql, fillTypeSql } from "./he-source-attribution.js";
+import { activityTypeSql, creditJoinsSql } from "./he-source-attribution.js";
 import type { SourceType } from "./qualified-followup.types.js";
 
 export const CONFIRM_VIA = ["email", "web", "whatsapp", "voice_bot", "call_file", "hr", "unknown"] as const;
@@ -77,8 +77,9 @@ export const calledSql = (liveFrom: string, n: number) => (streams: boolean): st
  GROUP BY ${TYPE_KEY_GROUP}, mob`;
 
 /** People e-mailed an invite link without a match (legacy Meta / pipeline): typed by the invite's stamp, else their form fill. */
-export const invitedSql = (liveFrom: string, n: number): string => `SELECT COALESCE(wi.drive_type, IF(ml.id IS NULL, 'he', ${fillTypeSql("ml", liveFrom)})) AS t, wi.mobile10 AS mob, wi.match_id
+export const invitedSql = (liveFrom: string, n: number): string => `SELECT COALESCE(wi.drive_type, ${activityTypeSql({ lead: "il", first: "ilf", fill: "ml", ref: "wi.last_sent_at", liveFrom })}) AS t, wi.mobile10 AS mob, wi.match_id
   FROM walkin_invite wi LEFT JOIN meta_lead_raw ml ON ml.id = wi.meta_lead_id ${CI}
+  LEFT JOIN he_lead il ON il.mobile10 = wi.mobile10 ${CI} LEFT JOIN meta_lead_raw ilf ON ilf.id = il.meta_lead_id ${CI}
  WHERE wi.requisition_id IN (${ph(n)}) AND wi.last_sent_at >= ? AND wi.last_sent_at < ?`; // matched invites are skipped in code, so the read stays on the requisition index
 
 /** People who answered on a channel (no-answer call results excluded). */

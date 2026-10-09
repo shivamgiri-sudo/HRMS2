@@ -11,15 +11,16 @@ const h = vi.hoisted(() => ({
   params: [] as Array<Record<string, unknown>>,
   noResponses: true,
   runsFail: false,
+  activityFail: false,
 }));
 vi.mock("../he-read-limit.js", () => {
   const exec = async (sql: string, p: unknown[] = []) => {
     const s = sql.replace(/\s+/g, " ").trim();
     h.sqls.push({ sql: s, p });
+    if (s.includes("activity48h")) { if (h.activityFail) throw Object.assign(new Error("Query execution was interrupted, maximum statement execution time exceeded"), { code: "ER_QUERY_TIMEOUT" }); return [h.activity, []]; }
     if (s.includes("FROM meta_campaign mc")) return [h.campaigns, []];
     if (s.includes("FROM job_requisition jr")) return [h.reqs.filter((r) => !s.includes("jr.branch_name = ?") || r.branch_name === p[p.length - 1]), []];
     if (s.includes("FROM requisition_stream")) return [h.streams, []];
-    if (s.includes("activity48h")) return [h.activity, []];
     if (s.includes("FROM candidate_response")) { if (h.noResponses) throw Object.assign(new Error("no table"), { code: "ER_NO_SUCH_TABLE" }); return [[], []]; }
     if (s.includes("FROM he_drive")) return [h.drives, []];
     if (s.includes("FROM shortlist_run")) { if (h.runsFail) throw Object.assign(new Error("timeout"), { code: "ER_QUERY_TIMEOUT" }); return [h.runs, []]; }
@@ -102,6 +103,35 @@ describe("getCampaignMatrix (C1 service)", () => {
     h.runsFail = false;
   });
 
+  it("E6: the 48 h activity read is index-friendly (no COALESCE on a join key; driven by the requisition ids and their campaigns) and read through the time-capped limiter", async () => {
+    await getCampaignMatrix({}, ALL, NOW);
+    const sql = h.sqls.find((x) => x.sql.includes("activity48h"))!.sql;
+    expect(sql).not.toMatch(/COALESCE\(r\.requisition_id/);
+    expect(sql).toContain("WHERE r.requisition_id IN (");
+    expect(sql).toContain("WHERE mc.requisition_id IN (");
+    expect(sql).toContain("r.requisition_id IS NULL");
+    // time cap: limitedDb adds MAX_EXECUTION_TIME to every read (he-read-limit withStatementTimeout)
+  });
+  it("E6: an activity timeout returns the matrix with activity unknown (partial), never a failure", async () => {
+    h.activityFail = true;
+    const m = await getCampaignMatrix({}, ALL, NOW);
+    h.activityFail = false;
+    expect(m.partial).toContain("activity");
+    expect(m.rows.length).toBeGreaterThan(0);
+    const cell = m.rows.find((r) => r.key === "~|ahm")!.cells.he;
+    expect(cell).toMatchObject({ activityUnknown: true });
+    expect(cell.reasonText).not.toMatch(/Nobody contacted/);
+  });
+  it("E7: activity and responses are typed by the shared attribution rule (Meta origin of the person, first fill, activity time), not by the raw fill alone", async () => {
+    h.noResponses = false;
+    await getCampaignMatrix({}, ALL, NOW);
+    h.noResponses = true;
+    for (const key of ["activity48h", "FROM candidate_response"]) {
+      const sql = h.sqls.find((x) => x.sql.includes(key))!.sql;
+      expect(sql).not.toContain("IF(f.id IS NULL, 'he'");
+      expect(sql).toContain("he_lead_campaign alx"); // metaOriginSql of the shared rule
+    }
+  });
   it("awaiting approval: a run with waiting people older than 24 h", async () => {
     h.runs = [{ requisition_id: "onf18", source_kind: "he", created_at: "2026-10-07 19:00:00", waiting: 5, n: 9 }];
     h.streams.push({ id: "s2", requisition_id: "onf18", source_type: "he", origin_id: "pool", status: "open" });

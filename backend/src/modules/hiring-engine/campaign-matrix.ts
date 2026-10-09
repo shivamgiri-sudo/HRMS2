@@ -27,7 +27,8 @@ export interface MatrixFacts {
     bmiLinkPresent: boolean; completeness: Completeness | null };
   streams: Partial<Record<DriveKind, MatrixStream>>;
   /** Distinct people sent an outbound message (or a legacy notification) for this requisition in 48 h, by the shared attribution rule. */
-  activity48h: Record<DriveKind, number>;
+  /** null: the activity read failed or timed out (unknown, listed in partial). */
+  activity48h: Record<DriveKind, number> | null;
   /** WS2 present: distinct people with a response in 3 days; null when unknown. */
   responses3d: Record<DriveKind, number> | null;
   drivesNext3d: number;
@@ -39,7 +40,7 @@ export interface MatrixFacts {
   enforcedEndDate: boolean;
 }
 export interface MatrixCell {
-  kind: DriveKind; state: CellState; reason: IdleReason | null; reasonText: string; activity48h: number; streamId: string | null; streamStatus: MatrixStream["status"] | null;
+  kind: DriveKind; state: CellState; reason: IdleReason | null; reasonText: string; activity48h: number; activityUnknown?: boolean; streamId: string | null; streamStatus: MatrixStream["status"] | null;
   mapIt: { requisitionId: string; sourceType: DriveKind; originId: string | null } | null;
   /** Live Meta cell of a campaign on a closed or full requisition: HR can relink the campaign to an open one (preview first). */
   relink: boolean;
@@ -92,7 +93,7 @@ function failing(f: MatrixFacts, kind: DriveKind, s: MatrixStream | undefined, a
   if (!f.enrolmentOn[kind]) out.push("enrolment_off");
   if (kind !== "meta_live" && f.drivesNext3d <= 0) out.push("no_drive_planned");
   if (f.eligible[kind] === 0) out.push("no_eligible_people");
-  if (activity <= 0) out.push("no_contact_48h");
+  if (activity <= 0 && f.activity48h) out.push("no_contact_48h");
   if (activity > 0 && f.responses3d && f.responses3d[kind] === 0) out.push("no_responses_3d");
   return REASON_ORDER.filter((r) => out.includes(r));
 }
@@ -100,7 +101,8 @@ function failing(f: MatrixFacts, kind: DriveKind, s: MatrixStream | undefined, a
 const isBlocking = (r: IdleReason, f: MatrixFacts): boolean => BLOCKING.has(r) || (r === "requisition_ended" && f.enforcedEndDate);
 
 export function matrixCell(f: MatrixFacts, kind: DriveKind): MatrixCell {
-  const base = { kind, activity48h: f.activity48h[kind] ?? 0, streamId: null as string | null, streamStatus: null as MatrixStream["status"] | null, mapIt: null as MatrixCell["mapIt"], relink: false };
+  const unknown = f.activity48h === null;
+  const base = { kind, activity48h: f.activity48h?.[kind] ?? 0, ...(unknown ? { activityUnknown: true } : {}), streamId: null as string | null, streamStatus: null as MatrixStream["status"] | null, mapIt: null as MatrixCell["mapIt"], relink: false };
   if (kind !== "he" && !f.campaign) return { ...base, state: "not_applicable", reason: null, reasonText: "No campaign on this row", activity48h: 0 };
   const s = f.streams[kind];
   const activity = base.activity48h;
@@ -108,7 +110,7 @@ export function matrixCell(f: MatrixFacts, kind: DriveKind): MatrixCell {
   const dead = q.closedReason || q.seatsLeft <= 0 || (f.enforcedEndDate && q.endDatePassed);
   // A campaign on a closed or full requisition is a mapping that cannot move (K7BK): never "not mapped", and Live Meta offers the relink.
   const relink = kind === "meta_live" && !!f.campaign && !!(q.closedReason || q.seatsLeft <= 0);
-  if (!s && activity <= 0 && !dead) {
+  if (!s && activity <= 0 && !dead && !unknown) {
     const originId = kind === "meta_live" ? f.campaign!.id : kind === "he" ? "pool" : null;
     return { ...base, state: "not_mapped", reason: null, reasonText: `No ${KIND_LABEL[kind]} stream works on this requisition`, mapIt: { requisitionId: f.requisition.id, sourceType: kind, originId } };
   }
@@ -120,6 +122,7 @@ export function matrixCell(f: MatrixFacts, kind: DriveKind): MatrixCell {
     const note = s ? "" : " (no stream: legacy outreach)";
     return { ...cell, state: "running", reason: warn, reasonText: warn ? `${activity} contacted in 48 h; ${reasonText(warn, f, kind)}${note}` : `${activity} contacted in 48 h${note}` };
   }
+  if (unknown && !reasons.length) return { ...cell, state: "idle", reason: null, reasonText: "Contacts in the last 48 h are unknown (the activity read timed out)" };
   const first = reasons[0] ?? "no_contact_48h";
   const extra = activity > 0 ? ` (${activity} contacted in 48 h)` : "";
   return { ...cell, state: "idle", reason: first, reasonText: `${reasonText(first, f, kind)}${extra}` };

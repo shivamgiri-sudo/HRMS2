@@ -20,7 +20,7 @@ export const personFactsSql = (n: number, liveFrom: string): string => `SELECT l
 
 /** Row-level signals that go next to a lead id. `extraMeta`: one more Meta signal of the row itself. */
 export function typeKeyColsSql(o: { streams: boolean; d: string; leadId: string; ref: string; liveFrom: string; stream?: string; extraMeta?: string }): string {
-  const credit = o.streams ? `COALESCE(${o.stream ?? "rs"}.source_type, 'he') <> 'he' OR ` : "";
+  const credit = o.streams ? `${o.stream ?? "rs"}.source_type IN ('meta_live','meta_old') OR ` : "";
   return `${o.leadId} AS tl, (${credit}${metaDriveSql(o.d)}${o.extraMeta ? ` OR ${o.extraMeta}` : ""}) AS tm, (${o.ref} >= ${cutoffSql(o.liveFrom)}) AS tr`;
 }
 /** Column names of typeKeyColsSql (for GROUP BY). */
