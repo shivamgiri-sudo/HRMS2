@@ -9,7 +9,7 @@ import type { SourceType } from "./driveCommandTypes";
 export type CellState = "running" | "idle" | "not_mapped" | "not_applicable";
 export interface Completeness { score: number; label: "complete" | "partial" | "incomplete"; missing: string[]; enrolmentReady: boolean }
 export interface MatrixCellData {
-  kind: SourceType; state: CellState; reason: string | null; reasonText: string; activity48h: number; streamId: string | null;
+  kind: SourceType; state: CellState; reason: string | null; reasonText: string; activity48h: number; activityUnknown?: boolean; streamId: string | null;
   streamStatus: "draft" | "open" | "paused" | "closed" | null; mapIt: { requisitionId: string; sourceType: SourceType; originId: string | null } | null; relink: boolean;
 }
 export interface MatrixRowData {
@@ -27,7 +27,7 @@ const ICON: Record<CellState, CellView["icon"]> = { running: "running", idle: "i
 const STUCK_STREAMS = ["draft", "paused", "closed"];
 
 export function cellView(c: MatrixCellData, o: { canWrite: boolean }): CellView {
-  const people = c.state === "not_applicable" ? "" : c.activity48h > 0 ? `${c.activity48h} contacted in 48 h` : "Nobody contacted in 48 h";
+  const people = c.state === "not_applicable" ? "" : c.activityUnknown ? "Contacts in 48 h unknown" : c.activity48h > 0 ? `${c.activity48h} contacted in 48 h` : "Nobody contacted in 48 h";
   let action: CellAction | null = null;
   if (o.canWrite) {
     if (c.state === "not_mapped" && c.mapIt) action = { kind: "map_it", label: "Map it", prefill: c.mapIt };

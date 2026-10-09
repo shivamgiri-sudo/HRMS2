@@ -14,6 +14,8 @@ const row = (o: Partial<MatrixRowData> = {}, cells: Partial<Record<"meta_live" |
 describe("cellView", () => {
   it("running: icon + word + people, never colour alone", () => {
     expect(cellView(cell(), { canWrite: true })).toMatchObject({ word: "Running", icon: "running", people: "3 contacted in 48 h", action: null });
+    // E6: the activity read timed out: unknown, never "nobody contacted"
+    expect(cellView({ ...cell(), state: "idle", activity48h: 0, activityUnknown: true }, { canWrite: true }).people).toBe("Contacts in 48 h unknown");
   });
   it("not mapped offers Map it with the prefill to writers only", () => {
     const c = cell({ state: "not_mapped", activity48h: 0, streamId: null, streamStatus: null, mapIt: { requisitionId: "r1", sourceType: "meta_live", originId: "c1" } });
