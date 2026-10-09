@@ -106,6 +106,25 @@ describe("routes", () => {
     expect(h.recordInviteStop).toHaveBeenCalledWith("M1");
     expect(h.recordInviteAnswer).not.toHaveBeenCalled();
   });
+  // Intended (reviewed 2026-10-09): STOP is an opt-out, not an RSVP. It is honoured on ANY existing token at ANY time (after the slot,
+  // after a decline, on a closed requisition, after arrival or a no-show), because a person must always be able to stop messages from
+  // any link they were ever sent. Every other answer needs the RSVP window. An unknown token stops nothing (404).
+  it.each(["confirmed", "arrived", "no_show", "declined", "slot_released"])("STOP is always honoured on a match token in state %s, after the slot, RSVP closed", async (state) => {
+    h.match = { ...matchRow, state, rsvp_open: 0, is_open: 0, optin_open: 0 };
+    const r = await fetch(`${base}/loc/${MATCH_T}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "stop" }) });
+    expect(r.status).toBe(200);
+    expect(h.recordInviteStop).toHaveBeenCalledWith("M1");
+    const y = await fetch(`${base}/loc/${MATCH_T}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "yes" }) });
+    expect(y.status).toBe(403);
+    expect(h.recordInviteAnswer).not.toHaveBeenCalled();
+  });
+  it("STOP on an unknown token changes nothing (404)", async () => {
+    h.invite = null; h.inviteCtx = null;
+    const r = await fetch(`${base}/loc/${"e".repeat(32)}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "stop" }) });
+    expect(r.status).toBe(404);
+    expect(h.recordInviteStop).not.toHaveBeenCalled();
+    expect(h.answerInviteToken).not.toHaveBeenCalled();
+  });
   it("unknown answer → 400 bad_answer (unchanged)", async () => {
     const r = await fetch(`${base}/loc/${INV_T}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "maybe" }) });
     expect(r.status).toBe(400);
