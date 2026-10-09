@@ -25,16 +25,19 @@ export interface RelinkPreview {
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 const CHUNK = 500;
 
-async function leadsOf(campaignId: string, fromId: string | null): Promise<RowDataPacket[]> {
+/** The moment the person filled the form, IST: Meta's created_time (UTC) when the payload has it, else the import time. */
+const FILL_IST_SQL = `COALESCE(CONVERT_TZ(STR_TO_DATE(LEFT(JSON_UNQUOTE(JSON_EXTRACT(r.raw_payload, '$.created_time')), 19), '%Y-%m-%dT%H:%i:%s'), '+00:00', '+05:30'), r.created_at)`;
+
+async function leadsOf(campaignId: string, fromId: string | null, since: string | null = null): Promise<RowDataPacket[]> {
   const t = await optionalTables();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT r.id, r.screening_result, ${isLeadContactedSql("r", t)} AS contacted FROM meta_lead_raw r
-      WHERE r.campaign_id = ? AND (r.requisition_id IS NULL${fromId ? " OR r.requisition_id = ?" : ""}) ORDER BY r.id`,
-    fromId ? [campaignId, fromId] : [campaignId]);
+      WHERE r.campaign_id = ? AND (r.requisition_id IS NULL${fromId ? " OR r.requisition_id = ?" : ""})${since ? ` AND ${FILL_IST_SQL} >= ?` : ""} ORDER BY r.id`,
+    [campaignId, ...(fromId ? [fromId] : []), ...(since ? [`${since} 00:00:00`] : [])]);
   return rows;
 }
 
-export async function previewRelink(campaignId: string, toRequisitionId: string): Promise<RelinkPreview & { moveIds: string[] }> {
+export async function previewRelink(campaignId: string, toRequisitionId: string, since: string | null = null): Promise<RelinkPreview & { moveIds: string[] }> {
   const [c] = await db.execute<RowDataPacket[]>("SELECT id, requisition_id, meta_form_id FROM meta_campaign WHERE id = ? LIMIT 1", [campaignId]);
   if (!c[0]) throw fail(404, "Campaign not found");
   const fromId = String(c[0].requisition_id ?? "") || null;
@@ -48,7 +51,7 @@ export async function previewRelink(campaignId: string, toRequisitionId: string)
   if (toClosed) throw fail(409, `Pick an open requisition (${toClosed})`);
   const from = fromId ? reqs.find((r) => String(r.id) === fromId) ?? null : null;
 
-  const leads = await leadsOf(campaignId, fromId);
+  const leads = await leadsOf(campaignId, fromId, since);
   const moving = leads.filter((l) => Number(l.contacted) !== 1);
   const count = (s: string) => moving.filter((l) => String(l.screening_result) === s).length;
   const moveIds = moving.map((l) => String(l.id));
@@ -61,7 +64,7 @@ export async function previewRelink(campaignId: string, toRequisitionId: string)
   }
   // E9: stable on an active campaign: the requisition pair and who must stay (contacted people), not every new lead id. A new lead moves
   // with the rest; someone contacted since the preview changes it (409 with the fresh preview).
-  const previewHash = createHash("sha256").update(JSON.stringify({ campaignId, fromId, to: toRequisitionId, stayIds: leads.filter((l) => Number(l.contacted) === 1).map((l) => String(l.id)) })).digest("hex");
+  const previewHash = createHash("sha256").update(JSON.stringify({ campaignId, fromId, to: toRequisitionId, since, stayIds: leads.filter((l) => Number(l.contacted) === 1).map((l) => String(l.id)) })).digest("hex");
   return {
     campaignId, fromRequisitionId: fromId, fromCode: from ? String(from.requisition_code ?? "") : null, fromClosedReason: from ? closedReasonOf(from) : null,
     toRequisitionId, toCode: String(to.requisition_code ?? ""), toBranch: String(to.branch_name ?? ""),
@@ -77,10 +80,10 @@ function routingCodeOf(raw: unknown): string | null {
   } catch { return null; }
 }
 
-export async function applyRelink(a: { campaignId: string; toRequisitionId: string; previewHash: string; reason: string; actor: LinkActor }): Promise<{ moved: number; kept: number; relinkId: string }> {
+export async function applyRelink(a: { campaignId: string; toRequisitionId: string; previewHash: string; reason: string; actor: LinkActor; since?: string | null }): Promise<{ moved: number; kept: number; relinkId: string }> {
   const reason = String(a.reason ?? "").trim();
   if (reason.length < 3 || reason.length > 300) throw fail(400, "Give a reason (3 to 300 characters)");
-  const p = await previewRelink(a.campaignId, a.toRequisitionId);
+  const p = await previewRelink(a.campaignId, a.toRequisitionId, a.since ?? null);
   if (p.previewHash !== a.previewHash) {
     const { moveIds: _ids, ...preview } = p;
     throw Object.assign(fail(409, "Someone on this campaign was contacted since the preview; check the new preview"), { preview });

@@ -18,6 +18,7 @@
  * leadgen_id is a no-op rather than a second candidate.
  */
 
+import { ensureOpenPrimary } from './campaign-successor.service.js';
 import { randomUUID } from 'crypto';
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
@@ -613,6 +614,16 @@ export const metaCampaignService = {
         }
       );
       if (routed) { campaign = routed; routedByCode = true; }
+    }
+
+    // Auto-successor (meta.auto_successor, off by default): a campaign whose requisition HR has filled or closed moves to the best open one
+    // of the same designation before this lead is screened. "Filled" is only HR's fulfilled_headcount; nothing here writes it.
+    if (campaign?.id && campaign.requisition_id && !routedByCode) {
+      const next = await ensureOpenPrimary(String(campaign.id));
+      if (next) {
+        const [cols] = await db.execute<RowDataPacket[]>(ROUTED_SCREENING_SQL, [next]);
+        if (cols[0]) campaign = { ...campaign, ...cols[0] } as RowDataPacket;
+      }
     }
 
     // WS3 B1: a campaign with several open requisitions sends the lead to the best fit (META_MULTI_REQ_ROUTING; off = not one statement more).
