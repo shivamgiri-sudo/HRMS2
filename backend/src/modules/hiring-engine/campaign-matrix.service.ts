@@ -13,13 +13,17 @@ import { compileCriteria } from "../selection/compile-criteria.js";
 import { LOAD_ROW_SQL, toCriteriaRow } from "../selection/criteria-row.js";
 import { endDateEnforcementAllowed, endDateOf, endDatePassed, seatsLeft } from "./requisition-criteria.js";
 import { activityTypeSql, fillPhoneSql } from "./he-source-attribution.js";
-import { loadLiveFrom } from "./he-source-attribution.service.js";
+import { loadLiveWindow } from "./he-source-attribution.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import { engineMode } from "./he-policy.service.js";
 import { DRIVE_KINDS, matrixRows, type DriveKind, type MatrixFacts, type MatrixRow, type MatrixStream } from "./campaign-matrix.js";
 
 export interface MatrixQuery { branch?: string | null; requisitionId?: string | null; campaignId?: string | null }
-export interface CampaignMatrix { rows: MatrixRow[]; generatedAt: string; partial: string[]; enforcedEndDate: boolean }
+export interface CampaignMatrix {
+  rows: MatrixRow[]; generatedAt: string; partial: string[]; enforcedEndDate: boolean;
+  /** The Live Meta cutoff the Live / Old counts used (rolling: today IST minus liveDays; he-source-attribution.service.ts). */
+  liveFrom?: string; liveDays?: number; liveMode?: "rolling" | "fixed";
+}
 
 const CI = "COLLATE utf8mb4_unicode_ci";
 const ph = (n: number) => Array.from({ length: n }, () => "?").join(",");
@@ -82,7 +86,7 @@ export async function getCampaignMatrix(q: MatrixQuery, scope: BranchScope, now 
   const branch = scope.all ? (q.branch ?? null) : scope.branchName;
   if (!scope.all && !scope.branchName) return { rows: [], generatedAt: now.toISOString(), partial: [], enforcedEndDate: false };
   if (!scope.all && q.branch && q.branch !== scope.branchName) return { rows: [], generatedAt: now.toISOString(), partial: [], enforcedEndDate: false };
-  const key = JSON.stringify([branch, q.requisitionId ?? null, q.campaignId ?? null]);
+  const key = JSON.stringify([branch, q.requisitionId ?? null, q.campaignId ?? null, istDay(now)]); // the day: the Live Meta cutoff rolls at midnight IST
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
   const value = await build(q, branch, now);
@@ -92,11 +96,13 @@ export async function getCampaignMatrix(q: MatrixQuery, scope: BranchScope, now 
 
 async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<CampaignMatrix> {
   const partial: string[] = [];
-  const [campaigns, params, liveFrom] = await Promise.all([
+  const [campaigns, params, live] = await Promise.all([
     run(CAMPAIGNS_SQL, []).catch((e) => { if (noTable(e)) return run(CAMPAIGNS_NO_LINKS_SQL, []); throw e; }),
     run("SELECT param_key, value FROM he_model_param WHERE param_key IN ('policy.req_end_date_enforced', 'policy.shortlist.enrol', 'policy.engine_auto')", []).catch(() => [] as RowDataPacket[]),
-    loadLiveFrom(),
+    loadLiveWindow(now),
   ]);
+  const liveFrom = live.liveFrom;
+  const cut = { liveFrom, liveDays: live.days, liveMode: live.mode };
   const param = (k: string) => Number(params.find((p) => p.param_key === k)?.value ?? 0) === 1;
   const enforced = endDateEnforcementAllowed() && param("policy.req_end_date_enforced");
   const engineLive = engineMode(process.env, param("policy.engine_auto")) === "live";
@@ -106,7 +112,7 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
   const reqRows = await run(reqSql(referenced.length, !!branch), [...referenced, ...(branch ? [branch] : [])]);
   const reqById = new Map(reqRows.map((r) => [String(r.id), r]));
   const ids = [...reqById.keys()];
-  if (!ids.length) return { rows: [], generatedAt: now.toISOString(), partial, enforcedEndDate: enforced };
+  if (!ids.length) return { rows: [], generatedAt: now.toISOString(), partial, enforcedEndDate: enforced, ...cut };
 
   const since48 = istText(new Date(now.getTime() - 48 * 3600_000)), since3d = istText(new Date(now.getTime() - 72 * 3600_000));
   const today = istDay(now), in3 = istDay(new Date(now.getTime() + 3 * 86_400_000));
@@ -171,5 +177,5 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
       enrolmentOn: { meta_live: cfg?.auto_notify !== false || followupMode() !== "off", meta_old: enrolHe, he: enrolHe }, enforcedEndDate: enforced,
     };
   });
-  return { rows: matrixRows(facts), generatedAt: now.toISOString(), partial, enforcedEndDate: enforced };
+  return { rows: matrixRows(facts), generatedAt: now.toISOString(), partial, enforcedEndDate: enforced, ...cut };
 }

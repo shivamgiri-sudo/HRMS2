@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execute = vi.hoisted(() => vi.fn());
 const logError = vi.hoisted(() => vi.fn());
@@ -10,7 +10,13 @@ import { getSourcesForRequisitions } from "../he-sources-window.service.js";
 import { stripRule } from "./attributionSql.js";
 import { qfTypeKeysSql, sourcesLeadsRows } from "../he-requisition-sources.service.js";
 import { PersonFacts } from "../he-person-facts.service.js";
-import { fillTypeSql } from "../he-source-attribution.js";
+import { fillTypeSql, rollingLiveFrom } from "../he-source-attribution.js";
+
+// The readers load the rolling Live Meta cutoff from the clock: pinned to 14 Oct 2026 11:30 IST, so the cutoff is 7 Oct 2026.
+const NOW = new Date("2026-10-14T06:00:00Z");
+const CUT = rollingLiveFrom(NOW);
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
+afterEach(() => { vi.useRealTimers(); });
 
 describe("getRequisitionSources SQL (pinned)", () => {
   beforeEach(() => { vi.clearAllMocks(); clearRequisitionSourcesCache(); });
@@ -78,7 +84,7 @@ describe("getSourcesForRequisitions", () => {
   it("types qualified .. joined by the person rule, never by qualified_followup.source_type (the pipeline's enqueue-time type)", async () => {
     await getSourcesForRequisitions(["r1"], W);
     const stages = calls().find(([q]) => kindOf(q) === "stages")![0];
-    expect(stages).toContain(`${qfTypeKeysSql("2026-10-08")}, qf.origin_id`);
+    expect(stages).toContain(`${qfTypeKeysSql(CUT)}, qf.origin_id`);
     expect(stages).not.toMatch(/qf\.source_type/);
   });
 
@@ -87,7 +93,7 @@ describe("getSourcesForRequisitions", () => {
     const q = calls().find(([x]) => kindOf(x) === "driveLeads")![0].replace(/\s+/g, " ");
     // per person (a hash of the mobile, never the mobile) the best campaign key of their fills, typed in SQL ...
     expect(q).toContain("SELECT /*+ MAX_EXECUTION_TIME(8000) */ 'f' AS src, MD5(f.person) AS pkey, f.requisition_id, MAX(CONCAT(4 - f.ft, 3, CHAR(31), 'campaign'");
-    expect(q).toContain(`FIELD(${fillTypeSql("r", "2026-10-08").replace(/\s+/g, " ")}, 'meta_live', 'meta_old', 'he') AS ft`);
+    expect(q).toContain(`FIELD(${fillTypeSql("r", CUT).replace(/\s+/g, " ")}, 'meta_live', 'meta_old', 'he') AS ft`);
     expect(q).toContain("GROUP BY pkey, f.requisition_id");
     // ... and every line-up with its person signals, typed once per person in JS
     expect(q).toContain("SELECT 'l', MD5(al.mobile10 COLLATE utf8mb4_unicode_ci), d.requisition_id COLLATE utf8mb4_unicode_ci, NULL, m.lead_id AS tl,");
@@ -95,7 +101,7 @@ describe("getSourcesForRequisitions", () => {
 
   it("sourcesLeadsRows picks the same origin and type the SQL used to: most-Meta type, then stream > campaign > drive > pool", async () => {
     execute.mockResolvedValue([[{ id: "old", pm: 1, fl: 0 }]]);
-    const pf = new PersonFacts("2026-10-08");
+    const pf = new PersonFacts(CUT);
     await pf.load(["old"]);
     const sep = String.fromCharCode(31);
     const f = (pkey: string, rank: number, cid: string, name: string) => ({ src: "f", pkey, requisition_id: "r1", fkey: `${4 - rank}3${sep}campaign${sep}${cid}${sep}${name}` });

@@ -357,7 +357,7 @@ describe("events-based stages and per-campaign progress", () => {
     impl.discovery = [head("r1")];
     await getDriveAnalytics(Q, ALL, NOW);
     const stops = callsOf("stops")[0][0];
-    expect(stops).toContain(`SELECT /*+ MAX_EXECUTION_TIME(8000) */ ${qfTypeKeysSql("2026-10-08")}, qf.stopped_reason`);
+    expect(stops).toContain(`SELECT /*+ MAX_EXECUTION_TIME(8000) */ ${qfTypeKeysSql("2026-10-07")}, qf.stopped_reason`);
     expect(stops).not.toMatch(/qf\.source_type/);
   });
   const p = (o: Record<string, unknown>) => ({ requisition_id: "r1", source_type: "he", campaign_id: null, leads: 0, qualified: 0, contacted: 0, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0, ...o });
@@ -375,7 +375,10 @@ describe("events-based stages and per-campaign progress", () => {
     expect(r.types.meta_old.stages).toMatchObject({ leads: 40, invited: 30, confirmed: 11, arrived: 2, selected: 1 });
     expect(r.types.meta_live.stages).toMatchObject({ leads: 9, invited: 0 });
     expect(r.types.he.stages).toMatchObject({ leads: 25, invited: 18, confirmed: 7, arrived: 6 });
-    expect(r.liveFrom).toBe("2026-10-08");
+    // rolling cutoff: 14 Oct 2026 (IST) minus 7 days
+    expect(r.liveFrom).toBe("2026-10-07");
+    expect(r.liveDays).toBe(7);
+    expect(r.liveMode).toBe("rolling");
     expect(r.campaigns).toEqual([
       expect.objectContaining({ campaignId: "c2", campaignName: "Onfido night", campaignStatus: "active", campaignRequisitionCode: "REQ-x", requisitionId: "r1", requisitionCode: "REQ-r1", branch: "Pune", sourceType: "meta_live",
         stages: { leads: 9, fills: 0, screened: 0, qualified: 0, contacted: 1, invited: 0, replied: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 } }),
@@ -450,7 +453,8 @@ describe("a slow read never hangs the response", () => {
     expect(BUILD_BUDGET_MS).toBe(12_000);
     impl.discovery = [head("r1")];
     await getDriveAnalytics(Q, ALL, NOW);
-    for (const [q] of sqlOf()) expect(q.trimStart()).toMatch(/^SELECT \/\*\+ MAX_EXECUTION_TIME\(8000\) \*\//);
+    // the cutoff params (he_model_param, three keys, cached 60 s) are the only read outside the analytics limiter
+    for (const [q] of sqlOf().filter(([x]) => !x.startsWith("SELECT param_key, value FROM he_model_param"))) expect(q.trimStart()).toMatch(/^SELECT \/\*\+ MAX_EXECUTION_TIME\(8000\) \*\//);
   });
 });
 
@@ -458,5 +462,23 @@ describe("existing reads are untouched", () => {
   it("getDriveTrend still answers null for an unknown requisition", async () => {
     execute.mockResolvedValue([[]]);
     expect(await getDriveTrend({ requisitionId: "x" }, ALL, NOW)).toBeNull();
+  });
+});
+
+describe("rolling Live Meta cutoff in the analytics build", () => {
+  it("one cutoff per build from the build's clock; the 60 s result cache never serves yesterday's cutoff after midnight IST", async () => {
+    impl.discovery = [head("r1")];
+    const late = new Date("2026-10-14T18:29:30Z"); // 23:59:30 IST on 14 Oct
+    const a = ok(await getDriveAnalytics(Q, ALL, late));
+    expect(a.liveFrom).toBe("2026-10-07");
+    const b = ok(await getDriveAnalytics(Q, ALL, new Date("2026-10-14T18:30:10Z"))); // 40 s later, 00:00:10 IST on 15 Oct
+    expect(b.liveFrom).toBe("2026-10-08");
+    expect(callsOf("persons").map(([q]) => q).every((q) => q.includes("TIMESTAMP '2026-10-07 00:00:00'") || q.includes("TIMESTAMP '2026-10-08 00:00:00'"))).toBe(true);
+  });
+  it("an empty scope still reports the rolling cutoff", async () => {
+    impl.discovery = [];
+    const r = ok(await getDriveAnalytics(Q, ALL, NOW));
+    expect(r.liveFrom).toBe("2026-10-07");
+    expect(r.liveMode).toBe("rolling");
   });
 });

@@ -203,7 +203,7 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
   const codeOf = (id: string): string => ctx.codes.get(id) ?? "";
   const dt = [`${ctx.from} 00:00:00`, `${addDays(ctx.to, 1)} 00:00:00`];
   const upTo = ctx.to < ctx.today ? ctx.to : ctx.today;
-  const lf = ctx.liveFrom ?? await loadLiveFrom();
+  const lf = ctx.liveFrom ?? await loadLiveFrom(ctx.now);
   const pf = ctx.personFacts ?? new PersonFacts(lf); // the build's person facts: people typed once per build
   const typedRead = async (list: string[], sqlOf: (n: number, streams: boolean, liveFrom: string) => string, params: (b: string[]) => unknown[]): Promise<RowDataPacket[]> => {
     const rows = await read(list, sqlOf, params, lf);

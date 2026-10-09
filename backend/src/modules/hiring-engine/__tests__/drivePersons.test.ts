@@ -277,3 +277,26 @@ describe("campaignProgress blockers (why qualified leads may stall)", () => {
     expect(out[0].blockers).toEqual([]);
   });
 });
+
+describe("a window that straddles the rolling Live Meta boundary", () => {
+  // 9 Oct 2026: cutoff 2 Oct. A: first fill 5 Oct, activity on both sides; B: first fill 28 Sep; C: pool; D: first fill exactly 2 Oct 00:00.
+  // 10 Oct 2026: cutoff 3 Oct, so D's first fill has left the window (the facts read says fl = 0) and D moves to Old Meta data.
+  const person = (tl: string, o: Record<string, unknown> = {}) => ({ cur: 1, requisition_id: "r1", tl, frank: null, lead_rows: 1, any_m: 0, any_r: 1, any_mr: 0, campaign_id: null, stage: 2, q: 0, sel: 0, joi: 0, ...o });
+  const rows = [person("A"), person("B"), person("C"), person("D")];
+  const at = async (liveFrom: string, d: { pm: number; fl: number }) => {
+    execute.mockResolvedValueOnce([[{ id: "A", pm: 1, fl: 1 }, { id: "B", pm: 1, fl: 0 }, { id: "C", pm: 0, fl: 0 }, { id: "D", ...d }]]);
+    const f = new PersonFacts(liveFrom);
+    await f.loadRows(rows);
+    return aggregatePersons(typePersonRows(rows as never, f)).byType;
+  };
+  it("each person is counted once, in exactly one section, and the sections sum to the total on both days", async () => {
+    const d1 = await at("2026-10-02", { pm: 1, fl: 1 });
+    const d2 = await at("2026-10-03", { pm: 1, fl: 0 });
+    expect([d1.meta_live.leads, d1.meta_old.leads, d1.he.leads]).toEqual([2, 1, 1]);
+    expect([d2.meta_live.leads, d2.meta_old.leads, d2.he.leads]).toEqual([1, 2, 1]);
+    for (const d of [d1, d2]) {
+      expect(d.meta_live.leads + d.meta_old.leads + d.he.leads).toBe(rows.length);
+      expect(d.meta_live.invited + d.meta_old.invited + d.he.invited).toBe(rows.length);
+    }
+  });
+});
