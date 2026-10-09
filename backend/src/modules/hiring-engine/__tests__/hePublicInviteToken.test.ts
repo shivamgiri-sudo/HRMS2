@@ -138,9 +138,16 @@ describe("routes", () => {
   it("30 concurrent answers on one token: one runs, the rest are told busy; a pool of 5 is never exhausted", async () => {
     let inUse = 0, peak = 0;
     const pool = { size: 5, async take() { if (inUse >= this.size) throw new Error("pool exhausted"); inUse++; peak = Math.max(peak, inUse); }, give() { inUse--; } };
-    h.answerInviteToken.mockImplementation(async () => { await pool.take(); try { await new Promise((r) => setTimeout(r, 40)); } finally { pool.give(); } return { state: "confirmed", booked: true }; });
+    // The running answer is held until the other 29 have been answered, so the result does not depend on how fast the requests arrive.
+    // The 2 s fallback only fires when the gate lets a second answer through (it would never answer), turning a hang into a failure.
+    let release!: () => void;
+    const hold = new Promise<void>((r) => { release = r; });
+    const fallback = setTimeout(() => release(), 2000);
+    h.answerInviteToken.mockImplementation(async () => { await pool.take(); try { await hold; } finally { pool.give(); } return { state: "confirmed", booked: true }; });
     const post = () => fetch(`${base}/loc/${INV_T}/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer: "yes" }) });
-    const rs = await Promise.all(Array.from({ length: 30 }, post));
+    let answered = 0;
+    const rs = await Promise.all(Array.from({ length: 30 }, () => post().then((r) => { if (++answered === 29) release(); return r; })));
+    clearTimeout(fallback);
     const codes = rs.map((r) => r.status);
     expect(codes.filter((c) => c === 200)).toHaveLength(1);
     expect(codes.filter((c) => c === 429)).toHaveLength(29);
