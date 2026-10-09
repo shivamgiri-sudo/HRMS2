@@ -204,9 +204,25 @@ export async function rejectPeople(a: { requisitionId: string; mobiles: string[]
 }
 
 const SOURCE: Record<SourceKind, "meta_live" | "meta_old" | "he"> = { meta_live: "meta_live", meta_old: "meta_old", he: "he" };
-async function cachedFacts(mobile10: string, sourceKind: SourceKind): Promise<CandidateFacts | null> {
-  const [r] = await db.execute<RowDataPacket[]>("SELECT facts_json FROM selection_person_fact WHERE mobile10 = ? AND source_kind = ? LIMIT 1", [mobile10, sourceKind]);
-  return r[0] ? ((typeof r[0].facts_json === "string" ? JSON.parse(r[0].facts_json) : r[0].facts_json) as CandidateFacts) : null;
+async function cachedPerson(mobile10: string, sourceKind: SourceKind): Promise<{ facts: CandidateFacts | null; sourceRef: string | null }> {
+  const [r] = await db.execute<RowDataPacket[]>("SELECT facts_json, source_ref FROM selection_person_fact WHERE mobile10 = ? AND source_kind = ? LIMIT 1", [mobile10, sourceKind]);
+  if (!r[0]) return { facts: null, sourceRef: null };
+  return { facts: (typeof r[0].facts_json === "string" ? JSON.parse(r[0].facts_json) : r[0].facts_json) as CandidateFacts, sourceRef: r[0].source_ref ? String(r[0].source_ref) : null };
+}
+
+/**
+ * The person's records for the journey: the follow-up books and sends through the Hiring Engine lead (a Meta lead is bridged into one
+ * when there is none). The facts cache's source_ref is the Meta lead (Meta sources) or the Hiring Engine lead (he); the lead is
+ * otherwise found by mobile.
+ */
+async function leadRefs(mobile10: string, sourceKind: SourceKind, sourceRef: string | null): Promise<{ heLeadId: string | null; metaLeadId: string | null }> {
+  const meta = sourceKind !== "he";
+  let heLeadId = !meta && sourceRef ? sourceRef : null;
+  if (!heLeadId) {
+    const [l] = await db.execute<RowDataPacket[]>("SELECT id FROM he_lead WHERE mobile10 = ? LIMIT 1", [mobile10]);
+    heLeadId = l[0]?.id ? String(l[0].id) : null;
+  }
+  return { heLeadId, metaLeadId: meta ? sourceRef : null };
 }
 
 /** The enrol step: approved rows only, and only with policy.shortlist.enrol = 1 (otherwise approved stays approved, nothing is sent). */
@@ -221,8 +237,10 @@ export async function enrolApproved(a: { requisitionId: string; sourceKind: Sour
   let enrolled = 0, staleVersion = 0;
   for (const r of rows) {
     if ((r.criteria_version_id ?? null) !== current) { staleVersion++; continue; }
-    const f = await cachedFacts(String(r.mobile10), a.sourceKind);
-    const out = await a.port.enqueue({ sourceType: SOURCE[a.sourceKind], requisitionId: a.requisitionId, mobile10: String(r.mobile10), fullName: f?.firstName ?? null,
+    const c = await cachedPerson(String(r.mobile10), a.sourceKind);
+    const f = c.facts;
+    const refs = await leadRefs(String(r.mobile10), a.sourceKind, c.sourceRef);
+    const out = await a.port.enqueue({ sourceType: SOURCE[a.sourceKind], requisitionId: a.requisitionId, mobile10: String(r.mobile10), ...refs, fullName: f?.firstName ?? null,
       email: f?.email.quality === "ok" ? String(f.email.value) : null, branchName: g.branchName, roleName: g.roleName,
       originId: String(r.run_id), originLabel: "Approved shortlist", shortlistId: String(r.id), criteriaVersionId: r.criteria_version_id ? String(r.criteria_version_id) : null });
     if (["enqueued", "exists", "promoted", "held"].includes(out.status)) {
@@ -253,7 +271,8 @@ export async function enrolLiveArrival(a: { requisitionId: string; facts: Candid
     [standing.id, a.requisitionId, f.personKey, f.subSource, e.score, standing.versionId, e.engineVersion, e.override?.kind ?? null, e.factsHash, standing.id]);
   const [r] = await db.execute<RowDataPacket[]>("SELECT id, status FROM shortlist_candidate WHERE run_id = ? AND mobile10 = ? LIMIT 1", [standing.id, f.personKey]);
   if (!r[0] || r[0].status !== "approved") return { decision: "already_enrolled" as const };
-  const out = await a.port.enqueue({ sourceType: "meta_live", requisitionId: a.requisitionId, mobile10: f.personKey, fullName: f.firstName ?? null,
+  const refs = await leadRefs(f.personKey, "meta_live", a.arrival?.metaLeadId ?? null);
+  const out = await a.port.enqueue({ sourceType: "meta_live", requisitionId: a.requisitionId, mobile10: f.personKey, ...refs, fullName: f.firstName ?? null,
     email: f.email.quality === "ok" ? String(f.email.value) : null, branchName: g.branchName, roleName: g.roleName, originId: standing.id, originLabel: "Standing approval",
     shortlistId: String(r[0].id), criteriaVersionId: standing.versionId, ...(a.arrival ?? {}) });
   if (["enqueued", "exists", "promoted", "held"].includes(out.status)) await db.execute("UPDATE shortlist_candidate SET status = 'enrolled' WHERE id = ?", [r[0].id]);

@@ -4,7 +4,7 @@ import type { Evaluated } from "../preview.service.js";
 const h = vi.hoisted(() => {
   const state = {
     req: {} as Record<string, unknown>, row: {} as Record<string, unknown>, runs: [] as Array<Record<string, unknown>>, cands: [] as Array<Record<string, unknown>>,
-    approvals: [] as Array<Record<string, unknown>>, enrol: 0, perSeat: null as number | null, version: "v1" as string | null, people: [] as Evaluated[], outOfScope: new Set<string>(), facts: new Map<string, unknown>(), nextId: 1,
+    approvals: [] as Array<Record<string, unknown>>, enrol: 0, perSeat: null as number | null, version: "v1" as string | null, people: [] as Evaluated[], outOfScope: new Set<string>(), facts: new Map<string, unknown>(), refs: new Map<string, string>(), leads: new Map<string, string>(), nextId: 1,
   };
   const exec = async (sql: string, p: unknown[] = []) => {
     const s = sql.replace(/\s+/g, " ").trim();
@@ -55,7 +55,8 @@ const h = vi.hoisted(() => {
       hit.forEach((c) => { c.status = "hr_rejected"; }); return [{ affectedRows: hit.length }, []];
     }
     if (s.startsWith("SELECT id, run_id, mobile10, criteria_version_id FROM shortlist_candidate")) return [S.cands.filter((c) => c.requisition_id === p[0] && c.source_kind === p[1] && c.status === "approved"), []];
-    if (s.startsWith("SELECT facts_json FROM selection_person_fact")) return [S.facts.has(String(p[0])) ? [{ facts_json: S.facts.get(String(p[0])) }] : [], []];
+    if (s.startsWith("SELECT facts_json, source_ref FROM selection_person_fact")) return [S.facts.has(String(p[0])) ? [{ facts_json: S.facts.get(String(p[0])), source_ref: S.refs.get(String(p[0])) ?? null }] : [], []];
+    if (s.startsWith("SELECT id FROM he_lead WHERE mobile10 = ?")) return [S.leads.has(String(p[0])) ? [{ id: S.leads.get(String(p[0])) }] : [], []];
     if (s.startsWith("UPDATE shortlist_candidate SET status = 'enrolled'")) { S.cands.filter((c) => c.id === p[0]).forEach((c) => { c.status = "enrolled"; }); return [{}, []]; }
     if (s.startsWith("SELECT id, status FROM shortlist_candidate WHERE run_id = ? AND mobile10 = ?")) return [S.cands.filter((c) => c.run_id === p[0] && c.mobile10 === p[1]), []];
     throw new Error(`unexpected SQL: ${s.slice(0, 80)}`);
@@ -96,7 +97,7 @@ const port = () => { const calls: unknown[] = []; return { calls, enqueue: vi.fn
 
 beforeEach(() => {
   Object.assign(h.state, { req: { approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 10, fulfilled_headcount: 0, requisition_validity: "2026-10-30", branch_name: "NOIDA-2", designation_name: "CSE" },
-    row: dbRow(), runs: [], cands: [], approvals: [], enrol: 0, perSeat: null, version: "v1", outOfScope: new Set(), facts: new Map(), nextId: 1 });
+    row: dbRow(), runs: [], cands: [], approvals: [], enrol: 0, perSeat: null, version: "v1", outOfScope: new Set(), facts: new Map(), refs: new Map(), leads: new Map(), nextId: 1 });
   h.state.people = evalAll([person(1), person(2), person(3), person(4, { age: { value: null, quality: "missing", from: "t" } }), person(5, { age: ok(50) }), person(6, { recordType: "legacy_employee" })]);
 });
 
@@ -214,6 +215,29 @@ describe("enrol step", () => {
     expect(p.calls[0]).toMatchObject({ sourceType: "he", requisitionId: "r1", mobile10: person(1).personKey, email: "p1@x.com", branchName: "NOIDA-2", roleName: "CSE", shortlistId: "1", criteriaVersionId: "v1" });
     expect(h.state.cands.filter((c) => c.status === "enrolled")).toHaveLength(3);
     expect(h.state.cands.find((c) => c.status === "review")).toBeTruthy(); // a review row is never enrolled
+  });
+});
+
+describe("enrol step: the person's records travel with the enrolment (rig finding: a journey without a lead could not book or send)", () => {
+  it("he: the Hiring Engine lead from the facts cache (source_ref); a missing ref falls back to the lead by mobile", async () => {
+    const { runId } = await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
+    await approveBatch({ requisitionId: "r1", sourceKind: "he", runId, actor, now: NOW });
+    h.state.enrol = 1;
+    h.state.facts.set(person(1).personKey, JSON.stringify(person(1))); h.state.refs.set(person(1).personKey, "lead-1");
+    h.state.leads.set(person(2).personKey, "lead-2");
+    const p = port();
+    await enrolApproved({ requisitionId: "r1", sourceKind: "he", port: p, now: NOW });
+    expect(p.calls.map((c) => [(c as { mobile10: string }).mobile10, (c as { heLeadId?: string | null }).heLeadId ?? null, (c as { metaLeadId?: string | null }).metaLeadId ?? null])).toEqual([
+      [person(1).personKey, "lead-1", null], [person(2).personKey, "lead-2", null], [person(3).personKey, null, null]]);
+  });
+  it("meta: the Meta lead from the facts cache (source_ref), plus the Hiring Engine lead of the mobile when there is one", async () => {
+    const { runId } = await createShortlistRun({ requisitionId: "r1", sourceKind: "meta_old", actor, now: NOW });
+    await approveBatch({ requisitionId: "r1", sourceKind: "meta_old", runId, actor, now: NOW });
+    h.state.enrol = 1;
+    h.state.facts.set(person(1).personKey, JSON.stringify(person(1))); h.state.refs.set(person(1).personKey, "meta-1"); h.state.leads.set(person(1).personKey, "lead-1");
+    const p = port();
+    await enrolApproved({ requisitionId: "r1", sourceKind: "meta_old", port: p, now: NOW });
+    expect(p.calls[0]).toMatchObject({ sourceType: "meta_old", metaLeadId: "meta-1", heLeadId: "lead-1" });
   });
 });
 

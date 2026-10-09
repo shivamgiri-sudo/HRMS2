@@ -103,11 +103,13 @@ export interface SendContext {
   leadStatus: string | null;
 }
 
-/** Meta rows are bridged into he_lead first (idempotent, never throws) and the link is stamped on the row; he rows already carry it. */
+/**
+ * Meta rows are bridged into he_lead first (idempotent, never throws); a row without a Meta lead (Hiring Engine, or enrolled without
+ * the link) takes the lead of its mobile. The link is stamped on the row.
+ */
 export async function ensureHeLead(row: FollowupRow): Promise<string | null> {
-  if (row.sourceType === "he" || !row.metaLeadId) return row.heLeadId;
   if (row.heLeadId) return row.heLeadId;
-  await bridgeOneMetaLead(row.metaLeadId);
+  if (row.sourceType !== "he" && row.metaLeadId) await bridgeOneMetaLead(row.metaLeadId);
   const [r] = await db.execute<RowDataPacket[]>(`SELECT id FROM he_lead WHERE mobile10 = ? ${C} LIMIT 1`, [row.mobile10]);
   const id = r[0]?.id ? String(r[0].id) : null;
   if (id) await db.execute("UPDATE qualified_followup SET he_lead_id = ? WHERE id = ? AND he_lead_id IS NULL", [id, row.id]);
