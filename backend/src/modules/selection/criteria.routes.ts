@@ -12,7 +12,7 @@ import {
 } from "./criteria.service.js";
 import { previewCsv, previewRequisition } from "./preview.service.js";
 import { whyNot } from "./why-not.service.js";
-import { registerJdSuggestionRoutes } from "./jd-suggestions.routes.js";
+import { mountJdSuggestionRoutes } from "./jd-suggestions.routes.js";
 import { campaignRequisitions, listCriteriaRequisitions } from "./selection-ui.service.js";
 import { RULE_KEYS, SOURCE_KINDS, SUB_SOURCES, type RuleKey, type SourceKind, type SubSource } from "./selection-types.js";
 import { TEMPLATES, type CriteriaPatch } from "./templates.js";
@@ -145,4 +145,4 @@ criteriaRouter.get("/:id/selection/preview.csv", requireAuth, requireRole(...PRE
 }));
 
 // Suggestions from the requisition text (S-O8)
-registerJdSuggestionRoutes(criteriaRouter);
+mountJdSuggestionRoutes(criteriaRouter);

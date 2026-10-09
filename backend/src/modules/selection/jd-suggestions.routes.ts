@@ -35,7 +35,7 @@ const valuesOf = (v: unknown): Record<string, number> | null => {
 };
 const bad = (res: Response, message: string) => res.status(400).json({ success: false, message });
 
-export function registerJdSuggestionRoutes(r: Router): void {
+export function mountJdSuggestionRoutes(r: Router): void {
   r.get("/:id/criteria/suggestions", requireAuth, requireRole(...CRITERIA_READ_ROLES), inScope, h(async (req, res) =>
     res.json({ success: true, data: await getSuggestions(req.params.id, String(req.authUser!.role ?? "")) })));
 
