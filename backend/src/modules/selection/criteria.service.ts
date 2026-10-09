@@ -17,7 +17,7 @@ import type { CompiledCriteria, RuleKey, SelectionRules } from "./selection-type
 import { applyTemplate, CONFIG_RULE, COLUMN_RULE, type CriteriaPatch } from "./templates.js";
 
 export const CRITERIA_EDIT_ROLES = ["super_admin", "hr", "recruitment_hr", "branch_head"] as const;
-export type CriteriaSource = "criteria_panel" | "bulk" | "copy" | "template";
+export type CriteriaSource = "criteria_panel" | "bulk" | "copy" | "template" | "jd_suggestion";
 export interface Actor { id: string; role: string }
 export interface SaveResult {
   versionId: string | null; versionNo: number | null; changed: CriteriaColumn[]; diff: Array<{ field: CriteriaColumn; from: unknown; to: unknown }>;
