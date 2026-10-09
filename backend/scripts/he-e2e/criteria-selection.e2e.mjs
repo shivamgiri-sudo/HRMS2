@@ -42,7 +42,7 @@ async function reset() {
                   c.meta_target_locations = m.meta_target_locations, c.selection_rules = NULL`);
   for (const t of ["shortlist_candidate", "shortlist_run", "shortlist_approval", "shortlist_override", "shortlist_override_log"]) await q(`DELETE FROM ${t}`);
   await q("DELETE FROM qualified_followup WHERE origin_label IN ('Approved shortlist', 'Standing approval')");
-  await q("DELETE FROM he_model_param WHERE param_key = 'policy.shortlist.enrol'");
+  await q("DELETE FROM he_model_param WHERE param_key IN ('policy.shortlist.enrol', 'policy.followup.he')");
 }
 const complete = (city, night = 0) => ({
   educationRequirement: "12th", ageMin: 18, ageMax: 40, targetLocations: [city], nightShiftRequired: night, shiftRequirement: night ? "Night" : "Day",
@@ -191,6 +191,8 @@ try {
   const en0 = await call(SA, "POST", "/api/he/shortlist/enrol", { requisitionId: ids.R01, sourceKind: "he" });
   ok("enrol switch off: nothing enrolled", en0.json?.data?.status === "enrol_switch_off" && (await q("SELECT COUNT(*) n FROM qualified_followup WHERE origin_label = 'Approved shortlist'"))[0].n === 0, en0.json);
   await q("INSERT INTO he_model_param (param_key, value, sample) VALUES ('policy.shortlist.enrol', 1, 0) ON DUPLICATE KEY UPDATE value = 1");
+  // unified enrolment: a source enrols only with its own screen switch (policy.followup.<source>; 1 = dry run, capped by QUAL_FOLLOWUP_MODE)
+  await q("INSERT INTO he_model_param (param_key, value, sample) VALUES ('policy.followup.he', 1, 0) ON DUPLICATE KEY UPDATE value = 1");
   const en1 = await call(SA, "POST", "/api/he/shortlist/enrol", { requisitionId: ids.R01, sourceKind: "he" });
   const enrolledRows = await q("SELECT mode_at_enqueue FROM qualified_followup WHERE origin_label = 'Approved shortlist' AND requisition_id = ?", [ids.R01]);
   ok("enrol switch on: approved people enrolled as dry-run rows (no sends)", en1.json?.data?.enrolled === ap1.json?.data?.approved && enrolledRows.length > 0 && enrolledRows.every((r) => r.mode_at_enqueue === "dry_run"),
