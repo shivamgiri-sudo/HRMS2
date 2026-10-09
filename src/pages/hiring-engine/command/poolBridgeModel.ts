@@ -28,6 +28,16 @@ export function bridgeBody(types: string[], dryRun: boolean, after?: { recordTyp
   return { recordTypes: types, dryRun, ...(after ? { after } : {}) };
 }
 
+/** A real run starts from the first row; it continues only from a previous REAL run's cursor (a dry run's cursor would skip rows). */
+export function requestBody(types: string[], dryRun: boolean, last: BridgeResult | null) {
+  return bridgeBody(types, dryRun, !dryRun && last && !last.dryRun ? last.next : null);
+}
+
+/** The real run is offered after a dry run, and again while a real run has rows left. */
+export function canRun(last: BridgeResult | null, types: string[]): boolean {
+  return Boolean(last && types.length && (last.dryRun || last.next));
+}
+
 export function skipText(s: Record<Skip, number>): string {
   return (Object.keys(SKIP_TEXT) as Skip[]).filter((k) => s[k] > 0).map((k) => `${s[k]} ${SKIP_TEXT[k][s[k] === 1 ? 0 : 1]}`).join(", ");
 }

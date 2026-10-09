@@ -8,7 +8,7 @@ import { AlertTriangle, DatabaseZap, Info } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { describeError } from "./commandData";
 import { BTN, PRIMARY } from "./StreamActions";
-import { BRIDGE_PATH, BRIDGE_SOURCES_PATH, bridgeBody, resultRows, skipText, sourceGroups, type BridgeResult, type BridgeSource } from "./poolBridgeModel";
+import { BRIDGE_PATH, BRIDGE_SOURCES_PATH, canRun, requestBody, resultRows, skipText, sourceGroups, type BridgeResult, type BridgeSource } from "./poolBridgeModel";
 
 const TD = "border-b border-slate-100 px-2 py-1 text-slate-800 dark:border-slate-800 dark:text-slate-100";
 const fmt = (n: number) => n.toLocaleString("en-IN");
@@ -43,13 +43,13 @@ export function PoolBridgeView({ sources, loading, error, picked, result, busy, 
       {sources && sources.length === 0 && <p className="text-sm text-slate-700 dark:text-slate-200">No import files found.</p>}
       <div className="flex flex-wrap gap-2">
         <button type="button" className={BTN} disabled={busy || !picked.length} onClick={onDryRun}>Dry run</button>
-        <button type="button" className={PRIMARY} disabled={busy || !result || !result.dryRun || !picked.length} onClick={onRun}>Bring into the pool</button>
+        <button type="button" className={PRIMARY} disabled={busy || !canRun(result, picked)} onClick={onRun}>Bring into the pool</button>
       </div>
       {note && <p role="status" className="text-xs text-slate-700 dark:text-slate-200">{note}</p>}
       {result && (
         <div className="space-y-1">
           <p className="text-sm font-semibold">{result.dryRun ? `${fmt(result.totals.inserted)} would be added, ${fmt(result.totals.enriched)} enriched` : `${fmt(result.totals.inserted)} added, ${fmt(result.totals.enriched)} enriched`} of {fmt(result.totals.scanned)} rows read
-            {skipText(result.totals.skipped) ? `; skipped: ${skipText(result.totals.skipped)}` : ""}{result.next ? "; more rows remain (run again to continue)" : ""}</p>
+            {skipText(result.totals.skipped) ? `; skipped: ${skipText(result.totals.skipped)}` : ""}{result.next ? (result.dryRun ? "; the dry run stopped early, the real run starts from the first row" : "; more rows remain (bring into the pool again to continue)") : ""}</p>
           <div className="relative max-h-72 overflow-x-auto overflow-y-auto">
             <table className="w-full min-w-max border-collapse text-left text-xs">
               <caption className="sr-only">Per import file: rows read, added, enriched and skipped</caption>
@@ -82,7 +82,7 @@ export default function PoolBridgeCard() {
   const call = async (dryRun: boolean) => {
     setBusy(true); setNote(null);
     try {
-      const r = await hrmsApi.post<{ data?: BridgeResult & { next_step?: string } }>(BRIDGE_PATH, bridgeBody(picked, dryRun, dryRun ? null : result?.next ?? null));
+      const r = await hrmsApi.post<{ data?: BridgeResult & { next_step?: string } }>(BRIDGE_PATH, requestBody(picked, dryRun, result));
       setResult(r?.data ?? null);
       if (!dryRun) { setNote(r?.data?.next_step ?? "Done."); void load(); }
     } catch (e) { setNote(`Could not run: ${describeError(e)}`); } finally { setBusy(false); }

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/hrmsApi", () => ({ hrmsApi: { get: vi.fn(() => new Promise(() => undefined)), post: vi.fn() } }));
 
 import { PoolBridgeView } from "../command/PoolBridgeCard";
-import { bridgeBody, resultRows, sourceGroups, type BridgeResult, type BridgeSource } from "../command/poolBridgeModel";
+import { bridgeBody, canRun, requestBody, resultRows, sourceGroups, type BridgeResult, type BridgeSource } from "../command/poolBridgeModel";
 
 const sources: BridgeSource[] = [
   { recordType: "naukri_import", sourceDetails: "SBI AHM_1.xlsx", rows: 155, inPool: 0 },
@@ -26,6 +26,20 @@ describe("model", () => {
   it("the request body is a dry run unless asked otherwise", () => {
     expect(bridgeBody(["naukri_import"], true)).toEqual({ recordTypes: ["naukri_import"], dryRun: true });
     expect(bridgeBody(["naukri_import"], false, { recordType: "naukri_import", afterId: "x" })).toEqual({ recordTypes: ["naukri_import"], dryRun: false, after: { recordType: "naukri_import", afterId: "x" } });
+  });
+  it("the real run starts from the beginning even when the dry run stopped early (never the dry run's cursor)", () => {
+    const dry: BridgeResult = { ...result, dryRun: true, next: { recordType: "workindia_import", afterId: "row-60000" } };
+    expect(requestBody(["workindia_import"], false, dry)).toEqual({ recordTypes: ["workindia_import"], dryRun: false });
+    expect(requestBody(["workindia_import"], true, dry)).toEqual({ recordTypes: ["workindia_import"], dryRun: true });
+  });
+  it("a real run that stopped early continues from its own cursor, and the run button stays enabled for it", () => {
+    const real: BridgeResult = { ...result, dryRun: false, next: { recordType: "workindia_import", afterId: "row-5000" } };
+    expect(requestBody(["workindia_import"], false, real)).toEqual({ recordTypes: ["workindia_import"], dryRun: false, after: { recordType: "workindia_import", afterId: "row-5000" } });
+    expect(canRun(real, ["workindia_import"])).toBe(true);
+    expect(canRun({ ...real, next: null }, ["workindia_import"])).toBe(false);
+    expect(canRun({ ...result, dryRun: true }, ["workindia_import"])).toBe(true);
+    expect(canRun(null, ["workindia_import"])).toBe(false);
+    expect(canRun({ ...result, dryRun: true }, [])).toBe(false);
   });
   it("result rows say what would happen per file, skips in words", () => {
     expect(resultRows(result)).toEqual([{ file: "SBI AHM_1.xlsx", source: "Naukri", scanned: 155, added: 150, enriched: 0, skipped: "3 former employees (legacy records), 2 without a valid mobile" }]);
