@@ -125,7 +125,7 @@ describe("row-based skip", () => {
     }
     if (before === undefined) delete process.env.QUAL_FOLLOWUP_MODE; else process.env.QUAL_FOLLOWUP_MODE = before;
     expect(new Set(out).size).toBe(1);
-    expect(out[0]).toBe(" AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND (qf.requisition_id = m.requisition_id COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded')))");
+    expect(out[0]).toBe(" AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = l.mobile10 COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND qf.stopped_reason IS NULL AND (qf.requisition_id = m.requisition_id COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded')))");
   });
 
   it("first-contact hold reads followup_person within 7 days", () => {

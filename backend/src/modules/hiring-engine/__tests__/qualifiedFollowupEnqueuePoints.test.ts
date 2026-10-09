@@ -109,10 +109,9 @@ describe("enqueueMatchedFollowups", () => {
 
 describe("followupSkipSql owner condition (row-based since the unified method)", () => {
   const a = { mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" };
-  it("only pipeline-owned live/canary rows silence a lead, open or stopped, whatever the env", () => {
+  it("only open pipeline-owned live/canary rows silence a lead (a stopped or legacy row never does), whatever the env", () => {
     const s = followupSkipSql(a);
-    expect(s).toContain("qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary')");
-    expect(s).not.toContain("stopped_reason");
+    expect(s).toContain("qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND qf.stopped_reason IS NULL");
   });
 });
 

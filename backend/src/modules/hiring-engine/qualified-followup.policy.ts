@@ -178,21 +178,25 @@ export function rowTag(s: FollowupSwitches): RowTag | null {
   return s.testMode || s.testMisconfigured ? "test" : "live";
 }
 
-/** Row-based: a live/canary pipeline row for this person and requisition (open or stopped), or any requisition while the person's
- *  live/canary journey is in stage A/B. Independent of the current mode, so a rollback keeps those people away from other senders. */
-export function followupSkipSql(a: { mobileExpr: string; requisitionExpr: string }): string {
-  return ` AND NOT ${followupOwnedExpr(a)}`;
+/** Row-based: an open live/canary pipeline row for this person and requisition, or any requisition while the person's live/canary
+ *  journey is in stage A/B. Independent of the current mode, so a rollback keeps those people away from other senders. A stopped row
+ *  (or a legacy row with a default journey_state) is never owned. `legacy`: the pre-2138 rule (no journey_state), used only while the
+ *  migration is missing (followup-schema-guard). */
+export function followupSkipSql(a: { mobileExpr: string; requisitionExpr: string }, legacy = false): string {
+  return ` AND NOT ${followupOwnedExpr(a, legacy)}`;
 }
 
 /** The same predicate as a value (1 = the follow-up method owns this person for this requisition). */
-export function followupOwnedExpr(a: { mobileExpr: string; requisitionExpr: string }): string {
-  return `EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = ${a.mobileExpr} COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND (qf.requisition_id = ${a.requisitionExpr} COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded')))`;
+export function followupOwnedExpr(a: { mobileExpr: string; requisitionExpr: string }, legacy = false): string {
+  if (legacy) return `EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = ${a.mobileExpr} COLLATE utf8mb4_unicode_ci AND qf.requisition_id = ${a.requisitionExpr} COLLATE utf8mb4_unicode_ci AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = 'live' AND qf.owner = 'pipeline')`;
+  return `EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = ${a.mobileExpr} COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND qf.stopped_reason IS NULL AND (qf.requisition_id = ${a.requisitionExpr} COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded')))`;
 }
 
 /** The match's lead mobile, for engine statements that select he_match without joining he_lead. */
 export const LEAD_MOBILE_OF_MATCH = "(SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id)";
 
 /** First-contact sends wait out the 7-day re-contact hold (followup_person). */
-export function firstContactHoldSql(a: { mobileExpr: string }): string {
+export function firstContactHoldSql(a: { mobileExpr: string }, legacy = false): string {
+  if (legacy) return "";
   return ` AND NOT EXISTS (SELECT 1 FROM followup_person fp WHERE fp.mobile10 = ${a.mobileExpr} COLLATE utf8mb4_unicode_ci AND fp.last_first_contact_at > DATE_SUB(NOW(), INTERVAL 7 DAY))`;
 }

@@ -7,7 +7,7 @@ exports[`arrival sync and no-show marking (pinned before the late-arrival change
     [],
   ],
   [
-    "SELECT m.id, m.lead_id, m.drive_id, EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = (SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id) COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND (qf.requisition_id = m.requisition_id COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded'))) AS followup_owned FROM he_match m WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE) AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)",
+    "SELECT m.id, m.lead_id, m.drive_id, EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = (SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id) COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND qf.stopped_reason IS NULL AND (qf.requisition_id = m.requisition_id COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded'))) AS followup_owned FROM he_match m WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE) AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)",
     [],
   ],
   [
@@ -44,7 +44,7 @@ exports[`arrival sync and no-show marking (pinned before the late-arrival change
     ],
   ],
   [
-    "SELECT m.id, m.lead_id, m.drive_id, EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = (SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id) COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND (qf.requisition_id = m.requisition_id COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded'))) AS followup_owned FROM he_match m WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE) AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)",
+    "SELECT m.id, m.lead_id, m.drive_id, EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = (SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id) COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND qf.stopped_reason IS NULL AND (qf.requisition_id = m.requisition_id COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded'))) AS followup_owned FROM he_match m WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE) AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)",
     [],
   ],
 ]
@@ -57,7 +57,7 @@ exports[`runFollowUps state hygiene (pinned before arrival sync was added to it)
     [],
   ],
   [
-    "SELECT m.id, m.lead_id, m.drive_id, EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = (SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id) COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND (qf.requisition_id = m.requisition_id COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded'))) AS followup_owned FROM he_match m WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE) AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)",
+    "SELECT m.id, m.lead_id, m.drive_id, EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = (SELECT lx.mobile10 FROM he_lead lx WHERE lx.id = m.lead_id) COLLATE utf8mb4_unicode_ci AND qf.owner = 'pipeline' AND qf.mode_at_enqueue IN ('live','canary') AND qf.stopped_reason IS NULL AND (qf.requisition_id = m.requisition_id COLLATE utf8mb4_unicode_ci OR qf.journey_state IN ('reach','engaged','confirmed','reminded'))) AS followup_owned FROM he_match m WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE) AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)",
     [],
   ],
   [

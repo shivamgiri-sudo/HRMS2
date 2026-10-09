@@ -33,6 +33,7 @@ import { sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 import { loadEndDateEnforced, requisitionEndedReason } from "./requisition-criteria.js";
 import { firstContactHoldSql, followupOwnedExpr, followupSkipSql, LEAD_MOBILE_OF_MATCH } from "./qualified-followup.policy.js";
+import { withFollowupSchema } from "./followup-schema-guard.js";
 
 // People the unified follow-up owns (row-based, any mode) get no engine send; marking and hygiene still cover them.
 const OWNED_BY_MATCH = { mobileExpr: LEAD_MOBILE_OF_MATCH, requisitionExpr: "m.requisition_id" };
@@ -60,7 +61,7 @@ function tally(c: Counts, r: SendResult): void {
 }
 
 async function voiceCalls(dryRun: boolean, c: Counts, max: number): Promise<void> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await withFollowupSchema("voice calls", (legacy) => db.execute<RowDataPacket[]>(
     `SELECT m.id, m.slot_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m
       WHERE m.state = 'invited' AND m.slot_at > NOW()
         AND (
@@ -72,8 +73,8 @@ async function voiceCalls(dryRun: boolean, c: Counts, max: number): Promise<void
                         AND e.delivery_status <> 'failed' AND e.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
               AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%'))
         )
-        AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > DATE_SUB(NOW(), INTERVAL 2 DAY))${followupSkipSql(OWNED_BY_MATCH)}
-      ORDER BY m.slot_at LIMIT ?`, [cadenceGapMin(), cadenceGapMin() * 2, max]);
+        AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > DATE_SUB(NOW(), INTERVAL 2 DAY))${followupSkipSql(OWNED_BY_MATCH, legacy)}
+      ORDER BY m.slot_at LIMIT ?`, [cadenceGapMin(), cadenceGapMin() * 2, max]));
   for (const r of rows) {
     if (bestHourWait({ now: new Date(), bestHourIst: r.best_hour == null ? null : Number(r.best_hour), slotAt: r.slot_at ? new Date(String(r.slot_at).replace(" ", "T") + "+05:30") : null })) {
       c.blocked.waiting_best_hour = (c.blocked.waiting_best_hour ?? 0) + 1; continue;
@@ -93,12 +94,12 @@ async function eventExists(leadId: string, driveId: string, type: string): Promi
 
 async function replacementSlots(dryRun: boolean, c: Counts, max: number): Promise<void> {
   // reschedule_requested more recent than the last slot_offered, match released.
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await withFollowupSchema("replacement slots", (legacy) => db.execute<RowDataPacket[]>(
     `SELECT m.id AS match_id, m.lead_id FROM he_match m
       WHERE m.state = 'slot_released' AND m.drive_id IS NOT NULL
         AND (SELECT MAX(id) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'reschedule_requested')
-          > COALESCE((SELECT MAX(id) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'slot_offered'), 0)${followupSkipSql(OWNED_BY_MATCH)}
-      LIMIT ?`, [max]);
+          > COALESCE((SELECT MAX(id) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'slot_offered'), 0)${followupSkipSql(OWNED_BY_MATCH, legacy)}
+      LIMIT ?`, [max]));
   for (const r of rows) {
     if (dryRun) { c.dryRun++; continue; }
     const slot = await reserveSlot(r.match_id as string, true);
@@ -145,7 +146,8 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
     const ended = dr[0] ? requisitionEndedReason({ validity: dr[0].requisition_validity as string | Date | null }, new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10), true) : null;
     if (ended) { out.blocked[ended] = 1; return out; }
   }
-  const [ms] = await db.execute<RowDataPacket[]>(
+  const optIn = (await whatsappRequiresOptIn()) ? 1 : 0;
+  const [ms] = await withFollowupSchema("drive invites", (legacy) => db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, l.full_name, l.mobile10,
             (l.last_contact_at IS NOT NULL AND l.last_contact_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) AS dormant,
             (l.email IS NOT NULL AND l.email <> '') AS has_email,
@@ -154,8 +156,8 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
             (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)
               OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = m.lead_id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL))) AS has_consent
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id
-      WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out'${followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" })}${firstContactHoldSql({ mobileExpr: "l.mobile10" })}
-      ORDER BY has_email DESC, m.score DESC LIMIT ?`, [(await whatsappRequiresOptIn()) ? 1 : 0, driveId, Math.max(1, Math.min(2000, Math.floor(o.max)))]);
+      WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out'${followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" }, legacy)}${firstContactHoldSql({ mobileExpr: "l.mobile10" }, legacy)}
+      ORDER BY has_email DESC, m.score DESC LIMIT ?`, [optIn, driveId, Math.max(1, Math.min(2000, Math.floor(o.max)))]));
   const [tpl] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'");
   const waTemplateOk = Number(tpl[0]?.n ?? 0) > 0;
   const quiet = istHour(new Date()) >= 20 || istHour(new Date()) < 9;
@@ -206,8 +208,7 @@ export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: 
 async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number): Promise<void> {
   const reqOptIn = await whatsappRequiresOptIn();
   const gap = cadenceGapMin();
-  const skip = followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" });
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await withFollowupSchema("WhatsApp step", (legacy) => { const skip = followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" }, legacy); return db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.slot_at, e.created_at AS email_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m
 ${skip ? "       JOIN he_lead l ON l.id = m.lead_id\n" : ""}       JOIN he_message e ON e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = ? AND e.direction = 'out' AND e.delivery_status <> 'failed'
       WHERE m.state = 'invited' AND m.slot_at > NOW() AND e.created_at <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
@@ -219,7 +220,7 @@ ${skip ? "       JOIN he_lead l ON l.id = m.lead_id\n" : ""}       JOIN he_messa
           OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = m.lead_id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NOT NULL)
               AND NOT EXISTS (SELECT 1 FROM he_lead lo WHERE lo.id = m.lead_id AND lo.status = 'opted_out'))
         )${skip}
-      ORDER BY m.slot_at LIMIT ?`, [INVITE_EMAIL_KEY, gap, reqOptIn ? 1 : 0, max]);
+      ORDER BY m.slot_at LIMIT ?`, [INVITE_EMAIL_KEY, gap, reqOptIn ? 1 : 0, max]); });
   for (const r of rows) {
     if (dryRun) { c.dryRun++; continue; }
     const step = nextCadenceStep({ now: new Date(), gapMin: gap, canEmail: true, waConsent: true, emailSentAt: new Date(String(r.email_at).replace(" ", "T") + "+05:30"), waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: false, bestHourIst: r.best_hour == null ? null : Number(r.best_hour), slotAt: r.slot_at ? new Date(String(r.slot_at).replace(" ", "T") + "+05:30") : null });
@@ -231,9 +232,9 @@ ${skip ? "       JOIN he_lead l ON l.id = m.lead_id\n" : ""}       JOIN he_messa
 
 async function reminders(dryRun: boolean, c: Counts): Promise<void> {
   for (const [key, evt, loMin, hiMin] of [["he_reminder_1d", "reminder_1d_sent", 22 * 60, 26 * 60], ["he_reminder_2h_location", "reminder_2h_sent", 90, 150]] as const) {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [rows] = await withFollowupSchema("reminders", (legacy) => db.execute<RowDataPacket[]>(
       `SELECT m.id, m.lead_id, m.drive_id FROM he_match m
-        WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)${followupSkipSql(OWNED_BY_MATCH)}`, [loMin, hiMin]);
+        WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)${followupSkipSql(OWNED_BY_MATCH, legacy)}`, [loMin, hiMin]));
     for (const r of rows) {
       if (!(await eventExists(r.lead_id as string, r.drive_id as string, evt))) {
         const res = await sendTemplateToLead({ leadId: r.lead_id as string, key, matchId: r.id as string, dryRun });
@@ -302,10 +303,10 @@ async function arrivalSync(dryRun: boolean): Promise<number> {
 }
 
 async function noShows(dryRun: boolean, c: Counts): Promise<number> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT m.id, m.lead_id, m.drive_id, ${followupOwnedExpr(OWNED_BY_MATCH)} AS followup_owned FROM he_match m
+  const [rows] = await withFollowupSchema("no-shows", (legacy) => db.execute<RowDataPacket[]>(
+    `SELECT m.id, m.lead_id, m.drive_id, ${followupOwnedExpr(OWNED_BY_MATCH, legacy)} AS followup_owned FROM he_match m
       WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE)
-        AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)`);
+        AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)`));
   for (const r of rows) {
     if (dryRun) continue;
     await db.execute("UPDATE he_match SET state = 'no_show' WHERE id = ?", [r.id]);
@@ -325,12 +326,12 @@ async function noShows(dryRun: boolean, c: Counts): Promise<number> {
 
 /** A no-show email that could not go out when the no-show was marked (it was after 20:00) is sent the next morning, within two days. */
 async function followUpCatchUp(dryRun: boolean, c: Counts): Promise<void> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [rows] = await withFollowupSchema("no-show catch-up", (legacy) => db.execute<RowDataPacket[]>(
     `SELECT m.id FROM he_match m JOIN he_lead l ON l.id = m.lead_id
       WHERE m.state = 'no_show' AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY) AND l.email IS NOT NULL AND l.email <> ''
         AND (SELECT COUNT(*) FROM he_match x WHERE x.lead_id = m.lead_id AND x.state = 'no_show') = 1
-        AND NOT EXISTS (SELECT 1 FROM he_message e WHERE e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = 'he_email_no_show' AND e.direction = 'out' AND e.delivery_status <> 'failed' AND (e.drive_id <=> m.drive_id))${followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" })}
-      LIMIT 100`);
+        AND NOT EXISTS (SELECT 1 FROM he_message e WHERE e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = 'he_email_no_show' AND e.direction = 'out' AND e.delivery_status <> 'failed' AND (e.drive_id <=> m.drive_id))${followupSkipSql({ mobileExpr: "l.mobile10", requisitionExpr: "m.requisition_id" }, legacy)}
+      LIMIT 100`));
   for (const r of rows) tally(c, await sendFollowUpEmail("no_show", r.id as string, { dryRun }));
 }
 
