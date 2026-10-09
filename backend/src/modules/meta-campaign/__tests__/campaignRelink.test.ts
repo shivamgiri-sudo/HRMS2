@@ -18,7 +18,7 @@ vi.mock("../../../db/mysql.js", () => {
     if (s.startsWith("SELECT r.id, r.screening_result")) return [h.leads, []];
     if (s.startsWith("SELECT raw_payload FROM meta_lead_raw")) return [h.lastPayload ? [{ raw_payload: h.lastPayload }] : [], []];
     // the move re-checks "contacted" per lead inside the transaction: a lead contacted since the preview is not moved
-    if (s.startsWith("UPDATE meta_lead_raw r SET r.requisition_id = ?")) { const ids = (p as string[]).slice(2); return [{ affectedRows: ids.filter((id) => !h.contactedNow.has(id)).length }, []]; }
+    if (s.startsWith("UPDATE meta_lead_raw r SET requisition_id = ?")) { const ids = (p as string[]).slice(2); return [{ affectedRows: ids.filter((id) => !h.contactedNow.has(id)).length }, []]; }
     return [{ affectedRows: 1 }, []];
   };
   const conn = { execute: exec, beginTransaction: async () => { h.sqls.push({ sql: "BEGIN", p: [] }); }, commit: async () => { h.sqls.push({ sql: "COMMIT", p: [] }); },
@@ -97,7 +97,7 @@ describe("relink a campaign to an open requisition (K7BK)", () => {
     const r = await applyRelink({ campaignId: "c1", toRequisitionId: "ropen", previewHash: p.previewHash, reason: "K7BK closed", actor });
     expect(r).toMatchObject({ moved: 1, kept: 2 });
     const seq = h.sqls.map((x) => x.sql);
-    const move = h.sqls.find((x) => x.sql.startsWith("UPDATE meta_lead_raw r SET r.requisition_id = ?"))!;
+    const move = h.sqls.find((x) => x.sql.startsWith("UPDATE meta_lead_raw r SET requisition_id = ?"))!;
     expect(seq.indexOf(move.sql)).toBeGreaterThan(seq.indexOf("BEGIN"));
     expect(move.sql).toContain("AND NOT (r.notification_sent_at IS NOT NULL OR");
     expect(seq.some((x) => x.startsWith("SELECT id FROM meta_campaign WHERE id = ? FOR UPDATE"))).toBe(true);
@@ -111,7 +111,7 @@ describe("relink a campaign to an open requisition (K7BK)", () => {
     const seq = h.sqls.map((x) => x.sql);
     const b = seq.indexOf("BEGIN"), e = seq.indexOf("COMMIT");
     const inTx = h.sqls.slice(b, e);
-    const move = inTx.find((x) => x.sql.startsWith("UPDATE meta_lead_raw r SET r.requisition_id = ?, r.routed_by = 'hr'"))!;
+    const move = inTx.find((x) => x.sql.startsWith("UPDATE meta_lead_raw r SET requisition_id = ?, routed_by = 'hr'"))!;
     expect(move.p).toEqual(["ropen", "c1", "l2", "l3"]);
     expect(inTx.some((x) => x.sql.startsWith("UPDATE meta_campaign SET requisition_id = ?") && x.p[0] === "ropen")).toBe(true);
     const audit = inTx.find((x) => x.sql.startsWith("INSERT INTO meta_campaign_relink"))!;

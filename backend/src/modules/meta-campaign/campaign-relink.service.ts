@@ -105,7 +105,7 @@ export async function applyRelink(a: { campaignId: string; toRequisitionId: stri
       const ids = p.moveIds.slice(i, i + CHUNK);
       // E9: "contacted" is re-checked here, in the transaction, for every lead: one contacted since the preview stays where it is.
       const [u] = await c.execute(
-        `UPDATE meta_lead_raw r SET r.requisition_id = ?, r.routed_by = 'hr', r.routed_at = NOW()
+        `UPDATE meta_lead_raw r SET requisition_id = ?, routed_by = 'hr', routed_at = NOW()
           WHERE r.campaign_id = ? AND r.id IN (${ids.map(() => "?").join(",")}) AND NOT ${isLeadContactedSql("r", tables)}`,
         [a.toRequisitionId, a.campaignId, ...ids]);
       moved += Number((u as { affectedRows?: number }).affectedRows ?? 0);
