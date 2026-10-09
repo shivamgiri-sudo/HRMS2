@@ -16,7 +16,7 @@ export { createDriveIfAbsent, targetDriveDates } from "./walkin-booking.service.
 export type BookingResult =
   | { status: "booked"; matchId: string; driveId: string; slotAt: string /* 'YYYY-MM-DD HH:MM:SS' IST */ }
   | { status: "would_book"; driveDate: string }
-  | { status: "slotless"; reason: "no_branch_address" | "no_capacity" | "requisition_closed" | "no_lead" | "drive_closed" };
+  | { status: "slotless"; reason: "no_branch_address" | "no_capacity" | "requisition_closed" | "requisition_ended" | "no_lead" | "drive_closed" };
 
 const C = "COLLATE utf8mb4_unicode_ci";
 

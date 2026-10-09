@@ -10,13 +10,16 @@ const h = vi.hoisted(() => ({
   booked: {} as Record<string, number>,
   match: null as null | { id: string; state: string; drive_id: string | null; slot_at: string | null; token: string | null },
   events: [] as unknown[][],
+  enforced: 0,
+  txDrives: [] as string[],
 }));
 
-function sqlRouter(sql: string, p: unknown[] = []) {
+function sqlRouter(sql: string, p: unknown[] = [], inTx = false) {
+  if (sql.includes("FROM he_model_param")) return [[{ value: h.enforced }]];
   if (sql.includes("FROM job_requisition")) return [h.req ? [h.req] : []];
   if (sql.startsWith("INSERT INTO he_drive")) {
     const date = String(p[3]);
-    if (!h.drives.has(date)) h.drives.set(date, { id: String(p[0]), drive_date: date, status: "active", slot_start: "10:00:00", slot_end: "17:30:00", slot_minutes: 30, slot_capacity: 6, auto_send: 0 });
+    if (!h.drives.has(date)) { h.drives.set(date, { id: String(p[0]), drive_date: date, status: "active", slot_start: "10:00:00", slot_end: "17:30:00", slot_minutes: 30, slot_capacity: 6, auto_send: 0 }); if (inTx) h.txDrives.push(date); }
     return [{ affectedRows: 1 }];
   }
   if (sql.includes("FROM he_drive WHERE requisition_id = ? AND branch_name = ? AND drive_date = ?")) {
@@ -36,11 +39,11 @@ vi.mock("../../../db/mysql.js", () => ({
   db: {
     execute: vi.fn(async (sql: string, p: unknown[] = []) => { h.sqls.push(sql); h.params.push(p); return sqlRouter(sql, p); }),
     getConnection: vi.fn(async () => ({
-      beginTransaction: vi.fn(async () => { h.connSqls.push("BEGIN"); }),
-      commit: vi.fn(async () => { h.connSqls.push("COMMIT"); }),
-      rollback: vi.fn(async () => { h.connSqls.push("ROLLBACK"); }),
+      beginTransaction: vi.fn(async () => { h.connSqls.push("BEGIN"); h.txDrives = []; }),
+      commit: vi.fn(async () => { h.connSqls.push("COMMIT"); h.txDrives = []; }),
+      rollback: vi.fn(async () => { h.connSqls.push("ROLLBACK"); for (const d of h.txDrives) h.drives.delete(d); h.txDrives = []; }),
       release: vi.fn(),
-      execute: vi.fn(async (sql: string, p: unknown[] = []) => { h.connSqls.push(sql); h.sqls.push(sql); h.params.push(p); return sqlRouter(sql, p); }),
+      execute: vi.fn(async (sql: string, p: unknown[] = []) => { h.connSqls.push(sql); h.sqls.push(sql); h.params.push(p); return sqlRouter(sql, p, true); }),
     })),
   },
 }));
@@ -53,7 +56,8 @@ const now = new Date("2026-10-08T03:30:00Z");
 const args = { leadId: "L1", requisitionId: "R1", branchName: "NOIDA-2", preferredSlotAt: "2026-10-09 10:30:00", now, state: "invited" as const };
 
 beforeEach(() => {
-  h.sqls = []; h.params = []; h.connSqls = []; h.drives = new Map(); h.booked = {}; h.match = null; h.events = [];
+  h.sqls = []; h.params = []; h.connSqls = []; h.drives = new Map(); h.booked = {}; h.match = null; h.events = []; h.enforced = 0; h.txDrives = [];
+  delete process.env.REQ_END_DATE_ENFORCEMENT;
   h.req = { approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 5, fulfilled_headcount: 0 };
 });
 
@@ -153,5 +157,26 @@ describe("bookLeadOnDrive", () => {
     expect(await bookLeadOnDrive(args)).toEqual({ status: "unavailable", reason: "drive_closed" });
     for (const d of h.drives.values()) { d.status = "active"; h.booked[`${d.drive_date} 10:00:00`] = 1; }
     expect(await bookLeadOnDrive(args)).toEqual({ status: "unavailable", reason: "no_capacity" });
+  });
+
+  it("E10: with the end date enforced, nothing is booked after the requisition's end (unavailable requisition_ended)", async () => {
+    process.env.REQ_END_DATE_ENFORCEMENT = "policy"; h.enforced = 1;
+    h.req = { ...h.req!, requisition_validity: "2026-10-09" };
+    for (let m = 600; m < 1050; m += 30) h.booked[`2026-10-09 ${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:00`] = 6;
+    expect(await bookLeadOnDrive(args)).toEqual({ status: "unavailable", reason: "requisition_ended" });
+    expect([...h.drives.keys()].filter((d) => d > "2026-10-09")).toEqual([]);
+    h.booked = {};
+    expect(await bookLeadOnDrive(args)).toMatchObject({ status: "booked", slotAt: "2026-10-09 10:30:00" });
+  });
+  it("E10: switched off, the end date reads nothing and changes nothing", async () => {
+    h.req = { ...h.req!, requisition_validity: "2026-10-01" };
+    expect(await bookLeadOnDrive(args)).toMatchObject({ status: "booked" });
+    expect(h.sqls.some((s) => s.includes("he_model_param") || s.includes("requisition_validity"))).toBe(false);
+  });
+  it("E10: a date that cannot take the booking leaves no new drive behind (only the first fitting date gets one)", async () => {
+    const evening = new Date("2026-10-08T12:00:00Z"); // 17:30 IST: no slot left today
+    const r = await bookLeadOnDrive({ ...args, now: evening, preferredSlotAt: "2026-10-08 17:00:00" });
+    expect(r).toMatchObject({ status: "booked", slotAt: expect.stringMatching(/^2026-10-09/) });
+    expect([...h.drives.keys()]).toEqual(["2026-10-09"]);
   });
 });

@@ -10,13 +10,14 @@ import { db } from "../../db/mysql.js";
 import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.js";
 import { addEvent } from "./he-lead.service.js";
 import { generateSlots, istAddMinutes, nowIst, type SlotConfig } from "./he-slots.js";
+import { loadEndDateEnforced } from "./requisition-criteria.js";
 
 export interface BookingDriveInput { requisitionId: string; branchName: string; driveDate: string /* YYYY-MM-DD */; createdBy?: string | null }
 export type DriveStatus = "draft" | "active" | "paused" | "closed";
 
 export type BookResult =
   | { status: "booked"; matchId: string; driveId: string; slotAt: string; token: string; created: boolean }
-  | { status: "unavailable"; reason: "requisition_closed" | "drive_closed" | "no_capacity" | "no_branch" };
+  | { status: "unavailable"; reason: "requisition_closed" | "requisition_ended" | "drive_closed" | "no_capacity" | "no_branch" };
 
 export interface BookInput {
   leadId: string; requisitionId: string; branchName: string; preferredSlotAt: string | null; now: Date; state: "invited";
@@ -117,17 +118,27 @@ export async function bookLeadOnDrive(a: BookInput): Promise<BookResult> {
     return { status: "booked", matchId: existing.id, driveId: String(existing.drive_id ?? ""), slotAt: String(existing.slot_at ?? "").slice(0, 19), token: existing.token ?? "", created: false };
   }
   const preferredTime = a.preferredSlotAt && a.preferredSlotAt.length >= 16 ? `${a.preferredSlotAt.slice(11, 16)}:00` : null;
+  // E10: with the end date enforced, no day after the requisition's end is booked (a read only while enforced).
+  const lastDay = await lastBookableDay(a.requisitionId);
+  const dates = targetDriveDates(a.now, a.preferredSlotAt).filter((d) => !lastDay || d <= lastDay);
+  if (!dates.length) return { status: "unavailable", reason: "requisition_ended" };
   let sawOpenDrive = false;
-  for (const date of targetDriveDates(a.now, a.preferredSlotAt)) {
-    const drive = await createDriveIfAbsent({ requisitionId: a.requisitionId, branchName: a.branchName.trim(), driveDate: date }, (a.tx as unknown as Exec | undefined) ?? db);
-    if (drive.status === "closed" || drive.status === "paused") continue;
-    sawOpenDrive = true;
+  for (const date of dates) {
+    let drive: Awaited<ReturnType<typeof createDriveIfAbsent>>;
     let r: Awaited<ReturnType<typeof bookOnDate>>;
-    if (a.tx) r = await bookOnDate(a.tx as unknown as Exec, a, drive.id, existing, preferredTime);
-    else {
+    if (a.tx) {
+      drive = await createDriveIfAbsent({ requisitionId: a.requisitionId, branchName: a.branchName.trim(), driveDate: date }, a.tx as unknown as Exec);
+      if (drive.status === "closed" || drive.status === "paused") continue;
+      sawOpenDrive = true;
+      r = await bookOnDate(a.tx as unknown as Exec, a, drive.id, existing, preferredTime);
+    } else {
+      // E10: the drive is created in the booking's own transaction, so a date that cannot take the booking leaves no unused drive.
       const conn = await db.getConnection();
       try {
         await conn.beginTransaction();
+        drive = await createDriveIfAbsent({ requisitionId: a.requisitionId, branchName: a.branchName.trim(), driveDate: date }, conn as unknown as Exec);
+        if (drive.status === "closed" || drive.status === "paused") { await conn.rollback(); continue; }
+        sawOpenDrive = true;
         r = await bookOnDate(conn as unknown as Exec, a, drive.id, existing, preferredTime);
         if (typeof r === "string") await conn.rollback(); else await conn.commit();
       } catch (err) { await conn.rollback(); throw err; } finally { conn.release(); }
@@ -137,5 +148,15 @@ export async function bookLeadOnDrive(a: BookInput): Promise<BookResult> {
     await addEvent(a.leadId, "slot_assigned", { driveId: drive.id, detail: r.slotAt });
     return { status: "booked", matchId: r.matchId, driveId: drive.id, slotAt: r.slotAt, token: r.token, created: drive.created };
   }
+  if (lastDay && dates.length < targetDriveDates(a.now, a.preferredSlotAt).length) return { status: "unavailable", reason: "requisition_ended" };
   return { status: "unavailable", reason: sawOpenDrive ? "no_capacity" : "drive_closed" };
+}
+
+/** The requisition's last bookable IST day when the end date is enforced (env + policy), else null (no statement while off). */
+async function lastBookableDay(requisitionId: string): Promise<string | null> {
+  if (!(await loadEndDateEnforced())) return null;
+  const [r] = await db.execute<RowDataPacket[]>("SELECT requisition_validity FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
+  const v = r[0]?.requisition_validity;
+  if (!v) return null;
+  return v instanceof Date ? new Date(v.getTime() + 330 * 60_000).toISOString().slice(0, 10) : String(v).slice(0, 10);
 }
