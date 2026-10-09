@@ -170,3 +170,16 @@ describe("routes", () => {
     expect(h.sqls).toHaveLength(0);
   });
 });
+
+describe("M5: an invite without a slot does not stay open forever", () => {
+  it("the RSVP window closes 30 days after the last send or at the requisition's end date", async () => {
+    const { INVITE_RSVP_WINDOW_SQL } = await import("../he-location.service.js");
+    await getInviteContext(INV_T);
+    const sql = h.sqls.find((s) => s.sql.includes("FROM walkin_invite wi"))!.sql;
+    expect(sql).toContain(INVITE_RSVP_WINDOW_SQL);
+    expect(INVITE_RSVP_WINDOW_SQL).toContain("wi.last_sent_at > DATE_SUB(NOW(), INTERVAL 30 DAY)");
+    expect(INVITE_RSVP_WINDOW_SQL).toContain("DATE(jr.requisition_validity) >= CURDATE()");
+    h.inviteCtx = ctxRow({ slot_at: null, before_slot: 0 });
+    expect((await getInviteContext(INV_T))?.rsvpOpen).toBe(false);
+  });
+});

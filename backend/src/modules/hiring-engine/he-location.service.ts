@@ -147,12 +147,16 @@ export interface InviteContext {
 }
 const INVITE_STATE: Record<string, string> = { sent: "invited", answered_yes: "invited", answered_later: "slot_released", declined: "declined", stopped: "stopped", superseded: "invited" };
 
+/** RSVP window of an invite: until its slot; without a slot (M5) for 30 days after the last send and never past the requisition's end date. */
+export const INVITE_RSVP_WINDOW_SQL = `(CASE WHEN wi.slot_at IS NOT NULL THEN NOW() < wi.slot_at
+            ELSE wi.last_sent_at > DATE_SUB(NOW(), INTERVAL 30 DAY) AND (jr.requisition_validity IS NULL OR DATE(jr.requisition_validity) >= CURDATE()) END)`;
+
 /** The page for a person invited without an he_match: first name, role, branch and slot only (never the mobile or email). */
 export async function getInviteContext(token: string): Promise<InviteContext | null> {
   if (!TOKEN_RE.test(token) || token === DEMO_TOKEN) return null;
   // Before migration 2140 there is no walkin_invite table: an unknown token is simply not found (404), not a server error.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT wi.id, wi.state, wi.slot_at, wi.branch_name, (wi.slot_at IS NULL OR NOW() < wi.slot_at) AS before_slot,
+    `SELECT wi.id, wi.state, wi.slot_at, wi.branch_name, ${INVITE_RSVP_WINDOW_SQL} AS before_slot,
             jr.designation_name, jr.branch_name AS jr_branch, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount,
             bm.address, bm.latitude, bm.longitude, COALESCE(l.full_name, r.parsed_name) AS full_name, l.status AS lead_status
        FROM walkin_invite wi
