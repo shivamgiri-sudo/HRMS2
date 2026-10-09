@@ -18,6 +18,31 @@ export const UNTRACKED_NOTE = "Qualified is tracked once the follow-up pipeline 
 export const CREDIT_NOTE = "Selected and joined count only people who arrived at the drive and were selected on or after the drive date.";
 export const EMPTY_TEXT = "No drive activity in this range";
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-02" as "02 Oct 2026"; "" when not a day. */
+export function boundaryDayText(d: string | null | undefined): string {
+  const p = String(d ?? "").split("-");
+  const [y, m, day] = p.map(Number);
+  return p.length === 3 && p[0].length === 4 && p[2].length === 2 && [y, m, day].every(Number.isFinite) && m >= 1 && m <= 12 && day >= 1 && day <= 31 ? `${p[2]} ${MONTHS[m - 1]} ${p[0]}` : "";
+}
+const daysText = (n: number): string => `${n} day${n === 1 ? "" : "s"}`;
+/**
+ * Which form fills count as Live Meta, with the computed boundary day (the server's liveFrom). Rolling: "the last N days"; a fixed date (or an
+ * older server that sends no liveDays) shows the date only. `type` picks the Live or Old wording; none is the Summary's line; "" for he.
+ */
+export function liveWindowNote(a: Pick<DriveAnalytics, "liveFrom" | "liveDays" | "liveMode"> | null | undefined, type?: SourceType): string {
+  const d = boundaryDayText(a?.liveFrom);
+  if (!d || type === "he") return "";
+  const n = typeof a?.liveDays === "number" && Number.isFinite(a.liveDays) ? a.liveDays : null;
+  if (a?.liveMode === "fixed" || n === null) {
+    if (type === "meta_old") return `Old Meta data = first form fill before ${d} (IST).`;
+    return `Live Meta = form filled on or after ${d} (IST)${a?.liveMode === "fixed" ? ", a fixed date" : ""}.${type ? "" : ` Old Meta data = first form fill before it.`}`;
+  }
+  if (type === "meta_live") return `Live Meta = form filled in the last ${daysText(n)}, on or after ${d} (IST).`;
+  if (type === "meta_old") return `Old Meta data = first form fill older than ${daysText(n)}, before ${d} (IST). People move here when their first fill leaves the window; their follow-up continues.`;
+  return `Live Meta = form filled in the last ${daysText(n)}, on or after ${d} (IST); Old Meta data = first form fill older than that. The boundary moves every day at midnight IST.`;
+}
+
 const isTracked = (a: DriveAnalytics): boolean => a?.qualifiedTracked !== false;
 const fin = (n: unknown): number => (typeof n === "number" && Number.isFinite(n) ? n : 0);
 const touchesQualified = (from: Stage, to: Stage): boolean => from === "qualified" || to === "qualified";

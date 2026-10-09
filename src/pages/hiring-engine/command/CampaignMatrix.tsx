@@ -11,6 +11,7 @@ import { describeError } from "./commandData";
 import { BTN, FIELD, LABEL } from "./StreamActions";
 import { TYPE_LABEL } from "./driveCommandModel";
 import type { SourceType } from "./driveCommandTypes";
+import { liveWindowNote } from "./charts/summaryView";
 import { cellView, filterRows, funnelFor, matrixPath, matrixSummary, rowHeader, type CampaignMatrixData, type CellAction, type CellView, type FunnelSource, type MatrixFilters, type MatrixRowData } from "./campaignMatrixModel";
 
 const KINDS: readonly SourceType[] = ["meta_live", "meta_old", "he"];
@@ -98,6 +99,7 @@ export function CampaignMatrixView({ data, loading, error, canWrite, filters, br
         <p role="alert" className="flex flex-wrap items-center gap-2 text-sm text-rose-800 dark:text-rose-200"><AlertTriangle className="h-4 w-4" aria-hidden /> Could not load the campaign map: {error}
           <button type="button" className={BTN} onClick={onRetry}>Retry</button></p>
       )}
+      {data && liveWindowNote(data) && <p className="text-xs text-slate-700 dark:text-slate-200">{liveWindowNote(data)}</p>}
       {data && data.partial.length > 0 && <p className="text-xs text-amber-900 dark:text-amber-200">Some facts could not be read ({data.partial.join(", ")}); their reasons may be missing.</p>}
       {data && data.rows.length === 0 && <p className="text-sm text-slate-700 dark:text-slate-200">No campaign or open requisition in your scope.</p>}
       {data && data.rows.length > 0 && (
