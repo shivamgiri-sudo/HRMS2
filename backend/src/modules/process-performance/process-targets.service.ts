@@ -627,6 +627,178 @@ export async function deleteManualAgent(
   return toManual(o[0]);
 }
 
+/* ------------------------------ TL / AM (group) reassignment ------------------------------ */
+
+/**
+ * Lets an uploaded roster agent's TL and AM/Center be corrected without touching the uploaded file --
+ * e.g. an agent uploaded under an AM who has since left is re-pointed at the current AM, so every
+ * dashboard, MIS export and raw sheet groups them correctly while the uploaded roster itself stays
+ * exactly as uploaded. Stored in db_masmis.process_agent_assignment_override (created by a DBA --
+ * the app user has no CREATE on db_masmis). Effective-dated by month like a target override, but
+ * latest-wins: reassignment is "who", not "how much", so there is no proportional split to do.
+ */
+export interface AssignmentOverrideRow {
+  id: number;
+  process: ProcessKey;
+  agentName: string;
+  effectiveMonth: string;
+  tl: string;
+  group: string;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+interface AoRow extends RowDataPacket {
+  id: number;
+  process_key: ProcessKey;
+  agent_name: string;
+  effective_month: string;
+  tl_name: string;
+  group_name: string;
+  updated_by: string | null;
+  updated_at: Date | string | null;
+}
+const AO_COLS =
+  "id, process_key, agent_name, effective_month, tl_name, group_name, updated_by, updated_at";
+const toAssignment = (r: AoRow): AssignmentOverrideRow => ({
+  id: Number(r.id),
+  process: r.process_key,
+  agentName: r.agent_name,
+  effectiveMonth: r.effective_month,
+  tl: r.tl_name,
+  group: r.group_name,
+  updatedBy: r.updated_by,
+  updatedAt: r.updated_at
+    ? String(
+        r.updated_at instanceof Date
+          ? r.updated_at.toISOString()
+          : r.updated_at,
+      )
+    : null,
+});
+
+export async function listAssignmentOverrides(
+  process: ProcessKey,
+): Promise<{ tableAvailable: boolean; rows: AssignmentOverrideRow[] }> {
+  try {
+    const [rs] = await db.execute<AoRow[]>(
+      `SELECT ${AO_COLS} FROM db_masmis.process_agent_assignment_override WHERE process_key = ? ORDER BY agent_name, effective_month DESC`,
+      [process],
+    );
+    return { tableAvailable: true, rows: rs.map(toAssignment) };
+  } catch (err) {
+    if (isMissingTable(err)) return { tableAvailable: false, rows: [] };
+    throw err;
+  }
+}
+
+/** The latest row per agent with effective_month <= month. */
+export function effectiveAssignmentOverrides(
+  rows: AssignmentOverrideRow[],
+  month: string,
+): Map<string, AssignmentOverrideRow> {
+  const out = new Map<string, AssignmentOverrideRow>();
+  for (const r of rows) {
+    if (r.effectiveMonth > month) continue;
+    const cur = out.get(r.agentName);
+    if (!cur || r.effectiveMonth > cur.effectiveMonth) out.set(r.agentName, r);
+  }
+  return out;
+}
+
+/** Applies TL/AM reassignment to any roster-like item list. Must run BEFORE applyOverridesToItems,
+ * since target distribution groups agents by their (possibly reassigned) tl/group. */
+export async function applyAssignmentOverridesToItems<T>(
+  process: ProcessKey,
+  items: T[],
+  toIso: string,
+  acc: {
+    name: (t: T) => string;
+    setTl: (t: T, v: string) => void;
+    setGroup: (t: T, v: string) => void;
+  },
+): Promise<void> {
+  const { rows } = await listAssignmentOverrides(process);
+  if (rows.length === 0) return;
+  const eff = effectiveAssignmentOverrides(rows, refMonthOf(toIso));
+  for (const t of items) {
+    const o = eff.get(acc.name(t));
+    if (!o) continue;
+    acc.setTl(t, o.tl);
+    acc.setGroup(t, o.group);
+  }
+}
+
+export interface AssignmentOverrideInput {
+  entityName: string;
+  effectiveMonth: string;
+  tl: string;
+  group: string;
+}
+function validateAssignment(
+  process: ProcessKey,
+  i: AssignmentOverrideInput,
+): { name: string; ym: string; tl: string; group: string } {
+  const name = normName(i.entityName);
+  if (!name) throw new Error("Agent name is required");
+  const ym = String(i.effectiveMonth ?? "").trim();
+  if (!MONTH_RE.test(ym))
+    throw new Error("Effective month must look like 2026-09");
+  const tl = normName(i.tl);
+  if (!tl) throw new Error("TL is required");
+  const group = normName(i.group);
+  if (!group) throw new Error(`${PROCESSES[process].topLabel} is required`);
+  return { name, ym, tl, group };
+}
+
+async function assignmentRowFor(
+  process: ProcessKey,
+  name: string,
+  ym: string,
+): Promise<AssignmentOverrideRow | null> {
+  const [rs] = await db.execute<AoRow[]>(
+    `SELECT ${AO_COLS} FROM db_masmis.process_agent_assignment_override WHERE process_key = ? AND agent_name = ? AND effective_month = ?`,
+    [process, name, ym],
+  );
+  return rs[0] ? toAssignment(rs[0]) : null;
+}
+
+export async function setAssignmentOverride(
+  process: ProcessKey,
+  input: AssignmentOverrideInput,
+  actorId: string,
+): Promise<{
+  oldValue: AssignmentOverrideRow | null;
+  newValue: AssignmentOverrideRow;
+}> {
+  const v = validateAssignment(process, input);
+  const oldValue = await assignmentRowFor(process, v.name, v.ym);
+  await db.execute<ResultSetHeader>(
+    `INSERT INTO db_masmis.process_agent_assignment_override (process_key, agent_name, effective_month, tl_name, group_name, created_by, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE tl_name = VALUES(tl_name), group_name = VALUES(group_name), updated_by = VALUES(updated_by)`,
+    [process, v.name, v.ym, v.tl, v.group, actorId, actorId],
+  );
+  const newValue = await assignmentRowFor(process, v.name, v.ym);
+  if (!newValue) throw new Error("Assignment was not saved");
+  return { oldValue, newValue };
+}
+
+export async function deleteAssignmentOverride(
+  process: ProcessKey,
+  id: number,
+): Promise<AssignmentOverrideRow | null> {
+  const [rs] = await db.execute<AoRow[]>(
+    `SELECT ${AO_COLS} FROM db_masmis.process_agent_assignment_override WHERE id = ? AND process_key = ?`,
+    [id, process],
+  );
+  if (!rs[0]) return null;
+  await db.execute<ResultSetHeader>(
+    `DELETE FROM db_masmis.process_agent_assignment_override WHERE id = ? AND process_key = ?`,
+    [id, process],
+  );
+  return toAssignment(rs[0]);
+}
+
 /* ------------------------------ the Process Details page ------------------------------ */
 
 export interface TargetEntityRow {
@@ -650,6 +822,16 @@ export interface TargetEntityRow {
   overridden: boolean;
   /** Set when this agent was added on the Process Details page (not on the uploaded roster). */
   manual: ManualAgent | null;
+  /** Set when this agent's TL/AM was reassigned on the Process Details page (agent rows only). */
+  assignment: {
+    id: number;
+    tl: string;
+    group: string;
+    effectiveMonth: string;
+    updatedBy: string | null;
+    updatedAt: string | null;
+  } | null;
+  reassigned: boolean;
 }
 export interface TargetsPageData {
   process: ProcessKey;
@@ -713,6 +895,18 @@ export async function getTargetsPage(
       target: m.monthlyTarget,
     });
   }
+  // TL/AM reassignments apply before the target override math, so a TL/AM override distributes
+  // across the agent's CURRENT (reassigned) group, not the one on the uploaded roster.
+  const { rows: aoRows } = await listAssignmentOverrides(process);
+  const aoEff = effectiveAssignmentOverrides(aoRows, ym);
+  for (const s of subjects) {
+    const o = aoEff.get(s.name);
+    if (o) {
+      s.tl = o.tl;
+      s.group = o.group;
+    }
+  }
+
   const baseline = new Map(subjects.map((s) => [s.name, s.target]));
   applyOverrides(subjects, ov);
 
@@ -754,6 +948,8 @@ export async function getTargetsPage(
           override: o,
           overridden: !!o || Math.abs(baseT - effT) > 0.005,
           manual: null,
+          assignment: null,
+          reassigned: false,
         };
       })
       .sort(
@@ -765,6 +961,7 @@ export async function getTargetsPage(
     .map((s) => {
       const o = ovInfo(ov.agent, s.name);
       const b = baseline.get(s.name) ?? 0;
+      const ao = aoEff.get(s.name) ?? null;
       return {
         level: "agent" as TargetLevel,
         name: s.name,
@@ -777,6 +974,17 @@ export async function getTargetsPage(
         override: o,
         overridden: !!o || Math.abs(b - s.target) > 0.005,
         manual: manualByName.get(s.name) ?? null,
+        assignment: ao
+          ? {
+              id: ao.id,
+              tl: ao.tl,
+              group: ao.group,
+              effectiveMonth: ao.effectiveMonth,
+              updatedBy: ao.updatedBy,
+              updatedAt: ao.updatedAt,
+            }
+          : null,
+        reassigned: !!ao,
       };
     })
     .sort(
@@ -812,6 +1020,9 @@ export interface TargetDetail {
     baselineTarget: number;
   }>;
   history: Array<OverrideRow & { updatedByLabel: string | null }>;
+  assignmentHistory: Array<
+    AssignmentOverrideRow & { updatedByLabel: string | null }
+  >;
   audit: Array<{
     at: string;
     action: string;
@@ -861,6 +1072,11 @@ export async function getTargetDetail(
   const mine = rows.filter(
     (r) => r.level === level && r.entityName === entity.name,
   );
+  const { rows: aoRows } =
+    level === "agent"
+      ? await listAssignmentOverrides(process)
+      : { rows: [] as AssignmentOverrideRow[] };
+  const mineAssignments = aoRows.filter((r) => r.agentName === entity.name);
   const [au] = await db.execute<RowDataPacket[]>(
     `SELECT actor_user_id, action_type, metadata_json, created_at FROM audit_action_log
       WHERE entity_type = 'process_target' AND entity_id = ? ORDER BY created_at DESC LIMIT 25`,
@@ -870,6 +1086,7 @@ export async function getTargetDetail(
     ...new Set(
       [
         ...mine.map((r) => r.updatedBy),
+        ...mineAssignments.map((r) => r.updatedBy),
         ...au.map((a) => String(a.actor_user_id)),
       ].filter((x): x is string => !!x),
     ),
@@ -891,6 +1108,10 @@ export async function getTargetDetail(
     entity,
     children,
     history: mine.map((r) => ({ ...r, updatedByLabel: label(r.updatedBy) })),
+    assignmentHistory: mineAssignments.map((r) => ({
+      ...r,
+      updatedByLabel: label(r.updatedBy),
+    })),
     audit: au.map((a) => {
       const meta = (
         typeof a.metadata_json === "string"

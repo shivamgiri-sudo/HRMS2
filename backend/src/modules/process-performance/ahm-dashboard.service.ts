@@ -102,7 +102,57 @@ const COUNTERS = `
   SUM(sales_qty * COALESCE(sku_mrp, 0)) AS sales_value,
   COUNT(DISTINCT CASE WHEN last_status = 'Delivered' THEN sales_no END) AS delivered`;
 
+/** Every call runs 11 aggregations over the whole matched range -- fine once the table is
+ * mostly historical, but with all 162k+ rows landing in one ~week-wide batch (the initial AHM
+ * catch-up import), a realistic date range matches close to the entire table: confirmed live,
+ * EXPLAIN shows a full table scan either way (the optimizer is right to skip the survey_date
+ * index when ~100% of rows match it), and the 11-query round trip took ~20-45s against this DB --
+ * past the frontend's original 30s request timeout, which is what actually produced "Could not
+ * load the AHM dashboard." Snapshotted per (from, to, region) in mas_hrms.ahm_dashboard_snapshot
+ * (sql/1876 -- lives in mas_hrms, not db_masmis, since it is derived/computed state and the app
+ * user has full rights there, unlike the raw table). ahm-snapshot.worker.ts proactively refreshes
+ * the common ranges every few minutes (behind AHM_SNAPSHOT_SCHEDULER_ENABLED) so a viewer rarely
+ * computes live at all; this function still falls back to a live compute (and saves its own
+ * result) for any ad-hoc range the worker doesn't cover, or if the scheduler is off/stalled and
+ * the snapshot has gone stale. Survives a backend restart, unlike the in-memory cache this
+ * replaced. */
+const SNAPSHOT_STALE_MS = 30 * 60_000;
+
+interface SnapshotRow extends RowDataPacket { payload: string; computed_at: Date | string }
+
+export const ahmSnapshotKey = (f: AhmFilters): string => `${f.from}|${f.to}|${f.region ?? ""}`;
+
 export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
+  const key = ahmSnapshotKey(f);
+  const [rows] = await db.execute<SnapshotRow[]>(
+    `SELECT payload, computed_at FROM ahm_dashboard_snapshot WHERE cache_key = ?`, [key],
+  );
+  const hit = rows[0];
+  if (hit) {
+    const age = Date.now() - new Date(hit.computed_at).getTime();
+    if (age < SNAPSHOT_STALE_MS) return JSON.parse(hit.payload) as AhmDashboardData;
+  }
+  return refreshAhmSnapshot(f);
+}
+
+/** Computes live and upserts the snapshot -- used both by a cache miss above and by the
+ * background worker's proactive refresh of the common ranges. */
+export async function refreshAhmSnapshot(f: AhmFilters): Promise<AhmDashboardData> {
+  const key = ahmSnapshotKey(f);
+  const t0 = Date.now();
+  const data = await computeAhmDashboard(f);
+  const computeMs = Date.now() - t0;
+  await db.execute(
+    `INSERT INTO ahm_dashboard_snapshot (cache_key, from_date, to_date, region, payload, compute_ms, computed_at)
+     VALUES (?, ?, ?, ?, ?, ?, NOW())
+     ON DUPLICATE KEY UPDATE from_date = VALUES(from_date), to_date = VALUES(to_date), region = VALUES(region),
+       payload = VALUES(payload), compute_ms = VALUES(compute_ms), computed_at = VALUES(computed_at)`,
+    [key, f.from, f.to, f.region, JSON.stringify(data), computeMs],
+  );
+  return data;
+}
+
+async function computeAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
   const w = where(f);
 
   const [[headlineRow], statusRows, dispoRows, hourRows, dailyRows, zoneRows, townRows, tsRows, dbRows, franRows, catRows] =
