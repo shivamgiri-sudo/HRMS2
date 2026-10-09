@@ -3,7 +3,9 @@
 //   RIG_API=http://127.0.0.1:5420 RIG_DB=jd_rig node backend/scripts/he-e2e/jd-suggest-api.e2e.mjs
 import { api, apiLogin, closeDb, q, suite } from "/home/shuvam/he-e2e2/lib/rig.mjs";
 
-if (process.env.RIG_DB !== "jd_rig" || !/:5420$/.test(process.env.RIG_API ?? "")) { console.error("refusing: RIG_DB=jd_rig and RIG_API=...:5420 required"); process.exit(2); }
+// Scratch clones only, each with its own backend: jd_rig on 5420, the release clone rel_rig on 5430.
+const PAIRS = { jd_rig: ":5420", rel_rig: ":5430" };
+if (!PAIRS[process.env.RIG_DB ?? ""] || !(process.env.RIG_API ?? "").endsWith(PAIRS[process.env.RIG_DB])) { console.error("refusing: RIG_DB=jd_rig + RIG_API ...:5420 (or rel_rig + ...:5430) required"); process.exit(2); }
 const { ok, step, done } = suite("jd_suggest_api");
 const ID = (code) => `jdrig-${code}`.toLowerCase();
 const U = (code) => `/api/job-requisition/${ID(code)}/criteria/suggestions`;

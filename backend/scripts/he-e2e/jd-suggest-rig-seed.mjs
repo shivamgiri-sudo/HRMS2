@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 
 const DB = process.env.RIG_DB;
-if (DB !== "jd_rig") { console.error("refusing: RIG_DB must be jd_rig"); process.exit(2); }
+if (DB !== "jd_rig" && DB !== "rel_rig") { console.error("refusing: RIG_DB must be jd_rig or rel_rig"); process.exit(2); }
 const require = createRequire(new URL("../../package.json", import.meta.url));
 const mysql = require("mysql2/promise");
 const c = await mysql.createConnection({ host: "127.0.0.1", port: 3312, user: "root", password: "x", database: DB, timezone: "+05:30" });

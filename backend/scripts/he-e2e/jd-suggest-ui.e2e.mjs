@@ -7,7 +7,8 @@ import path from "node:path";
 import { closeDb, q, suite } from "/home/shuvam/he-e2e2/lib/rig.mjs";
 
 const UI = process.env.JD_UI ?? "http://127.0.0.1:5421";
-if (process.env.RIG_DB !== "jd_rig" || !/:5421$/.test(UI)) { console.error("refusing: RIG_DB=jd_rig and JD_UI=...:5421 required"); process.exit(2); }
+const PAIRS = { jd_rig: ":5421", rel_rig: ":5431" }; // scratch clones only, each with its own vite
+if (!PAIRS[process.env.RIG_DB ?? ""] || !UI.endsWith(PAIRS[process.env.RIG_DB])) { console.error("refusing: RIG_DB=jd_rig + JD_UI ...:5421 (or rel_rig + ...:5431) required"); process.exit(2); }
 const SHOTS = "/home/shuvam/he-e2e2/shots/jd-suggest";
 fs.mkdirSync(SHOTS, { recursive: true });
 const USERS = { super_admin: "rig.superadmin@he-e2e2.test", ceo: "rig.ceo@he-e2e2.test", branch_hr_ahm: "rig.bhr.ahmedabad@he-e2e2.test", branch_hr_noida2: "rig.bhr.noida2@he-e2e2.test" };
