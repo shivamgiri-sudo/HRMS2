@@ -5,7 +5,8 @@ import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.
 import type { RowTag } from "./qualified-followup.policy.js";
 import { followupGuardOn } from "../selection/selection-switches.js";
 import { releasePerson } from "./followup-person.service.js";
-import { decideStop, nextStepDue, OUTCOME_UNKNOWN_ERROR, SENDING_STALE_MIN, type StopReason } from "./qualified-followup.rules.js";
+import { CRITERIA_HOLDABLE, decideStop, nextStepDue, OUTCOME_UNKNOWN_ERROR, SENDING_STALE_MIN, type StopReason } from "./qualified-followup.rules.js";
+import { releaseJourneyBooking } from "./followup-booking.service.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
 
@@ -35,8 +36,8 @@ function factsSql(limit: number, paged: boolean): string {
 
 const MAX_PAGES = 200;
 
-/** Journeys a criteria review may hold: stage A (or waiting); a booked journey (stage B) is never held. */
-const HOLDABLE = "'enrolled','reach','engaged','held_best_offer','reinvite_wait'";
+/** Journeys a criteria review may hold: stage A (or waiting); a confirmed journey (stage B) is never held (E2, rules.ts). */
+const HOLDABLE = CRITERIA_HOLDABLE;
 
 export async function runStopChecks(tag: RowTag, limit = 500): Promise<{ checked: number; stopped: Partial<Record<StopReason, number>>; held?: { criteria_review: number } }> {
   const stopped: Partial<Record<StopReason, number>> = {};
@@ -61,7 +62,7 @@ export async function runStopChecks(tag: RowTag, limit = 500): Promise<{ checked
           // One hold model with the unified follow-up: held for HR (held_manual), not stopped; releaseCriteriaHold releases it.
           const [u] = await db.execute<any>(
             `UPDATE qualified_followup SET journey_state = 'held_manual', held_reason = 'criteria_review' WHERE id = ? AND stopped_reason IS NULL AND journey_state IN (${HOLDABLE})`, [r.id]);
-          if (Number(u?.affectedRows ?? 0) > 0) held++;
+          if (Number(u?.affectedRows ?? 0) > 0) { held++; await releaseJourneyBooking(String(r.id)); }
           continue;
         }
         await db.execute(
@@ -70,6 +71,8 @@ export async function runStopChecks(tag: RowTag, limit = 500): Promise<{ checked
         stopped[reason] = (stopped[reason] ?? 0) + 1;
         // criteria_failed ends the journey like the guard chain's end_journey: the person is free for another requisition.
         if (reason === "criteria_failed") await releasePerson(String(r.mobile10), String(r.id));
+        // E1: the journey ended; its seat goes back unless the person confirmed / arrived.
+        await releaseJourneyBooking(String(r.id));
       } catch (err) {
         logger.warn({ rowId: r.id, err: (err as Error).message }, "[qualified-followup] stop check failed for row");
       }
@@ -94,7 +97,7 @@ async function criteriaFacts(ids: string[]): Promise<Map<string, { verdict: stri
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT qf.id, qf.criteria_verdict,
               EXISTS (SELECT 1 FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE l.mobile10 = qf.mobile10 ${C} AND m.requisition_id = qf.requisition_id ${C}
-                       AND m.state IN ('invited','confirmed') AND m.slot_at >= NOW()) AS booked
+                       AND m.state IN ('confirmed','arrived','selected')) AS booked
          FROM qualified_followup qf WHERE qf.id IN (${ids.map(() => "?").join(",")}) AND qf.criteria_verdict IN ('fail','review')`, ids);
     return new Map(rows.map((r) => [String(r.id), { verdict: r.criteria_verdict ?? null, booked: Number(r.booked) === 1 }]));
   } catch (err) {

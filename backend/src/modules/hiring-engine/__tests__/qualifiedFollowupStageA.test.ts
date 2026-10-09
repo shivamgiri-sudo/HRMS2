@@ -7,13 +7,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   sqls: [] as Array<{ sql: string; p: unknown[] }>,
   book: vi.fn(), claim: vi.fn(), facts: vi.fn(), note: vi.fn(), release: vi.fn(), skip: vi.fn(), branchToday: vi.fn(), markInvited: vi.fn(),
-  personFacts: vi.fn(),
+  personFacts: vi.fn(), releaseBooking: vi.fn(),
 }));
 vi.mock("../../../db/mysql.js", () => ({
   db: { execute: vi.fn(async (sql: string, p: unknown[] = []) => { h.sqls.push({ sql: sql.replace(/\s+/g, " ").trim(), p }); return [{ affectedRows: 1 }]; }) },
 }));
 vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
-vi.mock("../followup-booking.service.js", () => ({ bookJourney: h.book, markInvitedAfterSend: h.markInvited }));
+vi.mock("../followup-booking.service.js", () => ({ bookJourney: h.book, markInvitedAfterSend: h.markInvited, releaseJourneyBooking: h.releaseBooking }));
 vi.mock("../followup-person.service.js", () => ({ claimPerson: h.claim, notePersonFirstContact: h.note, releasePerson: h.release, personFacts: h.personFacts }));
 vi.mock("../followup-guard-facts.service.js", () => ({ loadGuardFacts: h.facts }));
 vi.mock("../followup-guards.service.js", async (orig) => ({ ...(await orig<typeof import("../followup-guards.service.js")>()), recordGuardSkip: h.skip, branchFirstContactsToday: h.branchToday }));
@@ -44,7 +44,7 @@ const writes = () => h.sqls.filter((s) => /^(INSERT|UPDATE)/.test(s.sql));
 
 beforeEach(() => {
   h.sqls = [];
-  for (const f of [h.book, h.claim, h.facts, h.note, h.release, h.skip, h.branchToday, h.markInvited, h.personFacts]) f.mockReset();
+  for (const f of [h.book, h.claim, h.facts, h.note, h.release, h.skip, h.branchToday, h.markInvited, h.personFacts, h.releaseBooking]) f.mockReset();
   h.book.mockResolvedValue({ status: "booked", matchId: "M1", driveId: "D1", slotAt: "2026-10-09 10:00:00" });
   h.claim.mockResolvedValue(true);
   h.personFacts.mockResolvedValue({ activeFollowupId: null, lastFirstContactAt: null, reinvites30d: 0, optedOutAt: null });
@@ -72,6 +72,11 @@ describe("beginJourney", () => {
     const r = await beginJourney(S, "live", row(), THU_11);
     expect(r.held).toBe(true);
     expect(writes()[0]).toEqual({ sql: "UPDATE qualified_followup SET journey_state = 'held_best_offer' WHERE id = ? AND journey_state IN ('enrolled','held_best_offer')", p: ["F1"] });
+  });
+  it("E1: the claim comes first: a lost claim books nothing, so a held row re-checked every tick never takes a seat", async () => {
+    h.claim.mockResolvedValue(false);
+    for (let i = 0; i < 3; i++) expect((await beginJourney(S, "live", row({ journeyState: i ? "held_best_offer" : "enrolled" }), THU_11)).held).toBe(true);
+    expect(h.book).not.toHaveBeenCalled();
   });
   it("a journey already in reach is not booked or claimed again", async () => {
     await beginJourney(S, "live", row({ journeyState: "reach", matchId: "M1" }), THU_11);
@@ -130,6 +135,12 @@ describe("gate", () => {
     expect(await gate(S, "live", row(), "email", THU_11, scope(), { firstContact: true, templateKey: null })).toEqual({ action: "ended", reason: "opted_out" });
     expect(writes()[0].sql).toContain("SET stopped_reason = ?, stopped_at = NOW(), journey_state = 'stopped'");
     expect(h.release).toHaveBeenCalledWith("9876543210", "F1");
+    expect(h.releaseBooking).toHaveBeenCalledWith("F1"); // E1: the journey's unconfirmed seat goes back
+  });
+  it("E2: criteria_review in stage A holds the journey for HR (held_manual), never a due time pushed again and again", async () => {
+    h.facts.mockResolvedValue(baseFacts({ criteriaVerdict: "review" }));
+    expect(await gate(S, "live", row(), "email", THU_11, scope(), { firstContact: true, templateKey: null })).toEqual({ action: "held", reason: "criteria_review" });
+    expect(writes().map((w) => w.sql)).toEqual(["UPDATE qualified_followup SET journey_state = 'held_manual', held_reason = 'criteria_review' WHERE id = ? AND stopped_reason IS NULL AND journey_state IN ('enrolled','reach','engaged','held_best_offer','reinvite_wait')"]);
   });
   it("skip_step returns the reason for the step to record", async () => {
     h.facts.mockResolvedValue(baseFacts({ channelAllowed: false }));

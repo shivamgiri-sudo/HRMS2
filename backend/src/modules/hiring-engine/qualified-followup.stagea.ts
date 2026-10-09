@@ -8,7 +8,8 @@ import { logger } from "../../logger.js";
 import { checkFollowupGuards, type GuardReason, type GuardStep } from "./followup-guards.js";
 import { branchFirstContactsToday, recordGuardSkip } from "./followup-guards.service.js";
 import { loadGuardFacts } from "./followup-guard-facts.service.js";
-import { bookJourney, markInvitedAfterSend } from "./followup-booking.service.js";
+import { bookJourney, markInvitedAfterSend, releaseJourneyBooking } from "./followup-booking.service.js";
+import { CRITERIA_HOLDABLE } from "./qualified-followup.rules.js";
 import { claimPerson, notePersonFirstContact, personFacts, releasePerson } from "./followup-person.service.js";
 import { canaryCapFor, type FollowupSwitches } from "./qualified-followup.policy.js";
 import { recordShadow } from "./qualified-followup.shadow.js";
@@ -39,6 +40,11 @@ const RETRY_MIN = 15;
 export async function beginJourney(s: FollowupSwitches, tag: RowTag, row: FollowupRow, now: Date): Promise<{ row: FollowupRow; held: boolean }> {
   if (row.journeyState !== "enrolled" && row.journeyState !== "held_best_offer") return { row, held: false };
   let r = row;
+  // The person is claimed first (E1): a journey that loses the claim books nothing, so a held row re-checked every tick never holds a seat.
+  if (tag !== "dry_run" && !(await claimPerson(r.mobile10, r.id))) {
+    await db.execute("UPDATE qualified_followup SET journey_state = 'held_best_offer' WHERE id = ? AND journey_state IN ('enrolled','held_best_offer')", [r.id]);
+    return { row: r, held: true };
+  }
   // Always at the first send of a stage A run: bookJourney keeps a booking still ahead and books anything else (a fresh row, a line-up
   // match without a slot, a re-invite's old no-show match).
   const simulate = tag === "dry_run" || (tag === "test" && r.mobile10 !== s.testPhone);
@@ -47,10 +53,6 @@ export async function beginJourney(s: FollowupSwitches, tag: RowTag, row: Follow
   if (tag === "dry_run") {
     const holder = (await personFacts(r.mobile10)).activeFollowupId;
     return { row: r, held: holder !== null && holder !== r.id };
-  }
-  if (!(await claimPerson(r.mobile10, r.id))) {
-    await db.execute("UPDATE qualified_followup SET journey_state = 'held_best_offer' WHERE id = ? AND journey_state IN ('enrolled','held_best_offer')", [r.id]);
-    return { row: r, held: true };
   }
   return { row: r, held: false };
 }
@@ -79,6 +81,12 @@ export async function gate(
   }
   if (v.ok) return { action: "send" };
   await recordGuardSkip(row.id, row.heLeadId, step, v.reason, now).catch((err: unknown) => logger.warn({ rowId: row.id, err: (err as Error).message }, "[qualified-followup] skip audit failed"));
+  // E2: a criteria review holds the journey for HR (held_manual, released by releaseCriteriaHold), and its unconfirmed seat goes back.
+  if (v.reason === "criteria_review") {
+    await db.execute(`UPDATE qualified_followup SET journey_state = 'held_manual', held_reason = 'criteria_review' WHERE id = ? AND stopped_reason IS NULL AND journey_state IN (${CRITERIA_HOLDABLE})`, [row.id]);
+    await releaseJourneyBooking(row.id);
+    return { action: "held", reason: v.reason };
+  }
   if (v.kind === "hold") {
     await db.execute(`UPDATE qualified_followup SET ${o.dueColumn ?? DUE[step]} = ? WHERE id = ?`, [v.retryAt ?? new Date(now.getTime() + RETRY_MIN * 60_000), row.id]);
     return { action: "held", reason: v.reason };
@@ -88,6 +96,7 @@ export async function gate(
       "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), journey_state = 'stopped', call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
       [v.reason, row.id]);
     await releasePerson(row.mobile10, row.id);
+    await releaseJourneyBooking(row.id);
     return { action: "ended", reason: v.reason };
   }
   return { action: "skipped", reason: v.reason };

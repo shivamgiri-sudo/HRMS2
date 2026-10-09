@@ -10,7 +10,8 @@ const facts = (o: Record<string, unknown> = {}) => ({
   id: "r1", mobile10: "9876543210", email: "a@b.in", lead_status: null, consent_revoked: 0, he_replied: 0, meta_replied: 0,
   ats_stage: null, jr_id: "req-1", approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 10, fulfilled_headcount: 1, ...o,
 });
-const updates = () => execute.mock.calls.filter(([sql]) => /^\s*UPDATE/.test(String(sql)));
+const updates = () => execute.mock.calls.filter(([sql]) => /^\s*UPDATE qualified_followup/.test(String(sql)));
+const releases = () => execute.mock.calls.filter(([sql]) => /UPDATE he_match m JOIN qualified_followup qf/.test(String(sql)));
 
 beforeEach(() => {
   execute.mockReset();
@@ -52,6 +53,7 @@ describe("runStopChecks", () => {
     execute.mockResolvedValueOnce([[facts({ lead_status: "joined" }), facts({ id: "r2", mobile10: "123" })]]);
     expect((await runStopChecks("live")).stopped).toEqual({ joined: 1 });
     expect(updates()).toHaveLength(1);
+    expect(releases().map((c) => c[1])).toEqual([["r1"]]); // E1: the stopped journey's unconfirmed seat goes back
   });
   it("pages past the limit so later open rows are also checked", async () => {
     execute

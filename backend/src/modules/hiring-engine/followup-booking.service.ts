@@ -74,6 +74,18 @@ export async function markInvitedAfterSend(matchId: string): Promise<void> {
   await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ? AND state = 'suggested' AND slot_at IS NOT NULL", [matchId]);
 }
 
+/**
+ * E1: a journey that ends (stopped, held, waiting for a re-invite) gives back the seat its booking holds, unless the person genuinely
+ * confirmed (or arrived): an 'invited' match (booked by the journey, not answered) loses its slot and becomes slot_released, which no
+ * engine sender picks up and the booking core can book again later.
+ */
+export async function releaseJourneyBooking(followupId: string): Promise<void> {
+  await db.execute(
+    `UPDATE he_match m JOIN qualified_followup qf ON qf.match_id = m.id
+        SET m.slot_at = NULL, m.state = 'slot_released'
+      WHERE qf.id = ? AND m.state = 'invited'`, [followupId]);
+}
+
 /** The Meta screens read interview_date / interview_time; the booking is the truth, this is its mirror. */
 export async function mirrorSlotToMeta(metaLeadId: string, slotAt: string): Promise<void> {
   await db.execute("UPDATE meta_lead_raw SET interview_date = ?, interview_time = ? WHERE id = ?", [slotAt.slice(0, 10), slotAt.slice(11, 19), metaLeadId]);

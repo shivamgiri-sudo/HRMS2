@@ -47,7 +47,7 @@ describe("runStopChecks with the guard", () => {
     expect(calls.some(([s]) => s.startsWith("SELECT qf.id, qf.criteria_verdict"))).toBe(false);
     expect(stops()).toEqual([]);
   });
-  it("on: one extra read per page; stage A fail ends the journey and frees the person, review is a held_manual hold, a booked person continues", async () => {
+  it("on: one extra read per page; stage A fail ends the journey and frees the person, review is a held_manual hold, a CONFIRMED person continues (E2)", async () => {
     vi.stubEnv("SELECTION_FOLLOWUP_GUARD", "1");
     rows.push(row("a"), row("b"), row("c"), row("d"));
     crit.push({ id: "a", criteria_verdict: "fail", booked: 0 }, { id: "b", criteria_verdict: "review", booked: 0 }, { id: "c", criteria_verdict: "fail", booked: 1 });
@@ -61,8 +61,17 @@ describe("runStopChecks with the guard", () => {
       ["UPDATE qualified_followup SET journey_state = 'held_manual', held_reason = 'criteria_review' WHERE id = ? AND stopped_reason IS NULL AND journey_state IN ('enrolled','reach','engaged','held_best_offer','reinvite_wait')", ["b"]]]);
     expect(out.stopped).toEqual({ criteria_failed: 1 });
     expect(out.held).toEqual({ criteria_review: 1 });
-    // no recall: the only writes are the stop, the release of the person and the hold
-    expect(calls.filter(([s]) => /^(UPDATE|INSERT|DELETE)/.test(s)).every(([s]) => /^UPDATE (qualified_followup SET (stopped_reason|journey_state = 'held_manual')|followup_person)/.test(s))).toBe(true);
+    // no recall: the only writes are the stop, the release of the person, the hold and (E1) the release of the unconfirmed seats of a and b
+    expect(calls.filter(([s]) => /^(UPDATE|INSERT|DELETE)/.test(s)).every(([s]) => /^UPDATE (qualified_followup SET (stopped_reason|journey_state = 'held_manual')|followup_person|he_match m JOIN qualified_followup qf)/.test(s))).toBe(true);
+    expect(calls.filter(([s]) => s.startsWith("UPDATE he_match m JOIN qualified_followup qf")).map(([, p]) => p)).toEqual([["a"], ["b"]]);
+  });
+  it("E2 one rule: only a confirmed / arrived / selected walk-in exempts a person; an invited (booked, not answered) one is subject", async () => {
+    vi.stubEnv("SELECTION_FOLLOWUP_GUARD", "1");
+    rows.push(row("a"));
+    await runStopChecks("live", 500);
+    const sql = calls.find(([s]) => s.startsWith("SELECT qf.id, qf.criteria_verdict"))![0];
+    expect(sql).toContain("m.state IN ('confirmed','arrived','selected')) AS booked");
+    expect(sql).not.toContain("'invited'");
   });
   it("on, but the criteria read fails (before migration 2145): today's behaviour", async () => {
     vi.stubEnv("SELECTION_FOLLOWUP_GUARD", "1");

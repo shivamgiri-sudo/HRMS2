@@ -30,9 +30,21 @@ exports[`follow-up stop checks pin > runStopChecks statements and stops for a pa
       ],
     ],
     [
+      "UPDATE he_match m JOIN qualified_followup qf ON qf.match_id = m.id SET m.slot_at = NULL, m.state = 'slot_released' WHERE qf.id = ? AND m.state = 'invited'",
+      [
+        "b",
+      ],
+    ],
+    [
       "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), journey_state = 'stopped', call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
       [
         "requisition_closed",
+        "d",
+      ],
+    ],
+    [
+      "UPDATE he_match m JOIN qualified_followup qf ON qf.match_id = m.id SET m.slot_at = NULL, m.state = 'slot_released' WHERE qf.id = ? AND m.state = 'invited'",
+      [
         "d",
       ],
     ],
@@ -44,9 +56,21 @@ exports[`follow-up stop checks pin > runStopChecks statements and stops for a pa
       ],
     ],
     [
+      "UPDATE he_match m JOIN qualified_followup qf ON qf.match_id = m.id SET m.slot_at = NULL, m.state = 'slot_released' WHERE qf.id = ? AND m.state = 'invited'",
+      [
+        "e",
+      ],
+    ],
+    [
       "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), journey_state = 'stopped', call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
       [
         "no_contact_details",
+        "f",
+      ],
+    ],
+    [
+      "UPDATE he_match m JOIN qualified_followup qf ON qf.match_id = m.id SET m.slot_at = NULL, m.state = 'slot_released' WHERE qf.id = ? AND m.state = 'invited'",
+      [
         "f",
       ],
     ],
@@ -58,9 +82,21 @@ exports[`follow-up stop checks pin > runStopChecks statements and stops for a pa
       ],
     ],
     [
+      "UPDATE he_match m JOIN qualified_followup qf ON qf.match_id = m.id SET m.slot_at = NULL, m.state = 'slot_released' WHERE qf.id = ? AND m.state = 'invited'",
+      [
+        "g",
+      ],
+    ],
+    [
       "UPDATE qualified_followup SET stopped_reason = ?, stopped_at = NOW(), journey_state = 'stopped', call_state = IF(call_state = 'pending', 'skipped', call_state) WHERE id = ? AND stopped_reason IS NULL",
       [
         "requisition_closed",
+        "h",
+      ],
+    ],
+    [
+      "UPDATE he_match m JOIN qualified_followup qf ON qf.match_id = m.id SET m.slot_at = NULL, m.state = 'slot_released' WHERE qf.id = ? AND m.state = 'invited'",
+      [
         "h",
       ],
     ],

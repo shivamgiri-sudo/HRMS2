@@ -118,8 +118,17 @@ export async function persistSignals(leadId: string, signals: Signal[], sourceRe
   }
 }
 
+/** An opt-out is terminal: nothing overwrites it. A no-show (one requisition) also never overwrites a join / arrival, or a person who
+ *  holds a live booking for another requisition (E1). */
 export async function setLeadStatus(leadId: string, status: LeadStatus): Promise<void> {
-  await db.execute("UPDATE he_lead SET status = ?, status_at = NOW() WHERE id = ?", [status, leadId]);
+  if (status === "opted_out") { await db.execute("UPDATE he_lead SET status = ?, status_at = NOW() WHERE id = ?", [status, leadId]); return; }
+  if (status === "no_show") {
+    await db.execute(
+      `UPDATE he_lead SET status = ?, status_at = NOW() WHERE id = ? AND status NOT IN ('opted_out','joined','arrived')
+          AND NOT EXISTS (SELECT 1 FROM he_match x WHERE x.lead_id = ? AND x.state IN ('invited','confirmed') AND x.slot_at >= NOW())`, [status, leadId, leadId]);
+    return;
+  }
+  await db.execute("UPDATE he_lead SET status = ?, status_at = NOW() WHERE id = ? AND status <> 'opted_out'", [status, leadId]);
 }
 
 /** Active consent = granted and not revoked. */

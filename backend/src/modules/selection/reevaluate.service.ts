@@ -105,13 +105,13 @@ export async function releaseCriteriaHold(a: { followupId: string; reason: strin
   return ok;
 }
 
-/** Booked for a walk-in but no longer meeting the criteria: HR keeps or cancels them by hand. Masked. */
+/** Confirmed for a walk-in but no longer meeting the criteria (E2: only confirmed people keep their walk-in): HR keeps or cancels them by hand. Masked. */
 export async function bookedMismatch(a: { requisitionId: string; actor: OverrideActor }) {
   if (!(await jobRequisitionService.isRequisitionVisible(a.actor.user, { id: a.requisitionId }))) throw fail(404, "Requisition not found");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT qf.id, qf.mobile10, qf.full_name, qf.criteria_verdict, qf.criteria_checked_at, m.state, m.slot_at
        FROM qualified_followup qf JOIN he_match m ON m.id = qf.match_id
-      WHERE qf.requisition_id = ? AND qf.criteria_verdict IN ('fail', 'review') AND m.state IN ('invited', 'confirmed') AND m.slot_at >= NOW()
+      WHERE qf.requisition_id = ? AND qf.criteria_verdict IN ('fail', 'review') AND m.state = 'confirmed' AND m.slot_at >= NOW()
       ORDER BY m.slot_at LIMIT 500`, [a.requisitionId]);
   return rows.map((r) => ({ followupId: String(r.id), maskedMobile: maskMobile(String(r.mobile10)), firstName: String(r.full_name ?? "").split(/\s+/)[0] ?? "",
     verdict: String(r.criteria_verdict), checkedAt: r.criteria_checked_at, matchState: String(r.state), slotAt: r.slot_at }));

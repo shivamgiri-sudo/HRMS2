@@ -13,6 +13,7 @@ import { rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup
 import { afterFailure, chooseWaTemplate, nextStepDue, nextWorkingDayIst } from "./qualified-followup.rules.js";
 import { assessmentText } from "./qualified-followup.cadence.js";
 import { releasePerson } from "./followup-person.service.js";
+import { releaseJourneyBooking } from "./followup-booking.service.js";
 import { withinSendWindow } from "./qualified-followup.schedule.js";
 import { bestOfferSkipSql } from "./he-best-offer.js";
 import { markHeldBestOffer, notInIdsSql, selectWithOfferHolds } from "./he-best-offer.service.js";
@@ -109,7 +110,7 @@ async function runMissedCallT9(s: FollowupSwitches, tag: RowTag, now: Date, scop
       await db.execute(
         "UPDATE qualified_followup SET missed_call_due_at = NULL, stage_a_ended_at = ?, journey_state = IF(journey_state IN ('enrolled','reach'), 'reinvite_wait', journey_state) WHERE id = ?",
         [now, row.id]);
-      if (!isDry) await releasePerson(row.mobile10, row.id);
+      if (!isDry) { await releasePerson(row.mobile10, row.id); await releaseJourneyBooking(row.id); }
       counts.processed++;
     } catch (err) {
       logger.warn({ rowId: row.id, err: scrub((err as Error).message) }, "[qualified-followup] missed-call message failed for row");

@@ -115,6 +115,8 @@ describe("release and booked-mismatch", () => {
     expect(await bookedMismatch({ requisitionId: "r1", actor })).toEqual([{ followupId: "q1", maskedMobile: "98xxxxxx10", firstName: "Asha", verdict: "fail", checkedAt: "t", matchState: "confirmed", slotAt: "2026-10-12 10:00:00" }]);
     // the journey's own booking (match_id), not any match of any lead with this mobile
     expect(h.state.sqls.find((q) => q.startsWith("SELECT qf.id, qf.mobile10, qf.full_name"))).toContain("FROM qualified_followup qf JOIN he_match m ON m.id = qf.match_id WHERE");
+    // E2: only CONFIRMED people keep their walk-in (an invited, unanswered one is held / stopped instead)
+    expect(h.state.sqls.find((q) => q.startsWith("SELECT qf.id, qf.mobile10, qf.full_name"))).toContain("AND m.state = 'confirmed' AND m.slot_at >= NOW()");
     h.state.outOfScope.add("r1");
     await expect(bookedMismatch({ requisitionId: "r1", actor })).rejects.toMatchObject({ statusCode: 404 });
   });

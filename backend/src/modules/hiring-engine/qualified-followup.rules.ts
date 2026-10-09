@@ -13,9 +13,17 @@ export interface StopFacts {
   joined: boolean;
   hasMobile: boolean;
   hasEmail: boolean;
-  /** The person's verdict against the requisition's current criteria, and whether they are booked for a walk-in (stage B). Absent = no criteria fact. */
+  /** The person's verdict against the requisition's current criteria, and whether they CONFIRMED (or arrived at) a walk-in for it (E2). Absent = no criteria fact. */
   criteria?: { verdict: "pass" | "fail" | "review" | string | null; booked: boolean };
 }
+
+/**
+ * E2, the one criteria rule: a journey that has started but whose person has NOT confirmed (or arrived) is subject to the criteria
+ * (fail = stopped, review = held for HR as held_manual); a confirmed person keeps their walk-in and shows on the booked-mismatch list.
+ */
+export const CRITERIA_EXEMPT_MATCH_STATES: readonly string[] = ["confirmed", "arrived", "selected"];
+/** Journey states a criteria review may hold (stage A or waiting); a confirmed journey (stage B) never is. */
+export const CRITERIA_HOLDABLE = "'enrolled','reach','engaged','held_best_offer','reinvite_wait'";
 
 /** A reply no longer stops the journey (unified method): it ends stage A (journey 'engaged') and stage B continues. */
 export function decideStop(f: StopFacts): StopReason | null {
@@ -23,7 +31,7 @@ export function decideStop(f: StopFacts): StopReason | null {
   if (f.requisitionClosed) return "requisition_closed";
   if (f.joined) return "joined";
   if (!f.hasMobile && !f.hasEmail) return "no_contact_details";
-  // stage A only: a booked person keeps their date and reminders; HR sees them in the booked-mismatch list
+  // a confirmed person keeps their date and reminders (HR sees them in the booked-mismatch list); anyone else is held or stopped
   if (f.criteria && !f.criteria.booked) {
     if (f.criteria.verdict === "fail") return "criteria_failed";
     if (f.criteria.verdict === "review") return "criteria_review";
