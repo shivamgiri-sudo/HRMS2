@@ -31,6 +31,8 @@ async function call(h, method, url, body) {
   const t = await r.text(); let json = null; try { json = JSON.parse(t); } catch { /* csv */ }
   return { status: r.status, json, text: t };
 }
+// Why-not search travels only in a POST body (never in a URL / access log).
+const why = (h, query, requisitionId) => call(h, "POST", "/api/job-requisition/selection/why", requisitionId ? { q: query, requisitionId } : { q: query });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ids = Object.fromEntries((await q("SELECT requisition_code, id FROM job_requisition WHERE requisition_code LIKE 'RIG-R%'")).map((r) => [r.requisition_code.slice(4), r.id]));
 
@@ -76,9 +78,12 @@ try {
     ok(`${role}: shortlist run on R01 -> ${runWant}`, run.status === runWant, run.status);
   }
   // S15-S20 read models: recruiters get nothing; lists follow scope; permissions travel with the data
-  for (const url of ["/api/job-requisition/selection/requisitions", `/api/he/shortlist/approval-state?requisitionId=${ids.R01}&sourceKind=he`, "/api/job-requisition/selection/why?q=99999"]) {
+  for (const url of ["/api/job-requisition/selection/requisitions", `/api/he/shortlist/approval-state?requisitionId=${ids.R01}&sourceKind=he`]) {
     ok(`recruiter: ${url.split("?")[0]} -> 403`, (await call(S.recruiter, "GET", url)).status === 403);
   }
+  ok("recruiter: POST /api/job-requisition/selection/why -> 403", (await why(S.recruiter, "99999")).status === 403);
+  const whyGet = await call(SA, "GET", "/api/job-requisition/selection/why?q=9999900103");
+  ok("why-not: a GET that carries the mobile in the URL is 400 and echoes nothing", whyGet.status === 400 && !whyGet.text.includes("9999900103"), whyGet.json);
   const lists = {};
   for (const role of ["super_admin", "ceo", "branch_hr_noida2", "branch_hr_ahm"]) lists[role] = (await call(S[role], "GET", "/api/job-requisition/selection/requisitions")).json?.data;
   const codesOf = (d) => new Set((d?.items ?? []).map((i) => i.code));
@@ -133,31 +138,31 @@ try {
   ok("R02 (night shift): the funnel has a night-shift step and unknown night-shift answers go to review", !!nightStep && nightStep.reviewHere > 0, pv02.json?.data?.steps);
   let prev = pv02.json.data.start;
   ok("R02 funnel invariant (remaining = previous - failed here)", pv02.json.data.steps.every((s) => { const okk = s.remaining === prev - s.failedHere; prev = s.remaining; return okk; }));
-  const ccc = await call(SA, "GET", `/api/job-requisition/selection/why?q=9999900206&requisitionId=${ids.R01}`);
+  const ccc = await why(SA, "9999900206", ids.R01);
   const cccR01 = ccc.json?.data?.[0]?.perRequisition?.[0];
   // 'ccc' address and locality, but the profile says "Uttar Pradesh": a state alone names no city -> unknown, review (never a silent fail)
   ok("WorkIndia 'ccc' (state-only profile): location unknown, verdict review", cccR01?.verdict === "review" && cccR01.unknown.some((u) => /names none of Noida/.test(u.actualText)), cccR01);
-  const legacy = await call(SA, "GET", "/api/job-requisition/selection/why?q=9999900207");
+  const legacy = await why(SA, "9999900207");
   ok("legacy employee: never contacted, explained", legacy.json?.data?.[0]?.perRequisition?.every((r) => r.explanation === "Never contacted: former employee record (legacy import)"), legacy.json?.data?.[0]?.perRequisition?.[0]);
-  const test = await call(SA, "GET", "/api/job-requisition/selection/why?q=9999900208");
+  const test = await why(SA, "9999900208");
   ok("test record: never contacted", test.json?.data?.[0]?.perRequisition?.every((r) => r.systemBlock === "test"));
   const pvMeta = await call(SA, "GET", `/api/job-requisition/${ids.R01}/selection/preview?source=meta_live`);
   const ageStep = pvMeta.json?.data?.steps?.find((s) => s.key === "age");
   ok("Live Meta: age unknown passes (missingBySource meta_live pass), never sent to review", pvMeta.status === 200 && (!ageStep || ageStep.reviewHere === 0), ageStep);
 
   // ── 4. multi-requisition campaign and branch scoping ──
-  const meera = await call(SA, "GET", "/api/job-requisition/selection/why?q=9999900113");
+  const meera = await why(SA, "9999900113");
   const byCode = Object.fromEntries((meera.json?.data?.[0]?.perRequisition ?? []).map((r) => [r.code, r]));
   ok("one person, two branches: Ahmedabad resident fails NOIDA-2 location, not Ahmedabad's", byCode["RIG-R01"]?.failed?.some((f) => f.key === "location_cities") && !byCode["RIG-R04"]?.failed?.some((f) => f.key === "location_cities"),
     { r01: byCode["RIG-R01"]?.failed, r04: byCode["RIG-R04"]?.failed });
   ok("Ahmedabad HR: NOIDA-2 preview 404", (await call(S.branch_hr_ahm, "GET", `/api/job-requisition/${ids.R01}/selection/preview`)).status === 404);
-  const ahmWhy = await call(S.branch_hr_ahm, "GET", "/api/job-requisition/selection/why?q=9999900113");
+  const ahmWhy = await why(S.branch_hr_ahm, "9999900113");
   ok("Ahmedabad HR: why-not shows only Ahmedabad requisitions", (ahmWhy.json?.data?.[0]?.perRequisition ?? []).every((r) => ["RIG-R03", "RIG-R04"].includes(r.code)) && ahmWhy.json.data[0].perRequisition.length > 0,
     ahmWhy.json?.data?.[0]?.perRequisition?.map((r) => r.code));
   // I3: people are scoped too; ceo / manager roles cannot look people up
-  const ahmOther = await call(S.branch_hr_ahm, "GET", "/api/job-requisition/selection/why?q=9999900103");
+  const ahmOther = await why(S.branch_hr_ahm, "9999900103");
   ok("Ahmedabad HR: a NOIDA-2-only person is 'not found in your scope' (no masked entry, no values)", ahmOther.status === 200 && Array.isArray(ahmOther.json?.data) && ahmOther.json.data.length === 0 && ahmOther.json.message === "Not found in your scope", ahmOther.json);
-  ok("CEO: why-not lookup is 403 (preview-export / override roles only)", (await call(S.ceo, "GET", "/api/job-requisition/selection/why?q=9999900103")).status === 403);
+  ok("CEO: why-not lookup is 403 (preview-export / override roles only)", (await why(S.ceo, "9999900103")).status === 403);
   ok("Ahmedabad HR: shortlist run on NOIDA-2 -> 404", (await call(S.branch_hr_ahm, "POST", "/api/he/shortlist/run", { requisitionId: ids.R01, sourceKind: "he" })).status === 404);
 
   // ── 5. contradictory rules ──
@@ -173,7 +178,7 @@ try {
 
   // ── 6. overrides ──
   const inc = await call(S.branch_hr_noida2, "PUT", "/api/he/shortlist/override", { mobile: "9999900103", requisitionScope: ids.R01, kind: "include", reason: "rig: client met him" });
-  const whyInc = await call(S.branch_hr_noida2, "GET", `/api/job-requisition/selection/why?q=9999900103&requisitionId=${ids.R01}`);
+  const whyInc = await why(S.branch_hr_noida2, "9999900103", ids.R01);
   ok("include on someone who fails age -> pass with the HR reason", inc.status === 200 && whyInc.json?.data?.[0]?.perRequisition?.[0]?.verdict === "pass" && whyInc.json.data[0].perRequisition[0].override?.reason === "rig: client met him", whyInc.json?.data?.[0]?.perRequisition?.[0]);
   const incLegacy = await call(SA, "PUT", "/api/he/shortlist/override", { mobile: "9999900207", requisitionScope: ids.R01, kind: "include", reason: "rig" });
   ok("include on a legacy employee warns: system exclusion cannot be overridden", incLegacy.json?.data?.warning === "system exclusion cannot be overridden (legacy_employee)", incLegacy.json);

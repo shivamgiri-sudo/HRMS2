@@ -25,7 +25,9 @@ const SEARCHED = "9999900103"; // the why-not search echoes the mobile the user 
 async function login(b, role) {
   const ctx = await b.newContext({ viewport: { width: 1440, height: 1000 }, permissions: ["geolocation"], geolocation: { latitude: 28.53, longitude: 77.39 } });
   const page = await ctx.newPage();
-  const issues = { console: [], pageErrors: [], failed: [], http: [], selCalls: [], unmasked: [] };
+  const issues = { console: [], pageErrors: [], failed: [], http: [], selCalls: [], unmasked: [], urlMobiles: [] };
+  // the searched mobile goes in a POST body only: no request URL may carry it (access logs)
+  page.on("request", (r) => { if (r.url().includes(SEARCHED)) issues.urlMobiles.push(`${r.method()} ${r.url().replace(UI, "").replace(SEARCHED, "<searched>")}`); });
   page.on("console", (m) => { if (m.type() === "error") issues.console.push(m.text().slice(0, 200)); });
   page.on("pageerror", (e) => issues.pageErrors.push(e.message.slice(0, 200)));
   // only the app's own requests: a third-party host (e.g. the browser-side reverse geocoder) is outside the rig and its egress is refused
@@ -168,6 +170,7 @@ try {
         await settle(page);
         const answered = page.locator('section[aria-label^="RIG-R"]');
         ok(`${role}: why-not answers per requisition in scope`, (await answered.count()) > 0 || (await visible(page.getByText(/Nobody found|Not part of any open requisition you can see/))), await answered.count());
+        ok(`${role}: the searched mobile is in no request URL (POST body only)`, issues.urlMobiles.length === 0, issues.urlMobiles);
         const ov = page.getByRole("button", { name: /^Override for RIG-R/ });
         ok(`${role}: override ${OVERRIDE.has(role) ? "offered" : "hidden"}`, (await visible(ov)) === OVERRIDE.has(role) || (OVERRIDE.has(role) && (await answered.count()) === 0));
         shots.push(await shot(page, `${role}__whynot`));

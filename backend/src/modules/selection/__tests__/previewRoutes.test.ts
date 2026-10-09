@@ -49,7 +49,7 @@ describe("preview routes", () => {
     h.user.role = "recruiter";
     const a = await app();
     expect((await request(a).get("/api/job-requisition/r1/selection/preview")).status).toBe(403);
-    expect((await request(a).get("/api/job-requisition/selection/why?q=abc")).status).toBe(403);
+    expect((await request(a).post("/api/job-requisition/selection/why").send({ q: "abc" })).status).toBe(403);
   });
   it.each(["ceo", "branch_head"])("%s may read the preview but not export the CSV", async (role) => {
     h.user.role = role;
@@ -67,26 +67,37 @@ describe("preview routes", () => {
 });
 
 describe("why-not route", () => {
-  it("passes the query, the caller and an optional requisition", async () => {
-    const res = await request(await app()).get("/api/job-requisition/selection/why?q=9876543210&requisitionId=r1");
+  const WHY = "/api/job-requisition/selection/why";
+  it("passes the query, the caller and an optional requisition (POST body; the mobile never travels in the URL)", async () => {
+    const res = await request(await app()).post(WHY).send({ q: "9876543210", requisitionId: "r1" });
     expect(res.status).toBe(200);
     expect(h.why).toHaveBeenCalledWith("9876543210", { user: { id: "u1", role: "hr" }, requisitionId: "r1", scope: { all: false, branchName: "NOIDA-2" } });
   });
+  it("a GET that still carries q is 400 and looks nobody up", async () => {
+    const res = await request(await app()).get(`${WHY}?q=9876543210`);
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/request body/);
+    expect(JSON.stringify(res.body)).not.toContain("9876543210");
+    expect(h.why).not.toHaveBeenCalled();
+  });
   it("preview-export and override roles only: ceo and branch_head are 403; admin may look up", async () => {
     const a = await app();
-    for (const role of ["ceo", "branch_head"]) { h.user.role = role; expect((await request(a).get("/api/job-requisition/selection/why?q=abc")).status).toBe(403); }
+    for (const role of ["ceo", "branch_head"]) { h.user.role = role; expect((await request(a).post(WHY).send({ q: "abc" })).status).toBe(403); }
     h.user.role = "admin";
-    expect((await request(a).get("/api/job-requisition/selection/why?q=abc")).status).toBe(200);
+    expect((await request(a).post(WHY).send({ q: "abc" })).status).toBe(200);
   });
   it("nobody in the caller's scope: an empty answer that says so", async () => {
-    const res = await request(await app()).get("/api/job-requisition/selection/why?q=abc");
+    const res = await request(await app()).post(WHY).send({ q: "abc" });
     expect(res.body).toEqual({ success: true, data: [], message: "Not found in your scope" });
   });
-  it("a missing or very long query is 400; an employee is 403", async () => {
+  it("a missing, non-string or very long query is 400; a non-string requisition is 400; an employee is 403", async () => {
     const a = await app();
-    expect((await request(a).get("/api/job-requisition/selection/why")).status).toBe(400);
-    expect((await request(a).get(`/api/job-requisition/selection/why?q=${"x".repeat(81)}`)).status).toBe(400);
+    expect((await request(a).post(WHY).send({})).status).toBe(400);
+    expect((await request(a).post(WHY).send({ q: 9876543210 })).status).toBe(400);
+    expect((await request(a).post(WHY).send({ q: "x".repeat(81) })).status).toBe(400);
+    expect((await request(a).post(WHY).send({ q: "abc", requisitionId: ["r1"] })).status).toBe(400);
+    expect(h.why).not.toHaveBeenCalled();
     h.user.role = "employee";
-    expect((await request(a).get("/api/job-requisition/selection/why?q=abc")).status).toBe(403);
+    expect((await request(a).post(WHY).send({ q: "abc" })).status).toBe(403);
   });
 });

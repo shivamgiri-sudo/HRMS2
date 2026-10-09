@@ -24,7 +24,9 @@ export const selectionApi = {
   preview: (id: string, source: SourceKind, sub: SubSource | "all", draft?: CriteriaPatch | null) => (draft
     ? hrmsApi.post<Env<PreviewResult>>(`${R}/${enc(id)}/selection/preview`, { source, sub, draft }) : hrmsApi.get<Env<PreviewResult>>(`${R}/${enc(id)}/selection/preview?source=${source}&sub=${sub}`)).then((r) => r.data),
   csvPath: (id: string, source: SourceKind, sub: SubSource | "all") => `${R}/${enc(id)}/selection/preview.csv?source=${source}&sub=${sub}`,
-  why: (q: string, requisitionId?: string) => hrmsApi.get<Env<WhyNotPerson[]>>(`${R}/selection/why?q=${enc(q)}${requisitionId ? `&requisitionId=${enc(requisitionId)}` : ""}`).then((r) => r.data),
+  /** The search goes in the POST body only (a mobile must never reach a URL / access log). */
+  why: (q: string, requisitionId?: string) =>
+    hrmsApi.post<Env<WhyNotPerson[]>>(`${R}/selection/why`, requisitionId ? { q, requisitionId } : { q }).then((r) => r.data),
   setOverride: (mobile: string, requisitionScope: string, kind: "include" | "exclude", reason: string) =>
     hrmsApi.put<Env<{ warning: string | null }>>("/api/he/shortlist/override", { mobile, requisitionScope, kind, reason }).then((r) => r.data),
   removeOverride: (mobile: string, requisitionScope: string, reason: string) => hrmsApi.delete("/api/he/shortlist/override", { data: { mobile, requisitionScope, reason } }),
