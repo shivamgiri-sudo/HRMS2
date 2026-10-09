@@ -58,6 +58,9 @@ describe("CampaignRequisitionsView", () => {
     const html = renderToStaticMarkup(<CampaignRequisitionsView {...base} confirmRemove="r1" />);
     expect(html).toContain("NOIDA-ONF-17 is the main requisition");
     expect(html).toContain("Remove it");
+    // a real (Radix) alert dialog: focus moves in, is trapped and goes back on close; Keep it is the safe default focus
+    expect(html).toMatch(/role="alertdialog"[^>]*data-state="open"[^>]*tabindex="-1"/);
+    expect(html).toContain('data-dialog-cancel="">Keep it');
   });
   it("loading, error with Retry", () => {
     expect(renderToStaticMarkup(<CampaignRequisitionsView {...base} links={null} loading />)).toContain('aria-busy="true"');

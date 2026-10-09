@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CircleDot, Star } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { InlineAlertDialog } from "@/components/ui/inline-alert-dialog";
 import { useHasRole } from "@/hooks/useUserRole";
 import { requisitionOptions, type RequisitionOption } from "@/pages/hiring-engine/command/commandData";
 import {
@@ -107,10 +108,12 @@ export function CampaignRequisitionsView(p: CampaignRequisitionsViewProps) {
         </div>
       )}
       {removing && (
-        <div role="alertdialog" aria-labelledby="remove-main-title" className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
-          <p id="remove-main-title">{removing.code} is the main requisition. {(links?.length ?? 0) > 1 ? "The next linked one becomes the main one." : "The campaign goes back to JR pending."}</p>
-          <span className="flex gap-2"><button type="button" className={BTN} disabled={busy} onClick={p.onConfirmRemove}>Remove it</button><button type="button" className={BTN} onClick={p.onCancelRemove}>Keep it</button></span>
-        </div>
+        <InlineAlertDialog className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+          titleClassName="font-semibold" title={`${removing.code} is the main requisition.`}
+          description={(links?.length ?? 0) > 1 ? "The next linked one becomes the main one." : "The campaign goes back to JR pending."}
+          onCancel={p.onCancelRemove} actionsClassName="flex gap-2"
+          actions={<button type="button" className={BTN} disabled={busy} onClick={p.onConfirmRemove}>Remove it</button>}
+          cancel={<button type="button" className={BTN}>Keep it</button>} />
       )}
       {canWrite && links && <AddRow options={options} busy={busy} onAdd={p.onAdd} />}
       {heldCount > 0 && (

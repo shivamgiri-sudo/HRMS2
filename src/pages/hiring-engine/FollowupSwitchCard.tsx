@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Eye, Loader2, PauseCircle, PlayCircle, Plus, RefreshCcw, ShieldCheck, ToggleLeft, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { InlineAlertDialog } from "@/components/ui/inline-alert-dialog";
 import { useUserRole } from "@/hooks/useUserRole";
 import {
   budgetPercent, canEditSwitches, confirmFor, countsLine, effectiveText, inboundLine, MODE_LABEL, MODES, pickerOptions, putBody, SOURCE_LABEL, SOURCES,
@@ -27,22 +28,26 @@ function ConfirmStep({ data, pending, busy, onConfirm, onCancel }: Pick<ViewProp
   const [ack, setAck] = useState(false);
   const c = confirmFor(pending.source, pending.mode, data.inbound);
   return (
-    <div role="alertdialog" aria-labelledby="fu-confirm-title" className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/40">
-      <p id="fu-confirm-title" className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-200"><AlertTriangle className="h-4 w-4" aria-hidden /> Confirm the change</p>
-      <p className="mt-1 text-sm text-slate-800 dark:text-slate-200">{c.text}</p>
+    <InlineAlertDialog
+      className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/40"
+      titleClassName="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-200"
+      title={<><AlertTriangle className="h-4 w-4" aria-hidden /> Confirm the change</>}
+      descriptionClassName="mt-1 text-sm text-slate-800 dark:text-slate-200" description={c.text}
+      onCancel={onCancel} actionsClassName="mt-3 flex gap-2"
+      actions={
+        <button type="button" disabled={busy || (c.needsAck && !ack)} onClick={() => onConfirm(ack)} className={`${BTN} border-blue-600 bg-blue-600 text-white hover:bg-blue-700 dark:border-blue-500 dark:bg-blue-600`}>
+          <CheckCircle2 className="h-4 w-4" aria-hidden /> Switch to {MODE_LABEL[pending.mode]}
+        </button>
+      }
+      cancel={<button type="button" className={BTN}><X className="h-4 w-4" aria-hidden /> Cancel</button>}
+    >
       {c.needsAck && (
         <label className="mt-2 flex cursor-pointer items-start gap-2 text-sm text-slate-800 dark:text-slate-200">
           <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-0.5 h-4 w-4 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500" />
           I accept that Pinbot inbound is not verified: WhatsApp replies, STOP and receipts may not reach the system (STOP still works by email, call and HR).
         </label>
       )}
-      <div className="mt-3 flex gap-2">
-        <button type="button" disabled={busy || (c.needsAck && !ack)} onClick={() => onConfirm(ack)} className={`${BTN} border-blue-600 bg-blue-600 text-white hover:bg-blue-700 dark:border-blue-500 dark:bg-blue-600`}>
-          <CheckCircle2 className="h-4 w-4" aria-hidden /> Switch to {MODE_LABEL[pending.mode]}
-        </button>
-        <button type="button" onClick={onCancel} className={BTN}><X className="h-4 w-4" aria-hidden /> Cancel</button>
-      </div>
-    </div>
+    </InlineAlertDialog>
   );
 }
 
@@ -93,7 +98,7 @@ function Caps({ data, canEdit, busy, onCap }: Pick<ViewProps, "canEdit" | "busy"
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <caption className="text-left text-xs text-slate-600 dark:text-slate-400">Canary first contacts per branch per day</caption>
-        <thead><tr className="text-left text-xs text-slate-500 dark:text-slate-400"><th className="py-1">Branch prefix</th><th className="py-1 text-right">Used today</th><th className="py-1 text-right">Daily cap</th></tr></thead>
+        <thead><tr className="text-left text-xs text-slate-500 dark:text-slate-400"><th scope="col" className="py-1">Branch prefix</th><th scope="col" className="py-1 text-right">Used today</th><th scope="col" className="py-1 text-right">Daily cap</th></tr></thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
           {data.caps.map((c) => (
             <tr key={c.prefix}>
@@ -149,7 +154,7 @@ export function FollowupSwitchView(p: ViewProps) {
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead><tr className="text-left text-xs text-slate-500 dark:text-slate-400"><th className="py-1">Source</th><th className="py-1">Mode</th><th className="py-1">Running as</th><th className="py-1">Journeys</th></tr></thead>
+          <thead><tr className="text-left text-xs text-slate-500 dark:text-slate-400"><th scope="col" className="py-1">Source</th><th scope="col" className="py-1">Mode</th><th scope="col" className="py-1">Running as</th><th scope="col" className="py-1">Journeys</th></tr></thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
             {SOURCES.map((src) => {
               const s = data.sources[src];

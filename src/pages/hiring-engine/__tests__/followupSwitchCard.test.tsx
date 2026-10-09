@@ -40,10 +40,17 @@ describe("FollowupSwitchView", () => {
     expect(putBody("live", true)).toEqual({ mode: "live", acknowledgeInboundUnverified: true });
     expect(putBody("dry_run", true)).toEqual({ mode: "dry_run" });
     const html = render({ pending: { source: "meta_live", mode: "live" } });
-    expect(html).toContain("role=\"alertdialog\"");
+    expect(html).toMatch(/role="alertdialog"[^>]*data-state="open"[^>]*tabindex="-1"/);
+    expect(html).toContain('data-dialog-cancel=""');
     expect(html).toContain("Live Meta leads to Live");
     // inbound not verified: the owner must tick the risk box
     expect(html).toContain("I accept that Pinbot inbound is not verified");
+  });
+  it("table headers carry scope", () => {
+    const html = render();
+    expect(html).toContain('<th scope="col" class="py-1">Source</th>');
+    expect(html).toContain('<th scope="col" class="py-1">Branch prefix</th>');
+    expect(html).not.toMatch(/<th class=/);
   });
   it("kill switch shows its state in words with an icon, and the button flips it", () => {
     expect(render()).toContain("Sends running");

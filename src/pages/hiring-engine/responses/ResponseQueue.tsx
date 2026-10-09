@@ -12,11 +12,11 @@ import { AnswerBadge, ChannelBadge } from "./ResponseBadges";
 import { QUEUE_ACTIONS, QUEUE_PATH, actionError, ageText, confidenceText, confirmPrompt, queueBuckets, withoutRow, type QueueAction, type ResponseQueueData, type ResponseRow } from "./responsesModel";
 
 export interface QueueViewProps {
-  data: ResponseQueueData | null; loading: boolean; error: string | null; canWrite: boolean; busyId: number | null; message: string | null; nowMs?: number;
+  data: ResponseQueueData | null; loading: boolean; error: string | null; canWrite: boolean; /** The person whose reply is being saved (its row already left the list), or null. */ saving: string | null; message: string | null; nowMs?: number;
   onAction: (row: ResponseRow, a: QueueAction) => void; onOpen: (row: ResponseRow) => void; onRetry: () => void;
 }
 
-export function QueueView({ data, loading, error, canWrite, busyId, message, nowMs, onAction, onOpen, onRetry }: QueueViewProps) {
+export function QueueView({ data, loading, error, canWrite, saving, message, nowMs, onAction, onOpen, onRetry }: QueueViewProps) {
   const total = data?.counts.total ?? 0;
   return (
     <section aria-labelledby="queue-heading" className="space-y-2 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900" data-queue>
@@ -25,7 +25,9 @@ export function QueueView({ data, loading, error, canWrite, busyId, message, now
         {data && total > 0 && <p className="text-xs text-slate-700 dark:text-slate-200">{queueBuckets(data.counts).filter((b) => b.n > 0).map((b) => `${b.n} ${b.label}`).join(" · ")}</p>}
       </div>
       <p className="text-xs text-slate-700 dark:text-slate-200">Replies in free text are never applied automatically. Pick what the candidate meant; a booking changes only when you pick Will come, Cannot come or Another time.</p>
-      <p role="status" className="text-sm text-slate-800 empty:hidden dark:text-slate-100">{message}</p>
+      <p role="status" className="flex items-center gap-1.5 text-sm text-slate-800 empty:hidden dark:text-slate-100">
+        {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />Saving {saving}...</> : message}
+      </p>
       {loading && !data && <div className="h-24 animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" role="status" aria-label="Loading the queue" />}
       {error && !data && (
         <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-rose-800 dark:text-rose-200">
@@ -51,8 +53,8 @@ export function QueueView({ data, loading, error, canWrite, busyId, message, now
               <div className="flex flex-wrap gap-1.5">
                 <button type="button" className={BTN} onClick={() => onOpen(r)} aria-label={`Timeline of ${r.person.name}`}><History className="h-3.5 w-3.5" aria-hidden /> Timeline</button>
                 {canWrite && QUEUE_ACTIONS.map((a) => (
-                  <button key={a.label} type="button" className={BTN} disabled={busyId != null} onClick={() => onAction(r, a)} aria-label={`${a.label}: ${r.person.name}`}>
-                    {busyId === r.id && <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />}{a.label}
+                  <button key={a.label} type="button" className={BTN} disabled={saving != null} onClick={() => onAction(r, a)} aria-label={`${a.label}: ${r.person.name}`}>
+                    {a.label}
                   </button>
                 ))}
               </div>
@@ -83,7 +85,7 @@ export function useResponseQueue(): { data: ResponseQueueData | null; setData: (
 
 export default function ResponseQueue({ canWrite, onOpen, onChanged, refreshSignal = 0 }: { canWrite: boolean; onOpen: (row: ResponseRow) => void; onChanged?: () => void; refreshSignal?: number }) {
   const q = useResponseQueue();
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   useEffect(() => { if (refreshSignal) q.reload(); }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
   const act = async (row: ResponseRow, a: QueueAction) => {
@@ -91,7 +93,7 @@ export default function ResponseQueue({ canWrite, onOpen, onChanged, refreshSign
     if (ask && !window.confirm(ask)) return;
     const cut = withoutRow(q.data?.rows ?? [], row.id);
     q.setData((d) => (d ? { ...d, rows: cut.rows, counts: { ...d.counts, total: Math.max(0, d.counts.total - 1) } } : d));
-    setBusyId(row.id); setMessage(null);
+    setSaving(row.person.name); setMessage(null);
     try {
       if ("ignore" in a) await hrmsApi.post(`/api/he/responses/${row.id}/ignore`, { reason: "Ignored by HR from the review queue" });
       else await hrmsApi.post(`/api/he/responses/${row.id}/classify`, { answer: a.answer, apply: a.apply });
@@ -101,7 +103,7 @@ export default function ResponseQueue({ canWrite, onOpen, onChanged, refreshSign
       q.setData((d) => (d ? { ...d, rows: cut.restore(d.rows), counts: { ...d.counts, total: d.counts.total + 1 } } : d));
       setMessage(actionError(e));
       if ((e as { status?: number })?.status === 409) q.reload();
-    } finally { setBusyId(null); }
+    } finally { setSaving(null); }
   };
-  return <QueueView data={q.data} loading={q.loading} error={q.error} canWrite={canWrite} busyId={busyId} message={message} onAction={(r, a) => void act(r, a)} onOpen={onOpen} onRetry={q.reload} />;
+  return <QueueView data={q.data} loading={q.loading} error={q.error} canWrite={canWrite} saving={saving} message={message} onAction={(r, a) => void act(r, a)} onOpen={onOpen} onRetry={q.reload} />;
 }

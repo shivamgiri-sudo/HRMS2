@@ -78,7 +78,7 @@ describe("ChannelCounts", () => {
 describe("QueueView", () => {
   const data = { rows: [row()], counts: { total: 1, under1h: 0, h1to4: 1, h4to24: 0, over24h: 0 }, oldestAt: "2026-10-08 10:00:00" };
   const q = (p: Partial<React.ComponentProps<typeof QueueView>> = {}) => renderToStaticMarkup(
-    <QueueView data={data} loading={false} error={null} canWrite busyId={null} message={null} nowMs={NOW.getTime()} onAction={noop} onOpen={noop} onRetry={noop} {...p} />);
+    <QueueView data={data} loading={false} error={null} canWrite saving={null} message={null} nowMs={NOW.getTime()} onAction={noop} onOpen={noop} onRetry={noop} {...p} />);
   it("write role: the five one-click classes; text, suggestion and confidence are shown", () => {
     const html = q();
     for (const l of ["Will come", "Cannot come", "Another time", "Question (no change)", "Ignore"]) expect(html).toContain(`aria-label="${l}: Asha V."`);
@@ -88,6 +88,12 @@ describe("QueueView", () => {
     expect(html).toContain("Replies waiting for HR (1)");
     expect(html).toContain("2 h ago");
     expect(html).toContain("never applied automatically");
+  });
+  it("while a reply is saved (its row already left the list) the spinner shows in the status line, not on a removed row", () => {
+    const html = q({ saving: "Ravi K.", data: { ...data, rows: [row()] } });
+    expect(html).toMatch(/role="status"[^>]*>.*animate-spin.*Saving Ravi K\./);
+    expect(html.match(/animate-spin/g)?.length).toBe(1);
+    expect(html).toMatch(/aria-label="Ignore: Asha V\."[^>]*disabled|disabled=""[^>]*aria-label="Ignore: Asha V\."/);
   });
   it("view-only role (ceo): no write button, the timeline stays", () => {
     const html = q({ canWrite: false });
