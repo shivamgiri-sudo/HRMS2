@@ -136,7 +136,17 @@ export async function saveRequisitionCriteria(a: { requisitionId: string; patch:
 }
 
 /** The requisition form (legacy PATCH/POST) and the backfill: a new version only when the compiled criteria changed. */
+/** One version row when the compiled criteria changed. A concurrent writer that took the next version number (unique key) makes this
+ *  retry once more from the top: the second pass sees the other version (same hash: nothing to write; else the following number). */
 export async function recordCriteriaVersion(requisitionId: string, actorId: string | null, source: string, reason: string | null = null): Promise<string | null> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await recordCriteriaVersionOnce(requisitionId, actorId, source, reason); } catch (e) {
+      if ((e as { code?: string }).code !== "ER_DUP_ENTRY" || attempt >= 2) throw e;
+    }
+  }
+}
+
+async function recordCriteriaVersionOnce(requisitionId: string, actorId: string | null, source: string, reason: string | null): Promise<string | null> {
   const conn = await db.getConnection();
   const ex = exOf(conn);
   try {

@@ -151,6 +151,25 @@ describe("recordCriteriaVersion (form path)", () => {
   });
 });
 
+describe("recordCriteriaVersion: unique-key race", () => {
+  it("a concurrent writer took the version number: retried, and a second version is not written when the other one already has this hash", async () => {
+    h.state.reqs.set("r1", row({ approval_status: "draft", education_requirement: "Graduate" }));
+    let raced = false;
+    h.conn.execute.mockImplementation((async (sql: string, p: unknown[] = []) => {
+      if (!raced && String(sql).trim().startsWith("INSERT INTO job_requisition_criteria_version")) {
+        raced = true;
+        // the other writer committed version 1 with the same criteria first
+        await h.exec(sql, p);
+        throw Object.assign(new Error("Duplicate entry 'r1-1' for key 'uq_jrcv_req_version'"), { code: "ER_DUP_ENTRY", errno: 1062 });
+      }
+      return h.exec(sql, p);
+    }) as never);
+    await expect(recordCriteriaVersion("r1", "u1", "form")).resolves.toBeNull();
+    expect(h.state.versions).toHaveLength(1);
+    h.conn.execute.mockImplementation(h.exec as never);
+  });
+});
+
 describe("bulk and copy", () => {
   beforeEach(() => {
     h.state.reqs.set("r2", row({ id: "r2", education_requirement: "12th", approval_status: "draft" }));
