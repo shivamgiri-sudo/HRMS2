@@ -290,6 +290,17 @@ export async function notifyQualifiedLead(
   }
 
   const { ctx } = loaded;
+  // A landed channel is recorded in the same step as its send (notification_sent_at on the first, the channel list after each), so a
+  // request that dies mid-lead never leaves a sent lead unmarked. Only real sends stamp: the dashboard's "Notified" stage counts this column.
+  const landed = async (channel: string): Promise<void> => {
+    outcome.succeeded.push(channel);
+    await db.execute(
+      outcome.succeeded.length === 1
+        ? `UPDATE meta_lead_raw SET notification_sent_at = NOW(), notification_channels = ? WHERE id = ?`
+        : `UPDATE meta_lead_raw SET notification_channels = ? WHERE id = ?`,
+      [JSON.stringify(outcome.succeeded), ctx.id]
+    );
+  };
 
   // ── Assign interview slot ──
   // Assign before outreach so slot is in both email and WhatsApp.
@@ -317,7 +328,7 @@ export async function notifyQualifiedLead(
         process.env.PINBOT_INTERVIEW_TEMPLATE || 'interview_invitation',
         [ctx.name, slot.dateLabel, slot.timeLabel, ctx.branchAddress, ctx.bmiUrl],
       );
-      if (res.success) outcome.succeeded.push('whatsapp');
+      if (res.success) await landed('whatsapp');
       else outcome.failed.push({ channel: 'whatsapp', error: res.error ?? 'unknown error' });
     }
   } else {
@@ -346,6 +357,7 @@ export async function notifyQualifiedLead(
         return null;
       });
     }
+    let emailSent = false;
     try {
       const mail = buildLegacyInviteEmail(ctx, slot, link, { stopLink: true });
       const replyTo = replyToFor(link?.token ?? null);
@@ -356,13 +368,16 @@ export async function notifyQualifiedLead(
         ...(mail.text ? { text: mail.text } : {}),
         ...(replyTo ? { replyTo } : {}),
       });
-      outcome.succeeded.push('email');
+      emailSent = true;
+    } catch (err) {
+      outcome.failed.push({ channel: 'email', error: err instanceof Error ? err.message : String(err) });
+    }
+    if (emailSent) {
+      await landed('email');
       if (link?.kind === 'invite' && inviteInput) {
         await inviteLinkFor(inviteInput, { token: link.token }).catch((e: unknown) =>
           console.warn('[meta] invite record failed after send', e instanceof Error ? e.message : e));
       }
-    } catch (err) {
-      outcome.failed.push({ channel: 'email', error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -384,7 +399,7 @@ export async function notifyQualifiedLead(
       referenceId: ctx.id,
     });
     if (res.status === 'triggered') {
-      outcome.succeeded.push('voice');
+      await landed('voice');
       await db.execute(
         `UPDATE meta_lead_raw SET voice_call_status = 'triggered', voice_called_at = NOW() WHERE id = ?`,
         [ctx.id]
@@ -400,7 +415,7 @@ export async function notifyQualifiedLead(
     outcome.attempted.push('voice');
     const res = await triggerVoiceCall({ phone: ctx.phone, name: ctx.name, referenceId: ctx.id });
     if (res.status === 'triggered') {
-      outcome.succeeded.push('voice');
+      await landed('voice');
       await db.execute(
         `UPDATE meta_lead_raw SET voice_call_status = 'triggered', voice_called_at = NOW() WHERE id = ?`,
         [ctx.id]
@@ -414,15 +429,6 @@ export async function notifyQualifiedLead(
     }
   } else {
     outcome.skipped.push({ channel: 'voice', reason: 'No voice provider configured (VAPI_API_KEY or VOICEBOT_TRIGGER_URL)' });
-  }
-
-  // Only stamp notification_sent_at when a channel genuinely landed. The dashboard's "Notified"
-  // stage counts this column, so stamping on attempt would overstate contact.
-  if (outcome.succeeded.length > 0) {
-    await db.execute(
-      `UPDATE meta_lead_raw SET notification_sent_at = NOW(), notification_channels = ? WHERE id = ?`,
-      [JSON.stringify(outcome.succeeded), ctx.id]
-    );
   }
 
   return outcome;

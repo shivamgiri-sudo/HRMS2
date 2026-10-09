@@ -91,16 +91,30 @@ exports[`legacy Meta Notify pin (switches off) > email, WhatsApp, voice and meta
   "writes": [
     {
       "p": [
+        "["whatsapp"]",
         "L1",
       ],
-      "sql": "UPDATE meta_lead_raw SET voice_call_status = 'triggered', voice_called_at = NOW() WHERE id = ?",
+      "sql": "UPDATE meta_lead_raw SET notification_sent_at = NOW(), notification_channels = ? WHERE id = ?",
+    },
+    {
+      "p": [
+        "["whatsapp","email"]",
+        "L1",
+      ],
+      "sql": "UPDATE meta_lead_raw SET notification_channels = ? WHERE id = ?",
     },
     {
       "p": [
         "["whatsapp","email","voice"]",
         "L1",
       ],
-      "sql": "UPDATE meta_lead_raw SET notification_sent_at = NOW(), notification_channels = ? WHERE id = ?",
+      "sql": "UPDATE meta_lead_raw SET notification_channels = ? WHERE id = ?",
+    },
+    {
+      "p": [
+        "L1",
+      ],
+      "sql": "UPDATE meta_lead_raw SET voice_call_status = 'triggered', voice_called_at = NOW() WHERE id = ?",
     },
   ],
 }
