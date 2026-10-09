@@ -258,14 +258,14 @@ describe("answer buttons on pipeline emails for Meta rows without a match (polic
       if (q.includes("FROM he_model_param") && q.includes("policy.email_buttons")) return [on ? [{ param_key: "policy.email_buttons.pipeline_meta", value: 1 }] : []];
       if (q.includes("FROM org_settings")) return [[]];
       if (q.includes("FROM he_match m JOIN he_lead l")) return [[]];
-      if (q.startsWith("INSERT INTO walkin_invite")) { inviteToken = String(p[1]); return [{ affectedRows: 1 }]; }
+      if (q.startsWith("INSERT INTO walkin_invite")) { inviteToken = inviteToken ?? String(p[1]); return [{ affectedRows: 1 }]; }
       if (q.includes("FROM walkin_invite WHERE mobile10")) return [inviteToken ? [{ id: "inv-1", token: inviteToken }] : []];
       return impl(sql, p);
     });
   }
   const inviteInserts = () => calls(/^INSERT INTO walkin_invite/);
 
-  it("live, switch on: the email carries the three answers to a fresh token and the invite is written after the send", async () => {
+  it("live, switch on: the invite (token) is reserved before the send, the email carries the STORED token, the send is recorded after it", async () => {
     world(); withButtons(true);
     vi.stubEnv("HE_PUBLIC_BASE_URL", "https://x");
     await runEmailStep(readSwitches(liveEnv), "live", now, 200, ON);
@@ -274,13 +274,16 @@ describe("answer buttons on pipeline emails for Meta rows without a match (polic
     expect(m).not.toBeNull();
     expect(m![1]).not.toBe("0".repeat(32));
     for (const a of ["later", "no", "stop"]) expect(html).toContain(`/w/${m![1]}?a=${a}`);
-    expect(inviteInserts()).toHaveLength(1);
-    const p = inviteInserts()[0][1] as unknown[];
-    expect(p[1]).toBe(m![1]);
-    expect(p).toContain("0f1e2d3c-aaaa-bbbb-cccc-000000000000");
-    expect(p).toContain("pipeline");
-    const order = execute.mock.invocationCallOrder[execute.mock.calls.findIndex(([s]) => String(s).startsWith("INSERT INTO walkin_invite"))];
-    expect(order).toBeGreaterThan(send.mock.invocationCallOrder[0]);
+    const ins = inviteInserts();
+    expect(ins).toHaveLength(2);
+    expect(String(ins[0][0])).toContain("ON DUPLICATE KEY UPDATE id = id"); // the reservation (send_count 0)
+    expect((ins[0][1] as unknown[])[1]).toBe(m![1]);
+    expect((ins[1][1] as unknown[])[1]).toBe(m![1]);
+    expect(ins[1][1] as unknown[]).toContain("0f1e2d3c-aaaa-bbbb-cccc-000000000000");
+    expect(ins[1][1] as unknown[]).toContain("pipeline");
+    const idx = (k: number) => execute.mock.invocationCallOrder[execute.mock.calls.findIndex((c, i) => String(c[0]).startsWith("INSERT INTO walkin_invite") && execute.mock.calls.slice(0, i).filter(([x]) => String(x).startsWith("INSERT INTO walkin_invite")).length === k)];
+    expect(idx(0)).toBeLessThan(send.mock.invocationCallOrder[0]);
+    expect(idx(1)).toBeGreaterThan(send.mock.invocationCallOrder[0]);
   });
 
   it("test mode, switch on: demo token, nothing written", async () => {
@@ -299,11 +302,13 @@ describe("answer buttons on pipeline emails for Meta rows without a match (polic
     expect(inviteInserts()).toHaveLength(0);
   });
 
-  it("a failed send writes no invite", async () => {
+  it("a failed send records no send (only the reservation, send_count 0, which the retry reuses)", async () => {
     world(); withButtons(true);
     send.mockRejectedValueOnce(new Error("550 mailbox unavailable"));
     await runEmailStep(readSwitches(liveEnv), "live", now, 200, ON);
-    expect(inviteInserts()).toHaveLength(0);
+    const ins = inviteInserts();
+    expect(ins).toHaveLength(1);
+    expect(String(ins[0][0])).toContain("ON DUPLICATE KEY UPDATE id = id");
   });
 });
 

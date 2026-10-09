@@ -14,6 +14,10 @@ vi.mock("../../../db/mysql.js", () => ({
       h.sqls.push(sql);
       h.params.push(p);
       if (sql.includes("FROM he_match m JOIN he_lead l") && sql.includes("l.mobile10 = ?")) return [h.match ? [h.match] : []];
+      if (sql.startsWith("INSERT INTO walkin_invite") && sql.includes("ON DUPLICATE KEY UPDATE id = id")) {
+        if (!h.invite) h.invite = { id: p[0], token: p[1], state: "sent", match_id: null, send_count: 0 };
+        return [{ affectedRows: 1 }];
+      }
       if (sql.startsWith("INSERT INTO walkin_invite")) {
         if (!h.invite) h.invite = { id: p[0], token: p[1], state: "sent", match_id: null, send_count: 1 };
         else h.invite = { ...h.invite, send_count: Number(h.invite.send_count) + 1, state: ["declined", "stopped"].includes(String(h.invite.state)) ? h.invite.state : "sent" };
@@ -94,6 +98,17 @@ describe("inviteLinkFor", () => {
     expect(h.sqls.some((x) => /INSERT|UPDATE/.test(x))).toBe(false);
   });
 
+  it("reserve: the token is stored before the send (read-after-upsert), so the emailed link is always the stored one", async () => {
+    h.invite = { id: "I0", token: "e".repeat(32), state: "sent", match_id: null, send_count: 1 }; // another path upserted first
+    const l = await inviteLinkFor(input, { reserve: true, token: "f".repeat(32) });
+    expect(l).toMatchObject({ kind: "invite", token: "e".repeat(32), inviteId: "I0" });
+    h.invite = null;
+    const fresh = await inviteLinkFor(input, { reserve: true, token: "f".repeat(32) });
+    expect(fresh.token).toBe("f".repeat(32));
+    expect(h.invite).toMatchObject({ send_count: 0 }); // the send is counted only by the record after it
+    await inviteLinkFor(input, { token: fresh.token });
+    expect(h.invite).toMatchObject({ token: "f".repeat(32), send_count: 1 });
+  });
   it("rejects a mobile that is not 10 digits", async () => {
     await expect(inviteLinkFor({ ...input, mobile10: "12345" })).rejects.toThrow(/mobile/);
   });

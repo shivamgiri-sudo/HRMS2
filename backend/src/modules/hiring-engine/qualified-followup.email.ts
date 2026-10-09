@@ -160,14 +160,15 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: Fol
     const branch = row.branchName ?? "";
     const base = env("HE_PUBLIC_BASE_URL", env("FRONTEND_URL", "https://mcnhrms.teammas.in")).replace(/\/$/, "");
     // A Meta row without a match gets the same answer buttons on an invite token (switch, default off). Test mode only reads
-    // (demo token on the page); live writes the invite after a successful send with the token the email carried.
+    // (demo token on the page); live reserves the invite before the send and emails the STORED token (read-after-upsert, so a row
+    // another path created first wins), then records the send after it.
     if (ctx.slot && !ctx.matchToken && buttons.pipelineMeta) {
       const input: InviteLinkInput = { mobile10: row.mobile10, requisitionId: row.requisitionId, leadId: heLeadId ?? null, metaLeadId: row.metaLeadId, followupId: row.id,
         branchName: row.branchName, slotAt: `${ctx.slot.date} ${ctx.slot.time}`.slice(0, 19), sourcePath: "pipeline", driveType: row.sourceType, now };
       // Test mode never shows a real person's invite token to the tester: the demo page only.
       const link: InviteLink = isTest
         ? { kind: "invite", token: DEMO_TOKEN, answerUrl: answerUrlFor(DEMO_TOKEN), matchId: null, inviteId: null }
-        : await inviteLinkFor(input, { simulate: true, token: newInviteToken() });
+        : await inviteLinkFor(input, { reserve: true, token: newInviteToken() });
       invite = { input, link };
     }
     const answerUrl = ctx.matchToken ? `${base}/w/${ctx.matchToken}` : invite?.link.answerUrl ?? null;
