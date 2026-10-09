@@ -55,6 +55,7 @@ beforeEach(() => {
   dbExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
     if (/FROM employees e\s+JOIN branch_master/.test(sql)) return [[{ branch_name: "Noida" }], []];
     if (/FROM meta_lead_raw ml\s+JOIN job_requisition jr/.test(sql)) return [String(params[0]).startsWith("noida") ? [{ 1: 1 }] : [], []];
+    if (/SELECT id FROM meta_lead_raw WHERE id IN/.test(sql)) return [(params as string[]).filter((x) => !x.startsWith("ghost")).map((id) => ({ id })), []];
     return [[], []];
   });
 });
@@ -87,12 +88,32 @@ describe("POST /api/meta/leads/notify-all", () => {
     expect((await request(a).post("/api/meta/leads/notify-all").send({ leadIds: Array.from({ length: 201 }, (_, i) => `noida-${i}`) })).status).toBe(400);
     expect((await request(a).post("/api/meta/leads/notify-all").send({ leadIds: "noida-1" })).status).toBe(400);
   });
-  it("any id outside the caller's branch → whole request 403, nothing sent", async () => {
+  it("ids outside the caller's branch or unknown get their own result (403 / 404) and are never sent; the rest are sent", async () => {
     const { notifyQualifiedLead } = await import("../lead-outreach.service.js");
     const a = await app();
-    const r = await request(a).post("/api/meta/leads/notify-all").send({ leadIds: ["noida-1", "pune-1"] });
-    expect(r.status).toBe(403);
-    expect(notifyQualifiedLead).not.toHaveBeenCalled();
+    const r = await request(a).post("/api/meta/leads/notify-all").send({ leadIds: ["noida-1", "pune-1", "ghost-1"] });
+    expect(r.status).toBe(200);
+    expect(vi.mocked(notifyQualifiedLead).mock.calls.map((c) => c[0])).toEqual(["noida-1"]);
+    expect(r.body.data.results).toEqual([
+      { leadId: "noida-1", status: "sent" },
+      { leadId: "pune-1", status: "failed", reason: "Not in your branch (403)" },
+      { leadId: "ghost-1", status: "failed", reason: "Lead not found (404)" },
+    ]);
+    expect(r.body.data.counts).toEqual({ sent: 1, skipped: 0, failed: 2 });
+  });
+  it("status re-read after a lost response: which in-scope leads are now marked notified (out-of-scope ids are not answered)", async () => {
+    dbExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (/FROM employees e\s+JOIN branch_master/.test(sql)) return [[{ branch_name: "Noida" }], []];
+      if (/FROM meta_lead_raw ml\s+JOIN job_requisition jr/.test(sql)) return [String(params[0]).startsWith("noida") ? [{ 1: 1 }] : [], []];
+      if (/SELECT id FROM meta_lead_raw WHERE id IN/.test(sql)) return [(params as string[]).filter((x) => !x.startsWith("ghost")).map((id) => ({ id })), []];
+      if (/notification_sent_at IS NOT NULL AS notified FROM meta_lead_raw/.test(sql)) return [(params as string[]).map((id) => ({ id, notified: id === "noida-1" ? 1 : 0 })), []];
+      return [[], []];
+    });
+    const a = await app();
+    const r = await request(a).post("/api/meta/leads/notify-all/status").send({ leadIds: ["noida-1", "noida-2", "pune-1"] });
+    expect(r.status).toBe(200);
+    expect(r.body.data).toEqual({ results: [{ leadId: "noida-1", notified: true }, { leadId: "noida-2", notified: false }] });
+    expect((await request(a).post("/api/meta/leads/notify-all/status").send({ leadIds: [] })).status).toBe(400);
   });
   it("force in the body is ignored; duplicates are sent once; per-lead results come back", async () => {
     const { notifyQualifiedLead } = await import("../lead-outreach.service.js");

@@ -571,7 +571,7 @@ export default function MetaLeadsPage() {
                   ? 'Notifying…'
                   : `Notify All (${rows.filter((r) => r.screeningResult === 'qualified' && !sentOverrides.has(r.id) && !r.notificationSentAt).length})`}
               </button>
-              {bulkResult && <BulkNotifyResult r={bulkResult} />}
+              {bulkResult && <BulkNotifyResult r={bulkResult} names={Object.fromEntries(rows.map((x) => [x.id, x.parsedName ?? x.id]))} />}
             </div>
           )}
         </div>

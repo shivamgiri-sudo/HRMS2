@@ -40,7 +40,7 @@ import { runMetaLeadSyncNow } from '../../cron/metaLeadSync.cron.js';
 import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
 import type { VapiCallbackPayload } from './vapi-voicebot.provider.js';
 import { recordMetaVoiceResponse } from './meta-response-bridge.service.js';
-import { BULK_MAX, notifyLeadsBulk, parseLeadIds } from './meta-notify-bulk.service.js';
+import { BULK_MAX, notifiedStatus, notifyLeadsBulk, parseLeadIds, refusedLeads } from './meta-notify-bulk.service.js';
 import { anyReplyProviderConfigured, sendLeadReply } from './lead-reply.js';
 import {
   saveMessage,
@@ -718,10 +718,22 @@ metaCampaignRouter.post(
     const ids = parseLeadIds(req.body?.leadIds);
     if (!ids) return res.status(400).json({ success: false, message: `Send 1 to ${BULK_MAX} lead ids` });
     const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
-    for (const id of ids) {
-      if (!(await canAccessLead(id, scope))) return res.status(403).json({ success: false, message: 'Some of these leads belong to another branch' });
-    }
-    return res.json({ success: true, data: await notifyLeadsBulk(ids, { actor: req.authUser!.id }) });
+    // Another branch's lead (403) or an unknown id (404) gets its own result and is never sent; the rest go ahead.
+    const refused = await refusedLeads(ids, scope);
+    return res.json({ success: true, data: await notifyLeadsBulk(ids, { actor: req.authUser!.id, refused }) });
+  })
+);
+
+/** Notify All re-reads this after a chunk's response was lost (timeout, proxy error): the server stamps each lead as it sends. */
+metaCampaignRouter.post(
+  '/leads/notify-all/status',
+  requireAuth,
+  requireRole(...CAMPAIGN_WRITE_ROLES),
+  h(async (req, res) => {
+    const ids = parseLeadIds(req.body?.leadIds);
+    if (!ids) return res.status(400).json({ success: false, message: `Send 1 to ${BULK_MAX} lead ids` });
+    const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
+    return res.json({ success: true, data: { results: await notifiedStatus(ids, scope) } });
   })
 );
 
