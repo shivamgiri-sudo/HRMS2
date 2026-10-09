@@ -265,6 +265,13 @@ const envSchema = z.object({
     .transform((v) => v === "true")
     .default("false"),
 
+  // SBI Card ViciDial source DB (asterisk @ 172.22.15.3) — read-only, drives the live sync
+  SBI_VICIDIAL_HOST: z.string().default("172.22.15.3"),
+  SBI_VICIDIAL_PORT: z.coerce.number().default(3306),
+  SBI_VICIDIAL_USER: z.string().default(""),
+  SBI_VICIDIAL_PASSWORD: z.string().default(""),
+  SBI_VICIDIAL_DB: z.string().default("asterisk"),
+
   // Billing DB (db_bill) — optional, only needed when billing features are used
   BILL_DB_HOST: z.string().default(""),
   BILL_DB_PORT: z.coerce.number().default(3306),

@@ -266,10 +266,7 @@ import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import { kpiStudioRouter } from "./modules/kpi/kpi-studio.routes.js";
 import { kpiCatalogueRouter } from "./modules/kpi-catalogue/kpi-catalogue.routes.js";
 import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
-import { criteriaRouter } from "./modules/selection/criteria.routes.js";
-import { shortlistRouter } from "./modules/selection/shortlist.routes.js";
 import { metaCampaignRouter } from "./modules/meta-campaign/meta-campaign.routes.js";
-import { campaignRequisitionRouter } from "./modules/meta-campaign/campaign-requisition.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
 import {
@@ -296,7 +293,6 @@ import { qualityLearningRouter } from "./modules/quality-learning/quality-learni
 import { nameConsistencyRouter } from "./modules/ats/name-consistency.routes.js";
 import { jclrRouter } from "./modules/ats/jclr.routes.js";
 import { joiningControlRoomRouter } from "./modules/ats/joining-control-room.routes.js";
-import { draCertificateRouter } from "./modules/ats/dra-certificate.routes.js";
 import { secureDocumentsRouter } from "./modules/ats/secure-documents.routes.js";
 import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-assignment.routes.js";
 import { payrollHeadReviewRouter } from "./modules/payroll-head-review/payroll-head-review.routes.js";
@@ -321,6 +317,7 @@ import { neemansPerformanceDashboardRouter } from "./modules/process-performance
 import { bellavitaChatDashboardRouter } from "./modules/process-performance/bellavita-chat-dashboard.routes.js";
 import { dalmiaDashboardRouter } from "./modules/process-performance/dalmia-dashboard.routes.js";
 import { sbiCardDashboardRouter } from "./modules/process-performance/sbi-card-dashboard.routes.js";
+import { sbiCardSyncRouter } from "./modules/process-performance/sbi-card-sync.routes.js";
 import { processDashboardRouter } from "./modules/process-dashboard/pd.routes.js";
 import { bellavitaCartDashboardRouter } from "./modules/process-performance/bellavita-cart-dashboard.routes.js";
 import { appreciateWealthDashboardRouter } from "./modules/process-performance/appreciate-wealth-dashboard.routes.js";
@@ -356,6 +353,7 @@ import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { vendorBankRouter } from "./modules/finance/vendor-bank.routes.js";
 import { gstExportRouter } from "./modules/gst/gst-export.routes.js";
+import { tallyVoucherRouter } from "./modules/gst/tally-voucher/tally-voucher.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { vendorApprovalRouter } from "./modules/finance/vendor-approval.routes.js";
 import { imprestRouter } from "./modules/finance/imprest.routes.js";
@@ -688,7 +686,6 @@ app.use("/api/portal", portalRouter);
 app.use("/api/portal/admin", portalAdminRouter);
 app.use("/api/presentations", presentationRouter);
 app.use("/api/job-requisition", jobRequisitionRouter);
-app.use("/api/job-requisition", criteriaRouter); // selection criteria (versioned, audited); after the requisition router
 // META campaign automation. NOTE: two routes inside are intentionally unauthenticated —
 // POST/GET /api/meta/webhooks (called by META's servers) and POST /api/meta/voice-callback
 // (called by the voice bot). Neither can present a session. They are gated on
@@ -696,13 +693,11 @@ app.use("/api/job-requisition", criteriaRouter); // selection criteria (versione
 // and VOICEBOT_CALLBACK_TOKEN respectively, and each REFUSES the request when its secret is
 // unset rather than falling open. Every other route in the router is requireAuth + requireRole.
 app.use("/api/meta", metaCampaignRouter);
-app.use("/api/meta", campaignRequisitionRouter); // a campaign's many requisitions + the HR relink (WS3 A2)
 // Hiring Engine capture webhooks: unauthenticated by design (Pinbot / email provider / voice bot cannot present a
 // session); every route is gated on HE_WEBHOOK_TOKEN and refuses when it is unset. Authenticated API is /api/he.
 app.use("/api/he-hook", heWebhookRouter);
 // Candidate live-location page API. Unauthenticated: the per-match token is the credential (see he-public.routes.ts).
 app.use("/api/he-public", hePublicRouter);
-app.use("/api/he/shortlist", shortlistRouter); // selection: overrides, approvals, booked-mismatch (before the HE router)
 app.use("/api/he", heRouter);
 app.use("/api/ats", atsFormConfigRouter);
 // Unauthenticated by design so a walk-in can self-register. Rate limiting is
@@ -860,6 +855,9 @@ app.use("/api/finance", vendorPaymentRouter);
 // Its own /api/gst prefix, not bare /api/finance: every path here is period-and-registration
 // scoped, and mounting it alongside grnRouter's "/grns/:id"-shaped routes would expose it to the
 // same literal-segment shadowing that swallowed vendor-payments/aging.
+// Tally voucher XML (sales / credit note; receipt plugs in later). Its own sub-prefix, mounted
+// before gstExportRouter so "/exports/:id"-style params there can never shadow it.
+app.use("/api/gst/tally-vouchers", tallyVoucherRouter);
 app.use("/api/gst", gstExportRouter);
 app.use("/api/finance", grnRouter);
 // vendor-approval.routes.ts's paths are all literal ("/vendor-approval/raise", "/vendor-approval/
@@ -1024,7 +1022,6 @@ app.use("/api/quality-learning", qualityLearningRouter);
 app.use("/api/ats/name-consistency", nameConsistencyRouter);
 app.use("/api/ats/jclr", jclrRouter);
 app.use("/api/ats/joining-control-room", joiningControlRoomRouter);
-app.use("/api/ats/dra-certificates", draCertificateRouter);
 // Secure candidate document viewer (JCLR "Documents" tab). Mounted here, after
 // clientRouter has applied requireAuth, because verify/reject read req.authUser.
 // The router shipped in 03ee489e but was never mounted — every endpoint 404'd.
@@ -1059,6 +1056,7 @@ app.use("/api/process-performance", satyaRetailReportRouter);
 app.use("/api/process-performance", cloviaLobDashboardRouter);
 app.use("/api/process-performance", dalmiaDashboardRouter);
 app.use("/api/process-performance", sbiCardDashboardRouter);
+app.use("/api/process-performance", sbiCardSyncRouter);
 app.use("/api/process-dashboard", processDashboardRouter);
 app.use("/api/process-performance", appreciateWealthDashboardRouter);
 app.use("/api/process-performance", dashboardExportRouter);
