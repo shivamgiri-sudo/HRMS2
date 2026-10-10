@@ -31,7 +31,7 @@ export const DAILY_INVITES_DEFAULT = 400;
 let invitesCache: { at: number; v: number } | null = null;
 /** Test hook. */
 export const resetInviteTargetCache = (): void => { invitesCache = null; };
-async function dailyInviteTarget(): Promise<number> {
+export async function dailyInviteTarget(): Promise<number> {
   if (invitesCache && Date.now() - invitesCache.at < 60_000) return invitesCache.v;
   let v = DAILY_INVITES_DEFAULT;
   try {

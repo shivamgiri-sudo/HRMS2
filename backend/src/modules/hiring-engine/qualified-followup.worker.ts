@@ -24,6 +24,7 @@ import { runDailyReport } from "./qualified-followup.report.js";
 import { pullPortalResults } from "./superbot-portal.sync.js";
 import { runSlotCorrections } from "./slot-corrections.js";
 import { sendQueuedReplies } from "./reply-agent.service.js";
+import { runMorningHealth } from "./ops-health.service.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
 
 export const LOCK_NAME = "qualified_followup_tick";
@@ -173,6 +174,8 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
 
   // Someone emailed for one day and later moved to another is sent the new slot (live rows only; the kill switch and pauses stop it).
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("slot-corrections", () => runSlotCorrections(now), null);
+  // One digest email a day (from 08:15 IST) of anything stuck or waiting. Runs even while sends are paused: it only emails the owner.
+  await guarded("morning-health", () => runMorningHealth(now), false);
   // Replies the reply agent queued outside the 09:00-20:00 window go out when it opens (only in automatic mode).
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("queued-replies", () => sendQueuedReplies(now), 0);
 

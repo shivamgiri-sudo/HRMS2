@@ -11,6 +11,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { closedReasonOf, syncPrimaryLink } from "./campaign-requisition.service.js";
 import { isLeadContactedSql, optionalTables } from "./lead-contact-lock.js";
+import { dailyInviteTarget } from "../hiring-engine/walkin-booking.service.js";
 
 const SYSTEM_ACTOR = "00000000-0000-0000-0000-000000000000";
 const branchFamily = (b: unknown): string => String(b ?? "").toUpperCase().replace(/[-\s]*\d+$/, "").trim();
@@ -25,17 +26,23 @@ export const sequenceOf = (code: string | undefined): number => { const m = /-(\
  * Tier: same branch + same process, same branch + another process, linked, other branch of the family. Inside a tier: the NEAREST
  * deadline first (it must fill first; no end date counts as last); on a tie the next sequence number (lower number); then more seats.
  */
-export function pickSuccessor(current: { designation: string; branch: string; process?: string }, candidates: Candidate[], today: string): Candidate | null {
+export function rankSuccessors(current: { designation: string; branch: string; process?: string }, candidates: Candidate[], today: string): Candidate[] {
   const sameBranch = (c: Candidate) => c.branch.toUpperCase() === current.branch.toUpperCase();
   const sameProcess = (c: Candidate) => !!current.process && c.process.toUpperCase() === current.process.toUpperCase();
   const ok = candidates.filter((c) => c.seatsLeft > 0 && c.designation.toUpperCase() === current.designation.toUpperCase()
     && (!c.validity || c.validity >= today) && (c.linked || sameBranch(c) || branchFamily(c.branch) === branchFamily(current.branch)));
   const tier = (c: Candidate) => (sameBranch(c) && sameProcess(c) ? 0 : sameBranch(c) ? 1 : c.linked ? 2 : 3);
-  ok.sort((a, b) => tier(a) - tier(b)
+  return ok.sort((a, b) => tier(a) - tier(b)
     || String(a.validity ?? "9999-12-31").localeCompare(String(b.validity ?? "9999-12-31"))
     || sequenceOf(a.code) - sequenceOf(b.code) || b.seatsLeft - a.seatsLeft);
-  return ok[0] ?? null;
 }
+export function pickSuccessor(current: { designation: string; branch: string; process?: string }, candidates: Candidate[], today: string): Candidate | null {
+  return rankSuccessors(current, candidates, today)[0] ?? null;
+}
+
+/** About 16 touches per open seat (the owner's 400 a day for 25 seats), at most the daily target, never fewer than 16. */
+export const TOUCHES_PER_SEAT = 16;
+export const successorQuota = (seatsLeft: number, dailyTarget: number): number => Math.max(TOUCHES_PER_SEAT, Math.min(Math.max(dailyTarget, 0) || 400, Math.max(seatsLeft, 0) * TOUCHES_PER_SEAT));
 
 export function autoSuccessorOn(campaignId: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const v = String(env.META_AUTO_SUCCESSOR ?? "").trim();
@@ -50,17 +57,20 @@ const toCandidate = (r: RowDataPacket): Candidate => ({
   seatsLeft: Number(r.requested_headcount) - Number(r.fulfilled_headcount), linked: Number(r.linked) === 1,
 });
 
-/** The successor for a closed requisition `cur` in the context of `campaignId`; null when none qualifies. Seats are HR's fulfilled_headcount only. */
-async function successorFor(campaignId: string, cur: RowDataPacket, now: Date): Promise<Candidate | null> {
+/** The open requisitions a closed one's leads may move to, best first (see rankSuccessors). */
+async function successorsFor(campaignId: string, cur: RowDataPacket, now: Date): Promise<Candidate[]> {
   const today = new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT j.*, EXISTS (SELECT 1 FROM meta_campaign_requisition l WHERE l.campaign_id = ? AND l.requisition_id = j.id AND l.removed_at IS NULL) AS linked
        FROM job_requisition j WHERE j.id <> ? AND j.designation_name = ? AND j.active_status = 1 AND j.approval_status = 'approved' AND j.closed_at IS NULL
         AND j.fulfilled_headcount < j.requested_headcount AND (j.requisition_validity IS NULL OR j.requisition_validity >= ?)`,
     [campaignId, String(cur.id), String(cur.designation_name), today]);
-  return pickSuccessor(
+  return rankSuccessors(
     { designation: String(cur.designation_name), branch: String(cur.branch_name), process: String(cur.process_id ?? cur.process_name ?? "") },
     rows.filter((r) => !closedReasonOf(r)).map(toCandidate), today);
+}
+async function successorFor(campaignId: string, cur: RowDataPacket, now: Date): Promise<Candidate | null> {
+  return (await successorsFor(campaignId, cur, now))[0] ?? null;
 }
 
 /** Returns the new primary requisition id when the campaign was switched, else null. Never throws. */
@@ -112,27 +122,39 @@ export async function sweepStrandedLeads(now = new Date()): Promise<{ pairs: num
       if (!autoSuccessorOn(campaignId)) continue;
       const [cur] = await db.execute<RowDataPacket[]>("SELECT * FROM job_requisition WHERE id = ? LIMIT 1", [fromId]);
       if (!cur[0] || !closedReasonOf(cur[0])) continue;
-      const pick = await successorFor(campaignId, cur[0], now);
-      if (!pick) continue;
-      const c = await db.getConnection();
-      try {
-        await c.beginTransaction();
-        await c.execute(`INSERT IGNORE INTO meta_campaign_requisition (campaign_id, requisition_id, is_primary, sort_order) VALUES (?, ?, 0, 5)`, [campaignId, pick.id]);
-        const [u] = await c.execute(
-          `UPDATE meta_lead_raw r SET r.requisition_id = ?, r.routed_by = 'best_fit', r.routed_at = NOW()
-            WHERE r.campaign_id = ? AND r.requisition_id = ? AND r.screening_result = 'qualified' AND NOT ${isLeadContactedSql("r", tables)} LIMIT ${SWEEP_MAX_PER_PAIR}`,
-          [pick.id, campaignId, fromId]);
-        const moved = Number((u as { affectedRows?: number }).affectedRows ?? 0);
-        await c.execute(
-          `INSERT INTO meta_campaign_relink (id, campaign_id, from_requisition_id, to_requisition_id, leads_moved, leads_kept, preview_hash, actor_id, actor_role, reason)
-           VALUES (?, ?, ?, ?, ?, 0, '', ?, 'system', ?)`,
-          [randomUUID(), campaignId, fromId, pick.id, moved, SYSTEM_ACTOR, `auto-sweep: ${closedReasonOf(cur[0])}`.slice(0, 300)]);
-        await c.commit();
-        out.pairs += 1; out.moved += moved;
-      } catch (e) {
-        try { await c.rollback(); } catch { /* keep the original error */ }
-        console.warn("[meta] stranded-lead sweep failed for one requisition", e instanceof Error ? e.message.split("\n")[0] : e);
-      } finally { c.release(); }
+      const ranked = await successorsFor(campaignId, cur[0], now);
+      if (!ranked.length) continue;
+      const daily = await dailyInviteTarget();
+      // Fill the best requisition to its quota for today, then the next one: three open requisitions share a backlog instead of one taking it all.
+      for (const pick of ranked) {
+        const [today] = await db.execute<RowDataPacket[]>(
+          "SELECT COUNT(*) n FROM meta_lead_raw WHERE requisition_id = ? AND routed_by = 'best_fit' AND routed_at >= CURDATE()", [pick.id]);
+        const room = successorQuota(pick.seatsLeft, daily) - Number(today[0]?.n ?? 0);
+        if (room <= 0) continue;
+        const take = Math.min(room, SWEEP_MAX_PER_PAIR);
+        const c = await db.getConnection();
+        let moved = 0;
+        try {
+          await c.beginTransaction();
+          await c.execute(`INSERT IGNORE INTO meta_campaign_requisition (campaign_id, requisition_id, is_primary, sort_order) VALUES (?, ?, 0, 5)`, [campaignId, pick.id]);
+          const [u] = await c.execute(
+            `UPDATE meta_lead_raw r SET r.requisition_id = ?, r.routed_by = 'best_fit', r.routed_at = NOW()
+              WHERE r.campaign_id = ? AND r.requisition_id = ? AND r.screening_result = 'qualified' AND NOT ${isLeadContactedSql("r", tables)} LIMIT ${take}`,
+            [pick.id, campaignId, fromId]);
+          moved = Number((u as { affectedRows?: number }).affectedRows ?? 0);
+          await c.execute(
+            `INSERT INTO meta_campaign_relink (id, campaign_id, from_requisition_id, to_requisition_id, leads_moved, leads_kept, preview_hash, actor_id, actor_role, reason)
+             VALUES (?, ?, ?, ?, ?, 0, '', ?, 'system', ?)`,
+            [randomUUID(), campaignId, fromId, pick.id, moved, SYSTEM_ACTOR, `auto-sweep: ${closedReasonOf(cur[0])}`.slice(0, 300)]);
+          await c.commit();
+          out.pairs += 1; out.moved += moved;
+        } catch (e) {
+          try { await c.rollback(); } catch { /* keep the original error */ }
+          console.warn("[meta] stranded-lead sweep failed for one requisition", e instanceof Error ? e.message.split("\n")[0] : e);
+          break;
+        } finally { c.release(); }
+        if (moved < take) break; // this requisition's backlog is cleared
+      }
     }
   } catch (e) {
     console.warn("[meta] stranded-lead sweep failed", e instanceof Error ? e.message.split("\n")[0] : e);

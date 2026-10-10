@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoSuccessorOn, pickSuccessor, sequenceOf, type Candidate } from "../campaign-successor.service.js";
+import { autoSuccessorOn, pickSuccessor, rankSuccessors, sequenceOf, successorQuota, type Candidate } from "../campaign-successor.service.js";
 
 const cur = { designation: "EXECUTIVE", branch: "NOIDA-2", process: "P1" };
 const c = (o: Partial<Candidate>): Candidate => ({ id: "x", designation: "EXECUTIVE", branch: "NOIDA-2", process: "P1", validity: "2026-10-30", seatsLeft: 10, linked: false, ...o });
@@ -56,5 +56,19 @@ describe("autoSuccessorOn", () => {
     expect(autoSuccessorOn("c1", { META_AUTO_SUCCESSOR: "all" })).toBe(true);
     expect(autoSuccessorOn("c1", { META_AUTO_SUCCESSOR: "c9, c1" })).toBe(true);
     expect(autoSuccessorOn("c1", { META_AUTO_SUCCESSOR: "c9" })).toBe(false);
+  });
+});
+
+describe("spreading a backlog", () => {
+  it("ranks every eligible requisition, best first", () => {
+    const r = rankSuccessors(cur, [c({ id: "24", code: "NOIDA-Onfido-24", validity: "2026-10-23" }), c({ id: "22", code: "NOIDA-Onfido-22", validity: "2026-10-15" }), c({ id: "23", code: "NOIDA-Onfido-23", validity: "2026-10-19" })], "2026-10-10");
+    expect(r.map((x) => x.id)).toEqual(["22", "23", "24"]);
+  });
+  it("gives about 16 touches per open seat, never more than the daily target and never under 16", () => {
+    expect(successorQuota(25, 400)).toBe(400);
+    expect(successorQuota(100, 400)).toBe(400);
+    expect(successorQuota(5, 400)).toBe(80);
+    expect(successorQuota(1, 400)).toBe(16);
+    expect(successorQuota(25, 0)).toBe(400);
   });
 });

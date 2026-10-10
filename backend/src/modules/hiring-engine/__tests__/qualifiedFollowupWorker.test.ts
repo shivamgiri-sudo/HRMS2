@@ -1,3 +1,4 @@
+vi.mock("../ops-health.service.js", () => ({ runMorningHealth: vi.fn(async () => false) }));
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
