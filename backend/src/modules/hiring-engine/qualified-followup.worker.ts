@@ -25,6 +25,7 @@ import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
 
 export const LOCK_NAME = "qualified_followup_tick";
 const INTERVAL_MS = 5 * 60 * 1000;
+const FIRST_TICK_MS = 30 * 1000;
 
 export interface TickReport {
   mode: FollowupMode;
@@ -194,10 +195,12 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
 export function startQualifiedFollowupWorker(): void {
   if (timer) return;
   if (readSwitches().mode === "off") return;
-  timer = setInterval(() => {
-    runQualifiedFollowupTick().catch((err) => logger.error({ err: (err as Error).message }, "[qualified-followup] tick failed"));
-  }, INTERVAL_MS);
+  const tick = () => runQualifiedFollowupTick().catch((err) => logger.error({ err: (err as Error).message }, "[qualified-followup] tick failed"));
+  timer = setInterval(tick, INTERVAL_MS);
   timer.unref();
+  // A restart (a deploy or an env change) must not starve the pipeline for a whole interval: first tick shortly after start.
+  const first = setTimeout(tick, FIRST_TICK_MS);
+  first.unref();
 }
 
 export function stopQualifiedFollowupWorker(): void {
