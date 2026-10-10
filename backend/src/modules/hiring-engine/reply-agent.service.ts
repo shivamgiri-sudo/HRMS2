@@ -10,6 +10,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { emailService } from "../communication/email.service.js";
 import { resolveWorkingProvider } from "../ai/mira-issue-triage.service.js";
+import { aiProviderConfigService } from "../ai/ai-provider-config.service.js";
 import { recordPersonOptOut } from "./followup-optout.service.js";
 import { stripQuoted } from "./response-classifier.js";
 import { disposition, ruleIntent, ruleReply, scrub, validateReply, type Draft, type FactSheet, type ReplyIntent } from "./reply-agent.rules.js";
@@ -138,8 +139,11 @@ async function callModel(facts: FactSheet, inbound: string): Promise<Draft | nul
     employment_type: facts.employmentType, shift: facts.shift, signature: `Regards,\nHR Team, ${facts.company}${facts.hrContact ? `\n${facts.hrContact}` : ""}`,
   };
   try {
+    // The stored key and model of that provider, exactly as Mira passes them (the provider falls back to its own env key when none is stored).
+    const config = await aiProviderConfigService.getByKey(provider.key, true).catch(() => null);
     const response = await provider.generateText({
       userId: "system-reply-agent", roleKeys: ["system"], providerKey: provider.key, requestSource: "candidate_reply_agent",
+      ...(config?.modelName ? { model: config.modelName } : {}), ...(config?.apiKey ? { apiKey: config.apiKey } : {}),
       systemInstruction: SYSTEM, userQuestion: `FACTS:\n${JSON.stringify(sheet)}\n\nCANDIDATE EMAIL:\n"""\n${inbound}\n"""`,
       sanitizedContext: {}, temperature: 0.2,
       // A reasoning model can spend a small budget thinking before it writes the answer (seen on Mira's triage).

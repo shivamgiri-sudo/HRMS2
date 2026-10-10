@@ -9,6 +9,7 @@ vi.mock("../../communication/email.service.js", () => ({ emailService: { send: h
 const gen = vi.hoisted(() => ({ provider: null as null | { key: string; generateText: ReturnType<typeof vi.fn> } }));
 const opt = vi.hoisted(() => ({ fn: vi.fn(async () => ({ leadId: "l1", journeysStopped: 1 })) }));
 vi.mock("../followup-optout.service.js", () => ({ recordPersonOptOut: opt.fn }));
+vi.mock("../../ai/ai-provider-config.service.js", () => ({ aiProviderConfigService: { getByKey: vi.fn(async () => ({ modelName: "free-model", apiKey: "stored-key" })) } }));
 vi.mock("../../ai/mira-issue-triage.service.js", () => ({ resolveWorkingProvider: vi.fn(async () => gen.provider) }));
 
 import { AUTO_INTENTS, disposition, ruleIntent, ruleReply, scrub, validateReply, type FactSheet } from "../reply-agent.rules.js";
@@ -126,6 +127,7 @@ describe("handleInboundReply", () => {
       reply: "Dear Asha,\n\nThe role is EXECUTIVE: handling customer queries on call.\n\nRegards,\nHR Team, MAS Callnet\nRavi 9811122233", reasons: [] }) })) };
     expect(await handleInboundReply(msg("What will be my work?"), new Date("2026-10-11T05:00:00Z"))).toBe("sent");
     expect(gen.provider.generateText).toHaveBeenCalledTimes(1);
+    expect(gen.provider.generateText).toHaveBeenCalledWith(expect.objectContaining({ model: "free-model", apiKey: "stored-key", requestSource: "candidate_reply_agent" }));
   });
   it("a model reply that names the process is held, never sent", async () => {
     gen.provider = { key: "freellm", generateText: vi.fn(async () => ({ safetyBlocked: false, answer: JSON.stringify({ intent: "ask_job", language: "en", confidence: 0.95, needs_human: false,
