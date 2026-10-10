@@ -6,6 +6,7 @@
 import { STAGES, type DriveAnalytics, type SourceType, type Stage, type StageCounts, type TypeAnalytics } from "./driveCommandTypes";
 import { SOURCE_TYPES, STAGE_LABEL, TYPE_LABEL, countText, defaultFilters, type Filters } from "./driveCommandModel";
 import { applyDateChange, dateBounds } from "./commandData";
+import { boundaryDayText } from "./charts/summaryView";
 
 export const HISTORIC_NOTE = "Old Meta leads are historic. Widen the date range to see them.";
 export const SHOW_ALL_TIME = "Show all time";
@@ -14,12 +15,6 @@ export const ALL_TIME_HINT = "Shows the 92 days ending on the To date, the longe
 export const STREAMS_HEADING = "Streams";
 /** Shown in the Hiring Engine section: its numbers never include Meta-origin people (the three sections do not overlap). */
 export const HE_META_NOTE = "Meta campaign leads are shown under Live Meta and Old Meta data.";
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-/** "2026-10-08" as "8 Oct 2026"; "" when not a day. */
-export function dayText(d: string | null | undefined): string {
-  const p = String(d ?? "").split("-").map(Number);
-  return p.length === 3 && p.every(Number.isFinite) && p[1] >= 1 && p[1] <= 12 ? `${p[2]} ${MONTHS[p[1] - 1]} ${p[0]}` : "";
-}
 
 const zeroStages = (): StageCounts => ({ leads: 0, qualified: 0, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 });
 const blankType = (t?: TypeAnalytics): TypeAnalytics => ({ stages: zeroStages(), previous: zeroStages(), noShow: 0, declined: 0, conversions: (t?.conversions ?? []).map((c) => ({ ...c, rate: null })), sparkline: [] });
@@ -67,7 +62,7 @@ export function atWidestRange(f: Filters, now: Date = new Date()): boolean {
 }
 
 export interface ZeroNote { id: string; text: string }
-/** Why numbers are zero, in plain words: a Live Meta range before the cutoff, nothing in range, no drive credit yet, a stage that is not
+/** Why numbers are zero, in plain words: a Live Meta range before the (rolling) cutoff, nothing in range, no drive credit yet, a stage that is not
  *  measured, or leads that are on no drive yet. */
 export function zeroNotes(a: DriveAnalytics, type: SourceType, f: Filters, now: Date = new Date()): ZeroNote[] {
   const s = stagesOf(a, type);
@@ -75,8 +70,12 @@ export function zeroNotes(a: DriveAnalytics, type: SourceType, f: Filters, now: 
   const out: ZeroNote[] = [];
   const cutoff = a?.liveFrom ?? null;
   // Nothing before the cutoff is ever Live (the person rule), so the note only explains an all-zero Live section; never next to numbers.
-  if (type === "meta_live" && cutoff && dayText(cutoff) && (a?.window?.to ?? f.to) < cutoff && STAGES.every((st) => s[st] === 0)) {
-    out.push({ id: "before-cutoff", text: `Live Meta starts with form fills on ${dayText(cutoff)}. This range ends before that, so its Meta leads are under Old Meta data.` });
+  const day = boundaryDayText(cutoff);
+  if (type === "meta_live" && cutoff && day && (a?.window?.to ?? f.to) < cutoff && STAGES.every((st) => s[st] === 0)) {
+    const n = a?.liveMode !== "fixed" && typeof a?.liveDays === "number" ? a.liveDays : null;
+    out.push({ id: "before-cutoff", text: n === null
+      ? `Live Meta starts with form fills on ${day}. This range ends before that, so its Meta leads are under Old Meta data.`
+      : `Live Meta is the last ${n} day${n === 1 ? "" : "s"}: form fills on or after ${day}. This range ends before that, so its Meta leads are under Old Meta data (first fill older than ${n} day${n === 1 ? "" : "s"}).` });
   }
   if (s.leads === 0) {
     if (showHistoricNote(a, type, f, now)) out.push({ id: "historic", text: HISTORIC_NOTE });

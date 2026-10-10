@@ -252,8 +252,19 @@ describe("start and stop", () => {
       startQualifiedFollowupWorker();
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
-      expect(h.getConnection).toHaveBeenCalledTimes(2);
+      // the first tick 30 s after start, then one per 5 minutes
+      expect(h.getConnection).toHaveBeenCalledTimes(3);
     } finally { delete process.env.QUAL_FOLLOWUP_MODE; vi.useRealTimers(); }
+  });
+  it("the first tick fires 30 seconds after start, not a whole interval later", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.QUAL_FOLLOWUP_MODE = "live";
+      h.getConnection.mockRejectedValue(new Error("db down"));
+      startQualifiedFollowupWorker();
+      await vi.advanceTimersByTimeAsync(31 * 1000);
+      expect(h.getConnection).toHaveBeenCalledTimes(1);
+    } finally { delete process.env.QUAL_FOLLOWUP_MODE; stopQualifiedFollowupWorker(); vi.useRealTimers(); }
   });
 });
 

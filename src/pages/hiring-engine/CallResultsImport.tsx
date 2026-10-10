@@ -9,7 +9,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { StatTile, num } from "@/components/analytics/analytics-kit";
 
 interface Row { rowNo: number; ok: boolean; errors: string[]; warnings: string[]; display: { phone: string; result: string }; outcome?: string; newInterviewAt?: string; knownLead: boolean; mobile10?: string }
-interface Preview { missingColumns: string[]; tooMany: boolean; rows: Row[]; summary: { total: number; valid: number; rejected: number; confirmed: number; rescheduled: number; declined: number; noAnswer: number; wrongPerson: number; failed: number; newLeads: number } }
+interface Preview { missingColumns: string[]; tooMany: boolean; rows: Row[]; summary: { total: number; valid: number; rejected: number; confirmed: number; rescheduled: number; declined: number; noAnswer: number; undecided?: number; wrongPerson: number; failed: number; newLeads: number } }
 
 const LABEL: Record<string, string> = { WALKIN_CONFIRMED_YES: "Confirmed", WALKIN_RESCHEDULED: "Rescheduled", WALKIN_DECLINED_NEEDS_FOLLOWUP: "Declined", NO_ANSWER: "No answer", WRONG_PERSON_REACHED: "Wrong person", CALL_FAILED: "Call failed" };
 const TONE: Record<string, string> = { WALKIN_CONFIRMED_YES: "text-emerald-700", WALKIN_RESCHEDULED: "text-blue-700", WALKIN_DECLINED_NEEDS_FOLLOWUP: "text-rose-700", NO_ANSWER: "text-slate-600", WRONG_PERSON_REACHED: "text-amber-700", CALL_FAILED: "text-slate-500" };
@@ -69,6 +69,7 @@ export default function CallResultsImport() {
             <StatTile label="Confirmed" value={num(s.confirmed)} intent="good" />
             <StatTile label="Rescheduled" value={num(s.rescheduled)} />
             <StatTile label="Declined" value={num(s.declined)} intent={s.declined ? "warning" : "neutral"} />
+            <StatTile label="Answered, no decision" value={num(s.undecided ?? 0)} />
             <StatTile label="No answer / failed" value={num(s.noAnswer + s.failed)} />
             <StatTile label="Not understood" value={num(s.rejected)} intent={s.rejected ? "critical" : "neutral"} denominator="skipped" />
           </div>

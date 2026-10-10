@@ -32,7 +32,7 @@ describe("person facts, once per build", () => {
       "meta-live": { metaOrigin: true, firstFillAt: LIVE }, "meta-old": { metaOrigin: true, firstFillAt: OLD }, pool: { metaOrigin: false, firstFillAt: null }, "no-lead-row": { metaOrigin: false, firstFillAt: null },
     };
     for (const tl of Object.keys(facts)) for (const tm of [0, 1]) for (const tr of [0, 1]) {
-      const expected = attributeSource({ metaOrigin: facts[tl].metaOrigin, driveSourceKind: tm ? "meta" : "pool", firstFillAt: facts[tl].firstFillAt, activityAt: tr ? "2026-10-09" : "2026-10-01" });
+      const expected = attributeSource({ metaOrigin: facts[tl].metaOrigin, driveSourceKind: tm ? "meta" : "pool", firstFillAt: facts[tl].firstFillAt, activityAt: tr ? "2026-10-09" : "2026-10-01", liveFrom: "2026-10-08" });
       expect(f.typeOf({ tl, tm, tr })).toBe(expected);
     }
     // a follow-up row whose first fill is its own (no lead, or a lead without meta_lead_id) carries that verdict in tx

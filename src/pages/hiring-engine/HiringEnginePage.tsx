@@ -18,6 +18,7 @@ const loaders = {
   planner: () => import("./PlannerTab"),
   calls: () => import("./BulkCallsTab"),
   templates: () => import("./TemplatesTab"),
+  history: () => import("./PersonHistoryTab"),
 };
 const LeadsTab = lazy(loaders.leads);
 const DrivesTab = lazy(loaders.drives);
@@ -27,6 +28,7 @@ const TemplatesTab = lazy(loaders.templates);
 const BulkCallsTab = lazy(loaders.calls);
 const MasterTab = lazy(loaders.master);
 const PlannerTab = lazy(loaders.planner);
+const PersonHistoryTab = lazy(loaders.history);
 
 const TABS = [
   { id: "board", label: "Walk-in board" },
@@ -37,6 +39,7 @@ const TABS = [
   { id: "planner", label: "Planner" },
   { id: "calls", label: "Bulk calls" },
   { id: "templates", label: "Templates" },
+  { id: "history", label: "Person history" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 const TAB_IDS = TABS.map((t) => t.id);
@@ -81,6 +84,7 @@ export default function HiringEnginePage() {
           {tab === "planner" && <PlannerTab />}
           {tab === "calls" && <BulkCallsTab />}
           {tab === "templates" && <TemplatesTab />}
+          {tab === "history" && <PersonHistoryTab />}
         </Suspense>
       </div>
     </DashboardLayout>

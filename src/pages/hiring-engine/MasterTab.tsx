@@ -19,6 +19,7 @@ import CampaignSettingsCard from "./CampaignSettingsCard";
 import LaunchCard from "./LaunchCard";
 import RecruiterBoard from "./RecruiterBoard";
 import PipelineHealthStrip from "./PipelineHealthStrip";
+import BmiLinksCard from "./BmiLinksCard";
 
 interface Summary {
   byTier: Array<{ tier: string; n: number }>;
@@ -95,6 +96,7 @@ export default function MasterTab() {
   return (
     <div className="space-y-5">
       <PipelineHealthStrip />
+      <BmiLinksCard />
       <CampaignDashboardCard />
       {error && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</div>}
       <div className="flex flex-wrap items-end justify-between gap-3">

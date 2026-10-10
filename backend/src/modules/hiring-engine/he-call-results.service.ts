@@ -24,7 +24,7 @@ export async function previewCallResults(raw: Array<Record<string, unknown>>) {
   return {
     missingColumns: p.missingColumns, tooMany: p.tooMany, rows,
     summary: { total: rows.length, valid: rows.filter((r) => r.ok).length, rejected: rows.filter((r) => !r.ok).length,
-      confirmed: count("WALKIN_CONFIRMED_YES"), rescheduled: count("WALKIN_RESCHEDULED"), declined: count("WALKIN_DECLINED_NEEDS_FOLLOWUP"), noAnswer: count("NO_ANSWER"), wrongPerson: count("WRONG_PERSON_REACHED"), failed: count("CALL_FAILED"), newLeads: rows.filter((r) => r.ok && !r.knownLead).length },
+      confirmed: count("WALKIN_CONFIRMED_YES"), rescheduled: count("WALKIN_RESCHEDULED"), declined: rows.filter((r) => r.ok && r.outcome === "WALKIN_DECLINED_NEEDS_FOLLOWUP" && !r.undecided).length, noAnswer: count("NO_ANSWER"), undecided: rows.filter((r) => r.ok && r.undecided).length, wrongPerson: count("WRONG_PERSON_REACHED"), failed: count("CALL_FAILED"), newLeads: rows.filter((r) => r.ok && !r.knownLead).length },
   };
 }
 
@@ -46,7 +46,10 @@ export async function applyCallResults(raw: Array<Record<string, unknown>>, o: {
         const [ev] = await db.execute<RowDataPacket[]>("SELECT meta_json FROM he_lead_event WHERE lead_id = ? AND event_type = 'exported_for_calling' AND meta_json IS NOT NULL AND created_at > DATE_SUB(NOW(), INTERVAL 5 DAY) ORDER BY id DESC LIMIT 1", [lead.id]);
         try { const mj = ev[0]?.meta_json; const j = typeof mj === "string" ? JSON.parse(mj) : mj; confirmedSlotAt = j?.interviewAt ?? null; } catch { confirmedSlotAt = null; }
       }
-      const res = await recordVoiceResult({ leadId: lead.id, providerCallId, startedAt: r.startedAt ?? null, result: r.voice!, summary: r.remarks ?? null, offeredSlotAt: r.newInterviewAt ?? null, confirmedSlotAt, source: "call_import", reference: r.referenceId ?? null });
+      // Answered without a decision on the walk-in, or a result older than a day (the interview day has passed): recorded in the call
+      // log and the response list, but no state change and nothing is sent to the candidate.
+      const historical = r.startedAt ? Date.now() - new Date(`${r.startedAt.replace(" ", "T")}+05:30`).getTime() > 24 * 3600_000 : false;
+      const res = await recordVoiceResult({ leadId: lead.id, providerCallId, startedAt: r.startedAt ?? null, result: r.voice!, summary: r.remarks ?? null, offeredSlotAt: r.newInterviewAt ?? null, confirmedSlotAt, source: "call_import", reference: r.referenceId ?? null, incomplete: Boolean(r.undecided), historical });
       if (res?.outcome === "duplicate") out.duplicates++;
       else { out.applied++; await addEvent(lead.id, "call_result_imported", { channel: "voice", actor: o.userId, detail: `${r.outcome}${r.remarks ? " - " + r.remarks : ""}`.slice(0, 480) }); }
     } catch { out.failedRows.push(r.rowNo); }

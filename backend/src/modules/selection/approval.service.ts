@@ -211,8 +211,13 @@ export async function rejectPeople(a: { requisitionId: string; mobiles: string[]
 }
 
 const SOURCE: Record<SourceKind, "meta_live" | "meta_old" | "he"> = { meta_live: "meta_live", meta_old: "meta_old", he: "he" };
+/** The person's cached facts for the source. Meta: the other Meta kind too, own kind first, because Live Meta rolls (7 days) and a person
+ *  approved as Live may be cached only as Old Meta data by the time the enrol step runs; they keep the approved journey either way. */
 async function cachedPerson(mobile10: string, sourceKind: SourceKind): Promise<{ facts: CandidateFacts | null; sourceRef: string | null }> {
-  const [r] = await db.execute<RowDataPacket[]>("SELECT facts_json, source_ref FROM selection_person_fact WHERE mobile10 = ? AND source_kind = ? LIMIT 1", [mobile10, sourceKind]);
+  const [r] = sourceKind === "he"
+    ? await db.execute<RowDataPacket[]>("SELECT facts_json, source_ref FROM selection_person_fact WHERE mobile10 = ? AND source_kind = ? LIMIT 1", [mobile10, sourceKind])
+    : await db.execute<RowDataPacket[]>("SELECT facts_json, source_ref FROM selection_person_fact WHERE mobile10 = ? AND source_kind IN (?, ?) ORDER BY source_kind = ? DESC LIMIT 1",
+      [mobile10, "meta_live", "meta_old", sourceKind]);
   if (!r[0]) return { facts: null, sourceRef: null };
   return { facts: (typeof r[0].facts_json === "string" ? JSON.parse(r[0].facts_json) : r[0].facts_json) as CandidateFacts, sourceRef: r[0].source_ref ? String(r[0].source_ref) : null };
 }

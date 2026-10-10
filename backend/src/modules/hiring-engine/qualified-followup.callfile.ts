@@ -12,6 +12,8 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { emailService } from "../communication/email.service.js";
 import { BULK_CALL_COLUMNS, BULK_CALL_MAX_ROWS } from "./he-bulk-call.js";
+import { uploadCallFile } from "./superbot-portal.sync.js";
+import { attemptLabel, loadAttemptEvents, summariseAttempts, type PersonAttempts } from "./person-attempts.service.js";
 import { loadOfferRows } from "./he-best-offer.service.js";
 import type { OfferRow } from "./he-best-offer.js";
 import { displayFirstName } from "./he-name.js";
@@ -34,6 +36,7 @@ const IST_MS = 5.5 * 3600_000;
 export const CALL_FILE_DETAIL_COLUMNS = [
   "requisition_code", "other_requisitions", "branch", "drive_type", "campaign", "qualified_at",
   "email_status", "email_sent_at", "whatsapp_status", "whatsapp_sent_at", "attempt", "priority",
+  "approach", "earlier_contacts", "earlier_connected",
 ] as const;
 export const CALL_FILE_COLUMNS = [...BULK_CALL_COLUMNS, ...CALL_FILE_DETAIL_COLUMNS];
 
@@ -57,6 +60,10 @@ export interface CallFileRow {
   waSentAt: string | null;
   attempt: number;
   priority: string;
+  /** FRESH, or REPEAT #n | contacts, connected | the requisitions tried earlier (contacts/connected each); "" when unknown. */
+  approach: string;
+  earlierContacts: number;
+  earlierConnected: number;
 }
 export interface CallFile { filename: string; content: Buffer; contentType: string }
 
@@ -71,6 +78,7 @@ const values = (r: CallFileRow, testPhone?: string | null): string[] => [
   safe((r.branchAddress ?? "").replace(/\r?\n/g, " ")), safe(r.referenceId),
   safe(r.requisitionCode), safe(r.otherRequisitions.join(" ")), safe(r.branch ?? ""), r.driveType, safe(r.campaign),
   r.qualifiedAt ?? "", safe(r.emailStatus ?? ""), r.emailSentAt ?? "", safe(r.waStatus ?? ""), r.waSentAt ?? "", String(r.attempt), r.priority,
+  safe(r.approach), String(r.earlierContacts), String(r.earlierConnected),
 ];
 
 /** BOM-prefixed so Excel reads UTF-8 (same as he-superbot-sheet.service.ts). */
@@ -227,6 +235,14 @@ async function offerRowsFor(mobiles: string[], tag: RowTag): Promise<Map<string,
   return out;
 }
 
+/** Fresh/repeat history per person for the file; a read error leaves the column empty, never blocks the file. */
+async function attemptHistoryFor(plan: CallFilePlan): Promise<Map<string, PersonAttempts>> {
+  const out = new Map<string, PersonAttempts>();
+  const events = await loadAttemptEvents(plan.rows.map((p) => p.best.mobile10));
+  for (const p of plan.rows) out.set(p.best.mobile10, summariseAttempts(p.best.mobile10, events.get(p.best.mobile10) ?? [], { journeyId: p.best.id }));
+  return out;
+}
+
 /** The reference a booked journey's call carries is its match's HRMS reference (so file results and Superbot resolve the booking). */
 async function referencesFor(plan: CallFilePlan, write: boolean): Promise<Map<string, string>> {
   const ids = plan.rows.map((r) => r.best.matchId).filter((x): x is string => !!x);
@@ -237,13 +253,15 @@ async function referencesFor(plan: CallFilePlan, write: boolean): Promise<Map<st
   return out;
 }
 
-function toFileRow(p: PlannedRow, refs: ReadonlyMap<string, string>): CallFileRow {
+function toFileRow(p: PlannedRow, refs: ReadonlyMap<string, string>, history: ReadonlyMap<string, PersonAttempts> = new Map()): CallFileRow {
   const b = p.best;
+  const h = history.get(b.mobile10);
   return {
     mobile10: b.mobile10, name: displayFirstName(b.fullName), role: String(b.roleName ?? ""), interviewDate: p.interviewDate, interviewTime: p.interviewTime,
     branchAddress: b.branchAddress, referenceId: (b.matchId ? refs.get(b.matchId) : undefined) ?? followupRef(b.id), requisitionCode: b.requisitionCode, otherRequisitions: p.otherRequisitionCodes,
     branch: b.branchName, driveType: callFileDriveType(b), campaign: b.campaign, qualifiedAt: b.qualifiedAt || null,
     emailStatus: b.emailStatus, emailSentAt: b.emailSentAt, waStatus: b.waStatus, waSentAt: b.waSentAt, attempt: p.attempt, priority: p.priority,
+    approach: attemptLabel(h), earlierContacts: h?.priorContacts ?? 0, earlierConnected: h?.timesConnected ?? 0,
   };
 }
 
@@ -360,7 +378,8 @@ export async function runCallFileBatch(
     }
 
     const refs = await referencesFor(plan, tag !== "dry_run");
-    const rows = plan.rows.map((p) => toFileRow(p, refs));
+    const history = await attemptHistoryFor(plan);
+    const rows = plan.rows.map((p) => toFileRow(p, refs, history));
     const files = await buildCallFiles(rows, { stamp: when.replace(/[-:]/g, "").replace(" ", "-"), testPhone: tag === "test" ? s.testPhone : null });
     const summary = summarise(plan, files.length);
 
@@ -387,6 +406,12 @@ export async function runCallFileBatch(
       for (const r of rows) if (r.interviewDate && r.interviewTime) slots[r.mobile10] = `${r.interviewDate} ${r.interviewTime}:00`;
       await markExportedForCalling(rows.map((r) => r.mobile10), { userId: null, label: `follow-up batch ${o.slotKey ?? when}`, slots })
         .catch((err: unknown) => logger.warn({ batchId, err: errText(err) }, "[qualified-followup] calling file sent; export record failed"));
+    }
+    // The portal upload (SUPERBOT_UPLOAD_MODE=live): live files only, never test or dry runs. A failure is a note on the batch, never a retry
+    // of the batch (the rows are already stamped and the mail is out).
+    if (tag === "live") {
+      await uploadCallFile(batchId as string, rows.map((r) => values(r, null).slice(0, 7)))
+        .catch((err: unknown) => logger.warn({ batchId, err: errText(err) }, "[qualified-followup] portal upload failed"));
     }
     return { status: "sent", batchId: batchId as string, rows: rows.length, files: files.length, summary };
   } catch (err) {

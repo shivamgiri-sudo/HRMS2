@@ -76,11 +76,16 @@ export const calledSql = (liveFrom: string, n: number) => (streams: boolean): st
  WHERE hc.requisition_id IN (${ph(n)}) AND hc.created_at >= ? AND hc.created_at < ?
  GROUP BY ${TYPE_KEY_GROUP}, mob`;
 
-/** People e-mailed an invite link without a match (legacy Meta / pipeline): typed by the invite's stamp, else their form fill. */
-export const invitedSql = (liveFrom: string, n: number): string => `SELECT COALESCE(wi.drive_type, ${activityTypeSql({ lead: "il", first: "ilf", fill: "ml", ref: "wi.last_sent_at", liveFrom })}) AS t, wi.mobile10 AS mob, wi.match_id
+/** People e-mailed an invite link without a match (legacy Meta / pipeline). The invite's stamp (drive_type at send time) says Meta or
+ *  Hiring Engine; Live vs Old Meta is the shared rule at the current cutoff, because the window rolls and a send-time 'meta_live' stamp goes
+ *  stale after 7 days. No stamp: the rule alone (their form fill). */
+export const invitedSql = (liveFrom: string, n: number): string => {
+  const rule = activityTypeSql({ lead: "il", first: "ilf", fill: "ml", ref: "wi.last_sent_at", liveFrom });
+  return `SELECT CASE WHEN wi.drive_type = 'he' THEN 'he' WHEN wi.drive_type IN ('meta_live','meta_old') THEN IF(${rule} = 'meta_live', 'meta_live', 'meta_old') ELSE ${rule} END AS t, wi.mobile10 AS mob, wi.match_id
   FROM walkin_invite wi LEFT JOIN meta_lead_raw ml ON ml.id = wi.meta_lead_id ${CI}
   LEFT JOIN he_lead il ON il.mobile10 = wi.mobile10 ${CI} LEFT JOIN meta_lead_raw ilf ON ilf.id = il.meta_lead_id ${CI}
  WHERE wi.requisition_id IN (${ph(n)}) AND wi.last_sent_at >= ? AND wi.last_sent_at < ?`; // matched invites are skipped in code, so the read stays on the requisition index
+};
 
 /** People who answered on a channel (no-answer call results excluded). */
 export const respondedSql = (n: number): string => `SELECT cr.channel AS ch, cr.mobile10 AS mob

@@ -54,6 +54,7 @@ import { registerOutcomeRoutes } from "./he-outcome.routes.js";
 import { registerResponseRoutes } from "./response.routes.js";
 import { bodyRequisitionScoped, driveScoped, followupRowScoped } from "./he-drive-scope.js";
 import { registerFollowupSwitchRoutes } from "./followup-switch.routes.js";
+import { registerPersonHistoryRoutes } from "./person-history.routes.js";
 import { DRIVE_STREAM_FED, STREAM_CHECK_FAILED, driveStreamCheck } from "./he-stream-guard.service.js";
 import { followupSummary } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -70,6 +71,7 @@ const ADMIN_ROLES = ["super_admin", "admin"];
 const WRITE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr"];
 registerStreamRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES, admin: ADMIN_ROLES });
 registerFollowupSwitchRoutes(heRouter, { view: VIEW_ROLES, admin: ADMIN_ROLES }); // before /qualified-followup/:id too
+registerPersonHistoryRoutes(heRouter, { view: VIEW_ROLES });
 registerCommandRoutes(heRouter, { view: VIEW_ROLES }); // before /qualified-followup/:id, which would answer /qualified-followup/status with 400
 registerCampaignMatrixRoutes(heRouter, { view: VIEW_ROLES });
 registerPoolBridgeRoutes(heRouter, { admin: ADMIN_ROLES });

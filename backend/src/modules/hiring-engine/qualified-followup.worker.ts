@@ -21,10 +21,15 @@ import { loadCallFileConfig, runCallFileBatch } from "./qualified-followup.callf
 import type { CallFileConfig } from "./qualified-followup.callfile-plan.js";
 import { getPinbotQuality } from "./he-pinbot-quality.service.js";
 import { runDailyReport } from "./qualified-followup.report.js";
+import { pullPortalResults } from "./superbot-portal.sync.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
 
 export const LOCK_NAME = "qualified_followup_tick";
 const INTERVAL_MS = 5 * 60 * 1000;
+const FIRST_TICK_MS = 30 * 1000;
+/** The portal call list is read at most once an hour (calls are made around the clock inside the bot's own 9-9 window). */
+const PORTAL_PULL_MS = 60 * 60 * 1000;
+let lastPortalPullAt = 0;
 
 export interface TickReport {
   mode: FollowupMode;
@@ -194,10 +199,13 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
 export function startQualifiedFollowupWorker(): void {
   if (timer) return;
   if (readSwitches().mode === "off") return;
-  timer = setInterval(() => {
-    runQualifiedFollowupTick().catch((err) => logger.error({ err: (err as Error).message }, "[qualified-followup] tick failed"));
-  }, INTERVAL_MS);
+  const pull = () => { if (Date.now() - lastPortalPullAt < PORTAL_PULL_MS) return; lastPortalPullAt = Date.now(); pullPortalResults().catch((err) => logger.warn({ err: (err as Error).message }, "[superbot] results pull failed")); };
+  const tick = () => { pull(); return runQualifiedFollowupTick().catch((err) => logger.error({ err: (err as Error).message }, "[qualified-followup] tick failed")); };
+  timer = setInterval(tick, INTERVAL_MS);
   timer.unref();
+  // A restart (a deploy or an env change) must not starve the pipeline for a whole interval: first tick shortly after start.
+  const first = setTimeout(tick, FIRST_TICK_MS);
+  first.unref();
 }
 
 export function stopQualifiedFollowupWorker(): void {

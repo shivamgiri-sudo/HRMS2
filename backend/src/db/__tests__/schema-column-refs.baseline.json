@@ -88,5 +88,9 @@
     "ats_candidate.annual_salary",
     "ats_candidate.current_designation",
     "ats_candidate.current_employer"
+  ],
+  "modules/meta-campaign/campaign-successor.service.ts": [
+    "meta_lead_raw.routed_at",
+    "meta_lead_raw.routed_by"
   ]
 }
