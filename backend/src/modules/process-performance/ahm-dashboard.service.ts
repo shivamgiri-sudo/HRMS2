@@ -137,7 +137,14 @@ const SNAPSHOT_STALE_MS = 30 * 60_000;
 
 interface SnapshotRow extends RowDataPacket { payload: string; computed_at: Date | string }
 
-export const ahmSnapshotKey = (f: AhmFilters): string => `${f.from}|${f.to}|${f.region ?? ""}|${f.zonePrefix ?? ""}`;
+// v3: bumped when AhmDashboardData's shape changes (most recently: hourlyDisposition /
+// zoneDisposition added) so an old cached payload from before the change can never match a
+// fresh request and get served with the new fields missing -- confirmed live: the frontend
+// crashed ("Cannot read properties of undefined (reading 'map')") on a stale v1/v2 snapshot
+// still inside its 30-minute freshness window. Bump this again any time a field is added,
+// renamed or removed.
+const SNAPSHOT_VERSION = "v3";
+export const ahmSnapshotKey = (f: AhmFilters): string => `${SNAPSHOT_VERSION}|${f.from}|${f.to}|${f.region ?? ""}|${f.zonePrefix ?? ""}`;
 
 export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
   const key = ahmSnapshotKey(f);

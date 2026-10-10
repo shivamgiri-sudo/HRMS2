@@ -502,9 +502,37 @@ export function AhmDashboard() {
             </div>
           )}
 
-          {tab === "hourly" && (
+          {tab === "hourly" && (() => {
+            const hourlyDispo = data.hourlyDisposition ?? [];
+            const withOrders = data.hourly.filter((h) => h.orders > 0);
+            const peak = withOrders.length ? withOrders.reduce((a, b) => (b.orders > a.orders ? b : a)) : null;
+            const rated = withOrders.map((h) => ({ ...h, dPct: h.orders > 0 ? Math.round((h.delivered / h.orders) * 1000) / 10 : 0 }));
+            const best = rated.length ? rated.reduce((a, b) => (b.dPct > a.dPct ? b : a)) : null;
+            const worst = rated.length ? rated.reduce((a, b) => (b.dPct < a.dPct ? b : a)) : null;
+            const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
+            return (
             <div className="ahm-card">
               <SlideHead icon={Clock} title="Hourly Order Taken Report" sub="Mirrors the Summary (hour × disposition) and Data sheets" />
+              {peak && (
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", marginBottom: 14 }}>
+                  <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: "10px 12px", background: ACCENT_SOFT }}>
+                    <div className="ahm-eyebrow" style={{ color: ACCENT }}>Peak hour</div>
+                    <div style={{ fontSize: 16, fontWeight: 800 }}>{hh(peak.hour)} · {int(peak.orders)} orders</div>
+                  </div>
+                  {best && (
+                    <div style={{ border: "1px solid #D1FAE5", borderRadius: 12, padding: "10px 12px", background: "#ECFDF5" }}>
+                      <div className="ahm-eyebrow" style={{ color: PALETTE.good }}>Best delivered % hour</div>
+                      <div style={{ fontSize: 16, fontWeight: 800 }}>{hh(best.hour)} · {best.dPct}%</div>
+                    </div>
+                  )}
+                  {worst && worst.hour !== best?.hour && (
+                    <div style={{ border: "1px solid #FEE2E2", borderRadius: 12, padding: "10px 12px", background: "#FEF2F2" }}>
+                      <div className="ahm-eyebrow" style={{ color: PALETTE.critical }}>Needs attention</div>
+                      <div style={{ fontSize: 16, fontWeight: 800 }}>{hh(worst.hour)} · {worst.dPct}% delivered</div>
+                    </div>
+                  )}
+                </div>
+              )}
               <p className="ahm-section-label">Orders by hour of day</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(24,minmax(0,1fr))", gap: 3, marginBottom: 14 }}>
                 {Array.from({ length: 24 }, (_, hour) => data.hourly.find((h) => h.hour === hour)).map((h, hour) => {
@@ -528,8 +556,8 @@ export function AhmDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {[...new Set(data.hourlyDisposition.map((r) => r.disposition))].sort().map((dispo) => {
-                      const byHour = new Map(data.hourlyDisposition.filter((r) => r.disposition === dispo).map((r) => [r.hour, r.orders]));
+                    {[...new Set(hourlyDispo.map((r) => r.disposition))].sort().map((dispo) => {
+                      const byHour = new Map(hourlyDispo.filter((r) => r.disposition === dispo).map((r) => [r.hour, r.orders]));
                       const total = [...byHour.values()].reduce((s, n) => s + n, 0);
                       return (
                         <tr key={dispo}>
@@ -539,19 +567,40 @@ export function AhmDashboard() {
                         </tr>
                       );
                     })}
-                    {data.hourlyDisposition.length === 0 && <tr><td colSpan={26} style={{ textAlign: "center", color: PALETTE.muted }}>No calls on this date.</td></tr>}
+                    {hourlyDispo.length === 0 && <tr><td colSpan={26} style={{ textAlign: "center", color: PALETTE.muted }}>No calls on this date.</td></tr>}
                   </tbody>
                 </table>
               </div>
             </div>
-          )}
+            );
+          })()}
 
-          {tab === "orderDelivery" && (
+          {tab === "orderDelivery" && (() => {
+            const sizedTowns = data.byTown.filter((t) => t.orders >= 10);
+            const biggestGap = sizedTowns.length ? sizedTowns.reduce((a, b) => (b.gapPct > a.gapPct ? b : a)) : null;
+            const topAgent = data.byTelesales.length ? data.byTelesales.reduce((a, b) => (b.orders > a.orders ? b : a)) : null;
+            return (
             <div className="ahm-card">
               <SlideHead icon={Route} title="Order vs Delivery" sub="Mirrors Maharashtra Order vs Delivery and the Mumbai Metro Order vs Delivery report" />
               <NotAvailableBanner>
                 The two source workbooks split this by ASM Zone / Branch ("MH 01", "MM 03", ...), a separate territory mapping this upload does not carry — the raw Zone column here is each outlet's own town/branch code, not that grouping. Shown combined, by real town and real telesales agent, instead of a guessed Maharashtra/Mumbai Metro split.
               </NotAvailableBanner>
+              {(biggestGap || topAgent) && (
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", marginBottom: 14 }}>
+                  {biggestGap && (
+                    <div style={{ border: "1px solid #FEE2E2", borderRadius: 12, padding: "10px 12px", background: "#FEF2F2" }}>
+                      <div className="ahm-eyebrow" style={{ color: PALETTE.critical }}>Biggest order-vs-sales gap (≥10 orders)</div>
+                      <div style={{ fontSize: 16, fontWeight: 800 }}>{biggestGap.name} · {biggestGap.gapPct}% gap</div>
+                    </div>
+                  )}
+                  {topAgent && (
+                    <div style={{ border: "1px solid var(--line)", borderRadius: 12, padding: "10px 12px", background: ACCENT_SOFT }}>
+                      <div className="ahm-eyebrow" style={{ color: ACCENT }}>Top telesales agent by orders</div>
+                      <div style={{ fontSize: 16, fontWeight: 800 }}>{topAgent.agent} · {int(topAgent.orders)} orders</div>
+                    </div>
+                  )}
+                </div>
+              )}
               <p className="ahm-section-label">Daily trend</p>
               <DailyTrendChart daily={data.daily} />
               <div style={{ marginTop: 14 }}>
@@ -567,11 +616,35 @@ export function AhmDashboard() {
                 <AgentTable rows={data.byDeliveredBy} onOpen={(agent) => setDrawer({ kind: "deliveredBy", key: agent })} />
               </div>
             </div>
-          )}
+            );
+          })()}
 
-          {tab === "maxDispo" && (
+          {tab === "maxDispo" && (() => {
+            const zoneDispo = data.zoneDisposition ?? [];
+            const zones = [...new Set(zoneDispo.map((r) => r.zone))];
+            const zoneConversion = zones.map((zone) => {
+              const rows = zoneDispo.filter((r) => r.zone === zone);
+              const total = rows.reduce((s, r) => s + r.orders, 0);
+              const taken = rows.find((r) => r.disposition === "Survey Taken")?.orders ?? 0;
+              return { zone, total, pct: total > 0 ? Math.round((taken / total) * 1000) / 10 : 0 };
+            }).filter((z) => z.total >= 10); // ignore near-empty zones so one stray order doesn't look like a crisis
+            const worstZone = zoneConversion.length ? zoneConversion.reduce((a, b) => (b.pct < a.pct ? b : a)) : null;
+            const bestZone = zoneConversion.length ? zoneConversion.reduce((a, b) => (b.pct > a.pct ? b : a)) : null;
+            return (
             <div className="ahm-card">
               <SlideHead icon={AlertTriangle} title="Max Disposition" sub="Mirrors Max Disposition Week: unique disposition by zone, with where-to-focus flags" />
+              {worstZone && bestZone && (
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", marginBottom: 14 }}>
+                  <div style={{ border: "1px solid #FEE2E2", borderRadius: 12, padding: "10px 12px", background: "#FEF2F2" }}>
+                    <div className="ahm-eyebrow" style={{ color: PALETTE.critical }}>Lowest conversion zone (≥10 orders)</div>
+                    <div style={{ fontSize: 16, fontWeight: 800 }}>{worstZone.zone} · {worstZone.pct}%</div>
+                  </div>
+                  <div style={{ border: "1px solid #D1FAE5", borderRadius: 12, padding: "10px 12px", background: "#ECFDF5" }}>
+                    <div className="ahm-eyebrow" style={{ color: PALETTE.good }}>Highest conversion zone</div>
+                    <div style={{ fontSize: 16, fontWeight: 800 }}>{bestZone.zone} · {bestZone.pct}%</div>
+                  </div>
+                </div>
+              )}
               <p className="ahm-section-label">Overall disposition breakdown ({int(data.dispositions.reduce((s, d) => s + d.orders, 0))} orders)</p>
               <RankedBars rows={data.dispositions.map((d) => ({ ...d }))} labelKey="disposition" valueKey="orders" pctKey="pct" highlightFirst />
               <div style={{ marginTop: 14 }}>
@@ -584,14 +657,14 @@ export function AhmDashboard() {
                   <thead>
                     <tr>
                       <th>Zone</th>
-                      {[...new Set(data.zoneDisposition.map((r) => r.disposition))].sort().map((d) => <th key={d}>{d}</th>)}
+                      {[...new Set(zoneDispo.map((r) => r.disposition))].sort().map((d) => <th key={d}>{d}</th>)}
                       <th>Total</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {[...new Set(data.zoneDisposition.map((r) => r.zone))].sort().map((zone) => {
-                      const dispos = [...new Set(data.zoneDisposition.map((r) => r.disposition))].sort();
-                      const byDispo = new Map(data.zoneDisposition.filter((r) => r.zone === zone).map((r) => [r.disposition, r.orders]));
+                    {zones.sort().map((zone) => {
+                      const dispos = [...new Set(zoneDispo.map((r) => r.disposition))].sort();
+                      const byDispo = new Map(zoneDispo.filter((r) => r.zone === zone).map((r) => [r.disposition, r.orders]));
                       const total = [...byDispo.values()].reduce((s, n) => s + n, 0);
                       return (
                         <tr key={zone}>
@@ -601,12 +674,13 @@ export function AhmDashboard() {
                         </tr>
                       );
                     })}
-                    {data.zoneDisposition.length === 0 && <tr><td colSpan={3} style={{ textAlign: "center", color: PALETTE.muted }}>No data for this range.</td></tr>}
+                    {zoneDispo.length === 0 && <tr><td colSpan={3} style={{ textAlign: "center", color: PALETTE.muted }}>No data for this range.</td></tr>}
                   </tbody>
                 </table>
               </div>
             </div>
-          )}
+            );
+          })()}
         </>
       )}
 
