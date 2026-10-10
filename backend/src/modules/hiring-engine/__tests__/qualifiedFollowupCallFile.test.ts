@@ -18,7 +18,7 @@ import { mapHeaders } from "../he-bulk-call.js";
 import { buildCallFiles, callFileCsv, chunkRows, recoverStaleBatches, runCallFileBatch, type CallFileRow } from "../qualified-followup.callfile.js";
 
 const HEADER7 = "phone,name,role,interview_date,interview_time,branch_address,reference_id";
-const HEADER = `${HEADER7},requisition_code,other_requisitions,branch,drive_type,campaign,qualified_at,email_status,email_sent_at,whatsapp_status,whatsapp_sent_at,attempt,priority`;
+const HEADER = `${HEADER7},requisition_code,other_requisitions,branch,drive_type,campaign,qualified_at,email_status,email_sent_at,whatsapp_status,whatsapp_sent_at,attempt,priority,approach,earlier_contacts,earlier_connected`;
 const now = new Date("2026-10-07T10:00:00+05:30");
 const liveEnv = { QUAL_FOLLOWUP_MODE: "live" } as NodeJS.ProcessEnv;
 const testEnv = { QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true", QUAL_FOLLOWUP_TEST_TO_PHONE: "9111122222", QUAL_FOLLOWUP_TEST_TO_EMAIL: "qa@x.in" } as NodeJS.ProcessEnv;
@@ -26,7 +26,7 @@ const testEnv = { QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true", Q
 const row = (over: Partial<CallFileRow> = {}): CallFileRow => ({
   mobile10: "9876543210", name: "Asha", role: "Support", interviewDate: "2026-10-08", interviewTime: "10:30", branchAddress: "Sector 62", referenceId: "QF-0001",
   requisitionCode: "REQ-1", otherRequisitions: [], branch: "Noida", driveType: "Live Meta", campaign: "Oct Noida", qualifiedAt: "2026-10-07 08:10",
-  emailStatus: "sent", emailSentAt: "2026-10-07 08:30", waStatus: "sent", waSentAt: "2026-10-07 09:30", attempt: 1, priority: "P1", ...over,
+  emailStatus: "sent", emailSentAt: "2026-10-07 08:30", waStatus: "sent", waSentAt: "2026-10-07 09:30", attempt: 1, priority: "P1", approach: "", earlierContacts: 0, earlierConnected: 0, ...over,
 });
 const dbRow = (i: number, over: Record<string, unknown> = {}) => ({
   id: `id-${i}`, source_type: i % 2 ? "he" : "meta_live", mobile10: `98765432${String(10 + i)}`, full_name: "asha rao", role_name: "Support",
@@ -68,7 +68,7 @@ describe("call file format", () => {
 
   it("leaves slot and address blank when absent", () => {
     expect(callFileCsv([row({ interviewDate: null, interviewTime: null, branchAddress: null })]).split("\r\n")[1])
-      .toBe("9876543210,Asha,Support,,,,QF-0001,REQ-1,,Noida,Live Meta,Oct Noida,2026-10-07 08:10,sent,2026-10-07 08:30,sent,2026-10-07 09:30,1,P1");
+      .toBe("9876543210,Asha,Support,,,,QF-0001,REQ-1,,Noida,Live Meta,Oct Noida,2026-10-07 08:10,sent,2026-10-07 08:30,sent,2026-10-07 09:30,1,P1,,0,0");
   });
 
   it("the seven upload columns come first, so the bulk-call upload still reads the file", () => {
@@ -383,7 +383,7 @@ describe("slots: one batch per IST slot and tag", () => {
   it("the cool period from he_model_param lets an earlier-filed person back", async () => {
     world({ rows: [dbRow(1, { files_n: 1, last_file_at: "2026-09-01 10:00:00" })], params: [{ param_key: "policy.callfile_cool_days", value: "20.0000" }] });
     expect(await runCallFileBatch(readSwitches(liveEnv), "live", now)).toMatchObject({ status: "sent", rows: 1 });
-    expect(String(send.mock.calls[0][0].attachments[0].content)).toMatch(/,2,P1\r\n/);
+    expect(String(send.mock.calls[0][0].attachments[0].content)).toMatch(/,2,P1,[^\r\n]*,0,0\r\n/);
   });
 });
 
