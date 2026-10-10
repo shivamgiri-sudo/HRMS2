@@ -1,0 +1,50 @@
+# Read-only: runs the candidate reply agent's drafting step on the production host with a made-up fact sheet and a few sample messages.
+# Nothing is emailed and nothing is written: it prints the provider the agent resolves (the same one Mira uses), whether the model or the
+# rule wording answered, the intent, and the checked reply. Runs on the self-hosted runner so it uses the server's own AI settings.
+
+name: Ops reply agent test (read-only)
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-reply-agent-test
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Draft sample replies on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /var/www/HRMS2/backend
+          node --input-type=module -e '
+            import "dotenv/config";
+            const svc = await import("./dist/src/modules/hiring-engine/reply-agent.service.js");
+            const rules = await import("./dist/src/modules/hiring-engine/reply-agent.rules.js");
+            const tri = await import("./dist/src/modules/ai/mira-issue-triage.service.js");
+            const prov = await tri.resolveWorkingProvider().catch(() => null);
+            console.log("provider:", prov ? prov.key : "none (rule wording only)");
+            const facts = { name: "Test", role: "EXECUTIVE", branch: "NOIDA-2", address: "Okaya Tower-1, 3rd Floor, Sector 62, Noida", mapsLink: null,
+              slotDate: "Monday, 12 Oct 2026", slotTime: "11:00 AM", documents: "Aadhaar, PAN, 12th marksheet", assessmentLink: null, hrContact: "HR Team",
+              company: "MAS Callnet", jobDescription: "Handle customer queries on call and resolve them.", skills: null, education: "12th pass", experience: null,
+              salary: null, employmentType: "full time", shift: null };
+            const deny = await svc.denyTerms();
+            const msgs = ["Yes I will come on Monday", "Sir kya address hai, kaha aana hai?", "What is the work? Which company is it?", "Mujhe salary kitni milegi?", "Am I selected?", "I cannot come Monday, can I come Wednesday"];
+            for (const t of msgs) {
+              const { draft, engine } = await svc.draftReply(facts, t);
+              const reply = rules.scrub(draft.reply, deny);
+              const v = reply ? rules.validateReply({ text: reply, facts, deny }) : { ok: false, reason: "empty" };
+              console.log("---\nQ:", t, "\nengine:", engine, "intent:", draft.intent, "lang:", draft.language, "conf:", draft.confidence, "human:", draft.needsHuman, "check:", v.ok ? "ok" : v.reason);
+              console.log("A:", reply.replace(/\n+/g, " | ").slice(0, 320));
+            }
+            process.exit(0);
+          '
