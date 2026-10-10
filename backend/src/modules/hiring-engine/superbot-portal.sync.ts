@@ -29,8 +29,11 @@ export async function uploadCallFile(batchId: string, rows: string[][]): Promise
 
 const FOLLOWUP_REF = /^QF-([0-9A-F]{8})$/i;
 
+/** The portal prints the reference with a space after the dash ("HRMS- 296"); ours has none. */
+export const normaliseRef = (reference: string): string => String(reference ?? "").replace(/\s+/g, "");
+
 async function mobileOf(reference: string): Promise<string | null> {
-  const ref = reference.trim();
+  const ref = normaliseRef(reference);
   if (!ref) return null;
   if (FOLLOWUP_REF.test(ref)) {
     const prefix = FOLLOWUP_REF.exec(ref)![1].toLowerCase();
@@ -47,7 +50,7 @@ async function mobileOf(reference: string): Promise<string | null> {
 export function botCallToReportRow(c: BotCall, mobile10: string): Record<string, string> {
   return {
     "Phone Number": mobile10, "Unique Call Id": c.callId, "Call Dial Time": c.processedAtIst ?? "", Disposition: c.disposition,
-    Outcome: c.status.toLowerCase() === "failed" ? "" : c.disposition ? "disposed" : "abandoned", Status: c.status, "Reference ID": c.reference,
+    Outcome: c.status.toLowerCase() === "failed" ? "" : c.disposition ? "disposed" : "abandoned", Status: c.status, "Reference ID": normaliseRef(c.reference),
     "No Of Attempt": String(c.noOfCalls || ""), "Walkin Interview Attendance": "-",
   };
 }

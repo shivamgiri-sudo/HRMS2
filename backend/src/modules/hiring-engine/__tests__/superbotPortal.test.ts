@@ -5,7 +5,7 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute: h.execute } }));
 vi.mock("../../../logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
 import { botConfig, BOT_PARAMS, bulkImport, resetBotToken } from "../superbot-portal.client.js";
-import { botCallToReportRow, uploadCallFile } from "../superbot-portal.sync.js";
+import { botCallToReportRow, normaliseRef, uploadCallFile } from "../superbot-portal.sync.js";
 import { parseResultRows } from "../he-call-results.js";
 
 const ENV = { SUPERBOT_EMAIL: "svc@example.test", SUPERBOT_PASSWORD: "pw", SUPERBOT_ACCOUNT_ID: "1965", SUPERBOT_CAMPAIGN_ID: "27425", SUPERBOT_UPLOAD_MODE: "live" };
@@ -63,6 +63,10 @@ describe("portal upload", () => {
 });
 
 describe("portal results as call-results rows", () => {
+  it("normalises the portal's spaced reference", () => {
+    expect(normaliseRef("HRMS- 296")).toBe("HRMS-296");
+    expect(normaliseRef(" QF-0A1B2C3D ")).toBe("QF-0A1B2C3D");
+  });
   it("answered with a disposition parses as the calling tool's report", () => {
     const rep = botCallToReportRow({ callId: "9", reference: "HRMS-188", disposition: "WILL ATTEND WALK-IN INTERVIEW", status: "answered", callStatus: "200", noOfCalls: 1, processedAtIst: "2026-10-08 16:53:02", maskedPhone: "XXXXXX8709" }, "9876543210");
     const p = parseResultRows([rep]);
