@@ -22,6 +22,7 @@ import type { CallFileConfig } from "./qualified-followup.callfile-plan.js";
 import { getPinbotQuality } from "./he-pinbot-quality.service.js";
 import { runDailyReport } from "./qualified-followup.report.js";
 import { pullPortalResults } from "./superbot-portal.sync.js";
+import { runSlotCorrections } from "./slot-corrections.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
 
 export const LOCK_NAME = "qualified_followup_tick";
@@ -168,6 +169,9 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
     r.byTag[tag] = t;
     r.email = add(r.email, t.email); r.whatsapp = add(r.whatsapp, t.whatsapp); r.call = add(r.call, t.call);
   }
+
+  // Someone emailed for one day and later moved to another is sent the new slot (live rows only; the kill switch and pauses stop it).
+  if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("slot-corrections", () => runSlotCorrections(now), null);
 
   // Both only email the owner, so they run while sends are paused. One calling file per tag and slot; one report (the first tag).
   const config = await guarded("call-file-config", () => deps.callFileConfig(), null);
