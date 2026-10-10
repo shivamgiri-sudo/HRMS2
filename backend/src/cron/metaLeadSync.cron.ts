@@ -13,6 +13,7 @@
  * No-op when META_MARKETING_ACCESS_TOKEN is not configured.
  */
 
+import { sweepStrandedLeads } from "../modules/meta-campaign/campaign-successor.service.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import { metaCampaignService } from "../modules/meta-campaign/meta-campaign.service.js";
@@ -196,6 +197,15 @@ async function runSyncCycle(): Promise<MetaSyncNowResult> {
       console.error("[meta-sync] Heal step failed:", err?.message ?? err);
     }
 
+
+    // 3b. Qualified, never-contacted leads on a filled/closed requisition move to a similar open one of the same branch
+    //     (META_AUTO_SUCCESSOR; off = no query), so the notify step below and the follow-up worker can reach them.
+    try {
+      const swept = await sweepStrandedLeads();
+      if (swept.moved) console.log(`[meta-sync] Sweep: ${swept.moved} lead(s) moved to an open requisition across ${swept.pairs} requisition(s)`);
+    } catch (err: any) {
+      console.error("[meta-sync] Sweep step failed:", err?.message ?? err);
+    }
 
     // 4. Notify newly qualified leads within the rolling window.
     //    backfillFormLeads sets skipOutreach=true, so we do outreach here.

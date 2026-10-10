@@ -89,5 +89,9 @@
   "modules/meta-campaign/campaign-relink.service.ts": [
     "meta_lead_raw.routed_at",
     "meta_lead_raw.routed_by"
+  ],
+  "modules/meta-campaign/campaign-successor.service.ts": [
+    "meta_lead_raw.routed_at",
+    "meta_lead_raw.routed_by"
   ]
 }
