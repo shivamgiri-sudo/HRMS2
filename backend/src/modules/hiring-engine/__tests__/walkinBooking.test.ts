@@ -11,10 +11,12 @@ const h = vi.hoisted(() => ({
   match: null as null | { id: string; state: string; drive_id: string | null; slot_at: string | null; token: string | null },
   events: [] as unknown[][],
   enforced: 0,
+  holidays: [] as string[],
   txDrives: [] as string[],
 }));
 
 function sqlRouter(sql: string, p: unknown[] = [], inTx = false) {
+  if (sql.includes("FROM leave_holiday_master")) return [h.holidays.map((d) => ({ d }))];
   if (sql.includes("FROM he_model_param")) return [[{ value: h.enforced }]];
   if (sql.includes("FROM job_requisition")) return [h.req ? [h.req] : []];
   if (sql.startsWith("INSERT INTO he_drive")) {
@@ -49,14 +51,14 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 vi.mock("../he-lead.service.js", () => ({ addEvent: vi.fn(async (...a: unknown[]) => { h.events.push(a); }) }));
 
-import { bookLeadOnDrive, createDriveIfAbsent, targetDriveDates } from "../walkin-booking.service.js";
+import { bookLeadOnDrive, createDriveIfAbsent, resetInviteTargetCache, softSlotCapacity, targetDriveDates } from "../walkin-booking.service.js";
 
 // Thu 2026-10-08 09:00 IST
 const now = new Date("2026-10-08T03:30:00Z");
 const args = { leadId: "L1", requisitionId: "R1", branchName: "NOIDA-2", preferredSlotAt: "2026-10-09 10:30:00", now, state: "invited" as const };
 
 beforeEach(() => {
-  h.sqls = []; h.params = []; h.connSqls = []; h.drives = new Map(); h.booked = {}; h.match = null; h.events = []; h.enforced = 0; h.txDrives = [];
+  h.sqls = []; h.params = []; h.connSqls = []; h.drives = new Map(); h.booked = {}; h.match = null; h.events = []; h.enforced = 0; h.holidays = []; h.txDrives = []; resetInviteTargetCache();
   delete process.env.REQ_END_DATE_ENFORCEMENT;
   h.req = { approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 5, fulfilled_headcount: 0 };
 });
@@ -168,15 +170,34 @@ describe("bookLeadOnDrive", () => {
     h.booked = {};
     expect(await bookLeadOnDrive(args)).toMatchObject({ status: "booked", slotAt: "2026-10-09 10:30:00" });
   });
-  it("E10: switched off, the end date reads nothing and changes nothing", async () => {
+  it("a requisition whose end date has passed is never booked, whatever the enforcement switch says", async () => {
     h.req = { ...h.req!, requisition_validity: "2026-10-01" };
-    expect(await bookLeadOnDrive(args)).toMatchObject({ status: "booked" });
-    expect(h.sqls.some((s) => s.includes("he_model_param") || s.includes("requisition_validity"))).toBe(false);
+    expect(await bookLeadOnDrive(args)).toEqual({ status: "unavailable", reason: "requisition_ended" });
+  });
+  it("the nearest working day takes the daily invitation target: a slot already at its seat count still books", async () => {
+    h.enforced = 400; // policy.walkin_daily_invites (the router answers every he_model_param read with this value)
+    h.booked["2026-10-09 10:30:00"] = 6; // 10:30 is the first slot at least an hour away in this test
+    expect(await bookLeadOnDrive(args)).toMatchObject({ status: "booked", slotAt: "2026-10-09 10:30:00" });
+  });
+  it("a national holiday is skipped, like a Sunday", async () => {
+    h.holidays = ["2026-10-09"];
+    const r = await bookLeadOnDrive(args);
+    expect(r).toMatchObject({ status: "booked" });
+    expect((r as { slotAt: string }).slotAt.startsWith("2026-10-09")).toBe(false);
   });
   it("E10: a date that cannot take the booking leaves no new drive behind (only the first fitting date gets one)", async () => {
     const evening = new Date("2026-10-08T12:00:00Z"); // 17:30 IST: no slot left today
     const r = await bookLeadOnDrive({ ...args, now: evening, preferredSlotAt: "2026-10-08 17:00:00" });
     expect(r).toMatchObject({ status: "booked", slotAt: expect.stringMatching(/^2026-10-09/) });
     expect([...h.drives.keys()]).toEqual(["2026-10-09"]);
+  });
+});
+
+describe("softSlotCapacity", () => {
+  it("spreads the daily target over the day's slots and never goes below the seat count", () => {
+    expect(softSlotCapacity(6, 16, 400)).toBe(25);
+    expect(softSlotCapacity(6, 16, 50)).toBe(6);
+    expect(softSlotCapacity(6, 16, 0)).toBe(6);
+    expect(softSlotCapacity(6, 0, 400)).toBe(6);
   });
 });
