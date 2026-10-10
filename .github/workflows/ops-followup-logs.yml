@@ -23,7 +23,10 @@ jobs:
       - name: pm2 status
         shell: bash
         run: pm2 status --no-color
-      - name: Follow-up lines (last 60)
+      - name: Follow-up, reader and portal lines (last 60 per process)
         shell: bash
         run: |
-          pm2 logs hrms2-workers --nostream --lines 1500 --no-color 2>&1 | grep -iE "qualified-followup|followup|whatsapp|pinbot|inbound-email|superbot|slot-corrections|imap" | tail -n 60 | cut -c1-400 || echo "no matching lines"
+          for P in hrms2-backend hrms2-workers; do
+            echo "=== $P ==="
+            pm2 logs "$P" --nostream --lines 2500 --no-color 2>&1 | grep -iE "qualified-followup|followup|whatsapp|pinbot|inbound-email|superbot|slot-corrections|imap|reply-agent" | tail -n 60 | cut -c1-400 || true
+          done
