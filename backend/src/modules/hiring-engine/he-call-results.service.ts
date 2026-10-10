@@ -49,7 +49,7 @@ export async function applyCallResults(raw: Array<Record<string, unknown>>, o: {
       // Answered without a decision on the walk-in, or a result older than a day (the interview day has passed): recorded in the call
       // log and the response list, but no state change and nothing is sent to the candidate.
       const historical = r.startedAt ? Date.now() - new Date(`${r.startedAt.replace(" ", "T")}+05:30`).getTime() > 24 * 3600_000 : false;
-      const res = await recordVoiceResult({ leadId: lead.id, providerCallId, startedAt: r.startedAt ?? null, result: r.voice!, summary: r.remarks ?? null, offeredSlotAt: r.newInterviewAt ?? null, confirmedSlotAt, source: "call_import", reference: r.referenceId ?? null, incomplete: Boolean(r.undecided) && !historical, historical });
+      const res = await recordVoiceResult({ leadId: lead.id, providerCallId, startedAt: r.startedAt ?? null, result: r.voice!, summary: r.remarks ?? null, offeredSlotAt: r.newInterviewAt ?? null, confirmedSlotAt, source: "call_import", reference: r.referenceId ?? null, incomplete: Boolean(r.undecided), historical });
       if (res?.outcome === "duplicate") out.duplicates++;
       else { out.applied++; await addEvent(lead.id, "call_result_imported", { channel: "voice", actor: o.userId, detail: `${r.outcome}${r.remarks ? " - " + r.remarks : ""}`.slice(0, 480) }); }
     } catch { out.failedRows.push(r.rowNo); }
