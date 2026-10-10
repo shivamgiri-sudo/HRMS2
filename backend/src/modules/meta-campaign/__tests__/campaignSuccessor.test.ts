@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoSuccessorOn, pickSuccessor, type Candidate } from "../campaign-successor.service.js";
+import { autoSuccessorOn, pickSuccessor, sequenceOf, type Candidate } from "../campaign-successor.service.js";
 
 const cur = { designation: "EXECUTIVE", branch: "NOIDA-2", process: "P1" };
 const c = (o: Partial<Candidate>): Candidate => ({ id: "x", designation: "EXECUTIVE", branch: "NOIDA-2", process: "P1", validity: "2026-10-30", seatsLeft: 10, linked: false, ...o });
@@ -26,6 +26,26 @@ describe("pickSuccessor", () => {
   });
   it("an open-ended requisition (no validity) is allowed", () => {
     expect(pickSuccessor(cur, [c({ id: "a", validity: null })], "2026-10-09")?.id).toBe("a");
+  });
+});
+
+describe("deadline then sequence", () => {
+  it("reads the sequence from the code", () => {
+    expect(sequenceOf("NOIDA-Onfido-23")).toBe(23);
+    expect(sequenceOf("REQ-2609-K7BK")).toBe(Number.POSITIVE_INFINITY);
+    expect(sequenceOf(undefined)).toBe(Number.POSITIVE_INFINITY);
+  });
+  it("picks the latest deadline inside the tier", () => {
+    const r = pickSuccessor(cur, [c({ id: "22", code: "NOIDA-Onfido-22", validity: "2026-10-15" }), c({ id: "24", code: "NOIDA-Onfido-24", validity: "2026-10-23" }), c({ id: "23", code: "NOIDA-Onfido-23", validity: "2026-10-19" })], "2026-10-10");
+    expect(r?.id).toBe("24");
+  });
+  it("on a deadline tie takes the next (lower) sequence number", () => {
+    const r = pickSuccessor(cur, [c({ id: "24", code: "NOIDA-Onfido-24", validity: "2026-10-23" }), c({ id: "23", code: "NOIDA-Onfido-23", validity: "2026-10-23" })], "2026-10-10");
+    expect(r?.id).toBe("23");
+  });
+  it("same process wins over a later deadline of another process", () => {
+    const r = pickSuccessor(cur, [c({ id: "other", process: "P2", validity: "2026-12-01" }), c({ id: "same", process: "P1", validity: "2026-10-15" })], "2026-10-10");
+    expect(r?.id).toBe("same");
   });
 });
 

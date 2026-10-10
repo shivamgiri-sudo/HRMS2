@@ -1,7 +1,8 @@
 /**
  * Auto-successor (owner requirement): when a campaign's primary requisition is filled, closed or inactive, the campaign moves to the
  * best open requisition so new leads are never stranded on a dead requisition. Priority: same branch AND same process, then same
- * branch with another process, then a linked or same-branch-family requisition; the designation must always match.
+ * branch with another process, then a linked or same-branch-family requisition; the designation must always match. Inside a tier:
+ * the latest deadline, then the next sequence number in the requisition code.
  * sweepStrandedLeads does the same for qualified, never-contacted leads already sitting on a closed requisition. Off unless env META_AUTO_SUCCESSOR names the campaign or says all. Leads already placed never move here (the HR
  * relink does that); only the campaign's primary changes, and the switch is audited in meta_campaign_relink with leads_moved 0.
  */
@@ -14,11 +15,15 @@ import { isLeadContactedSql, optionalTables } from "./lead-contact-lock.js";
 const SYSTEM_ACTOR = "00000000-0000-0000-0000-000000000000";
 const branchFamily = (b: unknown): string => String(b ?? "").toUpperCase().replace(/[-\s]*\d+$/, "").trim();
 
-export interface Candidate { id: string; designation: string; branch: string; process: string; validity: string | null; seatsLeft: number; linked: boolean }
+export interface Candidate { id: string; code?: string; designation: string; branch: string; process: string; validity: string | null; seatsLeft: number; linked: boolean }
+
+/** The fill-order number in a requisition code (NOIDA-Onfido-23 -> 23); Infinity when the code carries none. */
+export const sequenceOf = (code: string | undefined): number => { const m = /-(\d+)\s*$/.exec(String(code ?? "")); return m ? Number(m[1]) : Number.POSITIVE_INFINITY; };
 
 /**
- * Pure ranking. Eligible: seats left, not past its end date, same designation, same branch (family) or already linked to the campaign.
- * Order: same branch + same process, same branch + other process, linked, then more seats left, then the later validity.
+ * Pure ranking. Eligible: seats left (HR's fulfilled count), not past its end date, same designation, same branch (family) or linked.
+ * Tier: same branch + same process, same branch + another process, linked, other branch of the family. Inside a tier: the latest
+ * deadline first (no end date counts as latest); on a tie the next sequence number (lower number, fills first); then more seats left.
  */
 export function pickSuccessor(current: { designation: string; branch: string; process?: string }, candidates: Candidate[], today: string): Candidate | null {
   const sameBranch = (c: Candidate) => c.branch.toUpperCase() === current.branch.toUpperCase();
@@ -26,7 +31,9 @@ export function pickSuccessor(current: { designation: string; branch: string; pr
   const ok = candidates.filter((c) => c.seatsLeft > 0 && c.designation.toUpperCase() === current.designation.toUpperCase()
     && (!c.validity || c.validity >= today) && (c.linked || sameBranch(c) || branchFamily(c.branch) === branchFamily(current.branch)));
   const tier = (c: Candidate) => (sameBranch(c) && sameProcess(c) ? 0 : sameBranch(c) ? 1 : c.linked ? 2 : 3);
-  ok.sort((a, b) => tier(a) - tier(b) || b.seatsLeft - a.seatsLeft || String(b.validity ?? "9999").localeCompare(String(a.validity ?? "9999")));
+  ok.sort((a, b) => tier(a) - tier(b)
+    || String(b.validity ?? "9999-12-31").localeCompare(String(a.validity ?? "9999-12-31"))
+    || sequenceOf(a.code) - sequenceOf(b.code) || b.seatsLeft - a.seatsLeft);
   return ok[0] ?? null;
 }
 
@@ -38,7 +45,7 @@ export function autoSuccessorOn(campaignId: string, env: NodeJS.ProcessEnv = pro
 }
 
 const toCandidate = (r: RowDataPacket): Candidate => ({
-  id: String(r.id), designation: String(r.designation_name), branch: String(r.branch_name), process: String(r.process_id ?? r.process_name ?? ""),
+  id: String(r.id), code: String(r.requisition_code ?? ""), designation: String(r.designation_name), branch: String(r.branch_name), process: String(r.process_id ?? r.process_name ?? ""),
   validity: r.requisition_validity ? String(r.requisition_validity).slice(0, 10) : null,
   seatsLeft: Number(r.requested_headcount) - Number(r.fulfilled_headcount), linked: Number(r.linked) === 1,
 });
