@@ -54,7 +54,7 @@ const dayLabel = (d: string) => new Date(`${d.slice(0, 10)}T00:00:00Z`).toLocale
 const timeLabel = (t: string) => { const [h, m] = t.slice(11, 16).split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
 
 /** The only facts the agent may use about one person: no process name, no requisition code. */
-export async function buildFactSheet(a: { leadId: string | null; requisitionId: string | null; matchId: string | null }, deny: readonly string[]): Promise<{ facts: FactSheet; requisitionId: string } | null> {
+export async function buildFactSheet(a: { leadId: string | null; requisitionId: string | null; matchId: string | null; mobile10?: string | null }, deny: readonly string[]): Promise<{ facts: FactSheet; requisitionId: string } | null> {
   let requisitionId = a.requisitionId;
   let matchId = a.matchId;
   let leadName: string | null = null;
@@ -69,6 +69,12 @@ export async function buildFactSheet(a: { leadId: string | null; requisitionId: 
   if (!requisitionId && a.leadId) {
     const [m] = await db.execute<RowDataPacket[]>("SELECT id, requisition_id FROM he_match WHERE lead_id = ? ORDER BY created_at DESC LIMIT 1", [a.leadId]);
     if (m[0]) { requisitionId = String(m[0].requisition_id); matchId = matchId ?? String(m[0].id); }
+  }
+  if (!requisitionId && a.mobile10) {
+    // Someone the old Meta flow emailed has no booking: use the requisition their lead came in on.
+    const [m] = await db.execute<RowDataPacket[]>(
+      "SELECT requisition_id FROM meta_lead_raw WHERE requisition_id IS NOT NULL AND RIGHT(REGEXP_REPLACE(parsed_phone, '[^0-9]', ''), 10) = ? ORDER BY created_at DESC LIMIT 1", [a.mobile10]);
+    if (m[0]) requisitionId = String(m[0].requisition_id);
   }
   if (!requisitionId) return null;
   const [jr] = await db.execute<RowDataPacket[]>(
@@ -202,7 +208,7 @@ export async function handleInboundReply(m: InboundReply, now = new Date()): Pro
     };
     if (!m.who || mode <= 0) { await store({ status: "held", hold: !m.who ? "unknown_sender" : "agent_off" }); return "held"; }
     const deny = await denyTerms();
-    const built = await buildFactSheet({ leadId: m.who.leadId, matchId: m.who.matchId, requisitionId: m.who.requisitionId ?? null }, deny);
+    const built = await buildFactSheet({ leadId: m.who.leadId, matchId: m.who.matchId, requisitionId: m.who.requisitionId ?? null, mobile10: m.who.mobile10 }, deny);
     if (!built) { await store({ status: "held", hold: "no_requisition" }); return "held"; }
     const { facts, requisitionId } = built;
     const [lead] = await db.execute<RowDataPacket[]>("SELECT status FROM he_lead WHERE mobile10 = ? LIMIT 1", [m.who.mobile10]);

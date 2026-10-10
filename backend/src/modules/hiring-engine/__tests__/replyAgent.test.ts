@@ -60,6 +60,9 @@ describe("ruleIntent and ruleReply", () => {
     expect(ruleIntent("please stop messaging me")?.intent).toBe("opt_out");
     expect(ruleIntent("this is a scam")?.intent).toBe("complaint");
     expect(ruleIntent("am I selected?")?.intent).toBe("ask_selection");
+    expect(ruleIntent("I will attend the interview.")?.intent).toBe("confirm");
+    expect(ruleIntent("Which process regarding this job tell me more about detail")?.intent).toBe("ask_job");
+    expect(ruleIntent("I will not attend, sorry")?.intent).not.toBe("confirm");
   });
   it("answers from the facts and never invents a salary", () => {
     expect(ruleReply("ask_address", FACTS)).toContain("Okaya Tower");

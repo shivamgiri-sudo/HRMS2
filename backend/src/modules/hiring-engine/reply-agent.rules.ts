@@ -138,9 +138,9 @@ export function ruleIntent(text: string): { intent: ReplyIntent; confidence: num
   if (has(/\b(document|documents|bring|carry|certificate|aadhaar|pan)\b/)) return { intent: "ask_documents", confidence: 0.85 };
   if (has(/\b(link|assessment|test|bmi)\b/)) return { intent: "assessment_link", confidence: 0.75 };
   if (has(/\b(eligible|eligibility|fresher|12th|graduate|graduation|experience|qualification|age limit)\b/)) return { intent: "ask_eligibility", confidence: 0.8 };
-  if (has(/\b(job description|about the job|role|profile|work|what is the job|jd)\b/)) return { intent: "ask_job", confidence: 0.7 };
-  if (has(/\b(reschedule|another day|other day|next week|postpone|different day|cannot come|can t come|not available|some other time|dusre din)\b/)) return { intent: "reschedule", confidence: 0.85 };
-  if (has(/\b(not interested|no thanks|not looking|nahi aa|will not come|won t come|remove my)\b/)) return { intent: "decline", confidence: 0.85 };
-  if (has(/\b(yes|ok|okay|confirm|confirmed|will come|will be there|coming|sure|haan|aa jaunga|aa jaungi|theek hai|thik hai)\b/)) return { intent: "confirm", confidence: 0.8 };
+  if (has(/\b(job description|about the job|role|profile|what is the job|jd|which process|what process|process|details|tell me more|kya kaam|what work|kaam)\b/)) return { intent: "ask_job", confidence: 0.75 };
+  if (has(/\b(reschedule|another day|other day|next week|postpone|different day|cannot come|can t come|cannot attend|can t attend|unable to attend|unable to come|not able to attend|not able to come|not available|some other time|dusre din)\b/)) return { intent: "reschedule", confidence: 0.85 };
+  if (has(/\b(not interested|no thanks|not looking|nahi aa|will not come|won t come|will not attend|won t attend|not attending|not coming|remove my)\b/)) return { intent: "decline", confidence: 0.85 };
+  if (has(/\b(yes|ok|okay|confirm|confirmed|will come|will be there|coming|sure|haan|aa jaunga|aa jaungi|aunga|aungi|theek hai|thik hai|will attend|attend|attending|will visit|visit|will join|will reach|i will be present|present)\b/)) return { intent: "confirm", confidence: 0.8 };
   return null;
 }
