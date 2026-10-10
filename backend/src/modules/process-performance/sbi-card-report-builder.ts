@@ -1,9 +1,17 @@
 import ExcelJS from "exceljs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { query } from "../../db/mysql.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Rows-only query helper (db.execute returns [rows, fields]). */
+async function query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+  return rows as unknown as T[];
+}
+
 const TPL = path.resolve(__dirname, "../../../templates/sbi-card");
 
 async function loadTemplate(file: string): Promise<ExcelJS.Workbook> {
@@ -35,7 +43,7 @@ function timeFrac(t: string | null | undefined): number | null {
 }
 
 async function toBuffer(wb: ExcelJS.Workbook): Promise<Buffer> {
-  return wb.xlsx.writeBuffer() as Promise<Buffer>;
+  return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
 function getSbiProcessId(processId: string | null) {
