@@ -2,7 +2,7 @@
  * Auto-successor (owner requirement): when a campaign's primary requisition is filled, closed or inactive, the campaign moves to the
  * best open requisition so new leads are never stranded on a dead requisition. Priority: same branch AND same process, then same
  * branch with another process, then a linked or same-branch-family requisition; the designation must always match. Inside a tier:
- * the latest deadline, then the next sequence number in the requisition code.
+ * the nearest deadline, then the next sequence number in the requisition code.
  * sweepStrandedLeads does the same for qualified, never-contacted leads already sitting on a closed requisition. Off unless env META_AUTO_SUCCESSOR names the campaign or says all. Leads already placed never move here (the HR
  * relink does that); only the campaign's primary changes, and the switch is audited in meta_campaign_relink with leads_moved 0.
  */
@@ -22,8 +22,8 @@ export const sequenceOf = (code: string | undefined): number => { const m = /-(\
 
 /**
  * Pure ranking. Eligible: seats left (HR's fulfilled count), not past its end date, same designation, same branch (family) or linked.
- * Tier: same branch + same process, same branch + another process, linked, other branch of the family. Inside a tier: the latest
- * deadline first (no end date counts as latest); on a tie the next sequence number (lower number, fills first); then more seats left.
+ * Tier: same branch + same process, same branch + another process, linked, other branch of the family. Inside a tier: the NEAREST
+ * deadline first (it must fill first; no end date counts as last); on a tie the next sequence number (lower number); then more seats.
  */
 export function pickSuccessor(current: { designation: string; branch: string; process?: string }, candidates: Candidate[], today: string): Candidate | null {
   const sameBranch = (c: Candidate) => c.branch.toUpperCase() === current.branch.toUpperCase();
@@ -32,7 +32,7 @@ export function pickSuccessor(current: { designation: string; branch: string; pr
     && (!c.validity || c.validity >= today) && (c.linked || sameBranch(c) || branchFamily(c.branch) === branchFamily(current.branch)));
   const tier = (c: Candidate) => (sameBranch(c) && sameProcess(c) ? 0 : sameBranch(c) ? 1 : c.linked ? 2 : 3);
   ok.sort((a, b) => tier(a) - tier(b)
-    || String(b.validity ?? "9999-12-31").localeCompare(String(a.validity ?? "9999-12-31"))
+    || String(a.validity ?? "9999-12-31").localeCompare(String(b.validity ?? "9999-12-31"))
     || sequenceOf(a.code) - sequenceOf(b.code) || b.seatsLeft - a.seatsLeft);
   return ok[0] ?? null;
 }

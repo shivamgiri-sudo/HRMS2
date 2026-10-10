@@ -35,9 +35,9 @@ describe("deadline then sequence", () => {
     expect(sequenceOf("REQ-2609-K7BK")).toBe(Number.POSITIVE_INFINITY);
     expect(sequenceOf(undefined)).toBe(Number.POSITIVE_INFINITY);
   });
-  it("picks the latest deadline inside the tier", () => {
+  it("picks the nearest deadline inside the tier", () => {
     const r = pickSuccessor(cur, [c({ id: "22", code: "NOIDA-Onfido-22", validity: "2026-10-15" }), c({ id: "24", code: "NOIDA-Onfido-24", validity: "2026-10-23" }), c({ id: "23", code: "NOIDA-Onfido-23", validity: "2026-10-19" })], "2026-10-10");
-    expect(r?.id).toBe("24");
+    expect(r?.id).toBe("22");
   });
   it("on a deadline tie takes the next (lower) sequence number", () => {
     const r = pickSuccessor(cur, [c({ id: "24", code: "NOIDA-Onfido-24", validity: "2026-10-23" }), c({ id: "23", code: "NOIDA-Onfido-23", validity: "2026-10-23" })], "2026-10-10");
