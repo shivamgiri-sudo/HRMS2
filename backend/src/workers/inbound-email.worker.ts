@@ -38,10 +38,11 @@ export async function runInboundEmailTick(now = new Date()): Promise<PollResult 
 export function startInboundEmailWorker(): void {
   if (timer) return;
   if (inboundEmailConfig().mode === "off") return;
-  timer = setInterval(() => {
-    runInboundEmailTick().catch((err) => logger.error({ err: logText(err) }, "[inbound-email] tick failed"));
-  }, INTERVAL_MS);
+  const tick = () => runInboundEmailTick().catch((err) => logger.error({ err: logText(err) }, "[inbound-email] tick failed"));
+  timer = setInterval(tick, INTERVAL_MS);
   timer.unref();
+  // A restart (deploy, env change) must not leave replies unread for a whole interval: first read shortly after start.
+  setTimeout(tick, 20_000).unref();
 }
 
 export function stopInboundEmailWorker(): void {

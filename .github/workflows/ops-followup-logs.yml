@@ -26,4 +26,4 @@ jobs:
       - name: Follow-up lines (last 60)
         shell: bash
         run: |
-          pm2 logs hrms2-workers --nostream --lines 1500 --no-color 2>&1 | grep -iE "qualified-followup|followup|whatsapp|pinbot" | tail -n 60 | cut -c1-400 || echo "no matching lines"
+          pm2 logs hrms2-workers --nostream --lines 1500 --no-color 2>&1 | grep -iE "qualified-followup|followup|whatsapp|pinbot|inbound-email|superbot|slot-corrections|imap" | tail -n 60 | cut -c1-400 || echo "no matching lines"
