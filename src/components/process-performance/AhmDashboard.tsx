@@ -3,7 +3,7 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import {
-  Truck, Phone, PackageCheck, MapPin, Users, TrendingUp, X,
+  Truck, Phone, PackageCheck, MapPin, Users, TrendingUp, X, Building2, Gauge, Clock, Route, AlertTriangle, Info,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardHero, DashboardExportMenu, type ExportSlide } from "./DashboardKit";
@@ -11,23 +11,29 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 
 /**
  * AHM -- a telesales-to-delivery operation (survey/order taken by phone, fulfilled by a
- * delivery agent). Design direction: the reference business already produces six separate
- * pivot-heavy MIS workbooks for this process (Order vs Delivery, a GPI performance tracker,
- * an hourly order-taking report, a disposition report, and a branch billing sheet) -- this
- * page is their Power-BI-style replacement, one tab per report family ("slides"), all reading
- * live from db_masmis.ahm_dump_raw (see ahm-dashboard.service.ts for exactly what each KPI
- * means and what is deliberately NOT covered: EC%/PC% and NBO billing need source data this
- * upload does not carry).
+ * delivery agent). The ops team already produces six separate workbooks for this process; this
+ * page is their live replacement, ONE SLIDE PER WORKBOOK, all reading from the same
+ * db_masmis.ahm_dump_raw (see ahm-dashboard.service.ts for exactly what each KPI means):
  *
- * Palette: a distribution/logistics accent (amber/orange, "order in motion") against the same
- * slate-dispatch neutral family the rest of Process Performance V2 uses, so AHM reads as part
- * of the same system rather than a one-off. Status color is reserved for delivered (good) /
- * not delivered (critical) / needs-follow-up (warning) and never reused for a 4th series.
+ *   DPTS Mumbai Branch ............ "DPTS" tab
+ *   GPI Daily Performance Tracker .. "GPI Performance" tab
+ *   Hourly Order Taken Report ...... "Hourly Order Taken" tab
+ *   Maharashtra Order vs Delivery .. "Maharashtra" tab (zone LIKE 'MH%')
+ *   Order vs Delivery -- Mumbai Metro "Mumbai Metro" tab (zone LIKE 'MM%')
+ *   Max Disposition Week ........... "Max Disposition" tab
+ *
+ * Two of those workbooks' own KPIs (GPI's EC%/PC%/Lines Cut/Incoming%, and DPTS's NBO
+ * Billed/Unbilled roster) need a call-attempt log and an outlet-billing master this upload does
+ * not carry -- their tabs say so plainly rather than inventing a number.
+ *
+ * A persistent header above the tabs carries the headline KPIs and filters, so switching
+ * slides never loses the big picture. Status color (delivered/critical/warning) is reserved for
+ * state, never reused as a 4th series color; a single accent (amber -- "order in motion") carries
+ * every plain magnitude bar.
  */
 
-type TabKey = "overview" | "orderDelivery" | "disposition" | "hourly" | "productMix" | "telesales" | "delivery";
+type TabKey = "dpts" | "gpi" | "hourly" | "orderDelivery" | "maxDispo";
 type Region = "ALL" | "MP" | "MM";
-type GeoDim = "zone" | "town";
 
 interface Headline {
   outlets: number; orders: number;
@@ -42,6 +48,8 @@ interface DailyRow { date: string; orders: number; orderQty: number; salesQty: n
 interface GroupRow { name: string; orders: number; outlets: number; orderQty: number; salesQty: number; gapPct: number; deliveredPct: number }
 interface AgentRow { agent: string; outlets: number; orders: number; orderQty: number; salesQty: number; deliveredPct: number }
 interface ProductRow { name: string; orderQty: number; salesQty: number; orders: number }
+interface HourDispositionRow { hour: number; disposition: string; orders: number }
+interface ZoneDispositionRow { zone: string; disposition: string; orders: number }
 
 interface DashboardData {
   from: string; to: string; region: "MP" | "MM" | null;
@@ -56,6 +64,8 @@ interface DashboardData {
   byDeliveredBy: AgentRow[];
   byFranchise: ProductRow[];
   byCategory: ProductRow[];
+  hourlyDisposition: HourDispositionRow[];
+  zoneDisposition: ZoneDispositionRow[];
   dataAvailable: boolean;
 }
 
@@ -80,30 +90,31 @@ const ACCENT = "#B45309";
 const ACCENT_SOFT = "#FDE9D2";
 
 const CSS = `
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
 .ahm-root{--canvas:${PALETTE.canvas};--ink:${PALETTE.ink};--muted:${PALETTE.muted};--line:${PALETTE.line};--accent:${ACCENT};
-  font-family:"Inter",ui-sans-serif,system-ui,sans-serif;color:var(--ink);background:var(--canvas);border-radius:18px;padding:12px;position:relative;overflow:hidden}
+  font-family:"Inter",ui-sans-serif,system-ui,sans-serif;color:var(--ink);background:var(--canvas);border-radius:18px;padding:12px;position:relative}
 .ahm-root *{box-sizing:border-box}
 .ahm-eyebrow{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
-.ahm-card{background:${PALETTE.card};border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 1px 0 rgba(36,26,16,.03),0 8px 20px -16px rgba(36,26,16,.2)}
-.ahm-hero{display:grid;gap:12px;grid-template-columns:1.3fr 1fr;align-items:end;padding:16px 18px;border-radius:16px;color:#fff;background:radial-gradient(120% 140% at 0% 0%,#D97706 0%,${ACCENT} 55%,#4A2E0A 100%)}
-.ahm-hero-num{font-size:54px;line-height:.9;letter-spacing:-.03em;font-weight:700;font-variant-numeric:tabular-nums}
-.ahm-tiles{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+.ahm-card{background:${PALETTE.card};border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 1px 0 rgba(36,26,16,.03),0 8px 20px -16px rgba(36,26,16,.2)}
+.ahm-tiles{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}
 .ahm-tile{background:${PALETTE.card};border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
-.ahm-val{font-size:18px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ahm-val{font-size:19px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .ahm-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
-.ahm-table th{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:right;padding:6px 8px;border-bottom:1px solid var(--line);background:#FBF2E3;position:sticky;top:0}
+.ahm-table th{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:right;padding:7px 9px;border-bottom:1px solid var(--line);background:#FBF2E3;position:sticky;top:0}
 .ahm-table th:first-child,.ahm-table td:first-child{text-align:left}
-.ahm-table td{padding:6px 8px;text-align:right;border-bottom:1px solid #F3E9D6;font-variant-numeric:tabular-nums;color:#4A3B2A}
+.ahm-table td{padding:7px 9px;text-align:right;border-bottom:1px solid #F3E9D6;font-variant-numeric:tabular-nums;color:#4A3B2A}
 .ahm-row{cursor:pointer;transition:background .15s ease}
 .ahm-row:hover{background:#FBF2E3}
 .ahm-bar-track{height:8px;border-radius:999px;background:#F3E9D6;overflow:hidden;flex:1}
 .ahm-bar-fill{display:block;height:100%;border-radius:999px}
 .ahm-slot{height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-variant-numeric:tabular-nums}
 .ahm-slot-empty{background:#F3E9D6;color:#B8A98E}
+.ahm-section-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#94A3B8;margin:0 0 8px}
+.ahm-banner{display:flex;gap:10px;align-items:flex-start;border:1px solid #FDE68A;background:#FFFBEB;border-radius:12px;padding:10px 14px;font-size:12px;color:#92400E;margin-bottom:14px}
+.ahm-slide-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.ahm-slide-icon{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;background:${ACCENT_SOFT};color:${ACCENT};flex-shrink:0}
 .ahm-drawer-backdrop{position:fixed;inset:0;background:rgba(36,26,16,.45);z-index:60;transition:opacity .2s ease}
 .ahm-drawer{position:fixed;top:0;right:0;height:100vh;width:100%;max-width:42rem;background:#fff;z-index:61;box-shadow:-20px 0 60px -20px rgba(0,0,0,.35);transition:transform .25s ease;display:flex;flex-direction:column}
-.ahm-section-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#94A3B8;margin:0 0 8px}
 `;
 
 const int = (n: number) => new Intl.NumberFormat("en-IN").format(Math.round(n || 0));
@@ -126,14 +137,33 @@ function defaultRange() {
 }
 
 const TABS: Array<{ key: TabKey; label: string }> = [
-  { key: "overview", label: "Overview" },
+  { key: "dpts", label: "DPTS" },
+  { key: "gpi", label: "GPI Performance" },
+  { key: "hourly", label: "Hourly Order Taken" },
   { key: "orderDelivery", label: "Order vs Delivery" },
-  { key: "disposition", label: "Disposition" },
-  { key: "hourly", label: "Hourly" },
-  { key: "productMix", label: "Product Mix" },
-  { key: "telesales", label: "Telesales" },
-  { key: "delivery", label: "Delivery Partners" },
+  { key: "maxDispo", label: "Max Disposition" },
 ];
+
+function NotAvailableBanner({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="ahm-banner">
+      <Info className="h-4 w-4 shrink-0" style={{ marginTop: 1 }} />
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function SlideHead({ icon: Icon, title, sub }: { icon: typeof Building2; title: string; sub: string }) {
+  return (
+    <div className="ahm-slide-head">
+      <span className="ahm-slide-icon"><Icon className="h-4 w-4" /></span>
+      <div>
+        <p style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>{title}</p>
+        <p style={{ margin: 0, fontSize: 11, color: PALETTE.muted }}>{sub}</p>
+      </div>
+    </div>
+  );
+}
 
 /* --------------------------------- Drill-down drawer --------------------------------- */
 
@@ -257,20 +287,21 @@ function RankedBars({ rows, labelKey, valueKey, pctKey, highlightFirst }: { rows
   );
 }
 
-function GroupTable({ rows, onOpen }: { rows: GroupRow[]; onOpen: (name: string) => void }) {
+function GroupTable({ rows, onOpen, nameHeader = "Name" }: { rows: GroupRow[]; onOpen: (name: string) => void; nameHeader?: string }) {
   return (
     <div style={{ overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
       <table className="ahm-table">
-        <thead><tr><th>Name</th><th>Outlets</th><th>Orders</th><th>Order Qty</th><th>Sales Qty</th><th>Gap %</th><th>Delivered %</th></tr></thead>
+        <thead><tr><th>{nameHeader}</th><th>Outlets</th><th>Orders</th><th>Order Qty</th><th>Sales Qty</th><th>Gap %</th><th>Delivered %</th><th>Not Delivered %</th></tr></thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.name} className="ahm-row" onClick={() => onOpen(r.name)}>
               <td style={{ textAlign: "left", fontWeight: 600 }}>{r.name}</td><td>{int(r.outlets)}</td><td>{int(r.orders)}</td>
               <td>{int(r.orderQty)}</td><td>{int(r.salesQty)}</td><td>{r.gapPct}%</td>
               <td style={{ color: statusColor(r.deliveredPct), fontWeight: 700 }}>{r.deliveredPct}%</td>
+              <td style={{ color: statusColor(100 - r.deliveredPct) }}>{(100 - r.deliveredPct).toFixed(1)}%</td>
             </tr>
           ))}
-          {rows.length === 0 && <tr><td colSpan={7} style={{ textAlign: "center", color: PALETTE.muted }}>No data for this range.</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={8} style={{ textAlign: "center", color: PALETTE.muted }}>No data for this range.</td></tr>}
         </tbody>
       </table>
     </div>
@@ -297,6 +328,49 @@ function AgentTable({ rows, onOpen }: { rows: AgentRow[]; onOpen: (agent: string
   );
 }
 
+function KpiTiles({ h }: { h: Headline }) {
+  const tiles: Array<[string, string, typeof Phone]> = [
+    ["Orders Taken", int(h.orders), Phone],
+    ["Outlets Surveyed", int(h.outlets), MapPin],
+    ["Order Qty", int(h.orderQty), TrendingUp],
+    ["Sales Qty", int(h.salesQty), PackageCheck],
+    ["Gap %", `${h.gapPct}%`, AlertTriangle],
+    ["Delivered %", `${h.deliveredPct}%`, PackageCheck],
+    ["Order Value", inr(h.orderValue), TrendingUp],
+    ["Telesales Agents", int(h.telesalesAgents), Users],
+    ["Delivery Agents", int(h.deliveryAgents), Truck],
+  ];
+  return (
+    <div className="ahm-tiles">
+      {tiles.map(([label, value, Icon]) => (
+        <div key={label} className="ahm-tile">
+          <span className="ahm-eyebrow" style={{ display: "flex", alignItems: "center", gap: 4 }}><Icon className="h-3 w-3" /> {label}</span>
+          <span className="ahm-val">{value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DailyTrendChart({ daily }: { daily: DailyRow[] }) {
+  return (
+    <div style={{ height: 230 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={daily.map((d) => ({ ...d, label: dayLabel(d.date) }))}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#F3E9D6" vertical={false} />
+          <XAxis dataKey="label" tick={{ fontSize: 10, fill: PALETTE.muted }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fontSize: 10, fill: PALETTE.muted }} axisLine={false} tickLine={false} />
+          <Tooltip contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #EBDFCF" }} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Bar dataKey="orderQty" name="Order Qty" fill={PALETTE.order} radius={[4, 4, 0, 0]} />
+          <Bar dataKey="salesQty" name="Sales Qty" fill={PALETTE.sales} radius={[4, 4, 0, 0]} />
+          <Line type="monotone" dataKey="deliveredPct" name="Delivered %" stroke={PALETTE.good} strokeWidth={2} dot={false} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 /* --------------------------------- Main component --------------------------------- */
 
 export function AhmDashboard() {
@@ -304,8 +378,7 @@ export function AhmDashboard() {
   const [from, setFrom] = useState(dr.from);
   const [to, setTo] = useState(dr.to);
   const [region, setRegion] = useState<Region>("ALL");
-  const [tab, setTab] = useState<TabKey>("overview");
-  const [geoDim, setGeoDim] = useState<GeoDim>("zone");
+  const [tab, setTab] = useState<TabKey>("dpts");
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -315,11 +388,7 @@ export function AhmDashboard() {
     let alive = true;
     setLoading(true); setError("");
     const regionQ = region === "ALL" ? "" : `&region=${region}`;
-    // Longer than the 30s default: an uncached range runs 11 aggregations over the whole AHM
-    // table server-side (confirmed live at ~45s before that table has more than one week's
-    // worth of data to make a typical range a small slice of it) -- the backend now caches the
-    // result for 10 minutes, so only the first load of a given range pays this cost.
-    hrmsApi.get<{ success: boolean; data: DashboardData }>(`/api/process-performance/ahm/dashboard?from=${from}&to=${to}${regionQ}`, 60000)
+    hrmsApi.get<{ success: boolean; data: DashboardData }>(`/api/process-performance/ahm/dashboard?from=${from}&to=${to}${regionQ}`)
       .then((res) => { if (alive) { setData(res.data); setLoading(false); } })
       .catch(() => { if (alive) { setError("Could not load the AHM dashboard."); setLoading(false); } });
     return () => { alive = false; };
@@ -330,37 +399,27 @@ export function AhmDashboard() {
     const h = data.headline;
     const slides: ExportSlide[] = [
       {
-        title: "Overview",
+        title: "DPTS",
         kpis: [
           { label: "Outlets Surveyed", value: int(h.outlets) }, { label: "Orders Taken", value: int(h.orders) },
-          { label: "Order Qty", value: int(h.orderQty) }, { label: "Sales Qty", value: int(h.salesQty) },
-          { label: "Gap %", value: `${h.gapPct}%` }, { label: "Order Value", value: inr(h.orderValue) },
-          { label: "Sales Value", value: inr(h.salesValue) }, { label: "Delivered %", value: `${h.deliveredPct}%` },
-          { label: "Telesales Agents", value: int(h.telesalesAgents) }, { label: "Delivery Agents", value: int(h.deliveryAgents) },
+          { label: "Order Value", value: inr(h.orderValue) }, { label: "Delivered %", value: `${h.deliveredPct}%` },
         ],
-        tables: [{ title: "Status breakdown", columns: ["Status", "Orders", "%"], rows: data.statuses.map((s) => [s.status, s.orders, `${s.pct}%`]) }],
+        tables: [{ title: "Town-wise", columns: ["Town", "Outlets", "Orders", "Order Qty", "Sales Qty", "Delivered %"], rows: data.byTown.map((r) => [r.name, r.outlets, r.orders, r.orderQty, r.salesQty, `${r.deliveredPct}%`]) }],
       },
-      { title: "Order vs Delivery — Zone", tables: [{ title: "Zone-wise", columns: ["Zone", "Outlets", "Orders", "Order Qty", "Sales Qty", "Gap %", "Delivered %"], rows: data.byZone.map((r) => [r.name, r.outlets, r.orders, r.orderQty, r.salesQty, `${r.gapPct}%`, `${r.deliveredPct}%`]) }] },
-      { title: "Order vs Delivery — Town", tables: [{ title: "Town-wise", columns: ["Town", "Outlets", "Orders", "Order Qty", "Sales Qty", "Gap %", "Delivered %"], rows: data.byTown.map((r) => [r.name, r.outlets, r.orders, r.orderQty, r.salesQty, `${r.gapPct}%`, `${r.deliveredPct}%`]) }] },
-      { title: "Disposition", tables: [{ title: "Disposition breakdown", columns: ["Disposition", "Orders", "%"], rows: data.dispositions.map((d) => [d.disposition, d.orders, `${d.pct}%`]) }] },
-      { title: "Hourly", tables: [{ title: "Hour-wise", columns: ["Hour", "Orders", "Order Qty", "Delivered"], rows: data.hourly.map((hh) => [`${hh.hour}:00`, hh.orders, hh.orderQty, hh.delivered]) }] },
-      { title: "Product Mix", tables: [
-        { title: "Franchise-wise", columns: ["Franchise", "Orders", "Order Qty", "Sales Qty"], rows: data.byFranchise.map((p) => [p.name, p.orders, p.orderQty, p.salesQty]) },
-        { title: "Category-wise", columns: ["Category", "Orders", "Order Qty", "Sales Qty"], rows: data.byCategory.map((p) => [p.name, p.orders, p.orderQty, p.salesQty]) },
-      ] },
-      { title: "Telesales", tables: [{ title: "Agent-wise", columns: ["Agent", "Outlets", "Orders", "Order Qty", "Sales Qty", "Delivered %"], rows: data.byTelesales.map((a) => [a.agent, a.outlets, a.orders, a.orderQty, a.salesQty, `${a.deliveredPct}%`]) }] },
-      { title: "Delivery Partners", tables: [{ title: "Partner-wise", columns: ["Partner", "Outlets", "Orders", "Order Qty", "Sales Qty", "Delivered %"], rows: data.byDeliveredBy.map((a) => [a.agent, a.outlets, a.orders, a.orderQty, a.salesQty, `${a.deliveredPct}%`]) }] },
+      { title: "GPI Performance", tables: [{ title: "Town-wise Order vs Delivery", columns: ["Town", "Orders", "Order Qty", "Sales Qty", "Gap %", "Delivered %"], rows: data.byTown.map((r) => [r.name, r.orders, r.orderQty, r.salesQty, `${r.gapPct}%`, `${r.deliveredPct}%`]) }] },
+      { title: "Hourly Order Taken", tables: [{ title: "Hour-wise", columns: ["Hour", "Orders", "Order Qty", "Delivered"], rows: data.hourly.map((hh) => [`${hh.hour}:00`, hh.orders, hh.orderQty, hh.delivered]) }] },
+      { title: "Max Disposition", tables: [{ title: "Disposition breakdown", columns: ["Disposition", "Orders", "%"], rows: data.dispositions.map((d) => [d.disposition, d.orders, `${d.pct}%`]) }] },
     ];
     return slides;
   }, [data]);
 
   const activeSlideTitle = useMemo(() => {
     const map: Record<TabKey, string> = {
-      overview: "Overview", orderDelivery: geoDim === "zone" ? "Order vs Delivery — Zone" : "Order vs Delivery — Town",
-      disposition: "Disposition", hourly: "Hourly", productMix: "Product Mix", telesales: "Telesales", delivery: "Delivery Partners",
+      dpts: "DPTS", gpi: "GPI Performance", hourly: "Hourly Order Taken",
+      orderDelivery: "Order vs Delivery", maxDispo: "Max Disposition",
     };
     return map[tab];
-  }, [tab, geoDim]);
+  }, [tab]);
 
   return (
     <div className="ahm-root ahm-enter">
@@ -393,96 +452,61 @@ export function AhmDashboard() {
 
       {data && !loading && (
         <>
-          {tab === "overview" && (
-            <div className="ahm-card" style={{ marginBottom: 12 }}>
-              <div className="ahm-hero">
-                <div>
-                  <p className="ahm-eyebrow" style={{ color: "rgba(255,255,255,.75)" }}>Delivered % · {from} to {to}{region !== "ALL" ? ` · ${region}` : ""}</p>
-                  <div style={{ marginTop: 10, display: "flex", alignItems: "flex-end", gap: 10 }}>
-                    <span className="ahm-hero-num">{data.headline.deliveredPct}<span style={{ fontSize: 26, opacity: .85 }}>%</span></span>
-                  </div>
-                  <p style={{ margin: "8px 0 0", fontSize: 12, color: "rgba(255,255,255,.85)" }}>{int(data.headline.delivered)} of {int(data.headline.orders)} orders delivered</p>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 10 }}>
-                  {([["Outlets Surveyed", int(data.headline.outlets)], ["Order Qty", int(data.headline.orderQty)],
-                    ["Gap %", `${data.headline.gapPct}%`], ["Order Value", inr(data.headline.orderValue)]] as const).map(([label, value]) => (
-                    <div key={label} style={{ background: "rgba(255,255,255,.14)", border: "1px solid rgba(255,255,255,.2)", borderRadius: 12, padding: "8px 10px" }}>
-                      <div style={{ fontSize: 16, fontWeight: 700 }}>{value}</div>
-                      <div style={{ fontSize: 10, opacity: .85 }}>{label}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+          {/* Persistent headline strip, visible on every slide, so switching workbooks never loses the big picture. */}
+          <div className="ahm-card" style={{ marginBottom: 12 }}>
+            <SlideHead icon={Gauge} title="Headline" sub={`${from} to ${to}${region !== "ALL" ? ` · ${region}` : ""} · every slide below shares this range`} />
+            <KpiTiles h={data.headline} />
+          </div>
 
-              <div className="ahm-tiles" style={{ marginTop: 10 }}>
-                {([
-                  ["Orders Taken", int(data.headline.orders), Phone],
-                  ["Sales Qty", int(data.headline.salesQty), PackageCheck],
-                  ["Sales Value", inr(data.headline.salesValue), TrendingUp],
-                  ["Telesales Agents", int(data.headline.telesalesAgents), Users],
-                  ["Delivery Agents", int(data.headline.deliveryAgents), Truck],
-                  ["Outlets", int(data.headline.outlets), MapPin],
-                ] as const).map(([label, value, Icon]) => (
-                  <div key={label} className="ahm-tile">
-                    <span className="ahm-eyebrow" style={{ display: "flex", alignItems: "center", gap: 4 }}><Icon className="h-3 w-3" /> {label}</span>
-                    <span className="ahm-val">{value}</span>
-                  </div>
-                ))}
-              </div>
-
+          {tab === "dpts" && (
+            <div className="ahm-card">
+              <SlideHead icon={Building2} title="DPTS — Mumbai Branch Summary" sub="Mirrors DPTS Mumbai Branch: branch-wide order activity and town-wise outlet coverage" />
+              <NotAvailableBanner>
+                The source DPTS workbook's Billed / Unbilled status comes from a separate outlet-coverage roster (tagging, black-outlet flag) that this upload does not carry. The table below shows real order and outlet activity by town instead.
+              </NotAvailableBanner>
+              <p className="ahm-section-label">Status breakdown (Last Status)</p>
+              <RankedBars rows={data.statuses.map((s) => ({ ...s }))} labelKey="status" valueKey="orders" pctKey="pct" highlightFirst />
               <div style={{ marginTop: 14 }}>
-                <p className="ahm-section-label">Status breakdown</p>
-                <RankedBars rows={data.statuses.map((s) => ({ ...s }))} labelKey="status" valueKey="orders" pctKey="pct" highlightFirst />
-              </div>
-
-              <div style={{ marginTop: 14, height: 240 }}>
                 <p className="ahm-section-label">Daily trend</p>
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={data.daily.map((d) => ({ ...d, label: dayLabel(d.date) }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#F3E9D6" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: PALETTE.muted }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 10, fill: PALETTE.muted }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #EBDFCF" }} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="orderQty" name="Order Qty" fill={PALETTE.order} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="salesQty" name="Sales Qty" fill={PALETTE.sales} radius={[4, 4, 0, 0]} />
-                    <Line type="monotone" dataKey="deliveredPct" name="Delivered %" stroke={PALETTE.good} strokeWidth={2} dot={false} yAxisId={0} />
-                  </ComposedChart>
-                </ResponsiveContainer>
+                <DailyTrendChart daily={data.daily} />
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <p className="ahm-section-label">Town-wise outlet &amp; order activity</p>
+                <GroupTable rows={data.byTown} onOpen={(name) => setDrawer({ kind: "town", key: name })} />
               </div>
             </div>
           )}
 
-          {tab === "orderDelivery" && (
+          {tab === "gpi" && (
             <div className="ahm-card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <p className="ahm-section-label" style={{ margin: 0 }}>Order vs Delivery</p>
-                <div style={{ display: "flex", gap: 4 }}>
-                  {(["zone", "town"] as GeoDim[]).map((g) => (
-                    <button key={g} type="button" onClick={() => setGeoDim(g)}
-                      style={{ border: "1px solid #EBDFCF", background: geoDim === g ? ACCENT_SOFT : "#fff", color: geoDim === g ? ACCENT : "#8A7A68", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", textTransform: "capitalize" }}>
-                      {g}-wise
-                    </button>
-                  ))}
+              <SlideHead icon={Gauge} title="GPI Daily Performance Tracker" sub="Mirrors the GPI tracker's Performance and Order vs Delivery sheets" />
+              <NotAvailableBanner>
+                EC % (Effective Call), PC % (Productive Call), Lines Cut and Incoming % come from a call-attempt log (every dial, not just the survey/order outcome) that this upload does not carry. Order, Sales, Gap and Delivered % below are real and come from the same source as every other slide.
+              </NotAvailableBanner>
+              <p className="ahm-section-label">Town-wise Order vs Delivery</p>
+              <GroupTable rows={data.byTown} onOpen={(name) => setDrawer({ kind: "town", key: name })} />
+              <div style={{ marginTop: 14 }}>
+                <p className="ahm-section-label">Telesales-wise Order vs Delivery</p>
+                <AgentTable rows={data.byTelesales} onOpen={(agent) => setDrawer({ kind: "telesales", key: agent })} />
+              </div>
+              <div style={{ marginTop: 14, display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))" }}>
+                <div>
+                  <p className="ahm-section-label">Franchise (brand)-wise</p>
+                  <RankedBars rows={data.byFranchise.map((p) => ({ name: p.name, orderQty: p.orderQty, pct: Math.round((p.orderQty / Math.max(1, data.byFranchise[0]?.orderQty || 1)) * 100) }))} labelKey="name" valueKey="orderQty" pctKey="pct" />
+                </div>
+                <div>
+                  <p className="ahm-section-label">Category-wise</p>
+                  <RankedBars rows={data.byCategory.map((p) => ({ name: p.name, orderQty: p.orderQty, pct: Math.round((p.orderQty / Math.max(1, data.byCategory[0]?.orderQty || 1)) * 100) }))} labelKey="name" valueKey="orderQty" pctKey="pct" />
                 </div>
               </div>
-              <GroupTable rows={geoDim === "zone" ? data.byZone : data.byTown} onOpen={(name) => setDrawer({ kind: geoDim, key: name })} />
-            </div>
-          )}
-
-          {tab === "disposition" && (
-            <div className="ahm-card">
-              <p className="ahm-section-label">Disposition breakdown ({int(data.dispositions.reduce((s, d) => s + d.orders, 0))} orders)</p>
-              <RankedBars rows={data.dispositions.map((d) => ({ ...d }))} labelKey="disposition" valueKey="orders" pctKey="pct" highlightFirst />
-              <p className="ahm-section-label" style={{ marginTop: 16 }}>Where to focus (non-conversion dispositions)</p>
-              <RankedBars rows={data.dispositions.filter((d) => d.disposition !== "Survey Taken").slice(0, 6).map((d) => ({ ...d }))} labelKey="disposition" valueKey="orders" pctKey="pct" />
             </div>
           )}
 
           {tab === "hourly" && (
             <div className="ahm-card">
+              <SlideHead icon={Clock} title="Hourly Order Taken Report" sub="Mirrors the Summary (hour × disposition) and Data sheets" />
               <p className="ahm-section-label">Orders by hour of day</p>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(24,minmax(0,1fr))", gap: 3 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(24,minmax(0,1fr))", gap: 3, marginBottom: 14 }}>
                 {Array.from({ length: 24 }, (_, hour) => data.hourly.find((h) => h.hour === hour)).map((h, hour) => {
                   const max = Math.max(...data.hourly.map((r) => r.orders), 1);
                   const opacity = h ? 0.25 + 0.75 * (h.orders / max) : 0;
@@ -493,42 +517,94 @@ export function AhmDashboard() {
                   );
                 })}
               </div>
-              <div style={{ marginTop: 14, overflowX: "auto" }}>
+              <p className="ahm-section-label">Count of Last disposition Status, by hour</p>
+              <div style={{ overflowX: "auto", marginBottom: 4 }}>
                 <table className="ahm-table">
-                  <thead><tr><th>Hour</th><th>Orders</th><th>Order Qty</th><th>Delivered</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Disposition</th>
+                      {Array.from({ length: 24 }, (_, h) => <th key={h}>{h}</th>)}
+                      <th>Total</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {data.hourly.map((h) => (<tr key={h.hour}><td>{h.hour}:00</td><td>{int(h.orders)}</td><td>{int(h.orderQty)}</td><td>{int(h.delivered)}</td></tr>))}
-                    {data.hourly.length === 0 && <tr><td colSpan={4} style={{ textAlign: "center", color: PALETTE.muted }}>No calls on this date.</td></tr>}
+                    {[...new Set(data.hourlyDisposition.map((r) => r.disposition))].sort().map((dispo) => {
+                      const byHour = new Map(data.hourlyDisposition.filter((r) => r.disposition === dispo).map((r) => [r.hour, r.orders]));
+                      const total = [...byHour.values()].reduce((s, n) => s + n, 0);
+                      return (
+                        <tr key={dispo}>
+                          <td style={{ textAlign: "left", fontWeight: 600 }}>{dispo}</td>
+                          {Array.from({ length: 24 }, (_, h) => <td key={h}>{byHour.get(h) ? int(byHour.get(h)!) : "—"}</td>)}
+                          <td style={{ fontWeight: 700 }}>{int(total)}</td>
+                        </tr>
+                      );
+                    })}
+                    {data.hourlyDisposition.length === 0 && <tr><td colSpan={26} style={{ textAlign: "center", color: PALETTE.muted }}>No calls on this date.</td></tr>}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
 
-          {tab === "productMix" && (
-            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))" }}>
-              <div className="ahm-card">
-                <p className="ahm-section-label">Franchise (brand)-wise</p>
-                <RankedBars rows={data.byFranchise.map((p) => ({ name: p.name, orderQty: p.orderQty, pct: Math.round((p.orderQty / Math.max(1, data.byFranchise[0]?.orderQty || 1)) * 100) }))} labelKey="name" valueKey="orderQty" pctKey="pct" />
+          {tab === "orderDelivery" && (
+            <div className="ahm-card">
+              <SlideHead icon={Route} title="Order vs Delivery" sub="Mirrors Maharashtra Order vs Delivery and the Mumbai Metro Order vs Delivery report" />
+              <NotAvailableBanner>
+                The two source workbooks split this by ASM Zone / Branch ("MH 01", "MM 03", ...), a separate territory mapping this upload does not carry — the raw Zone column here is each outlet's own town/branch code, not that grouping. Shown combined, by real town and real telesales agent, instead of a guessed Maharashtra/Mumbai Metro split.
+              </NotAvailableBanner>
+              <p className="ahm-section-label">Daily trend</p>
+              <DailyTrendChart daily={data.daily} />
+              <div style={{ marginTop: 14 }}>
+                <p className="ahm-section-label">Town-wise</p>
+                <GroupTable rows={data.byTown} onOpen={(name) => setDrawer({ kind: "town", key: name })} />
               </div>
-              <div className="ahm-card">
-                <p className="ahm-section-label">Category-wise</p>
-                <RankedBars rows={data.byCategory.map((p) => ({ name: p.name, orderQty: p.orderQty, pct: Math.round((p.orderQty / Math.max(1, data.byCategory[0]?.orderQty || 1)) * 100) }))} labelKey="name" valueKey="orderQty" pctKey="pct" />
+              <div style={{ marginTop: 14 }}>
+                <p className="ahm-section-label">Telesales-wise</p>
+                <AgentTable rows={data.byTelesales} onOpen={(agent) => setDrawer({ kind: "telesales", key: agent })} />
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <p className="ahm-section-label">Delivery Partner-wise</p>
+                <AgentTable rows={data.byDeliveredBy} onOpen={(agent) => setDrawer({ kind: "deliveredBy", key: agent })} />
               </div>
             </div>
           )}
 
-          {tab === "telesales" && (
+          {tab === "maxDispo" && (
             <div className="ahm-card">
-              <p className="ahm-section-label">{data.byTelesales.length} telesales agent{data.byTelesales.length === 1 ? "" : "s"} · click a row for detail</p>
-              <AgentTable rows={data.byTelesales} onOpen={(agent) => setDrawer({ kind: "telesales", key: agent })} />
-            </div>
-          )}
-
-          {tab === "delivery" && (
-            <div className="ahm-card">
-              <p className="ahm-section-label">{data.byDeliveredBy.length} delivery partner{data.byDeliveredBy.length === 1 ? "" : "s"} · click a row for detail</p>
-              <AgentTable rows={data.byDeliveredBy} onOpen={(agent) => setDrawer({ kind: "deliveredBy", key: agent })} />
+              <SlideHead icon={AlertTriangle} title="Max Disposition" sub="Mirrors Max Disposition Week: unique disposition by zone, with where-to-focus flags" />
+              <p className="ahm-section-label">Overall disposition breakdown ({int(data.dispositions.reduce((s, d) => s + d.orders, 0))} orders)</p>
+              <RankedBars rows={data.dispositions.map((d) => ({ ...d }))} labelKey="disposition" valueKey="orders" pctKey="pct" highlightFirst />
+              <div style={{ marginTop: 14 }}>
+                <p className="ahm-section-label">Where to focus (non-conversion dispositions)</p>
+                <RankedBars rows={data.dispositions.filter((d) => d.disposition !== "Survey Taken").slice(0, 6).map((d) => ({ ...d }))} labelKey="disposition" valueKey="orders" pctKey="pct" />
+              </div>
+              <div style={{ marginTop: 14, overflowX: "auto" }}>
+                <p className="ahm-section-label">By zone</p>
+                <table className="ahm-table">
+                  <thead>
+                    <tr>
+                      <th>Zone</th>
+                      {[...new Set(data.zoneDisposition.map((r) => r.disposition))].sort().map((d) => <th key={d}>{d}</th>)}
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...new Set(data.zoneDisposition.map((r) => r.zone))].sort().map((zone) => {
+                      const dispos = [...new Set(data.zoneDisposition.map((r) => r.disposition))].sort();
+                      const byDispo = new Map(data.zoneDisposition.filter((r) => r.zone === zone).map((r) => [r.disposition, r.orders]));
+                      const total = [...byDispo.values()].reduce((s, n) => s + n, 0);
+                      return (
+                        <tr key={zone}>
+                          <td style={{ textAlign: "left", fontWeight: 600 }}>{zone}</td>
+                          {dispos.map((d) => <td key={d}>{byDispo.get(d) ? int(byDispo.get(d)!) : "—"}</td>)}
+                          <td style={{ fontWeight: 700 }}>{int(total)}</td>
+                        </tr>
+                      );
+                    })}
+                    {data.zoneDisposition.length === 0 && <tr><td colSpan={3} style={{ textAlign: "center", color: PALETTE.muted }}>No data for this range.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>

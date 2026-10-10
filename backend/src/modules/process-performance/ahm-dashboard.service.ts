@@ -33,7 +33,15 @@ import type { RowDataPacket } from "mysql2";
 const TABLE = "db_masmis.ahm_dump_raw";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-export interface AhmFilters { from: string; to: string; region: "MP" | "MM" | null }
+export interface AhmFilters {
+  from: string; to: string; region: "MP" | "MM" | null;
+  /** A plain prefix filter on the raw `zone` column (each outlet's own town/branch code, e.g.
+   * "PUNE FC-0202120" -- NOT the reference workbooks' separate "ASM Zone" codes like "MH 01" /
+   * "MM 03", confirmed live those don't appear in this upload at all: filtering for "MH"/"MM"
+   * here returns nothing. Kept as a generic, honest filter on whatever `zone` actually contains,
+   * not a Maharashtra/Mumbai Metro split -- the dashboard does not use it for that. */
+  zonePrefix?: string | null;
+}
 
 export function currentMonthRange(): { from: string; to: string } {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -42,18 +50,20 @@ export function currentMonthRange(): { from: string; to: string } {
   return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(now) };
 }
 
-export function normalizeAhmFilters(input: { from?: unknown; to?: unknown; region?: unknown }): AhmFilters {
+export function normalizeAhmFilters(input: { from?: unknown; to?: unknown; region?: unknown; zonePrefix?: unknown }): AhmFilters {
   const fallback = currentMonthRange();
   const from = typeof input.from === "string" && DATE_RE.test(input.from) ? input.from : fallback.from;
   const to = typeof input.to === "string" && DATE_RE.test(input.to) ? input.to : fallback.to;
   const region = input.region === "MP" || input.region === "MM" ? input.region : null;
-  return { from, to, region };
+  const zonePrefix = typeof input.zonePrefix === "string" && input.zonePrefix.trim() && input.zonePrefix.length <= 60 ? input.zonePrefix.trim() : null;
+  return { from, to, region, zonePrefix };
 }
 
 function where(f: AhmFilters, extra?: { sql: string; params: unknown[] }): { sql: string; params: unknown[] } {
   const parts = [`survey_date >= ?`, `survey_date < DATE_ADD(?, INTERVAL 1 DAY)`];
   const params: unknown[] = [f.from, f.to];
   if (f.region) { parts.push(`source_region = ?`); params.push(f.region); }
+  if (f.zonePrefix) { parts.push(`zone LIKE ?`); params.push(`${f.zonePrefix}%`); }
   if (extra) { parts.push(extra.sql); params.push(...extra.params); }
   return { sql: `WHERE ${parts.join(" AND ")}`, params };
 }
@@ -74,6 +84,11 @@ export interface AhmDailyRow { date: string; orders: number; orderQty: number; s
 export interface AhmGroupRow { name: string; orders: number; outlets: number; orderQty: number; salesQty: number; gapPct: number; deliveredPct: number }
 export interface AhmAgentRow { agent: string; outlets: number; orders: number; orderQty: number; salesQty: number; deliveredPct: number }
 export interface AhmProductRow { name: string; orderQty: number; salesQty: number; orders: number }
+/** hour -> disposition -> orders, matching the "Hourly Order Taken Report" workbook's own
+ * "Count of Last disposition Status" pivot (Row Labels = disposition, columns = hour). */
+export interface AhmHourDispositionRow { hour: number; disposition: string; orders: number }
+/** zone -> disposition -> orders, matching "Max Disposition"'s own ASM Zone / AM Name grouping. */
+export interface AhmZoneDispositionRow { zone: string; disposition: string; orders: number }
 
 export interface AhmDashboardData {
   from: string; to: string; region: "MP" | "MM" | null;
@@ -88,6 +103,8 @@ export interface AhmDashboardData {
   byDeliveredBy: AhmAgentRow[];
   byFranchise: AhmProductRow[];
   byCategory: AhmProductRow[];
+  hourlyDisposition: AhmHourDispositionRow[];
+  zoneDisposition: AhmZoneDispositionRow[];
   dataAvailable: boolean;
 }
 
@@ -120,7 +137,7 @@ const SNAPSHOT_STALE_MS = 30 * 60_000;
 
 interface SnapshotRow extends RowDataPacket { payload: string; computed_at: Date | string }
 
-export const ahmSnapshotKey = (f: AhmFilters): string => `${f.from}|${f.to}|${f.region ?? ""}`;
+export const ahmSnapshotKey = (f: AhmFilters): string => `${f.from}|${f.to}|${f.region ?? ""}|${f.zonePrefix ?? ""}`;
 
 export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
   const key = ahmSnapshotKey(f);
@@ -155,7 +172,7 @@ export async function refreshAhmSnapshot(f: AhmFilters): Promise<AhmDashboardDat
 async function computeAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
   const w = where(f);
 
-  const [[headlineRow], statusRows, dispoRows, hourRows, dailyRows, zoneRows, townRows, tsRows, dbRows, franRows, catRows] =
+  const [[headlineRow], statusRows, dispoRows, hourRows, dailyRows, zoneRows, townRows, tsRows, dbRows, franRows, catRows, hourDispoRows, zoneDispoRows] =
     await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT ${COUNTERS},
@@ -197,6 +214,14 @@ async function computeAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
         `SELECT COALESCE(NULLIF(category, ''), 'Unmapped') AS name, COUNT(DISTINCT sales_no) AS orders,
                 SUM(survey_qty) AS order_qty, SUM(sales_qty) AS sales_qty
            FROM ${TABLE} ${w.sql} GROUP BY name ORDER BY order_qty DESC LIMIT 30`, w.params),
+      db.execute<RowDataPacket[]>(
+        `SELECT HOUR(survey_date) AS hour, COALESCE(NULLIF(last_disposition_status, ''), 'Unknown') AS disposition,
+                COUNT(DISTINCT sales_no) AS orders
+           FROM ${TABLE} ${w.sql} GROUP BY hour, disposition ORDER BY hour`, w.params),
+      db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(NULLIF(zone, ''), 'Unmapped') AS zone, COALESCE(NULLIF(last_disposition_status, ''), 'Unknown') AS disposition,
+                COUNT(DISTINCT sales_no) AS orders
+           FROM ${TABLE} ${w.sql} GROUP BY zone, disposition ORDER BY zone`, w.params),
     ]);
 
   const h = headlineRow ?? {};
@@ -259,9 +284,16 @@ async function computeAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
   const byFranchise = franRows[0].map(productRow);
   const byCategory = catRows[0].map(productRow);
 
+  const hourlyDisposition: AhmHourDispositionRow[] = hourDispoRows[0].map((r) => ({
+    hour: num(r.hour), disposition: String(r.disposition), orders: num(r.orders),
+  }));
+  const zoneDisposition: AhmZoneDispositionRow[] = zoneDispoRows[0].map((r) => ({
+    zone: String(r.zone), disposition: String(r.disposition), orders: num(r.orders),
+  }));
+
   return {
     from: f.from, to: f.to, region: f.region, headline, statuses, dispositions, hourly, daily,
-    byZone, byTown, byTelesales, byDeliveredBy, byFranchise, byCategory,
+    byZone, byTown, byTelesales, byDeliveredBy, byFranchise, byCategory, hourlyDisposition, zoneDisposition,
     dataAvailable: headline.orders > 0,
   };
 }
