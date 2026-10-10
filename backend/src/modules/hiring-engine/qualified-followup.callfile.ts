@@ -12,6 +12,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { emailService } from "../communication/email.service.js";
 import { BULK_CALL_COLUMNS, BULK_CALL_MAX_ROWS } from "./he-bulk-call.js";
+import { uploadCallFile } from "./superbot-portal.sync.js";
 import { attemptLabel, loadAttemptEvents, summariseAttempts, type PersonAttempts } from "./person-attempts.service.js";
 import { loadOfferRows } from "./he-best-offer.service.js";
 import type { OfferRow } from "./he-best-offer.js";
@@ -405,6 +406,12 @@ export async function runCallFileBatch(
       for (const r of rows) if (r.interviewDate && r.interviewTime) slots[r.mobile10] = `${r.interviewDate} ${r.interviewTime}:00`;
       await markExportedForCalling(rows.map((r) => r.mobile10), { userId: null, label: `follow-up batch ${o.slotKey ?? when}`, slots })
         .catch((err: unknown) => logger.warn({ batchId, err: errText(err) }, "[qualified-followup] calling file sent; export record failed"));
+    }
+    // The portal upload (SUPERBOT_UPLOAD_MODE=live): live files only, never test or dry runs. A failure is a note on the batch, never a retry
+    // of the batch (the rows are already stamped and the mail is out).
+    if (tag === "live") {
+      await uploadCallFile(batchId as string, rows.map((r) => values(r, null).slice(0, 7)))
+        .catch((err: unknown) => logger.warn({ batchId, err: errText(err) }, "[qualified-followup] portal upload failed"));
     }
     return { status: "sent", batchId: batchId as string, rows: rows.length, files: files.length, summary };
   } catch (err) {
