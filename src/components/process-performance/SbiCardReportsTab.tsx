@@ -67,7 +67,7 @@ function ReportPanel({ report }: { report: ReportMeta }) {
       for (const [k, v] of Object.entries(filters)) {
         if (v) params.set(k, v);
       }
-      const token = localStorage.getItem("hrms_token") || sessionStorage.getItem("hrms_token") || "";
+      const token = localStorage.getItem("hrms_access_token") || "";
       const resp = await fetch(
         `/api/process-performance/sbi-card-reports/${report.id}/download?${params}`,
         { headers: { Authorization: `Bearer ${token}` } }
