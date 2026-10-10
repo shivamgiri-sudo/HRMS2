@@ -1,0 +1,27 @@
+-- Candidate email replies and what the reply agent did with them (one row per inbound message; unmatched senders are kept too).
+CREATE TABLE IF NOT EXISTS candidate_reply (
+  id               CHAR(36)     NOT NULL PRIMARY KEY,
+  inbound_ref      VARCHAR(190) NOT NULL COMMENT 'Message-Id, or uid:mailbox:validity:uid',
+  mobile10         CHAR(10)     NULL,
+  lead_id          CHAR(36)     NULL,
+  match_id         CHAR(36)     NULL,
+  requisition_id   CHAR(36)     NULL,
+  from_email       VARCHAR(190) NULL,
+  subject          VARCHAR(300) NULL,
+  inbound_text     TEXT         NULL,
+  intent           VARCHAR(30)  NULL,
+  language         VARCHAR(10)  NULL,
+  confidence       DECIMAL(4,3) NULL,
+  reply_text       TEXT         NULL,
+  reasons          JSON         NULL,
+  status           ENUM('draft','queued','sent','held','failed','discarded') NOT NULL DEFAULT 'held',
+  hold_reason      VARCHAR(40)  NULL,
+  engine           VARCHAR(20)  NULL COMMENT 'model | rules',
+  sent_at          DATETIME     NULL,
+  handled_by       CHAR(36)     NULL,
+  created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_cr_inbound (inbound_ref),
+  KEY idx_cr_status (status, created_at),
+  KEY idx_cr_mobile (mobile10)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

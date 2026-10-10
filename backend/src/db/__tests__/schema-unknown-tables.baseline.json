@@ -332,5 +332,11 @@
     "he_lead",
     "he_lead_batch",
     "he_lead_profile"
+  ],
+  "modules/hiring-engine/reply-agent.service.ts": [
+    "candidate_reply"
+  ],
+  "modules/hiring-engine/reply-agent.routes.ts": [
+    "candidate_reply"
   ]
 }

@@ -11,6 +11,7 @@ import { BTN } from "../command/charts/ChartFrame";
 import { useFilterOptions } from "../command/useCommandData";
 import { AnswerBadge, ChannelBadge } from "./ResponseBadges";
 import ResponseQueue from "./ResponseQueue";
+import EmailRepliesPanel from "./EmailRepliesPanel";
 import ConfirmedList from "./ConfirmedList";
 import TimelineDrawer from "./TimelineDrawer";
 import type { TimelineKey } from "./timelineModel";
@@ -219,7 +220,7 @@ export default function ResponsesTab() {
     <>
       <ResponsesView filters={filters} options={options} summary={summary} list={list} loading={loading} error={error} updatedAt={updatedAt}
         onFilters={onFilters} onMore={() => void load(filters, list?.nextCursor)} onOpen={(r) => setOpen({ responseId: r.id })} onRefresh={() => { void load(filters); setQueueTick((x) => x + 1); }}
-        queue={<ResponseQueue canWrite={canWrite} onOpen={(r) => setOpen({ responseId: r.id })} onChanged={() => void load(filters)} refreshSignal={queueTick} />} nextDrive={nextDrive} />
+        queue={<><EmailRepliesPanel /><ResponseQueue canWrite={canWrite} onOpen={(r) => setOpen({ responseId: r.id })} onChanged={() => void load(filters)} refreshSignal={queueTick} /></>} nextDrive={nextDrive} />
       <TimelineDrawer k={open} onClose={() => setOpen(null)} />
     </>
   );
