@@ -195,6 +195,9 @@ export function audienceSql(d: AudienceSpec, opts: { metaOnly?: boolean }): { sq
   if (kind === "campaign" && ids.length) return fill(`AND lc.campaign_id IN (${ph(ids.length)})`, ids);
   if (kind === "batch" && ids.length) return { sql: `AND EXISTS (SELECT 1 FROM he_lead_batch lb WHERE lb.lead_id = l.id AND lb.batch_id IN (${ph(ids.length)}))`, args: ids };
   if (kind === "meta") return fill("", []);
+  // The Hiring Engine pool drive is the non-Meta pool (owner rule): a person who ever filled a Meta form belongs to Live / Old Meta, and
+  // is never lined up here, so no one is approached by two drives.
+  if (kind === "pool") return { sql: "AND l.meta_lead_id IS NULL AND NOT EXISTS (SELECT 1 FROM he_lead_campaign hlc0 WHERE hlc0.lead_id = l.id)", args: [] };
   return { sql: "", args: [] };
 }
 
