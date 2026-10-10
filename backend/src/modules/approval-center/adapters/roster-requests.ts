@@ -5,8 +5,9 @@ import { rolesForKindAction } from "../../roster-requests/roster-requests.routes
 import { keepApproverOrBranchRole } from "./_scope.js";
 
 /**
- * Branch roles that may decide a request they are not the employee's reporting manager for - but only inside their OWN branch
- * (owner ruling 2026-10-01: admin / hr / wfm / branch_head are branch-scoped). Anyone else must be the effective approver.
+ * The designated approver of every hub kind is the employee's effective approver (reporting manager / skip-level). These branch roles
+ * are shown a request ONLY when the employee has no resolvable approver, and only inside their OWN branch; holding a role that is
+ * merely able to decide (admin / hr / wfm / branch_head / super_admin) is not a designation.
  */
 const FALLBACK_ROLES: Record<HubKind, string[]> = {
   swap: ["admin", "hr", "wfm"],

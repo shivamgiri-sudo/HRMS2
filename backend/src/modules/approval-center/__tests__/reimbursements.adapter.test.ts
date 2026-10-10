@@ -3,7 +3,7 @@ import { fakeCtx } from "./_ctx.js";
 import { reimbursementsAdapter as a } from "../adapters/reimbursements.js";
 import { beforeEach as __scopeBeforeEach } from "vitest";
 import { useScope, ORG_WIDE } from "./scope-fixture.js";
-__scopeBeforeEach(() => useScope(ORG_WIDE));
+__scopeBeforeEach(() => useScope({ ...ORG_WIDE, roles: ["branch_head"] }));
 
 const c = (o: any = {}) => ({ id: "c1", employee_name: "Ola", employee_code: "E8", claim_type: "FUEL", claim_month: "2026-09", amount_claimed: 3200, amount_approved: null, description: "Site visits", status: "submitted", submitted_at: "2026-10-01T00:00:00Z", attachment_original_name: "bill.pdf", ...o });
 
@@ -21,6 +21,13 @@ describe("reimbursements adapter", () => {
     expect(items[0].rejectNeedsReason).toBe(true);
     const { ctx: c2 } = fakeCtx({ "GET /api/payroll/reimbursements/manager-queue": { data: [c()] } });
     expect((await a.list(c2)).map((i) => i.id)).toEqual(["c1"]);
+  });
+  it("branch-head stage needs the literal branch_head role: super_admin alone is not shown it", async () => {
+    useScope({ ...ORG_WIDE, roles: ["super_admin"] });
+    const routes = { "GET /api/payroll/reimbursements/branch-head-queue": { data: [c({ id: "c2", status: "manager_approved", branch_id: "b1" })] } };
+    expect(await a.list(fakeCtx(routes).ctx)).toEqual([]);
+    useScope({ ...ORG_WIDE, roles: ["super_admin", "branch_head"] });
+    expect((await a.list(fakeCtx(routes).ctx)).map((i) => i.id)).toEqual(["c2"]);
   });
   it("decide per stage", async () => {
     const { ctx, calls } = fakeCtx({

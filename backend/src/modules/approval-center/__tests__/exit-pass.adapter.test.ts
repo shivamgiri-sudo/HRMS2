@@ -40,9 +40,18 @@ describe("exitPassAdapter", () => {
     const rows = [pass({ id: "mine-assigned" }), pass({ id: "scope-only", branch_head_employee_id: "emp-else" }), pass({ id: "own", requestor_employee_id: "emp-me" })];
     let r = await exitPassAdapter.list(fakeCtx(base(rows, [])).ctx);
     expect(r.map((i) => i.id)).toEqual(["mine-assigned"]);
+    // admin is only able to decide a scope-only row; it is designated solely when NO head is assigned
     (globalThis as any).__roles = ["admin"];
-    r = await exitPassAdapter.list(fakeCtx(base(rows, [])).ctx);
-    expect(r.map((i) => i.id)).toEqual(["mine-assigned", "scope-only"]);
+    r = await exitPassAdapter.list(fakeCtx(base([...rows, pass({ id: "no-head", branch_head_employee_id: null })], [])).ctx);
+    expect(r.map((i) => i.id)).toEqual(["mine-assigned", "no-head"]);
+  });
+  it("super_admin alone is not shown either stage; it_head is shown the admin stage", async () => {
+    const bh = [pass({ id: "bh-else", branch_head_employee_id: "emp-else" })];
+    const ad = [pass({ id: "a1", status: "pending_admin_approval" })];
+    (globalThis as any).__roles = ["super_admin"];
+    expect(await exitPassAdapter.list(fakeCtx(base(bh, ad)).ctx)).toEqual([]);
+    (globalThis as any).__roles = ["it_head"];
+    expect((await exitPassAdapter.list(fakeCtx(base(bh, ad)).ctx)).map((i) => i.id)).toEqual(["a1"]);
   });
   it("admin stage rows", async () => {
     (globalThis as any).__roles = ["admin"];

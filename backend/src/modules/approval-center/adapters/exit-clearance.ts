@@ -1,6 +1,6 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
-import { canClearTask } from "../../exit/exit.routes.js";
+import { canClearTask, CLEARANCE_ROLE_MAP } from "../../exit/exit.routes.js";
 import { callerRoleKeys } from "./_roles.js";
 import { keepApproverOrBranchRole, keepInBranch } from "./_scope.js";
 
@@ -41,9 +41,16 @@ export const exitClearanceAdapter: ApprovalAdapter = {
     if (rows.length === 0) return [];
     const roles = await callerRoleKeys(ctx.userId);
     // Owner policy: the manager-handover task belongs to the leaver's effective approver (admin / branch_head only inside their own
-    // branch); every other area (hr, it, wfm, payroll, ...) is a departmental task limited to the branch on the caller's own record
+    // branch, and only when the leaver has no resolvable approver); every other area (hr, it, wfm, payroll, ...) is a departmental task limited to the branch on the caller's own record
     // unless they are org-wide (admin is a wildcard in canClearTask but is NOT org-wide).
-    const clearable = rows.filter((r) => canClearTask(str(r.clearance_area), roles));
+    // canClearTask lets super_admin / admin clear ANY area (a bypass). A departmental task is designated by ROLE, so for those areas
+    // the caller must literally hold one of the area's own roles (CLEARANCE_ROLE_MAP); the manager-handover area is gated below by
+    // the effective-approver rule, with canClearTask only confirming the module would accept the caller.
+    const clearable = rows.filter((r) => {
+      const area = str(r.clearance_area);
+      if (area === "manager") return canClearTask(area, roles);
+      return (CLEARANCE_ROLE_MAP[area] ?? [area]).some((role) => roles.includes(role));
+    });
     const refOf = (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code });
     const mgr = await keepApproverOrBranchRole(ctx.userId, clearable.filter((r) => str(r.clearance_area) === "manager"), refOf, ["admin", "branch_head"]);
     const dept = await keepInBranch(ctx.userId, clearable.filter((r) => str(r.clearance_area) !== "manager"), refOf);

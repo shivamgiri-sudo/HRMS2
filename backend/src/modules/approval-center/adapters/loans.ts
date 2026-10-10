@@ -18,7 +18,9 @@ export const loansAdapter: ApprovalAdapter = {
     const res = await ctx.call("GET", "/api/payroll/loans/", { query: { status: "pending_approval", page: 1, limit: 200 } });
     // The module scopes by employee (and includes the caller's own row); keep only the caller's own branch (admin is branch-scoped,
     // finance_head / payroll_head org-wide) and never a loan for the caller themself.
-    const rows: any[] = await keepEmployeeRowsInBranch(await callerScope(ctx), res?.data ?? [], (r) => r.employee_id);
+    // Loans imported from the legacy system carry legacy_loan_id (employee_loans.*): history, never listed.
+    const live = ((res?.data ?? []) as any[]).filter((r) => !str(r.legacy_loan_id));
+    const rows: any[] = await keepEmployeeRowsInBranch(await callerScope(ctx), live, (r) => r.employee_id);
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       if (str(r.status) !== "pending_approval") continue;

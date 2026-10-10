@@ -28,7 +28,9 @@ export const salaryIncrementAdapter: ApprovalAdapter = {
     const canValidate = roleMeets(roles, ...INCREMENT_ROLE_GATES.hr_validate);
     if (!canApprove && !canValidate) return [];
     const res = await ctx.call("GET", "/api/salary-increment/", { query: { status: "pending", page: 1, limit: 200 } });
-    const rows: any[] = await keepEmployeeRowsInBranch(await callerScope(ctx), res?.data ?? [], (r) => r.employee_id);
+    // 14,467 'Legacy Migration' rows (source = 'legacy', created from db_bill history) are history, not work: never listed.
+    const live = ((res?.data ?? []) as any[]).filter((r) => str(r.source).toLowerCase() !== "legacy");
+    const rows: any[] = await keepEmployeeRowsInBranch(await callerScope(ctx), live, (r) => r.employee_id);
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       const status = str(r.status);
