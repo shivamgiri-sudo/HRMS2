@@ -6,6 +6,8 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 vi.mock("../../../logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock("../../communication/email.service.js", () => ({ emailService: { send: h.send } }));
+const gen = vi.hoisted(() => ({ provider: null as null | { key: string; generateText: ReturnType<typeof vi.fn> } }));
+vi.mock("../../ai/mira-issue-triage.service.js", () => ({ resolveWorkingProvider: vi.fn(async () => gen.provider) }));
 
 import { AUTO_INTENTS, disposition, ruleIntent, ruleReply, scrub, validateReply, type FactSheet } from "../reply-agent.rules.js";
 import { handleInboundReply, resetReplyAgentCaches } from "../reply-agent.service.js";
@@ -20,6 +22,9 @@ const FACTS: FactSheet = {
 describe("scrub", () => {
   it("removes process names and requisition codes", () => {
     expect(scrub("Join the Onfido process, code NOIDA-Onfido-22 today", ["Onfido"])).toBe("Join the the process process, code today");
+  });
+  it("keeps a branch name such as NOIDA-2 and removes a requisition code", () => {
+    expect(scrub("Visit NOIDA-2 for the NOIDA-Onfido-22 drive", [])).toBe("Visit NOIDA-2 for the drive");
   });
   it("ignores very short terms", () => { expect(scrub("It is ok", ["ok"])).toBe("It is ok"); });
 });
@@ -101,7 +106,7 @@ describe("handleInboundReply", () => {
     { match: /FROM job_requisition j LEFT JOIN branch_master/, rows: [{ designation_name: "EXECUTIVE", branch_name: "NOIDA-2", job_description: "Handle Onfido customer queries", address: "Okaya Tower-1, Noida", hr_contact: "Ravi 9811122233" }] },
     { match: /SELECT status FROM he_lead/, rows: [{ status: "invited" }] },
   ];
-  beforeEach(() => { h.sqls = []; h.params = []; h.send.mockClear(); h.rows = baseRows(); resetReplyAgentCaches(); delete process.env.ANTHROPIC_API_KEY; });
+  beforeEach(() => { h.sqls = []; h.params = []; h.send.mockClear(); h.rows = baseRows(); resetReplyAgentCaches(); gen.provider = null; });
   afterEach(() => vi.unstubAllGlobals());
   const msg = (text: string) => ({ inboundRef: "ref1", fromEmail: "asha@example.test", subject: "Walk-in interview", text, messageId: "<m1@x>", references: [], who: { mobile10: "9876543210", leadId: "l1", matchId: "m1" } });
 
@@ -113,6 +118,18 @@ describe("handleInboundReply", () => {
     expect(sent.text).toContain("Okaya Tower-1");
     expect(sent.text).not.toMatch(/onfido/i);
     expect(sent.inReplyTo).toBe("<m1@x>");
+  });
+  it("uses Mira's provider when one is configured, and the reply still passes the same checks", async () => {
+    gen.provider = { key: "freellm", generateText: vi.fn(async () => ({ safetyBlocked: false, answer: JSON.stringify({ intent: "ask_job", language: "en", confidence: 0.92, needs_human: false,
+      reply: "Dear Asha,\n\nThe role is EXECUTIVE: handling customer queries on call.\n\nRegards,\nHR Team, MAS Callnet\nRavi 9811122233", reasons: [] }) })) };
+    expect(await handleInboundReply(msg("What will be my work?"), new Date("2026-10-11T05:00:00Z"))).toBe("sent");
+    expect(gen.provider.generateText).toHaveBeenCalledTimes(1);
+  });
+  it("a model reply that names the process is held, never sent", async () => {
+    gen.provider = { key: "freellm", generateText: vi.fn(async () => ({ safetyBlocked: false, answer: JSON.stringify({ intent: "ask_job", language: "en", confidence: 0.95, needs_human: false,
+      reply: "Dear Asha, this is the Onfido process, your slot is Monday.", reasons: [] }) })) };
+    expect(await handleInboundReply(msg("What will be my work?"), new Date("2026-10-11T05:00:00Z"))).toBe("held");
+    expect(h.send).not.toHaveBeenCalled();
   });
   it("draft-only mode never sends", async () => {
     h.rows[0] = { match: /FROM he_model_param WHERE param_key = 'policy.reply_agent'/, rows: [{ value: 1 }] };

@@ -9,10 +9,10 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { emailService } from "../communication/email.service.js";
+import { resolveWorkingProvider } from "../ai/mira-issue-triage.service.js";
 import { stripQuoted } from "./response-classifier.js";
 import { disposition, ruleIntent, ruleReply, scrub, validateReply, type Draft, type FactSheet, type ReplyIntent } from "./reply-agent.rules.js";
 
-const MODEL = () => process.env.REPLY_AGENT_MODEL?.trim() || "claude-haiku-4-5-20251001";
 const INTENTS: readonly ReplyIntent[] = ["confirm", "decline", "reschedule", "ask_address", "ask_time", "ask_documents", "ask_job", "ask_salary", "ask_shift", "ask_eligibility", "ask_selection", "assessment_link", "already_joined", "opt_out", "complaint", "other"];
 
 /** policy.reply_agent: 0 off, 1 draft only (default), 2 automatic for the safe intents. */
@@ -126,34 +126,33 @@ const SYSTEM = `You are the HR assistant of MAS Callnet answering one job candid
 Return ONLY JSON: {"intent": one of ${INTENTS.join("|")}, "language": "en"|"hi"|"hinglish", "confidence": 0..1, "needs_human": boolean, "reply": string, "reasons": string[]}.
 If the person asks to stop contact use intent opt_out with an empty reply. For complaints, abuse or anything legal use needs_human true.`;
 
+/** The model Mira uses: whichever provider and key the server has configured (resolveWorkingProvider), no separate key for this agent. */
 async function callModel(facts: FactSheet, inbound: string): Promise<Draft | null> {
-  const key = process.env.ANTHROPIC_API_KEY?.trim();
-  if (!key) return null;
+  const provider = await resolveWorkingProvider().catch(() => null);
+  if (!provider) return null;
   const sheet = {
     first_name: facts.name, role: facts.role, branch: facts.branch, address: facts.address, location_link: facts.mapsLink, walk_in_date: facts.slotDate, walk_in_time: facts.slotTime,
     documents_to_carry: facts.documents, assessment_link: facts.assessmentLink, hr_contact: facts.hrContact, company: facts.company,
     job_description: facts.jobDescription, skills: facts.skills, education: facts.education, experience: facts.experience, salary: facts.salary,
     employment_type: facts.employmentType, shift: facts.shift, signature: `Regards,\nHR Team, ${facts.company}${facts.hrContact ? `\n${facts.hrContact}` : ""}`,
   };
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 25_000);
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST", signal: ctl.signal,
-      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model: MODEL(), max_tokens: 700, system: SYSTEM, messages: [{ role: "user", content: `FACTS:\n${JSON.stringify(sheet)}\n\nCANDIDATE EMAIL:\n"""\n${inbound}\n"""` }] }),
+    const response = await provider.generateText({
+      userId: "system-reply-agent", roleKeys: ["system"], providerKey: provider.key, requestSource: "candidate_reply_agent",
+      systemInstruction: SYSTEM, userQuestion: `FACTS:\n${JSON.stringify(sheet)}\n\nCANDIDATE EMAIL:\n"""\n${inbound}\n"""`,
+      sanitizedContext: {}, temperature: 0.2,
+      // A reasoning model can spend a small budget thinking before it writes the answer (seen on Mira's triage).
+      maxOutputTokens: 2000,
     });
-    if (!r.ok) return null;
-    const j = (await r.json()) as { content?: Array<{ text?: string }> };
-    const text = j.content?.map((c) => c.text ?? "").join("") ?? "";
-    const m = /\{[\s\S]*\}/.exec(text);
+    if (response.safetyBlocked) return null;
+    const m = /\{[\s\S]*\}/.exec(response.answer ?? "");
     if (!m) return null;
     const o = JSON.parse(m[0]) as Record<string, unknown>;
     const intent = (INTENTS as readonly string[]).includes(String(o.intent)) ? (o.intent as ReplyIntent) : "other";
     const lang = o.language === "hi" || o.language === "hinglish" ? o.language : "en";
     const conf = Math.max(0, Math.min(1, Number(o.confidence)));
     return { intent, language: lang, confidence: Number.isFinite(conf) ? conf : 0, needsHuman: o.needs_human === true, reply: String(o.reply ?? "").trim(), reasons: Array.isArray(o.reasons) ? o.reasons.map((x) => String(x).slice(0, 120)).slice(0, 5) : [] };
-  } catch { return null; } finally { clearTimeout(timer); }
+  } catch { return null; }
 }
 
 /** Model draft when configured, else the rule wording. A model answer against a rule opt-out / complaint goes to a person. */
@@ -215,7 +214,9 @@ export async function handleInboundReply(m: InboundReply, now = new Date()): Pro
     const optedOut = String(lead[0]?.status ?? "") === "opted_out";
     const { draft, engine } = await draftReply(facts, inbound);
     const reply = scrub(draft.reply, deny);
-    const v = reply ? validateReply({ text: reply, facts, deny }) : { ok: false as const, reason: "empty" };
+    // A draft that needed scrubbing named a process, client or code: never send a mangled version, a person writes it.
+    const touched = reply !== draft.reply.replace(/[ \t]{2,}/g, " ").trim();
+    const v = !reply ? { ok: false as const, reason: "empty" } : touched ? { ok: false as const, reason: "process_name_in_draft" } : validateReply({ text: reply, facts, deny });
     const disp = disposition(draft, v, mode, { inWindow: inWindow(now), matched: true, optedOut });
     if (disp.action === "hold") {
       await store({ req: requisitionId, d: draft, status: v.ok && !draft.needsHuman && reply ? "draft" : "held", hold: disp.reason, engine, reply });

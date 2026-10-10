@@ -38,13 +38,13 @@ export interface FactSheet {
 /** Terms that must never reach a candidate (process, client and department names, requisition codes). */
 export function scrub(text: string, deny: readonly string[]): string {
   // Requisition codes (they carry the process name) go first, then every process / client term.
-  let out = text.replace(/\b[A-Z0-9]{2,}(?:-[A-Za-z0-9]+)*-\d+\b/g, "").replace(/\bREQ-\d+-[A-Z0-9]+\b/g, "");
+  let out = text.replace(/\b[A-Z0-9]{2,}-[A-Za-z][A-Za-z0-9]*-\d+\b/g, "").replace(/\bREQ-\d+-[A-Z0-9]+\b/g, "");
   for (const term of deny) {
     const t = term.trim();
     if (t.length < 3) continue;
     out = out.replace(new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), "the process");
   }
-  return out.replace(/\s{2,}/g, " ").trim();
+  return out.replace(/[ \t]{2,}/g, " ").trim();
 }
 
 const FORBIDDEN = /\b(you (are|have been|were) selected|selection (is )?confirmed|offer letter|guarantee[d]?|assured (job|placement)|100% (job|placement)|appointment letter|joining letter|pay (us|a fee)|registration fee|security deposit)\b/i;
