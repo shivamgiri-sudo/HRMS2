@@ -1,0 +1,29 @@
+name: Ops follow-up logs (manual, read-only)
+
+# Read-only: the last follow-up worker lines (tick summaries, step failures, guard skips) from the hrms2-workers pm2 log, and the
+# pm2 status. Writes nothing. Runs on the self-hosted production runner (pm2 exists only on 192.168.11.225).
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-followup-logs
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  logs:
+    name: Follow-up worker log tail
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: pm2 status
+        shell: bash
+        run: pm2 status --no-color
+      - name: Follow-up lines (last 60)
+        shell: bash
+        run: |
+          pm2 logs hrms2-workers --nostream --lines 1500 --no-color 2>&1 | grep -iE "qualified-followup|followup|whatsapp|pinbot" | tail -n 60 | cut -c1-400 || echo "no matching lines"

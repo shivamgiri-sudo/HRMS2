@@ -23,8 +23,9 @@ export const advancesAdapter: ApprovalAdapter = {
       rows.push(...batch);
       if (batch.length < 100) break;
     }
+    // salary_advance_log.legacy_loan_id marks rows imported from the legacy system: history, never listed.
     const out: ApprovalItem[] = [];
-    const mine = await keepEmployeeRowsInBranch(await callerScope(ctx), rows.filter((r) => str(r.status).toLowerCase() === "pending"), (r) => r.employee_id);
+    const mine = await keepEmployeeRowsInBranch(await callerScope(ctx), rows.filter((r) => str(r.status).toLowerCase() === "pending" && !str(r.legacy_loan_id)), (r) => r.employee_id);
     for (const r of mine) {
       const age = ageDays(r.advance_date ?? r.created_at);
       out.push({

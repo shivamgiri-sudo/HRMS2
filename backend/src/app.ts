@@ -265,9 +265,10 @@ import { performanceIntelligenceRouter } from "./modules/performance-intelligenc
 import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import { kpiStudioRouter } from "./modules/kpi/kpi-studio.routes.js";
 import { kpiCatalogueRouter } from "./modules/kpi-catalogue/kpi-catalogue.routes.js";
-import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
 import { criteriaRouter } from "./modules/selection/criteria.routes.js";
 import { shortlistRouter } from "./modules/selection/shortlist.routes.js";
+import { draCertificateRouter } from "./modules/ats/dra-certificate.routes.js";
+import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
 import { metaCampaignRouter } from "./modules/meta-campaign/meta-campaign.routes.js";
 import { campaignRequisitionRouter } from "./modules/meta-campaign/campaign-requisition.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
@@ -296,7 +297,6 @@ import { qualityLearningRouter } from "./modules/quality-learning/quality-learni
 import { nameConsistencyRouter } from "./modules/ats/name-consistency.routes.js";
 import { jclrRouter } from "./modules/ats/jclr.routes.js";
 import { joiningControlRoomRouter } from "./modules/ats/joining-control-room.routes.js";
-import { draCertificateRouter } from "./modules/ats/dra-certificate.routes.js";
 import { secureDocumentsRouter } from "./modules/ats/secure-documents.routes.js";
 import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-assignment.routes.js";
 import { payrollHeadReviewRouter } from "./modules/payroll-head-review/payroll-head-review.routes.js";
@@ -321,6 +321,8 @@ import { neemansPerformanceDashboardRouter } from "./modules/process-performance
 import { bellavitaChatDashboardRouter } from "./modules/process-performance/bellavita-chat-dashboard.routes.js";
 import { dalmiaDashboardRouter } from "./modules/process-performance/dalmia-dashboard.routes.js";
 import { sbiCardDashboardRouter } from "./modules/process-performance/sbi-card-dashboard.routes.js";
+import { sbiCardSyncRouter } from "./modules/process-performance/sbi-card-sync.routes.js";
+import { sbiCardReportRouter } from "./modules/process-performance/sbi-card-report.routes.js";
 import { processDashboardRouter } from "./modules/process-dashboard/pd.routes.js";
 import { bellavitaCartDashboardRouter } from "./modules/process-performance/bellavita-cart-dashboard.routes.js";
 import { appreciateWealthDashboardRouter } from "./modules/process-performance/appreciate-wealth-dashboard.routes.js";
@@ -1059,6 +1061,8 @@ app.use("/api/process-performance", satyaRetailReportRouter);
 app.use("/api/process-performance", cloviaLobDashboardRouter);
 app.use("/api/process-performance", dalmiaDashboardRouter);
 app.use("/api/process-performance", sbiCardDashboardRouter);
+app.use("/api/process-performance", sbiCardSyncRouter);
+app.use("/api/process-performance", sbiCardReportRouter);
 app.use("/api/process-dashboard", processDashboardRouter);
 app.use("/api/process-performance", appreciateWealthDashboardRouter);
 app.use("/api/process-performance", dashboardExportRouter);

@@ -367,12 +367,18 @@ export function ApprovalCenterPopup() {
                     )
                   )}
                 </div>
-                <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1">
-                    <Inbox className="h-3.5 w-3.5" aria-hidden />
-                    {data?.failed?.length ? `${data.failed.length} queue(s) did not load` : "Same rules as each module's page"}
+                <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span className="inline-flex min-w-0 items-center gap-1">
+                    <Inbox className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    <span className="min-w-0 truncate">
+                      {data?.failed?.length
+                        ? `${data.failed.length} queue(s) did not load`
+                        : data?.staleHidden
+                          ? `${data.staleHidden} older request${data.staleHidden === 1 ? " is" : "s are"} on their pages`
+                          : "Only requests waiting on you"}
+                    </span>
                   </span>
-                  <button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={() => setOpen(false)}>Later</button>
+                  <button type="button" className="shrink-0 cursor-pointer underline-offset-2 hover:underline" onClick={() => setOpen(false)}>Later</button>
                 </div>
               </div>
             </>

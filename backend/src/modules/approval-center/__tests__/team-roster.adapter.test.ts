@@ -1,16 +1,20 @@
 import { describe, it, expect, vi } from "vitest";
 // Branch / approver policy is covered in scope.adapters.test.ts (fake DB); this file tests mapping + decide only.
-vi.mock("../adapters/_scope.js", async () => (await import("./_scopePassthrough.js")).passthrough);
+// The caller is employee "m-me": the named manager approver of the submissions below.
+vi.mock("../adapters/_scope.js", async () => ({
+  ...(await import("./_scopePassthrough.js")).passthrough,
+  callerScope: async () => ({ userId: "u", orgWide: false, employeeId: "m-me", ownBranchId: "b1", allows: () => true }),
+}));
 import { teamRosterAdapter } from "../adapters/team-roster.js";
 import { LoopbackError } from "../types.js";
 
 const listItem = (id: number) => ({ id, submissionNo: `TR-${id}`, status: "x", from: "2030-01-01", to: "2030-01-07", submittedAt: "2030-01-01T05:00:00Z", submitter: { code: "C1", name: "Lead" }, managerApprover: "Boss", lineCount: 2, appliedCount: 0, warningCount: 1 });
-const detail = (perm: any) => ({ submission: { note: "Festival cover", managerDecision: null }, lines: [
+const detail = (perm: any, approver: string = "m-me") => ({ submission: { note: "Festival cover", managerDecision: null, managerApprover: { id: approver } }, lines: [
   { employeeName: "A", employeeCode: "E1", date: "2030-01-02", kind: "CHANGE", old: { label: "GEN 09:00-18:00" }, new: { label: "NIGHT 21:00-06:00" }, reason: "Cover", warnings: [] },
   { employeeName: "B", employeeCode: "E2", date: "2030-01-03", kind: "NEW", old: null, new: { label: "WO" }, reason: null, warnings: [{ message: "Rest < 11h" }] },
 ], summary: { total: 2, withWarnings: 1 }, permissions: perm });
 
-function ctxFor(opts: { manager: any[]; wfm?: any[] | "403"; perms: Record<string, any> }) {
+function ctxFor(opts: { manager: any[]; wfm?: any[] | "403"; perms: Record<string, any>; approverOf?: Record<string, string> }) {
   const call = vi.fn(async (_m: string, path: string, o?: any) => {
     if (path === "/api/wfm/team-roster/approvals") {
       if (o.query.step === "manager") return { data: { items: opts.manager } };
@@ -18,7 +22,7 @@ function ctxFor(opts: { manager: any[]; wfm?: any[] | "403"; perms: Record<strin
       return { data: { items: opts.wfm ?? [] } };
     }
     const id = path.split("/").pop()!;
-    return { data: detail(opts.perms[id]) };
+    return { data: detail(opts.perms[id], opts.approverOf?.[id]) };
   });
   return { userId: "u", call } as any;
 }
@@ -40,6 +44,10 @@ describe("teamRosterAdapter", () => {
     const ctx = ctxFor({ manager: [listItem(1), listItem(2)], wfm: [listItem(3)], perms: { 1: { canManagerDecide: false }, 2: { canManagerDecide: true }, 3: { canWfmDecide: true } } });
     const items = await teamRosterAdapter.list(ctx);
     expect(items.map((i) => [i.id, i.meta?.step])).toEqual([["2", "manager"], ["3", "wfm"]]);
+  });
+  it("manager step is shown ONLY to the named approver even when the module says canManagerDecide (admin / super_admin)", async () => {
+    const ctx = ctxFor({ manager: [listItem(1), listItem(2)], perms: { 1: { canManagerDecide: true }, 2: { canManagerDecide: true } }, approverOf: { 2: "someone-else" } });
+    expect((await teamRosterAdapter.list(ctx)).map((i) => i.id)).toEqual(["1"]);
   });
   it("decides per step", async () => {
     const call = vi.fn().mockResolvedValue({});

@@ -33,7 +33,15 @@ import type { RowDataPacket } from "mysql2";
 const TABLE = "db_masmis.ahm_dump_raw";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-export interface AhmFilters { from: string; to: string; region: "MP" | "MM" | null }
+export interface AhmFilters {
+  from: string; to: string; region: "MP" | "MM" | null;
+  /** A plain prefix filter on the raw `zone` column (each outlet's own town/branch code, e.g.
+   * "PUNE FC-0202120" -- NOT the reference workbooks' separate "ASM Zone" codes like "MH 01" /
+   * "MM 03", confirmed live those don't appear in this upload at all: filtering for "MH"/"MM"
+   * here returns nothing. Kept as a generic, honest filter on whatever `zone` actually contains,
+   * not a Maharashtra/Mumbai Metro split -- the dashboard does not use it for that. */
+  zonePrefix?: string | null;
+}
 
 export function currentMonthRange(): { from: string; to: string } {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -42,18 +50,20 @@ export function currentMonthRange(): { from: string; to: string } {
   return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: ymd(now) };
 }
 
-export function normalizeAhmFilters(input: { from?: unknown; to?: unknown; region?: unknown }): AhmFilters {
+export function normalizeAhmFilters(input: { from?: unknown; to?: unknown; region?: unknown; zonePrefix?: unknown }): AhmFilters {
   const fallback = currentMonthRange();
   const from = typeof input.from === "string" && DATE_RE.test(input.from) ? input.from : fallback.from;
   const to = typeof input.to === "string" && DATE_RE.test(input.to) ? input.to : fallback.to;
   const region = input.region === "MP" || input.region === "MM" ? input.region : null;
-  return { from, to, region };
+  const zonePrefix = typeof input.zonePrefix === "string" && input.zonePrefix.trim() && input.zonePrefix.length <= 60 ? input.zonePrefix.trim() : null;
+  return { from, to, region, zonePrefix };
 }
 
 function where(f: AhmFilters, extra?: { sql: string; params: unknown[] }): { sql: string; params: unknown[] } {
   const parts = [`survey_date >= ?`, `survey_date < DATE_ADD(?, INTERVAL 1 DAY)`];
   const params: unknown[] = [f.from, f.to];
   if (f.region) { parts.push(`source_region = ?`); params.push(f.region); }
+  if (f.zonePrefix) { parts.push(`zone LIKE ?`); params.push(`${f.zonePrefix}%`); }
   if (extra) { parts.push(extra.sql); params.push(...extra.params); }
   return { sql: `WHERE ${parts.join(" AND ")}`, params };
 }
@@ -74,6 +84,11 @@ export interface AhmDailyRow { date: string; orders: number; orderQty: number; s
 export interface AhmGroupRow { name: string; orders: number; outlets: number; orderQty: number; salesQty: number; gapPct: number; deliveredPct: number }
 export interface AhmAgentRow { agent: string; outlets: number; orders: number; orderQty: number; salesQty: number; deliveredPct: number }
 export interface AhmProductRow { name: string; orderQty: number; salesQty: number; orders: number }
+/** hour -> disposition -> orders, matching the "Hourly Order Taken Report" workbook's own
+ * "Count of Last disposition Status" pivot (Row Labels = disposition, columns = hour). */
+export interface AhmHourDispositionRow { hour: number; disposition: string; orders: number }
+/** zone -> disposition -> orders, matching "Max Disposition"'s own ASM Zone / AM Name grouping. */
+export interface AhmZoneDispositionRow { zone: string; disposition: string; orders: number }
 
 export interface AhmDashboardData {
   from: string; to: string; region: "MP" | "MM" | null;
@@ -88,6 +103,8 @@ export interface AhmDashboardData {
   byDeliveredBy: AhmAgentRow[];
   byFranchise: AhmProductRow[];
   byCategory: AhmProductRow[];
+  hourlyDisposition: AhmHourDispositionRow[];
+  zoneDisposition: AhmZoneDispositionRow[];
   dataAvailable: boolean;
 }
 
@@ -102,10 +119,67 @@ const COUNTERS = `
   SUM(sales_qty * COALESCE(sku_mrp, 0)) AS sales_value,
   COUNT(DISTINCT CASE WHEN last_status = 'Delivered' THEN sales_no END) AS delivered`;
 
+/** Every call runs 11 aggregations over the whole matched range -- fine once the table is
+ * mostly historical, but with all 162k+ rows landing in one ~week-wide batch (the initial AHM
+ * catch-up import), a realistic date range matches close to the entire table: confirmed live,
+ * EXPLAIN shows a full table scan either way (the optimizer is right to skip the survey_date
+ * index when ~100% of rows match it), and the 11-query round trip took ~20-45s against this DB --
+ * past the frontend's original 30s request timeout, which is what actually produced "Could not
+ * load the AHM dashboard." Snapshotted per (from, to, region) in mas_hrms.ahm_dashboard_snapshot
+ * (sql/2151 -- lives in mas_hrms, not db_masmis, since it is derived/computed state and the app
+ * user has full rights there, unlike the raw table). ahm-snapshot.worker.ts proactively refreshes
+ * the common ranges every few minutes (behind AHM_SNAPSHOT_SCHEDULER_ENABLED) so a viewer rarely
+ * computes live at all; this function still falls back to a live compute (and saves its own
+ * result) for any ad-hoc range the worker doesn't cover, or if the scheduler is off/stalled and
+ * the snapshot has gone stale. Survives a backend restart, unlike the in-memory cache this
+ * replaced. */
+const SNAPSHOT_STALE_MS = 30 * 60_000;
+
+interface SnapshotRow extends RowDataPacket { payload: string; computed_at: Date | string }
+
+// v3: bumped when AhmDashboardData's shape changes (most recently: hourlyDisposition /
+// zoneDisposition added) so an old cached payload from before the change can never match a
+// fresh request and get served with the new fields missing -- confirmed live: the frontend
+// crashed ("Cannot read properties of undefined (reading 'map')") on a stale v1/v2 snapshot
+// still inside its 30-minute freshness window. Bump this again any time a field is added,
+// renamed or removed.
+const SNAPSHOT_VERSION = "v3";
+export const ahmSnapshotKey = (f: AhmFilters): string => `${SNAPSHOT_VERSION}|${f.from}|${f.to}|${f.region ?? ""}|${f.zonePrefix ?? ""}`;
+
 export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
+  const key = ahmSnapshotKey(f);
+  const [rows] = await db.execute<SnapshotRow[]>(
+    `SELECT payload, computed_at FROM ahm_dashboard_snapshot WHERE cache_key = ?`, [key],
+  );
+  const hit = rows[0];
+  if (hit) {
+    const age = Date.now() - new Date(hit.computed_at).getTime();
+    if (age < SNAPSHOT_STALE_MS) return JSON.parse(hit.payload) as AhmDashboardData;
+  }
+  return refreshAhmSnapshot(f);
+}
+
+/** Computes live and upserts the snapshot -- used both by a cache miss above and by the
+ * background worker's proactive refresh of the common ranges. */
+export async function refreshAhmSnapshot(f: AhmFilters): Promise<AhmDashboardData> {
+  const key = ahmSnapshotKey(f);
+  const t0 = Date.now();
+  const data = await computeAhmDashboard(f);
+  const computeMs = Date.now() - t0;
+  await db.execute(
+    `INSERT INTO ahm_dashboard_snapshot (cache_key, from_date, to_date, region, payload, compute_ms, computed_at)
+     VALUES (?, ?, ?, ?, ?, ?, NOW())
+     ON DUPLICATE KEY UPDATE from_date = VALUES(from_date), to_date = VALUES(to_date), region = VALUES(region),
+       payload = VALUES(payload), compute_ms = VALUES(compute_ms), computed_at = VALUES(computed_at)`,
+    [key, f.from, f.to, f.region, JSON.stringify(data), computeMs],
+  );
+  return data;
+}
+
+async function computeAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
   const w = where(f);
 
-  const [[headlineRow], statusRows, dispoRows, hourRows, dailyRows, zoneRows, townRows, tsRows, dbRows, franRows, catRows] =
+  const [[headlineRow], statusRows, dispoRows, hourRows, dailyRows, zoneRows, townRows, tsRows, dbRows, franRows, catRows, hourDispoRows, zoneDispoRows] =
     await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT ${COUNTERS},
@@ -147,6 +221,14 @@ export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> 
         `SELECT COALESCE(NULLIF(category, ''), 'Unmapped') AS name, COUNT(DISTINCT sales_no) AS orders,
                 SUM(survey_qty) AS order_qty, SUM(sales_qty) AS sales_qty
            FROM ${TABLE} ${w.sql} GROUP BY name ORDER BY order_qty DESC LIMIT 30`, w.params),
+      db.execute<RowDataPacket[]>(
+        `SELECT HOUR(survey_date) AS hour, COALESCE(NULLIF(last_disposition_status, ''), 'Unknown') AS disposition,
+                COUNT(DISTINCT sales_no) AS orders
+           FROM ${TABLE} ${w.sql} GROUP BY hour, disposition ORDER BY hour`, w.params),
+      db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(NULLIF(zone, ''), 'Unmapped') AS zone, COALESCE(NULLIF(last_disposition_status, ''), 'Unknown') AS disposition,
+                COUNT(DISTINCT sales_no) AS orders
+           FROM ${TABLE} ${w.sql} GROUP BY zone, disposition ORDER BY zone`, w.params),
     ]);
 
   const h = headlineRow ?? {};
@@ -209,9 +291,16 @@ export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> 
   const byFranchise = franRows[0].map(productRow);
   const byCategory = catRows[0].map(productRow);
 
+  const hourlyDisposition: AhmHourDispositionRow[] = hourDispoRows[0].map((r) => ({
+    hour: num(r.hour), disposition: String(r.disposition), orders: num(r.orders),
+  }));
+  const zoneDisposition: AhmZoneDispositionRow[] = zoneDispoRows[0].map((r) => ({
+    zone: String(r.zone), disposition: String(r.disposition), orders: num(r.orders),
+  }));
+
   return {
     from: f.from, to: f.to, region: f.region, headline, statuses, dispositions, hourly, daily,
-    byZone, byTown, byTelesales, byDeliveredBy, byFranchise, byCategory,
+    byZone, byTown, byTelesales, byDeliveredBy, byFranchise, byCategory, hourlyDisposition, zoneDisposition,
     dataAvailable: headline.orders > 0,
   };
 }

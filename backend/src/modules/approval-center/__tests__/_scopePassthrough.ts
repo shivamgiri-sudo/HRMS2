@@ -11,5 +11,6 @@ export const passthrough = {
   keepEffectiveApprover: async (_u: string, rows: unknown[]) => rows,
   keepApproverOrBranchRole: async (_u: string, rows: unknown[]) => rows,
   keepWorkItemsForCaller: async (_u: string, rows: unknown[]) => rows,
+  holdsLiteralRole: async () => true,
   dropOwn: async (_u: string, rows: unknown[]) => rows,
 };

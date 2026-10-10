@@ -52,12 +52,21 @@ describe("grn adapter", () => {
     expect(items.map((i) => i.id)).toEqual(["g2"]);
   });
 
-  it("super_admin sees all three stages", async () => {
+  it("super_admin alone is NOT a blanket pass: only stages whose role it holds are listed", async () => {
     roles = ["super_admin"];
-    const { ctx, calls } = fakeCtx(routes({ submitted: [row()], branch_head_approved: [row({ id: "g2", status: "branch_head_approved" })], accounts_head_approved: [row({ id: "g3", status: "accounts_head_approved" })] }));
-    const items = await grnAdapter.list(ctx);
-    expect(calls).toHaveLength(3);
-    expect(items.map((i) => i.id).sort()).toEqual(["g1", "g2", "g3"]);
+    const all = { submitted: [row()], branch_head_approved: [row({ id: "g2", status: "branch_head_approved" })], accounts_head_approved: [row({ id: "g3", status: "accounts_head_approved" })] };
+    const none = fakeCtx(routes(all));
+    expect(await grnAdapter.list(none.ctx)).toEqual([]);
+    expect(none.calls).toHaveLength(0);
+    roles = ["super_admin", "branch_head", "finance_head"];
+    const some = fakeCtx(routes(all));
+    expect((await grnAdapter.list(some.ctx)).map((i) => i.id).sort()).toEqual(["g1", "g3"]);
+  });
+
+  it("migrated GRNs (legacy_raised_by_name) are history and never listed", async () => {
+    roles = ["branch_head"];
+    const { ctx } = fakeCtx(routes({ submitted: [row(), row({ id: "old", legacy_raised_by_name: "Old Raiser" })] }));
+    expect((await grnAdapter.list(ctx)).map((i) => i.id)).toEqual(["g1"]);
   });
 
   it("drops own submissions, prior-stage reviewers and other-branch rows", async () => {

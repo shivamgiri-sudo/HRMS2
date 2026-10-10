@@ -35,6 +35,8 @@ export interface ApprovalCenterData {
   items: ApprovalItem[];
   counts: Record<string, number>;
   failed: Array<{ kind: string; label: string; reason: string }>;
+  /** Older pending requests left out of the popup (they remain on their own pages). */
+  staleHidden?: number;
   generatedAt: string;
 }
 

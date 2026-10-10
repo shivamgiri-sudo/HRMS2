@@ -130,12 +130,23 @@ export function isIndexOnlyMigrationSql(sql: string): boolean {
     .replace(/--[^\n]*/g, " ")
     .replace(/#[^\n]*/g, " ")
     .toLowerCase();
-  if (!/\b(add\s+(unique\s+)?(index|key)|create\s+(unique\s+)?index)\b/.test(stripped)) return false;
+  if (
+    !/\b(add\s+(unique\s+)?(index|key)|create\s+(unique\s+)?index)\b/.test(
+      stripped,
+    )
+  )
+    return false;
   // Anything that changes data, structure other than an index, or removes something disqualifies it.
   if (
-    /\b(drop|delete|update|insert|truncate|replace|rename|grant|revoke|modify|change|call)\b/.test(stripped) ||
-    /\badd\s+(column|constraint|foreign|primary|fulltext|spatial|check)\b/.test(stripped) ||
-    /\bcreate\s+(table|temporary|trigger|view|procedure|function|event|database|schema)\b/.test(stripped) ||
+    /\b(drop|delete|update|insert|truncate|replace|rename|grant|revoke|modify|change|call)\b/.test(
+      stripped,
+    ) ||
+    /\badd\s+(column|constraint|foreign|primary|fulltext|spatial|check)\b/.test(
+      stripped,
+    ) ||
+    /\bcreate\s+(table|temporary|trigger|view|procedure|function|event|database|schema)\b/.test(
+      stripped,
+    ) ||
     /\bforeign\s+key\b/.test(stripped)
   ) {
     return false;
@@ -148,7 +159,8 @@ export function isIndexOnlyMigrationSql(sql: string): boolean {
     for (const raw of clauses) {
       const c = raw.trim();
       if (!c) continue;
-      if (!/^(add\s+(unique\s+)?(index|key)\b|algorithm\s*=|lock\s*=)/.test(c)) return false;
+      if (!/^(add\s+(unique\s+)?(index|key)\b|algorithm\s*=|lock\s*=)/.test(c))
+        return false;
     }
   }
   return true;
@@ -1247,6 +1259,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1921_capacity_mandate_editors.sql", // Registered 2026-09-30. Grants WFM_CAPACITY_DASHBOARD view to finance_head, finance, branch_admin, operations_manager. Additive INSERT IGNORE.
   "1931_bank_exception_email_template.sql", // Registered 2026-09-30. Adds branded HTML email template BANK_EXCEPTION_INVALID_ASSIGNED to communication_template and wires it into the bank_exception_invalid_assigned event_config (template_key was NULL since 1756, causing the fallback "no template configured" footer on every bank-exception notification).
   "1932_sbi_card_collections.sql", // Registered 2026-09-30. SBI Card Collections process (SBI_CARD): process_master row + sbi_card_dialer_mis / agent_mis / account_file / downtime / pen_estimation tables (upsert on natural keys) and their five SBI_CARD_* upload templates. Additive: new tables and template rows only.
+  "1933_sbi_card_live_sync.sql", // Registered 2026-10-09. SBI Card live-sync support: sbi_card_agent_time, sbi_card_roster, sbi_card_live_sync_log — enables ViciDial (asterisk DB) → mas_hrms sync without manual Excel uploads. Additive; sbi_card_agent_time and sbi_card_roster already applied to production via earlier migrations (1932 series extras); only sbi_card_live_sync_log is truly new.
   "1941_process_dashboard_config.sql", // Registered 2026-09-30. Config-driven Process Dashboard: process_dashboard_config (APR table + column_map per process, category profile), page codes PROCESS_DASHBOARD / PROCESS_DASHBOARD_ADMIN with role access, and a DISABLED collections config row for SBI_CARD. Additive, idempotent; no backfill of existing processes.
   "1962_budget_topup_cancel.sql", // Registered 2026-09-30. Lets the raiser withdraw a budget top-up request: widens finance_budget_topup_request.status ENUM with 'cancelled' and adds nullable cancelled_by/cancelled_at/cancellation_reason. Amount edits (allowed only while status=submitted) need no schema. Additive, information_schema-guarded, re-runnable.
   "1963_ats_candidate_import_batch.sql", // Registered 2026-10-03. New ats_candidate_import_tag table + tags the 32,558 rows of the 2026-06-06/08 bulk load (no creator, source or recruiter) as legacy-2026-06 so dashboards label them instead of showing blank/Unassigned. Separate table because ats_candidate is at the InnoDB row-size limit (ADD COLUMN fails under strict mode). Idempotent.
@@ -1323,17 +1336,8 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2134_qualified_followup_attempts.sql", // Registered 2026-10-07. qualified_followup: per-channel attempts/errors, wa_message_id, missing_details, step_claimed_at, test row tag, idx_qfu_callfile. information_schema-guarded, re-runnable.
   "migrations/2135_requisition_streams.sql", // Registered 2026-10-07. requisition_stream (+ _day, _event, _plan, _match), requisition_stream.version, created_at/updated_at DATETIME(6), requisition_stream_plan.idx_rsp_date and qualified_followup.owner. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable.
   "migrations/2136_he_match_outcome_reason.sql", // Registered 2026-10-08. he_match_outcome_reason (one no-show/decline reason per he_match, last tap wins). CREATE TABLE IF NOT EXISTS only, re-runnable.
-  "migrations/2144_employee_master_snapshot_exit_reason.sql", // Registered 2026-10-08. employee_master_snapshot.exit_reason (Employee Master "Exit Reason" column). information_schema-guarded ALTER, re-runnable.
-  "migrations/2137_candidate_dra_certificate.sql", // Registered 2026-10-08. candidate_dra_certificate: DRA certificate upload + verification history for SBI Credit Card onboarding (cost centre BSS/OB/AHMH-JD/1050)
-  "migrations/2137_qualified_followup_call_batch_slot.sql", // Registered 2026-10-08. qualified_followup_call_batch: mode_tag, slot_key, slot_claim (uq_qfcb_slot, one batch per tag and IST slot), summary JSON; qualified_followup.idx_qfu_mobile_batch. information_schema-guarded, re-runnable.
-  "migrations/2140_walkin_invite.sql", // Registered 2026-10-08. walkin_invite (answer tokens for people invited without an he_match, one per mobile10+requisition); he_match.confirmed_at/confirmed_via/confirmed_response_id + idx_he_match_confirmed. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable.
-  "migrations/2141_candidate_response.sql", // Registered 2026-10-08. candidate_response (one response row per inbound event, unique source_kind+source_ref) and inbound_email_cursor. CREATE TABLE IF NOT EXISTS only, re-runnable.
-  "migrations/2138_unified_followup.sql", // Registered 2026-10-09. Unified follow-up journey: qualified_followup journey columns + canary tag, followup_person / followup_canary / followup_shadow, he_message.sent_by. Additive, information_schema-guarded, re-runnable.
-  "migrations/2142_campaign_requisition.sql", // Registered 2026-10-09. meta_campaign_requisition (many requisitions per campaign, primary mirrored into meta_campaign.requisition_id; backfilled), meta_lead_raw.routed_by/routed_at, meta_campaign_relink (HR relink audit). CREATE TABLE IF NOT EXISTS, INSERT IGNORE and information_schema-guarded ALTERs, re-runnable, no FKs.
-  "migrations/2145_requisition_selection_rules.sql", // Registered 2026-10-09. job_requisition.selection_rules JSON (rule mode/weight/missing policy, new rule kinds), job_requisition_criteria_version + _audit, qualified_followup.criteria_version_id/_verdict/_checked_at. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable, no FKs.
-  "migrations/2146_selection_person_fact.sql", // Registered 2026-10-09. selection_person_fact: per-person selection facts cache (mobile10 x source kind) for the criteria preview. CREATE TABLE IF NOT EXISTS only, no FKs.
-  "migrations/2147_shortlist_decisions.sql", // Registered 2026-10-09. shortlist_run, shortlist_candidate, shortlist_override (+ _log), shortlist_approval: selection decisions, HR overrides and approvals (from the amended WS3 2143). CREATE TABLE IF NOT EXISTS only, no FKs.
-  "migrations/2148_followup_shortlist_link.sql", // Registered 2026-10-09. qualified_followup.shortlist_id (+ criteria_version_id where 2145 skipped it); shortlist_run.trigger_kind / evening_date + uq_slr_evening (one evening preview per requisition x source x IST day). information_schema-guarded, re-runnable, no FKs.
+  "2149_agent_master_changes.sql", // Registered 2026-10-10 (Tausif AHM port; renumbered from 1785, taken by the leave/exit CC file). mas_hrms.agent_target_change_log (per-field change log for Housing Owner/Premium agents) and mas_hrms.pre_agent_am (Premium AM side table). CREATE TABLE IF NOT EXISTS only; mas_hrms, so the app user can create them.
+  "2151_ahm_dashboard_snapshot.sql", // Registered 2026-10-10 (Tausif AHM port; renumbered from 1876 to sit above 2150). mas_hrms.ahm_dashboard_snapshot: durable pre-computed AHM dashboard payloads, read and written by getAhmDashboard and the AHM_SNAPSHOT_SCHEDULER_ENABLED worker. CREATE TABLE IF NOT EXISTS only. 2150_agent_month_db_masmis.sql is deliberately NOT listed: it ALTERs db_masmis, which the app user cannot do.
 ];
 
 export type MigrationHealth = {
@@ -2209,7 +2213,9 @@ export async function runPendingMigrations(
           let deferIndexOnly = false;
           if (isTransientMigrationError(error)) {
             try {
-              deferIndexOnly = isIndexOnlyMigrationSql(fs.readFileSync(filePath, "utf8"));
+              deferIndexOnly = isIndexOnlyMigrationSql(
+                fs.readFileSync(filePath, "utf8"),
+              );
             } catch {
               deferIndexOnly = false;
             }

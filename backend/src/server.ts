@@ -50,6 +50,7 @@ import { startRosterRequestsScheduler } from "./modules/roster-requests/roster-r
 // but never ran before this scheduler was added.
 import { startInterventionRecommendationScheduler } from "./modules/analytics/intervention-recommendation.cron.js";
 import { startMisEmailScheduler } from "./modules/process-performance/mis-schedule.worker.js";
+import { startAhmSnapshotScheduler } from "./modules/process-performance/ahm-snapshot.worker.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { isModelAvailable as warmUpFaceDetectionModels } from "./modules/ats/face-match.service.js";
 import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
@@ -279,6 +280,12 @@ function startServer() {
     // starts every other scheduler on this backend. Enable on one backend only.
     if (process.env.MIS_EMAIL_SCHEDULER_ENABLED === "true") {
       startMisEmailScheduler();
+    }
+
+    // Keeps the AHM dashboard's common ranges pre-computed. Same reasoning as the MIS email
+    // scheduler above: its own switch, outside ENABLE_SCHEDULERS, enable on one backend only.
+    if (process.env.AHM_SNAPSHOT_SCHEDULER_ENABLED === "true") {
+      startAhmSnapshotScheduler();
     }
 
     if (env.ENABLE_SCHEDULERS) {

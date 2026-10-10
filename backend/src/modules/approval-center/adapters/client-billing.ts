@@ -2,6 +2,7 @@ import { LoopbackError, type ApprovalAdapter, type ApprovalItem } from "../types
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays, rowsOf } from "./finance-shared.js";
 import { branchAllowed, callerScope, io, type CallerScope } from "./scope-guard.js";
+import { holdsLiteralRole } from "./_scope.js";
 
 /**
  * The client-billing routes have no branch scoping at all and admit `admin` (branch-scoped by owner ruling) alongside the finance roles,
@@ -15,6 +16,8 @@ async function decidableBillingRows(ctx: { userId: string }, me: CallerScope, ro
   return notMine.filter((r) => branchAllowed(me, branches.get(String(r.cost_centre_id))));
 }
 
+/** Roles the client-billing decide routes name (admin is branch-scoped by the branch rule below). */
+const BILLING_ROLES = ["admin", "finance", "finance_head", "accounts_head", "super_admin"];
 const MAX_DETAIL = 30;
 const lineText = (l: any) => {
   const sign = str(l.line_type) === "deduction" ? "(deduction) " : "";
@@ -31,6 +34,7 @@ export const clientInvoiceAdapter: ApprovalAdapter = {
   label: "Client invoice (proforma)",
   category: "Finance",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, ...BILLING_ROLES))) return [];
     const res = await ctx.call("GET", "/api/client-billing/proformas", { query: { status: "proforma", limit: 200 } });
     const rows = await decidableBillingRows(ctx, await callerScope(ctx), rowsOf(res).filter((r) => str(r.invoice_status) === "proforma" && Number(r.is_migrated ?? 0) !== 1));
     const picked = rows.slice(0, MAX_DETAIL);
@@ -96,6 +100,7 @@ export const clientCreditNoteAdapter: ApprovalAdapter = {
   label: "Client credit note",
   category: "Finance",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, ...BILLING_ROLES))) return [];
     const res = await ctx.call("GET", "/api/client-billing/credit-notes", { query: { status: "draft", limit: 200 } });
     const rows = await decidableBillingRows(ctx, await callerScope(ctx), rowsOf(res).filter((r) => str(r.credit_status) === "draft" && Number(r.is_migrated ?? 0) !== 1));
     const picked = rows.slice(0, MAX_DETAIL);

@@ -16,9 +16,10 @@ export const MANAGER_STAGE_ROLES = new Set(["manager", "team_leader", "tl", "pro
  * filters by the caller's approver role, current step and requester scope; we drop the caller's own
  * requests and workflows another adapter owns, and then apply the responsible-person rules the endpoint does not:
  *  - a MANAGER-type step (manager / team_leader / process_manager ...) is shown only to the requester's effective approver
- *    (reporting manager, or the skip-level while the manager is on approved leave), not to every holder of that role;
- *  - every other step is shown only when the requester's branch is the caller's OWN branch (org-wide roles: all).
- *    A requester with no employee record has no branch, so only org-wide callers see theirs.
+ *    (reporting manager, or the skip-level while the manager is on approved leave), not to every holder of that role and not to
+ *    super_admin; with no resolvable approver, only a literal holder of the step role in the requester's branch;
+ *  - every other step is shown only to a caller who literally holds the step's role AND the requester's branch is the caller's OWN
+ *    branch (org-wide roles: all). A requester with no employee record has no branch, so only org-wide callers see theirs.
  */
 export const workflowAdapter: ApprovalAdapter = {
   kind: "workflow",
@@ -36,14 +37,17 @@ export const workflowAdapter: ApprovalAdapter = {
       if (WORKFLOW_EXCLUDED_ENTITY_TYPES.has(str(r.entity_type))) continue;
       if (str(r.requested_by) && str(r.requested_by) === ctx.userId) continue; // never approve own request
       const requester = requesters.get(str(r.requested_by));
-      if (MANAGER_STAGE_ROLES.has(str(r.approver_role).toLowerCase())) {
-        if (!me.roles.includes("super_admin")) {
-          if (!requester || !me.employeeId) continue;
-          const approver = await io.effectiveApproverEmployeeId(requester.employeeId);
-          // No resolvable manager: the module falls back to the privileged/branch role, so fall back to the branch rule.
-          if (approver ? approver !== me.employeeId : !branchAllowed(me, requester.branchId)) continue;
-        }
-      } else if (!branchAllowed(me, requester?.branchId)) continue;
+      const stageRole = str(r.approver_role).toLowerCase();
+      if (MANAGER_STAGE_ROLES.has(stageRole)) {
+        // Manager-type step: ONLY the requester's effective approver. super_admin / admin / hr are not a blanket pass. When no
+        // approver can be resolved the module falls back to the step's role, so a literal holder of it inside the requester's branch.
+        if (!requester || !me.employeeId) continue;
+        const approver = await io.effectiveApproverEmployeeId(requester.employeeId);
+        if (approver ? approver !== me.employeeId : !(me.roles.includes(stageRole) && branchAllowed(me, requester.branchId))) continue;
+      } else {
+        // Role-owned step: the caller must literally hold the step's role (no super_admin wildcard), for a requester in their branch.
+        if (!(stageRole && me.roles.includes(stageRole)) || !branchAllowed(me, requester?.branchId)) continue;
+      }
       const summary = str(r.summary) || str(r.summary_text);
       const created = iso(r.created_at);
       const sla = Number(r.sla_hours) > 0 ? Number(r.sla_hours) : AGING_HOURS_FALLBACK;

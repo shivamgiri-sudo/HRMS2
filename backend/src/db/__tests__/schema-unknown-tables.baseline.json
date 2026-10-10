@@ -2,6 +2,24 @@
   "db/__tests__/schema-column-refs.test.ts": [
     "leave_requests"
   ],
+  "modules/process-performance/sbi-card-vicidial-sync.service.ts": [
+    "sbi_card_live_sync_log"
+  ],
+  "modules/client-billing/client-billing-change-request.service.ts": [
+    "client_invoice_change_request"
+  ],
+  "modules/client-billing/client-billing-submit.service.ts": [
+    "client_invoice_submission"
+  ],
+  "modules/gst/tally-voucher/tally-voucher.service.ts": [
+    "tally_export_config",
+    "tally_voucher_batch",
+    "tally_voucher_batch_line",
+    "tally_voucher_export"
+  ],
+  "modules/gst/tally-voucher/__tests__/tally-voucher.mysql.integration.test.ts": [
+    "tally_export_config"
+  ],
   "modules/ats/mock-digilocker.routes.ts": [
     "ats_bgv_check"
   ],
@@ -27,34 +45,6 @@
   "modules/finance/tally-payment-import.service.ts": [
     "tally_import_batch",
     "tally_import_voucher"
-  ],
-  "modules/hiring-engine/followup-person.service.ts": [
-    "followup_person"
-  ],
-  "modules/hiring-engine/he-send.service.ts": [
-    "he_message"
-  ],
-  "modules/hiring-engine/qualified-followup.shadow.ts": [
-    "followup_shadow"
-  ],
-  "modules/hiring-engine/qualified-followup.stagea.ts": [
-    "qualified_followup"
-  ],
-  "modules/hiring-engine/qualified-followup.callresult.ts": [
-    "qualified_followup"
-  ],
-  "modules/hiring-engine/qualified-followup.stageb.ts": [
-    "qualified_followup"
-  ],
-  "modules/hiring-engine/followup-optout.service.ts": [
-    "followup_person",
-    "qualified_followup"
-  ],
-  "modules/hiring-engine/he-followup-email.service.ts": [
-    "he_message"
-  ],
-  "modules/hiring-engine/qualified-followup.runnow.ts": [
-    "qualified_followup"
   ],
   "modules/hiring-engine/he-action-queue.service.ts": [
     "qualified_followup"
@@ -180,8 +170,8 @@
     "qualified_followup"
   ],
   "modules/hiring-engine/qualified-followup.email.ts": [
-    "he_message",
-    "qualified_followup"
+    "qualified_followup",
+    "he_message"
   ],
   "modules/hiring-engine/qualified-followup.service.ts": [
     "qualified_followup"
@@ -265,6 +255,34 @@
   ],
   "workers/bulk-import.worker.ts": [
     "bulk_import_queue"
+  ],
+  "modules/hiring-engine/followup-person.service.ts": [
+    "followup_person"
+  ],
+  "modules/hiring-engine/he-send.service.ts": [
+    "he_message"
+  ],
+  "modules/hiring-engine/qualified-followup.shadow.ts": [
+    "followup_shadow"
+  ],
+  "modules/hiring-engine/qualified-followup.stagea.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.callresult.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/qualified-followup.stageb.ts": [
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/followup-optout.service.ts": [
+    "followup_person",
+    "qualified_followup"
+  ],
+  "modules/hiring-engine/he-followup-email.service.ts": [
+    "he_message"
+  ],
+  "modules/hiring-engine/qualified-followup.runnow.ts": [
+    "qualified_followup"
   ],
   "modules/ats/dra-certificate.service.ts": [
     "candidate_dra_certificate"

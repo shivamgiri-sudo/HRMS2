@@ -16,8 +16,8 @@ export const rosterPreferenceAdapter: ApprovalAdapter = {
     const res = await ctx.call("GET", "/api/wfm/roster-preferences/pending");
     const pending: any[] = ((res?.data ?? []) as any[]).filter((r) => !str(r.status) || str(r.status) === "pending").slice(0, 200);
     if (pending.length === 0) return [];
-    // Reporting manager (effective approver) decides; admin / hr / wfm only inside their own branch (owner ruling 2026-10-01).
-    const rows: any[] = await keepApproverOrBranchRole(ctx.userId, pending, (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }), ["admin", "hr", "wfm"]);
+    // ONLY the reporting manager (effective approver) is shown it; no admin / hr / wfm / super_admin fallback (owner decision).
+    const rows: any[] = await keepApproverOrBranchRole(ctx.userId, pending, (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }), []);
     if (rows.length === 0) return [];
     const me = await getEmployeeForUser(ctx.userId);
     const out: ApprovalItem[] = [];
