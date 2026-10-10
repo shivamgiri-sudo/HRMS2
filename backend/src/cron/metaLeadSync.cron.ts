@@ -13,6 +13,7 @@
  * No-op when META_MARKETING_ACCESS_TOKEN is not configured.
  */
 
+import { loadFollowupSwitches } from "../modules/hiring-engine/qualified-followup.policy.js";
 import { sweepStrandedLeads } from "../modules/meta-campaign/campaign-successor.service.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
@@ -295,9 +296,12 @@ export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped
   let skipped = 0;
   let failed = 0;
   // Enrolled held for HR when the source runs (D13); never messaged here.
+  // Old Meta data runs the same sequence as Live Meta when its switch is on: an older form fill is a drive of its own, not a hold-for-HR.
+  const oldMode = (await loadFollowupSwitches().catch(() => null))?.sourceModes.meta_old;
+  const oldOn = oldMode === "live" || oldMode === "canary";
   for (const lead of held as any[]) {
     const autoOff = Number(lead.auto_notify_off) === 1;
-    await enrolMetaArrival(lead.id, { skipOutreach: !autoOff }).catch(() => null);
+    await enrolMetaArrival(lead.id, { skipOutreach: !autoOff && !oldOn }).catch(() => null);
     skipped++;
   }
 
