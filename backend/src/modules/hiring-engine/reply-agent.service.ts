@@ -225,13 +225,18 @@ export async function handleInboundReply(m: InboundReply, now = new Date()): Pro
   }
 }
 
-/** Sends replies that were queued outside the window (09:00-20:00 IST), a few per call. */
+/**
+ * Sends queued replies when the 09:00-20:00 IST window is open, a few per call. In automatic mode every queued reply goes; in any mode
+ * a row marked hold_reason 'ack_approved' (an acknowledgement HR asked for explicitly) goes too.
+ */
 export async function sendQueuedReplies(now = new Date(), limit = 20): Promise<number> {
-  if (!inWindow(now) || (await replyAgentMode()) < 2) return 0;
+  if (!inWindow(now)) return 0;
+  const auto = (await replyAgentMode()) >= 2;
   let sent = 0;
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, from_email, subject, reply_text FROM candidate_reply WHERE status = 'queued' AND from_email IS NOT NULL AND reply_text IS NOT NULL ORDER BY created_at LIMIT ?", [limit]);
+      `SELECT id, from_email, subject, reply_text FROM candidate_reply
+        WHERE status = 'queued' AND from_email IS NOT NULL AND reply_text IS NOT NULL ${auto ? "" : "AND hold_reason = 'ack_approved'"} ORDER BY created_at LIMIT ?`, [limit]);
     for (const r of rows) if (await sendNow(String(r.id), String(r.from_email), String(r.subject ?? ""), String(r.reply_text), null, [])) sent++;
   } catch (err) { logger.warn({ err: (err as Error).message.slice(0, 160) }, "[reply-agent] queued send failed"); }
   return sent;
