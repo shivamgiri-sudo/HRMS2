@@ -257,26 +257,39 @@ const BACKFILL_AGE_MS = 2 * 86_400_000;
 const META_CREATED = `JSON_UNQUOTE(JSON_EXTRACT(meta_lead_raw.raw_payload, '$.created_time'))`;
 // Meta's created_time ("2026-10-07T10:00:00+0000") in UTC; a missing / odd offset reads as UTC, an unparsable value as NULL (not a backfill).
 const META_CREATED_UTC = `CONVERT_TZ(STR_TO_DATE(LEFT(${META_CREATED}, 19), '%Y-%m-%dT%H:%i:%s'), IF(${META_CREATED} REGEXP '[+-][0-9]{4}$', CONCAT(SUBSTRING(${META_CREATED}, -5, 3), ':', RIGHT(${META_CREATED}, 2)), '+00:00'), '+00:00')`;
-const leadSelect = (filter: string): string => `SELECT id,
+/**
+ * `routed` = the lead was placed on its requisition by the system (routed_by 'best_fit': the auto-successor sweep or best-fit routing). Such
+ * a lead is never a "backfill import" and is selected for a week after it was placed, however old its form fill is: it was moved so that it
+ * gets the email -> WhatsApp -> call sequence. Without the column (migration 2142 not applied yet) the plain rules apply.
+ */
+const leadSelect = (filter: string, routed = true): string => `SELECT id,
             (SELECT JSON_EXTRACT(jr.meta_screening_config, '$.auto_notify') = CAST('false' AS JSON) FROM job_requisition jr WHERE jr.id = meta_lead_raw.requisition_id) AS auto_notify_off,
-            ${META_CREATED_UTC} < ? AS is_backfill
+            ${routed ? `(${META_CREATED_UTC} < ? AND COALESCE(meta_lead_raw.routed_by, '') <> 'best_fit')` : `${META_CREATED_UTC} < ?`} AS is_backfill
        FROM meta_lead_raw
       WHERE screening_result = 'qualified'
         AND notification_sent_at IS NULL
-        AND created_at >= ?${OWNED_ROW_SKIP}${filter}
+        AND ${routed ? `(created_at >= ? OR (meta_lead_raw.routed_by = 'best_fit' AND meta_lead_raw.routed_at >= ?))` : 'created_at >= ?'}${OWNED_ROW_SKIP}${filter}
       ORDER BY created_at ASC
-      LIMIT 100`;
+      LIMIT 300`;
 const utcCutoff = (now: number): string => new Date(now - BACKFILL_AGE_MS).toISOString().slice(0, 19).replace("T", " ");
 
 export async function notifyNewQualifiedLeads(): Promise<{ sent: number; skipped: number; failed: number }> {
-  const params = [utcCutoff(Date.now()), notifyWindowStart()];
+  const baseParams = [utcCutoff(Date.now()), notifyWindowStart()];
+  const routedParams = [...baseParams, new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 19).replace("T", " ")];
+  const run = async (filter: string) => {
+    try { return await db.execute<RowDataPacket[]>(leadSelect(filter, true), routedParams); }
+    catch (e) {
+      if ((e as { code?: string })?.code !== "ER_BAD_FIELD_ERROR") throw e;
+      return db.execute<RowDataPacket[]>(leadSelect(filter, false), baseParams);
+    }
+  };
   // auto_notify off on the requisition, or a backfill import, are never messaged from here and keep notification_sent_at NULL, so
   // they are selected apart: they must not fill the LIMIT and starve newer leads. Their own pass skips anyone already enrolled.
-  const [held] = await db.execute<RowDataPacket[]>(leadSelect(`
+  const [held] = await run(`
         AND NOT EXISTS (SELECT 1 FROM qualified_followup q2 WHERE q2.meta_lead_id = meta_lead_raw.id COLLATE utf8mb4_unicode_ci)
-     HAVING (auto_notify_off = 1 OR is_backfill = 1)`), params);
-  const [leads] = await db.execute<RowDataPacket[]>(leadSelect(`
-     HAVING COALESCE(auto_notify_off, 0) = 0 AND COALESCE(is_backfill, 0) = 0`), params);
+     HAVING (auto_notify_off = 1 OR is_backfill = 1)`);
+  const [leads] = await run(`
+     HAVING COALESCE(auto_notify_off, 0) = 0 AND COALESCE(is_backfill, 0) = 0`);
 
   let sent = 0;
   let skipped = 0;
