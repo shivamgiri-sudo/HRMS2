@@ -12,7 +12,6 @@ import { emailService } from "../communication/email.service.js";
 import { stripQuoted } from "./response-classifier.js";
 import { disposition, ruleIntent, ruleReply, scrub, validateReply, type Draft, type FactSheet, type ReplyIntent } from "./reply-agent.rules.js";
 
-const IST_MS = 5.5 * 3600_000;
 const MODEL = () => process.env.REPLY_AGENT_MODEL?.trim() || "claude-haiku-4-5-20251001";
 const INTENTS: readonly ReplyIntent[] = ["confirm", "decline", "reschedule", "ask_address", "ask_time", "ask_documents", "ask_job", "ask_salary", "ask_shift", "ask_eligibility", "ask_selection", "assessment_link", "already_joined", "opt_out", "complaint", "other"];
 
@@ -169,7 +168,8 @@ export interface InboundReply {
   who: { mobile10: string; leadId: string | null; matchId: string | null; requisitionId?: string | null } | null;
 }
 
-const inWindow = (now: Date) => { const h = new Date(now.getTime() + IST_MS).getUTCHours(); return h >= 9 && h < 20; };
+/** Replies to a candidate's own email go out at any hour (owner decision); only unprompted outreach keeps 09:00-20:00. */
+const inWindow = (_now: Date): boolean => true;
 const esc = (l: string) => l.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
 async function sendNow(rowId: string, to: string, subject: string, body: string, inReplyTo: string | null, refs: string[]): Promise<boolean> {
@@ -226,7 +226,7 @@ export async function handleInboundReply(m: InboundReply, now = new Date()): Pro
 }
 
 /**
- * Sends queued replies when the 09:00-20:00 IST window is open, a few per call. In automatic mode every queued reply goes; in any mode
+ * Sends queued replies, a few per call. In automatic mode every queued reply goes; in any mode
  * a row marked hold_reason 'ack_approved' (an acknowledgement HR asked for explicitly) goes too.
  */
 export async function sendQueuedReplies(now = new Date(), limit = 20): Promise<number> {

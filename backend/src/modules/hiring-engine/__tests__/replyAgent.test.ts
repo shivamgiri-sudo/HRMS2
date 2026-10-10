@@ -124,9 +124,9 @@ describe("handleInboundReply", () => {
     expect(await handleInboundReply(msg("This is a scam, I will go to police"), new Date("2026-10-11T05:00:00Z"))).toBe("held");
     expect(h.send).not.toHaveBeenCalled();
   });
-  it("outside 09:00-20:00 IST the safe reply is queued, not sent", async () => {
-    expect(await handleInboundReply(msg("Yes I will come"), new Date("2026-10-11T18:00:00Z"))).toBe("queued");
-    expect(h.send).not.toHaveBeenCalled();
+  it("a safe reply goes out at any hour, including the middle of the night", async () => {
+    expect(await handleInboundReply(msg("Yes I will come"), new Date("2026-10-11T18:00:00Z"))).toBe("sent");
+    expect(h.send).toHaveBeenCalledTimes(1);
   });
   it("an unmatched sender is stored for HR and never answered", async () => {
     const st = await handleInboundReply({ ...msg("hello"), who: null }, new Date("2026-10-11T05:00:00Z"));
