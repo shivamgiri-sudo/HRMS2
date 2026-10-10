@@ -1,0 +1,60 @@
+# Turns the unified qualified follow-up (email -> +1h WhatsApp -> voice-bot call / calling file) on or off for all three drives
+# (Live Meta, Old Meta data, Hiring Engine) and sets the campaign auto-successor flag.
+# Changes on 192.168.11.225: backend/.env QUAL_FOLLOWUP_MODE + META_AUTO_SUCCESSOR (QUAL_FOLLOWUP_TEST_MODE removed), then restarts
+# hrms2-backend and hrms2-workers. The per-drive switches (policy.followup.*) are rows in he_model_param and are NOT touched here.
+# The Pinbot inbound-risk acknowledgement is never set by this workflow.
+# Runs on the self-hosted runner because backend/.env and pm2 exist only on 192.168.11.225.
+
+name: Ops follow-up (enable/disable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "off | dry_run (records, sends nothing) | live (really sends)"
+        required: true
+        type: choice
+        default: live
+        options: [off, dry_run, live]
+      auto_successor:
+        description: "Campaign moves to a similar open requisition when HR fills/closes its requisition"
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: ops-followup-flag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  flag:
+    name: Set follow-up mode on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Set .env and restart
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          SUCCESSOR: ${{ inputs.auto_successor }}
+        run: |
+          set -euo pipefail
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          test -f "$ENV_FILE" || { echo "::error::$ENV_FILE not found."; exit 1; }
+          BACKUP="${ENV_FILE}.bak-followup-$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a "$ENV_FILE" "$BACKUP"; echo "Backed up to $BACKUP"
+          if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then printf '\n' >> "$ENV_FILE"; fi
+          sed -i -E "/^(QUAL_FOLLOWUP_MODE|QUAL_FOLLOWUP_TEST_MODE|META_AUTO_SUCCESSOR)=/d" "$ENV_FILE"
+          printf 'QUAL_FOLLOWUP_MODE=%s\n' "$MODE" >> "$ENV_FILE"
+          if [[ "$SUCCESSOR" == "true" ]]; then printf 'META_AUTO_SUCCESSOR=all\n' >> "$ENV_FILE"; else printf 'META_AUTO_SUCCESSOR=off\n' >> "$ENV_FILE"; fi
+          for k in QUAL_FOLLOWUP_MODE META_AUTO_SUCCESSOR; do
+            [[ "$(grep -cE "^${k}=" "$ENV_FILE")" == "1" ]] || { echo "::error::$k not exactly once; restoring"; cp -a "$BACKUP" "$ENV_FILE"; exit 1; }
+          done
+          grep -E "^(QUAL_FOLLOWUP_MODE|META_AUTO_SUCCESSOR)=" "$ENV_FILE"
+          pm2 restart hrms2-backend hrms2-workers --update-env --no-color
+          pm2 save --no-color
+          pm2 status --no-color
