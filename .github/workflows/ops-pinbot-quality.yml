@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           ENV_FILE="/var/www/HRMS2/backend/.env"
-          getv() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- | sed -E 's/^"(.*)"$/\1/'; }
+          getv() { { grep -E "^$1=" "$ENV_FILE" || true; } | tail -1 | cut -d= -f2- | sed -E 's/^"(.*)"$/\1/'; }
           KEY="$(getv PINBOT_API_KEY)"; PID="$(getv PINBOT_PHONE_NUMBER_ID)"; BASE="$(getv PINBOT_BASE_URL)"; BASE="${BASE:-https://partnersv1.pinbot.ai/v3}"; BASE="${BASE%/}"
           if [[ -z "$KEY" || -z "$PID" ]]; then echo "PINBOT_API_KEY or PINBOT_PHONE_NUMBER_ID is not set"; exit 0; fi
           curl -sS -m 20 -H "apikey: $KEY" "$BASE/$PID" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const j=JSON.parse(d);console.log(JSON.stringify({quality_rating:j.quality_rating??null,messaging_limit_tier:j.messaging_limit_tier??j.throughput??null,status:j.status??null,name_status:j.name_status??null}))}catch{console.log("unreadable response")}})'
