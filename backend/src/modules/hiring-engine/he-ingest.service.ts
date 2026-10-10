@@ -245,6 +245,8 @@ export interface VoiceCallbackInput {
   recordingUrl?: string | null;
   /** The call connected and the person was right, but ended before they answered the walk-in question: recorded, nobody is marked declined. */
   incomplete?: boolean;
+  /** A result for a call made more than a day ago (imported file): the call and the answer are recorded, the journey is not changed and nothing is sent. */
+  historical?: boolean;
   /** Where the result came from, for the response record (one row per source + call id). */
   source?: "superbot_hook" | "superbot_report" | "vapi" | "call_import" | "voice_hook";
   /** The reference the call carried (HRMS-... match reference, or QF-... for older follow-up rows), so the result finds its journey. */
@@ -305,6 +307,14 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
     await addEvent(l.id, "call_incomplete", { channel: "voice", detail: (p.summary ?? "ended before the walk-in question").slice(0, 200) });
     if (l.meta_lead_id) await db.execute("UPDATE meta_lead_raw SET voice_call_outcome = ?, voice_called_at = COALESCE(?, NOW()) WHERE id = ?", [outcomeText, p.startedAt ?? null, l.meta_lead_id]);
     await callResponse(false);
+    await recomputeInsight(l.id);
+    await refreshLeadHistoryById(l.id);
+    return { leadId: l.id, outcome: outcomeText };
+  }
+  if (p.historical) {
+    // Past interview day: keep the facts (call log, response with the real answer, Meta mirror) without moving the journey or sending anything.
+    await callResponse(false);
+    if (l.meta_lead_id) await db.execute("UPDATE meta_lead_raw SET voice_call_outcome = ?, voice_called_at = COALESCE(?, voice_called_at) WHERE id = ?", [outcomeText.slice(0, 60), p.startedAt ?? null, l.meta_lead_id]);
     await recomputeInsight(l.id);
     await refreshLeadHistoryById(l.id);
     return { leadId: l.id, outcome: outcomeText };
