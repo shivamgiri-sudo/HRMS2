@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, str } from "../format.js";
-import { hasAnyRole, hasScopedAccess } from "../../../shared/scopeAccess.js";
+import { hasScopedAccess } from "../../../shared/scopeAccess.js";
+import { holdsLiteralRole } from "./_scope.js";
 import { APPROVER_ROLES, PAYROLL_APPROVER_ROLES } from "../../bulk-upload/bulk-approval.service.js";
 import { ageDays } from "./payroll-shared.js";
 import { branchAllowed, callerScope } from "./scope-guard.js";
@@ -26,10 +27,11 @@ export const bulkUploadAdapter: ApprovalAdapter = {
     const res = await ctx.call("GET", "/api/bulk-upload/approvals/pending");
     const rows: any[] = (res?.data ?? []).slice(0, 200);
     if (rows.length === 0) return [];
-    const [isSuper, isBranch, isPayroll] = await Promise.all([
-      hasAnyRole(ctx.userId, "super_admin"),
-      hasAnyRole(ctx.userId, ...APPROVER_ROLES),
-      hasAnyRole(ctx.userId, ...PAYROLL_APPROVER_ROLES),
+    // Literal stage roles; super_admin is not a bypass (it must hold branch_head / payroll_head for the stage it is shown).
+    const isSuper = false;
+    const [isBranch, isPayroll] = await Promise.all([
+      holdsLiteralRole(ctx.userId, ...APPROVER_ROLES),
+      holdsLiteralRole(ctx.userId, ...PAYROLL_APPROVER_ROLES),
     ]);
     const me = await callerScope(ctx);
     const scopeCache = new Map<string, boolean>();

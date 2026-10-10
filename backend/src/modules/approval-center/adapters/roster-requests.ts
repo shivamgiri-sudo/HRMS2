@@ -5,16 +5,10 @@ import { rolesForKindAction } from "../../roster-requests/roster-requests.routes
 import { keepApproverOrBranchRole } from "./_scope.js";
 
 /**
- * The designated approver of every hub kind is the employee's effective approver (reporting manager / skip-level). These branch roles
- * are shown a request ONLY when the employee has no resolvable approver, and only inside their OWN branch; holding a role that is
- * merely able to decide (admin / hr / wfm / branch_head / super_admin) is not a designation.
+ * The ONLY designated person for every hub kind is the employee's effective approver (reporting manager / skip-level on leave).
+ * There is no role fallback: when no approver is resolvable nobody is shown the request in the popup (owner decision).
  */
-const FALLBACK_ROLES: Record<HubKind, string[]> = {
-  swap: ["admin", "hr", "wfm"],
-  weekoff_rejection: ["admin", "hr", "wfm", "branch_head"],
-  dispute: ["admin", "hr", "wfm", "branch_head", "process_manager"],
-  conflict: ["admin", "hr", "wfm"],
-};
+const NO_FALLBACK: string[] = [];
 
 /**
  * Roster Requests Hub: four sub-kinds, each listed from its own existing endpoint (exactly what the hub page loads)
@@ -63,7 +57,7 @@ export const rosterSwapAdapter: ApprovalAdapter = {
     if (!(await allowed(ctx, "swap"))) return [];
     const res = await ctx.call("GET", "/api/wfm-ext/roster/swaps", { query: { status: "pending" } });
     const out: ApprovalItem[] = [];
-    const swaps = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (s: any) => ({ employeeId: s.requester_employee_id }), FALLBACK_ROLES.swap);
+    const swaps = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (s: any) => ({ employeeId: s.requester_employee_id }), NO_FALLBACK);
     for (const s of swaps) {
       if (str(s.status) && str(s.status) !== "pending") continue;
       // The swap service refuses an approve until the counterpart accepted; only offer rows the manager can actually move.
@@ -108,7 +102,7 @@ export const rosterWeekoffAdapter: ApprovalAdapter = {
     if (!(await allowed(ctx, "weekoff_rejection"))) return [];
     const res = await ctx.call("GET", "/api/wfm/manager/weekoff-review");
     const out: ApprovalItem[] = [];
-    const weekoffs = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (w: any) => ({ employeeId: w.employee_id, employeeCode: w.employee_code }), FALLBACK_ROLES.weekoff_rejection);
+    const weekoffs = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (w: any) => ({ employeeId: w.employee_id, employeeCode: w.employee_code }), NO_FALLBACK);
     for (const w of weekoffs) {
       const id = mkId("weekoff_rejection", w.id);
       const raised = w.employee_ack_at ?? w.updated_at ?? w.created_at;
@@ -156,7 +150,7 @@ export const rosterDisputeAdapter: ApprovalAdapter = {
     if (!(await allowed(ctx, "dispute"))) return [];
     const res = await ctx.call("GET", "/api/roster-gov/manager-review-queue");
     const out: ApprovalItem[] = [];
-    const disputes = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }), FALLBACK_ROLES.dispute);
+    const disputes = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }), NO_FALLBACK);
     for (const r of disputes) {
       if (r.dispute_resolved_at) continue;
       const id = String(r.id);
@@ -203,7 +197,7 @@ export const rosterConflictAdapter: ApprovalAdapter = {
     if (!(await allowed(ctx, "conflict"))) return [];
     const res = await ctx.call("GET", "/api/wfm-ext/roster/conflicts", { query: { resolved: "false" } });
     const out: ApprovalItem[] = [];
-    const conflicts = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (c: any) => ({ employeeId: Array.isArray(c.employees_involved) ? c.employees_involved[0] : undefined }), FALLBACK_ROLES.conflict);
+    const conflicts = await keepApproverOrBranchRole(ctx.userId, (res?.data ?? []) as any[], (c: any) => ({ employeeId: Array.isArray(c.employees_involved) ? c.employees_involved[0] : undefined }), NO_FALLBACK);
     for (const c of conflicts) {
       if (str(c.status) === "resolved") continue;
       const id = String(c.id);

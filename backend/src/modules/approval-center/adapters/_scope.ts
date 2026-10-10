@@ -210,7 +210,7 @@ export async function keepInBranchByKey<T>(userId: string, rows: T[], keyOf: (r:
 /**
  * work_item rows from GET /api/work-inbox/my are matched by user id OR by ROLE QUEUE (every holder of the role, in every
  * branch). Keep a row only if it is assigned to the caller personally, or it is an unassigned role-queue item filed under a
- * branch the caller is allowed to act in (org-wide callers: any). Unknown items are dropped (fail closed).
+ * branch the caller is allowed to act in AND whose queue role the caller literally holds. Unknown items are dropped (fail closed).
  */
 export async function keepWorkItemsForCaller<T>(userId: string, rows: T[], idOf: (r: T) => unknown, scope?: CallerScope): Promise<T[]> {
   if (rows.length === 0) return rows;
@@ -218,16 +218,18 @@ export async function keepWorkItemsForCaller<T>(userId: string, rows: T[], idOf:
   const ids = [...new Set(rows.map((r) => nz(idOf(r))).filter(Boolean))];
   if (ids.length === 0) return [];
   const [rs] = await db.execute<RowDataPacket[]>(
-    `SELECT id, assigned_to_user_id, branch_id FROM work_item WHERE id IN (${ids.map(() => "?").join(",")})`,
+    `SELECT id, assigned_to_user_id, assigned_to_role, branch_id FROM work_item WHERE id IN (${ids.map(() => "?").join(",")})`,
     ids,
   );
-  const byId = new Map<string, { assignee: string; branch: string | null }>();
-  for (const r of rs as RowDataPacket[]) byId.set(String(r.id), { assignee: nz(r.assigned_to_user_id), branch: r.branch_id ? String(r.branch_id) : null });
+  const byId = new Map<string, { assignee: string; role: string; branch: string | null }>();
+  for (const r of rs as RowDataPacket[]) byId.set(String(r.id), { assignee: nz(r.assigned_to_user_id), role: nz(r.assigned_to_role), branch: r.branch_id ? String(r.branch_id) : null });
+  const myRoles = await callerRoleKeys(userId);
   return rows.filter((r) => {
     const w = byId.get(nz(idOf(r)));
     if (!w) return false;
     if (w.assignee) return w.assignee === userId;
-    return s.allows(w.branch);
+    // Unassigned role-queue item: the caller must LITERALLY hold the queue's role (an item with no role is shown to nobody).
+    return !!w.role && myRoles.includes(w.role) && s.allows(w.branch);
   });
 }
 

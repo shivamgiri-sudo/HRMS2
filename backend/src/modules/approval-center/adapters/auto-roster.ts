@@ -2,6 +2,7 @@ import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { hasScopedAccess } from "../../../shared/scopeAccess.js";
 import { callerScope } from "./_scope.js";
+import { holdsLiteralRole } from "./_scope.js";
 
 const AGE_HIGH_MS = 2 * 24 * 3600 * 1000;
 
@@ -16,6 +17,7 @@ export const autoRosterAdapter: ApprovalAdapter = {
   label: "Auto-roster plan",
   category: "Attendance",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, "process_manager"))) return [];
     const res = await ctx.call("GET", "/api/wfm/auto-roster/plans");
     const plans: any[] = ((res?.data ?? []) as any[]).filter((p) => str(p.approval_status) === "submitted");
     if (plans.length === 0) return [];

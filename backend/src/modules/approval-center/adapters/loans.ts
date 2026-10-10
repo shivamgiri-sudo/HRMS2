@@ -1,6 +1,6 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
-import { hasAnyRole } from "../../../shared/scopeAccess.js";
+import { holdsLiteralRole } from "./_scope.js";
 import { ageDays } from "./payroll-shared.js";
 import { callerScope, keepEmployeeRowsInBranch } from "./scope-guard.js";
 
@@ -14,7 +14,7 @@ export const loansAdapter: ApprovalAdapter = {
   label: "Loan / advance request",
   category: "Payroll",
   async list(ctx) {
-    if (!(await hasAnyRole(ctx.userId, "finance_head", "payroll_head", "admin", "super_admin"))) return [];
+    if (!(await holdsLiteralRole(ctx.userId, "finance_head", "payroll_head", "admin", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/payroll/loans/", { query: { status: "pending_approval", page: 1, limit: 200 } });
     // The module scopes by employee (and includes the caller's own row); keep only the caller's own branch (admin is branch-scoped,
     // finance_head / payroll_head org-wide) and never a loan for the caller themself.

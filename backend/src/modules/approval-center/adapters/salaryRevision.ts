@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { date, f, fields, iso, long, str } from "../format.js";
 import { callerScope, keepEmployeeRowsInBranch } from "./scope-guard.js";
+import { holdsLiteralRole } from "./_scope.js";
 
 /**
  * Salary date revision: Payroll Head / super admin only (endpoint 403s everyone else, which the service swallows). Both are org-wide
@@ -11,6 +12,7 @@ export const salaryRevisionAdapter: ApprovalAdapter = {
   label: "Salary date revision",
   category: "Payroll",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, "payroll_head", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/salary-revision/", { query: { status: "pending" } });
     const rows: any[] = await keepEmployeeRowsInBranch(await callerScope(ctx), ((res?.data ?? []) as any[]).slice(0, 200), (r) => r.employee_id);
     const out: ApprovalItem[] = [];

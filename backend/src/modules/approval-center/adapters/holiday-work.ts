@@ -1,7 +1,6 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
-import { hasAnyRole } from "../../../shared/scopeAccess.js";
-import { keepInBranch } from "./_scope.js";
+import { holdsLiteralRole, keepInBranch } from "./_scope.js";
 
 /** Same role list as the PATCH /holiday-work/requests/:id/approve guard (the list endpoint also admits finance / branch_wfm, who cannot decide). */
 const DECIDE_ROLES = ["admin", "super_admin", "payroll", "payroll_head", "wfm", "payroll_branch"];
@@ -16,7 +15,7 @@ export const holidayWorkAdapter: ApprovalAdapter = {
     const res = await ctx.call("GET", "/api/payroll/holiday-work/requests", { query: { status: "submitted" } });
     let rows: any[] = (res?.data ?? []).filter((r: any) => str(r.status) === "submitted").slice(0, 200);
     if (rows.length === 0) return [];
-    if (!(await hasAnyRole(ctx.userId, ...DECIDE_ROLES))) return [];
+    if (!(await holdsLiteralRole(ctx.userId, ...DECIDE_ROLES))) return [];
     // `admin` is in DECIDE_ROLES but is branch-scoped (owner ruling 2026-10-01): only org-wide callers see other branches' requests.
     // Requests with no branch are org-wide and so only org-wide callers see them.
     rows = await keepInBranch(ctx.userId, rows, (r: any) => ({ branchId: r.branch_id }));

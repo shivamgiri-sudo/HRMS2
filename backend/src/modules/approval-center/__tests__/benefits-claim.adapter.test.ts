@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../../shared/accessGuard.js", () => ({ getEmployeeForUser: vi.fn(async () => ({ id: "emp-me", employee_code: "E0" })) }));
 
@@ -6,6 +6,9 @@ import { benefitsClaimAdapter } from "../adapters/benefits-claim.js";
 import { fakeCtx } from "./_fakeCtx.js";
 import { beforeEach as __scopeBeforeEach } from "vitest";
 import { useScope, ORG_WIDE } from "./scope-fixture.js";
+import { heldRoles, rolesModule } from "./_literalRoles.js";
+vi.mock("../adapters/_roles.js", async () => (await import("./_literalRoles.js")).rolesModule);
+beforeEach(() => { heldRoles.list = ["hr"]; });
 __scopeBeforeEach(() => useScope({ ...ORG_WIDE, employeeId: "emp-me" }));
 
 const claim = (o: any = {}) => ({ id: "c1", employee_id: "emp-x", employee_name: "Nina", employee_code: "E7", claim_type: "medical", amount: "2500.50", claim_date: "2026-09-30", description: "Dental", receipt_ref: "R-9", status: "submitted", created_at: "2026-10-01T00:00:00Z", ...o });

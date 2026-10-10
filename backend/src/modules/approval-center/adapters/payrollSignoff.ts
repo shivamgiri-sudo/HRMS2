@@ -13,8 +13,8 @@ export const payrollSignoffAdapter: ApprovalAdapter = {
   category: "Payroll",
   async list(ctx) {
     const roles = await callerRoleKeys(ctx.userId);
-    const canFinance = roleMeets(roles, "finance", "payroll_head");
-    const canCeo = roleMeets(roles, "ceo");
+    const canFinance = roleMeets(roles, "finance", "payroll_head", "super_admin");
+    const canCeo = roleMeets(roles, "ceo", "super_admin");
     if (!canFinance && !canCeo) return [];
     const out: ApprovalItem[] = [];
 

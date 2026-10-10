@@ -1,5 +1,4 @@
 import { db } from "../../../db/mysql.js";
-import { expandRoles, normalizeRoleInputs } from "../../../platform/policy/index.js";
 
 /** Active role keys of a user (same source requireRole falls back to). */
 export async function callerRoleKeys(userId: string): Promise<string[]> {
@@ -8,15 +7,12 @@ export async function callerRoleKeys(userId: string): Promise<string[]> {
 }
 
 /**
- * Mirrors middleware/requireRole.ts: super_admin passes, otherwise the alias-expanded role sets must intersect.
- * Use it to pre-filter list rows on a role the decide endpoint demands (admin is NOT a wildcard here, matching requireRole).
+ * Does the caller literally hold one of the roles the stage designates? (Stricter than requireRole on purpose: the popup shows
+ * "pending ON ME", so super_admin / alias roles that merely PASS the endpoint guard are not enough.)
  */
 export function roleMeets(roleKeys: readonly string[], ...allowed: string[]): boolean {
-  const mine = normalizeRoleInputs(roleKeys);
-  if (mine.includes("super_admin" as never)) return true;
-  const want = expandRoles(normalizeRoleInputs(allowed));
-  const have = expandRoles(mine);
-  return want.some((r) => have.includes(r));
+  // LITERAL match: the caller must hold one of the exact roles the stage names. No super_admin wildcard, no alias expansion.
+  return allowed.some((r) => roleKeys.includes(r));
 }
 
 /** Age in whole days from a date-ish value; null when unparsable. */

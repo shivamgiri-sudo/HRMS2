@@ -2,6 +2,7 @@ import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, str } from "../format.js";
 import { maskStatutoryValues } from "../../employees/statutory-approval.routes.js";
 import { keepInBranch } from "./_scope.js";
+import { holdsLiteralRole } from "./_scope.js";
 
 const LABELS: Record<string, string> = {
   pan_number: "PAN",
@@ -34,6 +35,7 @@ export const statutoryChangeAdapter: ApprovalAdapter = {
   label: "Statutory data change",
   category: "People",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, "hr", "admin", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/statutory-change-requests/pending");
     // hr / admin are branch-scoped (owner ruling 2026-10-01): only their own branch's employees.
     const rows: any[] = await keepInBranch(ctx.userId, (res?.data ?? []).slice(0, 200), (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }));

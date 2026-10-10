@@ -17,7 +17,7 @@ const w = vi.hoisted(() => {
   const emps: Record<string, { code: string; branch: string; manager: string | null }> = {};
   const branches: Record<string, { name: string; code: string }> = {};
   const cand: Record<string, string> = {};
-  const workItems: Record<string, { assignee: string | null; branch: string | null }> = {};
+  const workItems: Record<string, { assignee: string | null; role?: string; branch: string | null }> = {};
   return { users, emps, branches, cand, workItems };
 });
 
@@ -85,7 +85,7 @@ vi.mock("../../../db/mysql.js", () => ({
       }
       if (/FROM ats_candidate WHERE id IN/.test(s)) return [params.filter((p) => w.cand[p]).map((p) => ({ id: p, branch_key: w.cand[p] })), []];
       if (/FROM work_item WHERE id IN/.test(s)) {
-        return [params.filter((p) => w.workItems[p]).map((p) => ({ id: p, assigned_to_user_id: w.workItems[p].assignee, branch_id: w.workItems[p].branch })), []];
+        return [params.filter((p) => w.workItems[p]).map((p) => ({ id: p, assigned_to_user_id: w.workItems[p].assignee, assigned_to_role: w.workItems[p].role ?? null, branch_id: w.workItems[p].branch })), []];
       }
       throw new Error(`unexpected SQL in scope test: ${s.slice(0, 120)}`);
     },
@@ -262,32 +262,32 @@ describe("holiday work", () => {
 
 describe("roster requests hub", () => {
   // e3 has no resolvable approver: only then do admin / hr / wfm (and branch_head where the module allows it) get the row, in their own branch.
-  it("swap: effective approver only; admin/hr/wfm only for an employee with no approver (own branch); never root / other managers", async () => {
+  it("swap: ONLY the effective approver; no admin/hr/wfm/super_admin fallback even when the employee has no approver (s3)", async () => {
     const routes = { "GET /api/wfm-ext/roster/swaps": { data: [
       { id: "s1", status: "pending", counterpart_status: "accepted", requester_employee_id: "e1" },
       { id: "s2", status: "pending", counterpart_status: "accepted", requester_employee_id: "e2" },
       { id: "s3", status: "pending", counterpart_status: "accepted", requester_employee_id: "e3" },
     ] } };
-    await table(rosterSwapAdapter, routes, { mgr1: ["s1"], mgr1b: [], mgr2: ["s2"], admin1: ["s3"], admin2: [], hr1: ["s3"], wfm1: ["s3"], wfm2: [], bh1: [], root: [], self1: ["s3"] });
+    await table(rosterSwapAdapter, routes, { mgr1: ["s1"], mgr1b: [], mgr2: ["s2"], admin1: [], admin2: [], hr1: [], wfm1: [], wfm2: [], bh1: [], root: [], self1: [] });
   });
   it("week-off rejection", async () => {
     const routes = { "GET /api/wfm/manager/weekoff-review": { data: [{ id: "w1", employee_id: "e1", employee_code: "E1" }, { id: "w2", employee_id: "e2", employee_code: "E2" }, { id: "w3", employee_id: "e3", employee_code: "E3" }] } };
-    await table(rosterWeekoffAdapter, routes, { mgr1: ["w1"], mgr1b: [], mgr2: ["w2"], admin1: ["w3"], hr2: [], bh1: ["w3"], bh2: [], wfm1: ["w3"], root: [], self1: ["w3"] });
+    await table(rosterWeekoffAdapter, routes, { mgr1: ["w1"], mgr1b: [], mgr2: ["w2"], admin1: [], hr2: [], bh1: [], bh2: [], wfm1: [], root: [], self1: [] });
   });
   it("dispute (rows carry employee_id only)", async () => {
     const routes = { "GET /api/roster-gov/manager-review-queue": { data: [{ id: "d1", employee_id: "e1" }, { id: "d2", employee_id: "e2" }, { id: "d3", employee_id: "e3" }] } };
-    await table(rosterDisputeAdapter, routes, { mgr1: ["d1"], mgr1b: [], mgr2: ["d2"], pm1: ["d3"], bh1: ["d3"], bh2: [], wfm1: ["d3"], root: [] });
+    await table(rosterDisputeAdapter, routes, { mgr1: ["d1"], mgr1b: [], mgr2: ["d2"], pm1: [], bh1: [], bh2: [], wfm1: [], root: [] });
   });
   it("conflict", async () => {
     const routes = { "GET /api/wfm-ext/roster/conflicts": { data: [{ id: "c1", status: "open", employees_involved: ["e1"], employee_names: ["A"] }, { id: "c2", status: "open", employees_involved: ["e2"], employee_names: ["B"] }, { id: "c3", status: "open", employees_involved: ["e3"], employee_names: ["C"] }] } };
-    await table(rosterConflictAdapter, routes, { mgr1: ["c1"], mgr2: ["c2"], admin1: ["c3"], admin2: [], hr1: ["c3"], bh1: [], root: [] });
+    await table(rosterConflictAdapter, routes, { mgr1: ["c1"], mgr2: ["c2"], admin1: [], admin2: [], hr1: [], bh1: [], root: [] });
   });
 });
 
 describe("roster preference", () => {
   const rows = [{ id: "p1", employee_id: "e1", employee_code: "E1", status: "pending" }, { id: "p2", employee_id: "e2", employee_code: "E2", status: "pending" }, { id: "p3", employee_id: "e3", employee_code: "E3", status: "pending" }];
-  it("effective approver; admin/hr/wfm only when the employee has no approver (own branch); never root", async () => {
-    await table(rosterPreferenceAdapter, { "GET /api/wfm/roster-preferences/pending": { data: rows } }, { mgr1: ["p1"], mgr1b: [], mgr2: ["p2"], wfm1: ["p3"], hr1: ["p3"], hr2: [], admin1: ["p3"], root: [], self1: ["p3"] });
+  it("ONLY the effective approver; no admin/hr/wfm/super_admin fallback", async () => {
+    await table(rosterPreferenceAdapter, { "GET /api/wfm/roster-preferences/pending": { data: rows } }, { mgr1: ["p1"], mgr1b: [], mgr2: ["p2"], wfm1: [], hr1: [], hr2: [], admin1: [], root: [], self1: [] });
   });
 });
 
@@ -323,14 +323,14 @@ describe("auto roster", () => {
   const plans = [{ id: "a1", approval_status: "submitted", process_id: "pr1", branch_id: "b1" }, { id: "a2", approval_status: "submitted", process_id: "pr2", branch_id: "b2" }];
   const routes = { "GET /api/wfm/auto-roster/plans": { data: plans }, "GET /api/wfm/auto-roster/masters": { data: { processes: [], branches: [] } } };
   it("process_manager only for plans of the branch on their own record", async () => {
-    await table(autoRosterAdapter, routes, { pm1: ["a1"], pm2: ["a2"], root: ["a1", "a2"], admin1: [] });
+    await table(autoRosterAdapter, routes, { pm1: ["a1"], pm2: ["a2"], root: [], admin1: [] });
   });
 });
 
 describe("rm change", () => {
   const rows = [{ id: "r1", status: "pending", branch_id: "b1", employee_id: "e1" }, { id: "r2", status: "pending", branch_id: "b2", employee_id: "e2" }];
   it("module treats admin/hr as org-wide: adapter clamps them to their branch", async () => {
-    await table(rmChangeAdapter, { "GET /api/rm-change/pending": { data: rows } }, { admin1: ["r1"], admin2: ["r2"], hr1: ["r1"], hr2: ["r2"], bh1: ["r1"], bh2: ["r2"], ceo: ["r1", "r2"], root: ["r1", "r2"], self1: [], ghost: [] });
+    await table(rmChangeAdapter, { "GET /api/rm-change/pending": { data: rows } }, { admin1: ["r1"], admin2: ["r2"], hr1: ["r1"], hr2: ["r2"], bh1: ["r1"], bh2: ["r2"], ceo: [], root: [], self1: [], ghost: [] });
   });
 });
 
@@ -374,14 +374,14 @@ describe("rejoin", () => {
 describe("statutory change", () => {
   const rows = [{ id: 1, status: "pending", employee_id: "e1", new_values: "{}", old_values: "{}" }, { id: 2, status: "pending", employee_id: "e2", new_values: "{}", old_values: "{}" }];
   it("hr/admin own branch only; org-wide all; never the person's own", async () => {
-    await table(statutoryChangeAdapter, { "GET /api/statutory-change-requests/pending": { data: rows } }, { hr1: ["1"], hr2: ["2"], admin1: ["1"], admin2: ["2"], ceo: ["1", "2"], root: ["1", "2"], self1: [] });
+    await table(statutoryChangeAdapter, { "GET /api/statutory-change-requests/pending": { data: rows } }, { hr1: ["1"], hr2: ["2"], admin1: ["1"], admin2: ["2"], ceo: [], root: ["1", "2"], self1: [] });
   });
 });
 
 describe("bank change", () => {
   const rows = [{ id: 11, status: "pending", employee_id: "e1" }, { id: 12, status: "pending", employee_id: "e2" }];
   it("payroll own branch; payroll_head/super org-wide", async () => {
-    await table(bankChangeAdapter, { "GET /api/payroll/bank-change-requests": { data: rows } }, { pay1: ["11"], pay2: ["12"], payhead: ["11", "12"], root: ["11", "12"], self1: [] });
+    await table(bankChangeAdapter, { "GET /api/payroll/bank-change-requests": { data: rows } }, { pay1: ["11"], pay2: ["12"], payhead: [] /* payroll_head is not a listed role: literal match */, root: ["11", "12"], self1: [] });
   });
 });
 
@@ -442,17 +442,17 @@ describe("BGV review", () => {
 describe("AWOL + work-inbox items (role-queue rows)", () => {
   Object.assign(w.workItems, {
     k1: { assignee: "u-mgr1", branch: "b1" },   // AWOL assigned by user id to the reporting manager
-    k2: { assignee: null, branch: "b2" },        // unassigned role-queue item of branch 2
+    k2: { assignee: null, role: "manager", branch: "b2" }, // unassigned role-queue item of branch 2, queue role = manager
     k3: { assignee: "u-mgr2", branch: "b2" },
   });
   // user ids in the DB are the same strings as our fixture keys with a "u-" prefix in the item; fixture users are keyed without it
   w.users["u-mgr1"] = w.users.mgr1; w.users["u-mgr2"] = w.users.mgr2;
   const my = (type: string, ids: string[]) => ({ data: ids.map((id) => ({ id, source_table: "work_item", item_type: type, status: "pending", title: id })) });
-  it("awol: the assignee, not every privileged role; role-queue case only in its own branch", async () => {
+  it("awol: the assignee, or a literal holder of the queue role in the case's branch; never admin / super_admin by privilege", async () => {
     const routes = { "GET /api/work-inbox/my": my("AWOL_SUSPECTED", ["k1", "k2", "k3"]), "GET /api/work-inbox/k1/awol-context": { data: {} }, "GET /api/work-inbox/k2/awol-context": { data: {} }, "GET /api/work-inbox/k3/awol-context": { data: {} } };
-    await table(awolAdapter, routes, { "u-mgr1": ["k1"], "u-mgr2": ["k3", "k2"], admin1: [], bh1: [], admin2: ["k2"], root: ["k2"] });
+    await table(awolAdapter, routes, { "u-mgr1": ["k1"], "u-mgr2": ["k3", "k2"], admin1: [], bh1: [], admin2: [], root: [] });
   });
   it("work_item view-only cards: same rule", async () => {
-    await table(workItemAdapter, { "GET /api/work-inbox/my": my("NOTICE_PERIOD_OVERRIDE_OPS", ["k1", "k2", "k3"]) }, { "u-mgr1": ["k1"], "u-mgr2": ["k3", "k2"], admin1: [], admin2: ["k2"], root: ["k2"] });
+    await table(workItemAdapter, { "GET /api/work-inbox/my": my("NOTICE_PERIOD_OVERRIDE_OPS", ["k1", "k2", "k3"]) }, { "u-mgr1": ["k1"], "u-mgr2": ["k3", "k2"], admin1: [], admin2: [], root: [] });
   });
 });
