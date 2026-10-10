@@ -31,7 +31,7 @@ const switchesAt = (code: number) => async (env: NodeJS.ProcessEnv) =>
   readSwitches(env, new Map([["policy.followup.meta_live", code], ["policy.followup.meta_old", code], ["policy.followup.he", code]]));
 const tick = (env: NodeJS.ProcessEnv, now: Date, deps: Record<string, unknown> = {}, code = 4) =>
   runQualifiedFollowupTick({ env, now, deps: { loadSwitches: switchesAt(code), sharedWaSentToday: h.waSent, runStageB: async () => null, ...deps } as never });
-const PASS = ["expire", "sync", "stops", "email", "wa", "call"];
+const PASS = ["expire", "sync", "stops", "wa", "call", "email"];
 
 function lockOk(got = 1) {
   h.conn.execute.mockImplementation(async (sql: string) => (String(sql).includes("GET_LOCK") ? [[{ got }]] : [[{ r: 1 }]]));
@@ -297,6 +297,6 @@ describe("unified tick (Task 9)", () => {
   it("stage B runs before stage A in each pass, on the same scope", async () => {
     const runStageB = vi.fn(async () => { h.calls.push("stageB"); return null; });
     await tick(live, at("11:00"), { runStageB }, 1);
-    expect(h.calls).toEqual(["expire", "sync", "stops", "stageB", "email", "wa", "call"]);
+    expect(h.calls).toEqual(["expire", "sync", "stops", "stageB", "wa", "call", "email"]);
   });
 });

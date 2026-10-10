@@ -159,9 +159,11 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
     if (!(s.killSwitch || s.sendsPaused) || tag === "dry_run") {
       await guarded("stage-b", () => deps.runStageB(s, tag, now, scope), null);
       // Answer-button switches are read once per tag pass (not per row), and not at all for dry_run rows (no email is sent).
-      t.email = await guarded("email", async () => runEmailStep(s, tag, now, scope, tag === "dry_run" ? EMAIL_BUTTONS_OFF : await loadEmailButtonSwitches()), emptyCounts());
+      // People who are already due their WhatsApp / call go first: the email step is the slow one (one SMTP send at a time) and a long
+      // email batch must never hold a WhatsApp that was due an hour ago.
       t.whatsapp = await guarded("whatsapp", () => runWhatsappStep(s, tag, now, scope), emptyCounts());
       t.call = await guarded("call", () => runCallStep(s, tag, now, scope), emptyCounts());
+      t.email = await guarded("email", async () => runEmailStep(s, tag, now, scope, tag === "dry_run" ? EMAIL_BUTTONS_OFF : await loadEmailButtonSwitches()), emptyCounts());
     }
     r.byTag[tag] = t;
     r.email = add(r.email, t.email); r.whatsapp = add(r.whatsapp, t.whatsapp); r.call = add(r.call, t.call);
