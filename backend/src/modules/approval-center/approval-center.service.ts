@@ -12,7 +12,22 @@ export interface ListResult {
   counts: Record<string, number>;
   /** Kinds whose list call failed — shown as a soft warning, never hides the rest. */
   failed: Array<{ kind: string; label: string; reason: string }>;
+  /** Pending items older than the freshness window that are NOT listed (they remain on their module pages). */
+  staleHidden: number;
   generatedAt: string;
+}
+
+/**
+ * Freshness window: the popup is "pending on me, now". Items submitted more than this many days ago are not listed (they are
+ * counted in `staleHidden` and stay on their own pages). APPROVAL_CENTER_MAX_AGE_DAYS=0 disables the window. Read per call so
+ * tests and ops can change it without a restart-order dependency.
+ */
+export const DEFAULT_MAX_AGE_DAYS = 60;
+export function maxAgeDays(): number {
+  const raw = process.env.APPROVAL_CENTER_MAX_AGE_DAYS;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_MAX_AGE_DAYS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_AGE_DAYS;
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -69,10 +84,21 @@ async function buildList(ctx: LoopbackCtx, opts: { fresh?: boolean }): Promise<L
 
   const seen = new Set<string>();
   const items: ApprovalItem[] = [];
+  const windowDays = maxAgeDays();
+  const cutoff = windowDays > 0 ? Date.now() - windowDays * 86_400_000 : null;
+  let staleHidden = 0;
   for (const batch of settled) {
     for (const it of batch) {
       if (seen.has(it.uid)) continue;
       seen.add(it.uid);
+      // Items without a usable submittedAt cannot be aged, so they stay visible.
+      if (cutoff !== null && it.submittedAt) {
+        const t = new Date(it.submittedAt).getTime();
+        if (Number.isFinite(t) && t < cutoff) {
+          staleHidden++;
+          continue;
+        }
+      }
       items.push(it);
     }
   }
@@ -91,7 +117,7 @@ async function buildList(ctx: LoopbackCtx, opts: { fresh?: boolean }): Promise<L
     it.noReject = m.noReject === true || m.approveOnly === true || m.rejectUnsupported === true || m.rejectViewOnly === true;
     it.noApprove = m.approveViewOnly === true;
   }
-  const value: ListResult = { items, counts, failed, generatedAt: new Date().toISOString() };
+  const value: ListResult = { items, counts, failed, staleHidden, generatedAt: new Date().toISOString() };
   cache.set(ctx.userId, { exp: Date.now() + CACHE_TTL_MS, value });
   return value;
 }

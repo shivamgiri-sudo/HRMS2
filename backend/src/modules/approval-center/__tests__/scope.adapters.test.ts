@@ -26,6 +26,7 @@ Object.assign(w.branches, { b1: { name: "Noida", code: "NOI" }, b2: { name: "Pun
 Object.assign(w.emps, {
   e1: { code: "E1", branch: "b1", manager: "m1" },   // employee in branch 1, reports to m1
   e2: { code: "E2", branch: "b2", manager: "m2" },   // employee in branch 2, reports to m2
+  e3: { code: "E3", branch: "b1", manager: null },    // employee in branch 1 with NO resolvable approver (module falls back to hr / admin)
   m1: { code: "M1", branch: "b1", manager: null },
   m1b: { code: "M1B", branch: "b1", manager: null },  // another manager of branch 1, NOT e1's reporting manager
   m2: { code: "M2", branch: "b2", manager: null },
@@ -110,7 +111,9 @@ vi.mock("../adapters/_roles.js", () => ({
   callerRoleKeys: async (uid: string) => rolesOf(uid),
 }));
 vi.mock("../../wfm/wfm.regularization.secure.routes.js", () => ({
-  nextRegularizationStatus: () => "next",
+  // Real stage machine: manager acts at pending, wfm at manager_approved, payroll at payroll_pending, super_admin anywhere.
+  nextRegularizationStatus: (role: string, status: string) =>
+    role === "super_admin" || (role === "manager" && status === "pending") || (role === "wfm" && status === "manager_approved") || (role === "payroll" && status === "payroll_pending") ? "next" : null,
   // Mirrors regularizationReviewRole: payroll stage = role only; manager = effective approver; wfm = scoped (same branch here).
   regularizationReviewRole: async (uid: string, rid: string) => {
     const row = (globalThis as any).__regRows?.find((r: any) => r.id === rid);
@@ -130,6 +133,7 @@ vi.mock("../../roster-requests/roster-requests.routes.js", () => ({
     : ["admin", "hr", "wfm", "manager", "assistant_manager", "team_leader"],
 }));
 vi.mock("../../exit/exit.routes.js", () => ({
+  CLEARANCE_ROLE_MAP: { manager: ["manager", "assistant_manager", "process_manager", "branch_head"], hr: ["hr", "admin"], wfm: ["wfm", "admin"], payroll: ["payroll", "payroll_head", "hr"] },
   canClearTask: (area: string, roles: string[]) =>
     roles.some((r) => ["admin", "super_admin"].includes(r)) ||
     (area === "manager" ? ["manager", "assistant_manager", "process_manager", "branch_head"] : area === "hr" ? ["hr", "admin"] : ["payroll", "payroll_head"]).some((r) => roles.includes(r)),
@@ -186,21 +190,25 @@ async function table(adapter: ApprovalAdapter, routes: Routes, expected: Record<
 }
 
 describe("leave", () => {
-  const row = (id: string, emp: string, status = "pending") => ({ id, employee_id: emp, employee_code: w.emps[emp].code, status, can_review: true, employee_name: "X", leave_type_name: "CL", total_days: 1, from_date: "2026-10-10", to_date: "2026-10-10", applied_at: "2026-10-01" });
+  const row = (id: string, emp: string, status = "pending", over: any = {}) => ({ id, employee_id: emp, employee_code: w.emps[emp].code, status, can_review: true, employee_name: "X", leave_type_name: "CL", total_days: 1, from_date: "2026-10-10", to_date: "2026-10-10", applied_at: "2026-10-01", legacy_leave_id: null, ...over });
   // The leave module\'s own can_review flag, simulated at its widest: manager stage true for everyone, exception tier true for branch roles.
   const routesFor = (uid: string) => ({
-    "GET /api/leave/requests": { data: [row("L1", "e1"), row("L2", "e2"), row("L3", "e1", "pending_branch_head"), row("L4", "e2", "pending_branch_head")].map((r) => ({ ...r, can_review: r.status === "pending" || ["branch_head", "hr", "admin", "super_admin", "ceo"].some((x) => rolesOf(uid).includes(x)) })) },
+    "GET /api/leave/requests": { data: [
+      row("L1", "e1"), row("L2", "e2"), row("L3", "e1", "pending_branch_head"), row("L4", "e2", "pending_branch_head"),
+      row("L5", "e3"),                                  // employee with no resolvable approver
+      row("L6", "e1", "pending", { legacy_leave_id: "88" }), // imported from the legacy system
+    ].map((r) => ({ ...r, can_review: r.status === "pending" || ["branch_head", "hr", "admin", "super_admin", "ceo"].some((x) => rolesOf(uid).includes(x)) })) },
   });
-  it("effective approver anywhere, branch reviewers only in their own branch, org-wide everything, never own", async () => {
+  it("only the DESIGNATED approver of the current stage sees it: effective approver, literal branch_head at the exception tier, hr/admin only when no approver", async () => {
     const exp: Record<string, string[]> = {
-      mgr1: ["L1"],            // reporting manager of e1 (manager stage)
+      mgr1: ["L1"],            // reporting manager of e1 (manager stage); L6 is legacy-imported and hidden
       mgr1b: [],               // manager of the same branch who is NOT e1's reporting manager: module flag true, still not theirs
       mgr2: ["L2"],
-      hr1: ["L1", "L3"], hr2: ["L2", "L4"],
-      admin1: ["L1", "L3"], admin2: ["L2", "L4"],
-      bh1: ["L1", "L3"], bh2: ["L2", "L4"],
-      ceo: ["L1", "L2", "L3", "L4"], root: ["L1", "L2", "L3", "L4"],
-      self1: [],               // admin who IS e1: own leave excluded; e2's is another branch
+      hr1: ["L5"], hr2: [],    // hr was able to review L1/L3, but is designated only for an employee with no approver (own branch)
+      admin1: ["L5"], admin2: [],
+      bh1: ["L3"], bh2: ["L4"], // branch-head exception tier is theirs; manager-stage rows are not
+      ceo: [], root: [],       // org-wide / super_admin: able to review, not designated
+      self1: ["L5"],           // admin/hr who IS e1: own leave (L1/L3/L6) excluded, e2's is another branch; L5 (no approver, same branch) is theirs
       ghost: [],               // no employee record -> no branch -> sees nothing
     };
     for (const [uid, want] of Object.entries(exp)) expect({ uid, ids: await idsFor(leaveAdapter, uid, routesFor(uid)) }).toEqual({ uid, ids: want });
@@ -213,17 +221,21 @@ describe("regularization", () => {
     { id: "r2", employee_id: "e2", status: "pending" },
     { id: "r3", employee_id: "e1", status: "payroll_pending" },
     { id: "r4", employee_id: "e2", status: "payroll_pending" },
+    { id: "r5", employee_id: "e1", status: "manager_approved" },
+    { id: "r6", employee_id: "e2", status: "manager_approved" },
+    { id: "r7", employee_id: "e3", status: "pending" }, // no resolvable approver
   ].map((r) => ({ ...r, employee_code: w.emps[r.employee_id].code, decision_support: { canApproveNow: true }, created_at: "2026-10-01" }));
   (globalThis as any).__regRows = rows;
   const routes = { "GET /api/wfm/regularizations": { data: rows } };
-  it("manager = effective approver, wfm same branch, payroll stage branch-clamped except payroll_head/super", async () => {
+  it("stage-designated: manager = effective approver (stage 1), wfm same branch (stage 2), payroll (stage 3); super_admin/admin/hr are not a blanket pass", async () => {
     await table(regularizationAdapter, routes, {
       mgr1: ["r1"], mgr1b: [], mgr2: ["r2"],
-      wfm1: ["r1"], wfm2: ["r2"],
+      wfm1: ["r5"], wfm2: ["r6"],         // WFM stage only (manager_approved), same branch
       pay1: ["r3"], pay2: ["r4"],         // payroll role is branch-scoped at the 3rd stage
-      payhead: ["r3", "r4"], root: ["r1", "r2", "r3", "r4"],
+      payhead: ["r3", "r4"],
+      root: ["r7"],                       // super_admin: only the row nobody can be resolved for (module's privileged fallback)
       admin1: [], hr1: [],
-      self1: [],                      // e1 himself: never his own; payroll role but r4 is another branch
+      self1: [],                          // e1 himself: never his own; payroll role but r4 is another branch
     });
   });
 });
@@ -249,31 +261,33 @@ describe("holiday work", () => {
 });
 
 describe("roster requests hub", () => {
-  it("swap: effective approver, or admin/hr/wfm inside the branch; not other managers, not other branches", async () => {
+  // e3 has no resolvable approver: only then do admin / hr / wfm (and branch_head where the module allows it) get the row, in their own branch.
+  it("swap: effective approver only; admin/hr/wfm only for an employee with no approver (own branch); never root / other managers", async () => {
     const routes = { "GET /api/wfm-ext/roster/swaps": { data: [
       { id: "s1", status: "pending", counterpart_status: "accepted", requester_employee_id: "e1" },
       { id: "s2", status: "pending", counterpart_status: "accepted", requester_employee_id: "e2" },
+      { id: "s3", status: "pending", counterpart_status: "accepted", requester_employee_id: "e3" },
     ] } };
-    await table(rosterSwapAdapter, routes, { mgr1: ["s1"], mgr1b: [], mgr2: ["s2"], admin1: ["s1"], admin2: ["s2"], hr1: ["s1"], wfm2: ["s2"], bh1: [], root: ["s1", "s2"], self1: [] });
+    await table(rosterSwapAdapter, routes, { mgr1: ["s1"], mgr1b: [], mgr2: ["s2"], admin1: ["s3"], admin2: [], hr1: ["s3"], wfm1: ["s3"], wfm2: [], bh1: [], root: [], self1: ["s3"] });
   });
   it("week-off rejection", async () => {
-    const routes = { "GET /api/wfm/manager/weekoff-review": { data: [{ id: "w1", employee_id: "e1", employee_code: "E1" }, { id: "w2", employee_id: "e2", employee_code: "E2" }] } };
-    await table(rosterWeekoffAdapter, routes, { mgr1: ["w1"], mgr1b: [], mgr2: ["w2"], admin1: ["w1"], hr2: ["w2"], bh1: ["w1"], bh2: ["w2"], wfm1: ["w1"], root: ["w1", "w2"], self1: [] });
+    const routes = { "GET /api/wfm/manager/weekoff-review": { data: [{ id: "w1", employee_id: "e1", employee_code: "E1" }, { id: "w2", employee_id: "e2", employee_code: "E2" }, { id: "w3", employee_id: "e3", employee_code: "E3" }] } };
+    await table(rosterWeekoffAdapter, routes, { mgr1: ["w1"], mgr1b: [], mgr2: ["w2"], admin1: ["w3"], hr2: [], bh1: ["w3"], bh2: [], wfm1: ["w3"], root: [], self1: ["w3"] });
   });
   it("dispute (rows carry employee_id only)", async () => {
-    const routes = { "GET /api/roster-gov/manager-review-queue": { data: [{ id: "d1", employee_id: "e1" }, { id: "d2", employee_id: "e2" }] } };
-    await table(rosterDisputeAdapter, routes, { mgr1: ["d1"], mgr1b: [], mgr2: ["d2"], pm1: ["d1"], bh1: ["d1"], bh2: ["d2"], wfm1: ["d1"], root: ["d1", "d2"] });
+    const routes = { "GET /api/roster-gov/manager-review-queue": { data: [{ id: "d1", employee_id: "e1" }, { id: "d2", employee_id: "e2" }, { id: "d3", employee_id: "e3" }] } };
+    await table(rosterDisputeAdapter, routes, { mgr1: ["d1"], mgr1b: [], mgr2: ["d2"], pm1: ["d3"], bh1: ["d3"], bh2: [], wfm1: ["d3"], root: [] });
   });
   it("conflict", async () => {
-    const routes = { "GET /api/wfm-ext/roster/conflicts": { data: [{ id: "c1", status: "open", employees_involved: ["e1"], employee_names: ["A"] }, { id: "c2", status: "open", employees_involved: ["e2"], employee_names: ["B"] }] } };
-    await table(rosterConflictAdapter, routes, { mgr1: ["c1"], mgr2: ["c2"], admin1: ["c1"], admin2: ["c2"], hr1: ["c1"], bh1: [], root: ["c1", "c2"] });
+    const routes = { "GET /api/wfm-ext/roster/conflicts": { data: [{ id: "c1", status: "open", employees_involved: ["e1"], employee_names: ["A"] }, { id: "c2", status: "open", employees_involved: ["e2"], employee_names: ["B"] }, { id: "c3", status: "open", employees_involved: ["e3"], employee_names: ["C"] }] } };
+    await table(rosterConflictAdapter, routes, { mgr1: ["c1"], mgr2: ["c2"], admin1: ["c3"], admin2: [], hr1: ["c3"], bh1: [], root: [] });
   });
 });
 
 describe("roster preference", () => {
-  const rows = [{ id: "p1", employee_id: "e1", employee_code: "E1", status: "pending" }, { id: "p2", employee_id: "e2", employee_code: "E2", status: "pending" }];
-  it("effective approver, or admin/hr/wfm inside the branch", async () => {
-    await table(rosterPreferenceAdapter, { "GET /api/wfm/roster-preferences/pending": { data: rows } }, { mgr1: ["p1"], mgr1b: [], mgr2: ["p2"], wfm1: ["p1"], hr2: ["p2"], admin1: ["p1"], root: ["p1", "p2"], self1: [] });
+  const rows = [{ id: "p1", employee_id: "e1", employee_code: "E1", status: "pending" }, { id: "p2", employee_id: "e2", employee_code: "E2", status: "pending" }, { id: "p3", employee_id: "e3", employee_code: "E3", status: "pending" }];
+  it("effective approver; admin/hr/wfm only when the employee has no approver (own branch); never root", async () => {
+    await table(rosterPreferenceAdapter, { "GET /api/wfm/roster-preferences/pending": { data: rows } }, { mgr1: ["p1"], mgr1b: [], mgr2: ["p2"], wfm1: ["p3"], hr1: ["p3"], hr2: [], admin1: ["p3"], root: [], self1: ["p3"] });
   });
 });
 
@@ -288,12 +302,12 @@ describe("team roster", () => {
     "GET /api/wfm/team-roster/submissions/3": { data: { permissions: perms(true), submission: {}, lines: [] } },
     "GET /api/wfm/team-roster/submissions/4": { data: { permissions: perms(true), submission: {}, lines: [] } },
   });
-  it("manager step: named approver; WFM step: branch; admin (a module-global approver) only own branch", async () => {
+  it("manager step: ONLY the named approver; WFM step: literal wfm role in the submitter's branch; admin / super_admin (module-global approvers) are not designated", async () => {
     const exp: Record<string, string[]> = {
       mgr1: ["1"], mgr1b: [], mgr2: ["2"],            // module says canManagerDecide for everyone here; only the named approver may see it
       wfm1: ["3"], wfm2: ["4"],
-      admin1: ["1", "3"], admin2: ["2", "4"],
-      root: ["1", "2", "3", "4"],
+      admin1: [], admin2: [],
+      root: [],
     };
     for (const [uid, want] of Object.entries(exp)) {
       // mgr*: module never grants WFM step to managers
@@ -322,21 +336,21 @@ describe("rm change", () => {
 
 describe("exit resignation", () => {
   const x = (id: string, emp: string) => ({ id, status: "submitted", employee_id: emp, employee_code: w.emps[emp].code, initiated_by: "employee", initiated_by_user_id: `u-${emp}` });
-  const routes = { "GET /api/exit": (o: any) => ({ data: o.query.status === "submitted" ? [x("x1", "e1"), x("x2", "e2")] : [] }) };
-  it("effective approver (not other managers), admin/hr/branch_head own branch only", async () => {
-    await table(exitResignationAdapter, routes, { mgr1: ["x1"], mgr1b: [], mgr2: ["x2"], admin1: ["x1"], hr2: ["x2"], bh1: ["x1"], bh2: ["x2"], pm1: [], root: ["x1", "x2"], self1: [] });
+  const routes = { "GET /api/exit": (o: any) => ({ data: o.query.status === "submitted" ? [x("x1", "e1"), x("x2", "e2"), x("x3", "e3")] : [] }) };
+  it("effective approver only; admin/hr/branch_head just for an employee with no approver (own branch); never root / other managers", async () => {
+    await table(exitResignationAdapter, routes, { mgr1: ["x1"], mgr1b: [], mgr2: ["x2"], admin1: ["x3"], hr1: ["x3"], hr2: [], bh1: ["x3"], bh2: [], pm1: [], root: [], self1: ["x3"] });
   });
 });
 
 describe("exit clearance", () => {
   const t = (id: string, area: string, emp: string) => ({ id, clearance_area: area, exit_request_id: `x-${emp}`, employee_id: emp, employee_code: w.emps[emp].code, status: "pending" });
-  const routes = { "GET /api/exit/clearance/queue": { data: [t("t1", "manager", "e1"), t("t2", "hr", "e1"), t("t3", "hr", "e2"), t("t4", "manager", "e2")] } };
-  it("manager handover to the leaver's manager; departmental tasks to that department in the same branch", async () => {
+  const routes = { "GET /api/exit/clearance/queue": { data: [t("t1", "manager", "e1"), t("t2", "hr", "e1"), t("t3", "hr", "e2"), t("t4", "manager", "e2"), t("t5", "manager", "e3")] } };
+  it("manager handover to the leaver's manager only (admin/branch_head just when none resolvable); departmental tasks to holders of that area's role in the same branch; never root", async () => {
     await table(exitClearanceAdapter, routes, {
       mgr1: ["t1"], mgr1b: [], mgr2: ["t4"],
       hr1: ["t2"], hr2: ["t3"],
-      admin1: ["t1", "t2"], admin2: ["t3", "t4"],
-      bh1: ["t1"], bh2: ["t4"], root: ["t1", "t2", "t3", "t4"],
+      admin1: ["t2", "t5"], admin2: ["t3"],
+      bh1: ["t5"], bh2: [], root: [],
     });
   });
 });

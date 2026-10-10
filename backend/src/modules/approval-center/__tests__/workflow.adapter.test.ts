@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { workflowAdapter } from "../adapters/workflow.js";
 import { fakeCtx } from "./_fakeCtx.js";
 import { beforeEach as __scopeBeforeEach } from "vitest";
-import { useScope, ORG_WIDE } from "./scope-fixture.js";
+import { useScope, ORG_WIDE, person } from "./scope-fixture.js";
 __scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const row = (o: any = {}) => ({
@@ -12,8 +12,30 @@ const row = (o: any = {}) => ({
   requested_by_name: "Asha", ...o,
 });
 
+/** The caller is requester u-other's reporting manager (effective approver), same branch. */
+const asApprover = () => useScope(person({ roles: ["manager"] }), { users: { "u-other": { employeeId: "e-other", branchId: "b-noi" } }, approvers: { "e-other": "emp-me" } });
+
 describe("workflowAdapter", () => {
+  it("manager-type step: only the effective approver; super_admin / another manager / hr are not shown it", async () => {
+    const routes = { "GET /api/workflow/requests/pending": { data: [row()] } };
+    const world = { users: { "u-other": { employeeId: "e-other", branchId: "b-noi" } }, approvers: { "e-other": "emp-approver" } };
+    useScope(person({ employeeId: "emp-approver", roles: ["manager"] }), world);
+    expect((await workflowAdapter.list(fakeCtx(routes).ctx)).map((i) => i.id)).toEqual(["r1"]);
+    for (const roles of [["super_admin"], ["manager"], ["hr"], ["admin"]]) {
+      useScope(person({ roles, orgWide: roles[0] === "super_admin" }), world);
+      expect(await workflowAdapter.list(fakeCtx(routes).ctx), roles.join()).toEqual([]);
+    }
+  });
+  it("role-owned step: caller must literally hold the step role; super_admin without it is not shown", async () => {
+    const routes = { "GET /api/workflow/requests/pending": { data: [row({ approver_role: "hr" })] } };
+    const world = { users: { "u-other": { employeeId: "e-other", branchId: "b-noi" } } };
+    useScope(person({ roles: ["hr"] }), world);
+    expect((await workflowAdapter.list(fakeCtx(routes).ctx)).map((i) => i.id)).toEqual(["r1"]);
+    useScope(person({ roles: ["super_admin"], orgWide: true }), world);
+    expect(await workflowAdapter.list(fakeCtx(routes).ctx)).toEqual([]);
+  });
   it("maps fields, flags overdue, deep-links", async () => {
+    asApprover();
     const { ctx } = fakeCtx({ "GET /api/workflow/requests/pending": { data: [row()] } });
     const [it] = await workflowAdapter.list(ctx);
     expect(it.uid).toBe("workflow:r1");
@@ -25,6 +47,7 @@ describe("workflowAdapter", () => {
     expect(labels).toEqual(expect.arrayContaining(["Workflow", "Requested by", "Summary", "Current step", "Approver role", "Submitted"]));
   });
   it("drops own requests, job requisitions and non-pending", async () => {
+    asApprover();
     const { ctx } = fakeCtx({
       "GET /api/workflow/requests/pending": { data: [
         row({ id: "own", requested_by: "me-user" }),
