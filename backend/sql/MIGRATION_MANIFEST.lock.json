@@ -1026,7 +1026,9 @@
     "migrations/2133_qualified_followup.sql",
     "migrations/2134_qualified_followup_attempts.sql",
     "migrations/2135_requisition_streams.sql",
-    "migrations/2136_he_match_outcome_reason.sql"
+    "migrations/2136_he_match_outcome_reason.sql",
+    "2149_agent_master_changes.sql",
+    "2151_ahm_dashboard_snapshot.sql"
   ],
   "approvedDeletions": [
     {
@@ -1481,6 +1483,7 @@
     "208_sync_leave_from_db_bill.sql",
     "210_ml_rename_to_medical_leave.sql",
     "2117_alt_rx_dump.sql",
+    "2150_agent_month_db_masmis.sql",
     "215_inactive_access_and_otp_auth.sql",
     "215_inactive_access_and_otp_auth_no_trigger.sql",
     "216_missing_page_catalog_entries.sql",

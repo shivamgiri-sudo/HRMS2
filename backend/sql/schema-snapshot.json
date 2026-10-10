@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1261,
-  "columnCount": 18346,
+  "tableCount": 1264,
+  "columnCount": 18367,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -74,6 +74,27 @@
       "resolved_at",
       "resolution_note",
       "created_at"
+    ],
+    "agent_target_change_log": [
+      "id",
+      "process_key",
+      "agent_key",
+      "field_name",
+      "old_value",
+      "new_value",
+      "source",
+      "batch_id",
+      "changed_by",
+      "changed_at"
+    ],
+    "ahm_dashboard_snapshot": [
+      "cache_key",
+      "from_date",
+      "to_date",
+      "region",
+      "payload",
+      "compute_ms",
+      "computed_at"
     ],
     "ai_company_knowledge": [
       "id",
@@ -15223,6 +15244,12 @@
       "annual_report_year",
       "created_at",
       "updated_at"
+    ],
+    "pre_agent_am": [
+      "emp_id",
+      "am",
+      "updated_at",
+      "updated_by"
     ],
     "pre_auth_challenge": [
       "id",

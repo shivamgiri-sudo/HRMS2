@@ -1,7 +1,7 @@
 import { refreshAhmSnapshot, currentMonthRange, type AhmFilters } from "./ahm-dashboard.service.js";
 
 /**
- * Keeps the AHM dashboard's common ranges warm in mas_hrms.ahm_dashboard_snapshot (sql/1876) so
+ * Keeps the AHM dashboard's common ranges warm in mas_hrms.ahm_dashboard_snapshot (sql/2151) so
  * a viewer almost never pays the ~20-45s live-aggregation cost (see ahm-dashboard.service.ts's
  * getAhmDashboard for why that cost exists today). Off unless AHM_SNAPSHOT_SCHEDULER_ENABLED=true
  * -- its own flag, not nested in ENABLE_SCHEDULERS, the same lesson learned from the MIS email

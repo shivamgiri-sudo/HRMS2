@@ -1336,6 +1336,8 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2134_qualified_followup_attempts.sql", // Registered 2026-10-07. qualified_followup: per-channel attempts/errors, wa_message_id, missing_details, step_claimed_at, test row tag, idx_qfu_callfile. information_schema-guarded, re-runnable.
   "migrations/2135_requisition_streams.sql", // Registered 2026-10-07. requisition_stream (+ _day, _event, _plan, _match), requisition_stream.version, created_at/updated_at DATETIME(6), requisition_stream_plan.idx_rsp_date and qualified_followup.owner. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable.
   "migrations/2136_he_match_outcome_reason.sql", // Registered 2026-10-08. he_match_outcome_reason (one no-show/decline reason per he_match, last tap wins). CREATE TABLE IF NOT EXISTS only, re-runnable.
+  "2149_agent_master_changes.sql", // Registered 2026-10-10 (Tausif AHM port; renumbered from 1785, taken by the leave/exit CC file). mas_hrms.agent_target_change_log (per-field change log for Housing Owner/Premium agents) and mas_hrms.pre_agent_am (Premium AM side table). CREATE TABLE IF NOT EXISTS only; mas_hrms, so the app user can create them.
+  "2151_ahm_dashboard_snapshot.sql", // Registered 2026-10-10 (Tausif AHM port; renumbered from 1876 to sit above 2150). mas_hrms.ahm_dashboard_snapshot: durable pre-computed AHM dashboard payloads, read and written by getAhmDashboard and the AHM_SNAPSHOT_SCHEDULER_ENABLED worker. CREATE TABLE IF NOT EXISTS only. 2150_agent_month_db_masmis.sql is deliberately NOT listed: it ALTERs db_masmis, which the app user cannot do.
 ];
 
 export type MigrationHealth = {

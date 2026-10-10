@@ -126,7 +126,7 @@ const COUNTERS = `
  * index when ~100% of rows match it), and the 11-query round trip took ~20-45s against this DB --
  * past the frontend's original 30s request timeout, which is what actually produced "Could not
  * load the AHM dashboard." Snapshotted per (from, to, region) in mas_hrms.ahm_dashboard_snapshot
- * (sql/1876 -- lives in mas_hrms, not db_masmis, since it is derived/computed state and the app
+ * (sql/2151 -- lives in mas_hrms, not db_masmis, since it is derived/computed state and the app
  * user has full rights there, unlike the raw table). ahm-snapshot.worker.ts proactively refreshes
  * the common ranges every few minutes (behind AHM_SNAPSHOT_SCHEDULER_ENABLED) so a viewer rarely
  * computes live at all; this function still falls back to a live compute (and saves its own
