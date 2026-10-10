@@ -102,13 +102,17 @@ export function ruleReply(intent: ReplyIntent, f: FactSheet): string | null {
     case "ask_documents":
       return `${hi}\n\nPlease carry the following: ${f.documents}.\n\n${sig(f)}`;
     case "ask_job":
-      return f.jobDescription ? `${hi}\n\nThe role is ${f.role}. ${f.jobDescription}\n\n${sig(f)}` : null;
+      return f.jobDescription
+        ? `${hi}\n\nThe role is ${f.role} at ${f.company}, ${f.branch}. ${f.jobDescription}\n\n${sig(f)}`
+        : `${hi}\n\nThis is for the ${f.role} role at ${f.company}, ${f.branch}. Our team will explain the job in detail at the walk-in.\n\n${sig(f)}`;
     case "ask_salary":
       return f.salary ? `${hi}\n\nFor the ${f.role} role, the salary range is ${f.salary}. The exact offer is discussed after your interview.\n\n${sig(f)}` : null;
     case "ask_shift":
       return f.shift ? `${hi}\n\nThe role works in ${f.shift}.\n\n${sig(f)}` : null;
     case "ask_eligibility":
-      return f.education || f.experience ? `${hi}\n\nFor the ${f.role} role we look for: ${[f.education && `education: ${f.education}`, f.experience && `experience: ${f.experience}`].filter(Boolean).join("; ")}. Our team will confirm your eligibility at the walk-in.\n\n${sig(f)}` : null;
+      return f.education || f.experience
+        ? `${hi}\n\nFor the ${f.role} role we look for: ${[f.education && `education: ${f.education}`, f.experience && `experience: ${f.experience}`].filter(Boolean).join("; ")}. Our team will confirm your eligibility at the walk-in.\n\n${sig(f)}`
+        : `${hi}\n\nOur team will check your eligibility for the ${f.role} role at the walk-in. Please carry: ${f.documents}.\n\n${sig(f)}`;
     case "assessment_link":
       return f.assessmentLink ? `${hi}\n\nHere is your assessment link: ${f.assessmentLink}\nPlease complete it before your walk-in.\n\n${sig(f)}` : null;
     case "reschedule":
@@ -138,7 +142,7 @@ export function ruleIntent(text: string): { intent: ReplyIntent; confidence: num
   if (has(/\b(document|documents|bring|carry|certificate|aadhaar|pan)\b/)) return { intent: "ask_documents", confidence: 0.85 };
   if (has(/\b(link|assessment|test|bmi)\b/)) return { intent: "assessment_link", confidence: 0.75 };
   if (has(/\b(eligible|eligibility|fresher|12th|graduate|graduation|experience|qualification|age limit)\b/)) return { intent: "ask_eligibility", confidence: 0.8 };
-  if (has(/\b(job description|about the job|role|profile|what is the job|jd|which process|what process|process|details|tell me more|kya kaam|what work|kaam)\b/)) return { intent: "ask_job", confidence: 0.75 };
+  if (has(/\b(job description|about the job|role|profile|what is the job|jd|which process|what process|process|details|tell me more|kya kaam|what work|kaam)\b/)) return { intent: "ask_job", confidence: 0.8 };
   if (has(/\b(reschedule|another day|other day|next week|postpone|different day|cannot come|can t come|cannot attend|can t attend|unable to attend|unable to come|not able to attend|not able to come|not available|some other time|dusre din)\b/)) return { intent: "reschedule", confidence: 0.85 };
   if (has(/\b(not interested|no thanks|not looking|nahi aa|will not come|won t come|will not attend|won t attend|not attending|not coming|remove my)\b/)) return { intent: "decline", confidence: 0.85 };
   if (has(/\b(yes|ok|okay|confirm|confirmed|will come|will be there|coming|sure|haan|aa jaunga|aa jaungi|aunga|aungi|theek hai|thik hai|will attend|attend|attending|will visit|visit|will join|will reach|i will be present|present)\b/)) return { intent: "confirm", confidence: 0.8 };

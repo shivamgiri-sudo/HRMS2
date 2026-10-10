@@ -10,6 +10,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { emailService } from "../communication/email.service.js";
 import { resolveWorkingProvider } from "../ai/mira-issue-triage.service.js";
+import { recordPersonOptOut } from "./followup-optout.service.js";
 import { stripQuoted } from "./response-classifier.js";
 import { disposition, ruleIntent, ruleReply, scrub, validateReply, type Draft, type FactSheet, type ReplyIntent } from "./reply-agent.rules.js";
 
@@ -109,7 +110,7 @@ export async function buildFactSheet(a: { leadId: string | null; requisitionId: 
     company: env("HE_COMPANY_NAME", "MAS Callnet"),
     jobDescription: clean(r.job_description)?.slice(0, 700) ?? null, skills: clean(r.skills_required)?.slice(0, 300) ?? null,
     education: clean(r.education_requirement), experience: exp,
-    salary: lo > 0 && hi >= lo ? `${money(lo)} to ${money(hi)} a month` : lo > 0 ? `from ${money(lo)} a month` : null,
+    salary: lo > 0 && hi > lo ? `${money(lo)} to ${money(hi)} a month` : lo > 0 && hi === lo ? `${money(lo)} a month` : lo > 0 ? `from ${money(lo)} a month` : null,
     employmentType: r.employment_type ? String(r.employment_type).replace(/_/g, " ") : null,
     shift: shiftBits.length ? shiftBits.join(", ") : null,
   };
@@ -206,6 +207,14 @@ export async function handleInboundReply(m: InboundReply, now = new Date()): Pro
           o.d?.intent ?? null, o.d?.language ?? null, o.d ? o.d.confidence : null, o.reply ?? o.d?.reply ?? null, JSON.stringify(o.d?.reasons ?? []), o.status, o.hold ?? null, o.engine ?? null]);
     };
     if (!m.who || mode <= 0) { await store({ status: "held", hold: !m.who ? "unknown_sender" : "agent_off" }); return "held"; }
+    // An explicit, short "stop / unsubscribe / do not contact" is applied at once, from the email channel, whatever the mode: every journey
+    // of the number stops and nothing more is sent. Longer messages that merely contain the word go to a person.
+    const stop = ruleIntent(inbound);
+    if (stop?.intent === "opt_out" && stop.confidence >= 0.9 && inbound.length <= 200) {
+      await recordPersonOptOut(m.who.mobile10, { source: "email_unsubscribe", detail: inbound.slice(0, 120) }).catch(() => undefined);
+      await store({ d: { intent: "opt_out", language: "en", confidence: stop.confidence, needsHuman: false, reply: "", reasons: ["explicit_stop"] }, status: "held", hold: "opt_out_applied", engine: "rules" });
+      return "held";
+    }
     const deny = await denyTerms();
     const built = await buildFactSheet({ leadId: m.who.leadId, matchId: m.who.matchId, requisitionId: m.who.requisitionId ?? null, mobile10: m.who.mobile10 }, deny);
     if (!built) { await store({ status: "held", hold: "no_requisition" }); return "held"; }

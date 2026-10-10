@@ -7,6 +7,8 @@ vi.mock("../../../db/mysql.js", () => ({
 vi.mock("../../../logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock("../../communication/email.service.js", () => ({ emailService: { send: h.send } }));
 const gen = vi.hoisted(() => ({ provider: null as null | { key: string; generateText: ReturnType<typeof vi.fn> } }));
+const opt = vi.hoisted(() => ({ fn: vi.fn(async () => ({ leadId: "l1", journeysStopped: 1 })) }));
+vi.mock("../followup-optout.service.js", () => ({ recordPersonOptOut: opt.fn }));
 vi.mock("../../ai/mira-issue-triage.service.js", () => ({ resolveWorkingProvider: vi.fn(async () => gen.provider) }));
 
 import { AUTO_INTENTS, disposition, ruleIntent, ruleReply, scrub, validateReply, type FactSheet } from "../reply-agent.rules.js";
@@ -139,6 +141,18 @@ describe("handleInboundReply", () => {
   it("a salary question with no salary on the requisition is held for a person", async () => {
     expect(await handleInboundReply(msg("What is the salary?"), new Date("2026-10-11T05:00:00Z"))).toBe("held");
     expect(h.send).not.toHaveBeenCalled();
+  });
+  it("an explicit short stop applies the opt-out and sends nothing", async () => {
+    expect(await handleInboundReply(msg("Please stop messaging me"), new Date("2026-10-11T05:00:00Z"))).toBe("held");
+    expect(opt.fn).toHaveBeenCalledWith("9876543210", expect.objectContaining({ source: "email_unsubscribe" }));
+    expect(h.send).not.toHaveBeenCalled();
+  });
+  it("answers 'which company' and eligibility from the facts when the requisition has no detail", async () => {
+    h.rows[4] = { match: /FROM job_requisition j LEFT JOIN branch_master/, rows: [{ designation_name: "EXECUTIVE", branch_name: "NOIDA-2", address: "Okaya Tower-1, Noida", hr_contact: "Ravi 9811122233" }] };
+    expect(await handleInboundReply(msg("Which process is this? tell me more about the job"), new Date("2026-10-11T05:00:00Z"))).toBe("sent");
+    const text = (h.send.mock.calls[0][0] as { text: string }).text;
+    expect(text).toContain("walk-in");
+    expect(text).not.toMatch(/onfido/i);
   });
   it("a complaint is held", async () => {
     expect(await handleInboundReply(msg("This is a scam, I will go to police"), new Date("2026-10-11T05:00:00Z"))).toBe("held");
