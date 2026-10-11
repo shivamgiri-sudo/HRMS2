@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {
   checkFollowupGuards, inSendWindow, nextSendWindowOpen, requisitionOpenReason, type GuardFacts, type RequisitionFacts,
 } from "../followup-guards.js";
@@ -18,6 +18,9 @@ const minAgo = (m: number) => new Date(THU_11.getTime() - m * 60_000);
 const daysAgo = (d: number) => new Date(THU_11.getTime() - d * 86_400_000);
 
 describe("checkFollowupGuards order and kinds", () => {
+  // Pins the Mon-Sat rule (Sunday sending is the default now and is covered in the window block below).
+  beforeAll(() => { process.env.FOLLOWUP_SUNDAY_SENDS = "off"; });
+  afterAll(() => { delete process.env.FOLLOWUP_SUNDAY_SENDS; });
   it("passes when every fact passes", () => expect(checkFollowupGuards(base)).toEqual({ ok: true }));
 
   it("kill switch wins over STOP", () => {
@@ -146,19 +149,26 @@ describe("requisitionOpenReason (D8)", () => {
   });
 });
 
-describe("window (IST, Mon-Sat 09:00-20:00)", () => {
+describe("window (IST, every day 09:00-20:00; Sunday is a send day)", () => {
   it("19:59:59 IST inside, 20:00:00 outside, 08:59:59 outside", () => {
     expect(inSendWindow(new Date("2026-10-08T14:29:59Z"))).toBe(true);
     expect(inSendWindow(new Date("2026-10-08T14:30:00Z"))).toBe(false);
     expect(inSendWindow(new Date("2026-10-08T03:29:59Z"))).toBe(false);
     expect(inSendWindow(new Date("2026-10-08T03:30:00Z"))).toBe(true);
   });
-  it("Sunday is never inside", () => expect(inSendWindow(new Date("2026-10-11T05:30:00Z"))).toBe(false));
-  it("next open: 08:00 Thu -> 09:00 Thu; Thu 20:30 -> Fri 09:00; Sat 21:00 -> Mon 09:00; Sun 08:00 -> Mon 09:00", () => {
+  it("Sunday is inside the window (owner decision), and FOLLOWUP_SUNDAY_SENDS=off restores the Mon-Sat rule", () => {
+    expect(inSendWindow(new Date("2026-10-11T05:30:00Z"))).toBe(true);
+    process.env.FOLLOWUP_SUNDAY_SENDS = "off";
+    try {
+      expect(inSendWindow(new Date("2026-10-11T05:30:00Z"))).toBe(false);
+      expect(nextSendWindowOpen(new Date("2026-10-10T15:30:00Z"))).toEqual(new Date("2026-10-12T03:30:00Z"));
+    } finally { delete process.env.FOLLOWUP_SUNDAY_SENDS; }
+  });
+  it("next open: 08:00 Thu -> 09:00 Thu; Thu 20:30 -> Fri 09:00; Sat 21:00 -> Sun 09:00; Sun 21:00 -> Mon 09:00", () => {
     expect(nextSendWindowOpen(new Date("2026-10-08T02:30:00Z"))).toEqual(new Date("2026-10-08T03:30:00Z"));
     expect(nextSendWindowOpen(new Date("2026-10-08T15:00:00Z"))).toEqual(new Date("2026-10-09T03:30:00Z"));
-    expect(nextSendWindowOpen(new Date("2026-10-10T15:30:00Z"))).toEqual(new Date("2026-10-12T03:30:00Z"));
-    expect(nextSendWindowOpen(new Date("2026-10-11T02:30:00Z"))).toEqual(new Date("2026-10-12T03:30:00Z"));
+    expect(nextSendWindowOpen(new Date("2026-10-10T15:30:00Z"))).toEqual(new Date("2026-10-11T03:30:00Z"));
+    expect(nextSendWindowOpen(new Date("2026-10-11T15:30:00Z"))).toEqual(new Date("2026-10-12T03:30:00Z"));
   });
   it("is independent of the server time zone (UTC midnight edge)", () => {
     // 2026-10-09 23:59 UTC = Sat 05:29 IST -> Sat 09:00 IST

@@ -22,7 +22,7 @@ describe("getPipelineView", () => {
     expect(v.sources[1]).toMatchObject({ enrolled: 1837, emailed: 512, whatsapped: 0, waiting: { email: 1321, whatsapp: 1837, call: 1837 }, lastEmailAt: "2026-10-10 19:58" });
     expect(v.sources[0].enrolled).toBe(0);
     expect(v.last24h).toEqual({ emails: 895, whatsapps: 83, callResults: 0, replies: 12, confirmations: 3 });
-    expect(v.windowOpen).toBe(false);
+    expect(v.windowOpen).toBe(true); // Sunday 15:30 IST: Sunday is a send day
     expect(new Date(v.nextWindowOpen).getTime()).toBeGreaterThan(Date.parse("2026-10-11T10:00:00Z"));
   });
   it("a failed read leaves empty blocks instead of throwing", async () => {

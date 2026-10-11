@@ -32,6 +32,6 @@ export function whenIst(iso: string): string {
 /** One sentence that explains the zeros: sending is open, or when it opens and how much is queued. */
 export function windowBanner(v: PipelineView): string {
   const queued = v.sources.reduce((a, s) => a + s.waiting.email + s.waiting.whatsapp, 0);
-  if (v.windowOpen) return `Sending is open (Mon to Sat, 09:00 to 20:00 IST). ${queued.toLocaleString("en-IN")} messages are queued and go out in turn.`;
-  return `Sending is closed (Mon to Sat, 09:00 to 20:00 IST). It resumes ${whenIst(v.nextWindowOpen)}. ${queued.toLocaleString("en-IN")} messages are queued and start going out then.`;
+  if (v.windowOpen) return `Sending is open (every day, 09:00 to 20:00 IST). ${queued.toLocaleString("en-IN")} messages are queued and go out in turn.`;
+  return `Sending is closed (every day, 09:00 to 20:00 IST). It resumes ${whenIst(v.nextWindowOpen)}. ${queued.toLocaleString("en-IN")} messages are queued and start going out then.`;
 }
