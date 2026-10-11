@@ -40,6 +40,18 @@ const q = async (label: string, sql: string, params: unknown[] = []) => {
   await q("enrolled rows: email state (live, open)", `SELECT COALESCE(email_status,'none') es, COALESCE(wa_status,'none') ws, SUM(email_due_at <= NOW()) email_due_now, SUM(email_due_at > NOW()) email_due_later, SUM(email_due_at IS NULL) no_email_due, COUNT(*) n
       FROM qualified_followup WHERE mode_at_enqueue='live' AND stopped_reason IS NULL AND journey_state='enrolled' GROUP BY es, ws ORDER BY n DESC LIMIT 12`);
   await q("earliest email_due among unsent", `SELECT MIN(email_due_at) earliest, MAX(email_due_at) latest, SUM(email_due_at<=NOW()) due_now FROM qualified_followup WHERE mode_at_enqueue='live' AND stopped_reason IS NULL AND email_sent_at IS NULL AND email_status IS NULL`);
+  await q("BY SOURCE (live, open rows): email / WhatsApp / call progress", `SELECT source_type,
+      COUNT(*) total, SUM(email_sent_at IS NOT NULL) email_sent, SUM(email_sent_at IS NULL AND email_status IS NULL) email_unsent,
+      SUM(wa_sent_at IS NOT NULL) wa_sent, SUM(wa_status IS NULL AND wa_due_at IS NOT NULL AND wa_due_at <= NOW()) wa_due_now,
+      SUM(wa_status IS NULL AND wa_due_at > NOW()) wa_due_later, SUM(wa_status IS NULL AND wa_due_at IS NULL) wa_no_due,
+      SUM(wa_status = 'failed') wa_failed, SUM(wa_status = 'sending') wa_sending,
+      MIN(CASE WHEN wa_status IS NULL THEN wa_due_at END) wa_earliest_due, MAX(CASE WHEN wa_status IS NULL THEN wa_due_at END) wa_latest_due
+     FROM qualified_followup WHERE mode_at_enqueue='live' AND stopped_reason IS NULL GROUP BY source_type`);
+  await q("old-meta journeys: state x wa", `SELECT journey_state, COALESCE(held_reason,'-') held, wa_status IS NOT NULL wa_touched, COUNT(*) n
+      FROM qualified_followup WHERE mode_at_enqueue='live' AND source_type='meta_old' AND stopped_reason IS NULL GROUP BY 1,2,3 ORDER BY n DESC LIMIT 12`);
+  await q("old-meta enrolled by qualified_at day", `SELECT DATE(qualified_at) d, COUNT(*) n, SUM(email_sent_at IS NOT NULL) emailed FROM qualified_followup
+      WHERE mode_at_enqueue='live' AND source_type='meta_old' GROUP BY d ORDER BY d DESC LIMIT 10`);
+  await q("guard skips last 2 days (he_lead_event followup_skip) by reason", `SELECT detail, COUNT(*) n FROM he_lead_event WHERE event_type='followup_skip' AND created_at >= DATE_SUB(NOW(), INTERVAL 2 DAY) GROUP BY detail ORDER BY n DESC LIMIT 12`);
   await q("calls stamped by day", `SELECT DATE(called_at) d, COUNT(*) n FROM qualified_followup WHERE called_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) GROUP BY d ORDER BY d`);
   await q("bot-call results by day (he_call)", `SELECT DATE(created_at) d, COUNT(*) n FROM he_call WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) GROUP BY d ORDER BY d`);
   await db.end?.();
