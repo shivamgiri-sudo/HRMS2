@@ -334,8 +334,9 @@ export default function MetaCampaignDashboard() {
     if (!config) return [];
     const gaps: string[] = [];
     if (!config.metaApiConfigured) gaps.push("META Graph API token (META_MARKETING_ACCESS_TOKEN) — no lead detail or metrics can be fetched");
-    if (!config.webhookVerifyTokenConfigured) gaps.push("Webhook verify token (META_LEAD_VERIFY_TOKEN) — the webhook cannot be subscribed");
-    if (!config.webhookSignatureConfigured) gaps.push("Webhook signing secret (META_APP_SECRET) — incoming webhooks are refused unverified");
+    // Leads are pulled by the scheduled sync with the Graph token; the webhook items matter only when that token is missing.
+    if (!config.metaApiConfigured && !config.webhookVerifyTokenConfigured) gaps.push("Webhook verify token (META_LEAD_VERIFY_TOKEN) — the webhook cannot be subscribed");
+    if (!config.metaApiConfigured && !config.webhookSignatureConfigured) gaps.push("Webhook signing secret (META_APP_SECRET) — incoming webhooks are refused unverified");
     if (!config.whatsappConfigured) gaps.push("WhatsApp bridge URL (LOCAL_WHATSAPP_API_URL) — WhatsApp outreach is skipped");
     if (!config.voicebotConfigured) gaps.push("Voice bot URL (VOICEBOT_TRIGGER_URL) — voice calls are skipped");
     return gaps;

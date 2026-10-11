@@ -350,8 +350,9 @@ metaCampaignRouter.get(
         metaApiConfigured: isMetaConfigured(),
         webhookVerifyTokenConfigured: Boolean(process.env.META_LEAD_VERIFY_TOKEN),
         webhookSignatureConfigured: Boolean(process.env.META_APP_SECRET),
-        whatsappConfigured: Boolean(process.env.LOCAL_WHATSAPP_API_URL),
-        voicebotConfigured: Boolean(process.env.VOICEBOT_TRIGGER_URL),
+        // WhatsApp goes through Pinbot and voice through the calling file / Superbot; the older bridge variables are no longer required.
+        whatsappConfigured: Boolean(process.env.LOCAL_WHATSAPP_API_URL) || Boolean(process.env.PINBOT_API_KEY && process.env.PINBOT_PHONE_NUMBER_ID),
+        voicebotConfigured: Boolean(process.env.VOICEBOT_TRIGGER_URL) || /^(live|dry_run)$/i.test(String(process.env.QUAL_FOLLOWUP_MODE ?? "").trim()),
         vapiConfigured: isVapiConfigured(),
       },
     })

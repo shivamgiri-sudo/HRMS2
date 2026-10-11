@@ -495,7 +495,7 @@ export default function MetaShortlistReport() {
             </tbody>
           </table>
           <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2 text-sm text-slate-600">
-            <span>{fmt(total)} leads</span>
+            <span>{loading && rows.length === 0 ? "Loading…" : `${fmt(total)} leads`}</span>
             <div className="flex items-center gap-2">
               <button aria-label="Previous page" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} className="rounded border border-slate-200 p-1 disabled:opacity-40">
                 <ChevronLeft className="h-4 w-4" />
