@@ -17,7 +17,7 @@ export default function SectionNav({ current, onSelect, sections = SECTIONS }: {
   return (
     <div role="tablist" aria-label="Drive command sections" onKeyDown={onKeyDown}
       style={{ top: "var(--topbar-height, 64px)" }} // pins under the app TopBar (sticky z-30, min height 64px, TopBar.tsx)
-      className="sticky z-20 flex gap-1 overflow-x-auto border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+      className="sticky z-20 flex gap-1 overflow-x-auto overflow-y-hidden border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
       {sections.map((s) => {
         const on = s.id === current;
         return (

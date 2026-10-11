@@ -95,6 +95,14 @@ describe("retryFollowupStep", () => {
     expect(await retryFollowupStep(ID, "email")).toBe("not_found");
     expect(sqls(/^UPDATE/)).toHaveLength(0);
   });
+  it("an email with an unknown outcome is checked against the send log: logged = already sent, not logged = re-armed", async () => {
+    execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1, err: "outcome unknown (process stopped mid-send)" }]])
+      .mockResolvedValueOnce([[{ at: "2026-10-10 22:50:00" }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
+    expect(await retryFollowupStep(ID, "email")).toBe("already_sent");
+    execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1, err: "outcome unknown (process stopped mid-send)" }]])
+      .mockResolvedValueOnce([[{ at: null }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
+    expect(await retryFollowupStep(ID, "email")).toBe("ok");
+  });
   it("a call retry only touches rows not yet stamped into a calling file", async () => {
     execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1, err: "bot_unavailable" }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
     expect(await retryFollowupStep(ID, "call")).toBe("ok");
@@ -167,8 +175,9 @@ describe("routes", () => {
     expect(ok.body).toEqual({ success: true });
     execute.mockResolvedValueOnce([[]]);
     expect((await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" })).status).toBe(404);
+    // WhatsApp with an unknown outcome is never re-armed (a second message is visible to the candidate).
     execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1, err: "outcome unknown (process stopped mid-send)" }]]);
-    const unknown = await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" });
+    const unknown = await request(appFor("super_admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "whatsapp" });
     expect(unknown.status).toBe(409);
     expect(unknown.body.message).toBe("outcome_unknown");
     execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: "replied", retryable: 1 }]]);

@@ -146,12 +146,13 @@ export const CHANNEL_LABEL: Record<AttentionChannel, string> = { email: "E-mail"
 export const OUTCOME_UNKNOWN_LABEL = "Outcome unknown: a message may already have gone out";
 export const ALREADY_SENT_LABEL = "Already sent: the message went out before the failure";
 
+/** The server decides: an e-mail whose outcome is unknown is retryable (it checks the send log first); WhatsApp and calls are not. */
 export function showRetry(r: Pick<AttentionRow, "retryable" | "outcomeUnknown">): boolean {
-  return r.retryable === true && r.outcomeUnknown !== true;
+  return r.retryable === true;
 }
 export function retryHint(r: Pick<AttentionRow, "retryReason">): string | null {
   switch (r.retryReason) {
-    case "outcome_unknown": return "The send may already have happened; check before acting";
+    case "outcome_unknown": return "The send may already have happened. Retry checks our send log first: if it went out it is marked sent, otherwise it is sent again";
     case "already_sent": return "Already sent";
     case "already_in_file": return "Already in a calling file";
     default: return null;

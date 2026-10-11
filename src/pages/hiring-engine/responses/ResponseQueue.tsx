@@ -9,15 +9,18 @@ import { AlertTriangle, History, Inbox, Link2, Loader2, ShieldAlert } from "luci
 import { hrmsApi } from "@/lib/hrmsApi";
 import { BTN } from "../command/charts/ChartFrame";
 import { AnswerBadge, ChannelBadge } from "./ResponseBadges";
-import { QUEUE_ACTIONS, QUEUE_PATH, actionError, ageText, classifyBody, confidenceText, confirmPrompt, matchedByText, queueBuckets, withoutRow, type QueueAction, type ResponseQueueData, type ResponseRow } from "./responsesModel";
+import { QUEUE_ACTIONS, QUEUE_PATH, actionError, ageText, bulkWillCome, classifyBody, confidenceText, confirmPrompt, matchedByText, queueBuckets, withoutRow, type QueueAction, type ResponseAnswer, type ResponseQueueData, type ResponseRow } from "./responsesModel";
 
 export interface QueueViewProps {
   data: ResponseQueueData | null; loading: boolean; error: string | null; canWrite: boolean; /** The person whose reply is being saved (its row already left the list), or null. */ saving: string | null; message: string | null; nowMs?: number;
   onAction: (row: ResponseRow, a: QueueAction) => void; onOpen: (row: ResponseRow) => void; onRetry: () => void;
+  /** Confirms every clear "Will come" reply that is already tied to a booking (one confirmation, listing the people). */
+  onBulkConfirm?: (rows: ResponseRow[]) => void;
 }
 
-export function QueueView({ data, loading, error, canWrite, saving, message, nowMs, onAction, onOpen, onRetry }: QueueViewProps) {
+export function QueueView({ data, loading, error, canWrite, saving, message, nowMs, onAction, onOpen, onRetry, onBulkConfirm }: QueueViewProps) {
   const total = data?.counts.total ?? 0;
+  const clear = bulkWillCome(data?.rows ?? []);
   return (
     <section aria-labelledby="queue-heading" className="space-y-2 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900" data-queue>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -33,6 +36,12 @@ export function QueueView({ data, loading, error, canWrite, saving, message, now
         <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-rose-800 dark:text-rose-200">
           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden /> <span className="flex-1">Could not load the queue: {error}</span>
           <button type="button" className={BTN} onClick={onRetry}>Retry</button>
+        </div>
+      )}
+      {canWrite && onBulkConfirm && clear.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
+          <span className="flex-1">{clear.length} replies clearly say they will come (90% sure or more) and already have a booking.</span>
+          <button type="button" className={BTN} disabled={saving != null} onClick={() => onBulkConfirm(clear)}>Confirm all {clear.length}</button>
         </div>
       )}
       {data && data.rows.length === 0 && (
@@ -110,5 +119,17 @@ export default function ResponseQueue({ canWrite, onOpen, onChanged, refreshSign
       if ((e as { status?: number })?.status === 409) q.reload();
     } finally { setSaving(null); }
   };
-  return <QueueView data={q.data} loading={q.loading} error={q.error} canWrite={canWrite} saving={saving} message={message} onAction={(r, a) => void act(r, a)} onOpen={onOpen} onRetry={q.reload} />;
+  const bulk = async (rows: ResponseRow[]) => {
+    const names = rows.map((r) => r.person.name).join(", ");
+    if (!window.confirm(`Mark ${rows.length} people as coming? ${names}`)) return;
+    const will = QUEUE_ACTIONS[0] as Extract<QueueAction, { answer: ResponseAnswer }>;
+    let ok = 0; let failed = 0;
+    for (const r of rows) {
+      setSaving(r.person.name);
+      try { await hrmsApi.post(`/api/he/responses/${r.id}/classify`, classifyBody(r, will)); ok++; } catch { failed++; }
+    }
+    setSaving(null); setMessage(`Confirmed ${ok}${failed ? `, ${failed} could not be saved (open them one by one)` : ""}.`);
+    q.reload(); onChanged?.();
+  };
+  return <QueueView data={q.data} loading={q.loading} error={q.error} canWrite={canWrite} saving={saving} message={message} onAction={(r, a) => void act(r, a)} onOpen={onOpen} onRetry={q.reload} onBulkConfirm={(rows) => void bulk(rows)} />;
 }

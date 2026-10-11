@@ -130,3 +130,12 @@ describe("next drive and campaign pickers", () => {
     expect(campaignOptions([{ campaignId: "C1", campaignName: "AHM" }, { campaignName: "x" }])).toEqual([{ id: "C1", label: "AHM" }]);
   });
 });
+
+import { bulkWillCome } from "../responses/responsesModel";
+describe("bulkWillCome", () => {
+  const r = (o: Record<string, unknown>) => ({ suggested: "confirm", confidence: 0.95, matchId: "M", conflict: false, ...o }) as never;
+  it("keeps only clear, booked, conflict-free Will come replies", () => {
+    const rows = [r({}), r({ confidence: 0.89 }), r({ matchId: null }), r({ conflict: true }), r({ suggested: "decline" }), r({ confidence: 0.9 })];
+    expect(bulkWillCome(rows)).toHaveLength(2);
+  });
+});

@@ -29,7 +29,20 @@ export function stripQuoted(text: string): string {
       || /^(regards|best regards|thanks (and|&) regards|warm regards|kind regards)\b/i.test(l) || /^from:\s/i.test(l)) break;
     out.push(raw);
   }
-  return out.join("\n").trim();
+  return cutInlineHeader(out.join("\n")).trim();
+}
+
+/**
+ * Gmail and phone clients often put the quote header on the same line as the reply ("I will attend. On Thu, 8 Oct, 2026, 11:37 pm HR
+ * Team <hr@x> wrote:"). Cut there: when the header says "wrote:", or (a header cut short) it names a weekday, a date with a year and a clock time.
+ */
+const DAY = "(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*";
+const INLINE_WROTE = new RegExp(`\\bOn\\s+(?:${DAY},?\\s+)?(?:\\d{1,2}[\\s,/.-]+[A-Za-z]{3,9}|[A-Za-z]{3,9}\\s+\\d{1,2}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4})[^\\n]{0,160}?\\bwrote:?`, "i");
+const INLINE_CUT = new RegExp(`\\bOn\\s+${DAY},?\\s+(?:\\d{1,2}[\\s,/.-]+[A-Za-z]{3,9}|[A-Za-z]{3,9}\\s+\\d{1,2})[\\s,]+\\d{4}\\b[^\\n]{0,40}?\\d{1,2}:\\d`, "i");
+export function cutInlineHeader(text: string): string {
+  const a = INLINE_WROTE.exec(text); const b = INLINE_CUT.exec(text);
+  const at = [a?.index, b?.index].filter((n): n is number => n != null);
+  return at.length ? text.slice(0, Math.min(...at)) : text;
 }
 
 function clauseAnswer(t: string): { answer: ResponseAnswer; why: string } | null {

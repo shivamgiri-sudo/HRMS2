@@ -25,6 +25,10 @@ function Icon({ name, className }: { name: IconKey; className?: string }) {
 interface ViewProps { view: StripView; error: string | null; loading: boolean; onToggle: (key: string) => void; onRefresh: () => void }
 
 export function PipelineHealthView({ view, error, loading, onToggle, onRefresh }: ViewProps) {
+  // Only what needs attention is shown by default; the healthy checks sit behind one toggle so the strip stays small.
+  const [showAll, setShowAll] = useState(false);
+  const okCount = view.chips.filter((c) => c.level === "ok").length;
+  const shown = showAll ? view.chips : view.chips.filter((c) => c.level !== "ok" || c.expanded);
   if (error && view.chips.length === 0) {
     return (
       <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-700 dark:bg-rose-950 dark:text-rose-200">
@@ -41,7 +45,7 @@ export function PipelineHealthView({ view, error, loading, onToggle, onRefresh }
             <Icon name={view.overallIcon} />{view.overallLabel}
           </span>
         )}
-        {view.chips.map((c) => (
+        {shown.map((c) => (
           <button key={c.key} type="button" aria-expanded={c.expanded} aria-controls="he-health-detail" onClick={() => onToggle(c.key)}
             className={`inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium hover:brightness-95 sm:min-h-8 ${TONE[c.level]} ${MOTION} ${FOCUS}`}>
             <Icon name={c.icon} className="h-3.5 w-3.5 shrink-0" />
@@ -49,6 +53,12 @@ export function PipelineHealthView({ view, error, loading, onToggle, onRefresh }
             <span className="font-semibold">{c.levelWord}</span>
           </button>
         ))}
+        {okCount > 0 && (
+          <button type="button" aria-pressed={showAll} onClick={() => setShowAll((v) => !v)}
+            className={`inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-slate-300 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 sm:min-h-8 ${MOTION} ${FOCUS}`}>
+            {showAll ? "Hide healthy checks" : `${okCount} healthy check${okCount === 1 ? "" : "s"}`}
+          </button>
+        )}
         <button type="button" aria-label="Refresh pipeline health" aria-disabled={loading} onClick={() => { if (!loading) onRefresh(); }}
           className={`ml-auto inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 aria-disabled:cursor-wait aria-disabled:opacity-60 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 sm:h-8 sm:w-8 ${MOTION} ${FOCUS}`}>
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden />

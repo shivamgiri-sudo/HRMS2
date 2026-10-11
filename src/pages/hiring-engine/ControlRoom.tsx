@@ -7,7 +7,7 @@ import { Gauge } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { num } from "@/components/analytics/analytics-kit";
 
-interface Drive { driveId: string; driveDate: string; branch: string; role: string; requisitionCode: string; status: string; targetShows: number; suggested: number; invited: number; confirmed: number; arrived: number; noShows: number; expectedShows: number; gap: number; invitesNeeded: number; reachableSuggested: number; action: string }
+interface Drive { driveId: string; driveDate: string; branch: string; role: string; requisitionCode: string; status: string; targetShows: number; suggested: number; invited: number; confirmed: number; arrived: number; noShows: number; expectedShows: number; gap: number; invitesNeeded: number; reachableSuggested: number; action: string; targetSource?: "set" | "seats" }
 
 const dayLabel = (d: string) => {
   const t = new Date(d + "T00:00:00"); const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -43,10 +43,11 @@ export default function ControlRoom() {
                   <div><div className="text-sm font-semibold text-slate-900">{d.branch}</div><div className="text-xs text-slate-500">{d.role} · {d.requisitionCode}</div></div>
                   <span className="whitespace-nowrap rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">{dayLabel(d.driveDate)}{d.status !== "active" ? ` · ${d.status}` : ""}</span>
                 </div>
-                <div className="mt-3 flex items-baseline gap-1"><span className="text-2xl font-bold tabular-nums text-slate-900">{d.expectedShows}</span><span className="text-sm text-slate-500">expected / {num(d.targetShows)} target</span></div>
+                <div className="mt-3 flex items-baseline gap-1"><span className="text-2xl font-bold tabular-nums text-slate-900">{d.expectedShows}</span><span className="text-sm text-slate-500">expected / {num(d.targetShows)} {d.targetSource === "seats" ? "open seats" : "target"}</span></div>
                 <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Expected shows against target"><div className={`h-full rounded-full transition-all duration-500 motion-reduce:transition-none ${tone}`} style={{ width: `${pct}%` }} /></div>
                 <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-slate-600"><span>{d.confirmed} confirmed</span><span>{d.invited} invited</span><span>{d.arrived} arrived</span><span>{d.suggested} suggested</span></div>
                 <p className={`mt-2 text-sm font-medium ${d.invitesNeeded ? "text-rose-700" : "text-emerald-700"}`}>{d.action}</p>
+                <a href="#drives" className="mt-1 inline-flex min-h-8 items-center text-xs font-semibold text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600" aria-label={`Open drives for ${d.requisitionCode}, ${dayLabel(d.driveDate)}`}>Open drives</a>
               </li>
             );
           })}

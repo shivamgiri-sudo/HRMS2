@@ -72,3 +72,17 @@ describe("classifyReply", () => {
     expect(r.reasons.join(" ")).toMatch(/question/);
   });
 });
+
+describe("stripQuoted: header on the same line as the reply", () => {
+  it("cuts a Gmail inline header", () => {
+    expect(stripQuoted("I will attend the interview. On Thu, 8 Oct, 2026, 11:37 pm Mas Callnet HR Team, [email] wrote:")).toBe("I will attend the interview.");
+    expect(stripQuoted("Ok sir On Thu, Oct 8, 2026 at 7:22 PM Mas Callnet HR Team <hr@x.com> wrote: hello")).toBe("Ok sir");
+  });
+  it("cuts a header that was cut short by a preview limit, only with weekday + year + time", () => {
+    expect(stripQuoted("I will come. On Thu, 8 Oct, 2026, 11:3")).toBe("I will come.");
+  });
+  it("keeps a reply that merely says on a day", () => {
+    expect(stripQuoted("I can come on Monday 12 Oct")).toBe("I can come on Monday 12 Oct");
+    expect(stripQuoted("On Monday I will come")).toBe("On Monday I will come");
+  });
+});
