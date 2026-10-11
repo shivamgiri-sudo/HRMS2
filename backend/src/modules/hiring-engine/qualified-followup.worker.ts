@@ -3,6 +3,7 @@
  * Does nothing (not even a query) while QUAL_FOLLOWUP_MODE is off. A MySQL advisory lock keeps two processes from ticking together.
  */
 import type { PoolConnection } from "mysql2/promise";
+import { autoMapPoolStreams } from "./he-auto-map.service.js";
 import { autoResolveReplies } from "./response-auto-apply.service.js";
 import { refreshJoinedHeadcount } from "./requisition-joined.service.js";
 import type { RowDataPacket } from "mysql2";
@@ -150,6 +151,7 @@ const add = (a: StepCounts, b: StepCounts): StepCounts =>
   ({ processed: a.processed + b.processed, sent: a.sent + b.sent, failed: a.failed + b.failed, blocked: a.blocked + b.blocked, held: a.held + b.held, dryRun: a.dryRun + b.dryRun });
 
 let lastJoinedRefresh = 0;
+let lastAutoMap = 0;
 async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources: SourceType[] }>, now: Date, deps: TickDeps): Promise<TickReport> {
   const r = blank(s.mode);
   // Joined counts (employee code generated) decide when a requisition is filled; refreshed at most every 10 minutes.
@@ -179,6 +181,8 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
 
   // Someone emailed for one day and later moved to another is sent the new slot (live rows only; the kill switch and pauses stop it).
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("slot-corrections", () => runSlotCorrections(now), null);
+  // The Hiring Engine pool is mapped to the requisition at the front of each sequence (at most every 30 minutes).
+  if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastAutoMap > 30 * 60_000) { lastAutoMap = Date.now(); await guarded("auto-map", () => autoMapPoolStreams(now), null); }
   // Clear replies are applied by the engine (no HR step): Will come books, Cannot come records, Another time re-books.
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("auto-replies", () => autoResolveReplies(now), null);
   // One digest email a day (from 08:15 IST) of anything stuck or waiting. Runs even while sends are paused: it only emails the owner.
