@@ -60,12 +60,14 @@ describe("getFulfilment", () => {
       req({ id: "R2", requisition_code: "NOIDA-Onfido-23", requisition_validity: "2026-10-19" }),
       req({ id: "R1", requisition_code: "NOIDA-Onfido-22", requisition_validity: "2026-10-15" }),
       req({ id: "R3", requisition_code: "AHMEDABAD-SBI-1", process_name: "SBI", branch_name: "AHMEDABAD", requisition_validity: "2026-11-05" }),
+      req({ id: "R0", requisition_code: "NOIDA-Onfido-17", requisition_validity: "2026-09-25" }), // expired: overflow, must not hold the queue
     ];
     const v = await (await fresh())(NOW);
     const by = Object.fromEntries(v.requisitions.map((r) => [r.code, r]));
     expect(by["NOIDA-Onfido-22"]).toMatchObject({ sequence: 1, queuedBehind: null });
     expect(by["NOIDA-Onfido-23"]).toMatchObject({ sequence: 2, queuedBehind: "NOIDA-Onfido-22", verdict: "queued" });
     expect(by["AHMEDABAD-SBI-1"]).toMatchObject({ sequence: 1, queuedBehind: null });
+    expect(by["NOIDA-Onfido-17"]).toMatchObject({ sequence: 0, queuedBehind: null, verdict: "past_deadline" });
   });
   it("answers with the expected-arrivals blocks and computing=true while the sizing is still running, then serves the snapshot", async () => {
     vi.useFakeTimers();

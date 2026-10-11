@@ -88,7 +88,9 @@ async function computeFulfilment(now: Date): Promise<FulfilmentView> {
   // Sequence inside each process + designation + branch: nearest end date first (none last), then the lower requisition number.
   const seqNo = (code: string): number => { const m = /-(\d+)\s*$/.exec(code); return m ? Number(m[1]) : Number.POSITIVE_INFINITY; };
   const groupKey = (q: RowDataPacket): string => [q.process_name, q.designation_name, q.branch_name].map((x) => String(x ?? "").toUpperCase()).join("|");
-  const ordered = [...reqs].sort((a, b) => groupKey(a).localeCompare(groupKey(b))
+  // A requisition whose end date has passed is overflow (arrivals roll to the next open one); it never holds the queue.
+  const expired = (q: RowDataPacket): boolean => { const d = dayOf(q.requisition_validity); return d != null && d < today; };
+  const ordered = [...reqs].filter((q) => !expired(q)).sort((a, b) => groupKey(a).localeCompare(groupKey(b))
     || String(a.requisition_validity ?? "9999-12-31").localeCompare(String(b.requisition_validity ?? "9999-12-31")) || seqNo(String(a.requisition_code)) - seqNo(String(b.requisition_code)));
   const seq = new Map<string, { n: number; behind: string | null }>();
   const firstOf = new Map<string, string>(); const countOf = new Map<string, number>();
@@ -102,7 +104,7 @@ async function computeFulfilment(now: Date): Promise<FulfilmentView> {
     const id = String(q.id);
     const requestedSeats = num(q.requested_headcount), selected = num(q.fulfilled_headcount), joined = num(q.joined_headcount);
     const seatsOpen = selectionsStillNeeded(requestedSeats, selected, joined);
-    const position = seq.get(id) ?? { n: 1, behind: null };
+    const position = seq.get(id) ?? { n: 0, behind: null }; // 0 = overflow (end date passed)
     const deadline = dayOf(q.requisition_validity);
     const daysLeft = deadline ? Math.ceil((Date.parse(`${deadline}T23:59:59+05:30`) - now.getTime()) / 86_400_000) : null;
     const mine = facts.filter((f) => String(f.requisition_id) === id);
