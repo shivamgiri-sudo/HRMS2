@@ -3,6 +3,7 @@
  * Does nothing (not even a query) while QUAL_FOLLOWUP_MODE is off. A MySQL advisory lock keeps two processes from ticking together.
  */
 import type { PoolConnection } from "mysql2/promise";
+import { runBranchRosters } from "./he-branch-roster.service.js";
 import { autoMapPoolStreams } from "./he-auto-map.service.js";
 import { autoResolveReplies } from "./response-auto-apply.service.js";
 import { refreshJoinedHeadcount } from "./requisition-joined.service.js";
@@ -185,6 +186,8 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastAutoMap > 30 * 60_000) { lastAutoMap = Date.now(); await guarded("auto-map", () => autoMapPoolStreams(now), null); }
   // Clear replies are applied by the engine (no HR step): Will come books, Cannot come records, Another time re-books.
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("auto-replies", () => autoResolveReplies(now), null);
+  // The branch operations person's roster for the day (from 08:30 IST, once a day, only to staff at that branch).
+  await guarded("branch-roster", () => runBranchRosters(now), 0);
   // One digest email a day (from 08:15 IST) of anything stuck or waiting. Runs even while sends are paused: it only emails the owner.
   await guarded("morning-health", () => runMorningHealth(now), false);
   // Replies the reply agent queued outside the 09:00-20:00 window go out when it opens (only in automatic mode).

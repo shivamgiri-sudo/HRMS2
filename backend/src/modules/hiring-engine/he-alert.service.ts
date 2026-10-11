@@ -83,7 +83,7 @@ export async function runHrArrivalAlerts(o: { dryRun?: boolean } = {}): Promise<
       `SELECT DISTINCT e.user_id, e.full_name, e.mobile, e.official_email
          FROM employees e JOIN branch_master bm ON bm.id = e.branch_id
          JOIN user_roles ur ON ur.user_id = e.user_id AND ur.active_status = 1
-        WHERE bm.branch_name = ? AND ur.role_key IN ('recruitment_hr','hr','branch_head','branch_admin') AND e.active_status = 1`, [d.branch_name]);
+        WHERE bm.branch_name = ? AND ur.role_key IN ('operations_manager','process_manager','recruitment_hr','hr','branch_head','branch_admin') AND e.active_status = 1`, [d.branch_name]);
     const title = `${s.expected} candidate${s.expected === 1 ? "" : "s"} expected within 30 min`;
     const detail = `${d.branch_name}: ${s.confirmed} confirmed, ${s.live} sharing live location.`;
     const channels = { inApp: 0, whatsapp: 0, email: 0 };
