@@ -1,6 +1,6 @@
 name: Ops disk usage (manual, read-only)
 
-# Read-only: df and the largest directories on the production host (names and sizes only). Writes nothing.
+# Read-only: df and the deploy-backup directory listing (names, sizes, dates). Writes nothing.
 
 on:
   workflow_dispatch: {}
@@ -17,26 +17,23 @@ jobs:
     name: Disk usage
     runs-on: self-hosted
     environment: production
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: df
         shell: bash
-        run: df -h -x tmpfs -x devtmpfs 2>&1 | head -20; echo; df -i / 2>&1 | head -3
-      - name: Largest directories
+        run: df -h /var /var/lib /home 2>&1 | head
+      - name: Deploy backups (newest first)
         shell: bash
         run: |
-          for d in /var/www /var/www/HRMS2 /home /var/log /var/lib /tmp /opt; do
-            echo "=== $d ==="
-            du -xh --max-depth=2 "$d" 2>/dev/null | sort -rh | head -14 || true
-          done
-      - name: Deploy leftovers and logs
+          B=/var/www/HRMS2/.deploy-backups
+          echo "entries: $(ls -1 $B 2>/dev/null | wc -l)"
+          ls -lt --time-style=long-iso $B 2>/dev/null | head -60
+          echo "--- sizes of the 12 newest and 12 oldest"
+          (cd $B && ls -t | head -12 | xargs -r du -sh 2>/dev/null)
+          echo "..."
+          (cd $B && ls -tr | head -12 | xargs -r du -sh 2>/dev/null)
+      - name: Other deploy leftovers
         shell: bash
         run: |
-          echo "--- staging / failed deploy dirs"
-          ls -d /var/www/HRMS2/.deploy-staging/* /var/www/HRMS2/*.failed-* /var/www/HRMS2/*.bak* 2>/dev/null | head -40 || true
-          du -sh /var/www/HRMS2/.deploy-staging 2>/dev/null || true
-          echo "--- pm2 logs"
-          du -sh /home/masadmin/.pm2/logs 2>/dev/null || true
-          ls -laS /home/masadmin/.pm2/logs 2>/dev/null | head -12 || true
-          echo "--- .env backups"
-          ls -la /var/www/HRMS2/backend/.env.bak* 2>/dev/null | head -20 || true
+          ls -dlt --time-style=long-iso /var/www/HRMS2/.deploy-staging/* /var/www/HRMS2/dist.failed-* /var/www/HRMS2/*.failed-* 2>/dev/null | head -20 || true
+          grep -n "deploy-backups" /var/www/HRMS2/.github/workflows/deploy.yml 2>/dev/null | head -10 || true
