@@ -36,10 +36,15 @@ export default function FulfilmentCard() {
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let alive = true;
-    const load = () => hrmsApi.get<{ data: FulfilmentView }>("/api/he/fulfilment").then((r) => { if (alive) { setData(r.data); setFailed(false); } }).catch(() => { if (alive) setFailed(true); });
+    let timer: number | undefined;
+    const load = () => hrmsApi.get<{ data: FulfilmentView }>("/api/he/fulfilment").then((r) => {
+      if (!alive) return;
+      setData(r.data); setFailed(false);
+      // The table is still being sized on the server (first read after a restart): look again shortly.
+      timer = window.setTimeout(() => { if (document.visibilityState === "visible") void load(); }, r.data.computing ? 10_000 : 120_000);
+    }).catch(() => { if (alive) { setFailed(true); timer = window.setTimeout(() => void load(), 30_000); } });
     void load();
-    const t = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 120_000);
-    return () => { alive = false; window.clearInterval(t); };
+    return () => { alive = false; if (timer) window.clearTimeout(timer); };
   }, []);
   if (failed && !data) return null;
   if (!data) return <div className="h-48 animate-pulse rounded-xl border border-slate-200 bg-slate-50 motion-reduce:animate-none" aria-hidden />;
@@ -61,6 +66,7 @@ export default function FulfilmentCard() {
         <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
           {num(data.totals.seatsOpen)} seats open across {data.requisitions.length} requisitions; {data.totals.atRisk} at risk. "Needed" is how many people must be invited to land the open seats, from this process's walk-in and selection history.
         </p>
+        {data.computing && <p role="status" className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-200">Working out how many people each requisition needs from past walk-in and selection history. This takes under a minute after a restart.</p>}
         <div className="mt-2 overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <caption className="sr-only">Open requisitions: seats, end date, people needed and covered, and whether they will be filled</caption>

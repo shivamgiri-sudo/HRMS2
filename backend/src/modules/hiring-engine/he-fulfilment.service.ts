@@ -25,7 +25,9 @@ export interface RequisitionFill {
   invited: number; confirmed: number; expectedArrivals7d: number; expectedJoined: number;
   ratesFrom: "branch+process" | "process" | "all"; verdict: FillVerdict; reason: string;
 }
-export interface FulfilmentView { generatedAt: string; today: ExpectedDay; next: ExpectedDay | null; requisitions: RequisitionFill[]; totals: { seatsOpen: number; atRisk: number; expectedToday: number } }
+export interface FulfilmentView { generatedAt: string; today: ExpectedDay; next: ExpectedDay | null; requisitions: RequisitionFill[]; totals: { seatsOpen: number; atRisk: number; expectedToday: number };
+  /** True while the per-requisition sizing is still being computed (the first read after a restart): the day blocks are final, the table follows. */
+  computing: boolean }
 
 const IST_MS = 330 * 60_000;
 const istDay = (d: Date): string => new Date(d.getTime() + IST_MS).toISOString().slice(0, 10);
@@ -61,7 +63,7 @@ function toDay(date: string, rows: FactRow[], params: Record<string, number>): E
   return { date, booked, confirmed, expected: r1(expected), branches: list };
 }
 
-export async function getFulfilment(now: Date = new Date()): Promise<FulfilmentView> {
+async function computeFulfilment(now: Date): Promise<FulfilmentView> {
   const today = istDay(now);
   const params = await safe("show-params", {} as Record<string, number>, loadShowParams);
   const facts = await safe<FactRow[]>("facts", [], async () => (await db.execute<RowDataPacket[]>(
@@ -113,5 +115,57 @@ export async function getFulfilment(now: Date = new Date()): Promise<FulfilmentV
   return {
     generatedAt: now.toISOString(), today: todayDay, next: nextDay, requisitions: out,
     totals: { seatsOpen: out.reduce((a, r) => a + r.seatsOpen, 0), atRisk: out.filter((r) => r.verdict === "at_risk").length, expectedToday: todayDay.expected },
+    computing: false,
   };
+}
+
+// Sizing every requisition scans six months of recruiter history (8 to 15 s per scope when cold), so a request never waits for it:
+// the last snapshot is served, a stale one is refreshed in the background, and the very first read after a restart answers within
+// WAIT_MS with whatever is ready (computing = true) while the snapshot finishes.
+const TTL_MS = 5 * 60_000;
+const WAIT_MS = 12_000;
+let snapshot: { at: number; data: FulfilmentView } | null = null;
+let inflight: Promise<FulfilmentView> | null = null;
+
+function refresh(now: Date): Promise<FulfilmentView> {
+  if (!inflight) {
+    inflight = computeFulfilment(now)
+      .then((d) => { snapshot = { at: Date.now(), data: d }; return d; })
+      .finally(() => { inflight = null; });
+  }
+  return inflight;
+}
+
+export async function getFulfilment(now: Date = new Date()): Promise<FulfilmentView> {
+  if (snapshot && Date.now() - snapshot.at < TTL_MS) return snapshot.data;
+  if (snapshot) { void refresh(now).catch(() => undefined); return snapshot.data; }
+  const p = refresh(now);
+  void p.catch(() => undefined);
+  const early = await Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), WAIT_MS))]);
+  if (early) return early;
+  // Not ready yet: the fast part (who is expected) is cheap, so answer with it and let the table fill in.
+  const fast = await computeExpectedOnly(now);
+  return fast;
+}
+
+async function computeExpectedOnly(now: Date): Promise<FulfilmentView> {
+  const today = istDay(now);
+  const params = await safe("show-params", {} as Record<string, number>, loadShowParams);
+  const facts = await safe<FactRow[]>("facts", [], async () => (await db.execute<RowDataPacket[]>(
+    `SELECT f.*, d.drive_date, d.branch_name, d.requisition_id FROM (${FACTS_SQL}) f JOIN he_drive d ON d.id = f.drive_id
+      WHERE d.drive_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY) AND d.status IN ('active','draft','paused')
+        AND f.state IN ('invited','confirmed','arrived')`))[0] as FactRow[]);
+  const dates = [...new Set(facts.map((f) => dayOf(f.drive_date)).filter((d): d is string => !!d))].sort();
+  const t = toDay(today, facts, params);
+  const nd = dates.find((d) => d > today) ?? null;
+  return { generatedAt: now.toISOString(), today: t, next: nd ? toDay(nd, facts, params) : null, requisitions: [], totals: { seatsOpen: 0, atRisk: 0, expectedToday: t.expected }, computing: true };
+}
+
+/** Compute the snapshot once after start so the first visit is instant; re-run every 4 minutes. */
+let warmTimer: ReturnType<typeof setInterval> | null = null;
+export function startFulfilmentWarmup(): void {
+  if (warmTimer) return;
+  setTimeout(() => void refresh(new Date()).catch(() => undefined), 45_000).unref?.();
+  warmTimer = setInterval(() => void refresh(new Date()).catch(() => undefined), 4 * 60_000);
+  warmTimer.unref?.();
 }

@@ -97,7 +97,10 @@ export async function warmPlannerHistory(): Promise<void> {
     const [r] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT branch_name, process_name FROM job_requisition
         WHERE active_status = 1 AND approval_status = 'approved' AND fulfilled_headcount < requested_headcount AND branch_name IS NOT NULL AND process_name IS NOT NULL LIMIT 8`);
-    for (const x of r) await history("AND branch_name = ? AND process_name = ?", [x.branch_name, x.process_name], 6);
+    for (const x of r) {
+      await history("AND branch_name = ? AND process_name = ?", [x.branch_name, x.process_name], 6);
+      await history("AND process_name = ?", [x.process_name], 6); // the fallback scope when a branch has too little history
+    }
   } catch { /* the planner still works cold */ }
 }
 export function startPlannerWarmup(): void {

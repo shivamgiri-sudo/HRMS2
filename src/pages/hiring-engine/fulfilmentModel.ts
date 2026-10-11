@@ -8,7 +8,7 @@ export interface RequisitionFill {
   deadline: string | null; daysLeft: number | null; neededLeads: number; covered: number; gap: number; perDayNeeded: number; capacityPerDay: number;
   invited: number; confirmed: number; expectedArrivals7d: number; expectedJoined: number; ratesFrom: "branch+process" | "process" | "all"; verdict: FillVerdict; reason: string;
 }
-export interface FulfilmentView { generatedAt: string; today: ExpectedDay; next: ExpectedDay | null; requisitions: RequisitionFill[]; totals: { seatsOpen: number; atRisk: number; expectedToday: number } }
+export interface FulfilmentView { generatedAt: string; today: ExpectedDay; next: ExpectedDay | null; requisitions: RequisitionFill[]; totals: { seatsOpen: number; atRisk: number; expectedToday: number }; computing?: boolean }
 
 export const VERDICT_LABEL: Record<FillVerdict, string> = { covered: "Covered", on_track: "On track", at_risk: "At risk", past_deadline: "Past end date", no_history: "Not enough history" };
 export const VERDICT_TONE: Record<FillVerdict, string> = {
