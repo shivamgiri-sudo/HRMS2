@@ -36,6 +36,10 @@ const q = async (label: string, sql: string, params: unknown[] = []) => {
      FROM qualified_followup WHERE mode_at_enqueue='live'`);
   await q("held / stopped reasons (live)", `SELECT COALESCE(stopped_reason, held_reason, '-') reason, journey_state, COUNT(*) n FROM qualified_followup WHERE mode_at_enqueue='live' AND call_state IN ('pending','in_file') GROUP BY 1,2 ORDER BY n DESC LIMIT 15`);
   await q("sends by day (live)", `SELECT DATE(wa_sent_at) d, COUNT(*) wa FROM qualified_followup WHERE mode_at_enqueue='live' AND wa_sent_at >= DATE_SUB(CURDATE(), INTERVAL 4 DAY) GROUP BY d ORDER BY d`);
+  await q("emails by day / status (live)", `SELECT DATE(email_sent_at) d, email_status, COUNT(*) n FROM qualified_followup WHERE mode_at_enqueue='live' AND email_sent_at >= DATE_SUB(CURDATE(), INTERVAL 4 DAY) GROUP BY d, email_status ORDER BY d`);
+  await q("enrolled rows: email state (live, open)", `SELECT COALESCE(email_status,'none') es, COALESCE(wa_status,'none') ws, SUM(email_due_at <= NOW()) email_due_now, SUM(email_due_at > NOW()) email_due_later, SUM(email_due_at IS NULL) no_email_due, COUNT(*) n
+      FROM qualified_followup WHERE mode_at_enqueue='live' AND stopped_reason IS NULL AND journey_state='enrolled' GROUP BY es, ws ORDER BY n DESC LIMIT 12`);
+  await q("earliest email_due among unsent", `SELECT MIN(email_due_at) earliest, MAX(email_due_at) latest, SUM(email_due_at<=NOW()) due_now FROM qualified_followup WHERE mode_at_enqueue='live' AND stopped_reason IS NULL AND email_sent_at IS NULL AND email_status IS NULL`);
   await q("calls stamped by day", `SELECT DATE(called_at) d, COUNT(*) n FROM qualified_followup WHERE called_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) GROUP BY d ORDER BY d`);
   await q("bot-call results by day (he_call)", `SELECT DATE(created_at) d, COUNT(*) n FROM he_call WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) GROUP BY d ORDER BY d`);
   await db.end?.();
