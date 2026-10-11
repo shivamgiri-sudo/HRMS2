@@ -21,7 +21,13 @@ jobs:
     steps:
       - name: df
         shell: bash
-        run: df -h /var /var/lib /home 2>&1 | head
+        run: |
+          date -u
+          df -h /var /var/lib /home 2>&1 | head
+          echo '--- stat -f /var (free = all free blocks, available = usable by non-root)'
+          stat -f -c 'block=%S total=%b free=%f available=%a' /var
+          id -un
+          touch /var/www/HRMS2/.deploy-staging/.write-test 2>&1 && echo WRITE_OK && rm -f /var/www/HRMS2/.deploy-staging/.write-test || echo WRITE_FAILED
       - name: Deploy backups (newest first)
         shell: bash
         run: |
