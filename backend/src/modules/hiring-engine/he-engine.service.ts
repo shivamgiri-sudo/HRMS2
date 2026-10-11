@@ -32,6 +32,7 @@ import { streamDriveIds, topUpStreamDrive, type StreamDayPlan } from "./he-strea
 import { sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 import { loadEndDateEnforced, requisitionEndedReason } from "./requisition-criteria.js";
+import { carryOverArrival } from "./arrival-carryover.js";
 import { firstContactHoldSql, followupOwnedExpr, followupSkipSql, followupStoppedSql, LEAD_MOBILE_OF_MATCH } from "./qualified-followup.policy.js";
 import { withFollowupSchema } from "./followup-schema-guard.js";
 
@@ -298,6 +299,8 @@ async function arrivalSync(dryRun: boolean): Promise<number> {
     const booked = from === "invited" || from === "confirmed";
     await addEvent(r.lead_id as string, "arrived", { driveId: r.drive_id as string, channel: "branch", detail: arrivalDetail(from), ...(booked ? {} : { meta: { from } }) });
     await recomputeInsight(r.lead_id as string);
+    // Arrived for a requisition that has already ended: HR also sees the person on the next open requisition at the branch.
+    await carryOverArrival(r.id as string);
   }
   return n;
 }
