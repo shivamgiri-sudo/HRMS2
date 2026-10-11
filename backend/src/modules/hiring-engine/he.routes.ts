@@ -16,6 +16,7 @@ import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { generateWebhookToken, last4, saveSuperbot, superbotConfig, webhookToken } from "./he-secrets.service.js";
 import { getPipelineHealth } from "./he-pipeline-health.service.js";
+import { startPlannerWarmup } from "./he-planner.service.js";
 import { testSuperbotConnection } from "./he-superbot.service.js";
 import { buildSuperbotSheet } from "./he-superbot-sheet.service.js";
 import { applySuperbotReport } from "./he-superbot-report.service.js";
@@ -63,6 +64,7 @@ import { getFollowupAudit, listAttention, logAttentionError, markFollowupCalled,
 import { recordPersonOptOut } from "./followup-optout.service.js";
 
 export const heRouter = Router();
+if (process.env.NODE_ENV === "production" && !process.env.VITEST) startPlannerWarmup();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
 let masterCache: { at: number; data: unknown } | null = null;
 // Warm the Meta recruitment numbers shortly after start so the first visitor does not wait for the full computation.

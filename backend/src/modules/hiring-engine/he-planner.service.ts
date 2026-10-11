@@ -10,7 +10,8 @@ export interface PlannerRequest { requisitionId?: string | null; branch?: string
 export interface PlannerResponse extends Plan {
   scope: "branch+process" | "process" | "all";
   requisition: { id: string; code: string; branch: string; process: string | null; position: string; openPositions: number } | null;
-  pool: { reachableNow: number; suggested: number; invitedOrConfirmed: number };
+  /** inPipeline: people already enrolled in the live follow-up for this requisition (emailed, queued or answered). */
+  pool: { reachableNow: number; suggested: number; invitedOrConfirmed: number; inPipeline: number };
   historyMonths: number;
 }
 
@@ -62,16 +63,46 @@ export async function planHiring(q: PlannerRequest): Promise<PlannerResponse> {
   if (hist.reduce((a, h) => a + h.uniqueLeads, 0) < 50) { hist = await history("", [], months); scope = "all"; }
 
   const plan = buildPlan({ targetSelected: target, days, bufferPct: q.bufferPct ?? 15, history: hist });
-  let pool = { reachableNow: 0, suggested: 0, invitedOrConfirmed: 0 };
+  let pool = { reachableNow: 0, suggested: 0, invitedOrConfirmed: 0, inPipeline: 0 };
   if (requisition) {
     const [p] = await db.execute<RowDataPacket[]>(
       `SELECT SUM(m.state = 'suggested') AS suggested, SUM(m.state IN ('invited','confirmed')) AS booked,
               SUM(m.state = 'suggested' AND (COALESCE(l.email,'') <> '' OR EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL))) AS reachable
          FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.requisition_id = ?`, [requisition.id]);
-    pool = { reachableNow: Number(p[0]?.reachable ?? 0), suggested: Number(p[0]?.suggested ?? 0), invitedOrConfirmed: Number(p[0]?.booked ?? 0) };
-    if (pool.reachableNow < plan.totals.uniqueLeads) plan.notes.push(`The pool already holds ${pool.reachableNow} reachable matches for this requisition; source about ${plan.totals.uniqueLeads - pool.reachableNow} more leads.`);
-    else plan.notes.push(`The existing pool covers the lead requirement: work the ${pool.reachableNow} reachable matches before buying new leads.`);
+    let inPipeline = 0;
+    try {
+      const [f] = await db.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS n FROM qualified_followup WHERE requisition_id = ? AND mode_at_enqueue = 'live' AND stopped_reason IS NULL", [requisition.id]);
+      inPipeline = Number(f[0]?.n ?? 0);
+    } catch { /* the pool facts below still hold */ }
+    pool = { reachableNow: Number(p[0]?.reachable ?? 0), suggested: Number(p[0]?.suggested ?? 0), invitedOrConfirmed: Number(p[0]?.booked ?? 0), inPipeline };
+    // People already invited, confirmed or queued in the follow-up count as covered: only the rest is a sourcing gap.
+    const covered = pool.reachableNow + Math.max(pool.invitedOrConfirmed, pool.inPipeline);
+    const gap = Math.max(0, plan.totals.uniqueLeads - covered);
+    if (gap > 0) plan.notes.push(`${covered} people are already covered for this requisition (${pool.invitedOrConfirmed} invited or confirmed, ${pool.inPipeline} in the follow-up, ${pool.reachableNow} reachable suggestions); source about ${gap} more leads.`);
+    else plan.notes.push(`The existing pool covers the lead requirement: ${covered} people are already invited, queued or reachable. Work them before buying new leads.`);
   }
   if (scope !== "branch+process") plan.notes.unshift(scope === "process" ? "Too little history at this branch: rates come from the same process across branches." : "Too little history for this process: rates come from all hiring.");
   return { ...plan, scope, requisition, pool, historyMonths: months };
+}
+
+/**
+ * The first read of each scope scans the recruiter ledger for 8 to 15 seconds, and every deploy empties the cache, so the first person to
+ * open the Planner waited. Warm the default scope and the scope of every open requisition once after start and again every 14 minutes.
+ */
+let warmTimer: ReturnType<typeof setInterval> | null = null;
+export async function warmPlannerHistory(): Promise<void> {
+  try {
+    await history("", [], 6);
+    const [r] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT branch_name, process_name FROM job_requisition
+        WHERE active_status = 1 AND approval_status = 'approved' AND fulfilled_headcount < requested_headcount AND branch_name IS NOT NULL AND process_name IS NOT NULL LIMIT 8`);
+    for (const x of r) await history("AND branch_name = ? AND process_name = ?", [x.branch_name, x.process_name], 6);
+  } catch { /* the planner still works cold */ }
+}
+export function startPlannerWarmup(): void {
+  if (warmTimer) return;
+  setTimeout(() => void warmPlannerHistory(), 20_000).unref?.();
+  warmTimer = setInterval(() => void warmPlannerHistory(), 14 * 60_000);
+  warmTimer.unref?.();
 }
