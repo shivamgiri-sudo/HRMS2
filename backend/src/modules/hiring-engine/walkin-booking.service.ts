@@ -99,12 +99,12 @@ export function pickSlot(cfg: SlotConfig, booked: Record<string, number>, nowIst
 
 async function requisitionOpen(requisitionId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
+    "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
   const r = rows[0];
   if (!r) return false;
   const closed = requisitionClosedReason({
     approvalStatus: r.approval_status ?? null, activeStatus: r.active_status ?? null, closedAt: r.closed_at ?? null,
-    requestedHeadcount: r.requested_headcount != null ? Number(r.requested_headcount) : null, fulfilledHeadcount: r.fulfilled_headcount != null ? Number(r.fulfilled_headcount) : null,
+    requestedHeadcount: r.requested_headcount != null ? Number(r.requested_headcount) : null, fulfilledHeadcount: r.fulfilled_headcount != null ? Number(r.fulfilled_headcount) : null, joinedHeadcount: r.joined_headcount != null ? Number(r.joined_headcount) : null,
   });
   return closed == null && String(r.approval_status ?? "").toLowerCase() === "approved";
 }

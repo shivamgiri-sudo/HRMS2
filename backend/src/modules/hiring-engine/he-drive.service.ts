@@ -4,6 +4,7 @@
  * or voice calls can never be handed the same last seat).
  */
 import { randomBytes } from "node:crypto";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import { applyEligibilityGate, type LeadFactsRow } from "./he-eligibility.service.js";
 import { refreshHistoryChunk } from "./he-master.service.js";
 import { loadProfiles } from "./he-profile.service.js";
@@ -100,7 +101,7 @@ async function withSelectionRules(req: ReqRow | null): Promise<ReqRow | null> {
 
 async function loadRequisition(id: string): Promise<ReqRow | null> {
   const [rows] = await db.execute<ReqRow[]>(
-    `SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount,
+    `SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount,
             jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km,
             jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required,
             bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate
@@ -113,7 +114,7 @@ export async function createDrive(i: DriveInput): Promise<{ id: string; invites:
   const req = await loadRequisition(i.requisitionId);
   if (!req) throw new Error("Requisition not found");
   if (req.approval_status !== "approved" || !req.active_status) throw new Error("Requisition is not open for hiring");
-  const open = req.requested_headcount - req.fulfilled_headcount;
+  const open = joinsLeft(req.requested_headcount, (req as { joined_headcount?: number }).joined_headcount ?? 0);
   if (open <= 0) throw new Error("Requisition has no open positions");
   const cfg: SlotConfig = { date: i.driveDate, start: i.slotStart ?? "10:00", end: i.slotEnd ?? "17:30", minutes: i.slotMinutes ?? 30, capacity: i.slotCapacity ?? 6 };
   const cap = driveCapacity(cfg);
@@ -235,7 +236,7 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
   // The drive remembers the walk-ins it was created for (from the owner's target or the open positions); invites follow from that.
   const { invites } = drive.target_shows > 0
     ? invitesForTarget({ targetShows: drive.target_shows, showRatePct: drive.show_rate_pct, capacity: Number.MAX_SAFE_INTEGER }) // lined up for the walk-ins wanted, as before; seats are enforced when sending
-    : inviteTarget({ openPositions: Math.max(1, req.requested_headcount - req.fulfilled_headcount), showRatePct: drive.show_rate_pct, capacity: driveCapacity(cfg) });
+    : inviteTarget({ openPositions: Math.max(1, joinsLeft(req.requested_headcount, (req as { joined_headcount?: number }).joined_headcount ?? 0)), showRatePct: drive.show_rate_pct, capacity: driveCapacity(cfg) });
   const want = limit ?? invites;
 
 
@@ -378,7 +379,7 @@ export async function loadOpenRequisitionsForMatching(): Promise<Array<ReturnTyp
             jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required,
             bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate
        FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
-      WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount LIMIT 300`);
+      WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.joined_headcount < CEIL(jr.requested_headcount * 1.3) LIMIT 300`);
   return reqs.map((r) => ({ ...toMatchRequisition(r), code: String(r.requisition_code ?? ""), process: r.process_name, branch: r.branch_name, role: r.designation_name }));
 }
 
@@ -403,7 +404,7 @@ export async function alternativeRequisitions(leadId: string, excludeRequisition
             jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required,
             bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate
        FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
-      WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount AND jr.id <> ? LIMIT 200`, [excludeRequisitionId]);
+      WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.joined_headcount < CEIL(jr.requested_headcount * 1.3) AND jr.id <> ? LIMIT 200`, [excludeRequisitionId]);
   const prof = (await loadProfiles([leadId])).get(leadId) ?? {};
   // A requisition is only an alternative when the candidate's records place them in that branch's area (same rule as the drive shortlist).
   const loc = (await leadLocationTexts([leadId])).get(leadId) ?? "";

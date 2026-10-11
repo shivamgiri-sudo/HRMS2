@@ -144,7 +144,7 @@ beforeEach(() => {
     const k = kindOf(String(sql));
     const c = impl.fail?.[k];
     if (c) throw Object.assign(new Error("SELECT boom WHERE mobile = 9876543210"), { code: c });
-    if (k === "header") return [impl.header ?? [{ requisition_code: "REQ-1", branch_name: "Pune", requested_headcount: 10, fulfilled_headcount: 2 }]];
+    if (k === "header") return [impl.header ?? [{ requisition_code: "REQ-1", branch_name: "Pune", requested_headcount: 10, fulfilled_headcount: 2, joined_headcount: 5 }]];
     if (k === "drives") return [impl.drives ?? []];
     if (k === "lined") return [impl.lined ?? []];
     if (k === "rates") return [impl.rates ?? []];
@@ -191,7 +191,7 @@ describe("getDrivePlan", () => {
 
   it("builds the checklist: already planned, fill soon, stream ends, pool below quota, readiness", async () => {
     loadActiveStreams.mockResolvedValue([stream("s1", { openDays: 1, dailyInvites: 100 })]);
-    impl.header = [{ requisition_code: "REQ-1", branch_name: "Pune", requested_headcount: 10, fulfilled_headcount: 9 }];
+    impl.header = [{ requisition_code: "REQ-1", branch_name: "Pune", requested_headcount: 10, fulfilled_headcount: 9, joined_headcount: 12 }];
     impl.planned = [{ stream_id: "s1", lined: 30 }];
     impl.pool = [{ n: 40 }];
     readiness.mockResolvedValue({ ok: false, problems: [{ code: "no_bmi_link", severity: "warning", message: "No BookMyInterview link" }] });

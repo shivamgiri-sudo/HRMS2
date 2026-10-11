@@ -51,13 +51,13 @@ export async function reqEndDateEnforced(now: Date = new Date()): Promise<boolea
 
 export async function loadRequisitionFacts(requisitionId: string): Promise<RequisitionFacts | null> {
   const [r] = await db.execute<RowDataPacket[]>(
-    "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, requisition_validity FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
+    "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, joined_headcount, requisition_validity FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
   const x = r[0];
   if (!x) return null;
   return {
     approvalStatus: x.approval_status == null ? null : String(x.approval_status), activeStatus: x.active_status == null ? null : Number(x.active_status),
     closedAt: x.closed_at ?? null, requestedHeadcount: x.requested_headcount == null ? null : Number(x.requested_headcount),
-    fulfilledHeadcount: x.fulfilled_headcount == null ? null : Number(x.fulfilled_headcount), validityDate: x.requisition_validity ?? null,
+    fulfilledHeadcount: x.fulfilled_headcount == null ? null : Number(x.fulfilled_headcount), joinedHeadcount: x.joined_headcount == null ? null : Number(x.joined_headcount), validityDate: x.requisition_validity ?? null,
   };
 }
 

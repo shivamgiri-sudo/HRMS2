@@ -17,7 +17,7 @@ describe("collectHealth", () => {
       { match: /FROM meta_lead_raw/, rows: [{ h: 2 }] },
       { match: /inbound_email_cursor/, rows: [] },
       { match: /wa_due_at < DATE_SUB/, rows: [{ n: 40, oldest: "2026-10-09 10:00:00" }] },
-      { match: /job_requisition WHERE active_status = 1 AND approval_status = 'approved' AND fulfilled_headcount < requested_headcount AND requisition_validity IS NOT NULL/, rows: [{ c: "NOIDA-Onfido-17", v: "2026-09-25" }] },
+      { match: /job_requisition WHERE active_status = 1 AND approval_status = 'approved' AND joined_headcount < CEIL\(requested_headcount \* 1\.3\) AND requisition_validity IS NOT NULL/, rows: [{ c: "NOIDA-Onfido-17", v: "2026-09-25" }] },
     ];
     const c = await collectHealth(new Date("2026-10-11T03:00:00Z"));
     const by = Object.fromEntries(c.map((x) => [x.key, x]));

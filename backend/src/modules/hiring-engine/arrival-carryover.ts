@@ -40,7 +40,7 @@ export async function carryOverArrival(matchId: string, now: Date = new Date()):
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT j.* FROM job_requisition j WHERE j.id <> ? AND j.designation_name = ? AND j.active_status = 1 AND j.approval_status = 'approved'
-          AND j.closed_at IS NULL AND j.fulfilled_headcount < j.requested_headcount AND (j.requisition_validity IS NULL OR j.requisition_validity >= ?)`,
+          AND j.closed_at IS NULL AND j.joined_headcount < CEIL(j.requested_headcount * 1.3) AND (j.requisition_validity IS NULL OR j.requisition_validity >= ?)`,
       [String(cur.requisition_id), String(cur.designation_name), today]);
     const pick = rankSuccessors(
       { designation: String(cur.designation_name), branch: String(cur.branch_name), process: String(cur.process_id ?? cur.process_name ?? "") },

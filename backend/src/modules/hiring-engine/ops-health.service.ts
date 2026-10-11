@@ -59,13 +59,13 @@ export async function collectHealth(now = new Date()): Promise<Check[]> {
      AND NOT EXISTS (SELECT 1 FROM he_message y WHERE y.lead_id = m.lead_id AND y.requisition_id = m.requisition_id AND y.template_key = 'he_walkin_invite_email' AND y.direction = 'out' AND y.delivery_status <> 'failed' AND y.drive_id <=> m.drive_id)`);
   if (stuckCorr && n(stuckCorr.n) > 50) add("slot_corrections", "warn", "Corrected invitations are piling up", `${n(stuckCorr.n)} people hold a new slot that has not been emailed to them yet`);
 
-  const past = await many("SELECT requisition_code c, requisition_validity v FROM job_requisition WHERE active_status = 1 AND approval_status = 'approved' AND fulfilled_headcount < requested_headcount AND requisition_validity IS NOT NULL AND requisition_validity < CURDATE() ORDER BY requisition_validity LIMIT 12");
+  const past = await many("SELECT requisition_code c, requisition_validity v FROM job_requisition WHERE active_status = 1 AND approval_status = 'approved' AND joined_headcount < CEIL(requested_headcount * 1.3) AND requisition_validity IS NOT NULL AND requisition_validity < CURDATE() ORDER BY requisition_validity LIMIT 12");
   if (past && past.length) add("past_deadline", "warn", "Requisitions past their end date are still open", past.map((r) => `${r.c} (ended ${String(r.v).slice(0, 10)})`).join(", ") + ". Close or extend them.");
 
-  const noBmi = await one("SELECT COUNT(*) n FROM job_requisition WHERE active_status = 1 AND approval_status = 'approved' AND fulfilled_headcount < requested_headcount AND (requisition_validity IS NULL OR requisition_validity >= CURDATE()) AND (bmi_assessment_url IS NULL OR bmi_assessment_url = '')");
+  const noBmi = await one("SELECT COUNT(*) n FROM job_requisition WHERE active_status = 1 AND approval_status = 'approved' AND joined_headcount < CEIL(requested_headcount * 1.3) AND (requisition_validity IS NULL OR requisition_validity >= CURDATE()) AND (bmi_assessment_url IS NULL OR bmi_assessment_url = '')");
   if (noBmi && n(noBmi.n) > 0) add("bmi_links", "warn", "Open requisitions without an assessment link", `${n(noBmi.n)} requisitions: add the link in Hiring Engine, Master tab`);
 
-  const idle = await many(`SELECT j.requisition_code c FROM job_requisition j WHERE j.active_status = 1 AND j.approval_status = 'approved' AND j.fulfilled_headcount < j.requested_headcount
+  const idle = await many(`SELECT j.requisition_code c FROM job_requisition j WHERE j.active_status = 1 AND j.approval_status = 'approved' AND j.joined_headcount < CEIL(j.requested_headcount * 1.3)
       AND (j.requisition_validity IS NULL OR j.requisition_validity >= CURDATE())
       AND NOT EXISTS (SELECT 1 FROM qualified_followup q WHERE q.requisition_id = j.id AND q.mode_at_enqueue = 'live') LIMIT 12`);
   if (idle && idle.length) add("idle_requisitions", "warn", "Open requisitions nobody has been invited for", idle.map((r) => String(r.c)).join(", "));

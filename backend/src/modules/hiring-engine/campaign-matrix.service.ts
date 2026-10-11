@@ -6,6 +6,7 @@
  * `partial` and read as unknown. 60 s cache per scope and filter.
  */
 import type { RowDataPacket } from "mysql2";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import { limitedDb } from "./he-read-limit.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import { closedReasonOf } from "../meta-campaign/campaign-requisition.service.js";
@@ -40,7 +41,7 @@ const CAMPAIGNS_SQL = `SELECT mc.id, mc.campaign_name, mc.campaign_status, mc.me
   FROM meta_campaign mc LEFT JOIN meta_campaign_requisition l ON l.campaign_id = mc.id ${CI} AND l.removed_at IS NULL ORDER BY mc.created_at, l.is_primary DESC, l.sort_order`;
 const CAMPAIGNS_NO_LINKS_SQL = `SELECT mc.id, mc.campaign_name, mc.campaign_status, mc.meta_form_id, mc.requisition_id AS primary_id, mc.requisition_id AS link_id
   FROM meta_campaign mc ORDER BY mc.created_at`;
-const REQ_EXTRA = `jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.requisition_validity,
+const REQ_EXTRA = `jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.requisition_validity,
        (jr.bmi_assessment_url IS NOT NULL AND jr.bmi_assessment_url <> '') AS has_bmi,`;
 const reqSql = (n: number, branch: boolean): string => LOAD_ROW_SQL.replace("SELECT jr.id,", `SELECT jr.id, ${REQ_EXTRA}`)
   .replace("WHERE jr.id = ? LIMIT 1", `WHERE (jr.id IN (${n ? ph(n) : "NULL"}) OR (jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.closed_at IS NULL))${branch ? " AND jr.branch_name = ?" : ""}`);
@@ -170,7 +171,7 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
     return {
       campaign: c ? { id: String(c.id), name: String(c.campaign_name ?? ""), status: String(c.campaign_status ?? ""), hasForm: !!String(c.meta_form_id ?? "").trim() } : null,
       requisition: { id: rid, code: String(r.requisition_code ?? ""), branch: String(r.branch_name ?? ""), closedReason: closedReasonOf(r), endDate: endDateOf(v), endDatePassed: endDatePassed(v, istDay(now)),
-        seatsLeft: seatsLeft({ requestedHeadcount: Number(r.requested_headcount ?? 0), fulfilledHeadcount: Number(r.fulfilled_headcount ?? 0) }), bmiLinkPresent: Number(r.has_bmi) === 1,
+        seatsLeft: joinsLeft(Number(r.requested_headcount ?? 0), Number(r.joined_headcount ?? 0)), bmiLinkPresent: Number(r.has_bmi) === 1,
         completeness: compileCriteria(toCriteriaRow(r)).completeness },
       streams: streamsOf, activity48h: activity ? per(activity) : null, responses3d: responses ? per(responses) : null,
       drivesNext3d: Number(drives.find((d) => String(d.requisition_id) === rid)?.n ?? 0), eligible, pendingApproval: pending,

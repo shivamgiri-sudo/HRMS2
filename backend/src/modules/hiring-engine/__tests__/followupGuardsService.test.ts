@@ -51,8 +51,8 @@ describe("followup-guards.service", () => {
 
   it("loadRequisitionFacts maps the row (with the end date) and returns null when absent", async () => {
     expect(await loadRequisitionFacts("R1")).toBeNull();
-    h.req = { approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 5, fulfilled_headcount: 1, requisition_validity: "2026-10-31" };
-    expect(await loadRequisitionFacts("R1")).toEqual({ approvalStatus: "approved", activeStatus: 1, closedAt: null, requestedHeadcount: 5, fulfilledHeadcount: 1, validityDate: "2026-10-31" });
+    h.req = { approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 5, fulfilled_headcount: 1, joined_headcount: 0, requisition_validity: "2026-10-31" };
+    expect(await loadRequisitionFacts("R1")).toEqual({ approvalStatus: "approved", activeStatus: 1, closedAt: null, requestedHeadcount: 5, fulfilledHeadcount: 1, joinedHeadcount: 0, validityDate: "2026-10-31" });
   });
 
   it("the end date only counts with both WS3 E1 keys: REQ_END_DATE_ENFORCEMENT=policy and policy.req_end_date_enforced = 1 (read at most once a minute)", async () => {

@@ -40,7 +40,7 @@ describe("getFulfilment", () => {
     const get = await fresh();
     const v = await get(NOW);
     const r = v.requisitions[0];
-    expect(r).toMatchObject({ code: "NOIDA-Onfido-24", seatsOpen: 25, neededLeads: 1000, covered: 400, gap: 600, verdict: "on_track" });
+    expect(r).toMatchObject({ code: "NOIDA-Onfido-24", seatsOpen: 33, neededLeads: 1000, covered: 400, gap: 600, verdict: "on_track" });
     expect(r.perDayNeeded).toBe(Math.ceil(600 / r.daysLeft!));
   });
   it("at risk when the per-day need exceeds the daily capacity; covered when nothing is missing; past deadline when the end date has gone", async () => {
@@ -54,6 +54,18 @@ describe("getFulfilment", () => {
     h.reqs = [req({ requisition_validity: "2026-10-01" })];
     v = await (await fresh())(NOW);
     expect(v.requisitions[0].verdict).toBe("past_deadline");
+  });
+  it("sequences requisitions of the same process, designation and branch by end date: the first is filled now, the next is queued behind it", async () => {
+    h.reqs = [
+      req({ id: "R2", requisition_code: "NOIDA-Onfido-23", requisition_validity: "2026-10-19" }),
+      req({ id: "R1", requisition_code: "NOIDA-Onfido-22", requisition_validity: "2026-10-15" }),
+      req({ id: "R3", requisition_code: "AHMEDABAD-SBI-1", process_name: "SBI", branch_name: "AHMEDABAD", requisition_validity: "2026-11-05" }),
+    ];
+    const v = await (await fresh())(NOW);
+    const by = Object.fromEntries(v.requisitions.map((r) => [r.code, r]));
+    expect(by["NOIDA-Onfido-22"]).toMatchObject({ sequence: 1, queuedBehind: null });
+    expect(by["NOIDA-Onfido-23"]).toMatchObject({ sequence: 2, queuedBehind: "NOIDA-Onfido-22", verdict: "queued" });
+    expect(by["AHMEDABAD-SBI-1"]).toMatchObject({ sequence: 1, queuedBehind: null });
   });
   it("answers with the expected-arrivals blocks and computing=true while the sizing is still running, then serves the snapshot", async () => {
     vi.useFakeTimers();

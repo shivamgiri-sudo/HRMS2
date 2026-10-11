@@ -3,6 +3,7 @@
  * recruiter attempt ledger, plus how much of the existing pool is already reachable for this requisition.
  */
 import type { RowDataPacket } from "mysql2";
+import { selectionsStillNeeded } from "../../shared/requisition-fill.js";
 import { db } from "../../db/mysql.js";
 import { buildPlan, type Plan, type SourceHistory } from "./he-planner.js";
 
@@ -45,9 +46,9 @@ export async function planHiring(q: PlannerRequest): Promise<PlannerResponse> {
   let branch = q.branch?.trim() || null, proc = q.process?.trim() || null;
   if (q.requisitionId) {
     const [r] = await db.execute<RowDataPacket[]>(
-      "SELECT id, requisition_code, branch_name, process_name, designation_name, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1", [q.requisitionId]);
+      "SELECT id, requisition_code, branch_name, process_name, designation_name, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1", [q.requisitionId]);
     if (r[0]) {
-      requisition = { id: r[0].id, code: r[0].requisition_code, branch: r[0].branch_name, process: r[0].process_name, position: r[0].designation_name, openPositions: Math.max(0, Number(r[0].requested_headcount) - Number(r[0].fulfilled_headcount)) };
+      requisition = { id: r[0].id, code: r[0].requisition_code, branch: r[0].branch_name, process: r[0].process_name, position: r[0].designation_name, openPositions: selectionsStillNeeded(Number(r[0].requested_headcount), Number(r[0].fulfilled_headcount), Number(r[0].joined_headcount ?? 0)) };
       branch = branch ?? r[0].branch_name; proc = proc ?? r[0].process_name;
     }
   }
@@ -96,7 +97,7 @@ export async function warmPlannerHistory(): Promise<void> {
     await history("", [], 6);
     const [r] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT branch_name, process_name FROM job_requisition
-        WHERE active_status = 1 AND approval_status = 'approved' AND fulfilled_headcount < requested_headcount AND branch_name IS NOT NULL AND process_name IS NOT NULL LIMIT 8`);
+        WHERE active_status = 1 AND approval_status = 'approved' AND joined_headcount < CEIL(requested_headcount * 1.3) AND branch_name IS NOT NULL AND process_name IS NOT NULL LIMIT 8`);
     for (const x of r) {
       await history("AND branch_name = ? AND process_name = ?", [x.branch_name, x.process_name], 6);
       await history("AND process_name = ?", [x.process_name], 6); // the fallback scope when a branch has too little history

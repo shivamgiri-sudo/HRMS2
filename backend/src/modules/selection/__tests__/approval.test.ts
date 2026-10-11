@@ -112,7 +112,7 @@ const evalAll = (facts: CandidateFacts[], overrides: Record<string, unknown> = {
 const port = () => { const calls: unknown[] = []; return { calls, enqueue: vi.fn(async (i: unknown) => { calls.push(i); return { status: "enqueued" }; }) }; };
 
 beforeEach(() => {
-  Object.assign(h.state, { req: { approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 10, fulfilled_headcount: 0, requisition_validity: "2026-10-30", branch_name: "NOIDA-2", designation_name: "CSE" },
+  Object.assign(h.state, { req: { approval_status: "approved", active_status: 1, closed_at: null, requested_headcount: 10, fulfilled_headcount: 0, joined_headcount: 3, requisition_validity: "2026-10-30", branch_name: "NOIDA-2", designation_name: "CSE" },
     row: dbRow(), runs: [], cands: [], approvals: [], enrol: 0, perSeat: null, version: "v1", outOfScope: new Set(), facts: new Map(), refs: new Map(), leads: new Map(), factKind: new Map(), nextId: 1 });
   h.state.people = evalAll([person(1), person(2), person(3), person(4, { age: { value: null, quality: "missing", from: "t" } }), person(5, { age: ok(50) }), person(6, { recordType: "legacy_employee" })]);
 });
@@ -132,7 +132,7 @@ describe("shortlist run", () => {
 
 describe("seat caps on preview runs (WS3 D3)", () => {
   it("1 seat at 2 per seat: the 2 best picks stay picked (HR include first), the rest are capped and never approved; counts say so", async () => {
-    h.state.req = { ...h.state.req, requested_headcount: 5, fulfilled_headcount: 4 };
+    h.state.req = { ...h.state.req, requested_headcount: 5, fulfilled_headcount: 4, joined_headcount: 6 };
     h.state.perSeat = 2;
     h.state.people = evalAll([person(1), person(2), person(3), person(7, { age: ok(60) })], { [person(7).personKey]: { kind: "include", reason: "client asked", actorId: "hr", at: "t" } });
     const r = await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
@@ -160,7 +160,7 @@ describe("seat caps on preview runs (WS3 D3)", () => {
 
 describe("E5: seat caps are re-checked when approving and enrolling", () => {
   it("two runs the same day: the second approval sees the seats the first one used (capped, never approved)", async () => {
-    h.state.req = { ...h.state.req, requested_headcount: 5, fulfilled_headcount: 4 };
+    h.state.req = { ...h.state.req, requested_headcount: 5, fulfilled_headcount: 4, joined_headcount: 6 };
     h.state.perSeat = 2;
     h.state.people = evalAll([person(1), person(2), person(3)]);
     const a = await createShortlistRun({ requisitionId: "r1", sourceKind: "he", actor, now: NOW });
@@ -172,7 +172,7 @@ describe("E5: seat caps are re-checked when approving and enrolling", () => {
     expect(h.conn.execute.mock.calls.some((c) => String(c[0]).includes("FROM job_requisition WHERE id = ? FOR UPDATE"))).toBe(true);
   });
   it("Live Meta arrivals under a standing approval stop at the daily cap", async () => {
-    h.state.req = { ...h.state.req, requested_headcount: 5, fulfilled_headcount: 4 };
+    h.state.req = { ...h.state.req, requested_headcount: 5, fulfilled_headcount: 4, joined_headcount: 6 };
     h.state.perSeat = 1;
     h.state.enrol = 1;
     h.state.people = evalAll([person(1)]);
@@ -208,7 +208,7 @@ describe("approveBatch", () => {
     await expect(approveBatch({ requisitionId: "r1", sourceKind: "he", runId, actor, now: NOW })).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/criteria changed/) });
   });
   it.each([
-    ["closed", { approval_status: "closed" }], ["not approved", { approval_status: "pending_approval" }], ["full", { fulfilled_headcount: 10 }],
+    ["closed", { approval_status: "closed" }], ["not approved", { approval_status: "pending_approval" }], ["full", { fulfilled_headcount: 10, joined_headcount: 13 }],
     ["past its hiring deadline", { requisition_validity: "2026-10-01" }], ["inactive", { active_status: 0 }],
   ])("a requisition that is %s -> 409", async (_n, o) => {
     const runId = await run();

@@ -13,14 +13,19 @@ import { FACTS_SQL, loadShowParams } from "./he-showup.service.js";
 import { pShow } from "./he-showup.js";
 import { planHiring } from "./he-planner.service.js";
 import { dailyInviteTarget } from "./walkin-booking.service.js";
+import { joinTarget, selectionsStillNeeded } from "../../shared/requisition-fill.js";
 
 export interface HourBucket { hour: string; booked: number; confirmed: number; expected: number }
 export interface BranchDay { branch: string; booked: number; confirmed: number; expected: number; hours: HourBucket[] }
 export interface ExpectedDay { date: string; booked: number; confirmed: number; expected: number; branches: BranchDay[] }
-export type FillVerdict = "covered" | "on_track" | "at_risk" | "past_deadline" | "no_history";
+export type FillVerdict = "covered" | "on_track" | "at_risk" | "past_deadline" | "no_history" | "queued";
 export interface RequisitionFill {
   id: string; code: string; branch: string; process: string; role: string;
-  seatsOpen: number; requested: number; fulfilled: number; deadline: string | null; daysLeft: number | null;
+  /** Selections still to make to reach the 130% target (selected or joined, whichever is larger, already counted). */
+  seatsOpen: number; requested: number; fulfilled: number; target: number; selected: number; joined: number;
+  /** Position in the sequence of this process, designation and branch (1 = being filled now) and which requisition it waits for. */
+  sequence: number; queuedBehind: string | null;
+  deadline: string | null; daysLeft: number | null;
   neededLeads: number; covered: number; gap: number; perDayNeeded: number; capacityPerDay: number;
   invited: number; confirmed: number; expectedArrivals7d: number; expectedJoined: number;
   ratesFrom: "branch+process" | "process" | "all"; verdict: FillVerdict; reason: string;
@@ -76,14 +81,28 @@ async function computeFulfilment(now: Date): Promise<FulfilmentView> {
   const nextDay = nextDate ? toDay(nextDate, facts, params) : null;
 
   const reqs = await safe<RowDataPacket[]>("requisitions", [], async () => (await db.execute<RowDataPacket[]>(
-    `SELECT id, requisition_code, designation_name, process_name, branch_name, requested_headcount, fulfilled_headcount, requisition_validity
-       FROM job_requisition WHERE active_status = 1 AND approval_status = 'approved' AND closed_at IS NULL AND fulfilled_headcount < requested_headcount
+    `SELECT id, requisition_code, designation_name, process_name, branch_name, requested_headcount, fulfilled_headcount, joined_headcount, requisition_validity
+       FROM job_requisition WHERE active_status = 1 AND approval_status = 'approved' AND closed_at IS NULL AND joined_headcount < CEIL(requested_headcount * 1.3)
       ORDER BY (requisition_validity IS NULL), requisition_validity ASC LIMIT 12`))[0]);
   const capacity = await safe("capacity", 400, dailyInviteTarget);
+  // Sequence inside each process + designation + branch: nearest end date first (none last), then the lower requisition number.
+  const seqNo = (code: string): number => { const m = /-(\d+)\s*$/.exec(code); return m ? Number(m[1]) : Number.POSITIVE_INFINITY; };
+  const groupKey = (q: RowDataPacket): string => [q.process_name, q.designation_name, q.branch_name].map((x) => String(x ?? "").toUpperCase()).join("|");
+  const ordered = [...reqs].sort((a, b) => groupKey(a).localeCompare(groupKey(b))
+    || String(a.requisition_validity ?? "9999-12-31").localeCompare(String(b.requisition_validity ?? "9999-12-31")) || seqNo(String(a.requisition_code)) - seqNo(String(b.requisition_code)));
+  const seq = new Map<string, { n: number; behind: string | null }>();
+  const firstOf = new Map<string, string>(); const countOf = new Map<string, number>();
+  for (const q of ordered) {
+    const k = groupKey(q); const n = (countOf.get(k) ?? 0) + 1; countOf.set(k, n);
+    if (n === 1) firstOf.set(k, String(q.requisition_code));
+    seq.set(String(q.id), { n, behind: n === 1 ? null : (firstOf.get(k) ?? null) });
+  }
   const out: RequisitionFill[] = [];
   for (const q of reqs) {
     const id = String(q.id);
-    const seatsOpen = Math.max(0, num(q.requested_headcount) - num(q.fulfilled_headcount));
+    const requestedSeats = num(q.requested_headcount), selected = num(q.fulfilled_headcount), joined = num(q.joined_headcount);
+    const seatsOpen = selectionsStillNeeded(requestedSeats, selected, joined);
+    const position = seq.get(id) ?? { n: 1, behind: null };
     const deadline = dayOf(q.requisition_validity);
     const daysLeft = deadline ? Math.ceil((Date.parse(`${deadline}T23:59:59+05:30`) - now.getTime()) / 86_400_000) : null;
     const mine = facts.filter((f) => String(f.requisition_id) === id);
@@ -99,12 +118,13 @@ async function computeFulfilment(now: Date): Promise<FulfilmentView> {
       let verdict: FillVerdict; let reason: string;
       if (daysLeft != null && daysLeft <= 0) { verdict = "past_deadline"; reason = `The end date has passed with ${seatsOpen} seats open: people who arrive are carried to the next open requisition at this branch.`; }
       else if (plan.scope === "all" && neededLeads === 0) { verdict = "no_history"; reason = "Not enough history to size this requisition yet."; }
+      else if (position.behind) { verdict = "queued"; reason = `Queued: filled after ${position.behind} (same process, designation and branch). It starts when ${position.behind} reaches its join target. ${gap <= 0 ? "Its people are already lined up." : `About ${gap} more people will be needed then.`}`; }
       else if (gap <= 0) { verdict = "covered"; reason = `${covered} people are already invited or queued, which covers the ${neededLeads} the history says are needed.`; }
       else if (perDay <= capacity) { verdict = "on_track"; reason = `${covered} of ${neededLeads} needed are covered. The engine must add about ${perDay} a day for ${horizon} day${horizon === 1 ? "" : "s"}; its daily capacity is ${capacity}.`; }
       else { verdict = "at_risk"; reason = `${covered} of ${neededLeads} needed are covered. It needs ${perDay} new people a day for ${horizon} day${horizon === 1 ? "" : "s"}, above the ${capacity} a day the engine sends. More leads or a later date are needed.`; }
       out.push({
         id, code: String(q.requisition_code), branch: String(q.branch_name ?? ""), process: String(q.process_name ?? ""), role: String(q.designation_name ?? ""),
-        seatsOpen, requested: num(q.requested_headcount), fulfilled: num(q.fulfilled_headcount), deadline, daysLeft,
+        seatsOpen, requested: requestedSeats, fulfilled: selected, target: joinTarget(requestedSeats), selected, joined, sequence: position.n, queuedBehind: position.behind, deadline, daysLeft,
         neededLeads, covered, gap, perDayNeeded: perDay, capacityPerDay: capacity, invited, confirmed, expectedArrivals7d: exp7, expectedJoined: plan.totals.expectedJoined,
         ratesFrom: plan.scope, verdict, reason,
       });

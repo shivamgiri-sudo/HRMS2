@@ -3,6 +3,7 @@
  * Does nothing (not even a query) while QUAL_FOLLOWUP_MODE is off. A MySQL advisory lock keeps two processes from ticking together.
  */
 import type { PoolConnection } from "mysql2/promise";
+import { refreshJoinedHeadcount } from "./requisition-joined.service.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
@@ -147,8 +148,11 @@ export async function runQualifiedFollowupTick(o: { env?: NodeJS.ProcessEnv; now
 const add = (a: StepCounts, b: StepCounts): StepCounts =>
   ({ processed: a.processed + b.processed, sent: a.sent + b.sent, failed: a.failed + b.failed, blocked: a.blocked + b.blocked, held: a.held + b.held, dryRun: a.dryRun + b.dryRun });
 
+let lastJoinedRefresh = 0;
 async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources: SourceType[] }>, now: Date, deps: TickDeps): Promise<TickReport> {
   const r = blank(s.mode);
+  // Joined counts (employee code generated) decide when a requisition is filled; refreshed at most every 10 minutes.
+  if (Date.now() - lastJoinedRefresh > 10 * 60_000) { lastJoinedRefresh = Date.now(); await guarded("joined-refresh", () => refreshJoinedHeadcount(), 0); }
   // One shared WhatsApp budget for the Pinbot number: every unprompted send today by any mechanism counts (D10).
   const budget = newBudget(await guarded("budget", async () => waDailyBudget(await deps.getPinbotQuality(), s.waDailyMax) - (await deps.sharedWaSentToday(now)), 0));
   for (const { tag, sources } of plan) {

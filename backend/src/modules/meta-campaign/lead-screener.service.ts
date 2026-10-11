@@ -19,6 +19,7 @@
  */
 
 import type { MetaScreeningConfig } from '../job-requisition/job-requisition.types.js';
+import { fillTargetMet } from '../../shared/requisition-fill.js';
 
 export interface ScreeningInput {
   parsedAge: number | null;
@@ -53,6 +54,8 @@ export interface RequisitionState {
   closedAt: string | Date | null;
   requestedHeadcount: number | null;
   fulfilledHeadcount: number | null;
+  /** Candidates with an employee code (job_requisition.joined_headcount). When present it decides "filled" (130% rule). */
+  joinedHeadcount?: number | null;
 }
 
 const DEAD_APPROVAL_STATUSES = ['closed', 'cancelled', 'rejected', 'on_hold'];
@@ -72,6 +75,11 @@ export function requisitionClosedReason(state: RequisitionState | null): string 
   const status = (state.approvalStatus ?? '').toLowerCase();
   if (DEAD_APPROVAL_STATUSES.includes(status)) return `requisition is ${status.replace('_', ' ')}`;
   const requested = Number(state.requestedHeadcount ?? 0);
+  // Owner rule (2026-10-11): filled = joined (employee code generated) reaches 130% of the seats. HR's selected count does not close it.
+  if (state.joinedHeadcount !== undefined && state.joinedHeadcount !== null) {
+    if (fillTargetMet(requested, state.joinedHeadcount)) return 'all seats in this batch are filled (join target reached)';
+    return null;
+  }
   const fulfilled = Number(state.fulfilledHeadcount ?? 0);
   if (requested > 0 && fulfilled >= requested) return 'all seats in this batch are filled';
   return null;

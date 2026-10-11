@@ -12,7 +12,7 @@ export type GuardReason = "kill_switch" | "source_off" | "source_paused" | "opte
 
 export interface RequisitionFacts {
   approvalStatus: string | null; activeStatus: number | null; closedAt: string | Date | null;
-  requestedHeadcount: number | null; fulfilledHeadcount: number | null;
+  requestedHeadcount: number | null; fulfilledHeadcount: number | null; joinedHeadcount?: number | null;
   /** job_requisition.requisition_validity (the end date); only counts while policy.req_end_date_enforced = 1. */
   validityDate?: string | Date | null;
 }

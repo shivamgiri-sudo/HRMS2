@@ -5,6 +5,7 @@
 // Nothing is enrolled unless policy.shortlist.enrol = 1, the requisition is open, its enrolment mode is hr_approves and its
 // criteria are complete enough (S-O6: location, education, shift and age decided).
 import { randomUUID } from "node:crypto";
+import { joinsLeft } from "../../shared/requisition-fill.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.js";
@@ -35,11 +36,11 @@ async function inScope(actor: OverrideActor, requisitionId: string) {
 /** Open = approved, active, not closed, seats left, and not past its hiring deadline (IST day). */
 export async function requisitionState(requisitionId: string, now: Date) {
   const [r] = await db.execute<RowDataPacket[]>(
-    "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, requisition_validity, branch_name, designation_name FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
+    "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, joined_headcount, requisition_validity, branch_name, designation_name FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
   const s = r[0];
   if (!s) throw fail(404, "Requisition not found");
   const closed = requisitionClosedReason({ approvalStatus: s.approval_status ?? null, activeStatus: s.active_status ?? null, closedAt: s.closed_at ?? null,
-    requestedHeadcount: s.requested_headcount == null ? null : Number(s.requested_headcount), fulfilledHeadcount: s.fulfilled_headcount == null ? null : Number(s.fulfilled_headcount) });
+    requestedHeadcount: s.requested_headcount == null ? null : Number(s.requested_headcount), fulfilledHeadcount: s.fulfilled_headcount == null ? null : Number(s.fulfilled_headcount), joinedHeadcount: s.joined_headcount == null ? null : Number(s.joined_headcount) });
   const today = istText(now).slice(0, 10);
   const validity = s.requisition_validity ? String(s.requisition_validity instanceof Date ? istText(s.requisition_validity) : s.requisition_validity).slice(0, 10) : null;
   const notOpen = closed ?? (s.approval_status !== "approved" ? "requisition is not approved" : validity && validity < today ? "requisition is past its hiring deadline" : null);
@@ -68,9 +69,9 @@ export async function approvalBlocker(requisitionId: string, now = new Date()): 
 type SeatExec = { execute: <T extends RowDataPacket[]>(sql: string, p?: unknown[]) => Promise<[T, unknown]> };
 export async function seatCapFor(requisitionId: string, now: Date, ex: SeatExec = db as unknown as SeatExec): Promise<{ seatsLeft: number | null; perSeat: number; alreadyToday: number; cap: number | null }> {
   const [r] = await ex.execute<RowDataPacket[]>(
-    "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, requisition_validity, branch_name, designation_name FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
+    "SELECT approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, joined_headcount, requisition_validity, branch_name, designation_name FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
   const req = r[0]?.requested_headcount;
-  const seatsLeft = req == null ? null : Math.max(0, Number(req) - Number(r[0]?.fulfilled_headcount ?? 0));
+  const seatsLeft = req == null ? null : joinsLeft(Number(req), Number(r[0]?.joined_headcount ?? 0));
   const [p] = await ex.execute<RowDataPacket[]>("SELECT value FROM he_model_param WHERE param_key = ? LIMIT 1", [INVITES_PER_SEAT_KEY]);
   const v = p[0] ? Number(p[0].value) : NaN;
   const perSeat = Number.isFinite(v) && v > 0 ? v : DEFAULT_INVITES_PER_SEAT;

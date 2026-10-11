@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1264,
-  "columnCount": 18367,
+  "columnCount": 18368,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -11531,6 +11531,7 @@
       "process_name",
       "requested_headcount",
       "fulfilled_headcount",
+      "joined_headcount",
       "employment_type",
       "salary_min",
       "salary_max",

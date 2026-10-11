@@ -107,7 +107,7 @@ async function loadLeadContext(
             jr.designation_name, jr.branch_name, jr.requisition_code, jr.bmi_assessment_url,
             jr.salary_min, jr.salary_max,
             jr.approval_status, jr.active_status, jr.closed_at,
-            jr.requested_headcount, jr.fulfilled_headcount,
+            jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount,
             ml.parsed_location, ac.current_address, ac.permanent_address, bm.state AS branch_state,
             bm.address AS branch_address, bm.city AS branch_city,
             bm.latitude AS branch_lat, bm.longitude AS branch_lng
@@ -149,6 +149,7 @@ async function loadLeadContext(
       closedAt: (row.closed_at as string | null) ?? null,
       requestedHeadcount: row.requested_headcount !== null ? Number(row.requested_headcount) : null,
       fulfilledHeadcount: row.fulfilled_headcount !== null ? Number(row.fulfilled_headcount) : null,
+      joinedHeadcount: row.joined_headcount != null ? Number(row.joined_headcount) : null,
     }),
   };
 }

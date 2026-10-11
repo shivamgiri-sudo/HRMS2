@@ -4,6 +4,7 @@
  * Logged in he_message (channel 'email') so the cadence, the 360 view and the attempt view all see it.
  */
 import type { RowDataPacket } from "mysql2";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import { randomUUID } from "node:crypto";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
@@ -80,7 +81,7 @@ export async function sendInviteEmail(matchId: string, o: { dryRun?: boolean } =
   const [mr] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.requisition_id, m.slot_at, m.token, d.id AS drive_id, d.drive_date, d.status AS drive_status,
             l.full_name, l.email, l.status AS lead_status, l.mobile10, l.meta_lead_id,
-            jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, bm.address, bm.latitude, bm.longitude
+            jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, bm.address, bm.latitude, bm.longitude
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id LEFT JOIN he_drive d ON d.id = m.drive_id
        JOIN job_requisition jr ON jr.id = m.requisition_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE m.id = ? LIMIT 1`, [matchId]);
@@ -92,7 +93,7 @@ export async function sendInviteEmail(matchId: string, o: { dryRun?: boolean } =
   if (!(await channelAllowed(m.lead_id as string, "email"))) return { status: "blocked", reason: "email_off_for_campaign" };
   const to = normaliseEmail(String(m.email ?? ""));
   if (!to) return { status: "blocked", reason: "no_email" };
-  if (m.approval_status !== "approved" || !m.active_status || Number(m.fulfilled_headcount) >= Number(m.requested_headcount)) return { status: "blocked", reason: "requisition_closed" };
+  if (m.approval_status !== "approved" || !m.active_status || fillTargetMet(Number(m.requested_headcount), Number(m.joined_headcount ?? 0))) return { status: "blocked", reason: "requisition_closed" };
   if (!m.slot_at) return { status: "blocked", reason: "no_slot" };
   const h = istHour(new Date());
   if (h >= 20 || h < 9) return { status: "blocked", reason: "quiet_hours" };

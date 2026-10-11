@@ -64,20 +64,20 @@ export default function FulfilmentCard() {
       <div>
         <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100"><Target className="h-4 w-4 text-blue-600" aria-hidden /> Will every requisition be filled?</h2>
         <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
-          {num(data.totals.seatsOpen)} seats open across {data.requisitions.length} requisitions; {data.totals.atRisk} at risk. "Needed" is how many people must be invited to land the open seats, from this process's walk-in and selection history.
+          {num(data.totals.seatsOpen)} more selections needed across {data.requisitions.length} requisitions; {data.totals.atRisk} at risk. A requisition is filled when the number of people with an employee code reaches its seats plus 30%; then the next one of the same process, designation and branch starts (nearest end date first). "People covered" is how many must be invited to land the remaining selections, from this process's walk-in and selection history.
         </p>
         {data.computing && <p role="status" className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-200">Working out how many people each requisition needs from past walk-in and selection history. This takes under a minute after a restart.</p>}
         <div className="mt-2 overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <caption className="sr-only">Open requisitions: seats, end date, people needed and covered, and whether they will be filled</caption>
             <thead className="text-xs uppercase tracking-wide text-slate-600 dark:text-slate-300">
-              <tr><th scope="col" className="py-1 pr-3">Requisition</th><th scope="col" className="px-2 py-1 text-right">Seats open</th><th scope="col" className="px-2 py-1">End date</th><th scope="col" className="px-2 py-1">People covered</th><th scope="col" className="px-2 py-1 text-right">Expected 7 days</th><th scope="col" className="px-2 py-1">Verdict</th></tr>
+              <tr><th scope="col" className="py-1 pr-3">Requisition</th><th scope="col" className="px-2 py-1 text-right">Joined / target</th><th scope="col" className="px-2 py-1">End date</th><th scope="col" className="px-2 py-1">People covered</th><th scope="col" className="px-2 py-1 text-right">Expected 7 days</th><th scope="col" className="px-2 py-1">Verdict</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {data.requisitions.map((r) => (
                 <tr key={r.id} className="align-top">
-                  <th scope="row" className="py-2 pr-3 font-semibold text-slate-900 dark:text-slate-100">{r.code}<div className="text-xs font-normal text-slate-600 dark:text-slate-300">{r.branch}{r.process ? ` · ${r.process}` : ""}</div></th>
-                  <td className="px-2 py-2 text-right tabular-nums">{r.seatsOpen}<div className="text-xs text-slate-500">of {r.requested}</div></td>
+                  <th scope="row" className="py-2 pr-3 font-semibold text-slate-900 dark:text-slate-100"><span className="mr-1.5 inline-block rounded bg-slate-100 px-1.5 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200" title="Order in which this process fills its requisitions (nearest end date first)">{r.sequence}</span>{r.code}<div className="text-xs font-normal text-slate-600 dark:text-slate-300">{r.branch}{r.process ? ` · ${r.process}` : ""}</div></th>
+                  <td className="px-2 py-2 text-right tabular-nums">{r.joined} / {r.target}<div className="text-xs text-slate-500">{r.selected} selected · {r.requested} seats +30%</div></td>
                   <td className="px-2 py-2 tabular-nums">{r.deadline ? dayLabel(r.deadline) : "none"}<div className="text-xs text-slate-500">{r.daysLeft == null ? "" : r.daysLeft > 0 ? `${r.daysLeft} day${r.daysLeft === 1 ? "" : "s"} left` : "passed"}</div></td>
                   <td className="px-2 py-2">
                     <div className="tabular-nums">{num(r.covered)} of {num(r.neededLeads)}</div>

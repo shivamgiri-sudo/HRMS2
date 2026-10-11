@@ -251,7 +251,7 @@ describe("campaignProgress blockers (why qualified leads may stall)", () => {
     await run({});
     const sql = String(execute.mock.calls[0][0]).replace(/\s+/g, " ");
     expect(sql).toContain("mc.meta_form_id");
-    expect(sql).toContain("jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.bmi_assessment_url IS NOT NULL AND jr.bmi_assessment_url <> '' AS has_bmi");
+    expect(sql).toContain("jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.bmi_assessment_url IS NOT NULL AND jr.bmi_assessment_url <> '' AS has_bmi");
     expect(sql).toContain("WHERE mc.id IN (?)");
   });
   it("an open, linked, ready campaign has no blockers", async () => { expect(await run({})).toEqual([]); });

@@ -10,7 +10,7 @@ exports[`line-up pin (no selection_rules) > requisition A: SQL, params, ranked i
       ],
     ],
     [
-      "SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required, bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE jr.id = ? LIMIT 1",
+      "SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required, bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE jr.id = ? LIMIT 1",
       [
         "rA",
       ],
@@ -66,7 +66,7 @@ exports[`line-up pin (no selection_rules) > requisition B: SQL, params, ranked i
       ],
     ],
     [
-      "SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required, bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE jr.id = ? LIMIT 1",
+      "SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required, bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE jr.id = ? LIMIT 1",
       [
         "rB",
       ],
@@ -133,7 +133,7 @@ exports[`line-up pin (no selection_rules) > requisition C: SQL, params, ranked i
       ],
     ],
     [
-      "SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required, bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE jr.id = ? LIMIT 1",
+      "SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required, bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE jr.id = ? LIMIT 1",
       [
         "rC",
       ],

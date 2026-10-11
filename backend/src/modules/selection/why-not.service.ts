@@ -73,7 +73,7 @@ export async function openRequisitionsInScope(user: NonNullable<AuthenticatedReq
   const today = istText(now).slice(0, 10);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT jr.id FROM job_requisition jr WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.closed_at IS NULL
-        AND jr.fulfilled_headcount < jr.requested_headcount AND (jr.requisition_validity IS NULL OR DATE(jr.requisition_validity) >= ?)${requisitionId ? " AND jr.id = ?" : ""}
+        AND jr.joined_headcount < CEIL(jr.requested_headcount * 1.3) AND (jr.requisition_validity IS NULL OR DATE(jr.requisition_validity) >= ?)${requisitionId ? " AND jr.id = ?" : ""}
       ORDER BY jr.created_at DESC LIMIT 200`, requisitionId ? [today, requisitionId] : [today]);
   const ids = rows.map((r) => String(r.id)).filter((id) => !requisitionId || id === requisitionId);
   const out: string[] = [];

@@ -63,7 +63,7 @@ async function successorsFor(campaignId: string, cur: RowDataPacket, now: Date):
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT j.*, EXISTS (SELECT 1 FROM meta_campaign_requisition l WHERE l.campaign_id = ? AND l.requisition_id = j.id AND l.removed_at IS NULL) AS linked
        FROM job_requisition j WHERE j.id <> ? AND j.designation_name = ? AND j.active_status = 1 AND j.approval_status = 'approved' AND j.closed_at IS NULL
-        AND j.fulfilled_headcount < j.requested_headcount AND (j.requisition_validity IS NULL OR j.requisition_validity >= ?)`,
+        AND j.joined_headcount < CEIL(j.requested_headcount * 1.3) AND (j.requisition_validity IS NULL OR j.requisition_validity >= ?)`,
     [campaignId, String(cur.id), String(cur.designation_name), today]);
   return rankSuccessors(
     { designation: String(cur.designation_name), branch: String(cur.branch_name), process: String(cur.process_id ?? cur.process_name ?? "") },
@@ -115,7 +115,7 @@ export async function sweepStrandedLeads(now = new Date()): Promise<{ pairs: num
     const [pairs] = await db.execute<RowDataPacket[]>(
       `SELECT r.campaign_id, r.requisition_id, COUNT(*) n FROM meta_lead_raw r JOIN job_requisition j ON j.id = r.requisition_id
         WHERE r.screening_result = 'qualified' AND r.campaign_id IS NOT NULL AND r.notification_sent_at IS NULL
-          AND (j.approval_status IN ('closed','cancelled','rejected') OR j.active_status = 0 OR j.closed_at IS NOT NULL OR j.fulfilled_headcount >= j.requested_headcount)
+          AND (j.approval_status IN ('closed','cancelled','rejected') OR j.active_status = 0 OR j.closed_at IS NOT NULL OR j.joined_headcount >= CEIL(j.requested_headcount * 1.3))
         GROUP BY r.campaign_id, r.requisition_id ORDER BY n DESC LIMIT 25`);
     for (const p of pairs) {
       const campaignId = String(p.campaign_id), fromId = String(p.requisition_id);

@@ -3,6 +3,7 @@
  * screen is quiet instead of guessing. Read-only.
  */
 import { superbotConfig } from "./he-secrets.service.js";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { PinbotWhatsAppProvider } from "../communication/providers/whatsapp/pinbot.provider.js";
@@ -21,7 +22,7 @@ export interface Check { key: string; ok: boolean; label: string; detail: string
 export async function getDriveReadiness(driveId: string) {
   const [dr] = await db.execute<RowDataPacket[]>(
     `SELECT d.id, d.requisition_id, d.status, d.auto_send, d.drive_date, d.target_shows, jr.requisition_code, jr.designation_name, jr.approval_status, jr.active_status,
-            jr.requested_headcount, jr.fulfilled_headcount, bm.address
+            jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, bm.address
        FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE d.id = ? LIMIT 1`, [driveId]);
   const d = dr[0];
@@ -44,9 +45,9 @@ export async function getDriveReadiness(driveId: string) {
   const mode = engineMode(process.env, await engineAutoOn());
   const engineOn = mode === "live", engineLive = mode === "live";
   const h = istHour(new Date());
-  const reqOpen = d.approval_status === "approved" && Boolean(d.active_status) && Number(d.fulfilled_headcount) < Number(d.requested_headcount);
+  const reqOpen = d.approval_status === "approved" && Boolean(d.active_status) && !fillTargetMet(Number(d.requested_headcount), Number(d.joined_headcount ?? 0));
   const checks: Check[] = [
-    { key: "requisition", ok: reqOpen, label: "Requisition open", detail: reqOpen ? `${d.requisition_code}: ${Number(d.requested_headcount) - Number(d.fulfilled_headcount)} open` : `${d.requisition_code} is closed or filled`, blocks: reqOpen ? null : "all" },
+    { key: "requisition", ok: reqOpen, label: "Requisition open", detail: reqOpen ? `${d.requisition_code}: ${joinsLeft(Number(d.requested_headcount), Number(d.joined_headcount ?? 0))} joins to go` : `${d.requisition_code} is closed or filled`, blocks: reqOpen ? null : "all" },
     { key: "paused", ok: !sendsPaused(), label: "Sending not paused", detail: sendsPaused() ? "HE_SENDS_PAUSED is on" : "ok", blocks: sendsPaused() ? "all" : null },
     { key: "hours", ok: h >= 9 && h < 20, label: "Within 09:00-20:00 IST", detail: h >= 9 && h < 20 ? "messages can go out now" : "nothing is sent outside 09:00-20:00; send after 9 AM", blocks: h >= 9 && h < 20 ? null : "all" },
     { key: "email", ok: emailConfigured(), label: "Email set up on the server", detail: emailConfigured() ? "ok" : "mail provider not configured", blocks: emailConfigured() ? null : "email" },

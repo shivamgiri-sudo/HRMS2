@@ -34,7 +34,7 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   const dryRun = o.dryRun !== false;
   const [mr] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.requisition_id, m.state, m.slot_at, l.full_name, l.mobile10, l.status, l.meta_lead_id, jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status,
-            jr.requested_headcount, jr.fulfilled_headcount, jr.closed_at, bm.address, d.drive_date, d.status AS drive_status
+            jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.closed_at, bm.address, d.drive_date, d.status AS drive_status
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id JOIN job_requisition jr ON jr.id = m.requisition_id
        LEFT JOIN he_drive d ON d.id = m.drive_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE m.id = ? LIMIT 1`, [matchId]);
@@ -44,7 +44,7 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   if (["opted_out", "arrived", "joined", "dead", "declined"].includes(String(m.status))) return { status: "blocked", reason: `lead_${m.status}` };
   // D8, the one requisition-open rule.
   if (requisitionOpenReason({ approvalStatus: m.approval_status ?? null, activeStatus: m.active_status == null ? null : Number(m.active_status), closedAt: m.closed_at ?? null,
-    requestedHeadcount: m.requested_headcount == null ? null : Number(m.requested_headcount), fulfilledHeadcount: m.fulfilled_headcount == null ? null : Number(m.fulfilled_headcount) })) return { status: "blocked", reason: "requisition_closed" };
+    requestedHeadcount: m.requested_headcount == null ? null : Number(m.requested_headcount), fulfilledHeadcount: m.fulfilled_headcount == null ? null : Number(m.fulfilled_headcount), joinedHeadcount: m.joined_headcount == null ? null : Number(m.joined_headcount) })) return { status: "blocked", reason: "requisition_closed" };
   if (sendsPaused() || m.drive_status === "paused") return { status: "blocked", reason: "paused" };
   if (await metaFlowNotifiedRecently(m.meta_lead_id as string | null)) return { status: "blocked", reason: "meta_flow_already_notified" };
   const cfg = await configForLead(m.lead_id as string);

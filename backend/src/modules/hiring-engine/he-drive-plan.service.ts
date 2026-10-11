@@ -5,6 +5,7 @@
  * cached). ER_NO_SUCH_TABLE on requisition_stream* reads as "no rows". No candidate data: counts, dates, ids and labels only.
  */
 import type { RowDataPacket } from "mysql2";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
@@ -67,7 +68,7 @@ async function tolerant<T>(fn: () => Promise<T>, empty: T): Promise<T> {
 }
 
 // ---- SQL ---------------------------------------------------------------------------------------------------------------------------------
-const HEADER_SQL = "SELECT requisition_code, branch_name, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1";
+const HEADER_SQL = "SELECT requisition_code, branch_name, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1";
 const DRIVES_SQL = `SELECT id, drive_date, status, target_shows, slot_start, slot_end, slot_minutes, slot_capacity
   FROM he_drive WHERE requisition_id = ? AND drive_date BETWEEN ? AND ? ORDER BY drive_date, (status = 'closed'), id`;
 // Credit goes through he_match.id: a credit row may carry a stale drive_id, so sm.drive_id is never read. An uncredited match has stream_id NULL.
@@ -310,7 +311,7 @@ async function buildChecklist(o: {
     items.push({ kind: "already_planned", text: `${labels.get(id) ?? "Stream"}: ${Math.max(0, Number(r.lined ?? 0) || 0)} already lined up`, streamId: id });
   }
 
-  const left = Number(o.head?.requested_headcount ?? 0) - Number(o.head?.fulfilled_headcount ?? 0);
+  const left = joinsLeft(Number(o.head?.requested_headcount ?? 0), Number(o.head?.joined_headcount ?? 0));
   if (Number.isFinite(left) && left > 0 && left <= o.thresholds["insight.fill_soon_positions"]) items.push({ kind: "fill_soon", text: `Only ${left} positions left: the requisition is about to be filled` });
 
   for (const s of o.open) if (windowEnd(toWindow(s)) === checkDate) items.push({ kind: "stream_ends_tomorrow", text: `${labelOf(s)}: this stream's last planned day is ${checkDate}`, streamId: s.id });

@@ -157,7 +157,7 @@ export async function getInviteContext(token: string): Promise<InviteContext | n
   // Before migration 2140 there is no walkin_invite table: an unknown token is simply not found (404), not a server error.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT wi.id, wi.state, wi.slot_at, wi.branch_name, ${INVITE_RSVP_WINDOW_SQL} AS before_slot,
-            jr.designation_name, jr.branch_name AS jr_branch, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount,
+            jr.designation_name, jr.branch_name AS jr_branch, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount,
             bm.address, bm.latitude, bm.longitude, COALESCE(l.full_name, r.parsed_name) AS full_name, l.status AS lead_status
        FROM walkin_invite wi
        LEFT JOIN job_requisition jr ON jr.id = wi.requisition_id
@@ -169,7 +169,7 @@ export async function getInviteContext(token: string): Promise<InviteContext | n
   if (!r) return null;
   const closed = r.jr_branch == null ? "requisition not found" : requisitionClosedReason({
     approvalStatus: r.approval_status ?? null, activeStatus: r.active_status ?? null, closedAt: r.closed_at ?? null,
-    requestedHeadcount: r.requested_headcount != null ? Number(r.requested_headcount) : null, fulfilledHeadcount: r.fulfilled_headcount != null ? Number(r.fulfilled_headcount) : null,
+    requestedHeadcount: r.requested_headcount != null ? Number(r.requested_headcount) : null, fulfilledHeadcount: r.fulfilled_headcount != null ? Number(r.fulfilled_headcount) : null, joinedHeadcount: r.joined_headcount != null ? Number(r.joined_headcount) : null,
   }) ?? (String(r.approval_status ?? "").toLowerCase() === "approved" ? null : "not approved");
   const state = INVITE_STATE[String(r.state)] ?? "invited";
   return {

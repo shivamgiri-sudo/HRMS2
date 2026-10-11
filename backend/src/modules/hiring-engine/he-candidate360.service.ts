@@ -47,7 +47,7 @@ export async function getCandidate360(leadId: string): Promise<Record<string, un
 
   const [open] = await db.execute<RowDataPacket[]>(
     `SELECT id, requisition_code, process_name, designation_name AS position, branch_name FROM job_requisition
-      WHERE approval_status = 'approved' AND active_status = 1 AND fulfilled_headcount < requested_headcount ORDER BY created_at DESC LIMIT ${OPEN_REQ_LIMIT}`);
+      WHERE approval_status = 'approved' AND active_status = 1 AND joined_headcount < CEIL(requested_headcount * 1.3) ORDER BY created_at DESC LIMIT ${OPEN_REQ_LIMIT}`);
   const eligibility: Array<Record<string, unknown>> = [];
   for (const r of open) {
     const facts = (await loadEligibilityFacts([lead as unknown as LeadFactsRow], { id: r.id as string, processName: (r.process_name as string | null) ?? null })).get(leadId);

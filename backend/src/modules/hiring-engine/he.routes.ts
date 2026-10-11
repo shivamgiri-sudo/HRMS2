@@ -288,7 +288,7 @@ heRouter.get("/requisitions/open", requireAuth, requireRole(...VIEW_ROLES), asyn
       `SELECT id, requisition_code, designation_name, process_name, branch_name, requested_headcount, fulfilled_headcount,
               (requested_headcount - fulfilled_headcount) AS open_positions, priority
          FROM job_requisition
-        WHERE approval_status = 'approved' AND active_status = 1 AND fulfilled_headcount < requested_headcount
+        WHERE approval_status = 'approved' AND active_status = 1 AND joined_headcount < CEIL(requested_headcount * 1.3)
         ORDER BY FIELD(priority,'urgent','high','normal','low'), open_positions DESC LIMIT 300`);
     res.json({ success: true, data: rows });
   } catch (err) {
