@@ -1,0 +1,42 @@
+name: Ops disk usage (manual, read-only)
+
+# Read-only: df and the largest directories on the production host (names and sizes only). Writes nothing.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-disk-usage
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  disk:
+    name: Disk usage
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: df
+        shell: bash
+        run: df -h -x tmpfs -x devtmpfs 2>&1 | head -20; echo; df -i / 2>&1 | head -3
+      - name: Largest directories
+        shell: bash
+        run: |
+          for d in /var/www /var/www/HRMS2 /home /var/log /var/lib /tmp /opt; do
+            echo "=== $d ==="
+            du -xh --max-depth=2 "$d" 2>/dev/null | sort -rh | head -14 || true
+          done
+      - name: Deploy leftovers and logs
+        shell: bash
+        run: |
+          echo "--- staging / failed deploy dirs"
+          ls -d /var/www/HRMS2/.deploy-staging/* /var/www/HRMS2/*.failed-* /var/www/HRMS2/*.bak* 2>/dev/null | head -40 || true
+          du -sh /var/www/HRMS2/.deploy-staging 2>/dev/null || true
+          echo "--- pm2 logs"
+          du -sh /home/masadmin/.pm2/logs 2>/dev/null || true
+          ls -laS /home/masadmin/.pm2/logs 2>/dev/null | head -12 || true
+          echo "--- .env backups"
+          ls -la /var/www/HRMS2/backend/.env.bak* 2>/dev/null | head -20 || true
