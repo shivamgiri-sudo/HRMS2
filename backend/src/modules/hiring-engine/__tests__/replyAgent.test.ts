@@ -129,11 +129,13 @@ describe("handleInboundReply", () => {
     expect(gen.provider.generateText).toHaveBeenCalledTimes(1);
     expect(gen.provider.generateText).toHaveBeenCalledWith(expect.objectContaining({ model: "free-model", apiKey: "stored-key", requestSource: "candidate_reply_agent" }));
   });
-  it("a model reply that names the process is held, never sent", async () => {
+  it("a model reply that names the process is never what the candidate receives: the fixed professional wording is sent instead", async () => {
     gen.provider = { key: "freellm", generateText: vi.fn(async () => ({ safetyBlocked: false, answer: JSON.stringify({ intent: "ask_job", language: "en", confidence: 0.95, needs_human: false,
       reply: "Dear Asha, this is the Onfido process, your slot is Monday.", reasons: [] }) })) };
-    expect(await handleInboundReply(msg("What will be my work?"), new Date("2026-10-11T05:00:00Z"))).toBe("held");
-    expect(h.send).not.toHaveBeenCalled();
+    expect(await handleInboundReply(msg("What will be my work?"), new Date("2026-10-11T05:00:00Z"))).toBe("sent");
+    const sent = JSON.stringify(h.send.mock.calls[0]);
+    expect(sent).not.toMatch(/onfido/i);
+    expect(sent).toMatch(/Dear Asha/);
   });
   it("draft-only mode never sends", async () => {
     h.rows[0] = { match: /FROM he_model_param WHERE param_key = 'policy.reply_agent'/, rows: [{ value: 1 }] };

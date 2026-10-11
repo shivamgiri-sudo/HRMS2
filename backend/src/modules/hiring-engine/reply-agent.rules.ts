@@ -85,7 +85,18 @@ export function disposition(d: Draft, v: { ok: boolean }, mode: number, ctx: { i
 }
 
 const sig = (f: FactSheet) => `Regards,\nHR Team, ${f.company}${f.hrContact ? `\n${f.hrContact}` : ""}`;
-const slotLine = (f: FactSheet) => (f.slotDate && f.slotTime ? `${f.slotDate} at ${f.slotTime}` : null);
+/** "Monday, 12 October 2026 at 10:30 AM" from "2026-10-12" and "10:30"; the raw text when it is not in that shape. */
+export function prettySlot(date: string, time: string): string {
+  const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(date);
+  const t = /^(\d{1,2}):(\d{2})/.exec(time);
+  if (!d || !t) return `${date} at ${time}`;
+  const day = new Date(Date.UTC(Number(d[1]), Number(d[2]) - 1, Number(d[3])));
+  if (Number.isNaN(day.getTime())) return `${date} at ${time}`;
+  const text = day.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+  const h = Number(t[1]);
+  return `${text} at ${h % 12 === 0 ? 12 : h % 12}:${t[2]} ${h < 12 ? "AM" : "PM"}`;
+}
+const slotLine = (f: FactSheet) => (f.slotDate && f.slotTime ? prettySlot(f.slotDate, f.slotTime) : null);
 
 /** Safe wording used when no model is configured, and as the base the model must stay consistent with. Pure. */
 export function ruleReply(intent: ReplyIntent, f: FactSheet): string | null {
@@ -116,7 +127,7 @@ export function ruleReply(intent: ReplyIntent, f: FactSheet): string | null {
     case "assessment_link":
       return f.assessmentLink ? `${hi}\n\nHere is your assessment link: ${f.assessmentLink}\nPlease complete it before your walk-in.\n\n${sig(f)}` : null;
     case "reschedule":
-      return `${hi}\n\nThank you for letting us know. We have noted that you need another day, and our team will share a new slot shortly.\n\n${sig(f)}`;
+      return `${hi}\n\nThank you for letting us know. We have noted your request for another day. You will receive a new invitation with your updated slot shortly.\n\n${sig(f)}`;
     case "decline":
       return `${hi}\n\nThank you for letting us know. We will not contact you further for this role. We wish you the best.\n\n${sig(f)}`;
     case "already_joined":

@@ -5,6 +5,7 @@
  * sends from the list), 2 automatic for the safe intents. The process / client name never reaches a candidate. Never throws.
  */
 import { randomUUID } from "node:crypto";
+import { greetingName } from "./he-name.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
@@ -99,10 +100,10 @@ export async function buildFactSheet(a: { leadId: string | null; requisitionId: 
   const exp = r.experience_min_years != null || r.experience_max_years != null
     ? `${r.experience_min_years ?? 0}${r.experience_max_years != null ? ` to ${r.experience_max_years}` : "+"} years` : null;
   const clean = (v: unknown) => (v ? scrub(String(v).replace(/\s+/g, " ").trim(), deny) : null);
-  const first = (leadName ?? "").trim().split(/\s+/)[0];
+  const first = greetingName(leadName);
   const cname = env("HE_HR_CONTACT_NAME", ""), cphone = env("HE_HR_CONTACT_PHONE", "");
   const facts: FactSheet = {
-    name: first && first.length > 1 ? first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() : "Candidate",
+    name: first || "Candidate",
     role: String(r.designation_name ?? "the role"), branch: String(r.branch_name ?? ""),
     address: r.address ? String(r.address).replace(/\s+/g, " ").trim() : null, mapsLink: maps,
     slotDate, slotTime, documents: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"),
@@ -163,8 +164,15 @@ async function callModel(facts: FactSheet, inbound: string): Promise<Draft | nul
 /** Model draft when configured, else the rule wording. A model answer against a rule opt-out / complaint goes to a person. */
 export async function draftReply(facts: FactSheet, inbound: string): Promise<{ draft: Draft; engine: "model" | "rules" }> {
   const rule = ruleIntent(inbound);
-  const m = await callModel(facts, inbound);
+  let m = await callModel(facts, inbound);
   if (m) {
+    // The model classifies; automatic answers use the fixed professional wording. A model "other" against a clear rule answer
+    // ("I will be there", "cannot come") takes the rule's intent.
+    if (m.intent === "other" && rule && ["confirm", "decline", "reschedule"].includes(rule.intent) && rule.confidence >= 0.8) {
+      m = { ...m, intent: rule.intent, confidence: Math.max(m.confidence, rule.confidence), needsHuman: false, reasons: [...m.reasons, "rule_overrode_other"] };
+    }
+    const fixed = m.needsHuman ? null : ruleReply(m.intent, facts);
+    if (fixed) m = { ...m, reply: fixed };
     const disagree = rule && (rule.intent === "opt_out" || rule.intent === "complaint") && rule.intent !== m.intent;
     return { draft: disagree ? { ...m, needsHuman: true, reasons: [...m.reasons, "rule_model_disagree"] } : m, engine: "model" };
   }

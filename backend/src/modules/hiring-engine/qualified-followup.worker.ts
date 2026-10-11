@@ -3,6 +3,7 @@
  * Does nothing (not even a query) while QUAL_FOLLOWUP_MODE is off. A MySQL advisory lock keeps two processes from ticking together.
  */
 import type { PoolConnection } from "mysql2/promise";
+import { autoResolveReplies } from "./response-auto-apply.service.js";
 import { refreshJoinedHeadcount } from "./requisition-joined.service.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -178,6 +179,8 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
 
   // Someone emailed for one day and later moved to another is sent the new slot (live rows only; the kill switch and pauses stop it).
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("slot-corrections", () => runSlotCorrections(now), null);
+  // Clear replies are applied by the engine (no HR step): Will come books, Cannot come records, Another time re-books.
+  if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("auto-replies", () => autoResolveReplies(now), null);
   // One digest email a day (from 08:15 IST) of anything stuck or waiting. Runs even while sends are paused: it only emails the owner.
   await guarded("morning-health", () => runMorningHealth(now), false);
   // Replies the reply agent queued outside the 09:00-20:00 window go out when it opens (only in automatic mode).
