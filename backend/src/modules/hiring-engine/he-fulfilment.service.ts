@@ -1,0 +1,117 @@
+/**
+ * The owner's two questions, answered from data the system already holds:
+ *   1. Who is expected to walk in, at which branch and at what time (today, and the next working day with drives)?
+ *   2. Will every open requisition be filled by its deadline, and if not, what is the shortfall and what must the engine add per day?
+ * Expected arrivals weigh each booked person by their learned show-up probability (he-showup). The lead requirement comes from the
+ * planner: this process's (else all hiring's) lead -> walk-in -> selection -> joined history, sized to the seats still open.
+ * Read-only. A failure in one requisition leaves that row out with a reason; it never fails the page.
+ */
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { logger } from "../../logger.js";
+import { FACTS_SQL, loadShowParams } from "./he-showup.service.js";
+import { pShow } from "./he-showup.js";
+import { planHiring } from "./he-planner.service.js";
+import { dailyInviteTarget } from "./walkin-booking.service.js";
+
+export interface HourBucket { hour: string; booked: number; confirmed: number; expected: number }
+export interface BranchDay { branch: string; booked: number; confirmed: number; expected: number; hours: HourBucket[] }
+export interface ExpectedDay { date: string; booked: number; confirmed: number; expected: number; branches: BranchDay[] }
+export type FillVerdict = "covered" | "on_track" | "at_risk" | "past_deadline" | "no_history";
+export interface RequisitionFill {
+  id: string; code: string; branch: string; process: string; role: string;
+  seatsOpen: number; requested: number; fulfilled: number; deadline: string | null; daysLeft: number | null;
+  neededLeads: number; covered: number; gap: number; perDayNeeded: number; capacityPerDay: number;
+  invited: number; confirmed: number; expectedArrivals7d: number; expectedJoined: number;
+  ratesFrom: "branch+process" | "process" | "all"; verdict: FillVerdict; reason: string;
+}
+export interface FulfilmentView { generatedAt: string; today: ExpectedDay; next: ExpectedDay | null; requisitions: RequisitionFill[]; totals: { seatsOpen: number; atRisk: number; expectedToday: number } }
+
+const IST_MS = 330 * 60_000;
+const istDay = (d: Date): string => new Date(d.getTime() + IST_MS).toISOString().slice(0, 10);
+const r1 = (n: number): number => Math.round(n * 10) / 10;
+const num = (v: unknown): number => Number(v ?? 0) || 0;
+const dayOf = (v: unknown): string | null => (v == null || v === "" ? null : String(v).slice(0, 10));
+
+async function safe<T>(label: string, fallback: T, fn: () => Promise<T>): Promise<T> {
+  try { return await fn(); } catch (err) { logger.warn({ label, err: (err as Error).message.slice(0, 140) }, "[fulfilment] read failed"); return fallback; }
+}
+
+interface FactRow extends RowDataPacket { state: string; slot_at: string | null; drive_date: string; branch_name: string; requisition_id: string }
+
+function toDay(date: string, rows: FactRow[], params: Record<string, number>): ExpectedDay {
+  const branches = new Map<string, BranchDay>();
+  let booked = 0, confirmed = 0, expected = 0;
+  for (const r of rows.filter((x) => dayOf(x.drive_date) === date)) {
+    const p = pShow({ state: String(r.state), walkedBefore: num(r.walkin_count) > 0, pastNoShows: num(r.past_no_shows), distanceKm: r.distance_km == null ? null : num(r.distance_km), sharedLocation: num(r.shared_location) === 1, repliedPositive: num(r.replied_yes) === 1 }, params);
+    const arrived = r.state === "arrived";
+    const e = arrived ? 1 : p;
+    const hour = r.slot_at ? `${String(r.slot_at).slice(11, 13)}:00` : "no slot";
+    let b = branches.get(r.branch_name);
+    if (!b) { b = { branch: r.branch_name, booked: 0, confirmed: 0, expected: 0, hours: [] }; branches.set(r.branch_name, b); }
+    let h = b.hours.find((x) => x.hour === hour);
+    if (!h) { h = { hour, booked: 0, confirmed: 0, expected: 0 }; b.hours.push(h); }
+    const isConfirmed = r.state === "confirmed" || arrived;
+    b.booked++; h.booked++; booked++;
+    if (isConfirmed) { b.confirmed++; h.confirmed++; confirmed++; }
+    b.expected += e; h.expected += e; expected += e;
+  }
+  const list = [...branches.values()].map((b) => ({ ...b, expected: r1(b.expected), hours: b.hours.map((h) => ({ ...h, expected: r1(h.expected) })).sort((a, c) => a.hour.localeCompare(c.hour)) }));
+  list.sort((a, c) => c.expected - a.expected);
+  return { date, booked, confirmed, expected: r1(expected), branches: list };
+}
+
+export async function getFulfilment(now: Date = new Date()): Promise<FulfilmentView> {
+  const today = istDay(now);
+  const params = await safe("show-params", {} as Record<string, number>, loadShowParams);
+  const facts = await safe<FactRow[]>("facts", [], async () => (await db.execute<RowDataPacket[]>(
+    `SELECT f.*, d.drive_date, d.branch_name, d.requisition_id FROM (${FACTS_SQL}) f JOIN he_drive d ON d.id = f.drive_id
+      WHERE d.drive_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY) AND d.status IN ('active','draft','paused')
+        AND f.state IN ('invited','confirmed','arrived')`))[0] as FactRow[]);
+  const dates = [...new Set(facts.map((f) => dayOf(f.drive_date)).filter((d): d is string => !!d))].sort();
+  const todayDay = toDay(today, facts, params);
+  const nextDate = dates.find((d) => d > today) ?? null;
+  const nextDay = nextDate ? toDay(nextDate, facts, params) : null;
+
+  const reqs = await safe<RowDataPacket[]>("requisitions", [], async () => (await db.execute<RowDataPacket[]>(
+    `SELECT id, requisition_code, designation_name, process_name, branch_name, requested_headcount, fulfilled_headcount, requisition_validity
+       FROM job_requisition WHERE active_status = 1 AND approval_status = 'approved' AND closed_at IS NULL AND fulfilled_headcount < requested_headcount
+      ORDER BY (requisition_validity IS NULL), requisition_validity ASC LIMIT 12`))[0]);
+  const capacity = await safe("capacity", 400, dailyInviteTarget);
+  const out: RequisitionFill[] = [];
+  for (const q of reqs) {
+    const id = String(q.id);
+    const seatsOpen = Math.max(0, num(q.requested_headcount) - num(q.fulfilled_headcount));
+    const deadline = dayOf(q.requisition_validity);
+    const daysLeft = deadline ? Math.ceil((Date.parse(`${deadline}T23:59:59+05:30`) - now.getTime()) / 86_400_000) : null;
+    const mine = facts.filter((f) => String(f.requisition_id) === id);
+    const invited = mine.filter((f) => f.state === "invited").length, confirmed = mine.filter((f) => f.state === "confirmed" || f.state === "arrived").length;
+    const exp7 = r1(mine.reduce((a, f) => a + pShow({ state: String(f.state), walkedBefore: num(f.walkin_count) > 0, pastNoShows: num(f.past_no_shows), distanceKm: f.distance_km == null ? null : num(f.distance_km), sharedLocation: num(f.shared_location) === 1, repliedPositive: num(f.replied_yes) === 1 }, params), 0));
+    try {
+      const plan = await planHiring({ requisitionId: id, targetSelected: seatsOpen, deadline: deadline && (daysLeft ?? 0) > 0 ? deadline : null });
+      const neededLeads = plan.totals.uniqueLeads;
+      const covered = plan.pool.reachableNow + Math.max(plan.pool.invitedOrConfirmed, plan.pool.inPipeline);
+      const gap = Math.max(0, neededLeads - covered);
+      const horizon = daysLeft != null && daysLeft > 0 ? daysLeft : 7;
+      const perDay = gap > 0 ? Math.ceil(gap / horizon) : 0;
+      let verdict: FillVerdict; let reason: string;
+      if (daysLeft != null && daysLeft <= 0) { verdict = "past_deadline"; reason = `The end date has passed with ${seatsOpen} seats open: people who arrive are carried to the next open requisition at this branch.`; }
+      else if (plan.scope === "all" && neededLeads === 0) { verdict = "no_history"; reason = "Not enough history to size this requisition yet."; }
+      else if (gap <= 0) { verdict = "covered"; reason = `${covered} people are already invited or queued, which covers the ${neededLeads} the history says are needed.`; }
+      else if (perDay <= capacity) { verdict = "on_track"; reason = `${covered} of ${neededLeads} needed are covered. The engine must add about ${perDay} a day for ${horizon} day${horizon === 1 ? "" : "s"}; its daily capacity is ${capacity}.`; }
+      else { verdict = "at_risk"; reason = `${covered} of ${neededLeads} needed are covered. It needs ${perDay} new people a day for ${horizon} day${horizon === 1 ? "" : "s"}, above the ${capacity} a day the engine sends. More leads or a later date are needed.`; }
+      out.push({
+        id, code: String(q.requisition_code), branch: String(q.branch_name ?? ""), process: String(q.process_name ?? ""), role: String(q.designation_name ?? ""),
+        seatsOpen, requested: num(q.requested_headcount), fulfilled: num(q.fulfilled_headcount), deadline, daysLeft,
+        neededLeads, covered, gap, perDayNeeded: perDay, capacityPerDay: capacity, invited, confirmed, expectedArrivals7d: exp7, expectedJoined: plan.totals.expectedJoined,
+        ratesFrom: plan.scope, verdict, reason,
+      });
+    } catch (err) {
+      logger.warn({ id, err: (err as Error).message.slice(0, 120) }, "[fulfilment] requisition skipped");
+    }
+  }
+  return {
+    generatedAt: now.toISOString(), today: todayDay, next: nextDay, requisitions: out,
+    totals: { seatsOpen: out.reduce((a, r) => a + r.seatsOpen, 0), atRisk: out.filter((r) => r.verdict === "at_risk").length, expectedToday: todayDay.expected },
+  };
+}

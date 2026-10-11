@@ -15,6 +15,7 @@ import { getDrivePlan } from "./he-drive-plan.service.js";
 import { listHeldOffers } from "./he-best-offer.service.js";
 import { followupWorkerStatus } from "./qualified-followup.worker.js";
 import { getPipelineView } from "./qualified-followup.pipeline-view.js";
+import { getFulfilment } from "./he-fulfilment.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode } from "./qualified-followup.types.js";
 import { addDays, istToday } from "./requisition-stream.window.js";
@@ -95,6 +96,11 @@ export function registerCommandRoutes(r: Router, roles: { view: readonly string[
       const data: FollowupStatus = { mode: followupMode(), callFiles: await callFiles(), report: { running: w.running, last: w.reports[0] ?? null } };
       res.json({ success: true, data });
     } catch (err) { fail(res, err, "Could not load the follow-up status", "status"); }
+  });
+
+  // Who is expected to walk in (today / next working day, by branch and hour) and whether each requisition will be filled.
+  r.get("/fulfilment", ...view, async (_req: Request, res: Response) => {
+    try { res.json({ success: true, data: await getFulfilment() }); } catch (err) { fail(res, err, "Could not load the fulfilment view", "fulfilment"); }
   });
 
   // The pipeline funnel by drive with the queue and the next send window (CEO view). Registered before /qualified-followup/:id.

@@ -14,7 +14,7 @@ export async function loadShowParams(): Promise<ShowParams> {
   return Object.fromEntries(rows.map((r) => [String(r.param_key), Number(r.value)]));
 }
 
-const FACTS_SQL = `
+export const FACTS_SQL = `
   SELECT m.id, m.drive_id, m.state, m.distance_km, m.slot_at, l.walkin_count,
          (SELECT COUNT(*) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND ${countedNoShow("e")} AND (e.drive_id IS NULL OR e.drive_id <> m.drive_id)) AS past_no_shows,
          EXISTS (SELECT 1 FROM he_location_ping p WHERE p.match_id = m.id) AS shared_location,

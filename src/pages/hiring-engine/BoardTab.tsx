@@ -9,6 +9,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState } from "@/components/analytics/analytics-kit";
 import ControlRoom from "./ControlRoom";
 import PipelineFunnelCard from "./PipelineFunnelCard";
+import FulfilmentCard from "./FulfilmentCard";
 import OutcomeReasons from "./OutcomeReasons";
 import ConfirmedSheet from "./responses/ConfirmedSheet";
 
@@ -43,6 +44,7 @@ export default function BoardTab() {
 
   return (
     <div className="space-y-5">
+      <FulfilmentCard />
       <PipelineFunnelCard />
       <ControlRoom />
       <div className="flex items-center justify-between text-sm text-slate-600">
