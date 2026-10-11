@@ -14,6 +14,7 @@ import { getDriveAnalytics, MAX_AHEAD_DAYS, MAX_SPAN_DAYS, tidy } from "./he-dri
 import { getDrivePlan } from "./he-drive-plan.service.js";
 import { listHeldOffers } from "./he-best-offer.service.js";
 import { followupWorkerStatus } from "./qualified-followup.worker.js";
+import { getPipelineView } from "./qualified-followup.pipeline-view.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode } from "./qualified-followup.types.js";
 import { addDays, istToday } from "./requisition-stream.window.js";
@@ -94,6 +95,11 @@ export function registerCommandRoutes(r: Router, roles: { view: readonly string[
       const data: FollowupStatus = { mode: followupMode(), callFiles: await callFiles(), report: { running: w.running, last: w.reports[0] ?? null } };
       res.json({ success: true, data });
     } catch (err) { fail(res, err, "Could not load the follow-up status", "status"); }
+  });
+
+  // The pipeline funnel by drive with the queue and the next send window (CEO view). Registered before /qualified-followup/:id.
+  r.get("/qualified-followup/pipeline", ...view, async (_req: Request, res: Response) => {
+    try { res.json({ success: true, data: await getPipelineView() }); } catch (err) { fail(res, err, "Could not load the pipeline", "pipeline"); }
   });
 
   // Registered before the legacy /qualified-followup/:id (which would answer "held" with 400).
