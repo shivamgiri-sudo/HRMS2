@@ -10,6 +10,7 @@ import { db } from "../../db/mysql.js";
 import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.js";
 import { addEvent } from "./he-lead.service.js";
 import { generateSlots, istAddMinutes, nowIst, type SlotConfig } from "./he-slots.js";
+import { loadEndDateEnforced } from "./requisition-criteria.js";
 
 export interface BookingDriveInput { requisitionId: string; branchName: string; driveDate: string /* YYYY-MM-DD */; createdBy?: string | null }
 export type DriveStatus = "draft" | "active" | "paused" | "closed";
@@ -148,8 +149,9 @@ export async function bookLeadOnDrive(a: BookInput): Promise<BookResult> {
     return { status: "booked", matchId: existing.id, driveId: String(existing.drive_id ?? ""), slotAt: String(existing.slot_at ?? "").slice(0, 19), token: existing.token ?? "", created: false };
   }
   const preferredTime = a.preferredSlotAt && a.preferredSlotAt.length >= 16 ? `${a.preferredSlotAt.slice(11, 16)}:00` : null;
-  // E10: with the end date enforced, no day after the requisition's end is booked (a read only while enforced).
-  const lastDay = await lastBookableDay(a.requisitionId);
+  // No day after the requisition's end is booked while it is still running; once the end has passed, an unfilled requisition is an
+  // overflow drive (HR uses whoever arrives for the next requisition), so the nearest working day is offered unless the end date is enforced.
+  const lastDay = await lastBookableDay(a.requisitionId, a.now);
   const candidates = targetDriveDates(a.now, a.preferredSlotAt);
   // Nearest working day first: Sundays are skipped by targetDriveDates, national holidays here, and never a day after the requisition's end.
   const holidays = await nationalHolidays(candidates);
@@ -185,10 +187,16 @@ export async function bookLeadOnDrive(a: BookInput): Promise<BookResult> {
   return { status: "unavailable", reason: sawOpenDrive ? "no_capacity" : "drive_closed" };
 }
 
-/** The requisition's last bookable IST day (its end date), or null when it has none. A day after the end is never offered. */
-async function lastBookableDay(requisitionId: string): Promise<string | null> {
+/**
+ * The requisition's last bookable IST day (its end date), or null when it has none or has already passed and the end date is not
+ * enforced (overflow drive). While the requisition is still running a day after the end is never offered.
+ */
+async function lastBookableDay(requisitionId: string, now?: Date): Promise<string | null> {
   const [r] = await db.execute<RowDataPacket[]>("SELECT requisition_validity FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
   const v = r[0]?.requisition_validity;
   if (!v) return null;
-  return v instanceof Date ? new Date(v.getTime() + 330 * 60_000).toISOString().slice(0, 10) : String(v).slice(0, 10);
+  const day = v instanceof Date ? new Date(v.getTime() + 330 * 60_000).toISOString().slice(0, 10) : String(v).slice(0, 10);
+  const today = new Date((now ?? new Date()).getTime() + 330 * 60_000).toISOString().slice(0, 10);
+  if (day < today && !(await loadEndDateEnforced())) return null;
+  return day;
 }

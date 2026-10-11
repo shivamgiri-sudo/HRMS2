@@ -170,9 +170,16 @@ describe("bookLeadOnDrive", () => {
     h.booked = {};
     expect(await bookLeadOnDrive(args)).toMatchObject({ status: "booked", slotAt: "2026-10-09 10:30:00" });
   });
-  it("a requisition whose end date has passed is never booked, whatever the enforcement switch says", async () => {
+  it("a requisition whose end date has passed (not enforced) is an overflow drive: the nearest working day is booked", async () => {
+    delete process.env.REQ_END_DATE_ENFORCEMENT;
+    h.req = { ...h.req!, requisition_validity: "2026-10-01" };
+    expect(await bookLeadOnDrive(args)).toMatchObject({ status: "booked", slotAt: "2026-10-09 10:30:00" });
+  });
+  it("a requisition whose end date has passed and is enforced is never booked", async () => {
+    process.env.REQ_END_DATE_ENFORCEMENT = "policy"; h.enforced = 1;
     h.req = { ...h.req!, requisition_validity: "2026-10-01" };
     expect(await bookLeadOnDrive(args)).toEqual({ status: "unavailable", reason: "requisition_ended" });
+    delete process.env.REQ_END_DATE_ENFORCEMENT;
   });
   it("the nearest working day takes the daily invitation target: a slot already at its seat count still books", async () => {
     h.enforced = 400; // policy.walkin_daily_invites (the router answers every he_model_param read with this value)
