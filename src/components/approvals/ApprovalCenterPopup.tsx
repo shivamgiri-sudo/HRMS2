@@ -51,15 +51,18 @@ function initials(name?: string | null) {
   return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "•";
 }
 
+// Once per calendar day on this browser (a new tab or a re-login the same day does not open it again; the corner pill stays).
+const today = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 function readShown(): boolean {
   try {
-    return sessionStorage.getItem(SHOWN_KEY) === "1";
+    return localStorage.getItem(SHOWN_KEY) === today() || sessionStorage.getItem(SHOWN_KEY) === "1";
   } catch {
     return false;
   }
 }
 function writeShown() {
   try {
+    localStorage.setItem(SHOWN_KEY, today());
     sessionStorage.setItem(SHOWN_KEY, "1");
   } catch {
     /* storage blocked: the popup simply shows again next load */
@@ -67,7 +70,7 @@ function writeShown() {
 }
 
 /**
- * Approval Center popup. Opens on every login (and fresh tab) when the signed-in person has anything
+ * Approval Center popup. Opens once a day (first load) when the signed-in person has anything
  * waiting on them, one card per request with every component, plus Approve / Decline / View.
  * After "Later" a pill stays in the corner to reopen it.
  */
