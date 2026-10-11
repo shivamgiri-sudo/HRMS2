@@ -126,6 +126,7 @@ on:
           - payslip-diagnose
           - meta-whatsapp-diagnose
           - he-inbox-timing
+          - followup-callfile-audit
           - backend-log-grep
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
@@ -546,6 +547,10 @@ jobs:
             backend-log-grep)
               # Read-only: greps backend logs for the phrase given in employee_codes.
               npx tsx scripts/backend-log-grep.ts "${INPUT_EMPLOYEE_CODES}"
+              ;;
+            followup-callfile-audit)
+              # Read-only in both modes: counts of calling-file batches, call states and results; no personal data.
+              npx tsx scripts/followup-callfile-audit.ts
               ;;
             he-inbox-timing)
               # Read-only in both modes: counts and timings of the HE inbox query.
