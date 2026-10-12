@@ -64,7 +64,7 @@ export interface CostBlock {
 }
 
 const NOTE_NONE = "No cost source yet: no Meta ad spend is synced for these requisitions and no messaging rates are set";
-const NOTE_ESTIMATE = "Estimated: Meta ad spend is the last 30-day total spread over the days in range; messaging uses the owner's rates. Calls from the calling file and messages without a requisition are not counted.";
+const NOTE_ESTIMATE = "Estimated: Meta ad spend is the last 30-day total spread over the days in range; messaging uses the owner's rates. Calls whose result has no duration are billed at the average call length; failed dials are not billed. Messages without a requisition are not counted.";
 const NOTE_NO_RATES = " Messaging rates are not set, so only ad spend counts.";
 
 export function costBlock(usage: Record<SourceType, CostUsage>, r: CostRates, stages: Record<SourceType, StageCounts>): CostBlock {
