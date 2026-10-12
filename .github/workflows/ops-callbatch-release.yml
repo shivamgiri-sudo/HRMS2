@@ -1,0 +1,50 @@
+name: Ops release a refused calling-file batch (manual)
+
+# Puts the people of ONE calling-file batch back in the queue when the portal refused that batch and nobody in it was called, so the
+# engine files them again. Dry run unless "apply" is true. Only ever touches that batch's rows.
+on:
+  workflow_dispatch:
+    inputs:
+      batch_id:
+        description: "Calling-file batch id"
+        required: true
+      apply:
+        description: "true to release, anything else is a dry run"
+        required: false
+        default: "false"
+
+concurrency:
+  group: ops-callbatch-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release batch
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Release (dry run unless apply)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          BATCH_ID: ${{ inputs.batch_id }}
+          APPLY: ${{ inputs.apply == 'true' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::production .env not found"; exit 1; }
+          npx tsx scripts/callbatch-release.ts
