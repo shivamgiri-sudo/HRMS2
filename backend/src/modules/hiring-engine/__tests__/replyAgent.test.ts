@@ -178,3 +178,21 @@ describe("handleInboundReply", () => {
     expect(h.send).not.toHaveBeenCalled();
   });
 });
+
+describe("company policy: no cab, no work from home (every branch and process)", () => {
+  it.each([
+    ["Is there cab facility?", "ask_cab"], ["Cab facility", "ask_cab"], ["Do you provide pick and drop", "ask_cab"],
+    ["I want work from home", "ask_wfh"], ["Is WFH available?", "ask_wfh"], ["Is it a remote job", "ask_wfh"],
+  ])("%s -> %s, answered by the fixed wording", (text, intent) => {
+    const r = ruleIntent(text);
+    expect(r).toMatchObject({ intent });
+    expect(r!.confidence).toBeGreaterThanOrEqual(0.8);
+    expect(AUTO_INTENTS.has(intent as never)).toBe(true);
+    const reply = ruleReply(intent as never, FACTS)!;
+    expect(reply).toMatch(intent === "ask_cab" ? /do not provide a cab or transport service/ : /do not offer work from home/);
+    expect(validateReply({ text: reply, facts: FACTS, deny: [] })).toEqual({ ok: true });
+  });
+  it("keeps night-shift questions as shift questions", () => {
+    expect(ruleIntent("What is the night shift timing")).toMatchObject({ intent: "ask_shift" });
+  });
+});

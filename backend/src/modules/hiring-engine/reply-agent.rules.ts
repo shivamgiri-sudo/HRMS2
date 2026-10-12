@@ -4,12 +4,12 @@
  * Every drafted reply passes `validateReply` before it can be sent; a failure holds it for HR. No I/O here.
  */
 export type ReplyIntent =
-  | "confirm" | "decline" | "reschedule" | "ask_address" | "ask_time" | "ask_documents" | "ask_job" | "ask_salary" | "ask_shift"
+  | "confirm" | "decline" | "reschedule" | "ask_address" | "ask_time" | "ask_documents" | "ask_job" | "ask_salary" | "ask_shift" | "ask_cab" | "ask_wfh"
   | "ask_eligibility" | "ask_selection" | "assessment_link" | "already_joined" | "opt_out" | "complaint" | "other";
 
 /** Intents the agent may answer without a person, once the facts it needs are present. */
 export const AUTO_INTENTS: ReadonlySet<ReplyIntent> = new Set<ReplyIntent>([
-  "confirm", "decline", "reschedule", "ask_address", "ask_time", "ask_documents", "ask_job", "ask_salary", "ask_shift", "ask_eligibility", "assessment_link", "already_joined",
+  "confirm", "decline", "reschedule", "ask_address", "ask_time", "ask_documents", "ask_job", "ask_salary", "ask_shift", "ask_cab", "ask_wfh", "ask_eligibility", "assessment_link", "already_joined",
 ]);
 /** Never answered by the agent: a person decides (opt_out is handled by the STOP path with its own acknowledgement). */
 export const HUMAN_INTENTS: ReadonlySet<ReplyIntent> = new Set<ReplyIntent>(["complaint", "ask_selection", "other", "opt_out"]);
@@ -118,6 +118,11 @@ export function ruleReply(intent: ReplyIntent, f: FactSheet): string | null {
         : `${hi}\n\nThis is for the ${f.role} role at ${f.company}, ${f.branch}. Our team will explain the job in detail at the walk-in.\n\n${sig(f)}`;
     case "ask_salary":
       return f.salary ? `${hi}\n\nFor the ${f.role} role, the salary range is ${f.salary}. The exact offer is discussed after your interview.\n\n${sig(f)}` : null;
+    // Company policy for every branch and process (owner, 2026-10-12): no cab service, no work from home.
+    case "ask_cab":
+      return `${hi}\n\nWe do not provide a cab or transport service at any of our branches, so candidates travel to the branch on their own.${slot ? `\nYour walk-in: ${slot} at ${where}.` : ""}\n\n${sig(f)}`;
+    case "ask_wfh":
+      return `${hi}\n\nAll of our roles are work from office at the branch; we do not offer work from home for any role.${slot ? `\nYour walk-in: ${slot} at ${where}.` : ""}\n\n${sig(f)}`;
     case "ask_shift":
       return f.shift ? `${hi}\n\nThe role works in ${f.shift}.\n\n${sig(f)}` : null;
     case "ask_eligibility":
@@ -157,7 +162,9 @@ export function ruleIntent(text: string): { intent: ReplyIntent; confidence: num
   if (has(/\b(i|we|u|you)\s+can\s+come\s+(now|today|tomorrow|right now)\b/) || has(/\b(coming|reaching|leaving)\s+(now|shortly|soon)\b/) || has(/\bon (my|the) way\b/)) return { intent: "confirm", confidence: 0.9 };
   if (has(/\b(selected|selection|offer letter|result)\b/)) return { intent: "ask_selection", confidence: 0.8 };
   if (has(/\b(salary|ctc|package|pay|income|stipend)\b/)) return { intent: "ask_salary", confidence: 0.85 };
-  if (has(/\b(shift|night|timing of job|work from home|wfh|rotational|week ?off|sunday)\b/)) return { intent: "ask_shift", confidence: 0.8 };
+  if (has(/\b(cab|cabs|pick ?up|pick and drop|drop facility|transport|transportation|conveyance|shuttle)\b/)) return { intent: "ask_cab", confidence: 0.9 };
+  if (has(/\b(work from home|wfh|home based|work at home|from home|remote)\b/)) return { intent: "ask_wfh", confidence: 0.9 };
+  if (has(/\b(shift|night|timing of job|rotational|week ?off|sunday)\b/)) return { intent: "ask_shift", confidence: 0.8 };
   if (has(/\b(address|location|where|map|landmark|route|kaha|kahan)\b/)) return { intent: "ask_address", confidence: 0.85 };
   if (has(/\b(what time|timing|reporting time|kab|when should)\b/)) return { intent: "ask_time", confidence: 0.8 };
   if (has(/\b(document|documents|bring|carry|certificate|aadhaar|pan)\b/)) return { intent: "ask_documents", confidence: 0.85 };
