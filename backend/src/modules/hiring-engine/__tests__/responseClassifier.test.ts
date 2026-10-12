@@ -86,3 +86,21 @@ describe("stripQuoted: header on the same line as the reply", () => {
     expect(stripQuoted("On Monday I will come")).toBe("On Monday I will come");
   });
 });
+
+describe("classifyReply: another chance / coming now (the replies that sat in the review queue)", () => {
+  it.each([
+    ["Sir I have late seen this massege please give me again 1 chance", "reschedule"],
+    ["Hi, I am interested. Can u schedule my interview to Monday", "reschedule"],
+    ["Please give me another chance", "reschedule"],
+    ["You can come now.", "confirm"],
+    ["I can come now sir", "confirm"],
+  ])("%s -> %s", (text, answer) => {
+    const c = classifyReply(text);
+    expect(c.answer).toBe(answer);
+    expect(c.confidence).toBeGreaterThanOrEqual(0.9);
+  });
+  it("still leaves a contact-number question and a work-from-home ask to a person", () => {
+    expect(classifyReply("Koi contect number available h .sir .").confidence).toBeLessThan(0.9);
+    expect(classifyReply("I want work from home Thankyou Neha").confidence).toBeLessThan(0.9);
+  });
+});

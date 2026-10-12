@@ -16,8 +16,10 @@ const GUARDS = ["no problem", "no issue", "no issues", "no worries", "koi dikkat
 const WRONG = ["wrong number", "galat number", "wrong person", "not me"];
 const UNSUB = ["do not message", "don t message", "dont message", "do not contact", "don t contact", "stop messaging", "do not call", "don t call"];
 const DECLINE = ["not able", "unable", "won t be able", "wont be able", "not possible", "nahi aa", "nhi aa", "not available", "already joined", "got another job", "job mil gayi", "not looking"];
-const RESCHEDULE = ["next week", "some other day", "other day", "another day", "instead", "postpone", "dusre din", "agle hafte"];
-const CONFIRM = ["will come", "will be there", "i ll come", "i ll be there", "coming", "sure", "definitely", "aa jaunga", "aa jaungi", "aa raha", "aa rahi", "theek hai", "thik hai", "attend"];
+const RESCHEDULE = ["next week", "some other day", "other day", "another day", "instead", "postpone", "dusre din", "agle hafte",
+  "another chance", "one more chance", "1 more chance", "again 1 chance", "again one chance", "another opportunity", "another slot", "new slot", "new date",
+  "late seen", "late saw", "late noticed", "missed my slot", "missed the interview", "reschedule", "schedule my interview", "schedule my slot", "give me another"];
+const CONFIRM = ["can come now", "coming now", "on my way", "reaching now", "reaching soon", "will come", "will be there", "i ll come", "i ll be there", "coming", "sure", "definitely", "aa jaunga", "aa jaungi", "aa raha", "aa rahi", "theek hai", "thik hai", "attend"];
 const QUESTION = ["kya", "kitna", "kitni", "kab", "kahan", "kaha", "kaise", "salary", "address", "location", "when", "where", "what", "how", "which", "documents"];
 
 /** The reply's own words: cut at the first quote header, quoted line, signature or "sent from" line. */

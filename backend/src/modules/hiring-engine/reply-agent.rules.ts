@@ -145,6 +145,16 @@ export function ruleIntent(text: string): { intent: ReplyIntent; confidence: num
   if (has(/\b(stop|unsubscribe|do not (message|contact|call)|dont (message|contact|call))\b/)) return { intent: "opt_out", confidence: 0.95 };
   if (has(/\b(scam|fraud|cheat|complain|police|legal|harass|spam|why are you)\b/)) return { intent: "complaint", confidence: 0.9 };
   if (has(/\b(already (joined|working)|got (a )?job|joined (another|somewhere))\b/)) return { intent: "already_joined", confidence: 0.85 };
+  // Asking for another chance or another day, in the many ways people write it ("give me again 1 chance", "late seen this message",
+  // "schedule my interview to Monday"): a new slot, not a question for a person.
+  if (has(/\b(again|another|one more|1 more|second|new|next)\s+(1\s+|one\s+)?(chance|opportunity|slot|time|date)\b/)
+    || has(/\b(give|giv|allow|provide)\s+me\b.{0,25}\b(chance|time|slot|date)\b/)
+    || has(/\blate\s+(seen|saw|noticed|read|checked)\b/)
+    || has(/\bmissed\b.{0,25}\b(message|mail|email|interview|slot|call)\b/)
+    || has(/\b(schedule|reschedule|shift|move|change)\s+(my\s+|the\s+)?(interview|slot|walk ?in|appointment)\b/)
+    || has(/\bcan i come\s+(tomorrow|today|on|next|monday|tuesday|wednesday|thursday|friday|saturday)\b/)) return { intent: "reschedule", confidence: 0.9 };
+  // "I can come now" / "you can come now" / "on my way": they are coming.
+  if (has(/\b(i|we|u|you)\s+can\s+come\s+(now|today|tomorrow|right now)\b/) || has(/\b(coming|reaching|leaving)\s+(now|shortly|soon)\b/) || has(/\bon (my|the) way\b/)) return { intent: "confirm", confidence: 0.9 };
   if (has(/\b(selected|selection|offer letter|result)\b/)) return { intent: "ask_selection", confidence: 0.8 };
   if (has(/\b(salary|ctc|package|pay|income|stipend)\b/)) return { intent: "ask_salary", confidence: 0.85 };
   if (has(/\b(shift|night|timing of job|work from home|wfh|rotational|week ?off|sunday)\b/)) return { intent: "ask_shift", confidence: 0.8 };
