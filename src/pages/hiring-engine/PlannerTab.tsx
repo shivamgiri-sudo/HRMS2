@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CalendarClock, Target, Users } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { num } from "@/components/analytics/analytics-kit";
+import BranchPlanSection from "./BranchPlanSection";
 
 interface Req { id: string; requisition_code: string; designation_name: string; process_name: string | null; branch_name: string; open_positions: number; priority: string }
 interface SourcePlan { source: string; expectedSelected: number; uniqueLeads: number; walkins: number; callAttempts: number; dailyCalls: number; dailyLeads: number; dailyWalkins: number; rates: { leadToWalkin: number; walkinToSelected: number; callToLead: number; selectedToJoined: number }; sample: string }
@@ -59,6 +60,7 @@ export default function PlannerTab() {
 
   return (
     <div className="space-y-5">
+      <BranchPlanSection />
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Plan inputs">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr_auto] lg:items-end">
           <label className="text-sm"><span className="mb-1 block font-medium text-slate-700">Requisition</span>

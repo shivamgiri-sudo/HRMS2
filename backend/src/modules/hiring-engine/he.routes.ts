@@ -29,6 +29,7 @@ import { applyCallResults, markExportedForCalling, previewCallResults } from "./
 import { getCandidate360 } from "./he-candidate360.service.js";
 import { refreshProfilesChunk } from "./he-profile.service.js";
 import { planHiring } from "./he-planner.service.js";
+import { planBranches } from "./he-branch-plan.service.js";
 import { ingestCandidates, previewCandidates } from "./he-intake.service.js";
 import { getControlRoom, learnMatchWeights, learnShowUp } from "./he-showup.service.js";
 import { INTAKE_SOURCES, type IntakeSource } from "./he-intake.js";
@@ -621,6 +622,19 @@ heRouter.post("/master/ex-employees/refresh", requireAuth, requireRole(...ADMIN_
   masterCache = null;
   try { const after = (req.body as { after?: unknown })?.after; res.json({ success: true, data: await refreshExEmployees({ after: typeof after === "string" ? after : null }) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] ex-employee refresh failed"); res.status(500).json({ message: "Could not refresh former employees" }); }
+});
+
+// Branch hiring plan: per branch, joins still needed, walk-ins needed at its own conversion, days to target and cost to target.
+heRouter.get("/branch-plan", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try {
+    const q = req.query as Record<string, string | undefined>;
+    const num = (v?: string) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
+    const deadline = q.deadline && /^\d{4}-\d{2}-\d{2}$/.test(q.deadline) ? q.deadline : null;
+    res.json({ success: true, data: await planBranches({ months: num(q.months), deadline, walkinToSelected: num(q.walkinToSelected), selectedToJoined: num(q.selectedToJoined), walkinsPerDay: num(q.walkinsPerDay) }) });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he] branch plan failed");
+    res.status(500).json({ success: false, message: "Could not build the branch plan" });
+  }
 });
 
 // Hiring planner: what to do per source per day (and how many recruiters) to reach a selection target by a date.
