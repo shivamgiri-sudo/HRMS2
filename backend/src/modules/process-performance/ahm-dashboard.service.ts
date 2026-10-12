@@ -156,6 +156,9 @@ interface SnapshotRow extends RowDataPacket { payload: string; computed_at: Date
 const SNAPSHOT_VERSION = "v4";
 export const ahmSnapshotKey = (f: AhmFilters): string => `${SNAPSHOT_VERSION}|${f.from}|${f.to}|${f.region ?? ""}|${f.zonePrefix ?? ""}`;
 
+/** Serves the saved snapshot immediately, however old: a viewer must never wait ~2 minutes for a recompute that a stale
+ * payload (at most a few minutes behind the last upload) answers just as well. A stale one triggers a background refresh;
+ * only a range that has never been computed pays the live cost. */
 export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
   const key = ahmSnapshotKey(f);
   const [rows] = await db.execute<SnapshotRow[]>(
@@ -164,15 +167,31 @@ export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> 
   const hit = rows[0];
   if (hit) {
     const age = Date.now() - new Date(hit.computed_at).getTime();
-    if (age < SNAPSHOT_STALE_MS) return JSON.parse(hit.payload) as AhmDashboardData;
+    if (age >= SNAPSHOT_STALE_MS) {
+      void refreshAhmSnapshot(f).catch((err) => console.error("[ahm-dashboard] background refresh failed:", err instanceof Error ? err.message : err));
+    }
+    return JSON.parse(hit.payload) as AhmDashboardData;
   }
   return refreshAhmSnapshot(f);
 }
 
-/** Computes live and upserts the snapshot -- used both by a cache miss above and by the
- * background worker's proactive refresh of the common ranges. */
-export async function refreshAhmSnapshot(f: AhmFilters): Promise<AhmDashboardData> {
+const inflight = new Map<string, Promise<AhmDashboardData>>();
+let lastMetricSyncAt = 0;
+const METRIC_SYNC_MIN_GAP_MS = 10 * 60_000;
+
+/** Computes live and upserts the snapshot -- used both by a cache miss above and by the background worker's proactive
+ * refresh of the common ranges. One compute per key at a time: concurrent viewers share it instead of each launching
+ * the 13-aggregation pass over the whole table. */
+export function refreshAhmSnapshot(f: AhmFilters): Promise<AhmDashboardData> {
   const key = ahmSnapshotKey(f);
+  const running = inflight.get(key);
+  if (running) return running;
+  const p = doRefreshAhmSnapshot(f, key).finally(() => { inflight.delete(key); });
+  inflight.set(key, p);
+  return p;
+}
+
+async function doRefreshAhmSnapshot(f: AhmFilters, key: string): Promise<AhmDashboardData> {
   const t0 = Date.now();
   const data = await computeAhmDashboard(f);
   const computeMs = Date.now() - t0;
@@ -183,7 +202,22 @@ export async function refreshAhmSnapshot(f: AhmFilters): Promise<AhmDashboardDat
        payload = VALUES(payload), compute_ms = VALUES(compute_ms), computed_at = VALUES(computed_at)`,
     [key, f.from, f.to, f.region, JSON.stringify(data), computeMs],
   );
+  // Keep the Process Operations KPI tiles current whenever fresh dump data has just been read. Throttled, never blocks or fails the viewer.
+  if (Date.now() - lastMetricSyncAt > METRIC_SYNC_MIN_GAP_MS) {
+    lastMetricSyncAt = Date.now();
+    void import("./ahm-metrics.service.js")
+      .then((m) => { const r = m.recentRange(); return m.syncAhmProcessMetrics(r.from, r.to); })
+      .catch((err) => console.error("[ahm-dashboard] metric roll-up failed:", err instanceof Error ? err.message : err));
+  }
   return data;
+}
+
+/** Re-computes the dashboard's default ranges (month to date: all regions, MP, MM) in the background, e.g. after an upload. */
+export function warmAhmCurrentMonth(): void {
+  const { from, to } = currentMonthRange();
+  for (const region of [null, "MP", "MM"] as const) {
+    void refreshAhmSnapshot({ from, to, region }).catch((err) => console.error("[ahm-dashboard] warm failed:", err instanceof Error ? err.message : err));
+  }
 }
 
 async function computeAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {

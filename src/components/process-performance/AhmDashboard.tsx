@@ -504,7 +504,7 @@ export function AhmDashboard() {
         </div>
       </div>
 
-      {loading && <p style={{ padding: 24, textAlign: "center", color: PALETTE.muted }}>Loading…</p>}
+      {loading && <p style={{ padding: 24, textAlign: "center", color: PALETTE.muted }}>Loading… the first view of a new date range is computed from the full order table and can take a couple of minutes; after that it opens instantly.</p>}
       {error && <p style={{ padding: 24, textAlign: "center", color: "#DC2626" }}>{error}</p>}
 
       {data && !loading && (

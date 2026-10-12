@@ -837,6 +837,9 @@ async function refreshAhmProcessMetrics(): Promise<void> {
     const { syncAhmProcessMetrics, recentRange } = await import("../process-performance/ahm-metrics.service.js");
     const { from, to } = recentRange();
     await syncAhmProcessMetrics(from, to);
+    // New rows landed: re-warm the dashboard's default ranges so the next viewer gets a fresh snapshot instantly.
+    const { warmAhmCurrentMonth } = await import("../process-performance/ahm-dashboard.service.js");
+    warmAhmCurrentMonth();
   } catch (err) {
     console.error("[bulk-dispatch] AHM process metric refresh failed:", err instanceof Error ? err.message : err);
   }
