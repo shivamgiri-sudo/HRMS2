@@ -52,6 +52,7 @@ on:
           - resend-address-bgv-links
           - roster-requests-verify
           - bla-uploader-diagnose
+          - roster-tracker-profile
           - report-requests-diagnose
           - payment-voucher-salary-verify
           - sbi-card-verify
@@ -295,6 +296,7 @@ jobs:
               fi
               node scripts/report-requests-diagnose.mjs
               ;;
+            roster-tracker-profile) node scripts/roster-tracker-profile.mjs ;; # read-only (SELECT + EXPLAIN in a READ ONLY session)
             bla-uploader-diagnose) node scripts/bla-uploader-diagnose.mjs ;; # read-only (SELECTs in a READ ONLY session)
             roster-requests-verify)
               # Read-only: SELECTs only, in a READ ONLY session. Checks the Roster Requests hub
