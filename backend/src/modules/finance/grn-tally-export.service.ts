@@ -22,7 +22,8 @@ import {
  *
  * "Fully approved" means the last approval step has happened: a vendor GRN at Finance Head approval
  * or later, an imprest GRN at 'approved' or later. GRNs imported from the legacy billing system
- * (bill_source_id set) are left out, because the old system already booked them. Nothing before
+ * (bill_source_id set, or created by the migration's sentinel user) are left out, because the old
+ * system already booked them. Nothing before
  * GRN_TALLY_EXPORT_FROM is exported, so switching this on never sends history.
  *
  * No duplicates: each GRN is reserved in grn_tally_export (primary key = the GRN) in the same
@@ -104,6 +105,16 @@ export type GrnTallyRunResult =
 
 const r2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
+/**
+ * A GRN raised in HRMS: not linked to a db_bill row, and not written by the db_bill migration. The
+ * migration also created month-suffixed child rows ("Mas/5/26/124-Oct") with bill_source_id NULL but
+ * its sentinel creator (00000000-...), so bill_source_id alone lets legacy data through. Both
+ * conditions must hold before a GRN goes to Tally; the old system has already booked the rest.
+ */
+export function hrmsRaisedGrnSql(alias: string): string {
+  return `${alias}.bill_source_id IS NULL AND COALESCE(${alias}.created_by, '') NOT LIKE '00000000-%'`;
+}
+
 async function selectCandidates(
   executor: Executor,
   from: string,
@@ -115,7 +126,7 @@ async function selectCandidates(
             g.description, g.branch_id, g.amount, g.amount_without_tax, g.tax_amount, g.other_charges, g.round_off_amount,
             g.amount_with_tax, g.gst_type, g.recoverable_tax_pct, COALESCE(g.approved_at, g.updated_at) AS approved_on
        FROM grn_request g
-      WHERE g.bill_source_id IS NULL
+      WHERE ${hrmsRaisedGrnSql("g")}
         AND g.grn_number IS NOT NULL AND TRIM(g.grn_number) <> ''
         AND ((g.grn_type = 'vendor' AND g.status IN (${vendorIn})) OR (g.grn_type = 'imprest' AND g.status IN (${imprestIn})))
         AND COALESCE(g.approved_at, g.updated_at) >= ?

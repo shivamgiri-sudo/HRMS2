@@ -70,6 +70,8 @@ describe("loadGrnTallyDownload", () => {
     await loadGrnTallyDownload({ ...all, month: "2026-09" });
     const select = h.state.calls.find((c) => /FROM grn_request g/.test(c.sql))!;
     expect(select.sql).toMatch(/g\.bill_source_id IS NULL/);
+    // db_bill migration also wrote suffixed child rows with bill_source_id NULL; its sentinel creator marks them.
+    expect(select.sql).toMatch(/COALESCE\(g\.created_by, ''\) NOT LIKE '00000000-%'/);
     expect(select.sql).toMatch(/g\.grn_number IS NOT NULL/);
     expect(select.sql).toMatch(/g\.status NOT IN/);
     expect(select.params).toEqual(["cancelled", "consumption_reversed", "2026-09"]);

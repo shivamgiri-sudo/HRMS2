@@ -9,6 +9,7 @@ import {
 } from "../../shared/ownCompanyCostCentre.js";
 import {
   lookupNames,
+  hrmsRaisedGrnSql,
   readGrnTallyConfig,
   toVoucherInput,
 } from "./grn-tally-export.service.js";
@@ -21,7 +22,7 @@ import {
 /**
  * On-demand download of HRMS GRNs for a Tally import test, as Tally XML, Excel or CSV.
  *
- * Which GRNs: raised in HRMS (bill_source_id IS NULL, so nothing migrated from db_bill), carrying
+ * Which GRNs: raised in HRMS (no bill_source_id and not created by the db_bill migration user, so nothing migrated from db_bill), carrying
  * a GRN number (a number exists only from Finance Head approval onwards, so drafts and pending
  * GRNs are out by construction), and not cancelled or consumption-reversed — a spend that was
  * undone is not something to book. Same branch scope and own-company rule as the GRN Register.
@@ -94,7 +95,7 @@ export async function loadGrnTallyDownload(
   await refreshHiddenGrnScope();
   const conditions: string[] = [
     ownCompanyGrnSql("g"),
-    "g.bill_source_id IS NULL",
+    hrmsRaisedGrnSql("g"),
     "g.grn_number IS NOT NULL",
     "TRIM(g.grn_number) <> ''",
     `g.status NOT IN (${EXCLUDED_STATUSES.map(() => "?").join(",")})`,
