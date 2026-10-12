@@ -181,7 +181,7 @@ export async function grantAbscondingFfException(params: {
     );
   }
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT er.id, er.employee_id, er.ff_exception_at, er.exit_type, er.exit_sub_type,
+    `SELECT er.id, er.employee_id, er.ff_exception_at, er.ff_exception_bh_at, er.ff_exception_bh_by, er.exit_type, er.exit_sub_type,
             e.employment_status
        FROM exit_request er JOIN employees e ON e.id = er.employee_id
       WHERE er.id = ? LIMIT 1`,
@@ -190,6 +190,20 @@ export async function grantAbscondingFfException(params: {
   const er = rows[0];
   if (!er) {
     throw Object.assign(new Error("Exit request not found"), { statusCode: 404, code: "EXIT_NOT_FOUND" });
+  }
+  // Step 1 belongs to the Branch Head. The Payroll Head's exception is only meaningful on top of it.
+  if (!er.ff_exception_bh_at) {
+    throw Object.assign(
+      new Error("The Branch Head must approve this exception first. Ask the employee's Branch Head to approve it, then record the Payroll Head exception."),
+      { statusCode: 409, code: "FF_EXCEPTION_BRANCH_HEAD_PENDING" },
+    );
+  }
+  // Two approvers, two people: the Payroll Head step cannot be the same person as the Branch Head step.
+  if (String(er.ff_exception_bh_by ?? "") === String(params.actorUserId)) {
+    throw Object.assign(
+      new Error("The Payroll Head exception must be recorded by someone other than the Branch Head who approved it."),
+      { statusCode: 403, code: "FF_EXCEPTION_SAME_APPROVER" },
+    );
   }
   if (er.ff_exception_at) {
     throw Object.assign(new Error("An F&F exception is already recorded for this exit."), {
@@ -221,4 +235,71 @@ export async function grantAbscondingFfException(params: {
     entity_id: params.exitRequestId,
     change_summary: { employee_id: String(er.employee_id), reason },
   });
+}
+
+/**
+ * Step 1 of an absconder F&F exception: the employee's Branch Head approves it, with a reason.
+ * The route restricts the caller to branch_head (scoped to the employee's branch by the exit-scope
+ * guard). Nothing unlocks yet: the Payroll Head's exception (step 2) is still required.
+ */
+export async function recordBranchHeadFfException(params: {
+  exitRequestId: string;
+  reason: string;
+  actorUserId: string;
+  actorRole?: string | null;
+}): Promise<void> {
+  const reason = params.reason?.trim() ?? "";
+  if (reason.length < 15) {
+    throw Object.assign(new Error("A reason of at least 15 characters is required."), {
+      statusCode: 400,
+      code: "FF_EXCEPTION_REASON_REQUIRED",
+    });
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT er.id, er.employee_id, er.ff_exception_at, er.ff_exception_bh_at FROM exit_request er WHERE er.id = ? LIMIT 1`,
+    [params.exitRequestId],
+  );
+  const er = rows[0];
+  if (!er) {
+    throw Object.assign(new Error("Exit request not found"), { statusCode: 404, code: "EXIT_NOT_FOUND" });
+  }
+  if (er.ff_exception_bh_at) {
+    throw Object.assign(new Error("The Branch Head has already approved this exception."), {
+      statusCode: 409,
+      code: "FF_EXCEPTION_BH_EXISTS",
+    });
+  }
+  const gate = await ffSettlementGate(String(er.employee_id), params.exitRequestId);
+  if (gate.code !== "ABSCONDED_NO_EXCEPTION") {
+    throw Object.assign(new Error("This exit is not an absconding case awaiting an exception."), {
+      statusCode: 409,
+      code: "FF_EXCEPTION_NOT_NEEDED",
+    });
+  }
+  await db.execute(
+    `UPDATE exit_request SET ff_exception_bh_by = ?, ff_exception_bh_at = NOW(), ff_exception_bh_reason = ?
+      WHERE id = ? AND ff_exception_bh_at IS NULL`,
+    [params.actorUserId, reason.slice(0, 500), params.exitRequestId],
+  );
+  await logSensitiveAction({
+    actor_user_id: params.actorUserId,
+    actor_role: params.actorRole ?? undefined,
+    action_type: "FF_ABSCONDER_EXCEPTION_BRANCH_HEAD_APPROVED",
+    module_key: "exit",
+    entity_type: "exit_request",
+    entity_id: params.exitRequestId,
+    change_summary: { employee_id: String(er.employee_id), reason },
+  });
+}
+
+/** Where an absconder's exception stands, for the screen. */
+export async function ffExceptionProgress(exitRequestId: string): Promise<{
+  branchHeadApproved: boolean;
+  payrollHeadApproved: boolean;
+}> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ff_exception_bh_at, ff_exception_at FROM exit_request WHERE id = ? LIMIT 1`,
+    [exitRequestId],
+  );
+  return { branchHeadApproved: Boolean(rows[0]?.ff_exception_bh_at), payrollHeadApproved: Boolean(rows[0]?.ff_exception_at) };
 }

@@ -4,7 +4,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { exitController } from "./exit.controller.js";
 import { ffService } from "./ff.service.js";
-import { grantAbscondingFfException, ffSettlementGate } from "./ff-settlement-gate.service.js";
+import { grantAbscondingFfException, ffSettlementGate, recordBranchHeadFfException, ffExceptionProgress } from "./ff-settlement-gate.service.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { computeFfPreview } from "./ff-compute.service.js";
 import { getExitAnalyticsSummary } from "./exit-analytics.service.js";
@@ -450,9 +450,54 @@ exitRouter.get(
     const gate = await ffSettlementGate(String(rows[0].employee_id), req.params.exitRequestId);
     // canGrantException lets the screen show the exception action to the Payroll Head only,
     // instead of offering it to everyone and answering 403.
-    const canGrantException =
-      gate.code === "ABSCONDED_NO_EXCEPTION" && (await hasAnyRole(req.authUser!.id, "payroll_head"));
-    return res.json({ success: true, data: { ...gate, canGrantException } });
+    const absconded = gate.code === "ABSCONDED_NO_EXCEPTION";
+    const progress = absconded ? await ffExceptionProgress(req.params.exitRequestId) : null;
+    const isPayrollHead = absconded && (await hasAnyRole(req.authUser!.id, "payroll_head"));
+    const isBranchHead = absconded && (await hasAnyRole(req.authUser!.id, "branch_head"));
+    return res.json({
+      success: true,
+      data: {
+        ...gate,
+        exception: progress,
+        // Step 1 (Branch Head) must precede step 2 (Payroll Head).
+        canApproveAsBranchHead: Boolean(isBranchHead && progress && !progress.branchHeadApproved),
+        canGrantException: Boolean(isPayrollHead && progress?.branchHeadApproved),
+      },
+    });
+  }),
+);
+
+/**
+ * POST /api/exit/ff/:exitRequestId/absconding-exception/branch-head
+ *
+ * body: { reason: string }
+ *
+ * Step 1 of an absconder's F&F exception: the employee's Branch Head approves it. Branch scope comes
+ * from guardExitEmployee. Does not unlock anything; the Payroll Head still has to record the exception.
+ */
+exitRouter.post(
+  "/ff/:exitRequestId/absconding-exception/branch-head",
+  guardExitEmployee("exitRequestId"),
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    if (!(await hasAnyRole(userId, "branch_head"))) {
+      return res.status(403).json({
+        success: false,
+        code: "FF_EXCEPTION_FORBIDDEN",
+        message: "Only the employee's Branch Head can give the first approval for an absconder's F&F exception.",
+      });
+    }
+    try {
+      await recordBranchHeadFfException({
+        exitRequestId: req.params.exitRequestId,
+        reason: String((req.body as { reason?: string })?.reason ?? ""),
+        actorUserId: userId,
+      });
+      return res.json({ success: true, message: "Branch Head approval recorded. The Payroll Head can now decide the exception." });
+    } catch (err) {
+      const e = err as { statusCode?: number; code?: string; message: string };
+      return res.status(e.statusCode ?? 500).json({ success: false, code: e.code, message: e.message });
+    }
   }),
 );
 
@@ -461,8 +506,8 @@ exitRouter.get(
  *
  * body: { reason: string }
  *
- * F&F is not allowed for an absconder. This is the only way past that: a recorded Payroll Head
- * exception. After it, the flow is exactly as for any other leaver.
+ * F&F is not allowed for an absconder. This is the only way past that: the Branch Head's approval
+ * first, then a recorded Payroll Head exception. After it, the flow is exactly as for any other leaver.
  */
 exitRouter.post(
   "/ff/:exitRequestId/absconding-exception",

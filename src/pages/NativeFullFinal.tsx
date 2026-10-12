@@ -692,6 +692,8 @@ export default function NativeFullFinal() {
     code: string | null;
     reason: string | null;
     canGrantException?: boolean;
+    canApproveAsBranchHead?: boolean;
+    exception?: { branchHeadApproved: boolean; payrollHeadApproved: boolean } | null;
   } | null>(null);
   const [exceptionReason, setExceptionReason] = useState("");
   const [grantingException, setGrantingException] = useState(false);
@@ -705,6 +707,21 @@ export default function NativeFullFinal() {
     } catch {
       setGate(null);
     }
+  };
+
+  const approveAsBranchHead = async () => {
+    if (!selectedRequest) return;
+    const reason = exceptionReason.trim();
+    if (reason.length < 15) return showMessage("Give a reason of at least 15 characters.", "error");
+    setGrantingException(true); setMessage("");
+    try {
+      await hrmsApi.post(`/api/exit/ff/${selectedRequest.id}/absconding-exception/branch-head`, { reason });
+      showMessage("Branch Head approval recorded. The Payroll Head can now decide.", "success");
+      setExceptionReason("");
+      await loadGate(selectedRequest.id);
+    } catch (err: unknown) {
+      showMessage((err as Error).message || "Could not record the approval.", "error");
+    } finally { setGrantingException(false); }
   };
 
   const grantException = async () => {
@@ -1149,6 +1166,35 @@ export default function NativeFullFinal() {
                       <Lock className="h-4 w-4" /> F&amp;F settlement is locked
                     </p>
                     <p className="mt-1 text-sm text-amber-900">{gate.reason}</p>
+                    {gate.code === "ABSCONDED_NO_EXCEPTION" && (
+                      <ol className="mt-3 space-y-1 text-xs font-semibold text-amber-900">
+                        <li>{gate.exception?.branchHeadApproved ? "✔" : "1."} Branch Head approval{gate.exception?.branchHeadApproved ? " — done" : " — pending"}</li>
+                        <li>{gate.exception?.payrollHeadApproved ? "✔" : "2."} Payroll Head exception{gate.exception?.payrollHeadApproved ? " — done" : " — after the Branch Head"}</li>
+                        <li>3. Fully signed NOC (every clearance level)</li>
+                      </ol>
+                    )}
+                    {gate.code === "ABSCONDED_NO_EXCEPTION" && gate.canApproveAsBranchHead && (
+                      <div className="mt-3">
+                        <label className="text-xs font-bold text-amber-900">
+                          Branch Head approval — reason (recorded against your name)
+                        </label>
+                        <textarea
+                          className="mt-1 w-full rounded-xl border border-amber-300 bg-white p-2 text-sm"
+                          rows={3}
+                          maxLength={500}
+                          value={exceptionReason}
+                          onChange={(e) => setExceptionReason(e.target.value)}
+                          placeholder="Why an F&F is being recommended for this absconded employee"
+                        />
+                        <button
+                          onClick={approveAsBranchHead}
+                          disabled={grantingException || exceptionReason.trim().length < 15}
+                          className="mt-2 rounded-xl bg-amber-700 px-4 py-2 text-sm font-bold text-white hover:bg-amber-800 disabled:opacity-50 cursor-pointer"
+                        >
+                          {grantingException ? "Recording…" : "Approve as Branch Head"}
+                        </button>
+                      </div>
+                    )}
                     {gate.code === "ABSCONDED_NO_EXCEPTION" && gate.canGrantException && (
                       <div className="mt-3">
                         <label className="text-xs font-bold text-amber-900">
@@ -1174,9 +1220,11 @@ export default function NativeFullFinal() {
                         </button>
                       </div>
                     )}
-                    {gate.code === "ABSCONDED_NO_EXCEPTION" && !gate.canGrantException && (
+                    {gate.code === "ABSCONDED_NO_EXCEPTION" && !gate.canGrantException && !gate.canApproveAsBranchHead && (
                       <p className="mt-2 text-xs font-semibold text-amber-800">
-                        Only the Payroll Head can approve an exception.
+                        {gate.exception?.branchHeadApproved
+                          ? "Waiting for the Payroll Head to decide the exception."
+                          : "Waiting for the employee's Branch Head to approve first; then the Payroll Head decides."}
                       </p>
                     )}
                   </div>

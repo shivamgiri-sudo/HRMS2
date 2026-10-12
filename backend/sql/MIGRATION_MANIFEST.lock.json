@@ -1049,7 +1049,10 @@
     "2151_ahm_dashboard_snapshot.sql",
     "migrations/2157_noc_cases_page_access_employee_wfm.sql",
     "migrations/2158_pnl_branch_review.sql",
-    "migrations/2159_noc_payroll_head_final_approval_and_absconder_ff_exception.sql"
+    "migrations/2159_noc_payroll_head_final_approval_and_absconder_ff_exception.sql",
+    "migrations/2162_ff_absconder_branch_head_approval.sql",
+    "migrations/2160_roster_import_row_tracker_indexes.sql",
+    "migrations/2161_roster_import_row_batch_cover.sql"
   ],
   "approvedDeletions": [
     {
@@ -1374,7 +1377,10 @@
     "migrations/2156_ahm_metric_period_units.sql",
     "migrations/2157_noc_cases_page_access_employee_wfm.sql",
     "migrations/2158_pnl_branch_review.sql",
-    "migrations/2159_noc_payroll_head_final_approval_and_absconder_ff_exception.sql"
+    "migrations/2159_noc_payroll_head_final_approval_and_absconder_ff_exception.sql",
+    "migrations/2162_ff_absconder_branch_head_approval.sql",
+    "migrations/2160_roster_import_row_tracker_indexes.sql",
+    "migrations/2161_roster_import_row_batch_cover.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

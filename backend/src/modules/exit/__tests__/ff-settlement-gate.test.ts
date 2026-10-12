@@ -17,7 +17,7 @@ vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem: vi.
 vi.mock("../../../shared/recipient-resolver.js", () => ({ resolveRoleHolderUserIds: vi.fn().mockResolvedValue([]) }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction: vi.fn().mockResolvedValue(undefined) }));
 
-const { ffSettlementGate, grantAbscondingFfException, abscondedWithoutExceptionSql } = await import(
+const { ffSettlementGate, grantAbscondingFfException, recordBranchHeadFfException, abscondedWithoutExceptionSql } = await import(
   "../ff-settlement-gate.service.js"
 );
 
@@ -127,28 +127,51 @@ describe("Payroll Head final approval", () => {
   });
 });
 
-describe("absconder exception", () => {
+describe("absconder exception: Branch Head first, then Payroll Head", () => {
   beforeEach(() => execute.mockReset());
+  const longReason = "a perfectly good reason here";
+  const absc = { ...leaver, exit_type: "absconding" };
+
+  it("Payroll Head cannot decide before the Branch Head has approved", async () => {
+    world({ er: absc });
+    await expect(grantAbscondingFfException({ exitRequestId: "x1", reason: longReason, actorUserId: "ph" })).rejects.toMatchObject({ code: "FF_EXCEPTION_BRANCH_HEAD_PENDING" });
+  });
+
+  it("Payroll Head cannot be the same person as the Branch Head", async () => {
+    world({ er: { ...absc, ff_exception_bh_at: "2026-10-12", ff_exception_bh_by: "same" } });
+    await expect(grantAbscondingFfException({ exitRequestId: "x1", reason: longReason, actorUserId: "same" })).rejects.toMatchObject({ code: "FF_EXCEPTION_SAME_APPROVER" });
+  });
 
   it("refuses a short reason", async () => {
-    world({ er: { ...leaver, exit_type: "absconding" } });
-    await expect(grantAbscondingFfException({ exitRequestId: "x1", reason: "ok", actorUserId: "u" })).rejects.toMatchObject({ code: "FF_EXCEPTION_REASON_REQUIRED" });
+    world({ er: { ...absc, ff_exception_bh_at: "2026-10-12", ff_exception_bh_by: "bh" } });
+    await expect(grantAbscondingFfException({ exitRequestId: "x1", reason: "ok", actorUserId: "ph" })).rejects.toMatchObject({ code: "FF_EXCEPTION_REASON_REQUIRED" });
   });
 
   it("refuses an exit that is not absconding", async () => {
-    world({ er: leaver });
-    await expect(grantAbscondingFfException({ exitRequestId: "x1", reason: "a perfectly good reason here", actorUserId: "u" })).rejects.toMatchObject({ code: "FF_EXCEPTION_NOT_NEEDED" });
+    world({ er: { ...leaver, ff_exception_bh_at: "2026-10-12", ff_exception_bh_by: "bh" } });
+    await expect(grantAbscondingFfException({ exitRequestId: "x1", reason: longReason, actorUserId: "ph" })).rejects.toMatchObject({ code: "FF_EXCEPTION_NOT_NEEDED" });
   });
 
   it("refuses a second exception", async () => {
-    world({ er: { ...leaver, exit_type: "absconding", ff_exception_at: "2026-10-12" } });
-    await expect(grantAbscondingFfException({ exitRequestId: "x1", reason: "a perfectly good reason here", actorUserId: "u" })).rejects.toMatchObject({ code: "FF_EXCEPTION_EXISTS" });
+    world({ er: { ...absc, ff_exception_at: "2026-10-12", ff_exception_bh_at: "2026-10-11", ff_exception_bh_by: "bh" } });
+    await expect(grantAbscondingFfException({ exitRequestId: "x1", reason: longReason, actorUserId: "ph" })).rejects.toMatchObject({ code: "FF_EXCEPTION_EXISTS" });
   });
 
-  it("records the exception for a genuine absconder", async () => {
-    world({ er: { ...leaver, exit_type: "absconding" } });
-    await grantAbscondingFfException({ exitRequestId: "x1", reason: "Legal settlement agreed with the employee", actorUserId: "ph" });
+  it("records the Payroll Head exception after a different Branch Head approved", async () => {
+    world({ er: { ...absc, ff_exception_bh_at: "2026-10-11", ff_exception_bh_by: "bh" } });
+    await grantAbscondingFfException({ exitRequestId: "x1", reason: longReason, actorUserId: "ph" });
     expect(execute.mock.calls.some((c) => String(c[0]).includes("UPDATE exit_request"))).toBe(true);
+  });
+
+  it("Branch Head step records once and only for a locked absconder", async () => {
+    world({ er: absc });
+    await recordBranchHeadFfException({ exitRequestId: "x1", reason: longReason, actorUserId: "bh" });
+    expect(execute.mock.calls.some((c) => String(c[0]).includes("ff_exception_bh_by"))).toBe(true);
+    world({ er: { ...absc, ff_exception_bh_at: "2026-10-12" } });
+    await expect(recordBranchHeadFfException({ exitRequestId: "x1", reason: longReason, actorUserId: "bh" })).rejects.toMatchObject({ code: "FF_EXCEPTION_BH_EXISTS" });
+    world({ er: leaver });
+    await expect(recordBranchHeadFfException({ exitRequestId: "x1", reason: longReason, actorUserId: "bh" })).rejects.toMatchObject({ code: "FF_EXCEPTION_NOT_NEEDED" });
+    await expect(recordBranchHeadFfException({ exitRequestId: "x1", reason: "short", actorUserId: "bh" })).rejects.toMatchObject({ code: "FF_EXCEPTION_REASON_REQUIRED" });
   });
 });
 
