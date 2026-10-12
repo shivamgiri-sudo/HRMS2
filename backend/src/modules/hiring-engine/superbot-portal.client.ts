@@ -39,7 +39,7 @@ async function token(c: BotConfig): Promise<string | null> {
   return null;
 }
 
-async function authed(c: BotConfig, path: string, init: { method?: string; json?: unknown } = {}): Promise<{ ok: boolean; status: number; body: unknown; error?: string }> {
+async function authed(c: BotConfig, path: string, init: { method?: string; json?: unknown } = {}, retried = false): Promise<{ ok: boolean; status: number; body: unknown; error?: string }> {
   const tok = await token(c);
   if (!tok) return { ok: false, status: 0, body: null, error: "portal sign-in failed" };
   try {
@@ -48,7 +48,9 @@ async function authed(c: BotConfig, path: string, init: { method?: string; json?
       headers: { Authorization: `Bearer ${tok}`, Accept: "application/json", ...(init.json !== undefined ? { "Content-Type": "application/json" } : {}) },
       ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
     });
-    if (r.status === 401) resetBotToken();
+    // A refused token ("Unauthenticated.") is signed in again once and the call repeated; a cached token can expire before its time.
+    const refused = r.status === 401 || /unauthenticated/i.test(String((r.body as { message?: unknown } | null)?.message ?? ""));
+    if (refused) { resetBotToken(); if (!retried) return authed(c, path, init, true); }
     return { ok: r.status >= 200 && r.status < 300, status: r.status, body: r.body };
   } catch (e) {
     return { ok: false, status: 0, body: null, error: (e as Error).name === "AbortError" ? "portal timed out" : "portal unreachable" };

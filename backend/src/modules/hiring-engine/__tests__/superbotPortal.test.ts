@@ -79,3 +79,40 @@ describe("portal results as call-results rows", () => {
     expect(abandoned.rows[0].outcome).toBe("NO_ANSWER");
   });
 });
+
+describe("portal sign-in refused, then retried", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); resetBotToken(); h.execute.mockReset(); });
+  const row = ["9876543210", "Asha", "EXECUTIVE", "11 10 2026", "11 00 AM", "Okaya Tower", "QF-0A1B2C3D"];
+
+  it("signs in again once when the cached token is refused, and the upload goes through", async () => {
+    for (const [k, v] of Object.entries(ENV)) vi.stubEnv(k, v);
+    let imports = 0; let logins = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.endsWith("/login")) { logins++; return { status: 200, json: async () => ({ token: `t${logins}` }) }; }
+      imports++;
+      return imports === 1 ? { status: 401, json: async () => ({ message: "Unauthenticated." }) } : { status: 200, json: async () => ({ success: true, message: "Bulk Upload Successful" }) };
+    }));
+    const r = await uploadCallFile("b9", [row]);
+    expect(r).toMatchObject({ attempted: true, ok: true });
+    expect(logins).toBe(2);
+  });
+
+  it("keeps the rows of a refused upload and re-sends them; a timed-out one is never repeated", async () => {
+    for (const [k, v] of Object.entries(ENV)) vi.stubEnv(k, v);
+    const { retryPortalUploads } = await import("../superbot-portal.sync.js");
+    h.execute.mockImplementation(async (sql: string) => {
+      if (String(sql).includes("FROM qualified_followup_call_payload")) return [[
+        { batch_id: "b1", rows_json: JSON.stringify([row]), last_message: "Unauthenticated." },
+        { batch_id: "b2", rows_json: JSON.stringify([row]), last_message: "portal timed out" },
+      ], []];
+      return [[], []];
+    });
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(url);
+      return url.endsWith("/login") ? { status: 200, json: async () => ({ token: "t" }) } : { status: 200, json: async () => ({ success: true, message: "Bulk Upload Successful" }) };
+    }));
+    expect(await retryPortalUploads()).toBe(1);
+    expect(urls.filter((u) => u.endsWith("/bulk-import"))).toHaveLength(1);
+  });
+});

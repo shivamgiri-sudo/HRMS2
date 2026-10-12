@@ -18,13 +18,59 @@ export async function uploadCallFile(batchId: string, rows: string[][]): Promise
   const c = botConfig();
   if (!c || c.uploadMode !== "live") return { attempted: false, ok: false, total: rows.length, message: "portal upload is off" };
   const clean = rows.filter((r) => /^\d{10}$/.test(String(r[0] ?? "")));
+  // Kept until the portal accepts it, so a refused upload is retried (retryPortalUploads) instead of waiting for a person.
+  try { await db.execute("INSERT IGNORE INTO qualified_followup_call_payload (batch_id, rows_json) VALUES (?, ?)", [batchId, JSON.stringify(clean)]); } catch { /* bookkeeping only */ }
   const r = await bulkImport(c, clean).catch((e: unknown) => ({ ok: false, status: 0, total: clean.length, message: String((e as Error).message).slice(0, 120) }));
   logger.info({ batchId, total: clean.length, ok: r.ok, status: r.status }, "[superbot] calling file upload");
+  await notePayload(batchId, r.ok, r.message);
   try {
     await db.execute("UPDATE qualified_followup_call_batch SET summary = JSON_SET(COALESCE(summary, JSON_OBJECT()), '$.portal', CAST(? AS JSON)) WHERE id = ?",
       [JSON.stringify({ ok: r.ok, total: clean.length, message: r.message, at: new Date().toISOString() }), batchId]);
   } catch { /* the upload result is only a note */ }
   return { attempted: true, ok: r.ok, total: clean.length, message: r.message };
+}
+
+/** Records one upload attempt; an accepted file frees its stored rows. */
+async function notePayload(batchId: string, ok: boolean, message: string): Promise<void> {
+  try {
+    await db.execute(
+      `UPDATE qualified_followup_call_payload SET attempts = attempts + 1, last_message = ?, uploaded_at = IF(?, NOW(), uploaded_at), rows_json = IF(?, '[]', rows_json) WHERE batch_id = ?`,
+      [message.slice(0, 200), ok ? 1 : 0, ok ? 1 : 0, batchId]);
+  } catch { /* bookkeeping only */ }
+}
+
+/** Only a refusal that proves the rows did not reach the portal is retried; a timeout is ambiguous and is never repeated (no double calls). */
+const DEFINITELY_NOT_DELIVERED = /unauthenticated|sign-in failed|unreachable|invalid credentials/i;
+
+/** Re-sends calling files the portal refused (at most 4 attempts each, within 12 hours). Returns how many were accepted. */
+let retrying = false;
+export async function retryPortalUploads(): Promise<number> {
+  const c = botConfig();
+  if (!c || c.uploadMode !== "live" || retrying) return 0;
+  retrying = true;
+  let done = 0;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT batch_id, rows_json, last_message FROM qualified_followup_call_payload
+        WHERE uploaded_at IS NULL AND attempts BETWEEN 1 AND 4 AND created_at >= DATE_SUB(NOW(), INTERVAL 12 HOUR) AND rows_json <> '[]'
+        ORDER BY created_at LIMIT 2`);
+    for (const p of rows) {
+      if (!DEFINITELY_NOT_DELIVERED.test(String(p.last_message ?? ""))) continue;
+      const data = JSON.parse(String(p.rows_json)) as string[][];
+      const r = await bulkImport(c, data).catch((e: unknown) => ({ ok: false, status: 0, total: data.length, message: String((e as Error).message).slice(0, 120) }));
+      await notePayload(String(p.batch_id), r.ok, r.message);
+      logger.info({ batchId: p.batch_id, total: data.length, ok: r.ok, message: r.message }, "[superbot] calling file upload retried");
+      if (r.ok) {
+        done++;
+        try {
+          await db.execute("UPDATE qualified_followup_call_batch SET summary = JSON_SET(COALESCE(summary, JSON_OBJECT()), '$.portal', CAST(? AS JSON)) WHERE id = ?",
+            [JSON.stringify({ ok: true, total: data.length, message: `${r.message} (retried)`, at: new Date().toISOString() }), String(p.batch_id)]);
+        } catch { /* only a note */ }
+      }
+    }
+  } catch (err) { logger.warn({ err: (err as Error).message.slice(0, 120) }, "[superbot] upload retry failed"); }
+  finally { retrying = false; }
+  return done;
 }
 
 const FOLLOWUP_REF = /^QF-([0-9A-F]{8})$/i;
