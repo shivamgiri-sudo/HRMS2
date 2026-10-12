@@ -32,6 +32,8 @@ export interface BranchPlan {
   totals: { joinsLeft: number; walkinsNeeded: number; walkinsToBring: number; costToTarget: number | null; branchesAtRisk: number };
 }
 
+/** A plan longer than this is reported as not achievable at the current pace. */
+export const MAX_PLAN_DAYS = 365;
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const pct = (n?: number | null) => (n != null && Number.isFinite(n) ? clamp(n > 1 ? n / 100 : n, 0.01, 1) : null);
@@ -56,14 +58,15 @@ export function buildBranchPlan(i: {
     { uniqueLeads: 0, walkins: 0, selected: 0, joined: 0 });
   const baseW2S = all.walkins ? all.selected / all.walkins : 0.3;
   const baseS2J = all.selected ? all.joined / all.selected : 0.6;
-  const hist = new Map(i.history.map((h) => [h.branch, h]));
-  const pace = new Map(i.pace.map((p) => [p.branch, p]));
-  const booked = new Map(i.booked.map((b) => [b.branch, b]));
+  const k = (b: string) => b.trim().toLowerCase();
+  const hist = new Map(i.history.map((h) => [k(h.branch), h]));
+  const pace = new Map(i.pace.map((p) => [k(p.branch), p]));
+  const booked = new Map(i.booked.map((b) => [k(b.branch), b]));
   const ovW2S = pct(ov.walkinToSelected), ovS2J = pct(ov.selectedToJoined);
   const ovPace = ov.walkinsPerDay != null && ov.walkinsPerDay > 0 ? ov.walkinsPerDay : null;
 
   const rows: BranchPlanRow[] = i.seats.filter((s) => s.joinsLeft > 0 || s.requisitions > 0).map((s) => {
-    const h = hist.get(s.branch);
+    const h = hist.get(k(s.branch));
     const prior = h && h.walkins >= 50 ? 25 : 60;
     const w2s = ovW2S ?? smooth(h?.selected ?? 0, h?.walkins ?? 0, baseW2S, prior, 0.1, 0.7);
     const s2j = ovS2J ?? smooth(h?.joined ?? 0, h?.selected ?? 0, baseS2J, prior, 0.2, 0.85);
@@ -73,14 +76,17 @@ export function buildBranchPlan(i: {
     const newJoinsNeeded = Math.max(0, s.joinsLeft - expectedFromPending);
     const selectionsNeeded = newJoinsNeeded > 0 ? Math.ceil(newJoinsNeeded / s2j) : 0;
     const walkinsNeeded = selectionsNeeded > 0 ? Math.ceil(selectionsNeeded / w2s) : 0;
-    const bookedShows = Math.min(walkinsNeeded, expectedShows(booked.get(s.branch)));
+    const bookedShows = Math.min(walkinsNeeded, expectedShows(booked.get(k(s.branch))));
     const walkinsToBring = walkinsNeeded - bookedShows;
 
-    const p = pace.get(s.branch);
+    const p = pace.get(k(s.branch));
     const observed = p && p.windowDays > 0 && p.walkinsInWindow > 0 ? p.walkinsInWindow / p.windowDays : null;
     const walkinsPerDay = ovPace ?? (observed != null ? Math.round(observed * 10) / 10 : null);
     const paceSource: BranchPlanRow["paceSource"] = ovPace ? "override" : observed != null ? "observed" : "none";
-    const daysToTarget = walkinsToBring === 0 ? 0 : walkinsPerDay ? Math.ceil(walkinsToBring / walkinsPerDay) : null;
+    const rawDays = walkinsToBring === 0 ? 0 : walkinsPerDay ? Math.ceil(walkinsToBring / walkinsPerDay) : null;
+    // Beyond a year the arithmetic is not a plan: say what pace is needed instead of printing a date in 2175.
+    const unreachable = rawDays != null && rawDays > MAX_PLAN_DAYS;
+    const daysToTarget = unreachable ? null : rawDays;
 
     const spend = r2(i.spendByBranch[s.branch] ?? 0);
     const perWalkin = p && p.walkinsInWindow > 0 && spend > 0 ? r2(spend / p.walkinsInWindow) : null;
@@ -91,6 +97,7 @@ export function buildBranchPlan(i: {
     let note: string | null = null;
     if (s.joinsLeft === 0) status = "covered";
     else if (walkinsToBring === 0) { status = "covered"; note = "Pending selections and booked walk-ins already cover the target."; }
+    else if (unreachable) { status = "at_risk"; note = `At ${walkinsPerDay} walk-ins a day this would take over ${MAX_PLAN_DAYS} days. About ${Math.ceil(walkinsToBring / (i.deadlineDays ?? 60))} walk-ins a day are needed to finish in ${i.deadlineDays ?? 60} days.`; }
     else if (daysToTarget == null) { status = "no_pace"; note = "No walk-in pace observed in the last 30 days: enter a daily walk-in figure to get a timeline."; }
     else if (i.deadlineDays != null && daysToTarget > i.deadlineDays) { status = "at_risk"; note = `Needs ${daysToTarget} days at ${walkinsPerDay} walk-ins a day; the deadline allows ${i.deadlineDays}.`; }
     else status = "on_track";

@@ -117,7 +117,8 @@ export default function BranchPlanSection() {
               <tbody className="divide-y divide-slate-100">
                 {data.rows.map((r) => (
                   <tr key={r.branch} className="hover:bg-slate-50" title={r.note ?? undefined}>
-                    <td className="px-3 py-2 font-medium text-slate-900">{r.branch}<div className="text-[11px] font-normal text-slate-500">{r.joined} joined of {r.joinTarget} target · {r.requisitions} req.</div></td>
+                    <td className="px-3 py-2 font-medium text-slate-900">{r.branch}<div className="text-[11px] font-normal text-slate-500">{r.joined} joined of {r.joinTarget} target · {r.requisitions} req.</div>
+                      {r.note && r.status !== "covered" && <div className="mt-0.5 max-w-xs text-[11px] font-normal text-amber-700">{r.note}</div>}</td>
                     <td className="px-3 py-2 text-right font-semibold tabular-nums">{num(r.joinsLeft)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{pct(r.rates.walkinToSelected)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{pct(r.rates.selectedToJoined)}</td>

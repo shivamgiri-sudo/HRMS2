@@ -51,15 +51,32 @@ async function history(months: number): Promise<BranchHistory[]> {
   return rows.map((r) => ({ branch: String(r.branch), uniqueLeads: n(r.uniqueLeads), walkins: n(r.walkins), selected: n(r.selected), joined: n(r.joined) }));
 }
 
+/**
+ * Walk-in pace per branch over the last PACE_DAYS: the larger of (a) the recruiter ledger's walk-in flags and (b) distinct candidates
+ * issued a queue token at the branch (a token is what a real arrival gets, the same test the Meta recruitment count uses for "walked in").
+ * The ledger alone showed 0.1-0.5 walk-ins a day on prod (it is filled in by hand), which turned the plan into "54,000 days".
+ */
 async function pace(): Promise<BranchPace[]> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const [ledger] = await db.execute<RowDataPacket[]>(
     `SELECT branch_name AS branch,
             COUNT(DISTINCT CASE WHEN walkin_flag OR final_selection_flag OR joined_flag THEN mobile10 END) AS walkins,
             COUNT(DISTINCT CASE WHEN joined_flag THEN mobile10 END) AS joined
        FROM ats_recruiter_hiring_activity
       WHERE activity_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY) AND branch_name IS NOT NULL AND branch_name <> ''
       GROUP BY branch_name`, [PACE_DAYS]);
-  return rows.map((r) => ({ branch: String(r.branch), walkinsInWindow: n(r.walkins), joinedInWindow: n(r.joined), windowDays: PACE_DAYS }));
+  const [tokens] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_name AS branch, COUNT(DISTINCT candidate_id) AS walkins FROM ats_queue_token
+      WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) AND branch_name IS NOT NULL AND branch_name <> '' GROUP BY branch_name`, [PACE_DAYS])
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const by = new Map<string, BranchPace>();
+  const key = (b: unknown) => String(b).trim().toLowerCase();
+  for (const r of ledger) by.set(key(r.branch), { branch: String(r.branch).trim(), walkinsInWindow: n(r.walkins), joinedInWindow: n(r.joined), windowDays: PACE_DAYS });
+  for (const r of tokens as RowDataPacket[]) {
+    const k = key(r.branch), cur = by.get(k);
+    if (cur) cur.walkinsInWindow = Math.max(cur.walkinsInWindow, n(r.walkins));
+    else by.set(k, { branch: String(r.branch).trim(), walkinsInWindow: n(r.walkins), joinedInWindow: 0, windowDays: PACE_DAYS });
+  }
+  return [...by.values()];
 }
 
 async function booked(): Promise<BranchBooked[]> {

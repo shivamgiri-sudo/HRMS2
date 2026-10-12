@@ -58,6 +58,19 @@ describe("buildBranchPlan", () => {
     expect(p.rows[0].rates.source).toBe("all-branches");
   });
 
+  it("an absurd pace is reported as not achievable, with the pace that would work, never a date years away", () => {
+    const r = buildBranchPlan({ ...base, pace: [{ branch: "A", walkinsInWindow: 3, joinedInWindow: 0, windowDays: 30 }], seats: [seat()] }).rows[0];
+    expect(r.daysToTarget).toBeNull();
+    expect(r.targetDate).toBeNull();
+    expect(r.status).toBe("at_risk");
+    expect(r.note).toMatch(/walk-ins a day are needed/);
+  });
+
+  it("branch names match regardless of case and spaces", () => {
+    const r = buildBranchPlan({ ...base, seats: [seat({ branch: " a " })] }).rows[0];
+    expect(r.walkinsPerDay).toBe(5);
+  });
+
   it("expectedShows uses the engine's base show-up rates", () => {
     expect(expectedShows({ branch: "A", invited: 10, confirmed: 10 })).toBe(Math.round(10 * 0.3 + 10 * 0.55));
     expect(expectedShows(undefined)).toBe(0);
