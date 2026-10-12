@@ -219,7 +219,7 @@ export interface GrnSpendRow {
   amount: number;
   /** Only populated when `withDetail` is asked for (the drilldown): which leg the row came from,
    *  the GRN's own number, a human label and the bill date. Null otherwise. */
-  source?: "app_allocation" | "app_grn" | null;
+  source?: "app_allocation" | "app_grn" | "legacy_grn" | null;
   grnRef?: string | null;
   label?: string | null;
   billDate?: string | null;
@@ -271,6 +271,15 @@ function grnScope(opts: GrnSpendOptions): { sql: string; params: unknown[] } {
  * twin-amount guard that de-duplicated it (2026-09-25), are removed with it.
  */
 const HRMS_RAISED_GRN_SQL = `gr.bill_source_id IS NULL AND COALESCE(gr.created_by, '') NOT LIKE '00000000-%'`;
+
+/**
+ * Owner ruling 2026-10-12 (supersedes the 2026-09-26 exclusion above for legacy months): the P&L must tie to what was
+ * billed, and Apr-Jul 2026 were billed in db_bill, so GRNs imported from it (bill_source_id) or written by a migration
+ * script (system user) COUNT as ordinary GRNs (leg 3). Without this a closed month showed about Rs 0 non-people cost
+ * against Rs 50-70 lakh in db_bill and branch profit was overstated. A legacy GRN is skipped when an HRMS-raised GRN
+ * carries the same GRN number, so a voucher entered in both systems is counted once (the HRMS copy).
+ */
+const LEGACY_GRN_SQL = `(gr.bill_source_id IS NOT NULL OR COALESCE(gr.created_by, '') LIKE '00000000-%')`;
 
 /** grn_request statuses at which an ordinary (allocation-less) GRN's budget is consumed —
  *  Finance Head approval and everything after it (same set as grn-report's fully_approved). */
@@ -350,6 +359,25 @@ export async function readGrnSpend(
         AND gr.accounting_period = ?
         AND ${HRMS_RAISED_GRN_SQL}
         AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
+        AND ${scope.sql}`,
+  );
+  params.push(periodCode, ...scope.params);
+
+  // Leg 3 — legacy (db_bill-imported / migration-script) ordinary GRNs: same status rule as leg 2, no budget line
+  // needed (they pre-date HRMS budgets), never when it has allocation rows (leg 1's job) or an HRMS twin.
+  legs.push(
+    `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
+            ${processCol("gr.process_id", "pc3")} AS process_id, ${grnRequestExGstSql("gr")} AS amount,
+            ${detailCols("legacy_grn", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
+       FROM grn_request gr
+       LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
+       ${processJoin("pc3")}
+      WHERE ${LEGACY_GRN_SQL}
+        AND gr.status IN (${ordinaryStatuses})
+        AND gr.accounting_period = ?
+        AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
+        AND NOT EXISTS (SELECT 1 FROM grn_request t WHERE t.grn_number = gr.grn_number AND t.id <> gr.id
+                          AND t.bill_source_id IS NULL AND COALESCE(t.created_by, '') NOT LIKE '00000000-%')
         AND ${scope.sql}`,
   );
   params.push(periodCode, ...scope.params);

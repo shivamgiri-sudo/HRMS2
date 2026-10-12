@@ -39,6 +39,13 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
     expect(body).not.toContain("l.amount");
   });
 
+  it("legacy GRNs count through leg 3 only (owner ruling 2026-10-12), with an HRMS-twin guard and no mirror tables", () => {
+    const body = readerBody();
+    expect(body).toContain("WHERE ${LEGACY_GRN_SQL}");
+    expect(body).toContain("t.grn_number = gr.grn_number");
+    expect(body).toContain("NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)");
+  });
+
   it("both app legs are restricted to HRMS-raised GRNs (no bill_source_id, no system-user rows)", () => {
     const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
     expect(service).toContain(
@@ -58,7 +65,7 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
     expect(body).toContain('${grnRequestExGstSql("gr")} AS amount');
     expect(body).not.toContain("pnl_cost_amount");
     // OWN_COMPANY_SQL (via grnScope) on both legs.
-    expect(body.split("${scope.sql}").length - 1).toBe(2);
+    expect(body.split("${scope.sql}").length - 1).toBe(3);
     expect(body).toContain("gr.accounting_period = ?");
   });
 

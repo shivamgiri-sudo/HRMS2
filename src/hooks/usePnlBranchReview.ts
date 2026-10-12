@@ -18,7 +18,7 @@ export interface BranchReviewCostCentre {
 export interface BranchReviewRow {
   branchId: string; branchName: string; status: BranchReviewStatus;
   revenue: number; cost: number; operatingProfit: number; marginPct: number | null; issues: string[];
-  peopleCostMissing: boolean; legacySpendExcluded: number; costNotFinal: boolean; costCentres: BranchReviewCostCentre[];
+  peopleCostMissing: boolean; costCentres: BranchReviewCostCentre[];
   acknowledgedAt: string | null; acknowledgedBy: string | null; acknowledgedByName: string | null; comment: string | null;
   snapshot: { revenue: number; cost: number; operatingProfit: number } | null;
   openQueries: number; queries: BranchReviewQuery[];

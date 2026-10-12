@@ -51,7 +51,7 @@ function BranchCard({ row, period, canReview, canResolve, onOpenDetail }: {
   const [note, setNote] = useState<Record<string, string>>({});
   const s = STATUS[row.status];
   const err = ack.error || raise.error || resolve.error;
-  const incomplete = row.costNotFinal;
+  const incomplete = row.peopleCostMissing;
 
   const doAck = () => ack.mutate(
     { branchId: row.branchId, period, comment: ackNote.trim() || undefined, confirmIncomplete: incomplete },
@@ -74,8 +74,7 @@ function BranchCard({ row, period, canReview, canResolve, onOpenDetail }: {
       {incomplete && (
         <div className="mt-2 space-y-1 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
           <p>Cost and margin are not the final result for this month. Do not read the margin as a profit.</p>
-          {row.peopleCostMissing && <p>Payroll is not in this month yet.</p>}
-          {row.legacySpendExcluded > 0 && <p>{money(row.legacySpendExcluded)} of non-people spend was billed in the legacy system. The P&amp;L counts only GRNs raised in HRMS, so it is not in Cost above.</p>}
+          <p>Payroll is not in this month yet.</p>
         </div>
       )}
 
