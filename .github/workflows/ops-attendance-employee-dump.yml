@@ -22,6 +22,7 @@ on:
           - attendance-night-shift-population-scan
           - attendance-ncosec-daily-table-check
           - attendance-night-shift-month-impact
+          - attendance-night-shift-change-report
       from:
         description: "From date YYYY-MM-DD"
         required: true
