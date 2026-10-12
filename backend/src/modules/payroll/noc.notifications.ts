@@ -30,6 +30,7 @@ import { env } from "../../config/env.js";
 import { notificationGateway } from "../communication/notification.gateway.js";
 import type { RecipientSpec } from "../../shared/recipient-resolver.types.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
+import { normaliseEmail } from "../../shared/email-domains.js";
 import { inboxService } from "../inbox/inbox.service.js";
 
 function frontendBaseUrl(): string {
@@ -39,6 +40,37 @@ function frontendBaseUrl(): string {
 /** Deep link to the authenticated case screen — where a signatory records their decision. */
 function caseUrl(caseId: string): string {
   return `${frontendBaseUrl()}/payroll/noc?case=${caseId}`;
+}
+
+/**
+ * Every deliverable address the leaver has, official AND personal, as explicit recipients.
+ *
+ * The stored spec uses emailPolicy official_then_personal, which sends to ONE address: the
+ * official mailbox whenever it still exists. A leaver's official access is revoked at or soon
+ * after exit, so a link sent only there is lost, and the personal address is never tried while
+ * the official one still resolves. The form link and the decline/completion notices must reach
+ * both. Passed as specOverride, so kill switch, cap, cooldown, dedupe and audit all still apply.
+ *
+ * Returns null when the employee has no address at all, so the caller falls back to the stored
+ * spec (and its normal "dropped: no_email" accounting) rather than an empty `to` that throws.
+ */
+async function leaverBothAddressesTo(employeeId: string): Promise<RecipientSpec["to"] | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT official_email, office_email, email, personal_email, full_name
+       FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  const seen = new Set<string>();
+  const to: NonNullable<RecipientSpec["to"]> = [];
+  for (const raw of [r.official_email, r.office_email, r.email, r.personal_email]) {
+    const addr = normaliseEmail(raw as string | null);
+    if (!addr || seen.has(addr)) continue;
+    seen.add(addr);
+    to.push({ kind: "explicit_email", email: addr, name: (r.full_name as string | null) ?? undefined });
+  }
+  return to.length > 0 ? to : null;
 }
 
 interface CaseContext extends RowDataPacket {
@@ -194,8 +226,10 @@ export async function notifyInviteSent(
     const nocCase = await loadCase(caseId);
     if (!nocCase) return result;
 
+    const bothTo = await leaverBothAddressesTo(nocCase.employee_id);
     const outcome = await notificationGateway.notify({
       eventCode: "noc_invite_sent",
+      ...(bothTo ? { specOverride: { to: bothTo } } : {}),
       dedupeKey: `noc_case:${caseId}:invite:${invite.inviteId}`,
       context: { employeeId: nocCase.employee_id, branchId: nocCase.branch_id },
       entityType: "noc_case",
@@ -403,8 +437,17 @@ export async function notifyDeclined(caseId: string, stageKey: string): Promise<
     const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return;
 
+    const bothTo = await leaverBothAddressesTo(nocCase.employee_id);
     await notificationGateway.notify({
       eventCode: "noc_declined",
+      ...(bothTo
+        ? {
+            specOverride: {
+              to: bothTo,
+              cc: [{ kind: "branch_hr" as const }, { kind: "reporting_manager" as const }],
+            },
+          }
+        : {}),
       dedupeKey: `noc_case:${caseId}:declined:${stageKey}`,
       context: { employeeId: nocCase.employee_id, branchId: nocCase.branch_id },
       entityType: "noc_case",
@@ -456,8 +499,17 @@ export async function notifyCompleted(caseId: string): Promise<void> {
     if (!nocCase) return;
 
     const route = nocCase.fnf_option ?? nocCase.fnf_option_suggested;
+    const bothTo = await leaverBothAddressesTo(nocCase.employee_id);
     await notificationGateway.notify({
       eventCode: "noc_completed",
+      ...(bothTo
+        ? {
+            specOverride: {
+              to: bothTo,
+              cc: [{ kind: "branch_hr" as const }, { kind: "branch_head" as const }],
+            },
+          }
+        : {}),
       dedupeKey: `noc_case:${caseId}:completed`,
       context: { employeeId: nocCase.employee_id, branchId: nocCase.branch_id },
       entityType: "noc_case",
