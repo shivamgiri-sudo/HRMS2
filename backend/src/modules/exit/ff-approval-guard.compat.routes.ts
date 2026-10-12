@@ -8,6 +8,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { guardExitEmployee } from "./exitScope.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { isFfApprovalPayrollHeadOnly } from "./ff-approval-authority.js";
+import { ffAttendanceCheck } from "./ff-attendance.js";
 
 export const ffApprovalGuardCompatRouter = Router();
 ffApprovalGuardCompatRouter.use(requireAuth);
@@ -40,6 +41,24 @@ ffApprovalGuardCompatRouter.post(
     // migration 1220, so this guard can now actually fire.
     if (String(ff.status) === "paid") return res.status(400).json({ success: false, message: "F&F already paid" });
 
+    // Attendance must be closed for the final month. A Payroll Head may approve over a gap only by
+    // acknowledging it with a reason, which is written to the audit trail below.
+    const [lwdRows] = await db.execute<RowDataPacket[]>(
+      `SELECT er.employee_id, COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS lwd
+         FROM exit_request er WHERE er.id = ? LIMIT 1`,
+      [ff.exit_request_id],
+    );
+    const att = await ffAttendanceCheck(String(lwdRows[0]?.employee_id ?? ""), lwdRows[0]?.lwd ? String(lwdRows[0].lwd) : null);
+    const ack = String((req.body as { acknowledge_attendance_gaps?: string })?.acknowledge_attendance_gaps ?? "").trim();
+    if (!att.ok && att.unmarked_days > 0 && ack.length < 10) {
+      return res.status(409).json({
+        success: false,
+        code: "FF_ATTENDANCE_GAPS",
+        message: att.note,
+        data: att,
+      });
+    }
+
     const [clearanceRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS open_count
          FROM exit_clearance_task
@@ -69,7 +88,11 @@ ffApprovalGuardCompatRouter.post(
       module_key: "exit",
       entity_type: "full_final_calculation",
       entity_id: req.params.id,
-      change_summary: { exit_request_id: ff.exit_request_id },
+      change_summary: {
+        exit_request_id: ff.exit_request_id,
+        attendance_unmarked_days: att.unmarked_days,
+        attendance_gap_acknowledged: att.unmarked_days > 0 ? ack : null,
+      },
       req,
     });
     return res.json({ success: true, data, message: "F&F approved" });

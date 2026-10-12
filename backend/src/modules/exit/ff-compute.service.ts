@@ -33,6 +33,7 @@ import { db } from "../../db/mysql.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 import { taxEngineService } from "../payroll-compliance/taxEngine.service.js";
 import { resolveGrossMonthly } from "./ff-gross.js";
+import { ffAttendanceCheck, type FfAttendanceCheck } from "./ff-attendance.js";
 import { ffService, type GratuityCalculation, type PayrollAlreadyPaid } from "./ff.service.js";
 
 export type ComputedStatus = "computed" | "not_applicable" | "pending_configuration";
@@ -107,6 +108,8 @@ export interface FfComputePreview {
    * what is being paid and where; F&F carries it only when NO payroll line will pay it, because
    * adding it when payroll already pays it would pay the same days twice.
    */
+  attendance_check: FfAttendanceCheck;
+
   final_month_salary: {
     month: string | null;
     paid_via: "payroll" | "fnf_manual" | "none";
@@ -531,6 +534,7 @@ export async function computeFfPreview(exitRequestId: string): Promise<FfCompute
   );
 
   const finalMonthSalary = await resolveFinalMonthSalary(exitReq.employee_id, notice.lastWorkingDay);
+  const attendanceCheck = await ffAttendanceCheck(exitReq.employee_id, notice.lastWorkingDay);
   const { lastWorkingDay, ...noticeRest } = notice;
 
   return {
@@ -545,5 +549,6 @@ export async function computeFfPreview(exitRequestId: string): Promise<FfCompute
     tds_true_up: tdsTrueUp,
     payroll_already_paid: payrollAlreadyPaid,
     final_month_salary: finalMonthSalary,
+    attendance_check: attendanceCheck,
   };
 }

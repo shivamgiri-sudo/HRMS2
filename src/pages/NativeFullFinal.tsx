@@ -67,6 +67,11 @@ export type FfComputePreview = {
   notice: { recovery_amount: ComputedComponent };
   gratuity: { amount: number; status: "draft" | "not_eligible" | "pending_configuration"; note: string };
   advances_loans: { total_recovery: ComputedComponent };
+  attendance_check?: {
+    ok: boolean; unmarked_days: number; unmarked_dates: string[]; note: string;
+    present_days: number; leave_days: number; lwp_days: number; week_off_holiday_days: number;
+    from: string | null; to: string | null; post_exit_records: number;
+  };
   final_month_salary?: {
     month: string | null;
     paid_via: "payroll" | "fnf_manual" | "none";
@@ -415,6 +420,24 @@ function PrepareFFForm({
               );
             })}
           </ul>
+        </div>
+      )}
+      {preview?.attendance_check && (
+        <div
+          className={`rounded-2xl border p-4 text-sm ${
+            preview.attendance_check.ok ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-300 bg-rose-50 text-rose-900"
+          }`}
+        >
+          <p className="font-black">
+            Attendance {preview.attendance_check.ok ? "verified" : "has gaps"}
+            {preview.attendance_check.from ? ` (${preview.attendance_check.from} to ${preview.attendance_check.to})` : ""}
+          </p>
+          <p className="mt-1 text-xs">{preview.attendance_check.note}</p>
+          {preview.attendance_check.post_exit_records > 0 && (
+            <p className="mt-1 text-xs font-bold">
+              {preview.attendance_check.post_exit_records} record(s) after the last working day are excluded from pay.
+            </p>
+          )}
         </div>
       )}
       {preview?.final_month_salary && (
@@ -793,9 +816,17 @@ export default function NativeFullFinal() {
     if (!ffCalc) return;
     if (hasOpenClearance(selectedRequest)) return showMessage("Cannot approve: clearance is incomplete.", "error");
     if (Number(ffCalc.is_ff_provisional ?? 0) === 1) return showMessage("Cannot approve: F&F is still provisional.", "error");
+    // Attendance for the final month must be closed. Over a gap, approval needs a written reason.
+    let acknowledge: string | undefined;
+    const att = preview?.attendance_check;
+    if (att && !att.ok && att.unmarked_days > 0) {
+      const reason = window.prompt(`${att.note}\n\nTo approve anyway, type the reason (min 10 characters):`) ?? "";
+      if (reason.trim().length < 10) return showMessage("Approval stopped: attendance has gaps and no reason was given.", "error");
+      acknowledge = reason.trim();
+    }
     setApproving(true); setMessage("");
     try {
-      await hrmsApi.post(`/api/exit/ff/${ffCalc.id}/approve`, {});
+      await hrmsApi.post(`/api/exit/ff/${ffCalc.id}/approve`, acknowledge ? { acknowledge_attendance_gaps: acknowledge } : {});
       showMessage("F&F settlement approved.", "success");
       setFfCalc({ ...ffCalc, status: "approved", approved_at: new Date().toISOString() });
     } catch (err: unknown) { showMessage((err as Error).message || "Approval failed.", "error"); }
@@ -1211,6 +1242,11 @@ export default function NativeFullFinal() {
                           <p className="mt-1 text-4xl font-black text-white">{INR(ffCalc.net_payable)}</p>
                         </div>
                         <div className="text-right text-sm text-slate-300">
+                          {preview?.attendance_check && !preview.attendance_check.ok && (
+                            <div className="mb-2 rounded-2xl bg-amber-500/20 p-3 text-left font-bold text-amber-100">
+                              Attendance gaps: {preview.attendance_check.unmarked_days} unmarked day(s) — approval needs a reason.
+                            </div>
+                          )}
                           {approvalBlockedReasons.length > 0 ? (
                             <div className="rounded-2xl bg-rose-500/20 p-3 text-left font-bold text-rose-100">
                               Blocked: {approvalBlockedReasons.join(", ")}
