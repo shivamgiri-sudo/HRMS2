@@ -25,6 +25,7 @@ on:
           - attendance-night-shift-change-report
           - attendance-cases-punch-trace
           - roster-tables-compare
+          - attendance-attribution-vs-datd
       from:
         description: "From date YYYY-MM-DD"
         required: true
