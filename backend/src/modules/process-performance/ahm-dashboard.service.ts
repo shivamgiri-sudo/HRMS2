@@ -325,8 +325,8 @@ async function computeCallPerformance(
   f: AhmFilters, orders: number, w: { sql: string; params: unknown[] },
 ): Promise<AhmCallPerformance> {
   const [linesRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(DISTINCT CONCAT(sales_no, '|', product_code)) AS lines FROM ${TABLE} ${w.sql}`, w.params);
-  const linesCut = num(linesRows[0]?.lines);
+    `SELECT COUNT(DISTINCT CONCAT(sales_no, '|', product_code)) AS line_count FROM ${TABLE} ${w.sql}`, w.params);
+  const linesCut = num(linesRows[0]?.line_count);
   const base: AhmCallPerformance = {
     linesCut, linesPerOrder: orders > 0 ? Math.round((linesCut / orders) * 100) / 100 : 0,
     callLogAvailable: false, calls: 0, ecPct: null, pcPct: null, incomingPct: null, byTelesales: [],

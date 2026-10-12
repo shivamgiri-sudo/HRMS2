@@ -28,7 +28,7 @@ export function ahmMetricRows(date: string, r: Record<string, unknown>): AhmMetr
   const orders = num(r.orders);
   if (orders <= 0) return [];
   const orderQty = num(r.order_qty), salesQty = num(r.sales_qty), delivered = num(r.delivered);
-  const surveyTaken = num(r.survey_taken), agents = num(r.telesales_agents), lines = num(r.lines);
+  const surveyTaken = num(r.survey_taken), agents = num(r.telesales_agents), lines = num(r.line_count);
   const out: AhmMetricRow[] = [
     { metricKey: "AHM_ORDERS", date, value: orders, numerator: null, denominator: null },
     { metricKey: "AHM_OUTLETS", date, value: num(r.outlets), numerator: null, denominator: null },
@@ -93,7 +93,7 @@ export async function syncAhmProcessMetrics(from: string, to: string): Promise<{
             COUNT(DISTINCT CASE WHEN last_status = 'Delivered' THEN sales_no END) AS delivered,
             COUNT(DISTINCT CASE WHEN last_disposition_status = 'Survey Taken' THEN sales_no END) AS survey_taken,
             COUNT(DISTINCT NULLIF(telesales_id, '')) AS telesales_agents,
-            COUNT(DISTINCT CONCAT(sales_no, '|', product_code)) AS lines
+            COUNT(DISTINCT CONCAT(sales_no, '|', product_code)) AS line_count
        FROM db_masmis.ahm_dump_raw
       WHERE survey_date >= ? AND survey_date < DATE_ADD(?, INTERVAL 1 DAY)
       GROUP BY d`, [from, to]);

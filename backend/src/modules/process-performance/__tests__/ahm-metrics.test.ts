@@ -17,6 +17,12 @@ describe("ahmMetricRows", () => {
     expect(m.AHM_ORDER_VALUE.value).toBe(12345.5);
   });
 
+  it("derives lines cut and lines per order from the line count (alias is not the reserved word LINES)", () => {
+    const m = by(ahmMetricRows("2026-10-02", { orders: 50, outlets: 40, order_qty: 200, sales_qty: 150, order_value: 1, delivered: 1, survey_taken: 1, telesales_agents: 5, line_count: 175 }));
+    expect(m.AHM_LINES_CUT.value).toBe(175);
+    expect(m.AHM_LINES_PER_ORDER).toMatchObject({ value: 3.5, numerator: 175, denominator: 50 });
+  });
+
   it("skips fill rate and per-agent metrics when their denominator is zero rather than writing 0", () => {
     const m = by(ahmMetricRows("2026-10-02", { orders: 3, outlets: 3, order_qty: 0, sales_qty: 0, order_value: 0, delivered: 0, survey_taken: 0, telesales_agents: 0 }));
     expect(m.AHM_FILL_RATE_PCT).toBeUndefined();
