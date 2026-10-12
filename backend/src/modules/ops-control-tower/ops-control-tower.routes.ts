@@ -33,6 +33,8 @@ import {
   employeeBranchId,
   issueOnboardingLink,
   emailOnboardingLink,
+  issueEsignKitLink,
+  emailEsignKitLink,
   enrichDetailRows,
   nudgeBranchPending,
   nudgeEmployee,
@@ -354,9 +356,14 @@ opsControlTowerRouter.post("/onboarding-link", requireRole(...NUDGE_ROLES), asyn
       res.status(403).json({ error: "Forbidden: this employee is outside your branch / assigned scope" });
       return;
     }
-    const issued = await issueOnboardingLink(employeeId);
+    const isEsign = issue === "esign-pending";
+    const issued = isEsign ? await issueEsignKitLink(employeeId) : await issueOnboardingLink(employeeId);
     if (!issued) {
-      res.status(409).json({ error: "This employee has no onboarding link to issue (no onboarding record, or marked not joining)" });
+      res.status(409).json({
+        error: isEsign
+          ? "No live eSign joining-document link for this employee (no kit out for signing, or its signing session has expired - re-dispatch the kit from the Joining Control Room)"
+          : "This employee has no onboarding link to issue (no onboarding record, or marked not joining)",
+      });
       return;
     }
     void logSensitiveAction({
@@ -401,7 +408,10 @@ opsControlTowerRouter.post("/onboarding-link/email", requireRole(...NUDGE_ROLES)
       res.status(403).json({ error: "Forbidden: this employee is outside your branch / assigned scope" });
       return;
     }
-    const out = await emailOnboardingLink(employeeId);
+    const isEsign = issue === "esign-pending";
+    const out = isEsign
+      ? await emailEsignKitLink(employeeId, (req as any).authUser?.id ?? null)
+      : await emailOnboardingLink(employeeId);
     void logSensitiveAction({
       actor_user_id: (req as any).authUser?.id,
       action_type: "ONBOARDING_LINK_EMAILED",
@@ -413,7 +423,14 @@ opsControlTowerRouter.post("/onboarding-link/email", requireRole(...NUDGE_ROLES)
     });
     if (out.status === "sent") { res.json({ status: "sent", sentTo: out.sentTo }); return; }
     if (out.status === "no_email") { res.status(409).json({ error: "No valid email address on file for this employee" }); return; }
-    if (out.status === "no_link") { res.status(409).json({ error: "This employee has no onboarding link to issue (no onboarding record, or marked not joining)" }); return; }
+    if (out.status === "no_link") {
+      res.status(409).json({
+        error: isEsign
+          ? "No live eSign joining-document link for this employee (no kit out for signing, or its signing session has expired - re-dispatch the kit from the Joining Control Room)"
+          : "This employee has no onboarding link to issue (no onboarding record, or marked not joining)",
+      });
+      return;
+    }
     if (out.status === "not_found") { res.status(404).json({ error: "Employee not found" }); return; }
     res.status(502).json({ error: `Email could not be delivered: ${out.status === "failed" ? out.error : "unknown error"}` });
   } catch (err) {
