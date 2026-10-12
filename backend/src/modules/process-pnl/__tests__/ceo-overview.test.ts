@@ -900,6 +900,7 @@ describe("legal entity — this page is one company's P&L, not a consolidation",
     const spendSql = execute.mock.calls.map((c) => String(c[0])).find((q) => q.includes("FROM grn_entry_line_snapshot"));
     expect(spendSql, "the mirror leg is in the one shared GRN query").toBeDefined();
     expect(spendSql).toContain("gr2.grn_number = ge.grn_no");
+    expect(spendSql, "an imported copy of the bill must not hide the mirror line").toContain("gr2.bill_source_id IS NULL");
     expect(spendSql).toContain("ABS((SELECT SUM(");
   });
 

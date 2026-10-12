@@ -38,6 +38,7 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
     expect(body).toContain("LEGACY_TWIN_MIN_AMOUNT");
     // Imported / migration-script grn_request rows are never read as legacy themselves: the mirror is the one legacy source.
     expect(body.split("${HRMS_RAISED_GRN_SQL}").length - 1).toBe(2);
+    expect(body, "the voucher-number guard only matches HRMS-raised GRNs").toContain('HRMS_RAISED_GRN_SQL.replace(/gr\\./g, "gr2.")');
   });
 
   it("both app legs are restricted to HRMS-raised GRNs (no bill_source_id, no system-user rows)", () => {

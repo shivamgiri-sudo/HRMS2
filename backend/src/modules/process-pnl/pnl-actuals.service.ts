@@ -277,7 +277,7 @@ const HRMS_RAISED_GRN_SQL = `gr.bill_source_id IS NULL AND COALESCE(gr.created_b
  * what was billed. April-July 2026 were billed in db_bill and almost none of it exists as an HRMS GRN, so a closed month showed
  * about Rs 0 non-people cost against Rs 50-70 lakh and branch profit was overstated. Leg 3 below reads the db_bill mirror
  * (grn_entry_line_snapshot) again, for a voucher HRMS does not already carry. Three guards keep a voucher from counting twice:
- * the same GRN number on any HRMS GRN (raised, or imported from db_bill), and the amount-twin guard for the same invoice keyed
+ * the same GRN number on an HRMS-RAISED GRN (an imported copy of the same bill must not hide the mirror line), and the amount-twin guard for the same invoice keyed
  * under another number in both systems (measured 2026-09-25: 22 NOIDA-2 bills, Rs 9.14 lakh). Imported / migration-script
  * grn_request rows are still not read themselves: the mirror is the one legacy source, so they cannot be counted twice.
  */
@@ -386,6 +386,7 @@ export async function readGrnSpend(
           AND NOT EXISTS (
                 SELECT 1 FROM grn_request gr2
                  WHERE gr2.grn_number = ge.grn_no
+                   AND ${HRMS_RAISED_GRN_SQL.replace(/gr\./g, "gr2.")}
                    AND gr2.status NOT IN ('draft','cancelled','rejected','consumption_reversed')
               )
           AND NOT EXISTS (
