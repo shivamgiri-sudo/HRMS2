@@ -15,7 +15,7 @@
  * and the failure mode is the worst kind: a button that looks available and 409s.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -411,6 +411,19 @@ export default function NocClearanceChain({
   const [statusFilter, setStatusFilter] = useState("open");
   const [search, setSearch] = useState("");
   const [slaOnly, setSlaOnly] = useState(false);
+  // Branch / process narrowing. Both are applied server-side, and the board above follows them.
+  const [branchId, setBranchId] = useState("");
+  const [processId, setProcessId] = useState("");
+  const [awaitingFinalOnly, setAwaitingFinalOnly] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [filterOptions, setFilterOptions] = useState<{
+    branches: Array<{ id: string; name: string; count: number }>;
+    processes: Array<{ id: string; name: string; branchIds: string[]; count: number }>;
+  }>({ branches: [], processes: [] });
+  // Only the newest list request may write state, so a slow earlier response cannot overwrite it.
+  const listRequestRef = useRef(0);
   /** Set by clicking a column on the board — narrows the list to that role's pending queue. */
   const [stageFilter, setStageFilter] = useState("");
 
@@ -441,39 +454,72 @@ export default function NocClearanceChain({
   const [finalNote, setFinalNote] = useState("");
   const [lwd, setLwd] = useState("");
 
-  const loadList = useCallback(async () => {
-    setListLoading(true);
-    try {
+  const PAGE_SIZE = 50;
+
+  const buildListParams = useCallback(
+    (offset: number) => {
       const params = new URLSearchParams();
-      // "open" is not a backend status — it means "not finished", which the API expresses by the
-      // absence of a status filter plus client-side exclusion would be wrong (it paginates).
-      // Sent as-is only for the real statuses; 'open' just omits the filter.
-      if (statusFilter && statusFilter !== "open" && statusFilter !== "all")
+      // 'open' is resolved server-side (statusGroup) so paging and the total stay exact.
+      if (statusFilter === "open") params.set("statusGroup", "open");
+      else if (statusFilter && statusFilter !== "all")
         params.set("status", statusFilter);
-      if (search.trim()) params.set("search", search.trim());
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
       if (slaOnly) params.set("slaBreachedOnly", "true");
+      if (branchId) params.set("branchId", branchId);
+      if (processId) params.set("processId", processId);
+      if (awaitingFinalOnly) params.set("awaitingFinal", "true");
       if (stageFilter) {
         // Paired with stageStatus=pending: the board's number is a pending count, so clicking it
         // must land on the same population it named.
         params.set("stageKey", stageFilter);
         params.set("stageStatus", "pending");
       }
-      const res = await hrmsApi.get<{ data: CaseListRow[] }>(
-        `/api/payroll/noc-cases?${params.toString()}`,
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(offset));
+      return params;
+    },
+    [statusFilter, debouncedSearch, slaOnly, branchId, processId, awaitingFinalOnly, stageFilter],
+  );
+
+  const loadList = useCallback(async () => {
+    const ticket = ++listRequestRef.current;
+    setListLoading(true);
+    try {
+      const res = await hrmsApi.get<{ data: CaseListRow[]; total?: number }>(
+        `/api/payroll/noc-cases?${buildListParams(0).toString()}`,
       );
-      let data = res.data ?? [];
-      if (statusFilter === "open") {
-        data = data.filter(
-          (r) => r.status !== "completed" && r.status !== "cancelled",
-        );
-      }
-      setRows(data);
+      if (ticket !== listRequestRef.current) return;
+      setRows(res.data ?? []);
+      setTotal(Number(res.total ?? res.data?.length ?? 0));
     } catch (err) {
+      if (ticket !== listRequestRef.current) return;
       toast.error((err as Error)?.message ?? "Could not load NOC clearances");
+      setRows([]);
+      setTotal(0);
     } finally {
-      setListLoading(false);
+      if (ticket === listRequestRef.current) setListLoading(false);
     }
-  }, [statusFilter, search, slaOnly, stageFilter]);
+  }, [buildListParams]);
+
+  const loadMore = useCallback(async () => {
+    const ticket = listRequestRef.current;
+    setLoadingMore(true);
+    try {
+      const res = await hrmsApi.get<{ data: CaseListRow[]; total?: number }>(
+        `/api/payroll/noc-cases?${buildListParams(rows.length).toString()}`,
+      );
+      if (ticket !== listRequestRef.current) return;
+      setRows((cur) => {
+        const seen = new Set(cur.map((r) => r.id));
+        return [...cur, ...(res.data ?? []).filter((r) => !seen.has(r.id))];
+      });
+      setTotal(Number(res.total ?? total));
+    } catch (err) {
+      toast.error((err as Error)?.message ?? "Could not load more");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [buildListParams, rows.length, total]);
 
   const loadDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
@@ -498,8 +544,11 @@ export default function NocClearanceChain({
    */
   const loadSummary = useCallback(async () => {
     try {
+      const qs = new URLSearchParams();
+      if (branchId) qs.set("branchId", branchId);
+      if (processId) qs.set("processId", processId);
       const res = await hrmsApi.get<{ data: { byRole: SummaryRoleRow[] } }>(
-        "/api/payroll/noc-cases/summary",
+        `/api/payroll/noc-cases/summary${qs.toString() ? `?${qs}` : ""}`,
       );
       setSummary(res.data?.byRole ?? []);
     } catch {
@@ -507,7 +556,28 @@ export default function NocClearanceChain({
       // an error toast here would fire on every page load for a user whose scope is empty.
       setSummary([]);
     }
+  }, [branchId, processId]);
+
+  // Debounce typing so each keystroke is not a request.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Branch / process options: only ones that have a case in the caller's scope.
+  useEffect(() => {
+    hrmsApi
+      .get<{ data: typeof filterOptions }>("/api/payroll/noc-cases/filters")
+      .then((res) => res.data && setFilterOptions(res.data))
+      .catch(() => undefined);
   }, []);
+
+  // Choosing a branch drops a process that does not belong to it.
+  useEffect(() => {
+    if (!branchId || !processId) return;
+    const p = filterOptions.processes.find((x) => x.id === processId);
+    if (p && !p.branchIds.includes(branchId)) setProcessId("");
+  }, [branchId, processId, filterOptions.processes]);
 
   useEffect(() => {
     void loadList();
@@ -893,6 +963,43 @@ export default function NocClearanceChain({
               </Button>
             </div>
 
+            <div className="grid grid-cols-2 gap-2">
+              <Select
+                value={branchId || "__all"}
+                onValueChange={(v) => setBranchId(v === "__all" ? "" : v)}
+              >
+                <SelectTrigger aria-label="Branch">
+                  <SelectValue placeholder="All branches" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all">All branches</SelectItem>
+                  {filterOptions.branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name} ({b.count})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={processId || "__all"}
+                onValueChange={(v) => setProcessId(v === "__all" ? "" : v)}
+              >
+                <SelectTrigger aria-label="Process">
+                  <SelectValue placeholder="All processes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all">All processes</SelectItem>
+                  {filterOptions.processes
+                    .filter((p) => !branchId || p.branchIds.includes(branchId))
+                    .map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name} ({p.count})
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="flex items-center gap-2">
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="flex-1">
@@ -920,10 +1027,51 @@ export default function NocClearanceChain({
               </Button>
             </div>
 
-            <div className="space-y-2 max-h-[62vh] overflow-y-auto pr-1">
-              {listLoading && (
-                <div className="py-10 text-center text-sm text-slate-400">
-                  <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+            {(branchId || processId || awaitingFinalOnly || slaOnly || search || statusFilter !== "open" || stageFilter) && (
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>
+                  {total} clearance{total === 1 ? "" : "s"} match
+                </span>
+                <button
+                  type="button"
+                  className="font-semibold text-blue-600 hover:underline"
+                  onClick={() => {
+                    setBranchId("");
+                    setProcessId("");
+                    setAwaitingFinalOnly(false);
+                    setSlaOnly(false);
+                    setSearch("");
+                    setStatusFilter("open");
+                    setStageFilter("");
+                  }}
+                >
+                  Clear filters
+                </button>
+              </div>
+            )}
+            {awaitingFinal !== null && (
+              <Button
+                variant={awaitingFinalOnly ? "default" : "outline"}
+                size="sm"
+                className={awaitingFinalOnly ? "w-full bg-emerald-600 hover:bg-emerald-700" : "w-full"}
+                onClick={() => {
+                  setAwaitingFinalOnly((v) => !v);
+                  setStatusFilter("completed");
+                }}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Awaiting final approval
+                {awaitingFinal ? ` (${awaitingFinal.size})` : ""}
+              </Button>
+            )}
+
+            <div
+              className={`space-y-2 max-h-[62vh] overflow-y-auto pr-1 transition-opacity ${listLoading && rows.length > 0 ? "opacity-60" : ""}`}
+            >
+              {listLoading && rows.length === 0 && (
+                <div className="space-y-2" aria-busy="true">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <div key={i} className="h-[62px] animate-pulse rounded-lg bg-slate-100" />
+                  ))}
                 </div>
               )}
               {!listLoading && rows.length === 0 && (
@@ -935,7 +1083,7 @@ export default function NocClearanceChain({
                       : "No NOC clearances in this view."}
                 </div>
               )}
-              {!listLoading &&
+              {rows.length > 0 &&
                 rows.map((r) => {
                   const active = r.id === selectedId;
                   return (
@@ -999,6 +1147,17 @@ export default function NocClearanceChain({
                     </button>
                   );
                 })}
+              {rows.length > 0 && rows.length < total && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  disabled={loadingMore}
+                  onClick={() => void loadMore()}
+                >
+                  {loadingMore ? "Loading…" : `Show more (${rows.length} of ${total})`}
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>

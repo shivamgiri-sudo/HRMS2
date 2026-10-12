@@ -33,11 +33,15 @@ vi.mock("../noc-release-gate.service.js", () => ({
   nocReleaseStatusForEmployee: vi.fn(async () => ({ released: false })),
 }));
 
-const { listCases, getCase, getCaseDetail, getCaseByEmployee } = vi.hoisted(() => ({
-  listCases: vi.fn(async () => [
-    { id: "c1", employee_id: "emp-me", status: "in_progress", decline_reason: "internal", override_reason: "secret",
-      declined_by: "u-9", initiated_by_user_id: "u-3", branch_name: "Noida", signatory_total: 8, signatory_pending: 5 },
-  ]),
+const { listCasesPage: listCases, getCase, getCaseDetail, getCaseByEmployee } = vi.hoisted(() => ({
+  // The list route calls listCasesPage (rows + total); the scope assertions below read its 2nd arg.
+  listCasesPage: vi.fn(async (..._args: unknown[]) => ({
+    rows: [
+      { id: "c1", employee_id: "emp-me", status: "in_progress", decline_reason: "internal", override_reason: "secret",
+        declined_by: "u-9", initiated_by_user_id: "u-3", branch_name: "Noida", signatory_total: 8, signatory_pending: 5 },
+    ],
+    total: 1,
+  })),
   getCase: vi.fn(),
   getCaseDetail: vi.fn(async () => ({
     nocCase: { id: "c1", employee_id: "emp-me", employee_code: "MAS1", employee_name: "Riya", designation: "Agent",
@@ -55,7 +59,7 @@ const { listCases, getCase, getCaseDetail, getCaseByEmployee } = vi.hoisted(() =
 }));
 vi.mock("../noc-case.service.js", async (orig) => ({
   ...(await orig<typeof import("../noc-case.service.js")>()),
-  listCases,
+  listCasesPage: listCases,
   getCase,
   getCaseDetail,
   getCaseByEmployee,

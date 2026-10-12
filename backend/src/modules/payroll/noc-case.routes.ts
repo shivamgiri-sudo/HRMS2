@@ -240,6 +240,25 @@ async function readMode(
   return { mode: "none" };
 }
 
+/**
+ * Row scope for the case list, summary and filter options. One definition so the three can never
+ * disagree about what the caller is allowed to see.
+ */
+async function caseScope(
+  userId: string,
+  read: { mode: string; employeeId?: string },
+): Promise<{ sql: string; params: unknown[] }> {
+  if (read.mode === "self") {
+    return { sql: "c.employee_id = ?", params: [read.employeeId] as unknown[] };
+  }
+  return buildScopeWhereClause(
+    userId,
+    READ_ROLES,
+    { branchId: "c.branch_id", processId: "c.process_id", employeeId: "c.employee_id" },
+    { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
+  );
+}
+
 // GET /api/payroll/noc-cases
 nocCaseRouter.get(
   "/",
@@ -258,45 +277,96 @@ nocCaseRouter.get(
     // Row scoping through the same builder every other scoped list uses, so a branch user sees
     // their branch and Payroll Head / HR see everything. allowCeoAllRead keeps leadership read-only
     // visibility consistent with the rest of the payroll module.
-    const scope =
-      read.mode === "self"
-        ? { sql: "c.employee_id = ?", params: [read.employeeId] as unknown[] }
-        : await buildScopeWhereClause(
-            userId,
-            READ_ROLES,
-            {
-              branchId: "c.branch_id",
-              processId: "c.process_id",
-              employeeId: "c.employee_id",
-            },
-            { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
-          );
+    const scope = await caseScope(userId, read);
 
     const {
       status,
+      statusGroup,
       branchId,
+      processId,
       stageKey,
       stageStatus,
       slaBreachedOnly,
+      awaitingFinal,
       search,
       limit,
+      offset,
     } = req.query as Record<string, string>;
 
-    const rows = await nocCase.listCases(
+    // "Awaiting final approval" only means something once the Payroll Head gate is switched on.
+    const awaitingFinalFrom =
+      awaitingFinal === "true" ? await nocFinalApprovalFrom() : null;
+    if (awaitingFinal === "true" && !awaitingFinalFrom) {
+      return res.json({ success: true, data: [], total: 0 });
+    }
+
+    const { rows, total } = await nocCase.listCasesPage(
       {
         status,
+        statusGroup: statusGroup === "open" ? "open" : undefined,
         branchId,
+        processId,
         stageKey,
         stageStatus,
-        search,
+        search: search?.trim() || undefined,
         slaBreachedOnly: slaBreachedOnly === "true",
+        awaitingFinalFrom,
         limit: limit ? Number(limit) : undefined,
+        offset: offset ? Number(offset) : undefined,
       },
       scope,
     );
     return res.json({
       success: true,
+      total,
       data: read.mode === "self" ? rows.map((r) => nocCase.employeeSafeListRow(r)) : rows,
+    });
+  }),
+);
+
+/**
+ * GET /api/payroll/noc-cases/filters — the branches and processes that actually have a NOC case
+ * inside the caller's scope, so the dropdowns never offer an empty option or one the caller
+ * cannot see. Registered above the /:id routes.
+ */
+nocCaseRouter.get(
+  "/filters",
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    const read = await readMode(userId);
+    if (read.mode === "none") {
+      return refuse(res, 403, "NOC_ACCESS_DENIED", "You do not have access to NOC clearance records.");
+    }
+    const scope = await caseScope(userId, read);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT c.branch_id, b.branch_name, c.process_id, p.process_name, COUNT(*) AS cnt
+         FROM noc_case c
+         LEFT JOIN branch_master b ON b.id = c.branch_id
+         LEFT JOIN process_master p ON p.id = c.process_id
+        WHERE (${scope.sql})
+        GROUP BY c.branch_id, b.branch_name, c.process_id, p.process_name`,
+      scope.params,
+    );
+    const branches = new Map<string, { id: string; name: string; count: number }>();
+    const processes = new Map<string, { id: string; name: string; branchIds: string[]; count: number }>();
+    for (const r of rows) {
+      const n = Number(r.cnt);
+      if (r.branch_id) {
+        const b = branches.get(String(r.branch_id)) ?? { id: String(r.branch_id), name: String(r.branch_name ?? r.branch_id), count: 0 };
+        b.count += n;
+        branches.set(b.id, b);
+      }
+      if (r.process_id) {
+        const p = processes.get(String(r.process_id)) ?? { id: String(r.process_id), name: String(r.process_name ?? r.process_id), branchIds: [], count: 0 };
+        p.count += n;
+        if (r.branch_id && !p.branchIds.includes(String(r.branch_id))) p.branchIds.push(String(r.branch_id));
+        processes.set(p.id, p);
+      }
+    }
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+    return res.json({
+      success: true,
+      data: { branches: [...branches.values()].sort(byName), processes: [...processes.values()].sort(byName) },
     });
   }),
 );
@@ -321,19 +391,13 @@ nocCaseRouter.get(
         "You do not have access to NOC clearance records.",
       );
     }
-    const scope =
-      read.mode === "self"
-        ? { sql: "c.employee_id = ?", params: [read.employeeId] as unknown[] }
-        : await buildScopeWhereClause(
-            userId,
-            READ_ROLES,
-            {
-              branchId: "c.branch_id",
-              processId: "c.process_id",
-              employeeId: "c.employee_id",
-            },
-            { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
-          );
+    const scope = await caseScope(userId, read);
+    // The board follows the page's branch / process filters, so its numbers always name the same
+    // population as the list under it.
+    const f = { sql: "", params: [] as unknown[] };
+    const q = req.query as Record<string, string>;
+    if (q.branchId) { f.sql += " AND c.branch_id = ?"; f.params.push(q.branchId); }
+    if (q.processId) { f.sql += " AND c.process_id = ?"; f.params.push(q.processId); }
 
     const [byRole] = await db.execute<RowDataPacket[]>(
       `SELECT s.display_no, s.stage_key, s.stage_label,
@@ -344,18 +408,18 @@ nocCaseRouter.get(
        FROM noc_signatory s
        JOIN noc_case c ON c.id = s.noc_case_id
       WHERE (${scope.sql})
-        AND c.status NOT IN ('completed','cancelled')
+        AND c.status NOT IN ('completed','cancelled')${f.sql}
       GROUP BY s.display_no, s.stage_key, s.stage_label
       ORDER BY s.display_no`,
-      scope.params,
+      [...scope.params, ...f.params],
     );
 
     const [byStatus] = await db.execute<RowDataPacket[]>(
       `SELECT c.status, COUNT(*) AS cnt
        FROM noc_case c
-      WHERE (${scope.sql})
+      WHERE (${scope.sql})${f.sql}
       GROUP BY c.status`,
-      scope.params,
+      [...scope.params, ...f.params],
     );
 
     return res.json({ success: true, data: { byRole, byStatus } });

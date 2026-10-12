@@ -390,39 +390,53 @@ export function employeeSafeCaseDetail(detail: Awaited<ReturnType<typeof getCase
 
 export interface ListCaseFilters {
   status?: string;
+  /** 'open' = invited / employee_submitted / in_progress, resolved in SQL so paging stays exact. */
+  statusGroup?: "open";
   branchId?: string;
+  processId?: string;
   stageKey?: string;
   stageStatus?: string;
   /** Only cases with at least one signatory past its SLA. */
   slaBreachedOnly?: boolean;
+  /** Completed cases still waiting for the Payroll Head (date from nocFinalApprovalFrom). */
+  awaitingFinalFrom?: string | null;
   search?: string;
   limit?: number;
+  offset?: number;
 }
 
+const OPEN_STATUSES = ["invited", "employee_submitted", "in_progress"];
+
 /**
- * The HR / Payroll Head tracking list.
+ * Cases, newest first, one page at a time.
  *
- * Carries the per-role counts inline rather than making the caller fan out one query per case:
- * the dashboard shows Pending/Accepted/Declined per role per leaver, and N+1 on a list of every
- * open exit is how that page becomes unusable at a few hundred rows.
- *
- * scopeSql is applied by the caller from buildScopeWhereClause so a branch-scoped user sees only
- * their branch, using the same predicate builder as every other scoped list in this codebase.
+ * Two steps on purpose. The old single query LEFT JOINed a GROUP BY over the whole noc_signatory
+ * table, so every page paid for aggregating every case's signatories. Here the page of case ids is
+ * selected first (filters + LIMIT/OFFSET on noc_case alone), then only those ids' signatories are
+ * aggregated. The count is a separate, filter-only COUNT so the UI can show "1-50 of 312" without
+ * fetching everything.
  */
-export async function listCases(
+export async function listCasesPage(
   filters: ListCaseFilters,
   scope: { sql: string; params: unknown[] } = { sql: "1=1", params: [] },
-): Promise<RowDataPacket[]> {
+): Promise<{ rows: RowDataPacket[]; total: number }> {
   const conds: string[] = [`(${scope.sql})`];
   const params: unknown[] = [...scope.params];
 
-  if (filters.status) {
+  if (filters.statusGroup === "open") {
+    conds.push(`c.status IN (${OPEN_STATUSES.map(() => "?").join(",")})`);
+    params.push(...OPEN_STATUSES);
+  } else if (filters.status) {
     conds.push("c.status = ?");
     params.push(filters.status);
   }
   if (filters.branchId) {
     conds.push("c.branch_id = ?");
     params.push(filters.branchId);
+  }
+  if (filters.processId) {
+    conds.push("c.process_id = ?");
+    params.push(filters.processId);
   }
   if (filters.search) {
     conds.push("(c.employee_code LIKE ? OR c.employee_name LIKE ?)");
@@ -440,35 +454,72 @@ export async function listCases(
                          WHERE s3.noc_case_id = c.id AND s3.status = 'pending'
                            AND s3.sla_due_at IS NOT NULL AND s3.sla_due_at < NOW())`);
   }
+  if (filters.awaitingFinalFrom) {
+    conds.push(`(c.status = 'completed' AND c.override_at IS NULL
+                 AND c.payroll_head_approved_at IS NULL AND DATE(c.completed_at) >= ?)`);
+    params.push(filters.awaitingFinalFrom);
+  }
 
-  const limit = Math.max(1, Math.min(500, filters.limit ?? 200));
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT c.*,
-            b.branch_name,
-            COALESCE(sig.total, 0)        AS signatory_total,
-            COALESCE(sig.accepted, 0)     AS signatory_accepted,
-            COALESCE(sig.declined, 0)     AS signatory_declined,
-            COALESCE(sig.pending, 0)      AS signatory_pending,
-            COALESCE(sig.sla_breached, 0) AS signatory_sla_breached,
-            sig.pending_stages
+  const where = conds.join(" AND ");
+  const limit = Math.max(1, Math.min(200, Math.trunc(filters.limit ?? 50)));
+  const offset = Math.max(0, Math.trunc(filters.offset ?? 0));
+
+  const [[countRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM noc_case c WHERE ${where}`,
+    params,
+  ) as unknown as [RowDataPacket[]];
+  const total = Number(countRow?.n ?? 0);
+  if (total === 0 || offset >= total) return { rows: [], total };
+
+  const [cases] = await db.execute<RowDataPacket[]>(
+    `SELECT c.*, b.branch_name, p.process_name
        FROM noc_case c
        LEFT JOIN branch_master b ON b.id = c.branch_id
-       LEFT JOIN (
-         SELECT noc_case_id,
-                COUNT(*) AS total,
-                SUM(status IN ('accepted','acknowledged')) AS accepted,
-                SUM(status = 'declined')                   AS declined,
-                SUM(status = 'pending')                    AS pending,
-                SUM(status = 'pending' AND sla_due_at IS NOT NULL AND sla_due_at < NOW()) AS sla_breached,
-                GROUP_CONCAT(CASE WHEN status = 'pending' THEN stage_key END ORDER BY display_no) AS pending_stages
-           FROM noc_signatory GROUP BY noc_case_id
-       ) sig ON sig.noc_case_id = c.id
-      WHERE ${conds.join(" AND ")}
-      ORDER BY c.created_at DESC
-      LIMIT ${limit}`,
+       LEFT JOIN process_master p ON p.id = c.process_id
+      WHERE ${where}
+      ORDER BY c.created_at DESC, c.id
+      LIMIT ${limit} OFFSET ${offset}`,
     params,
   );
-  return rows as RowDataPacket[];
+  if (cases.length === 0) return { rows: [], total };
+
+  const ids = cases.map((r) => String(r.id));
+  const [sigs] = await db.execute<RowDataPacket[]>(
+    `SELECT noc_case_id,
+            COUNT(*) AS total,
+            SUM(status IN ('accepted','acknowledged')) AS accepted,
+            SUM(status = 'declined')                   AS declined,
+            SUM(status = 'pending')                    AS pending,
+            SUM(status = 'pending' AND sla_due_at IS NOT NULL AND sla_due_at < NOW()) AS sla_breached,
+            GROUP_CONCAT(CASE WHEN status = 'pending' THEN stage_key END ORDER BY display_no) AS pending_stages
+       FROM noc_signatory
+      WHERE noc_case_id IN (${ids.map(() => "?").join(",")})
+      GROUP BY noc_case_id`,
+    ids,
+  );
+  const byCase = new Map(sigs.map((r) => [String(r.noc_case_id), r]));
+  const rows = cases.map((c) => {
+    const g = byCase.get(String(c.id));
+    return {
+      ...c,
+      signatory_total: Number(g?.total ?? 0),
+      signatory_accepted: Number(g?.accepted ?? 0),
+      signatory_declined: Number(g?.declined ?? 0),
+      signatory_pending: Number(g?.pending ?? 0),
+      signatory_sla_breached: Number(g?.sla_breached ?? 0),
+      pending_stages: g?.pending_stages ?? null,
+    } as unknown as RowDataPacket;
+  });
+  return { rows, total };
+}
+
+/** Back-compat wrapper: callers that only want the rows (limit default kept at 200). */
+export async function listCases(
+  filters: ListCaseFilters,
+  scope: { sql: string; params: unknown[] } = { sql: "1=1", params: [] },
+): Promise<RowDataPacket[]> {
+  const { rows } = await listCasesPage({ limit: 200, ...filters }, scope);
+  return rows;
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
