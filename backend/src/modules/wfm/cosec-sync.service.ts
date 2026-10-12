@@ -280,7 +280,18 @@ export function attributeNightShifts(
     const byDate = new Map<string, PunchGroup>();
     const place = (punchDate: string, first: string, last: string, count: number, absorbed: boolean) => {
       const existing = byDate.get(punchDate);
-      if (existing) {
+      if (existing && diffMinutes(first < existing.firstPunch ? first : existing.firstPunch,
+                                  last > existing.lastPunch ? last : existing.lastPunch) > MAX_SHIFT_SPAN_MIN) {
+        // Two clusters starting the same date that cannot be one shift: keep the longer one
+        // rather than inventing a span no one worked.
+        if (diffMinutes(first, last) > existing.workingMinutes) {
+          existing.firstPunch = first;
+          existing.lastPunch = last;
+          existing.totalPunches = count;
+          existing.workingMinutes = diffMinutes(first, last);
+          if (absorbed) existing.tailMerged = true; else delete existing.tailMerged;
+        }
+      } else if (existing) {
         if (first < existing.firstPunch) existing.firstPunch = first;
         if (last > existing.lastPunch) existing.lastPunch = last;
         existing.totalPunches += count;
