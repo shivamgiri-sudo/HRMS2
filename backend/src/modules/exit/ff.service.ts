@@ -6,6 +6,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordMoneyEventAudit } from "../../shared/moneyEventAudit.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
 import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
+import { assertFfSettlementAllowed } from "./ff-settlement-gate.service.js";
 import { notifyFullFinalReady, notifyFFApproved } from "./exit.notifications.js";
 // Type-only import — does not create a runtime circular dependency with
 // ff-compute.service.ts, which imports ffService from this file.
@@ -214,6 +215,10 @@ export const ffService = {
     const exitReq = (exitRows as any[])[0];
     if (!exitReq) throw new Error("Exit request not found");
 
+    // Absconders get no settlement without a Payroll Head exception, and (once switched on) a
+    // cleared NOC still needs the Payroll Head's final approval. See ff-settlement-gate.service.ts.
+    await assertFfSettlementAllowed(exitReq.employee_id, exitRequestId);
+
     // net_payable arrives from the caller like every other figure on FfInput — there is no F&F
     // calculation engine deriving it (see the module audit). Nothing checked that it agreed with
     // the components stored alongside it, so a settlement could be written whose headline amount
@@ -390,6 +395,7 @@ export const ffService = {
     const rec = (rows as any[])[0];
     if (!rec) throw ffError(404, "F&F calculation not found");
     if (rec.status === "paid") throw ffError(409, "F&F already paid — cannot re-approve");
+    await assertFfSettlementAllowed(rec.employee_id, rec.exit_request_id);
 
     // Same refusal the HTTP route makes (ff-approval-guard.compat.routes.ts). Kept here too
     // so a caller that reaches the service directly cannot approve provisional figures.
@@ -483,6 +489,7 @@ export const ffService = {
     if (!rec) throw ffError(404, "F&F calculation not found");
 
     if (rec.status === "paid") throw ffError(409, "F&F is already marked paid");
+    await assertFfSettlementAllowed(rec.employee_id, rec.exit_request_id);
     if (rec.status !== "approved") {
       throw ffError(409, `Cannot mark paid: F&F is '${rec.status}', not 'approved'`);
     }

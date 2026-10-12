@@ -147,6 +147,8 @@ interface CaseDetail {
     fnf_option: string | null;
     fnf_option_suggested: string | null;
     override_at: string | null;
+    payroll_head_approved_at?: string | null;
+    payroll_head_approval_note?: string | null;
     override_reason: string | null;
     override_document_path: string | null;
     override_document_original_name: string | null;
@@ -433,6 +435,10 @@ export default function NocClearanceChain({
   const [overrideReason, setOverrideReason] = useState("");
   const [overrideFile, setOverrideFile] = useState<File | null>(null);
   const [viewingOverrideDoc, setViewingOverrideDoc] = useState(false);
+  // Payroll Head final approval: ids of completed cases waiting on it (empty / null when the gate
+  // is not switched on, in which case no approval control is shown at all).
+  const [awaitingFinal, setAwaitingFinal] = useState<Set<string> | null>(null);
+  const [finalNote, setFinalNote] = useState("");
   const [lwd, setLwd] = useState("");
 
   const loadList = useCallback(async () => {
@@ -642,6 +648,48 @@ export default function NocClearanceChain({
       toast.error(
         (err as Error)?.message ?? "Could not set the settlement route",
       );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!canOverride) {
+      setAwaitingFinal(null);
+      return;
+    }
+    let live = true;
+    hrmsApi
+      .get<{
+        data: { enabled: boolean; rows: Array<{ case_id: string }> };
+      }>("/api/payroll/noc-cases/final-approval/queue")
+      .then((res) => {
+        if (!live) return;
+        setAwaitingFinal(
+          res.data?.enabled
+            ? new Set((res.data.rows ?? []).map((r) => r.case_id))
+            : null,
+        );
+      })
+      .catch(() => live && setAwaitingFinal(null));
+    return () => {
+      live = false;
+    };
+  }, [canOverride, detail?.nocCase?.id, detail?.nocCase?.payroll_head_approved_at]);
+
+  const submitFinalApproval = async () => {
+    if (!detail) return;
+    setBusy("final");
+    try {
+      await hrmsApi.post(
+        `/api/payroll/noc-cases/${detail.nocCase.id}/final-approval`,
+        { note: finalNote.trim() || undefined },
+      );
+      toast.success("NOC approved — F&F settlement is unlocked for this employee");
+      setFinalNote("");
+      await refreshBoth();
+    } catch (err) {
+      toast.error((err as Error)?.message ?? "Could not record the final approval");
     } finally {
       setBusy(null);
     }
@@ -1498,6 +1546,55 @@ export default function NocClearanceChain({
 
               {/* Override + timeline */}
               <div className="grid gap-4 lg:grid-cols-2">
+                {canOverride &&
+                  c.status === "completed" &&
+                  !c.override_at &&
+                  !c.payroll_head_approved_at &&
+                  awaitingFinal?.has(c.id) && (
+                    <Card className="border-emerald-300">
+                      <CardContent className="pt-5">
+                        <h4 className="text-sm font-bold text-slate-900">
+                          Final approval — unlock F&amp;F
+                        </h4>
+                        <p className="mt-1 text-xs text-slate-600 leading-relaxed">
+                          Every clearance level has responded. Your approval is
+                          the last step before F&amp;F settlement can be
+                          prepared, approved and paid for this employee.
+                        </p>
+                        <input
+                          className="mt-3 w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                          placeholder="Note (optional)"
+                          value={finalNote}
+                          onChange={(e) => setFinalNote(e.target.value)}
+                          maxLength={500}
+                        />
+                        <Button
+                          size="sm"
+                          className="mt-3 bg-emerald-600 hover:bg-emerald-700"
+                          disabled={busy === "final"}
+                          onClick={submitFinalApproval}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                          {busy === "final" ? "Approving…" : "Approve for F&F"}
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
+                {c.status === "completed" && c.payroll_head_approved_at && (
+                  <Card className="border-emerald-200">
+                    <CardContent className="pt-5">
+                      <h4 className="text-sm font-bold text-emerald-800">
+                        Payroll Head final approval recorded
+                      </h4>
+                      <p className="mt-1 text-xs text-slate-600">
+                        F&amp;F settlement is unlocked.
+                        {c.payroll_head_approval_note
+                          ? ` Note: ${c.payroll_head_approval_note}`
+                          : ""}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
                 {canOverride && c.status !== "completed" && !c.override_at && (
                   <Card className="border-purple-200">
                     <CardContent className="pt-5">

@@ -544,6 +544,11 @@ export async function notifyCompleted(caseId: string): Promise<void> {
       }
     }
 
+    // Hand the completed case straight to the Payroll Head for final approval, which is what
+    // unlocks F&F settlement. Inert unless noc_ph_final_approval_from is set.
+    const { queueForFinalApproval } = await import("./noc-final-approval.service.js");
+    await queueForFinalApproval(caseId);
+
     // Close out the per-signatory inbox tasks for this case — they are done, and leaving them
     // open is how a work inbox becomes noise people stop reading.
     await inboxService.resolveItems({

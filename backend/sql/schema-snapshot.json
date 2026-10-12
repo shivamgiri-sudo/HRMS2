@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1265,
-  "columnCount": 18389,
+  "columnCount": 18395,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -8812,7 +8812,10 @@
       "admin_actioned_at",
       "exit_confirmed_at",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "ff_exception_by",
+      "ff_exception_at",
+      "ff_exception_reason"
     ],
     "exit_retention_action": [
       "id",
@@ -13642,7 +13645,10 @@
       "override_document_path",
       "override_document_original_name",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "payroll_head_approved_by",
+      "payroll_head_approved_at",
+      "payroll_head_approval_note"
     ],
     "noc_case_event": [
       "id",

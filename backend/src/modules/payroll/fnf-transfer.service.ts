@@ -48,6 +48,7 @@ import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 import { IFSC_RE, maskAccount } from "./bank-payment-readiness.service.js";
 import { getDebitAccountNumber } from "./payroll-debit-account-config.service.js";
 import { nocReleaseStatusForEmployee } from "./noc-release-gate.service.js";
+import { ffSettlementGate } from "../exit/ff-settlement-gate.service.js";
 import {
   SALARY_TRANSFER_HEADER,
   buildAoa,
@@ -141,6 +142,13 @@ export async function getEligibleFnfTransferRows(): Promise<{
     const noc = await nocReleaseStatusForEmployee(line.employee_id);
     if (noc.blocked) {
       ineligible.push({ ...base, reason: noc.reason ?? "NOC clearance is not complete" });
+      continue;
+    }
+
+    // Absconder without a Payroll Head exception, or a NOC still awaiting final approval.
+    const gate = await ffSettlementGate(line.employee_id, line.exit_request_id);
+    if (!gate.allowed) {
+      ineligible.push({ ...base, reason: gate.reason ?? "F&F settlement is locked" });
       continue;
     }
 

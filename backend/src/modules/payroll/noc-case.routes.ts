@@ -43,6 +43,7 @@ import {
 } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import * as nocCase from "./noc-case.service.js";
+import { approveNocFinal, listAwaitingFinalApproval, nocFinalApprovalFrom } from "./noc-final-approval.service.js";
 import { filterVisibleEmployeeIds, guardEmployee } from "./payroll-branch-scope.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import {
@@ -1038,6 +1039,66 @@ nocCaseRouter.post(
 // ─────────────────────────────────────────────────────────────────────────────
 // Finance: settlement route
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/payroll/noc-cases/final-approval/queue
+ *
+ * Completed NOCs waiting for the Payroll Head. Payroll Head and super_admin only (hasAnyRole
+ * grants super_admin). Registered ABOVE the /:id routes so "final-approval" is never read as an id.
+ */
+nocCaseRouter.get(
+  "/final-approval/queue",
+  h(async (req, res) => {
+    if (!(await hasAnyRole(req.authUser!.id, "payroll_head"))) {
+      return refuse(res, 403, "NOC_FINAL_APPROVAL_FORBIDDEN", "Only Payroll Head can see the final-approval queue.");
+    }
+    const from = await nocFinalApprovalFrom();
+    return res.json({
+      success: true,
+      data: { enabled: Boolean(from), from, rows: await listAwaitingFinalApproval() },
+    });
+  }),
+);
+
+/**
+ * POST /api/payroll/noc-cases/:id/final-approval
+ *
+ * body: { note?: string }
+ *
+ * The Payroll Head's single hard approval of a NOC every level has cleared. This is what unlocks
+ * F&F settlement. Not delegable and not automated: payroll_head (and super_admin) only.
+ */
+nocCaseRouter.post(
+  "/:id/final-approval",
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    if (!(await hasAnyRole(userId, "payroll_head"))) {
+      return refuse(res, 403, "NOC_FINAL_APPROVAL_FORBIDDEN", "Only Payroll Head can give final approval to a NOC.");
+    }
+    const actor = await resolveActor(req);
+    try {
+      await approveNocFinal({
+        caseId: String(req.params.id),
+        actorUserId: userId,
+        actorRole: actor.role,
+        actorName: actor.name,
+        note: (req.body as { note?: string })?.note ?? null,
+      });
+      await logSensitiveAction({
+        actor_user_id: userId,
+        actor_role: actor.role ?? undefined,
+        action_type: "noc_payroll_head_final_approved",
+        module_key: "payroll_noc",
+        entity_type: "noc_case",
+        entity_id: String(req.params.id),
+        req,
+      });
+      return res.json({ success: true, message: "NOC approved. F&F settlement is now unlocked for this employee." });
+    } catch (err) {
+      return fail(res, err);
+    }
+  }),
+);
 
 /** PATCH /api/payroll/noc-cases/:id/fnf-option */
 nocCaseRouter.patch(
