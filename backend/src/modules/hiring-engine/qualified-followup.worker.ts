@@ -6,6 +6,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { runBranchRosters } from "./he-branch-roster.service.js";
 import { autoMapPoolStreams } from "./he-auto-map.service.js";
 import { autoResolveReplies } from "./response-auto-apply.service.js";
+import { sweepLocationElsewhere } from "./location-sweep.service.js";
 import { refreshJoinedHeadcount } from "./requisition-joined.service.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -153,6 +154,7 @@ const add = (a: StepCounts, b: StepCounts): StepCounts =>
 
 let lastJoinedRefresh = 0;
 let lastAutoMap = 0;
+let lastLocationSweep = 0;
 async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources: SourceType[] }>, now: Date, deps: TickDeps): Promise<TickReport> {
   const r = blank(s.mode);
   // Joined counts (employee code generated) decide when a requisition is filled; refreshed at most every 10 minutes.
@@ -184,6 +186,8 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("slot-corrections", () => runSlotCorrections(now), null);
   // The Hiring Engine pool is mapped to the requisition at the front of each sequence (at most every 30 minutes).
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastAutoMap > 30 * 60_000) { lastAutoMap = Date.now(); await guarded("auto-map", () => autoMapPoolStreams(now), null); }
+  // People the records already place in another city are taken off the walk-in (a page of open journeys every 10 minutes).
+  if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastLocationSweep > 10 * 60_000) { lastLocationSweep = Date.now(); await guarded("location-sweep", () => sweepLocationElsewhere(), null); }
   // Clear replies are applied by the engine (no HR step): Will come books, Cannot come records, Another time re-books.
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("auto-replies", () => autoResolveReplies(now), null);
   // The branch operations person's roster for the day (from 08:30 IST, once a day, only to staff at that branch).
