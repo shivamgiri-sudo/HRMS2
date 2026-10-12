@@ -12,6 +12,10 @@ on:
         description: "Space-separated YYYY-MM periods (blank = April 2026 up to last month)"
         required: false
         default: ""
+      nonpeople:
+        description: "Set to 'yes' to run the non-people (GRN / vendor) reconciliation instead (read-only)."
+        required: false
+        default: ""
       trace:
         description: "People-cost trace (read-only, counts and totals only): 'YYYY-MM code1 code2 ...'. When set, runs the trace instead of the evidence."
         required: false
@@ -48,9 +52,12 @@ jobs:
           NODE_ENV: production
           INPUT_PERIODS: ${{ inputs.periods }}
           INPUT_TRACE: ${{ inputs.trace }}
+          INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
         run: |
           set -euo pipefail
-          if [ -n "$INPUT_TRACE" ]; then
+          if [ "$INPUT_NONPEOPLE" = "yes" ]; then
+            npx tsx scripts/pnl-nonpeople-recon-evidence.ts $INPUT_PERIODS
+          elif [ -n "$INPUT_TRACE" ]; then
             # Quoted per word so codes containing '/' survive; read-only.
             read -r -a ARGS <<< "$INPUT_TRACE"
             npx tsx scripts/pnl-people-cost-cc-trace.ts "${ARGS[@]}"
