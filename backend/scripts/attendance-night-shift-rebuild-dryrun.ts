@@ -93,7 +93,7 @@ type Shift = { start: number; end: number; night: boolean; weekOff: boolean; inh
     grp = [];
   };
   for (const p of punches) {
-    if (grp.length && ms(p) - ms(cur[grp.length - 1]) >= GAP_H * 3600000) flush();
+    if (grp.length && ms(p) - ms(grp[grp.length - 1]) >= GAP_H * 3600000) flush();
     grp.push(p);
   }
   flush();
