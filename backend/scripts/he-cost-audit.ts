@@ -16,5 +16,8 @@ const q = async (label: string, sql: string) => {
       (SELECT COUNT(*) FROM he_call) he_calls, (SELECT COUNT(*) FROM he_call WHERE duration_s > 0) he_calls_with_dur`);
   await q("meta_campaign spend", `SELECT mc.id, mc.campaign_name, mc.requisition_id, jr.branch_name, mc.spend_inr, mc.impressions, mc.clicks, mc.last_synced_at FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id ORDER BY mc.spend_inr DESC`);
   await q("meta_campaign columns", "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'meta_campaign'");
+  console.log("\n== env (set or not, never the value)");
+  for (const k of ["META_MARKETING_ACCESS_TOKEN", "META_AD_ACCOUNT_ID", "META_GRAPH_VERSION", "META_ACCESS_TOKEN", "META_APP_SECRET", "META_CAMPAIGN_SYNC_ENABLED"]) console.log(k, process.env[k] ? "SET" : "unset");
+  await q("meta ids / sync errors", "SELECT campaign_name, campaign_status, meta_campaign_id IS NOT NULL AND meta_campaign_id <> '' AS has_campaign_id, meta_adset_id <> '' AS has_adset, meta_form_id <> '' AS has_form, last_sync_error FROM meta_campaign");
   await db.end?.();
 })();
