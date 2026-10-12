@@ -26,6 +26,13 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { EMPLOYMENT_END_DATE_SELECT } from "./employment-end-date.js";
+import {
+  autoTierOf,
+  isChainStage,
+  isNocAutoClearanceEnabled,
+  NOC_OPEN_AHEAD_DAYS,
+  NOC_SYSTEM_ACTOR_ID,
+} from "./noc-auto-profile.js";
 
 /**
  * The pooled connection db.getConnection() actually hands back.
@@ -164,6 +171,7 @@ export type StageBlockReason =
   | { code: "EMPLOYEE_FORM_PENDING"; message: string }
   | { code: "PRIOR_TIER_PENDING"; message: string }
   | { code: "LWD_NOT_SET"; message: string }
+  | { code: "LWD_NOT_REACHED"; message: string }
   | { code: "ASSETS_OUTSTANDING"; message: string }
   | { code: "ALREADY_ACTIONED"; message: string };
 
@@ -496,6 +504,8 @@ export function stageBlockReason(
   all: NocSignatoryRow[],
   target: NocSignatoryRow,
   assetGate: { satisfied: boolean; outstanding: string[] },
+  /** Auto-clearance profile (noc-auto-profile.ts): parallel stages, form is not a gate. */
+  auto = false,
 ): StageBlockReason | null {
   if (target.status !== "pending") {
     return {
@@ -514,7 +524,7 @@ export function stageBlockReason(
   }
   // The form comes first: the signatories are certifying against what the employee declared,
   // so signing before that exists would be certifying a blank document.
-  if (nocCase.status === "invited") {
+  if (nocCase.status === "invited" && !auto) {
     return {
       code: "EMPLOYEE_FORM_PENDING",
       message:
@@ -523,9 +533,15 @@ export function stageBlockReason(
   }
 
   // Tier gate. Equal tiers are independent; every LOWER tier must have responded positively.
+  const tierOf = (s: NocSignatoryRow) =>
+    auto ? autoTierOf(s.stage_key, s.tier) : s.tier;
   const blockingLower = all.filter(
     (s) =>
-      s.tier < target.tier &&
+      tierOf(s) < tierOf(target) &&
+      // Under the profile only MANDATORY lower stages gate a later one. Accounts and Finance are
+      // tracked but do not hold the case open (1764), so they must not hold HR's closing stage
+      // open either — otherwise Finance waiting on a laptop would stall a case it cannot block.
+      (!auto || Number(s.is_mandatory) === 1) &&
       s.status !== "accepted" &&
       s.status !== "acknowledged",
   );
@@ -545,6 +561,18 @@ export function stageBlockReason(
       message:
         "Record the confirmed Last Working Day before clearing the HR stage.",
     };
+  }
+
+  // Under the profile the case may open before the LWD (the pre-LWD stages clear from system
+  // evidence during notice), but it must never close before the person has actually left.
+  if (auto && target.stage_key === "hr" && nocCase.last_working_day) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (String(nocCase.last_working_day).slice(0, 10) > today) {
+      return {
+        code: "LWD_NOT_REACHED",
+        message: `The case closes on the Last Working Day (${String(nocCase.last_working_day).slice(0, 10)}).`,
+      };
+    }
   }
 
   if (Number(target.requires_asset_clearance) === 1 && !assetGate.satisfied) {
@@ -654,7 +682,14 @@ export async function openCase(params: {
     );
   }
   const today = new Date().toISOString().slice(0, 10);
-  if (lwd > today) {
+  // Auto-clearance profile: the case may open up to NOC_OPEN_AHEAD_DAYS before the LWD so the
+  // evidence-based stages clear during notice; it still cannot CLOSE before the LWD (HR stage).
+  const openFrom = (await isNocAutoClearanceEnabled())
+    ? new Date(Date.now() + NOC_OPEN_AHEAD_DAYS * 86_400_000)
+        .toISOString()
+        .slice(0, 10)
+    : today;
+  if (String(lwd).slice(0, 10) > openFrom) {
     throw refuse(
       409,
       "NOC_LWD_NOT_REACHED",
@@ -1328,8 +1363,15 @@ export async function actOnSignatory(params: {
       "That signatory stage is not on this NOC.",
     );
 
+  const auto = await isNocAutoClearanceEnabled();
   const assetGate = evaluateAssetGate(await getAssets(params.caseId));
-  const blocked = stageBlockReason(nocCase, signatories, target, assetGate);
+  const blocked = stageBlockReason(
+    nocCase,
+    signatories,
+    target,
+    assetGate,
+    auto,
+  );
   // A decline is allowed to bypass the asset gate: "I cannot clear this because the laptop is
   // missing" is exactly the decline Finance needs to be able to record, and refusing it because
   // the laptop is missing would be circular. Every other block still applies.
@@ -1403,11 +1445,60 @@ export async function actOnSignatory(params: {
       caseStatus = "declined";
       declined = true;
     } else {
-      const after = signatories.map((s) =>
+      let after = signatories.map((s) =>
         s.id === target.id
           ? { ...s, status: params.decision as SignatoryStatus }
           : s,
       );
+
+      // Single reporting-chain approval: one human decision on Team Leader / Process Manager /
+      // Branch Manager covers the other two, recorded as such rather than as a signature they
+      // never made. Only a human decision triggers it, so the engine's own deemed-cover cannot
+      // chain into itself.
+      if (
+        auto &&
+        isChainStage(target.stage_key) &&
+        params.actorUserId !== NOC_SYSTEM_ACTOR_ID
+      ) {
+        const covered = after.filter(
+          (s) =>
+            s.id !== target.id &&
+            isChainStage(s.stage_key) &&
+            s.status === "pending",
+        );
+        for (const c of covered) {
+          await conn.execute(
+            `UPDATE noc_signatory
+                SET status = 'acknowledged', acted_by_user_id = ?, acted_by_name = ?,
+                    acted_by_role = 'system', acted_at = NOW(), remarks = ?
+              WHERE id = ? AND status = 'pending'`,
+            [
+              NOC_SYSTEM_ACTOR_ID,
+              "Covered by reporting-chain approval",
+              `Covered by ${target.stage_label} approval by ${params.actorName ?? "the reporting chain"}`.slice(
+                0,
+                500,
+              ),
+              c.id,
+            ],
+          );
+          await writeEvent(conn, {
+            caseId: params.caseId,
+            stageKey: c.stage_key,
+            action: "signatory_covered",
+            actorUserId: NOC_SYSTEM_ACTOR_ID,
+            actorRole: "system",
+            actorName: "NOC auto-clearance",
+            actorType: "system",
+            reason: `Covered by ${target.stage_label} approval by ${params.actorName ?? "the reporting chain"}`,
+          });
+        }
+        after = after.map((s) =>
+          covered.some((c) => c.id === s.id)
+            ? { ...s, status: "acknowledged" as SignatoryStatus }
+            : s,
+        );
+      }
       // Accounts and Finance are real, trackable signatory stages, but not mandatory for the
       // case to reach 'completed' (1764_noc_signatory_not_mandatory.sql, per the business owner
       // 2026-09-12) — a non-mandatory stage still pending does not hold the case open.
@@ -1433,7 +1524,10 @@ export async function actOnSignatory(params: {
           actorName: params.actorName,
           reason: "All signatories responded",
         });
-      } else if (nocCase.status === "employee_submitted") {
+      } else if (
+        nocCase.status === "employee_submitted" ||
+        (auto && nocCase.status === "invited")
+      ) {
         await conn.execute(
           `UPDATE noc_case SET status = 'in_progress' WHERE id = ?`,
           [params.caseId],
@@ -1465,9 +1559,15 @@ export async function actionableStages(
   if (!nocCase) return [];
   const signatories = await getSignatories(caseId);
   const assetGate = evaluateAssetGate(await getAssets(caseId));
+  const auto = await isNocAutoClearanceEnabled();
   return signatories.filter(
-    (s) => stageBlockReason(nocCase, signatories, s, assetGate) === null,
+    (s) => stageBlockReason(nocCase, signatories, s, assetGate, auto) === null,
   );
+}
+
+/** Start SLA clocks for a case outside any transaction (case open under the auto profile). */
+export async function startSlaForCase(caseId: string): Promise<void> {
+  await startSlaForActionableStages(null, caseId);
 }
 
 /**

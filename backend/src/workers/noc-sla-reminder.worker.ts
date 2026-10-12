@@ -29,6 +29,8 @@ import type { RowDataPacket } from "mysql2";
 import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
 import { withWorkerLock, recordWorkerRun, registerTimer, unregisterTimer } from "./worker-utils.js";
 import { notifySignatoryReminder } from "../modules/payroll/noc.notifications.js";
+import { runAutoClearSweep } from "../modules/payroll/noc-auto-clear.service.js";
+import { isNocAutoClearanceEnabled } from "../modules/payroll/noc-auto-profile.js";
 
 /**
  * Must match the worker_config.worker_name row exactly, or the kill switch silently does nothing —
@@ -81,6 +83,19 @@ interface OverdueStage extends RowDataPacket {
  * because the gateway's is per event+entity and this is per stage.
  */
 async function findOverdueStages(): Promise<OverdueStage[]> {
+  // Auto-clearance profile (noc-auto-profile.ts): stages are parallel, the employee form is not a
+  // gate (cases sit in 'invited' while stages are already actionable), and only MANDATORY lower
+  // stages gate a later one. The SQL below must express the same rules as stageBlockReason().
+  const auto = await isNocAutoClearanceEnabled();
+  const effTier = (alias: string) =>
+    auto
+      ? `(CASE WHEN ${alias}.stage_key = 'hr' THEN 2
+               WHEN ${alias}.stage_key IN ('team_leader','process_manager','branch_manager','it','admin','accounts','finance') THEN 1
+               ELSE ${alias}.tier END)`
+      : `${alias}.tier`;
+  const caseStatuses = auto
+    ? `'invited', 'employee_submitted', 'in_progress'`
+    : `'employee_submitted', 'in_progress'`;
   const [rows] = await db.execute<OverdueStage[]>(
     `SELECT s.id AS signatory_id, s.noc_case_id, s.stage_key, s.reminder_count
        FROM noc_signatory s
@@ -90,11 +105,12 @@ async function findOverdueStages(): Promise<OverdueStage[]> {
         AND s.sla_due_at < NOW()
         AND s.reminder_count < ?
         AND (s.last_reminder_at IS NULL OR s.last_reminder_at < DATE_SUB(NOW(), INTERVAL 24 HOUR))
-        AND c.status IN ('employee_submitted', 'in_progress')
+        AND c.status IN (${caseStatuses})
         AND NOT EXISTS (
               SELECT 1 FROM noc_signatory lower_s
                WHERE lower_s.noc_case_id = s.noc_case_id
-                 AND lower_s.tier < s.tier
+                 AND ${effTier("lower_s")} < ${effTier("s")}
+                 ${auto ? "AND lower_s.is_mandatory = 1" : ""}
                  AND lower_s.status NOT IN ('accepted', 'acknowledged')
             )
         -- Finance is not late while it is structurally blocked on outstanding company property.
@@ -156,6 +172,17 @@ async function sweep(): Promise<void> {
             err instanceof Error ? err.message : err,
           );
         }
+      }
+
+      // Evidence-based clearance runs AFTER reminders so a stage that the engine is about to
+      // clear is still reminded once if it has already breached; it is a no-op while the
+      // noc_auto_clearance_enabled flag is off.
+      const auto = await runAutoClearSweep().catch((e) => {
+        console.error("[NocSlaReminder] auto-clear sweep failed:", e instanceof Error ? e.message : e);
+        return { cases: 0, cleared: 0, completed: 0 };
+      });
+      if (auto.cleared > 0) {
+        console.log(`[NocSlaReminder] auto-clear: ${auto.cleared} stage(s) over ${auto.cases} case(s), ${auto.completed} completed`);
       }
 
       if (overdue.length > 0) {
