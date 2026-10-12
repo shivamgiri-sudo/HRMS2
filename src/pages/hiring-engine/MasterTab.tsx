@@ -14,6 +14,7 @@ import FollowupSwitchCard from "./FollowupSwitchCard";
 import IntegrationsCard from "./IntegrationsCard";
 import DailyPlanCard from "./DailyPlanCard";
 import MetaFunnelCard from "./MetaFunnelCard";
+import CostByBranchCard from "./CostByBranchCard";
 import CampaignDashboardCard from "./CampaignDashboardCard";
 import CampaignSettingsCard from "./CampaignSettingsCard";
 import LaunchCard from "./LaunchCard";
@@ -152,6 +153,7 @@ export default function MasterTab() {
       <RecruiterBoard />
 
       <MetaFunnelCard />
+      <CostByBranchCard />
       <CampaignSettingsCard />
       <LaunchCard />
       <DailyPlanCard />

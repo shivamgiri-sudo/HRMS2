@@ -37,6 +37,7 @@ import { refreshExEmployees } from "./he-ex-employee.service.js";
 import { getMasterSummary, getRecruiterProductivity, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import { getMetaFunnel } from "./he-meta-funnel.service.js";
+import { getCostByBranch } from "./he-cost-branch.service.js";
 import { getCampaignDashboard, scopeDriveGroups } from "./he-campaign-dashboard.service.js";
 import { listCampaignConfigs, setCampaignConfig } from "./he-campaign-config.service.js";
 import { listBatches, listLaunches, previewLaunch, startLaunch, type LaunchInput } from "./he-launch.service.js";
@@ -911,6 +912,12 @@ heRouter.get("/drives/:id/superbot-sheet", requireAuth, requireRole(...WRITE_ROL
 heRouter.get("/meta-funnel", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try { res.json({ success: true, data: await getMetaFunnel() }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] meta funnel failed"); res.status(500).json({ success: false, message: "Could not load the Meta funnel" }); }
+});
+
+/** Engine cost per branch and drive type (ad spend, WhatsApp, bot calling minutes, e-mail) for a date range; defaults to the last 30 days. */
+heRouter.get("/cost/by-branch", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try { res.json({ success: true, data: await getCostByBranch(String(req.query.from ?? ""), String(req.query.to ?? "")) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] cost by branch failed"); res.status(500).json({ success: false, message: "Could not load the cost report" }); }
 });
 
 // Per Meta campaign: who owns the outreach (old Meta flow / Hiring Engine), channel switches, Superbot campaign.
