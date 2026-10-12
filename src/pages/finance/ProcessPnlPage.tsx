@@ -46,6 +46,7 @@ const PnlTrendCharts = lazy(() => import("@/components/finance/pnl/PnlTrendChart
 const PnlReceivablesAgeingPanel = lazy(() => import("@/components/finance/pnl/PnlReceivablesAgeingPanel").then((m) => ({ default: m.PnlReceivablesAgeingPanel })));
 const PnlSeatBillabilityPanel = lazy(() => import("@/components/finance/pnl/PnlSeatBillabilityPanel").then((m) => ({ default: m.PnlSeatBillabilityPanel })));
 const BpoPnlMatrixTable = lazy(() => import("@/components/finance/pnl/BpoPnlMatrixTable").then((m) => ({ default: m.BpoPnlMatrixTable })));
+const PnlBranchReviewPanel = lazy(() => import("@/components/finance/pnl/PnlBranchReviewPanel").then((m) => ({ default: m.PnlBranchReviewPanel })));
 const ProcessPnlAlertsWorkspace = lazy(() => import("@/components/finance/pnl/ProcessPnlAlertsWorkspace").then((m) => ({ default: m.ProcessPnlAlertsWorkspace })));
 
 const tabFallback = <Skeleton className="h-72 w-full rounded-md" />;
@@ -106,7 +107,7 @@ export default function ProcessPnlPage() {
   const clientId = searchParams.get("clientId") ?? "";
   const search = searchParams.get("search") ?? "";
   const [draftSearch, setDraftSearch] = useState(search);
-  const [activeTab, setActiveTab] = useState<"overview" | "live" | "trend" | "insights" | "matrix" | "statement" | "alerts" | "leakage">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "live" | "trend" | "insights" | "matrix" | "statement" | "alerts" | "review" | "leakage">("overview");
   // Same roles as GET /pnl/cost-leakage (process-pnl.routes.ts): it exposes company-wide spend, so
   // every other P&L reader got a raw 403 in this tab.
   const canSeeCostLeakage = useHasRole("super_admin", "admin", "finance_head", "accounts_head");
@@ -552,6 +553,7 @@ export default function ProcessPnlPage() {
             <TabsTrigger value="matrix" className={tabTriggerClass}>Process Matrix</TabsTrigger>
             <TabsTrigger value="statement" className={tabTriggerClass}>P&amp;L Statement</TabsTrigger>
             <TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>
+            <TabsTrigger value="review" className={tabTriggerClass}>Branch Review</TabsTrigger>
             {canSeeCostLeakage && <TabsTrigger value="leakage" className={tabTriggerClass}>Cost Leakage</TabsTrigger>}
           </TabsList>
 
@@ -792,6 +794,12 @@ export default function ProcessPnlPage() {
               onViewByChange={setStatementViewBy}
               period={filters.period}
             />
+          </TabsContent>
+
+          <TabsContent value="review" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <Suspense fallback={tabFallback}>
+              <PnlBranchReviewPanel period={period} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="alerts" className="flex-1 overflow-auto px-4 py-3 m-0">

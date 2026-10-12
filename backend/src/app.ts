@@ -377,6 +377,7 @@ import { payrollLedgerPostingRouter } from "./modules/finance/payroll-ledger-pos
 import { legacyReportsRouter } from "./modules/legacy-reports/legacy-reports.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
 import { revenueForecastRouter } from "./modules/process-pnl/revenue-forecast.routes.js";
+import { pnlBranchReviewRouter } from "./modules/process-pnl/pnl-branch-review.routes.js";
 import { clientPaymentTrackingRouter } from "./modules/finance/client-payment-tracking.routes.js";
 import mandateSeatTrackingRouter from "./modules/finance/mandate-seat-tracking.routes.js";
 import { financeAnalyticsRouter } from "./modules/finance/finance-analytics.routes.js";
@@ -895,6 +896,7 @@ app.use("/api/finance/payroll", payrollLedgerPostingRouter);
 app.use("/api/legacy-reports", legacyReportsRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
 app.use("/api/finance/revenue-forecasts", revenueForecastRouter);
+app.use("/api/finance/pnl-branch-review", pnlBranchReviewRouter);
 app.use("/api/finance/client-payments", clientPaymentTrackingRouter);
 app.use("/api/finance/mandate-seats", mandateSeatTrackingRouter);
 app.use("/api/finance/analytics", financeAnalyticsRouter);

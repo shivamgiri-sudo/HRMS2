@@ -294,6 +294,10 @@
   "modules/process-performance/sbi-card-vicidial-sync.service.ts": [
     "sbi_card_live_sync_log"
   ],
+  "modules/process-pnl/pnl-branch-review.service.ts": [
+    "pnl_branch_review",
+    "pnl_branch_review_query"
+  ],
   "modules/quality-dashboard/onfido-utilization.routes.ts": [
     "onfido_utilization_upload"
   ],

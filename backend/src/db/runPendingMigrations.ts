@@ -1357,6 +1357,7 @@ const MIGRATION_MANIFEST: string[] = [
   "2149_agent_master_changes.sql", // Registered 2026-10-10 (Tausif AHM port; renumbered from 1785, taken by the leave/exit CC file). mas_hrms.agent_target_change_log (per-field change log for Housing Owner/Premium agents) and mas_hrms.pre_agent_am (Premium AM side table). CREATE TABLE IF NOT EXISTS only; mas_hrms, so the app user can create them.
   "2151_ahm_dashboard_snapshot.sql", // Registered 2026-10-10 (Tausif AHM port; renumbered from 1876 to sit above 2150). mas_hrms.ahm_dashboard_snapshot: durable pre-computed AHM dashboard payloads, read and written by getAhmDashboard and the AHM_SNAPSHOT_SCHEDULER_ENABLED worker. CREATE TABLE IF NOT EXISTS only. 2150_agent_month_db_masmis.sql is deliberately NOT listed: it ALTERs db_masmis, which the app user cannot do.
   "migrations/2157_noc_cases_page_access_employee_wfm.sql", // Registered 2026-10-12. PAYROLL_NOC_CASES view-only for employee, wfm, branch_wfm (NOC Clearance Chain visible to them). Additive, idempotent.
+  "migrations/2158_pnl_branch_review.sql", // Registered 2026-10-12. pnl_branch_review (branch acknowledges the month, figures snapshotted) + pnl_branch_review_query (branch raises, finance resolves). CREATE TABLE IF NOT EXISTS only.
 ];
 
 export type MigrationHealth = {
