@@ -3,7 +3,7 @@
  *   - confirm / decline / reschedule, read with >= 90% confidence (or a button / call answer), not a conflict, not a duplicate;
  *   - tied to a booking or an invitation -> the same path as the Will come / Cannot come / Another time buttons;
  *   - tied to a person and requisition but with no booking yet -> booked on the nearest working day (the manual-confirm path) and closed.
- * A reply that could not be applied now (engine busy, no seat) stays in the queue and is retried on the next tick for 3 days.
+ * A reply that could not be applied now (engine busy, no seat) stays in the queue and is retried on the next tick for 10 days.
  * policy.replies_auto_apply = 0 switches this off. Bounded per tick; never throws.
  */
 import type { RowDataPacket } from "mysql2";
@@ -41,7 +41,7 @@ export async function rereadUnclearReplies(now: Date): Promise<number> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, raw_text FROM candidate_response
         WHERE status = 'needs_review' AND mode = 'text' AND handled_at IS NULL AND conflict = 0 AND dedupe_of IS NULL AND raw_text IS NOT NULL
-          AND COALESCE(suggested_answer, answer) IN ('other','question') AND occurred_at >= DATE_SUB(?, INTERVAL 3 DAY)
+          AND COALESCE(suggested_answer, answer) IN ('other','question') AND occurred_at >= DATE_SUB(?, INTERVAL 10 DAY)
         ORDER BY occurred_at DESC LIMIT 100`, [now]);
     for (const r of rows) {
       const hit = classifyReply(String(r.raw_text));
@@ -64,7 +64,7 @@ export async function autoResolveReplies(now: Date = new Date()): Promise<AutoAp
         WHERE status = 'needs_review' AND handled_at IS NULL AND conflict = 0 AND dedupe_of IS NULL
           AND COALESCE(suggested_answer, answer) IN ('confirm','decline','reschedule')
           AND (mode IN ('button','call','manual') OR confidence >= ${AUTO_MIN_CONFIDENCE})
-          AND occurred_at <= DATE_SUB(?, INTERVAL 2 MINUTE) AND occurred_at >= DATE_SUB(?, INTERVAL 3 DAY)
+          AND occurred_at <= DATE_SUB(?, INTERVAL 2 MINUTE) AND occurred_at >= DATE_SUB(?, INTERVAL 10 DAY)
         ORDER BY occurred_at LIMIT ${PER_TICK}`, [now, now]);
     for (const r of rows) {
       rep.considered++;

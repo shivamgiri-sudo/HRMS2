@@ -63,6 +63,10 @@ export function classifyReply(text: string, _o: { channel?: "email" | "whatsapp"
   if (!top) return { answer: "other", confidence: 0, reasons: ["empty"] };
   const reasons: string[] = [];
   let t = norm(top);
+  // A bare "I am interested" in answer to a walk-in invitation is a yes to the slot offered (no question, nothing else in the reply).
+  if (/^(hi |hello |dear sir |sir |good (morning|afternoon|evening) )*(sir |madam |sir madam )?(i am |i m |im )?(very |highly )?interested( sir| madam| thank you| thanks)?$/.test(t)) {
+    return { answer: "confirm", confidence: 0.9, reasons: ["interested, no question"] };
+  }
   let guarded = false;
   for (const g of GUARDS) if (has(t, [g])) { t = norm(t.replace(new RegExp(`(^| )${g}( |$)`, "g"), " ")); guarded = true; reasons.push(`"${g}" is not a decline`); }
   const question = top.includes("?") || !!has(t, QUESTION);

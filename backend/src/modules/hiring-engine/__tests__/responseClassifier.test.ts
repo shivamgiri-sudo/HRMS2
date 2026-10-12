@@ -104,3 +104,14 @@ describe("classifyReply: another chance / coming now (the replies that sat in th
     expect(classifyReply("I want work from home Thankyou Neha").confidence).toBeLessThan(0.9);
   });
 });
+
+describe("classifyReply: a bare 'I am interested'", () => {
+  it("is a yes to the offered slot", () => {
+    expect(classifyReply("Hi, I am interested.")).toMatchObject({ answer: "confirm", confidence: 0.9 });
+    expect(classifyReply("Interested sir").answer).toBe("confirm");
+  });
+  it("is not when there is a question or a negation", () => {
+    expect(classifyReply("Hi, I am interested. But 1 question in my mind I want to only night shift").confidence).toBeLessThan(0.9);
+    expect(classifyReply("I am not interested").answer).not.toBe("confirm");
+  });
+});
