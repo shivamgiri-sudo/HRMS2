@@ -57,7 +57,8 @@ const COST_CENTRE_ID = "cc-1";
 beforeEach(() => {
   execute.mockReset();
   tableExists.mockReset();
-  tableExists.mockResolvedValue(true);
+  // The db_bill mirror leg (owner decision 2026-10-12) has its own tests; the fixtures here are about the HRMS legs.
+  tableExists.mockImplementation(async (t: string) => t !== "grn_entry_line_snapshot");
   execute.mockResolvedValue([[], []]);
   getSeatBillingEstimate.mockReset();
 });
@@ -260,9 +261,8 @@ describe("drilldowns tie to the tiles they open from (audit item 17)", () => {
     const consumedSql = sqlCalls().find((c) => c.sql.includes("'consumed'"))!.sql;
     expect(consumedSql).toContain("FROM grn_cost_allocation a");
     expect(consumedSql).toContain("FROM grn_request gr");
-    expect(consumedSql, "the db_bill mirror tables are never read; legacy GRNs come from grn_request (owner ruling 2026-10-12)").not.toContain("grn_entry_line_snapshot");
-    expect(consumedSql, "HRMS-raised legs plus the guarded legacy leg").toContain("bill_source_id IS NULL");
-    expect(consumedSql).toContain("bill_source_id IS NOT NULL");
+    expect(consumedSql, "no legacy bill is added to HRMS figures (owner ruling 2026-09-26)").not.toContain("grn_entry_line_snapshot");
+    expect(consumedSql, "only HRMS-raised GRNs: no db_bill import, no system-user backfill").toContain("bill_source_id IS NULL");
     // Branch scope keeps only this branch's rows; reserved (committed) GRN is always included.
     expect(result.total).toBe(5000 + 300);
     expect(result.hasEstimatedRows).toBe(true);

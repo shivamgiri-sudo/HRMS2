@@ -31,19 +31,13 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
     return fn.slice(0, fn.indexOf("\n}\n"));
   }
 
-  it("readGrnSpend has no mirror leg: it never touches the db_bill snapshot tables or their guards", () => {
+  it("readGrnSpend has ONE legacy leg, the db_bill mirror, guarded against a voucher HRMS already carries (owner decision 2026-10-12)", () => {
     const body = readerBody();
-    expect(body).not.toContain("grn_entry_line_snapshot");
-    expect(body).not.toContain("grn_entry_snapshot");
-    expect(body).not.toContain("LEGACY_TWIN_MIN_AMOUNT");
-    expect(body).not.toContain("l.amount");
-  });
-
-  it("legacy GRNs count through leg 3 only (owner ruling 2026-10-12), with an HRMS-twin guard and no mirror tables", () => {
-    const body = readerBody();
-    expect(body).toContain("WHERE ${LEGACY_GRN_SQL}");
-    expect(body).toContain("t.grn_number = gr.grn_number");
-    expect(body).toContain("NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)");
+    expect(body.split("FROM grn_entry_line_snapshot").length - 1).toBe(1);
+    expect(body).toContain("gr2.grn_number = ge.grn_no");
+    expect(body).toContain("LEGACY_TWIN_MIN_AMOUNT");
+    // Imported / migration-script grn_request rows are never read as legacy themselves: the mirror is the one legacy source.
+    expect(body.split("${HRMS_RAISED_GRN_SQL}").length - 1).toBe(2);
   });
 
   it("both app legs are restricted to HRMS-raised GRNs (no bill_source_id, no system-user rows)", () => {

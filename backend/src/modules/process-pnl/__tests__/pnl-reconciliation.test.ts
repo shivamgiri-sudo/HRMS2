@@ -13,7 +13,8 @@ function mockDb(options: { payrollRows?: number } = {}) {
   const payrollRows = options.payrollRows ?? 2;
   tableExists.mockReset();
   execute.mockReset();
-  tableExists.mockResolvedValue(true);
+  // The db_bill mirror leg (owner decision 2026-10-12) has its own tests; the fixtures here are about the HRMS legs.
+  tableExists.mockImplementation(async (t: string) => t !== "grn_entry_line_snapshot");
   execute.mockImplementation(async (sql: string) => {
     const q = String(sql);
     if (

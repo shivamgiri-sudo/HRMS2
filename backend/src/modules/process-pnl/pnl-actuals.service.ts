@@ -219,7 +219,7 @@ export interface GrnSpendRow {
   amount: number;
   /** Only populated when `withDetail` is asked for (the drilldown): which leg the row came from,
    *  the GRN's own number, a human label and the bill date. Null otherwise. */
-  source?: "app_allocation" | "app_grn" | "legacy_grn" | null;
+  source?: "app_allocation" | "app_grn" | "db_bill_mirror" | null;
   grnRef?: string | null;
   label?: string | null;
   billDate?: string | null;
@@ -273,13 +273,15 @@ function grnScope(opts: GrnSpendOptions): { sql: string; params: unknown[] } {
 const HRMS_RAISED_GRN_SQL = `gr.bill_source_id IS NULL AND COALESCE(gr.created_by, '') NOT LIKE '00000000-%'`;
 
 /**
- * Owner ruling 2026-10-12 (supersedes the 2026-09-26 exclusion above for legacy months): the P&L must tie to what was
- * billed, and Apr-Jul 2026 were billed in db_bill, so GRNs imported from it (bill_source_id) or written by a migration
- * script (system user) COUNT as ordinary GRNs (leg 3). Without this a closed month showed about Rs 0 non-people cost
- * against Rs 50-70 lakh in db_bill and branch profit was overstated. A legacy GRN is skipped when an HRMS-raised GRN
- * carries the same GRN number, so a voucher entered in both systems is counted once (the HRMS copy).
+ * Owner decision 2026-10-12 (supersedes the 2026-09-26 "no legacy bill" ruling for what db_bill billed): the P&L must tie to
+ * what was billed. April-July 2026 were billed in db_bill and almost none of it exists as an HRMS GRN, so a closed month showed
+ * about Rs 0 non-people cost against Rs 50-70 lakh and branch profit was overstated. Leg 3 below reads the db_bill mirror
+ * (grn_entry_line_snapshot) again, for a voucher HRMS does not already carry. Three guards keep a voucher from counting twice:
+ * the same GRN number on any HRMS GRN (raised, or imported from db_bill), and the amount-twin guard for the same invoice keyed
+ * under another number in both systems (measured 2026-09-25: 22 NOIDA-2 bills, Rs 9.14 lakh). Imported / migration-script
+ * grn_request rows are still not read themselves: the mirror is the one legacy source, so they cannot be counted twice.
  */
-const LEGACY_GRN_SQL = `(gr.bill_source_id IS NOT NULL OR COALESCE(gr.created_by, '') LIKE '00000000-%')`;
+const LEGACY_TWIN_MIN_AMOUNT = 1000;
 
 /** grn_request statuses at which an ordinary (allocation-less) GRN's budget is consumed —
  *  Finance Head approval and everything after it (same set as grn-report's fully_approved). */
@@ -363,24 +365,48 @@ export async function readGrnSpend(
   );
   params.push(periodCode, ...scope.params);
 
-  // Leg 3 — legacy (db_bill-imported / migration-script) ordinary GRNs: same status rule as leg 2, no budget line
-  // needed (they pre-date HRMS budgets), never when it has allocation rows (leg 1's job) or an HRMS twin.
-  legs.push(
-    `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
-            ${processCol("gr.process_id", "pc3")} AS process_id, ${grnRequestExGstSql("gr")} AS amount,
-            ${detailCols("legacy_grn", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
-       FROM grn_request gr
-       LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
-       ${processJoin("pc3")}
-      WHERE ${LEGACY_GRN_SQL}
-        AND gr.status IN (${ordinaryStatuses})
-        AND gr.accounting_period = ?
-        AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
-        AND NOT EXISTS (SELECT 1 FROM grn_request t WHERE t.grn_number = gr.grn_number AND t.id <> gr.id
-                          AND t.bill_source_id IS NULL AND COALESCE(t.created_by, '') NOT LIKE '00000000-%')
-        AND ${scope.sql}`,
-  );
-  params.push(periodCode, ...scope.params);
+  // Leg 3 — the db_bill mirror, for vouchers HRMS does not carry (see LEGACY_TWIN_MIN_AMOUNT). Line level, because only the line
+  // carries the cost centre; branch from the cost centre because the mirror's branch ids are db_bill's, not branch_master's.
+  if (await tableExists("grn_entry_line_snapshot")) {
+    legs.push(
+      `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
+              ${processCol(null, "pc3")} AS process_id, l.amount AS amount,
+              ${detailCols(
+                "db_bill_mirror",
+                "COALESCE(ge.grn_no, l.bill_source_id)",
+                "CONCAT_WS(' — ', NULLIF(TRIM(ge.vendor), ''), NULLIF(TRIM(l.particular), ''))",
+                "ge.bill_date",
+              )}
+         FROM grn_entry_line_snapshot l
+         JOIN grn_entry_snapshot ge ON ge.bill_source_id = l.grn_source_id
+         LEFT JOIN cost_centre_master ccm
+                ON ccm.cost_centre_code = l.cost_centre_code COLLATE utf8mb4_unicode_ci
+         ${processJoin("pc3")}
+        WHERE ge.period_code = ? AND ge.is_rejected = 0 AND ${scope.sql}
+          AND NOT EXISTS (
+                SELECT 1 FROM grn_request gr2
+                 WHERE gr2.grn_number = ge.grn_no
+                   AND gr2.status NOT IN ('draft','cancelled','rejected','consumption_reversed')
+              )
+          AND NOT EXISTS (
+                SELECT 1
+                  FROM grn_request gr3
+                 WHERE gr3.accounting_period = ge.period_code
+                   AND gr3.branch_id = ccm.branch_id
+                   AND ${HRMS_RAISED_GRN_SQL.replace(/gr\./g, "gr3.")}
+                   AND l.amount >= ${LEGACY_TWIN_MIN_AMOUNT}
+                   AND (ABS((SELECT SUM(${grnAllocationExGstSql("a3")})
+                               FROM grn_cost_allocation a3
+                              WHERE a3.grn_request_id = gr3.id
+                                AND a3.lifecycle_status IN ('consumed', 'reserved')) - l.amount) <= 1
+                        OR ABS((SELECT SUM(COALESCE(a4.amount_with_tax, 0))
+                                  FROM grn_cost_allocation a4
+                                 WHERE a4.grn_request_id = gr3.id
+                                   AND a4.lifecycle_status IN ('consumed', 'reserved')) - l.amount) <= 1)
+              )`,
+    );
+    params.push(periodCode, ...scope.params);
+  }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date, SUM(amount) AS amount

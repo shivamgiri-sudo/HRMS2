@@ -118,15 +118,13 @@ describe.skipIf(!sqlite)(
       expect(total).toBe(17000);
     });
 
-    it("legacy GRNs count once (owner ruling 2026-10-12): bill_source_id and system-user rows count, allocation-backed and HRMS-twinned ones do not", async () => {
+    it("HRMS-raised GRNs only: bill_source_id and system-user (00000000-) GRNs are not counted", async () => {
       const { readGrnSpend } = await import("../pnl-actuals.service.js");
       sqlite!.exec(`
       INSERT INTO grn_request (id, grn_number, branch_id, cost_centre_id, accounting_period, bill_date, budget_line_id, status, vendor_name, head, sub_head, recoverable_tax_pct, amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount, bill_source_id, created_by) VALUES
         ('G7','GRN-7','B1','cc1','2026-08','2026-08-10','L1','finance_head_approved','V','Admin','Rent',0,7000,0,7000,7000,7000,'DB-BILL-1','user-1'),
         ('G8','GRN-8','B1','cc1','2026-08','2026-08-10','L1','finance_head_approved','V','Admin','Rent',0,8000,0,8000,8000,8000,NULL,'00000000-0000-0000-0000-000000000001'),
-        ('G9','GRN-9','B1','cc1','2026-08','2026-08-10','L1','finance_head_approved','V','Admin','Rent',0,9000,0,9000,9000,9000,'DB-BILL-2','user-1'),
-        ('G10','GRN-10','B1','cc1','2026-08','2026-08-10','L1','paid','V','Admin','Rent',0,1000,0,1000,1000,1000,'DB-BILL-3','user-1'),
-        ('G11','GRN-10','B1','cc1','2026-08','2026-08-10','L1','finance_head_approved','V','Admin','Rent',0,1000,0,1000,1000,1000,NULL,'user-2');
+        ('G9','GRN-9','B1','cc1','2026-08','2026-08-10','L1','finance_head_approved','V','Admin','Rent',0,9000,0,9000,9000,9000,'DB-BILL-2','user-1');
       INSERT INTO grn_cost_allocation VALUES ('A9','G9','cc1',NULL,'consumed',0,9000,0,9000,9000);
     `);
       try {
@@ -134,12 +132,11 @@ describe.skipIf(!sqlite)(
           (t, r) => t + r.amount,
           0,
         );
-        // 17,000 already there + G7 7,000 (db_bill import) + G8 8,000 (system user) + G11 1,000 (the HRMS copy of GRN-10).
-        // G9 (allocation on an imported GRN) and G10 (db_bill copy of GRN-10, which has an HRMS twin) add nothing.
-        expect(total).toBe(33000);
+        // G7 (bill_source_id), G8 (system user) and G9 (allocation on a bill_source_id GRN) add nothing.
+        expect(total).toBe(17000);
       } finally {
         sqlite!.exec(
-          "DELETE FROM grn_cost_allocation WHERE id = 'A9'; DELETE FROM grn_request WHERE id IN ('G7','G8','G9','G10','G11');",
+          "DELETE FROM grn_cost_allocation WHERE id = 'A9'; DELETE FROM grn_request WHERE id IN ('G7','G8','G9');",
         );
       }
     });

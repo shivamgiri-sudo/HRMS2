@@ -887,20 +887,20 @@ describe("legal entity — this page is one company's P&L, not a consolidation",
     );
   });
 
-  it("never reads the db_bill mirror for GRN spend: mirror rows add nothing (owner ruling 2026-09-26)", async () => {
+  it("reads the db_bill mirror for vouchers HRMS does not carry, once (owner decision 2026-10-12)", async () => {
     mockDb({
       branches: [{ id: "b", branch_name: "NOIDA", active_status: 1 }],
       revenue: [{ branch_id: "b", amount: L(80) }],
       people: [{ branch_id: "b", staff: 10, cost: L(30) }],
-      spend: [{ branch_id: "b", amount: L(10) }], // HRMS-raised
-      mirrorSpend: [{ branch_id: "b", amount: L(20) }], // db_bill mirror: must be ignored
+      spend: [{ branch_id: "b", amount: L(30) }], // the shared reader's one UNION: HRMS legs plus the guarded mirror leg
     });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06");
-    expect(out.indirectCost).toBeCloseTo(L(10), 0);
-    expect(out.operatingProfit).toBeCloseTo(L(40), 0); // 80 - 30 - 10
-    const sql = execute.mock.calls.map((c) => String(c[0]));
-    expect(sql.some((q) => q.includes("grn_entry_line_snapshot"))).toBe(false);
+    expect(out.indirectCost).toBeCloseTo(L(30), 0);
+    const spendSql = execute.mock.calls.map((c) => String(c[0])).find((q) => q.includes("FROM grn_entry_line_snapshot"));
+    expect(spendSql, "the mirror leg is in the one shared GRN query").toBeDefined();
+    expect(spendSql).toContain("gr2.grn_number = ge.grn_no");
+    expect(spendSql).toContain("ABS((SELECT SUM(");
   });
 
   it("does NOT filter payroll by company", async () => {
