@@ -88,6 +88,7 @@ import { startQualityGapDetectorWorker } from "./workers/quality-gap-detector.wo
 import { startProcessDashboardAlertsWorker } from "./modules/process-dashboard/alerts/alerts.worker.js";
 import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
 import { startLeaveApprovalReminderWorker } from "./workers/leave-approval-reminder.worker.js";
+import { startNocSlaReminderWorker } from "./workers/noc-sla-reminder.worker.js";
 import { startRejoinPendingReminderWorker } from "./workers/rejoin-pending-reminder.worker.js";
 import { startGrnApprovalReminderWorker } from "./workers/grn-approval-reminder.worker.js";
 import { registerNotificationDeliverer } from "./modules/communication/notification.deliverer.js";
@@ -421,6 +422,10 @@ function startServer() {
         // 1698_noc_worker_and_release_gate_flag.sql. Registering this one in BOTH files from
         // the start, not as a follow-up fix.
         startLeaveApprovalReminderWorker();
+        // NOC SLA reminders + evidence-based auto-clearance sweep. Was written but never registered in
+        // either entry point, so neither had ever run. Gated by worker_config (noc-sla-reminder) and,
+        // for auto-clearance, payroll_config_flags noc_auto_clearance_enabled.
+        startNocSlaReminderWorker();
         // Same dual registration (rejoin v3 reminders/escalation).
         startRejoinPendingReminderWorker();
         // Same dual registration, same reasoning.
