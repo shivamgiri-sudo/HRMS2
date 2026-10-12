@@ -226,7 +226,9 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
   const mreq = {
     ...base, strict: true,
     // Meta form leads never state a night-shift preference: for a Meta / campaign audience that one unknown does not block them (the invite and call ask).
-    unknownOk: audience.source_kind === "campaign" || audience.source_kind === "meta" ? ["night_shift"] : undefined,
+    // Owner decision 2026-10-12: a person whose age or education is not on file is still invited (the branch checks ID and certificates at
+    // the desk); only a KNOWN age over the limit or a KNOWN qualification below the minimum is turned away.
+    unknownOk: [...(audience.source_kind === "campaign" || audience.source_kind === "meta" ? ["night_shift"] : []), "age", "education"],
     mandatorySkills: jd?.parsed.mandatorySkills.length ? jd.parsed.mandatorySkills : null,
     preferredSkills: jd?.parsed.preferredSkills.length ? jd.parsed.preferredSkills : null,
     minExperienceYears: base.minExperienceYears ?? jd?.parsed.minExperience ?? null,
@@ -244,10 +246,11 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
   // scored are all potentially eligible instead of an arbitrary slice of a pool that can be 100k+ strong.
   const pre: string[] = [];
   const preArgs: unknown[] = [];
-  // Strict drive shortlists: a required level must be on record, so unknowns do not crowd the scored pool.
-  if (mreq.minEducationRank != null) { pre.push("l.education_rank >= ?"); preArgs.push(mreq.minEducationRank); }
-  if (mreq.ageMin != null) { pre.push("l.age >= ?"); preArgs.push(mreq.ageMin); }
-  if (mreq.ageMax != null) { pre.push("l.age <= ?"); preArgs.push(mreq.ageMax); }
+  // A known value must meet the requirement; an unknown one passes for the facts listed in unknownOk (ranked after the known ones below).
+  const unkEdu = mreq.unknownOk?.includes("education"), unkAge = mreq.unknownOk?.includes("age");
+  if (mreq.minEducationRank != null) { pre.push(unkEdu ? "(l.education_rank IS NULL OR l.education_rank >= ?)" : "l.education_rank >= ?"); preArgs.push(mreq.minEducationRank); }
+  if (mreq.ageMin != null) { pre.push(unkAge ? "(l.age IS NULL OR l.age >= ?)" : "l.age >= ?"); preArgs.push(mreq.ageMin); }
+  if (mreq.ageMax != null) { pre.push(unkAge ? "(l.age IS NULL OR l.age <= ?)" : "l.age <= ?"); preArgs.push(mreq.ageMax); }
   if (mreq.nightShift === true) pre.push(mreq.unknownOk?.includes("night_shift") ? "(l.night_shift_ok = 1 OR l.night_shift_ok IS NULL)" : "l.night_shift_ok = 1");
   // Walk-ins only work if people can reach the branch: shortlist only those whose records place them in the branch's
   // city/region (lead locality, ATS branch/address, Meta form location or campaign branch, recruiter-call branch), or
