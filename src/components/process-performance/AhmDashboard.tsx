@@ -51,6 +51,13 @@ interface ProductRow { name: string; orderQty: number; salesQty: number; orders:
 interface HourDispositionRow { hour: number; disposition: string; orders: number }
 interface ZoneDispositionRow { zone: string; disposition: string; orders: number }
 
+interface CallAgentRow { agent: string; calls: number; ecPct: number | null; pcPct: number | null; incomingPct: number | null }
+interface CallPerformance {
+  linesCut: number; linesPerOrder: number; callLogAvailable: boolean;
+  calls: number; ecPct: number | null; pcPct: number | null; incomingPct: number | null;
+  byTelesales: CallAgentRow[];
+}
+
 interface DashboardData {
   from: string; to: string; region: "MP" | "MM" | null;
   headline: Headline;
@@ -66,6 +73,8 @@ interface DashboardData {
   byCategory: ProductRow[];
   hourlyDisposition: HourDispositionRow[];
   zoneDisposition: ZoneDispositionRow[];
+  /** Absent on a snapshot written before the call log existed. */
+  callPerformance?: CallPerformance;
   dataAvailable: boolean;
 }
 
@@ -328,6 +337,54 @@ function AgentTable({ rows, onOpen }: { rows: AgentRow[]; onOpen: (agent: string
   );
 }
 
+const pctOrDash = (v: number | null) => (v === null ? "—" : `${v}%`);
+
+/** GPI's own KPIs. Lines Cut always comes from the order dump; EC / PC / Incoming need the uploaded call log. */
+function CallPerformancePanel({ perf }: { perf?: CallPerformance }) {
+  if (!perf) return null;
+  const tiles: Array<[string, string]> = [
+    ["Lines Cut", int(perf.linesCut)],
+    ["Lines / Order", String(perf.linesPerOrder)],
+    ["Calls", perf.callLogAvailable ? int(perf.calls) : "—"],
+    ["EC % (Effective Call)", perf.callLogAvailable ? pctOrDash(perf.ecPct) : "—"],
+    ["PC % (Productive Call)", perf.callLogAvailable ? pctOrDash(perf.pcPct) : "—"],
+    ["Incoming %", perf.callLogAvailable ? pctOrDash(perf.incomingPct) : "—"],
+  ];
+  return (
+    <div style={{ marginBottom: 14 }}>
+      {!perf.callLogAvailable && (
+        <NotAvailableBanner>
+          EC %, PC % and Incoming % need the call-attempt log: upload it under Data Uploader → Call log. Lines Cut and Lines / Order are real and come from the order dump.
+        </NotAvailableBanner>
+      )}
+      <div className="ahm-tiles">
+        {tiles.map(([label, value]) => (
+          <div key={label} className="ahm-tile">
+            <span className="ahm-eyebrow">{label}</span>
+            <span className="ahm-val">{value}</span>
+          </div>
+        ))}
+      </div>
+      {perf.callLogAvailable && perf.byTelesales.length > 0 && (
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <p className="ahm-section-label">Telesales-wise call performance</p>
+          <table className="ahm-table">
+            <thead><tr><th>Telesales</th><th>Calls</th><th>EC %</th><th>PC %</th><th>Incoming %</th></tr></thead>
+            <tbody>
+              {perf.byTelesales.map((a) => (
+                <tr key={a.agent}><td>{a.agent}</td><td>{int(a.calls)}</td><td>{pctOrDash(a.ecPct)}</td><td>{pctOrDash(a.pcPct)}</td><td>{pctOrDash(a.incomingPct)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p style={{ fontSize: 11, color: "#94A3B8", marginTop: 8 }}>
+        EC % = connected calls / calls; PC % = calls that produced an order or survey / calls; Incoming % = customer-initiated calls / calls. Each rate counts only the calls the file gave evidence for.
+      </p>
+    </div>
+  );
+}
+
 function KpiTiles({ h }: { h: Headline }) {
   const tiles: Array<[string, string, typeof Phone]> = [
     ["Orders Taken", int(h.orders), Phone],
@@ -480,9 +537,7 @@ export function AhmDashboard() {
           {tab === "gpi" && (
             <div className="ahm-card">
               <SlideHead icon={Gauge} title="GPI Daily Performance Tracker" sub="Mirrors the GPI tracker's Performance and Order vs Delivery sheets" />
-              <NotAvailableBanner>
-                EC % (Effective Call), PC % (Productive Call), Lines Cut and Incoming % come from a call-attempt log (every dial, not just the survey/order outcome) that this upload does not carry. Order, Sales, Gap and Delivered % below are real and come from the same source as every other slide.
-              </NotAvailableBanner>
+              <CallPerformancePanel perf={data.callPerformance} />
               <p className="ahm-section-label">Town-wise Order vs Delivery</p>
               <GroupTable rows={data.byTown} onOpen={(name) => setDrawer({ kind: "town", key: name })} />
               <div style={{ marginTop: 14 }}>

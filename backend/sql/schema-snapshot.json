@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1264,
-  "columnCount": 18368,
+  "tableCount": 1265,
+  "columnCount": 18389,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -86,6 +86,29 @@
       "batch_id",
       "changed_by",
       "changed_at"
+    ],
+    "ahm_call_log": [
+      "id",
+      "process_id",
+      "call_key",
+      "call_time",
+      "call_date",
+      "telesales_id",
+      "outlet_id",
+      "phone",
+      "call_type",
+      "call_status",
+      "disposition",
+      "duration_sec",
+      "is_connected",
+      "is_productive",
+      "is_incoming",
+      "zone",
+      "region",
+      "upload_batch_id",
+      "created_by",
+      "created_at",
+      "updated_at"
     ],
     "ahm_dashboard_snapshot": [
       "cache_key",

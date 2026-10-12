@@ -25,3 +25,49 @@ describe("ahmMetricRows", () => {
     expect(m.AHM_DELIVERED_PCT.value).toBe(0);
   });
 });
+
+import { ahmCallMetricRows } from "../ahm-metrics.service.js";
+import { classifyCall, parseDurationSec } from "../../bulk-upload/ahm-call-log-bulk.service.js";
+
+describe("ahmCallMetricRows", () => {
+  it("uses only classified calls as each rate's denominator", () => {
+    const m = by(ahmCallMetricRows("2026-10-02", { calls: 100, connected: 60, connected_known: 80, productive: 20, productive_known: 80, incoming: 0, incoming_known: 0 }));
+    expect(m.AHM_EC_PCT).toMatchObject({ value: 75, numerator: 6000, denominator: 80 });
+    expect(m.AHM_PC_PCT).toMatchObject({ value: 25 });
+    expect(m.AHM_INCOMING_PCT).toBeUndefined();
+    expect(m.AHM_CALLS.value).toBe(100);
+  });
+});
+
+describe("classifyCall", () => {
+  const base = { status: null, disposition: null, durationSec: null, callType: null, productiveFlag: null };
+  it("reads status text, with not-connected winning over connected", () => {
+    expect(classifyCall({ ...base, status: "Connected" }).isConnected).toBe(1);
+    expect(classifyCall({ ...base, status: "Not Connected" }).isConnected).toBe(0);
+    expect(classifyCall({ ...base, status: "No Answer" }).isConnected).toBe(0);
+  });
+  it("falls back to talk time, and stays unknown with no evidence", () => {
+    expect(classifyCall({ ...base, durationSec: 40 }).isConnected).toBe(1);
+    expect(classifyCall({ ...base, durationSec: 0 }).isConnected).toBe(0);
+    expect(classifyCall(base)).toEqual({ isConnected: null, isProductive: null, isIncoming: null });
+  });
+  it("marks productive from disposition, never for a call that did not connect", () => {
+    expect(classifyCall({ ...base, status: "Connected", disposition: "Survey Taken" }).isProductive).toBe(1);
+    expect(classifyCall({ ...base, status: "Connected", disposition: "Not Interested" }).isProductive).toBe(0);
+    expect(classifyCall({ ...base, status: "Switched Off", disposition: "Survey Taken" }).isProductive).toBe(0);
+  });
+  it("reads direction from the call type", () => {
+    expect(classifyCall({ ...base, callType: "Inbound" }).isIncoming).toBe(1);
+    expect(classifyCall({ ...base, callType: "Outbound" }).isIncoming).toBe(0);
+  });
+});
+
+describe("parseDurationSec", () => {
+  it("accepts seconds, mm:ss, h:mm:ss and Excel day fractions", () => {
+    expect(parseDurationSec("85")).toBe(85);
+    expect(parseDurationSec("1:25")).toBe(85);
+    expect(parseDurationSec("0:01:25")).toBe(85);
+    expect(parseDurationSec("0.000984")).toBe(85);
+    expect(parseDurationSec("")).toBeNull();
+  });
+});

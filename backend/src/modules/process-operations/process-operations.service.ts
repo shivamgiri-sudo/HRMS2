@@ -137,6 +137,7 @@ const SECTIONS: Array<{ key: string; title: string; blurb: string; members: stri
     members: [
       "AHM_ORDERS", "AHM_OUTLETS", "AHM_ORDER_QTY", "AHM_ORDER_VALUE", "AHM_DELIVERED_PCT",
       "AHM_FILL_RATE_PCT", "AHM_SURVEY_TAKEN_PCT", "AHM_TELESALES_AGENTS", "AHM_ORDERS_PER_AGENT",
+      "AHM_LINES_CUT", "AHM_LINES_PER_ORDER", "AHM_CALLS", "AHM_EC_PCT", "AHM_PC_PCT", "AHM_INCOMING_PCT",
     ],
   },
   {

@@ -24,7 +24,7 @@ import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
 function normalizeKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
-function getByColumn(data: Record<string, unknown>, ...columnNames: string[]): unknown {
+export function getByColumn(data: Record<string, unknown>, ...columnNames: string[]): unknown {
   const normalized: Record<string, unknown> = {};
   for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const col of columnNames) {
@@ -33,12 +33,12 @@ function getByColumn(data: Record<string, unknown>, ...columnNames: string[]): u
   }
   return null;
 }
-function str(data: Record<string, unknown>, ...columnNames: string[]): string | null {
+export function str(data: Record<string, unknown>, ...columnNames: string[]): string | null {
   const v = getByColumn(data, ...columnNames);
   return v === null ? null : String(v).trim() || null;
 }
 /** Strips a trailing ".0" a float-ish phone/code number can pick up once JSON round-trips it. */
-function strNum(data: Record<string, unknown>, ...columnNames: string[]): string | null {
+export function strNum(data: Record<string, unknown>, ...columnNames: string[]): string | null {
   const v = getByColumn(data, ...columnNames);
   if (v === null) return null;
   const n = Number(v);
@@ -67,7 +67,7 @@ const ZERO_DATE_RE = /^0000-00-00/;
 
 /** JS Date | ISO-ish string | Excel day-serial number -> "YYYY-MM-DD HH:MM:SS", or null for
  * anything unparsable (including the source's own "0000-00-00 00:00:00" unset-date sentinel). */
-function parseAhmDateTime(data: Record<string, unknown>, ...columnNames: string[]): string | null {
+export function parseAhmDateTime(data: Record<string, unknown>, ...columnNames: string[]): string | null {
   const v = getByColumn(data, ...columnNames);
   if (v === null) return null;
   if (v instanceof Date) {

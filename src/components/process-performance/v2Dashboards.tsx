@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RotateCcw, Truck } from "lucide-react";
+import { RotateCcw, Truck, PhoneCall } from "lucide-react";
 import { ProcessDashboard } from "@/components/process-dashboard/ProcessDashboard";
 import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
 import { BellavitaSaleDashboard } from "@/components/process-performance/BellavitaSaleDashboard";
@@ -298,6 +298,7 @@ export function V2DashboardView({ company, dashboard, onOpenDashboard }: {
 export const AHM_UPLOADERS: UploaderHubItem[] = [
   { code: "AHM_DUMP_MP", label: "Dump (MP)", description: "Upload AHM's order/survey-to-delivery export, MP branch", icon: Truck },
   { code: "AHM_DUMP_MM", label: "Dump (MM)", description: "Upload AHM's order/survey-to-delivery export, MM branch", icon: Truck },
+  { code: "AHM_CALLS", label: "Call log", description: "Upload the call-attempt log (every dial): drives EC %, PC % and Incoming %", icon: PhoneCall },
 ];
 
 /** Uploaders the Process Operations page offers beside a V2 company's dashboards (real UploaderWorkspace, not the stub grid). */

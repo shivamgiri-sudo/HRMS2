@@ -786,6 +786,13 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_ahm_call_log_batch") {
+    const { importAhmCallLogBatch } = await import("./ahm-call-log-bulk.service.js");
+    const data = await importAhmCallLogBatch(id, userId);
+    await refreshAhmProcessMetrics();
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_ahm_dump_mm_batch") {
     const { importAhmDumpMmBatch } = await import("./ahm-dump-bulk.service.js");
     const data = await importAhmDumpMmBatch(id, userId);

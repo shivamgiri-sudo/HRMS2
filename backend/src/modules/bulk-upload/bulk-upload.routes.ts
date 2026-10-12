@@ -623,6 +623,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   // AHM "Dump" export (one row per outlet/SKU order line), two uploaders, one shared table (sql/1875).
   "import_ahm_dump_mp_batch",
   "import_ahm_dump_mm_batch",
+  "import_ahm_call_log_batch", // AHM call-attempt log -> mas_hrms.ahm_call_log (EC% / PC% / Incoming %)
   "import_du_team_mapping_korea_batch",
   "import_du_team_mapping_thailand_batch",
   "import_bella_repeat_alignment_batch",

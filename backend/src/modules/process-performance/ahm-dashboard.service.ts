@@ -90,6 +90,15 @@ export interface AhmHourDispositionRow { hour: number; disposition: string; orde
 /** zone -> disposition -> orders, matching "Max Disposition"'s own ASM Zone / AM Name grouping. */
 export interface AhmZoneDispositionRow { zone: string; disposition: string; orders: number }
 
+/** GPI tracker KPIs. Lines Cut is from the order dump; EC/PC/Incoming need the uploaded call-attempt log (callLogAvailable). */
+export interface AhmCallAgentRow { agent: string; calls: number; ecPct: number | null; pcPct: number | null; incomingPct: number | null }
+export interface AhmCallPerformance {
+  linesCut: number; linesPerOrder: number;
+  callLogAvailable: boolean;
+  calls: number; ecPct: number | null; pcPct: number | null; incomingPct: number | null;
+  byTelesales: AhmCallAgentRow[];
+}
+
 export interface AhmDashboardData {
   from: string; to: string; region: "MP" | "MM" | null;
   headline: AhmHeadline;
@@ -105,6 +114,7 @@ export interface AhmDashboardData {
   byCategory: AhmProductRow[];
   hourlyDisposition: AhmHourDispositionRow[];
   zoneDisposition: AhmZoneDispositionRow[];
+  callPerformance: AhmCallPerformance;
   dataAvailable: boolean;
 }
 
@@ -143,7 +153,7 @@ interface SnapshotRow extends RowDataPacket { payload: string; computed_at: Date
 // crashed ("Cannot read properties of undefined (reading 'map')") on a stale v1/v2 snapshot
 // still inside its 30-minute freshness window. Bump this again any time a field is added,
 // renamed or removed.
-const SNAPSHOT_VERSION = "v3";
+const SNAPSHOT_VERSION = "v4";
 export const ahmSnapshotKey = (f: AhmFilters): string => `${SNAPSHOT_VERSION}|${f.from}|${f.to}|${f.region ?? ""}|${f.zonePrefix ?? ""}`;
 
 export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
@@ -298,11 +308,55 @@ async function computeAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> {
     zone: String(r.zone), disposition: String(r.disposition), orders: num(r.orders),
   }));
 
+  const callPerformance = await computeCallPerformance(f, headline.orders, w);
+
   return {
     from: f.from, to: f.to, region: f.region, headline, statuses, dispositions, hourly, daily,
     byZone, byTown, byTelesales, byDeliveredBy, byFranchise, byCategory, hourlyDisposition, zoneDisposition,
+    callPerformance,
     dataAvailable: headline.orders > 0,
   };
+}
+
+/** A rate over only the calls the file gave evidence for; null when there were none (never a 0 standing in for "unknown"). */
+const rate = (part: unknown, known: unknown): number | null => (num(known) > 0 ? pct(num(part), num(known)) : null);
+
+async function computeCallPerformance(
+  f: AhmFilters, orders: number, w: { sql: string; params: unknown[] },
+): Promise<AhmCallPerformance> {
+  const [linesRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT CONCAT(sales_no, '|', product_code)) AS lines FROM ${TABLE} ${w.sql}`, w.params);
+  const linesCut = num(linesRows[0]?.lines);
+  const base: AhmCallPerformance = {
+    linesCut, linesPerOrder: orders > 0 ? Math.round((linesCut / orders) * 100) / 100 : 0,
+    callLogAvailable: false, calls: 0, ecPct: null, pcPct: null, incomingPct: null, byTelesales: [],
+  };
+  try {
+    // The call log has its own date; region/zone filters belong to the dump's columns and are not applied to dials.
+    const sel = `COUNT(*) AS calls, SUM(is_connected = 1) AS connected, SUM(is_connected IS NOT NULL) AS connected_known,
+                 SUM(is_productive = 1) AS productive, SUM(is_productive IS NOT NULL) AS productive_known,
+                 SUM(is_incoming = 1) AS incoming, SUM(is_incoming IS NOT NULL) AS incoming_known`;
+    const range = `call_date >= ? AND call_date <= ?`;
+    const [[tot], [agents]] = await Promise.all([
+      db.execute<RowDataPacket[]>(`SELECT ${sel} FROM ahm_call_log WHERE ${range}`, [f.from, f.to]),
+      db.execute<RowDataPacket[]>(
+        `SELECT telesales_id AS agent, ${sel} FROM ahm_call_log WHERE ${range} GROUP BY telesales_id ORDER BY calls DESC LIMIT 200`, [f.from, f.to]),
+    ]);
+    const t = tot[0];
+    if (!t || num(t.calls) <= 0) return { ...base, callLogAvailable: false };
+    return {
+      ...base, callLogAvailable: true, calls: num(t.calls),
+      ecPct: rate(t.connected, t.connected_known), pcPct: rate(t.productive, t.productive_known),
+      incomingPct: rate(t.incoming, t.incoming_known),
+      byTelesales: agents.map((r) => ({
+        agent: String(r.agent), calls: num(r.calls), ecPct: rate(r.connected, r.connected_known),
+        pcPct: rate(r.productive, r.productive_known), incomingPct: rate(r.incoming, r.incoming_known),
+      })),
+    };
+  } catch (err) {
+    if ((err as { code?: string }).code === "ER_NO_SUCH_TABLE") return base;
+    throw err;
+  }
 }
 
 export type AhmDetailKind = "telesales" | "deliveredBy" | "zone" | "town";

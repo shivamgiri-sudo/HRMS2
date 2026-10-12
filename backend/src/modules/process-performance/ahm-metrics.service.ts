@@ -28,7 +28,7 @@ export function ahmMetricRows(date: string, r: Record<string, unknown>): AhmMetr
   const orders = num(r.orders);
   if (orders <= 0) return [];
   const orderQty = num(r.order_qty), salesQty = num(r.sales_qty), delivered = num(r.delivered);
-  const surveyTaken = num(r.survey_taken), agents = num(r.telesales_agents);
+  const surveyTaken = num(r.survey_taken), agents = num(r.telesales_agents), lines = num(r.lines);
   const out: AhmMetricRow[] = [
     { metricKey: "AHM_ORDERS", date, value: orders, numerator: null, denominator: null },
     { metricKey: "AHM_OUTLETS", date, value: num(r.outlets), numerator: null, denominator: null },
@@ -37,12 +37,47 @@ export function ahmMetricRows(date: string, r: Record<string, unknown>): AhmMetr
     { metricKey: "AHM_DELIVERED_PCT", date, value: r4((delivered / orders) * 100), numerator: delivered * 100, denominator: orders },
     { metricKey: "AHM_SURVEY_TAKEN_PCT", date, value: r4((surveyTaken / orders) * 100), numerator: surveyTaken * 100, denominator: orders },
   ];
+  if (lines > 0) {
+    out.push({ metricKey: "AHM_LINES_CUT", date, value: lines, numerator: null, denominator: null });
+    out.push({ metricKey: "AHM_LINES_PER_ORDER", date, value: r4(lines / orders), numerator: lines, denominator: orders });
+  }
   if (orderQty > 0) out.push({ metricKey: "AHM_FILL_RATE_PCT", date, value: r4((salesQty / orderQty) * 100), numerator: salesQty * 100, denominator: orderQty });
   if (agents > 0) {
     out.push({ metricKey: "AHM_TELESALES_AGENTS", date, value: agents, numerator: null, denominator: null });
     out.push({ metricKey: "AHM_ORDERS_PER_AGENT", date, value: r4(orders / agents), numerator: orders, denominator: agents });
   }
   return out;
+}
+
+/**
+ * Pure: one day's call-log aggregate -> EC / PC / Incoming rows. Each rate's denominator is only the calls the file gave
+ * evidence for (is_connected / is_productive / is_incoming not NULL), so an unclassified call never counts as a miss.
+ */
+export function ahmCallMetricRows(date: string, r: Record<string, unknown>): AhmMetricRow[] {
+  const calls = num(r.calls);
+  if (calls <= 0) return [];
+  const out: AhmMetricRow[] = [{ metricKey: "AHM_CALLS", date, value: calls, numerator: null, denominator: null }];
+  const rate = (key: string, part: unknown, whole: unknown) => {
+    const w = num(whole);
+    if (w > 0) out.push({ metricKey: key, date, value: r4((num(part) / w) * 100), numerator: num(part) * 100, denominator: w });
+  };
+  rate("AHM_EC_PCT", r.connected, r.connected_known);
+  rate("AHM_PC_PCT", r.productive, r.productive_known);
+  rate("AHM_INCOMING_PCT", r.incoming, r.incoming_known);
+  return out;
+}
+
+async function writeRows(processId: string, rows: AhmMetricRow[], note: string): Promise<number> {
+  for (const m of rows) {
+    await db.execute(
+      `INSERT INTO process_metric_actual
+         (id, process_id, metric_key, score_date, actual_value, source, source_connector_key, note, rollup_numerator, rollup_denominator)
+       VALUES (UUID(), ?, ?, ?, ?, 'connector', NULL, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE actual_value = VALUES(actual_value), source = 'connector', note = VALUES(note),
+         rollup_numerator = VALUES(rollup_numerator), rollup_denominator = VALUES(rollup_denominator)`,
+      [processId, m.metricKey, m.date, m.value, note, m.numerator, m.denominator]);
+  }
+  return rows.length;
 }
 
 export async function syncAhmProcessMetrics(from: string, to: string): Promise<{ days: number; written: number; skipped?: string }> {
@@ -57,24 +92,27 @@ export async function syncAhmProcessMetrics(from: string, to: string): Promise<{
             SUM(survey_qty) AS order_qty, SUM(sales_qty) AS sales_qty, SUM(survey_qty * COALESCE(sku_mrp, 0)) AS order_value,
             COUNT(DISTINCT CASE WHEN last_status = 'Delivered' THEN sales_no END) AS delivered,
             COUNT(DISTINCT CASE WHEN last_disposition_status = 'Survey Taken' THEN sales_no END) AS survey_taken,
-            COUNT(DISTINCT NULLIF(telesales_id, '')) AS telesales_agents
+            COUNT(DISTINCT NULLIF(telesales_id, '')) AS telesales_agents,
+            COUNT(DISTINCT CONCAT(sales_no, '|', product_code)) AS lines
        FROM db_masmis.ahm_dump_raw
       WHERE survey_date >= ? AND survey_date < DATE_ADD(?, INTERVAL 1 DAY)
       GROUP BY d`, [from, to]);
 
   let written = 0;
-  for (const r of rows as RowDataPacket[]) {
-    const date = String(r.d);
-    for (const m of ahmMetricRows(date, r)) {
-      await db.execute(
-        `INSERT INTO process_metric_actual
-           (id, process_id, metric_key, score_date, actual_value, source, source_connector_key, note, rollup_numerator, rollup_denominator)
-         VALUES (UUID(), ?, ?, ?, ?, 'connector', NULL, 'AHM dump roll-up', ?, ?)
-         ON DUPLICATE KEY UPDATE actual_value = VALUES(actual_value), source = 'connector', note = VALUES(note),
-           rollup_numerator = VALUES(rollup_numerator), rollup_denominator = VALUES(rollup_denominator)`,
-        [processId, m.metricKey, m.date, m.value, m.numerator, m.denominator]);
-      written++;
-    }
+  for (const r of rows as RowDataPacket[]) written += await writeRows(processId, ahmMetricRows(String(r.d), r), "AHM dump roll-up");
+
+  // Call-attempt log: absent until the table exists / a file has been uploaded, which is not an error.
+  try {
+    const [calls] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(call_date, '%Y-%m-%d') AS d, COUNT(*) AS calls,
+              SUM(is_connected = 1) AS connected, SUM(is_connected IS NOT NULL) AS connected_known,
+              SUM(is_productive = 1) AS productive, SUM(is_productive IS NOT NULL) AS productive_known,
+              SUM(is_incoming = 1) AS incoming, SUM(is_incoming IS NOT NULL) AS incoming_known
+         FROM ahm_call_log WHERE call_date >= ? AND call_date <= ? GROUP BY d`, [from, to]);
+    for (const r of calls as RowDataPacket[]) written += await writeRows(processId, ahmCallMetricRows(String(r.d), r), "AHM call log roll-up");
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code !== "ER_NO_SUCH_TABLE") throw err;
   }
   return { days: (rows as RowDataPacket[]).length, written };
 }
