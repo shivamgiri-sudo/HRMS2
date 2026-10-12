@@ -96,7 +96,6 @@ on:
           - case-duplicates-scan
           - salary-assignment-dedupe-identical
           - rejoin-stale-exit-audit
-          - ff-accuracy-audit
           - attendance-register-exited-verify
           - reconcile-aug-incentives
           - zero-day-gross-audit
@@ -623,10 +622,6 @@ jobs:
               # Dry-runs unless given --apply. Apply deactivates the later of two IDENTICAL active rows (soft).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/salary-assignment-dedupe-identical.ts $FLAG
-              ;;
-            ff-accuracy-audit)
-              # Read-only in both modes: SELECTs only, employee_code and figures only in the output.
-              npx tsx scripts/ff-accuracy-audit.ts
               ;;
             rejoin-stale-exit-audit)
               # Read-only in both modes: SELECTs only, employee_code only in the output.
