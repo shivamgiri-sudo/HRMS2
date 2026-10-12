@@ -181,7 +181,7 @@ async function sweep(): Promise<void> {
         console.error("[NocSlaReminder] auto-clear sweep failed:", e instanceof Error ? e.message : e);
         return { cases: 0, cleared: 0, completed: 0 };
       });
-      if (auto.cleared > 0) {
+      if (auto.cases > 0) {
         console.log(`[NocSlaReminder] auto-clear: ${auto.cleared} stage(s) over ${auto.cases} case(s), ${auto.completed} completed`);
       }
 

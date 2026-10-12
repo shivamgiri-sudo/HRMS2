@@ -278,9 +278,12 @@ export async function getCaseDetail(caseId: string): Promise<{
   ]);
 
   const assetGate = evaluateAssetGate(assets);
+  // Same rules the sign-off endpoint applies: under the auto profile the employee form is not a gate,
+  // so the screen must not tell a signer "form pending" while the API would accept their decision.
+  const auto = await isNocAutoClearanceEnabled();
   const annotated = signatories.map((s) => ({
     ...s,
-    blocked: stageBlockReason(nocCase, signatories, s, assetGate),
+    blocked: stageBlockReason(nocCase, signatories, s, assetGate, auto),
   }));
 
   // A case can only be opened once the employee's last working day is known, but openCase never copied it

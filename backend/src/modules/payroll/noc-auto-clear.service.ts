@@ -46,7 +46,7 @@ import {
 
 const DONE_PROVISIONING = ["actioned", "confirmed", "waived"] as const;
 const OPEN_CASE_STATUSES = ["invited", "employee_submitted", "in_progress"];
-const MAX_CASES_PER_SWEEP = 200;
+const MAX_CASES_PER_SWEEP = 500;
 /**
  * Sign-off emails per sweep. Turning the profile on makes every open case's stages actionable at
  * once; mailing all of them in one hour would also hit the gateway's per-event daily cap and starve
