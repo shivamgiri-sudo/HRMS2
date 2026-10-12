@@ -55,6 +55,7 @@ on:
           - report-requests-diagnose
           - payment-voucher-salary-verify
           - sbi-card-verify
+          - ahm-dialer-discover
           - sbi-card-demo-seed
           - sbi-card-demo-remove
           - holiday-mapping-audit
@@ -323,6 +324,15 @@ jobs:
                 exit 1
               fi
               node scripts/sbi-card-verify.mjs
+              ;;
+            ahm-dialer-discover)
+              # Read-only: SELECTs only, in a READ ONLY session, on the app's own dialer pool settings. Lists the dialer
+              # DB's table families, call/CDR-looking tables with columns, and where an AHM/GPI campaign name appears.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::ahm-dialer-discover is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              node scripts/ahm-dialer-discover.mjs
               ;;
             sbi-card-demo-seed|sbi-card-demo-remove)
               # Synthetic SBI Card dashboard data, tagged data_source='DEMO_SEED' so it can be removed exactly. dry-run reports only;
