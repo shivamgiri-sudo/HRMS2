@@ -87,6 +87,42 @@ async function namesByUserId(ids: unknown[]): Promise<Map<string, string>> {
   return out;
 }
 
+const uniq = (ids: unknown[]) => [...new Set(ids.filter((v): v is string => typeof v === "string" && v.length > 0))];
+
+/** id -> name for a small master table (branch_master / process_master); identifiers are fixed by callers. */
+async function namesById(table: "branch_master" | "process_master", column: "branch_name" | "process_name", ids: unknown[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const list = uniq(ids);
+  for (let i = 0; i < list.length; i += 500) {
+    const chunk = list.slice(i, i + 500);
+    const rows = rowsOf<RowDataPacket>(await db.execute(`SELECT id, ${column} AS name FROM ${table} WHERE id IN (${chunk.map(() => "?").join(",")})`, chunk));
+    for (const r of rows) out.set(String(r.id), String(r.name ?? ""));
+  }
+  return out;
+}
+
+async function employeeNamesById(ids: unknown[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const list = uniq(ids);
+  for (let i = 0; i < list.length; i += 500) {
+    const chunk = list.slice(i, i + 500);
+    const rows = rowsOf<RowDataPacket>(await db.execute(`SELECT e.id, ${NAME("e")} AS name FROM employees e WHERE e.id IN (${chunk.map(() => "?").join(",")})`, chunk));
+    for (const r of rows) out.set(String(r.id), String(r.name ?? ""));
+  }
+  return out;
+}
+
+async function employeeCodesById(ids: unknown[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const list = uniq(ids);
+  for (let i = 0; i < list.length; i += 500) {
+    const chunk = list.slice(i, i + 500);
+    const rows = rowsOf<RowDataPacket>(await db.execute(`SELECT id, employee_code FROM employees WHERE id IN (${chunk.map(() => "?").join(",")})`, chunk));
+    for (const r of rows) out.set(String(r.id), String(r.employee_code ?? ""));
+  }
+  return out;
+}
+
 const clamp = (offset?: number, limit?: number) => ({
   offset: Math.max(Math.trunc(offset ?? 0), 0),
   limit: Math.min(Math.max(Math.trunc(limit ?? 25), 1), 200),
@@ -137,83 +173,101 @@ export async function listHistory(actor: Actor, f: HistoryFilter) {
 export async function historyFilterOptions(actor: Actor) {
   const { where, params } = await buildWhere(actor, {});
   const w = where.join(" AND ");
-  const rows = rowsOf<RowDataPacket>(await db.execute(
-    `SELECT DISTINCT b.id AS branch_id, b.branch_name, p.id AS process_id, p.process_name
-       FROM roster_team_submission s
-       JOIN roster_team_submission_line l ON l.submission_id = s.id
-       JOIN employees e ON e.id = l.employee_id
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-       LEFT JOIN process_master p ON p.id = e.process_id
-      WHERE ${w} LIMIT 5000`, params,
+  // Small steps instead of one wide join: ids first, names from the (tiny) masters after.
+  const subs = rowsOf<RowDataPacket>(await db.execute(
+    `SELECT s.id, s.submitter_employee_id, s.manager_approver_employee_id FROM roster_team_submission s WHERE ${w} LIMIT 20000`, params,
   ));
-  const managers = rowsOf<RowDataPacket>(await db.execute(
-    `SELECT m.id, ${NAME("m")} AS name FROM employees m
-      WHERE m.id IN (SELECT s.submitter_employee_id FROM roster_team_submission s WHERE ${w})
-         OR m.id IN (SELECT s.manager_approver_employee_id FROM roster_team_submission s WHERE ${w})
-      LIMIT 2000`, [...params, ...params],
-  ));
+  const subIds = subs.map((r) => Number(r.id));
+  const pairs = new Map<string, { branchId: string | null; processId: string | null }>();
+  for (let i = 0; i < subIds.length; i += 1000) {
+    const chunk = subIds.slice(i, i + 1000);
+    const rows = rowsOf<RowDataPacket>(await db.execute(
+      `SELECT DISTINCT e.branch_id, e.process_id FROM roster_team_submission_line l JOIN employees e ON e.id = l.employee_id
+        WHERE l.submission_id IN (${chunk.map(() => "?").join(",")})`, chunk,
+    ));
+    for (const r of rows) {
+      const k = `${r.branch_id ?? ""}|${r.process_id ?? ""}`;
+      pairs.set(k, { branchId: r.branch_id ? String(r.branch_id) : null, processId: r.process_id ? String(r.process_id) : null });
+    }
+  }
+  const branchNames = await namesById("branch_master", "branch_name", [...pairs.values()].map((v) => v.branchId));
+  const processNames = await namesById("process_master", "process_name", [...pairs.values()].map((v) => v.processId));
   const branches = new Map<string, string>();
   const processes = new Map<string, { name: string; branchId: string | null }>();
-  for (const r of rows) {
-    if (r.branch_id) branches.set(String(r.branch_id), String(r.branch_name ?? ""));
-    if (r.process_id) processes.set(String(r.process_id), { name: String(r.process_name ?? ""), branchId: r.branch_id ? String(r.branch_id) : null });
+  for (const v of pairs.values()) {
+    if (v.branchId && branchNames.has(v.branchId)) branches.set(v.branchId, branchNames.get(v.branchId)!);
+    if (v.processId && processNames.has(v.processId)) processes.set(v.processId, { name: processNames.get(v.processId)!, branchId: v.branchId });
   }
+  const managerIds = [...new Set(subs.flatMap((r) => [r.submitter_employee_id, r.manager_approver_employee_id]).filter((v): v is string => typeof v === "string" && v.length > 0))];
+  const managerNames = await employeeNamesById(managerIds);
   const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
   return {
     branches: [...branches].map(([id, name]) => ({ id, name })).sort(byName),
     processes: [...processes].map(([id, v]) => ({ id, name: v.name, branchId: v.branchId })).sort(byName),
-    managers: managers.map((m) => ({ id: String(m.id), name: String(m.name ?? "") })).filter((m) => m.name).sort(byName),
+    managers: [...managerNames].map(([id, name]) => ({ id, name })).filter((m) => m.name).sort(byName),
   };
 }
 
 /**
  * One row per raised cell, sorted branch > process > manager so a plain sheet reads "process wise,
  * manager wise". Scope and filters are exactly the history list's; capped to keep the response bounded.
+ * Built from three narrow reads (submissions, their lines + employee, master names) and sorted in code:
+ * one wide multi-join with an ORDER BY over names took ~15s on the live data.
  */
 export async function exportHistoryRows(actor: Actor, f: HistoryFilter) {
   const { where, params } = await buildWhere(actor, { ...f, offset: 0 });
-  const rows = rowsOf<RowDataPacket>(await db.execute(
-    `SELECT s.id AS submission_id, s.submission_no, s.status, ${DATE("s.from_date", "from_d")}, ${DATE("s.to_date", "to_d")},
-            ${STAMP("s.submitted_at", "submitted_s")}, s.note,
-            se.employee_code AS submitter_code, ${NAME("se")} AS submitter_name, ${NAME("me")} AS manager_name,
+  const subs = rowsOf<RowDataPacket>(await db.execute(
+    `SELECT s.id, s.submission_no, s.status, ${DATE("s.from_date", "from_d")}, ${DATE("s.to_date", "to_d")},
+            ${STAMP("s.submitted_at", "submitted_s")}, s.note, s.submitter_employee_id, s.manager_approver_employee_id,
             s.manager_decision, ${STAMP("s.manager_decided_at", "mgr_at")}, s.manager_remarks, s.manager_decided_by,
             s.wfm_decision, ${STAMP("s.wfm_decided_at", "wfm_at")}, s.wfm_remarks, s.wfm_decided_by,
-            ${STAMP("s.applied_at", "applied_s")},
-            b.branch_name, p.process_name, e.employee_code, ${NAME("e")} AS employee_name,
-            ${DATE("l.roster_date", "roster_d")}, l.kind, l.old_assignment_type, l.old_shift_start_time, l.old_shift_end_time,
-            l.new_assignment_type, l.new_shift_start_time, l.new_shift_end_time, l.reason, l.line_status, l.skip_reason
-       FROM roster_team_submission s
-       JOIN roster_team_submission_line l ON l.submission_id = s.id
-       LEFT JOIN employees e ON e.id = l.employee_id
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-       LEFT JOIN process_master p ON p.id = e.process_id
-       LEFT JOIN employees se ON se.id = s.submitter_employee_id
-       LEFT JOIN employees me ON me.id = s.manager_approver_employee_id
-      WHERE ${where.join(" AND ")}
-      ORDER BY b.branch_name, p.process_name, ${NAME("se")}, s.id, l.roster_date, e.employee_code
-      LIMIT ${HISTORY_EXPORT_MAX_ROWS + 1}`, params,
+            ${STAMP("s.applied_at", "applied_s")}
+       FROM roster_team_submission s WHERE ${where.join(" AND ")} ORDER BY s.id LIMIT 20000`, params,
   ));
-  const names = await namesByUserId(rows.flatMap((r) => [r.manager_decided_by, r.wfm_decided_by]));
-  const truncated = rows.length > HISTORY_EXPORT_MAX_ROWS;
+  const subById = new Map(subs.map((r) => [Number(r.id), r]));
+  const lines: RowDataPacket[] = [];
+  const ids = [...subById.keys()];
+  for (let i = 0; i < ids.length && lines.length <= HISTORY_EXPORT_MAX_ROWS; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    lines.push(...rowsOf<RowDataPacket>(await db.execute(
+      `SELECT l.submission_id, l.employee_id, ${DATE("l.roster_date", "roster_d")}, l.kind, l.old_assignment_type, l.old_shift_start_time,
+              l.old_shift_end_time, l.new_assignment_type, l.new_shift_start_time, l.new_shift_end_time, l.reason, l.line_status, l.skip_reason,
+              e.employee_code, e.branch_id, e.process_id, ${NAME("e")} AS employee_name
+         FROM roster_team_submission_line l LEFT JOIN employees e ON e.id = l.employee_id
+        WHERE l.submission_id IN (${chunk.map(() => "?").join(",")})`, chunk,
+    )));
+  }
+  const truncated = lines.length > HISTORY_EXPORT_MAX_ROWS;
+  const used = lines.slice(0, HISTORY_EXPORT_MAX_ROWS);
+  const [branchNames, processNames, empNames, userNames] = await Promise.all([
+    namesById("branch_master", "branch_name", used.map((l) => l.branch_id)),
+    namesById("process_master", "process_name", used.map((l) => l.process_id)),
+    employeeNamesById(subs.flatMap((r) => [r.submitter_employee_id, r.manager_approver_employee_id])),
+    namesByUserId(subs.flatMap((r) => [r.manager_decided_by, r.wfm_decided_by])),
+  ]);
+  const codes = await employeeCodesById(subs.map((r) => r.submitter_employee_id));
   const time = (s: unknown, e: unknown) => (s && e ? `${String(s).slice(0, 5)}-${String(e).slice(0, 5)}` : "");
   const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
-  return {
-    truncated,
-    max: HISTORY_EXPORT_MAX_ROWS,
-    rows: rows.slice(0, HISTORY_EXPORT_MAX_ROWS).map((r) => ({
-      branch: str(r.branch_name), process: str(r.process_name),
+  const rows = used.map((l) => {
+    const r = subById.get(Number(l.submission_id))!;
+    return {
+      branch: branchNames.get(str(l.branch_id)) ?? "", process: processNames.get(str(l.process_id)) ?? "",
       submissionNo: str(r.submission_no), status: str(r.status),
-      raisedBy: str(r.submitter_name), raisedByCode: str(r.submitter_code), raisedAt: str(r.submitted_s),
+      raisedBy: empNames.get(str(r.submitter_employee_id)) ?? "", raisedByCode: codes.get(str(r.submitter_employee_id)) ?? "", raisedAt: str(r.submitted_s),
       periodFrom: str(r.from_d), periodTo: str(r.to_d),
-      managerApprover: str(r.manager_name),
-      managerDecision: str(r.manager_decision), managerDecidedBy: names.get(String(r.manager_decided_by)) ?? "", managerDecidedAt: str(r.mgr_at), managerRemarks: str(r.manager_remarks),
-      wfmDecision: str(r.wfm_decision), wfmDecidedBy: names.get(String(r.wfm_decided_by)) ?? "", wfmDecidedAt: str(r.wfm_at), wfmRemarks: str(r.wfm_remarks),
+      managerApprover: empNames.get(str(r.manager_approver_employee_id)) ?? "",
+      managerDecision: str(r.manager_decision), managerDecidedBy: userNames.get(str(r.manager_decided_by)) ?? "", managerDecidedAt: str(r.mgr_at), managerRemarks: str(r.manager_remarks),
+      wfmDecision: str(r.wfm_decision), wfmDecidedBy: userNames.get(str(r.wfm_decided_by)) ?? "", wfmDecidedAt: str(r.wfm_at), wfmRemarks: str(r.wfm_remarks),
       appliedAt: str(r.applied_s),
-      employeeCode: str(r.employee_code), employeeName: str(r.employee_name), rosterDate: str(r.roster_d),
-      kind: str(r.kind),
-      oldAssignment: [str(r.old_assignment_type), time(r.old_shift_start_time, r.old_shift_end_time)].filter(Boolean).join(" "),
-      newAssignment: [str(r.new_assignment_type), time(r.new_shift_start_time, r.new_shift_end_time)].filter(Boolean).join(" "),
-      reason: str(r.reason), lineResult: str(r.line_status), skipReason: str(r.skip_reason), submissionNote: str(r.note),
-    })),
-  };
+      employeeCode: str(l.employee_code), employeeName: str(l.employee_name), rosterDate: str(l.roster_d),
+      kind: str(l.kind),
+      oldAssignment: [str(l.old_assignment_type), time(l.old_shift_start_time, l.old_shift_end_time)].filter(Boolean).join(" "),
+      newAssignment: [str(l.new_assignment_type), time(l.new_shift_start_time, l.new_shift_end_time)].filter(Boolean).join(" "),
+      reason: str(l.reason), lineResult: str(l.line_status), skipReason: str(l.skip_reason), submissionNote: str(r.note),
+    };
+  });
+  const cmp = (a: string, b: string) => a.localeCompare(b);
+  rows.sort((x, y) => cmp(x.branch, y.branch) || cmp(x.process, y.process) || cmp(x.raisedBy, y.raisedBy)
+    || cmp(x.submissionNo, y.submissionNo) || cmp(x.rosterDate, y.rosterDate) || cmp(x.employeeCode, y.employeeCode));
+  return { truncated, max: HISTORY_EXPORT_MAX_ROWS, rows };
 }
