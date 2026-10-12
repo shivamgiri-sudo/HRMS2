@@ -3,6 +3,7 @@ import { Router } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logger } from "../../logger.js";
+import { db } from "../../db/mysql.js";
 import {
   DashboardScopeConfigurationError,
   resolveDashboardScopeForRequest,
@@ -102,14 +103,31 @@ function todayIST(): string {
  * Branch ids the caller may see; null = org-wide. Only ORG_ALL and branch / process level scopes
  * carry a branch list - team / self scopes and unconfigured accounts get an empty set (fail closed).
  */
+// Matches the login email first, then the person's employee-record emails (login and official mail can differ).
+async function isAllBranchViewer(req: import("express").Request): Promise<boolean> {
+  const user = (req as any).authUser as { id?: string; email?: string } | undefined;
+  if (ALL_BRANCH_VIEWER_EMAILS.has(String(user?.email ?? "").trim().toLowerCase())) return true;
+  if (!user?.id) return false;
+  try {
+    const emails = [...ALL_BRANCH_VIEWER_EMAILS];
+    const [rows] = await db.execute<any[]>(
+      `SELECT 1 FROM employees WHERE user_id = ? AND active_status = 1
+          AND (LOWER(official_email) IN (${emails.map(() => "?").join(",")})
+            OR LOWER(email) IN (${emails.map(() => "?").join(",")})) LIMIT 1`,
+      [user.id, ...emails, ...emails],
+    );
+    return (rows as any[]).length > 0;
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, "[ops-control-tower] all-branch viewer lookup failed");
+    return false;
+  }
+}
+
 async function allowedBranchIds(
   req: import("express").Request,
   opts: { view?: boolean } = {},
 ): Promise<Set<string> | null> {
-  if (opts.view) {
-    const email = String((req as any).authUser?.email ?? "").trim().toLowerCase();
-    if (ALL_BRANCH_VIEWER_EMAILS.has(email)) return null;
-  }
+  if (opts.view && (await isAllBranchViewer(req))) return null;
   try {
     const scope = await resolveDashboardScopeForRequest((req as any).authUser, "");
     if (scope.level === "ORG_ALL") return null;
