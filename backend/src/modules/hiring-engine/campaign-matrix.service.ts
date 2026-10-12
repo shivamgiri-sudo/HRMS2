@@ -68,6 +68,14 @@ const activitySql = (n: number, liveFrom: string): string => {
      WHERE hm.requisition_id IN (${ph(n)}) AND hm.created_at >= ? AND hm.direction = 'out' AND (hm.delivery_status IS NULL OR hm.delivery_status <> 'failed')
   ) x GROUP BY x.requisition_id, x.kind, x.campaign_id`;
 };
+/**
+ * People the unified follow-up contacted in 48 h (email, WhatsApp or call), per requisition, drive type and campaign. One indexed read on the
+ * follow-up table: exact for the engine's own sends, and it still answers when the wider activity read above times out.
+ */
+const followupActivitySql = (n: number): string => `SELECT requisition_id, source_type AS kind, campaign_id, COUNT(DISTINCT mobile10) AS n /* followup48h */
+  FROM qualified_followup
+ WHERE requisition_id IN (${ph(n)}) AND mode_at_enqueue = 'live' AND (email_sent_at >= ? OR wa_sent_at >= ? OR called_at >= ?)
+ GROUP BY requisition_id, source_type, campaign_id`;
 const responsesSql = (n: number, liveFrom: string): string => `SELECT cr.requisition_id, ${activityTypeSql({ lead: "l", first: "lf", fill: "f", ref: "cr.occurred_at", liveFrom })} AS kind, f.campaign_id, COUNT(DISTINCT cr.mobile10) AS n
   FROM candidate_response cr LEFT JOIN he_lead l ON l.mobile10 = cr.mobile10 ${CI} LEFT JOIN meta_lead_raw lf ON lf.id = l.meta_lead_id ${CI}
   LEFT JOIN meta_lead_raw f ON f.id = COALESCE(cr.meta_lead_id, l.meta_lead_id) ${CI}
@@ -120,14 +128,18 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
   const optional = async (name: string, sql: string, p: unknown[], absentIsNull = true): Promise<RowDataPacket[] | null> => {
     try { return await run(sql, p); } catch (e) { if (absentIsNull && noTable(e)) return null; partial.push(name); return null; }
   };
-  const [streams, activity, responses, drives, runs] = await Promise.all([
+  const [streams, activityWide, followupAct, responses, drives, runs] = await Promise.all([
     run(`SELECT id, requisition_id, source_type, origin_id, status FROM requisition_stream WHERE requisition_id IN (${ph(ids.length)}) ORDER BY updated_at DESC`, ids).catch((e) => { if (noTable(e)) return [] as RowDataPacket[]; throw e; }),
     optional("activity", activitySql(ids.length, liveFrom), [...ids, since48, ...ids, since48, ...ids, since48], false),
+    optional("followup48h", followupActivitySql(ids.length), [...ids, since48, since48, since48]),
     optional("responses", responsesSql(ids.length, liveFrom), [...ids, since3d]),
     run(`SELECT requisition_id, COUNT(*) AS n FROM he_drive WHERE requisition_id IN (${ph(ids.length)}) AND drive_date BETWEEN ? AND ? AND status IN ('active', 'draft') GROUP BY requisition_id`, [...ids, today, in3]),
     optional("shortlist", shortlistSql(ids.length), ids),
   ]);
 
+  // The wide read can time out; the follow-up's own contacts are exact and cheap, so the matrix reads both and is "unknown" only when both fail.
+  // When only the follow-up read answered, a drive with contacts is known to be running; one without stays "unknown" (the legacy sends were not read).
+  const activity: RowDataPacket[] | null = activityWide || followupAct ? [...(activityWide ?? []), ...(followupAct ?? [])] : null;
   // rows
   const inScope = (id: string) => reqById.has(id) && (!q.requisitionId || q.requisitionId === id);
   const activeCampaign = (c: RowDataPacket) => ["active", "draft"].includes(String(c.campaign_status));
@@ -173,7 +185,7 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
       requisition: { id: rid, code: String(r.requisition_code ?? ""), branch: String(r.branch_name ?? ""), closedReason: closedReasonOf(r), endDate: endDateOf(v), endDatePassed: endDatePassed(v, istDay(now)),
         seatsLeft: joinsLeft(Number(r.requested_headcount ?? 0), Number(r.joined_headcount ?? 0)), bmiLinkPresent: Number(r.has_bmi) === 1,
         completeness: compileCriteria(toCriteriaRow(r)).completeness },
-      streams: streamsOf, activity48h: activity ? per(activity) : null, responses3d: responses ? per(responses) : null,
+      streams: streamsOf, activity48h: activity ? (() => { const p = per(activity); return activityWide || p.meta_live + p.meta_old + p.he > 0 ? p : null; })() : null, responses3d: responses ? per(responses) : null,
       drivesNext3d: Number(drives.find((d) => String(d.requisition_id) === rid)?.n ?? 0), eligible, pendingApproval: pending,
       enrolmentOn: { meta_live: cfg?.auto_notify !== false || followupMode() !== "off", meta_old: enrolHe, he: enrolHe }, enforcedEndDate: enforced,
     };

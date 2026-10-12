@@ -92,7 +92,7 @@ export function CampaignMatrixView({ data, loading, error, canWrite, filters, br
         <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800 dark:text-slate-100 sm:min-h-9">
           <input type="checkbox" className="h-4 w-4 cursor-pointer accent-blue-700" checked={filters.onlyProblems} onChange={(e) => onFilters({ ...filters, onlyProblems: e.target.checked })} /> Only problems
         </label>
-        {sum && <p className="text-xs text-slate-700 dark:text-slate-200">{sum.rows} rows: {sum.running} running, {sum.idle} idle, {sum.notMapped} not mapped</p>}
+        {sum && <p className="text-xs text-slate-700 dark:text-slate-200">{sum.rows} requisitions x 3 drive types = {sum.rows * 3} drives: {sum.running} running, {sum.idle} idle, {sum.notMapped} not mapped{sum.rows * 3 - sum.running - sum.idle - sum.notMapped > 0 ? `, ${sum.rows * 3 - sum.running - sum.idle - sum.notMapped} other` : ""}</p>}
       </div>
       {loading && !data && <div aria-busy="true" aria-label="Loading the campaign map" className="h-40 animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" />}
       {error && !data && (
