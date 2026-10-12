@@ -15,7 +15,57 @@ import { env } from '../../config/env.js';
 import { nowIST } from '../../shared/timezone.js';
 import { classifyCosecMinutes } from './attendance-engine.service.js';
 import { assessAggregatePunches } from './cosec-punch-interpretation.service.js';
-import { type PunchGroup, mergeNightShiftRollover } from './cosec-sync.service.js';
+import {
+  type PunchBlock,
+  type PunchGroup,
+  attributeNightShifts,
+  mergeNightShiftRollover,
+} from './cosec-sync.service.js';
+
+function addDaysText(dateText: string, days: number): string {
+  const d = new Date(`${dateText}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * One user's punches from the raw event table, attributed to the date each SHIFT started on.
+ *
+ * Grouping the event table by calendar date glued a night shift's morning exit to the next
+ * shift's evening start (a "today" that read 00:30 -> 23:59). This pulls one day of lead-in so a
+ * morning exit finds the evening it belongs to, and uses the same attributeNightShifts() the COSEC
+ * sync uses, so the live view and the stored attendance can never disagree about what a shift is.
+ */
+async function getAttributedShifts(cosecUserId: string, fromDate: string, toDate: string): Promise<PunchGroup[]> {
+  const table = env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn';
+  const pool = await getNcosecPool();
+  const result = await pool.request()
+    .input('userId', cosecUserId)
+    .input('dateStart', `${addDaysText(fromDate, -1)} 00:00:00`)
+    .input('dateEnd', `${toDate} 23:59:59`)
+    .query(`
+      SELECT
+        CONVERT(CHAR(10), CAST(Edatetime AS DATE), 23) AS punch_date,
+        CASE WHEN DATEPART(HOUR, Edatetime) < 14 THEN 'AM' ELSE 'PM' END AS part,
+        CONVERT(CHAR(19), MIN(Edatetime), 120) AS first_punch,
+        CONVERT(CHAR(19), MAX(Edatetime), 120) AS last_punch,
+        COUNT(*) AS total_punches
+      FROM ${table}
+      WHERE UserID = @userId
+        AND Edatetime >= @dateStart
+        AND Edatetime <= @dateEnd
+      GROUP BY CAST(Edatetime AS DATE), CASE WHEN DATEPART(HOUR, Edatetime) < 14 THEN 'AM' ELSE 'PM' END
+    `);
+  const blocks: PunchBlock[] = result.recordset.map((row: any) => ({
+    cosecUserId,
+    punchDate: String(row.punch_date),
+    part: row.part === 'AM' ? 'AM' : 'PM',
+    firstPunch: String(row.first_punch),
+    lastPunch: String(row.last_punch),
+    totalPunches: Number(row.total_punches),
+  }));
+  return attributeNightShifts(blocks, 'ncosec_realtime', table).groups;
+}
 
 interface RealTimePunch {
   punch_date: string;
@@ -114,30 +164,23 @@ export async function getRealTimePunchesToday(employeeId: string): Promise<RealT
   const todayStr = nowIST().slice(0, 10);
 
   try {
-    const pool = await getNcosecPool();
-    const result = await pool.request()
-      .input('userId', mapping.cosec_user_id)
-      .input('dateStart', `${todayStr} 00:00:00`)
-      .input('dateEnd', `${todayStr} 23:59:59`)
-      .query(`
-        SELECT
-          UserID,
-          CONVERT(CHAR(19), MIN(Edatetime), 120) as first_punch,
-          CONVERT(CHAR(19), MAX(Edatetime), 120) as last_punch,
-          COUNT(*) as total_punches,
-          DATEDIFF(MINUTE, MIN(Edatetime), MAX(Edatetime)) as raw_minutes
-        FROM ${env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn'}
-        WHERE UserID = @userId
-          AND Edatetime >= @dateStart
-          AND Edatetime <= @dateEnd
-        GROUP BY UserID
-      `);
-
-    if (result.recordset.length === 0) {
+    // The shift that is current today: one that started today, or last night's that is still
+    // running / ended this morning. Calendar-date MIN/MAX read 00:30 -> 23:59 for a night worker.
+    const shifts = await getAttributedShifts(mapping.cosec_user_id, todayStr, todayStr);
+    const yesterday = addDaysText(todayStr, -1);
+    const shift =
+      shifts.find((g) => g.punchDate === todayStr)
+      ?? shifts.find((g) => g.punchDate === yesterday && g.lastPunch.slice(0, 10) === todayStr);
+    if (!shift) {
       return null;
     }
 
-    const row = result.recordset[0];
+    const row = {
+      first_punch: shift.firstPunch,
+      last_punch: shift.lastPunch,
+      total_punches: shift.totalPunches,
+      raw_minutes: shift.workingMinutes,
+    };
 
     // NCOSEC stores IST wall-clock. CONVERT(CHAR) returns IST string directly.
     // Just tag with +05:30, no arithmetic needed.
@@ -187,36 +230,21 @@ export async function getRealTimePunchesRange(
   }
 
   try {
-    const pool = await getNcosecPool();
-    const result = await pool.request()
-      .input('userId', mapping.cosec_user_id)
-      .input('dateStart', `${fromDate} 00:00:00`)
-      .input('dateEnd', `${toDate} 23:59:59`)
-      .query(`
-        SELECT
-          CONVERT(CHAR(10), CAST(Edatetime AS DATE), 23) as punch_date,
-          CONVERT(CHAR(19), MIN(Edatetime), 120) as first_punch,
-          CONVERT(CHAR(19), MAX(Edatetime), 120) as last_punch,
-          COUNT(*) as total_punches,
-          DATEDIFF(MINUTE, MIN(Edatetime), MAX(Edatetime)) as raw_minutes
-        FROM ${env.NCOSEC_EVENT_TABLE || 'dbo.Mx_ATDEventTrn'}
-        WHERE UserID = @userId
-          AND Edatetime >= @dateStart
-          AND Edatetime <= @dateEnd
-        GROUP BY CAST(Edatetime AS DATE)
-        ORDER BY CAST(Edatetime AS DATE) DESC
-      `);
+    // Shifts attributed to the date they started on (see getAttributedShifts).
+    const shifts = (await getAttributedShifts(mapping.cosec_user_id, fromDate, toDate))
+      .filter((g) => g.punchDate >= fromDate && g.punchDate <= toDate)
+      .sort((a, b) => b.punchDate.localeCompare(a.punchDate));
 
     const tagIST = (str: string | null) => str ? str.replace(' ', 'T') + '+05:30' : null;
 
     const todayIST = nowIST().slice(0, 10);
-    return result.recordset.map(row => {
-      const punchDate = String(row.punch_date);
+    return shifts.map(shift => {
+      const punchDate = shift.punchDate;
       const assessed = assessAggregatePunches({
-        firstPunch: row.first_punch,
-        lastPunch: row.last_punch,
-        totalPunches: row.total_punches,
-        workingMinutes: row.raw_minutes,
+        firstPunch: shift.firstPunch,
+        lastPunch: shift.lastPunch,
+        totalPunches: shift.totalPunches,
+        workingMinutes: shift.workingMinutes,
         // Past dates: treat odd punch count as completed shift (last swipe = out)
         // Today: keep live mode so mid-shift odd count isn't shown as clocked-out
         mode: punchDate < todayIST ? 'historical' : 'live',
