@@ -52,8 +52,11 @@ const verdict = (hrms: number, src: number) => {
 
   // Which tbl_invoice column carries the invoice description (used to spot re-issued invoices).
   const cols = (await billQuery<any>("SHOW COLUMNS FROM tbl_invoice")).map((c: any) => String(c.Field));
-  const descCol = ["description", "particulars", "invoice_description", "narration", "remarks"].find((c) => cols.includes(c)) ?? null;
+  const lower = new Map(cols.map((c) => [c.toLowerCase(), c]));
+  const descCol = ["description", "particulars", "invoice_description", "narration", "remarks", "item_description", "service_description", "servicedescription", "invoicedescription", "particular"]
+    .map((c) => lower.get(c)).find(Boolean) ?? cols.find((c) => /desc|particular|narrat|service/i.test(c) && !/month|date|type|status|id$/i.test(c)) ?? null;
   console.log("EVID_META " + JSON.stringify({ tolerancePct: TOL_PCT, toleranceAbs: TOL_ABS, invoiceDescriptionColumn: descCol, periods }));
+  console.log("EVID_COLUMNS " + JSON.stringify(cols));
 
   const inv = await billQuery<any>(
     `SELECT id, TRIM(month) svc, TRIM(cost_company_name) company, TRIM(cost_center) cc, invoiceType itype,
@@ -68,6 +71,7 @@ const verdict = (hrms: number, src: number) => {
     if (!sm) continue;
     keep.set(`${String(r.cc).toLowerCase()}|${sm}|${descCol ? String(r.descr ?? "").toLowerCase() : r.id}`, { ...r, sm });
   }
+  const revByCc = new Map<string, number>();
   const revByBranchMonth = new Map<string, number>();
   const unmapped = new Map<string, number>();
   for (const r of keep.values()) {
@@ -75,17 +79,20 @@ const verdict = (hrms: number, src: number) => {
     const amt = Number(r.total ?? 0);
     if (!b) { unmappedRev += 1; unmapped.set(`REV|${r.sm}|${r.cc}`, (unmapped.get(`REV|${r.sm}|${r.cc}`) ?? 0) + amt); continue; }
     revByBranchMonth.set(`${b}|${r.sm}`, (revByBranchMonth.get(`${b}|${r.sm}`) ?? 0) + amt);
+    revByCc.set(`${String(r.cc).trim().toLowerCase()}|${r.sm}`, (revByCc.get(`${String(r.cc).trim().toLowerCase()}|${r.sm}`) ?? 0) + amt);
   }
 
   const sal = await billQuery<any>(
     `SELECT DATE_FORMAT(SalayDate,'%Y-%m') p, TRIM(CostCenter) cc, SUM(CAST(CTC AS DECIMAL(16,2))) ctc, SUM(CAST(Incentive AS DECIMAL(16,2))) inc
        FROM salary_data WHERE SalayDate >= '2026-04-01' GROUP BY p, cc`);
+  const salByCc = new Map<string, number>();
   const salByBranchMonth = new Map<string, number>();
   for (const r of sal) {
     const b = branchOf.get(String(r.cc).trim().toLowerCase());
     const amt = Number(r.ctc ?? 0);
     if (!b) { unmapped.set(`SAL|${r.p}|${r.cc}`, (unmapped.get(`SAL|${r.p}|${r.cc}`) ?? 0) + amt); continue; }
     salByBranchMonth.set(`${b}|${r.p}`, (salByBranchMonth.get(`${b}|${r.p}`) ?? 0) + amt);
+    salByCc.set(`${String(r.cc).trim().toLowerCase()}|${r.p}`, (salByCc.get(`${String(r.cc).trim().toLowerCase()}|${r.p}`) ?? 0) + amt);
   }
   console.log("EVID_SOURCE " + JSON.stringify({ invoicesRead: inv.length, kept: keep.size, excludedIdc, excludedNonRevenue: excludedNonRev, unmappedInvoiceLines: unmappedRev }));
 
@@ -104,6 +111,15 @@ const verdict = (hrms: number, src: number) => {
     const rc = new Map<string, { rev: number; people: number; unalloc: number }>();
     try {
       const rec: any = await getPnlReconciliation(period, {});
+      const ccDiff: Array<{ metric: string; branch: string; cc: string; name: string; hrms: number; dbbill: number; diff: number }> = [];
+      for (const row of rec.rows as any[]) {
+        const key = `${String(row.costCentreCode).trim().toLowerCase()}|${period}`;
+        const push = (metric: string, hrms: number, src: number) => { if (Math.abs(hrms - src) >= 20000) ccDiff.push({ metric, branch: String(row.branchName ?? "Unassigned"), cc: String(row.costCentreCode), name: String(row.costCentreName ?? ""), hrms: r0(hrms), dbbill: r0(src), diff: r0(hrms - src) }); };
+        push("revenue", Number(row.recognisedRevenue ?? 0), revByCc.get(key) ?? 0);
+        push("people", Number(row.payrollCost ?? 0), salByCc.get(key) ?? 0);
+      }
+      ccDiff.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+      for (const d of ccDiff.slice(0, 25)) console.log("EVID_CC " + JSON.stringify({ period, ...d }));
       for (const b of rec.branches as any[]) rc.set(String(b.branchName ?? "Unassigned"), { rev: Number(b.revenue ?? 0), people: Number(b.payrollCost ?? 0), unalloc: Number(b.unallocatedPayroll ?? 0) });
     } catch (e) { console.log("EVID_ERROR " + JSON.stringify({ period, basis: "reconciliation", error: e instanceof Error ? e.message : String(e) })); }
     const branches = new Set<string>([...hr.keys(), ...rc.keys(), ...[...revByBranchMonth.keys(), ...salByBranchMonth.keys()].filter((k) => k.endsWith("|" + period)).map((k) => k.split("|")[0])]);
