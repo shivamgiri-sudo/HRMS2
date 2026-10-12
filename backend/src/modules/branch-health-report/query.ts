@@ -16,6 +16,7 @@ import { getPnlReconciliation } from "../process-pnl/pnl-reconciliation.service.
 import { readGrnSpend } from "../process-pnl/pnl-actuals.service.js";
 import { getBranchActivityByBranch } from "../ats/branch-activity-report/index.js";
 import { isShiftDueYet } from "../wfm/shift-due.util.js";
+import { ONFIDO_MANDATE_LOB_CODES } from "../onfido-process/onfido-mandate-manpower.service.js";
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
 
@@ -1006,13 +1007,29 @@ export async function fetchHeadcountMovement(
                    WHERE status NOT IN ('revoked', 'rejected', 'cancelled')
                    GROUP BY employee_id) er ON er.employee_id = e.id
       WHERE e.branch_id = ?`;
+  // Onfido is counted by LOB (DOC + POA + Appen/ENCORD), not by process: anyone tagged to the
+  // Onfido process but outside those LOBs is shown on a separate "(other LOBs)" row so the
+  // branch total still adds up. Same two-path LOB match as onfido-mandate-manpower.service.
+  const onfidoLobs = [...ONFIDO_MANDATE_LOB_CODES];
+  const onfidoPh = onfidoLobs.map(() => "?").join(",");
   const [activeRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(pm.process_name, NULLIF(TRIM(ccm.cost_centre_name), ''), 'Unassigned') AS process, COUNT(*) AS cnt
+    `SELECT CASE
+              WHEN pm.process_name LIKE '%onfido%' AND NOT (
+                    lm.lob_code IN (${onfidoPh})
+                    OR (e.lob_id IS NULL AND EXISTS (
+                          SELECT 1 FROM lob_master per_lob
+                           WHERE per_lob.lob_code = e.employee_code AND per_lob.active_status = 1
+                             AND per_lob.lob_name IN (SELECT canon.lob_name FROM lob_master canon
+                                                       WHERE canon.lob_code IN (${onfidoPh})))))
+                THEN CONCAT(pm.process_name, ' (other LOBs)')
+              ELSE COALESCE(pm.process_name, NULLIF(TRIM(ccm.cost_centre_name), ''), 'Unassigned')
+            END AS process, COUNT(*) AS cnt
        FROM employees e LEFT JOIN process_master pm ON pm.id = e.process_id
        LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
+       LEFT JOIN lob_master lm ON lm.id = e.lob_id
       WHERE e.branch_id = ? AND e.active_status = 1
       GROUP BY process`,
-    [branchId],
+    [...onfidoLobs, ...onfidoLobs, branchId],
   );
   const [joinRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name) AS name,
