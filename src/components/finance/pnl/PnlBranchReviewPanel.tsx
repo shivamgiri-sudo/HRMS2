@@ -51,7 +51,7 @@ function BranchCard({ row, period, canReview, canResolve, onOpenDetail }: {
   const [note, setNote] = useState<Record<string, string>>({});
   const s = STATUS[row.status];
   const err = ack.error || raise.error || resolve.error;
-  const incomplete = row.peopleCostMissing;
+  const incomplete = row.costNotFinal;
 
   const doAck = () => ack.mutate(
     { branchId: row.branchId, period, comment: ackNote.trim() || undefined, confirmIncomplete: incomplete },
@@ -71,7 +71,13 @@ function BranchCard({ row, period, canReview, canResolve, onOpenDetail }: {
         <div><dt className="text-xs text-muted-foreground">{incomplete ? "Revenue less cost so far" : "Operating profit"}</dt><dd className={`font-semibold tabular-nums ${row.operatingProfit < 0 ? "text-rose-600" : ""}`}>{money(row.operatingProfit)}</dd></div>
         <div><dt className="text-xs text-muted-foreground">Margin</dt><dd className="font-semibold tabular-nums" title={incomplete ? "Not meaningful until payroll is posted" : undefined}>{incomplete ? "Not final" : row.marginPct == null ? "NA" : `${row.marginPct.toFixed(1)}%`}</dd></div>
       </dl>
-      {incomplete && <p className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">Payroll is not in this month yet, so cost and margin are not the final result. Do not read the margin as a profit.</p>}
+      {incomplete && (
+        <div className="mt-2 space-y-1 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+          <p>Cost and margin are not the final result for this month. Do not read the margin as a profit.</p>
+          {row.peopleCostMissing && <p>Payroll is not in this month yet.</p>}
+          {row.legacySpendExcluded > 0 && <p>{money(row.legacySpendExcluded)} of non-people spend was billed in the legacy system. The P&amp;L counts only GRNs raised in HRMS, so it is not in Cost above.</p>}
+        </div>
+      )}
 
       {row.status === "changed_after_acknowledgement" && row.snapshot && (
         <p className="mt-2 text-xs text-rose-700">You acknowledged revenue {money(row.snapshot.revenue)}, cost {money(row.snapshot.cost)}, profit {money(row.snapshot.operatingProfit)}. The figures above are newer: review again.</p>
@@ -152,8 +158,8 @@ function BranchCard({ row, period, canReview, canResolve, onOpenDetail }: {
       )}
       {confirming && (
         <div className="mt-3 space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
-          <p className="font-semibold text-amber-900">Cost for this month is incomplete.</p>
-          <p className="text-amber-900">If you acknowledge now you are agreeing to the revenue and the cost recorded so far, not a final profit. Say what you checked.</p>
+          <p className="font-semibold text-amber-900">Cost for this month is not final.</p>
+          <p className="text-amber-900">If you acknowledge now you are agreeing to the revenue and the cost counted so far, not a final profit. Say what you checked.</p>
           <label className="block text-xs font-medium">Note (required)
             <input className="mt-1 h-9 w-full rounded border border-input bg-background px-2 text-sm" value={ackNote} maxLength={500} onChange={(e) => setAckNote(e.target.value)} placeholder="e.g. Revenue checked against client invoices; payroll awaited" />
           </label>

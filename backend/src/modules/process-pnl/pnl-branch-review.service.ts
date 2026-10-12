@@ -4,6 +4,8 @@ import { db } from "../../db/mysql.js";
 import { refuse } from "./finance-error.js";
 import { getPnlReconciliation, type PnlBranchRollup } from "./pnl-reconciliation.service.js";
 import { EXCLUDED_BRANCH_IDS } from "./cost-centre-process-resolver.service.js";
+import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
+import { grnRequestExGstSql } from "./pnl-ex-gst.js";
 
 /**
  * Branch review of the monthly P&L. The figures come from the same reconciliation the P&L page uses
@@ -35,6 +37,14 @@ export interface BranchReviewRow {
   issues: string[];
   /** True when the month has no payroll yet, so cost and margin are incomplete and must not be read as a result. */
   peopleCostMissing: boolean;
+  /**
+   * Non-people spend booked in the legacy billing system (GRNs imported from db_bill or written by a migration script).
+   * By owner ruling 2026-09-26 the P&L counts only GRNs raised in HRMS, so this amount is NOT in Cost above. When it is
+   * material the month's cost and margin are not final.
+   */
+  legacySpendExcluded: number;
+  /** Cost and margin are not the month's final result (payroll missing, or material legacy spend excluded). */
+  costNotFinal: boolean;
   costCentres: BranchReviewCostCentre[];
   acknowledgedAt: string | null; acknowledgedBy: string | null; acknowledgedByName: string | null; comment: string | null;
   snapshot: { revenue: number; cost: number; operatingProfit: number } | null;
@@ -49,6 +59,9 @@ export interface BranchReviewResult {
 /** Reconciliation flags after which a branch's cost (and so its margin) is incomplete. */
 export const COST_INCOMPLETE_ISSUES = ["PAYROLL_NOT_POSTED_FOR_PERIOD", "REVENUE_WITH_NO_PAYROLL", "PAYROLL_ACCRUED_NOT_FINAL"] as const;
 export const hasIncompleteCost = (issues: readonly string[]) => issues.some((i) => (COST_INCOMPLETE_ISSUES as readonly string[]).includes(i));
+
+/** Legacy spend above this share of recognised revenue (or Rs 50,000) makes cost "not final". */
+export const LEGACY_MATERIAL_ABS = 50_000;
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
@@ -98,6 +111,14 @@ export async function getBranchReview(period: string, branchIds: string[] | null
        LEFT JOIN auth_user us ON us.id = q.resolved_by
        LEFT JOIN employees es ON es.user_id = us.id AND es.active_status = 1
       WHERE q.period_code = ? ORDER BY q.raised_at DESC`, [period]);
+  const [legacy] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, SUM(${grnRequestExGstSql("gr")}) AS amount
+       FROM grn_request gr
+       LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
+      WHERE gr.accounting_period = ? AND (gr.bill_source_id IS NOT NULL OR COALESCE(gr.created_by, '') LIKE '00000000-%')
+        AND gr.status NOT IN ('draft','submitted','rejected','cancelled','consumption_reversed','returned_to_branch_head','returned_to_raiser') AND ${OWN_COMPANY_SQL}
+      GROUP BY COALESCE(ccm.branch_id, gr.branch_id)`, [period]).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const legacyBy = new Map<string, number>((legacy as RowDataPacket[]).map((r) => [String(r.branch_id), Number(r.amount ?? 0)]));
   const ackBy = new Map(acks.map((a) => [String(a.branch_id), a]));
   const qBy = new Map<string, BranchReviewQuery[]>();
   for (const q of qs) {
@@ -119,7 +140,8 @@ export async function getBranchReview(period: string, branchIds: string[] | null
     const open = queries.filter((q) => q.status === "open").length;
     const snapshot = a ? { revenue: Number(a.snapshot_revenue), cost: Number(a.snapshot_cost), operatingProfit: Number(a.snapshot_operating_profit) } : null;
     const issues = b.issues ?? [];
-    const incomplete = hasIncompleteCost(issues);
+    const legacySpendExcluded = r2(legacyBy.get(id) ?? 0);
+    const incomplete = hasIncompleteCost(issues) || legacySpendExcluded >= LEGACY_MATERIAL_ABS;
     const costCentres: BranchReviewCostCentre[] = rec.rows.filter((r) => r.branchId === id).map((r) => ({
       id: r.costCentreId, code: r.costCentreCode, name: r.costCentreName, process: r.costCentreProcess ?? null,
       revenue: r2(Number(r.recognisedRevenue ?? 0)), peopleCost: r2(Number(r.payrollCost ?? 0)), grn: r2(Number(r.grnActual ?? 0)),
@@ -128,7 +150,7 @@ export async function getBranchReview(period: string, branchIds: string[] | null
     return {
       branchId: id, branchName: b.branchName, status: deriveStatus(open, snapshot, f),
       revenue: f.revenue, cost: f.cost, operatingProfit: f.operatingProfit, marginPct: incomplete ? null : f.marginPct, issues,
-      peopleCostMissing: incomplete, costCentres,
+      peopleCostMissing: hasIncompleteCost(issues), legacySpendExcluded, costNotFinal: incomplete, costCentres,
       acknowledgedAt: a ? iso(a.acknowledged_at) : null, acknowledgedBy: a ? String(a.acknowledged_by) : null,
       acknowledgedByName: a?.by_name ?? null, comment: a?.comment ?? null,
       snapshot, openQueries: open, queries,
@@ -142,22 +164,33 @@ export async function getBranchReview(period: string, branchIds: string[] | null
   };
 }
 
+async function legacySpendFor(period: string, branchId: string): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT SUM(${grnRequestExGstSql("gr")}) AS amount
+       FROM grn_request gr LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
+      WHERE gr.accounting_period = ? AND COALESCE(ccm.branch_id, gr.branch_id) = ?
+        AND (gr.bill_source_id IS NOT NULL OR COALESCE(gr.created_by, '') LIKE '00000000-%')
+        AND gr.status NOT IN ('draft','submitted','rejected','cancelled','consumption_reversed','returned_to_branch_head','returned_to_raiser') AND ${OWN_COMPANY_SQL}`, [period, branchId]).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  return r2(Number((rows as RowDataPacket[])[0]?.amount ?? 0));
+}
+
 async function currentFigures(period: string, branchId: string) {
   const rec = await getPnlReconciliation(period, { branchIds: [branchId] });
   const b = rec.branches.find((x) => x.branchId === branchId);
   if (!b) throw refuse(404, "BRANCH_NOT_IN_PNL", "This branch has no P&L for the period");
-  return { figures: reviewFigures(b), mode: rec.mode, blockers: rec.blockers, issues: b.issues ?? [] };
+  return { figures: reviewFigures(b), mode: rec.mode, blockers: rec.blockers, issues: b.issues ?? [], legacy: await legacySpendFor(period, branchId) };
 }
 
 export async function acknowledgeBranch(
   branchId: string, period: string, userId: string, comment: string | null, confirmIncomplete = false,
 ) {
   assertPeriod(period);
-  const { figures, mode, blockers, issues } = await currentFigures(period, branchId);
-  if (hasIncompleteCost(issues) && !confirmIncomplete) {
-    throw refuse(409, "COST_INCOMPLETE", "Cost for this month is incomplete (payroll is not posted or not final). Confirm that you are acknowledging revenue only, or wait for payroll.");
+  const { figures, mode, blockers, issues, legacy } = await currentFigures(period, branchId);
+  const notFinal = hasIncompleteCost(issues) || legacy >= LEGACY_MATERIAL_ABS;
+  if (notFinal && !confirmIncomplete) {
+    throw refuse(409, "COST_INCOMPLETE", "Cost for this month is not final (payroll is missing, or spend billed in the legacy system is not counted). Confirm what you are acknowledging, or wait.");
   }
-  if (hasIncompleteCost(issues) && !(comment?.trim())) throw refuse(400, "COMMENT_REQUIRED", "Add a note saying what you are acknowledging while cost is incomplete");
+  if (notFinal && !(comment?.trim())) throw refuse(400, "COMMENT_REQUIRED", "Add a note saying what you are acknowledging while cost is incomplete");
   if (mode === "BLOCKED") throw refuse(409, "PNL_BLOCKED", `The P&L for ${period} is blocked: ${blockers.join("; ") || "a source is missing"}`);
   const [open] = await db.execute<RowDataPacket[]>(
     "SELECT COUNT(*) AS n FROM pnl_branch_review_query WHERE branch_id = ? AND period_code = ? AND status = 'open'", [branchId, period]);
