@@ -16,6 +16,10 @@ on:
         description: "Set to 'yes' to run the non-people (GRN / vendor) reconciliation instead (read-only)."
         required: false
         default: ""
+      branchplan:
+        description: "Set to 'yes' to print the Hiring Engine branch plan as the API returns it (read-only)."
+        required: false
+        default: ""
       diag:
         description: "Set to 'yes' to print what each GRN source holds per month (read-only)."
         required: false
@@ -58,9 +62,12 @@ jobs:
           INPUT_TRACE: ${{ inputs.trace }}
           INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
           INPUT_DIAG: ${{ inputs.diag }}
+          INPUT_BRANCHPLAN: ${{ inputs.branchplan }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_DIAG" = "yes" ]; then
+          if [ "$INPUT_BRANCHPLAN" = "yes" ]; then
+            npx tsx scripts/he-branch-plan-prod-check.ts
+          elif [ "$INPUT_DIAG" = "yes" ]; then
             npx tsx scripts/pnl-grn-source-diag.ts
           elif [ "$INPUT_NONPEOPLE" = "yes" ]; then
             npx tsx scripts/pnl-nonpeople-recon-evidence.ts $INPUT_PERIODS
