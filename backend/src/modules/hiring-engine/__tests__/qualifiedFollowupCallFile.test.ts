@@ -419,3 +419,37 @@ describe("unified call file (Task 10)", () => {
     expect(r.summary?.skipped).toEqual({ already_exported: 1 });
   });
 });
+
+describe("the portal is the file's destination; the mail is a copy", () => {
+  const portalEnv = { SUPERBOT_EMAIL: "svc@example.test", SUPERBOT_PASSWORD: "pw", SUPERBOT_ACCOUNT_ID: "1965", SUPERBOT_CAMPAIGN_ID: "27425", SUPERBOT_UPLOAD_MODE: "live" };
+  const stubPortal = (ok: boolean) => vi.stubGlobal("fetch", vi.fn(async (url: string) => (url.endsWith("/login")
+    ? { status: 200, json: async () => ({ token: "t" }) }
+    : { status: ok ? 200 : 401, json: async () => (ok ? { success: true, message: "Bulk Upload Successful" } : { message: "Unauthenticated." }) })));
+  const withEnv = async (fn: () => Promise<void>) => {
+    for (const [k, v] of Object.entries(portalEnv)) vi.stubEnv(k, v);
+    try { await fn(); } finally { vi.unstubAllEnvs(); vi.unstubAllGlobals(); }
+  };
+
+  it("keeps the batch sent when the mailbox refuses the mail but the portal accepted the file", async () => {
+    await withEnv(async () => {
+      stubPortal(true);
+      world({ rows: [dbRow(1), dbRow(2)] });
+      send.mockRejectedValue(new Error("550 Daily user sending limit exceeded"));
+      const res = await runCallFileBatch(readSwitches(liveEnv), "live", now);
+      expect(res).toMatchObject({ status: "sent", rows: 2 });
+      expect(calls(/SET call_file_batch_id = NULL WHERE call_file_batch_id = \?/)).toHaveLength(0);
+      expect(calls(/'\$\.mail'/)).toHaveLength(1);
+    });
+  });
+
+  it("still fails and releases the rows when neither the portal nor the mail took the file", async () => {
+    await withEnv(async () => {
+      stubPortal(false);
+      world({ rows: [dbRow(1)] });
+      send.mockRejectedValue(new Error("SMTP down"));
+      const res = await runCallFileBatch(readSwitches(liveEnv), "live", now);
+      expect(res).toMatchObject({ status: "failed", error: "SMTP down" });
+      expect(calls(/SET call_file_batch_id = NULL WHERE call_file_batch_id = \?/)).toHaveLength(1);
+    });
+  });
+});

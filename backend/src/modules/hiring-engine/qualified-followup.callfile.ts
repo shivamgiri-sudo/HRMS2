@@ -391,12 +391,29 @@ export async function runCallFileBatch(
 
     // From 'sending' on, stale recovery never releases these rows: the mail may already be out.
     await db.execute("UPDATE qualified_followup_call_batch SET status = 'sending', row_count = ?, summary = ? WHERE id = ?", [rows.length, JSON.stringify(summary), batchId]);
-    await emailService.send({
-      to: to as string,
-      subject: `[HRMS] Calling file: ${rows.length} candidates (${when} IST)`,
-      html: summaryHtml(summary, when, tag === "test"),
-      attachments: files.map((f) => ({ filename: f.filename, content: f.content, contentType: f.contentType })),
-    });
+    // The portal is the file's real destination, so it goes first: a mail that cannot be sent (the mailbox's daily sending limit) must not
+    // stop the calls. The mail is the owner's copy: it failing after the portal accepted the file is a note, not a failed batch.
+    let portalOk = false;
+    if (tag === "live") {
+      const up = await uploadCallFile(batchId as string, rows.map((r) => values(r, null).slice(0, 7)))
+        .catch((err: unknown) => { logger.warn({ batchId, err: errText(err) }, "[qualified-followup] portal upload failed"); return null; });
+      portalOk = up?.ok === true && up.attempted;
+    }
+    try {
+      await emailService.send({
+        to: to as string,
+        subject: `[HRMS] Calling file: ${rows.length} candidates (${when} IST)`,
+        html: summaryHtml(summary, when, tag === "test"),
+        attachments: files.map((f) => ({ filename: f.filename, content: f.content, contentType: f.contentType })),
+      });
+    } catch (mailErr) {
+      if (!portalOk) throw mailErr;
+      logger.warn({ batchId, err: errText(mailErr) }, "[qualified-followup] calling file is on the portal; the owner's mail copy failed");
+      try {
+        await db.execute("UPDATE qualified_followup_call_batch SET summary = JSON_SET(COALESCE(summary, JSON_OBJECT()), '$.mail', CAST(? AS JSON)) WHERE id = ?",
+          [JSON.stringify({ ok: false, message: errText(mailErr).slice(0, 160) }), batchId]);
+      } catch { /* only a note */ }
+    }
     // The mail is out: from here the rows must stay stamped whatever happens to the bookkeeping.
     await recordSent(batchId as string, rows.length);
     // The same export record HR's manual Prepare writes and reads (18 h), so the two never put one person in two files. Test files went
@@ -406,12 +423,6 @@ export async function runCallFileBatch(
       for (const r of rows) if (r.interviewDate && r.interviewTime) slots[r.mobile10] = `${r.interviewDate} ${r.interviewTime}:00`;
       await markExportedForCalling(rows.map((r) => r.mobile10), { userId: null, label: `follow-up batch ${o.slotKey ?? when}`, slots })
         .catch((err: unknown) => logger.warn({ batchId, err: errText(err) }, "[qualified-followup] calling file sent; export record failed"));
-    }
-    // The portal upload (SUPERBOT_UPLOAD_MODE=live): live files only, never test or dry runs. A failure is a note on the batch, never a retry
-    // of the batch (the rows are already stamped and the mail is out).
-    if (tag === "live") {
-      await uploadCallFile(batchId as string, rows.map((r) => values(r, null).slice(0, 7)))
-        .catch((err: unknown) => logger.warn({ batchId, err: errText(err) }, "[qualified-followup] portal upload failed"));
     }
     return { status: "sent", batchId: batchId as string, rows: rows.length, files: files.length, summary };
   } catch (err) {
