@@ -121,7 +121,7 @@ export async function acknowledgeBranch(branchId: string, period: string, userId
   if (mode === "BLOCKED") throw refuse(409, "PNL_BLOCKED", `The P&L for ${period} is blocked: ${blockers.join("; ") || "a source is missing"}`);
   const [open] = await db.execute<RowDataPacket[]>(
     "SELECT COUNT(*) AS n FROM pnl_branch_review_query WHERE branch_id = ? AND period_code = ? AND status = 'open'", [branchId, period]);
-  if (Number(open[0]?.n ?? 0) > 0) throw refuse(409, "OPEN_QUERIES", "Resolve or withdraw the open queries before acknowledging");
+  if (Number(open[0]?.n ?? 0) > 0) throw refuse(409, "OPEN_QUERIES", "Finance has to resolve the open queries before you can acknowledge");
   await db.execute(
     `INSERT INTO pnl_branch_review (id, branch_id, period_code, acknowledged_by, acknowledged_at, comment, snapshot_revenue, snapshot_cost, snapshot_operating_profit, snapshot_mode)
      VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?)

@@ -126,7 +126,7 @@ export function PnlBranchReviewPanel({ period }: { period: string }) {
       </div>
       {d.blockers.length > 0 && (
         <div role="alert" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          <p className="font-semibold">This month cannot be acknowledged yet:</p>
+          <p className="font-semibold">{d.mode === "BLOCKED" ? "This month cannot be acknowledged yet:" : "Data caveats to know before you acknowledge:"}</p>
           <ul className="list-disc pl-5">{d.blockers.map((b) => <li key={b}>{b}</li>)}</ul>
         </div>
       )}
