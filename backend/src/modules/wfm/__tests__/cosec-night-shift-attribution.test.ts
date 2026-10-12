@@ -152,4 +152,20 @@ describe("attributeNightShifts", () => {
     expect(by["2026-10-11"].review).toMatch(/no exit/);
     expect(by["2026-10-09"].review).toBeUndefined();
   });
+
+  it("splits a night shift's exit from the next day shift when small gaps chain them (MAS49499)", () => {
+    const b = (d: string, a: string, z: string, n = 5) => ({ punchDate: d, firstPunch: `${d} ${a}:00`, lastPunch: `${d} ${z}:00`, totalPunches: n });
+    const { groups, consumedDates } = run([
+      b("2026-10-03", "20:23", "22:08", 9),
+      b("2026-10-04", "00:14", "00:40", 6), b("2026-10-04", "03:10", "03:40", 6), b("2026-10-04", "07:00", "07:14", 4),
+      b("2026-10-04", "08:49", "10:00", 8), b("2026-10-04", "12:30", "16:01", 12),
+    ]);
+    const by = Object.fromEntries(groups.map((g) => [g.punchDate, g]));
+    expect(by["2026-10-03"].firstPunch).toBe("2026-10-03 20:23:00");
+    expect(by["2026-10-03"].lastPunch).toBe("2026-10-04 07:14:00");
+    expect(by["2026-10-04"].firstPunch).toBe("2026-10-04 08:49:00");
+    expect(by["2026-10-04"].lastPunch).toBe("2026-10-04 16:01:00");
+    for (const g of groups) expect(g.workingMinutes).toBeLessThan(15 * 60);
+    expect(consumedDates).toEqual([]);
+  });
 });

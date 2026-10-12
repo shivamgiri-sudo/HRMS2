@@ -200,6 +200,8 @@ export type PunchBlock = {
 const SHIFT_SPLIT_GAP_MIN = 540;
 /** Longest silent stretch tolerated between a shift's last punch and its morning exit. */
 const MAX_TAIL_GAP_MIN = 840;
+/** Smallest silence an oversized cluster may be split at. */
+const MIN_SPLIT_GAP_MIN = 45;
 /** No single shift is longer than this; anything longer is two shifts, not one. */
 const MAX_SHIFT_SPAN_MIN = 900;
 /** An exit cluster starts before this hour (no night shift's exit starts later). */
@@ -284,6 +286,40 @@ export function attributeNightShifts(
         clusters.push({ first: b.firstPunch, last: b.lastPunch, count: b.totalPunches, absorbed: false, blocks: [b] });
       }
     }
+
+    // 1b. A cluster longer than any real shift is two shifts chained by small gaps: a night shift's
+    // exit followed, an hour or two later, by the next day shift (MAS49499: 20:23 ... 07:14, then
+    // 08:49 ... 16:01). Split at the largest internal silence until every piece is a plausible
+    // shift. Silences under MIN_SPLIT_GAP_MIN are left alone, and a cluster that cannot be split
+    // stays whole and takes the calendar-date fallback below.
+    const splitOversized = (c: Cluster): Cluster[] => {
+      if (diffMinutes(c.first, c.last) <= MAX_SHIFT_SPAN_MIN || c.blocks.length < 2) return [c];
+      const bl = [...c.blocks].sort((x, y) => x.firstPunch.localeCompare(y.firstPunch));
+      // Prefer a silence that looks like "night shift's exit, then the day shift starts": the part
+      // before it ends 04:00-09:59 and the part after it begins 05:00-11:59. Otherwise the largest.
+      let best = -1, bestGap = 0, bestPref = -1, bestPrefGap = 0;
+      let runEnd = bl[0].lastPunch;
+      for (let i = 1; i < bl.length; i++) {
+        const gap = diffMinutes(runEnd, bl[i].firstPunch);
+        const endH = hourOf(runEnd), startH = hourOf(bl[i].firstPunch);
+        if (gap >= MIN_SPLIT_GAP_MIN && endH >= 4 && endH < 10 && startH >= 5 && startH < 12 && gap > bestPrefGap) { bestPrefGap = gap; bestPref = i; }
+        if (gap > bestGap) { bestGap = gap; best = i; }
+        if (bl[i].lastPunch > runEnd) runEnd = bl[i].lastPunch;
+      }
+      if (bestPref >= 0) { best = bestPref; bestGap = bestPrefGap; }
+      if (best < 0 || bestGap < MIN_SPLIT_GAP_MIN) return [c];
+      const mkc = (part: PunchBlock[]): Cluster => ({
+        first: part[0].firstPunch,
+        last: part.reduce((m, b) => (b.lastPunch > m ? b.lastPunch : m), part[0].lastPunch),
+        count: part.reduce((n, b) => n + b.totalPunches, 0),
+        absorbed: false,
+        blocks: part,
+      });
+      return [...splitOversized(mkc(bl.slice(0, best))), ...splitOversized(mkc(bl.slice(best)))];
+    };
+    const split = clusters.flatMap(splitOversized);
+    clusters.length = 0;
+    clusters.push(...split);
 
     // 2. absorb exit-like clusters into the previous shift
     const shifts: Cluster[] = [];
