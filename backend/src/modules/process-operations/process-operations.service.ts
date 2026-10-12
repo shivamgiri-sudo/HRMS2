@@ -131,6 +131,15 @@ const SECTIONS: Array<{ key: string; title: string; blurb: string; members: stri
     ],
   },
   {
+    key: "order_to_delivery",
+    title: "Orders & delivery",
+    blurb: "Telesales order-taking through to delivery, from the uploaded order/survey dump (AHM).",
+    members: [
+      "AHM_ORDERS", "AHM_OUTLETS", "AHM_ORDER_QTY", "AHM_ORDER_VALUE", "AHM_DELIVERED_PCT",
+      "AHM_FILL_RATE_PCT", "AHM_SURVEY_TAKEN_PCT", "AHM_TELESALES_AGENTS", "AHM_ORDERS_PER_AGENT",
+    ],
+  },
+  {
     key: "conversion",
     title: "Conversation & conversion",
     blurb:

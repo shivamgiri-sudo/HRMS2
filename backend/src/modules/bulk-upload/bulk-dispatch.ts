@@ -782,12 +782,14 @@ export async function dispatchImport(
   if (rpc_name === "import_ahm_dump_mp_batch") {
     const { importAhmDumpMpBatch } = await import("./ahm-dump-bulk.service.js");
     const data = await importAhmDumpMpBatch(id, userId);
+    await refreshAhmProcessMetrics();
     return { success: true, data };
   }
 
   if (rpc_name === "import_ahm_dump_mm_batch") {
     const { importAhmDumpMmBatch } = await import("./ahm-dump-bulk.service.js");
     const data = await importAhmDumpMmBatch(id, userId);
+    await refreshAhmProcessMetrics();
     return { success: true, data };
   }
 
@@ -820,4 +822,15 @@ export async function dispatchImport(
   }
 
   throw new Error(`Import function '${rpc_name}' for batch ${id} is not yet implemented in the MySQL backend.`);
+}
+
+/** Refreshes AHM's Process Operations tiles after a Dump import. Never fails the import: the daily KPI sync repairs a miss. */
+async function refreshAhmProcessMetrics(): Promise<void> {
+  try {
+    const { syncAhmProcessMetrics, recentRange } = await import("../process-performance/ahm-metrics.service.js");
+    const { from, to } = recentRange();
+    await syncAhmProcessMetrics(from, to);
+  } catch (err) {
+    console.error("[bulk-dispatch] AHM process metric refresh failed:", err instanceof Error ? err.message : err);
+  }
 }

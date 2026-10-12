@@ -629,6 +629,7 @@ interface WorkforceCorrelation {
 
 const SECTION_STYLE: Record<string, { accent: string; tint: string; icon: typeof Target }> = {
   operations: { accent: "#06B6D4", tint: "linear-gradient(135deg,#ECFEFF 0%,#CFFAFE 100%)", icon: Headphones },
+  order_to_delivery: { accent: "#EA580C", tint: "linear-gradient(135deg,#FFF7ED 0%,#FFEDD5 100%)", icon: Truck },
   conversion: { accent: C_BLUE, tint: "linear-gradient(135deg,#EFF6FF 0%,#DBEAFE 100%)", icon: Target },
   risk: { accent: C_RED, tint: "linear-gradient(135deg,#FEF2F2 0%,#FEE2E2 100%)", icon: ShieldAlert },
   conduct: { accent: C_PURPLE, tint: "linear-gradient(135deg,#F5F3FF 0%,#EDE9FE 100%)", icon: Sparkles },
@@ -3040,7 +3041,7 @@ function deriveInsights(ops: Operations, health: ProcessBusinessHealth | undefin
     });
   }
 
-  const sectionOrder = ["operations", "conversion", "risk", "conduct", "quality", "hygiene"];
+  const sectionOrder = ["operations", "order_to_delivery", "conversion", "risk", "conduct", "quality", "hygiene"];
   for (const key of sectionOrder) {
     const section = ops.sections.find((s) => s.key === key);
     if (!section) continue;
@@ -3127,6 +3128,7 @@ function InsightCard({ insight: ins }: { insight: Insight }) {
 
 const PERF_SECTION_STYLE: Record<string, { text: string; border: string; bg: string }> = {
   operations: { text: "#1d4ed8", border: "#bfdbfe", bg: "#eff6ff" },
+  order_to_delivery: { text: "#c2410c", border: "#fed7aa", bg: "#fff7ed" },
   conversion:  { text: "#15803d", border: "#bbf7d0", bg: "#f0fdf4" },
   risk:        { text: "#c2410c", border: "#fed7aa", bg: "#fff7ed" },
   conduct:     { text: "#b45309", border: "#fde68a", bg: "#fffbeb" },

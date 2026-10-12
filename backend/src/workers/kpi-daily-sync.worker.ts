@@ -83,6 +83,16 @@ async function runDailySync(): Promise<void> {
     console.error(`[KpiDailySyncWorker] Upload feeds failed:`, err.message);
   }
 
+  // AHM: db_masmis.ahm_dump_raw -> process_metric_actual (Process Operations tiles). Trailing window, so late uploads land.
+  try {
+    const { syncAhmProcessMetrics, recentRange } = await import('../modules/process-performance/ahm-metrics.service.js');
+    const { from, to } = recentRange();
+    const r = await syncAhmProcessMetrics(from, to);
+    console.log(`[KpiDailySyncWorker] AHM process metrics (${from}..${to}): ${r.written} written over ${r.days} day(s)${r.skipped ? `, skipped: ${r.skipped}` : ''}`);
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] AHM process metrics failed:`, err.message);
+  }
+
   // Quality daily, alongside every other source. It previously ran only on the
   // 2nd of the month for the month before, so quality sat up to five weeks
   // behind the metrics it is compared against, and arrived as one rollup per
