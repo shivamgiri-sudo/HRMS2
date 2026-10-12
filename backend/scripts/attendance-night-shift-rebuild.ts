@@ -107,6 +107,16 @@ const addDays = (s: string, n: number) => { const d = new Date(s + "T00:00:00Z")
   console.log(`  shifts that differ stored  : ${changed.length}  (would be rewritten, unlocked rows only)`);
   console.log(`  exit-only dates to clear   : ${attributed.consumedDates.filter((d) => d.punchDate >= FROM && d.punchDate <= TO).length}`);
   console.log(`  shifts still over 15h      : ${stillLong}  (should be 0)`);
+  if (stillLong) {
+    const long = inRange.filter((g) => g.workingMinutes > 900).slice(0, 12);
+    console.log("  sample long shifts (user | date | first -> last | punches | hrs | blocks that day / day before):");
+    for (const g of long) {
+      const day = (d: string) => blocks
+        .filter((b) => b.cosecUserId === g.cosecUserId && b.punchDate === d)
+        .map((b) => `${b.part} ${b.firstPunch.slice(11, 16)}-${b.lastPunch.slice(11, 16)}(${b.totalPunches})`).join(" ") || "none";
+      console.log(`    ${g.cosecUserId} | ${g.punchDate} | ${g.firstPunch.slice(5, 16)} -> ${g.lastPunch.slice(5, 16)} | ${g.totalPunches} | ${(g.workingMinutes / 60).toFixed(1)}h | D: ${day(g.punchDate)} | D-1: ${day(addDays(g.punchDate, -1))}`);
+    }
+  }
 
   if (!APPLY) { console.log("\nmode: dry-run, nothing written."); await db.end(); return; }
 
