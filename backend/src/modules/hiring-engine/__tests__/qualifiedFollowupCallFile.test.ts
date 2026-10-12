@@ -430,8 +430,19 @@ describe("the portal is the file's destination; the mail is a copy", () => {
     try { await fn(); } finally { vi.unstubAllEnvs(); vi.unstubAllGlobals(); }
   };
 
-  it("keeps the batch sent when the mailbox refuses the mail but the portal accepted the file", async () => {
+  it("does not spend a mail on a file the portal already has", async () => {
     await withEnv(async () => {
+      stubPortal(true);
+      world({ rows: [dbRow(1), dbRow(2)] });
+      const res = await runCallFileBatch(readSwitches(liveEnv), "live", now);
+      expect(res).toMatchObject({ status: "sent", rows: 2 });
+      expect(send).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps the batch sent when the owner's copy is on and the mailbox refuses it but the portal accepted the file", async () => {
+    await withEnv(async () => {
+      vi.stubEnv("QUAL_FOLLOWUP_CALLFILE_MAIL_COPY", "true");
       stubPortal(true);
       world({ rows: [dbRow(1), dbRow(2)] });
       send.mockRejectedValue(new Error("550 Daily user sending limit exceeded"));

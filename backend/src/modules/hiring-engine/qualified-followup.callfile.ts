@@ -399,20 +399,25 @@ export async function runCallFileBatch(
         .catch((err: unknown) => { logger.warn({ batchId, err: errText(err) }, "[qualified-followup] portal upload failed"); return null; });
       portalOk = up?.ok === true && up.attempted;
     }
-    try {
-      await emailService.send({
-        to: to as string,
-        subject: `[HRMS] Calling file: ${rows.length} candidates (${when} IST)`,
-        html: summaryHtml(summary, when, tag === "test"),
-        attachments: files.map((f) => ({ filename: f.filename, content: f.content, contentType: f.contentType })),
-      });
-    } catch (mailErr) {
-      if (!portalOk) throw mailErr;
-      logger.warn({ batchId, err: errText(mailErr) }, "[qualified-followup] calling file is on the portal; the owner's mail copy failed");
+    // The owner's copy is skipped when the portal has the file (QUAL_FOLLOWUP_CALLFILE_MAIL_COPY=true keeps it): the mailbox's daily sending
+    // limit is shared with every reminder and reply, and four copies an hour were enough to exhaust it.
+    const skipCopy = portalOk && tag === "live" && process.env.QUAL_FOLLOWUP_CALLFILE_MAIL_COPY !== "true";
+    if (!skipCopy) {
       try {
-        await db.execute("UPDATE qualified_followup_call_batch SET summary = JSON_SET(COALESCE(summary, JSON_OBJECT()), '$.mail', CAST(? AS JSON)) WHERE id = ?",
-          [JSON.stringify({ ok: false, message: errText(mailErr).slice(0, 160) }), batchId]);
-      } catch { /* only a note */ }
+        await emailService.send({
+          to: to as string,
+          subject: `[HRMS] Calling file: ${rows.length} candidates (${when} IST)`,
+          html: summaryHtml(summary, when, tag === "test"),
+          attachments: files.map((f) => ({ filename: f.filename, content: f.content, contentType: f.contentType })),
+        });
+      } catch (mailErr) {
+        if (!portalOk) throw mailErr;
+        logger.warn({ batchId, err: errText(mailErr) }, "[qualified-followup] calling file is on the portal; the owner's mail copy failed");
+        try {
+          await db.execute("UPDATE qualified_followup_call_batch SET summary = JSON_SET(COALESCE(summary, JSON_OBJECT()), '$.mail', CAST(? AS JSON)) WHERE id = ?",
+            [JSON.stringify({ ok: false, message: errText(mailErr).slice(0, 160) }), batchId]);
+        } catch { /* only a note */ }
+      }
     }
     // The mail is out: from here the rows must stay stamped whatever happens to the bookkeeping.
     await recordSent(batchId as string, rows.length);
