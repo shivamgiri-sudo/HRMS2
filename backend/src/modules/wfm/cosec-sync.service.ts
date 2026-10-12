@@ -235,7 +235,7 @@ export function attributeNightShifts(
     return min === "" || d < min ? d : min;
   }, "");
 
-  type Cluster = { first: string; last: string; count: number; absorbed: boolean };
+  type Cluster = { first: string; last: string; count: number; absorbed: boolean; blocks: PunchBlock[] };
   const groups: PunchGroup[] = [];
   const consumedDates: Array<{ cosecUserId: string; punchDate: string }> = [];
 
@@ -249,8 +249,9 @@ export function attributeNightShifts(
       if (last && diffMinutes(last.last, b.firstPunch) < SHIFT_SPLIT_GAP_MIN) {
         if (b.lastPunch > last.last) last.last = b.lastPunch;
         last.count += b.totalPunches;
+        last.blocks.push(b);
       } else {
-        clusters.push({ first: b.firstPunch, last: b.lastPunch, count: b.totalPunches, absorbed: false });
+        clusters.push({ first: b.firstPunch, last: b.lastPunch, count: b.totalPunches, absorbed: false, blocks: [b] });
       }
     }
 
@@ -265,6 +266,7 @@ export function attributeNightShifts(
         && diffMinutes(prev.first, c.last) <= MAX_SHIFT_SPAN_MIN) {
         prev.last = c.last;
         prev.count += c.count;
+        prev.blocks.push(...c.blocks);
         prev.absorbed = true;
         goneDates.push(c.first.slice(0, 10));
       } else if (!prev && exitLike && c.first.slice(0, 10) === windowStart) {
@@ -276,26 +278,35 @@ export function attributeNightShifts(
 
     // 3. one group per start date
     const byDate = new Map<string, PunchGroup>();
-    for (const sft of shifts) {
-      const punchDate = sft.first.slice(0, 10);
+    const place = (punchDate: string, first: string, last: string, count: number, absorbed: boolean) => {
       const existing = byDate.get(punchDate);
       if (existing) {
-        existing.lastPunch = sft.last > existing.lastPunch ? sft.last : existing.lastPunch;
-        existing.totalPunches += sft.count;
+        if (first < existing.firstPunch) existing.firstPunch = first;
+        if (last > existing.lastPunch) existing.lastPunch = last;
+        existing.totalPunches += count;
         existing.workingMinutes = diffMinutes(existing.firstPunch, existing.lastPunch);
-        if (sft.absorbed) existing.tailMerged = true;
+        if (absorbed) existing.tailMerged = true;
       } else {
         byDate.set(punchDate, {
           cosecUserId,
           punchDate,
-          firstPunch: sft.first,
-          lastPunch: sft.last,
-          totalPunches: sft.count,
-          workingMinutes: diffMinutes(sft.first, sft.last),
+          firstPunch: first,
+          lastPunch: last,
+          totalPunches: count,
+          workingMinutes: diffMinutes(first, last),
           sourceSystem,
           sourceTable,
-          ...(sft.absorbed ? { tailMerged: true } : {}),
+          ...(absorbed ? { tailMerged: true } : {}),
         });
+      }
+    };
+    for (const sft of shifts) {
+      if (diffMinutes(sft.first, sft.last) > MAX_SHIFT_SPAN_MIN) {
+        // Punches chained across days with gaps under 5 h (a sparse puncher, not a night shift):
+        // no honest single shift, so fall back to the calendar-date grouping used before.
+        for (const b of sft.blocks) place(b.firstPunch.slice(0, 10), b.firstPunch, b.lastPunch, b.totalPunches, false);
+      } else {
+        place(sft.first.slice(0, 10), sft.first, sft.last, sft.count, sft.absorbed);
       }
     }
     groups.push(...byDate.values());

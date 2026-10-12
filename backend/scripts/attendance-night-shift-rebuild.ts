@@ -99,15 +99,18 @@ const addDays = (s: string, n: number) => { const d = new Date(s + "T00:00:00Z")
   }
   const attributed = attributeNightShifts(blocks, "cosec_sqlserver", table);
   const inRange = attributed.groups.filter((g) => g.punchDate >= FROM && g.punchDate <= TO);
-  const stillLong = inRange.filter((g) => g.workingMinutes > 900).length;
+  const crossLong = inRange.filter((g) => g.workingMinutes > 900 && g.firstPunch.slice(0, 10) !== g.lastPunch.slice(0, 10)).length;
+  const sameDayLong = inRange.filter((g) => g.workingMinutes > 900 && g.firstPunch.slice(0, 10) === g.lastPunch.slice(0, 10)).length;
+  const stillLong = crossLong;
   const changed = await filterUnchangedGroups(inRange, TO);
   console.log(`\nDRY RUN ${FROM}..${TO}`);
   console.log(`  shifts attributed          : ${inRange.length}`);
   console.log(`  shifts that differ stored  : ${changed.length}  (would be rewritten, unlocked rows only)`);
   console.log(`  exit-only dates to clear   : ${attributed.consumedDates.filter((d) => d.punchDate >= FROM && d.punchDate <= TO).length}`);
-  console.log(`  shifts still over 15h      : ${stillLong}  (should be 0)`);
+  console.log(`  overnight shifts over 15h  : ${crossLong}  (should be 0)`);
+  console.log(`  same-date days over 15h    : ${sameDayLong}  (sparse punchers, legacy grouping, unchanged)`);
   if (stillLong) {
-    const long = inRange.filter((g) => g.workingMinutes > 900).slice(0, 12);
+    const long = inRange.filter((g) => g.workingMinutes > 900 && g.firstPunch.slice(0, 10) !== g.lastPunch.slice(0, 10)).slice(0, 12);
     console.log("  sample long shifts (user | date | first -> last | punches | hrs | blocks that day / day before):");
     for (const g of long) {
       const day = (d: string) => blocks
