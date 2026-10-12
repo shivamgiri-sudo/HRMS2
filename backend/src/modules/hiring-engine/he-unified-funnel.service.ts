@@ -9,6 +9,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { candidateBecameEmployee, getEmployeeMobileJoinMap } from "../ats/analytics.unified.service.js";
 import { isSelected } from "../ats/dashboard.overview.service.js";
+import { loadLiveFrom } from "./he-source-attribution.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
 
 export interface FunnelCounts { enrolled: number; emailed: number; whatsapped: number; called: number; confirmed: number; walkedIn: number; selected: number; joined: number }
@@ -40,6 +41,30 @@ export async function getUnifiedFunnel(): Promise<UnifiedFunnel> {
     const better = RANK.indexOf(type) < RANK.indexOf(cur.type);
     people.set(m, { type: better ? type : cur.type, enrolledDay: next.enrolledDay < cur.enrolledDay ? next.enrolledDay : cur.enrolledDay, em: cur.em || next.em, wa: cur.wa || next.wa, ca: cur.ca || next.ca });
   }
+  // Earlier history: the last 30 days of Meta form fills and of outbound messages and bot calls, for people the live follow-up does not hold.
+  // Typed Live / Old Meta by the first form fill against the cutoff, everyone else Hiring Engine; enrolled = first contact (or the fill day).
+  const since = new Date(Date.now() - 30 * 86_400_000 + 330 * 60_000).toISOString().slice(0, 10);
+  const liveFrom = String(await loadLiveFrom()).slice(0, 10);
+  const add = (m: string, type: SourceType, d: string, f: { em?: boolean; wa?: boolean; ca?: boolean }, hasFollowup: boolean) => {
+    const cur = people.get(m);
+    if (!cur) { people.set(m, { type, enrolledDay: d, em: !!f.em, wa: !!f.wa, ca: !!f.ca }); return; }
+    people.set(m, { type: hasFollowup ? cur.type : cur.type, enrolledDay: d < cur.enrolledDay ? d : cur.enrolledDay, em: cur.em || !!f.em, wa: cur.wa || !!f.wa, ca: cur.ca || !!f.ca });
+  };
+  const inFollowup = new Set(people.keys());
+  const [fills] = await db.execute<RowDataPacket[]>(
+    `SELECT RIGHT(REGEXP_REPLACE(parsed_phone,'[^0-9]',''),10) AS m, MIN(created_at) AS first_fill FROM meta_lead_raw
+      WHERE created_at >= ? AND parsed_phone IS NOT NULL GROUP BY m`, [since]);
+  for (const r of fills) { const m = String(r.m); if (m.length === 10) { const d = day(r.first_fill); add(m, d >= liveFrom ? "meta_live" : "meta_old", d, {}, false); } }
+  const [msgs] = await db.execute<RowDataPacket[]>(
+    `SELECT l.mobile10 AS m, h.channel, MIN(h.created_at) AS first_at FROM he_message h JOIN he_lead l ON l.id = h.lead_id
+      WHERE h.direction = 'out' AND h.created_at >= ? AND h.channel IN ('email','whatsapp') AND (h.delivery_status IS NULL OR h.delivery_status <> 'failed') GROUP BY l.mobile10, h.channel`, [since]);
+  for (const r of msgs) { const m = String(r.m); add(m, "he", day(r.first_at), { em: r.channel === "email", wa: r.channel === "whatsapp" }, false); }
+  const [calls] = await db.execute<RowDataPacket[]>(
+    `SELECT l.mobile10 AS m, MIN(c.created_at) AS first_at FROM he_call c JOIN he_lead l ON l.id = c.lead_id WHERE c.created_at >= ? GROUP BY l.mobile10`, [since]);
+  for (const r of calls) { const m = String(r.m); add(m, "he", day(r.first_at), { ca: true }, false); }
+  // (A person already in the follow-up keeps their type; earlier contacts only move their enrolment day back and add channels.)
+  // A person first seen as a plain Hiring Engine message who also has a Meta fill is a Meta person.
+  for (const r of fills) { const m = String(r.m); const p = people.get(m); if (p && !inFollowup.has(m) && p.type === "he") { const d = day(r.first_fill); people.set(m, { ...p, type: d >= liveFrom ? "meta_live" : "meta_old" }); } }
   const from = [...people.values()].reduce((a, p) => (p.enrolledDay < a ? p.enrolledDay : a), day(new Date()));
 
   const confirmed = new Set<string>();
