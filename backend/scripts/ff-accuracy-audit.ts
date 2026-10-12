@@ -29,21 +29,23 @@ const q = async (sql: string, p: unknown[] = []): Promise<Row[]> => {
 const j = (o: unknown) => JSON.stringify(o, null, 2);
 
 async function pick(kind: "voluntary" | "involuntary"): Promise<string[]> {
-  const types = kind === "voluntary" ? ["resignation"] : ["termination"];
+  // exit_type is voluntary / involuntary; the sub-type says resignation / termination / absconding.
+  // Prefer the plain cases: a resignation for voluntary, a termination for involuntary.
+  const sub = kind === "voluntary" ? "resignation" : "termination";
   const rows = await q(
     `SELECT er.id
        FROM exit_request er
        JOIN employees e ON e.id = er.employee_id
        JOIN full_final_calculation ff ON ff.exit_request_id = er.id
-       JOIN employee_salary_assignment esa ON esa.employee_id = er.employee_id AND esa.active_status = 1
-      WHERE LOWER(er.exit_type) IN (${types.map(() => "?").join(",")})
-        AND LOWER(er.status) = 'exited'
+      WHERE LOWER(er.exit_type) = ?
+        AND LOWER(COALESCE(er.exit_sub_type, '')) = ?
         AND e.date_of_joining IS NOT NULL
         AND COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) IS NOT NULL
+        AND EXISTS (SELECT 1 FROM employee_salary_assignment esa WHERE esa.employee_id = er.employee_id)
       GROUP BY er.id
       ORDER BY MAX(ff.created_at) DESC
       LIMIT 3`,
-    types,
+    [kind, sub],
   );
   return rows.map((r) => String(r.id));
 }
@@ -117,6 +119,13 @@ async function audit(exitId: string): Promise<void> {
 async function main() {
   const fromEnv = (process.env.FF_AUDIT_EXIT_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const ids = fromEnv.length ? fromEnv : [...(await pick("voluntary")).slice(0, 1), ...(await pick("involuntary")).slice(0, 1)];
+  const mix = await q(
+    `SELECT LOWER(er.exit_type) AS exit_type, LOWER(COALESCE(er.exit_sub_type,'')) AS sub_type,
+            LOWER(er.status) AS status, COUNT(*) AS n,
+            SUM(EXISTS (SELECT 1 FROM full_final_calculation ff WHERE ff.exit_request_id = er.id)) AS with_ff
+       FROM exit_request er GROUP BY 1,2,3 ORDER BY n DESC LIMIT 40`,
+  );
+  console.log("EXIT MIX (type / sub-type / status / count / with F&F row)", j(mix));
   if (!fromEnv.length) {
     console.log("auto-picked exit ids:", ids.join(", ") || "(none found)");
     console.log("more voluntary candidates:", (await pick("voluntary")).join(", "));
