@@ -69,6 +69,12 @@ const NUDGE_ROLES = [
 const CLOSE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "payroll_head"];
 // Backfilling writes attendance records, which payroll reads: narrower again.
 const BACKFILL_ROLES = ["super_admin", "admin", "payroll_head"];
+// Named people who may VIEW every branch on this page although their role is branch-scoped
+// elsewhere (owner request 2026-10-12). View only: nudges (outward WhatsApp) stay in branch scope.
+const ALL_BRANCH_VIEWER_EMAILS: ReadonlySet<string> = new Set([
+  "huda.malik@teammas.in",
+  "dinesh.mehta@teammas.in",
+]);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
 
@@ -96,7 +102,14 @@ function todayIST(): string {
  * Branch ids the caller may see; null = org-wide. Only ORG_ALL and branch / process level scopes
  * carry a branch list - team / self scopes and unconfigured accounts get an empty set (fail closed).
  */
-async function allowedBranchIds(req: import("express").Request): Promise<Set<string> | null> {
+async function allowedBranchIds(
+  req: import("express").Request,
+  opts: { view?: boolean } = {},
+): Promise<Set<string> | null> {
+  if (opts.view) {
+    const email = String((req as any).authUser?.email ?? "").trim().toLowerCase();
+    if (ALL_BRANCH_VIEWER_EMAILS.has(email)) return null;
+  }
   try {
     const scope = await resolveDashboardScopeForRequest((req as any).authUser, "");
     if (scope.level === "ORG_ALL") return null;
@@ -131,7 +144,7 @@ opsControlTowerRouter.get("/", requireRole(...VIEW_ROLES), async (req, res) => {
       res.status(400).json({ error: "date must be YYYY-MM-DD" });
       return;
     }
-    const allowed = await allowedBranchIds(req);
+    const allowed = await allowedBranchIds(req, { view: true });
     const date = dateParam ?? todayIST();
     // Cached org-wide; scoping to the caller's branches happens on the cached copy, never inside it.
     res.json(scopeSummaryToBranches(await cachedSummary(date, () => getOpsControlTowerSummary(date)), allowed));
@@ -181,7 +194,7 @@ opsControlTowerRouter.get(
         return;
       }
       // The branchId comes from the URL, so it is only a request: it must sit inside the caller's scope.
-      const allowed = await allowedBranchIds(req);
+      const allowed = await allowedBranchIds(req, { view: true });
       if (allowed !== null && !allowed.has(branchId)) {
         res.status(403).json({ error: "Forbidden: this branch is outside your branch / assigned scope" });
         return;
@@ -238,7 +251,7 @@ opsControlTowerRouter.get("/sync-health", requireRole(...VIEW_ROLES), async (req
       res.status(403).json({ error: "Forbidden: this section is not available to your role" });
       return;
     }
-    const allowed = await allowedBranchIds(req);
+    const allowed = await allowedBranchIds(req, { view: true });
     const health = await getSyncHealth();
     const coverage = allowed === null ? health.coverage : health.coverage.filter((b) => allowed.has(b.branchId));
     res.json({ ...health, coverage, lowDays: coverage.reduce((n, b) => n + b.days.filter((d) => d.low).length, 0) });
