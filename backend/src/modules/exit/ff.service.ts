@@ -6,6 +6,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordMoneyEventAudit } from "../../shared/moneyEventAudit.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
 import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
+import { resolveGrossMonthly } from "./ff-gross.js";
 import { assertFfSettlementAllowed } from "./ff-settlement-gate.service.js";
 import { notifyFullFinalReady, notifyFFApproved } from "./exit.notifications.js";
 // Type-only import — does not create a runtime circular dependency with
@@ -702,25 +703,30 @@ export const ffService = {
     employeeId: string,
     lastWorkingDay?: string | Date
   ): Promise<GratuityCalculation> {
+    // Basis = what the person was actually paid. The "active" salary assignment is unreliable for a
+    // leaver (recent assignments are routinely deactivated while a stale old one stays active, which
+    // produced a basic of 8,000 against a gross of 8,192), so the monthly base comes from the last
+    // paid payroll line, times the basic percentage of the most recent assignment of ANY status.
     const [salRows] = await db.execute<RowDataPacket[]>(
-      `SELECT esa.ctc_annual, ss.basic_pct
+      `SELECT esa.ctc_annual, ss.basic_pct, esa.active_status
          FROM employee_salary_assignment esa
          JOIN salary_structure_master ss ON ss.id = esa.structure_id
-        WHERE esa.employee_id = ? AND esa.active_status = 1
+        WHERE esa.employee_id = ?
         ORDER BY esa.effective_from DESC
         LIMIT 1`,
       [employeeId]
     );
     const sal = (salRows as Array<{ ctc_annual: number; basic_pct: number }>)[0];
-    if (!sal) {
+    const paidGross = await resolveGrossMonthly(employeeId);
+    if (!sal && paidGross === null) {
       return {
         amount: 0,
         status: "pending_configuration",
-        note: "No active salary assignment found for employee.",
+        note: "No salary assignment or paid payroll found for employee.",
       };
     }
-
-    const lastBasicMonthly = (sal.ctc_annual / 12) * ((sal.basic_pct ?? 40) / 100);
+    const monthlyBase = paidGross ?? Number(sal!.ctc_annual) / 12;
+    const lastBasicMonthly = monthlyBase * ((sal?.basic_pct ?? 40) / 100);
     const result = await calculateGratuity(employeeId, lastBasicMonthly, lastWorkingDay);
 
     if (!result.eligible) {
