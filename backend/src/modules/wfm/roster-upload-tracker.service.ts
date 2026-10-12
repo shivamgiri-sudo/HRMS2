@@ -184,38 +184,24 @@ async function loadPairs(filter: { branchId?: string; processId?: string; scope?
 async function loadCoverage(weeks: string[]): Promise<Map<string, CoverageRow>> {
   const from = weeks[0];
   const to = addDays(weeks[weeks.length - 1], 6);
-  // Two sources count as "rostered": committed import batches, and Team Roster submissions that WFM
-  // approved and applied (their cells are written straight to wfm_roster_assignment, never via a batch).
   const rows = await query<RowDataPacket>(
     `SELECT e.branch_id, e.process_id, c.week_start,
             COUNT(*) AS covered, MIN(c.first_commit) AS first_commit, MAX(c.first_commit) AS full_commit
        FROM (
-         SELECT u.employee_code, u.week_start, MIN(u.first_commit) AS first_commit
-           FROM (
-             SELECT r.employee_id_raw COLLATE utf8mb4_unicode_ci AS employee_code,
-                    DATE_FORMAT(DATE_SUB(r.roster_date, INTERVAL WEEKDAY(r.roster_date) DAY), '%Y-%m-%d') AS week_start,
-                    UNIX_TIMESTAMP(b.committed_at) AS first_commit
-               FROM wfm_roster_import_batch b
-               JOIN wfm_roster_import_row r ON r.batch_id = b.id
-              WHERE b.status = 'COMMITTED' AND b.committed_at IS NOT NULL
-                AND b.date_range_end >= ? AND b.date_range_start <= ?
-                AND r.employee_id_raw IS NOT NULL AND r.roster_date BETWEEN ? AND ?
-             UNION ALL
-             SELECT te.employee_code COLLATE utf8mb4_unicode_ci AS employee_code,
-                    DATE_FORMAT(DATE_SUB(tl.roster_date, INTERVAL WEEKDAY(tl.roster_date) DAY), '%Y-%m-%d') AS week_start,
-                    UNIX_TIMESTAMP(ts.applied_at) AS first_commit
-               FROM roster_team_submission ts
-               JOIN roster_team_submission_line tl ON tl.submission_id = ts.id AND tl.line_status = 'applied'
-               JOIN employees te ON te.id = tl.employee_id
-              WHERE ts.status IN ('applied', 'partially_applied') AND ts.applied_at IS NOT NULL
-                AND tl.roster_date BETWEEN ? AND ?
-           ) u
-          GROUP BY u.employee_code, u.week_start
+         SELECT r.employee_id_raw AS employee_code,
+                DATE_FORMAT(DATE_SUB(r.roster_date, INTERVAL WEEKDAY(r.roster_date) DAY), '%Y-%m-%d') AS week_start,
+                MIN(UNIX_TIMESTAMP(b.committed_at)) AS first_commit
+           FROM wfm_roster_import_batch b
+           JOIN wfm_roster_import_row r ON r.batch_id = b.id
+          WHERE b.status = 'COMMITTED' AND b.committed_at IS NOT NULL
+            AND b.date_range_end >= ? AND b.date_range_start <= ?
+            AND r.employee_id_raw IS NOT NULL AND r.roster_date BETWEEN ? AND ?
+          GROUP BY r.employee_id_raw, week_start
        ) c
        JOIN employees e ON e.employee_code COLLATE utf8mb4_unicode_ci = c.employee_code COLLATE utf8mb4_unicode_ci
                        AND e.employment_status = 'active'
       GROUP BY e.branch_id, e.process_id, c.week_start`,
-    [from, to, from, to, from, to],
+    [from, to, from, to],
   );
   const out = new Map<string, CoverageRow>();
   for (const r of rows) {
@@ -225,7 +211,56 @@ async function loadCoverage(weeks: string[]): Promise<Map<string, CoverageRow>> 
       fullCommitMs: Number(r.full_commit) * 1000,
     });
   }
+  await addTeamRosterCoverage(out, from, to);
   return out;
+}
+
+/**
+ * Cells applied through an approved Team Roster submission are written straight to
+ * wfm_roster_assignment, never through an import batch, so they are merged in here. An employee
+ * already covered for the week by a committed import is not counted twice.
+ */
+async function addTeamRosterCoverage(out: Map<string, CoverageRow>, from: string, to: string): Promise<void> {
+  try {
+    const team = await query<RowDataPacket>(
+      `SELECT e.employee_code, e.branch_id, e.process_id,
+              DATE_FORMAT(DATE_SUB(tl.roster_date, INTERVAL WEEKDAY(tl.roster_date) DAY), '%Y-%m-%d') AS week_start,
+              MIN(UNIX_TIMESTAMP(ts.applied_at)) AS applied_at
+         FROM roster_team_submission ts
+         JOIN roster_team_submission_line tl ON tl.submission_id = ts.id AND tl.line_status = 'applied'
+         JOIN employees e ON e.id = tl.employee_id AND e.employment_status = 'active'
+        WHERE ts.status IN ('applied', 'partially_applied') AND ts.applied_at IS NOT NULL
+          AND tl.roster_date BETWEEN ? AND ?
+        GROUP BY e.id, e.employee_code, e.branch_id, e.process_id, week_start`,
+      [from, to],
+    );
+    if (team.length === 0) return;
+    const codes = [...new Set(team.map((r) => String(r.employee_code)))];
+    const imported = new Set<string>();
+    for (let i = 0; i < codes.length; i += 500) {
+      const chunk = codes.slice(i, i + 500);
+      const hit = await query<RowDataPacket>(
+        `SELECT DISTINCT r.employee_id_raw AS employee_code,
+                DATE_FORMAT(DATE_SUB(r.roster_date, INTERVAL WEEKDAY(r.roster_date) DAY), '%Y-%m-%d') AS week_start
+           FROM wfm_roster_import_row r
+           JOIN wfm_roster_import_batch b ON b.id = r.batch_id AND b.status = 'COMMITTED' AND b.committed_at IS NOT NULL
+          WHERE r.employee_id_raw IN (${inList(chunk)}) AND r.roster_date BETWEEN ? AND ?`,
+        [...chunk, from, to],
+      );
+      for (const h of hit) imported.add(`${String(h.employee_code)}|${String(h.week_start)}`);
+    }
+    for (const r of team) {
+      if (imported.has(`${String(r.employee_code)}|${String(r.week_start)}`)) continue;
+      const key = `${pairKey(String(r.branch_id), String(r.process_id))}|${String(r.week_start)}`;
+      const at = Number(r.applied_at) * 1000;
+      const cur = out.get(key);
+      out.set(key, cur
+        ? { covered: cur.covered + 1, firstCommitMs: Math.min(cur.firstCommitMs, at), fullCommitMs: Math.max(cur.fullCommitMs, at) }
+        : { covered: 1, firstCommitMs: at, fullCommitMs: at });
+    }
+  } catch (err) {
+    if (!isMissingObject(err)) throw err;
+  }
 }
 
 const personName = (r: RowDataPacket): string => String(r.full_name ?? r.email ?? 'Unknown').trim();

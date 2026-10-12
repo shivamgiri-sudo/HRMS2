@@ -75,6 +75,18 @@ async function buildWhere(actor: Actor, f: HistoryFilter): Promise<{ where: stri
   return { where, params };
 }
 
+/** Display names for auth user ids, looked up once instead of joining employees per row. */
+async function namesByUserId(ids: unknown[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter((v): v is string => typeof v === "string" && v.length > 0))];
+  const out = new Map<string, string>();
+  if (!unique.length) return out;
+  const rows = rowsOf<RowDataPacket>(await db.execute(
+    `SELECT e.user_id, ${NAME("e")} AS name FROM employees e WHERE e.user_id IN (${unique.map(() => "?").join(",")})`, unique,
+  ));
+  for (const r of rows) if (r.user_id && r.name) out.set(String(r.user_id), String(r.name));
+  return out;
+}
+
 const clamp = (offset?: number, limit?: number) => ({
   offset: Math.max(Math.trunc(offset ?? 0), 0),
   limit: Math.min(Math.max(Math.trunc(limit ?? 25), 1), 200),
@@ -90,7 +102,7 @@ export async function listHistory(actor: Actor, f: HistoryFilter) {
             ${STAMP("s.submitted_at", "submitted_s")}, ${STAMP("s.manager_decided_at", "mgr_at")}, ${STAMP("s.wfm_decided_at", "wfm_at")},
             ${STAMP("s.applied_at", "applied_s")}, s.manager_decision, s.wfm_decision,
             se.employee_code AS submitter_code, ${NAME("se")} AS submitter_name, ${NAME("me")} AS manager_name,
-            ${NAME("mdu")} AS manager_decided_by_name, ${NAME("wdu")} AS wfm_decided_by_name,
+            s.manager_decided_by, s.wfm_decided_by,
             (SELECT COUNT(*) FROM roster_team_submission_line l WHERE l.submission_id = s.id) AS line_count,
             (SELECT COUNT(*) FROM roster_team_submission_line l WHERE l.submission_id = s.id AND l.line_status = 'applied') AS applied_count,
             (SELECT COUNT(*) FROM roster_team_submission_line l WHERE l.submission_id = s.id AND l.line_status IN ('skipped','failed')) AS skipped_count,
@@ -103,19 +115,18 @@ export async function listHistory(actor: Actor, f: HistoryFilter) {
        FROM roster_team_submission s
        LEFT JOIN employees se ON se.id = s.submitter_employee_id
        LEFT JOIN employees me ON me.id = s.manager_approver_employee_id
-       LEFT JOIN employees mdu ON mdu.user_id = s.manager_decided_by
-       LEFT JOIN employees wdu ON wdu.user_id = s.wfm_decided_by
       WHERE ${w}
       ORDER BY COALESCE(s.submitted_at, s.created_at) DESC, s.id DESC LIMIT ${limit} OFFSET ${offset}`, params,
   ));
+  const names = await namesByUserId(rows.flatMap((r) => [r.manager_decided_by, r.wfm_decided_by]));
   const items = rows.map((r) => ({
     id: Number(r.id), submissionNo: r.submission_no ? String(r.submission_no) : null, status: String(r.status),
     from: r.from_d ? String(r.from_d) : null, to: r.to_d ? String(r.to_d) : null,
     submittedAt: r.submitted_s ? String(r.submitted_s) : null, appliedAt: r.applied_s ? String(r.applied_s) : null,
     submitter: { code: r.submitter_code ? String(r.submitter_code) : null, name: String(r.submitter_name ?? "") },
     managerApprover: r.manager_name ? String(r.manager_name) : null,
-    managerDecision: r.manager_decision ? { decision: String(r.manager_decision), at: r.mgr_at ? String(r.mgr_at) : null, by: r.manager_decided_by_name ? String(r.manager_decided_by_name) : null } : null,
-    wfmDecision: r.wfm_decision ? { decision: String(r.wfm_decision), at: r.wfm_at ? String(r.wfm_at) : null, by: r.wfm_decided_by_name ? String(r.wfm_decided_by_name) : null } : null,
+    managerDecision: r.manager_decision ? { decision: String(r.manager_decision), at: r.mgr_at ? String(r.mgr_at) : null, by: names.get(String(r.manager_decided_by)) ?? null } : null,
+    wfmDecision: r.wfm_decision ? { decision: String(r.wfm_decision), at: r.wfm_at ? String(r.wfm_at) : null, by: names.get(String(r.wfm_decided_by)) ?? null } : null,
     raised: Number(r.line_count ?? 0), applied: Number(r.applied_count ?? 0), skipped: Number(r.skipped_count ?? 0),
     branches: r.branches ? String(r.branches) : "", processes: r.processes ? String(r.processes) : "",
   }));
@@ -136,9 +147,10 @@ export async function historyFilterOptions(actor: Actor) {
       WHERE ${w} LIMIT 5000`, params,
   ));
   const managers = rowsOf<RowDataPacket>(await db.execute(
-    `SELECT DISTINCT m.id, ${NAME("m")} AS name FROM roster_team_submission s
-       JOIN employees m ON m.id = s.submitter_employee_id OR m.id = s.manager_approver_employee_id
-      WHERE ${w} LIMIT 2000`, params,
+    `SELECT m.id, ${NAME("m")} AS name FROM employees m
+      WHERE m.id IN (SELECT s.submitter_employee_id FROM roster_team_submission s WHERE ${w})
+         OR m.id IN (SELECT s.manager_approver_employee_id FROM roster_team_submission s WHERE ${w})
+      LIMIT 2000`, [...params, ...params],
   ));
   const branches = new Map<string, string>();
   const processes = new Map<string, { name: string; branchId: string | null }>();
@@ -164,8 +176,8 @@ export async function exportHistoryRows(actor: Actor, f: HistoryFilter) {
     `SELECT s.id AS submission_id, s.submission_no, s.status, ${DATE("s.from_date", "from_d")}, ${DATE("s.to_date", "to_d")},
             ${STAMP("s.submitted_at", "submitted_s")}, s.note,
             se.employee_code AS submitter_code, ${NAME("se")} AS submitter_name, ${NAME("me")} AS manager_name,
-            s.manager_decision, ${STAMP("s.manager_decided_at", "mgr_at")}, s.manager_remarks, ${NAME("mdu")} AS mgr_by,
-            s.wfm_decision, ${STAMP("s.wfm_decided_at", "wfm_at")}, s.wfm_remarks, ${NAME("wdu")} AS wfm_by,
+            s.manager_decision, ${STAMP("s.manager_decided_at", "mgr_at")}, s.manager_remarks, s.manager_decided_by,
+            s.wfm_decision, ${STAMP("s.wfm_decided_at", "wfm_at")}, s.wfm_remarks, s.wfm_decided_by,
             ${STAMP("s.applied_at", "applied_s")},
             b.branch_name, p.process_name, e.employee_code, ${NAME("e")} AS employee_name,
             ${DATE("l.roster_date", "roster_d")}, l.kind, l.old_assignment_type, l.old_shift_start_time, l.old_shift_end_time,
@@ -177,12 +189,11 @@ export async function exportHistoryRows(actor: Actor, f: HistoryFilter) {
        LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN employees se ON se.id = s.submitter_employee_id
        LEFT JOIN employees me ON me.id = s.manager_approver_employee_id
-       LEFT JOIN employees mdu ON mdu.user_id = s.manager_decided_by
-       LEFT JOIN employees wdu ON wdu.user_id = s.wfm_decided_by
       WHERE ${where.join(" AND ")}
       ORDER BY b.branch_name, p.process_name, ${NAME("se")}, s.id, l.roster_date, e.employee_code
       LIMIT ${HISTORY_EXPORT_MAX_ROWS + 1}`, params,
   ));
+  const names = await namesByUserId(rows.flatMap((r) => [r.manager_decided_by, r.wfm_decided_by]));
   const truncated = rows.length > HISTORY_EXPORT_MAX_ROWS;
   const time = (s: unknown, e: unknown) => (s && e ? `${String(s).slice(0, 5)}-${String(e).slice(0, 5)}` : "");
   const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -195,8 +206,8 @@ export async function exportHistoryRows(actor: Actor, f: HistoryFilter) {
       raisedBy: str(r.submitter_name), raisedByCode: str(r.submitter_code), raisedAt: str(r.submitted_s),
       periodFrom: str(r.from_d), periodTo: str(r.to_d),
       managerApprover: str(r.manager_name),
-      managerDecision: str(r.manager_decision), managerDecidedBy: str(r.mgr_by), managerDecidedAt: str(r.mgr_at), managerRemarks: str(r.manager_remarks),
-      wfmDecision: str(r.wfm_decision), wfmDecidedBy: str(r.wfm_by), wfmDecidedAt: str(r.wfm_at), wfmRemarks: str(r.wfm_remarks),
+      managerDecision: str(r.manager_decision), managerDecidedBy: names.get(String(r.manager_decided_by)) ?? "", managerDecidedAt: str(r.mgr_at), managerRemarks: str(r.manager_remarks),
+      wfmDecision: str(r.wfm_decision), wfmDecidedBy: names.get(String(r.wfm_decided_by)) ?? "", wfmDecidedAt: str(r.wfm_at), wfmRemarks: str(r.wfm_remarks),
       appliedAt: str(r.applied_s),
       employeeCode: str(r.employee_code), employeeName: str(r.employee_name), rosterDate: str(r.roster_d),
       kind: str(r.kind),
