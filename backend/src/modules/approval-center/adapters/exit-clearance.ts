@@ -89,7 +89,7 @@ export const exitClearanceAdapter: ApprovalAdapter = {
           long("Existing remarks", r.remarks),
         ),
         submittedAt: iso(r.created_at),
-        priority: overdue || str(r.status) === "blocked" ? "high" : "normal",
+        priority: overdue ? "high" : "normal",
         viewPath: `${PAGE_BY_OWNER_ROLE[owner] ?? "/exit/command-center"}?approvalId=${encodeURIComponent(String(r.id))}`,
         rejectNeedsReason: true,
         approveLabel: "Mark cleared",

@@ -90,7 +90,8 @@ export function ApprovalCenterPopup() {
   const [busy, setBusy] = useState<null | "approve" | "reject">(null);
   const [handled, setHandled] = useState(0);
 
-  const all = data?.items ?? [];
+  const rawAll = data?.items ?? [];
+  const all = useMemo(() => collapseBulk(rawAll), [rawAll]);
   const categories = useMemo(() => {
     const m = new Map<string, number>();
     for (const i of all) m.set(i.category, (m.get(i.category) ?? 0) + 1);
@@ -124,7 +125,7 @@ export function ApprovalCenterPopup() {
 
   if (!user?.id) return null;
 
-  const total = all.length;
+  const total = rawAll.length;
 
   const run = async (action: "approve" | "reject") => {
     if (!item) return;
@@ -303,7 +304,7 @@ export function ApprovalCenterPopup() {
                     {item.noReject ? "Declining isn't available here — use View if you need to reject." : "Approving needs details only the request page can collect — use View."}
                   </p>
                 )}
-                {item.viewOnly && (
+                {item.viewOnly && !item.uid.startsWith("bulk:") && (
                   <p className="mt-4 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
                     This request needs details that can only be entered on its page. Use <strong>View</strong> to review and decide.
                   </p>
@@ -374,7 +375,9 @@ export function ApprovalCenterPopup() {
                   <span className="inline-flex min-w-0 items-center gap-1">
                     <Inbox className="h-3.5 w-3.5 shrink-0" aria-hidden />
                     <span className="min-w-0 truncate">
-                      {data?.failed?.length
+                      {data?.partial
+                        ? `Still loading ${data.pendingKinds?.length ?? "some"} more queue${(data.pendingKinds?.length ?? 2) === 1 ? "" : "s"}…`
+                        : data?.failed?.length
                         ? `${data.failed.length} queue(s) did not load`
                         : data?.staleHidden
                           ? `${data.staleHidden} older request${data.staleHidden === 1 ? " is" : "s are"} on their pages`
@@ -390,6 +393,60 @@ export function ApprovalCenterPopup() {
       </Dialog>
     </>
   );
+}
+
+/** A request type with more than this many waiting collapses to one summary card plus its first few. */
+const BULK_AFTER = 25;
+const BULK_SHOW = 5;
+
+/**
+ * 200 locked-month overrides or 160 exit tasks must not become 200 popup cards. Past BULK_AFTER, a type shows one summary
+ * card (View opens its page) followed by its first BULK_SHOW requests, so the person can still act on the oldest few here.
+ */
+function collapseBulk(items: ApprovalItem[]): ApprovalItem[] {
+  const byKind = new Map<string, ApprovalItem[]>();
+  for (const it of items) {
+    const l = byKind.get(it.kind);
+    if (l) l.push(it);
+    else byKind.set(it.kind, [it]);
+  }
+  const emitted = new Set<string>();
+  const out: ApprovalItem[] = [];
+  const shown = new Map<string, number>();
+  for (const it of items) {
+    const group = byKind.get(it.kind)!;
+    if (group.length <= BULK_AFTER) {
+      out.push(it);
+      continue;
+    }
+    if (!emitted.has(it.kind)) {
+      emitted.add(it.kind);
+      const first = group[0];
+      out.push({
+        uid: `bulk:${it.kind}`,
+        kind: it.kind,
+        kindLabel: it.kindLabel,
+        category: it.category,
+        id: `bulk-${it.kind}`,
+        title: `${group.length} ${it.kindLabel} requests are waiting`,
+        subtitle: "Too many to step through here — open the page to review them together",
+        fields: [
+          { label: "Waiting", value: String(group.length) },
+          { label: "Shown below", value: `the first ${BULK_SHOW}` },
+        ],
+        viewPath: first.viewPath.replace(/([?&])approvalId=[^&]*&?/, "$1").replace(/[?&]$/, ""),
+        rejectNeedsReason: false,
+        viewOnly: true,
+        priority: "normal",
+      });
+    }
+    const n = shown.get(it.kind) ?? 0;
+    if (n < BULK_SHOW) {
+      out.push(it);
+      shown.set(it.kind, n + 1);
+    }
+  }
+  return out;
 }
 
 function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {

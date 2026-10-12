@@ -15,6 +15,11 @@ export interface ListResult {
   /** Pending items older than the freshness window that are NOT listed (they remain on their module pages). */
   staleHidden: number;
   generatedAt: string;
+  /** True while some queues are still computing; the client re-asks shortly and gets the full list from the cache. */
+  partial?: boolean;
+  pendingKinds?: string[];
+  /** Per-queue wall time in ms (diagnostics only, no personal data). */
+  timings?: Record<string, number>;
 }
 
 /**
@@ -47,47 +52,38 @@ async function mapLimit<T, R>(list: T[], limit: number, fn: (x: T) => Promise<R>
   return out;
 }
 
-/** One list build per user at a time: a double-open / refetch storm shares the in-flight build. */
-const building = new Map<string, Promise<ListResult>>();
-
 const PRIORITY_RANK = { high: 0, normal: 1 } as const;
 
 export function invalidateApprovalCache(userId: string) {
   cache.delete(userId);
 }
 
-export function listPendingApprovals(ctx: LoopbackCtx, opts: { fresh?: boolean } = {}): Promise<ListResult> {
-  const existing = building.get(ctx.userId);
-  if (existing) return existing;
-  const p = buildList(ctx, opts).finally(() => building.delete(ctx.userId));
-  building.set(ctx.userId, p);
-  return p;
+/**
+ * Soft deadline: a list request returns whatever queues have finished by then, flagged `partial`, while the rest keep
+ * computing in the background and land in the cache for the next request. A person with hundreds of rows in a few queues
+ * (200 locked-month overrides, 160 exit tasks) otherwise waits a minute for a popup. Read per call so ops can tune it.
+ */
+export function softDeadlineMs(): number {
+  const n = Number(process.env.APPROVAL_CENTER_SOFT_DEADLINE_MS);
+  return Number.isFinite(n) && n > 0 ? n : 12_000;
 }
 
-async function buildList(ctx: LoopbackCtx, opts: { fresh?: boolean }): Promise<ListResult> {
-  const hit = cache.get(ctx.userId);
-  if (!opts.fresh && hit && hit.exp > Date.now()) return hit.value;
+interface BuildState {
+  results: Map<string, ApprovalItem[]>;
+  failed: ListResult["failed"];
+  timings: Record<string, number>;
+  pendingKinds: Set<string>;
+  done: Promise<ListResult>;
+}
+const builds = new Map<string, BuildState>();
 
-  const failed: ListResult["failed"] = [];
-  // Adapters run a few at a time (loopback also caps in-flight calls process-wide) so listing never floods the DB pool.
-  const settled = await mapLimit(ADAPTERS, 4, async (a) => {
-      try {
-        return await withTimeout(a.list(ctx), ADAPTER_TIMEOUT_MS);
-      } catch (e: any) {
-        // 401/403 = this person simply has no queue here. Anything else is a real fault worth surfacing.
-        if (!(e instanceof LoopbackError && (e.status === 401 || e.status === 403))) {
-          failed.push({ kind: a.kind, label: a.label, reason: String(e?.message ?? e).slice(0, 200) });
-        }
-        return [] as ApprovalItem[];
-      }
-  });
-
+function compose(state: BuildState, partial: boolean): ListResult {
   const seen = new Set<string>();
   const items: ApprovalItem[] = [];
   const windowDays = maxAgeDays();
   const cutoff = windowDays > 0 ? Date.now() - windowDays * 86_400_000 : null;
   let staleHidden = 0;
-  for (const batch of settled) {
+  for (const batch of state.results.values()) {
     for (const it of batch) {
       if (seen.has(it.uid)) continue;
       seen.add(it.uid);
@@ -99,7 +95,7 @@ async function buildList(ctx: LoopbackCtx, opts: { fresh?: boolean }): Promise<L
           continue;
         }
       }
-      items.push(it);
+      items.push({ ...it });
     }
   }
   items.sort((a, b) => {
@@ -107,19 +103,75 @@ async function buildList(ctx: LoopbackCtx, opts: { fresh?: boolean }): Promise<L
     if (p !== 0) return p;
     return String(a.submittedAt ?? "").localeCompare(String(b.submittedAt ?? ""));
   });
-
   const counts: Record<string, number> = {};
   for (const it of items) counts[it.kind] = (counts[it.kind] ?? 0) + 1;
-
   for (const it of items) {
     const m = it.meta ?? {};
     it.viewOnly = m.viewOnly === true;
     it.noReject = m.noReject === true || m.approveOnly === true || m.rejectUnsupported === true || m.rejectViewOnly === true;
     it.noApprove = m.approveViewOnly === true;
   }
-  const value: ListResult = { items, counts, failed, staleHidden, generatedAt: new Date().toISOString() };
-  cache.set(ctx.userId, { exp: Date.now() + CACHE_TTL_MS, value });
-  return value;
+  return {
+    items,
+    counts,
+    failed: [...state.failed],
+    staleHidden,
+    generatedAt: new Date().toISOString(),
+    ...(partial ? { partial: true, pendingKinds: [...state.pendingKinds] } : {}),
+    timings: { ...state.timings },
+  };
+}
+
+function startBuild(ctx: LoopbackCtx): BuildState {
+  const state: BuildState = {
+    results: new Map(),
+    failed: [],
+    timings: {},
+    pendingKinds: new Set(ADAPTERS.map((a) => a.kind)),
+    done: Promise.resolve(null as unknown as ListResult),
+  };
+  // Adapters run a few at a time (loopback also caps in-flight calls process-wide) so listing never floods the DB pool.
+  state.done = (async () => {
+    await mapLimit(ADAPTERS, 4, async (a) => {
+      const t0 = Date.now();
+      try {
+        state.results.set(a.kind, await withTimeout(a.list(ctx), ADAPTER_TIMEOUT_MS));
+      } catch (e: any) {
+        // 401/403 = this person simply has no queue here. Anything else is a real fault worth surfacing.
+        if (!(e instanceof LoopbackError && (e.status === 401 || e.status === 403))) {
+          state.failed.push({ kind: a.kind, label: a.label, reason: String(e?.message ?? e).slice(0, 200) });
+        }
+        state.results.set(a.kind, []);
+      } finally {
+        state.timings[a.kind] = Date.now() - t0;
+        state.pendingKinds.delete(a.kind);
+      }
+    });
+    const value = compose(state, false);
+    cache.set(ctx.userId, { exp: Date.now() + CACHE_TTL_MS, value });
+    builds.delete(ctx.userId);
+    return value;
+  })();
+  return state;
+}
+
+export async function listPendingApprovals(ctx: LoopbackCtx, opts: { fresh?: boolean } = {}): Promise<ListResult> {
+  const hit = cache.get(ctx.userId);
+  if (!opts.fresh && hit && hit.exp > Date.now()) return hit.value;
+
+  // One build per user at a time: a double-open / refetch storm shares the in-flight build.
+  let state = builds.get(ctx.userId);
+  if (!state) {
+    state = startBuild(ctx);
+    builds.set(ctx.userId, state);
+  }
+  const deadline = new Promise<"deadline">((resolve) => {
+    const t = setTimeout(() => resolve("deadline"), softDeadlineMs());
+    (t as unknown as { unref?: () => void }).unref?.();
+  });
+  const winner = await Promise.race([state.done, deadline]);
+  if (winner !== "deadline") return winner;
+  return compose(state, true);
 }
 
 export function findAdapter(kind: string): ApprovalAdapter | undefined {

@@ -37,6 +37,8 @@ export interface ApprovalCenterData {
   failed: Array<{ kind: string; label: string; reason: string }>;
   /** Older pending requests left out of the popup (they remain on their own pages). */
   staleHidden?: number;
+  partial?: boolean;
+  pendingKinds?: string[];
   generatedAt: string;
 }
 
@@ -48,7 +50,8 @@ export function useApprovalCenter() {
     queryKey: [APPROVAL_CENTER_KEY, user?.id],
     enabled: !!user?.id,
     staleTime: 60_000,
-    refetchInterval: 5 * 60_000,
+    // While some queues are still computing on the server, ask again shortly; otherwise the normal 5-minute refresh.
+    refetchInterval: (q) => (q.state.data?.partial ? 6_000 : 5 * 60_000),
     refetchOnWindowFocus: true,
     retry: 1,
     queryFn: async (): Promise<ApprovalCenterData> => {
