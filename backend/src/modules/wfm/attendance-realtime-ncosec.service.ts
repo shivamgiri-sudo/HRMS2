@@ -18,7 +18,6 @@ import { assessAggregatePunches } from './cosec-punch-interpretation.service.js'
 import {
   type PunchBlock,
   type PunchGroup,
-  SHIFT_BLOCK_CUTOFF_HOUR,
   attributeNightShifts,
   mergeNightShiftRollover,
 } from './cosec-sync.service.js';
@@ -47,7 +46,6 @@ async function getAttributedShifts(cosecUserId: string, fromDate: string, toDate
     .query(`
       SELECT
         CONVERT(CHAR(10), CAST(Edatetime AS DATE), 23) AS punch_date,
-        CASE WHEN DATEPART(HOUR, Edatetime) < ${SHIFT_BLOCK_CUTOFF_HOUR} THEN 'AM' ELSE 'PM' END AS part,
         CONVERT(CHAR(19), MIN(Edatetime), 120) AS first_punch,
         CONVERT(CHAR(19), MAX(Edatetime), 120) AS last_punch,
         COUNT(*) AS total_punches
@@ -55,12 +53,11 @@ async function getAttributedShifts(cosecUserId: string, fromDate: string, toDate
       WHERE UserID = @userId
         AND Edatetime >= @dateStart
         AND Edatetime <= @dateEnd
-      GROUP BY CAST(Edatetime AS DATE), CASE WHEN DATEPART(HOUR, Edatetime) < ${SHIFT_BLOCK_CUTOFF_HOUR} THEN 'AM' ELSE 'PM' END
+      GROUP BY CAST(Edatetime AS DATE), DATEPART(HOUR, Edatetime)
     `);
   const blocks: PunchBlock[] = result.recordset.map((row: any) => ({
     cosecUserId,
     punchDate: String(row.punch_date),
-    part: row.part === 'AM' ? 'AM' : 'PM',
     firstPunch: String(row.first_punch),
     lastPunch: String(row.last_punch),
     totalPunches: Number(row.total_punches),

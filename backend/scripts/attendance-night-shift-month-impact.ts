@@ -65,15 +65,14 @@ const diffMin = (a: string, b: string) => Math.round((new Date(b.replace(" ", "T
     const r = await req.query(`
       SELECT CAST([${uc}] AS NVARCHAR(100)) AS user_id,
              CONVERT(CHAR(10), CAST([${dc}] AS DATE), 23) AS attendance_date,
-             CASE WHEN DATEPART(HOUR, [${dc}]) < 10 THEN 'AM' ELSE 'PM' END AS part,
              CONVERT(CHAR(19), MIN([${dc}]), 120) AS first_punch,
              CONVERT(CHAR(19), MAX([${dc}]), 120) AS last_punch,
              COUNT_BIG(*) AS total_punches
         FROM ${table}
        WHERE [${dc}] >= @f AND [${dc}] < @t AND CAST([${uc}] AS NVARCHAR(100)) IN (${slice.map((_, j) => `@u${j}`).join(",")})
-       GROUP BY [${uc}], CAST([${dc}] AS DATE), CASE WHEN DATEPART(HOUR, [${dc}]) < 10 THEN 'AM' ELSE 'PM' END`);
+       GROUP BY [${uc}], CAST([${dc}] AS DATE), DATEPART(HOUR, [${dc}])`);
     for (const row of r.recordset) blocks.push({
-      cosecUserId: String(row.user_id).trim(), punchDate: String(row.attendance_date), part: row.part === "AM" ? "AM" : "PM",
+      cosecUserId: String(row.user_id).trim(), punchDate: String(row.attendance_date),
       firstPunch: String(row.first_punch), lastPunch: String(row.last_punch), totalPunches: Number(row.total_punches),
     });
   }

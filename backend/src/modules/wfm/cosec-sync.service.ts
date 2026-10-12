@@ -173,32 +173,26 @@ function getConfig() {
 }
 
 /**
- * One calendar day of one user's punches, split at the AM/PM boundary (SHIFT_BLOCK_CUTOFF_HOUR).
- * The SQL aggregates each half separately so the night-shift tail (the exit punches that fall
- * after midnight) can be told apart from the start of the next shift without pulling every punch.
+ * A run of punches for one user: first/last/count over some interval. The SQL source delivers one
+ * block per (user, date, hour); tests and scripts may pass any granularity.
  */
 export type PunchBlock = {
   cosecUserId: string;
   punchDate: string;
-  part: "AM" | "PM";
   firstPunch: string;
   lastPunch: string;
   totalPunches: number;
 };
 
-/**
- * Hour that separates a calendar day's "AM" block (punches before it) from its "PM" block.
- * 10:00, not noon or 14:00: a 13:00 shift's start must not be lumped with a 00:13 exit, and no
- * night shift's exit runs past 10:00.
- */
-export const SHIFT_BLOCK_CUTOFF_HOUR = 10;
-/** Punches this many minutes apart inside one calendar day are two different shifts. */
+/** Punches this many minutes apart start a new cluster (a new shift, or an exit after silence). */
 const SHIFT_SPLIT_GAP_MIN = 300;
-/** Longest silent stretch tolerated between the last punch of a shift and its morning exit. */
-const MAX_TAIL_GAP_MIN = 600;
+/** Longest silent stretch tolerated between a shift's last punch and its morning exit. */
+const MAX_TAIL_GAP_MIN = 840;
 /** No single shift is longer than this; anything longer is two shifts, not one. */
 const MAX_SHIFT_SPAN_MIN = 900;
-/** The morning exit of a night shift is over by this hour. */
+/** An exit cluster starts before this hour (no night shift's exit starts later). */
+const TAIL_EARLIEST_HOUR_MAX = 10;
+/** ...and is over by this hour. */
 const TAIL_LATEST_HOUR = 12;
 
 const hourOf = (ts: string) => parseInt(ts.substring(11, 13), 10);
@@ -211,94 +205,108 @@ const hourOf = (ts: string) => parseInt(ts.substring(11, 13), 10);
  * 00:30 -> 23:59 = 23.5 h, and the exit-only morning row was graded absent with LWP 1. Seen live on
  * 2,384 employee-days across ~234 employees (Aug-Oct 2026, NOIDA / NOIDA-2).
  *
- * RULE. A shift belongs to the date it STARTED on. Each date arrives as an AM block (punches
- * before SHIFT_BLOCK_CUTOFF_HOUR) and a PM block (the rest). For each user and date:
- *   - AM and PM both present and 5 h+ apart: the AM block is the exit of the previous shift and
- *     the PM block starts a new one.
- *   - an AM-only day ending before 12:00 that follows the previous shift's last punch by <= 10 h
- *     is that shift's exit.
- *   - otherwise the two halves are one ordinary day, exactly as before.
- * An exit is only absorbed when the joined shift is <= 15 h, so a morning-shift worker is never
- * glued to the evening before. The first date of the pull has no previous day to join, so its
- * leading exit block is treated as belonging to a shift that began before the window.
+ * RULE. A shift belongs to the date it STARTED on.
+ *   1. Cluster each user's punches: a gap of 5 h or more starts a new cluster.
+ *   2. A cluster that looks like an exit (starts before 10:00, ends before 12:00) is absorbed into
+ *      the previous cluster when the joined shift is <= 15 h and the silence between them <= 14 h.
+ *      This also re-joins a shift that has a long quiet stretch inside it.
+ *   3. Each remaining cluster is a shift, dated by its first punch. Two clusters on one date are
+ *      combined exactly as the old calendar-date grouping did.
+ * A morning-shift worker is never glued to the evening before, because the 15 h cap rejects it.
+ * The first date of the pull has no previous cluster to join, so a leading exit cluster there is
+ * dropped as belonging to a shift that began before the window.
  *
- * Returns the attributed groups plus the dates whose punches were absorbed into the previous
- * shift and have no shift of their own left; their stale rows have to be cleared by the caller.
+ * Returns the attributed groups plus the dates whose punches were absorbed into another shift and
+ * have no shift of their own left; their stale rows have to be cleared by the caller.
  */
 export function attributeNightShifts(
   blocks: PunchBlock[],
   sourceSystem: string,
   sourceTable: string,
 ): { groups: PunchGroup[]; consumedDates: Array<{ cosecUserId: string; punchDate: string }> } {
-  const byUser = new Map<string, Map<string, { am?: PunchBlock; pm?: PunchBlock }>>();
+  const byUser = new Map<string, PunchBlock[]>();
   for (const b of blocks) {
-    const days = byUser.get(b.cosecUserId) ?? new Map();
-    const day = days.get(b.punchDate) ?? {};
-    if (b.part === "AM") day.am = b; else day.pm = b;
-    days.set(b.punchDate, day);
-    byUser.set(b.cosecUserId, days);
+    const arr = byUser.get(b.cosecUserId) ?? [];
+    arr.push(b);
+    byUser.set(b.cosecUserId, arr);
   }
+  const windowStart = blocks.reduce((min, b) => {
+    const d = b.firstPunch.slice(0, 10);
+    return min === "" || d < min ? d : min;
+  }, "");
 
+  type Cluster = { first: string; last: string; count: number; absorbed: boolean };
   const groups: PunchGroup[] = [];
   const consumedDates: Array<{ cosecUserId: string; punchDate: string }> = [];
-  const windowStart = blocks.reduce((min, b) => (min === "" || b.punchDate < min ? b.punchDate : min), "");
 
-  for (const [cosecUserId, days] of byUser) {
-    const dates = [...days.keys()].sort();
-    const mains = new Map<string, PunchGroup>();
+  for (const [cosecUserId, userBlocks] of byUser) {
+    userBlocks.sort((a, b) => a.firstPunch.localeCompare(b.firstPunch));
 
-    const mk = (punchDate: string, first: string, last: string, count: number): PunchGroup => ({
-      cosecUserId, punchDate, firstPunch: first, lastPunch: last, totalPunches: count,
-      workingMinutes: diffMinutes(first, last), sourceSystem, sourceTable,
-    });
-    // A morning block is the exit of the previous shift when it follows that shift's last punch
-    // closely enough and the joined shift is a plausible length. No evening-start requirement: a
-    // 13:00-22:00 shift that someone leaves at 00:13 has its exit on the next date too.
-    const canAbsorb = (prev: PunchGroup | undefined, tailFirst: string, tailLast: string) =>
-      !!prev
-      && !prev.tailMerged
-      && diffMinutes(prev.lastPunch, tailFirst) <= MAX_TAIL_GAP_MIN
-      && diffMinutes(prev.firstPunch, tailLast) <= MAX_SHIFT_SPAN_MIN;
-
-    for (const date of dates) {
-      const { am, pm } = days.get(date)!;
-      const prevDate = shiftDate(date, -1);
-      const prev = mains.get(prevDate);
-
-      if (am && pm) {
-        const gap = diffMinutes(am.lastPunch, pm.firstPunch);
-        const splits = gap >= SHIFT_SPLIT_GAP_MIN;
-        if (splits && canAbsorb(prev, am.firstPunch, am.lastPunch)) {
-          mains.set(prevDate, {
-            ...mk(prevDate, prev!.firstPunch, am.lastPunch, prev!.totalPunches + am.totalPunches),
-            tailMerged: true,
-          });
-          mains.set(date, mk(date, pm.firstPunch, pm.lastPunch, pm.totalPunches));
-        } else if (splits && !prev && date === windowStart) {
-          // First date in the pull: the morning block is the exit of a shift that began before
-          // the window, so it is not part of this date's shift.
-          mains.set(date, mk(date, pm.firstPunch, pm.lastPunch, pm.totalPunches));
-        } else {
-          mains.set(date, mk(date, am.firstPunch, pm.lastPunch, am.totalPunches + pm.totalPunches));
-        }
-      } else if (am) {
-        if (date === windowStart && !prev && hourOf(am.lastPunch) < TAIL_LATEST_HOUR) {
-          // Exit-only first date of the pull: belongs to a shift that began before the window.
-          consumedDates.push({ cosecUserId, punchDate: date });
-        } else if (hourOf(am.lastPunch) < TAIL_LATEST_HOUR && canAbsorb(prev, am.firstPunch, am.lastPunch)) {
-          mains.set(prevDate, {
-            ...mk(prevDate, prev!.firstPunch, am.lastPunch, prev!.totalPunches + am.totalPunches),
-            tailMerged: true,
-          });
-          consumedDates.push({ cosecUserId, punchDate: date });
-        } else {
-          mains.set(date, mk(date, am.firstPunch, am.lastPunch, am.totalPunches));
-        }
-      } else if (pm) {
-        mains.set(date, mk(date, pm.firstPunch, pm.lastPunch, pm.totalPunches));
+    // 1. cluster by silence
+    const clusters: Cluster[] = [];
+    for (const b of userBlocks) {
+      const last = clusters[clusters.length - 1];
+      if (last && diffMinutes(last.last, b.firstPunch) < SHIFT_SPLIT_GAP_MIN) {
+        if (b.lastPunch > last.last) last.last = b.lastPunch;
+        last.count += b.totalPunches;
+      } else {
+        clusters.push({ first: b.firstPunch, last: b.lastPunch, count: b.totalPunches, absorbed: false });
       }
     }
-    groups.push(...mains.values());
+
+    // 2. absorb exit-like clusters into the previous shift
+    const shifts: Cluster[] = [];
+    const goneDates: string[] = [];
+    for (const c of clusters) {
+      const prev = shifts[shifts.length - 1];
+      const exitLike = hourOf(c.first) < TAIL_EARLIEST_HOUR_MAX && hourOf(c.last) < TAIL_LATEST_HOUR;
+      if (prev && exitLike
+        && diffMinutes(prev.last, c.first) <= MAX_TAIL_GAP_MIN
+        && diffMinutes(prev.first, c.last) <= MAX_SHIFT_SPAN_MIN) {
+        prev.last = c.last;
+        prev.count += c.count;
+        prev.absorbed = true;
+        goneDates.push(c.first.slice(0, 10));
+      } else if (!prev && exitLike && c.first.slice(0, 10) === windowStart) {
+        goneDates.push(c.first.slice(0, 10));
+      } else {
+        shifts.push({ ...c });
+      }
+    }
+
+    // 3. one group per start date
+    const byDate = new Map<string, PunchGroup>();
+    for (const sft of shifts) {
+      const punchDate = sft.first.slice(0, 10);
+      const existing = byDate.get(punchDate);
+      if (existing) {
+        existing.lastPunch = sft.last > existing.lastPunch ? sft.last : existing.lastPunch;
+        existing.totalPunches += sft.count;
+        existing.workingMinutes = diffMinutes(existing.firstPunch, existing.lastPunch);
+        if (sft.absorbed) existing.tailMerged = true;
+      } else {
+        byDate.set(punchDate, {
+          cosecUserId,
+          punchDate,
+          firstPunch: sft.first,
+          lastPunch: sft.last,
+          totalPunches: sft.count,
+          workingMinutes: diffMinutes(sft.first, sft.last),
+          sourceSystem,
+          sourceTable,
+          ...(sft.absorbed ? { tailMerged: true } : {}),
+        });
+      }
+    }
+    groups.push(...byDate.values());
+    // Dates a shift runs into (its exit lands there) are no longer a day of their own either.
+    for (const sft of shifts) {
+      const lastDate = sft.last.slice(0, 10);
+      for (let d = shiftDate(sft.first.slice(0, 10), 1); d <= lastDate; d = shiftDate(d, 1)) goneDates.push(d);
+    }
+    for (const d of new Set(goneDates)) {
+      if (!byDate.has(d)) consumedDates.push({ cosecUserId, punchDate: d });
+    }
   }
   return { groups, consumedDates };
 }
@@ -326,14 +334,13 @@ async function pullCosecAttendance(
       reject(new Error(`pullCosecAttendance timed out after ${QUERY_TIMEOUT_MS / 1000}s`));
     }, QUERY_TIMEOUT_MS);
   });
-  // One row per (user, date, AM|PM). The 10:00 split lets attributeNightShifts() separate a night
-  // shift's exit punches from the next shift's start without pulling every raw punch.
+  // One row per (user, date, hour): small enough to pull for the whole population, fine enough
+  // for attributeNightShifts() to see the silences that separate one shift from the next.
   request.input("windowFrom", sql.Date, shiftDate(from, -1));
   const queryPromise = request.query(`
       SELECT
         CAST(${userColumn} AS NVARCHAR(100)) AS user_id,
         CONVERT(CHAR(10), CAST(${datetimeColumn} AS DATE), 23) AS attendance_date,
-        CASE WHEN DATEPART(HOUR, ${datetimeColumn}) < ${SHIFT_BLOCK_CUTOFF_HOUR} THEN 'AM' ELSE 'PM' END AS part,
         CONVERT(CHAR(19), MIN(${datetimeColumn}), 120) AS first_punch,
         CONVERT(CHAR(19), MAX(${datetimeColumn}), 120) AS last_punch,
         COUNT_BIG(*) AS total_punches
@@ -341,8 +348,7 @@ async function pullCosecAttendance(
       WHERE ${datetimeColumn} >= @windowFrom
         AND ${datetimeColumn} < DATEADD(DAY, 1, @toDate)
         AND ${userColumn} IS NOT NULL
-      GROUP BY ${userColumn}, CAST(${datetimeColumn} AS DATE),
-               CASE WHEN DATEPART(HOUR, ${datetimeColumn}) < ${SHIFT_BLOCK_CUTOFF_HOUR} THEN 'AM' ELSE 'PM' END
+      GROUP BY ${userColumn}, CAST(${datetimeColumn} AS DATE), DATEPART(HOUR, ${datetimeColumn})
       ORDER BY ${userColumn}, attendance_date
     `);
   let result: Awaited<typeof queryPromise>;
@@ -355,7 +361,6 @@ async function pullCosecAttendance(
     .map((row: any) => ({
       cosecUserId: String(row.user_id ?? "").trim(),
       punchDate: String(row.attendance_date ?? "").trim(),
-      part: (row.part === "AM" ? "AM" : "PM") as "AM" | "PM",
       firstPunch: String(row.first_punch ?? "").trim(),
       lastPunch: String(row.last_punch ?? "").trim(),
       totalPunches: Math.max(0, Number(row.total_punches ?? 0)),
