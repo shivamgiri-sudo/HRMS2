@@ -37,6 +37,11 @@ on:
         description: "To APPLY, type REBUILD-NIGHT-SHIFTS exactly. Ignored for a dry run."
         required: false
         type: string
+      scope_all:
+        description: "Scope = every employee with biometric rows (repair), not only the flagged night-shift set"
+        required: false
+        default: false
+        type: boolean
       allow_closed_months:
         description: "Permit applying to a finalized / locked / disbursed payroll month"
         required: false
@@ -91,9 +96,11 @@ jobs:
           TO_D: ${{ inputs.to }}
           MODE: ${{ inputs.mode }}
           ALLOW_CLOSED: ${{ inputs.allow_closed_months }}
+          SCOPE_ALL: ${{ inputs.scope_all }}
         run: |
           set -euo pipefail
           FLAGS=""
           [ "$MODE" = "apply" ] && FLAGS="--apply"
           [ "$ALLOW_CLOSED" = "true" ] && FLAGS="$FLAGS --allow-closed-months"
+          [ "$SCOPE_ALL" = "true" ] && FLAGS="$FLAGS --all"
           npx tsx scripts/attendance-night-shift-rebuild.ts "$FROM_D" "$TO_D" $FLAGS

@@ -3,7 +3,7 @@
 //   --apply          : runs cosecSyncService.sync() scoped to the flagged employees, in chunks.
 //   --allow-closed-months : required to apply to a month whose payroll run is finalized/locked/disbursed.
 // Locked rows (regularisations, payroll locks) are never overwritten by the sync's write path.
-// Usage: npx tsx scripts/attendance-night-shift-rebuild.ts <from> <to> [--apply] [--allow-closed-months]
+// Usage: npx tsx scripts/attendance-night-shift-rebuild.ts <from> <to> [--apply] [--allow-closed-months] [--all]
 import "dotenv/config";
 import sql from "mssql";
 import type { RowDataPacket } from "mysql2";
@@ -20,6 +20,9 @@ import { isRunClosed } from "../src/modules/payroll/run-status.js";
 const [FROM, TO] = [process.argv[2], process.argv[3]];
 const APPLY = process.argv.includes("--apply");
 const ALLOW_CLOSED = process.argv.includes("--allow-closed-months");
+// --all: scope = every employee with biometric-sourced rows in the range, not just the ones the
+// old logic left looking inflated. Needed to repair days an earlier attribution got wrong.
+const ALL = process.argv.includes("--all");
 if (!/^\d{4}-\d{2}-\d{2}$/.test(FROM ?? "") || !/^\d{4}-\d{2}-\d{2}$/.test(TO ?? "")) {
   console.error("usage: attendance-night-shift-rebuild.ts <from> <to> [--apply] [--allow-closed-months]");
   process.exit(1);
@@ -46,12 +49,18 @@ const addDays = (s: string, n: number) => { const d = new Date(s + "T00:00:00Z")
 
   // ---- flagged employees: inflated days or exit-only mornings graded absent/half ----
   const [flag] = await db.execute<any[]>(
-    `SELECT DISTINCT t.employee_id
-       FROM attendance_daily_record t
-      WHERE t.record_date BETWEEN ? AND ?
-        AND (t.raw_minutes > 840
-             OR (t.attendance_status IN ('absent','half_day') AND t.clock_in_time IS NOT NULL
-                 AND TIME(t.clock_in_time) < '09:00:00' AND (t.clock_out_time IS NULL OR TIME(t.clock_out_time) < '11:00:00')))`,
+    ALL
+      ? `SELECT DISTINCT t.employee_id
+           FROM attendance_daily_record t
+          WHERE t.record_date BETWEEN ? AND ?
+            AND (t.source_system LIKE '%cosec%' OR t.source_system = 'wfm_attendance_session'
+                 OR t.source_system = 'regularization')`
+      : `SELECT DISTINCT t.employee_id
+           FROM attendance_daily_record t
+          WHERE t.record_date BETWEEN ? AND ?
+            AND (t.raw_minutes > 840
+                 OR (t.attendance_status IN ('absent','half_day') AND t.clock_in_time IS NOT NULL
+                     AND TIME(t.clock_in_time) < '09:00:00' AND (t.clock_out_time IS NULL OR TIME(t.clock_out_time) < '11:00:00')))`,
     [FROM, TO]);
   const empIds = (flag as any[]).map((r) => r.employee_id);
   console.log(`flagged employees: ${empIds.length}`);
