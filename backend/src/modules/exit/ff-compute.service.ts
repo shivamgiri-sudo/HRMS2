@@ -100,6 +100,20 @@ export interface FfComputePreview {
   };
 
   payroll_already_paid: PayrollAlreadyPaid[];
+
+  /**
+   * The last month's salary, which payroll pays on paid days like anyone else's. Shown so HR can see
+   * what is being paid and where; F&F carries it only when NO payroll line will pay it, because
+   * adding it when payroll already pays it would pay the same days twice.
+   */
+  final_month_salary: {
+    month: string | null;
+    paid_via: "payroll" | "fnf_manual" | "none";
+    paid_days: number | null;
+    net_salary: number | null;
+    run_status: string | null;
+    note: string;
+  };
 }
 
 interface ExitRequestRow extends RowDataPacket {
@@ -483,6 +497,45 @@ async function resolveTdsTrueUp(
   }
 }
 
+async function resolveFinalMonthSalary(
+  employeeId: string,
+  lastWorkingDay: string | null,
+): Promise<FfComputePreview["final_month_salary"]> {
+  if (!lastWorkingDay) {
+    return { month: null, paid_via: "none", paid_days: null, net_salary: null, run_status: null,
+      note: "No last working day recorded, so the final month cannot be located." };
+  }
+  const month = String(lastWorkingDay).slice(0, 7);
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT spr.status AS run_status, spl.net_salary, spl.final_payable_days
+         FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id
+        WHERE spl.employee_id = ? AND spr.run_month = ?
+          AND LOWER(spl.status) NOT IN ('excluded','blocked')
+          AND LOWER(spr.status) NOT IN ('draft','cancelled','rejected')
+        ORDER BY spr.created_at DESC LIMIT 1`,
+      [employeeId, month],
+    );
+    const r = rows[0];
+    if (r) {
+      return {
+        month, paid_via: "payroll",
+        paid_days: r.final_payable_days === null ? null : Number(r.final_payable_days),
+        net_salary: Number(r.net_salary ?? 0),
+        run_status: String(r.run_status),
+        note: `${month} salary is paid by the ${month} payroll run (${r.run_status}) on ${r.final_payable_days ?? "?"} paid days. Not added to F&F, so it cannot be paid twice.`,
+      };
+    }
+    return {
+      month, paid_via: "fnf_manual", paid_days: null, net_salary: null, run_status: null,
+      note: `No ${month} payroll line will pay this month. HR must enter the pending salary for the paid days in "Salary hold" — it is not derived automatically.`,
+    };
+  } catch (err) {
+    return { month, paid_via: "none", paid_days: null, net_salary: null, run_status: null,
+      note: `Final-month salary could not be determined: ${(err as Error).message}` };
+  }
+}
+
 export async function computeFfPreview(exitRequestId: string): Promise<FfComputePreview> {
   const [exitRows] = await db.execute<RowDataPacket[]>(
     "SELECT id, employee_id FROM exit_request WHERE id = ? LIMIT 1",
@@ -511,6 +564,7 @@ export async function computeFfPreview(exitRequestId: string): Promise<FfCompute
     leaveEncashment.amount.status === "computed" ? leaveEncashment.amount.value : null
   );
 
+  const finalMonthSalary = await resolveFinalMonthSalary(exitReq.employee_id, notice.lastWorkingDay);
   const { lastWorkingDay, ...noticeRest } = notice;
 
   return {
@@ -524,5 +578,6 @@ export async function computeFfPreview(exitRequestId: string): Promise<FfCompute
     asset_recovery: assetRecovery,
     tds_true_up: tdsTrueUp,
     payroll_already_paid: payrollAlreadyPaid,
+    final_month_salary: finalMonthSalary,
   };
 }

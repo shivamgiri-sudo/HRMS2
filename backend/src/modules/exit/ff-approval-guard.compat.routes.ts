@@ -6,6 +6,8 @@ import { db } from "../../db/mysql.js";
 import { ffService } from "./ff.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { guardExitEmployee } from "./exitScope.js";
+import { hasAnyRole } from "../../shared/scopeAccess.js";
+import { isFfApprovalPayrollHeadOnly } from "./ff-approval-authority.js";
 
 export const ffApprovalGuardCompatRouter = Router();
 ffApprovalGuardCompatRouter.use(requireAuth);
@@ -17,6 +19,15 @@ ffApprovalGuardCompatRouter.post(
   requireRole("admin", "finance", "payroll"),
   guardExitEmployee("id", "ff"),
   h(async (req, res) => {
+    // Final authority: the Payroll Head approves every F&F (finance / payroll prepare and pay).
+    // Kill switch: payroll_config_flags ff_approval_payroll_head_only = 'false'.
+    if ((await isFfApprovalPayrollHeadOnly()) && !(await hasAnyRole(req.authUser!.id, "payroll_head"))) {
+      return res.status(403).json({
+        success: false,
+        code: "FF_APPROVAL_PAYROLL_HEAD_ONLY",
+        message: "Only the Payroll Head can approve an F&F settlement.",
+      });
+    }
     const [ffRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, exit_request_id, is_ff_provisional, status
          FROM full_final_calculation

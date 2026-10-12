@@ -67,6 +67,14 @@ export type FfComputePreview = {
   notice: { recovery_amount: ComputedComponent };
   gratuity: { amount: number; status: "draft" | "not_eligible" | "pending_configuration"; note: string };
   advances_loans: { total_recovery: ComputedComponent };
+  final_month_salary?: {
+    month: string | null;
+    paid_via: "payroll" | "fnf_manual" | "none";
+    paid_days: number | null;
+    net_salary: number | null;
+    run_status: string | null;
+    note: string;
+  };
 };
 
 // ─── Constants & Helpers ──────────────────────────────────────────────────────
@@ -407,6 +415,23 @@ function PrepareFFForm({
               );
             })}
           </ul>
+        </div>
+      )}
+      {preview?.final_month_salary && (
+        <div
+          className={`rounded-2xl border p-4 text-sm ${
+            preview.final_month_salary.paid_via === "fnf_manual"
+              ? "border-amber-300 bg-amber-50 text-amber-900"
+              : "border-slate-200 bg-slate-50 text-slate-700"
+          }`}
+        >
+          <p className="font-black">
+            Final-month salary{preview.final_month_salary.month ? ` (${preview.final_month_salary.month})` : ""}
+            {preview.final_month_salary.paid_via === "payroll" && preview.final_month_salary.net_salary !== null
+              ? ` — ${INR(preview.final_month_salary.net_salary)} on ${preview.final_month_salary.paid_days ?? "?"} paid days, via payroll`
+              : ""}
+          </p>
+          <p className="mt-1 text-xs">{preview.final_month_salary.note}</p>
         </div>
       )}
       <div className="grid gap-4 sm:grid-cols-2">

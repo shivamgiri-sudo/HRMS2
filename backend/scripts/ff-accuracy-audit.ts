@@ -28,7 +28,7 @@ const q = async (sql: string, p: unknown[] = []): Promise<Row[]> => {
 };
 const j = (o: unknown) => JSON.stringify(o, null, 2);
 
-async function pick(kind: "voluntary" | "involuntary"): Promise<string[]> {
+async function pick(kind: "voluntary" | "involuntary", minYears = 0): Promise<string[]> {
   // exit_type is voluntary / involuntary; the sub-type says resignation / termination / absconding.
   // Prefer the plain cases: a resignation for voluntary, a termination for involuntary.
   const sub = kind === "voluntary" ? "resignation" : "termination";
@@ -40,6 +40,7 @@ async function pick(kind: "voluntary" | "involuntary"): Promise<string[]> {
       WHERE LOWER(er.exit_type) = ?
         AND LOWER(COALESCE(er.exit_sub_type, '')) = ?
         AND e.date_of_joining IS NOT NULL
+        AND DATEDIFF(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed), e.date_of_joining) >= ${Math.round(minYears * 365)}
         AND COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) IS NOT NULL
         AND EXISTS (SELECT 1 FROM employee_salary_assignment esa WHERE esa.employee_id = er.employee_id)
       GROUP BY er.id
@@ -119,7 +120,7 @@ async function audit(exitId: string): Promise<void> {
 
 async function main() {
   const fromEnv = (process.env.FF_AUDIT_EXIT_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const ids = fromEnv.length ? fromEnv : [...(await pick("voluntary")).slice(0, 1), ...(await pick("involuntary")).slice(0, 1)];
+  const ids = fromEnv.length ? fromEnv : [...(await pick("voluntary")).slice(0, 1), ...(await pick("involuntary")).slice(0, 1), ...(await pick("voluntary", 5)).slice(0, 1)];
   const mix = await q(
     `SELECT LOWER(er.exit_type) AS exit_type, LOWER(COALESCE(er.exit_sub_type,'')) AS sub_type,
             LOWER(er.status) AS status, COUNT(*) AS n,
