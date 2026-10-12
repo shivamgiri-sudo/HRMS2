@@ -35,6 +35,7 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
     const body = readerBody();
     expect(body.split("FROM grn_entry_line_snapshot").length - 1).toBe(1);
     expect(body).toContain("gr2.grn_number = ge.grn_no");
+    expect(body, "billed history is consumed, never reserved: reading it for both kinds counted every line twice").toContain('kind === "consumed" && (await tableExists("grn_entry_line_snapshot"))');
     expect(body).toContain("LEGACY_TWIN_MIN_AMOUNT");
     // Imported / migration-script grn_request rows are never read as legacy themselves: the mirror is the one legacy source.
     expect(body.split("${HRMS_RAISED_GRN_SQL}").length - 1).toBe(2);

@@ -367,7 +367,8 @@ export async function readGrnSpend(
 
   // Leg 3 — the db_bill mirror, for vouchers HRMS does not carry (see LEGACY_TWIN_MIN_AMOUNT). Line level, because only the line
   // carries the cost centre; branch from the cost centre because the mirror's branch ids are db_bill's, not branch_master's.
-  if (await tableExists("grn_entry_line_snapshot")) {
+  // Consumed only: a mirrored bill is billed history, never "reserved". Read for both kinds it counted every line twice.
+  if (kind === "consumed" && (await tableExists("grn_entry_line_snapshot"))) {
     legs.push(
       `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
               ${processCol(null, "pc3")} AS process_id, l.amount AS amount,
