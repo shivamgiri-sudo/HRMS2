@@ -81,4 +81,36 @@ describe("attributeNightShifts", () => {
     expect(groups[0].tailMerged).toBeUndefined();
     expect(consumedDates).toEqual([]);
   });
+
+  it("does not lump a 13:00 shift's start with the previous shift's 00:13 exit (MAS36220)", () => {
+    // Day shift 14:56-21:49 left at 00:13; next day starts 13:36. With a 14:00 cutoff the 00:13 and
+    // the 13:36 shared one block and the day read 00:13 -> 19:02 = 18.8h.
+    const { groups, consumedDates } = run([
+      { punchDate: "2026-10-05", part: "PM", firstPunch: "2026-10-05 14:56:00", lastPunch: "2026-10-05 21:49:00", totalPunches: 8 },
+      { punchDate: "2026-10-06", part: "AM", firstPunch: "2026-10-06 00:13:00", lastPunch: "2026-10-06 00:13:00", totalPunches: 1 },
+      { punchDate: "2026-10-06", part: "PM", firstPunch: "2026-10-06 13:36:00", lastPunch: "2026-10-06 19:02:00", totalPunches: 9 },
+    ]);
+    const by = Object.fromEntries(groups.map((g) => [g.punchDate, g]));
+    expect(by["2026-10-05"].lastPunch).toBe("2026-10-06 00:13:00");
+    expect(by["2026-10-06"].firstPunch).toBe("2026-10-06 13:36:00");
+    expect(by["2026-10-06"].workingMinutes).toBeLessThan(6 * 60);
+    expect(consumedDates).toEqual([]);
+  });
+
+  it("treats the leading exit block of the pull as a shift that began before the window (MAS48068)", () => {
+    // First date in the pull has an exit (01:22-07:16) and an evening start (21:50). The exit has no
+    // previous day to join, so it must not be glued to the 21:50 start (22h span).
+    const { groups } = run([
+      { punchDate: "2026-10-01", part: "AM", firstPunch: "2026-10-01 01:22:00", lastPunch: "2026-10-01 07:16:00", totalPunches: 10 },
+      { punchDate: "2026-10-01", part: "PM", firstPunch: "2026-10-01 21:50:00", lastPunch: "2026-10-01 23:40:00", totalPunches: 4 },
+      { punchDate: "2026-10-02", part: "AM", firstPunch: "2026-10-02 01:46:00", lastPunch: "2026-10-02 07:17:00", totalPunches: 11 },
+      { punchDate: "2026-10-02", part: "PM", firstPunch: "2026-10-02 22:08:00", lastPunch: "2026-10-02 22:09:00", totalPunches: 2 },
+    ]);
+    const by = Object.fromEntries(groups.map((g) => [g.punchDate, g]));
+    expect(by["2026-10-01"].firstPunch).toBe("2026-10-01 21:50:00");
+    expect(by["2026-10-01"].lastPunch).toBe("2026-10-02 07:17:00");
+    expect(by["2026-10-01"].workingMinutes).toBeLessThan(10 * 60);
+    expect(by["2026-10-02"].firstPunch).toBe("2026-10-02 22:08:00");
+    for (const g of groups) expect(g.workingMinutes).toBeLessThan(15 * 60);
+  });
 });
