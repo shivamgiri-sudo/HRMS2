@@ -30,14 +30,22 @@ try {
   await dialer.query("SET SESSION TRANSACTION READ ONLY");
   await dialer.query("SET SESSION MAX_EXECUTION_TIME = 30000");
 
-  const ids = (await q(main, "AHM dump: telesales ids (count + sample + date range)",
-    `SELECT COUNT(DISTINCT telesales_id) agents, MIN(survey_date) first_day, MAX(survey_date) last_day,
-            SUBSTRING_INDEX(GROUP_CONCAT(DISTINCT telesales_id ORDER BY telesales_id SEPARATOR ','), ',', 6) sample
-       FROM db_masmis.ahm_dump_raw WHERE telesales_id IS NOT NULL AND telesales_id <> ''`));
-  const [idRows] = await main.query(`SELECT DISTINCT LOWER(TRIM(telesales_id)) id FROM db_masmis.ahm_dump_raw WHERE telesales_id IS NOT NULL AND TRIM(telesales_id) <> '' LIMIT 2000`);
-  const agentIds = idRows.map((r) => r.id);
-  console.log(`\n(ahm telesales ids loaded: ${agentIds.length})`);
-  if (!agentIds.length) process.exit(0);
+  await q(main, "processes / cost centres that look like this client",
+    `SELECT p.id, p.process_name, p.process_code, p.active_status,
+            (SELECT COUNT(*) FROM employees e WHERE e.process_id = p.id AND e.active_status = 1) active_employees
+       FROM process_master p
+      WHERE p.process_name REGEXP 'GODFREY|GPI|PHILIP|PHILLIP|AHM|GOLDFLAKE|CIGAR' OR p.process_code REGEXP 'GODFREY|GPI|PHILIP|AHM'`);
+  const [empRows] = await main.query(
+    `SELECT DISTINCT UPPER(TRIM(e.employee_code)) id FROM employees e
+       JOIN process_master p ON p.id = e.process_id
+      WHERE e.active_status = 1 AND (p.process_name REGEXP 'GODFREY|GPI|PHILIP|PHILLIP|AHM' OR p.process_code REGEXP 'GODFREY|GPI|PHILIP|AHM')
+      LIMIT 2000`);
+  const agentIds = empRows.map((r) => r.id.toLowerCase());
+  console.log(`\n(client employees loaded by employee code: ${agentIds.length})`);
+  if (!agentIds.length) {
+    console.log("No active HRMS employees on a Godfrey/GPI/AHM-named process, so there is nothing to match by employee code.");
+    process.exit(0);
+  }
 
   const [tbl] = await dialer.query(
     `SELECT TABLE_NAME t FROM information_schema.tables WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
@@ -55,7 +63,7 @@ try {
       scores.push({ table: t, ...r });
     } catch (e) { scores.push({ table: t, ERROR: `${e.code ?? ""} ${e.message}`.slice(0, 80) }); }
   }
-  out("tables ranked by AHM-agent matches since 2026-09-25", scores.sort((a, b) => Number(b.agents ?? -1) - Number(a.agents ?? -1)));
+  out("tables ranked by client-employee matches since 2026-09-25", scores.sort((a, b) => Number(b.agents ?? -1) - Number(a.agents ?? -1)));
 
   const best = scores.filter((s) => s.table?.startsWith("cdr_ob_") && Number(s.agents) > 0).sort((a, b) => Number(b.agents) - Number(a.agents))[0];
   if (best) {
