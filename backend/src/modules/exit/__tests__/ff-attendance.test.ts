@@ -9,7 +9,7 @@ function world(rows: unknown[], start = "2026-09-01") {
 }
 
 describe("F&F attendance check", () => {
-  beforeEach(() => execute.mockReset());
+  beforeEach(() => { execute.mockReset(); });
 
   it("is complete when every day up to the LWD has a record", async () => {
     world([rec("2026-09-01", "present"), rec("2026-09-02", "week_off"), rec("2026-09-03", "leave_approved"), rec("2026-09-04", "present", 0.5)]);
@@ -37,7 +37,7 @@ describe("F&F attendance check", () => {
 
   it("is not ok without an LWD or when the read fails", async () => {
     expect((await ffAttendanceCheck("e1", null)).ok).toBe(false);
-    execute.mockImplementation(async () => { throw new Error("db down"); });
+    execute.mockImplementation(() => { throw new Error("db down"); });
     expect((await ffAttendanceCheck("e1", "2026-09-04")).ok).toBe(false);
   });
 });
