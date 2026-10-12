@@ -6,7 +6,6 @@ const run = async (label: string, sql: string) => { try { const [r] = await db.e
 const M = "RIGHT(REGEXP_REPLACE(ac.mobile,'[^0-9]',''),10)";
 const NAME = (c: string) => `LOWER(REGEXP_REPLACE(${c}, '[^a-zA-Z]', ''))`;
 (async () => {
-  await run("walk-ins since 10-08 by source column", `SELECT ac.walk_in_date d, COALESCE(NULLIF(ac.source,''),'(blank)') source, COUNT(*) n FROM ats_candidate ac WHERE ac.walk_in_date >= '2026-10-08' GROUP BY d, source ORDER BY d DESC, n DESC`);
   await run("walk-ins since 10-08 matched to an invitee by e-mail (he_lead or meta fill), mobile not matched", `SELECT ac.walk_in_date d, COUNT(*) n FROM ats_candidate ac
       WHERE ac.walk_in_date >= '2026-10-08' AND ac.email IS NOT NULL AND ac.email <> ''
         AND NOT EXISTS (SELECT 1 FROM he_lead l WHERE l.mobile10 = ${M} COLLATE utf8mb4_unicode_ci)
