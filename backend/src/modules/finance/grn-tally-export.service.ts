@@ -9,6 +9,7 @@ import {
 import path from "path";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { hrmsRaisedGrnSql } from "../../shared/ownCompanyCostCentre.js";
 import {
   buildGrnVoucher,
   DEFAULT_LEDGER_NAMES,
@@ -31,6 +32,8 @@ import {
  * .tmp name is renamed to .xml) after that transaction has committed. A crash in between leaves a
  * 'claimed' batch that the next run either completes (the .tmp file is there) or releases (it is not).
  */
+
+export { hrmsRaisedGrnSql };
 
 type Executor = { execute(sql: string, params?: any[]): Promise<[any, any]> };
 
@@ -104,16 +107,6 @@ export type GrnTallyRunResult =
     };
 
 const r2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
-
-/**
- * A GRN raised in HRMS: not linked to a db_bill row, and not written by the db_bill migration. The
- * migration also created month-suffixed child rows ("Mas/5/26/124-Oct") with bill_source_id NULL but
- * its sentinel creator (00000000-...), so bill_source_id alone lets legacy data through. Both
- * conditions must hold before a GRN goes to Tally; the old system has already booked the rest.
- */
-export function hrmsRaisedGrnSql(alias: string): string {
-  return `${alias}.bill_source_id IS NULL AND COALESCE(${alias}.created_by, '') NOT LIKE '00000000-%'`;
-}
 
 async function selectCandidates(
   executor: Executor,

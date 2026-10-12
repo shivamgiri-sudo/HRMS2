@@ -2,7 +2,7 @@ import { grnBranchVisibility } from "./grn-branch-split.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
-import { ownCompanyGrnSql, refreshHiddenGrnScope } from "../../shared/ownCompanyCostCentre.js";
+import { hrmsRaisedGrnSql, legacyGrnSql, ownCompanyGrnSql, refreshHiddenGrnScope } from "../../shared/ownCompanyCostCentre.js";
 import { resolvePendingWith } from "./finance-workflow-role.js";
 
 /**
@@ -49,7 +49,7 @@ export type GrnReportFilters = {
   approvalStage?: string;
   /** Rows awaiting a named stage. Derived from status, never stored. */
   pendingWith?: string;
-  /** "hrms" = raised natively in this system; "legacy" = migrated from db_bill (bill_source_id IS NOT NULL). */
+  /** "hrms" = raised natively in this system; "legacy" = migrated from db_bill (bill_source_id set, or written by the migration user). */
   source?: string;
   limit?: number;
 };
@@ -135,9 +135,9 @@ function scopeConditions(filters: GrnReportFilters) {
     conditions.push("g.grn_type <> 'imprest'");
   }
   if (filters.source === "legacy") {
-    conditions.push("g.bill_source_id IS NOT NULL");
+    conditions.push(legacyGrnSql("g"));
   } else if (filters.source === "hrms") {
-    conditions.push("g.bill_source_id IS NULL");
+    conditions.push(hrmsRaisedGrnSql("g"));
   }
   if (filters.grnNumber) {
     conditions.push("g.grn_number LIKE ?");
@@ -226,6 +226,7 @@ export const grnReportService = {
           -- drive) and the stage clock always fell back to created_at. 84,767 of 84,818 rows are
           -- migrated, so "permanently false" meant "wrong on 99.9% of the register".
           g.bill_source_id,
+          (g.created_by LIKE '00000000-%') AS is_migration_creator,
           g.submitted_at,
           g.branch_head_reviewed_at,
           g.finance_head_reviewed_at,
@@ -282,7 +283,7 @@ export const grnReportService = {
     const decorated = (rows as RowDataPacket[]).map((row) => {
       const pending = resolvePendingWith(String(row.status ?? ""), "grn", row.grn_type ?? null);
       const stageStartedAt = row.branch_head_reviewed_at ?? row.submitted_at ?? row.grn_date ?? null;
-      const isLegacyData = Boolean(row.bill_source_id);
+      const isLegacyData = Boolean(row.bill_source_id) || Number(row.is_migration_creator) === 1;
       let ageDays: number | null = null;
       if (pending.isPending && stageStartedAt) {
         const rawAgeDays = Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000));
