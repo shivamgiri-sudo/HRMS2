@@ -798,7 +798,7 @@ export default function ProcessPnlPage() {
 
           <TabsContent value="review" className="flex-1 overflow-auto px-4 py-3 m-0">
             <Suspense fallback={tabFallback}>
-              <PnlBranchReviewPanel period={period} />
+              <PnlBranchReviewPanel period={period} onOpenDetail={(id) => { updateFilters({ branchId: id }); setActiveTab("live"); }} />
             </Suspense>
           </TabsContent>
 

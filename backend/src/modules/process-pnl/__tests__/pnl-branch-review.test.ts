@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveStatus, reviewFigures } from "../pnl-branch-review.service.js";
+import { deriveStatus, hasIncompleteCost, reviewFigures } from "../pnl-branch-review.service.js";
 
 describe("pnl branch review figures", () => {
   it("cost is revenue minus operating profit so it cannot disagree with the P&L", () => {
@@ -17,4 +17,15 @@ describe("pnl branch review status", () => {
   it("acknowledged when the figures still match", () => expect(deriveStatus(0, { ...now }, { ...now, revenue: 1000.5 })).toBe("acknowledged"));
   it("flags a month whose figures moved after acknowledgement", () =>
     expect(deriveStatus(0, now, { revenue: 1100, cost: 800, operatingProfit: 300 })).toBe("changed_after_acknowledgement"));
+});
+
+describe("cost-incomplete detection", () => {
+  it("payroll gaps make cost incomplete", () => {
+    expect(hasIncompleteCost(["PAYROLL_NOT_POSTED_FOR_PERIOD"])).toBe(true);
+    expect(hasIncompleteCost(["REVENUE_WITH_NO_PAYROLL", "GRN_ESTIMATED_FROM_RESERVED"])).toBe(true);
+  });
+  it("other flags do not", () => {
+    expect(hasIncompleteCost(["BRANCH_BUDGET_MISSING"])).toBe(false);
+    expect(hasIncompleteCost([])).toBe(false);
+  });
 });

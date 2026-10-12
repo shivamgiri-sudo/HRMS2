@@ -8,12 +8,18 @@ export type BranchQuerySection = "revenue" | "people_cost" | "non_people_cost" |
 
 export interface BranchReviewQuery {
   id: string; section: BranchQuerySection; costCentreId: string | null; message: string; status: "open" | "resolved";
-  raisedBy: string; raisedAt: string; resolvedBy: string | null; resolvedAt: string | null; resolutionNote: string | null;
+  raisedBy: string; raisedByName: string | null; raisedAt: string;
+  resolvedBy: string | null; resolvedByName: string | null; resolvedAt: string | null; resolutionNote: string | null;
+}
+export interface BranchReviewCostCentre {
+  id: string; code: string; name: string; process: string | null;
+  revenue: number; peopleCost: number; grn: number; operatingProfit: number; issues: string[];
 }
 export interface BranchReviewRow {
   branchId: string; branchName: string; status: BranchReviewStatus;
   revenue: number; cost: number; operatingProfit: number; marginPct: number | null; issues: string[];
-  acknowledgedAt: string | null; acknowledgedBy: string | null; comment: string | null;
+  peopleCostMissing: boolean; costCentres: BranchReviewCostCentre[];
+  acknowledgedAt: string | null; acknowledgedBy: string | null; acknowledgedByName: string | null; comment: string | null;
   snapshot: { revenue: number; cost: number; operatingProfit: number } | null;
   openQueries: number; queries: BranchReviewQuery[];
 }
@@ -37,7 +43,7 @@ function useReviewMutation<T>(fn: (input: T) => Promise<unknown>) {
 }
 
 export const useAcknowledgeBranch = () =>
-  useReviewMutation((i: { branchId: string; period: string; comment?: string }) => hrmsApi.post(`${BASE}/acknowledge`, i));
+  useReviewMutation((i: { branchId: string; period: string; comment?: string; confirmIncomplete?: boolean }) => hrmsApi.post(`${BASE}/acknowledge`, i));
 export const useRaiseBranchQuery = () =>
   useReviewMutation((i: { branchId: string; period: string; section: BranchQuerySection; message: string; costCentreId?: string }) =>
     hrmsApi.post(`${BASE}/queries`, i));

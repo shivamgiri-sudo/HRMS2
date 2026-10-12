@@ -8,11 +8,12 @@ import { acknowledgeBranch, getBranchReview, getQueryBranch, raiseQuery, resolve
 
 /**
  * /api/finance/pnl-branch-review: a branch reviews its monthly P&L (migration 2158).
- * Branch Head / Branch Admin acknowledge or raise queries for their own branch; Finance resolves queries.
+ * Branch Head acknowledges or raises queries for their own branch; Finance resolves queries.
  * Every read and write is branch-scoped through finance-access-scope, like the revenue forecast.
  */
-const READ_ROLES = ["super_admin", "admin", "branch_head", "branch_admin", "finance_head", "payroll_head", "accounts_head", "finance", "ceo", "coo"] as const;
-const REVIEW_ROLES = ["super_admin", "branch_head", "branch_admin"] as const;
+const READ_ROLES = ["super_admin", "admin", "branch_head", "finance_head", "payroll_head", "accounts_head", "finance", "ceo", "coo"] as const;
+// branch_admin has no FINANCE_PROCESS_PNL page grant, so it could not reach the tab: it is not listed.
+const REVIEW_ROLES = ["super_admin", "branch_head"] as const;
 const RESOLVE_ROLES = ["super_admin", "finance_head", "accounts_head", "finance"] as const;
 
 export const pnlBranchReviewRouter = Router();
@@ -68,7 +69,7 @@ pnlBranchReviewRouter.post(
     const period = String(req.body?.period ?? "");
     if (!branchId) throw refuse(400, "BRANCH_REQUIRED", "Choose a branch");
     await assertBranch(req, branchId);
-    const figures = await acknowledgeBranch(branchId, period, actor(req).id, req.body?.comment ?? null);
+    const figures = await acknowledgeBranch(branchId, period, actor(req).id, req.body?.comment ?? null, req.body?.confirmIncomplete === true);
     await writeAuditLog({
       actor_user_id: actor(req).id, actor_role: actor(req).role, action_type: "PNL_BRANCH_REVIEW_ACKNOWLEDGE",
       module_key: "finance", entity_type: "pnl_branch_review", entity_id: `${branchId}:${period}`, req,
