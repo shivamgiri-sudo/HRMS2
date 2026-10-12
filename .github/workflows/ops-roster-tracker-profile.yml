@@ -1,0 +1,37 @@
+name: Ops roster tracker profile (manual, read-only)
+
+# Read-only: times and EXPLAINs each query the Roster Upload Tracker grid runs. SELECTs in a READ ONLY session.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-roster-tracker-profile
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    name: Tracker query profile
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Profile
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: node scripts/roster-tracker-profile.mjs
