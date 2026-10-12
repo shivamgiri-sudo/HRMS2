@@ -135,16 +135,25 @@ async function resolveGrossMonthly(employeeId: string): Promise<number | null> {
   // latest closed payroll run; CTC / 12 remains the fallback.
   try {
     const [paid] = await db.execute<RowDataPacket[]>(
-      `SELECT spl.gross_before_lwp
+      `SELECT spl.gross_before_lwp, spl.gross_salary, spl.final_payable_days, spl.working_days
          FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id
-        WHERE spl.employee_id = ? AND spl.gross_before_lwp > 0
+        WHERE spl.employee_id = ? AND spl.gross_salary > 0
           AND LOWER(spr.status) IN ('locked','finalized','disbursed','approved','completed')
           AND LOWER(spl.status) NOT IN ('excluded','blocked')
         ORDER BY spr.run_month DESC, spr.created_at DESC LIMIT 1`,
       [employeeId]
     );
-    const g = Number((paid as Array<{ gross_before_lwp: number }>)[0]?.gross_before_lwp ?? 0);
-    if (g > 0) return g;
+    const r = (paid as Array<{ gross_before_lwp: number | null; gross_salary: number; final_payable_days: number | null; working_days: number | null }>)[0];
+    if (r) {
+      // Full-month base: gross_before_lwp when the calculator stored it, otherwise rebuilt from what
+      // was actually paid (gross / paid days x days in the month). Older lines carry no base.
+      const stored = Number(r.gross_before_lwp ?? 0);
+      if (stored > 0) return stored;
+      const days = Number(r.final_payable_days ?? 0);
+      const month = Number(r.working_days ?? 0);
+      if (days > 0 && month > 0) return Math.round((Number(r.gross_salary) / days) * month * 100) / 100;
+      return Number(r.gross_salary);
+    }
   } catch { /* fall through to CTC */ }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT esa.ctc_annual
