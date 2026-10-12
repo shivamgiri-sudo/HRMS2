@@ -184,8 +184,14 @@ export type PunchBlock = {
   totalPunches: number;
 };
 
-/** Punches this many minutes apart start a new cluster (a new shift, or an exit after silence). */
-const SHIFT_SPLIT_GAP_MIN = 300;
+/**
+ * Punches this many minutes apart start a new cluster (a new shift, or an exit after silence).
+ * 9 h, not 5 h: a sparse day worker swipes at arrival, lunch and departure with gaps of 5 h or
+ * more, and a 5 h threshold cut such a day into pieces and glued the morning swipe to the evening
+ * before. Real gaps BETWEEN shifts are 11 h or more, and the longest silence inside one night
+ * shift seen on production is 7.5 h.
+ */
+const SHIFT_SPLIT_GAP_MIN = 540;
 /** Longest silent stretch tolerated between a shift's last punch and its morning exit. */
 const MAX_TAIL_GAP_MIN = 840;
 /** No single shift is longer than this; anything longer is two shifts, not one. */
@@ -206,7 +212,7 @@ const hourOf = (ts: string) => parseInt(ts.substring(11, 13), 10);
  * 2,384 employee-days across ~234 employees (Aug-Oct 2026, NOIDA / NOIDA-2).
  *
  * RULE. A shift belongs to the date it STARTED on.
- *   1. Cluster each user's punches: a gap of 5 h or more starts a new cluster.
+ *   1. Cluster each user's punches: a gap of 9 h or more starts a new cluster.
  *   2. A cluster that looks like an exit (starts before 10:00, ends before 12:00) is absorbed into
  *      the previous cluster when the joined shift is <= 15 h and the silence between them <= 14 h.
  *      This also re-joins a shift that has a long quiet stretch inside it.

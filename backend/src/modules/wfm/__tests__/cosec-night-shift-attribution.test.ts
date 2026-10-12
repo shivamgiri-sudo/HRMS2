@@ -46,7 +46,6 @@ describe("attributeNightShifts", () => {
     expect(groups[0].punchDate).toBe("2026-10-09");
     expect(groups[0].lastPunch).toBe("2026-10-10 07:43:49");
     expect(groups[0].totalPunches).toBe(20);
-    expect(groups[0].tailMerged).toBe(true);
     expect(consumedDates).toHaveLength(1);
   });
 
@@ -112,5 +111,24 @@ describe("attributeNightShifts", () => {
     expect(by["2026-10-01"].workingMinutes).toBeLessThan(10 * 60);
     expect(by["2026-10-02"].firstPunch).toBe("2026-10-02 22:08:00");
     for (const g of groups) expect(g.workingMinutes).toBeLessThan(15 * 60);
+  });
+
+  it("keeps a sparse day worker's day whole instead of gluing his arrival to the evening before (MAS61375)", () => {
+    // Day shift 07:00-16:00, swipes only at arrival, lunch and departure: gaps of 5h+ inside the day.
+    const b = (d: string, a: string, z: string, n = 1) => ({
+      punchDate: d, firstPunch: `${d} ${a}:00`, lastPunch: `${d} ${z}:00`, totalPunches: n,
+    });
+    const { groups, consumedDates } = run([
+      b("2026-10-07", "06:59", "07:00", 2), b("2026-10-07", "11:48", "11:48"), b("2026-10-07", "17:11", "17:11"),
+      b("2026-10-08", "06:43", "06:43", 2), b("2026-10-08", "12:01", "12:01"), b("2026-10-08", "18:34", "18:35", 2),
+      b("2026-10-09", "06:44", "06:44"), b("2026-10-09", "11:18", "12:52", 3), b("2026-10-09", "18:28", "18:28"),
+    ]);
+    const by = Object.fromEntries(groups.map((g) => [g.punchDate, g]));
+    expect(by["2026-10-08"].firstPunch).toBe("2026-10-08 06:43:00");
+    expect(by["2026-10-08"].lastPunch).toBe("2026-10-08 18:35:00");
+    expect(by["2026-10-07"].firstPunch).toBe("2026-10-07 06:59:00");
+    expect(by["2026-10-07"].lastPunch).toBe("2026-10-07 17:11:00");
+    expect(by["2026-10-09"].lastPunch).toBe("2026-10-09 18:28:00");
+    expect(consumedDates).toEqual([]);
   });
 });
