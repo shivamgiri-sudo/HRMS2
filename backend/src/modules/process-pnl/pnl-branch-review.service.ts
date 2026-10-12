@@ -191,9 +191,11 @@ export async function raiseQuery(
   return { id };
 }
 
-export async function getQueryBranch(queryId: string): Promise<{ branchId: string; status: string } | null> {
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT branch_id, status FROM pnl_branch_review_query WHERE id = ? LIMIT 1", [queryId]);
-  return rows[0] ? { branchId: String(rows[0].branch_id), status: String(rows[0].status) } : null;
+export async function getQueryBranch(queryId: string): Promise<{ branchId: string; status: string; period: string; raisedBy: string | null } | null> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT branch_id, status, period_code, raised_by FROM pnl_branch_review_query WHERE id = ? LIMIT 1", [queryId]);
+  return rows[0]
+    ? { branchId: String(rows[0].branch_id), status: String(rows[0].status), period: String(rows[0].period_code), raisedBy: rows[0].raised_by ? String(rows[0].raised_by) : null }
+    : null;
 }
 
 export async function resolveQuery(queryId: string, userId: string, note: string | null) {

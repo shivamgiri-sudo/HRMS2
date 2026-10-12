@@ -150,6 +150,7 @@ on:
           - db-bill-snapshot-refresh
           - grn-migrate-2026-27
           - book-nk-to-bluevine
+          - pnl-branch-recon-evidence
           - repair-migrated-grn-ex-gst
 
       mode:
@@ -338,6 +339,10 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            pnl-branch-recon-evidence)
+              # Read-only: per branch and month, HRMS P&L revenue / people cost vs db_bill invoices / salary. employee_codes = optional periods (space separated).
+              npx tsx scripts/pnl-branch-recon-evidence.ts ${INPUT_EMPLOYEE_CODES:-}
               ;;
             backfill-vendor-recognition-period)
               # Dry-runs unless given --apply. Apply sets vendor_payment_tracking.recognition_period (NULL rows only) from the db_bill finance month.

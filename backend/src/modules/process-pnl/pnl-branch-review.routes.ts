@@ -5,6 +5,7 @@ import { assertFinanceRecordBranch, resolveFinanceBranchScopeSet } from "../fina
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { refuse } from "./finance-error.js";
 import { acknowledgeBranch, getBranchReview, getQueryBranch, raiseQuery, resolveQuery } from "./pnl-branch-review.service.js";
+import { notifyQueryRaised, notifyQueryResolved } from "./pnl-branch-review.notify.js";
 
 /**
  * /api/finance/pnl-branch-review: a branch reviews its monthly P&L (migration 2158).
@@ -95,6 +96,7 @@ pnlBranchReviewRouter.post(
       actor_user_id: actor(req).id, actor_role: actor(req).role, action_type: "PNL_BRANCH_REVIEW_QUERY_RAISED",
       module_key: "finance", entity_type: "pnl_branch_review_query", entity_id: data.id, req,
     });
+    await notifyQueryRaised({ queryId: data.id, branchId, period: String(req.body?.period ?? ""), section: String(req.body?.section ?? ""), message: String(req.body?.message ?? "") });
     res.json({ success: true, data });
   }),
 );
@@ -107,6 +109,7 @@ pnlBranchReviewRouter.post(
     const q = await getQueryBranch(req.params.id);
     if (!q) throw refuse(404, "QUERY_NOT_FOUND", "Query not found");
     await resolveQuery(req.params.id, actor(req).id, req.body?.note ?? null);
+    await notifyQueryResolved({ queryId: req.params.id, branchId: q.branchId, period: q.period, raisedBy: q.raisedBy, note: String(req.body?.note ?? "") });
     await writeAuditLog({
       actor_user_id: actor(req).id, actor_role: actor(req).role, action_type: "PNL_BRANCH_REVIEW_QUERY_RESOLVED",
       module_key: "finance", entity_type: "pnl_branch_review_query", entity_id: req.params.id, req,

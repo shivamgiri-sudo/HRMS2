@@ -107,7 +107,9 @@ export default function ProcessPnlPage() {
   const clientId = searchParams.get("clientId") ?? "";
   const search = searchParams.get("search") ?? "";
   const [draftSearch, setDraftSearch] = useState(search);
-  const [activeTab, setActiveTab] = useState<"overview" | "live" | "trend" | "insights" | "matrix" | "statement" | "alerts" | "review" | "leakage">("overview");
+  type PnlTab = "overview" | "live" | "trend" | "insights" | "matrix" | "statement" | "alerts" | "review" | "leakage";
+  // ?tab=review is what the Work Inbox links to when a branch P&L query is raised or resolved.
+  const [activeTab, setActiveTab] = useState<PnlTab>(() => (searchParams.get("tab") === "review" ? "review" : "overview"));
   // Same roles as GET /pnl/cost-leakage (process-pnl.routes.ts): it exposes company-wide spend, so
   // every other P&L reader got a raw 403 in this tab.
   const canSeeCostLeakage = useHasRole("super_admin", "admin", "finance_head", "accounts_head");
@@ -544,7 +546,7 @@ export default function ProcessPnlPage() {
         </div>
 
         {/* Tab layout: CEO Overview (default) + Process Matrix + Alerts & Reconciliation */}
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-1 flex-col overflow-hidden">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as PnlTab)} className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="h-auto w-full shrink-0 justify-start gap-0 rounded-none border-b-2 border-border bg-card px-4 py-0">
             <TabsTrigger value="overview" className={tabTriggerClass}>CEO Overview</TabsTrigger>
             <TabsTrigger value="live" className={tabTriggerClass}>Live P&amp;L</TabsTrigger>
