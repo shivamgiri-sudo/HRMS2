@@ -3,6 +3,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { refuse } from "./finance-error.js";
 import { getPnlReconciliation, type PnlBranchRollup } from "./pnl-reconciliation.service.js";
+import { EXCLUDED_BRANCH_IDS } from "./cost-centre-process-resolver.service.js";
 
 /**
  * Branch review of the monthly P&L. The figures come from the same reconciliation the P&L page uses
@@ -81,7 +82,8 @@ export function deriveStatus(
 export async function getBranchReview(period: string, branchIds: string[] | null): Promise<BranchReviewResult> {
   assertPeriod(period);
   const rec = await getPnlReconciliation(period, { branchIds: branchIds ?? [] });
-  const rollups = rec.branches.filter((b) => b.branchId && (!branchIds || branchIds.includes(b.branchId)));
+  // IDC entities (NOIDA-DIALDESK) are not MAS Callnet (owner ruling): they are never part of a branch review.
+  const rollups = rec.branches.filter((b) => b.branchId && !EXCLUDED_BRANCH_IDS.has(b.branchId) && (!branchIds || branchIds.includes(b.branchId)));
   const [acks] = await db.execute<RowDataPacket[]>(
     `SELECT r.*, COALESCE(e.full_name, u.email) AS by_name
        FROM pnl_branch_review r

@@ -221,7 +221,7 @@ export function PnlBranchReviewPanel({ period, onOpenDetail }: { period: string;
         <span><strong>{d.totals.queried}</strong> with open queries</span>
         <span><strong>{d.totals.pending}</strong> awaiting review</span>
         {d.totals.changed > 0 && <span className="text-rose-700"><strong>{d.totals.changed}</strong> changed since acknowledged</span>}
-        <span className="text-xs text-muted-foreground">Figures are the reconciled P&amp;L ({d.mode === "FINAL" ? "closed month" : "month to date"}), the same numbers the CEO view uses.</span>
+        <span className="text-xs text-muted-foreground">Each cost centre is counted in the branch that runs it ({d.mode === "FINAL" ? "closed month" : "month to date"}). Views that group by process can split revenue between branches differently.</span>
       </div>
       <div className="flex flex-wrap gap-2" role="group" aria-label="Filter branches by review status">
         {chips.map((c) => (
