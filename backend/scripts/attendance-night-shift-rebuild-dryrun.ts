@@ -82,19 +82,19 @@ type Shift = { start: number; end: number; night: boolean; weekOff: boolean; inh
   const GAP_H = 5;
   const bucket = new Map<string, string[]>();
   const orphan: string[] = [];
-  let cur: string[] = [];
+  let grp: string[] = [];
   const flush = () => {
-    if (!cur.length) return;
-    const d = cur[0].slice(0, 10);
+    if (!grp.length) return;
+    const d = grp[0].slice(0, 10);
     if (d >= FROM && d <= TO) {
       const k = bucket.has(d) ? `${d}#2` : d; // two shifts starting same date: keep both visible
-      bucket.set(k, cur);
-    } else orphan.push(...cur);
-    cur = [];
+      bucket.set(k, grp);
+    } else orphan.push(...grp);
+    grp = [];
   };
   for (const p of punches) {
-    if (cur.length && ms(p) - ms(cur[cur.length - 1]) >= GAP_H * 3600000) flush();
-    cur.push(p);
+    if (grp.length && ms(p) - ms(cur[grp.length - 1]) >= GAP_H * 3600000) flush();
+    grp.push(p);
   }
   flush();
   for (const k of [...bucket.keys()]) if (k.endsWith("#2")) console.log("NOTE second shift starting same date:", k, bucket.get(k)![0], "->", bucket.get(k)!.slice(-1)[0]);
