@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Truck } from "lucide-react";
 import { ProcessDashboard } from "@/components/process-dashboard/ProcessDashboard";
 import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
 import { BellavitaSaleDashboard } from "@/components/process-performance/BellavitaSaleDashboard";
@@ -289,6 +289,19 @@ export function V2DashboardView({ company, dashboard, onOpenDashboard }: {
     </>
   );
 }
+
+/**
+ * AHM's "Dump" export, one row per outlet/SKU order line -- two uploaders (branch-level files, same shape), one
+ * shared table (sql/1875). See ahm-dump-bulk.service.ts. Lives here so ProcessPerformanceV2Page and the Process
+ * Operations page upload through the same list.
+ */
+export const AHM_UPLOADERS: UploaderHubItem[] = [
+  { code: "AHM_DUMP_MP", label: "Dump (MP)", description: "Upload AHM's order/survey-to-delivery export, MP branch", icon: Truck },
+  { code: "AHM_DUMP_MM", label: "Dump (MM)", description: "Upload AHM's order/survey-to-delivery export, MM branch", icon: Truck },
+];
+
+/** Uploaders the Process Operations page offers beside a V2 company's dashboards (real UploaderWorkspace, not the stub grid). */
+export const V2_UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = { ahm: AHM_UPLOADERS };
 
 /** Process Operations process_master.process_code -> the V2 company keys whose dashboards belong to it. */
 const V2_COMPANIES_BY_PROCESS_CODE: Record<string, CompanyKey[]> = {

@@ -5,7 +5,7 @@ import { fetchConfigs as fetchProcessDashboardConfigs } from "@/components/proce
 import type { ProcessConfigSummary } from "@/components/process-dashboard/types";
 import { Link } from "react-router-dom";
 import { AltRxMisPanel } from "@/components/process-performance/AltRxMisPanel";
-import { V2DashboardView, DASHBOARDS_BY_COMPANY, COMPANIES, todayStr, firstOfMonthStr, type CompanyKey, type DashboardKind } from "@/components/process-performance/v2Dashboards";
+import { V2DashboardView, DASHBOARDS_BY_COMPANY, COMPANIES, AHM_UPLOADERS, todayStr, firstOfMonthStr, type CompanyKey, type DashboardKind } from "@/components/process-performance/v2Dashboards";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
@@ -228,13 +228,6 @@ const SBI_CARD_UPLOADERS = [
   { code: "SBI_CARD_ROSTER",         label: "Agent roster", description: "Upload the TEAM_LIST: dialer id, team (HIGHBAL / LOWBAL) and team leader", icon: Users },
   { code: "SBI_CARD_OUTCOME",        label: "Outcome (Res / NM / RB)", description: "Upload cycle-to-date Resolution, Normalisation and Rollback for the payout", icon: Target },
   { code: "SBI_CARD_PEN_ESTIMATION", label: "Pen Estimation",   description: "Upload SBI Card penetration estimation",                     icon: Target },
-];
-
-/** AHM's "Dump" export, one row per outlet/SKU order line -- two uploaders (branch-level
- * files, same shape), one shared table (sql/1875). See ahm-dump-bulk.service.ts. */
-const AHM_UPLOADERS = [
-  { code: "AHM_DUMP_MP", label: "Dump (MP)", description: "Upload AHM's order/survey-to-delivery export, MP branch", icon: Truck },
-  { code: "AHM_DUMP_MM", label: "Dump (MM)", description: "Upload AHM's order/survey-to-delivery export, MM branch", icon: Truck },
 ];
 
 const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
