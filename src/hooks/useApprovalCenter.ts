@@ -44,6 +44,9 @@ export interface ApprovalCenterData {
 
 export const APPROVAL_CENTER_KEY = "approval-center";
 
+// Set after a decision so the next list bypasses the server cache once.
+let forceFresh = false;
+
 export function useApprovalCenter() {
   const { user } = useAuth();
   return useQuery({
@@ -55,7 +58,12 @@ export function useApprovalCenter() {
     refetchOnWindowFocus: true,
     retry: 1,
     queryFn: async (): Promise<ApprovalCenterData> => {
-      const res = await hrmsApi.get<{ success: boolean; data: ApprovalCenterData }>("/api/approval-center/pending", 150_000);
+      const fresh = forceFresh;
+      forceFresh = false;
+      const res = await hrmsApi.get<{ success: boolean; data: ApprovalCenterData }>(
+        fresh ? "/api/approval-center/pending?fresh=1" : "/api/approval-center/pending",
+        150_000,
+      );
       return res.data;
     },
   });
@@ -66,7 +74,12 @@ export function useDecideApproval() {
   return useMutation({
     mutationFn: async (v: { uid: string; action: "approve" | "reject"; remarks?: string }) =>
       hrmsApi.post<{ success: boolean; message?: string }>("/api/approval-center/decide", v, 60_000),
-    onSuccess: () => {
+    onSuccess: (_r, v) => {
+      // Drop the actioned card at once; the refetch then confirms from a fresh server list.
+      qc.setQueriesData<ApprovalCenterData>({ queryKey: [APPROVAL_CENTER_KEY] }, (old) =>
+        old ? { ...old, items: old.items.filter((i) => i.uid !== v.uid) } : old,
+      );
+      forceFresh = true;
       void qc.invalidateQueries({ queryKey: [APPROVAL_CENTER_KEY] });
     },
   });

@@ -54,8 +54,33 @@ async function mapLimit<T, R>(list: T[], limit: number, fn: (x: T) => Promise<R>
 
 const PRIORITY_RANK = { high: 0, normal: 1 } as const;
 
+/** uids this person just decided, hidden from their list for a few minutes while module lists catch up. */
+const DECIDED_TTL_MS = 180_000;
+const decided = new Map<string, Map<string, number>>();
+function decidedUids(userId: string): Set<string> {
+  const m = decided.get(userId);
+  const out = new Set<string>();
+  if (!m) return out;
+  const now = Date.now();
+  for (const [uid, exp] of m) {
+    if (exp > now) out.add(uid);
+    else m.delete(uid);
+  }
+  return out;
+}
+function markDecided(userId: string, uid: string) {
+  let m = decided.get(userId);
+  if (!m) decided.set(userId, (m = new Map()));
+  m.set(uid, Date.now() + DECIDED_TTL_MS);
+}
+
+/**
+ * Drops the cached list AND detaches any in-flight build: a build that started before a decision would otherwise be shared
+ * with the next request and re-cached, showing the just-actioned item again.
+ */
 export function invalidateApprovalCache(userId: string) {
   cache.delete(userId);
+  builds.delete(userId);
 }
 
 /**
@@ -73,6 +98,7 @@ interface BuildState {
   failed: ListResult["failed"];
   timings: Record<string, number>;
   pendingKinds: Set<string>;
+  userId: string;
   done: Promise<ListResult>;
 }
 const builds = new Map<string, BuildState>();
@@ -83,9 +109,10 @@ function compose(state: BuildState, partial: boolean): ListResult {
   const windowDays = maxAgeDays();
   const cutoff = windowDays > 0 ? Date.now() - windowDays * 86_400_000 : null;
   let staleHidden = 0;
+  const hide = decidedUids(state.userId);
   for (const batch of state.results.values()) {
     for (const it of batch) {
-      if (seen.has(it.uid)) continue;
+      if (seen.has(it.uid) || hide.has(it.uid)) continue;
       seen.add(it.uid);
       // Items without a usable submittedAt cannot be aged, so they stay visible.
       if (cutoff !== null && it.submittedAt) {
@@ -128,6 +155,7 @@ function startBuild(ctx: LoopbackCtx): BuildState {
     failed: [],
     timings: {},
     pendingKinds: new Set(ADAPTERS.map((a) => a.kind)),
+    userId: ctx.userId,
     done: Promise.resolve(null as unknown as ListResult),
   };
   // Adapters run a few at a time (loopback also caps in-flight calls process-wide) so listing never floods the DB pool.
@@ -148,8 +176,11 @@ function startBuild(ctx: LoopbackCtx): BuildState {
       }
     });
     const value = compose(state, false);
-    cache.set(ctx.userId, { exp: Date.now() + CACHE_TTL_MS, value });
-    builds.delete(ctx.userId);
+    // Only the build still registered for this user may cache; one detached by a decision is stale.
+    if (builds.get(ctx.userId) === state) {
+      cache.set(ctx.userId, { exp: Date.now() + CACHE_TTL_MS, value });
+      builds.delete(ctx.userId);
+    }
     return value;
   })();
   return state;
@@ -225,6 +256,7 @@ export async function decideApproval(
     const status = e instanceof LoopbackError ? e.status : 500;
     return { ok: false, status, message: String(e?.message ?? "Action failed") };
   }
+  markDecided(ctx.userId, uid);
   invalidateApprovalCache(ctx.userId);
   return { ok: true };
 }

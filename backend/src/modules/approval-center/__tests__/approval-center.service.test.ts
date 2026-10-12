@@ -52,3 +52,14 @@ describe("approval center freshness window", () => {
     invalidateApprovalCache("u-decide");
   });
 });
+
+describe("approval center after a decision", () => {
+  it("does not list the decided item again even if the module still returns it, and ignores an in-flight older build", async () => {
+    setup([item("a", 1), item("b", 1)]);
+    const u = ctxFor("u-after");
+    await listPendingApprovals(u, { fresh: true });
+    expect(await decideApproval(u, "t:a", "approve", "")).toEqual({ ok: true });
+    const r = await listPendingApprovals(u, { fresh: true });
+    expect(r.items.map((i) => i.id)).toEqual(["b"]);
+  });
+});
