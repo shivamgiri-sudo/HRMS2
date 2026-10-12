@@ -66,13 +66,14 @@ ${row("Please carry", `<ul style="margin:0;padding-left:18px">${docs.map((d) => 
 ${row("Reference", `<span style="font-family:Consolas,monospace">${esc(c.reference)}</span> <span style="font-size:13px;color:#64748b">(show this at reception)</span>`)}
 ${c.contact ? row("Questions", esc(c.contact)) : ""}
 </table></td></tr>
+<tr><td style="padding:12px 28px 0;font-size:13px;color:#475569">This walk-in is at <b>${esc(c.branch)}</b>. If you live in a different city, just reply to this email with your city name and we will take you off this list.</td></tr>
 ${c.optInUrl ? `<tr><td style="padding:12px 28px 0;font-size:13px;color:#475569">Want reminders and directions on WhatsApp? <a href="${esc(c.optInUrl)}" style="color:#15803d;font-weight:bold">Turn on WhatsApp updates</a> (optional).</td></tr>` : ""}
 <tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>${esc(c.company)} Hiring Team</b></td></tr>
 <tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with ${esc(c.company)} or shared your profile with us. The interview is free of charge; we never ask for money.</td></tr>
 </table></td></tr></table></body></html>`;
   const text = [`Hi ${c.name},`, "", `Your profile matches our ${c.role} opening. Your walk-in interview slot:`, `${c.date}, ${c.time}`,
     `Venue: ${c.branch}${c.address ? `, ${c.address}` : ""}`, c.maps ? `Directions: ${c.maps}` : "", `Please carry: ${docs.join(", ")}`, `Reference: ${c.reference}`,
-    c.answerUrl ? answerButtonsText(c.answerUrl) : "", c.answerUrl && c.stopUrl ? stopLinkText(c.stopUrl) : "",
+    `This walk-in is at ${c.branch}. If you live in a different city, reply to this email with your city name and we will take you off this list.`, c.answerUrl ? answerButtonsText(c.answerUrl) : "", c.answerUrl && c.stopUrl ? stopLinkText(c.stopUrl) : "",
     c.contact ? `Questions: ${c.contact}` : "", "", `All the best,`, `${c.company} Hiring Team`].filter((l) => l !== "").join("\n");
   return { subject, html, text };
 }

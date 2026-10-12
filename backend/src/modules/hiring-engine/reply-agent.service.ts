@@ -14,7 +14,8 @@ import { resolveWorkingProvider } from "../ai/mira-issue-triage.service.js";
 import { aiProviderConfigService } from "../ai/ai-provider-config.service.js";
 import { recordPersonOptOut } from "./followup-optout.service.js";
 import { stripQuoted } from "./response-classifier.js";
-import { disposition, ruleIntent, ruleReply, scrub, validateReply, type Draft, type FactSheet, type ReplyIntent } from "./reply-agent.rules.js";
+import { detectOtherCity, disposition, elsewhereReply, ruleIntent, ruleReply, scrub, validateReply, type Draft, type FactSheet, type ReplyIntent } from "./reply-agent.rules.js";
+import { markLocationElsewhere } from "./location-elsewhere.service.js";
 
 const INTENTS: readonly ReplyIntent[] = ["confirm", "decline", "reschedule", "ask_address", "ask_time", "ask_documents", "ask_job", "ask_salary", "ask_shift", "ask_eligibility", "ask_selection", "assessment_link", "already_joined", "opt_out", "complaint", "other"];
 
@@ -233,6 +234,15 @@ export async function handleInboundReply(m: InboundReply, now = new Date()): Pro
     const { facts, requisitionId } = built;
     const [lead] = await db.execute<RowDataPacket[]>("SELECT status FROM he_lead WHERE mobile10 = ? LIMIT 1", [m.who.mobile10]);
     const optedOut = String(lead[0]?.status ?? "") === "opted_out";
+    // Someone who says they live in another city is taken off this walk-in and told so, whatever else they wrote.
+    const otherCity = optedOut ? null : detectOtherCity(inbound, facts.branch.replace(/[-\s]*\d+$/, ""));
+    if (otherCity) {
+      await markLocationElsewhere(m.who.mobile10, { city: otherCity, actor: "auto-reply" });
+      const text = elsewhereReply(facts, otherCity);
+      await store({ req: requisitionId, d: { intent: "other_city" as unknown as ReplyIntent, language: "en", confidence: 0.9, needsHuman: false, reply: text, reasons: ["lives_elsewhere"] }, status: "draft", engine: "rules", reply: text });
+      const ok = m.fromEmail ? await sendNow(id, m.fromEmail, m.subject, text, m.messageId, m.references) : false;
+      return ok ? "sent" : "failed";
+    }
     const { draft, engine } = await draftReply(facts, inbound);
     const reply = scrub(draft.reply, deny);
     // A draft that needed scrubbing named a process, client or code: never send a mangled version, a person writes it.

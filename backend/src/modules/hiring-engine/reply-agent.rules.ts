@@ -159,3 +159,22 @@ export function ruleIntent(text: string): { intent: ReplyIntent; confidence: num
   if (has(/\b(yes|ok|okay|confirm|confirmed|will come|will be there|coming|sure|haan|aa jaunga|aa jaungi|aunga|aungi|theek hai|thik hai|will attend|attend|attending|will visit|visit|will join|will reach|i will be present|present)\b/)) return { intent: "confirm", confidence: 0.8 };
   return null;
 }
+
+const CITIES = ["ahmedabad", "mumbai", "pune", "bangalore", "bengaluru", "hyderabad", "chennai", "kolkata", "lucknow", "jaipur", "surat", "vadodara", "baroda", "rajkot",
+  "indore", "bhopal", "patna", "ranchi", "nagpur", "chandigarh", "kanpur", "varanasi", "gandhinagar", "agra", "meerut", "dehradun", "raipur", "bhubaneswar", "guwahati",
+  "coimbatore", "kochi", "visakhapatnam", "ludhiana", "amritsar", "jodhpur", "udaipur", "nashik", "thane", "mysore", "bareilly", "gorakhpur", "prayagraj", "allahabad"];
+/** The city a candidate says they live in, when it is not the branch's own: "I am in Ahmedabad", "staying at Surat". null otherwise. Pure. */
+export function detectOtherCity(text: string, branchCity: string | null | undefined): string | null {
+  const t = text.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  const own = String(branchCity ?? "").toLowerCase().trim();
+  const cue = /\b(i am|i m|im|i live|living|live in|stay|staying|based|currently|resident|from|belong|reside|residing)\b/;
+  if (!cue.test(t)) return null;
+  for (const c of CITIES) {
+    if (c === own) continue;
+    if (new RegExp(`\\b${c}\\b`).test(t)) return c.charAt(0).toUpperCase() + c.slice(1);
+  }
+  return null;
+}
+export const elsewhereReply = (f: FactSheet, city: string): string =>
+  `Dear ${f.name},\n\nThank you for letting us know that you are in ${city}. This walk-in is at ${f.branch}, so we have taken you off this list. We will contact you if a walk-in opens in your city.\n\n${sig(f)}`;

@@ -17,6 +17,7 @@ import { placeVoiceCall } from "./he-voice.service.js";
 import { generateWebhookToken, last4, saveSuperbot, superbotConfig, webhookToken } from "./he-secrets.service.js";
 import { getPipelineHealth } from "./he-pipeline-health.service.js";
 import { startPlannerWarmup } from "./he-planner.service.js";
+import { markLocationElsewhere } from "./location-elsewhere.service.js";
 import { startFulfilmentWarmup } from "./he-fulfilment.service.js";
 import { testSuperbotConnection } from "./he-superbot.service.js";
 import { buildSuperbotSheet } from "./he-superbot-sheet.service.js";
@@ -143,6 +144,19 @@ heRouter.post("/qualified-followup/:id/retry", requireAuth, requireRole(...ADMIN
 });
 
 // HR's STOP button: the person asked not to be contacted (phone, in person). Ends every follow-up journey of the mobile; recorded with the user.
+heRouter.post("/qualified-followup/:id/not-my-city", requireAuth, requireRole(...WRITE_ROLES), followupRowScoped, async (req, res) => {
+  try {
+    const m = await mobileOfFollowup(String(req.params.id));
+    if (!m) return res.status(404).json({ success: false, message: "Row not found" });
+    const city = typeof req.body?.city === "string" ? req.body.city.trim().slice(0, 60) : null;
+    const out = await markLocationElsewhere(m, { city, actor: (req as AuthenticatedRequest).authUser?.id ?? "admin" });
+    return res.json({ success: true, data: out });
+  } catch (err) {
+    logAttentionError("not-my-city", err);
+    return res.status(500).json({ success: false, message: "Could not record that" });
+  }
+});
+
 heRouter.post("/qualified-followup/:id/opt-out", requireAuth, requireRole(...WRITE_ROLES), followupRowScoped, async (req, res) => {
   if (!FOLLOWUP_ID_RE.test(req.params.id)) return res.status(400).json({ success: false, message: "Invalid id" });
   try {
