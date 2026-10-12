@@ -170,6 +170,7 @@ export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> 
     if (age >= SNAPSHOT_STALE_MS) {
       void refreshAhmSnapshot(f).catch((err) => console.error("[ahm-dashboard] background refresh failed:", err instanceof Error ? err.message : err));
     }
+    maybeSyncAhmMetrics();
     return JSON.parse(hit.payload) as AhmDashboardData;
   }
   return refreshAhmSnapshot(f);
@@ -178,6 +179,15 @@ export async function getAhmDashboard(f: AhmFilters): Promise<AhmDashboardData> 
 const inflight = new Map<string, Promise<AhmDashboardData>>();
 let lastMetricSyncAt = 0;
 const METRIC_SYNC_MIN_GAP_MS = 10 * 60_000;
+
+/** Keeps the Process Operations KPI tiles current from the order dump. Throttled, in the background, never fails the viewer. */
+function maybeSyncAhmMetrics(): void {
+  if (Date.now() - lastMetricSyncAt < METRIC_SYNC_MIN_GAP_MS) return;
+  lastMetricSyncAt = Date.now();
+  void import("./ahm-metrics.service.js")
+    .then((m) => { const r = m.recentRange(); return m.syncAhmProcessMetrics(r.from, r.to); })
+    .catch((err) => console.error("[ahm-dashboard] metric roll-up failed:", err instanceof Error ? err.message : err));
+}
 
 /** Computes live and upserts the snapshot -- used both by a cache miss above and by the background worker's proactive
  * refresh of the common ranges. One compute per key at a time: concurrent viewers share it instead of each launching
@@ -202,13 +212,7 @@ async function doRefreshAhmSnapshot(f: AhmFilters, key: string): Promise<AhmDash
        payload = VALUES(payload), compute_ms = VALUES(compute_ms), computed_at = VALUES(computed_at)`,
     [key, f.from, f.to, f.region, JSON.stringify(data), computeMs],
   );
-  // Keep the Process Operations KPI tiles current whenever fresh dump data has just been read. Throttled, never blocks or fails the viewer.
-  if (Date.now() - lastMetricSyncAt > METRIC_SYNC_MIN_GAP_MS) {
-    lastMetricSyncAt = Date.now();
-    void import("./ahm-metrics.service.js")
-      .then((m) => { const r = m.recentRange(); return m.syncAhmProcessMetrics(r.from, r.to); })
-      .catch((err) => console.error("[ahm-dashboard] metric roll-up failed:", err instanceof Error ? err.message : err));
-  }
+  maybeSyncAhmMetrics();
   return data;
 }
 
