@@ -76,23 +76,28 @@ type Shift = { start: number; end: number; night: boolean; weekOff: boolean; inh
     }
   }
 
-  // ---- assign each punch to the shift-day whose window contains it ----
-  const windows = [...shifts.entries()].filter(([d]) => d >= FROM && d <= TO).map(([d, sh]) => {
-    const startMs = ms(`${d} 00:00:00`) + sh.start * 60000 - PRE_H * 3600000;
-    const endDay = sh.night ? addDays(d, 1) : d;
-    const endMs = ms(`${endDay} 00:00:00`) + sh.end * 60000 + POST_H * 3600000;
-    return { d, sh, startMs, endMs };
-  });
+  // ---- cluster punches into shifts: a gap of GAP_H or more starts a new shift ----
+  // Roster-independent on purpose: rosters are often draft or stale, and break/door punches
+  // inside a 9h shift can be 20-45 events. A shift is attributed to the date of its first punch.
+  const GAP_H = 5;
   const bucket = new Map<string, string[]>();
   const orphan: string[] = [];
+  let cur: string[] = [];
+  const flush = () => {
+    if (!cur.length) return;
+    const d = cur[0].slice(0, 10);
+    if (d >= FROM && d <= TO) {
+      const k = bucket.has(d) ? `${d}#2` : d; // two shifts starting same date: keep both visible
+      bucket.set(k, cur);
+    } else orphan.push(...cur);
+    cur = [];
+  };
   for (const p of punches) {
-    const t = ms(p);
-    const hit = windows.filter(w => t >= w.startMs && t <= w.endMs);
-    if (!hit.length) { orphan.push(p); continue; }
-    // overlap: prefer the window whose rostered start is nearest
-    hit.sort((a, b) => Math.abs(t - (a.startMs + PRE_H * 3600000)) - Math.abs(t - (b.startMs + PRE_H * 3600000)));
-    const k = hit[0].d; (bucket.get(k) ?? bucket.set(k, []).get(k)!).push(p);
+    if (cur.length && ms(p) - ms(cur[cur.length - 1]) >= GAP_H * 3600000) flush();
+    cur.push(p);
   }
+  flush();
+  for (const k of [...bucket.keys()]) if (k.endsWith("#2")) console.log("NOTE second shift starting same date:", k, bucket.get(k)![0], "->", bucket.get(k)!.slice(-1)[0]);
 
   // ---- current attendance_daily_record ----
   const [cur] = await db.execute<any[]>(
@@ -105,7 +110,7 @@ type Shift = { start: number; end: number; night: boolean; weekOff: boolean; inh
   const paidOf = (st: string) => st === "present" || st === "week_off_worked" || st === "leave_approved" || st === "holiday" ? 1 : st === "half_day" ? 0.5 : 0;
   for (let d = FROM; d <= TO; d = addDays(d, 1)) {
     const sh = shifts.get(d);
-    const ps = (bucket.get(d) ?? []).sort();
+    const ps = [...(bucket.get(d) ?? []), ...(bucket.get(d + "#2") ?? [])].sort();
     let inT: string | null = null, outT: string | null = null, mins = 0, st = "no_punch";
     if (ps.length) {
       inT = ps[0];
