@@ -238,7 +238,13 @@ function enrichColumn(
   /** GRN Committed (reserved, ex-GST) — added into Indirect Cost; see indirectCostTotal below. */
   committedIdc?: ActualsByKey,
   /** Approved revenue forecasts; the other revenue sources arrive with these cost centres removed. */
-  forecast?: ForecastRevenueActuals
+  forecast?: ForecastRevenueActuals,
+  /**
+   * Recognised revenue per branch exactly as Live P&L, CEO Overview and the Branch Review show it (pnl-reconciliation:
+   * every cost centre counted in the branch that runs it). When it has the column's branch, a BRANCH column uses it
+   * for every period, so no two tabs can show a branch a different revenue. Process columns never use it.
+   */
+  branchRevenue?: Map<string, number>
 ): Record<string, unknown> {
   /*
    * A6 FIX (2026-09-01): idc/seat must never inherit the WHOLE branch's total just because a
@@ -374,7 +380,10 @@ function enrichColumn(
   const useCanonical = !useBilled && existingRevenue > 0;
   const baseRevenue = useBilled ? billedPlusEstimate : useCanonical ? existingRevenue : plannedRevenue;
   // The canonical figure already carries the forecast (see above); the billed and planned maps do not.
-  const recognizedRevenue = baseRevenue + (useCanonical ? 0 : (forecastAmount ?? 0));
+  const reconciledBranchRevenue = !key.processId && key.branchId ? branchRevenue?.get(key.branchId) : undefined;
+  const recognizedRevenue = reconciledBranchRevenue !== undefined
+    ? reconciledBranchRevenue
+    : baseRevenue + (useCanonical ? 0 : (forecastAmount ?? 0));
   out.recognizedRevenue = recognizedRevenue;
   out.revenueForecast = forecastAmount ?? 0;
   out.plannedRevenue = plannedRevenue;
@@ -387,7 +396,9 @@ function enrichColumn(
    * "accounting_fallback") via the `...data` spread below reads from the source row; passed through
    * unchanged here for a process column so both surfaces agree on WHY a revenue figure is what it is.
    */
-  out.revenueBasis = hasForecast && baseRevenue === 0 && !useCanonical
+  out.revenueBasis = reconciledBranchRevenue !== undefined
+    ? "reconciled"
+    : hasForecast && baseRevenue === 0 && !useCanonical
     ? "forecast"
     : (!periodOpen && billedPlusEstimate > 0)
       ? (hasForecast ? "invoiced+forecast" : "invoiced")
@@ -648,6 +659,8 @@ export interface StatementDependencies {
   /** Approved Branch Head revenue forecasts (pnl-forecast-overlay.ts). When a caller injects
    *  getInvoicedRevenue but not this, it is treated as none, like getCommittedIndirectCost. */
   getForecastRevenue?: (period: string) => Promise<ForecastRevenueActuals>;
+  /** Branch revenue as Live P&L shows it (pnl-reconciliation); undefined / failure keeps the per-source chain. */
+  getBranchRevenue?: (period: string) => Promise<Map<string, number> | undefined>;
 }
 
 const emptyEstimate = (): ActualsByKey => ({ byBranch: new Map(), byProcess: new Map(), byCostCentre: new Map() });
@@ -662,6 +675,13 @@ const liveEstimateCache = new Map<string, { at: number; value: Promise<ActualsBy
  * Process attribution uses getCostCentreProcessIds — the rule invoice revenue is attributed by.
  * Cached for 60s (same as CEO Overview): the reconciliation is not cheap.
  */
+export async function getReconciledBranchRevenue(period: string): Promise<Map<string, number> | undefined> {
+  const rec = await getPnlReconciliation(period);
+  const out = new Map<string, number>();
+  for (const b of rec.branches) if (b.branchId) out.set(String(b.branchId), Number(b.revenue ?? 0));
+  return out;
+}
+
 export async function getLiveRevenueEstimate(period: string): Promise<ActualsByKey> {
   const hit = liveEstimateCache.get(period);
   if (hit && Date.now() - hit.at < LIVE_ESTIMATE_TTL_MS) return hit.value;
@@ -834,6 +854,9 @@ export async function getStatement(
   const forecastReader = deps.getForecastRevenue
     ?? (deps.getInvoicedRevenue ? async () => undefined : getForecastRevenueActuals);
   const forecast = await forecastReader(periodCode).catch(() => undefined);
+  // One revenue per branch across every tab: the reconciled figure (see enrichColumn). A failure keeps the per-source chain.
+  const branchRevenueReader = deps.getBranchRevenue ?? (deps.getInvoicedRevenue ? async () => undefined : getReconciledBranchRevenue);
+  const branchRevenue = viewBy === "branch" ? await branchRevenueReader(periodCode).catch(() => undefined) : undefined;
   const forecastCcs = forecast ? [...forecast.byCostCentre.keys()] : [];
   const revenue = forecastCcs.length ? withoutCostCentres(driverRevenue, forecastCcs) : driverRevenue;
   const invoicedRevenue = forecastCcs.length ? withoutCostCentres(invoicedRevenueAll, forecastCcs) : invoicedRevenueAll;
@@ -854,7 +877,8 @@ export async function getStatement(
       viewBy === "process",
       estimate,
       committedIdc,
-      forecastCcs.length ? forecast : undefined
+      forecastCcs.length ? forecast : undefined,
+      branchRevenue,
     );
     // Coverage belongs on the column, not among the money rows: it qualifies how far the whole
     // column can be trusted, and a consumer must be able to see that before reading any figure in it.

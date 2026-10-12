@@ -741,6 +741,11 @@ export default function ProcessPnlPage() {
           )}
 
           <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <p className="mb-2 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground" role="note">
+              This matrix is per process: each row sits under the branch its process is managed from, and a process's revenue is the
+              sum of its cost centres even where one of them belongs to another branch. For a branch total use Live P&amp;L, CEO
+              Overview, the P&amp;L Statement (branch view) or Branch Review, which count each cost centre in the branch that runs it.
+            </p>
             <ProcessPnlMatrixToolbar
               preset={matrixPreset}
               status={statusFilter}
