@@ -2,7 +2,8 @@
  * Branch P&L reconciliation evidence, per branch and month. READ-ONLY (HRMS reads + billQuery SELECT only).
  *
  * "Reconciled before branches review" needs proof, not a claim. For each month this prints, per HRMS branch:
- *   HRMS    recognised revenue and people cost from the allocation overlay (what the P&L pages show)
+ *   HRMS    recognised revenue and payroll cost per branch as the Branch Review tab shows them (reconciliation, cost-centre branch);
+ *           the process-based allocation overlay is printed beside it as overlayBasis
  *   db_bill invoice revenue (tbl_invoice.total, ex-GST; status 0; service month; IDC company and Non Revenue
  *           excluded; a re-issued invoice counted once) and salary cost (salary_data), mapped to the branch of the
  *           HRMS cost centre with the same code
@@ -16,6 +17,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { billQuery } from "../src/db/billDb.js";
 import { bpoPnlAllocationOverlayService } from "../src/modules/process-pnl/bpo-pnl-allocation-overlay.service.js";
+import { getPnlReconciliation } from "../src/modules/process-pnl/pnl-reconciliation.service.js";
 
 const TOL_PCT = 2, TOL_ABS = 50_000;
 const r0 = (v: unknown) => Math.round(Number(v ?? 0));
@@ -98,16 +100,25 @@ const verdict = (hrms: number, src: number) => {
       cur.rev += Number(row.recognizedRevenue ?? 0); cur.people += Number(row.totalPeopleCost ?? 0);
       hr.set(b, cur);
     }
-    const branches = new Set<string>([...hr.keys(), ...[...revByBranchMonth.keys(), ...salByBranchMonth.keys()].filter((k) => k.endsWith("|" + period)).map((k) => k.split("|")[0])]);
+    // The basis the Branch Review tab shows: cost-centre branch for revenue and payroll (pnl-reconciliation).
+    const rc = new Map<string, { rev: number; people: number; unalloc: number }>();
+    try {
+      const rec: any = await getPnlReconciliation(period, {});
+      for (const b of rec.branches as any[]) rc.set(String(b.branchName ?? "Unassigned"), { rev: Number(b.revenue ?? 0), people: Number(b.payrollCost ?? 0), unalloc: Number(b.unallocatedPayroll ?? 0) });
+    } catch (e) { console.log("EVID_ERROR " + JSON.stringify({ period, basis: "reconciliation", error: e instanceof Error ? e.message : String(e) })); }
+    const branches = new Set<string>([...hr.keys(), ...rc.keys(), ...[...revByBranchMonth.keys(), ...salByBranchMonth.keys()].filter((k) => k.endsWith("|" + period)).map((k) => k.split("|")[0])]);
     for (const b of [...branches].sort()) {
       const h = hr.get(b) ?? { rev: 0, people: 0 };
-      const rev = verdict(h.rev, revByBranchMonth.get(`${b}|${period}`) ?? 0);
-      const peo = verdict(h.people, salByBranchMonth.get(`${b}|${period}`) ?? 0);
-      for (const v of [rev.verdict, peo.verdict]) v === "MATCH" ? match++ : review++;
+      const c = rc.get(b) ?? { rev: 0, people: 0, unalloc: 0 };
+      const srcRev = revByBranchMonth.get(`${b}|${period}`) ?? 0, srcPeo = salByBranchMonth.get(`${b}|${period}`) ?? 0;
+      const rev = verdict(h.rev, srcRev), peo = verdict(h.people, srcPeo);
+      const rrev = verdict(c.rev, srcRev), rpeo = verdict(c.people, srcPeo);
+      for (const v of [rrev.verdict, rpeo.verdict]) v === "MATCH" ? match++ : review++;
       console.log("EVID_ROW " + JSON.stringify({
         period, branch: b,
-        revenue: { hrms: r0(h.rev), dbbill: r0(revByBranchMonth.get(`${b}|${period}`)), ...rev },
-        peopleCost: { hrms: r0(h.people), dbbill: r0(salByBranchMonth.get(`${b}|${period}`)), ...peo },
+        revenue: { hrms: r0(c.rev), dbbill: r0(srcRev), ...rrev },
+        peopleCost: { hrms: r0(c.people), dbbill: r0(srcPeo), ...rpeo, unallocatedInHrms: r0(c.unalloc) },
+        overlayBasis: { revenue: { hrms: r0(h.rev), ...rev }, peopleCost: { hrms: r0(h.people), ...peo } },
       }));
     }
   }
