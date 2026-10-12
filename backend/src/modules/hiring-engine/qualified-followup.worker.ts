@@ -161,6 +161,8 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
   const r = blank(s.mode);
   // Joined counts (employee code generated) decide when a requisition is filled; refreshed at most every 10 minutes.
   if (Date.now() - lastJoinedRefresh > 10 * 60_000) { lastJoinedRefresh = Date.now(); await guarded("joined-refresh", () => refreshJoinedHeadcount(), 0); }
+  // New Meta form fills get a Hiring Engine lead so Lead pool, Master and person history match the Meta campaign page (first run reaches back 14 days). Runs before the send steps: a long e-mail batch must not hold it back.
+  if (Date.now() - lastMetaLeadSync > 10 * 60_000) { const first = lastMetaLeadSync === 0; lastMetaLeadSync = Date.now(); await guarded("meta-lead-sync", () => syncRecentMetaLeads(first ? 24 * 14 : 72), 0); }
   // One shared WhatsApp budget for the Pinbot number: every unprompted send today by any mechanism counts (D10).
   const budget = newBudget(await guarded("budget", async () => waDailyBudget(await deps.getPinbotQuality(), s.waDailyMax) - (await deps.sharedWaSentToday(now)), 0));
   for (const { tag, sources } of plan) {
@@ -188,8 +190,6 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("slot-corrections", () => runSlotCorrections(now), null);
   // The Hiring Engine pool is mapped to the requisition at the front of each sequence (at most every 30 minutes).
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastAutoMap > 30 * 60_000) { lastAutoMap = Date.now(); await guarded("auto-map", () => autoMapPoolStreams(now), null); }
-  // New Meta form fills get a Hiring Engine lead so Lead pool, Master and person history match the Meta campaign page (first run reaches back 14 days).
-  if (Date.now() - lastMetaLeadSync > 10 * 60_000) { const first = lastMetaLeadSync === 0; lastMetaLeadSync = Date.now(); await guarded("meta-lead-sync", () => syncRecentMetaLeads(first ? 24 * 14 : 72), 0); }
   // People the records already place in another city are taken off the walk-in (a page of open journeys every 10 minutes).
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastLocationSweep > 10 * 60_000) { lastLocationSweep = Date.now(); await guarded("location-sweep", () => sweepLocationElsewhere(), null); }
   // Clear replies are applied by the engine (no HR step): Will come books, Cannot come records, Another time re-books.
