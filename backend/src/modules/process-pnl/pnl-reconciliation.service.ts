@@ -2,7 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { OWN_COMPANY_SQL, readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
-import { getSeatBillingEstimate, isEstimateWindow, type CostCentreSeatBilling } from "./pnl-seat-billing.service.js";
+import { getSeatBillingEstimate, isEstimateWindow, shiftPeriod, type CostCentreSeatBilling } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
@@ -13,6 +13,19 @@ import { nonVoidRunSql } from "../payroll/run-status.js";
 import { snapshotUncoveredByRunSql } from "./pnl-payroll-coverage.js";
 import { getForecastRevenueByCostCentre } from "./revenue-forecast.service.js";
 import { readOpenBudgetReserve } from "./pnl-open-budget.js";
+
+/**
+ * Is a running month's accrued salary plausible? Expected = last month's payroll x days elapsed / days in month (salary is earned up to
+ * yesterday). Returns the shortfall when the accrual is under 85% of it, with at least 3 days elapsed; otherwise null.
+ */
+export function accrualShortfall(i: { asOfDate: string; period: string; accrued: number; previousMonthPayroll: number }):
+  { expected: number; elapsed: number; daysInMonth: number; pctOfExpected: number } | null {
+  const daysInMonth = new Date(Date.UTC(Number(i.period.slice(0, 4)), Number(i.period.slice(5, 7)), 0)).getUTCDate();
+  const elapsed = Math.max(0, Number(i.asOfDate.slice(8, 10)) - 1);
+  const expected = i.previousMonthPayroll * (elapsed / daysInMonth);
+  if (!(i.previousMonthPayroll > 0) || elapsed < 3 || !(i.accrued < expected * 0.85)) return null;
+  return { expected, elapsed, daysInMonth, pctOfExpected: Math.round((i.accrued / expected) * 100) };
+}
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
@@ -1037,6 +1050,21 @@ async function buildPnlReconciliation(
         ? "Payroll run is not posted; Live P&L uses accrued running salary. Uploaded incentives or deductions are reflected only after they are applied to payroll inputs/final run."
         : "Payroll run and running salary snapshot are both missing for this period, so live OP excludes people cost.",
     );
+    // Is the accrual plausible? Compare it with what last month's payroll implies for the days elapsed so far. A big shortfall
+    // (typically attendance not yet marked for part of the workforce) overstates margin, and nothing else on the page says so.
+    if (runningRows > 0 && period === asOfDate.slice(0, 7) && totals.payrollCost > 0) {
+      try {
+        const prevPeriod = shiftPeriod(period, -1);
+        const prev = await readPayroll(prevPeriod);
+        const prevTotal = [...prev.values()].reduce((t, v) => t + v.cost, 0);
+        const gap = accrualShortfall({ asOfDate, period, accrued: totals.payrollCost, previousMonthPayroll: prevTotal });
+        if (gap) {
+          blockers.push(
+            `Accrued salary is Rs ${(totals.payrollCost / 100000).toFixed(1)} L, about ${gap.pctOfExpected}% of the Rs ${(gap.expected / 100000).toFixed(1)} L that ${prevPeriod}'s payroll implies for ${gap.elapsed} of ${gap.daysInMonth} days. People cost, and so margin, is probably understated until attendance is complete or payroll is posted.`,
+          );
+        }
+      } catch { /* a missing comparison never breaks Live P&L */ }
+    }
   }
   if ((freshness.find((item) => item.source === "Billing provision")?.rows ?? 0) === 0) {
     blockers.push("Billing provision snapshot has no rows for this period; uninvoiced revenue cannot be accrued.");
