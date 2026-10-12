@@ -49,6 +49,10 @@ export async function rereadUnclearReplies(now: Date): Promise<number> {
       await db.execute("UPDATE candidate_response SET suggested_answer = ?, confidence = ? WHERE id = ? AND handled_at IS NULL", [hit.answer, hit.confidence, Number(r.id)]);
       n++;
     }
+    // A repeat "yes" from someone whose booking is already confirmed has nothing left to apply: it is closed as recorded, not left for review.
+    await db.execute(
+      `UPDATE candidate_response SET status = 'recorded', handled_by = ?, handled_at = ?
+        WHERE status = 'needs_review' AND handled_at IS NULL AND dedupe_of IS NOT NULL AND conflict = 0 AND COALESCE(suggested_answer, answer) = 'confirm'`, [AUTO_ACTOR, now]);
   } catch (err) { logger.warn({ err: (err as Error).message.slice(0, 120) }, "[auto-reply] re-read failed"); }
   return n;
 }
