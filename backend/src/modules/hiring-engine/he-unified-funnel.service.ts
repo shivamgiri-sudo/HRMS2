@@ -17,7 +17,7 @@ export interface UnifiedFunnel {
   drives: Record<SourceType, FunnelCounts>;
   drivesTotal: FunnelCounts;
   /** Everyone registered at a branch in the window: the drives' walk-ins plus the rest. */
-  ats: { registered: number; selected: number; joined: number; fromDrives: number; otherSources: { registered: number; selected: number; joined: number } };
+  ats: { registered: number; selected: number; joined: number; fromDrives: number; beforeEnrolment: number; otherSources: { registered: number; selected: number; joined: number } };
 }
 
 const RANK: SourceType[] = ["meta_live", "meta_old", "he"];
@@ -57,7 +57,7 @@ export async function getUnifiedFunnel(): Promise<UnifiedFunnel> {
     c.enrolled++; if (p.em) c.emailed++; if (p.wa) c.whatsapped++; if (p.ca) c.called++; if (confirmed.has(m)) c.confirmed++;
   }
   const seen = new Set<string>();
-  const out = { registered: 0, selected: 0, joined: 0, fromDrives: 0, otherSources: { registered: 0, selected: 0, joined: 0 } };
+  const out = { registered: 0, selected: 0, joined: 0, fromDrives: 0, beforeEnrolment: 0, otherSources: { registered: 0, selected: 0, joined: 0 } };
   for (const r of ats) {
     const m = norm10(r.mobile);
     const sel = isSelected(String(r.status ?? ""), String(r.current_stage ?? ""));
@@ -67,7 +67,9 @@ export async function getUnifiedFunnel(): Promise<UnifiedFunnel> {
     if (p && String(r.walk_in_date).slice(0, 10) >= p.enrolledDay && !seen.has(m)) {
       seen.add(m); out.fromDrives++;
       const c = drives[p.type]; c.walkedIn++; if (sel) c.selected++; if (joi) c.joined++;
-    } else if (!p) {
+    } else if (p) {
+      out.beforeEnrolment++; // registered at a branch before the engine enrolled them, or a second registration of the same person
+    } else {
       out.otherSources.registered++; if (sel) out.otherSources.selected++; if (joi) out.otherSources.joined++;
     }
   }

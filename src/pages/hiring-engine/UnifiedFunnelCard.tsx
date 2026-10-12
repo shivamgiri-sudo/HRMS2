@@ -11,7 +11,7 @@ type Src = "meta_live" | "meta_old" | "he";
 interface Counts { enrolled: number; emailed: number; whatsapped: number; called: number; confirmed: number; walkedIn: number; selected: number; joined: number }
 interface Funnel {
   generatedAt: string; from: string; drives: Record<Src, Counts>; drivesTotal: Counts;
-  ats: { registered: number; selected: number; joined: number; fromDrives: number; otherSources: { registered: number; selected: number; joined: number } };
+  ats: { registered: number; selected: number; joined: number; fromDrives: number; beforeEnrolment: number; otherSources: { registered: number; selected: number; joined: number } };
 }
 const COLS: Array<{ key: keyof Counts; label: string }> = [
   { key: "enrolled", label: "Enrolled" }, { key: "emailed", label: "Emailed" }, { key: "whatsapped", label: "WhatsApped" }, { key: "called", label: "Bot called" },
@@ -52,7 +52,7 @@ export default function UnifiedFunnelCard() {
       <h3 className="mt-4 text-sm font-semibold text-slate-900">ATS funnel, everyone registered at a branch</h3>
       <p className="mt-1 text-sm text-slate-700">
         <b>{num(d.ats.registered)}</b> registered, <b>{num(d.ats.selected)}</b> selected ({pct(d.ats.selected, d.ats.registered)}), <b>{num(d.ats.joined)}</b> joined ({pct(d.ats.joined, d.ats.selected)} of selected).
-        {" "}{num(d.ats.fromDrives)} came through the drives; the other sources brought <b>{num(o.registered)}</b> registered, {num(o.selected)} selected, {num(o.joined)} joined.
+        {" "}{num(d.ats.fromDrives)} came after the engine enrolled them, {num(d.ats.beforeEnrolment)} are people the engine knows but registered before enrolment or a second time; the other sources brought <b>{num(o.registered)}</b> registered, {num(o.selected)} selected, {num(o.joined)} joined.
       </p>
     </section>
   );
