@@ -293,7 +293,10 @@ nocCaseRouter.get(
       },
       scope,
     );
-    return res.json({ success: true, data: rows });
+    return res.json({
+      success: true,
+      data: read.mode === "self" ? rows.map((r) => nocCase.employeeSafeListRow(r)) : rows,
+    });
   }),
 );
 
@@ -430,7 +433,13 @@ nocCaseRouter.get(
     const release = await nocReleaseStatusForEmployee(
       String(req.params.employeeId),
     );
-    return res.json({ success: true, data: { nocCase: existing, release } });
+    return res.json({
+      success: true,
+      data: {
+        nocCase: read.mode === "self" ? nocCase.employeeSafeCaseRow(existing as never) : existing,
+        release,
+      },
+    });
   }),
 );
 
@@ -456,9 +465,11 @@ nocCaseRouter.get(
       );
     }
     try {
+      const detail = await nocCase.getCaseDetail(String(req.params.id));
       return res.json({
         success: true,
-        data: await nocCase.getCaseDetail(String(req.params.id)),
+        // A leaver reading their own case gets the redacted view; staff get the full record.
+        data: read.mode === "self" ? nocCase.employeeSafeCaseDetail(detail) : detail,
       });
     } catch (err) {
       return fail(res, err);

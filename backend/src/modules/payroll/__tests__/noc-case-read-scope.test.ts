@@ -34,12 +34,32 @@ vi.mock("../noc-release-gate.service.js", () => ({
 }));
 
 const { listCases, getCase, getCaseDetail, getCaseByEmployee } = vi.hoisted(() => ({
-  listCases: vi.fn(async () => [{ id: "c1" }]),
+  listCases: vi.fn(async () => [
+    { id: "c1", employee_id: "emp-me", status: "in_progress", decline_reason: "internal", override_reason: "secret",
+      declined_by: "u-9", initiated_by_user_id: "u-3", branch_name: "Noida", signatory_total: 8, signatory_pending: 5 },
+  ]),
   getCase: vi.fn(),
-  getCaseDetail: vi.fn(async () => ({ id: "c1", signatories: [] })),
-  getCaseByEmployee: vi.fn(async () => ({ id: "c1" })),
+  getCaseDetail: vi.fn(async () => ({
+    nocCase: { id: "c1", employee_id: "emp-me", employee_code: "MAS1", employee_name: "Riya", designation: "Agent",
+      resignation_date: "2026-10-01", last_working_day: "2026-10-31", status: "in_progress", completed_at: null,
+      created_at: "2026-10-02", decline_reason: "internal", override_reason: "secret", override_document_path: "/x.pdf" },
+    signatories: [{ display_no: 1, tier: 1, stage_key: "tl", stage_label: "Team Leader", status: "declined", acted_at: "t",
+      acted_by_name: "Boss", acted_by_role: "tl", remarks: "owes laptop", sla_due_at: "t", reminder_count: 2 }],
+    assets: [{ item_no: 1, item_label: "Laptop", quantity: 1, status: "pending", remarks: "damaged", waiver_reason: "x" }],
+    events: [{ id: "e1", note: "internal" }],
+    assetGate: { satisfied: false, outstanding: ["Laptop"] },
+    progress: { total: 8, responded: 1, accepted: 0, declined: 1, pending: 7 },
+  })),
+  getCaseByEmployee: vi.fn(async () => ({ id: "c1", employee_id: "emp-me", status: "in_progress", decline_reason: "internal",
+    override_reason: "secret", override_document_path: "/x.pdf", declined_by: "u-9" })),
 }));
-vi.mock("../noc-case.service.js", () => ({ listCases, getCase, getCaseDetail, getCaseByEmployee }));
+vi.mock("../noc-case.service.js", async (orig) => ({
+  ...(await orig<typeof import("../noc-case.service.js")>()),
+  listCases,
+  getCase,
+  getCaseDetail,
+  getCaseByEmployee,
+}));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
@@ -118,5 +138,40 @@ describe("NOC clearance read access", () => {
     const res = await request(await app()).get("/api/payroll/noc-cases");
     expect(res.status).toBe(403);
     expect(res.body.code).toBe("NOC_ACCESS_DENIED");
+  });
+
+  it("employee: own case detail is redacted (no remarks, names, decline/override info, events)", async () => {
+    held = ["employee"];
+    getCase.mockResolvedValueOnce({ id: "c1", employee_id: "emp-me", branch_id: "b1", process_id: null });
+    const res = await request(await app()).get("/api/payroll/noc-cases/c1");
+    const body = JSON.stringify(res.body);
+    expect(res.status).toBe(200);
+    expect(res.body.data.redacted).toBe(true);
+    for (const leak of ["owes laptop", "Boss", "internal", "secret", "/x.pdf", "damaged", "acted_by", "reminder_count"]) {
+      expect(body).not.toContain(leak);
+    }
+    expect(res.body.data.signatories[0]).toMatchObject({ stage_label: "Team Leader", status: "declined" });
+    expect(res.body.data.nocCase.last_working_day).toBe("2026-10-31");
+    expect(res.body.data.assets[0]).toMatchObject({ item_label: "Laptop", status: "pending" });
+    expect(res.body.data.events).toEqual([]);
+  });
+
+  it("employee: list and per-employee rows drop decline / override / initiator fields", async () => {
+    held = ["employee"];
+    const list = await request(await app()).get("/api/payroll/noc-cases");
+    expect(list.body.data[0]).toMatchObject({ id: "c1", branch_name: "Noida", signatory_pending: 5 });
+    expect(JSON.stringify(list.body)).not.toMatch(/internal|secret|u-9|u-3/);
+    const own = await request(await app()).get("/api/payroll/noc-cases/employee/emp-me");
+    expect(own.body.data.nocCase).toMatchObject({ id: "c1", status: "in_progress" });
+    expect(JSON.stringify(own.body)).not.toMatch(/internal|secret|u-9|\/x\.pdf/);
+  });
+
+  it("staff (manager) still get the full detail", async () => {
+    held = ["manager"];
+    getCase.mockResolvedValueOnce({ id: "c1", employee_id: "emp-other", branch_id: "b1", process_id: null });
+    const res = await request(await app()).get("/api/payroll/noc-cases/c1");
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(res.body)).toContain("owes laptop");
+    expect(res.body.data.redacted).toBeUndefined();
   });
 });

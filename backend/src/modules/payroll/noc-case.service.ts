@@ -292,6 +292,80 @@ export async function getCaseDetail(caseId: string): Promise<{
   };
 }
 
+const EMPLOYEE_VISIBLE_CASE_COLUMNS = [
+  "id",
+  "employee_id",
+  "employee_code",
+  "employee_name",
+  "designation",
+  "resignation_date",
+  "last_working_day",
+  "status",
+  "completed_at",
+  "created_at",
+] as const;
+
+/** A case row as the leaver sees it: no decline reason, override fields, or who initiated / declined. */
+export function employeeSafeCaseRow<T extends Record<string, unknown> | null>(row: T): Record<string, unknown> | null {
+  if (!row) return null;
+  const out: Record<string, unknown> = {};
+  for (const k of EMPLOYEE_VISIBLE_CASE_COLUMNS) out[k] = row[k];
+  return out;
+}
+
+/** A list row as the leaver sees it: the safe columns plus branch name and the stage counts. */
+export function employeeSafeListRow(row: Record<string, unknown>): Record<string, unknown> {
+  const out = employeeSafeCaseRow(row) as Record<string, unknown>;
+  for (const k of ["branch_name", "signatory_total", "signatory_accepted", "signatory_declined", "signatory_pending", "pending_stages"]) {
+    out[k] = row[k];
+  }
+  return out;
+}
+
+/**
+ * What the leaver themself may see of their own NOC case.
+ *
+ * Enough to answer "where is my clearance stuck": the case status, last working day, each stage's
+ * label and status, and which items are outstanding. Everything that belongs to the people running the
+ * process is left out: who signed or declined and their remarks, the decline reason, an override's
+ * reason and attached document, the audit events, and SLA / reminder bookkeeping.
+ */
+export function employeeSafeCaseDetail(detail: Awaited<ReturnType<typeof getCaseDetail>>) {
+  const c = detail.nocCase;
+  return {
+    nocCase: {
+      id: c.id,
+      employee_id: c.employee_id,
+      employee_code: c.employee_code,
+      employee_name: c.employee_name,
+      designation: c.designation,
+      resignation_date: c.resignation_date,
+      last_working_day: c.last_working_day,
+      status: c.status,
+      completed_at: c.completed_at,
+      created_at: c.created_at,
+    },
+    signatories: detail.signatories.map((s) => ({
+      display_no: s.display_no,
+      tier: s.tier,
+      stage_key: s.stage_key,
+      stage_label: s.stage_label,
+      status: s.status,
+      acted_at: s.acted_at,
+    })),
+    assets: detail.assets.map((a) => ({
+      item_no: a.item_no,
+      item_label: a.item_label,
+      quantity: a.quantity,
+      status: a.status,
+    })),
+    assetGate: detail.assetGate,
+    progress: detail.progress,
+    events: [] as RowDataPacket[],
+    redacted: true,
+  };
+}
+
 export interface ListCaseFilters {
   status?: string;
   branchId?: string;
