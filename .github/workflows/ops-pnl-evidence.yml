@@ -12,6 +12,10 @@ on:
         description: "Space-separated YYYY-MM periods (blank = April 2026 up to last month)"
         required: false
         default: ""
+      trace:
+        description: "People-cost trace (read-only, counts and totals only): 'YYYY-MM code1 code2 ...'. When set, runs the trace instead of the evidence."
+        required: false
+        default: ""
 
 concurrency:
   group: ops-pnl-evidence-production
@@ -43,6 +47,13 @@ jobs:
           DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
           NODE_ENV: production
           INPUT_PERIODS: ${{ inputs.periods }}
+          INPUT_TRACE: ${{ inputs.trace }}
         run: |
           set -euo pipefail
-          npx tsx scripts/pnl-branch-recon-evidence.ts $INPUT_PERIODS
+          if [ -n "$INPUT_TRACE" ]; then
+            # Quoted per word so codes containing '/' survive; read-only.
+            read -r -a ARGS <<< "$INPUT_TRACE"
+            npx tsx scripts/pnl-people-cost-cc-trace.ts "${ARGS[@]}"
+          else
+            npx tsx scripts/pnl-branch-recon-evidence.ts $INPUT_PERIODS
+          fi
