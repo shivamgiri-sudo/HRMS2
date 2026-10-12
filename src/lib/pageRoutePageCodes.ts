@@ -214,6 +214,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/payroll/loans": "PAYROLL_LOANS",
   "/payroll/masters": "PAYROLL_MASTERS",
   "/payroll/noc": "PAYROLL_NOC",
+  "/payroll/noc-cases": "PAYROLL_NOC_CASES",
   "/payroll/overtime": "PAYROLL_OVERTIME",
   "/payroll/package-admin": "SALARY_PACKAGE_ADMIN",
   "/payroll/payslips": "PAYROLL_PAYSLIPS",

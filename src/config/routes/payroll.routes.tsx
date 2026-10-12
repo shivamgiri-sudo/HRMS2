@@ -209,7 +209,7 @@ export const payrollRouteElements = (
           this list must not drift from it. No PAYROLL_NOC_CASES page-access rows exist yet for
           any role, so only super_admin can actually see it via Gate's own bypass until that RBAC
           grant is added for the rest of READ_ROLES — flagged here rather than hidden. */}
-      <Route path="/payroll/noc-cases"           element={<ProtectedRoute roles={['hr','branch_hr','payroll','payroll_head','payroll_hr','payroll_branch','finance','finance_head','accounts','admin','super_admin','branch_head','branch_admin','branch_it','it','it_head','process_manager','manager','tl','team_leader']}><Gate pageCode="PAYROLL_NOC_CASES"><NocClearanceWorkspace /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/noc-cases"           element={<ProtectedRoute roles={['hr','branch_hr','payroll','payroll_head','payroll_hr','payroll_branch','finance','finance_head','accounts','admin','super_admin','branch_head','branch_admin','branch_it','it','it_head','process_manager','manager','tl','team_leader','employee','wfm','branch_wfm']}><Gate pageCode="PAYROLL_NOC_CASES"><NocClearanceWorkspace /></Gate></ProtectedRoute>} />
       {/* Payroll Readiness Dashboard — merged page with scope toggle for branch/process */}
       <Route path="/payroll/readiness" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','payroll_hr','admin','hr','finance','payroll','process_manager','wfm','branch_payroll','branch_wfm']}><Gate pageCode="PAYROLL_BRANCH_READINESS"><PayrollReadinessDashboard /></Gate></ProtectedRoute>} />
       {/* Cost-centre attendance sign-off — the drill-down behind the readiness page's

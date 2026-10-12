@@ -44,6 +44,7 @@ import {
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import * as nocCase from "./noc-case.service.js";
 import { filterVisibleEmployeeIds, guardEmployee } from "./payroll-branch-scope.js";
+import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import {
   overrideNocRelease,
   nocBlockedEmployeesForRuns,
@@ -103,6 +104,8 @@ const READ_ROLES = [
   "manager",
   "tl",
   "team_leader",
+  "wfm",
+  "branch_wfm",
 ];
 
 /** Roles allowed to open a case and send the employee invite. */
@@ -217,12 +220,32 @@ async function canAccessCase(
 // Dashboard / list
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * How the caller may read NOC cases.
+ *   staff - holds one of READ_ROLES: branch/assignment scoped exactly as before.
+ *   self  - holds only the plain "employee" role: may read ONLY their own case(s).
+ *   none  - anything else.
+ * An employee sees their own clearance status and never anyone else's; every write route keeps its own
+ * role gate, so this adds no ability to act.
+ */
+async function readMode(
+  userId: string,
+): Promise<{ mode: "staff" } | { mode: "self"; employeeId: string } | { mode: "none" }> {
+  if (await hasAnyRole(userId, ...READ_ROLES)) return { mode: "staff" };
+  if (await hasAnyRole(userId, "employee")) {
+    const me = await getEmployeeForUser(userId);
+    if (me?.id) return { mode: "self", employeeId: String(me.id) };
+  }
+  return { mode: "none" };
+}
+
 // GET /api/payroll/noc-cases
 nocCaseRouter.get(
   "/",
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (!(await hasAnyRole(userId, ...READ_ROLES))) {
+    const read = await readMode(userId);
+    if (read.mode === "none") {
       return refuse(
         res,
         403,
@@ -234,16 +257,19 @@ nocCaseRouter.get(
     // Row scoping through the same builder every other scoped list uses, so a branch user sees
     // their branch and Payroll Head / HR see everything. allowCeoAllRead keeps leadership read-only
     // visibility consistent with the rest of the payroll module.
-    const scope = await buildScopeWhereClause(
-      userId,
-      READ_ROLES,
-      {
-        branchId: "c.branch_id",
-        processId: "c.process_id",
-        employeeId: "c.employee_id",
-      },
-      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
-    );
+    const scope =
+      read.mode === "self"
+        ? { sql: "c.employee_id = ?", params: [read.employeeId] as unknown[] }
+        : await buildScopeWhereClause(
+            userId,
+            READ_ROLES,
+            {
+              branchId: "c.branch_id",
+              processId: "c.process_id",
+              employeeId: "c.employee_id",
+            },
+            { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
+          );
 
     const {
       status,
@@ -282,7 +308,8 @@ nocCaseRouter.get(
   "/summary",
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (!(await hasAnyRole(userId, ...READ_ROLES))) {
+    const read = await readMode(userId);
+    if (read.mode === "none") {
       return refuse(
         res,
         403,
@@ -290,16 +317,19 @@ nocCaseRouter.get(
         "You do not have access to NOC clearance records.",
       );
     }
-    const scope = await buildScopeWhereClause(
-      userId,
-      READ_ROLES,
-      {
-        branchId: "c.branch_id",
-        processId: "c.process_id",
-        employeeId: "c.employee_id",
-      },
-      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
-    );
+    const scope =
+      read.mode === "self"
+        ? { sql: "c.employee_id = ?", params: [read.employeeId] as unknown[] }
+        : await buildScopeWhereClause(
+            userId,
+            READ_ROLES,
+            {
+              branchId: "c.branch_id",
+              processId: "c.process_id",
+              employeeId: "c.employee_id",
+            },
+            { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
+          );
 
     const [byRole] = await db.execute<RowDataPacket[]>(
       `SELECT s.display_no, s.stage_key, s.stage_label,
@@ -378,7 +408,8 @@ nocCaseRouter.get(
   "/employee/:employeeId",
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (!(await hasAnyRole(userId, ...READ_ROLES))) {
+    const read = await readMode(userId);
+    if (read.mode === "none") {
       return refuse(
         res,
         403,
@@ -386,7 +417,13 @@ nocCaseRouter.get(
         "You do not have access to NOC clearance records.",
       );
     }
-    if (!(await guardEmployee(req as any, res, String(req.params.employeeId)))) return;
+    if (read.mode === "self") {
+      if (read.employeeId !== String(req.params.employeeId)) {
+        return refuse(res, 403, "NOC_OUT_OF_SCOPE", "This NOC is outside your assigned scope.");
+      }
+    } else if (!(await guardEmployee(req as any, res, String(req.params.employeeId)))) {
+      return;
+    }
     const existing = await nocCase.getCaseByEmployee(
       String(req.params.employeeId),
     );
@@ -405,7 +442,12 @@ nocCaseRouter.get(
     const row = await nocCase.getCase(String(req.params.id));
     if (!row)
       return refuse(res, 404, "NOC_CASE_NOT_FOUND", "NOC case not found");
-    if (!(await canAccessCase(userId, row, READ_ROLES))) {
+    const read = await readMode(userId);
+    const allowed =
+      read.mode === "self"
+        ? read.employeeId === String(row.employee_id)
+        : read.mode === "staff" && (await canAccessCase(userId, row, READ_ROLES));
+    if (!allowed) {
       return refuse(
         res,
         403,
