@@ -138,7 +138,7 @@ async function alreadyExported(
   return new Set(rows.map((r) => String(r.grn_request_id)));
 }
 
-async function lookupNames(
+export async function lookupNames(
   executor: Executor,
   table: "vendor_master" | "branch_master",
   column: string,
@@ -156,7 +156,7 @@ async function lookupNames(
   return out;
 }
 
-function toVoucherInput(
+export function toVoucherInput(
   r: RowDataPacket,
   vendors: Map<string, string>,
   branches: Map<string, string>,

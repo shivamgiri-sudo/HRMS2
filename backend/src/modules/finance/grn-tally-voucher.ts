@@ -49,8 +49,23 @@ export const DEFAULT_LEDGER_NAMES: GrnTallyLedgerNames = {
   roundOff: "Round Off",
 };
 
+/** One ledger line of a built voucher, as it appears in the XML. */
+export type GrnVoucherEntry = {
+  ledger: string;
+  side: "Dr" | "Cr";
+  amount: number;
+};
+
 export type BuiltVoucher =
-  | { ok: true; grnId: string; xml: string; gross: number; lines: number }
+  | {
+      ok: true;
+      grnId: string;
+      xml: string;
+      gross: number;
+      lines: number;
+      voucherType: "Purchase" | "Journal";
+      entries: GrnVoucherEntry[];
+    }
   | { ok: false; grnId: string; grnNumber: string; reason: string };
 
 const r2 = (n: number) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -133,19 +148,23 @@ export function buildGrnVoucher(
   }
 
   const lines: string[] = [];
-  lines.push(ledgerEntry(input.expenseLedger.trim(), expense, true));
+  const entries: GrnVoucherEntry[] = [];
+  const add = (name: string, amount: number, isDebit: boolean, isParty = false) => {
+    lines.push(ledgerEntry(name, amount, isDebit, isParty));
+    entries.push({ ledger: name, side: isDebit ? "Dr" : "Cr", amount: r2(Math.abs(amount)) });
+  };
+  add(input.expenseLedger.trim(), expense, true);
   if (inputTax > 0) {
     if (input.gstType === "igst") {
-      lines.push(ledgerEntry(names.inputIgst, inputTax, true));
+      add(names.inputIgst, inputTax, true);
     } else {
       const half = r2(inputTax / 2);
-      lines.push(ledgerEntry(names.inputCgst, half, true));
-      lines.push(ledgerEntry(names.inputSgst, r2(inputTax - half), true));
+      add(names.inputCgst, half, true);
+      add(names.inputSgst, r2(inputTax - half), true);
     }
   }
-  if (roundOff !== 0)
-    lines.push(ledgerEntry(names.roundOff, Math.abs(roundOff), roundOff > 0));
-  lines.push(ledgerEntry(credit, gross, false, input.grnType === "vendor"));
+  if (roundOff !== 0) add(names.roundOff, Math.abs(roundOff), roundOff > 0);
+  add(credit, gross, false, input.grnType === "vendor");
 
   const vchType = input.grnType === "vendor" ? "Purchase" : "Journal";
   const narration = [
@@ -173,7 +192,15 @@ export function buildGrnVoucher(
     `<PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>` +
     lines.join("") +
     `</VOUCHER>`;
-  return { ok: true, grnId: input.grnId, xml, gross, lines: lines.length };
+  return {
+    ok: true,
+    grnId: input.grnId,
+    xml,
+    gross,
+    lines: lines.length,
+    voucherType: vchType,
+    entries,
+  };
 }
 
 /** Wraps built vouchers in the Tally import envelope. */
