@@ -204,7 +204,7 @@ export interface AttentionGroup { channel: AttentionChannel; cause: string; coun
 // backend/src/modules/hiring-engine/he-command.routes.ts
 export interface FollowupStatus {
   mode: FollowupMode;
-  callFiles: Array<{ id: string; createdAt: string; rows: number; status: string; error: string | null }>;
+  callFiles: Array<{ id: string; createdAt: string; rows: number; status: string; error: string | null; portal?: string }>;
   report: { running: boolean; last: { slot: string; ok: boolean; tries: number } | null };
 }
 

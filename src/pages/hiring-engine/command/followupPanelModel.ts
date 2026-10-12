@@ -109,7 +109,7 @@ export function formatWhen(iso: unknown): string {
   if (!Number.isFinite(t) || !IST_FMT) return DASH;
   return `${IST_FMT.format(new Date(t))} IST`;
 }
-export function callFileRows(s: FollowupStatus | null | undefined): Array<{ id: string; when: string; rows: string; status: string; error: string }> {
+export function callFileRows(s: FollowupStatus | null | undefined): Array<{ id: string; when: string; rows: string; status: string; error: string; portal: string }> {
   const list = Array.isArray(s?.callFiles) ? s!.callFiles.slice(0, 10) : [];
   return list.map((f, i) => ({
     id: typeof f?.id === "string" && f.id ? f.id : `file-${i}`,
@@ -117,6 +117,7 @@ export function callFileRows(s: FollowupStatus | null | undefined): Array<{ id: 
     rows: typeof f?.rows === "number" && Number.isFinite(f.rows) ? String(f.rows) : DASH,
     status: orDash(f?.status),
     error: orDash(f?.error),
+    portal: orDash(f?.portal),
   }));
 }
 

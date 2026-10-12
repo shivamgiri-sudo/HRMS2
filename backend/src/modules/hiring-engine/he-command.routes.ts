@@ -22,7 +22,7 @@ import { addDays, istToday } from "./requisition-stream.window.js";
 
 export interface FollowupStatus {
   mode: FollowupMode;
-  callFiles: Array<{ id: string; createdAt: string; rows: number; status: string; error: string | null }>;
+  callFiles: Array<{ id: string; createdAt: string; rows: number; status: string; error: string | null; portal: string }>;
   report: { running: boolean; last: { slot: string; ok: boolean; tries: number } | null };
 }
 
@@ -41,13 +41,23 @@ function fail(res: Response, err: unknown, generic: string, what: string): void 
 /** Stored send errors can echo an address or a number: keep the words only. */
 const scrub = (s: string): string => s.replace(/[^\s@]+@[^\s@]+/g, "[email]").replace(/\d{6,}/g, "#").slice(0, 120);
 
+/** What the portal upload of a calling file did, from the batch summary: accepted, refused (with its words) or not attempted. */
+export function portalNote(summary: unknown): string {
+  try {
+    const o = (typeof summary === "string" ? JSON.parse(summary) : summary) as { portal?: { ok?: boolean; message?: string } } | null;
+    const p = o?.portal;
+    if (!p) return "not uploaded";
+    return p.ok ? `uploaded${p.message ? `: ${scrub(String(p.message))}` : ""}` : `refused: ${scrub(String(p.message ?? "no reason"))}`;
+  } catch { return "unknown"; }
+}
+
 async function callFiles(): Promise<FollowupStatus["callFiles"]> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, created_at, row_count, status, error FROM qualified_followup_call_batch ORDER BY created_at DESC LIMIT 10");
+      "SELECT id, created_at, row_count, status, error, CAST(summary AS CHAR) AS summary FROM qualified_followup_call_batch ORDER BY created_at DESC LIMIT 10");
     return rows.map((r) => ({
       id: String(r.id), createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at ?? ""),
-      rows: Number(r.row_count ?? 0), status: String(r.status), error: r.error == null ? null : scrub(String(r.error)),
+      rows: Number(r.row_count ?? 0), status: String(r.status), error: r.error == null ? null : scrub(String(r.error)), portal: portalNote(r.summary),
     }));
   } catch (err) {
     if ((err as { code?: unknown })?.code === "ER_NO_SUCH_TABLE") return [];
