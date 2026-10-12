@@ -16,6 +16,10 @@ on:
         description: "Set to 'yes' to run the non-people (GRN / vendor) reconciliation instead (read-only)."
         required: false
         default: ""
+      diag:
+        description: "Set to 'yes' to print what each GRN source holds per month (read-only)."
+        required: false
+        default: ""
       trace:
         description: "People-cost trace (read-only, counts and totals only): 'YYYY-MM code1 code2 ...'. When set, runs the trace instead of the evidence."
         required: false
@@ -53,9 +57,12 @@ jobs:
           INPUT_PERIODS: ${{ inputs.periods }}
           INPUT_TRACE: ${{ inputs.trace }}
           INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
+          INPUT_DIAG: ${{ inputs.diag }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_NONPEOPLE" = "yes" ]; then
+          if [ "$INPUT_DIAG" = "yes" ]; then
+            npx tsx scripts/pnl-grn-source-diag.ts
+          elif [ "$INPUT_NONPEOPLE" = "yes" ]; then
             npx tsx scripts/pnl-nonpeople-recon-evidence.ts $INPUT_PERIODS
           elif [ -n "$INPUT_TRACE" ]; then
             # Quoted per word so codes containing '/' survive; read-only.
