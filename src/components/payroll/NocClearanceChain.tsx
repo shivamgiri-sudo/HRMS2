@@ -129,6 +129,7 @@ interface SummaryRoleRow {
 }
 
 interface CaseDetail {
+  proposedLastWorkingDay?: string | null;
   nocCase: {
     id: string;
     employee_id: string;
@@ -475,7 +476,7 @@ export default function NocClearanceChain({
         `/api/payroll/noc-cases/${id}`,
       );
       setDetail(res.data ?? null);
-      setLwd(res.data?.nocCase?.last_working_day ?? "");
+      setLwd(res.data?.nocCase?.last_working_day ?? res.data?.proposedLastWorkingDay ?? "");
     } catch (err) {
       toast.error((err as Error)?.message ?? "Could not load this NOC");
       setDetail(null);
@@ -1122,6 +1123,11 @@ export default function NocClearanceChain({
                         min={c.resignation_date ?? undefined}
                         onChange={(e) => setLwd(e.target.value)}
                       />
+                      {!c.last_working_day && lwd && (
+                        <p className="mt-1 text-[10px] text-amber-700">
+                          From the employee record — click Save LWD to confirm.
+                        </p>
+                      )}
                     </div>
                     <Button
                       size="sm"

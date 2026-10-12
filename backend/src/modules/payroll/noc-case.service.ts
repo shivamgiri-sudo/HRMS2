@@ -250,6 +250,8 @@ export async function getCaseDetail(caseId: string): Promise<{
   assets: NocAssetRow[];
   events: RowDataPacket[];
   assetGate: { satisfied: boolean; outstanding: string[] };
+  /** The employee record's confirmed/proposed last working day, offered while HR has not recorded one. */
+  proposedLastWorkingDay: string | null;
   progress: {
     total: number;
     responded: number;
@@ -273,6 +275,17 @@ export async function getCaseDetail(caseId: string): Promise<{
     blocked: stageBlockReason(nocCase, signatories, s, assetGate),
   }));
 
+  // A case can only be opened once the employee's last working day is known, but openCase never copied it
+  // onto the case, so HR's Last Working Day field sat blank. Offer it (HR still confirms with Save LWD).
+  let proposedLastWorkingDay: string | null = null;
+  if (!nocCase.last_working_day) {
+    const [lwdRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ${EMPLOYMENT_END_DATE_SELECT} AS lwd FROM employees e WHERE e.id = ? LIMIT 1`,
+      [nocCase.employee_id],
+    );
+    proposedLastWorkingDay = (lwdRows[0]?.lwd as string | null | undefined) ?? null;
+  }
+
   const responded = signatories.filter((s) => s.status !== "pending").length;
   return {
     nocCase,
@@ -280,6 +293,7 @@ export async function getCaseDetail(caseId: string): Promise<{
     assets,
     events,
     assetGate,
+    proposedLastWorkingDay,
     progress: {
       total: signatories.length,
       responded,
@@ -756,11 +770,19 @@ export async function mintInvite(
   }
 
   const emp = await loadEmployeeSnapshot(nocCase.employee_id);
+  // Leavers often have no employee-record email; the hiring candidate record still has the personal one.
+  const [candRows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.email, c.mobile
+       FROM ats_onboarding_bridge b
+       JOIN ats_candidate c ON c.id = b.candidate_id
+      WHERE b.employee_id = ? LIMIT 1`,
+    [nocCase.employee_id],
+  );
   const email =
-    [emp?.official_email, emp?.email, emp?.personal_email].find(
+    [emp?.official_email, emp?.email, emp?.personal_email, candRows[0]?.email].find(
       (e) => typeof e === "string" && e.includes("@"),
     ) ?? null;
-  const mobile = emp?.mobile ?? null;
+  const mobile = emp?.mobile || (candRows[0]?.mobile as string | null | undefined) || null;
 
   await db.execute(
     `UPDATE noc_invite SET token_status = 'superseded'
