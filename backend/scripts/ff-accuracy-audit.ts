@@ -36,7 +36,7 @@ async function pick(kind: "voluntary" | "involuntary", minYears = 0): Promise<st
     `SELECT er.id
        FROM exit_request er
        JOIN employees e ON e.id = er.employee_id
-       JOIN full_final_calculation ff ON ff.exit_request_id = er.id
+       LEFT JOIN full_final_calculation ff ON ff.exit_request_id = er.id
       WHERE LOWER(er.exit_type) = ?
         AND LOWER(COALESCE(er.exit_sub_type, '')) = ?
         AND e.date_of_joining IS NOT NULL
