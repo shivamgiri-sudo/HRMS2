@@ -19,6 +19,7 @@ on:
         options:
           - attendance-employee-dump
           - attendance-night-shift-rebuild-dryrun
+          - attendance-night-shift-population-scan
       from:
         description: "From date YYYY-MM-DD"
         required: true
