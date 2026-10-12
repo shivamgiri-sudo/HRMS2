@@ -47,6 +47,14 @@ import {
 const DONE_PROVISIONING = ["actioned", "confirmed", "waived"] as const;
 const OPEN_CASE_STATUSES = ["invited", "employee_submitted", "in_progress"];
 const MAX_CASES_PER_SWEEP = 200;
+/**
+ * Sign-off emails per sweep. Turning the profile on makes every open case's stages actionable at
+ * once; mailing all of them in one hour would also hit the gateway's per-event daily cap and starve
+ * genuinely new work. Only never-notified stages are mailed (notified_at), so the backlog drains
+ * across sweeps instead of repeating.
+ */
+const MAX_NOTIFY_PER_SWEEP = 40;
+const MAX_NOTIFY_PER_CASE_CALL = 8;
 
 export interface Verdict {
   clear: boolean;
@@ -245,7 +253,10 @@ export interface AutoClearResult {
   completed: boolean;
 }
 
-export async function runAutoClearForCase(caseId: string): Promise<AutoClearResult> {
+export async function runAutoClearForCase(
+  caseId: string,
+  budget: { left: number } = { left: MAX_NOTIFY_PER_CASE_CALL },
+): Promise<AutoClearResult> {
   const out: AutoClearResult = { caseId, cleared: [], completed: false };
   if (!(await isNocAutoClearanceEnabled())) return out;
 
@@ -318,7 +329,10 @@ export async function runAutoClearForCase(caseId: string): Promise<AutoClearResu
     for (const s of open) {
       if (isChainStage(s.stage_key) || s.stage_key === "hr") {
         const row = sigs.find((x) => x.id === s.id);
-        if (row?.status === "pending") await m.notifySignatoryPending(caseId, s.stage_key);
+        if (row?.status === "pending" && !row.notified_at && budget.left > 0) {
+          budget.left--;
+          await m.notifySignatoryPending(caseId, s.stage_key);
+        }
       }
     }
   }
@@ -333,9 +347,10 @@ export async function runAutoClearSweep(): Promise<{ cases: number; cleared: num
       WHERE status IN ('invited','employee_submitted','in_progress')
       ORDER BY created_at LIMIT ${MAX_CASES_PER_SWEEP}`,
   );
+  const budget = { left: MAX_NOTIFY_PER_SWEEP };
   for (const r of rows) {
     try {
-      const res = await runAutoClearForCase(String(r.id));
+      const res = await runAutoClearForCase(String(r.id), budget);
       summary.cases++;
       summary.cleared += res.cleared.length;
       if (res.completed) summary.completed++;
