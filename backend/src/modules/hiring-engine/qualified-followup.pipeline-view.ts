@@ -15,6 +15,10 @@ export interface PipelineSource {
   /** Still to come: people whose first email / WhatsApp / call has not gone yet (open rows only). */
   waiting: { email: number; whatsapp: number; call: number };
   lastEmailAt: string | null; lastWhatsappAt: string | null;
+  /** Enrolled since 00:00 IST today (every drive). */
+  enrolledToday: number;
+  /** Live Meta only: today's Meta form fills and how many the screening qualified, as on the Meta campaign page (IST day). */
+  formFillsToday?: { fills: number; qualified: number };
 }
 export interface PipelineView {
   generatedAt: string; windowOpen: boolean; nextWindowOpen: string;
@@ -41,6 +45,7 @@ export async function getPipelineView(now: Date = new Date()): Promise<PipelineV
             SUM(stopped_reason IS NULL AND email_sent_at IS NULL AND (email_status IS NULL OR email_status = 'failed')) w_email,
             SUM(stopped_reason IS NULL AND wa_sent_at IS NULL AND (wa_status IS NULL OR wa_status = 'failed') AND journey_state NOT IN ('held_manual','declined','stopped')) w_wa,
             SUM(stopped_reason IS NULL AND call_state IN ('pending','in_file') AND journey_state NOT IN ('held_manual','declined','stopped')) w_call,
+            SUM(created_at >= DATE_SUB(DATE(DATE_ADD(NOW(), INTERVAL 330 MINUTE)), INTERVAL 330 MINUTE)) enrolled_today,
             MAX(email_sent_at) last_email, MAX(wa_sent_at) last_wa
        FROM qualified_followup WHERE mode_at_enqueue = 'live' GROUP BY source_type`))[0]);
   const by = new Map(rows.map((r) => [String(r.source_type), r]));
@@ -50,8 +55,14 @@ export async function getPipelineView(now: Date = new Date()): Promise<PipelineV
       sourceType: t, label: SOURCE_LABEL[t], enrolled: n(r?.enrolled), emailed: n(r?.emailed), whatsapped: n(r?.whatsapped), called: n(r?.called),
       engaged: n(r?.engaged), confirmed: n(r?.confirmed), arrived: n(r?.arrived), stopped: n(r?.stopped),
       waiting: { email: n(r?.w_email), whatsapp: n(r?.w_wa), call: n(r?.w_call) }, lastEmailAt: wall(r?.last_email), lastWhatsappAt: wall(r?.last_wa),
+      enrolledToday: n(r?.enrolled_today),
     };
   });
+  const fills = await safe<RowDataPacket | null>("fills-today", null, async () => (await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) fills, SUM(screening_result = 'qualified') qualified FROM meta_lead_raw
+      WHERE created_at >= DATE_SUB(DATE(DATE_ADD(NOW(), INTERVAL 330 MINUTE)), INTERVAL 330 MINUTE)`))[0][0] ?? null);
+  const live = sources.find((x) => x.sourceType === "meta_live");
+  if (live && fills) live.formFillsToday = { fills: n(fills.fills), qualified: n(fills.qualified) };
   const day = await safe<RowDataPacket | null>("last24h", null, async () => (await db.execute<RowDataPacket[]>(
     `SELECT (SELECT COUNT(*) FROM qualified_followup WHERE mode_at_enqueue = 'live' AND email_sent_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) emails,
             (SELECT COUNT(*) FROM qualified_followup WHERE mode_at_enqueue = 'live' AND wa_sent_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) whatsapps,

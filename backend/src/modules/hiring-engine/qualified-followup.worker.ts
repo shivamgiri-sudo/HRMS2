@@ -6,6 +6,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { runBranchRosters } from "./he-branch-roster.service.js";
 import { autoMapPoolStreams } from "./he-auto-map.service.js";
 import { autoResolveReplies } from "./response-auto-apply.service.js";
+import { syncRecentMetaLeads } from "./he-lead.service.js";
 import { sweepLocationElsewhere } from "./location-sweep.service.js";
 import { refreshJoinedHeadcount } from "./requisition-joined.service.js";
 import type { RowDataPacket } from "mysql2";
@@ -155,6 +156,7 @@ const add = (a: StepCounts, b: StepCounts): StepCounts =>
 let lastJoinedRefresh = 0;
 let lastAutoMap = 0;
 let lastLocationSweep = 0;
+let lastMetaLeadSync = 0;
 async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources: SourceType[] }>, now: Date, deps: TickDeps): Promise<TickReport> {
   const r = blank(s.mode);
   // Joined counts (employee code generated) decide when a requisition is filled; refreshed at most every 10 minutes.
@@ -186,6 +188,8 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("slot-corrections", () => runSlotCorrections(now), null);
   // The Hiring Engine pool is mapped to the requisition at the front of each sequence (at most every 30 minutes).
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastAutoMap > 30 * 60_000) { lastAutoMap = Date.now(); await guarded("auto-map", () => autoMapPoolStreams(now), null); }
+  // New Meta form fills get a Hiring Engine lead so Lead pool, Master and person history match the Meta campaign page (first run reaches back 14 days).
+  if (Date.now() - lastMetaLeadSync > 10 * 60_000) { const first = lastMetaLeadSync === 0; lastMetaLeadSync = Date.now(); await guarded("meta-lead-sync", () => syncRecentMetaLeads(first ? 24 * 14 : 72), 0); }
   // People the records already place in another city are taken off the walk-in (a page of open journeys every 10 minutes).
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastLocationSweep > 10 * 60_000) { lastLocationSweep = Date.now(); await guarded("location-sweep", () => sweepLocationElsewhere(), null); }
   // Clear replies are applied by the engine (no HR step): Will come books, Cannot come records, Another time re-books.

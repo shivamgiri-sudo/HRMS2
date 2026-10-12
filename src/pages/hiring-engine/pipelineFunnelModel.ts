@@ -1,7 +1,7 @@
 /** Pure view-model of the pipeline funnel card (mirrors backend qualified-followup.pipeline-view.ts). No DOM. */
 export interface PipelineSource {
   sourceType: "meta_live" | "meta_old" | "he"; label: string;
-  enrolled: number; emailed: number; whatsapped: number; called: number; engaged: number; confirmed: number; arrived: number; stopped: number;
+  enrolled: number; emailed: number; whatsapped: number; called: number; engaged: number; confirmed: number; arrived: number; stopped: number; enrolledToday?: number; formFillsToday?: { fills: number; qualified: number };
   waiting: { email: number; whatsapp: number; call: number }; lastEmailAt: string | null; lastWhatsappAt: string | null;
 }
 export interface PipelineView {

@@ -51,6 +51,11 @@ export default function PipelineFunnelCard() {
           return (
             <article key={s.sourceType} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700" aria-label={s.label}>
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">{s.label}</h3>
+              {(s.formFillsToday || (s.enrolledToday ?? 0) > 0) && (
+                <p className="mt-1 text-xs text-slate-700 dark:text-slate-200">
+                  <span className="font-semibold">Today:</span>{s.formFillsToday ? ` ${num(s.formFillsToday.fills)} form fills (${num(s.formFillsToday.qualified)} qualified),` : ""} {num(s.enrolledToday ?? 0)} newly enrolled.
+                </p>
+              )}
               {s.enrolled === 0 ? <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Nobody has been enrolled in this drive yet.</p> : (
                 <ol className="mt-2 space-y-1.5">
                   {stages.map((st) => (

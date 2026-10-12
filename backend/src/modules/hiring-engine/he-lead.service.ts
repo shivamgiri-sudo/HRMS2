@@ -215,3 +215,25 @@ export async function backfillLeadPool(opts: { dryRun?: boolean; grantMetaFormCo
   }
   return out;
 }
+
+/**
+ * Keeps the lead pool in step with the Meta campaign page: form fills created in the last `sinceHours` hours get a Hiring Engine lead
+ * (idempotent on mobile10, same mapping as the backfill, no consent change). Without it a fresh fill is on the campaign page but missing
+ * from Lead pool, Master and the person history until someone ran the manual backfill.
+ */
+export async function syncRecentMetaLeads(sinceHours = 72): Promise<number> {
+  const hours = Math.max(1, Math.min(24 * 60, Math.floor(sinceHours)));
+  const [r] = await db.execute<ResultSetHeader>(
+    `INSERT INTO he_lead (mobile10, full_name, email, age, education_rank, experience_years, primary_source, sources_json, meta_lead_id)
+     SELECT mob, name, email, age, edu, exp_y, 'meta', JSON_ARRAY('meta'), lid FROM (
+       SELECT ${M10("parsed_phone")} AS mob, MAX(parsed_name) AS name, MAX(parsed_email) AS email, MAX(parsed_age) AS age, MAX(id) AS lid,
+              MAX(${eduRankSql("parsed_education")}) AS edu, MAX(parsed_experience_yr) AS exp_y
+         FROM meta_lead_raw WHERE ${M10("parsed_phone")} REGEXP '^[6-9][0-9]{9}$' AND created_at >= DATE_SUB(NOW(), INTERVAL ${hours} HOUR)
+        GROUP BY ${M10("parsed_phone")}) t
+     ON DUPLICATE KEY UPDATE meta_lead_id = COALESCE(he_lead.meta_lead_id, VALUES(meta_lead_id)),
+                             age = COALESCE(he_lead.age, VALUES(age)),
+                             email = COALESCE(he_lead.email, VALUES(email)),
+                             education_rank = COALESCE(he_lead.education_rank, VALUES(education_rank)),
+                             experience_years = COALESCE(he_lead.experience_years, VALUES(experience_years))`);
+  return r.affectedRows;
+}
