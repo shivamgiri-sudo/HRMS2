@@ -16,6 +16,10 @@ on:
         description: "Set to 'yes' to run the non-people (GRN / vendor) reconciliation instead (read-only)."
         required: false
         default: ""
+      livesalary:
+        description: "Set to 'yes' to check that the running-month salary reaches Live P&L (read-only)."
+        required: false
+        default: ""
       branchplan:
         description: "Set to 'yes' to print the Hiring Engine branch plan as the API returns it (read-only)."
         required: false
@@ -63,9 +67,12 @@ jobs:
           INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
           INPUT_DIAG: ${{ inputs.diag }}
           INPUT_BRANCHPLAN: ${{ inputs.branchplan }}
+          INPUT_LIVESALARY: ${{ inputs.livesalary }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_BRANCHPLAN" = "yes" ]; then
+          if [ "$INPUT_LIVESALARY" = "yes" ]; then
+            npx tsx scripts/pnl-live-salary-check.ts $INPUT_PERIODS
+          elif [ "$INPUT_BRANCHPLAN" = "yes" ]; then
             npx tsx scripts/he-branch-plan-prod-check.ts
           elif [ "$INPUT_DIAG" = "yes" ]; then
             npx tsx scripts/pnl-grn-source-diag.ts
