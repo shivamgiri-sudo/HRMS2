@@ -184,24 +184,38 @@ async function loadPairs(filter: { branchId?: string; processId?: string; scope?
 async function loadCoverage(weeks: string[]): Promise<Map<string, CoverageRow>> {
   const from = weeks[0];
   const to = addDays(weeks[weeks.length - 1], 6);
+  // Two sources count as "rostered": committed import batches, and Team Roster submissions that WFM
+  // approved and applied (their cells are written straight to wfm_roster_assignment, never via a batch).
   const rows = await query<RowDataPacket>(
     `SELECT e.branch_id, e.process_id, c.week_start,
             COUNT(*) AS covered, MIN(c.first_commit) AS first_commit, MAX(c.first_commit) AS full_commit
        FROM (
-         SELECT r.employee_id_raw AS employee_code,
-                DATE_FORMAT(DATE_SUB(r.roster_date, INTERVAL WEEKDAY(r.roster_date) DAY), '%Y-%m-%d') AS week_start,
-                MIN(UNIX_TIMESTAMP(b.committed_at)) AS first_commit
-           FROM wfm_roster_import_batch b
-           JOIN wfm_roster_import_row r ON r.batch_id = b.id
-          WHERE b.status = 'COMMITTED' AND b.committed_at IS NOT NULL
-            AND b.date_range_end >= ? AND b.date_range_start <= ?
-            AND r.employee_id_raw IS NOT NULL AND r.roster_date BETWEEN ? AND ?
-          GROUP BY r.employee_id_raw, week_start
+         SELECT u.employee_code, u.week_start, MIN(u.first_commit) AS first_commit
+           FROM (
+             SELECT r.employee_id_raw COLLATE utf8mb4_unicode_ci AS employee_code,
+                    DATE_FORMAT(DATE_SUB(r.roster_date, INTERVAL WEEKDAY(r.roster_date) DAY), '%Y-%m-%d') AS week_start,
+                    UNIX_TIMESTAMP(b.committed_at) AS first_commit
+               FROM wfm_roster_import_batch b
+               JOIN wfm_roster_import_row r ON r.batch_id = b.id
+              WHERE b.status = 'COMMITTED' AND b.committed_at IS NOT NULL
+                AND b.date_range_end >= ? AND b.date_range_start <= ?
+                AND r.employee_id_raw IS NOT NULL AND r.roster_date BETWEEN ? AND ?
+             UNION ALL
+             SELECT te.employee_code COLLATE utf8mb4_unicode_ci AS employee_code,
+                    DATE_FORMAT(DATE_SUB(tl.roster_date, INTERVAL WEEKDAY(tl.roster_date) DAY), '%Y-%m-%d') AS week_start,
+                    UNIX_TIMESTAMP(ts.applied_at) AS first_commit
+               FROM roster_team_submission ts
+               JOIN roster_team_submission_line tl ON tl.submission_id = ts.id AND tl.line_status = 'applied'
+               JOIN employees te ON te.id = tl.employee_id
+              WHERE ts.status IN ('applied', 'partially_applied') AND ts.applied_at IS NOT NULL
+                AND tl.roster_date BETWEEN ? AND ?
+           ) u
+          GROUP BY u.employee_code, u.week_start
        ) c
        JOIN employees e ON e.employee_code COLLATE utf8mb4_unicode_ci = c.employee_code COLLATE utf8mb4_unicode_ci
                        AND e.employment_status = 'active'
       GROUP BY e.branch_id, e.process_id, c.week_start`,
-    [from, to, from, to],
+    [from, to, from, to, from, to],
   );
   const out = new Map<string, CoverageRow>();
   for (const r of rows) {
@@ -526,6 +540,76 @@ export interface CellDetail {
   uncoveredEmployees: { id: string; code: string; name: string }[];
   uncoveredTotal: number;
   trail: AlertTrailEntry[];
+  /** Team Roster requests raised for this branch × process in this week, with what was approved/applied. */
+  teamRoster: TeamRosterRequest[];
+}
+
+export interface TeamRosterRequest {
+  submissionId: number;
+  submissionNo: string | null;
+  status: string;
+  raisedBy: string | null;
+  managerApprover: string | null;
+  submittedAtMs: number | null;
+  managerDecision: string | null;
+  managerDecidedAtMs: number | null;
+  managerRemarks: string | null;
+  wfmDecision: string | null;
+  wfmDecidedAtMs: number | null;
+  wfmRemarks: string | null;
+  appliedAtMs: number | null;
+  /** Cells in this week for this branch × process. */
+  raised: number;
+  applied: number;
+  skipped: number;
+}
+
+const ms = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v) * 1000);
+
+/** Team Roster submissions with cells for this branch × process inside the week, newest first. */
+async function loadTeamRosterRequests(branchId: string, processId: string, weekStart: string, weekEnd: string): Promise<TeamRosterRequest[]> {
+  try {
+    const rows = await query<RowDataPacket>(
+      `SELECT s.id, s.submission_no, s.status, s.manager_decision, s.wfm_decision, s.manager_remarks, s.wfm_remarks,
+              UNIX_TIMESTAMP(s.submitted_at) AS submitted_at, UNIX_TIMESTAMP(s.manager_decided_at) AS manager_at,
+              UNIX_TIMESTAMP(s.wfm_decided_at) AS wfm_at, UNIX_TIMESTAMP(s.applied_at) AS applied_at,
+              se.full_name AS raised_by, me.full_name AS manager_name,
+              COUNT(*) AS raised,
+              SUM(l.line_status = 'applied') AS applied,
+              SUM(l.line_status IN ('skipped', 'failed')) AS skipped
+         FROM roster_team_submission s
+         JOIN roster_team_submission_line l ON l.submission_id = s.id
+         JOIN employees e ON e.id = l.employee_id AND e.branch_id = ? AND e.process_id = ?
+         LEFT JOIN employees se ON se.id = s.submitter_employee_id
+         LEFT JOIN employees me ON me.id = s.manager_approver_employee_id
+        WHERE s.status <> 'draft' AND l.roster_date BETWEEN ? AND ?
+        GROUP BY s.id, se.full_name, me.full_name
+        ORDER BY COALESCE(s.submitted_at, s.created_at) DESC
+        LIMIT 50`,
+      [branchId, processId, weekStart, weekEnd],
+    );
+    return rows.map((r) => ({
+      submissionId: Number(r.id),
+      submissionNo: r.submission_no ? String(r.submission_no) : null,
+      status: String(r.status),
+      raisedBy: r.raised_by ? String(r.raised_by) : null,
+      managerApprover: r.manager_name ? String(r.manager_name) : null,
+      submittedAtMs: ms(r.submitted_at),
+      managerDecision: r.manager_decision ? String(r.manager_decision) : null,
+      managerDecidedAtMs: ms(r.manager_at),
+      managerRemarks: r.manager_remarks ? String(r.manager_remarks) : null,
+      wfmDecision: r.wfm_decision ? String(r.wfm_decision) : null,
+      wfmDecidedAtMs: ms(r.wfm_at),
+      wfmRemarks: r.wfm_remarks ? String(r.wfm_remarks) : null,
+      appliedAtMs: ms(r.applied_at),
+      raised: Number(r.raised ?? 0),
+      applied: Number(r.applied ?? 0),
+      skipped: Number(r.skipped ?? 0),
+    }));
+  } catch (err) {
+    if (!isMissingObject(err)) throw err;
+    return [];
+  }
 }
 
 export async function getCellDetail(
@@ -540,7 +624,7 @@ export async function getCellDetail(
   if (!row) return null;
   const weekEnd = addDays(weekStart, 6);
 
-  const [batchRows, uncovered, trail, skipLevel] = await Promise.all([
+  const [batchRows, uncovered, trail, skipLevel, teamRoster] = await Promise.all([
     query<RowDataPacket>(
       `SELECT b.id, b.status, b.file_name, b.process_id, b.total_rows, u.email,
               UNIX_TIMESTAMP(b.created_at) AS created_at, UNIX_TIMESTAMP(b.committed_at) AS committed_at
@@ -561,11 +645,16 @@ export async function getCellDetail(
               JOIN wfm_roster_import_batch b ON b.id = r.batch_id AND b.status = 'COMMITTED'
              WHERE r.employee_id_raw COLLATE utf8mb4_unicode_ci = e.employee_code COLLATE utf8mb4_unicode_ci
                AND r.roster_date BETWEEN ? AND ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM roster_team_submission_line tl
+              JOIN roster_team_submission ts ON ts.id = tl.submission_id AND ts.status IN ('applied', 'partially_applied')
+             WHERE tl.employee_id = e.id AND tl.line_status = 'applied' AND tl.roster_date BETWEEN ? AND ?)
         ORDER BY e.full_name LIMIT ${MISSING_EMPLOYEE_LIMIT}`,
-      [branchId, processId, weekStart, weekEnd],
+      [branchId, processId, weekStart, weekEnd, weekStart, weekEnd],
     ),
     loadTrail(branchId, processId, weekStart),
     loadSkipLevel(branchId, row.managers),
+    loadTeamRosterRequests(branchId, processId, weekStart, weekEnd),
   ]);
 
   return {
@@ -596,5 +685,6 @@ export async function getCellDetail(
     })),
     uncoveredTotal: Math.max(0, row.cells[0].expected - row.cells[0].covered),
     trail,
+    teamRoster,
   };
 }

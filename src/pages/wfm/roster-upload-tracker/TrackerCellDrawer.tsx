@@ -28,6 +28,21 @@ const BATCH_STATUS_NOTE: Record<string, string> = {
   VALIDATING: "still validating",
 };
 
+const TEAM_STATUS: Record<string, string> = {
+  pending_manager: "Awaiting manager",
+  pending_wfm: "Awaiting WFM",
+  applied: "Applied",
+  partially_applied: "Partly applied",
+  rejected: "Rejected",
+  cancelled: "Cancelled",
+};
+
+function decisionLine(decision: string | null, atMs: number | null, remarks: string | null): string {
+  if (!decision) return "not decided";
+  const verb = decision === "approved" ? "approved" : "rejected";
+  return `${verb}${atMs ? ` ${formatDateTime(atMs)}` : ""}${remarks ? ` - ${remarks}` : ""}`;
+}
+
 function SectionLabel({ children }: { children: string }) {
   return <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">{children}</h3>;
 }
@@ -145,6 +160,40 @@ export function TrackerCellDrawer({ selected, canRemind, onClose }: TrackerCellD
                         {b.fileName ?? "unnamed file"} · {b.totalRows} rows · by {b.uploadedBy ?? "system"} ·
                         {" "}uploaded {formatDateTime(b.createdAtMs)}
                         {b.committedAtMs ? ` · committed ${formatDateTime(b.committedAtMs)}` : ""}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section>
+              <SectionLabel>Team roster requests</SectionLabel>
+              {(detail.teamRoster ?? []).length === 0 ? (
+                <None text="No team roster change was raised for this week" />
+              ) : (
+                <ul className="space-y-2">
+                  {detail.teamRoster.map((r) => (
+                    <li key={r.submissionId} className="rounded-md border p-2.5 text-sm">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <a className="font-medium text-blue-700 hover:underline" href={`/wfm/team-roster?tab=history&submission=${r.submissionId}`}>
+                          {r.submissionNo ?? `Submission ${r.submissionId}`}
+                        </a>
+                        <span className="text-xs font-semibold text-slate-600">{TEAM_STATUS[r.status] ?? r.status}</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        Raised {r.raised} cell{r.raised === 1 ? "" : "s"} by {r.raisedBy ?? "unknown"}
+                        {r.submittedAtMs ? ` · ${formatDateTime(r.submittedAtMs)}` : ""}
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        Manager{r.managerApprover ? ` (${r.managerApprover})` : ""}: {decisionLine(r.managerDecision, r.managerDecidedAtMs, r.managerRemarks)}
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        WFM: {decisionLine(r.wfmDecision, r.wfmDecidedAtMs, r.wfmRemarks)}
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-700">
+                        Approved and applied {r.applied} of {r.raised}{r.skipped > 0 ? ` · ${r.skipped} skipped` : ""}
+                        {r.appliedAtMs ? ` · ${formatDateTime(r.appliedAtMs)}` : ""}
                       </div>
                     </li>
                   ))}

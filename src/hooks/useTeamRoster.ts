@@ -108,6 +108,31 @@ export interface SubmissionDetail {
   permissions: { canCancel: boolean; canManagerDecide: boolean; canWfmDecide: boolean; canCopyToDraft: boolean };
 }
 
+export interface HistoryItem {
+  id: number; submissionNo: string | null; status: string; from: string | null; to: string | null;
+  submittedAt: string | null; appliedAt: string | null; submitter: { code: string | null; name: string };
+  managerApprover: string | null;
+  managerDecision: { decision: string; at: string | null; by: string | null } | null;
+  wfmDecision: { decision: string; at: string | null; by: string | null } | null;
+  raised: number; applied: number; skipped: number; branches: string; processes: string;
+}
+export interface HistoryList { items: HistoryItem[]; total: number; offset: number; limit: number }
+export interface HistoryFilters {
+  branches: Array<{ id: string; name: string }>;
+  processes: Array<{ id: string; name: string; branchId: string | null }>;
+  managers: Array<{ id: string; name: string }>;
+}
+export type HistoryQuery = { from?: string; to?: string; status?: string; branchId?: string; processId?: string; managerId?: string; search?: string };
+export interface HistoryExportRow {
+  branch: string; process: string; submissionNo: string; status: string;
+  raisedBy: string; raisedByCode: string; raisedAt: string; periodFrom: string; periodTo: string; managerApprover: string;
+  managerDecision: string; managerDecidedBy: string; managerDecidedAt: string; managerRemarks: string;
+  wfmDecision: string; wfmDecidedBy: string; wfmDecidedAt: string; wfmRemarks: string; appliedAt: string;
+  employeeCode: string; employeeName: string; rosterDate: string; kind: string; oldAssignment: string; newAssignment: string;
+  reason: string; lineResult: string; skipReason: string; submissionNote: string;
+}
+export interface HistoryExport { truncated: boolean; max: number; rows: HistoryExportRow[] }
+
 export interface AttendanceTotals {
   present: number; absent: number; onDuty: number; halfDay: number; leave: number; holiday: number; weekOff: number; totalWorkingDays: number;
 }
@@ -165,6 +190,21 @@ export const useApprovals = (step: "manager" | "wfm", offset: number, enabled: b
     queryKey: approvalsKey(step, offset), enabled, placeholderData: keepPreviousData,
     queryFn: async () => unwrap<SubmissionList>(await hrmsApi.get(`${BASE}/approvals${qs({ step, offset, limit: 25 })}`)),
   });
+
+export const historyKey = (f: HistoryQuery, offset: number) => [...TEAM_ROSTER_KEY, "history", f, offset] as const;
+export const historyFiltersKey = [...TEAM_ROSTER_KEY, "history-filters"] as const;
+
+export const useHistory = (f: HistoryQuery, offset: number, enabled = true) =>
+  useQuery({
+    queryKey: historyKey(f, offset), enabled, placeholderData: keepPreviousData,
+    queryFn: async () => unwrap<HistoryList>(await hrmsApi.get(`${BASE}/history${qs({ ...f, offset, limit: 25 })}`)),
+  });
+
+export const useHistoryFilters = (enabled = true) =>
+  useQuery({ queryKey: historyFiltersKey, enabled, staleTime: 5 * 60_000, queryFn: async () => unwrap<HistoryFilters>(await hrmsApi.get(`${BASE}/history/filters`)) });
+
+/** One row per raised cell for the current filters (the download). */
+export const fetchHistoryExport = async (f: HistoryQuery) => unwrap<HistoryExport>(await hrmsApi.get(`${BASE}/history/export${qs(f)}`));
 
 export const useSubmissionDetail = (id: number | null) =>
   useQuery({ queryKey: detailKey(id), enabled: id !== null, queryFn: async () => unwrap<SubmissionDetail>(await hrmsApi.get(`${BASE}/submissions/${id}`)) });
