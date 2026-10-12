@@ -116,6 +116,22 @@ interface ExitRequestRow extends RowDataPacket {
  * already uses. Shared here rather than queried twice per preview.
  */
 async function resolveGrossMonthly(employeeId: string): Promise<number | null> {
+  // What the person was actually paid per month beats contract CTC, which stale or inactive salary
+  // assignments can misstate. gross_before_lwp is the full-month base before loss-of-pay, from the
+  // latest closed payroll run; CTC / 12 remains the fallback.
+  try {
+    const [paid] = await db.execute<RowDataPacket[]>(
+      `SELECT spl.gross_before_lwp
+         FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id
+        WHERE spl.employee_id = ? AND spl.gross_before_lwp > 0
+          AND LOWER(spr.status) IN ('locked','finalized','disbursed','approved','completed')
+          AND LOWER(spl.status) NOT IN ('excluded','blocked')
+        ORDER BY spr.run_month DESC, spr.created_at DESC LIMIT 1`,
+      [employeeId]
+    );
+    const g = Number((paid as Array<{ gross_before_lwp: number }>)[0]?.gross_before_lwp ?? 0);
+    if (g > 0) return g;
+  } catch { /* fall through to CTC */ }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT esa.ctc_annual
        FROM employee_salary_assignment esa
@@ -135,7 +151,7 @@ async function resolveNoticeShortfall(
   grossMonthly: number | null
 ): Promise<FfComputePreview["notice"] & { lastWorkingDay: string | null }> {
   const [rows] = await db.execute<ExitRequestRow[]>(
-    `SELECT er.employee_id, er.notice_period_days, er.submitted_at,
+    `SELECT er.employee_id, er.exit_type, er.notice_period_days, er.submitted_at, er.notice_start_date,
             COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
             DATEDIFF(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed), er.submitted_at) AS served_days
        FROM exit_request er
@@ -154,6 +170,16 @@ async function resolveNoticeShortfall(
     };
   }
 
+  // Notice is the employee's obligation to the employer. An employer-initiated exit has no
+  // recovery; showing "pending configuration" there sent HR hunting for a number that is not owed.
+  if (String(row.exit_type ?? "").toLowerCase() === "involuntary") {
+    const na = notApplicable(0, "Employer-initiated exit: no notice recovery applies.");
+    return {
+      required_days: na, served_days: null, shortfall_days: na,
+      per_day_rate: na, recovery_amount: na, lastWorkingDay,
+    };
+  }
+
   const requiredDays = Number(row.notice_period_days ?? 0);
   const servedDays = row.served_days === null ? null : Number(row.served_days);
 
@@ -167,7 +193,7 @@ async function resolveNoticeShortfall(
   const divisor = Number(await getPolicyValue("payroll", "calculation", "default_working_days", "26"));
   const perDayRate: ComputedComponent<number> = grossMonthly === null
     ? pending(0, "No active salary assignment found for employee.")
-    : computed(Math.round((grossMonthly / divisor) * 100) / 100, `Last gross monthly (${grossMonthly.toFixed(2)}) / ${divisor} working days.`);
+    : computed(Math.round((grossMonthly / divisor) * 100) / 100, `Monthly gross (${grossMonthly.toFixed(2)}, last paid payroll base, else CTC/12) / ${divisor} working days.`);
 
   if (requiredComponent.status === "pending_configuration" || perDayRate.status === "pending_configuration") {
     const zero = pending(0, "Cannot compute until required notice days and per-day rate are both known.");
@@ -187,7 +213,13 @@ async function resolveNoticeShortfall(
     served_days: servedDays,
     shortfall_days: shortfallComponent,
     per_day_rate: perDayRate,
-    recovery_amount: computed(recoveryAmount, `${shortfallDays} shortfall day(s) × ${perDayRate.value.toFixed(2)}/day.`),
+    recovery_amount: computed(
+      recoveryAmount,
+      `${shortfallDays} shortfall day(s) × ${perDayRate.value.toFixed(2)}/day.` +
+        (servedDays === 0 && shortfallDays > 0
+          ? " HR to confirm: notice starts and ends on the last working day (no notice served) — a waiver would make this 0."
+          : ""),
+    ),
     lastWorkingDay,
   };
 }
