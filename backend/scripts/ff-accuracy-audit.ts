@@ -43,7 +43,8 @@ async function pick(kind: "voluntary" | "involuntary"): Promise<string[]> {
         AND COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) IS NOT NULL
         AND EXISTS (SELECT 1 FROM employee_salary_assignment esa WHERE esa.employee_id = er.employee_id)
       GROUP BY er.id
-      ORDER BY MAX(ff.created_at) DESC
+      ORDER BY (DATEDIFF(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed), MIN(e.date_of_joining)) >= 365) DESC,
+               MAX(ABS(ff.net_payable)) DESC, MAX(ff.created_at) DESC
       LIMIT 3`,
     [kind, sub],
   );
@@ -82,7 +83,7 @@ async function audit(exitId: string): Promise<void> {
 
   const lines = await q(
     `SELECT spr.run_month, spr.status AS run_status, spl.status, spl.gross_salary, spl.net_salary,
-            spl.paid_days, spl.tds_amount
+            spl.working_days, spl.present_days, spl.lwp_days, spl.final_payable_days, spl.tds_amount
        FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id
       WHERE spl.employee_id = ? ORDER BY spr.run_month DESC LIMIT 4`,
     [er.employee_id],
