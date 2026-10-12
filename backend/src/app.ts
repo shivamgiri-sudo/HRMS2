@@ -54,6 +54,7 @@ import { payrollCostSummaryRouter } from "./modules/payroll/payroll-cost-summary
 import { payrollStatutoryFilingRouter } from "./modules/payroll/payroll-statutory-filing.routes.js";
 import { tdsCertificatePartARouter } from "./modules/payroll/tds-certificate-part-a.routes.js";
 import { payrollVarianceRouter } from "./modules/payroll/payroll-variance.routes.js";
+import { salaryAttCompareRouter } from "./modules/payroll/salary-attendance-compare.routes.js";
 import { payrollAuditTrailRouter } from "./modules/payroll/payroll-audit-trail.routes.js";
 import { loansRouter } from "./modules/payroll/loans.routes.js";
 import { deductionEntryRouter } from "./modules/payroll/deduction-entry.routes.js";
@@ -600,6 +601,7 @@ app.use(
   payrollStatutoryFilingRouter,
 );
 app.use("/api/payroll/variance", listEndpointLimiter, payrollVarianceRouter);
+app.use("/api/payroll/salary-att-compare", listEndpointLimiter, salaryAttCompareRouter);
 app.use(
   "/api/payroll/audit-trail",
   listEndpointLimiter,

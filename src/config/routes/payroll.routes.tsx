@@ -58,6 +58,7 @@ const BranchCostCentreAttendance = lazy(() => import("@/pages/payroll/BranchCost
 const StatutoryCenter           = lazy(() => import("@/pages/payroll/StatutoryCenter"));
 const PayrollVarianceAnalysis   = lazy(() => import("@/pages/payroll/PayrollVarianceAnalysis"));
 const PayrollRunLifecycle       = lazy(() => import("@/pages/payroll/PayrollRunLifecycle"));
+const SalaryAttendanceCompare   = lazy(() => import("@/pages/payroll/SalaryAttendanceCompare"));
 
 /**
  * Roles entitled to the org-wide admin Payslip Center. Everyone else — including
@@ -258,5 +259,6 @@ export const payrollRouteElements = (
       <Route path="/payroll/salary-disputes/queue" element={<Navigate to="/payroll/salary-disputes?tab=queue" replace />} />
       <Route path="/payroll/salary-disputes/team"  element={<Navigate to="/payroll/salary-disputes?tab=team" replace />} />
       <Route path="/salary-increment"            element={<ProtectedRoute><Gate pageCode="SALARY_INCREMENT"><DashboardLayout><NativeSalaryIncrement /></DashboardLayout></Gate></ProtectedRoute>} />
+      <Route path="/payroll/salary-att-compare"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_hr','finance','hr','hr_admin']}><SalaryAttendanceCompare /></ProtectedRoute>} />
   </>
 );
