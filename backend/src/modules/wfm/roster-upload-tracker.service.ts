@@ -180,6 +180,25 @@ async function loadPairs(filter: { branchId?: string; processId?: string; scope?
   }));
 }
 
+const COVERAGE_TTL_MS = 60_000;
+const coverageCache = new Map<string, { at: number; value: Promise<Map<string, CoverageRow>> }>();
+
+/**
+ * The viewer-facing grid reads the same org-wide coverage for every filter change and every user, and it
+ * is the slowest query (whole committed-import scan). Shared for a minute, including in-flight calls; a
+ * failed load is never kept. The escalation sweep and the cell drawer pass fresh=true and bypass it.
+ */
+function loadCoverageCached(weeks: string[], nowMs: number): Promise<Map<string, CoverageRow>> {
+  const key = weeks.join(',');
+  const hit = coverageCache.get(key);
+  if (hit && nowMs - hit.at < COVERAGE_TTL_MS && nowMs >= hit.at) return hit.value;
+  const value = loadCoverage(weeks);
+  coverageCache.set(key, { at: nowMs, value });
+  value.catch(() => { if (coverageCache.get(key)?.value === value) coverageCache.delete(key); });
+  if (coverageCache.size > 40) coverageCache.delete(coverageCache.keys().next().value as string);
+  return value;
+}
+
 /** Per branch × process × week: employees covered by committed uploads and when. */
 async function loadCoverage(weeks: string[]): Promise<Map<string, CoverageRow>> {
   const from = weeks[0];
@@ -420,10 +439,13 @@ export interface GridData {
 export async function loadGrid(
   weeks: string[],
   nowMs: number,
-  filter: { branchId?: string; processId?: string; scope?: TrackerScope } = {},
+  filter: { branchId?: string; processId?: string; scope?: TrackerScope; cacheCoverage?: boolean } = {},
 ): Promise<GridData> {
   const pairs = await loadPairs(filter);
-  const [coverage, directory] = await Promise.all([loadCoverage(weeks), loadRecipientDirectory(pairs)]);
+  const [coverage, directory] = await Promise.all([
+    filter.cacheCoverage ? loadCoverageCached(weeks, nowMs) : loadCoverage(weeks),
+    loadRecipientDirectory(pairs),
+  ]);
   const rows = pairs.map((pair) => ({
     branchId: pair.branchId,
     branchName: pair.branchName,
@@ -457,6 +479,7 @@ export async function getTracker(q: TrackerQuery = {}): Promise<TrackerResult> {
     branchId: q.branchId,
     processId: q.processId,
     scope: q.scope,
+    cacheCoverage: q.nowMs === undefined,
   });
 
   const managerFiltered = q.managerId

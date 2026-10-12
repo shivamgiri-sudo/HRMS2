@@ -1360,6 +1360,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2158_pnl_branch_review.sql", // Registered 2026-10-12. pnl_branch_review (branch acknowledges the month, figures snapshotted) + pnl_branch_review_query (branch raises, finance resolves). CREATE TABLE IF NOT EXISTS only.
   "migrations/2159_noc_payroll_head_final_approval_and_absconder_ff_exception.sql", // Registered 2026-10-12. noc_case.payroll_head_approved_by/at/note (Payroll Head final approval of a completed NOC, gated by flag noc_ph_final_approval_from) + exit_request.ff_exception_by/at/reason (Payroll Head exception allowing F&F for an absconder). Nullable, additive, guarded.
   "migrations/2160_roster_import_row_tracker_indexes.sql", // Registered 2026-10-12. Covering indexes on wfm_roster_import_row (roster_date,batch_id,employee_id_raw) and (employee_id_raw,roster_date,batch_id): Roster Upload Tracker took ~37s per load and ~120s per cell drawer because the table was only indexed by batch_id.
+  "migrations/2161_roster_import_row_batch_cover.sql", // Registered 2026-10-12. Covering index (batch_id, roster_date, employee_id_raw) on wfm_roster_import_row: tracker coverage scan was 12.7s through idx_batch plus a table fetch per row.
 ];
 
 export type MigrationHealth = {
