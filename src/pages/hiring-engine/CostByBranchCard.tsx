@@ -47,28 +47,28 @@ export default function CostByBranchCard() {
         {data.from} to {data.to}. Bot calling {perMin > 0 ? `₹${perMin.toFixed(2)} per minute` : "rate not set"}. Total <b>{rs(data.totals.all)}</b>.
         {data.rows.every((r) => COLS.every((c) => r.byType[c.key].adSpend === 0)) ? " Meta ad spend is not synced yet, so ads show nothing." : ""}
       </p>
-      <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
-        <table className="w-full min-w-[720px] text-left text-sm">
-          <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+      <div className="mt-3 rounded-lg border border-slate-200 md:overflow-x-auto">
+        <table className="block w-full text-left text-sm md:table">
+          <thead className="hidden bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 md:table-header-group">
             <tr><th className="px-3 py-2">Branch</th>{COLS.map((c) => <th key={c.key} className="px-3 py-2">{c.label}</th>)}<th className="px-3 py-2 text-right">Total</th></tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="block divide-y divide-slate-100 md:table-row-group">
             {data.rows.map((r) => (
-              <tr key={r.branch}>
-                <td className="px-3 py-2"><div className="font-medium text-slate-900">{r.branch}</div><div className="text-xs text-slate-500">{r.requisitions} requisitions</div></td>
-                {COLS.map((c) => <td key={c.key} className="px-3 py-2"><Cell c={r.byType[c.key]} /></td>)}
-                <td className="px-3 py-2 text-right font-bold tabular-nums text-slate-900">{rs(r.total)}</td>
+              <tr key={r.branch} className="block px-1 py-2 md:table-row md:p-0">
+                <td className="block px-3 py-1 md:table-cell md:py-2"><div className="font-medium text-slate-900">{r.branch}</div><div className="text-xs text-slate-500">{r.requisitions} requisitions</div></td>
+                {COLS.map((c) => <td key={c.key} className="block px-3 py-1 md:table-cell md:py-2"><span className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:hidden">{c.label}</span><Cell c={r.byType[c.key]} /></td>)}
+                <td className="block px-3 py-1 font-bold tabular-nums text-slate-900 md:table-cell md:py-2 md:text-right"><span className="mr-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:hidden">Total</span>{rs(r.total)}</td>
               </tr>
             ))}
-            <tr className="bg-slate-50">
-              <td className="px-3 py-2 font-semibold text-slate-900">All branches</td>
-              {COLS.map((c) => <td key={c.key} className="px-3 py-2"><Cell c={data.totals[c.key]} /></td>)}
-              <td className="px-3 py-2 text-right font-bold tabular-nums text-slate-900">{rs(data.totals.all)}</td>
+            <tr className="block bg-slate-50 px-1 py-2 md:table-row md:p-0">
+              <td className="block px-3 py-1 font-semibold text-slate-900 md:table-cell md:py-2">All branches</td>
+              {COLS.map((c) => <td key={c.key} className="block px-3 py-1 md:table-cell md:py-2"><span className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:hidden">{c.label}</span><Cell c={data.totals[c.key]} /></td>)}
+              <td className="block px-3 py-1 font-bold tabular-nums text-slate-900 md:table-cell md:py-2 md:text-right"><span className="mr-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:hidden">Total</span>{rs(data.totals.all)}</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-xs text-slate-500">{data.note}</p>
+      <p className="mt-2 text-xs text-slate-600">{data.note}</p>
       {data.failedSections.length > 0 && <p className="mt-1 text-xs text-amber-700">Some figures could not be read ({data.failedSections.join(", ")}); they count as 0.</p>}
     </section>
   );
