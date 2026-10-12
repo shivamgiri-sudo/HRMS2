@@ -56,9 +56,28 @@ describe("absconder rule", () => {
     expect((await ffSettlementGate("e1", "x1")).code).toBe("ABSCONDED_NO_EXCEPTION");
   });
 
-  it("lets an absconder through once the exception is recorded", async () => {
-    world({ er: { ...leaver, exit_type: "absconding", ff_exception_at: "2026-10-12" } });
+  const excepted = { ...leaver, exit_type: "absconding", ff_exception_at: "2026-10-12" };
+
+  it("lets an excepted absconder through only with a signed (completed) NOC", async () => {
+    world({ er: excepted, nc: { status: "completed", override_at: null, completed_at: "2026-10-12", payroll_head_approved_at: null } });
     expect((await ffSettlementGate("e1", "x1")).allowed).toBe(true);
+  });
+
+  it("keeps an excepted absconder locked while the NOC is not signed", async () => {
+    world({ er: excepted, nc: { status: "in_progress", override_at: null, completed_at: null, payroll_head_approved_at: null } });
+    expect(await ffSettlementGate("e1", "x1")).toMatchObject({ allowed: false, code: "NOC_INCOMPLETE" });
+    world({ er: excepted, nc: null });
+    expect((await ffSettlementGate("e1", "x1")).code).toBe("NOC_INCOMPLETE");
+  });
+
+  it("does not accept a release override as the signed NOC for an excepted absconder", async () => {
+    world({ er: excepted, nc: { status: "in_progress", override_at: "2026-10-12", completed_at: null, payroll_head_approved_at: null } });
+    expect((await ffSettlementGate("e1", "x1")).code).toBe("NOC_INCOMPLETE");
+  });
+
+  it("applies Payroll Head final approval to an excepted absconder when switched on", async () => {
+    world({ er: excepted, from: "2026-10-01", nc: { status: "completed", override_at: null, completed_at: "2026-10-20", payroll_head_approved_at: null } });
+    expect((await ffSettlementGate("e1", "x1")).code).toBe("PAYROLL_HEAD_APPROVAL_PENDING");
   });
 
   it("does not touch an ordinary resignation", async () => {

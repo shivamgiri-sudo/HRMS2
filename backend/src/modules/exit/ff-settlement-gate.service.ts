@@ -8,6 +8,9 @@
  *    audited). Once that exception exists everything downstream runs exactly as it does for any
  *    other leaver: NOC, Payroll Head NOC approval, F&F approval, payment.
  *
+ *    The exception does not waive the NOC: an absconder's F&F also needs a fully SIGNED NOC
+ *    (status 'completed'); a release override does not satisfy it.
+ *
  * 2. A NOC THE BRANCH HAS CLEARED STILL NEEDS THE PAYROLL HEAD. When
  *    payroll_config_flags.noc_ph_final_approval_from is set, a case completed on or after that
  *    date unlocks F&F only once payroll_head_approved_at is set (see
@@ -83,6 +86,25 @@ export async function ffSettlementGate(
       reason:
         "F&F is not allowed for an absconded employee. A Payroll Head exception approval is required before a settlement can be prepared, approved or paid.",
     };
+  }
+
+  // An absconder who has the exception still needs a SIGNED NOC. This holds whether or not the
+  // final-approval date is switched on, and a Payroll Head release override does not stand in for
+  // it: the override exists to release salary when a clearance cannot be completed, and an
+  // exception to "no F&F for absconders" must not be satisfiable by a second override.
+  if (absconded) {
+    const [signed] = await db.execute<RowDataPacket[]>(
+      `SELECT status FROM noc_case WHERE employee_id = ? LIMIT 1`,
+      [employeeId],
+    );
+    if (String(signed[0]?.status ?? "") !== "completed") {
+      return {
+        allowed: false,
+        code: "NOC_INCOMPLETE",
+        reason:
+          "An absconder's F&F exception also needs a fully signed NOC (every clearance level). A Payroll Head release override does not count.",
+      };
+    }
   }
 
   const from = await nocFinalApprovalFrom();

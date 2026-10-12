@@ -448,7 +448,11 @@ exitRouter.get(
     );
     if (!rows[0]) return res.status(404).json({ success: false, message: "Exit request not found" });
     const gate = await ffSettlementGate(String(rows[0].employee_id), req.params.exitRequestId);
-    return res.json({ success: true, data: gate });
+    // canGrantException lets the screen show the exception action to the Payroll Head only,
+    // instead of offering it to everyone and answering 403.
+    const canGrantException =
+      gate.code === "ABSCONDED_NO_EXCEPTION" && (await hasAnyRole(req.authUser!.id, "payroll_head"));
+    return res.json({ success: true, data: { ...gate, canGrantException } });
   }),
 );
 
@@ -478,7 +482,7 @@ exitRouter.post(
         reason: String((req.body as { reason?: string })?.reason ?? ""),
         actorUserId: userId,
       });
-      return res.json({ success: true, message: "Exception recorded. F&F can now proceed through the normal flow." });
+      return res.json({ success: true, message: "Exception recorded. F&F still needs a fully signed NOC; after that it proceeds through the normal flow." });
     } catch (err) {
       const e = err as { statusCode?: number; code?: string; message: string };
       return res.status(e.statusCode ?? 500).json({ success: false, code: e.code, message: e.message });
