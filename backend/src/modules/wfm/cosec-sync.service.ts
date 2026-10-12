@@ -21,6 +21,8 @@ export type PunchGroup = {
   workingMinutes: number;
   sourceSystem: string;
   sourceTable: string;
+  /** Set by attributeNightShifts: this group already absorbed the next morning's exit punches. */
+  tailMerged?: boolean;
 };
 
 type SyncResult = {
@@ -131,6 +133,13 @@ function toISTDateString(date: Date): string {
   return new Date(date.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+/** Calendar date arithmetic on a YYYY-MM-DD string (UTC maths, no timezone drift). */
+function shiftDate(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function defaultFromDate(): string {
   const date = new Date();
   date.setDate(date.getDate() - 1);
@@ -163,7 +172,124 @@ function getConfig() {
   };
 }
 
-async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup[]> {
+/**
+ * One calendar day of one user's punches, split at the AM/PM boundary (14:00).
+ * The SQL aggregates each half separately so the night-shift tail (the exit punches that fall
+ * after midnight) can be told apart from the start of the next shift without pulling every punch.
+ */
+export type PunchBlock = {
+  cosecUserId: string;
+  punchDate: string;
+  part: "AM" | "PM";
+  firstPunch: string;
+  lastPunch: string;
+  totalPunches: number;
+};
+
+/** Punches this many minutes apart inside one calendar day are two different shifts. */
+const SHIFT_SPLIT_GAP_MIN = 300;
+/** A shift starting at or after this hour is an evening / night start. */
+const EVENING_START_HOUR = 17;
+/** Longest silent stretch tolerated between the last evening punch and the morning exit. */
+const MAX_TAIL_GAP_MIN = 600;
+/** No single shift is longer than this; anything longer is two shifts, not one. */
+const MAX_SHIFT_SPAN_MIN = 900;
+/** The morning exit of a night shift is over by this hour. */
+const TAIL_LATEST_HOUR = 12;
+
+const hourOf = (ts: string) => parseInt(ts.substring(11, 13), 10);
+
+/**
+ * Attribute punches to SHIFTS rather than to calendar dates.
+ *
+ * WHY. The source groups by calendar date and takes MIN/MAX. For a night worker (in ~22:00, out
+ * ~07:00) date D therefore holds the exit of shift D-1 AND the start of shift D, so its span ran
+ * 00:30 -> 23:59 = 23.5 h, and the exit-only morning row was graded absent with LWP 1. Seen live on
+ * 2,384 employee-days across ~234 employees (Aug-Oct 2026, NOIDA / NOIDA-2).
+ *
+ * RULE. A shift belongs to the date it STARTED on. For each user and date:
+ *   - AM and PM blocks both present, 5 h+ apart and the PM block starting at 17:00 or later:
+ *     the AM block is the exit of the previous evening's shift, the PM block starts a new one.
+ *   - an AM-only day that ends before 12:00 and follows an evening start by <= 10 h is the exit.
+ *   - otherwise the two halves are one ordinary day, exactly as before.
+ * A tail is only absorbed when the resulting shift is <= 15 h, so a day worker is never glued to
+ * the evening before.
+ *
+ * Returns the attributed groups plus the dates whose punches were absorbed into the previous
+ * shift and have no shift of their own left; their stale rows have to be cleared by the caller.
+ */
+export function attributeNightShifts(
+  blocks: PunchBlock[],
+  sourceSystem: string,
+  sourceTable: string,
+): { groups: PunchGroup[]; consumedDates: Array<{ cosecUserId: string; punchDate: string }> } {
+  const byUser = new Map<string, Map<string, { am?: PunchBlock; pm?: PunchBlock }>>();
+  for (const b of blocks) {
+    const days = byUser.get(b.cosecUserId) ?? new Map();
+    const day = days.get(b.punchDate) ?? {};
+    if (b.part === "AM") day.am = b; else day.pm = b;
+    days.set(b.punchDate, day);
+    byUser.set(b.cosecUserId, days);
+  }
+
+  const groups: PunchGroup[] = [];
+  const consumedDates: Array<{ cosecUserId: string; punchDate: string }> = [];
+
+  for (const [cosecUserId, days] of byUser) {
+    const dates = [...days.keys()].sort();
+    const mains = new Map<string, PunchGroup>();
+
+    const mk = (punchDate: string, first: string, last: string, count: number): PunchGroup => ({
+      cosecUserId, punchDate, firstPunch: first, lastPunch: last, totalPunches: count,
+      workingMinutes: diffMinutes(first, last), sourceSystem, sourceTable,
+    });
+    const canAbsorb = (prev: PunchGroup | undefined, tailFirst: string, tailLast: string) =>
+      !!prev
+      && hourOf(prev.firstPunch) >= EVENING_START_HOUR
+      && !prev.tailMerged
+      && diffMinutes(prev.lastPunch, tailFirst) <= MAX_TAIL_GAP_MIN
+      && diffMinutes(prev.firstPunch, tailLast) <= MAX_SHIFT_SPAN_MIN;
+
+    for (const date of dates) {
+      const { am, pm } = days.get(date)!;
+      const prevDate = shiftDate(date, -1);
+      const prev = mains.get(prevDate);
+
+      if (am && pm) {
+        const gap = diffMinutes(am.lastPunch, pm.firstPunch);
+        const splits = gap >= SHIFT_SPLIT_GAP_MIN && hourOf(pm.firstPunch) >= EVENING_START_HOUR;
+        if (splits && canAbsorb(prev, am.firstPunch, am.lastPunch)) {
+          mains.set(prevDate, {
+            ...mk(prevDate, prev!.firstPunch, am.lastPunch, prev!.totalPunches + am.totalPunches),
+            tailMerged: true,
+          });
+          mains.set(date, mk(date, pm.firstPunch, pm.lastPunch, pm.totalPunches));
+        } else {
+          mains.set(date, mk(date, am.firstPunch, pm.lastPunch, am.totalPunches + pm.totalPunches));
+        }
+      } else if (am) {
+        if (hourOf(am.lastPunch) < TAIL_LATEST_HOUR && canAbsorb(prev, am.firstPunch, am.lastPunch)) {
+          mains.set(prevDate, {
+            ...mk(prevDate, prev!.firstPunch, am.lastPunch, prev!.totalPunches + am.totalPunches),
+            tailMerged: true,
+          });
+          consumedDates.push({ cosecUserId, punchDate: date });
+        } else {
+          mains.set(date, mk(date, am.firstPunch, am.lastPunch, am.totalPunches));
+        }
+      } else if (pm) {
+        mains.set(date, mk(date, pm.firstPunch, pm.lastPunch, pm.totalPunches));
+      }
+    }
+    groups.push(...mains.values());
+  }
+  return { groups, consumedDates };
+}
+
+async function pullCosecAttendance(
+  from: string,
+  to: string,
+): Promise<{ groups: PunchGroup[]; consumedDates: Array<{ cosecUserId: string; punchDate: string }> }> {
   const cfg = getConfig();
   const table = quoteTable(cfg.table);
   const userColumn = quoteColumn(cfg.userColumn);
@@ -183,19 +309,23 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
       reject(new Error(`pullCosecAttendance timed out after ${QUERY_TIMEOUT_MS / 1000}s`));
     }, QUERY_TIMEOUT_MS);
   });
+  // One row per (user, date, AM|PM). The 14:00 split lets attributeNightShifts() separate a night
+  // shift's exit punches from the next shift's start without pulling every raw punch.
+  request.input("windowFrom", sql.Date, shiftDate(from, -1));
   const queryPromise = request.query(`
       SELECT
         CAST(${userColumn} AS NVARCHAR(100)) AS user_id,
         CONVERT(CHAR(10), CAST(${datetimeColumn} AS DATE), 23) AS attendance_date,
+        CASE WHEN DATEPART(HOUR, ${datetimeColumn}) < 14 THEN 'AM' ELSE 'PM' END AS part,
         CONVERT(CHAR(19), MIN(${datetimeColumn}), 120) AS first_punch,
         CONVERT(CHAR(19), MAX(${datetimeColumn}), 120) AS last_punch,
-        COUNT_BIG(*) AS total_punches,
-        DATEDIFF(MINUTE, MIN(${datetimeColumn}), MAX(${datetimeColumn})) AS working_minutes
+        COUNT_BIG(*) AS total_punches
       FROM ${table}
-      WHERE ${datetimeColumn} >= @fromDate
+      WHERE ${datetimeColumn} >= @windowFrom
         AND ${datetimeColumn} < DATEADD(DAY, 1, @toDate)
         AND ${userColumn} IS NOT NULL
-      GROUP BY ${userColumn}, CAST(${datetimeColumn} AS DATE)
+      GROUP BY ${userColumn}, CAST(${datetimeColumn} AS DATE),
+               CASE WHEN DATEPART(HOUR, ${datetimeColumn}) < 14 THEN 'AM' ELSE 'PM' END
       ORDER BY ${userColumn}, attendance_date
     `);
   let result: Awaited<typeof queryPromise>;
@@ -204,25 +334,28 @@ async function pullCosecAttendance(from: string, to: string): Promise<PunchGroup
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
-  return result.recordset
+  const blocks: PunchBlock[] = result.recordset
     .map((row: any) => ({
       cosecUserId: String(row.user_id ?? "").trim(),
       punchDate: String(row.attendance_date ?? "").trim(),
+      part: (row.part === "AM" ? "AM" : "PM") as "AM" | "PM",
       firstPunch: String(row.first_punch ?? "").trim(),
       lastPunch: String(row.last_punch ?? "").trim(),
       totalPunches: Math.max(0, Number(row.total_punches ?? 0)),
-      workingMinutes: Math.max(0, Number(row.working_minutes ?? 0)),
-      sourceSystem: "cosec_sqlserver",
-      sourceTable: cfg.table,
     }))
-    .filter((row: PunchGroup) =>
-      row.cosecUserId
-      && /^\d{4}-\d{2}-\d{2}$/.test(row.punchDate)
-      && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.firstPunch)
-      && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.lastPunch)
-      && Number.isFinite(row.totalPunches)
-      && Number.isFinite(row.workingMinutes)
+    .filter((b: PunchBlock) =>
+      b.cosecUserId
+      && /^\d{4}-\d{2}-\d{2}$/.test(b.punchDate)
+      && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(b.firstPunch)
+      && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(b.lastPunch)
+      && Number.isFinite(b.totalPunches)
     );
+  const attributed = attributeNightShifts(blocks, "cosec_sqlserver", cfg.table);
+  // The extra leading day is only there so a tail can find the evening it belongs to.
+  return {
+    groups: attributed.groups.filter((g) => g.punchDate >= from),
+    consumedDates: attributed.consumedDates.filter((d) => d.punchDate >= from),
+  };
 }
 
 
@@ -789,6 +922,47 @@ export async function filterUnchangedGroups(groups: PunchGroup[], syncToDate: st
   }
 }
 
+/**
+ * A calendar date whose punches were all the exit of the previous night's shift. Earlier syncs
+ * stored those punches as a short day of their own (graded absent, LWP 1). Remove that mirror and
+ * regrade the day from what is left. Unlocked rows only: a regularised or payroll-locked row is
+ * never overwritten here (upsertDailyRecord and the UPDATE below both guard on is_locked).
+ *
+ * Returns the employee id when something was cleared, null when there was nothing stale.
+ */
+export async function clearConsumedTailDay(cosecUserId: string, punchDate: string): Promise<string | null> {
+  const employee = await resolveEmployee(cosecUserId);
+  if (!employee) return null;
+  const [stale] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM biometric_attendance_log
+      WHERE employee_id = ? AND punch_date = ? AND (first_punch_in IS NOT NULL OR COALESCE(total_punches,0) > 0)
+      LIMIT 1`,
+    [employee.employee_id, punchDate],
+  );
+  if (!(stale as RowDataPacket[]).length) return null;
+
+  await db.execute(`DELETE FROM biometric_attendance_log WHERE employee_id = ? AND punch_date = ?`, [employee.employee_id, punchDate]);
+  await db.execute(
+    `DELETE FROM wfm_attendance_session WHERE employee_id = ? AND session_date = ? AND punch_source = 'BIOMETRIC'`,
+    [employee.employee_id, punchDate],
+  );
+  await db.execute(
+    `DELETE FROM integration_biometric_daily WHERE employee_code = ? AND activity_date = ? AND integration_key = 'cosec_sqlserver'`,
+    [employee.employee_code, punchDate],
+  );
+  const attendance = await attendanceEngineService.processEmployee(employee.employee_id, punchDate);
+  await attendanceEngineService.upsertDailyRecord(attendance, "cosec_sqlserver_sync");
+  await db.execute(
+    `UPDATE attendance_daily_record
+        SET clock_in_time = NULL, clock_out_time = NULL,
+            status_change_reason = 'COSEC night-shift exit punches attributed to previous shift start date'
+      WHERE employee_id = ? AND record_date = ? AND is_locked = 0
+        AND attendance_status IN ('missing_punch','absent')`,
+    [employee.employee_id, punchDate],
+  );
+  return employee.employee_id;
+}
+
 export const cosecSyncService = {
   getLastSyncResult() {
     return lastSyncResult;
@@ -798,7 +972,14 @@ export const cosecSyncService = {
     return runningSince !== null;
   },
 
-  async sync(options: { from?: string; to?: string } = {}): Promise<SyncResult> {
+  async sync(options: {
+    from?: string;
+    to?: string;
+    /** Scoped backfill: only these COSEC user ids are written. */
+    onlyUserIds?: string[];
+    /** Scoped backfill: shifts starting before this date are left untouched. */
+    minWriteDate?: string;
+  } = {}): Promise<SyncResult> {
     const lock = decideCosecLock(runningSince, Date.now(), STALE_LOCK_MS);
     if (lock.action === "reject") {
       throw new Error(
@@ -837,10 +1018,28 @@ export const cosecSyncService = {
     };
 
     try {
-      const rawGroups = config.sourceMode === "mysql"
-        ? await pullMysqlAttendance(from, to)
-        : await pullCosecAttendance(from, to);
-      const groups = await mergeNightShiftRollover(rawGroups);
+      // SQL Server source: punches are already attributed to the shift's start date by
+      // attributeNightShifts(), so the old aggregate-level rollover must not run on them.
+      // MySQL fallback source only has per-date aggregates and keeps the old rollover.
+      let consumedDates: Array<{ cosecUserId: string; punchDate: string }> = [];
+      let groups: PunchGroup[];
+      if (config.sourceMode === "mysql") {
+        groups = await mergeNightShiftRollover(await pullMysqlAttendance(from, to));
+      } else {
+        const pulled = await pullCosecAttendance(from, to);
+        groups = pulled.groups;
+        consumedDates = pulled.consumedDates;
+      }
+      if (options.onlyUserIds) {
+        const only = new Set(options.onlyUserIds);
+        groups = groups.filter((g) => only.has(g.cosecUserId));
+        consumedDates = consumedDates.filter((d) => only.has(d.cosecUserId));
+      }
+      if (options.minWriteDate) {
+        const min = options.minWriteDate;
+        groups = groups.filter((g) => g.punchDate >= min);
+        consumedDates = consumedDates.filter((d) => d.punchDate >= min);
+      }
       result.pulledEvents = groups.reduce((total, group) => total + group.totalPunches, 0);
       result.groupedDays = groups.length;
       const [excludedRows, employeeRows] = await Promise.all([
@@ -945,6 +1144,29 @@ export const cosecSyncService = {
           result.failed.push({
             cosecUserId: group.cosecUserId,
             punchDate: group.punchDate,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      // Dates whose punches were all absorbed into the previous night's shift. Older runs wrote
+      // those exit punches as a day of their own, so the stale rows have to be cleared and the
+      // day regraded; otherwise the phantom absent / LWP row stays forever.
+      const haveGroup = new Set(groups.map((g) => `${g.cosecUserId}|${g.punchDate}`));
+      for (const d of consumedDates) {
+        if (haveGroup.has(`${d.cosecUserId}|${d.punchDate}`)) continue;
+        try {
+          const cleared = await clearConsumedTailDay(d.cosecUserId, d.punchDate);
+          if (cleared) {
+            result.migratedDays += 1;
+            const month = d.punchDate.slice(0, 7);
+            if (!writtenByMonth.has(month)) writtenByMonth.set(month, new Set());
+            writtenByMonth.get(month)!.add(cleared);
+          }
+        } catch (error) {
+          result.success = false;
+          result.failed.push({
+            cosecUserId: d.cosecUserId,
+            punchDate: d.punchDate,
             error: error instanceof Error ? error.message : String(error),
           });
         }
