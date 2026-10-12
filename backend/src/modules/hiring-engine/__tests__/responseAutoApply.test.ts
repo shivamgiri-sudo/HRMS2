@@ -62,3 +62,13 @@ describe("prettySlot", () => {
     expect(prettySlot("soon", "later")).toBe("soon at later");
   });
 });
+
+describe("autoResolveReplies: asking for a slot with no booking yet", () => {
+  it("books the person on the nearest working day instead of leaving the reply", async () => {
+    h.rows = [row({ id: 20, ans: "reschedule" })];
+    const r = await autoResolveReplies(NOW);
+    expect(r.booked).toBe(1);
+    expect(h.manual).toHaveBeenCalledWith(expect.objectContaining({ leadId: "L1", requisitionId: "R1", answer: "confirm" }), expect.anything());
+    expect(h.classify).toHaveBeenCalledWith(expect.objectContaining({ responseId: 20, answer: "reschedule", apply: false }), expect.anything());
+  });
+});

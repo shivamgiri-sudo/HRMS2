@@ -77,11 +77,12 @@ export async function autoResolveReplies(now: Date = new Date()): Promise<AutoAp
         if (r.match_id || r.invite_id) {
           const out = await classifyResponse({ actor: AUTO_ACTOR, responseId: id, answer: answer as ResponseAnswer, apply: true, confirmPerson: true }, ALL);
           if (out.status === "applied") rep.applied++; else rep.retryLater++;
-        } else if (r.lead_id && r.requisition_id && answer === "confirm") {
-          const out = await manualResponse({ actor: AUTO_ACTOR, leadId: String(r.lead_id), requisitionId: String(r.requisition_id), answer, via: "other",
-            note: `Candidate replied that they will attend (reply #${id}); booked by the engine` }, ALL);
+        } else if (r.lead_id && r.requisition_id && (answer === "confirm" || answer === "reschedule")) {
+          // Someone with no booking who asks for a slot ("schedule my interview", "give me another chance") is booked on the nearest working day.
+          const out = await manualResponse({ actor: AUTO_ACTOR, leadId: String(r.lead_id), requisitionId: String(r.requisition_id), answer: "confirm", via: "other",
+            note: answer === "confirm" ? `Candidate replied that they will attend (reply #${id}); booked by the engine` : `Candidate asked for a slot (reply #${id}); booked by the engine` }, ALL);
           if (out.state === "pending" || out.state === "unavailable") { rep.retryLater++; continue; }
-          await classifyResponse({ actor: AUTO_ACTOR, responseId: id, answer: "confirm", apply: false }, ALL);
+          await classifyResponse({ actor: AUTO_ACTOR, responseId: id, answer: answer === "reschedule" ? "reschedule" : "confirm", apply: false }, ALL);
           rep.booked++;
         } else if (answer === "decline") {
           await classifyResponse({ actor: AUTO_ACTOR, responseId: id, answer: "decline", apply: false }, ALL);
