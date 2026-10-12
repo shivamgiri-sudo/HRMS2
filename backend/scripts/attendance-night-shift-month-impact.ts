@@ -115,6 +115,7 @@ const diffMin = (a: string, b: string) => Math.round((new Date(b.replace(" ", "T
     const att = attributed.get(eid);
     if (!att) continue;
     let pbCur = 0, pbNew = 0, changedDays = 0;
+    const detail: any[] = [];
     for (let d = FROM; d <= TO; d = addDays(d, 1)) {
       const c = rows.get(d);
       const curSt = c?.st ?? "missing_punch";
@@ -127,17 +128,26 @@ const diffMin = (a: string, b: string) => Math.round((new Date(b.replace(" ", "T
         const a = att.get(d);
         newSt = !a || a.punches < 2 ? (a ? "missing_punch" : "missing_punch") : a.minutes >= FULL ? "present" : a.minutes >= HALF ? "half_day" : "absent";
       }
-      if (newSt !== curSt) changedDays++;
+      if (newSt !== curSt) {
+        changedDays++;
+        const a = att.get(d);
+        detail.push({ date: d, cur: `${curSt}${c?.lk ? '/L' : ''}`, now: newSt, minutes: a?.minutes ?? '', punches: a?.punches ?? 0 });
+      }
       pbNew += paidOf(newSt);
     }
     const dCur = payable(pbCur), dNew = payable(pbNew), delta = Math.round((dNew - dCur) * 100) / 100;
     sumDelta += delta; if (delta > 0) gain++; else if (delta < 0) loss++; else same++;
-    out.push({ code: info.get(eid)!.code, paidBaseCur: pbCur, paidBaseNew: pbNew, payableCur: dCur, payableNew: dNew, delta, changedDays });
+    out.push({ code: info.get(eid)!.code, paidBaseCur: pbCur, paidBaseNew: pbNew, payableCur: dCur, payableNew: dNew, delta, changedDays, detail });
   }
   out.sort((a, b) => b.delta - a.delta);
   console.log(`\n=== ${FROM}..${TO}: employees compared ${out.length} | payable days UP ${gain} | DOWN ${loss} | same ${same} | net payable-day delta ${Math.round(sumDelta * 100) / 100} | locked rows kept ${lockedKept} ===`);
   console.log("top gains"); console.table(out.slice(0, 25));
-  console.log("top losses"); console.table(out.slice(-25).reverse());
+  console.log("top losses"); console.table(out.slice(-25).reverse().map(({ detail, ...r }) => r));
+  const lossDetail = out.filter((r) => r.delta < 0);
+  let evOnly = 0, other = 0;
+  for (const r of lossDetail) for (const d of r.detail) { if (d.cur.startsWith("present") && d.now !== "present") { if (Number(d.minutes || 0) < 270) evOnly++; else other++; } }
+  console.log(`present->not-present days among employees with loss: short-or-open shift (<270 min or none) ${evOnly}, other ${other}`);
+  for (const r of lossDetail.slice(0, 8)) { console.log(`--- ${r.code} delta ${r.delta}`); console.table(r.detail); }
   await db.end();
   process.exit(0);
 })().catch(async (e) => { console.error("ERR", e?.message ?? e); try { await db.end(); } catch { } process.exit(1); });
