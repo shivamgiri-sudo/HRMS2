@@ -1,0 +1,131 @@
+// Rebuild night-shift attendance for a date range with the shift-attribution sync.
+//   dry-run (default): pull, attribute, and report what WOULD be written. Writes nothing.
+//   --apply          : runs cosecSyncService.sync() scoped to the flagged employees, in chunks.
+//   --allow-closed-months : required to apply to a month whose payroll run is finalized/locked/disbursed.
+// Locked rows (regularisations, payroll locks) are never overwritten by the sync's write path.
+// Usage: npx tsx scripts/attendance-night-shift-rebuild.ts <from> <to> [--apply] [--allow-closed-months]
+import "dotenv/config";
+import sql from "mssql";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../src/db/mysql.js";
+import { getNcosecPool } from "../src/db/ncosecDb.js";
+import {
+  attributeNightShifts,
+  cosecSyncService,
+  filterUnchangedGroups,
+  type PunchBlock,
+} from "../src/modules/wfm/cosec-sync.service.js";
+import { isRunClosed } from "../src/modules/payroll/run-status.js";
+
+const [FROM, TO] = [process.argv[2], process.argv[3]];
+const APPLY = process.argv.includes("--apply");
+const ALLOW_CLOSED = process.argv.includes("--allow-closed-months");
+if (!/^\d{4}-\d{2}-\d{2}$/.test(FROM ?? "") || !/^\d{4}-\d{2}-\d{2}$/.test(TO ?? "")) {
+  console.error("usage: attendance-night-shift-rebuild.ts <from> <to> [--apply] [--allow-closed-months]");
+  process.exit(1);
+}
+const addDays = (s: string, n: number) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+(async () => {
+  // ---- payroll month guard ----
+  const months = new Set<string>();
+  for (let d = FROM; d <= TO; d = addDays(d, 1)) months.add(d.slice(0, 7));
+  const closed: string[] = [];
+  for (const m of months) {
+    const [runs] = await db.execute<RowDataPacket[]>(`SELECT status FROM salary_prep_run WHERE run_month = ?`, [m]);
+    const st = (runs as any[]).map((r) => r.status);
+    const isClosed = st.some((s) => isRunClosed(s));
+    console.log(`payroll ${m}: ${st.length ? st.join(",") : "no run"}${isClosed ? "  [CLOSED]" : ""}`);
+    if (isClosed) closed.push(m);
+  }
+  if (APPLY && closed.length && !ALLOW_CLOSED) {
+    console.error(`REFUSING to apply: payroll closed for ${closed.join(", ")}. Re-run with --allow-closed-months after the Payroll Head signs off.`);
+    await db.end();
+    process.exit(2);
+  }
+
+  // ---- flagged employees: inflated days or exit-only mornings graded absent/half ----
+  const [flag] = await db.execute<any[]>(
+    `SELECT DISTINCT t.employee_id
+       FROM attendance_daily_record t
+      WHERE t.record_date BETWEEN ? AND ?
+        AND (t.raw_minutes > 840
+             OR (t.attendance_status IN ('absent','half_day') AND t.clock_in_time IS NOT NULL
+                 AND TIME(t.clock_in_time) < '09:00:00' AND (t.clock_out_time IS NULL OR TIME(t.clock_out_time) < '11:00:00')))`,
+    [FROM, TO]);
+  const empIds = (flag as any[]).map((r) => r.employee_id);
+  console.log(`flagged employees: ${empIds.length}`);
+  if (!empIds.length) { await db.end(); return; }
+
+  const userIds = new Set<string>();
+  for (let i = 0; i < empIds.length; i += 500) {
+    const [rows] = await db.query<any[]>(
+      `SELECT e.employee_code, e.biometric_code, GROUP_CONCAT(DISTINCT ebe.cosec_user_id) AS cosec_ids
+         FROM employees e LEFT JOIN employee_biometric_enrollment ebe ON ebe.employee_id = e.id
+        WHERE e.id IN (?) GROUP BY e.id, e.employee_code, e.biometric_code`, [empIds.slice(i, i + 500)]);
+    for (const r of rows as any[]) {
+      for (const v of [r.employee_code, r.biometric_code, ...String(r.cosec_ids ?? "").split(",")]) {
+        const t = String(v ?? "").trim(); if (t) userIds.add(t);
+      }
+    }
+  }
+  const ids = [...userIds];
+
+  // ---- what would be written ----
+  const pool = await getNcosecPool();
+  const table = process.env.NCOSEC_EVENT_TABLE?.trim() || "dbo.Mx_ATDEventTrn";
+  const uc = process.env.NCOSEC_USER_ID_COLUMN?.trim() || "UserID";
+  const dc = process.env.NCOSEC_DATETIME_COLUMN?.trim() || "Edatetime";
+  const blocks: PunchBlock[] = [];
+  for (let i = 0; i < ids.length; i += 400) {
+    const slice = ids.slice(i, i + 400);
+    const req = pool.request();
+    req.input("f", sql.Date, addDays(FROM, -1));
+    req.input("t", sql.Date, addDays(TO, 1));
+    slice.forEach((v, j) => req.input(`u${j}`, sql.NVarChar(100), v));
+    const r = await req.query(`
+      SELECT CAST([${uc}] AS NVARCHAR(100)) AS user_id,
+             CONVERT(CHAR(10), CAST([${dc}] AS DATE), 23) AS attendance_date,
+             CASE WHEN DATEPART(HOUR, [${dc}]) < 14 THEN 'AM' ELSE 'PM' END AS part,
+             CONVERT(CHAR(19), MIN([${dc}]), 120) AS first_punch,
+             CONVERT(CHAR(19), MAX([${dc}]), 120) AS last_punch,
+             COUNT_BIG(*) AS total_punches
+        FROM ${table}
+       WHERE [${dc}] >= @f AND [${dc}] < @t AND CAST([${uc}] AS NVARCHAR(100)) IN (${slice.map((_, j) => `@u${j}`).join(",")})
+       GROUP BY [${uc}], CAST([${dc}] AS DATE), CASE WHEN DATEPART(HOUR, [${dc}]) < 14 THEN 'AM' ELSE 'PM' END`);
+    for (const row of r.recordset) blocks.push({
+      cosecUserId: String(row.user_id).trim(), punchDate: String(row.attendance_date), part: row.part === "AM" ? "AM" : "PM",
+      firstPunch: String(row.first_punch), lastPunch: String(row.last_punch), totalPunches: Number(row.total_punches),
+    });
+  }
+  const attributed = attributeNightShifts(blocks, "cosec_sqlserver", table);
+  const inRange = attributed.groups.filter((g) => g.punchDate >= FROM && g.punchDate <= TO);
+  const stillLong = inRange.filter((g) => g.workingMinutes > 900).length;
+  const changed = await filterUnchangedGroups(inRange, TO);
+  console.log(`\nDRY RUN ${FROM}..${TO}`);
+  console.log(`  shifts attributed          : ${inRange.length}`);
+  console.log(`  shifts that differ stored  : ${changed.length}  (would be rewritten, unlocked rows only)`);
+  console.log(`  exit-only dates to clear   : ${attributed.consumedDates.filter((d) => d.punchDate >= FROM && d.punchDate <= TO).length}`);
+  console.log(`  shifts still over 15h      : ${stillLong}  (should be 0)`);
+
+  if (!APPLY) { console.log("\nmode: dry-run, nothing written."); await db.end(); return; }
+
+  // ---- apply: scoped sync in 7-day chunks ----
+  let migrated = 0, failed = 0;
+  // Chunks overlap by one day: the last evening of a chunk only gets its morning exit when the
+  // NEXT chunk's window (which starts on that date) pulls it, so the next chunk begins on the
+  // previous chunk's last date and rewrites that day with the exit included.
+  let from = FROM;
+  for (;;) {
+    const to = addDays(from, 6) < TO ? addDays(from, 6) : TO;
+    const res = await cosecSyncService.sync({ from, to, onlyUserIds: ids, minWriteDate: FROM });
+    migrated += res.migratedDays; failed += res.failed.length;
+    console.log(`chunk ${from}..${to}: migrated ${res.migratedDays}, unchanged ${res.skippedUnchanged}, failed ${res.failed.length}`);
+    if (res.failed.length) console.log("  first failures:", JSON.stringify(res.failed.slice(0, 5)));
+    if (to >= TO) break;
+    from = to;
+  }
+  console.log(`\nAPPLIED ${FROM}..${TO}: migrated ${migrated}, failed ${failed}`);
+  await db.end();
+  process.exit(failed ? 3 : 0);
+})().catch(async (e) => { console.error("ERR", e?.message ?? e); try { await db.end(); } catch { } process.exit(1); });
