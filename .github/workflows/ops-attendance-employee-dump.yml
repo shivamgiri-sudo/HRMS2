@@ -11,6 +11,14 @@ on:
         description: "Employee code, e.g. MAS47157"
         required: true
         type: string
+      script:
+        description: "Which read-only script"
+        required: true
+        default: attendance-employee-dump
+        type: choice
+        options:
+          - attendance-employee-dump
+          - attendance-night-shift-rebuild-dryrun
       from:
         description: "From date YYYY-MM-DD"
         required: true
@@ -53,6 +61,7 @@ jobs:
           EMP: ${{ inputs.employee_code }}
           FROM_D: ${{ inputs.from }}
           TO_D: ${{ inputs.to }}
+          SCRIPT: ${{ inputs.script }}
         run: |
           set -euo pipefail
-          npx tsx scripts/attendance-employee-dump.ts "$EMP" "$FROM_D" "$TO_D"
+          npx tsx "scripts/${SCRIPT}.ts" "$EMP" "$FROM_D" "$TO_D"
