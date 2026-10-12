@@ -9,6 +9,11 @@ name: Ops F&F Accuracy Audit (manual, read-only)
 on:
   workflow_dispatch:
     inputs:
+      script:
+        description: "Optional read-only db_bill script in backend/scripts (e.g. ff-dbbill-discover.mjs); default runs the F&F accuracy audit"
+        required: false
+        default: ""
+        type: string
       exit_ids:
         description: "Optional comma list of exit_request ids (default: auto-pick one voluntary + one involuntary)"
         required: false
@@ -45,4 +50,6 @@ jobs:
           DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
           NODE_ENV: production
           FF_AUDIT_EXIT_IDS: ${{ inputs.exit_ids }}
-        run: npx tsx scripts/ff-accuracy-audit.ts
+          FF_DBBILL_SCRIPT: ${{ inputs.script }}
+        run: |
+          if [ -n "${FF_DBBILL_SCRIPT:-}" ]; then node "scripts/${FF_DBBILL_SCRIPT}"; else npx tsx scripts/ff-accuracy-audit.ts; fi
