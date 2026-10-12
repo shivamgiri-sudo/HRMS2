@@ -23,6 +23,12 @@ export type PunchGroup = {
   sourceTable: string;
   /** Set by attributeNightShifts: this group already absorbed the next morning's exit punches. */
   tailMerged?: boolean;
+  /**
+   * Set by attributeNightShifts when the shift is of a kind its own rule cannot be sure about
+   * (see shiftReviewReason). The write path turns it into mismatch_flag + a reason, so the day
+   * lands in the mismatch queue instead of reading as clean attendance.
+   */
+  review?: string;
 };
 
 type SyncResult = {
@@ -204,6 +210,24 @@ const TAIL_LATEST_HOUR = 12;
 const hourOf = (ts: string) => parseInt(ts.substring(11, 13), 10);
 
 /**
+ * Shapes the attribution rule cannot be sure about. Validated 2026-10-12 against NCOSEC's own
+ * per-shift table: ~94% agreement, and the residue clusters in exactly these shapes. They are
+ * flagged for a human, never silently settled.
+ *   - a long shift: 12 h or more
+ *   - a day that starts in the small hours (00:00-05:59) and runs 10 h or more: typically a night
+ *     shift's morning exit glued to the following day shift
+ *   - a night-shift start whose exit is missing (single swipe, nothing after)
+ */
+export function shiftReviewReason(first: string, last: string, punches: number): string | undefined {
+  const span = diffMinutes(first, last);
+  const startHour = hourOf(first);
+  if (span >= 12 * 60) return `shift spans ${(span / 60).toFixed(1)}h (12h or more) - check for a glued exit or a double shift`;
+  if (startHour < 6 && span >= 10 * 60) return `starts ${first.slice(11, 16)} and runs ${(span / 60).toFixed(1)}h - a night shift's exit may be glued to the next day shift`;
+  if (punches <= 1 && startHour >= 17) return `evening start with no exit punch yet`;
+  return undefined;
+}
+
+/**
  * Attribute punches to SHIFTS rather than to calendar dates.
  *
  * WHY. The source groups by calendar date and takes MIN/MAX. For a night worker (in ~22:00, out
@@ -325,6 +349,10 @@ export function attributeNightShifts(
       } else {
         place(sft.first.slice(0, 10), sft.first, sft.last, sft.count, sft.absorbed);
       }
+    }
+    for (const g of byDate.values()) {
+      const r = shiftReviewReason(g.firstPunch, g.lastPunch, g.totalPunches);
+      if (r) g.review = r;
     }
     groups.push(...byDate.values());
     // Dates a shift runs into (its exit lands there) are no longer a day of their own either.
@@ -634,14 +662,14 @@ export async function migratePunchGroup(group: PunchGroup, mode: PunchAssessment
       WHERE employee_id = ? AND record_date = ? AND is_locked = 0`,
     [firstPunchIST, lastPunchIST, employee.employee_id, group.punchDate],
   );
-  if (assessed.reviewRequired) {
+  if (assessed.reviewRequired || group.review) {
     await db.execute(
       `UPDATE attendance_daily_record
           SET mismatch_flag = 1,
               status_change_reason = ?
         WHERE employee_id = ? AND record_date = ? AND is_locked = 0`,
       [
-        `COSEC ${mode} review: ${assessed.reason}; punches=${assessed.effectivePunchCount}; source_span_minutes=${Math.round(group.workingMinutes ?? 0)}; applied_minutes=${rawMinutes}`,
+        `COSEC ${mode} review: ${[assessed.reviewRequired ? assessed.reason : null, group.review ? `shift check: ${group.review}` : null].filter(Boolean).join("; ")}; punches=${assessed.effectivePunchCount}; source_span_minutes=${Math.round(group.workingMinutes ?? 0)}; applied_minutes=${rawMinutes}`,
         employee.employee_id,
         group.punchDate,
       ],

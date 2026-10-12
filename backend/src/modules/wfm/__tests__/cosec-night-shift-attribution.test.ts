@@ -131,4 +131,25 @@ describe("attributeNightShifts", () => {
     expect(by["2026-10-09"].lastPunch).toBe("2026-10-09 18:28:00");
     expect(consumedDates).toEqual([]);
   });
+
+  it("flags shapes the rule cannot settle: long shifts and a small-hours start running 10h+ (MAS49499)", () => {
+    const b = (d: string, a: string, z: string, n = 5) => ({ punchDate: d, firstPunch: `${d} ${a}:00`, lastPunch: `${d} ${z}:00`, totalPunches: n });
+    const { groups } = run([
+      b("2026-10-04", "00:14", "07:30"), b("2026-10-04", "08:49", "14:11"),
+      b("2026-10-05", "22:10", "23:00"), b("2026-10-06", "00:10", "07:20"),
+    ]);
+    const by = Object.fromEntries(groups.map((g) => [g.punchDate, g]));
+    expect(by["2026-10-04"].review).toMatch(/glued/);
+    expect(by["2026-10-05"].review).toBeUndefined();
+  });
+
+  it("flags an evening start with no exit yet, and nothing for an ordinary shift", () => {
+    const { groups } = run([
+      { punchDate: "2026-10-11", firstPunch: "2026-10-11 21:57:58", lastPunch: "2026-10-11 21:57:58", totalPunches: 1 },
+      { punchDate: "2026-10-09", firstPunch: "2026-10-09 22:00:00", lastPunch: "2026-10-10 07:00:00", totalPunches: 9 },
+    ]);
+    const by = Object.fromEntries(groups.map((g) => [g.punchDate, g]));
+    expect(by["2026-10-11"].review).toMatch(/no exit/);
+    expect(by["2026-10-09"].review).toBeUndefined();
+  });
 });

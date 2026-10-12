@@ -112,6 +112,10 @@ const diffMin = (a: string, b: string) => Math.round((new Date(b.replace(" ", "T
   for (const d of onlyDatd.slice(0, 25)) console.log(`  ${d.k} | ${d.datdIn} -> ${d.datdOut}`);
   console.log("\nONLY-IN-MINE samples");
   for (const d of onlyMine.slice(0, 25)) console.log(`  ${d.k} | ${d.mineIn} -> ${d.mineOut} | ${d.n}`);
+  // Daily-check mode: a drop in agreement is the signal. Exit non-zero so the scheduled run goes red.
+  const minPct = Number(process.env.MIN_MATCH_PCT ?? "");
+  const pct = (match / Math.max(total, 1)) * 100;
+  console.log(`\nAGREEMENT ${FROM}..${TO}: ${pct.toFixed(2)}% of ${total} shift-days${Number.isFinite(minPct) ? ` (alarm below ${minPct}%)` : ""}`);
   await db.end();
-  process.exit(0);
+  process.exit(Number.isFinite(minPct) && total >= 200 && pct < minPct ? 4 : 0);
 })().catch(async (e) => { console.error("ERR", e?.message ?? e); try { await db.end(); } catch { } process.exit(1); });
