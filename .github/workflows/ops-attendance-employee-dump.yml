@@ -24,6 +24,7 @@ on:
           - attendance-night-shift-month-impact
           - attendance-night-shift-change-report
           - attendance-cases-punch-trace
+          - roster-tables-compare
       from:
         description: "From date YYYY-MM-DD"
         required: true
