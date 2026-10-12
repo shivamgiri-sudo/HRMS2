@@ -39,6 +39,7 @@ import { getMasterSummary, getRecruiterProductivity, listPrefixes, refreshHistor
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import { getMetaFunnel } from "./he-meta-funnel.service.js";
 import { getCostByBranch } from "./he-cost-branch.service.js";
+import { getUnifiedFunnel } from "./he-unified-funnel.service.js";
 import { getCampaignDashboard, scopeDriveGroups } from "./he-campaign-dashboard.service.js";
 import { listCampaignConfigs, setCampaignConfig } from "./he-campaign-config.service.js";
 import { listBatches, listLaunches, previewLaunch, startLaunch, type LaunchInput } from "./he-launch.service.js";
@@ -926,6 +927,12 @@ heRouter.get("/drives/:id/superbot-sheet", requireAuth, requireRole(...WRITE_ROL
 heRouter.get("/meta-funnel", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try { res.json({ success: true, data: await getMetaFunnel() }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] meta funnel failed"); res.status(500).json({ success: false, message: "Could not load the Meta funnel" }); }
+});
+
+/** One funnel from one person list: enrolled to joined per drive (they add up), plus the ATS funnel and what came from other sources. */
+heRouter.get("/funnel/unified", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await getUnifiedFunnel() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] unified funnel failed"); res.status(500).json({ success: false, message: "Could not load the funnel" }); }
 });
 
 /** Engine cost per branch and drive type (ad spend, WhatsApp, bot calling minutes, e-mail) for a date range; defaults to the last 30 days. */
