@@ -14,7 +14,7 @@ interface Row {
   rates: { walkinToSelected: number; selectedToJoined: number; source: string };
   selectionsNeeded: number; walkinsNeeded: number; bookedShows: number; walkinsToBring: number;
   walkinsPerDay: number | null; paceSource: string; daysToTarget: number | null; targetDate: string | null;
-  cost: { perWalkin: number | null; perJoin: number | null; toTarget: number | null; spend: number };
+  cost: { perWalkin: number | null; perJoin: number | null; toTarget: number | null; spend: number; basis: "engine" | "assumption" };
   status: "covered" | "on_track" | "at_risk" | "no_history" | "no_pace"; note: string | null;
 }
 interface Resp {
@@ -31,10 +31,10 @@ const STATUS = {
 
 function toCsv(rows: Row[]): string {
   const head = ["Branch", "Open requisitions", "Seats requested", "Join target (130%)", "Joined", "Joins still needed", "Selected, not joined", "Walk-in to selected", "Selected to joined",
-    "Selections needed", "Walk-ins needed", "Already booked (expected shows)", "Walk-ins to bring", "Walk-ins per day", "Days to target", "Target date", "Cost per walk-in", "Cost to target", "Status", "Note"];
+    "Selections needed", "Walk-ins needed", "Already booked (expected shows)", "Walk-ins to bring", "Walk-ins per day", "Days to target", "Target date", "Cost per walk-in", "Cost to target", "Cost basis", "Status", "Note"];
   const esc = (v: unknown) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const lines = rows.map((r) => [r.branch, r.requisitions, r.requested, r.joinTarget, r.joined, r.joinsLeft, r.pendingSelected, pct(r.rates.walkinToSelected), pct(r.rates.selectedToJoined),
-    r.selectionsNeeded, r.walkinsNeeded, r.bookedShows, r.walkinsToBring, r.walkinsPerDay ?? "", r.daysToTarget ?? "", r.targetDate ?? "", r.cost.perWalkin ?? "", r.cost.toTarget ?? "", STATUS[r.status][0], r.note ?? ""].map(esc).join(","));
+    r.selectionsNeeded, r.walkinsNeeded, r.bookedShows, r.walkinsToBring, r.walkinsPerDay ?? "", r.daysToTarget ?? "", r.targetDate ?? "", r.cost.perWalkin ?? "", r.cost.toTarget ?? "", r.cost.basis === "engine" ? "engine spend only" : "entered cost per walk-in", STATUS[r.status][0], r.note ?? ""].map(esc).join(","));
   return [head.join(","), ...lines].join("\n");
 }
 
@@ -47,6 +47,7 @@ export default function BranchPlanSection() {
   const [w2s, setW2s] = useState("");
   const [s2j, setS2j] = useState("");
   const [pace, setPace] = useState("");
+  const [cpw, setCpw] = useState("");
 
   const load = useCallback(async () => {
     setBusy(true); setErr(null);
@@ -56,10 +57,11 @@ export default function BranchPlanSection() {
       if (w2s) p.set("walkinToSelected", w2s);
       if (s2j) p.set("selectedToJoined", s2j);
       if (pace) p.set("walkinsPerDay", pace);
+      if (cpw) p.set("costPerWalkin", cpw);
       setData((await hrmsApi.get<{ data: Resp }>(`/api/he/branch-plan?${p.toString()}`)).data);
     } catch (e: unknown) { setErr((e as { message?: string })?.message || "Could not build the branch plan"); }
     finally { setBusy(false); }
-  }, [months, deadline, w2s, s2j, pace]);
+  }, [months, deadline, w2s, s2j, pace, cpw]);
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const download = () => {
@@ -83,7 +85,7 @@ export default function BranchPlanSection() {
           <Download className="h-4 w-4" aria-hidden /> Download CSV</button>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-[repeat(5,1fr)_auto] lg:items-end">
+      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-[repeat(6,1fr)_auto] lg:items-end">
         <label className="text-sm"><span className="mb-1 block font-medium text-slate-700">History used</span>
           <select value={months} onChange={(e) => setMonths(e.target.value)} className={`${input} bg-white`}>
             <option value="3">Last 3 months</option><option value="6">Last 6 months</option><option value="12">Last 12 months</option></select></label>
@@ -95,6 +97,8 @@ export default function BranchPlanSection() {
           <input type="number" min={1} max={100} inputMode="numeric" value={s2j} placeholder="actual" onChange={(e) => setS2j(e.target.value)} className={input} /></label>
         <label className="text-sm"><span className="mb-1 block font-medium text-slate-700">What-if walk-ins / day / branch</span>
           <input type="number" min={1} inputMode="numeric" value={pace} placeholder="observed" onChange={(e) => setPace(e.target.value)} className={input} /></label>
+        <label className="text-sm"><span className="mb-1 block font-medium text-slate-700">All-in cost per walk-in (₹)</span>
+          <input type="number" min={1} inputMode="numeric" value={cpw} placeholder="engine only" onChange={(e) => setCpw(e.target.value)} className={input} /></label>
         <button type="button" onClick={() => void load()} disabled={busy} className="h-10 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">{busy ? "Working…" : "Update"}</button>
       </div>
 
@@ -105,7 +109,7 @@ export default function BranchPlanSection() {
           <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div className="rounded-lg bg-slate-50 p-3"><dt className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Joins still needed</dt><dd className="text-2xl font-bold tabular-nums">{num(data.totals.joinsLeft)}</dd></div>
             <div className="rounded-lg bg-slate-50 p-3"><dt className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Walk-ins needed</dt><dd className="text-2xl font-bold tabular-nums">{num(data.totals.walkinsNeeded)}</dd><div className="text-xs text-slate-500">{num(data.totals.walkinsToBring)} still to bring</div></div>
-            <div className="rounded-lg bg-slate-50 p-3"><dt className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Cost to target</dt><dd className="text-2xl font-bold tabular-nums">{inr(data.totals.costToTarget)}</dd></div>
+            <div className="rounded-lg bg-slate-50 p-3"><dt className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{cpw ? "Cost to target (your ₹/walk-in)" : "Engine cost to target (not all-in)"}</dt><dd className="text-2xl font-bold tabular-nums">{inr(data.totals.costToTarget)}</dd></div>
             <div className="rounded-lg bg-slate-50 p-3"><dt className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Branches at risk</dt><dd className="text-2xl font-bold tabular-nums">{data.totals.branchesAtRisk}</dd></div>
           </dl>
           <div className="overflow-x-auto rounded-lg border border-slate-200">
@@ -127,7 +131,7 @@ export default function BranchPlanSection() {
                     <td className="px-3 py-2 text-right font-semibold tabular-nums">{num(r.walkinsToBring)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{r.walkinsPerDay ?? "n/a"}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{r.daysToTarget ?? "n/a"}{r.targetDate ? <div className="text-[11px] text-slate-500">{r.targetDate}</div> : null}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{inr(r.cost.toTarget)}{r.cost.perWalkin != null ? <div className="text-[11px] text-slate-500">{inr(r.cost.perWalkin)} / walk-in</div> : null}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{inr(r.cost.toTarget)}{r.cost.perWalkin != null ? <div className="text-[11px] text-slate-500">{inr(r.cost.perWalkin)} / walk-in{r.cost.basis === "engine" ? " (engine only)" : ""}</div> : null}</td>
                     <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${STATUS[r.status][1]}`}>{STATUS[r.status][0]}</span></td>
                   </tr>
                 ))}

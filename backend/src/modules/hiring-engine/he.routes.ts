@@ -631,7 +631,7 @@ heRouter.get("/branch-plan", requireAuth, requireRole(...VIEW_ROLES), async (req
     const q = req.query as Record<string, string | undefined>;
     const num = (v?: string) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
     const deadline = q.deadline && /^\d{4}-\d{2}-\d{2}$/.test(q.deadline) ? q.deadline : null;
-    res.json({ success: true, data: await planBranches({ months: num(q.months), deadline, walkinToSelected: num(q.walkinToSelected), selectedToJoined: num(q.selectedToJoined), walkinsPerDay: num(q.walkinsPerDay) }) });
+    res.json({ success: true, data: await planBranches({ months: num(q.months), deadline, walkinToSelected: num(q.walkinToSelected), selectedToJoined: num(q.selectedToJoined), walkinsPerDay: num(q.walkinsPerDay), costPerWalkin: num(q.costPerWalkin) }) });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] branch plan failed");
     res.status(500).json({ success: false, message: "Could not build the branch plan" });

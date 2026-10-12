@@ -48,6 +48,18 @@ describe("buildBranchPlan", () => {
     expect(b.rates.source).toBe("override");
   });
 
+  it("an entered all-in cost per walk-in drives cost to target and is labelled as an assumption", () => {
+    const r = buildBranchPlan({ ...base, seats: [seat()], overrides: { costPerWalkin: 250 } }).rows[0];
+    expect(r.cost.basis).toBe("assumption");
+    expect(r.cost.perWalkin).toBe(250);
+    expect(r.cost.toTarget).toBe(r.walkinsToBring * 250);
+    expect(r.cost.perJoin).toBeCloseTo(250 / (r.rates.walkinToSelected * r.rates.selectedToJoined), 0);
+  });
+
+  it("without the input, cost is labelled engine-only", () => {
+    expect(buildBranchPlan({ ...base, seats: [seat()] }).rows[0].cost.basis).toBe("engine");
+  });
+
   it("cost is null without spend rather than zero", () => {
     const r = buildBranchPlan({ ...base, spendByBranch: {}, seats: [seat()] }).rows[0];
     expect(r.cost.toTarget).toBeNull();

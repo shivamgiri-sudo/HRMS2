@@ -13,7 +13,7 @@ export interface BranchHistory { branch: string; uniqueLeads: number; walkins: n
 export interface BranchSeats { branch: string; requisitions: number; requested: number; target: number; joined: number; pendingSelected: number; joinsLeft: number }
 export interface BranchPace { branch: string; walkinsInWindow: number; joinedInWindow: number; windowDays: number }
 export interface BranchBooked { branch: string; invited: number; confirmed: number }
-export interface BranchPlanOverrides { walkinToSelected?: number | null; selectedToJoined?: number | null; walkinsPerDay?: number | null }
+export interface BranchPlanOverrides { walkinToSelected?: number | null; selectedToJoined?: number | null; walkinsPerDay?: number | null; costPerWalkin?: number | null }
 
 export interface BranchPlanRow {
   branch: string; requisitions: number; requested: number; joinTarget: number; joined: number; joinsLeft: number;
@@ -23,7 +23,8 @@ export interface BranchPlanRow {
   selectionsNeeded: number; walkinsNeeded: number; bookedShows: number; walkinsToBring: number;
   walkinsPerDay: number | null; paceSource: "observed" | "override" | "none";
   daysToTarget: number | null; targetDate: string | null;
-  cost: { perWalkin: number | null; perJoin: number | null; toTarget: number | null; spend: number };
+  /** basis: 'engine' = engine messaging and ad spend only (no recruiter, venue or incentive cost); 'assumption' = the all-in rupees per walk-in the user entered. */
+  cost: { perWalkin: number | null; perJoin: number | null; toTarget: number | null; spend: number; basis: "engine" | "assumption" };
   status: "covered" | "on_track" | "at_risk" | "no_history" | "no_pace";
   note: string | null;
 }
@@ -89,9 +90,11 @@ export function buildBranchPlan(i: {
     const daysToTarget = unreachable ? null : rawDays;
 
     const spend = r2(i.spendByBranch[s.branch] ?? 0);
-    const perWalkin = p && p.walkinsInWindow > 0 && spend > 0 ? r2(spend / p.walkinsInWindow) : null;
-    const perJoin = p && p.joinedInWindow > 0 && spend > 0 ? r2(spend / p.joinedInWindow) : null;
+    const assumed = ov.costPerWalkin != null && ov.costPerWalkin > 0 ? ov.costPerWalkin : null;
+    const perWalkin = assumed ?? (p && p.walkinsInWindow > 0 && spend > 0 ? r2(spend / p.walkinsInWindow) : null);
+    const perJoin = assumed != null && s2j > 0 && w2s > 0 ? r2(assumed / (w2s * s2j)) : p && p.joinedInWindow > 0 && spend > 0 ? r2(spend / p.joinedInWindow) : null;
     const toTarget = perWalkin != null ? r2(perWalkin * walkinsToBring) : walkinsToBring === 0 ? 0 : null;
+    const costBasis: "engine" | "assumption" = assumed != null ? "assumption" : "engine";
 
     let status: BranchPlanRow["status"];
     let note: string | null = null;
@@ -109,7 +112,7 @@ export function buildBranchPlan(i: {
       rates: { walkinToSelected: r2(w2s), selectedToJoined: r2(s2j), source },
       selectionsNeeded, walkinsNeeded, bookedShows, walkinsToBring, walkinsPerDay, paceSource,
       daysToTarget, targetDate: daysToTarget == null ? null : addCalendarDays(i.today, daysToTarget),
-      cost: { perWalkin, perJoin, toTarget, spend }, status, note,
+      cost: { perWalkin, perJoin, toTarget, spend, basis: costBasis }, status, note,
     };
   });
   rows.sort((a, b) => b.joinsLeft - a.joinsLeft || a.branch.localeCompare(b.branch));

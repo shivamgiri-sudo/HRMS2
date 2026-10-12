@@ -100,6 +100,6 @@ export async function planBranches(q: BranchPlanRequest = {}): Promise<BranchPla
   const plan = buildBranchPlan({ today, seats: s, history: h, pace: p, booked: b, spendByBranch, overrides: q, deadlineDays });
   return {
     ...plan, asOf: today, historyMonths: months, paceDays: PACE_DAYS, joinBufferPct: Math.round((FILL_BUFFER - 1) * 100), deadlineDays,
-    costNote: "Cost = last 30 days of engine spend at the branch (Meta ad spend, WhatsApp, bot calls, e-mail at the owner's rates) divided by walk-ins in the same window. Recruiter salaries and venue costs are not included.",
+    costNote: "Without a cost-per-walk-in input, cost is ENGINE spend only: the last 30 days of Meta ad spend that is synced, WhatsApp, bot calls and e-mail at the owner's rates, divided by walk-ins. It excludes recruiter pay, venue, referral and incentive cost, so it understates what a walk-in really costs. Enter an all-in cost per walk-in to plan with a real figure.",
   };
 }
