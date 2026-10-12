@@ -79,6 +79,33 @@ const diffMin = (a: string, b: string) => Math.round((new Date(b.replace(" ", "T
   console.log(`  disagree where mine ends LATER than NCOSEC by >10min: ${bucket((d) => d.outByMin !== "" && d.outByMin > TOL_MIN)}`);
   console.log(`  disagree where mine ends EARLIER than NCOSEC by >10min: ${bucket((d) => d.outByMin !== "" && d.outByMin < -TOL_MIN)}`);
   console.log(`  disagree on shift START: ${bucket((d) => Math.abs(diffMin(`2026-${d.datdIn}:00`, `2026-${d.mineIn}:00`)) > TOL_MIN)}`);
+  // ---- per-employee concentration and plausibility classes ----
+  const span = (a: string, b: string | null) => (b ? diffMin(`2026-${a}:00`, `2026-${b}:00`) : null);
+  const cls = { ncosecImplausibleMinePlausible: 0, bothPlausible: 0, minePlausibleNcosecOpen: 0, mineImplausible: 0, bothImplausible: 0 };
+  const perEmp = new Map<string, { n: number; classes: Record<string, number> }>();
+  const rows: string[] = ["CSV,employee,date,class,ncosec_in,ncosec_out,ncosec_hours,mine_in,mine_out,mine_hours,punches"];
+  for (const d of diffs) {
+    const [emp, date] = String(d.k).split("|");
+    const ns = span(d.datdIn, d.datdOut === "-" ? null : d.datdOut);
+    const ms = span(d.mineIn, d.mineOut);
+    const nBad = ns !== null && (ns > 14 * 60 || ns < 60);
+    const mBad = ms !== null && (ms > 14 * 60);
+    let c: keyof typeof cls;
+    if (ns === null) c = mBad ? "mineImplausible" : "minePlausibleNcosecOpen";
+    else if (nBad && !mBad) c = "ncosecImplausibleMinePlausible";
+    else if (!nBad && !mBad) c = "bothPlausible";
+    else if (mBad && !nBad) c = "mineImplausible";
+    else c = "bothImplausible";
+    cls[c]++;
+    const e = perEmp.get(emp) ?? { n: 0, classes: {} }; e.n++; e.classes[c] = (e.classes[c] ?? 0) + 1; perEmp.set(emp, e);
+    rows.push(["CSV", emp, date, c, d.datdIn, d.datdOut, ns === null ? "" : (ns / 60).toFixed(1), d.mineIn, d.mineOut, ms === null ? "" : (ms / 60).toFixed(1), d.n].join(","));
+  }
+  const ranked = [...perEmp.entries()].sort((a, b) => b[1].n - a[1].n);
+  console.log(`\nDISAGREE CLASSES: ${JSON.stringify(cls)}`);
+  console.log(`DISAGREE employees: ${perEmp.size}; top 10 employees hold ${ranked.slice(0, 10).reduce((s, [, v]) => s + v.n, 0)} of ${diffs.length}; top 30 hold ${ranked.slice(0, 30).reduce((s, [, v]) => s + v.n, 0)}`);
+  console.log("DISAGREE by employee (top 40): employee | disagreements | classes");
+  for (const [emp, v] of ranked.slice(0, 40)) console.log(`  ${emp} | ${v.n} | ${JSON.stringify(v.classes)}`);
+  for (const r of rows) console.log(r);
   console.log("\nDISAGREE samples (key | NCOSEC in->out | mine in->out | punches | out diff min)");
   for (const d of diffs.slice(0, 40)) console.log(`  ${d.k} | ${d.datdIn} -> ${d.datdOut} | ${d.mineIn} -> ${d.mineOut} | ${d.n} | ${d.outByMin}`);
   console.log("\nONLY-IN-NCOSEC samples");
