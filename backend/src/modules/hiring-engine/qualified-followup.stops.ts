@@ -22,7 +22,7 @@ function factsSql(limit: number, paged: boolean): string {
        EXISTS (SELECT 1 FROM he_message hm WHERE hm.mobile10 = qf.mobile10 ${C} AND hm.direction = 'in' AND hm.created_at > qf.qualified_at) AS he_replied,
        EXISTS (SELECT 1 FROM meta_lead_messages mm WHERE mm.lead_id = qf.meta_lead_id ${C} AND mm.direction = 'inbound' AND mm.created_at > qf.qualified_at) AS meta_replied,
        ac.current_stage AS ats_stage,
-       jr.id AS jr_id, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount
+       jr.id AS jr_id, jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount
   FROM qualified_followup qf
   LEFT JOIN job_requisition jr ON jr.id = qf.requisition_id ${C}
   LEFT JOIN ats_candidate ac ON ac.id = qf.ats_candidate_id ${C}
@@ -117,6 +117,7 @@ function decideRow(r: RowDataPacket, criteria?: { verdict: string | null; booked
       closedAt: r.closed_at ?? null,
       requestedHeadcount: r.requested_headcount != null ? Number(r.requested_headcount) : null,
       fulfilledHeadcount: r.fulfilled_headcount != null ? Number(r.fulfilled_headcount) : null,
+      joinedHeadcount: r.joined_headcount != null ? Number(r.joined_headcount) : null,
     }),
     joined: r.lead_status === "joined" || stage === "joined" || stage === "payroll_validated",
     hasMobile: /^[6-9][0-9]{9}$/.test(String(r.mobile10 ?? "")),

@@ -107,3 +107,11 @@ describe("dark mode guard (the host page's global label colour is light-theme on
     }
   });
 });
+
+describe("campaign map: the Live / Old boundary", () => {
+  it("says which form fills count as Live Meta, with the computed day", () => {
+    const html = view({ data: { ...data(), liveFrom: "2026-10-02", liveDays: 7, liveMode: "rolling" } });
+    expect(html).toContain("Live Meta = form filled in the last 7 days, on or after 02 Oct 2026 (IST); Old Meta data = first form fill older than that.");
+    expect(view()).not.toContain("Live Meta = form filled");
+  });
+});

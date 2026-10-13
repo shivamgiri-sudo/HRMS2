@@ -8,9 +8,10 @@ const MAX_DETAIL_CALLS = 15;
 type Stage = "branch_head" | "admin";
 
 /**
- * The module's UNRESTRICTED_ROLES (super_admin, admin, it_head) override the assigned-head / branch check at both stages. Owner policy
- * keeps super_admin and it_head (a department head: org-wide) as true overrides but makes `admin` branch-scoped, so an admin may
- * decide only passes of their OWN branch. Everyone else decides as the assigned Branch Head, or as the branch_admin of the pass's branch.
+ * The module's UNRESTRICTED_ROLES (super_admin, admin, it_head) override the assigned-head / branch check at both stages, which only
+ * means they are ABLE to decide. The popup shows a pass to its designated person: the assigned Branch Head at stage 1 (a branch admin
+ * only when none is assigned), and at stage 2 it_head (org-wide), the branch's admin or its branch_admin. super_admin is not
+ * shown either stage unless it holds one of those roles.
  */
 async function who(ctx: LoopbackCtx): Promise<{ employeeId: string | null; roles: string[]; scope: CallerScope }> {
   const [roles, me, scope] = await Promise.all([
@@ -21,7 +22,7 @@ async function who(ctx: LoopbackCtx): Promise<{ employeeId: string | null; roles
   return { employeeId: me?.employeeId ?? null, roles, scope };
 }
 
-const GLOBAL_OVERRIDE_ROLES = ["super_admin", "it_head"];
+const GLOBAL_OVERRIDE_ROLES = ["it_head"];
 const globalOverride = (w: { roles: string[] }) => w.roles.some((r) => GLOBAL_OVERRIDE_ROLES.includes(r));
 const adminOfBranch = (w: { roles: string[]; scope: CallerScope }, branchId: unknown) => w.roles.includes("admin") && branchAllowed(w.scope, branchId);
 
@@ -109,10 +110,13 @@ export const exitPassAdapter: ApprovalAdapter = {
     if (!me.employeeId) return [];
     const bhRows: any[] = (bh?.data ?? [])
       .filter((r: any) => r.status === "pending_branch_head" && r.requestor_employee_id !== me.employeeId)
-      .filter((r: any) => r.branch_head_employee_id === me.employeeId || globalOverride(me) || adminOfBranch(me, r.branch_id))
+      // Branch-head stage: the ASSIGNED head only. A literal admin of the pass's branch is shown it solely when no head is assigned.
+      .filter((r: any) => r.branch_head_employee_id === me.employeeId || (!r.branch_head_employee_id && adminOfBranch(me, r.branch_id)))
       .slice(0, 200);
     const adminRows: any[] = (admin?.data ?? [])
       .filter((r: any) => r.status === "pending_admin_approval" && r.requestor_employee_id !== me.employeeId)
+      // Admin / IT stage is role-designated: it_head (org-wide), admin of the branch, branch_admin of the branch. super_admin alone is
+      // a bypass, not a designation, so it is not shown the stage unless it also holds one of those roles.
       .filter((r: any) => globalOverride(me) || adminOfBranch(me, r.branch_id) || (me.roles.includes("branch_admin") && branchAllowed(me.scope, r.branch_id)))
       .slice(0, 200);
     const items = await itemsFor(ctx, [...bhRows, ...adminRows]);

@@ -1,3 +1,4 @@
+vi.mock("../ops-health.service.js", () => ({ runMorningHealth: vi.fn(async () => false) }));
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
@@ -31,7 +32,7 @@ const switchesAt = (code: number) => async (env: NodeJS.ProcessEnv) =>
   readSwitches(env, new Map([["policy.followup.meta_live", code], ["policy.followup.meta_old", code], ["policy.followup.he", code]]));
 const tick = (env: NodeJS.ProcessEnv, now: Date, deps: Record<string, unknown> = {}, code = 4) =>
   runQualifiedFollowupTick({ env, now, deps: { loadSwitches: switchesAt(code), sharedWaSentToday: h.waSent, runStageB: async () => null, ...deps } as never });
-const PASS = ["expire", "sync", "stops", "email", "wa", "call"];
+const PASS = ["expire", "sync", "stops", "wa", "call", "email"];
 
 function lockOk(got = 1) {
   h.conn.execute.mockImplementation(async (sql: string) => (String(sql).includes("GET_LOCK") ? [[{ got }]] : [[{ r: 1 }]]));
@@ -252,8 +253,19 @@ describe("start and stop", () => {
       startQualifiedFollowupWorker();
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
-      expect(h.getConnection).toHaveBeenCalledTimes(2);
+      // the first tick 30 s after start, then one per 5 minutes
+      expect(h.getConnection).toHaveBeenCalledTimes(3);
     } finally { delete process.env.QUAL_FOLLOWUP_MODE; vi.useRealTimers(); }
+  });
+  it("the first tick fires 30 seconds after start, not a whole interval later", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.QUAL_FOLLOWUP_MODE = "live";
+      h.getConnection.mockRejectedValue(new Error("db down"));
+      startQualifiedFollowupWorker();
+      await vi.advanceTimersByTimeAsync(31 * 1000);
+      expect(h.getConnection).toHaveBeenCalledTimes(1);
+    } finally { delete process.env.QUAL_FOLLOWUP_MODE; stopQualifiedFollowupWorker(); vi.useRealTimers(); }
   });
 });
 
@@ -286,6 +298,6 @@ describe("unified tick (Task 9)", () => {
   it("stage B runs before stage A in each pass, on the same scope", async () => {
     const runStageB = vi.fn(async () => { h.calls.push("stageB"); return null; });
     await tick(live, at("11:00"), { runStageB }, 1);
-    expect(h.calls).toEqual(["expire", "sync", "stops", "stageB", "email", "wa", "call"]);
+    expect(h.calls).toEqual(["expire", "sync", "stops", "stageB", "wa", "call", "email"]);
   });
 });

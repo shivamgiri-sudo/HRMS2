@@ -8,12 +8,9 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { emailService } from "../communication/email.service.js";
-import { PinbotWhatsAppProvider } from "../communication/providers/whatsapp/pinbot.provider.js";
 import { STALE_PING_MS, summarizeExpected, type ExpectedRow } from "./he-eta.js";
-import { buildParams } from "./he-template-catalog.js";
-import { sendsPaused } from "./he-send.service.js";
 
-const pinbot = new PinbotWhatsAppProvider();
+
 const WINDOW_MIN = 30;
 
 export interface AlertSummary { drives: number; alerted: number; skipped: number; recipients: number }
@@ -63,14 +60,28 @@ export async function getBoard(): Promise<BoardDrive[]> {
   return out;
 }
 
+const esc = (v: unknown): string => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** The staff e-mail: which requisition, position and process, and every confirmed candidate with name, number and slot. Internal only. */
+export function alertEmailHtml(a: { branch: string; requisition: string; position: string; process: string; expected: number; live: number; confirmed: Array<{ name: string | null; mobile10: string; slot: string | null }>; link: string }): string {
+  const rows = a.confirmed.map((c) => `<tr><td style="padding:4px 8px;border:1px solid #ddd">${esc(c.name ?? "Candidate")}</td><td style="padding:4px 8px;border:1px solid #ddd">${esc(c.mobile10)}</td><td style="padding:4px 8px;border:1px solid #ddd">${esc(c.slot ? String(c.slot).slice(11, 16) : "")}</td></tr>`).join("");
+  return `<p><b>${a.expected} candidate${a.expected === 1 ? "" : "s"} expected within 30 minutes at ${esc(a.branch)}.</b></p>
+<table style="border-collapse:collapse;margin:8px 0"><tr><td style="padding:2px 8px 2px 0">Job requisition</td><td><b>${esc(a.requisition)}</b></td></tr>
+<tr><td style="padding:2px 8px 2px 0">Position</td><td><b>${esc(a.position)}</b></td></tr><tr><td style="padding:2px 8px 2px 0">Process</td><td><b>${esc(a.process)}</b></td></tr></table>
+<p>${a.confirmed.length} confirmed, ${a.live} sharing live location.</p>
+${a.confirmed.length ? `<table style="border-collapse:collapse"><tr><th style="padding:4px 8px;border:1px solid #ddd;text-align:left">Confirmed candidate</th><th style="padding:4px 8px;border:1px solid #ddd;text-align:left">Contact number</th><th style="padding:4px 8px;border:1px solid #ddd;text-align:left">Slot</th></tr>${rows}</table>` : "<p>Nobody has confirmed yet for this window.</p>"}
+<p><a href="${esc(a.link)}">Open the Hiring Engine</a></p>`;
+}
+
 export async function runHrArrivalAlerts(o: { dryRun?: boolean } = {}): Promise<AlertSummary> {
   const dryRun = o.dryRun !== false;
   const out: AlertSummary = { drives: 0, alerted: 0, skipped: 0, recipients: 0 };
   const now = new Date();
-  const [drives] = await db.execute<RowDataPacket[]>("SELECT id, branch_name FROM he_drive WHERE status = 'active' AND drive_date = CURDATE()");
+  const [drives] = await db.execute<RowDataPacket[]>("SELECT d.id, d.branch_name, jr.requisition_code, jr.designation_name, jr.process_name FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id WHERE d.status = 'active' AND d.drive_date = CURDATE()");
   for (const d of drives) {
     out.drives++;
-    const cands = (await loadExpectedRows(d.id as string)).filter((r) => r.state !== "arrived");
+    const allRows = await loadExpectedRows(d.id as string);
+    const cands = allRows.filter((r) => r.state !== "arrived");
     const s = summarizeExpected(cands, now, WINDOW_MIN);
     if (s.expected < 1) { out.skipped++; continue; }
     if (dryRun) { out.alerted++; continue; }
@@ -83,11 +94,13 @@ export async function runHrArrivalAlerts(o: { dryRun?: boolean } = {}): Promise<
       `SELECT DISTINCT e.user_id, e.full_name, e.mobile, e.official_email
          FROM employees e JOIN branch_master bm ON bm.id = e.branch_id
          JOIN user_roles ur ON ur.user_id = e.user_id AND ur.active_status = 1
-        WHERE bm.branch_name = ? AND ur.role_key IN ('recruitment_hr','hr','branch_head','branch_admin') AND e.active_status = 1`, [d.branch_name]);
+        WHERE bm.branch_name = ? AND ur.role_key IN ('operations_manager','process_manager','recruitment_hr','hr','branch_head','branch_admin') AND e.active_status = 1`, [d.branch_name]);
     const title = `${s.expected} candidate${s.expected === 1 ? "" : "s"} expected within 30 min`;
     const detail = `${d.branch_name}: ${s.confirmed} confirmed, ${s.live} sharing live location.`;
     const channels = { inApp: 0, whatsapp: 0, email: 0 };
     const base = process.env.HE_PUBLIC_BASE_URL ?? "";
+    const html = alertEmailHtml({ branch: String(d.branch_name), requisition: String(d.requisition_code ?? ""), position: String(d.designation_name ?? ""), process: String(d.process_name ?? ""),
+      expected: s.expected, live: s.live, confirmed: cands.filter((r) => r.confirmed).map((r) => ({ name: r.name, mobile10: r.mobile10, slot: r.slotAtRaw })), link: `${base}/ats/hiring-engine` });
     for (const h of hr) {
       if (h.user_id) {
         await db.execute(
@@ -95,18 +108,9 @@ export async function runHrArrivalAlerts(o: { dryRun?: boolean } = {}): Promise<
            VALUES (UUID(), ?, 'he_arrival_alert', ?, ?, 'he_drive', ?, '/ats/hiring-engine', 'high', 0, 0, NOW())`, [h.user_id, title, detail, d.id])
           .then(() => { channels.inApp++; }).catch(() => undefined);
       }
-      if (!sendsPaused() && h.mobile && pinbot.isConfigured()) {
-        const [t] = await db.execute<RowDataPacket[]>("SELECT pinbot_name, language, approval_state FROM he_template WHERE template_key = 'he_hr_arrival_alert:en' LIMIT 1");
-        if (t[0]?.approval_state === "approved") {
-          try {
-            const params = buildParams("he_hr_arrival_alert", "en", { contact_name: String(h.full_name ?? "Team").split(/\s+/)[0], branch_name: d.branch_name, expected_count: s.expected, confirmed_count: s.confirmed, live_count: s.live, board_link: `${base}/ats/hiring-engine` });
-            const r = await pinbot.sendTemplate(String(h.mobile), String(t[0].pinbot_name), params, String(t[0].language));
-            if (r.success) channels.whatsapp++;
-          } catch (err) { logger.warn({ err: (err as Error).message }, "[he-alert] whatsapp skipped"); }
-        }
-      }
+      // No WhatsApp to HR and branch heads (owner decision 2026-10-13): staff get the in-app item and the email only.
       if (h.official_email && emailService.isConfigured()) {
-        try { await emailService.send({ to: String(h.official_email), subject: title, html: `<p>${detail}</p><p><a href="${base}/ats/hiring-engine">Open the Hiring Engine</a></p>` }); channels.email++; }
+        try { await emailService.send({ to: String(h.official_email), subject: title, html }); channels.email++; }
         catch (err) { logger.warn({ err: (err as Error).message }, "[he-alert] email skipped"); }
       }
     }

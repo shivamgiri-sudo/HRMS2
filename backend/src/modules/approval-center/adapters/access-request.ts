@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { branchAllowed, callerScope, io } from "./scope-guard.js";
+import { holdsLiteralRole } from "./_scope.js";
 
 /**
  * Page-access requests. Both endpoints are admin-only; a non-admin gets 403 from list (swallowed by the service). The endpoint lists
@@ -13,6 +14,7 @@ export const accessRequestAdapter: ApprovalAdapter = {
   label: "Page access request",
   category: "Admin",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, "admin"))) return [];
     const res = await ctx.call("GET", "/api/access/requests", { query: { status: "pending" } });
     const rows: any[] = (res?.data ?? []).slice(0, 200);
     const me = await callerScope(ctx);

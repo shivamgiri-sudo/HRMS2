@@ -30,7 +30,15 @@ import { env } from "../../config/env.js";
 import { notificationGateway } from "../communication/notification.gateway.js";
 import type { RecipientSpec } from "../../shared/recipient-resolver.types.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
+import { normaliseEmail } from "../../shared/email-domains.js";
 import { inboxService } from "../inbox/inbox.service.js";
+
+/**
+ * Stages whose holders are never mailed about a NOC. Accounts is cleared by the system from the dues
+ * snapshot and Finance is not a stage any more, so a sign-off or overdue mail to the Accounts or
+ * Finance heads would only ask people for something nobody needs from them.
+ */
+const NEVER_NOTIFY_STAGES = new Set(["accounts", "finance"]);
 
 function frontendBaseUrl(): string {
   return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(/\/+$/, "");
@@ -38,7 +46,38 @@ function frontendBaseUrl(): string {
 
 /** Deep link to the authenticated case screen — where a signatory records their decision. */
 function caseUrl(caseId: string): string {
-  return `${frontendBaseUrl()}/payroll/noc?case=${caseId}`;
+  return `${frontendBaseUrl()}/payroll/noc-cases?case=${caseId}`;
+}
+
+/**
+ * Every deliverable address the leaver has, official AND personal, as explicit recipients.
+ *
+ * The stored spec uses emailPolicy official_then_personal, which sends to ONE address: the
+ * official mailbox whenever it still exists. A leaver's official access is revoked at or soon
+ * after exit, so a link sent only there is lost, and the personal address is never tried while
+ * the official one still resolves. The form link and the decline/completion notices must reach
+ * both. Passed as specOverride, so kill switch, cap, cooldown, dedupe and audit all still apply.
+ *
+ * Returns null when the employee has no address at all, so the caller falls back to the stored
+ * spec (and its normal "dropped: no_email" accounting) rather than an empty `to` that throws.
+ */
+async function leaverBothAddressesTo(employeeId: string): Promise<RecipientSpec["to"] | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT official_email, office_email, email, personal_email, full_name
+       FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  const seen = new Set<string>();
+  const to: NonNullable<RecipientSpec["to"]> = [];
+  for (const raw of [r.official_email, r.office_email, r.email, r.personal_email]) {
+    const addr = normaliseEmail(raw as string | null);
+    if (!addr || seen.has(addr)) continue;
+    seen.add(addr);
+    to.push({ kind: "explicit_email", email: addr, name: (r.full_name as string | null) ?? undefined });
+  }
+  return to.length > 0 ? to : null;
 }
 
 interface CaseContext extends RowDataPacket {
@@ -117,16 +156,48 @@ async function stageVerifyHint(stageKey: string): Promise<string> {
  * gateway records as undeliverable. HR in cc does not prevent that throw; it is there so the
  * common case of "role holder exists but has no company email" still reaches a human.
  */
-function stageSpec(stage: StageContext, branchId: string | null): RecipientSpec {
+/**
+ * Users who hold one of these roles FOR THIS BRANCH, and nobody else.
+ *
+ * The shared resolver's branch scope also returns every holder of the role with an organisation-wide
+ * ("all") scope, which is how leadership accounts (CEO, COO, other cross-branch heads) ended up on
+ * every branch's NOC mail. A NOC stage is signed by the people of the leaver's own branch, so this
+ * takes only: a plain role grant for someone who sits in the branch, or a scope row naming the branch.
+ * Leadership roles are excluded outright, whatever else they hold.
+ */
+const LEADERSHIP_ROLES = ["ceo", "coo", "cxo", "md", "director", "chairman", "super_admin"];
+
+async function branchOnlyRoleHolders(roleKeys: string[], branchId: string | null): Promise<string[]> {
+  const keys = roleKeys.map((k) => k.trim().toLowerCase()).filter(Boolean);
+  if (!keys.length || !branchId) return [];
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT DISTINCT e.user_id
+       FROM employees e
+       JOIN auth_user au ON au.id = e.user_id
+      WHERE e.active_status = 1
+        AND (
+          (e.branch_id = ? AND EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = e.user_id AND r.active_status = 1 AND r.role_key IN (?)))
+          OR EXISTS (SELECT 1 FROM user_assignment_scope s
+                      WHERE s.user_id = e.user_id AND s.active_status = 1 AND s.role_key IN (?)
+                        AND s.scope_type IN ('branch','team') AND s.branch_id = ?)
+        )
+        AND NOT EXISTS (SELECT 1 FROM user_roles x WHERE x.user_id = e.user_id AND x.active_status = 1 AND x.role_key IN (?))
+      LIMIT 10`,
+    [branchId, keys, keys, branchId, LEADERSHIP_ROLES],
+  );
+  return rows.map((r) => String(r.user_id));
+}
+
+async function stageSpec(stage: StageContext, branchId: string | null): Promise<RecipientSpec> {
   const roleKeys = [stage.role_key, stage.fallback_role_key].filter((r): r is string => Boolean(r));
+  const holders = await branchOnlyRoleHolders(roleKeys, branchId);
   return {
-    to: [{
-      kind: "role_scope",
-      roleKeys,
-      scope: branchId ? { type: "branch", branchIds: [branchId] } : { type: "all" },
-      limit: 10,
-    }],
-    cc: branchId ? [{ kind: "branch_hr", branchId }] : [],
+    // Named users, so the shared resolver cannot widen the list; the fallback to branch HR keeps a
+    // stage with no resolvable holder from throwing EMPTY_TO.
+    to: holders.length
+      ? holders.map((userId) => ({ kind: "user" as const, userId }))
+      : branchId ? [{ kind: "branch_hr" as const, branchId }] : [],
+    cc: holders.length && branchId ? [{ kind: "branch_hr" as const, branchId }] : [],
   };
 }
 
@@ -147,9 +218,7 @@ async function inboxForStage(
 ): Promise<void> {
   const roleKeys = [stage.role_key, stage.fallback_role_key].filter((r): r is string => Boolean(r));
   const userIds = new Set<string>();
-  for (const rk of roleKeys) {
-    for (const id of await resolveRoleHolderUserIds(rk, nocCase.branch_id)) userIds.add(id);
-  }
+  for (const id of await branchOnlyRoleHolders(roleKeys, nocCase.branch_id)) userIds.add(id);
   for (const userId of userIds) {
     await inboxService.createItem({
       user_id: userId,
@@ -158,7 +227,7 @@ async function inboxForStage(
       description: `${nocCase.employee_name ?? ""} (${nocCase.employee_code ?? ""}) — ${stage.stage_label} clearance`,
       entity_type: "noc_case",
       entity_id: nocCase.id,
-      action_url: `/payroll/noc?case=${nocCase.id}`,
+      action_url: `/payroll/noc-cases?case=${nocCase.id}`,
       priority,
     }).catch(() => { /* the bell is a mirror; never the reason a notification fails */ });
   }
@@ -194,8 +263,10 @@ export async function notifyInviteSent(
     const nocCase = await loadCase(caseId);
     if (!nocCase) return result;
 
+    const bothTo = await leaverBothAddressesTo(nocCase.employee_id);
     const outcome = await notificationGateway.notify({
       eventCode: "noc_invite_sent",
+      ...(bothTo ? { specOverride: { to: bothTo } } : {}),
       dedupeKey: `noc_case:${caseId}:invite:${invite.inviteId}`,
       context: { employeeId: nocCase.employee_id, branchId: nocCase.branch_id },
       entityType: "noc_case",
@@ -294,10 +365,25 @@ export async function notifyEmployeeSubmitted(caseId: string): Promise<void> {
 // 3. Signatory pending
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function notifySignatoryPending(caseId: string, stageKey: string): Promise<void> {
+export async function notifySignatoryPending(
+  caseId: string,
+  stageKey: string,
+  opts: { inboxOnly?: boolean } = {},
+): Promise<void> {
+  if (NEVER_NOTIFY_STAGES.has(stageKey)) return;
   try {
     const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return;
+
+    // Backlog sweeps pass inboxOnly: the task appears in the person's Work Inbox, with no email.
+    if (opts.inboxOnly) {
+      await inboxForStage(stage, nocCase, "noc_signatory_pending",
+        `NOC clearance awaiting your sign-off — ${nocCase.employee_name ?? nocCase.employee_code ?? ""}`);
+      await db.execute(
+        `UPDATE noc_signatory SET notified_at = COALESCE(notified_at, NOW())
+          WHERE noc_case_id = ? AND stage_key = ?`, [caseId, stageKey]).catch(() => undefined);
+      return;
+    }
 
     await notificationGateway.notify({
       eventCode: "noc_signatory_pending",
@@ -308,7 +394,7 @@ export async function notifySignatoryPending(caseId: string, stageKey: string): 
       entityType: "noc_case",
       entityId: caseId,
       correlationId: `noc_case:${caseId}`,
-      specOverride: stageSpec(stage, nocCase.branch_id),
+      specOverride: await stageSpec(stage, nocCase.branch_id),
       data: {
         employee_name: nocCase.employee_name,
         employee_code: nocCase.employee_code,
@@ -355,11 +441,12 @@ export async function notifySignatoryReminder(
   reminderNo: number,
   escalate: boolean,
 ): Promise<boolean> {
+  if (NEVER_NOTIFY_STAGES.has(stageKey)) return false;
   try {
     const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return false;
 
-    const spec = stageSpec(stage, nocCase.branch_id);
+    const spec = await stageSpec(stage, nocCase.branch_id);
     if (escalate && nocCase.branch_id) {
       spec.cc = [...(spec.cc ?? []), { kind: "branch_head", branchId: nocCase.branch_id }];
     }
@@ -403,8 +490,17 @@ export async function notifyDeclined(caseId: string, stageKey: string): Promise<
     const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return;
 
+    const bothTo = await leaverBothAddressesTo(nocCase.employee_id);
     await notificationGateway.notify({
       eventCode: "noc_declined",
+      ...(bothTo
+        ? {
+            specOverride: {
+              to: bothTo,
+              cc: [{ kind: "branch_hr" as const }, { kind: "reporting_manager" as const }],
+            },
+          }
+        : {}),
       dedupeKey: `noc_case:${caseId}:declined:${stageKey}`,
       context: { employeeId: nocCase.employee_id, branchId: nocCase.branch_id },
       entityType: "noc_case",
@@ -431,7 +527,7 @@ export async function notifyDeclined(caseId: string, stageKey: string): Promise<
         description: nocCase.decline_reason ?? stage.remarks ?? "No reason recorded",
         entity_type: "noc_case",
         entity_id: caseId,
-        action_url: `/payroll/noc?case=${caseId}`,
+        action_url: `/payroll/noc-cases?case=${caseId}`,
         priority: "high",
       }).catch(() => undefined);
     }
@@ -456,8 +552,17 @@ export async function notifyCompleted(caseId: string): Promise<void> {
     if (!nocCase) return;
 
     const route = nocCase.fnf_option ?? nocCase.fnf_option_suggested;
+    const bothTo = await leaverBothAddressesTo(nocCase.employee_id);
     await notificationGateway.notify({
       eventCode: "noc_completed",
+      ...(bothTo
+        ? {
+            specOverride: {
+              to: bothTo,
+              cc: [{ kind: "branch_hr" as const }, { kind: "branch_head" as const }],
+            },
+          }
+        : {}),
       dedupeKey: `noc_case:${caseId}:completed`,
       context: { employeeId: nocCase.employee_id, branchId: nocCase.branch_id },
       entityType: "noc_case",
@@ -486,11 +591,16 @@ export async function notifyCompleted(caseId: string): Promise<void> {
           description: `Salary and F&F release is unblocked. Settlement route: ${route ? (FNF_LABEL[route] ?? route) : "not set"}.`,
           entity_type: "noc_case",
           entity_id: caseId,
-          action_url: `/payroll/noc?case=${caseId}`,
+          action_url: `/payroll/noc-cases?case=${caseId}`,
           priority: "normal",
         }).catch(() => undefined);
       }
     }
+
+    // Hand the completed case straight to the Payroll Head for final approval, which is what
+    // unlocks F&F settlement. Inert unless noc_ph_final_approval_from is set.
+    const { queueForFinalApproval } = await import("./noc-final-approval.service.js");
+    await queueForFinalApproval(caseId);
 
     // Close out the per-signatory inbox tasks for this case — they are done, and leaving them
     // open is how a work inbox becomes noise people stop reading.

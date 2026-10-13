@@ -1,0 +1,58 @@
+name: Ops deploy-backup contents check (manual, read-only)
+
+# Read-only: proves what is inside /var/www/HRMS2/.deploy-backups (build output vs user files) and where the real upload folders are.
+# Names, counts and sizes only. Deletes nothing.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-backup-contents-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Backup contents
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - name: Look
+        shell: bash
+        run: |
+          B=/var/www/HRMS2/.deploy-backups
+          echo "== backup entry kinds"
+          ls -1 "$B" | sed -E 's/-[0-9]{8,14}.*$//' | sort | uniq -c
+          echo "== any upload / private / candidate / ocr / env names anywhere inside the backups (depth 6)"
+          find "$B" -maxdepth 6 \( -type d \( -iname uploads -o -iname private-storage -o -iname candidate-files -o -iname candidate-documents -o -iname ocr-data -o -iname documents \) -o -name '.env*' \) 2>/dev/null | head -20
+          echo "(end)"
+          echo "== symlinks inside backups (could point at live data)"
+          find "$B" -maxdepth 6 -type l 2>/dev/null | head -20
+          echo "(end)"
+          echo "== size by kind"
+          for k in deploy frontend-dist predeploy untracked-migrations; do
+            echo "$k: $(du -sch "$B"/$k* 2>/dev/null | tail -1)"
+          done
+          echo "== file types in samples (dirs only): oldest/middle/newest of each kind"
+          for k in deploy frontend-dist; do
+            for d in $(ls -dtr "$B"/$k-* 2>/dev/null | sed -n '1p;$p'); do
+              echo "-- $(basename $d)  $(du -sh "$d" 2>/dev/null | cut -f1)"
+              if [ -d "$d" ]; then (cd "$d" && find . -type f | sed -E 's/.*\.([A-Za-z0-9]+)$/\1/' | sort | uniq -c | sort -rn | head -8); ls -la "$d" | head -8; fi
+            done
+          done
+          echo "== predeploy / untracked-migrations"
+          ls -la "$B"/predeploy* "$B"/untracked-migrations* 2>/dev/null | head -10
+          echo "== any .sql / .sql.gz / dump files anywhere in the backups"
+          find "$B" -maxdepth 4 \( -name '*.sql' -o -name '*.sql.gz' -o -name '*.dump' \) 2>/dev/null | head -10
+          echo "(end)"
+          echo "== where the real user files live"
+          for p in /var/www/HRMS2/backend/uploads /var/www/HRMS2/backend/private-storage /var/www/HRMS2/backend/candidate-files /var/www/HRMS2/backend/ocr-data /var/www/HRMS2/uploads; do
+            if [ -e "$p" ]; then echo "$p  $(du -sh "$p" 2>/dev/null | cut -f1)  fs=$(df --output=target "$p" | tail -1)"; else echo "$p  (absent)"; fi
+          done
+          echo "== UPLOAD_DIR in env (value only if it is a path)"
+          grep -E '^UPLOAD_DIR=' /var/www/HRMS2/backend/.env 2>/dev/null | sed -E 's/=.*/=<set>/' || true
+          echo "== is anything under .deploy-backups newer than 1 day other than expected build dirs"
+          find "$B" -maxdepth 1 -mtime -1 | wc -l

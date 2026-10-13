@@ -1,0 +1,45 @@
+name: Ops disk usage (manual, read-only)
+
+# Read-only: df and the deploy-backup directory listing (names, sizes, dates). Writes nothing.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-disk-usage
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  disk:
+    name: Disk usage
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: df
+        shell: bash
+        run: |
+          date -u
+          df -h /var /var/lib /home 2>&1 | head
+          echo '--- stat -f /var (free = all free blocks, available = usable by non-root)'
+          stat -f -c 'block=%S total=%b free=%f available=%a' /var
+          id -un
+          touch /var/www/HRMS2/.deploy-staging/.write-test 2>&1 && echo WRITE_OK && rm -f /var/www/HRMS2/.deploy-staging/.write-test || echo WRITE_FAILED
+      - name: Deploy backups (newest first)
+        shell: bash
+        run: |
+          B=/var/www/HRMS2/.deploy-backups
+          echo "entries: $(ls -1 $B 2>/dev/null | wc -l)"
+          ls -lt --time-style=long-iso $B 2>/dev/null | head -60
+          echo "--- sizes of the 12 newest and 12 oldest"
+          (cd $B && ls -t | head -12 | xargs -r du -sh 2>/dev/null)
+          echo "..."
+          (cd $B && ls -tr | head -12 | xargs -r du -sh 2>/dev/null)
+      - name: Other deploy leftovers
+        shell: bash
+        run: |
+          ls -dlt --time-style=long-iso /var/www/HRMS2/.deploy-staging/* /var/www/HRMS2/dist.failed-* /var/www/HRMS2/*.failed-* 2>/dev/null | head -20 || true
+          grep -n "deploy-backups" /var/www/HRMS2/.github/workflows/deploy.yml 2>/dev/null | head -10 || true

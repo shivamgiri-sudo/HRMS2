@@ -10,7 +10,7 @@ const STAGES: Record<string, { role: string; label: string; step: number }> = {
 
 /**
  * Budget top-up requests (2 stages). The list endpoint is branch-scoped but returns every status
- * and role's view; actionable = status at a stage the caller owns (or super_admin) and not raised by the caller
+ * and role's view; actionable = status at a stage whose role the caller holds and not raised by the caller
  * (budgetTopupService.review refuses both decisions on your own request).
  * The list is scoped by the finance resolver (all-branch for `admin`, plus assignment-granted branches), so each row is also
  * required to be in the caller's OWN branch unless the caller is org-wide (Finance Head and the other exempt roles).
@@ -21,8 +21,8 @@ export const budgetTopupAdapter: ApprovalAdapter = {
   category: "Finance",
   async list(ctx) {
     const roles = await callerRoles(ctx);
-    const isSuper = hasRole(roles, "super_admin");
-    const allowed = Object.keys(STAGES).filter((s) => isSuper || hasRole(roles, STAGES[s].role));
+    // Stage-role designated: super_admin is able to review any stage but is only shown the stages whose role it literally holds.
+    const allowed = Object.keys(STAGES).filter((s) => hasRole(roles, STAGES[s].role));
     if (!allowed.length) return [];
     const res = await ctx.call("GET", "/api/finance/pnl/budget-topups");
     const me = await callerScope(ctx);

@@ -14,13 +14,15 @@ import { getDriveAnalytics, MAX_AHEAD_DAYS, MAX_SPAN_DAYS, tidy } from "./he-dri
 import { getDrivePlan } from "./he-drive-plan.service.js";
 import { listHeldOffers } from "./he-best-offer.service.js";
 import { followupWorkerStatus } from "./qualified-followup.worker.js";
+import { getPipelineView } from "./qualified-followup.pipeline-view.js";
+import { getFulfilment } from "./he-fulfilment.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupMode } from "./qualified-followup.types.js";
 import { addDays, istToday } from "./requisition-stream.window.js";
 
 export interface FollowupStatus {
   mode: FollowupMode;
-  callFiles: Array<{ id: string; createdAt: string; rows: number; status: string; error: string | null }>;
+  callFiles: Array<{ id: string; createdAt: string; rows: number; status: string; error: string | null; portal: string }>;
   report: { running: boolean; last: { slot: string; ok: boolean; tries: number } | null };
 }
 
@@ -39,13 +41,23 @@ function fail(res: Response, err: unknown, generic: string, what: string): void 
 /** Stored send errors can echo an address or a number: keep the words only. */
 const scrub = (s: string): string => s.replace(/[^\s@]+@[^\s@]+/g, "[email]").replace(/\d{6,}/g, "#").slice(0, 120);
 
+/** What the portal upload of a calling file did, from the batch summary: accepted, refused (with its words) or not attempted. */
+export function portalNote(summary: unknown): string {
+  try {
+    const o = (typeof summary === "string" ? JSON.parse(summary) : summary) as { portal?: { ok?: boolean; message?: string } } | null;
+    const p = o?.portal;
+    if (!p) return "not uploaded";
+    return p.ok ? `uploaded${p.message ? `: ${scrub(String(p.message))}` : ""}` : `refused: ${scrub(String(p.message ?? "no reason"))}`;
+  } catch { return "unknown"; }
+}
+
 async function callFiles(): Promise<FollowupStatus["callFiles"]> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, created_at, row_count, status, error FROM qualified_followup_call_batch ORDER BY created_at DESC LIMIT 10");
+      "SELECT id, created_at, row_count, status, error, CAST(summary AS CHAR) AS summary FROM qualified_followup_call_batch ORDER BY created_at DESC LIMIT 10");
     return rows.map((r) => ({
       id: String(r.id), createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at ?? ""),
-      rows: Number(r.row_count ?? 0), status: String(r.status), error: r.error == null ? null : scrub(String(r.error)),
+      rows: Number(r.row_count ?? 0), status: String(r.status), error: r.error == null ? null : scrub(String(r.error)), portal: portalNote(r.summary),
     }));
   } catch (err) {
     if ((err as { code?: unknown })?.code === "ER_NO_SUCH_TABLE") return [];
@@ -94,6 +106,16 @@ export function registerCommandRoutes(r: Router, roles: { view: readonly string[
       const data: FollowupStatus = { mode: followupMode(), callFiles: await callFiles(), report: { running: w.running, last: w.reports[0] ?? null } };
       res.json({ success: true, data });
     } catch (err) { fail(res, err, "Could not load the follow-up status", "status"); }
+  });
+
+  // Who is expected to walk in (today / next working day, by branch and hour) and whether each requisition will be filled.
+  r.get("/fulfilment", ...view, async (_req: Request, res: Response) => {
+    try { res.json({ success: true, data: await getFulfilment() }); } catch (err) { fail(res, err, "Could not load the fulfilment view", "fulfilment"); }
+  });
+
+  // The pipeline funnel by drive with the queue and the next send window (CEO view). Registered before /qualified-followup/:id.
+  r.get("/qualified-followup/pipeline", ...view, async (_req: Request, res: Response) => {
+    try { res.json({ success: true, data: await getPipelineView() }); } catch (err) { fail(res, err, "Could not load the pipeline", "pipeline"); }
   });
 
   // Registered before the legacy /qualified-followup/:id (which would answer "held" with 400).

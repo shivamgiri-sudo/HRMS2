@@ -13,6 +13,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Fixtures are dated Aug 2026; pin "today" before them so the past-week block (2026-10-13)
+// does not refuse every row.
+vi.mock('../../../utils/dateUtils.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/dateUtils.js')>()),
+  getIstDateString: () => '2026-07-27',
+}));
+
 // ── Hoist shared state ───────────────────────────────────────────────────────
 const { mockExecute, mockConn, mockGetConnection, notifyConn, state } = vi.hoisted(() => {
   const state = {
@@ -138,7 +145,7 @@ vi.mock('../../roster/roster-lock-guard.js', () => ({
 }));
 
 // Import service AFTER mock registration
-import { commitImportBatch } from '../roster-import.service.js';
+import { commitImportBatch, currentIstWeekStart } from '../roster-import.service.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -361,6 +368,29 @@ describe('commitImportBatch', () => {
     expect(result.assignmentsCreated).toBe(0);
     expect(state.assignmentInserts.length).toBe(0);
     expect(state.committed).toBe(true); // one locked row doesn't stop the batch reaching COMMITTED
+  });
+
+  it('refuses rows dated before the current IST week, and still commits the rest', async () => {
+    // "today" pinned to Mon 2026-07-27: a batch previewed earlier must not write last week now.
+    state.batch = makeBatch({ import_mode: 'NEW' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.importRows = [
+      makeImportRow({ employee_id_raw: 'EMP001', roster_date: '2026-07-26', validation_state: 'VALID' }),
+      makeImportRow({ id: 2, employee_id_raw: 'EMP001', roster_date: '2026-07-27', validation_state: 'VALID' }),
+    ];
+
+    const result = await commitImportBatch(1, 'approver-1', {});
+
+    expect(result.blockedByPastWeek).toBe(1);
+    expect(result.assignmentsCreated).toBe(1);
+    expect(state.committed).toBe(true);
+  });
+
+  it('currentIstWeekStart returns the Monday of the given IST date', () => {
+    expect(currentIstWeekStart('2026-10-13')).toBe('2026-10-12');
+    expect(currentIstWeekStart('2026-10-12')).toBe('2026-10-12');
+    expect(currentIstWeekStart('2026-10-18')).toBe('2026-10-12');
   });
 
   it('parses a SHIFT row\'s raw value and persists shift_start_time/shift_end_time', async () => {

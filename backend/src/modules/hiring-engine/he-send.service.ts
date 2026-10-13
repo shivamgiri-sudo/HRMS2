@@ -91,7 +91,7 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   if (o.matchId) {
     const [mr] = await db.execute<RowDataPacket[]>(
       `SELECT m.id, m.requisition_id, m.slot_at, m.token, m.state, d.id AS drive_id, d.drive_date, d.status AS drive_status, d.reinvite,
-              jr.designation_name, jr.branch_name, jr.bmi_assessment_url, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.closed_at,
+              jr.designation_name, jr.branch_name, jr.bmi_assessment_url, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.closed_at,
               bm.address, bm.latitude, bm.longitude, bm.hr_contact
          FROM he_match m LEFT JOIN he_drive d ON d.id = m.drive_id JOIN job_requisition jr ON jr.id = m.requisition_id
          LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
@@ -100,7 +100,7 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   }
   // D8, the one requisition-open rule (approved, active, not closed, seats left), shared with the follow-up guards.
   const isOpen = (r: RowDataPacket) => requisitionOpenReason({ approvalStatus: r.approval_status ?? null, activeStatus: r.active_status == null ? null : Number(r.active_status), closedAt: r.closed_at ?? null,
-    requestedHeadcount: r.requested_headcount == null ? null : Number(r.requested_headcount), fulfilledHeadcount: r.fulfilled_headcount == null ? null : Number(r.fulfilled_headcount) }) === null;
+    requestedHeadcount: r.requested_headcount == null ? null : Number(r.requested_headcount), fulfilledHeadcount: r.fulfilled_headcount == null ? null : Number(r.fulfilled_headcount), joinedHeadcount: r.joined_headcount == null ? null : Number(r.joined_headcount) }) === null;
   let requisitionOpen = m ? isOpen(m) : true;
   if (!m && o.requisitionId) {
     const [rr] = await db.execute<RowDataPacket[]>(

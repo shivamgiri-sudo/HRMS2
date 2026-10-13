@@ -16,6 +16,9 @@ import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { generateWebhookToken, last4, saveSuperbot, superbotConfig, webhookToken } from "./he-secrets.service.js";
 import { getPipelineHealth } from "./he-pipeline-health.service.js";
+import { startPlannerWarmup } from "./he-planner.service.js";
+import { markLocationElsewhere } from "./location-elsewhere.service.js";
+import { startFulfilmentWarmup } from "./he-fulfilment.service.js";
 import { testSuperbotConnection } from "./he-superbot.service.js";
 import { buildSuperbotSheet } from "./he-superbot-sheet.service.js";
 import { applySuperbotReport } from "./he-superbot-report.service.js";
@@ -26,6 +29,7 @@ import { applyCallResults, markExportedForCalling, previewCallResults } from "./
 import { getCandidate360 } from "./he-candidate360.service.js";
 import { refreshProfilesChunk } from "./he-profile.service.js";
 import { planHiring } from "./he-planner.service.js";
+import { planBranches } from "./he-branch-plan.service.js";
 import { ingestCandidates, previewCandidates } from "./he-intake.service.js";
 import { getControlRoom, learnMatchWeights, learnShowUp } from "./he-showup.service.js";
 import { INTAKE_SOURCES, type IntakeSource } from "./he-intake.js";
@@ -34,6 +38,8 @@ import { refreshExEmployees } from "./he-ex-employee.service.js";
 import { getMasterSummary, getRecruiterProductivity, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import { getMetaFunnel } from "./he-meta-funnel.service.js";
+import { getCostByBranch } from "./he-cost-branch.service.js";
+import { getUnifiedFunnel } from "./he-unified-funnel.service.js";
 import { getCampaignDashboard, scopeDriveGroups } from "./he-campaign-dashboard.service.js";
 import { listCampaignConfigs, setCampaignConfig } from "./he-campaign-config.service.js";
 import { listBatches, listLaunches, previewLaunch, startLaunch, type LaunchInput } from "./he-launch.service.js";
@@ -54,6 +60,8 @@ import { registerOutcomeRoutes } from "./he-outcome.routes.js";
 import { registerResponseRoutes } from "./response.routes.js";
 import { bodyRequisitionScoped, driveScoped, followupRowScoped } from "./he-drive-scope.js";
 import { registerFollowupSwitchRoutes } from "./followup-switch.routes.js";
+import { registerPersonHistoryRoutes } from "./person-history.routes.js";
+import { registerReplyAgentRoutes } from "./reply-agent.routes.js";
 import { DRIVE_STREAM_FED, STREAM_CHECK_FAILED, driveStreamCheck } from "./he-stream-guard.service.js";
 import { followupSummary } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -61,6 +69,7 @@ import { getFollowupAudit, listAttention, logAttentionError, markFollowupCalled,
 import { recordPersonOptOut } from "./followup-optout.service.js";
 
 export const heRouter = Router();
+if (process.env.NODE_ENV === "production" && !process.env.VITEST) { startPlannerWarmup(); startFulfilmentWarmup(); }
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
 let masterCache: { at: number; data: unknown } | null = null;
 // Warm the Meta recruitment numbers shortly after start so the first visitor does not wait for the full computation.
@@ -70,6 +79,8 @@ const ADMIN_ROLES = ["super_admin", "admin"];
 const WRITE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr"];
 registerStreamRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES, admin: ADMIN_ROLES });
 registerFollowupSwitchRoutes(heRouter, { view: VIEW_ROLES, admin: ADMIN_ROLES }); // before /qualified-followup/:id too
+registerPersonHistoryRoutes(heRouter, { view: VIEW_ROLES });
+registerReplyAgentRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES });
 registerCommandRoutes(heRouter, { view: VIEW_ROLES }); // before /qualified-followup/:id, which would answer /qualified-followup/status with 400
 registerCampaignMatrixRoutes(heRouter, { view: VIEW_ROLES });
 registerPoolBridgeRoutes(heRouter, { admin: ADMIN_ROLES });
@@ -136,6 +147,19 @@ heRouter.post("/qualified-followup/:id/retry", requireAuth, requireRole(...ADMIN
 });
 
 // HR's STOP button: the person asked not to be contacted (phone, in person). Ends every follow-up journey of the mobile; recorded with the user.
+heRouter.post("/qualified-followup/:id/not-my-city", requireAuth, requireRole(...WRITE_ROLES), followupRowScoped, async (req, res) => {
+  try {
+    const m = await mobileOfFollowup(String(req.params.id));
+    if (!m) return res.status(404).json({ success: false, message: "Row not found" });
+    const city = typeof req.body?.city === "string" ? req.body.city.trim().slice(0, 60) : null;
+    const out = await markLocationElsewhere(m, { city, actor: (req as AuthenticatedRequest).authUser?.id ?? "admin" });
+    return res.json({ success: true, data: out });
+  } catch (err) {
+    logAttentionError("not-my-city", err);
+    return res.status(500).json({ success: false, message: "Could not record that" });
+  }
+});
+
 heRouter.post("/qualified-followup/:id/opt-out", requireAuth, requireRole(...WRITE_ROLES), followupRowScoped, async (req, res) => {
   if (!FOLLOWUP_ID_RE.test(req.params.id)) return res.status(400).json({ success: false, message: "Invalid id" });
   try {
@@ -281,7 +305,7 @@ heRouter.get("/requisitions/open", requireAuth, requireRole(...VIEW_ROLES), asyn
       `SELECT id, requisition_code, designation_name, process_name, branch_name, requested_headcount, fulfilled_headcount,
               (requested_headcount - fulfilled_headcount) AS open_positions, priority
          FROM job_requisition
-        WHERE approval_status = 'approved' AND active_status = 1 AND fulfilled_headcount < requested_headcount
+        WHERE approval_status = 'approved' AND active_status = 1 AND joined_headcount < CEIL(requested_headcount * 1.3)
         ORDER BY FIELD(priority,'urgent','high','normal','low'), open_positions DESC LIMIT 300`);
     res.json({ success: true, data: rows });
   } catch (err) {
@@ -601,6 +625,19 @@ heRouter.post("/master/ex-employees/refresh", requireAuth, requireRole(...ADMIN_
   catch (err) { logger.error({ err: (err as Error).message }, "[he] ex-employee refresh failed"); res.status(500).json({ message: "Could not refresh former employees" }); }
 });
 
+// Branch hiring plan: per branch, joins still needed, walk-ins needed at its own conversion, days to target and cost to target.
+heRouter.get("/branch-plan", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try {
+    const q = req.query as Record<string, string | undefined>;
+    const num = (v?: string) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
+    const deadline = q.deadline && /^\d{4}-\d{2}-\d{2}$/.test(q.deadline) ? q.deadline : null;
+    res.json({ success: true, data: await planBranches({ months: num(q.months), deadline, walkinToSelected: num(q.walkinToSelected), selectedToJoined: num(q.selectedToJoined), walkinsPerDay: num(q.walkinsPerDay), costPerWalkin: num(q.costPerWalkin) }) });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he] branch plan failed");
+    res.status(500).json({ success: false, message: "Could not build the branch plan" });
+  }
+});
+
 // Hiring planner: what to do per source per day (and how many recruiters) to reach a selection target by a date.
 heRouter.get("/planner", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
   try {
@@ -890,6 +927,18 @@ heRouter.get("/drives/:id/superbot-sheet", requireAuth, requireRole(...WRITE_ROL
 heRouter.get("/meta-funnel", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try { res.json({ success: true, data: await getMetaFunnel() }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] meta funnel failed"); res.status(500).json({ success: false, message: "Could not load the Meta funnel" }); }
+});
+
+/** One funnel from one person list: enrolled to joined per drive (they add up), plus the ATS funnel and what came from other sources. */
+heRouter.get("/funnel/unified", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await getUnifiedFunnel(String(_req.query.from ?? ""), String(_req.query.to ?? "")) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] unified funnel failed"); res.status(500).json({ success: false, message: "Could not load the funnel" }); }
+});
+
+/** Engine cost per branch and drive type (ad spend, WhatsApp, bot calling minutes, e-mail) for a date range; defaults to the last 30 days. */
+heRouter.get("/cost/by-branch", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try { res.json({ success: true, data: await getCostByBranch(String(req.query.from ?? ""), String(req.query.to ?? "")) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] cost by branch failed"); res.status(500).json({ success: false, message: "Could not load the cost report" }); }
 });
 
 // Per Meta campaign: who owns the outreach (old Meta flow / Hiring Engine), channel switches, Superbot campaign.

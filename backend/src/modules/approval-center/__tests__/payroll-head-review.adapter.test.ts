@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 const hasAnyRole = vi.fn();
-vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole: (...a: unknown[]) => hasAnyRole(...a) }));
+vi.mock("../adapters/_scope.js", () => ({ holdsLiteralRole: (...a: unknown[]) => hasAnyRole(...a) }));
 import { describe, it, expect } from "vitest";
 import type { LoopbackCtx } from "../types.js";
 

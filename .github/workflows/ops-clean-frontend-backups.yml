@@ -1,0 +1,100 @@
+name: Ops clean old frontend backups (dry-run / apply)
+
+# Deletes ONLY superseded website-build rollback copies: directories named frontend-dist-<14 digits>-<pid> directly inside
+# /var/www/HRMS2/.deploy-backups, keeping the newest N (default 5) by their timestamp name.
+# Never touched: deploy-*, predeploy-*, untracked-migrations-*, mysqldump logs, backend/, uploads, private-storage, .env, the live dist.
+# Dry-run lists what would go and frees nothing. Apply needs confirm = clean-frontend-backups.
+# Shares the deploy concurrency group so it can never run during a deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (default) or apply"
+        required: true
+        default: dry-run
+        type: choice
+        options: [dry-run, apply]
+      keep:
+        description: "How many newest frontend-dist backups to keep"
+        required: true
+        default: "5"
+      confirm:
+        description: "To apply, type: clean-frontend-backups"
+        required: false
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  clean:
+    name: Clean frontend backups (${{ inputs.mode }})
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 60
+    steps:
+      - name: Guard inputs
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          KEEP: ${{ inputs.keep }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          [[ "$KEEP" =~ ^[0-9]{1,3}$ ]] && [ "$KEEP" -ge 3 ] || { echo "::error::keep must be a number of at least 3"; exit 1; }
+          if [ "$MODE" = apply ] && [ "$CONFIRM" != "clean-frontend-backups" ]; then echo "::error::type clean-frontend-backups in confirm to apply"; exit 1; fi
+          echo "mode=$MODE keep=$KEEP"
+
+      - name: Before
+        shell: bash
+        run: |
+          echo "--- disk"; df -h /var | tail -1
+          for p in /var/www/HRMS2/backend/uploads /var/www/HRMS2/backend/private-storage /var/www/HRMS2/uploads; do
+            echo "$p files=$(find "$p" -type f 2>/dev/null | wc -l) size=$(du -sh "$p" 2>/dev/null | cut -f1)"
+          done
+          echo "--- live site: $(curl -s -o /dev/null -w '%{http_code}' https://mcnhrms.teammas.in/)"
+          echo "--- live dist index present: $(test -f /var/www/HRMS2/dist/index.html && echo yes || echo NO)"
+          echo "--- entries by kind"; ls -1 /var/www/HRMS2/.deploy-backups | sed -E 's/-[0-9]{8,14}.*$//' | sort | uniq -c
+
+      - name: Clean
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          KEEP: ${{ inputs.keep }}
+        run: |
+          set -euo pipefail
+          B=/var/www/HRMS2/.deploy-backups
+          cd "$B"
+          mapfile -t ALL < <(ls -1 | grep -E '^frontend-dist-[0-9]{14}-[0-9]+$' | sort -r)
+          echo "frontend-dist backups: ${#ALL[@]}"
+          KEEPL=("${ALL[@]:0:$KEEP}")
+          DEL=("${ALL[@]:$KEEP}")
+          echo "keeping ${#KEEPL[@]} newest:"; printf '  %s\n' "${KEEPL[@]}"
+          echo "to delete: ${#DEL[@]}"
+          [ "${#DEL[@]}" -gt 0 ] || { echo "nothing to delete"; exit 0; }
+          echo "oldest to delete: ${DEL[-1]}"; echo "newest to delete: ${DEL[0]}"
+          n=0
+          for d in "${DEL[@]}"; do
+            # Safety: a real directory (not a link) whose real path is directly inside the backup folder.
+            [ -d "$d" ] && [ ! -L "$d" ] || { echo "skip (not a plain directory): $d"; continue; }
+            [ "$(dirname "$(realpath "$d")")" = "$B" ] || { echo "skip (outside backup folder): $d"; continue; }
+            if [ "$MODE" = apply ]; then rm -rf --one-file-system -- "$B/$d"; fi
+            n=$((n+1))
+          done
+          echo "$MODE: $n director(ies) $( [ "$MODE" = apply ] && echo removed || echo would be removed )"
+
+      - name: After
+        shell: bash
+        run: |
+          echo "--- disk"; df -h /var | tail -1
+          for p in /var/www/HRMS2/backend/uploads /var/www/HRMS2/backend/private-storage /var/www/HRMS2/uploads; do
+            echo "$p files=$(find "$p" -type f 2>/dev/null | wc -l) size=$(du -sh "$p" 2>/dev/null | cut -f1)"
+          done
+          echo "--- live site: $(curl -s -o /dev/null -w '%{http_code}' https://mcnhrms.teammas.in/)"
+          echo "--- live dist index present: $(test -f /var/www/HRMS2/dist/index.html && echo yes || echo NO)"
+          echo "--- entries by kind"; ls -1 /var/www/HRMS2/.deploy-backups | sed -E 's/-[0-9]{8,14}.*$//' | sort | uniq -c
+          echo "--- pm2"; pm2 status --no-color | head -12

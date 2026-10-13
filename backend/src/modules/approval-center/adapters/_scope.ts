@@ -3,7 +3,7 @@ import { db } from "../../../db/mysql.js";
 import { isOrgWideUser } from "../../../shared/scopeAccess.js";
 import { getEmployeeForUser } from "../../../shared/accessGuard.js";
 import { resolveEffectiveApprover } from "../../../shared/approvalEscalation.js";
-import { callerHasRole } from "./_roles.js";
+import { callerRoleKeys } from "./_roles.js";
 
 /**
  * Approval Center row-level scope. The popup must show a request ONLY to the person responsible for deciding it.
@@ -123,22 +123,30 @@ export async function dropOwn<T>(userId: string, rows: T[], pick: (r: T) => EmpR
   });
 }
 
+/** True when the caller LITERALLY holds one of `allowed` (no super_admin wildcard, no alias expansion): "designated by role". */
+export async function holdsLiteralRole(userId: string, ...allowed: string[]): Promise<boolean> {
+  const mine = await callerRoleKeys(userId);
+  return mine.some((r) => allowed.includes(r));
+}
+
 /**
- * Two-way gate for stages the reporting manager normally owns but a branch role may also decide:
- *   - the employee's EFFECTIVE APPROVER (reporting manager / skip-level on leave) sees it wherever the employee sits;
- *   - a caller holding one of `fallbackRoles` sees it only if the employee is in the caller's OWN branch;
- *   - org-wide callers see everything; everyone else (e.g. a manager who is not this employee's approver) sees nothing.
+ * Designated-approver gate for a MANAGER / reporting stage ("pending ON ME", not "I could review"):
+ *   - the employee's EFFECTIVE APPROVER (reporting manager, or skip-level while the manager is on approved leave) sees it,
+ *     wherever the employee sits;
+ *   - when NO approver can be resolved (employee has no reporting manager) the module falls back to a privileged role, so a caller
+ *     who LITERALLY holds one of `noApproverRoles` sees it, but only for an employee in their own branch (org-wide users: any);
+ *   - nobody else: super_admin / admin / hr / branch_head / org-wide roles are merely ABLE to review and are not shown it.
+ * Own rows are always dropped.
  */
 export async function keepApproverOrBranchRole<T>(
   userId: string,
   rows: T[],
   pick: (r: T) => EmpRef & { employeeId?: unknown },
-  fallbackRoles: string[],
+  noApproverRoles: string[],
 ): Promise<T[]> {
   rows = await dropOwn(userId, rows, pick);
   if (rows.length === 0) return rows;
   const scope = await callerScope(userId);
-  if (scope.orgWide) return rows;
   const refs = rows.map(pick);
   // Rows that only carry an employee code are resolved to ids first so the approver check can run.
   const needId = refs.filter((r) => !nz(r.employeeId) && nz(r.employeeCode));
@@ -149,15 +157,30 @@ export async function keepApproverOrBranchRole<T>(
     for (const r of rs as RowDataPacket[]) codeToId.set(String(r.employee_code), String(r.id));
   }
   const idOf = (r: EmpRef) => nz(r.employeeId) || codeToId.get(nz(r.employeeCode)) || "";
-  const approverIdx = new Set<number>();
-  (await keepEffectiveApprover(userId, rows.map((_, i) => i), (i) => idOf(refs[i]), scope)).forEach((i) => approverIdx.add(i));
-  const mayFallback = scope.ownBranchId ? await callerHasRole(userId, ...fallbackRoles) : false;
-  const inBranch = new Set<number>();
-  if (mayFallback) {
-    const idx = rows.map((_, i) => i);
-    (await keepInBranch(userId, idx, (i) => ({ ...refs[i], employeeId: idOf(refs[i]) || undefined }), scope)).forEach((i) => inBranch.add(i));
+  const cache = new Map<string, Promise<string | null>>();
+  const approverOf = (eid: string) => {
+    let p = cache.get(eid);
+    if (!p) {
+      p = resolveEffectiveApprover(eid).then((a) => a.approverId ?? null);
+      cache.set(eid, p);
+    }
+    return p;
+  };
+  const mayFallback = noApproverRoles.length > 0 && (await holdsLiteralRole(userId, ...noApproverRoles));
+  const keep: boolean[] = [];
+  const fallbackIdx: number[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const eid = idOf(refs[i]);
+    const approver = eid ? await approverOf(eid) : null;
+    if (approver && scope.employeeId && approver === scope.employeeId) keep[i] = true;
+    else if (!approver && mayFallback) { keep[i] = false; fallbackIdx.push(i); }
+    else keep[i] = false;
   }
-  return rows.filter((_, i) => approverIdx.has(i) || inBranch.has(i));
+  if (fallbackIdx.length) {
+    const inBranch = await keepInBranch(userId, fallbackIdx, (i) => ({ ...refs[i], employeeId: idOf(refs[i]) || undefined }), scope);
+    for (const i of inBranch) keep[i] = true;
+  }
+  return rows.filter((_, i) => keep[i]);
 }
 
 /**
@@ -187,7 +210,7 @@ export async function keepInBranchByKey<T>(userId: string, rows: T[], keyOf: (r:
 /**
  * work_item rows from GET /api/work-inbox/my are matched by user id OR by ROLE QUEUE (every holder of the role, in every
  * branch). Keep a row only if it is assigned to the caller personally, or it is an unassigned role-queue item filed under a
- * branch the caller is allowed to act in (org-wide callers: any). Unknown items are dropped (fail closed).
+ * branch the caller is allowed to act in AND whose queue role the caller literally holds. Unknown items are dropped (fail closed).
  */
 export async function keepWorkItemsForCaller<T>(userId: string, rows: T[], idOf: (r: T) => unknown, scope?: CallerScope): Promise<T[]> {
   if (rows.length === 0) return rows;
@@ -195,16 +218,18 @@ export async function keepWorkItemsForCaller<T>(userId: string, rows: T[], idOf:
   const ids = [...new Set(rows.map((r) => nz(idOf(r))).filter(Boolean))];
   if (ids.length === 0) return [];
   const [rs] = await db.execute<RowDataPacket[]>(
-    `SELECT id, assigned_to_user_id, branch_id FROM work_item WHERE id IN (${ids.map(() => "?").join(",")})`,
+    `SELECT id, assigned_to_user_id, assigned_to_role, branch_id FROM work_item WHERE id IN (${ids.map(() => "?").join(",")})`,
     ids,
   );
-  const byId = new Map<string, { assignee: string; branch: string | null }>();
-  for (const r of rs as RowDataPacket[]) byId.set(String(r.id), { assignee: nz(r.assigned_to_user_id), branch: r.branch_id ? String(r.branch_id) : null });
+  const byId = new Map<string, { assignee: string; role: string; branch: string | null }>();
+  for (const r of rs as RowDataPacket[]) byId.set(String(r.id), { assignee: nz(r.assigned_to_user_id), role: nz(r.assigned_to_role), branch: r.branch_id ? String(r.branch_id) : null });
+  const myRoles = await callerRoleKeys(userId);
   return rows.filter((r) => {
     const w = byId.get(nz(idOf(r)));
     if (!w) return false;
     if (w.assignee) return w.assignee === userId;
-    return s.allows(w.branch);
+    // Unassigned role-queue item: the caller must LITERALLY hold the queue's role (an item with no role is shown to nobody).
+    return !!w.role && myRoles.includes(w.role) && s.allows(w.branch);
   });
 }
 

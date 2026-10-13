@@ -51,15 +51,18 @@ function initials(name?: string | null) {
   return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "•";
 }
 
+// Once per calendar day on this browser (a new tab or a re-login the same day does not open it again; the corner pill stays).
+const today = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
 function readShown(): boolean {
   try {
-    return sessionStorage.getItem(SHOWN_KEY) === "1";
+    return localStorage.getItem(SHOWN_KEY) === today() || sessionStorage.getItem(SHOWN_KEY) === "1";
   } catch {
     return false;
   }
 }
 function writeShown() {
   try {
+    localStorage.setItem(SHOWN_KEY, today());
     sessionStorage.setItem(SHOWN_KEY, "1");
   } catch {
     /* storage blocked: the popup simply shows again next load */
@@ -67,7 +70,7 @@ function writeShown() {
 }
 
 /**
- * Approval Center popup. Opens on every login (and fresh tab) when the signed-in person has anything
+ * Approval Center popup. Opens once a day (first load) when the signed-in person has anything
  * waiting on them, one card per request with every component, plus Approve / Decline / View.
  * After "Later" a pill stays in the corner to reopen it.
  */
@@ -87,7 +90,8 @@ export function ApprovalCenterPopup() {
   const [busy, setBusy] = useState<null | "approve" | "reject">(null);
   const [handled, setHandled] = useState(0);
 
-  const all = data?.items ?? [];
+  const rawAll = data?.items ?? [];
+  const all = useMemo(() => collapseBulk(rawAll), [rawAll]);
   const categories = useMemo(() => {
     const m = new Map<string, number>();
     for (const i of all) m.set(i.category, (m.get(i.category) ?? 0) + 1);
@@ -121,7 +125,7 @@ export function ApprovalCenterPopup() {
 
   if (!user?.id) return null;
 
-  const total = all.length;
+  const total = rawAll.length;
 
   const run = async (action: "approve" | "reject") => {
     if (!item) return;
@@ -300,7 +304,7 @@ export function ApprovalCenterPopup() {
                     {item.noReject ? "Declining isn't available here — use View if you need to reject." : "Approving needs details only the request page can collect — use View."}
                   </p>
                 )}
-                {item.viewOnly && (
+                {item.viewOnly && !item.uid.startsWith("bulk:") && (
                   <p className="mt-4 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
                     This request needs details that can only be entered on its page. Use <strong>View</strong> to review and decide.
                   </p>
@@ -367,12 +371,20 @@ export function ApprovalCenterPopup() {
                     )
                   )}
                 </div>
-                <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1">
-                    <Inbox className="h-3.5 w-3.5" aria-hidden />
-                    {data?.failed?.length ? `${data.failed.length} queue(s) did not load` : "Same rules as each module's page"}
+                <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span className="inline-flex min-w-0 items-center gap-1">
+                    <Inbox className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    <span className="min-w-0 truncate">
+                      {data?.partial
+                        ? `Still loading ${data.pendingKinds?.length ?? "some"} more queue${(data.pendingKinds?.length ?? 2) === 1 ? "" : "s"}…`
+                        : data?.failed?.length
+                        ? `${data.failed.length} queue(s) did not load`
+                        : data?.staleHidden
+                          ? `${data.staleHidden} older request${data.staleHidden === 1 ? " is" : "s are"} on their pages`
+                          : "Only requests waiting on you"}
+                    </span>
                   </span>
-                  <button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={() => setOpen(false)}>Later</button>
+                  <button type="button" className="shrink-0 cursor-pointer underline-offset-2 hover:underline" onClick={() => setOpen(false)}>Later</button>
                 </div>
               </div>
             </>
@@ -381,6 +393,60 @@ export function ApprovalCenterPopup() {
       </Dialog>
     </>
   );
+}
+
+/** A request type with more than this many waiting collapses to one summary card plus its first few. */
+const BULK_AFTER = 25;
+const BULK_SHOW = 5;
+
+/**
+ * 200 locked-month overrides or 160 exit tasks must not become 200 popup cards. Past BULK_AFTER, a type shows one summary
+ * card (View opens its page) followed by its first BULK_SHOW requests, so the person can still act on the oldest few here.
+ */
+function collapseBulk(items: ApprovalItem[]): ApprovalItem[] {
+  const byKind = new Map<string, ApprovalItem[]>();
+  for (const it of items) {
+    const l = byKind.get(it.kind);
+    if (l) l.push(it);
+    else byKind.set(it.kind, [it]);
+  }
+  const emitted = new Set<string>();
+  const out: ApprovalItem[] = [];
+  const shown = new Map<string, number>();
+  for (const it of items) {
+    const group = byKind.get(it.kind)!;
+    if (group.length <= BULK_AFTER) {
+      out.push(it);
+      continue;
+    }
+    if (!emitted.has(it.kind)) {
+      emitted.add(it.kind);
+      const first = group[0];
+      out.push({
+        uid: `bulk:${it.kind}`,
+        kind: it.kind,
+        kindLabel: it.kindLabel,
+        category: it.category,
+        id: `bulk-${it.kind}`,
+        title: `${group.length} ${it.kindLabel} requests are waiting`,
+        subtitle: "Too many to step through here — open the page to review them together",
+        fields: [
+          { label: "Waiting", value: String(group.length) },
+          { label: "Shown below", value: `the first ${BULK_SHOW}` },
+        ],
+        viewPath: first.viewPath.replace(/([?&])approvalId=[^&]*&?/, "$1").replace(/[?&]$/, ""),
+        rejectNeedsReason: false,
+        viewOnly: true,
+        priority: "normal",
+      });
+    }
+    const n = shown.get(it.kind) ?? 0;
+    if (n < BULK_SHOW) {
+      out.push(it);
+      shown.set(it.kind, n + 1);
+    }
+  }
+  return out;
 }
 
 function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {

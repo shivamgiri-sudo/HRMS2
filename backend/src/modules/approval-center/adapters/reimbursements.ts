@@ -1,7 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays } from "./payroll-shared.js";
-import { branchAllowed, callerScope, isOwnEmployee } from "./scope-guard.js";
+import { branchAllowed, callerHolds, callerScope, isOwnEmployee } from "./scope-guard.js";
 
 type Stage = "manager" | "branch_head";
 
@@ -65,7 +65,10 @@ export const reimbursementsAdapter: ApprovalAdapter = {
     for (const r of ((mgr?.data ?? []) as any[]).slice(0, 200)) {
       if (r.status === "submitted" && !isOwnEmployee(me, r.employee_id)) out.push(mapClaim(r, "manager"));
     }
-    for (const r of ((bh?.data ?? []) as any[]).slice(0, 200)) {
+    // The branch-head stage is role-designated: the queue endpoint also admits super_admin for every branch, which is "able to",
+    // not "designated" - so the caller must literally hold branch_head.
+    const isBranchHead = callerHolds(me, "branch_head");
+    for (const r of isBranchHead ? ((bh?.data ?? []) as any[]).slice(0, 200) : []) {
       if (r.status !== "manager_approved" || isOwnEmployee(me, r.employee_id) || !branchAllowed(me, r.branch_id)) continue;
       out.push(mapClaim(r, "branch_head"));
     }

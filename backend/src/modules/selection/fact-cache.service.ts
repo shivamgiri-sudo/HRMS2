@@ -2,6 +2,7 @@
 // refreshed in chunks; facts_json is rewritten only when facts_hash changes. Facts only, never criteria (review focus 1).
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { fillTypeSql } from "../hiring-engine/he-source-attribution.js";
 import { canonicalJson, sha256 } from "./compile-criteria.js";
 import { normaliseFacts } from "./facts-normalise.js";
 import { istText, loadMetaLeadFacts, loadRawPeople } from "./facts-loader.service.js";
@@ -57,12 +58,20 @@ export async function refreshFactCache(o: { sourceKind: SourceKind; chunk?: numb
   return { sourceKind: o.sourceKind, chunks, people, removed, skippedInvalidMobile, complete, nextKey };
 }
 
-export async function readFactCache(o: { sourceKind: SourceKind; subSources?: SubSource[]; afterKey?: string; limit: number }) {
+/**
+ * One page of cached facts. `liveFrom` (the rolling Live Meta cutoff, he-source-attribution.service.ts) applies to meta_live only: the cutoff
+ * moves every midnight IST while the cache is rebuilt in the evening, so a cached Live row counts only while its fill and the person's
+ * FIRST fill are still on or after the cutoff (fillTypeSql, keyed by the row's meta_lead_raw id). Someone who rolled out of the window is
+ * Old Meta data: the next meta_old refresh pass adds them there, and the next complete meta_live pass deletes the stale Live row.
+ */
+export async function readFactCache(o: { sourceKind: SourceKind; subSources?: SubSource[]; afterKey?: string; limit: number; liveFrom?: string }) {
   const limit = Math.max(1, Math.min(o.limit, 5000));
   const subs = o.subSources ?? [];
+  const live = o.sourceKind === "meta_live" && o.liveFrom
+    ? ` AND EXISTS (SELECT 1 FROM meta_lead_raw r WHERE r.id = spf.source_ref COLLATE utf8mb4_unicode_ci AND ${fillTypeSql("r", o.liveFrom)} = 'meta_live')` : "";
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT mobile10, sub_source, facts_json, facts_hash, refreshed_at FROM selection_person_fact FORCE INDEX (idx_spf_source)
-      WHERE source_kind = ? AND mobile10 > ?${subs.length ? ` AND sub_source IN (${subs.map(() => "?").join(",")})` : ""}
+    `SELECT mobile10, sub_source, facts_json, facts_hash, refreshed_at FROM selection_person_fact spf FORCE INDEX (idx_spf_source)
+      WHERE source_kind = ? AND mobile10 > ?${subs.length ? ` AND sub_source IN (${subs.map(() => "?").join(",")})` : ""}${live}
       ORDER BY mobile10 LIMIT ?`, [o.sourceKind, o.afterKey ?? "", ...subs, limit]);
   return {
     rows: rows.map((r) => ({ mobile10: String(r.mobile10), subSource: r.sub_source as SubSource, factsHash: String(r.facts_hash), refreshedAt: r.refreshed_at,

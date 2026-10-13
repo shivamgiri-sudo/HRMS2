@@ -88,7 +88,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   stream = baseStream();
   days = [];
-  requisition = { id: "r-1", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 1 };
+  requisition = { id: "r-1", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 1, joined_headcount: 3 };
   update0 = false; eventFails = false; dupOnInsert = false; autoRows = [];
   h.execute.mockImplementation(async (sql: string, p: unknown[] = []) => route(sql, p));
   h.connExecute.mockImplementation(async (sql: string, p: unknown[] = []) => connRoute(sql, p));
@@ -298,7 +298,7 @@ describe("changeStream", () => {
 
   it("reopen refuses a filled requisition", async () => {
     stream = baseStream({ status: "closed", open_from: "2026-10-01", open_days: 2 });
-    requisition = { approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 5 };
+    requisition = { approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 5, joined_headcount: 7 };
     await expectErr(changeStream("s-1", { action: "reopen", days: 3 }, admin, NOW), 409, "A filled or closed requisition cannot be reopened");
   });
 
@@ -404,11 +404,11 @@ describe("reads", () => {
 });
 
 describe("autoCloseStreams", () => {
-  const rowOf = (id: string, o: Row) => ({ ...baseStream({ id }), jr_id: "r-1", approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 1, ...o });
+  const rowOf = (id: string, o: Row) => ({ ...baseStream({ id }), jr_id: "r-1", approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 1, joined_headcount: 3, ...o });
   beforeEach(() => {
     autoRows = [
       rowOf("s-a", { open_from: "2026-10-08", open_days: 5, status: "open" }), // ends Wed 14... overridden below
-      rowOf("s-b", { status: "paused", fulfilled_headcount: 5 }),
+      rowOf("s-b", { status: "paused", fulfilled_headcount: 5, joined_headcount: 7 }),
       rowOf("s-c", { open_from: "2026-10-13", open_days: 3 }),
     ];
     autoRows[0] = rowOf("s-a", { open_from: "2026-10-09", open_days: 3, status: "open" }); // Fri, Sat, Mon 12
@@ -429,7 +429,7 @@ describe("autoCloseStreams", () => {
   });
 
   it("reports requisition_closed first and treats a missing requisition as closed", async () => {
-    autoRows = [rowOf("s-a", { active_status: 0, fulfilled_headcount: 5 }), rowOf("s-b", { jr_id: null, approval_status: null })];
+    autoRows = [rowOf("s-a", { active_status: 0, fulfilled_headcount: 5, joined_headcount: 7 }), rowOf("s-b", { jr_id: null, approval_status: null })];
     const r = await autoCloseStreams("2026-10-08", true);
     expect(r.map((x) => x.reason)).toEqual(["requisition_closed", "requisition_closed"]);
   });

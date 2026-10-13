@@ -12,7 +12,7 @@ export type GuardReason = "kill_switch" | "source_off" | "source_paused" | "opte
 
 export interface RequisitionFacts {
   approvalStatus: string | null; activeStatus: number | null; closedAt: string | Date | null;
-  requestedHeadcount: number | null; fulfilledHeadcount: number | null;
+  requestedHeadcount: number | null; fulfilledHeadcount: number | null; joinedHeadcount?: number | null;
   /** job_requisition.requisition_validity (the end date); only counts while policy.req_end_date_enforced = 1. */
   validityDate?: string | Date | null;
 }
@@ -46,17 +46,20 @@ const istParts = (d: Date) => { const x = new Date(d.getTime() + IST_MS); return
 const istMidnight = (t: number) => Math.floor((t + IST_MS) / DAY_MS) * DAY_MS - IST_MS;
 const istDate = (d: string | Date) => (typeof d === "string" ? d.slice(0, 10) : new Date(d.getTime() + IST_MS).toISOString().slice(0, 10));
 
-/** Mon-Sat, 09:00 <= IST < 20:00 (D3). */
+/** Sunday is a send day (owner decision, 2026-10-11). FOLLOWUP_SUNDAY_SENDS=off puts the old Mon-Sat rule back. */
+const sundaySends = (): boolean => !/^(off|0|false|no)$/i.test(String(process.env.FOLLOWUP_SUNDAY_SENDS ?? "").trim());
+
+/** Every day, 09:00 <= IST < 20:00 (D3; Sunday included unless FOLLOWUP_SUNDAY_SENDS=off). */
 export function inSendWindow(now: Date): boolean {
   const { hour, dow } = istParts(now);
-  return dow !== 0 && hour >= OPEN_HOUR && hour < CLOSE_HOUR;
+  return (dow !== 0 || sundaySends()) && hour >= OPEN_HOUR && hour < CLOSE_HOUR;
 }
 
-/** The first Mon-Sat 09:00 IST at or after `now` (same rule as nextWindowOpen, Sunday skipped). */
+/** The first 09:00 IST at or after `now` on a send day (same rule as nextWindowOpen). */
 export function nextSendWindowOpen(now: Date): Date {
   let open = istMidnight(now.getTime()) + OPEN_HOUR * 3600_000;
   if (now.getTime() > open) open += DAY_MS;
-  while (istParts(new Date(open)).dow === 0) open += DAY_MS;
+  if (!sundaySends()) while (istParts(new Date(open)).dow === 0) open += DAY_MS;
   return new Date(open);
 }
 

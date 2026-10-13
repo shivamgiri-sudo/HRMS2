@@ -1,15 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execute = vi.hoisted(() => vi.fn());
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute, getConnection: vi.fn() } }));
 vi.mock("../../../logger.js", () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 
 import {
-  LIVE_FROM_DEFAULT, attributeSource, attributionJoinsSql, cutoffSql, fillTypeSql, formFillTime, isLiveFill, isMetaDrive, liveFirstFillSql, metaDriveSql, metaOriginSql,
+  attributeSource, attributionJoinsSql, cutoffSql, fillTypeSql, formFillTime, isLiveFill, isMetaDrive, liveFirstFillSql, metaDriveSql, metaOriginSql,
   personFirstFillSql, sourceTypeSql, typeKeySql, validDay,
 } from "../he-source-attribution.js";
 import { clearLiveFromCache, loadLiveFrom } from "../he-source-attribution.service.js";
 import { classifySource } from "../qualified-followup.schedule.js";
+
+// The clock is 15 Oct 2026 12:00 IST, so the rolling cutoff (today - 7 days) is 8 Oct 2026 00:00 IST; rollingCutoff.test.ts covers the rolling.
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-15T06:30:00Z")); });
+afterEach(() => { vi.useRealTimers(); });
 
 const OLD_FILL = "2026-09-20 09:00:00";
 const LIVE_FILL = "2026-10-08 10:00:00";
@@ -43,14 +47,16 @@ describe("attributeSource (the display rule, pure mirror): three exclusive types
     // fills on both sides of the cutoff: the first (September) one decides
     expect(attributeSource({ metaOrigin: true, firstFillAt: OLD_FILL, activityAt: OCT })).toBe("meta_old");
   });
-  it("the cutoff is 2026-10-08 00:00 IST by default and can be moved", () => {
-    expect(LIVE_FROM_DEFAULT).toBe("2026-10-08");
-    expect(isLiveFill("2026-10-08 00:00:00")).toBe(true);
-    expect(isLiveFill("2026-10-07 23:59:59")).toBe(false);
-    expect(isLiveFill(null)).toBe(false);
+  it("the cutoff is the given day at 00:00 IST; without one (or an invalid one) it is the rolling cutoff of the clock (rollingCutoff.test.ts)", () => {
+    expect(isLiveFill("2026-10-08 00:00:00", "2026-10-08")).toBe(true);
+    expect(isLiveFill("2026-10-07 23:59:59", "2026-10-08")).toBe(false);
+    expect(isLiveFill(null, "2026-10-08")).toBe(false);
     expect(attributeSource({ metaOrigin: true, firstFillAt: LIVE_FILL, activityAt: OCT, liveFrom: "2026-10-09" })).toBe("meta_old");
     expect(attributeSource({ metaOrigin: true, firstFillAt: OLD_FILL, activityAt: SEP, liveFrom: "2026-09-01" })).toBe("meta_live");
-    expect(attributeSource({ metaOrigin: true, firstFillAt: LIVE_FILL, activityAt: OCT, liveFrom: "not a day" })).toBe("meta_live"); // invalid: default
+    // 9 Oct 2026 12:00 IST: the rolling cutoff is 2 Oct
+    const now = new Date("2026-10-09T06:30:00Z");
+    expect(attributeSource({ metaOrigin: true, firstFillAt: LIVE_FILL, activityAt: OCT, liveFrom: "not a day", now })).toBe("meta_live");
+    expect(attributeSource({ metaOrigin: true, firstFillAt: OLD_FILL, activityAt: OCT, liveFrom: "not a day", now })).toBe("meta_old");
   });
   it("Meta drives are 'meta' and 'campaign', and 'batch' only when the upload batch is a Meta one", () => {
     expect(isMetaDrive("meta")).toBe(true);
@@ -136,7 +142,7 @@ describe("SQL fragment (mirrors attributeSource)", () => {
   });
   it("inlines only a validated cutoff day", () => {
     expect(cutoffSql("2026-10-15")).toBe("TIMESTAMP '2026-10-15 00:00:00'");
-    expect(cutoffSql("2026-10-15' OR 1=1 --")).toBe("TIMESTAMP '2026-10-08 00:00:00'");
+    expect(cutoffSql("2026-10-15' OR 1=1 --")).toMatch(/^TIMESTAMP '\d{4}-\d{2}-\d{2} 00:00:00'$/); // the rolling day, never the input
   });
   it("Meta origin is the person's meta_lead_id or a campaign link, both by key", () => {
     expect(metaOriginSql("al")).toBe("(al.meta_lead_id IS NOT NULL OR EXISTS (SELECT 1 FROM he_lead_campaign alx WHERE alx.lead_id = al.id))");
@@ -172,23 +178,23 @@ describe("SQL fragment (mirrors attributeSource)", () => {
   });
 });
 
-describe("loadLiveFrom (he_model_param 'meta.live_from.YYYY-MM-DD' = 1)", () => {
+describe("loadLiveFrom (rolling by default; the fixed meta.live_from.YYYY-MM-DD days only with meta.live_mode = 1)", () => {
   beforeEach(() => { vi.clearAllMocks(); clearLiveFromCache(); });
-  it("defaults to 2026-10-08 with no row, a failing read or an invalid key", async () => {
+  const now = new Date("2026-10-09T06:30:00Z");
+  it("is the rolling 7 days with no row, a failing read or an invalid key; a fixed-day row alone no longer moves it", async () => {
     execute.mockResolvedValueOnce([[]]);
-    expect(await loadLiveFrom()).toBe("2026-10-08");
+    expect(await loadLiveFrom(now)).toBe("2026-10-02");
     clearLiveFromCache();
     execute.mockRejectedValueOnce(Object.assign(new Error("x"), { code: "ER_NO_SUCH_TABLE" }));
-    expect(await loadLiveFrom()).toBe("2026-10-08");
+    expect(await loadLiveFrom(now)).toBe("2026-10-02");
     clearLiveFromCache();
-    execute.mockResolvedValueOnce([[{ param_key: "meta.live_from.2026-13-01" }]]);
-    expect(await loadLiveFrom()).toBe("2026-10-08");
+    execute.mockResolvedValueOnce([[{ param_key: "meta.live_from.2026-10-08", value: 1 }]]);
+    expect(await loadLiveFrom(now)).toBe("2026-10-02");
   });
-  it("takes the latest valid day and caches it", async () => {
-    execute.mockResolvedValueOnce([[{ param_key: "meta.live_from.2026-10-01" }, { param_key: "meta.live_from.2026-10-15" }]]);
-    expect(await loadLiveFrom()).toBe("2026-10-15");
-    expect(await loadLiveFrom()).toBe("2026-10-15");
+  it("in fixed mode takes the latest valid day and caches the params", async () => {
+    execute.mockResolvedValueOnce([[{ param_key: "meta.live_mode", value: "1.0000" }, { param_key: "meta.live_from.2026-10-01", value: 1 }, { param_key: "meta.live_from.2026-10-15", value: 1 }, { param_key: "meta.live_from.2026-13-01", value: 1 }]]);
+    expect(await loadLiveFrom(now)).toBe("2026-10-15");
+    expect(await loadLiveFrom(now)).toBe("2026-10-15");
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0]).toEqual(["SELECT param_key FROM he_model_param WHERE param_key LIKE ? AND value = 1", ["meta.live_from.%"]]);
   });
 });

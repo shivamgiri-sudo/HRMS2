@@ -13,7 +13,7 @@ import { normaliseFacts, type RawPerson } from "./facts-normalise.js";
 import type { CandidateFacts, SourceKind, SubSource } from "./selection-types.js";
 
 export const HE_RECORD_TYPES = ["candidate", "naukri_import", "workindia_import"] as const;
-/** liveFrom: the Live Meta cutoff day (meta.live_from); read from he_model_param when not given. */
+/** liveFrom: the Live Meta cutoff day (the rolling cutoff of he-source-attribution.service.ts at `now`); loaded when not given. */
 export interface LoadScope { sourceKind: SourceKind; subSources?: SubSource[]; afterKey?: string; limit: number; liveFrom?: string }
 export interface Loaded { people: Array<{ person: RawPerson; sourceRef: string }>; nextKey: string | null; skippedInvalidMobile: number }
 
@@ -173,7 +173,7 @@ export async function loadRawPeople(scope: LoadScope, now: Date): Promise<Loaded
     const people = await heRowsToPeople(rows, now);
     return { people, nextKey: rows.length === limit ? String(rows[rows.length - 1].mobile10) : null, skippedInvalidMobile: 0 };
   }
-  const liveFrom = scope.liveFrom ?? await loadLiveFrom();
+  const liveFrom = scope.liveFrom ?? await loadLiveFrom(now);
   const [rows] = await db.execute<RowDataPacket[]>(META_BASE_SQL(liveFrom), [scope.afterKey ?? "", scope.sourceKind, limit]);
   const { people, valid } = await metaRowsToPeople(rows, scope.sourceKind, now);
   return { people, nextKey: rows.length === limit ? String(rows[rows.length - 1].id) : null, skippedInvalidMobile: rows.length - valid.length };

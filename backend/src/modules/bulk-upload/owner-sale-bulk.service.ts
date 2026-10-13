@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { syncMissingOwnerAgents } from "../process-performance/housing-owner-roster-sync.service.js";
 
 /**
  * Housing Owner's "Owner Sale" export -- writes into the NEW db_masmis.owner_sale
@@ -193,6 +194,13 @@ export async function importOwnerSaleBatch(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
     [finalStatus, importedRows, errorRows, batchId],
   );
+
+  // Best-effort: a brand-new agent in this file must never go unnoticed just because the sync
+  // itself hit a problem -- the sale import above has already succeeded and must stay succeeded.
+  if (importedRows > 0) {
+    try { await syncMissingOwnerAgents(importedByUserId); }
+    catch (err) { console.error("[owner-sale-bulk] roster sync failed:", err); }
+  }
 
   return { importedRows, errorRows, errors };
 }

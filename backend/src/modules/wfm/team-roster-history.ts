@@ -1,0 +1,273 @@
+/**
+ * Team Roster - history (every submission the caller may see, whatever its state) and the flat export.
+ *
+ * The approval queues only show what is still waiting, so once a request was approved it vanished from
+ * the page. This is the permanent log: who raised what, what each approver decided and when, and what
+ * finally landed in the roster. Visibility mirrors getSubmissionDetail/canView: global approvers see
+ * everything, WFM sees submissions holding at least one employee in their scope, everyone else sees what
+ * they raised or are the named manager approver for.
+ */
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { resolveCallerEmployee } from "./team-roster-tree.js";
+import { wfmEmployeeScope } from "./team-roster-workflow.js";
+import { SUBMISSION_STATUS, TeamRosterError, isGlobalApprover, isWfmApprover, rowsOf, type Actor } from "./team-roster-types.js";
+
+export const HISTORY_EXPORT_MAX_ROWS = 50000;
+
+export interface HistoryFilter {
+  from?: string;
+  to?: string;
+  status?: string;
+  branchId?: string;
+  processId?: string;
+  managerId?: string;
+  search?: string;
+  offset?: number;
+  limit?: number;
+}
+
+const NAME = (a: string) => `COALESCE(NULLIF(${a}.full_name, ''), TRIM(CONCAT(COALESCE(${a}.first_name, ''), ' ', COALESCE(${a}.last_name, ''))))`;
+const STAMP = (c: string, alias: string) => `DATE_FORMAT(${c}, '%Y-%m-%d %H:%i:%s') AS ${alias}`;
+const DATE = (c: string, alias: string) => `DATE_FORMAT(${c}, '%Y-%m-%d') AS ${alias}`;
+
+/** WHERE fragments (alias `s` = roster_team_submission) for what the caller may see plus the user's filters. */
+async function buildWhere(actor: Actor, f: HistoryFilter): Promise<{ where: string[]; params: unknown[] }> {
+  const where: string[] = [`s.status <> 'draft'`];
+  const params: unknown[] = [];
+  const caller = await resolveCallerEmployee(actor.id);
+
+  if (!isGlobalApprover(actor)) {
+    const ors: string[] = [];
+    if (caller) {
+      ors.push(`s.submitter_employee_id = ?`, `s.manager_approver_employee_id = ?`);
+      params.push(caller.id, caller.id);
+    }
+    if (isWfmApprover(actor)) {
+      const scope = await wfmEmployeeScope(actor);
+      ors.push(`EXISTS (SELECT 1 FROM roster_team_submission_line vl JOIN employees ve ON ve.id = vl.employee_id
+                         WHERE vl.submission_id = s.id AND ${scope.sql.replace(/\be\./g, "ve.")})`);
+      params.push(...scope.params);
+    }
+    if (!ors.length) throw new TeamRosterError(403, "You have no team roster history to view.", "NOT_ALLOWED");
+    where.push(`(${ors.join(" OR ")})`);
+  }
+
+  if (f.from) { where.push(`s.to_date >= ?`); params.push(f.from); }
+  if (f.to) { where.push(`s.from_date <= ?`); params.push(f.to); }
+  if (f.status && Object.values(SUBMISSION_STATUS).includes(f.status as never)) { where.push(`s.status = ?`); params.push(f.status); }
+  if (f.managerId) {
+    where.push(`(s.submitter_employee_id = ? OR s.manager_approver_employee_id = ?)`);
+    params.push(f.managerId, f.managerId);
+  }
+  if (f.branchId || f.processId) {
+    const parts: string[] = [];
+    if (f.branchId) { parts.push(`fe.branch_id = ?`); params.push(f.branchId); }
+    if (f.processId) { parts.push(`fe.process_id = ?`); params.push(f.processId); }
+    where.push(`EXISTS (SELECT 1 FROM roster_team_submission_line fl JOIN employees fe ON fe.id = fl.employee_id
+                         WHERE fl.submission_id = s.id AND ${parts.join(" AND ")})`);
+  }
+  if (f.search) {
+    const like = `%${f.search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    where.push(`(s.submission_no LIKE ? OR EXISTS (SELECT 1 FROM employees x WHERE x.id = s.submitter_employee_id AND (x.employee_code LIKE ? OR ${NAME("x")} LIKE ?)))`);
+    params.push(like, like, like);
+  }
+  return { where, params };
+}
+
+/** Display names for auth user ids, looked up once instead of joining employees per row. */
+async function namesByUserId(ids: unknown[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter((v): v is string => typeof v === "string" && v.length > 0))];
+  const out = new Map<string, string>();
+  if (!unique.length) return out;
+  const rows = rowsOf<RowDataPacket>(await db.execute(
+    `SELECT e.user_id, ${NAME("e")} AS name FROM employees e WHERE e.user_id IN (${unique.map(() => "?").join(",")})`, unique,
+  ));
+  for (const r of rows) if (r.user_id && r.name) out.set(String(r.user_id), String(r.name));
+  return out;
+}
+
+const uniq = (ids: unknown[]) => [...new Set(ids.filter((v): v is string => typeof v === "string" && v.length > 0))];
+
+/** id -> name for a small master table (branch_master / process_master); identifiers are fixed by callers. */
+async function namesById(table: "branch_master" | "process_master", column: "branch_name" | "process_name", ids: unknown[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const list = uniq(ids);
+  for (let i = 0; i < list.length; i += 500) {
+    const chunk = list.slice(i, i + 500);
+    const rows = rowsOf<RowDataPacket>(await db.execute(`SELECT id, ${column} AS name FROM ${table} WHERE id IN (${chunk.map(() => "?").join(",")})`, chunk));
+    for (const r of rows) out.set(String(r.id), String(r.name ?? ""));
+  }
+  return out;
+}
+
+async function employeeNamesById(ids: unknown[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const list = uniq(ids);
+  for (let i = 0; i < list.length; i += 500) {
+    const chunk = list.slice(i, i + 500);
+    const rows = rowsOf<RowDataPacket>(await db.execute(`SELECT e.id, ${NAME("e")} AS name FROM employees e WHERE e.id IN (${chunk.map(() => "?").join(",")})`, chunk));
+    for (const r of rows) out.set(String(r.id), String(r.name ?? ""));
+  }
+  return out;
+}
+
+async function employeeCodesById(ids: unknown[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const list = uniq(ids);
+  for (let i = 0; i < list.length; i += 500) {
+    const chunk = list.slice(i, i + 500);
+    const rows = rowsOf<RowDataPacket>(await db.execute(`SELECT id, employee_code FROM employees WHERE id IN (${chunk.map(() => "?").join(",")})`, chunk));
+    for (const r of rows) out.set(String(r.id), String(r.employee_code ?? ""));
+  }
+  return out;
+}
+
+const clamp = (offset?: number, limit?: number) => ({
+  offset: Math.max(Math.trunc(offset ?? 0), 0),
+  limit: Math.min(Math.max(Math.trunc(limit ?? 25), 1), 200),
+});
+
+export async function listHistory(actor: Actor, f: HistoryFilter) {
+  const { where, params } = await buildWhere(actor, f);
+  const { offset, limit } = clamp(f.offset, f.limit);
+  const w = where.join(" AND ");
+  const total = Number(rowsOf<RowDataPacket>(await db.execute(`SELECT COUNT(*) AS c FROM roster_team_submission s WHERE ${w}`, params))[0]?.c ?? 0);
+  const rows = rowsOf<RowDataPacket>(await db.execute(
+    `SELECT s.id, s.submission_no, s.status, ${DATE("s.from_date", "from_d")}, ${DATE("s.to_date", "to_d")},
+            ${STAMP("s.submitted_at", "submitted_s")}, ${STAMP("s.manager_decided_at", "mgr_at")}, ${STAMP("s.wfm_decided_at", "wfm_at")},
+            ${STAMP("s.applied_at", "applied_s")}, s.manager_decision, s.wfm_decision,
+            se.employee_code AS submitter_code, ${NAME("se")} AS submitter_name, ${NAME("me")} AS manager_name,
+            s.manager_decided_by, s.wfm_decided_by,
+            (SELECT COUNT(*) FROM roster_team_submission_line l WHERE l.submission_id = s.id) AS line_count,
+            (SELECT COUNT(*) FROM roster_team_submission_line l WHERE l.submission_id = s.id AND l.line_status = 'applied') AS applied_count,
+            (SELECT COUNT(*) FROM roster_team_submission_line l WHERE l.submission_id = s.id AND l.line_status IN ('skipped','failed')) AS skipped_count,
+            (SELECT GROUP_CONCAT(DISTINCT b.branch_name ORDER BY b.branch_name SEPARATOR ', ')
+               FROM roster_team_submission_line l JOIN employees le ON le.id = l.employee_id
+               JOIN branch_master b ON b.id = le.branch_id WHERE l.submission_id = s.id) AS branches,
+            (SELECT GROUP_CONCAT(DISTINCT p.process_name ORDER BY p.process_name SEPARATOR ', ')
+               FROM roster_team_submission_line l JOIN employees le ON le.id = l.employee_id
+               JOIN process_master p ON p.id = le.process_id WHERE l.submission_id = s.id) AS processes
+       FROM roster_team_submission s
+       LEFT JOIN employees se ON se.id = s.submitter_employee_id
+       LEFT JOIN employees me ON me.id = s.manager_approver_employee_id
+      WHERE ${w}
+      ORDER BY COALESCE(s.submitted_at, s.created_at) DESC, s.id DESC LIMIT ${limit} OFFSET ${offset}`, params,
+  ));
+  const names = await namesByUserId(rows.flatMap((r) => [r.manager_decided_by, r.wfm_decided_by]));
+  const items = rows.map((r) => ({
+    id: Number(r.id), submissionNo: r.submission_no ? String(r.submission_no) : null, status: String(r.status),
+    from: r.from_d ? String(r.from_d) : null, to: r.to_d ? String(r.to_d) : null,
+    submittedAt: r.submitted_s ? String(r.submitted_s) : null, appliedAt: r.applied_s ? String(r.applied_s) : null,
+    submitter: { code: r.submitter_code ? String(r.submitter_code) : null, name: String(r.submitter_name ?? "") },
+    managerApprover: r.manager_name ? String(r.manager_name) : null,
+    managerDecision: r.manager_decision ? { decision: String(r.manager_decision), at: r.mgr_at ? String(r.mgr_at) : null, by: names.get(String(r.manager_decided_by)) ?? null } : null,
+    wfmDecision: r.wfm_decision ? { decision: String(r.wfm_decision), at: r.wfm_at ? String(r.wfm_at) : null, by: names.get(String(r.wfm_decided_by)) ?? null } : null,
+    raised: Number(r.line_count ?? 0), applied: Number(r.applied_count ?? 0), skipped: Number(r.skipped_count ?? 0),
+    branches: r.branches ? String(r.branches) : "", processes: r.processes ? String(r.processes) : "",
+  }));
+  return { items, total, offset, limit };
+}
+
+/** Distinct branches / processes / managers inside what the caller may see, to fill the filter dropdowns. */
+export async function historyFilterOptions(actor: Actor) {
+  const { where, params } = await buildWhere(actor, {});
+  const w = where.join(" AND ");
+  // Small steps instead of one wide join: ids first, names from the (tiny) masters after.
+  const subs = rowsOf<RowDataPacket>(await db.execute(
+    `SELECT s.id, s.submitter_employee_id, s.manager_approver_employee_id FROM roster_team_submission s WHERE ${w} LIMIT 20000`, params,
+  ));
+  const subIds = subs.map((r) => Number(r.id));
+  const pairs = new Map<string, { branchId: string | null; processId: string | null }>();
+  for (let i = 0; i < subIds.length; i += 1000) {
+    const chunk = subIds.slice(i, i + 1000);
+    const rows = rowsOf<RowDataPacket>(await db.execute(
+      `SELECT DISTINCT e.branch_id, e.process_id FROM roster_team_submission_line l JOIN employees e ON e.id = l.employee_id
+        WHERE l.submission_id IN (${chunk.map(() => "?").join(",")})`, chunk,
+    ));
+    for (const r of rows) {
+      const k = `${r.branch_id ?? ""}|${r.process_id ?? ""}`;
+      pairs.set(k, { branchId: r.branch_id ? String(r.branch_id) : null, processId: r.process_id ? String(r.process_id) : null });
+    }
+  }
+  const branchNames = await namesById("branch_master", "branch_name", [...pairs.values()].map((v) => v.branchId));
+  const processNames = await namesById("process_master", "process_name", [...pairs.values()].map((v) => v.processId));
+  const branches = new Map<string, string>();
+  const processes = new Map<string, { name: string; branchId: string | null }>();
+  for (const v of pairs.values()) {
+    if (v.branchId && branchNames.has(v.branchId)) branches.set(v.branchId, branchNames.get(v.branchId)!);
+    if (v.processId && processNames.has(v.processId)) processes.set(v.processId, { name: processNames.get(v.processId)!, branchId: v.branchId });
+  }
+  const managerIds = [...new Set(subs.flatMap((r) => [r.submitter_employee_id, r.manager_approver_employee_id]).filter((v): v is string => typeof v === "string" && v.length > 0))];
+  const managerNames = await employeeNamesById(managerIds);
+  const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
+  return {
+    branches: [...branches].map(([id, name]) => ({ id, name })).sort(byName),
+    processes: [...processes].map(([id, v]) => ({ id, name: v.name, branchId: v.branchId })).sort(byName),
+    managers: [...managerNames].map(([id, name]) => ({ id, name })).filter((m) => m.name).sort(byName),
+  };
+}
+
+/**
+ * One row per raised cell, sorted branch > process > manager so a plain sheet reads "process wise,
+ * manager wise". Scope and filters are exactly the history list's; capped to keep the response bounded.
+ * Built from three narrow reads (submissions, their lines + employee, master names) and sorted in code:
+ * one wide multi-join with an ORDER BY over names took ~15s on the live data.
+ */
+export async function exportHistoryRows(actor: Actor, f: HistoryFilter) {
+  const { where, params } = await buildWhere(actor, { ...f, offset: 0 });
+  const subs = rowsOf<RowDataPacket>(await db.execute(
+    `SELECT s.id, s.submission_no, s.status, ${DATE("s.from_date", "from_d")}, ${DATE("s.to_date", "to_d")},
+            ${STAMP("s.submitted_at", "submitted_s")}, s.note, s.submitter_employee_id, s.manager_approver_employee_id,
+            s.manager_decision, ${STAMP("s.manager_decided_at", "mgr_at")}, s.manager_remarks, s.manager_decided_by,
+            s.wfm_decision, ${STAMP("s.wfm_decided_at", "wfm_at")}, s.wfm_remarks, s.wfm_decided_by,
+            ${STAMP("s.applied_at", "applied_s")}
+       FROM roster_team_submission s WHERE ${where.join(" AND ")} ORDER BY s.id LIMIT 20000`, params,
+  ));
+  const subById = new Map(subs.map((r) => [Number(r.id), r]));
+  const lines: RowDataPacket[] = [];
+  const ids = [...subById.keys()];
+  for (let i = 0; i < ids.length && lines.length <= HISTORY_EXPORT_MAX_ROWS; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    lines.push(...rowsOf<RowDataPacket>(await db.execute(
+      `SELECT l.submission_id, l.employee_id, ${DATE("l.roster_date", "roster_d")}, l.kind, l.old_assignment_type, l.old_shift_start_time,
+              l.old_shift_end_time, l.new_assignment_type, l.new_shift_start_time, l.new_shift_end_time, l.reason, l.line_status, l.skip_reason,
+              e.employee_code, e.branch_id, e.process_id, ${NAME("e")} AS employee_name
+         FROM roster_team_submission_line l LEFT JOIN employees e ON e.id = l.employee_id
+        WHERE l.submission_id IN (${chunk.map(() => "?").join(",")})`, chunk,
+    )));
+  }
+  const truncated = lines.length > HISTORY_EXPORT_MAX_ROWS;
+  const used = lines.slice(0, HISTORY_EXPORT_MAX_ROWS);
+  const [branchNames, processNames, empNames, userNames] = await Promise.all([
+    namesById("branch_master", "branch_name", used.map((l) => l.branch_id)),
+    namesById("process_master", "process_name", used.map((l) => l.process_id)),
+    employeeNamesById(subs.flatMap((r) => [r.submitter_employee_id, r.manager_approver_employee_id])),
+    namesByUserId(subs.flatMap((r) => [r.manager_decided_by, r.wfm_decided_by])),
+  ]);
+  const codes = await employeeCodesById(subs.map((r) => r.submitter_employee_id));
+  const time = (s: unknown, e: unknown) => (s && e ? `${String(s).slice(0, 5)}-${String(e).slice(0, 5)}` : "");
+  const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
+  const rows = used.map((l) => {
+    const r = subById.get(Number(l.submission_id))!;
+    return {
+      branch: branchNames.get(str(l.branch_id)) ?? "", process: processNames.get(str(l.process_id)) ?? "",
+      submissionNo: str(r.submission_no), status: str(r.status),
+      raisedBy: empNames.get(str(r.submitter_employee_id)) ?? "", raisedByCode: codes.get(str(r.submitter_employee_id)) ?? "", raisedAt: str(r.submitted_s),
+      periodFrom: str(r.from_d), periodTo: str(r.to_d),
+      managerApprover: empNames.get(str(r.manager_approver_employee_id)) ?? "",
+      managerDecision: str(r.manager_decision), managerDecidedBy: userNames.get(str(r.manager_decided_by)) ?? "", managerDecidedAt: str(r.mgr_at), managerRemarks: str(r.manager_remarks),
+      wfmDecision: str(r.wfm_decision), wfmDecidedBy: userNames.get(str(r.wfm_decided_by)) ?? "", wfmDecidedAt: str(r.wfm_at), wfmRemarks: str(r.wfm_remarks),
+      appliedAt: str(r.applied_s),
+      employeeCode: str(l.employee_code), employeeName: str(l.employee_name), rosterDate: str(l.roster_d),
+      kind: str(l.kind),
+      oldAssignment: [str(l.old_assignment_type), time(l.old_shift_start_time, l.old_shift_end_time)].filter(Boolean).join(" "),
+      newAssignment: [str(l.new_assignment_type), time(l.new_shift_start_time, l.new_shift_end_time)].filter(Boolean).join(" "),
+      reason: str(l.reason), lineResult: str(l.line_status), skipReason: str(l.skip_reason), submissionNote: str(r.note),
+    };
+  });
+  const cmp = (a: string, b: string) => a.localeCompare(b);
+  rows.sort((x, y) => cmp(x.branch, y.branch) || cmp(x.process, y.process) || cmp(x.raisedBy, y.raisedBy)
+    || cmp(x.submissionNo, y.submissionNo) || cmp(x.rosterDate, y.rosterDate) || cmp(x.employeeCode, y.employeeCode));
+  return { truncated, max: HISTORY_EXPORT_MAX_ROWS, rows };
+}

@@ -50,6 +50,7 @@ import { startRosterRequestsScheduler } from "./modules/roster-requests/roster-r
 // but never ran before this scheduler was added.
 import { startInterventionRecommendationScheduler } from "./modules/analytics/intervention-recommendation.cron.js";
 import { startMisEmailScheduler } from "./modules/process-performance/mis-schedule.worker.js";
+import { startAhmSnapshotScheduler } from "./modules/process-performance/ahm-snapshot.worker.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { isModelAvailable as warmUpFaceDetectionModels } from "./modules/ats/face-match.service.js";
 import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
@@ -87,6 +88,7 @@ import { startQualityGapDetectorWorker } from "./workers/quality-gap-detector.wo
 import { startProcessDashboardAlertsWorker } from "./modules/process-dashboard/alerts/alerts.worker.js";
 import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
 import { startLeaveApprovalReminderWorker } from "./workers/leave-approval-reminder.worker.js";
+import { startNocSlaReminderWorker } from "./workers/noc-sla-reminder.worker.js";
 import { startRejoinPendingReminderWorker } from "./workers/rejoin-pending-reminder.worker.js";
 import { startGrnApprovalReminderWorker } from "./workers/grn-approval-reminder.worker.js";
 import { registerNotificationDeliverer } from "./modules/communication/notification.deliverer.js";
@@ -281,6 +283,12 @@ function startServer() {
       startMisEmailScheduler();
     }
 
+    // Keeps the AHM dashboard's common ranges pre-computed. Same reasoning as the MIS email
+    // scheduler above: its own switch, outside ENABLE_SCHEDULERS, enable on one backend only.
+    if (process.env.AHM_SNAPSHOT_SCHEDULER_ENABLED === "true") {
+      startAhmSnapshotScheduler();
+    }
+
     if (env.ENABLE_SCHEDULERS) {
       if (!WORKERS_EXTERNAL) {
         // Start all schedulers in API process
@@ -414,6 +422,10 @@ function startServer() {
         // 1698_noc_worker_and_release_gate_flag.sql. Registering this one in BOTH files from
         // the start, not as a follow-up fix.
         startLeaveApprovalReminderWorker();
+        // NOC SLA reminders + evidence-based auto-clearance sweep. Was written but never registered in
+        // either entry point, so neither had ever run. Gated by worker_config (noc-sla-reminder) and,
+        // for auto-clearance, payroll_config_flags noc_auto_clearance_enabled.
+        startNocSlaReminderWorker();
         // Same dual registration (rejoin v3 reminders/escalation).
         startRejoinPendingReminderWorker();
         // Same dual registration, same reasoning.

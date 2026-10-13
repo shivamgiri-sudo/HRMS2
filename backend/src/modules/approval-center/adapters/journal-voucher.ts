@@ -1,6 +1,8 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { rowsOf } from "./finance-shared.js";
+import { holdsLiteralRole } from "./_scope.js";
+import { JV_APPROVER_ROLES } from "../../finance/journal-voucher.roles.js";
 
 const MAX_DETAIL = 30;
 const TYPE_LABEL = (t: unknown) => str(t).replace(/_/g, " ");
@@ -20,6 +22,7 @@ export const journalVoucherAdapter: ApprovalAdapter = {
   label: "Journal voucher",
   category: "Finance",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, ...JV_APPROVER_ROLES))) return [];
     const res = await ctx.call("GET", "/api/finance/journal-vouchers", { query: { status: "pending_approval", pageSize: 100, sort: "voucherDate", dir: "asc" } });
     const rows = rowsOf(res?.data ?? res).filter((r) => str(r.status) === "pending_approval" && r.permissions?.canApprove === true);
     const picked = rows.slice(0, MAX_DETAIL);

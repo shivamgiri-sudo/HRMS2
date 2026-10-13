@@ -21,9 +21,9 @@ import {
 } from "./he-drive-analytics.js";
 import { costBlock, type CostBlock } from "./he-cost.js";
 import { driveCreditSql } from "./he-drive-credit.js";
-import { LIVE_FROM_DEFAULT, creditJoinsSql } from "./he-source-attribution.js";
+import { creditJoinsSql } from "./he-source-attribution.js";
 import { PersonFacts, TYPE_KEY_GROUP, typeKeyColsSql } from "./he-person-facts.service.js";
-import { loadLiveFrom } from "./he-source-attribution.service.js";
+import { loadLiveWindow } from "./he-source-attribution.service.js";
 import { readCostUsage } from "./he-cost.service.js";
 import { readResponseStats, type ResponseStats } from "./he-response-stats.service.js";
 import { evaluateInsights, type DriveInsight } from "./he-drive-insights.js";
@@ -50,8 +50,11 @@ export interface DriveAnalytics {
   filter: { requisitionId: string | null; branch: string | null };
   followupMode: FollowupMode;
   qualifiedTracked: boolean;
-  /** Live Meta cutoff day (IST): Meta-origin people with a form fill on or after it are meta_live, earlier ones meta_old. */
+  /** Live Meta cutoff day (IST): Meta-origin people whose FIRST form fill is on or after its 00:00 IST are meta_live, earlier ones meta_old.
+   *  Rolling: the IST day of the build minus liveDays (default 7); 'fixed' only while he_model_param meta.live_mode = 1. */
   liveFrom: string;
+  liveDays: number;
+  liveMode: "rolling" | "fixed";
   types: Record<SourceType, TypeAnalytics>;
   typesPresent: SourceType[];
   daily: DailyPoint[];
@@ -308,7 +311,8 @@ export async function getDriveAnalytics(q: AnalyticsQuery, scope: BranchScope, n
     }
     if (!exists) return null;
   }
-  const key = `${scopeKey(scope)}|${w.from}|${w.to}|${requisitionId ?? "*"}|${branchIn ?? "*"}`;
+  // the IST day is in the key: the rolling Live Meta cutoff moves at midnight, so a result cached at 23:59 is not served at 00:00
+  const key = `${scopeKey(scope)}|${istToday(now)}|${w.from}|${w.to}|${requisitionId ?? "*"}|${branchIn ?? "*"}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return structuredClone(hit.data); // a copy: a caller may extend or edit the result
   if (hit) cache.delete(key);
@@ -368,7 +372,8 @@ async function build(
   }
 
   const none = ids.length === 0;
-  const liveFrom = none ? LIVE_FROM_DEFAULT : await loadLiveFrom(); // one cutoff for every read of this build
+  const live = await loadLiveWindow(now); // one cutoff for every read of this build, from the build's clock (it rolls at midnight IST)
+  const liveFrom = live.liveFrom;
   const pf = new PersonFacts(liveFrom); // each person's facts read once for the whole build
   // Reads that need nothing computed here start with the others (the read limiter keeps the pool safe); their results are used further down.
   const reasonsP = !none && valueAddOn("outcome_reasons") ? sec("reasons", () => outcomeReasonCounts(ids, w.from, w.to, liveFrom, pf), null) : Promise.resolve(null);
@@ -484,6 +489,8 @@ async function build(
     followupMode: mode,
     qualifiedTracked: mode !== "off",
     liveFrom,
+    liveDays: live.days,
+    liveMode: live.mode,
     types,
     typesPresent: SOURCE_TYPES.filter((t) => anyStage(types[t].stages) || anyStage(types[t].previous)),
     daily,

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, beforeAll, afterAll } from "vitest";
 
 /** Stage B for every source (Task 11): confirm, reschedule, D-1, 2 h, no-show, arrival, re-invite; journeys found by their match. */
 const h = vi.hoisted(() => ({
@@ -37,6 +37,11 @@ import { readSwitches } from "../qualified-followup.policy.js";
 import { decideStop } from "../qualified-followup.rules.js";
 import { toFollowupRow } from "../qualified-followup.context.js";
 import type { GuardFacts } from "../followup-guards.js";
+
+// These cases pin the Mon-Sat rule; Sunday sending is the default now, so they run with FOLLOWUP_SUNDAY_SENDS=off (the Sunday default is covered in followupGuards.test.ts).
+beforeAll(() => { process.env.FOLLOWUP_SUNDAY_SENDS = "off"; });
+afterAll(() => { delete process.env.FOLLOWUP_SUNDAY_SENDS; });
+
 
 const ist = (s: string) => new Date(`${s}+05:30`);
 const S = readSwitches({ QUAL_FOLLOWUP_MODE: "live" } as NodeJS.ProcessEnv, new Map([["policy.followup.meta_live", 4], ["policy.followup.he", 4]]));

@@ -1,0 +1,41 @@
+name: Ops follow-up calling-file audit (manual, read-only)
+
+# Read-only: calling-file batches of the last 4 days, live rows by call state, why rows are not yet in a file, and call results by day.
+# Counts only (no names or numbers). Runs on the self-hosted production runner with the production .env.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-followup-callfile-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Calling-file audit
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run (read-only)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::production .env not found"; exit 1; }
+          npx tsx scripts/followup-callfile-audit.ts

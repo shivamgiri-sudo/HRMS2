@@ -17,7 +17,11 @@ export interface MatrixRowData {
   requisition: { id: string; code: string; branch: string; closedReason: string | null; endDate: string | null; endDatePassed: boolean; seatsLeft: number; bmiLinkPresent: boolean; completeness: Completeness | null };
   cells: Record<SourceType, MatrixCellData>;
 }
-export interface CampaignMatrixData { rows: MatrixRowData[]; generatedAt: string; partial: string[]; enforcedEndDate: boolean }
+export interface CampaignMatrixData {
+  rows: MatrixRowData[]; generatedAt: string; partial: string[]; enforcedEndDate: boolean;
+  /** The Live Meta cutoff the Live / Old cells used (rolling: today IST minus liveDays). Absent on older servers. */
+  liveFrom?: string; liveDays?: number; liveMode?: "rolling" | "fixed";
+}
 
 export type CellAction = { kind: "map_it"; label: string; prefill: NonNullable<MatrixCellData["mapIt"]> } | { kind: "open_stream"; label: string; streamId: string } | { kind: "relink"; label: string };
 export interface CellView { word: string; icon: "running" | "idle" | "not_mapped" | "na"; people: string; text: string; action: CellAction | null }

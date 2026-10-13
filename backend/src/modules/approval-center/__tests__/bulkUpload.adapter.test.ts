@@ -4,6 +4,7 @@ import { fakeCtx } from "./_ctx.js";
 const hasAnyRole = vi.fn();
 const hasScopedAccess = vi.fn();
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole: (...a: unknown[]) => hasAnyRole(...a), hasScopedAccess: (...a: unknown[]) => hasScopedAccess(...a) }));
+vi.mock("../adapters/_scope.js", () => ({ holdsLiteralRole: (...a: unknown[]) => hasAnyRole(...a) }));
 vi.mock("../../bulk-upload/bulk-approval.service.js", () => ({ APPROVER_ROLES: ["branch_head"], PAYROLL_APPROVER_ROLES: ["payroll_head"] }));
 import { bulkUploadAdapter as a } from "../adapters/bulkUpload.js";
 import { beforeEach as __scopeBeforeEach } from "vitest";

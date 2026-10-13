@@ -36,7 +36,7 @@ export async function getVicidialPool(): Promise<mysql.Pool> {
 
 export async function vicidialQuery<T = mysql.RowDataPacket>(sql: string, params?: unknown[]): Promise<T[]> {
   const p = await getVicidialPool();
-  const [rows] = await p.execute(sql, params);
+  const [rows] = await p.execute(sql, params as Parameters<typeof p.execute>[1]);
   return rows as T[];
 }
 

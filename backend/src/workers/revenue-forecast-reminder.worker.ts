@@ -77,7 +77,7 @@ export async function runRevenueForecastReminders(now: Date = istNow()): Promise
           entity_type: "revenue_forecast_branch_period",
           entity_id: `${p.branchId}:${period}`,
           action_url: `/finance/revenue-forecast?period=${period}`,
-          priority: day >= 25 ? "high" : "medium",
+          priority: day >= 25 ? "high" : "normal",
         });
         sent++;
       } catch (err) {

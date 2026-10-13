@@ -60,7 +60,7 @@ exports[`planStreamsForDay before calibration (snapshot of today's behaviour) > 
     {},
   ],
   [
-    "SELECT id, requisition_code, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r1",
     ],
@@ -207,7 +207,7 @@ exports[`planStreamsForDay before calibration (snapshot of today's behaviour) > 
     {},
   ],
   [
-    "SELECT id, requisition_code, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r1",
     ],

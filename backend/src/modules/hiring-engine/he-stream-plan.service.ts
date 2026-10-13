@@ -6,6 +6,7 @@
  * Logs carry ids and error codes only, never candidate data.
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { createDrive, lineUpCandidates, setDriveStatus, type AudienceSpec } from "./he-drive.service.js";
@@ -242,10 +243,10 @@ async function planRequisition(requisitionId: string, streams: StreamRow[], c: C
   const base: StreamDayPlan = { requisitionId, code: requisitionId, branch: streams[0].branchName, date: c.date, driveId: null, drive: "skipped", streams: [] };
   if (c.rates) base.rates = streams.map((s) => { const r = c.rates?.get(s.id); return { streamId: s.id, rate: r?.rate ?? 0, basis: r?.basis ?? "plan_default" }; });
   const [rq] = await db.execute<RowDataPacket[]>(
-    "SELECT id, requisition_code, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
+    "SELECT id, requisition_code, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
   const r = rq[0];
   if (r?.requisition_code) base.code = String(r.requisition_code);
-  if (!r || r.approval_status !== "approved" || !r.active_status || Number(r.fulfilled_headcount) >= Number(r.requested_headcount)) return { ...base, reason: "requisition is closed or filled" };
+  if (!r || r.approval_status !== "approved" || !r.active_status || fillTargetMet(Number(r.requested_headcount), Number(r.joined_headcount ?? 0))) return { ...base, reason: "requisition is closed or filled" };
   // the requisition's CURRENT branch: the same key createDrive writes, so a closed drive is always found (and never reopened)
   const branch = String(r.branch_name ?? base.branch);
   base.branch = branch;

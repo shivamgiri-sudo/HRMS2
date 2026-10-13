@@ -1231,16 +1231,9 @@ export const jobRequisitionService = {
         [requisitionId]
       );
 
-      const [check] = await db.execute<RowDataPacket[]>(
-        "SELECT fulfilled_headcount, requested_headcount FROM job_requisition WHERE id = ?",
-        [requisitionId]
-      );
-      if (check[0] && check[0].fulfilled_headcount >= check[0].requested_headcount) {
-        await db.execute(
-          `UPDATE job_requisition SET approval_status = 'closed', closed_at = NOW(), closed_reason = 'All positions filled' WHERE id = ?`,
-          [requisitionId]
-        );
-      }
+      // Owner rule (2026-10-11): selecting the last seat no longer closes the requisition. It is filled when the JOINED count (employee
+      // code generated) reaches 130% of the seats; the hiring engine reads that from job_requisition.joined_headcount and moves on to the
+      // next requisition of the same process, designation and branch.
     }
   },
 

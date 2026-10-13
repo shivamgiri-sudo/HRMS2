@@ -14,6 +14,8 @@
 // 2026-09-22 — and the eSign figure independently matches appointmentLetterEligibility.
 // service.ts's own `idCreationSlaBreached: daysSinceIdCreated > 3`, the same employees.created_at
 // clock used there.
+import { abscondedWithoutExceptionSql } from "../exit/ff-settlement-gate.service.js";
+import { awaitingFinalApprovalSql, nocFinalApprovalFrom } from "../payroll/noc-final-approval.service.js";
 import { DIGILOCKER_EVIDENCE_SQL } from "../ats/onboarding-bridge-heal.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -279,6 +281,10 @@ export async function getJoiningBlock(onDate: string): Promise<JoiningBlock> {
 // ── 4. F&F pending ───────────────────────────────────────────────────────────────────────────
 // full_final_calculation.status stays 'draft'/'verified'/'approved' until Finance marks it
 // 'paid'. Branch comes off the leaving employee's own record.
+//
+// An absconder is not allowed an F&F, so a settlement row for one is not a pendency anyone can
+// work — it is excluded here unless the Payroll Head has recorded an exception on the exit
+// (exit_request.ff_exception_at), in which case it is counted like any other.
 export async function getFnfPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
@@ -286,7 +292,9 @@ export async function getFnfPendingBlock(): Promise<CountBlock> {
     `SELECT e.branch_id, COUNT(*) AS n
        FROM full_final_calculation ffc
        JOIN employees e ON e.id = ffc.employee_id
+       LEFT JOIN exit_request er ON er.id = ffc.exit_request_id
       WHERE ffc.status <> 'paid'
+        AND NOT ${abscondedWithoutExceptionSql("er", "e")}
       GROUP BY e.branch_id`,
   );
   return rollupCounts(
@@ -313,7 +321,9 @@ export async function getFnfPendingDetail(
             DATEDIFF(CURDATE(), ffc.calculation_date) AS days_open
        FROM full_final_calculation ffc
        JOIN employees e ON e.id = ffc.employee_id
+       LEFT JOIN exit_request er ON er.id = ffc.exit_request_id
       WHERE e.branch_id = ? AND ffc.status <> 'paid'
+        AND NOT ${abscondedWithoutExceptionSql("er", "e")}
       ORDER BY ffc.calculation_date ASC
       LIMIT 200`,
     [branchId],
@@ -335,10 +345,22 @@ const NOC_OPEN_STATUSES = ["invited", "employee_submitted", "in_progress"];
 
 export async function getNocPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
+  // Completed cases waiting for the Payroll Head's final approval are still a pendency: F&F is
+  // locked behind them. Only counted once noc_ph_final_approval_from is switched on.
+  const from = await nocFinalApprovalFrom();
+  const awaiting = from ? ` OR ${awaitingFinalApprovalSql("noc_case")}` : "";
+  // An absconder cannot be worked until the Payroll Head records an F&F exception, so — like the F&F
+  // count — they are not a pendency anyone can clear. Excluded from the OPEN part only; a completed NOC
+  // awaiting the Payroll Head's final approval is still counted.
   const rows = await query<RowDataPacket>(
     "noc-pending",
-    `SELECT branch_id, COUNT(*) AS n FROM noc_case WHERE status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")}) GROUP BY branch_id`,
-    NOC_OPEN_STATUSES,
+    `SELECT noc_case.branch_id, COUNT(*) AS n
+       FROM noc_case
+       LEFT JOIN exit_request er ON er.id = noc_case.exit_request_id
+       LEFT JOIN employees e ON e.id = noc_case.employee_id
+      WHERE (noc_case.status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")}) AND NOT ${abscondedWithoutExceptionSql("er", "e")})${awaiting}
+      GROUP BY noc_case.branch_id`,
+    from ? [...NOC_OPEN_STATUSES, from] : NOC_OPEN_STATUSES,
   );
   return rollupCounts(
     branches,
@@ -357,14 +379,19 @@ export interface NocDetailRow {
 export async function getNocPendingDetail(
   branchId: string,
 ): Promise<NocDetailRow[]> {
+  const from = await nocFinalApprovalFrom();
   const rows = await query<RowDataPacket>(
     "noc-pending-detail",
-    `SELECT employee_id, employee_code, employee_name, status, DATEDIFF(CURDATE(), COALESCE(initiated_at, employee_submitted_at)) AS days_open
+    `SELECT noc_case.employee_id, noc_case.employee_code, noc_case.employee_name, noc_case.status,
+            DATEDIFF(CURDATE(), COALESCE(noc_case.initiated_at, noc_case.employee_submitted_at)) AS days_open
        FROM noc_case
-      WHERE branch_id = ? AND status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")})
-      ORDER BY initiated_at ASC
+       LEFT JOIN exit_request er ON er.id = noc_case.exit_request_id
+       LEFT JOIN employees e ON e.id = noc_case.employee_id
+      WHERE noc_case.branch_id = ?
+        AND ((noc_case.status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")}) AND NOT ${abscondedWithoutExceptionSql("er", "e")})${from ? ` OR ${awaitingFinalApprovalSql("noc_case")}` : ""})
+      ORDER BY noc_case.initiated_at ASC
       LIMIT 200`,
-    [branchId, ...NOC_OPEN_STATUSES],
+    [branchId, ...NOC_OPEN_STATUSES, ...(from ? [from] : [])],
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, beforeAll, afterAll } from "vitest";
 
 /**
  * Stage A for every source (Task 9): booking before the first send, one owner per person, the guard chain with the shared budget and
@@ -22,6 +22,11 @@ import { afterFirstSend, beginJourney, gate, newBudget, scopeFilter } from "../q
 import { readSwitches } from "../qualified-followup.policy.js";
 import type { FollowupRow } from "../qualified-followup.context.js";
 import type { GuardFacts } from "../followup-guards.js";
+
+// These cases pin the Mon-Sat rule; Sunday sending is the default now, so they run with FOLLOWUP_SUNDAY_SENDS=off (the Sunday default is covered in followupGuards.test.ts).
+beforeAll(() => { process.env.FOLLOWUP_SUNDAY_SENDS = "off"; });
+afterAll(() => { delete process.env.FOLLOWUP_SUNDAY_SENDS; });
+
 
 const THU_11 = new Date("2026-10-08T05:30:00Z");
 const SUN_11 = new Date("2026-10-11T05:30:00Z");

@@ -14,6 +14,7 @@ import { RATE_CHANNELS, readResponseStats, type RateChannel } from "./he-respons
 import { maskMobile } from "./qualified-followup.rules.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import type { ResponseAnswer, ResponseChannel, ResponseMode, ResponseStatus } from "./response-normalise.js";
+import { stripQuoted } from "./response-classifier.js";
 
 export const CHANNELS: readonly ResponseChannel[] = ["email", "whatsapp", "voice_bot", "call_file", "hr", "web"];
 const TYPES: readonly SourceType[] = ["meta_live", "meta_old", "he"];
@@ -78,7 +79,7 @@ function toRow(r: RowDataPacket): ResponseListRow {
     leadId: str(r.lead_id), matchId: str(r.match_id), requisitionId: str(r.requisition_id), requisitionCode: str(r.requisition_code), campaignName: str(r.campaign_name),
     driveType: (str(r.drive_type) as SourceType | null), driveId: str(r.drive_id), driveDate: str(r.drive_date), slotAt: str(r.slot_at),
     handledBy: r.handled_by && r.handled_by !== "system" ? "hr" : "system", handledAt: str(r.handled_at),
-    conflict: Number(r.conflict) === 1, dedupeOf: r.dedupe_of == null ? null : Number(r.dedupe_of), textPreview: preview(r.raw_text),
+    conflict: Number(r.conflict) === 1, dedupeOf: r.dedupe_of == null ? null : Number(r.dedupe_of), textPreview: preview(stripQuoted(String(r.raw_text ?? ""))),
     matchedBy: MATCHED_BY[String(r.source_kind ?? "")] ?? null,
   };
 }

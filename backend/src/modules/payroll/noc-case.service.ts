@@ -26,6 +26,13 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { EMPLOYMENT_END_DATE_SELECT } from "./employment-end-date.js";
+import {
+  autoTierOf,
+  isChainStage,
+  isNocAutoClearanceEnabled,
+  NOC_OPEN_AHEAD_DAYS,
+  NOC_SYSTEM_ACTOR_ID,
+} from "./noc-auto-profile.js";
 
 /**
  * The pooled connection db.getConnection() actually hands back.
@@ -164,6 +171,7 @@ export type StageBlockReason =
   | { code: "EMPLOYEE_FORM_PENDING"; message: string }
   | { code: "PRIOR_TIER_PENDING"; message: string }
   | { code: "LWD_NOT_SET"; message: string }
+  | { code: "LWD_NOT_REACHED"; message: string }
   | { code: "ASSETS_OUTSTANDING"; message: string }
   | { code: "ALREADY_ACTIONED"; message: string };
 
@@ -250,6 +258,8 @@ export async function getCaseDetail(caseId: string): Promise<{
   assets: NocAssetRow[];
   events: RowDataPacket[];
   assetGate: { satisfied: boolean; outstanding: string[] };
+  /** The employee record's confirmed/proposed last working day, offered while HR has not recorded one. */
+  proposedLastWorkingDay: string | null;
   progress: {
     total: number;
     responded: number;
@@ -268,10 +278,24 @@ export async function getCaseDetail(caseId: string): Promise<{
   ]);
 
   const assetGate = evaluateAssetGate(assets);
+  // Same rules the sign-off endpoint applies: under the auto profile the employee form is not a gate,
+  // so the screen must not tell a signer "form pending" while the API would accept their decision.
+  const auto = await isNocAutoClearanceEnabled();
   const annotated = signatories.map((s) => ({
     ...s,
-    blocked: stageBlockReason(nocCase, signatories, s, assetGate),
+    blocked: stageBlockReason(nocCase, signatories, s, assetGate, auto),
   }));
+
+  // A case can only be opened once the employee's last working day is known, but openCase never copied it
+  // onto the case, so HR's Last Working Day field sat blank. Offer it (HR still confirms with Save LWD).
+  let proposedLastWorkingDay: string | null = null;
+  if (!nocCase.last_working_day) {
+    const [lwdRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ${EMPLOYMENT_END_DATE_SELECT} AS lwd FROM employees e WHERE e.id = ? LIMIT 1`,
+      [nocCase.employee_id],
+    );
+    proposedLastWorkingDay = (lwdRows[0]?.lwd as string | null | undefined) ?? null;
+  }
 
   const responded = signatories.filter((s) => s.status !== "pending").length;
   return {
@@ -280,6 +304,7 @@ export async function getCaseDetail(caseId: string): Promise<{
     assets,
     events,
     assetGate,
+    proposedLastWorkingDay,
     progress: {
       total: signatories.length,
       responded,
@@ -292,41 +317,129 @@ export async function getCaseDetail(caseId: string): Promise<{
   };
 }
 
+const EMPLOYEE_VISIBLE_CASE_COLUMNS = [
+  "id",
+  "employee_id",
+  "employee_code",
+  "employee_name",
+  "designation",
+  "resignation_date",
+  "last_working_day",
+  "status",
+  "completed_at",
+  "created_at",
+] as const;
+
+/** A case row as the leaver sees it: no decline reason, override fields, or who initiated / declined. */
+export function employeeSafeCaseRow<T extends Record<string, unknown> | null>(row: T): Record<string, unknown> | null {
+  if (!row) return null;
+  const out: Record<string, unknown> = {};
+  for (const k of EMPLOYEE_VISIBLE_CASE_COLUMNS) out[k] = row[k];
+  return out;
+}
+
+/** A list row as the leaver sees it: the safe columns plus branch name and the stage counts. */
+export function employeeSafeListRow(row: Record<string, unknown>): Record<string, unknown> {
+  const out = employeeSafeCaseRow(row) as Record<string, unknown>;
+  for (const k of ["branch_name", "signatory_total", "signatory_accepted", "signatory_declined", "signatory_pending", "pending_stages"]) {
+    out[k] = row[k];
+  }
+  return out;
+}
+
+/**
+ * What the leaver themself may see of their own NOC case.
+ *
+ * Enough to answer "where is my clearance stuck": the case status, last working day, each stage's
+ * label and status, and which items are outstanding. Everything that belongs to the people running the
+ * process is left out: who signed or declined and their remarks, the decline reason, an override's
+ * reason and attached document, the audit events, and SLA / reminder bookkeeping.
+ */
+export function employeeSafeCaseDetail(detail: Awaited<ReturnType<typeof getCaseDetail>>) {
+  const c = detail.nocCase;
+  return {
+    nocCase: {
+      id: c.id,
+      employee_id: c.employee_id,
+      employee_code: c.employee_code,
+      employee_name: c.employee_name,
+      designation: c.designation,
+      resignation_date: c.resignation_date,
+      last_working_day: c.last_working_day,
+      status: c.status,
+      completed_at: c.completed_at,
+      created_at: c.created_at,
+    },
+    signatories: detail.signatories.map((s) => ({
+      display_no: s.display_no,
+      tier: s.tier,
+      stage_key: s.stage_key,
+      stage_label: s.stage_label,
+      status: s.status,
+      acted_at: s.acted_at,
+    })),
+    assets: detail.assets.map((a) => ({
+      item_no: a.item_no,
+      item_label: a.item_label,
+      quantity: a.quantity,
+      status: a.status,
+    })),
+    assetGate: detail.assetGate,
+    progress: detail.progress,
+    events: [] as RowDataPacket[],
+    redacted: true,
+  };
+}
+
 export interface ListCaseFilters {
   status?: string;
+  /** 'open' = invited / employee_submitted / in_progress, resolved in SQL so paging stays exact. */
+  statusGroup?: "open";
   branchId?: string;
+  processId?: string;
   stageKey?: string;
   stageStatus?: string;
   /** Only cases with at least one signatory past its SLA. */
   slaBreachedOnly?: boolean;
+  /** Completed cases still waiting for the Payroll Head (date from nocFinalApprovalFrom). */
+  awaitingFinalFrom?: string | null;
   search?: string;
   limit?: number;
+  offset?: number;
 }
 
+const OPEN_STATUSES = ["invited", "employee_submitted", "in_progress"];
+
 /**
- * The HR / Payroll Head tracking list.
+ * Cases, newest first, one page at a time.
  *
- * Carries the per-role counts inline rather than making the caller fan out one query per case:
- * the dashboard shows Pending/Accepted/Declined per role per leaver, and N+1 on a list of every
- * open exit is how that page becomes unusable at a few hundred rows.
- *
- * scopeSql is applied by the caller from buildScopeWhereClause so a branch-scoped user sees only
- * their branch, using the same predicate builder as every other scoped list in this codebase.
+ * Two steps on purpose. The old single query LEFT JOINed a GROUP BY over the whole noc_signatory
+ * table, so every page paid for aggregating every case's signatories. Here the page of case ids is
+ * selected first (filters + LIMIT/OFFSET on noc_case alone), then only those ids' signatories are
+ * aggregated. The count is a separate, filter-only COUNT so the UI can show "1-50 of 312" without
+ * fetching everything.
  */
-export async function listCases(
+export async function listCasesPage(
   filters: ListCaseFilters,
   scope: { sql: string; params: unknown[] } = { sql: "1=1", params: [] },
-): Promise<RowDataPacket[]> {
+): Promise<{ rows: RowDataPacket[]; total: number }> {
   const conds: string[] = [`(${scope.sql})`];
   const params: unknown[] = [...scope.params];
 
-  if (filters.status) {
+  if (filters.statusGroup === "open") {
+    conds.push(`c.status IN (${OPEN_STATUSES.map(() => "?").join(",")})`);
+    params.push(...OPEN_STATUSES);
+  } else if (filters.status) {
     conds.push("c.status = ?");
     params.push(filters.status);
   }
   if (filters.branchId) {
     conds.push("c.branch_id = ?");
     params.push(filters.branchId);
+  }
+  if (filters.processId) {
+    conds.push("c.process_id = ?");
+    params.push(filters.processId);
   }
   if (filters.search) {
     conds.push("(c.employee_code LIKE ? OR c.employee_name LIKE ?)");
@@ -344,35 +457,72 @@ export async function listCases(
                          WHERE s3.noc_case_id = c.id AND s3.status = 'pending'
                            AND s3.sla_due_at IS NOT NULL AND s3.sla_due_at < NOW())`);
   }
+  if (filters.awaitingFinalFrom) {
+    conds.push(`(c.status = 'completed' AND c.override_at IS NULL
+                 AND c.payroll_head_approved_at IS NULL AND DATE(c.completed_at) >= ?)`);
+    params.push(filters.awaitingFinalFrom);
+  }
 
-  const limit = Math.max(1, Math.min(500, filters.limit ?? 200));
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT c.*,
-            b.branch_name,
-            COALESCE(sig.total, 0)        AS signatory_total,
-            COALESCE(sig.accepted, 0)     AS signatory_accepted,
-            COALESCE(sig.declined, 0)     AS signatory_declined,
-            COALESCE(sig.pending, 0)      AS signatory_pending,
-            COALESCE(sig.sla_breached, 0) AS signatory_sla_breached,
-            sig.pending_stages
+  const where = conds.join(" AND ");
+  const limit = Math.max(1, Math.min(200, Math.trunc(filters.limit ?? 50)));
+  const offset = Math.max(0, Math.trunc(filters.offset ?? 0));
+
+  const [[countRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM noc_case c WHERE ${where}`,
+    params,
+  ) as unknown as [RowDataPacket[]];
+  const total = Number(countRow?.n ?? 0);
+  if (total === 0 || offset >= total) return { rows: [], total };
+
+  const [cases] = await db.execute<RowDataPacket[]>(
+    `SELECT c.*, b.branch_name, p.process_name
        FROM noc_case c
        LEFT JOIN branch_master b ON b.id = c.branch_id
-       LEFT JOIN (
-         SELECT noc_case_id,
-                COUNT(*) AS total,
-                SUM(status IN ('accepted','acknowledged')) AS accepted,
-                SUM(status = 'declined')                   AS declined,
-                SUM(status = 'pending')                    AS pending,
-                SUM(status = 'pending' AND sla_due_at IS NOT NULL AND sla_due_at < NOW()) AS sla_breached,
-                GROUP_CONCAT(CASE WHEN status = 'pending' THEN stage_key END ORDER BY display_no) AS pending_stages
-           FROM noc_signatory GROUP BY noc_case_id
-       ) sig ON sig.noc_case_id = c.id
-      WHERE ${conds.join(" AND ")}
-      ORDER BY c.created_at DESC
-      LIMIT ${limit}`,
+       LEFT JOIN process_master p ON p.id = c.process_id
+      WHERE ${where}
+      ORDER BY c.created_at DESC, c.id
+      LIMIT ${limit} OFFSET ${offset}`,
     params,
   );
-  return rows as RowDataPacket[];
+  if (cases.length === 0) return { rows: [], total };
+
+  const ids = cases.map((r) => String(r.id));
+  const [sigs] = await db.execute<RowDataPacket[]>(
+    `SELECT noc_case_id,
+            COUNT(*) AS total,
+            SUM(status IN ('accepted','acknowledged')) AS accepted,
+            SUM(status = 'declined')                   AS declined,
+            SUM(status = 'pending')                    AS pending,
+            SUM(status = 'pending' AND sla_due_at IS NOT NULL AND sla_due_at < NOW()) AS sla_breached,
+            GROUP_CONCAT(CASE WHEN status = 'pending' THEN stage_key END ORDER BY display_no) AS pending_stages
+       FROM noc_signatory
+      WHERE noc_case_id IN (${ids.map(() => "?").join(",")})
+      GROUP BY noc_case_id`,
+    ids,
+  );
+  const byCase = new Map(sigs.map((r) => [String(r.noc_case_id), r]));
+  const rows = cases.map((c) => {
+    const g = byCase.get(String(c.id));
+    return {
+      ...c,
+      signatory_total: Number(g?.total ?? 0),
+      signatory_accepted: Number(g?.accepted ?? 0),
+      signatory_declined: Number(g?.declined ?? 0),
+      signatory_pending: Number(g?.pending ?? 0),
+      signatory_sla_breached: Number(g?.sla_breached ?? 0),
+      pending_stages: g?.pending_stages ?? null,
+    } as unknown as RowDataPacket;
+  });
+  return { rows, total };
+}
+
+/** Back-compat wrapper: callers that only want the rows (limit default kept at 200). */
+export async function listCases(
+  filters: ListCaseFilters,
+  scope: { sql: string; params: unknown[] } = { sql: "1=1", params: [] },
+): Promise<RowDataPacket[]> {
+  const { rows } = await listCasesPage({ limit: 200, ...filters }, scope);
+  return rows;
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -408,6 +558,8 @@ export function stageBlockReason(
   all: NocSignatoryRow[],
   target: NocSignatoryRow,
   assetGate: { satisfied: boolean; outstanding: string[] },
+  /** Auto-clearance profile (noc-auto-profile.ts): parallel stages, form is not a gate. */
+  auto = false,
 ): StageBlockReason | null {
   if (target.status !== "pending") {
     return {
@@ -426,7 +578,7 @@ export function stageBlockReason(
   }
   // The form comes first: the signatories are certifying against what the employee declared,
   // so signing before that exists would be certifying a blank document.
-  if (nocCase.status === "invited") {
+  if (nocCase.status === "invited" && !auto) {
     return {
       code: "EMPLOYEE_FORM_PENDING",
       message:
@@ -435,9 +587,15 @@ export function stageBlockReason(
   }
 
   // Tier gate. Equal tiers are independent; every LOWER tier must have responded positively.
+  const tierOf = (s: NocSignatoryRow) =>
+    auto ? autoTierOf(s.stage_key, s.tier) : s.tier;
   const blockingLower = all.filter(
     (s) =>
-      s.tier < target.tier &&
+      tierOf(s) < tierOf(target) &&
+      // Under the profile only MANDATORY lower stages gate a later one. Accounts and Finance are
+      // tracked but do not hold the case open (1764), so they must not hold HR's closing stage
+      // open either — otherwise Finance waiting on a laptop would stall a case it cannot block.
+      (!auto || Number(s.is_mandatory) === 1) &&
       s.status !== "accepted" &&
       s.status !== "acknowledged",
   );
@@ -457,6 +615,18 @@ export function stageBlockReason(
       message:
         "Record the confirmed Last Working Day before clearing the HR stage.",
     };
+  }
+
+  // Under the profile the case may open before the LWD (the pre-LWD stages clear from system
+  // evidence during notice), but it must never close before the person has actually left.
+  if (auto && target.stage_key === "hr" && nocCase.last_working_day) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (String(nocCase.last_working_day).slice(0, 10) > today) {
+      return {
+        code: "LWD_NOT_REACHED",
+        message: `The case closes on the Last Working Day (${String(nocCase.last_working_day).slice(0, 10)}).`,
+      };
+    }
   }
 
   if (Number(target.requires_asset_clearance) === 1 && !assetGate.satisfied) {
@@ -566,7 +736,14 @@ export async function openCase(params: {
     );
   }
   const today = new Date().toISOString().slice(0, 10);
-  if (lwd > today) {
+  // Auto-clearance profile: the case may open up to NOC_OPEN_AHEAD_DAYS before the LWD so the
+  // evidence-based stages clear during notice; it still cannot CLOSE before the LWD (HR stage).
+  const openFrom = (await isNocAutoClearanceEnabled())
+    ? new Date(Date.now() + NOC_OPEN_AHEAD_DAYS * 86_400_000)
+        .toISOString()
+        .slice(0, 10)
+    : today;
+  if (String(lwd).slice(0, 10) > openFrom) {
     throw refuse(
       409,
       "NOC_LWD_NOT_REACHED",
@@ -682,11 +859,19 @@ export async function mintInvite(
   }
 
   const emp = await loadEmployeeSnapshot(nocCase.employee_id);
+  // Leavers often have no employee-record email; the hiring candidate record still has the personal one.
+  const [candRows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.email, c.mobile
+       FROM ats_onboarding_bridge b
+       JOIN ats_candidate c ON c.id = b.candidate_id
+      WHERE b.employee_id = ? LIMIT 1`,
+    [nocCase.employee_id],
+  );
   const email =
-    [emp?.official_email, emp?.email, emp?.personal_email].find(
+    [emp?.official_email, emp?.email, emp?.personal_email, candRows[0]?.email].find(
       (e) => typeof e === "string" && e.includes("@"),
     ) ?? null;
-  const mobile = emp?.mobile ?? null;
+  const mobile = emp?.mobile || (candRows[0]?.mobile as string | null | undefined) || null;
 
   await db.execute(
     `UPDATE noc_invite SET token_status = 'superseded'
@@ -1232,8 +1417,15 @@ export async function actOnSignatory(params: {
       "That signatory stage is not on this NOC.",
     );
 
+  const auto = await isNocAutoClearanceEnabled();
   const assetGate = evaluateAssetGate(await getAssets(params.caseId));
-  const blocked = stageBlockReason(nocCase, signatories, target, assetGate);
+  const blocked = stageBlockReason(
+    nocCase,
+    signatories,
+    target,
+    assetGate,
+    auto,
+  );
   // A decline is allowed to bypass the asset gate: "I cannot clear this because the laptop is
   // missing" is exactly the decline Finance needs to be able to record, and refusing it because
   // the laptop is missing would be circular. Every other block still applies.
@@ -1307,11 +1499,60 @@ export async function actOnSignatory(params: {
       caseStatus = "declined";
       declined = true;
     } else {
-      const after = signatories.map((s) =>
+      let after = signatories.map((s) =>
         s.id === target.id
           ? { ...s, status: params.decision as SignatoryStatus }
           : s,
       );
+
+      // Single reporting-chain approval: one human decision on Team Leader / Process Manager /
+      // Branch Manager covers the other two, recorded as such rather than as a signature they
+      // never made. Only a human decision triggers it, so the engine's own deemed-cover cannot
+      // chain into itself.
+      if (
+        auto &&
+        isChainStage(target.stage_key) &&
+        params.actorUserId !== NOC_SYSTEM_ACTOR_ID
+      ) {
+        const covered = after.filter(
+          (s) =>
+            s.id !== target.id &&
+            isChainStage(s.stage_key) &&
+            s.status === "pending",
+        );
+        for (const c of covered) {
+          await conn.execute(
+            `UPDATE noc_signatory
+                SET status = 'acknowledged', acted_by_user_id = ?, acted_by_name = ?,
+                    acted_by_role = 'system', acted_at = NOW(), remarks = ?
+              WHERE id = ? AND status = 'pending'`,
+            [
+              NOC_SYSTEM_ACTOR_ID,
+              "Covered by reporting-chain approval",
+              `Covered by ${target.stage_label} approval by ${params.actorName ?? "the reporting chain"}`.slice(
+                0,
+                500,
+              ),
+              c.id,
+            ],
+          );
+          await writeEvent(conn, {
+            caseId: params.caseId,
+            stageKey: c.stage_key,
+            action: "signatory_covered",
+            actorUserId: NOC_SYSTEM_ACTOR_ID,
+            actorRole: "system",
+            actorName: "NOC auto-clearance",
+            actorType: "system",
+            reason: `Covered by ${target.stage_label} approval by ${params.actorName ?? "the reporting chain"}`,
+          });
+        }
+        after = after.map((s) =>
+          covered.some((c) => c.id === s.id)
+            ? { ...s, status: "acknowledged" as SignatoryStatus }
+            : s,
+        );
+      }
       // Accounts and Finance are real, trackable signatory stages, but not mandatory for the
       // case to reach 'completed' (1764_noc_signatory_not_mandatory.sql, per the business owner
       // 2026-09-12) — a non-mandatory stage still pending does not hold the case open.
@@ -1337,7 +1578,10 @@ export async function actOnSignatory(params: {
           actorName: params.actorName,
           reason: "All signatories responded",
         });
-      } else if (nocCase.status === "employee_submitted") {
+      } else if (
+        nocCase.status === "employee_submitted" ||
+        (auto && nocCase.status === "invited")
+      ) {
         await conn.execute(
           `UPDATE noc_case SET status = 'in_progress' WHERE id = ?`,
           [params.caseId],
@@ -1369,9 +1613,15 @@ export async function actionableStages(
   if (!nocCase) return [];
   const signatories = await getSignatories(caseId);
   const assetGate = evaluateAssetGate(await getAssets(caseId));
+  const auto = await isNocAutoClearanceEnabled();
   return signatories.filter(
-    (s) => stageBlockReason(nocCase, signatories, s, assetGate) === null,
+    (s) => stageBlockReason(nocCase, signatories, s, assetGate, auto) === null,
   );
+}
+
+/** Start SLA clocks for a case outside any transaction (case open under the auto profile). */
+export async function startSlaForCase(caseId: string): Promise<void> {
+  await startSlaForActionableStages(null, caseId);
 }
 
 /**

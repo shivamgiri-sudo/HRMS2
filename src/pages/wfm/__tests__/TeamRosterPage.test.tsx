@@ -421,9 +421,9 @@ describe("attendance helpers", () => {
 
 describe("pure helpers", () => {
   it("visibleTabs encodes the audience rules", () => {
-    expect(visibleTabs({ isManager: true, canApproveManagerStep: false, canApproveWfmStep: false })).toEqual(["roster", "attendance", "submissions"]);
-    expect(visibleTabs({ isManager: false, canApproveManagerStep: false, canApproveWfmStep: true })).toEqual(["approvals"]);
-    expect(visibleTabs({ isManager: true, canApproveManagerStep: true, canApproveWfmStep: true })).toEqual(["roster", "attendance", "submissions", "approvals"]);
+    expect(visibleTabs({ isManager: true, canApproveManagerStep: false, canApproveWfmStep: false })).toEqual(["roster", "attendance", "submissions", "history"]);
+    expect(visibleTabs({ isManager: false, canApproveManagerStep: false, canApproveWfmStep: true })).toEqual(["approvals", "history"]);
+    expect(visibleTabs({ isManager: true, canApproveManagerStep: true, canApproveWfmStep: true })).toEqual(["roster", "attendance", "submissions", "approvals", "history"]);
     expect(visibleTabs({ isManager: false, canApproveManagerStep: false, canApproveWfmStep: false })).toEqual([]);
   });
 

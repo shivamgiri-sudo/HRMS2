@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execute = vi.hoisted(() => vi.fn());
 const loadActiveStreams = vi.hoisted(() => vi.fn());
@@ -16,6 +16,9 @@ import { clearDriveAnalyticsCache, getDriveAnalytics } from "../he-drive-analyti
 
 // Pins today's drive analytics output and statement list (one requisition fed by all three types) so HE_COST_PER_SOURCE off stays byte-identical.
 const NOW = new Date("2026-10-14T06:00:00Z");
+// The build reads the rolling Live Meta cutoff from the clock: pinned to NOW, so the cutoff is 14 Oct - 7 days = 7 Oct 2026.
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
+afterEach(() => { vi.useRealTimers(); });
 const Q = { from: "2026-10-01", to: "2026-10-14" };
 const ALL = { all: true } as never;
 const zeros = { qualified: 0, emailed: 0, whatsapped: 0, replied: 0, called: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 };

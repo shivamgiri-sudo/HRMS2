@@ -4,9 +4,12 @@
  *   - Meta-origin: a Meta stream credit (requisition_stream_match -> requisition_stream.source_type meta_live / meta_old), a Meta-sourced
  *     drive (source_kind 'meta' or 'campaign', or 'batch' whose upload batch has he_import_batch.source = 'meta'; other upload batches such
  *     as Naukri / WorkIndia / apna / walk-in / referral are NOT Meta), he_lead.meta_lead_id, or a he_lead_campaign link;
- *   - a Meta-origin person is meta_live for an activity when their FIRST Meta form fill is on or after the cutoff (LIVE_FROM_DEFAULT 00:00
- *     IST, he_model_param 'meta.live_from.YYYY-MM-DD') and the activity itself is on or after the cutoff; otherwise meta_old (also with no
- *     fill time). A later re-fill never turns earlier activity Live, and nothing before the cutoff is ever Live;
+ *   - a Meta-origin person is meta_live for an activity when their FIRST Meta form fill is on or after the cutoff and the activity itself
+ *     is on or after the cutoff; otherwise meta_old (also with no fill time). A later re-fill never turns earlier activity Live, and
+ *     nothing before the cutoff is ever Live. The cutoff ROLLS (owner, 2026-10-09: "Old Meta = today minus 7 days, always"): 00:00 IST of
+ *     the IST day (today - N), N = he_model_param meta.live_days (default 7), so Live Meta is the last N days plus today and a person
+ *     moves to Old Meta data the day their first fill leaves that window, even when they filled again later (the first-fill rule). A
+ *     fixed day ('meta.live_from.YYYY-MM-DD' = 1) applies only while meta.live_mode = 1 (he-source-attribution.service.ts);
  *   - everyone else is 'he'.
  * A person's form fills are their bridged fills (he_lead.meta_lead_id and he_lead_campaign); a fill with no he_lead is judged with the other
  * raw fills of the same parsed_phone. Fill time: Meta's created_time from raw_payload in IST, never later than our import time (created_at),
@@ -18,10 +21,14 @@
 import { effectiveLeadTime } from "./he-pipeline-health.js";
 import type { SourceType } from "./qualified-followup.types.js";
 
-/** Meta leads first received on or after this IST day are Live Meta; earlier ones are Old Meta data. Overridable by he_model_param. */
-export const LIVE_FROM_DEFAULT = "2026-10-08";
+/** Live Meta = a first form fill on or after 00:00 IST of (today - LIVE_DAYS_DEFAULT days), IST day; he_model_param meta.live_days overrides. */
+export const LIVE_DAYS_DEFAULT = 7;
+export const LIVE_DAYS_MAX = 365;
+export const LIVE_DAYS_PARAM = "meta.live_days";
+/** value 1 = 'fixed': the latest 'meta.live_from.YYYY-MM-DD' = 1 row is the cutoff; absent or 0 = rolling. */
+export const LIVE_MODE_PARAM = "meta.live_mode";
 export const LIVE_FROM_PARAM = "meta.live_from";
-const IST_OFFSET_MIN = 330; // the SQL uses '+05:30'
+const IST_OFFSET_MIN = 330; // IST is a fixed +05:30 with no DST; the SQL uses '+05:30'
 const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{4}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -31,6 +38,34 @@ export function validDay(v: unknown): string | null {
   const d = v.trim();
   const t = Date.parse(`${d}T00:00:00Z`);
   return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === d ? d : null;
+}
+
+/** The IST calendar day of an instant. */
+export function istDayOf(now: Date): string {
+  return new Date(now.getTime() + IST_OFFSET_MIN * 60_000).toISOString().slice(0, 10);
+}
+
+/** meta.live_days as a whole number of days 0..LIVE_DAYS_MAX (a DECIMAL 7.0000 is 7, a fraction rounds down); anything else is the default. */
+export function liveDaysOf(v: unknown): number {
+  if (v === null || v === undefined || v === "") return LIVE_DAYS_DEFAULT;
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n >= 0 && n <= LIVE_DAYS_MAX ? n : LIVE_DAYS_DEFAULT;
+}
+
+/** The rolling cutoff day: the IST day of `now` minus `days` (its 00:00 IST is the boundary; a fill at exactly that moment is Live). */
+export function rollingLiveFrom(now: Date = new Date(), days: number = LIVE_DAYS_DEFAULT): string {
+  return new Date(Date.parse(`${istDayOf(now)}T00:00:00Z`) - liveDaysOf(days) * 86_400_000).toISOString().slice(0, 10);
+}
+
+export interface LiveWindow { liveFrom: string; mode: "rolling" | "fixed"; days: number }
+/** The cutoff from the he_model_param values (meta.live_days, meta.live_mode, the days of the 'meta.live_from.<day>' = 1 rows) at `now`. */
+export function resolveLiveWindow(p: { liveDays?: unknown; liveMode?: unknown; fixedDays?: readonly unknown[] }, now: Date = new Date()): LiveWindow {
+  const days = liveDaysOf(p.liveDays);
+  if (Number(p.liveMode) === 1) {
+    const fixed = (p.fixedDays ?? []).map(validDay).filter((d): d is string => !!d).sort();
+    if (fixed.length) return { liveFrom: fixed[fixed.length - 1], mode: "fixed", days };
+  }
+  return { liveFrom: rollingLiveFrom(now, days), mode: "rolling", days };
 }
 
 export interface AttributionFacts {
@@ -43,11 +78,13 @@ export interface AttributionFacts {
   firstFillAt?: string | null;
   /** When the activity happened (drive date or event time, IST); without it the activity reads as Old Meta (the SQL's NULL rule). */
   activityAt?: string | null;
-  /** Cutoff day 'YYYY-MM-DD'; LIVE_FROM_DEFAULT when not given or invalid. */
+  /** Cutoff day 'YYYY-MM-DD'; the rolling cutoff of `now` when not given or invalid. */
   liveFrom?: string | null;
+  /** The clock for the rolling cutoff when liveFrom is not given (default: the real clock). */
+  now?: Date;
 }
 
-export function isLiveFill(fill: string | null | undefined, liveFrom: string = LIVE_FROM_DEFAULT): boolean {
+export function isLiveFill(fill: string | null | undefined, liveFrom: string = rollingLiveFrom()): boolean {
   return !!fill && fill >= `${liveFrom} 00:00:00`;
 }
 
@@ -58,7 +95,7 @@ export function isMetaDrive(kind: string | null | undefined, batchMeta = false):
 export function attributeSource(f: AttributionFacts): SourceType {
   const metaStream = f.streamType === "meta_live" || f.streamType === "meta_old";
   if (!(metaStream || isMetaDrive(f.driveSourceKind, f.driveBatchMeta) || f.metaOrigin)) return "he";
-  const cutoff = validDay(f.liveFrom) ?? LIVE_FROM_DEFAULT;
+  const cutoff = validDay(f.liveFrom) ?? rollingLiveFrom(f.now ?? new Date());
   // E7: no activity time reads as before the cutoff (meta_old), exactly as the SQL's NULL comparison does.
   const afterCutoff = !!f.activityAt && f.activityAt.slice(0, 10) >= cutoff;
   return isLiveFill(f.firstFillAt, cutoff) && afterCutoff ? "meta_live" : "meta_old";
@@ -87,8 +124,8 @@ const metaTimeSql = (r: string): string => {
 /** One meta_lead_raw row's fill time (alias `r`), the SQL of formFillTime. */
 export const rawFillSql = (r: string): string => `LEAST(${r}.created_at, COALESCE(${metaTimeSql(r)}, ${r}.created_at))`;
 
-/** The cutoff as a SQL DATETIME literal (validated day only). */
-export const cutoffSql = (liveFrom: string): string => `TIMESTAMP '${validDay(liveFrom) ?? LIVE_FROM_DEFAULT} 00:00:00'`;
+/** The cutoff as a SQL DATETIME literal (validated day only; anything else is the rolling cutoff of the real clock). */
+export const cutoffSql = (liveFrom: string): string => `TIMESTAMP '${validDay(liveFrom) ?? rollingLiveFrom()} 00:00:00'`;
 
 /** The person's first fill (he_lead `lead`, first fill row `first`), NULL when none: the specification liveFirstFillSql is tested against. */
 export function personFirstFillSql(lead: string, first = `${lead}f`): string {

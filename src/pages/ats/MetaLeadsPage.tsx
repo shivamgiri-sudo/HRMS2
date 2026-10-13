@@ -173,6 +173,14 @@ function csvCell(value: unknown): string {
   return needsQuote ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
+/** The live form has no city question: its only place-related answer is a willingness one (yes / no / can_relocate). Label it as that. */
+const WILLINGNESS = /^(yes|no|can[_ ]relocate|maybe)$/i;
+function locationText(v: string | null): string {
+  const t = (v ?? "").trim();
+  if (!t) return "—";
+  return WILLINGNESS.test(t) ? `Can travel: ${t.replace(/_/g, " ").toLowerCase()}` : t;
+}
+
 export default function MetaLeadsPage() {
   const [rows, setRows] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
@@ -666,7 +674,7 @@ export default function MetaLeadsPage() {
                       {/* Age */}
                       <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedAge != null ? `${l.parsedAge} yr` : "—"}</td>
                       {/* Location */}
-                      <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedLocation ?? "—"}</td>
+                      <td className="px-3 py-2.5 text-sm text-slate-600">{locationText(l.parsedLocation)}</td>
                       {/* Education */}
                       <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedEducation ?? "—"}</td>
                       {/* Exp */}

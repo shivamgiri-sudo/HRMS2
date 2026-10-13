@@ -10,6 +10,7 @@ import { writeAuditLog } from "../../shared/auditLog.js";
 import { canAccessCampaign, canAccessLead, canAccessRequisition, resolveBranchScope } from "./meta-access.js";
 import { addCampaignRequisition, listCampaignRequisitions, removeCampaignRequisition, setPrimaryRequisition } from "./campaign-requisition.service.js";
 import { applyRelink, previewRelink } from "./campaign-relink.service.js";
+import { validSince } from "./relink-since.js";
 import { enrolMetaArrival } from "../selection/meta-arrival.service.js";
 import { campaignRoutingSummary, overrideLeadRequisition } from "./lead-routing.service.js";
 import { metaCampaignService } from "./meta-campaign.service.js";
@@ -81,7 +82,7 @@ campaignRequisitionRouter.get("/campaigns/:id/relink-preview", requireAuth, requ
   const id = String(req.params.id), to = typeof req.query.to === "string" ? req.query.to : "";
   if (!to) return void res.status(400).json({ success: false, message: "Pick the requisition to link" });
   if (!(await inScope(req, res, id, to))) return;
-  const { moveIds: _ids, ...preview } = await previewRelink(id, to);
+  const { moveIds: _ids, ...preview } = await previewRelink(id, to, validSince(req.query.since));
   res.json({ success: true, data: preview });
 }));
 
@@ -90,7 +91,7 @@ campaignRequisitionRouter.post("/campaigns/:id/relink", requireAuth, requireRole
   const to = typeof b.toRequisitionId === "string" ? b.toRequisitionId : "";
   if (!to || typeof b.previewHash !== "string" || b.confirm !== true) return void res.status(400).json({ success: false, message: "Preview first, then confirm" });
   if (!(await inScope(req, res, id, to))) return;
-  const r = await applyRelink({ campaignId: id, toRequisitionId: to, previewHash: b.previewHash, reason: String(b.reason ?? ""), actor: actorOf(req) });
+  const r = await applyRelink({ campaignId: id, toRequisitionId: to, previewHash: b.previewHash, reason: String(b.reason ?? ""), actor: actorOf(req), since: validSince(b.since) });
   await audit(req, "META_CAMPAIGN_RELINK", id, { to, moved: r.moved, kept: r.kept, relinkId: r.relinkId });
   res.json({ success: true, data: r });
 }));

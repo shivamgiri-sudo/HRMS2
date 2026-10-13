@@ -12,6 +12,7 @@ import { evaluate } from "./evaluate.js";
 import { readFactCache } from "./fact-cache.service.js";
 import { normaliseFacts } from "./facts-normalise.js";
 import { loadRawPeople } from "./facts-loader.service.js";
+import { loadLiveFrom } from "../hiring-engine/he-source-attribution.service.js";
 import { buildFunnel, finalVerdict, pickSample, type FunnelResult } from "./funnel.js";
 import { loadOverrides, withOverride } from "./override.service.js";
 import type { CandidateFacts, CompiledCriteria, Evaluation, SourceKind, SubSource, Verdict } from "./selection-types.js";
@@ -61,16 +62,21 @@ export async function evaluatePopulation(i: PreviewInput): Promise<{ compiled: C
   const subs = i.subSource && i.subSource !== "all" ? [i.subSource] : undefined;
   const partial: string[] = [];
   const raw: Array<{ facts: CandidateFacts; hash?: string }> = [];
+  // Live Meta is a rolling window: the cached Live rows are re-checked against the cutoff of this clock (fact-cache.service.ts).
+  const liveFrom = i.sourceKind === "meta_live" ? await loadLiveFrom(now) : null;
   let after: string | undefined;
   for (;;) {
-    const r = await readFactCache({ sourceKind: i.sourceKind, subSources: subs, afterKey: after, limit: 5000 });
+    const r = await readFactCache({ sourceKind: i.sourceKind, subSources: subs, afterKey: after, limit: 5000, ...(liveFrom ? { liveFrom } : {}) });
     for (const x of r.rows) raw.push({ facts: x.facts, hash: x.factsHash });
     if (!r.nextKey || raw.length >= MAX_PEOPLE) { if (r.nextKey) partial.push(`capped_at_${MAX_PEOPLE}`); break; }
     after = r.nextKey;
   }
   if (!raw.length) {
     const live = await loadRawPeople({ sourceKind: i.sourceKind, subSources: subs, limit: LIVE_READ_CAP }, now);
-    for (const p of live.people) raw.push({ facts: normaliseFacts(p.person, now) });
+    // one person once (several Meta form fills are one person; the newest record wins, as refreshFactCache does): a run stores one row per person
+    const byPerson = new Map<string, CandidateFacts>();
+    for (const p of live.people) { const f = normaliseFacts(p.person, now); byPerson.set(f.personKey, f); }
+    for (const facts of byPerson.values()) raw.push({ facts });
     partial.push(live.nextKey ? `facts_cache_empty_live_read_capped_at_${LIVE_READ_CAP}` : "facts_cache_empty_live_read");
   }
   const overrides = await loadOverrides(i.requisitionId);

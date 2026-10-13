@@ -1738,6 +1738,7 @@ router.get(
               sal.recovery_months,
               sal.notes AS purpose,
               sal.created_at,
+              sal.legacy_loan_id,
               e.employee_code,
               CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name
          FROM salary_advance_log sal

@@ -39,7 +39,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import { driveCreditSql } from "./he-drive-credit.js";
-import { creditJoinsSql, fillPhoneSql, fillTypeSql, liveFirstFillSql } from "./he-source-attribution.js";
+import { creditJoinsSql, fillPhoneSql, fillTypeSql, istDayOf, liveFirstFillSql } from "./he-source-attribution.js";
 import { PersonFacts, typeKeyColsSql } from "./he-person-facts.service.js";
 import { loadLiveFrom } from "./he-source-attribution.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -291,7 +291,7 @@ export async function getRequisitionSources(requisitionId: string, scope: Branch
   if (!row) return null;
   const branch = String(row.branch_name ?? "");
   if (!scope.all && !(scope.branchName != null && scope.branchName === branch)) return null;
-  const key = `${requisitionId}|${scopeKey(scope)}`;
+  const key = `${requisitionId}|${scopeKey(scope)}|${istDayOf(new Date())}`; // the day: the Live Meta cutoff rolls at midnight IST
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
   if (hit) cache.delete(key);

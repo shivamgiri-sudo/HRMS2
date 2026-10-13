@@ -22,7 +22,8 @@ import { BusinessDatapoints } from "@/components/process-operations/BusinessData
 import { MetricDayGrid } from "@/components/process-operations/MetricDayGrid";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { MasmisUploaderGrid } from "@/components/process-operations/MasmisUploader";
-import { V2DashboardView, v2DashboardsForProcess, V2_COMPANY_LABELS } from "@/components/process-performance/v2Dashboards";
+import { V2DashboardView, v2DashboardsForProcess, V2_COMPANY_LABELS, V2_UPLOADERS_BY_COMPANY } from "@/components/process-performance/v2Dashboards";
+import { UploaderWorkspace } from "@/components/process-performance/UploaderWorkspace";
 
 /**
  * Real inline upload, keyed by processCode (not mapping.type, since Housing
@@ -196,11 +197,18 @@ function ProcessSalesDashboardView(props: { processId: string; processCode: stri
       .map((t) => ({ ...t, id: `${t.company}:${t.dashboard.key}` })),
     [props.processCode, props.processName, workforce],
   );
+  // Same roles the Bulk Upload Hub accepts; the server enforces them again on every batch.
+  const canUpload = workforce.hasAnyRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr");
+  const uploaderTabs = useMemo(
+    () => (canUpload ? v2Tabs.filter((t, i, all) => V2_UPLOADERS_BY_COMPANY[t.company] && all.findIndex((x) => x.company === t.company) === i) : []),
+    [canUpload, v2Tabs],
+  );
   const LEGACY = "__classic";
   const [picked, setPicked] = useState<string | null>(null);
   if (!v2Tabs.length) return <LegacyProcessSalesDashboardView {...props} />;
   const multiCompany = new Set(v2Tabs.map((t) => t.company)).size > 1;
-  const activeId = picked && (picked === LEGACY || v2Tabs.some((t) => t.id === picked)) ? picked : v2Tabs[0].id;
+  const uploadTab = uploaderTabs.find((t) => `${t.company}:__upload` === picked);
+  const activeId = picked && (picked === LEGACY || uploadTab || v2Tabs.some((t) => t.id === picked)) ? picked : v2Tabs[0].id;
   const active = v2Tabs.find((t) => t.id === activeId);
   return (
     <div className="space-y-4">
@@ -211,12 +219,24 @@ function ProcessSalesDashboardView(props: { processId: string; processCode: stri
             {multiCompany ? `${t.companyLabel} · ${t.dashboard.label}` : t.dashboard.label}
           </button>
         ))}
+        {uploaderTabs.map((t) => {
+          const id = `${t.company}:__upload`;
+          return (
+            <button key={id} type="button" role="tab" aria-selected={activeId === id} onClick={() => setPicked(id)}
+              className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-all ${activeId === id ? "bg-slate-900 text-amber-300" : "text-slate-500 hover:text-slate-800"}`}>
+              {multiCompany ? `${t.companyLabel} · Data Uploader` : "Data Uploader"}
+            </button>
+          );
+        })}
         <button type="button" role="tab" aria-selected={activeId === LEGACY} onClick={() => setPicked(LEGACY)}
           className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-all ${activeId === LEGACY ? "bg-slate-900 text-amber-300" : "text-slate-500 hover:text-slate-800"}`}>
           Classic view &amp; uploads
         </button>
       </div>
-      {active
+      {uploadTab && V2_UPLOADERS_BY_COMPANY[uploadTab.company]
+        ? <UploaderWorkspace key={uploadTab.company} companyLabel={uploadTab.companyLabel} uploaders={V2_UPLOADERS_BY_COMPANY[uploadTab.company]!}
+            initialCode={V2_UPLOADERS_BY_COMPANY[uploadTab.company]![0].code} tone="orange" />
+        : active
         ? <V2DashboardView key={active.id} company={active.company} dashboard={active.dashboard}
             onOpenDashboard={(key) => { const t = v2Tabs.find((x) => x.company === active.company && x.dashboard.key === key); if (t) setPicked(t.id); }} />
         : <LegacyProcessSalesDashboardView {...props} />}
@@ -609,6 +629,7 @@ interface WorkforceCorrelation {
 
 const SECTION_STYLE: Record<string, { accent: string; tint: string; icon: typeof Target }> = {
   operations: { accent: "#06B6D4", tint: "linear-gradient(135deg,#ECFEFF 0%,#CFFAFE 100%)", icon: Headphones },
+  order_to_delivery: { accent: "#EA580C", tint: "linear-gradient(135deg,#FFF7ED 0%,#FFEDD5 100%)", icon: Truck },
   conversion: { accent: C_BLUE, tint: "linear-gradient(135deg,#EFF6FF 0%,#DBEAFE 100%)", icon: Target },
   risk: { accent: C_RED, tint: "linear-gradient(135deg,#FEF2F2 0%,#FEE2E2 100%)", icon: ShieldAlert },
   conduct: { accent: C_PURPLE, tint: "linear-gradient(135deg,#F5F3FF 0%,#EDE9FE 100%)", icon: Sparkles },
@@ -3020,7 +3041,7 @@ function deriveInsights(ops: Operations, health: ProcessBusinessHealth | undefin
     });
   }
 
-  const sectionOrder = ["operations", "conversion", "risk", "conduct", "quality", "hygiene"];
+  const sectionOrder = ["operations", "order_to_delivery", "conversion", "risk", "conduct", "quality", "hygiene"];
   for (const key of sectionOrder) {
     const section = ops.sections.find((s) => s.key === key);
     if (!section) continue;
@@ -3107,6 +3128,7 @@ function InsightCard({ insight: ins }: { insight: Insight }) {
 
 const PERF_SECTION_STYLE: Record<string, { text: string; border: string; bg: string }> = {
   operations: { text: "#1d4ed8", border: "#bfdbfe", bg: "#eff6ff" },
+  order_to_delivery: { text: "#c2410c", border: "#fed7aa", bg: "#fff7ed" },
   conversion:  { text: "#15803d", border: "#bbf7d0", bg: "#f0fdf4" },
   risk:        { text: "#c2410c", border: "#fed7aa", bg: "#fff7ed" },
   conduct:     { text: "#b45309", border: "#fde68a", bg: "#fffbeb" },

@@ -7,18 +7,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import MyTeamRosterTab from "@/components/wfm/team-roster/MyTeamRosterTab";
 import SubmissionDrawer from "@/components/wfm/team-roster/SubmissionDrawer";
 import SubmissionsTable from "@/components/wfm/team-roster/SubmissionsTable";
+import HistoryTab from "@/components/wfm/team-roster/HistoryTab";
 import TeamAttendanceTab from "@/components/wfm/team-roster/TeamAttendanceTab";
 import { parseRosterDeepLink } from "@/components/wfm/team-roster/rosterDeepLink";
 import { SUBMISSION_STATUS_FILTERS, STATUS_META, unpackError } from "@/components/wfm/team-roster/teamRosterFormat";
 import { useApprovals, useMySubmissions, useTeamRosterMe, type TeamRosterMe } from "@/hooks/useTeamRoster";
 
-type TabKey = "roster" | "attendance" | "submissions" | "approvals";
+type TabKey = "roster" | "attendance" | "submissions" | "approvals" | "history";
 
 /** Which tabs this caller gets. Pure so the audience rules are testable without rendering. */
 export function visibleTabs(me: Pick<TeamRosterMe, "isManager" | "canApproveManagerStep" | "canApproveWfmStep">): TabKey[] {
   const tabs: TabKey[] = [];
   if (me.isManager) tabs.push("roster", "attendance", "submissions");
   if (me.canApproveManagerStep || me.canApproveWfmStep) tabs.push("approvals");
+  // The permanent log: what was raised, decided and applied, even after it left the approval queue.
+  if (tabs.length > 0) tabs.push("history");
   return tabs;
 }
 
@@ -123,6 +126,7 @@ export default function TeamRosterPage() {
           {tabs.includes("attendance") && <TabsTrigger value="attendance">Team Attendance</TabsTrigger>}
           {tabs.includes("submissions") && <TabsTrigger value="submissions">My Submissions</TabsTrigger>}
           {tabs.includes("approvals") && <TabsTrigger value="approvals">Approvals</TabsTrigger>}
+          {tabs.includes("history") && <TabsTrigger value="history">History &amp; Downloads</TabsTrigger>}
         </TabsList>
         {tabs.includes("roster") && (
           <TabsContent value="roster" className="mt-4">
@@ -132,6 +136,7 @@ export default function TeamRosterPage() {
         {tabs.includes("attendance") && <TabsContent value="attendance" className="mt-4"><TeamAttendanceTab me={data} /></TabsContent>}
         {tabs.includes("submissions") && <TabsContent value="submissions" className="mt-4"><MySubmissionsTab onOpen={setDrawerId} /></TabsContent>}
         {tabs.includes("approvals") && <TabsContent value="approvals" className="mt-4"><ApprovalsTab me={data} onOpen={setDrawerId} /></TabsContent>}
+        {tabs.includes("history") && <TabsContent value="history" className="mt-4"><HistoryTab onOpen={setDrawerId} /></TabsContent>}
       </Tabs>
       <SubmissionDrawer id={drawerId} onClose={() => setDrawerId(null)} onCopiedToDraft={() => openTab("roster")} />
     </Shell>

@@ -17,12 +17,12 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > a createDr
     "branch": "Pune",
     "code": "REQ-3",
     "date": "2026-10-08",
+    "driveId": "d-r3",
     "invitesWanted": 400,
-    "lined": 0,
-    "reason": "requisition is closed or filled",
+    "lined": 7,
     "requisitionId": "r3",
     "role": "Caller",
-    "status": "skipped",
+    "status": "created",
   },
   {
     "branch": "",
@@ -67,7 +67,7 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > a createDr
     [],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r1",
     ],
@@ -80,19 +80,26 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > a createDr
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r3",
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r3",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r9",
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r2",
     ],
@@ -105,7 +112,7 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > a createDr
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r4",
     ],
@@ -149,10 +156,10 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > dry run > 
     "date": "2026-10-08",
     "invitesWanted": 400,
     "lined": 0,
-    "reason": "requisition is closed or filled",
+    "reason": "dry run",
     "requisitionId": "r3",
     "role": "Caller",
-    "status": "skipped",
+    "status": "created",
   },
   {
     "branch": "",
@@ -197,7 +204,7 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > dry run > 
     [],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r1",
     ],
@@ -210,19 +217,26 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > dry run > 
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r3",
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r3",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r9",
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r2",
     ],
@@ -235,7 +249,7 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > dry run > 
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r4",
     ],
@@ -275,6 +289,22 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > meta-only 
     [
       {
         "audience": {
+          "kind": "meta",
+        },
+        "autoSend": true,
+        "driveDate": "2026-10-08",
+        "requisitionId": "r3",
+        "showRatePct": 25,
+        "slotCapacity": 27,
+        "slotEnd": "17:30",
+        "slotMinutes": 30,
+        "slotStart": "10:00",
+        "targetShows": 100,
+      },
+    ],
+    [
+      {
+        "audience": {
           "ids": [
             "c2",
             "c2b",
@@ -299,6 +329,10 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > meta-only 
       "active",
     ],
     [
+      "d-r3",
+      "active",
+    ],
+    [
       "d-r2",
       "active",
     ],
@@ -306,6 +340,9 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > meta-only 
   "suggestMatches": [
     [
       "d-r1",
+    ],
+    [
+      "d-r3",
     ],
     [
       "d-r2",
@@ -332,12 +369,12 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > meta-only 
     "branch": "Pune",
     "code": "REQ-3",
     "date": "2026-10-08",
+    "driveId": "d-r3",
     "invitesWanted": 400,
-    "lined": 0,
-    "reason": "requisition is closed or filled",
+    "lined": 7,
     "requisitionId": "r3",
     "role": "Caller",
-    "status": "skipped",
+    "status": "created",
   },
   {
     "branch": "",
@@ -382,7 +419,7 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > meta-only 
     [],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r1",
     ],
@@ -395,19 +432,26 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > meta-only 
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r3",
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r3",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r9",
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r2",
     ],
@@ -420,7 +464,7 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > meta-only 
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r4",
     ],
@@ -445,6 +489,20 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > plan list 
         "autoSend": true,
         "driveDate": "2026-10-08",
         "requisitionId": "r1",
+        "showRatePct": 25,
+        "slotCapacity": 27,
+        "slotEnd": "17:30",
+        "slotMinutes": 30,
+        "slotStart": "10:00",
+        "targetShows": 100,
+      },
+    ],
+    [
+      {
+        "audience": undefined,
+        "autoSend": true,
+        "driveDate": "2026-10-08",
+        "requisitionId": "r3",
         "showRatePct": 25,
         "slotCapacity": 27,
         "slotEnd": "17:30",
@@ -480,6 +538,10 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > plan list 
       "active",
     ],
     [
+      "d-r3",
+      "active",
+    ],
+    [
       "d-r2",
       "active",
     ],
@@ -487,6 +549,9 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > plan list 
   "suggestMatches": [
     [
       "d-r1",
+    ],
+    [
+      "d-r3",
     ],
     [
       "d-r2",
@@ -515,12 +580,12 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > plan list 
       "branch": "Pune",
       "code": "REQ-3",
       "date": "2026-10-08",
+      "driveId": "d-r3",
       "invitesWanted": 400,
-      "lined": 0,
-      "reason": "requisition is closed or filled",
+      "lined": 7,
       "requisitionId": "r3",
       "role": "Caller",
-      "status": "skipped",
+      "status": "created",
     },
     {
       "branch": "",
@@ -568,7 +633,7 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > plan list 
     [],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r1",
     ],
@@ -581,19 +646,26 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > plan list 
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r3",
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r3",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r9",
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r2",
     ],
@@ -606,7 +678,7 @@ exports[`planNextDay before streams (snapshot of today's behaviour) > plan list 
     ],
   ],
   [
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1",
     [
       "r4",
     ],

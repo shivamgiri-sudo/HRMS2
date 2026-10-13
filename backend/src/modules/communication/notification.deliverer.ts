@@ -19,6 +19,8 @@ import { db } from '../../db/mysql.js';
 import { emailService } from './email.service.js';
 import type { EmailAttachment } from './email.service.js';
 import { templateService } from './template.service.js';
+import { env } from '../../config/env.js';
+import { renderEventEmail } from './event-email-content.js';
 import { registerDeliverer } from './notification.gateway.js';
 import type { NotificationDeliverer } from './notification.gateway.js';
 import type { ResolvedRecipient } from '../../shared/recipient-resolver.types.js';
@@ -47,31 +49,14 @@ function addressList(people: ResolvedRecipient[]): string {
 }
 
 /**
- * Minimal, deliberately plain fallback body.
+ * Body for an event with no resolvable template.
  *
- * Used only when an event has no template. It is intentionally boring: a missing template
- * should look unfinished so somebody fixes it, rather than looking polished enough to
- * leave. It still carries the "why you got this" line, which is mandatory on every copy.
+ * Previously a bare key/value dump (first 12 keys, raw snake_case, ISO timestamps, an apology
+ * about the missing template). Now a complete email built from per-event copy plus the whole
+ * payload — see event-email-content.ts. A real template still takes precedence when it resolves.
  */
 export function fallbackBody(eventCode: string, data: Record<string, unknown>): { subject: string; html: string; text: string } {
-  const rows = Object.entries(data)
-    .filter(([, v]) => v !== null && v !== undefined && typeof v !== 'object')
-    .slice(0, 12)
-    .map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#6b7280;font-size:13px">${k.replace(/_/g, ' ')}</td>` +
-                     `<td style="padding:4px 0;color:#111827;font-size:13px"><strong>${String(v)}</strong></td></tr>`)
-    .join('');
-  const title = eventCode.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
-  return {
-    subject: `MAS Callnet HRMS — ${title}`,
-    html:
-      `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:560px">` +
-      `<p style="font-size:15px;color:#111827;margin:0 0 12px"><strong>${title}</strong></p>` +
-      `<table style="border-collapse:collapse">${rows}</table>` +
-      `<p style="margin-top:18px;font-size:12px;color:#6b7280">` +
-      `You are receiving this from MAS Callnet PeopleOS. This notification has no template ` +
-      `configured yet — please report it to HR Systems.</p></div>`,
-    text: `${title}\n\n` + Object.entries(data).map(([k, v]) => `${k}: ${String(v)}`).join('\n'),
-  };
+  return renderEventEmail(eventCode, data, String(env.FRONTEND_URL));
 }
 
 export const notificationDeliverer: NotificationDeliverer = {

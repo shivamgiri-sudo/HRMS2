@@ -23,6 +23,10 @@ vi.mock("../../../shared/fieldEncryption.js", () => ({
 
 const { nocReleaseStatusForEmployee } = vi.hoisted(() => ({ nocReleaseStatusForEmployee: vi.fn() }));
 vi.mock("../noc-release-gate.service.js", () => ({ nocReleaseStatusForEmployee }));
+// Absconder / Payroll Head final-approval gate has its own suite (exit/__tests__/ff-settlement-gate.test.ts).
+vi.mock("../../exit/ff-settlement-gate.service.js", () => ({
+  ffSettlementGate: vi.fn().mockResolvedValue({ allowed: true, code: null, reason: null }),
+}));
 
 const { markFfPaid } = vi.hoisted(() => ({ markFfPaid: vi.fn() }));
 vi.mock("../../exit/ff.service.js", () => ({ ffService: { markFfPaid } }));

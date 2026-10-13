@@ -24,5 +24,27 @@ export function cleanName(raw: unknown): string {
 
 /** First name to greet with; "there" when nothing usable is left ("Hi there"). */
 export function displayFirstName(raw: unknown): string {
-  return cleanName(raw).split(" ")[0] || "there";
+  // A decorative or spaced-out form name ("Engineer-p-r-i-n-c-e") is not a first name: greet with "there" instead of printing nonsense.
+  const first = cleanName(raw).split(" ")[0] || "";
+  return (decorative(raw) ? "" : first) || "there";
+}
+
+/** Letters strung together with separators: three or more single-letter pieces in a row is decoration, not a name. */
+function decorative(raw: unknown): boolean {
+  return /(?:^|[\s\-_.])(?:\p{L}[\s\-_.]+){3,}\p{L}(?:$|[\s\-_.])/u.test(String(raw ?? "").normalize("NFKC"));
+}
+
+/**
+ * The name to greet a candidate with in a letter, or "" when the form name is not a real first name: decorative or spaced-out letters
+ * ("Engineer-p-r-i-n-c-e", "ⓇⒶⒽⓊⓁ"), a lone initial, or a label ("Candidate"). The caller then writes "Dear Candidate,".
+ */
+export function greetingName(raw: unknown): string {
+  const text = String(raw ?? "").normalize("NFKC");
+  if (decorative(raw)) return "";
+  const first = cleanName(text).split(" ")[0] ?? "";
+  if (first.length < 2 || first.length > 20) return "";
+  // After folding, a name must still be mostly letters of one script (emoji, symbols and boxed letters fold away or fail this test).
+  const letters = [...first].filter((c) => /\p{L}/u.test(c)).length;
+  if (letters < first.length) return "";
+  return first;
 }

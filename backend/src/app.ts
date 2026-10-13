@@ -266,8 +266,12 @@ import { performanceIntelligenceRouter } from "./modules/performance-intelligenc
 import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import { kpiStudioRouter } from "./modules/kpi/kpi-studio.routes.js";
 import { kpiCatalogueRouter } from "./modules/kpi-catalogue/kpi-catalogue.routes.js";
+import { criteriaRouter } from "./modules/selection/criteria.routes.js";
+import { shortlistRouter } from "./modules/selection/shortlist.routes.js";
+import { draCertificateRouter } from "./modules/ats/dra-certificate.routes.js";
 import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
 import { metaCampaignRouter } from "./modules/meta-campaign/meta-campaign.routes.js";
+import { campaignRequisitionRouter } from "./modules/meta-campaign/campaign-requisition.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
 import {
@@ -355,7 +359,6 @@ import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { vendorBankRouter } from "./modules/finance/vendor-bank.routes.js";
 import { gstExportRouter } from "./modules/gst/gst-export.routes.js";
-import { tallyVoucherRouter } from "./modules/gst/tally-voucher/tally-voucher.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { vendorApprovalRouter } from "./modules/finance/vendor-approval.routes.js";
 import { imprestRouter } from "./modules/finance/imprest.routes.js";
@@ -375,6 +378,7 @@ import { payrollLedgerPostingRouter } from "./modules/finance/payroll-ledger-pos
 import { legacyReportsRouter } from "./modules/legacy-reports/legacy-reports.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
 import { revenueForecastRouter } from "./modules/process-pnl/revenue-forecast.routes.js";
+import { pnlBranchReviewRouter } from "./modules/process-pnl/pnl-branch-review.routes.js";
 import { clientPaymentTrackingRouter } from "./modules/finance/client-payment-tracking.routes.js";
 import mandateSeatTrackingRouter from "./modules/finance/mandate-seat-tracking.routes.js";
 import { financeAnalyticsRouter } from "./modules/finance/finance-analytics.routes.js";
@@ -689,6 +693,7 @@ app.use("/api/portal", portalRouter);
 app.use("/api/portal/admin", portalAdminRouter);
 app.use("/api/presentations", presentationRouter);
 app.use("/api/job-requisition", jobRequisitionRouter);
+app.use("/api/job-requisition", criteriaRouter); // selection criteria (versioned, audited); after the requisition router
 // META campaign automation. NOTE: two routes inside are intentionally unauthenticated —
 // POST/GET /api/meta/webhooks (called by META's servers) and POST /api/meta/voice-callback
 // (called by the voice bot). Neither can present a session. They are gated on
@@ -696,11 +701,13 @@ app.use("/api/job-requisition", jobRequisitionRouter);
 // and VOICEBOT_CALLBACK_TOKEN respectively, and each REFUSES the request when its secret is
 // unset rather than falling open. Every other route in the router is requireAuth + requireRole.
 app.use("/api/meta", metaCampaignRouter);
+app.use("/api/meta", campaignRequisitionRouter); // a campaign's many requisitions + the HR relink (WS3 A2)
 // Hiring Engine capture webhooks: unauthenticated by design (Pinbot / email provider / voice bot cannot present a
 // session); every route is gated on HE_WEBHOOK_TOKEN and refuses when it is unset. Authenticated API is /api/he.
 app.use("/api/he-hook", heWebhookRouter);
 // Candidate live-location page API. Unauthenticated: the per-match token is the credential (see he-public.routes.ts).
 app.use("/api/he-public", hePublicRouter);
+app.use("/api/he/shortlist", shortlistRouter); // selection: overrides, approvals, booked-mismatch (before the HE router)
 app.use("/api/he", heRouter);
 app.use("/api/ats", atsFormConfigRouter);
 // Unauthenticated by design so a walk-in can self-register. Rate limiting is
@@ -858,9 +865,6 @@ app.use("/api/finance", vendorPaymentRouter);
 // Its own /api/gst prefix, not bare /api/finance: every path here is period-and-registration
 // scoped, and mounting it alongside grnRouter's "/grns/:id"-shaped routes would expose it to the
 // same literal-segment shadowing that swallowed vendor-payments/aging.
-// Tally voucher XML (sales / credit note; receipt plugs in later). Its own sub-prefix, mounted
-// before gstExportRouter so "/exports/:id"-style params there can never shadow it.
-app.use("/api/gst/tally-vouchers", tallyVoucherRouter);
 app.use("/api/gst", gstExportRouter);
 app.use("/api/finance", grnRouter);
 // vendor-approval.routes.ts's paths are all literal ("/vendor-approval/raise", "/vendor-approval/
@@ -894,6 +898,7 @@ app.use("/api/finance/payroll", payrollLedgerPostingRouter);
 app.use("/api/legacy-reports", legacyReportsRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
 app.use("/api/finance/revenue-forecasts", revenueForecastRouter);
+app.use("/api/finance/pnl-branch-review", pnlBranchReviewRouter);
 app.use("/api/finance/client-payments", clientPaymentTrackingRouter);
 app.use("/api/finance/mandate-seats", mandateSeatTrackingRouter);
 app.use("/api/finance/analytics", financeAnalyticsRouter);
@@ -1025,6 +1030,7 @@ app.use("/api/quality-learning", qualityLearningRouter);
 app.use("/api/ats/name-consistency", nameConsistencyRouter);
 app.use("/api/ats/jclr", jclrRouter);
 app.use("/api/ats/joining-control-room", joiningControlRoomRouter);
+app.use("/api/ats/dra-certificates", draCertificateRouter);
 // Secure candidate document viewer (JCLR "Documents" tab). Mounted here, after
 // clientRouter has applied requireAuth, because verify/reject read req.authUser.
 // The router shipped in 03ee489e but was never mounted — every endpoint 404'd.

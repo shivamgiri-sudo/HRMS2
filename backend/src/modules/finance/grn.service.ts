@@ -42,6 +42,8 @@ import { postGrnApprovalJournalEntry } from "./grn-journal-posting.service.js";
 import { runInBackground } from "./grn-background.js";
 import { journalService } from "./journal.service.js";
 import {
+  hrmsRaisedGrnSql,
+  legacyGrnSql,
   ownCompanyGrnSql,
   refreshHiddenGrnScope,
 } from "../../shared/ownCompanyCostCentre.js";
@@ -2104,7 +2106,7 @@ export const grnService = {
         "returned_to_branch_head",
       ]);
       if (statuses.some((status) => APPROVAL_QUEUE_STATUSES.has(status))) {
-        conditions.push("g.bill_source_id IS NULL");
+        conditions.push(hrmsRaisedGrnSql("g"));
       }
     }
     if (filters.excludeDraft) {
@@ -2249,7 +2251,7 @@ export const grnService = {
               -- migrated straight into grn_request needs the same signal computed from
               -- bill_source_id, or the History "Legacy" badge and any future legacy-only styling
               -- silently never fires for these 84,767 rows under the default source=new view.
-              CASE WHEN g.bill_source_id IS NOT NULL THEN 'legacy' ELSE 'new' END AS source_type,
+              CASE WHEN ${legacyGrnSql("g")} THEN 'legacy' ELSE 'new' END AS source_type,
               -- Legacy rows (bill_source_id IS NOT NULL) never got a real created_by/
               -- reviewed_by/*_reviewed_by FK — migrate-grn-from-dbbill.ts wrote a single
               -- migration-sentinel user for all 84,767 of them, so these employees joins miss

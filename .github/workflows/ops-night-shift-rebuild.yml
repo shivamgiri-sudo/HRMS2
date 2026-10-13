@@ -1,0 +1,106 @@
+name: Ops Night-Shift Attendance Rebuild (manual)
+
+# Rebuilds attendance for night-shift employees over a date range using the shift-attribution
+# COSEC sync (a shift belongs to the date it started on). See
+# backend/scripts/attendance-night-shift-rebuild.ts.
+#
+# SAFETY
+#   - workflow_dispatch only. Defaults to a DRY RUN, which writes nothing.
+#   - Applying needs mode=apply AND confirm=REBUILD-NIGHT-SHIFTS.
+#   - Locked rows (regularisations, payroll locks) are never overwritten.
+#   - A month whose payroll run is finalized / locked / disbursed is refused unless
+#     allow_closed_months=true. Get the Payroll Head's sign-off before setting that.
+#   - Serialised with the other production ops scripts.
+#
+# After an apply on an open month, the payroll head should re-prepare the run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "First date YYYY-MM-DD"
+        required: true
+        type: string
+      to:
+        description: "Last date YYYY-MM-DD"
+        required: true
+        type: string
+      mode:
+        description: "dry-run only reports; apply writes"
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+      confirm:
+        description: "To APPLY, type REBUILD-NIGHT-SHIFTS exactly. Ignored for a dry run."
+        required: false
+        type: string
+      scope_all:
+        description: "Scope = every employee with biometric rows (repair), not only the flagged night-shift set"
+        required: false
+        default: false
+        type: boolean
+      allow_closed_months:
+        description: "Permit applying to a finalized / locked / disbursed payroll month"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: ops-scripts-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    name: "night-shift rebuild ${{ inputs.from }}..${{ inputs.to }} (${{ inputs.mode }})"
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 90
+    steps:
+      - name: Refuse an unconfirmed apply
+        if: inputs.mode == 'apply'
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "REBUILD-NIGHT-SHIFTS" ]; then
+            echo "::error::To apply, 'confirm' must be exactly REBUILD-NIGHT-SHIFTS."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          FROM_D: ${{ inputs.from }}
+          TO_D: ${{ inputs.to }}
+          MODE: ${{ inputs.mode }}
+          ALLOW_CLOSED: ${{ inputs.allow_closed_months }}
+          SCOPE_ALL: ${{ inputs.scope_all }}
+        run: |
+          set -euo pipefail
+          FLAGS=""
+          [ "$MODE" = "apply" ] && FLAGS="--apply"
+          [ "$ALLOW_CLOSED" = "true" ] && FLAGS="$FLAGS --allow-closed-months"
+          [ "$SCOPE_ALL" = "true" ] && FLAGS="$FLAGS --all"
+          npx tsx scripts/attendance-night-shift-rebuild.ts "$FROM_D" "$TO_D" $FLAGS

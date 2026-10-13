@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CalendarClock, Target, Users } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { num } from "@/components/analytics/analytics-kit";
+import BranchPlanSection from "./BranchPlanSection";
 
 interface Req { id: string; requisition_code: string; designation_name: string; process_name: string | null; branch_name: string; open_positions: number; priority: string }
 interface SourcePlan { source: string; expectedSelected: number; uniqueLeads: number; walkins: number; callAttempts: number; dailyCalls: number; dailyLeads: number; dailyWalkins: number; rates: { leadToWalkin: number; walkinToSelected: number; callToLead: number; selectedToJoined: number }; sample: string }
@@ -15,7 +16,7 @@ interface Plan {
   totals: { uniqueLeads: number; walkins: number; callAttempts: number; expectedJoined: number };
   daily: { calls: number; leads: number; walkins: number; selected: number };
   recruiters: { forCalling: number; forWalkins: number; forClosures: number; needed: number };
-  pool: { reachableNow: number; suggested: number; invitedOrConfirmed: number };
+  pool: { reachableNow: number; suggested: number; invitedOrConfirmed: number; inPipeline?: number };
   sources: SourcePlan[]; notes: string[];
 }
 const pct = (n: number) => `${Math.round(n * 100)}%`;
@@ -59,6 +60,7 @@ export default function PlannerTab() {
 
   return (
     <div className="space-y-5">
+      <BranchPlanSection />
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Plan inputs">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr_auto] lg:items-end">
           <label className="text-sm"><span className="mb-1 block font-medium text-slate-700">Requisition</span>
@@ -85,7 +87,7 @@ export default function PlannerTab() {
             <div className="rounded-xl border border-slate-200 bg-white p-4"><div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500"><Target className="h-3.5 w-3.5" aria-hidden /> Target</div><div className="mt-1 text-3xl font-bold tabular-nums text-slate-900">{num(plan.targetSelected)}</div><div className="text-xs text-slate-500">plan for {num(plan.withBuffer)} incl. buffer</div></div>
             <div className="rounded-xl border border-slate-200 bg-white p-4"><div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500"><CalendarClock className="h-3.5 w-3.5" aria-hidden /> Days left</div><div className="mt-1 text-3xl font-bold tabular-nums text-slate-900">{num(plan.days)}</div><div className="text-xs text-slate-500">{num(plan.daily.calls)} calls · {num(plan.daily.walkins)} walk-ins a day</div></div>
             <div className="rounded-xl border border-slate-200 bg-white p-4"><div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500"><Users className="h-3.5 w-3.5" aria-hidden /> Recruiters</div><div className="mt-1 text-3xl font-bold tabular-nums text-slate-900">{num(plan.recruiters.needed)}</div><div className="text-xs text-slate-500">calling {plan.recruiters.forCalling} · walk-ins {plan.recruiters.forWalkins} · closures {plan.recruiters.forClosures}</div></div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4"><div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Risk</div><div className="mt-2"><span className={`rounded-full px-3 py-1 text-sm font-semibold capitalize ring-1 ring-inset ${RISK[plan.risk]}`}>{plan.risk}</span></div><div className="mt-2 text-xs text-slate-500">Pool: {num(plan.pool.reachableNow)} reachable · {num(plan.pool.invitedOrConfirmed)} booked</div></div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4"><div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Risk</div><div className="mt-2"><span className={`rounded-full px-3 py-1 text-sm font-semibold capitalize ring-1 ring-inset ${RISK[plan.risk]}`}>{plan.risk}</span></div><div className="mt-2 text-xs text-slate-500">Pool: {num(plan.pool.reachableNow)} reachable · {num(plan.pool.invitedOrConfirmed)} booked · {num(plan.pool.inPipeline ?? 0)} in the follow-up</div></div>
           </section>
 
           <section className="rounded-xl border border-slate-200 bg-white p-4" aria-label="Reverse funnel">

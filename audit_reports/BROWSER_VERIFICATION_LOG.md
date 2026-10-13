@@ -4,6 +4,23 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-10-12 — GRN Reports: Tally Import Test Export (XML / Excel / CSV)
+
+**Method:** `npm run build` + backend `tsc --noEmit` clean. The service and HTTP routes were run against a throwaway `mysql:8` (Docker) seeded with 10 GRNs: numbered HRMS GRNs, a draft, a submitted one, a legacy `bill_source_id` row, a cancelled one, a DialDesk-branch row, a DialDesk-cost-centre row and an already-connector-sent one. The UI was checked with a temporary Vite harness and mocked `/api` (the download responses were the real files from the MySQL run) in headless Playwright Chromium. Harness removed.
+
+| Check | Result |
+|---|---|
+| Selection (real MySQL) | 4 numbered HRMS GRNs only; draft, submitted, legacy, cancelled and DialDesk rows excluded |
+| XML | parses; 3 vouchers (2 Purchase, 1 Journal), every voucher sums to 0.00; GRN missing a sub-head left out as an exception |
+| Excel | opens; sheets GRNs (4), Voucher Lines (11), Exceptions (1) |
+| CSV | UTF-8 BOM, ledger split per GRN, formula-looking cells neutralised |
+| HTTP | xml/xlsx/csv 200 with attachment filenames; bad format and bad month 400; branch_head 403; each download audited in `sensitive_action_log` |
+| Browser | card renders at 1360 px and 390 px, metrics update on month change, all three buttons download, zero console/page errors |
+
+**Not verified:** real production GRN data and an actual import into Tally. Also found, **not fixed** (shared code): `ownCompanyGrnSql` emits `NOT IN (NULL)` when there are no non-MAS cost centres, which hides every GRN that has a cost centre. Production has such cost centres, so it should not trigger there.
+
+---
+
 ## 2026-09-30 (later) — Quality tab: title / subtitle overlap
 
 **Method:** temporary Vite harness with mocked API, headless Playwright Chromium, measured the rendered gap between each card title and its sub-line; harness removed.

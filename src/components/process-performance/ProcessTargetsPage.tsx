@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Target, IndianRupee, Users, SlidersHorizontal, Pencil, RotateCcw, X, Loader2, Search, AlertTriangle, ArrowUp, ArrowDown, Check, UserPlus, UserCog, Trash2 } from "lucide-react";
+import { Target, IndianRupee, Users, SlidersHorizontal, Pencil, RotateCcw, X, Loader2, Search, AlertTriangle, ArrowUp, ArrowDown, Check, UserPlus, UserCog, Trash2, Shuffle } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
 import { Spinner, KpiCard, SectionCard, TableExcelIconButton, formatINR } from "./DashboardKit";
 import { useSortableRows } from "./useSortableRows";
 import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
@@ -38,9 +39,11 @@ const fmtDateTime = (iso: string | null) => {
 type Level = "am" | "center" | "tl" | "agent";
 interface ManualAgent { id: number; name: string; empId: string | null; tl: string; group: string; status: "Active" | "InActive"; doj: string | null; monthlyTarget: number; effectiveFrom: string }
 interface OverrideInfo { id: number; monthlyTarget: number; effectiveMonth: string; updatedBy: string | null; updatedAt: string | null }
+interface AssignmentInfo { id: number; tl: string; group: string; effectiveMonth: string; updatedBy: string | null; updatedAt: string | null }
 interface Entity {
   level: Level; name: string; tl: string | null; group: string | null; status: string | null;
   agentCount: number; baselineTarget: number; effectiveTarget: number; override: OverrideInfo | null; overridden: boolean; manual: ManualAgent | null;
+  assignment: AssignmentInfo | null; reassigned: boolean;
 }
 interface PageData {
   month: string; tableAvailable: boolean; manualAvailable: boolean;
@@ -51,6 +54,7 @@ interface Detail {
   entity: Entity;
   children: Array<{ name: string; kind: "TL" | "Agent"; effectiveTarget: number; baselineTarget: number }>;
   history: Array<{ id: number; effectiveMonth: string; monthlyTarget: number; updatedAt: string | null; updatedByLabel: string | null }>;
+  assignmentHistory: Array<{ id: number; effectiveMonth: string; tl: string; group: string; updatedAt: string | null; updatedByLabel: string | null }>;
   audit: Array<{ at: string; action: string; actor: string; reason: string | null; oldValue: unknown; newValue: unknown }>;
 }
 
@@ -226,6 +230,22 @@ function TargetDrawer({ api: API, topLevel, topLabel, target, month, tableAvaila
                 )}
               </section>
 
+              {target.level === "agent" && (
+                <section className="space-y-2">
+                  <p className={label}>TL / {topLabel} reassignments on record</p>
+                  {detail.assignmentHistory.length === 0 ? <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">None — using the uploaded roster's TL and {topLabel}</p> : (
+                    <ul className="space-y-1.5">
+                      {detail.assignmentHistory.map((h) => (
+                        <li key={h.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 px-3 py-2 text-xs">
+                          <span className="font-semibold text-slate-700">From {monthLabel(h.effectiveMonth)}: TL {h.tl} · {topLabel} {h.group}</span>
+                          <span className="text-slate-400">{fmtDateTime(h.updatedAt)} · {h.updatedByLabel ?? "—"}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              )}
+
               <section className="space-y-2">
                 <p className={label}>Change history</p>
                 {detail.audit.length === 0 ? <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">None</p> : (
@@ -337,6 +357,88 @@ function AgentFormDrawer({ api: API, topLabel, month, months, tls, groups, agent
   );
 }
 
+/* ------------------------------- reassign TL / AM ------------------------------- */
+
+function AssignmentDrawer({ api: API, topLabel, month, months, tlOptions, groupOptions, agent, onClose, onSaved }: {
+  api: string; topLabel: string; month: string; months: string[]; tlOptions: SearchableOption[]; groupOptions: SearchableOption[];
+  agent: Entity; onClose: () => void; onSaved: () => void;
+}) {
+  const [tl, setTl] = useState(agent.assignment?.tl ?? agent.tl ?? "");
+  const [group, setGroup] = useState(agent.assignment?.group ?? agent.group ?? "");
+  const [from, setFrom] = useState(month);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [shown, setShown] = useState(false);
+  useEffect(() => { const t = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(t); }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const ready = tl.trim() !== "" && group.trim() !== "";
+  async function save() {
+    setSaving(true); setError("");
+    try {
+      await hrmsApi.put(`${API}/assignment`, { name: agent.name, month: from, tl: tl.trim(), group: group.trim(), reason: reason.trim() || undefined });
+      onSaved(); onClose();
+    } catch (e) { setError(e instanceof Error ? e.message : "Unable to save the reassignment."); }
+    finally { setSaving(false); }
+  }
+  async function reset() {
+    if (!agent.assignment) return;
+    setSaving(true); setError("");
+    try { await hrmsApi.delete(`${API}/assignment/${agent.assignment.id}`); onSaved(); onClose(); }
+    catch (e) { setError(e instanceof Error ? e.message : "Unable to reset."); }
+    finally { setSaving(false); }
+  }
+  const lbl = "mb-1 text-[11px] font-semibold text-slate-500";
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className={`absolute inset-0 bg-slate-900/40 transition-opacity duration-200 ${shown ? "opacity-100" : "opacity-0"}`} onClick={onClose} />
+      <aside className={`relative flex h-full w-full max-w-2xl flex-col overflow-y-auto bg-white shadow-2xl transition-transform duration-200 ${shown ? "translate-x-0" : "translate-x-full"}`}>
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-100 bg-white px-5 py-3">
+          <div>
+            <p className="text-sm font-bold text-slate-800">Reassign TL / {topLabel} · {agent.name}</p>
+            <p className="text-[11px] text-slate-400">Changes who this agent rolls up under from the chosen month onwards; the uploaded roster is not touched</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="space-y-4 p-5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className={lbl}>TL</p>
+              <SearchableSelect options={tlOptions} value={tl} onChange={setTl} placeholder="Select TL" searchPlaceholder="Search TL…" aria-label="TL" />
+            </div>
+            <div>
+              <p className={lbl}>{topLabel}</p>
+              <SearchableSelect options={groupOptions} value={group} onChange={setGroup} placeholder={`Select ${topLabel}`} searchPlaceholder={`Search ${topLabel}…`} aria-label={topLabel} />
+            </div>
+            <div className="sm:col-span-2">
+              <p className={lbl}>Effective from (month)</p>
+              <Select value={from} onValueChange={setFrom}>
+                <SelectTrigger className="h-9" aria-label="Effective month"><SelectValue /></SelectTrigger>
+                <SelectContent>{months.map((m) => <SelectItem key={m} value={m}>{monthLabel(m)}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="sm:col-span-2">
+              <p className={lbl}>Reason (optional)</p>
+              <Input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="e.g. AM left, moved to a new team" />
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-400">Uploaded roster: TL {agent.tl ?? "—"} · {topLabel} {agent.group ?? "—"}. Every dashboard, MIS export and raw sheet groups this agent under the TL / {topLabel} picked here for the current month instead; the uploaded roster itself is not changed.</p>
+          {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+          <div className="flex gap-2">
+            <Button onClick={save} disabled={saving || !ready} className="h-9">{saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}Save reassignment</Button>
+            {agent.assignment && <Button variant="outline" onClick={reset} disabled={saving} className="h-9"><RotateCcw className="mr-1.5 h-3.5 w-3.5" />Reset to roster</Button>}
+            <Button variant="outline" onClick={onClose} className="h-9">Cancel</Button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 /* ---------------------------------- the page ---------------------------------- */
 
 export function ProcessTargetsPage({ api: API, topLevel, topLabel, title, pageCode }: { api: string; topLevel: "am" | "center"; topLabel: string; title: string; pageCode: string }) {
@@ -358,6 +460,7 @@ export function ProcessTargetsPage({ api: API, topLevel, topLabel, title, pageCo
   const [reloadKey, setReloadKey] = useState(0);
   const [agentForm, setAgentForm] = useState<{ agent: ManualAgent | null } | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [assignForm, setAssignForm] = useState<Entity | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -369,6 +472,9 @@ export function ProcessTargetsPage({ api: API, topLevel, topLabel, title, pageCo
     return () => { cancelled = true; };
   }, [API, month, reloadKey]);
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+  // TL / AM are a closed set -- only names already on this process's roster are offered for reassignment.
+  const tlOptions = useMemo<SearchableOption[]>(() => (data?.tls ?? []).map((t) => ({ value: t.name, label: t.name })), [data]);
+  const groupOptions = useMemo<SearchableOption[]>(() => (data?.groups ?? []).map((g) => ({ value: g.name, label: g.name })), [data]);
 
   const rows = useMemo(() => {
     const list = data ? (level === topLevel ? data.groups : level === "tl" ? data.tls : data.agents) : [];
@@ -495,7 +601,7 @@ export function ProcessTargetsPage({ api: API, topLevel, topLabel, title, pageCo
             )}
           </div>
         }
-        footnote="Click a row for its full detail and history. Pencil = change the target from the chosen month onwards (it replaces the roster target; the uploaded roster is not touched). A TL / {topLabel} target is the total for that TL / {topLabel} and is shared over their Active agents; agents and TLs with a target of their own keep it.">
+        footnote="Click a row for its full detail and history. Pencil = change the target from the chosen month onwards (it replaces the roster target; the uploaded roster is not touched). On the Agent-wise tab, the shuffle icon reassigns an agent's TL / {topLabel} the same way, without touching the uploaded roster. A TL / {topLabel} target is the total for that TL / {topLabel} and is shared over their Active agents; agents and TLs with a target of their own keep it.">
         {rowError && <p className="mb-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{rowError}</p>}
         <div className="max-h-[560px] overflow-auto rounded-lg border border-slate-100">
           <table className="w-full text-center text-xs">
@@ -517,7 +623,7 @@ export function ProcessTargetsPage({ api: API, topLevel, topLabel, title, pageCo
                 const isEditing = editing?.key === key;
                 return (
                   <tr key={key} onClick={() => setDrawer({ level: r.level, name: r.name })} className={`cursor-pointer hover:bg-orange-50/60 ${i % 2 ? "bg-slate-50/60" : "bg-white"}`}>
-                    <td className="whitespace-nowrap px-3 py-2 text-left font-semibold text-slate-700">{r.name}{r.manual && <span className="ml-1.5 rounded-full bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold text-sky-700">Added here</span>}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-left font-semibold text-slate-700">{r.name}{r.manual && <span className="ml-1.5 rounded-full bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold text-sky-700">Added here</span>}{r.reassigned && <span className="ml-1.5 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[9px] font-bold text-indigo-700">Reassigned</span>}</td>
                     {level === "agent" && <><td className="px-3 py-2 text-slate-500">{r.tl}</td><td className="px-3 py-2 text-slate-500">{r.group}</td><td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${r.status === "Active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{r.status}</span></td></>}
                     {level === "tl" && <><td className="px-3 py-2 text-slate-500">{r.group}</td><td className="px-3 py-2 text-slate-600">{r.agentCount}</td></>}
                     {level === topLevel && <td className="px-3 py-2 text-slate-600">{r.agentCount}</td>}
@@ -541,6 +647,7 @@ export function ProcessTargetsPage({ api: API, topLevel, topLabel, title, pageCo
                       {!isEditing && (
                         <>
                           <button type="button" disabled={!data.tableAvailable || !canEdit} onClick={() => { setRowError(""); setEditing({ key, value: String(Math.round(r.effectiveTarget)) }); }} className="rounded-md p-1.5 text-slate-400 hover:bg-orange-50 hover:text-orange-600 disabled:opacity-40" title="Change target" aria-label={`Change target of ${r.name}`}><Pencil className="h-3.5 w-3.5" /></button>
+                          {level === "agent" && !r.manual && canEdit && <button type="button" onClick={() => setAssignForm(r)} className="rounded-md p-1.5 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600" title={`Reassign TL / ${topLabel}`} aria-label={`Reassign ${r.name}`}><Shuffle className="h-3.5 w-3.5" /></button>}
                           {r.manual && canEdit && <button type="button" onClick={() => setAgentForm({ agent: r.manual })} className="rounded-md p-1.5 text-slate-400 hover:bg-sky-50 hover:text-sky-600" title="Edit this agent" aria-label={`Edit agent ${r.name}`}><UserCog className="h-3.5 w-3.5" /></button>}
                           {r.manual && canEdit && (confirmRemove === r.name
                             ? <button type="button" disabled={rowBusy === r.name} onClick={() => void removeAgent(r)} className="rounded-md bg-rose-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-rose-700 disabled:opacity-50">Confirm remove</button>
@@ -561,6 +668,11 @@ export function ProcessTargetsPage({ api: API, topLevel, topLabel, title, pageCo
       {agentForm && (
         <AgentFormDrawer key={agentForm.agent?.id ?? "new"} api={API} topLabel={topLabel} month={month} months={months} tls={data.tls.map((t) => t.name)} groups={data.groups.map((g) => g.name)}
           agent={agentForm.agent} onClose={() => setAgentForm(null)} onSaved={refresh} />
+      )}
+
+      {assignForm && canEdit && (
+        <AssignmentDrawer key={`assign-${assignForm.name}`} api={API} topLabel={topLabel} month={month} months={months} tlOptions={tlOptions} groupOptions={groupOptions}
+          agent={assignForm} onClose={() => setAssignForm(null)} onSaved={refresh} />
       )}
 
       {drawer && (

@@ -1,8 +1,8 @@
 import type { ApprovalAdapter, ApprovalItem, LoopbackCtx } from "../types.js";
 import { LoopbackError } from "../types.js";
 import { badge, date, dateText, f, fields, iso, long, str } from "../format.js";
-import { callerHasRole } from "./_roles.js";
-import { callerScope, keepInBranch } from "./_scope.js";
+import { WFM_APPROVER_ROLES } from "../../wfm/team-roster-types.js";
+import { callerScope, holdsLiteralRole, keepInBranch } from "./_scope.js";
 
 const DETAIL_CAP = 100;
 const LINES_SHOWN = 40;
@@ -35,25 +35,26 @@ async function listStep(ctx: LoopbackCtx, step: Step): Promise<ApprovalItem[]> {
       } catch { /* keep the list row */ }
     }),
   );
-  // The module treats admin as a GLOBAL approver (every branch, both steps). Owner policy: admin / wfm are branch-scoped, so outside
-  // org-wide callers a submission is shown only for the NAMED manager approver (manager step) or when its submitter is in the
-  // caller's own branch. Items without a loaded detail are dropped (fail closed) rather than shown unchecked.
+  // The module treats admin / super_admin as GLOBAL approvers of both steps; that is "able to", not "designated". Popup rule:
+  //  - manager step: ONLY the submission's named manager approver (an admin / super_admin who is not that person is not shown it);
+  //  - wfm step: a caller who LITERALLY holds a WFM approver role (wfm, wfm_spoc, wfm_analyst, branch_wfm, ho_wfm), for a submitter in
+  //    their own branch (org-wide wfm roles: any). admin / super_admin are shown it only when they also hold one of those roles.
+  // Items without a loaded detail are dropped (fail closed) rather than shown unchecked.
   const scope = await callerScope(ctx.userId);
+  const wfmHolder = step === "wfm" ? await holdsLiteralRole(ctx.userId, ...(WFM_APPROVER_ROLES as readonly string[])) : false;
   const inBranch = new Set(
-    scope.orgWide ? [] : (await keepInBranch(ctx.userId, items, (it: any) => ({ employeeCode: it.submitter?.code }), scope)).map((it: any) => Number(it.id)),
+    wfmHolder ? (await keepInBranch(ctx.userId, items, (it: any) => ({ employeeCode: it.submitter?.code }), scope)).map((it: any) => Number(it.id)) : [],
   );
-  // Manager step: the named approver, or an admin (the module's global approver) inside their own branch. No other role takes it over.
-  const isAdmin = !scope.orgWide && step === "manager" ? await callerHasRole(ctx.userId, "admin") : false;
   const out: ApprovalItem[] = [];
   for (const it of items) {
     const d = details.get(Number(it.id));
     if (!d) continue;
     // The detail's own permission flag is the module's final word on "can this caller decide this step now".
     if (d?.permissions && !(step === "manager" ? d.permissions.canManagerDecide : d.permissions.canWfmDecide)) continue;
-    if (!scope.orgWide) {
-      const named = step === "manager" && !!scope.employeeId && String(d?.submission?.managerApprover?.id ?? "") === scope.employeeId;
-      if (step === "manager" ? !(named || (isAdmin && inBranch.has(Number(it.id)))) : !inBranch.has(Number(it.id))) continue;
-    }
+    if (step === "manager") {
+      const named = !!scope.employeeId && String(d?.submission?.managerApprover?.id ?? "") === scope.employeeId;
+      if (!named) continue;
+    } else if (!inBranch.has(Number(it.id))) continue;
     const sub = d?.submission ?? {};
     const lines: any[] = Array.isArray(d?.lines) ? d.lines : [];
     const shown = lines.slice(0, LINES_SHOWN).map(lineText);

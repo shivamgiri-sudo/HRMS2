@@ -1,0 +1,55 @@
+name: Ops F&F Accuracy Audit (manual, read-only)
+
+# Runs backend/scripts/ff-accuracy-audit.ts on the production host: picks one voluntary and one
+# involuntary exit that already have a settlement row, runs the live compute engine, and prints
+# every input beside the stored figures. SELECT-only (the script refuses anything else); output is
+# employee_code and figures, no names. Its own workflow because ops-scripts.yml's run block is at
+# GitHub's 21,000-character expression limit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "Optional read-only db_bill script in backend/scripts (e.g. ff-dbbill-discover.mjs); default runs the F&F accuracy audit"
+        required: false
+        default: ""
+        type: string
+      exit_ids:
+        description: "Optional comma list of exit_request ids (default: auto-pick one voluntary + one involuntary)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ops-ff-accuracy-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: ff-accuracy-audit
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Audit
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          FF_AUDIT_EXIT_IDS: ${{ inputs.exit_ids }}
+          FF_DBBILL_SCRIPT: ${{ inputs.script }}
+        run: |
+          if [ -n "${FF_DBBILL_SCRIPT:-}" ]; then node "scripts/${FF_DBBILL_SCRIPT}"; else npx tsx scripts/ff-accuracy-audit.ts; fi

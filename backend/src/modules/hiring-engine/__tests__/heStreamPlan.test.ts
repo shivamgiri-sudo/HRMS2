@@ -130,7 +130,7 @@ const three = () => [
   stream("s2", { sourceType: "meta_old", originId: "d-old", createdAt: "2026-10-07 09:30:00" }),
   stream("s3", { sourceType: "he", originId: "pool", createdAt: "2026-10-07 10:00:00" }),
 ];
-const openReq = { id: "r1", requisition_code: "REQ-1", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 10, fulfilled_headcount: 2 };
+const openReq = { id: "r1", requisition_code: "REQ-1", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 10, fulfilled_headcount: 2, joined_headcount: 5 };
 const sqls = () => h.calls.map(([q]) => q);
 const credits = () => sqls().filter((q) => q.startsWith("INSERT INTO requisition_stream_match"));
 const writes = () => sqls().filter((q) => /^(INSERT|UPDATE|DELETE)/.test(q));
@@ -229,7 +229,7 @@ describe("planStreamsForDay", () => {
 
   it("a filled requisition: no drive, skipped with the reason, auto-close ran first, no UPDATE he_drive (Review Focus 5)", async () => {
     h.streams = three();
-    h.st.req = { ...openReq, fulfilled_headcount: 10 };
+    h.st.req = { ...openReq, fulfilled_headcount: 10, joined_headcount: 13 };
     const r = await planStreamsForDay({ date: "2026-10-08", dryRun: false });
     expect(h.autoClose).toHaveBeenCalledTimes(1);
     expect(h.createDrive).not.toHaveBeenCalled();

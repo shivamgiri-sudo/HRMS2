@@ -3,6 +3,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { getHousingOwnerDashboard, getHousingOwnerEntityTrend, getHousingOwnerOutbound } from "./housing-owner-dashboard.service.js";
 import { mountProcessTargetRoutes } from "./process-targets.routes.js";
+import { syncMissingOwnerAgents } from "./housing-owner-roster-sync.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -43,6 +44,14 @@ router.get("/housing-owner-dashboard/entity-trend", requireRole(...VIEWER_ROLES)
 
 router.get("/housing-owner-dashboard/outbound", requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await getHousingOwnerOutbound(String(req.query.from ?? ""), String(req.query.to ?? ""));
+  res.json({ success: true, data });
+}));
+
+/** Manual catch-up: the same sync that runs automatically after every owner_sale / Owner_cdr
+ * upload (see owner-sale-bulk.service.ts / owner-cdr-bulk.service.ts), exposed here so an
+ * agent missing from an upload that already happened doesn't have to wait for the next one. */
+router.post("/housing-owner-dashboard/sync-roster", requireRole("admin", "process_manager", "branch_head", "operations_manager"), h(async (req, res) => {
+  const data = await syncMissingOwnerAgents(req.authUser!.id);
   res.json({ success: true, data });
 }));
 

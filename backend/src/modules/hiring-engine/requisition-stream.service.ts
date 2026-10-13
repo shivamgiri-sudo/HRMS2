@@ -6,6 +6,7 @@
  * createStream / changeStream wrap them and throw StreamError for the routes. Nothing here logs candidate data.
  */
 import { randomUUID } from "node:crypto";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
@@ -250,9 +251,9 @@ export async function tryChangeStream(id: string, c: StreamChangeInput, a: Strea
     const winChange: WindowChange | null = windowChangeOf(c);
 
     if (act === "reopen") {
-      const [rq] = await db.execute<RowDataPacket[]>("SELECT approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1", [s.requisitionId]);
+      const [rq] = await db.execute<RowDataPacket[]>("SELECT approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1", [s.requisitionId]);
       const r = rq[0];
-      if (!r || r.approval_status !== "approved" || !r.active_status || !(Number(r.fulfilled_headcount) < Number(r.requested_headcount))) return fail("conflict", 409, "A filled or closed requisition cannot be reopened");
+      if (!r || r.approval_status !== "approved" || !r.active_status || fillTargetMet(Number(r.requested_headcount), Number(r.joined_headcount ?? 0))) return fail("conflict", 409, "A filled or closed requisition cannot be reopened");
     }
     if (winChange) {
       const res = applyWindowChange(w, winChange, today);
@@ -392,7 +393,7 @@ export async function autoCloseStreams(date: string, dryRun: boolean): Promise<A
   const endEnforced = await loadEndDateEnforced();
   try {
     const [r] = await db.execute<RowDataPacket[]>(
-      `SELECT s.*, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.id AS jr_id${endEnforced ? ", jr.requisition_validity" : ""}
+      `SELECT s.*, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.id AS jr_id${endEnforced ? ", jr.requisition_validity" : ""}
          FROM requisition_stream s
          LEFT JOIN job_requisition jr ON jr.id = s.requisition_id COLLATE utf8mb4_unicode_ci
         WHERE s.status IN ('open','paused') ORDER BY s.created_at, s.id`);
@@ -407,7 +408,7 @@ export async function autoCloseStreams(date: string, dryRun: boolean): Promise<A
     const s = streams[n], r = rows[n];
     let reason: AutoCloseReason | null = null;
     if (r.jr_id == null || r.approval_status !== "approved" || !r.active_status) reason = "requisition_closed";
-    else if (Number(r.fulfilled_headcount) >= Number(r.requested_headcount)) reason = "requisition_filled";
+    else if (fillTargetMet(Number(r.requested_headcount), Number(r.joined_headcount ?? 0))) reason = "requisition_filled";
     else if (windowEnd(toWindow(s)) < date) reason = "window_ended";
     else if (endEnforced && requisitionEndedReason({ validity: r.requisition_validity as string | Date | null }, date, true)) reason = "window_ended";
     if (!reason) continue;

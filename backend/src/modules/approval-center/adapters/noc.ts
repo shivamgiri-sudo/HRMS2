@@ -1,6 +1,6 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
-import { hasAnyRole } from "../../../shared/scopeAccess.js";
+import { holdsLiteralRole } from "./_scope.js";
 import { ageDays } from "./payroll-shared.js";
 
 /** Payroll NOC (salary / F&F): uploaded by branch payroll, validated or rejected by the Payroll Head only (the endpoint enforces it too). */
@@ -9,7 +9,7 @@ export const nocAdapter: ApprovalAdapter = {
   label: "Payroll NOC",
   category: "Payroll",
   async list(ctx) {
-    if (!(await hasAnyRole(ctx.userId, "payroll_head", "super_admin"))) return [];
+    if (!(await holdsLiteralRole(ctx.userId, "payroll_head", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/payroll/noc/", { query: { uploadStatus: "uploaded" } });
     const rows: any[] = (res?.data ?? []).slice(0, 200);
     const out: ApprovalItem[] = [];

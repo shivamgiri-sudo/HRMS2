@@ -1,6 +1,6 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
-import { hasAnyRole } from "../../../shared/scopeAccess.js";
+import { holdsLiteralRole } from "./_scope.js";
 
 /**
  * Payroll Head new-hire salary review.
@@ -19,7 +19,7 @@ export const payrollHeadReviewAdapter: ApprovalAdapter = {
   label: "Salary review (new hire)",
   category: "Payroll",
   async list(ctx) {
-    if (!(await hasAnyRole(ctx.userId, "payroll_head", "super_admin"))) return [];
+    if (!(await holdsLiteralRole(ctx.userId, "payroll_head", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/payroll-head-review/queue", { query: { status: "pending_review" } });
     const rows: any[] = (res?.data ?? []).slice(0, 200);
     const out: ApprovalItem[] = [];

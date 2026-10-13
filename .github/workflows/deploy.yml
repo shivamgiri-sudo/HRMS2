@@ -291,6 +291,8 @@ jobs:
           STAGE_DIR="$STAGE_PARENT/backend-sql-$STAMP"
           BACKUP_DIR="$BACKUP_PARENT/backend-sql-$STAMP"
           mkdir -p "$STAGE_PARENT" "$BACKUP_PARENT"
+          # Keep only the 5 newest backend-sql rollback copies: they were never pruned and filled /var (266 GB by 2026-10-11).
+          ls -dt "$BACKUP_PARENT"/backend-sql-* 2>/dev/null | tail -n +6 | xargs -r rm -rf || true
           if [[ "$(stat -c %d "$STAGE_PARENT")" != "$(stat -c %d "$(dirname "$LIVE_DIR")")" ]]; then
             echo "Backend SQL staging and live directories must be on the same filesystem"
             exit 1
@@ -345,6 +347,8 @@ jobs:
           STAGE_DIR="$STAGE_PARENT/backend-dist-$STAMP"
           BACKUP_DIR="$BACKUP_PARENT/backend-dist-$STAMP"
           mkdir -p "$STAGE_PARENT" "$BACKUP_PARENT"
+          # Keep only the 5 newest backend-dist rollback copies: they were never pruned and filled /var (266 GB by 2026-10-11).
+          ls -dt "$BACKUP_PARENT"/backend-dist-* 2>/dev/null | tail -n +6 | xargs -r rm -rf || true
           if [[ "$(stat -c %d "$STAGE_PARENT")" != "$(stat -c %d "$(dirname "$LIVE_DIR")")" ]]; then
             echo "Backend staging and live directories must be on the same filesystem"
             exit 1
@@ -523,6 +527,8 @@ jobs:
           STAGE_DIR="$STAGE_PARENT/frontend-dist-$STAMP"
           BACKUP_DIR="$BACKUP_PARENT/frontend-dist-$STAMP"
           mkdir -p "$STAGE_PARENT" "$BACKUP_PARENT"
+          # Keep only the 5 newest frontend-dist rollback copies: they were never pruned and filled /var (266 GB by 2026-10-11).
+          ls -dt "$BACKUP_PARENT"/frontend-dist-* 2>/dev/null | tail -n +6 | xargs -r rm -rf || true
           if [[ "$(stat -c %d "$STAGE_PARENT")" != "$(stat -c %d "$(dirname "$LIVE_DIR")")" ]]; then
             echo "Frontend staging and live directories must be on the same filesystem"
             exit 1

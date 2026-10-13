@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fakeCtx } from "./_ctx.js";
 
 const hasAnyRole = vi.fn();
-vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole: (...a: unknown[]) => hasAnyRole(...a) }));
+vi.mock("../adapters/_scope.js", () => ({ holdsLiteralRole: (...a: unknown[]) => hasAnyRole(...a) }));
 import { loansAdapter as a } from "../adapters/loans.js";
 import { beforeEach as __scopeBeforeEach } from "vitest";
 import { useScope, ORG_WIDE } from "./scope-fixture.js";

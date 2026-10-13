@@ -10,6 +10,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Fixtures are dated Aug 2026; pin "today" before them so the past-week block (2026-10-13)
+// does not refuse every row.
+vi.mock('../../../utils/dateUtils.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/dateUtils.js')>()),
+  getIstDateString: () => '2026-07-27',
+}));
+
 const { executeMock, mockConn, notifyConn, getConnectionMock } = vi.hoisted(() => ({
   executeMock: vi.fn(),
   mockConn: { execute: vi.fn() },

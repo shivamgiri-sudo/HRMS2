@@ -131,7 +131,7 @@ const three = () => [
   stream("s2", { sourceType: "meta_old", originId: "d-old", createdAt: "2026-10-07 09:30:00" }),
   stream("s3", { sourceType: "he", originId: "pool", createdAt: "2026-10-07 10:00:00" }),
 ];
-const openReq = { id: "r1", requisition_code: "REQ-1", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 10, fulfilled_headcount: 2 };
+const openReq = { id: "r1", requisition_code: "REQ-1", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 10, fulfilled_headcount: 2, joined_headcount: 5 };
 const sqls = () => h.calls.map(([q]) => q);
 const credits = () => sqls().filter((q) => q.startsWith("INSERT INTO requisition_stream_match"));
 const writes = () => sqls().filter((q) => /^(INSERT|UPDATE|DELETE)/.test(q));
@@ -334,7 +334,7 @@ describe("ownership ends with the window (M2) and the evening log (M3)", () => {
     vi.setSystemTime(new Date("2026-10-07T18:00:00+05:30"));
     h.streams = [stream("s3")];
     h.st.owned = ["r1"];
-    h.st.req = { ...h.st.req, fulfilled_headcount: 10 };
+    h.st.req = { ...h.st.req, fulfilled_headcount: 10, joined_headcount: 13 };
     vi.mocked(logger.warn).mockClear();
     await runEngineTick({ dryRun: false });
     const call = vi.mocked(logger.warn).mock.calls.find((c) => c[1] === "[he-engine] daily plan: stream days not planned");

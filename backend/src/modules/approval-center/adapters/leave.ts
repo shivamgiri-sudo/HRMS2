@@ -1,28 +1,31 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, dateText, f, fields, iso, long, str } from "../format.js";
-import { callerHasRole } from "./_roles.js";
-import { callerScope, keepEffectiveApprover, keepInBranch } from "./_scope.js";
+import { holdsLiteralRole, keepApproverOrBranchRole, keepInBranch } from "./_scope.js";
 
-/** Leave: reporting manager / skip-level / branch-head exception tier. `can_review` is computed by the leave module itself. */
+const isLegacyLeave = (r: any) => r.legacy_leave_id !== null && r.legacy_leave_id !== undefined && String(r.legacy_leave_id).trim() !== "";
+
+/** Leave: reporting manager / skip-level (manager stage) or literal branch_head (exception tier). Legacy-imported rows are excluded. */
 export const leaveAdapter: ApprovalAdapter = {
   kind: "leave",
   label: "Leave request",
   category: "People",
   async list(ctx) {
     const res = await ctx.call("GET", "/api/leave/requests", { query: { status: "pending,pending_branch_head", limit: 200 } });
-    const reviewable: any[] = (res?.data ?? []).filter((r: any) => r.can_review);
-    // can_review lets HR/admin in through their assignment scope and the branch-head tier through the bare role. Owner policy:
-    // the only person outside their own branch who sees a leave is its EFFECTIVE APPROVER (reporting manager / skip-level) at the
-    // manager stage; every other reviewer (hr, admin, branch_head exception tier, ...) is clamped to the branch on their own record.
-    const scope = await callerScope(ctx.userId);
-    const rows: any[] = scope.orgWide ? reviewable : await (async () => {
-      const mgrStage = reviewable.filter((r) => r.status !== "pending_branch_head");
-      const asApprover = new Set((await keepEffectiveApprover(ctx.userId, mgrStage, (r: any) => r.employee_id, scope)).map((r) => r.id));
-      // Only the roles the module lets review leave inside a branch (HR/admin scoped reviewers, branch-head exception tier) get the branch fallback.
-      const branchReviewer = await callerHasRole(ctx.userId, "admin", "hr", "hr_admin", "payroll_hr", "branch_head");
-      const inBranch = new Set((branchReviewer ? await keepInBranch(ctx.userId, reviewable, (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code }), scope) : []).map((r) => r.id));
-      return reviewable.filter((r) => asApprover.has(r.id) || inBranch.has(r.id));
-    })();
+    // Rows imported from db_bill carry legacy_leave_id (551 of 586 pending rows on prod when this was written): never shown here.
+    const reviewable: any[] = (res?.data ?? []).filter((r: any) => r.can_review && !isLegacyLeave(r));
+    // can_review only means "this caller is ABLE to review" (super_admin, branch-scoped hr/admin, branch_head by role). The popup is
+    // "pending ON ME", so a row is shown only when the caller is its DESIGNATED approver for the CURRENT stage:
+    //   - manager stage (pending): the employee's effective approver (reporting manager / skip-level on leave). When no approver is
+    //     resolvable the module falls back to hr/admin, so a literal admin / hr / hr_admin / payroll_hr holder of the same branch.
+    //   - branch-head exception tier (pending_branch_head): a literal branch_head of the employee's own branch.
+    // super_admin / admin / hr / org-wide roles are not shown manager-stage rows they are merely able to review.
+    const ref = (r: any) => ({ employeeId: r.employee_id, employeeCode: r.employee_code });
+    const mgrStage = reviewable.filter((r) => r.status !== "pending_branch_head");
+    const bhStage = reviewable.filter((r) => r.status === "pending_branch_head");
+    const mgrRows = await keepApproverOrBranchRole(ctx.userId, mgrStage, ref, ["admin", "hr", "hr_admin", "payroll_hr"]);
+    const bhRows = bhStage.length && (await holdsLiteralRole(ctx.userId, "branch_head")) ? await keepInBranch(ctx.userId, bhStage, ref) : [];
+    const keepIds = new Set([...mgrRows, ...bhRows].map((r) => String(r.id)));
+    const rows: any[] = reviewable.filter((r) => keepIds.has(String(r.id)));
     const out: ApprovalItem[] = [];
     for (const r of rows) {
       const escalated = r.status === "pending_branch_head";

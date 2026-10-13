@@ -14,7 +14,7 @@ export async function loadShowParams(): Promise<ShowParams> {
   return Object.fromEntries(rows.map((r) => [String(r.param_key), Number(r.value)]));
 }
 
-const FACTS_SQL = `
+export const FACTS_SQL = `
   SELECT m.id, m.drive_id, m.state, m.distance_km, m.slot_at, l.walkin_count,
          (SELECT COUNT(*) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND ${countedNoShow("e")} AND (e.drive_id IS NULL OR e.drive_id <> m.drive_id)) AS past_no_shows,
          EXISTS (SELECT 1 FROM he_location_ping p WHERE p.match_id = m.id) AS shared_location,
@@ -58,13 +58,15 @@ export interface ControlRoomDrive {
   driveId: string; driveDate: string; branch: string; role: string; requisitionCode: string; status: string;
   targetShows: number; suggested: number; invited: number; confirmed: number; arrived: number; noShows: number;
   expectedShows: number; gap: number; invitesNeeded: number; reachableSuggested: number; action: string;
+  /** "set" = HR's target for the drive; "seats" = none set, the requisition's open seats are used. */
+  targetSource: "set" | "seats";
 }
 
 /** Today + next 7 days: every active/draft drive with expected shows and what to do next. */
 export async function getControlRoom(): Promise<{ drives: ControlRoomDrive[]; learnedParams: number }> {
   const params = await loadShowParams();
   const [drives] = await db.execute<RowDataPacket[]>(
-    `SELECT d.id, d.drive_date, d.branch_name, d.status, d.target_shows, jr.designation_name, jr.requisition_code
+    `SELECT d.id, d.drive_date, d.branch_name, d.status, d.target_shows, jr.designation_name, jr.requisition_code, jr.requested_headcount, jr.fulfilled_headcount
        FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id
       WHERE d.status IN ('active','draft','paused') AND d.drive_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
       ORDER BY d.drive_date, d.branch_name LIMIT 100`);
@@ -77,11 +79,15 @@ export async function getControlRoom(): Promise<{ drives: ControlRoomDrive[]; le
     const count = (s: string) => rows.filter((r) => r.state === s).length;
     const booked = rows.filter((r) => (r.state === "invited" || r.state === "confirmed") && r.slot_at);
     const expected = booked.reduce((a, r) => a + pShow({ state: String(r.state), walkedBefore: Number(r.walkin_count) > 0, pastNoShows: Number(r.past_no_shows), distanceKm: r.distance_km == null ? null : Number(r.distance_km), sharedLocation: Number(r.shared_location) === 1, repliedPositive: Number(r.replied_yes) === 1 }, params), 0) + count("arrived");
-    const target = Number(d.target_shows) || 0;
+    // No target set for the drive: aim at the requisition's open seats (a person who walks in fills a seat), so a drive is never "0 target".
+    const set = Number(d.target_shows) || 0;
+    const seatsOpen = Math.max(0, (Number(d.requested_headcount) || 0) - (Number(d.fulfilled_headcount) || 0));
+    const target = set || seatsOpen;
+    const targetSource: "set" | "seats" = set ? "set" : "seats";
     const pNew = pShow({ state: "invited", walkedBefore: false, pastNoShows: 0, distanceKm: null, sharedLocation: false, repliedPositive: false }, params);
     const needed = invitesToClose(target, expected, pNew);
     const reachable = Number(reach[0]?.n ?? 0);
-    const action = target === 0 ? "Set a target for this drive"
+    const action = target === 0 ? "No open seats left on this requisition"
       : needed === 0 ? "On track: send reminders and watch arrivals"
       : d.status !== "active" ? `Activate the drive: ${needed} more invites needed`
       : reachable >= needed ? `Invite ${needed} more from the ${reachable} reachable suggestions`
@@ -89,7 +95,7 @@ export async function getControlRoom(): Promise<{ drives: ControlRoomDrive[]; le
     out.push({
       driveId: d.id, driveDate: String(d.drive_date).slice(0, 10), branch: d.branch_name, role: d.designation_name, requisitionCode: d.requisition_code, status: d.status,
       targetShows: target, suggested: count("suggested"), invited: count("invited"), confirmed: count("confirmed"), arrived: count("arrived"), noShows: count("no_show"),
-      expectedShows: Math.round(expected * 10) / 10, gap: Math.max(0, Math.round((target - expected) * 10) / 10), invitesNeeded: needed, reachableSuggested: reachable, action,
+      targetSource, expectedShows: Math.round(expected * 10) / 10, gap: Math.max(0, Math.round((target - expected) * 10) / 10), invitesNeeded: needed, reachableSuggested: reachable, action,
     });
   }
   return { drives: out, learnedParams: Object.keys(params).length };

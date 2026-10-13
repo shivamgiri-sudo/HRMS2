@@ -67,6 +67,8 @@ export const incentivesAdapter: ApprovalAdapter = {
     const chain = await ctx.call("GET", "/api/incentives/approvals/pending").catch(() => null);
     for (const r of ((chain?.data ?? []) as any[]).slice(0, 200)) {
       if (seen.has(String(r.id)) || !mayDecide(r)) continue;
+      // The chain step names the role that decides it; the caller must literally hold it.
+      if (str(r.required_role) && !roles.includes(str(r.required_role))) continue;
       out.push(mapBatch(r, "chain"));
     }
     return out;

@@ -1,7 +1,11 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { nextRegularizationStatus, regularizationReviewRole } from "../../wfm/wfm.regularization.secure.routes.js";
-import { callerScope, employeeBranchMaps } from "./_scope.js";
+import { resolveEffectiveApprover } from "../../../shared/approvalEscalation.js";
+import { callerScope, employeeBranchMaps, holdsLiteralRole } from "./_scope.js";
+
+/** Mirrors PAYROLL_APPROVAL_ROLES in wfm.regularization.secure.routes (not exported). */
+const PAYROLL_STAGE_ROLES = ["payroll", "payroll_head", "payroll_admin"];
 
 const AGE_HIGH_MS = 3 * 24 * 3600 * 1000;
 const STAGES: Record<string, string> = {
@@ -52,6 +56,18 @@ export const regularizationAdapter: ApprovalAdapter = {
         if (!role || nextRegularizationStatus(role, str(r.status), "approved") === null) return false;
         // Payroll stage (3rd) is role-only in the module; owner branch policy still applies to non-org-wide payroll staff.
         if (role === "payroll") return scope.allows(await branchOfEmployee(r));
+        // The module resolves a super_admin to "super_admin" at EVERY stage (a bypass, not a designation). The popup is "pending ON ME":
+        // super_admin gets the row only when designated for the CURRENT stage - the effective approver at stage 1 (or nobody can be
+        // resolved), a literal wfm holder at stage 2, a literal payroll holder at stage 3 - exactly like everyone else.
+        if (role === "super_admin") {
+          const status = str(r.status);
+          if (status === "pending") {
+            const { approverId } = await resolveEffectiveApprover(String(r.employee_id));
+            return approverId ? approverId === scope.employeeId : true;
+          }
+          if (status === "payroll_pending") return (await holdsLiteralRole(ctx.userId, ...PAYROLL_STAGE_ROLES)) && scope.allows(await branchOfEmployee(r));
+          return (await holdsLiteralRole(ctx.userId, "wfm")) && scope.allows(await branchOfEmployee(r));
+        }
         return true;
       } catch {
         return false;

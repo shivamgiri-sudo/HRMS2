@@ -5,6 +5,7 @@
  * helper (syncPrimaryLink) does nothing.
  */
 import type { FieldPacket, QueryResult, RowDataPacket } from "mysql2";
+import { joinsLeft } from "../../shared/requisition-fill.js";
 import { db } from "../../db/mysql.js";
 import { requisitionClosedReason } from "./lead-screener.service.js";
 import { applyTemplateToRequisition } from "../selection/criteria.service.js";
@@ -26,14 +27,14 @@ const ph = (n: number) => Array.from({ length: n }, () => "?").join(",");
 const noTable = (e: unknown) => (e as { code?: string })?.code === "ER_NO_SUCH_TABLE";
 const istToday = (now: Date) => new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
 
-const REQ_STATE_SQL = `SELECT id, requisition_code, branch_name, approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, requisition_validity
+const REQ_STATE_SQL = `SELECT id, requisition_code, branch_name, approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, joined_headcount, requisition_validity
   FROM job_requisition WHERE id = ? LIMIT 1`;
 const LINKS_SQL = "SELECT campaign_id, requisition_id, is_primary, sort_order, removed_at FROM meta_campaign_requisition WHERE campaign_id = ? ORDER BY sort_order, added_at";
 
 export const closedReasonOf = (r: RowDataPacket | Record<string, unknown>): string | null => requisitionClosedReason({
   activeStatus: r.active_status == null ? null : Number(r.active_status), closedAt: r.closed_at == null ? null : String(r.closed_at),
   approvalStatus: r.approval_status == null ? null : String(r.approval_status),
-  requestedHeadcount: r.requested_headcount == null ? null : Number(r.requested_headcount), fulfilledHeadcount: r.fulfilled_headcount == null ? null : Number(r.fulfilled_headcount),
+  requestedHeadcount: r.requested_headcount == null ? null : Number(r.requested_headcount), fulfilledHeadcount: r.fulfilled_headcount == null ? null : Number(r.fulfilled_headcount), joinedHeadcount: r.joined_headcount == null ? null : Number(r.joined_headcount),
 });
 
 async function loadCampaign(exec: Exec, campaignId: string): Promise<RowDataPacket | null> {
@@ -156,7 +157,7 @@ export async function listCampaignRequisitions(campaignId: string, now = new Dat
   const ids = await linkedRequisitionIds(campaignId);
   if (!ids.length) return [];
   const [states] = await db.execute<RowDataPacket[]>(
-    `SELECT id, requisition_code, branch_name, approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, requisition_validity,
+    `SELECT id, requisition_code, branch_name, approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, joined_headcount, requisition_validity,
             (bmi_assessment_url IS NOT NULL AND bmi_assessment_url <> '') AS has_bmi FROM job_requisition WHERE id IN (${ph(ids.length)})`, ids);
   const [crit] = await db.execute<RowDataPacket[]>(LOAD_ROW_SQL.replace("WHERE jr.id = ? LIMIT 1", `WHERE jr.id IN (${ph(ids.length)})`), ids);
   const enforced = await loadEndDateEnforced();
@@ -170,7 +171,7 @@ export async function listCampaignRequisitions(campaignId: string, now = new Dat
     return {
       campaignId, requisitionId: id, code: String(s.requisition_code ?? ""), branch: String(s.branch_name ?? ""), isPrimary: i === 0, sortOrder: i,
       openReason: closedReasonOf(s), endDate: endDateOf(v), endDatePassed: endDatePassed(v, today), endedReason: requisitionEndedReason(v, today, enforced),
-      seatsLeft: seatsLeft({ requestedHeadcount: Number(s.requested_headcount ?? 0), fulfilledHeadcount: Number(s.fulfilled_headcount ?? 0) }),
+      seatsLeft: joinsLeft(Number(s.requested_headcount ?? 0), Number(s.joined_headcount ?? 0)),
       bmiLinkPresent: Number(s.has_bmi) === 1, criteria: d ? criteriaSummary(criteriaOf(toCriteriaRow(d))) : null,
     };
   });

@@ -15,7 +15,7 @@
  * and the failure mode is the worst kind: a button that looks available and 409s.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -129,6 +129,7 @@ interface SummaryRoleRow {
 }
 
 interface CaseDetail {
+  proposedLastWorkingDay?: string | null;
   nocCase: {
     id: string;
     employee_id: string;
@@ -146,6 +147,8 @@ interface CaseDetail {
     fnf_option: string | null;
     fnf_option_suggested: string | null;
     override_at: string | null;
+    payroll_head_approved_at?: string | null;
+    payroll_head_approval_note?: string | null;
     override_reason: string | null;
     override_document_path: string | null;
     override_document_original_name: string | null;
@@ -359,6 +362,17 @@ function openCertificate(d: CaseDetail): void {
   w.document.close();
 }
 
+/** Left rail colour of a list card: the status at a glance, before reading any text. */
+function caseRailClass(s: string): string {
+  switch (s) {
+    case "completed": return "border-slate-200 border-l-emerald-500";
+    case "declined": return "border-slate-200 border-l-red-500";
+    case "in_progress": return "border-slate-200 border-l-amber-500";
+    case "employee_submitted": return "border-slate-200 border-l-blue-500";
+    default: return "border-slate-200 border-l-slate-400";
+  }
+}
+
 function caseStatusClass(s: string): string {
   switch (s) {
     case "completed":
@@ -390,7 +404,7 @@ function sigStatusBadge(s: SignatoryStatus) {
   if (s === "declined")
     return { cls: "bg-red-100 text-red-800 border-red-200", label: "Declined" };
   return {
-    cls: "bg-slate-100 text-slate-600 border-slate-200",
+    cls: "bg-amber-100 text-amber-800 border-amber-300",
     label: "Pending",
   };
 }
@@ -404,10 +418,24 @@ export default function NocClearanceChain({
 }) {
   const [rows, setRows] = useState<CaseListRow[]>([]);
   const [summary, setSummary] = useState<SummaryRoleRow[]>([]);
+  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [listLoading, setListLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState("open");
   const [search, setSearch] = useState("");
   const [slaOnly, setSlaOnly] = useState(false);
+  // Branch / process narrowing. Both are applied server-side, and the board above follows them.
+  const [branchId, setBranchId] = useState("");
+  const [processId, setProcessId] = useState("");
+  const [awaitingFinalOnly, setAwaitingFinalOnly] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [filterOptions, setFilterOptions] = useState<{
+    branches: Array<{ id: string; name: string; count: number }>;
+    processes: Array<{ id: string; name: string; branchIds: string[]; count: number }>;
+  }>({ branches: [], processes: [] });
+  // Only the newest list request may write state, so a slow earlier response cannot overwrite it.
+  const listRequestRef = useRef(0);
   /** Set by clicking a column on the board — narrows the list to that role's pending queue. */
   const [stageFilter, setStageFilter] = useState("");
 
@@ -432,41 +460,78 @@ export default function NocClearanceChain({
   const [overrideReason, setOverrideReason] = useState("");
   const [overrideFile, setOverrideFile] = useState<File | null>(null);
   const [viewingOverrideDoc, setViewingOverrideDoc] = useState(false);
+  // Payroll Head final approval: ids of completed cases waiting on it (empty / null when the gate
+  // is not switched on, in which case no approval control is shown at all).
+  const [awaitingFinal, setAwaitingFinal] = useState<Set<string> | null>(null);
+  const [finalNote, setFinalNote] = useState("");
   const [lwd, setLwd] = useState("");
 
-  const loadList = useCallback(async () => {
-    setListLoading(true);
-    try {
+  const PAGE_SIZE = 50;
+
+  const buildListParams = useCallback(
+    (offset: number) => {
       const params = new URLSearchParams();
-      // "open" is not a backend status — it means "not finished", which the API expresses by the
-      // absence of a status filter plus client-side exclusion would be wrong (it paginates).
-      // Sent as-is only for the real statuses; 'open' just omits the filter.
-      if (statusFilter && statusFilter !== "open" && statusFilter !== "all")
+      // 'open' is resolved server-side (statusGroup) so paging and the total stay exact.
+      if (statusFilter === "open") params.set("statusGroup", "open");
+      else if (statusFilter && statusFilter !== "all")
         params.set("status", statusFilter);
-      if (search.trim()) params.set("search", search.trim());
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
       if (slaOnly) params.set("slaBreachedOnly", "true");
+      if (branchId) params.set("branchId", branchId);
+      if (processId) params.set("processId", processId);
+      if (awaitingFinalOnly) params.set("awaitingFinal", "true");
       if (stageFilter) {
         // Paired with stageStatus=pending: the board's number is a pending count, so clicking it
         // must land on the same population it named.
         params.set("stageKey", stageFilter);
         params.set("stageStatus", "pending");
       }
-      const res = await hrmsApi.get<{ data: CaseListRow[] }>(
-        `/api/payroll/noc-cases?${params.toString()}`,
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(offset));
+      return params;
+    },
+    [statusFilter, debouncedSearch, slaOnly, branchId, processId, awaitingFinalOnly, stageFilter],
+  );
+
+  const loadList = useCallback(async () => {
+    const ticket = ++listRequestRef.current;
+    setListLoading(true);
+    try {
+      const res = await hrmsApi.get<{ data: CaseListRow[]; total?: number }>(
+        `/api/payroll/noc-cases?${buildListParams(0).toString()}`,
       );
-      let data = res.data ?? [];
-      if (statusFilter === "open") {
-        data = data.filter(
-          (r) => r.status !== "completed" && r.status !== "cancelled",
-        );
-      }
-      setRows(data);
+      if (ticket !== listRequestRef.current) return;
+      setRows(res.data ?? []);
+      setTotal(Number(res.total ?? res.data?.length ?? 0));
     } catch (err) {
+      if (ticket !== listRequestRef.current) return;
       toast.error((err as Error)?.message ?? "Could not load NOC clearances");
+      setRows([]);
+      setTotal(0);
     } finally {
-      setListLoading(false);
+      if (ticket === listRequestRef.current) setListLoading(false);
     }
-  }, [statusFilter, search, slaOnly, stageFilter]);
+  }, [buildListParams]);
+
+  const loadMore = useCallback(async () => {
+    const ticket = listRequestRef.current;
+    setLoadingMore(true);
+    try {
+      const res = await hrmsApi.get<{ data: CaseListRow[]; total?: number }>(
+        `/api/payroll/noc-cases?${buildListParams(rows.length).toString()}`,
+      );
+      if (ticket !== listRequestRef.current) return;
+      setRows((cur) => {
+        const seen = new Set(cur.map((r) => r.id));
+        return [...cur, ...(res.data ?? []).filter((r) => !seen.has(r.id))];
+      });
+      setTotal(Number(res.total ?? total));
+    } catch (err) {
+      toast.error((err as Error)?.message ?? "Could not load more");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [buildListParams, rows.length, total]);
 
   const loadDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
@@ -475,7 +540,7 @@ export default function NocClearanceChain({
         `/api/payroll/noc-cases/${id}`,
       );
       setDetail(res.data ?? null);
-      setLwd(res.data?.nocCase?.last_working_day ?? "");
+      setLwd(res.data?.nocCase?.last_working_day ?? res.data?.proposedLastWorkingDay ?? "");
     } catch (err) {
       toast.error((err as Error)?.message ?? "Could not load this NOC");
       setDetail(null);
@@ -491,16 +556,43 @@ export default function NocClearanceChain({
    */
   const loadSummary = useCallback(async () => {
     try {
-      const res = await hrmsApi.get<{ data: { byRole: SummaryRoleRow[] } }>(
-        "/api/payroll/noc-cases/summary",
-      );
+      const qs = new URLSearchParams();
+      if (branchId) qs.set("branchId", branchId);
+      if (processId) qs.set("processId", processId);
+      const res = await hrmsApi.get<{
+        data: { byRole: SummaryRoleRow[]; byStatus?: Array<{ status: string; cnt: number }> };
+      }>(`/api/payroll/noc-cases/summary${qs.toString() ? `?${qs}` : ""}`);
       setSummary(res.data?.byRole ?? []);
+      setStatusCounts(
+        Object.fromEntries((res.data?.byStatus ?? []).map((r) => [r.status, Number(r.cnt)])),
+      );
     } catch {
       // The board is a headline, not the workspace. If it fails the list below still works, and
       // an error toast here would fire on every page load for a user whose scope is empty.
       setSummary([]);
     }
+  }, [branchId, processId]);
+
+  // Debounce typing so each keystroke is not a request.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Branch / process options: only ones that have a case in the caller's scope.
+  useEffect(() => {
+    hrmsApi
+      .get<{ data: typeof filterOptions }>("/api/payroll/noc-cases/filters")
+      .then((res) => res.data && setFilterOptions(res.data))
+      .catch(() => undefined);
   }, []);
+
+  // Choosing a branch drops a process that does not belong to it.
+  useEffect(() => {
+    if (!branchId || !processId) return;
+    const p = filterOptions.processes.find((x) => x.id === processId);
+    if (p && !p.branchIds.includes(branchId)) setProcessId("");
+  }, [branchId, processId, filterOptions.processes]);
 
   useEffect(() => {
     void loadList();
@@ -511,6 +603,12 @@ export default function NocClearanceChain({
   useEffect(() => {
     if (selectedId) void loadDetail(selectedId);
   }, [selectedId, loadDetail]);
+
+  // Deep link from an email or Work Inbox task: /payroll/noc-cases?case=<id> opens that case.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("case");
+    if (id && /^[0-9a-f-]{20,}$/i.test(id)) setSelectedId(id);
+  }, []);
 
   const refreshBoth = useCallback(async () => {
     await loadList();
@@ -646,6 +744,48 @@ export default function NocClearanceChain({
     }
   };
 
+  useEffect(() => {
+    if (!canOverride) {
+      setAwaitingFinal(null);
+      return;
+    }
+    let live = true;
+    hrmsApi
+      .get<{
+        data: { enabled: boolean; rows: Array<{ case_id: string }> };
+      }>("/api/payroll/noc-cases/final-approval/queue")
+      .then((res) => {
+        if (!live) return;
+        setAwaitingFinal(
+          res.data?.enabled
+            ? new Set((res.data.rows ?? []).map((r) => r.case_id))
+            : null,
+        );
+      })
+      .catch(() => live && setAwaitingFinal(null));
+    return () => {
+      live = false;
+    };
+  }, [canOverride, detail?.nocCase?.id, detail?.nocCase?.payroll_head_approved_at]);
+
+  const submitFinalApproval = async () => {
+    if (!detail) return;
+    setBusy("final");
+    try {
+      await hrmsApi.post(
+        `/api/payroll/noc-cases/${detail.nocCase.id}/final-approval`,
+        { note: finalNote.trim() || undefined },
+      );
+      toast.success("NOC approved — F&F settlement is unlocked for this employee");
+      setFinalNote("");
+      await refreshBoth();
+    } catch (err) {
+      toast.error((err as Error)?.message ?? "Could not record the final approval");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const submitOverride = async () => {
     if (!detail || !overrideReason.trim()) {
       toast.warning("An override reason is required.");
@@ -740,54 +880,68 @@ export default function NocClearanceChain({
         chase actually starts — "who is holding up eleven clearances" is a more useful question
         than "what is the status of this one leaver".
       */}
+      {/* ── Headline numbers ── */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5" role="list" aria-label="Clearance summary">
+        {[
+          { key: "open", label: "Open clearances", value: (statusCounts.invited ?? 0) + (statusCounts.employee_submitted ?? 0) + (statusCounts.in_progress ?? 0), tone: "border-blue-200 bg-blue-50 text-blue-900", dot: "bg-blue-500" },
+          { key: "progress", label: "In progress", value: statusCounts.in_progress ?? 0, tone: "border-amber-200 bg-amber-50 text-amber-900", dot: "bg-amber-500" },
+          { key: "overdue", label: "Stages past SLA", value: summary.reduce((n, r) => n + Number(r.sla_breached || 0), 0), tone: "border-orange-200 bg-orange-50 text-orange-900", dot: "bg-orange-500" },
+          { key: "declined", label: "Declined", value: statusCounts.declined ?? 0, tone: "border-red-200 bg-red-50 text-red-900", dot: "bg-red-500" },
+          { key: "done", label: "Completed", value: statusCounts.completed ?? 0, tone: "border-emerald-200 bg-emerald-50 text-emerald-900", dot: "bg-emerald-500" },
+        ].map((k) => (
+          <div key={k.key} role="listitem" className={`rounded-xl border p-4 ${k.tone}`}>
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <span className={`h-2.5 w-2.5 rounded-full ${k.dot}`} aria-hidden="true" />
+              {k.label}
+            </div>
+            <div className="mt-1 text-3xl font-bold tabular-nums">{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Per-role board: click a role to see who is holding up its queue ── */}
       {summary.length > 0 && (
-        <Card>
+        <Card className="border-slate-200 shadow-sm">
           <CardContent className="pt-5">
-            <h4 className="mb-3 text-sm font-bold text-slate-900">
+            <h4 className="mb-4 text-lg font-bold text-slate-900">
               Clearance board
-              <span className="ml-2 text-xs font-normal text-slate-500">
-                open exits, by signatory role
+              <span className="ml-2 text-sm font-normal text-slate-600">
+                open exits by signatory role — click a role to see its queue
               </span>
             </h4>
-            <div className="grid gap-2 sm:grid-cols-4 lg:grid-cols-8">
+            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-7">
               {summary.map((r) => {
-                const active =
-                  statusFilter !== "completed" && stageFilter === r.stage_key;
+                const active = statusFilter !== "completed" && stageFilter === r.stage_key;
+                const breached = Number(r.sla_breached) > 0;
+                const declined = Number(r.declined) > 0;
+                const tone = declined
+                  ? "border-red-300 bg-red-50"
+                  : breached
+                    ? "border-orange-300 bg-orange-50"
+                    : Number(r.pending) === 0
+                      ? "border-emerald-300 bg-emerald-50"
+                      : "border-slate-200 bg-white";
                 return (
                   <button
                     key={r.stage_key}
                     type="button"
                     aria-pressed={active}
                     onClick={() => setStageFilter(active ? "" : r.stage_key)}
-                    className={`rounded-lg border px-2.5 py-2 text-left transition ${
-                      active
-                        ? "border-blue-400 bg-blue-50 ring-1 ring-blue-200"
-                        : "border-slate-200 hover:bg-slate-50"
-                    }`}
+                    className={`cursor-pointer rounded-xl border-2 p-3 text-left transition-colors duration-200 hover:border-blue-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 ${tone} ${active ? "ring-2 ring-blue-500 border-blue-500" : ""}`}
                   >
-                    <div
-                      className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 truncate"
-                      title={r.stage_label}
-                    >
-                      {r.display_no}. {r.stage_label}
+                    <div className="truncate text-sm font-semibold text-slate-800" title={r.stage_label}>
+                      {r.stage_label}
                     </div>
                     <div className="mt-1 flex items-baseline gap-1.5">
-                      <span className="text-lg font-bold tabular-nums text-slate-900">
-                        {r.pending}
-                      </span>
-                      <span className="text-[10px] text-slate-500">
-                        pending
-                      </span>
+                      <span className="text-3xl font-bold tabular-nums text-slate-900">{r.pending}</span>
+                      <span className="text-sm text-slate-600">pending</span>
                     </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-[10px] font-medium">
-                      <span className="text-emerald-700">{r.accepted} ok</span>
-                      {Number(r.declined) > 0 && (
-                        <span className="text-red-700">{r.declined} dec</span>
-                      )}
-                      {Number(r.sla_breached) > 0 && (
-                        <span className="text-amber-700" title="Past SLA">
-                          <Clock className="inline h-2.5 w-2.5" />{" "}
-                          {r.sla_breached}
+                    <div className="mt-1 flex flex-wrap items-center gap-x-3 text-sm font-medium">
+                      <span className="text-emerald-700">{r.accepted} cleared</span>
+                      {declined && <span className="text-red-700">{r.declined} declined</span>}
+                      {breached && (
+                        <span className="text-orange-700" title="Past SLA">
+                          <Clock className="inline h-3.5 w-3.5" /> {r.sla_breached} late
                         </span>
                       )}
                     </div>
@@ -796,20 +950,9 @@ export default function NocClearanceChain({
               })}
             </div>
             {stageFilter && (
-              <p className="mt-2 text-xs text-slate-500">
-                Filtered to pending{" "}
-                <strong>
-                  {
-                    summary.find((s) => s.stage_key === stageFilter)
-                      ?.stage_label
-                  }
-                </strong>{" "}
-                clearances.{" "}
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={() => setStageFilter("")}
-                >
+              <p className="mt-3 text-sm text-slate-700">
+                Showing pending <strong>{summary.find((s) => s.stage_key === stageFilter)?.stage_label}</strong> clearances.{" "}
+                <button type="button" className="font-semibold text-blue-700 underline" onClick={() => setStageFilter("")}>
                   Clear
                 </button>
               </p>
@@ -818,7 +961,7 @@ export default function NocClearanceChain({
         </Card>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(320px,380px)_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
         {/* ── Tracking list ── */}
         <Card className="h-fit">
           <CardContent className="pt-5 space-y-3">
@@ -842,6 +985,43 @@ export default function NocClearanceChain({
                   className={`h-4 w-4 ${listLoading ? "animate-spin" : ""}`}
                 />
               </Button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Select
+                value={branchId || "__all"}
+                onValueChange={(v) => setBranchId(v === "__all" ? "" : v)}
+              >
+                <SelectTrigger aria-label="Branch">
+                  <SelectValue placeholder="All branches" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all">All branches</SelectItem>
+                  {filterOptions.branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name} ({b.count})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={processId || "__all"}
+                onValueChange={(v) => setProcessId(v === "__all" ? "" : v)}
+              >
+                <SelectTrigger aria-label="Process">
+                  <SelectValue placeholder="All processes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all">All processes</SelectItem>
+                  {filterOptions.processes
+                    .filter((p) => !branchId || p.branchIds.includes(branchId))
+                    .map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name} ({p.count})
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="flex items-center gap-2">
@@ -871,14 +1051,55 @@ export default function NocClearanceChain({
               </Button>
             </div>
 
-            <div className="space-y-2 max-h-[62vh] overflow-y-auto pr-1">
-              {listLoading && (
-                <div className="py-10 text-center text-sm text-slate-400">
-                  <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+            {(branchId || processId || awaitingFinalOnly || slaOnly || search || statusFilter !== "open" || stageFilter) && (
+              <div className="flex items-center justify-between text-sm text-slate-500">
+                <span>
+                  {total} clearance{total === 1 ? "" : "s"} match
+                </span>
+                <button
+                  type="button"
+                  className="font-semibold text-blue-600 hover:underline"
+                  onClick={() => {
+                    setBranchId("");
+                    setProcessId("");
+                    setAwaitingFinalOnly(false);
+                    setSlaOnly(false);
+                    setSearch("");
+                    setStatusFilter("open");
+                    setStageFilter("");
+                  }}
+                >
+                  Clear filters
+                </button>
+              </div>
+            )}
+            {awaitingFinal !== null && (
+              <Button
+                variant={awaitingFinalOnly ? "default" : "outline"}
+                size="sm"
+                className={awaitingFinalOnly ? "w-full bg-emerald-600 hover:bg-emerald-700" : "w-full"}
+                onClick={() => {
+                  setAwaitingFinalOnly((v) => !v);
+                  setStatusFilter("completed");
+                }}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Awaiting final approval
+                {awaitingFinal ? ` (${awaitingFinal.size})` : ""}
+              </Button>
+            )}
+
+            <div
+              className={`space-y-2 max-h-[62vh] overflow-y-auto pr-1 transition-opacity ${listLoading && rows.length > 0 ? "opacity-60" : ""}`}
+            >
+              {listLoading && rows.length === 0 && (
+                <div className="space-y-2" aria-busy="true">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <div key={i} className="h-[62px] animate-pulse rounded-lg bg-slate-100" />
+                  ))}
                 </div>
               )}
               {!listLoading && rows.length === 0 && (
-                <div className="py-10 text-center text-sm text-slate-500">
+                <div className="py-10 text-center text-base text-slate-500">
                   {slaOnly
                     ? "No clearance is past its SLA. Clear the Overdue filter to see the rest."
                     : search.trim()
@@ -886,7 +1107,7 @@ export default function NocClearanceChain({
                       : "No NOC clearances in this view."}
                 </div>
               )}
-              {!listLoading &&
+              {rows.length > 0 &&
                 rows.map((r) => {
                   const active = r.id === selectedId;
                   return (
@@ -894,25 +1115,23 @@ export default function NocClearanceChain({
                       key={r.id}
                       type="button"
                       onClick={() => setSelectedId(r.id)}
-                      className={`w-full text-left rounded-lg border px-3 py-2.5 transition ${
-                        active
-                          ? "border-blue-400 bg-blue-50"
-                          : "border-slate-200 hover:bg-slate-50"
+                      className={`w-full cursor-pointer rounded-lg border border-l-4 px-4 py-3 text-left transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 ${caseRailClass(r.status)} ${
+                        active ? "ring-2 ring-blue-500 bg-blue-50" : "bg-white hover:bg-slate-50"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="font-medium text-sm text-slate-900 truncate">
+                          <div className="font-medium text-base text-slate-900 truncate">
                             {r.employee_name ?? "—"}
                           </div>
-                          <div className="text-xs text-slate-500">
+                          <div className="text-sm text-slate-500">
                             {r.employee_code}{" "}
                             {r.branch_name ? `· ${r.branch_name}` : ""}
                           </div>
                         </div>
                         <Badge
                           variant="outline"
-                          className={`shrink-0 text-[10px] ${caseStatusClass(r.status)}`}
+                          className={`shrink-0 text-xs ${caseStatusClass(r.status)}`}
                         >
                           {r.status.replace(/_/g, " ")}
                         </Badge>
@@ -928,12 +1147,12 @@ export default function NocClearanceChain({
                             }}
                           />
                         </div>
-                        <span className="text-[11px] font-medium text-slate-600 tabular-nums">
+                        <span className="text-xs font-medium text-slate-600 tabular-nums">
                           {r.signatory_accepted}/{r.signatory_total}
                         </span>
                         {Number(r.signatory_sla_breached) > 0 && (
                           <span
-                            className="text-[11px] font-semibold text-amber-700"
+                            className="text-xs font-semibold text-amber-700"
                             title="Signatories past SLA"
                           >
                             <Clock className="inline h-3 w-3" />{" "}
@@ -950,15 +1169,26 @@ export default function NocClearanceChain({
                     </button>
                   );
                 })}
+              {rows.length > 0 && rows.length < total && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  disabled={loadingMore}
+                  onClick={() => void loadMore()}
+                >
+                  {loadingMore ? "Loading…" : `Show more (${rows.length} of ${total})`}
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
 
-        {/* ── Case detail ── */}
-        <div className="space-y-4">
+        {/* ── Case detail ── min-w-0 so wide tables scroll inside the card instead of pushing the page */}
+        <div className="min-w-0 space-y-4">
           {!selectedId && (
             <Card>
-              <CardContent className="py-16 text-center text-sm text-slate-500">
+              <CardContent className="py-16 text-center text-base text-slate-500">
                 <FileCheck className="mx-auto mb-3 h-10 w-10 text-slate-300" />
                 Select a leaver on the left to see their clearance chain.
               </CardContent>
@@ -980,10 +1210,10 @@ export default function NocClearanceChain({
                 <CardContent className="pt-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h3 className="text-base font-bold text-slate-900">
+                      <h3 className="text-lg font-bold text-slate-900">
                         {c.employee_name}
                       </h3>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-sm text-slate-500">
                         {c.employee_code} · {c.location ?? "—"} ·{" "}
                         {c.designation ?? "—"}
                       </p>
@@ -1011,7 +1241,7 @@ export default function NocClearanceChain({
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 text-xs"
+                        className="h-9 text-sm"
                         onClick={() => openCertificate(detail)}
                       >
                         <Printer className="h-3.5 w-3.5 mr-1" /> Print record
@@ -1019,7 +1249,7 @@ export default function NocClearanceChain({
                     </div>
                   </div>
 
-                  <div className="mt-4 grid gap-3 sm:grid-cols-4 text-xs">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-4 text-sm">
                     <Field label="Portfolio" value={c.portfolio} />
                     <Field
                       label="Resignation date"
@@ -1041,10 +1271,10 @@ export default function NocClearanceChain({
 
                   {c.reason_for_leaving && (
                     <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Reason for leaving
                       </div>
-                      <p className="mt-0.5 text-sm text-slate-700">
+                      <p className="mt-0.5 text-base text-slate-700">
                         {c.reason_for_leaving}
                       </p>
                     </div>
@@ -1057,11 +1287,11 @@ export default function NocClearanceChain({
                     >
                       <Lock className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
                       <div className="flex-1">
-                        <p className="text-sm font-semibold text-red-900">
+                        <p className="text-base font-semibold text-red-900">
                           Declined at {c.declined_stage_key?.replace(/_/g, " ")}{" "}
                           — locked pending HR resolution
                         </p>
-                        <p className="text-xs text-red-800 mt-0.5">
+                        <p className="text-sm text-red-800 mt-0.5">
                           {c.decline_reason}
                         </p>
                       </div>
@@ -1078,11 +1308,11 @@ export default function NocClearanceChain({
 
                   {c.override_at && (
                     <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2">
-                      <p className="text-xs font-semibold text-purple-900">
+                      <p className="text-sm font-semibold text-purple-900">
                         Payroll Head override — salary release is unblocked
                         without a completed clearance
                       </p>
-                      <p className="text-xs text-purple-800 mt-0.5">
+                      <p className="text-sm text-purple-800 mt-0.5">
                         {c.override_reason}
                       </p>
                       {c.override_document_path && (
@@ -1095,7 +1325,7 @@ export default function NocClearanceChain({
                             )
                           }
                           disabled={viewingOverrideDoc}
-                          className="mt-1.5 min-h-[44px] text-xs font-bold text-purple-700 underline underline-offset-2 hover:text-purple-900 sm:min-h-0"
+                          className="mt-1.5 min-h-[44px] text-sm font-bold text-purple-700 underline underline-offset-2 hover:text-purple-900 sm:min-h-0"
                         >
                           {viewingOverrideDoc
                             ? "Opening…"
@@ -1110,7 +1340,7 @@ export default function NocClearanceChain({
                     <div>
                       <label
                         htmlFor="noc-lwd"
-                        className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+                        className="block text-xs font-semibold uppercase tracking-wide text-slate-500"
                       >
                         Last Working Day (HR)
                       </label>
@@ -1122,6 +1352,11 @@ export default function NocClearanceChain({
                         min={c.resignation_date ?? undefined}
                         onChange={(e) => setLwd(e.target.value)}
                       />
+                      {!c.last_working_day && lwd && (
+                        <p className="mt-1 text-xs text-amber-700">
+                          From the employee record — click Save LWD to confirm.
+                        </p>
+                      )}
                     </div>
                     <Button
                       size="sm"
@@ -1145,7 +1380,7 @@ export default function NocClearanceChain({
                     <div className="ml-auto">
                       <label
                         htmlFor="noc-fnf"
-                        className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+                        className="block text-xs font-semibold uppercase tracking-wide text-slate-500"
                       >
                         Settlement route{" "}
                         {c.fnf_option_suggested && !c.fnf_option && (
@@ -1162,7 +1397,7 @@ export default function NocClearanceChain({
                         onValueChange={(v) => void setFnf(v)}
                       >
                         <SelectTrigger id="noc-fnf" className="mt-1 w-56">
-                          <SelectValue placeholder="Not set — Finance decides" />
+                          <SelectValue placeholder="Not set — HR decides" />
                         </SelectTrigger>
                         <SelectContent>
                           {Object.entries(FNF_LABELS).map(([k, v]) => (
@@ -1181,9 +1416,9 @@ export default function NocClearanceChain({
               <Card>
                 <CardContent className="pt-5">
                   <div className="mb-3 flex items-center justify-between">
-                    <h4 className="text-sm font-bold text-slate-900">
+                    <h4 className="text-base font-bold text-slate-900">
                       Signatory Clearance
-                      <span className="ml-2 font-normal text-xs text-slate-500">
+                      <span className="ml-2 font-normal text-sm text-slate-500">
                         digitally captured — role, name, status, date
                       </span>
                     </h4>
@@ -1198,29 +1433,29 @@ export default function NocClearanceChain({
                   </div>
 
                   <div className="overflow-x-auto rounded-lg border border-slate-200">
-                    <table className="w-full text-sm">
+                    <div className="overflow-x-auto"><table className="w-full text-base">
                       <caption className="sr-only">
                         The eight NOC signatories in the order printed on the
                         certificate, with each decision and timestamp
                       </caption>
-                      <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                         <tr>
-                          <th scope="col" className="px-3 py-2 w-10">
+                          <th scope="col" className="px-4 py-3 w-10">
                             #
                           </th>
-                          <th scope="col" className="px-3 py-2">
+                          <th scope="col" className="px-4 py-3">
                             Role
                           </th>
-                          <th scope="col" className="px-3 py-2">
+                          <th scope="col" className="px-4 py-3">
                             Name
                           </th>
-                          <th scope="col" className="px-3 py-2 w-32">
+                          <th scope="col" className="px-4 py-3 w-32">
                             Status
                           </th>
-                          <th scope="col" className="px-3 py-2 w-40">
+                          <th scope="col" className="px-4 py-3 w-40">
                             Date
                           </th>
-                          <th scope="col" className="px-3 py-2 text-right w-56">
+                          <th scope="col" className="px-4 py-3 text-right w-56">
                             Action
                           </th>
                         </tr>
@@ -1233,43 +1468,45 @@ export default function NocClearanceChain({
                               key={s.id}
                               className={
                                 s.status === "declined"
-                                  ? "bg-red-50/50"
-                                  : undefined
+                                  ? "bg-red-50"
+                                  : s.status === "pending"
+                                    ? "bg-amber-50/40"
+                                    : "bg-emerald-50/40"
                               }
                             >
-                              <td className="px-3 py-2 text-slate-500">
+                              <td className="px-4 py-3 text-slate-500">
                                 {s.display_no}
                               </td>
-                              <td className="px-3 py-2">
+                              <td className="px-4 py-3">
                                 <div className="font-medium text-slate-900">
                                   {s.stage_label}
                                 </div>
-                                <div className="text-[11px] text-slate-400">
+                                <div className="text-xs text-slate-400">
                                   {s.role_key}
                                 </div>
                               </td>
-                              <td className="px-3 py-2 text-slate-700">
+                              <td className="px-4 py-3 text-slate-700">
                                 {s.acted_by_name ?? "—"}
                               </td>
-                              <td className="px-3 py-2">
+                              <td className="px-4 py-3">
                                 <Badge
                                   variant="outline"
-                                  className={`text-[10px] ${badge.cls}`}
+                                  className={`text-xs ${badge.cls}`}
                                 >
                                   {badge.label}
                                 </Badge>
                               </td>
-                              <td className="px-3 py-2 text-xs text-slate-500 whitespace-nowrap">
+                              <td className="px-4 py-3 text-sm text-slate-500 whitespace-nowrap">
                                 {s.acted_at
                                   ? fmt(s.acted_at)
                                   : s.sla_due_at
                                     ? `Due ${fmt(s.sla_due_at)}`
                                     : "—"}
                               </td>
-                              <td className="px-3 py-2 text-right">
+                              <td className="px-4 py-3 text-right">
                                 {s.status !== "pending" ? (
                                   s.remarks ? (
-                                    <span className="text-xs text-slate-500 italic">
+                                    <span className="text-sm text-slate-500 italic">
                                       {s.remarks}
                                     </span>
                                   ) : (
@@ -1279,7 +1516,7 @@ export default function NocClearanceChain({
                                   // The server's reason, verbatim. A generic "not your turn" would
                                   // hide the actionable cases — outstanding assets, missing LWD.
                                   <span
-                                    className="text-xs text-slate-400"
+                                    className="text-sm text-slate-400"
                                     title={s.blocked.message}
                                   >
                                     {s.blocked.code === "ASSETS_OUTSTANDING"
@@ -1295,7 +1532,7 @@ export default function NocClearanceChain({
                                   <div className="flex items-center justify-end gap-1.5">
                                     <Button
                                       size="sm"
-                                      className="h-7 bg-emerald-600 hover:bg-emerald-700 text-xs"
+                                      className="h-9 bg-emerald-600 hover:bg-emerald-700 text-sm"
                                       onClick={() => {
                                         setDecision({
                                           stageKey: s.stage_key,
@@ -1310,7 +1547,7 @@ export default function NocClearanceChain({
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      className="h-7 text-xs"
+                                      className="h-9 text-sm"
                                       onClick={() => {
                                         setDecision({
                                           stageKey: s.stage_key,
@@ -1325,7 +1562,7 @@ export default function NocClearanceChain({
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      className="h-7 text-xs border-red-300 text-red-700 hover:bg-red-50"
+                                      className="h-9 text-sm border-red-300 text-red-700 hover:bg-red-50"
                                       onClick={() => {
                                         setDecision({
                                           stageKey: s.stage_key,
@@ -1344,7 +1581,7 @@ export default function NocClearanceChain({
                           );
                         })}
                       </tbody>
-                    </table>
+                    </table></div>
                   </div>
                 </CardContent>
               </Card>
@@ -1353,7 +1590,7 @@ export default function NocClearanceChain({
               <Card>
                 <CardContent className="pt-5">
                   <div className="mb-3 flex items-center justify-between">
-                    <h4 className="text-sm font-bold text-slate-900">
+                    <h4 className="text-base font-bold text-slate-900">
                       Company Property
                     </h4>
                     {detail.assetGate.satisfied ? (
@@ -1361,8 +1598,8 @@ export default function NocClearanceChain({
                         variant="outline"
                         className="bg-emerald-100 text-emerald-800 border-emerald-200"
                       >
-                        <CheckCircle2 className="h-3 w-3 mr-1" /> Finance not
-                        blocked
+                        <CheckCircle2 className="h-3 w-3 mr-1" /> Property
+                        returned
                       </Badge>
                     ) : (
                       <Badge
@@ -1370,7 +1607,7 @@ export default function NocClearanceChain({
                         className="bg-amber-100 text-amber-800 border-amber-200"
                       >
                         <AlertTriangle className="h-3 w-3 mr-1" />
-                        Finance blocked — {
+                        Admin blocked — {
                           detail.assetGate.outstanding.length
                         }{" "}
                         item(s)
@@ -1379,25 +1616,25 @@ export default function NocClearanceChain({
                   </div>
 
                   <div className="overflow-x-auto rounded-lg border border-slate-200">
-                    <table className="w-full text-sm">
+                    <div className="overflow-x-auto"><table className="w-full text-base">
                       <caption className="sr-only">
                         Company property, return status, and any waiver
                       </caption>
-                      <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                         <tr>
-                          <th scope="col" className="px-3 py-2 w-10">
+                          <th scope="col" className="px-4 py-3 w-10">
                             #
                           </th>
-                          <th scope="col" className="px-3 py-2">
+                          <th scope="col" className="px-4 py-3">
                             Item
                           </th>
-                          <th scope="col" className="px-3 py-2 w-16">
+                          <th scope="col" className="px-4 py-3 w-16">
                             Qty
                           </th>
-                          <th scope="col" className="px-3 py-2 w-64">
+                          <th scope="col" className="px-4 py-3 w-64">
                             Status
                           </th>
-                          <th scope="col" className="px-3 py-2 text-right w-28">
+                          <th scope="col" className="px-4 py-3 text-right w-28">
                             Waiver
                           </th>
                         </tr>
@@ -1405,26 +1642,26 @@ export default function NocClearanceChain({
                       <tbody className="divide-y divide-slate-100">
                         {detail.assets.map((a) => (
                           <tr key={a.id}>
-                            <td className="px-3 py-2 text-slate-500">
+                            <td className="px-4 py-3 text-slate-500">
                               {a.item_no}
                             </td>
-                            <td className="px-3 py-2">
+                            <td className="px-4 py-3">
                               <span className="font-medium text-slate-900">
                                 {a.item_label}
                               </span>
                               {Number(a.is_mandatory_for_finance) === 1 && (
                                 <span
-                                  className="ml-2 text-[10px] font-semibold uppercase text-amber-700"
-                                  title="Blocks Finance sign-off until returned or waived"
+                                  className="ml-2 text-xs font-semibold uppercase text-amber-700"
+                                  title="Blocks the Admin sign-off until returned or waived"
                                 >
                                   required
                                 </span>
                               )}
                             </td>
-                            <td className="px-3 py-2 text-slate-600">
+                            <td className="px-4 py-3 text-slate-600">
                               {a.quantity ?? "—"}
                             </td>
-                            <td className="px-3 py-2">
+                            <td className="px-4 py-3">
                               <div className="flex gap-1">
                                 {(
                                   [
@@ -1439,7 +1676,7 @@ export default function NocClearanceChain({
                                     variant={
                                       a.status === st ? "default" : "outline"
                                     }
-                                    className={`h-6 px-2 text-[11px] ${a.status === st && st === "returned" ? "bg-emerald-600 hover:bg-emerald-700" : ""}`}
+                                    className={`h-6 px-2 text-xs ${a.status === st && st === "returned" ? "bg-emerald-600 hover:bg-emerald-700" : ""}`}
                                     disabled={busy === `asset:${a.item_code}`}
                                     onClick={() =>
                                       void setAsset(a.item_code, st)
@@ -1454,10 +1691,10 @@ export default function NocClearanceChain({
                                 ))}
                               </div>
                             </td>
-                            <td className="px-3 py-2 text-right">
+                            <td className="px-4 py-3 text-right">
                               {a.waived_at ? (
                                 <span
-                                  className="text-[11px] text-purple-700 font-medium"
+                                  className="text-xs text-purple-700 font-medium"
                                   title={a.waiver_reason ?? ""}
                                 >
                                   Waived
@@ -1467,7 +1704,7 @@ export default function NocClearanceChain({
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  className="h-6 px-2 text-[11px]"
+                                  className="h-6 px-2 text-xs"
                                   onClick={() => {
                                     setWaive({
                                       itemCode: a.item_code,
@@ -1485,20 +1722,69 @@ export default function NocClearanceChain({
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                    </table></div>
                   </div>
                 </CardContent>
               </Card>
 
               {/* Override + timeline */}
               <div className="grid gap-4 lg:grid-cols-2">
+                {canOverride &&
+                  c.status === "completed" &&
+                  !c.override_at &&
+                  !c.payroll_head_approved_at &&
+                  awaitingFinal?.has(c.id) && (
+                    <Card className="border-emerald-300">
+                      <CardContent className="pt-5">
+                        <h4 className="text-base font-bold text-slate-900">
+                          Final approval — unlock F&amp;F
+                        </h4>
+                        <p className="mt-1 text-sm text-slate-600 leading-relaxed">
+                          Every clearance level has responded. Your approval is
+                          the last step before F&amp;F settlement can be
+                          prepared, approved and paid for this employee.
+                        </p>
+                        <input
+                          className="mt-3 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                          placeholder="Note (optional)"
+                          value={finalNote}
+                          onChange={(e) => setFinalNote(e.target.value)}
+                          maxLength={500}
+                        />
+                        <Button
+                          size="sm"
+                          className="mt-3 bg-emerald-600 hover:bg-emerald-700"
+                          disabled={busy === "final"}
+                          onClick={submitFinalApproval}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                          {busy === "final" ? "Approving…" : "Approve for F&F"}
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
+                {c.status === "completed" && c.payroll_head_approved_at && (
+                  <Card className="border-emerald-200">
+                    <CardContent className="pt-5">
+                      <h4 className="text-base font-bold text-emerald-800">
+                        Payroll Head final approval recorded
+                      </h4>
+                      <p className="mt-1 text-sm text-slate-600">
+                        F&amp;F settlement is unlocked.
+                        {c.payroll_head_approval_note
+                          ? ` Note: ${c.payroll_head_approval_note}`
+                          : ""}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
                 {canOverride && c.status !== "completed" && !c.override_at && (
                   <Card className="border-purple-200">
                     <CardContent className="pt-5">
-                      <h4 className="text-sm font-bold text-slate-900">
+                      <h4 className="text-base font-bold text-slate-900">
                         Payroll Head override
                       </h4>
-                      <p className="mt-1 text-xs text-slate-600 leading-relaxed">
+                      <p className="mt-1 text-sm text-slate-600 leading-relaxed">
                         Releases this employee's salary without a completed
                         clearance. Recorded against your name with the reason,
                         and the case still shows as not signed — an override is
@@ -1519,19 +1805,19 @@ export default function NocClearanceChain({
 
                 <Card>
                   <CardContent className="pt-5">
-                    <h4 className="text-sm font-bold text-slate-900 mb-2">
+                    <h4 className="text-base font-bold text-slate-900 mb-2">
                       Timeline
                     </h4>
                     <ol className="space-y-2 max-h-64 overflow-y-auto">
                       {detail.events.length === 0 && (
-                        <li className="text-xs text-slate-400">
+                        <li className="text-sm text-slate-400">
                           No activity recorded yet.
                         </li>
                       )}
                       {detail.events.map((ev, i) => (
                         <li
                           key={`${ev.created_at}-${i}`}
-                          className="text-xs border-l-2 border-slate-200 pl-3"
+                          className="text-sm border-l-2 border-slate-200 pl-3"
                         >
                           <div className="font-medium text-slate-800">
                             {ev.action.replace(/_/g, " ")}
@@ -1579,7 +1865,7 @@ export default function NocClearanceChain({
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-2">
-            <p className="text-sm text-slate-600">
+            <p className="text-base text-slate-600">
               {decision?.kind === "declined"
                 ? "Declining locks this NOC and routes it to HR. The employee's salary and settlement stay withheld until it is resolved. A reason is required."
                 : "Your name and the time will be recorded against this clearance as your digital signature."}
@@ -1633,8 +1919,8 @@ export default function NocClearanceChain({
             <DialogTitle>Waive — {waive?.label}</DialogTitle>
           </DialogHeader>
           <div className="space-y-2">
-            <p className="text-sm text-slate-600">
-              A waiver lets Finance sign off on property the company has not got
+            <p className="text-base text-slate-600">
+              A waiver lets Admin sign off on property the company has not got
               back. It is recorded against your name, so the reason needs to
               stand on its own later.
             </p>
@@ -1670,7 +1956,7 @@ export default function NocClearanceChain({
             <DialogTitle>Override NOC release</DialogTitle>
           </DialogHeader>
           <div className="space-y-2">
-            <p className="text-sm text-slate-600">
+            <p className="text-base text-slate-600">
               This releases <strong>{c?.employee_name}</strong>'s salary without
               a completed clearance. The reason below is the only record of why,
               so write it for whoever reads it in an audit rather than for
@@ -1683,10 +1969,10 @@ export default function NocClearanceChain({
               onChange={(e) => setOverrideReason(e.target.value)}
             />
             <div className="space-y-1.5">
-              <label className="text-xs font-bold uppercase tracking-wide text-slate-400">
+              <label className="text-sm font-bold uppercase tracking-wide text-slate-400">
                 Signed paper NOC (optional)
               </label>
-              <p className="text-xs text-slate-500">
+              <p className="text-sm text-slate-500">
                 If the employee's NOC was signed on paper instead of through the
                 digital chain, attach a photo or scan of it here — PDF, JPG or
                 PNG, up to 10 MB.
@@ -1695,10 +1981,10 @@ export default function NocClearanceChain({
                 type="file"
                 accept=".pdf,.jpg,.jpeg,.png"
                 onChange={(e) => setOverrideFile(e.target.files?.[0] ?? null)}
-                className="block w-full min-h-[44px] text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-bold file:text-slate-700 hover:file:bg-slate-200"
+                className="block w-full min-h-[44px] text-base text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-base file:font-bold file:text-slate-700 hover:file:bg-slate-200"
               />
               {overrideFile && (
-                <p className="text-xs text-emerald-700">
+                <p className="text-sm text-emerald-700">
                   Attached: {overrideFile.name}
                 </p>
               )}
@@ -1738,7 +2024,7 @@ function Field({
 }) {
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
         {label}
       </div>
       <div className="mt-0.5 font-medium text-slate-900">

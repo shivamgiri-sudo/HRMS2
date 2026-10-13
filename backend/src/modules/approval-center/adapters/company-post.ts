@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { branchAllowed, callerScope, io } from "./scope-guard.js";
+import { holdsLiteralRole } from "./_scope.js";
 
 /**
  * Company feed post moderation. The module's approvals endpoint is role-gated (admin / super_admin /
@@ -13,6 +14,7 @@ export const companyPostAdapter: ApprovalAdapter = {
   label: "Company feed post",
   category: "Engagement",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, "admin", "hr_head", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/engagement/company-posts/approvals", { query: { page: 1, limit: 100 } });
     const rows: any[] = res?.posts ?? res?.data?.posts ?? [];
     const me = await callerScope(ctx);

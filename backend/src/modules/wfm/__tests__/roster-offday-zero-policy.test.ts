@@ -14,6 +14,13 @@
  * generation path when the columns are absent.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Import fixtures are dated Aug 2026; pin "today" before them so the past-week import block
+// (2026-10-13) does not refuse the recorded rows.
+vi.mock("../../../utils/dateUtils.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/dateUtils.js")>()),
+  getIstDateString: () => "2026-07-27",
+}));
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";

@@ -151,9 +151,9 @@ function CallFiles({ status }: { status: FollowupStatus | null }) {
         <div className="relative overflow-x-auto">
           <table className="min-w-full">
             <caption className="sr-only">Last calling-file batches</caption>
-            <thead><tr><th scope="col" className={TH}>Time</th><th scope="col" className={TH}>Rows</th><th scope="col" className={TH}>Status</th><th scope="col" className={TH}>Error</th></tr></thead>
+            <thead><tr><th scope="col" className={TH}>Time</th><th scope="col" className={TH}>Rows</th><th scope="col" className={TH}>Status</th><th scope="col" className={TH}>Portal upload</th><th scope="col" className={TH}>Error</th></tr></thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-              {files.map((f) => <tr key={f.id}><td className={TD}>{f.when}</td><td className={TD}>{f.rows}</td><td className={TD}>{f.status}</td><td className={`${TD} break-words`}>{f.error}</td></tr>)}
+              {files.map((f) => <tr key={f.id}><td className={TD}>{f.when}</td><td className={TD}>{f.rows}</td><td className={TD}>{f.status}</td><td className={`${TD} break-words`}>{f.portal}</td><td className={`${TD} break-words`}>{f.error}</td></tr>)}
             </tbody>
           </table>
         </div>

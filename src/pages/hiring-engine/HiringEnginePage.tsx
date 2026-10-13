@@ -18,6 +18,7 @@ const loaders = {
   planner: () => import("./PlannerTab"),
   calls: () => import("./BulkCallsTab"),
   templates: () => import("./TemplatesTab"),
+  history: () => import("./PersonHistoryTab"),
 };
 const LeadsTab = lazy(loaders.leads);
 const DrivesTab = lazy(loaders.drives);
@@ -27,6 +28,7 @@ const TemplatesTab = lazy(loaders.templates);
 const BulkCallsTab = lazy(loaders.calls);
 const MasterTab = lazy(loaders.master);
 const PlannerTab = lazy(loaders.planner);
+const PersonHistoryTab = lazy(loaders.history);
 
 const TABS = [
   { id: "board", label: "Walk-in board" },
@@ -37,6 +39,7 @@ const TABS = [
   { id: "planner", label: "Planner" },
   { id: "calls", label: "Bulk calls" },
   { id: "templates", label: "Templates" },
+  { id: "history", label: "Person history" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 const TAB_IDS = TABS.map((t) => t.id);
@@ -63,7 +66,7 @@ export default function HiringEnginePage() {
           <p className="text-sm text-slate-600">Turn open positions into walk-ins: who to invite, who confirmed, who is on the way, and what to do next.</p>
         </header>
         <MetaRecruitmentStrip />
-        <nav role="tablist" aria-label="Hiring Engine sections" className="flex gap-1 overflow-x-auto border-b border-slate-200">
+        <nav role="tablist" aria-label="Hiring Engine sections" className="flex gap-1 overflow-x-auto overflow-y-hidden border-b border-slate-200">
           {TABS.map((t) => (
             <button key={t.id} role="tab" type="button" aria-selected={tab === t.id} onClick={() => go(t.id)} onPointerEnter={() => { void loaders[t.id](); }} onFocus={() => { void loaders[t.id](); }}
               className={`-mb-px cursor-pointer whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${tab === t.id ? "border-blue-600 text-blue-700" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
@@ -81,6 +84,7 @@ export default function HiringEnginePage() {
           {tab === "planner" && <PlannerTab />}
           {tab === "calls" && <BulkCallsTab />}
           {tab === "templates" && <TemplatesTab />}
+          {tab === "history" && <PersonHistoryTab />}
         </Suspense>
       </div>
     </DashboardLayout>

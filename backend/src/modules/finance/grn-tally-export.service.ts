@@ -9,6 +9,7 @@ import {
 import path from "path";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { hrmsRaisedGrnSql } from "../../shared/ownCompanyCostCentre.js";
 import {
   buildGrnVoucher,
   DEFAULT_LEDGER_NAMES,
@@ -22,7 +23,8 @@ import {
  *
  * "Fully approved" means the last approval step has happened: a vendor GRN at Finance Head approval
  * or later, an imprest GRN at 'approved' or later. GRNs imported from the legacy billing system
- * (bill_source_id set) are left out, because the old system already booked them. Nothing before
+ * (bill_source_id set, or created by the migration's sentinel user) are left out, because the old
+ * system already booked them. Nothing before
  * GRN_TALLY_EXPORT_FROM is exported, so switching this on never sends history.
  *
  * No duplicates: each GRN is reserved in grn_tally_export (primary key = the GRN) in the same
@@ -30,6 +32,8 @@ import {
  * .tmp name is renamed to .xml) after that transaction has committed. A crash in between leaves a
  * 'claimed' batch that the next run either completes (the .tmp file is there) or releases (it is not).
  */
+
+export { hrmsRaisedGrnSql };
 
 type Executor = { execute(sql: string, params?: any[]): Promise<[any, any]> };
 
@@ -115,7 +119,7 @@ async function selectCandidates(
             g.description, g.branch_id, g.amount, g.amount_without_tax, g.tax_amount, g.other_charges, g.round_off_amount,
             g.amount_with_tax, g.gst_type, g.recoverable_tax_pct, COALESCE(g.approved_at, g.updated_at) AS approved_on
        FROM grn_request g
-      WHERE g.bill_source_id IS NULL
+      WHERE ${hrmsRaisedGrnSql("g")}
         AND g.grn_number IS NOT NULL AND TRIM(g.grn_number) <> ''
         AND ((g.grn_type = 'vendor' AND g.status IN (${vendorIn})) OR (g.grn_type = 'imprest' AND g.status IN (${imprestIn})))
         AND COALESCE(g.approved_at, g.updated_at) >= ?
@@ -138,7 +142,7 @@ async function alreadyExported(
   return new Set(rows.map((r) => String(r.grn_request_id)));
 }
 
-async function lookupNames(
+export async function lookupNames(
   executor: Executor,
   table: "vendor_master" | "branch_master",
   column: string,
@@ -156,7 +160,7 @@ async function lookupNames(
   return out;
 }
 
-function toVoucherInput(
+export function toVoucherInput(
   r: RowDataPacket,
   vendors: Map<string, string>,
   branches: Map<string, string>,

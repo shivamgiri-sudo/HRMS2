@@ -42,7 +42,7 @@ function route(sql: string, p: unknown[]): unknown[] {
   const view = snapshot ?? { row: cur, days };
   if (s.includes("FROM requisition_stream_day")) return [view.days];
   if (s.startsWith("SELECT * FROM requisition_stream WHERE id")) return [[view.row]];
-  if (s.includes("FROM job_requisition WHERE id")) return [[{ id: "r-1", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 1 }]];
+  if (s.includes("FROM job_requisition WHERE id")) return [[{ id: "r-1", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 1, joined_headcount: 3 }]];
   if (s.includes("FROM meta_campaign")) return [[{ id: "c-1", campaign_name: "Noida drive", requisition_id: campaignReq }]];
   if (s.includes("FROM he_drive")) return [drive && drive.id === p[0] ? [drive] : []];
   return [[]];
@@ -148,7 +148,7 @@ describe("stream change version guard", () => {
 });
 
 describe("auto-close guard", () => {
-  const autoRow = (o: Row = {}) => ({ ...base(), jr_id: "r-1", approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 1, ...o });
+  const autoRow = (o: Row = {}) => ({ ...base(), jr_id: "r-1", approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 1, joined_headcount: 3, ...o });
   const selectReturns = (rows: Row[]) =>
     h.execute.mockImplementation(async (sql: string, p: unknown[] = []) => String(sql).includes("FROM requisition_stream s") ? [rows] : route(sql, p));
 
@@ -175,7 +175,7 @@ describe("auto-close guard", () => {
   });
 
   it("a closing UPDATE that matches no row is skipped with no event row", async () => {
-    selectReturns([autoRow({ id: "s-1" }), autoRow({ id: "s-2", fulfilled_headcount: 5 })]);
+    selectReturns([autoRow({ id: "s-1" }), autoRow({ id: "s-2", fulfilled_headcount: 5, joined_headcount: 7 })]);
     h.connExecute.mockImplementation(async (sql: string, p: unknown[] = []) =>
       String(sql).startsWith("UPDATE requisition_stream SET status = 'closed'") ? [{ affectedRows: 0 }] : connRoute(sql, p));
     const r = await autoCloseStreams("2026-10-13", false);
@@ -186,7 +186,7 @@ describe("auto-close guard", () => {
   });
 
   it("requisition_filled guards the status only (the window does not matter)", async () => {
-    selectReturns([autoRow({ fulfilled_headcount: 5 })]);
+    selectReturns([autoRow({ fulfilled_headcount: 5, joined_headcount: 7 })]);
     cur = { ...cur, open_days: 9, version: 4 };
     const r = await autoCloseStreams("2026-10-08", false);
     expect(r).toEqual([{ streamId: "s-1", requisitionId: "r-1", reason: "requisition_filled" }]);

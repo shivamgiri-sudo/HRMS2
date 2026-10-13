@@ -16,6 +16,7 @@ import { discardDraft, getMyDraft, setDraftNote, upsertDraftLines } from "./team
 import { getSubmissionDetail, listApprovals, listMySubmissions } from "./team-roster-query.js";
 import { getTeamAttendance, getTeamAttendanceDetail } from "./team-roster-attendance.js";
 import { getGrid, getMe, listTemplates } from "./team-roster.service.js";
+import { exportHistoryRows, historyFilterOptions, listHistory } from "./team-roster-history.js";
 import { getAutofillSuggestions } from "./team-roster-autofill.js";
 import { editSubmissionLine } from "./team-roster-approver-edit.js";
 import { managerDecide, wfmDecide } from "./team-roster-workflow.js";
@@ -52,6 +53,11 @@ const schemas = {
   decision: z.object({ remarks: z.string().trim().max(MAX_REMARKS_LENGTH).nullish() }),
   mine: z.object({ status: z.string().trim().max(30).optional(), offset: int, limit: int }),
   approvals: z.object({ step: z.enum(["manager", "wfm"]), offset: int, limit: int }),
+  history: z.object({
+    from: ymd.optional(), to: ymd.optional(), status: z.string().trim().max(30).optional(),
+    branchId: z.string().trim().max(36).optional(), processId: z.string().trim().max(36).optional(), managerId: z.string().trim().max(36).optional(),
+    search: z.string().trim().max(100).optional(), offset: int, limit: int,
+  }),
   attendance: z.object({ month: z.string().regex(/^\d{4}-\d{2}$/, "expected YYYY-MM"), search: z.string().trim().max(100).optional(), processId: z.string().trim().max(36).optional(), offset: int, limit: int }),
   attendanceDetail: z.object({ month: z.string().regex(/^\d{4}-\d{2}$/, "expected YYYY-MM") }),
 };
@@ -127,6 +133,9 @@ teamRosterRouter.delete("/draft", run("none", null, (a) => discardDraft(a)));
 teamRosterRouter.post("/draft/submit", run("body", schemas.submit, (a, b) => submitDraft(a, { note: b.note ?? null }), 201));
 teamRosterRouter.get("/submissions", run("query", schemas.mine, (a, q) => listMySubmissions(a, q)));
 teamRosterRouter.get("/approvals", run("query", schemas.approvals, (a, q) => listApprovals(a, q)));
+teamRosterRouter.get("/history", run("query", schemas.history, (a, q) => listHistory(a, q)));
+teamRosterRouter.get("/history/filters", run("none", null, (a) => historyFilterOptions(a)));
+teamRosterRouter.get("/history/export", run("query", schemas.history, (a, q) => exportHistoryRows(a, q)));
 teamRosterRouter.get("/submissions/:id", run("none", null, (a, _i, req) => getSubmissionDetail(a, idOf(req))));
 teamRosterRouter.post("/submissions/:id/cancel", run("none", null, (a, _i, req) => cancelSubmission(a, idOf(req))));
 teamRosterRouter.post("/submissions/:id/copy-to-draft", run("none", null, (a, _i, req) => copySubmissionToDraft(a, idOf(req))));

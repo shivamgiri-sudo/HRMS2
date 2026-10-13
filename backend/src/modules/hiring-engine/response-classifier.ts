@@ -16,8 +16,10 @@ const GUARDS = ["no problem", "no issue", "no issues", "no worries", "koi dikkat
 const WRONG = ["wrong number", "galat number", "wrong person", "not me"];
 const UNSUB = ["do not message", "don t message", "dont message", "do not contact", "don t contact", "stop messaging", "do not call", "don t call"];
 const DECLINE = ["not able", "unable", "won t be able", "wont be able", "not possible", "nahi aa", "nhi aa", "not available", "already joined", "got another job", "job mil gayi", "not looking"];
-const RESCHEDULE = ["next week", "some other day", "other day", "another day", "instead", "postpone", "dusre din", "agle hafte"];
-const CONFIRM = ["will come", "will be there", "i ll come", "i ll be there", "coming", "sure", "definitely", "aa jaunga", "aa jaungi", "aa raha", "aa rahi", "theek hai", "thik hai", "attend"];
+const RESCHEDULE = ["next week", "some other day", "other day", "another day", "instead", "postpone", "dusre din", "agle hafte",
+  "another chance", "one more chance", "1 more chance", "again 1 chance", "again one chance", "another opportunity", "another slot", "new slot", "new date",
+  "late seen", "late saw", "late noticed", "missed my slot", "missed the interview", "reschedule", "schedule my interview", "schedule my slot", "give me another"];
+const CONFIRM = ["can come now", "coming now", "on my way", "reaching now", "reaching soon", "will come", "will be there", "i ll come", "i ll be there", "coming", "sure", "definitely", "aa jaunga", "aa jaungi", "aa raha", "aa rahi", "theek hai", "thik hai", "attend"];
 const QUESTION = ["kya", "kitna", "kitni", "kab", "kahan", "kaha", "kaise", "salary", "address", "location", "when", "where", "what", "how", "which", "documents"];
 
 /** The reply's own words: cut at the first quote header, quoted line, signature or "sent from" line. */
@@ -29,7 +31,20 @@ export function stripQuoted(text: string): string {
       || /^(regards|best regards|thanks (and|&) regards|warm regards|kind regards)\b/i.test(l) || /^from:\s/i.test(l)) break;
     out.push(raw);
   }
-  return out.join("\n").trim();
+  return cutInlineHeader(out.join("\n")).trim();
+}
+
+/**
+ * Gmail and phone clients often put the quote header on the same line as the reply ("I will attend. On Thu, 8 Oct, 2026, 11:37 pm HR
+ * Team <hr@x> wrote:"). Cut there: when the header says "wrote:", or (a header cut short) it names a weekday, a date with a year and a clock time.
+ */
+const DAY = "(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*";
+const INLINE_WROTE = new RegExp(`\\bOn\\s+(?:${DAY},?\\s+)?(?:\\d{1,2}[\\s,/.-]+[A-Za-z]{3,9}|[A-Za-z]{3,9}\\s+\\d{1,2}|\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4})[^\\n]{0,160}?\\bwrote:?`, "i");
+const INLINE_CUT = new RegExp(`\\bOn\\s+${DAY},?\\s+(?:\\d{1,2}[\\s,/.-]+[A-Za-z]{3,9}|[A-Za-z]{3,9}\\s+\\d{1,2})[\\s,]+\\d{4}\\b[^\\n]{0,40}?\\d{1,2}:\\d`, "i");
+export function cutInlineHeader(text: string): string {
+  const a = INLINE_WROTE.exec(text); const b = INLINE_CUT.exec(text);
+  const at = [a?.index, b?.index].filter((n): n is number => n != null);
+  return at.length ? text.slice(0, Math.min(...at)) : text;
 }
 
 function clauseAnswer(t: string): { answer: ResponseAnswer; why: string } | null {
@@ -48,6 +63,10 @@ export function classifyReply(text: string, _o: { channel?: "email" | "whatsapp"
   if (!top) return { answer: "other", confidence: 0, reasons: ["empty"] };
   const reasons: string[] = [];
   let t = norm(top);
+  // A bare "I am interested" in answer to a walk-in invitation is a yes to the slot offered (no question, nothing else in the reply).
+  if (/^(hi |hello |dear sir |sir |good (morning|afternoon|evening) )*(sir |madam |sir madam )?(i am |i m |im )?(very |highly )?interested( sir| madam| thank you| thanks)?$/.test(t)) {
+    return { answer: "confirm", confidence: 0.9, reasons: ["interested, no question"] };
+  }
   let guarded = false;
   for (const g of GUARDS) if (has(t, [g])) { t = norm(t.replace(new RegExp(`(^| )${g}( |$)`, "g"), " ")); guarded = true; reasons.push(`"${g}" is not a decline`); }
   const question = top.includes("?") || !!has(t, QUESTION);

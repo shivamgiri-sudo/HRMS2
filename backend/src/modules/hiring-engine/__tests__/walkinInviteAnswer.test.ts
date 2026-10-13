@@ -95,8 +95,8 @@ describe("answerInviteToken", () => {
     expect(h.log.indexOf("send:T2")).toBeGreaterThan(h.log.indexOf("conn.release"));
   });
 
-  it("lock busy three times (GET_LOCK 0, 3 tries) → response recorded, needs_human_followup, nothing booked", async () => {
-    h.lockResults = [0, 0, 0];
+  it("lock busy eight times (GET_LOCK 0, 8 tries) → response recorded, needs_human_followup, nothing booked", async () => {
+    h.lockResults = [0, 0, 0, 0, 0, 0, 0, 0];
     const r = await answerInviteToken(invite(), "yes", { now, channel: "web" });
     expect(r).toMatchObject({ booked: false, reason: "busy" });
     expect(h.log).not.toContain("book");

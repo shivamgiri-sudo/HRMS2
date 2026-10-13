@@ -25,12 +25,12 @@ const view = (d: PanelData | null, over: Partial<React.ComponentProps<typeof Fol
   renderToStaticMarkup(<FollowupPanelView expanded loading={false} error={null} data={d} onToggle={noop} onReload={noop} onRetry={noop} onMarkCalled={noop} {...over} />);
 
 describe("showRetry / retryHint / stateLabel", () => {
-  const cases: Array<[boolean, boolean, boolean]> = [[true, true, false], [false, false, false], [true, false, true], [false, true, false]];
+  const cases: Array<[boolean, boolean, boolean]> = [[true, true, true], [false, false, false], [true, false, true], [false, true, false]];
   it.each(cases)("retryable=%s outcomeUnknown=%s -> %s", (retryable, outcomeUnknown, want) => {
     expect(showRetry({ retryable, outcomeUnknown })).toBe(want);
   });
   it.each([
-    ["outcome_unknown", "The send may already have happened; check before acting"], ["already_sent", "Already sent"],
+    ["outcome_unknown", "The send may already have happened. Retry checks our send log first: if it went out it is marked sent, otherwise it is sent again"], ["already_sent", "Already sent"],
     ["already_in_file", "Already in a calling file"], [null, null],
   ] as const)("hint %s", (reason, text) => expect(retryHint({ retryReason: reason })).toBe(text));
   it("labels unknown outcome and already sent in words", () => {
@@ -141,7 +141,7 @@ describe("FollowupPanelView markup", () => {
     const html = view(data({ attention: GROUPS }));
     expect(html).toContain('aria-expanded="true"');
     expect(html.match(/>Retry</g)?.length ?? 0).toBe(1);
-    expect(html).toContain("The send may already have happened; check before acting");
+    expect(html).toContain("The send may already have happened. Retry checks our send log first");
     expect(html).toContain("Outcome unknown: a message may already have gone out");
     expect(html).toContain("xxxxxx3210");
     expect(html).not.toMatch(/\d{10}/);

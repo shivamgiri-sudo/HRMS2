@@ -251,7 +251,7 @@ export async function getDriveTrend(
   const reqBranch = String(h[0].branch_name ?? "");
   const branch = q.branch ? q.branch : reqBranch;
   if (!scope.all && !(scope.branchName != null && scope.branchName === reqBranch && scope.branchName === branch)) return null;
-  const key = `${q.requisitionId}|${branch}|${scopeKey(scope)}|${sourceType ?? "all"}`;
+  const key = `${q.requisitionId}|${branch}|${scopeKey(scope)}|${sourceType ?? "all"}|${istToday(now)}`; // the day: the Live Meta cutoff rolls at midnight IST
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
   if (hit) cache.delete(key);
@@ -263,7 +263,7 @@ export async function getDriveTrend(
   const from = streamDays.length ? streamDays[0] : addDays(today, -DEFAULT_BACK);
   const to = streamDays.length ? streamDays[streamDays.length - 1] : addDays(today, DEFAULT_AHEAD);
   const rows = await section("drives", failed, async () => {
-    const pf = new PersonFacts(await loadLiveFrom());
+    const pf = new PersonFacts(await loadLiveFrom(now));
     const raw = await readAgg(trendSql(pf.liveFrom), [q.requisitionId, branch, from, to]);
     await pf.loadRows(raw);
     return raw.map((r) => parseAgg(r, pf));
@@ -296,7 +296,7 @@ export async function getDriveGroupsDetailed(now: Date = new Date()): Promise<{ 
   for (const s of active) { const d = windowDays(toWindow(s)); if (d.length) { if (d[0] < from) from = d[0]; if (d[d.length - 1] > to) to = d[d.length - 1]; } }
   const ids = [...new Set([...keys.values()].map((k) => k.requisitionId))];
   const typed = await section("groups", failed, async () => {
-    const pf = new PersonFacts(await loadLiveFrom());
+    const pf = new PersonFacts(await loadLiveFrom(now));
     const rows = await readAgg((st) => groupsSql(ids.length, st, pf.liveFrom), [from, to, ...ids]);
     await pf.loadRows(rows);
     return { rows, pf };

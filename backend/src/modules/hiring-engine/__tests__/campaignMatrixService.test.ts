@@ -29,7 +29,11 @@ vi.mock("../he-read-limit.js", () => {
   };
   return { limitedDb: { execute: exec } };
 });
-vi.mock("../he-source-attribution.service.js", () => ({ loadLiveFrom: async () => "2026-10-08" }));
+// the real rolling rule (no params): the cutoff is the IST day of the call's clock minus 7
+vi.mock("../he-source-attribution.service.js", async () => {
+  const { resolveLiveWindow } = await import("../he-source-attribution.js");
+  return { loadLiveWindow: async (now: Date) => resolveLiveWindow({}, now), loadLiveFrom: async (now: Date) => resolveLiveWindow({}, now).liveFrom };
+});
 vi.mock("../qualified-followup.schedule.js", () => ({ followupMode: () => "off" }));
 
 import { clearMatrixCache, getCampaignMatrix } from "../campaign-matrix.service.js";
@@ -150,5 +154,18 @@ describe("end-date enforcement shown in the matrix", () => {
     process.env.REQ_END_DATE_ENFORCEMENT = "policy";
     expect((await getCampaignMatrix({}, ALL, NOW)).enforcedEndDate).toBe(true);
     delete process.env.REQ_END_DATE_ENFORCEMENT;
+  });
+});
+
+describe("rolling Live Meta cutoff in the matrix", () => {
+  it("Live / Old counts use the cutoff of the call's clock; it is returned, and a cached matrix is not reused after midnight IST", async () => {
+    const a = await getCampaignMatrix({}, ALL, new Date("2026-10-09T18:29:30Z")); // 23:59:30 IST 9 Oct
+    expect(a).toMatchObject({ liveFrom: "2026-10-02", liveDays: 7, liveMode: "rolling" });
+    expect(h.sqls.find((x) => x.sql.includes("activity48h"))!.sql).toContain("TIMESTAMP '2026-10-02 00:00:00'");
+    h.sqls = [];
+    const b = await getCampaignMatrix({}, ALL, new Date("2026-10-09T18:30:20Z")); // 50 s later, 00:00:20 IST 10 Oct
+    expect(b.liveFrom).toBe("2026-10-03");
+    expect(h.sqls.find((x) => x.sql.includes("activity48h"))!.sql).toContain("TIMESTAMP '2026-10-03 00:00:00'");
+    expect(JSON.stringify(h.sqls)).not.toContain("2026-10-08 00:00:00");
   });
 });

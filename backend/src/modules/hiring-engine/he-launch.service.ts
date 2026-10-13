@@ -5,6 +5,7 @@
  * own row in the list with its own funnel - an original push and a re-run of the same campaign never mix.
  */
 import type { RowDataPacket } from "mysql2";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import { db } from "../../db/mysql.js";
 import { bridgeMetaLeads } from "./he-meta-bridge.service.js";
 import { createDrive, setDriveStatus, suggestMatchesDetailed, type SuggestResult } from "./he-drive.service.js";
@@ -27,10 +28,10 @@ async function validate(i: LaunchInput): Promise<{ requisition: RowDataPacket }>
   if (i.date < istToday()) throw fail("The date is in the past");
   if (new Date(`${i.date}T00:00:00Z`).getUTCDay() === 0) throw fail("Sunday: pick a working day");
   const [rq] = await db.execute<RowDataPacket[]>(
-    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1", [i.requisitionId]);
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1", [i.requisitionId]);
   const r = rq[0];
   if (!r) throw fail("Requisition not found", 404);
-  if (r.approval_status !== "approved" || !r.active_status || Number(r.fulfilled_headcount) >= Number(r.requested_headcount)) throw fail("That requisition is closed or filled. Pick an open requisition of the same branch.");
+  if (r.approval_status !== "approved" || !r.active_status || fillTargetMet(Number(r.requested_headcount), Number(r.joined_headcount ?? 0))) throw fail("That requisition is closed or filled. Pick an open requisition of the same branch.");
   const table = i.kind === "campaign" ? "meta_campaign" : "he_import_batch";
   const [ok] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM ${table} WHERE id IN (${ph(i.ids.length)})`, i.ids);
   if (Number(ok[0].n) !== new Set(i.ids).size) throw fail(`One of the ${i.kind === "campaign" ? "campaigns" : "upload batches"} was not found`, 404);
@@ -70,7 +71,7 @@ export async function previewLaunch(i: LaunchInput): Promise<LaunchPreview> {
     people = alreadyInPool = Number(p[0].pool); optedOut = Number(p[0].oo ?? 0); joinedOrEmployee = Number(p[0].jn ?? 0); liveBooking = Number(p[0].live ?? 0);
   }
   return {
-    requisition: { code: String(r.requisition_code), role: String(r.designation_name), branch: String(r.branch_name), open: Number(r.requested_headcount) - Number(r.fulfilled_headcount) },
+    requisition: { code: String(r.requisition_code), role: String(r.designation_name), branch: String(r.branch_name), open: joinsLeft(Number(r.requested_headcount), Number(r.joined_headcount ?? 0)) },
     audience: { people, qualified, inWindow, alreadyInPool, optedOut, joinedOrEmployee, liveBooking },
   };
 }

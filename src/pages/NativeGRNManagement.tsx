@@ -6,6 +6,7 @@ import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnFor
 import { GrnHistoryTable } from "@/components/finance/grn/GrnHistoryTable";
 import { GrnSearchWorkspace } from "@/components/finance/grn/GrnSearchWorkspace";
 import { FinanceReportsWorkspace } from "@/components/finance/grn/FinanceReportsWorkspace";
+import { GrnTallyDownloadPanel } from "@/components/finance/grn/GrnTallyDownloadPanel";
 import { ImprestWorkspace } from "@/components/finance/grn/imprest/ImprestWorkspace";
 import { ImprestHolderDashboard } from "@/components/finance/grn/imprest/ImprestHolderDashboard";
 import { GrnLobAttributionQueue } from "@/components/finance/grn/GrnLobAttributionQueue";
@@ -81,6 +82,9 @@ export default function NativeGRNManagement() {
     "branch_head",
     "branch_admin"
   );
+  // Mirrors GRN_TALLY_READ_ROLES (backend/src/modules/finance/grn-tally-export.routes.ts):
+  // branch roles see Reports but not the company-wide Tally export.
+  const canDownloadTally = useHasRole("super_admin", "admin", "finance_head", "accounts_head", "finance", "ceo");
 
   // Check if the current user holds an active imprest float. Anyone with an active
   // imprest_manager record should see "My Float" regardless of their primary role.
@@ -238,6 +242,7 @@ export default function NativeGRNManagement() {
               recent activity; these are the month-end reads finance reconciles against. */}
           {canViewReports && (
             <TabsContent value="reports" className="mt-4">
+              {canDownloadTally && <GrnTallyDownloadPanel />}
               <FinanceReportsWorkspace />
             </TabsContent>
           )}

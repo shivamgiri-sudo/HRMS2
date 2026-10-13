@@ -101,7 +101,7 @@ export async function answerInviteToken(inv: WalkinInviteRow, answer: InviteToke
     return { state: "recorded", booked: false, reason: "booking_off", ...(await respond(false, { leadId: lead.id })) };
   }
 
-  const lock = await takeEngineLock();
+  const lock = await takeEngineLock({ tries: 8, gapMs: 1000 }); // wait up to ~8 s for the engine tick: a busy lock must not become an HR hand-off
   if (!lock) {
     await human(`answered ${answer} on the invitation link while the engine was busy: book by hand`);
     return { state: "pending", booked: false, reason: "busy", ...(await respond(false, { leadId: lead.id })) };
@@ -144,7 +144,7 @@ export async function answerInviteToken(inv: WalkinInviteRow, answer: InviteToke
  */
 export async function bookAndAnswerMatch(a: { leadId: string; requisitionId: string; answer: "yes" | "later"; now: Date; actor: string; note: string }):
   Promise<{ state: string; booked: boolean; reason?: string; responseId?: number; matchId?: string }> {
-  const lock = await takeEngineLock();
+  const lock = await takeEngineLock({ tries: 8, gapMs: 1000 }); // wait up to ~8 s for the engine tick: a busy lock must not become an HR hand-off
   const sends: Array<() => Promise<unknown>> = [];
   if (!lock) {
     await addEvent(a.leadId, "needs_human_followup", { channel: "hr", detail: `HR recorded ${a.answer} while the engine was busy: book by hand`, actor: a.actor });

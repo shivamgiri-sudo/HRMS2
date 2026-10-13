@@ -13,7 +13,7 @@ beforeEach(() => execute.mockReset());
 
 describe("incentives adapter", () => {
   it("finance: pending_approval batches + chain rows, no duplicates", async () => {
-    execute.mockResolvedValue([[{ role_key: "finance" }]]);
+    execute.mockResolvedValue([[{ role_key: "finance" }, { role_key: "operations_head" }]]); // chain step role must be held literally
     const { ctx } = fakeCtx({
       "GET /api/incentives/batches": { data: [b(), b({ id: "z", status: "approved" })] },
       "GET /api/incentives/approvals/pending": { data: [b({ id: "c1", status: "approval_chain_active", pending_step: 2, required_role: "operations_head" })] },
@@ -25,6 +25,14 @@ describe("incentives adapter", () => {
     expect(items[1].stage).toMatch(/step 2/);
     expect(items[1].rejectNeedsReason).toBe(true);
     expect(items[0].viewPath).toBe("/payroll/incentives?approvalId=b1");
+  });
+  it("chain step whose required_role the caller does not literally hold is not listed", async () => {
+    execute.mockResolvedValue([[{ role_key: "finance" }]]);
+    const { ctx } = fakeCtx({
+      "GET /api/incentives/batches": { data: [] },
+      "GET /api/incentives/approvals/pending": { data: [b({ id: "c1", status: "approval_chain_active", pending_step: 2, required_role: "operations_head" })] },
+    });
+    expect(await a.list(ctx)).toEqual([]);
   });
   it("non-finance only gets the chain list (already role-filtered server side)", async () => {
     execute.mockResolvedValue([[{ role_key: "branch_head" }]]);

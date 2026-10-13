@@ -41,6 +41,18 @@ export function approvalSteps(s: SubmissionDetail["submission"]): Array<{ label:
   ];
 }
 
+/** One-line detail for audit rows that carry counts or a touched cell. */
+export function metaNote(action: string, meta: unknown): string | null {
+  if (!meta || typeof meta !== "object") return null;
+  const m = meta as Record<string, unknown>;
+  if ((action === "applied" || action === "partially_applied") && typeof m.applied === "number") {
+    return `${m.applied} applied, ${Number(m.skipped ?? 0)} skipped, ${Number(m.failed ?? 0)} failed`;
+  }
+  if (action === "line_edited" && typeof m.date === "string") return `Cell on ${formatDmy(m.date)}${m.reverted ? " restored to the original proposal" : ""}`;
+  if (action === "submitted" && typeof m.lineCount === "number") return `${m.lineCount} cell(s) raised`;
+  return null;
+}
+
 const STEP_ICON: Record<StepState, React.ReactNode> = {
   done: <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden />,
   rejected: <XCircle className="h-4 w-4 text-red-600" aria-hidden />,
@@ -67,7 +79,8 @@ export function DrawerBody({ detail, busy, onAction, onEditCell }: {
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           <div><dt className="text-xs text-slate-400">Submitted by</dt><dd>{s.submitter.name}{s.submitter.code ? ` (${s.submitter.code})` : ""}</dd></div>
           <div><dt className="text-xs text-slate-400">Period</dt><dd>{formatDmy(s.from)} to {formatDmy(s.to)}</dd></div>
-          <div><dt className="text-xs text-slate-400">Changes</dt><dd>{summary.total} ({summary.applied} applied, {summary.skipped} skipped, {summary.failed} failed)</dd></div>
+          <div><dt className="text-xs text-slate-400">Raised</dt><dd>{summary.total} cell{summary.total === 1 ? "" : "s"}{s.submittedAt ? ` on ${formatDmyTime(s.submittedAt)}` : ""}</dd></div>
+          <div><dt className="text-xs text-slate-400">Approved and applied</dt><dd>{summary.applied} of {summary.total}{summary.skipped + summary.failed > 0 ? ` (${summary.skipped} skipped, ${summary.failed} failed)` : ""}{s.status === "rejected" ? " - rejected, nothing applied" : ""}</dd></div>
           <div><dt className="text-xs text-slate-400">Note</dt><dd>{s.note || "None"}</dd></div>
         </dl>
       </section>
@@ -141,6 +154,7 @@ export function DrawerBody({ detail, busy, onAction, onEditCell }: {
                 <div className="font-medium">{AUDIT_ACTION_LABEL[t.action] ?? t.action}</div>
                 <div className="text-xs text-slate-500">{[t.actorName, formatDmyTime(t.at)].filter(Boolean).join(" - ")}</div>
                 {t.remarks && <div className="text-xs text-slate-600">{t.remarks}</div>}
+                {metaNote(t.action, t.meta) && <div className="text-xs text-slate-500">{metaNote(t.action, t.meta)}</div>}
               </li>
             ))}
           </ol>

@@ -143,7 +143,7 @@ describe("GET /qualified-followup/status", () => {
     ];
     const r = await request(appFor("ceo")).get("/api/he/qualified-followup/status");
     expect(r.status).toBe(200);
-    expect(r.body.data.callFiles[0]).toEqual({ id: "b1", createdAt: "2026-10-08T03:00:00.000Z", rows: 12, status: "failed", error: "smtp # rejected [email]" });
+    expect(r.body.data.callFiles[0]).toEqual({ id: "b1", createdAt: "2026-10-08T03:00:00.000Z", rows: 12, status: "failed", error: "smtp # rejected [email]", portal: "not uploaded" });
     expect(r.body.data.callFiles[1].error).toBeNull();
     expect(r.body.data.report.last).toBeNull(); // unknown since restart
     expect(r.body.data.mode).toBe("off");

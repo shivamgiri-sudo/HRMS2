@@ -1,0 +1,47 @@
+name: Ops AHM Dialer Discover (manual, read-only)
+
+# Finds where AHM's call-attempt data lives in the dialer database.
+#
+# Read-only: backend/scripts/ahm-dialer-discover.mjs issues SELECTs in a READ ONLY session, using the app's own
+# DIALER_DB_* settings from the deployed .env (no credential is passed in or printed). workflow_dispatch only.
+# Its own workflow, not an option on ops-scripts.yml: that file is at GitHub's expression-length limit.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ops-ahm-dialer-discover-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: List dialer tables and AHM campaign matches
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          node scripts/ahm-dialer-discover.mjs

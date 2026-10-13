@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { callerScope, keepEmployeeRowsInBranch } from "./scope-guard.js";
+import { holdsLiteralRole } from "./_scope.js";
 
 /**
  * Benefits / reimbursement claim review (admin / hr, branch-scoped by the module).
@@ -13,6 +14,7 @@ export const benefitsClaimAdapter: ApprovalAdapter = {
   label: "Benefit / reimbursement claim",
   category: "Finance",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, "admin", "hr"))) return [];
     const res = await ctx.call("GET", "/api/benefits/claims", { query: { status: "submitted" } });
     if (!res || res.stats === undefined) return [];
     const rows: any[] = await keepEmployeeRowsInBranch(

@@ -1,0 +1,59 @@
+name: Ops Attendance Daily Agreement (read-only)
+
+# Compares the shift attribution the COSEC sync writes with NCOSEC's own per-shift table
+# (Mx_DATDTrn) for the last few complete days, and goes RED when agreement drops below the
+# threshold. Read-only: it writes nothing. Baseline measured 2026-10-12: ~94%.
+# Runs once a day (06:30 IST) and on demand.
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+    inputs:
+      days_back:
+        description: "How many complete days ending yesterday to compare"
+        required: false
+        default: "3"
+        type: string
+      min_match_pct:
+        description: "Go red below this agreement percentage"
+        required: false
+        default: "88"
+        type: string
+
+concurrency:
+  group: ops-attendance-daily-agreement
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  agreement:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Compare
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          DAYS_BACK: ${{ inputs.days_back || '3' }}
+          MIN_MATCH_PCT: ${{ inputs.min_match_pct || '88' }}
+        run: |
+          set -euo pipefail
+          TO=$(TZ=Asia/Kolkata date -d "yesterday" +%F)
+          FROM=$(TZ=Asia/Kolkata date -d "$DAYS_BACK days ago" +%F)
+          echo "window $FROM..$TO"
+          npx tsx scripts/attendance-attribution-vs-datd.ts ALL "$FROM" "$TO"

@@ -1,7 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
 import { ageDays } from "./payroll-shared.js";
-import { callerScope, keepEmployeeRowsInBranch } from "./scope-guard.js";
+import { callerHolds, callerScope, keepEmployeeRowsInBranch } from "./scope-guard.js";
 
 const SAFE = async <T>(p: Promise<T>): Promise<T | null> => { try { return await p; } catch { return null; } };
 
@@ -60,8 +60,9 @@ export const salaryDisputeAdapter: ApprovalAdapter = {
     // WFM / Payroll HR / payroll are branch roles: the WFM queue is already scoped by the module, but it also includes the
     // caller's own dispute, so both stages are narrowed to the caller's own branch (org-wide: all) and never their own.
     const me = await callerScope(ctx);
-    const wfmRows = await keepEmployeeRowsInBranch(me, ((wfm?.data ?? []) as any[]).filter((r) => r.status === "pending_wfm").slice(0, 200), (r) => r.employee_id);
-    const phRows = await keepEmployeeRowsInBranch(me, ((ph?.data ?? []) as any[]).filter((r) => r.status === "pending_payroll_head").slice(0, 200), (r) => r.employee_id);
+    // Stage roles as the queue endpoints name them; literal match (super_admin alone passes the endpoint guard but is not designated).
+    const wfmRows = !callerHolds(me, "wfm", "payroll_hr", "payroll", "super_admin") ? [] : await keepEmployeeRowsInBranch(me, ((wfm?.data ?? []) as any[]).filter((r) => r.status === "pending_wfm").slice(0, 200), (r) => r.employee_id);
+    const phRows = !callerHolds(me, "payroll_head", "super_admin") ? [] : await keepEmployeeRowsInBranch(me, ((ph?.data ?? []) as any[]).filter((r) => r.status === "pending_payroll_head").slice(0, 200), (r) => r.employee_id);
     return [...wfmRows.map((r) => mapDispute(r, "wfm")), ...phRows.map((r) => mapDispute(r, "payroll_head"))];
   },
   async decide(ctx, item, action, remarks) {

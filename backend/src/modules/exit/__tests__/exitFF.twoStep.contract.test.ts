@@ -14,6 +14,10 @@ vi.mock('../../payroll/payrollCalculate.service.js', () => ({
 vi.mock('../../payroll/noc-release-gate.service.js', () => ({
   nocReleaseStatusForEmployee: vi.fn().mockResolvedValue({ blocked: false }),
 }));
+// The settlement gate has its own suite (ff-settlement-gate.test.ts); these tests pin the 2-step flow.
+vi.mock('../ff-settlement-gate.service.js', () => ({
+  assertFfSettlementAllowed: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../exit.notifications.js', () => ({
   notifyFullFinalReady: vi.fn().mockResolvedValue(undefined),
   notifyFFApproved: vi.fn().mockResolvedValue(undefined),

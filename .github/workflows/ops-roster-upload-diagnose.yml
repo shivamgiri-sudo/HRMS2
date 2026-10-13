@@ -1,0 +1,47 @@
+name: Ops Roster Upload Diagnose (read-only)
+
+# Manual, read-only. For one branch x process cell of the Roster Upload Tracker, prints the recent
+# roster-import batches, the weeks their rows fall in, which branch/process the uploaded codes belong
+# to, and the tracker's coverage numbers. Writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Branch, process, uploader (space separated), e.g. NOIDA-2 GS1 bhavesh"
+        required: true
+        default: "NOIDA-2 GS1 bhavesh"
+        type: string
+
+concurrency:
+  group: ops-roster-upload-diagnose
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Diagnose
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          node scripts/roster-upload-diagnose.mjs $TARGET

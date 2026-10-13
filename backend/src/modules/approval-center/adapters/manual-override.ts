@@ -1,7 +1,6 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, money, str } from "../format.js";
-import { hasAnyRole } from "../../../shared/scopeAccess.js";
-import { keepInBranch } from "./_scope.js";
+import { holdsLiteralRole, keepInBranch } from "./_scope.js";
 
 const AGE_HIGH_MS = 3 * 24 * 3600 * 1000;
 const pretty = (v: unknown) => str(v).replace(/_/g, " ");
@@ -16,6 +15,7 @@ export const manualOverrideAdapter: ApprovalAdapter = {
   label: "Attendance manual override",
   category: "Payroll",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, "payroll_head", "payroll_admin", "admin", "super_admin"))) return [];
     const res = await ctx.call("GET", "/api/attendance/manual-overrides", { query: { status: "pending" } });
     // Owner branch policy: payroll_head / super_admin see every branch; admin / payroll_admin only their own employees.record branch.
     const rows: any[] = await keepInBranch(
@@ -28,7 +28,7 @@ export const manualOverrideAdapter: ApprovalAdapter = {
     for (const r of rows) {
       const locked = Number(r.higher_approval_required) === 1 || r.higher_approval_required === true;
       if (locked) {
-        superAdmin ??= await hasAnyRole(ctx.userId, "super_admin");
+        superAdmin ??= await holdsLiteralRole(ctx.userId, "super_admin");
         if (!superAdmin) continue;
       }
       const created = iso(r.created_at);

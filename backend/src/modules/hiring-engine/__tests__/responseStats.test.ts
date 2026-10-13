@@ -4,7 +4,8 @@ const execute = vi.hoisted(() => vi.fn());
 vi.mock("../he-read-limit.js", () => ({ limitedDb: { execute } }));
 
 import { PersonFacts } from "../he-person-facts.service.js";
-import { contactedSql, confirmedSql, rateChannelOf, readResponseStats, respondedSql } from "../he-response-stats.service.js";
+import { contactedSql, confirmedSql, invitedSql, rateChannelOf, readResponseStats, respondedSql } from "../he-response-stats.service.js";
+import { activityTypeSql } from "../he-source-attribution.js";
 
 const W = { from: "2026-10-01", to: "2026-10-14" };
 type Rows = Record<string, unknown>[];
@@ -102,5 +103,14 @@ describe("response rate per channel and drive type", () => {
   });
   it("channel mapping", () => {
     expect(["email", "web", "whatsapp", "voice_bot", "call_file", "hr", "x"].map(rateChannelOf)).toEqual(["email", "email", "whatsapp", "voice_bot", "voice_bot", null, null]);
+  });
+});
+
+describe("invites without a match under the rolling Live Meta cutoff", () => {
+  it("a Meta stamp keeps the person Meta, but Live vs Old is the rule at today's cutoff (a Live stamp from 9 days ago reads Old now); he stays he", () => {
+    const rule = activityTypeSql({ lead: "il", first: "ilf", fill: "ml", ref: "wi.last_sent_at", liveFrom: "2026-10-02" });
+    const sql = invitedSql("2026-10-02", 1).replace(/\s+/g, " ");
+    expect(sql).toContain(`SELECT CASE WHEN wi.drive_type = 'he' THEN 'he' WHEN wi.drive_type IN ('meta_live','meta_old') THEN IF(${rule.replace(/\s+/g, " ")} = 'meta_live', 'meta_live', 'meta_old') ELSE ${rule.replace(/\s+/g, " ")} END AS t`);
+    expect(sql).not.toContain("COALESCE(wi.drive_type");
   });
 });

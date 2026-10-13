@@ -180,6 +180,25 @@ async function loadPairs(filter: { branchId?: string; processId?: string; scope?
   }));
 }
 
+const COVERAGE_TTL_MS = 60_000;
+const coverageCache = new Map<string, { at: number; value: Promise<Map<string, CoverageRow>> }>();
+
+/**
+ * The viewer-facing grid reads the same org-wide coverage for every filter change and every user, and it
+ * is the slowest query (whole committed-import scan). Shared for a minute, including in-flight calls; a
+ * failed load is never kept. The escalation sweep and the cell drawer pass fresh=true and bypass it.
+ */
+function loadCoverageCached(weeks: string[], nowMs: number): Promise<Map<string, CoverageRow>> {
+  const key = weeks.join(',');
+  const hit = coverageCache.get(key);
+  if (hit && nowMs - hit.at < COVERAGE_TTL_MS && nowMs >= hit.at) return hit.value;
+  const value = loadCoverage(weeks);
+  coverageCache.set(key, { at: nowMs, value });
+  value.catch(() => { if (coverageCache.get(key)?.value === value) coverageCache.delete(key); });
+  if (coverageCache.size > 40) coverageCache.delete(coverageCache.keys().next().value as string);
+  return value;
+}
+
 /** Per branch × process × week: employees covered by committed uploads and when. */
 async function loadCoverage(weeks: string[]): Promise<Map<string, CoverageRow>> {
   const from = weeks[0];
@@ -211,7 +230,56 @@ async function loadCoverage(weeks: string[]): Promise<Map<string, CoverageRow>> 
       fullCommitMs: Number(r.full_commit) * 1000,
     });
   }
+  await addTeamRosterCoverage(out, from, to);
   return out;
+}
+
+/**
+ * Cells applied through an approved Team Roster submission are written straight to
+ * wfm_roster_assignment, never through an import batch, so they are merged in here. An employee
+ * already covered for the week by a committed import is not counted twice.
+ */
+async function addTeamRosterCoverage(out: Map<string, CoverageRow>, from: string, to: string): Promise<void> {
+  try {
+    const team = await query<RowDataPacket>(
+      `SELECT e.employee_code, e.branch_id, e.process_id,
+              DATE_FORMAT(DATE_SUB(tl.roster_date, INTERVAL WEEKDAY(tl.roster_date) DAY), '%Y-%m-%d') AS week_start,
+              MIN(UNIX_TIMESTAMP(ts.applied_at)) AS applied_at
+         FROM roster_team_submission ts
+         JOIN roster_team_submission_line tl ON tl.submission_id = ts.id AND tl.line_status = 'applied'
+         JOIN employees e ON e.id = tl.employee_id AND e.employment_status = 'active'
+        WHERE ts.status IN ('applied', 'partially_applied') AND ts.applied_at IS NOT NULL
+          AND tl.roster_date BETWEEN ? AND ?
+        GROUP BY e.id, e.employee_code, e.branch_id, e.process_id, week_start`,
+      [from, to],
+    );
+    if (team.length === 0) return;
+    const codes = [...new Set(team.map((r) => String(r.employee_code)))];
+    const imported = new Set<string>();
+    for (let i = 0; i < codes.length; i += 500) {
+      const chunk = codes.slice(i, i + 500);
+      const hit = await query<RowDataPacket>(
+        `SELECT DISTINCT r.employee_id_raw AS employee_code,
+                DATE_FORMAT(DATE_SUB(r.roster_date, INTERVAL WEEKDAY(r.roster_date) DAY), '%Y-%m-%d') AS week_start
+           FROM wfm_roster_import_row r
+           JOIN wfm_roster_import_batch b ON b.id = r.batch_id AND b.status = 'COMMITTED' AND b.committed_at IS NOT NULL
+          WHERE r.employee_id_raw IN (${inList(chunk)}) AND r.roster_date BETWEEN ? AND ?`,
+        [...chunk, from, to],
+      );
+      for (const h of hit) imported.add(`${String(h.employee_code)}|${String(h.week_start)}`);
+    }
+    for (const r of team) {
+      if (imported.has(`${String(r.employee_code)}|${String(r.week_start)}`)) continue;
+      const key = `${pairKey(String(r.branch_id), String(r.process_id))}|${String(r.week_start)}`;
+      const at = Number(r.applied_at) * 1000;
+      const cur = out.get(key);
+      out.set(key, cur
+        ? { covered: cur.covered + 1, firstCommitMs: Math.min(cur.firstCommitMs, at), fullCommitMs: Math.max(cur.fullCommitMs, at) }
+        : { covered: 1, firstCommitMs: at, fullCommitMs: at });
+    }
+  } catch (err) {
+    if (!isMissingObject(err)) throw err;
+  }
 }
 
 const personName = (r: RowDataPacket): string => String(r.full_name ?? r.email ?? 'Unknown').trim();
@@ -371,10 +439,13 @@ export interface GridData {
 export async function loadGrid(
   weeks: string[],
   nowMs: number,
-  filter: { branchId?: string; processId?: string; scope?: TrackerScope } = {},
+  filter: { branchId?: string; processId?: string; scope?: TrackerScope; cacheCoverage?: boolean } = {},
 ): Promise<GridData> {
   const pairs = await loadPairs(filter);
-  const [coverage, directory] = await Promise.all([loadCoverage(weeks), loadRecipientDirectory(pairs)]);
+  const [coverage, directory] = await Promise.all([
+    filter.cacheCoverage ? loadCoverageCached(weeks, nowMs) : loadCoverage(weeks),
+    loadRecipientDirectory(pairs),
+  ]);
   const rows = pairs.map((pair) => ({
     branchId: pair.branchId,
     branchName: pair.branchName,
@@ -408,6 +479,7 @@ export async function getTracker(q: TrackerQuery = {}): Promise<TrackerResult> {
     branchId: q.branchId,
     processId: q.processId,
     scope: q.scope,
+    cacheCoverage: q.nowMs === undefined,
   });
 
   const managerFiltered = q.managerId
@@ -526,6 +598,76 @@ export interface CellDetail {
   uncoveredEmployees: { id: string; code: string; name: string }[];
   uncoveredTotal: number;
   trail: AlertTrailEntry[];
+  /** Team Roster requests raised for this branch × process in this week, with what was approved/applied. */
+  teamRoster: TeamRosterRequest[];
+}
+
+export interface TeamRosterRequest {
+  submissionId: number;
+  submissionNo: string | null;
+  status: string;
+  raisedBy: string | null;
+  managerApprover: string | null;
+  submittedAtMs: number | null;
+  managerDecision: string | null;
+  managerDecidedAtMs: number | null;
+  managerRemarks: string | null;
+  wfmDecision: string | null;
+  wfmDecidedAtMs: number | null;
+  wfmRemarks: string | null;
+  appliedAtMs: number | null;
+  /** Cells in this week for this branch × process. */
+  raised: number;
+  applied: number;
+  skipped: number;
+}
+
+const ms = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v) * 1000);
+
+/** Team Roster submissions with cells for this branch × process inside the week, newest first. */
+async function loadTeamRosterRequests(branchId: string, processId: string, weekStart: string, weekEnd: string): Promise<TeamRosterRequest[]> {
+  try {
+    const rows = await query<RowDataPacket>(
+      `SELECT s.id, s.submission_no, s.status, s.manager_decision, s.wfm_decision, s.manager_remarks, s.wfm_remarks,
+              UNIX_TIMESTAMP(s.submitted_at) AS submitted_at, UNIX_TIMESTAMP(s.manager_decided_at) AS manager_at,
+              UNIX_TIMESTAMP(s.wfm_decided_at) AS wfm_at, UNIX_TIMESTAMP(s.applied_at) AS applied_at,
+              se.full_name AS raised_by, me.full_name AS manager_name,
+              COUNT(*) AS raised,
+              SUM(l.line_status = 'applied') AS applied,
+              SUM(l.line_status IN ('skipped', 'failed')) AS skipped
+         FROM roster_team_submission s
+         JOIN roster_team_submission_line l ON l.submission_id = s.id
+         JOIN employees e ON e.id = l.employee_id AND e.branch_id = ? AND e.process_id = ?
+         LEFT JOIN employees se ON se.id = s.submitter_employee_id
+         LEFT JOIN employees me ON me.id = s.manager_approver_employee_id
+        WHERE s.status <> 'draft' AND l.roster_date BETWEEN ? AND ?
+        GROUP BY s.id, se.full_name, me.full_name
+        ORDER BY COALESCE(s.submitted_at, s.created_at) DESC
+        LIMIT 50`,
+      [branchId, processId, weekStart, weekEnd],
+    );
+    return rows.map((r) => ({
+      submissionId: Number(r.id),
+      submissionNo: r.submission_no ? String(r.submission_no) : null,
+      status: String(r.status),
+      raisedBy: r.raised_by ? String(r.raised_by) : null,
+      managerApprover: r.manager_name ? String(r.manager_name) : null,
+      submittedAtMs: ms(r.submitted_at),
+      managerDecision: r.manager_decision ? String(r.manager_decision) : null,
+      managerDecidedAtMs: ms(r.manager_at),
+      managerRemarks: r.manager_remarks ? String(r.manager_remarks) : null,
+      wfmDecision: r.wfm_decision ? String(r.wfm_decision) : null,
+      wfmDecidedAtMs: ms(r.wfm_at),
+      wfmRemarks: r.wfm_remarks ? String(r.wfm_remarks) : null,
+      appliedAtMs: ms(r.applied_at),
+      raised: Number(r.raised ?? 0),
+      applied: Number(r.applied ?? 0),
+      skipped: Number(r.skipped ?? 0),
+    }));
+  } catch (err) {
+    if (!isMissingObject(err)) throw err;
+    return [];
+  }
 }
 
 export async function getCellDetail(
@@ -540,7 +682,7 @@ export async function getCellDetail(
   if (!row) return null;
   const weekEnd = addDays(weekStart, 6);
 
-  const [batchRows, uncovered, trail, skipLevel] = await Promise.all([
+  const [batchRows, uncovered, trail, skipLevel, teamRoster] = await Promise.all([
     query<RowDataPacket>(
       `SELECT b.id, b.status, b.file_name, b.process_id, b.total_rows, u.email,
               UNIX_TIMESTAMP(b.created_at) AS created_at, UNIX_TIMESTAMP(b.committed_at) AS committed_at
@@ -561,11 +703,16 @@ export async function getCellDetail(
               JOIN wfm_roster_import_batch b ON b.id = r.batch_id AND b.status = 'COMMITTED'
              WHERE r.employee_id_raw COLLATE utf8mb4_unicode_ci = e.employee_code COLLATE utf8mb4_unicode_ci
                AND r.roster_date BETWEEN ? AND ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM roster_team_submission_line tl
+              JOIN roster_team_submission ts ON ts.id = tl.submission_id AND ts.status IN ('applied', 'partially_applied')
+             WHERE tl.employee_id = e.id AND tl.line_status = 'applied' AND tl.roster_date BETWEEN ? AND ?)
         ORDER BY e.full_name LIMIT ${MISSING_EMPLOYEE_LIMIT}`,
-      [branchId, processId, weekStart, weekEnd],
+      [branchId, processId, weekStart, weekEnd, weekStart, weekEnd],
     ),
     loadTrail(branchId, processId, weekStart),
     loadSkipLevel(branchId, row.managers),
+    loadTeamRosterRequests(branchId, processId, weekStart, weekEnd),
   ]);
 
   return {
@@ -596,5 +743,6 @@ export async function getCellDetail(
     })),
     uncoveredTotal: Math.max(0, row.cells[0].expected - row.cells[0].covered),
     trail,
+    teamRoster,
   };
 }

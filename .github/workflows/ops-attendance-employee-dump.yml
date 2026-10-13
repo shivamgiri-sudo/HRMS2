@@ -1,0 +1,74 @@
+name: Ops Attendance Employee Dump (read-only)
+
+# Manual, read-only. Prints one employee's attendance across every layer
+# (raw punches, biometric log, sessions, daily record, roster, payroll line) for a window.
+# Writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      employee_code:
+        description: "Employee code, e.g. MAS47157"
+        required: true
+        type: string
+      script:
+        description: "Which read-only script"
+        required: true
+        default: attendance-employee-dump
+        type: choice
+        options:
+          - attendance-employee-dump
+          - attendance-night-shift-rebuild-dryrun
+          - attendance-night-shift-population-scan
+          - attendance-ncosec-daily-table-check
+          - attendance-night-shift-month-impact
+          - attendance-night-shift-change-report
+          - attendance-cases-punch-trace
+          - roster-tables-compare
+          - attendance-attribution-vs-datd
+      from:
+        description: "From date YYYY-MM-DD"
+        required: true
+        default: "2026-09-01"
+        type: string
+      to:
+        description: "To date YYYY-MM-DD"
+        required: true
+        default: "2026-10-12"
+        type: string
+
+concurrency:
+  group: ops-attendance-employee-dump
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Dump
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          EMP: ${{ inputs.employee_code }}
+          FROM_D: ${{ inputs.from }}
+          TO_D: ${{ inputs.to }}
+          SCRIPT: ${{ inputs.script }}
+        run: |
+          set -euo pipefail
+          npx tsx "scripts/${SCRIPT}.ts" "$EMP" "$FROM_D" "$TO_D"

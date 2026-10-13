@@ -45,6 +45,22 @@ beforeEach(() => {
 const ORG_WIDE = { mode: "all" } as any;
 const ONE_BRANCH = { mode: "branches", branchIds: ["branch-A"] } as any;
 
+describe("source filter: HRMS-raised vs legacy db_bill", () => {
+  // The db_bill migration also wrote month-suffixed child GRNs with bill_source_id NULL, under its
+  // sentinel creator (00000000-...). Filtering on bill_source_id alone listed them as HRMS-raised.
+  it("source=hrms excludes rows written by the migration user, not only rows with a bill_source_id", async () => {
+    await grnReportService.register({ branchScope: ORG_WIDE, source: "hrms" });
+    const sql = lastSql();
+    expect(sql).toContain("g.bill_source_id IS NULL");
+    expect(sql).toContain("COALESCE(g.created_by, '') NOT LIKE '00000000-%'");
+  });
+
+  it("source=legacy includes the migration user's rows too", async () => {
+    await grnReportService.register({ branchScope: ORG_WIDE, source: "legacy" });
+    expect(lastSql()).toContain("(g.bill_source_id IS NOT NULL OR COALESCE(g.created_by, '') LIKE '00000000-%')");
+  });
+});
+
 describe("the finance month is the accounting period", () => {
   it("filters the register on accounting_period, never on bill_date", async () => {
     await grnReportService.register({ branchScope: ORG_WIDE, month: "2026-07" });

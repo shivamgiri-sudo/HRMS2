@@ -151,6 +151,14 @@ describe("runGrnTallyExport", () => {
     expect(connection.commit).toHaveBeenCalledTimes(1);
   });
 
+  it("never selects legacy db_bill GRNs, including the migration's suffixed child rows", async () => {
+    h.state.candidateRows = [row("g1", "Mas/10/26/1")];
+    await runGrnTallyExport({ trigger: "manual" });
+    const select = calls.find((c) => /FROM grn_request g/.test(c.sql))!;
+    expect(select.sql).toMatch(/g\.bill_source_id IS NULL/);
+    expect(select.sql).toMatch(/COALESCE\(g\.created_by, ''\) NOT LIKE '00000000-%'/);
+  });
+
   it("skips GRNs that were already exported", async () => {
     h.state.candidateRows = [
       row("g1", "Mas/10/26/1"),

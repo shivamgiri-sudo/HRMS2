@@ -25,7 +25,7 @@ export async function getMetaFunnel(): Promise<MetaFunnel> {
        JOIN (SELECT l.id, l.meta_lead_id,
                     EXISTS (SELECT 1 FROM he_message x WHERE x.lead_id = l.id AND x.direction = 'out' AND x.channel = 'email' AND x.delivery_status <> 'failed') AS em,
                     EXISTS (SELECT 1 FROM he_message x WHERE x.lead_id = l.id AND x.direction = 'out' AND x.channel = 'whatsapp' AND x.delivery_status <> 'failed') AS wa,
-                    EXISTS (SELECT 1 FROM he_call x WHERE x.lead_id = l.id) AS cl,
+                    (EXISTS (SELECT 1 FROM he_call x WHERE x.lead_id = l.id) OR EXISTS (SELECT 1 FROM qualified_followup q WHERE q.meta_lead_id COLLATE utf8mb4_unicode_ci = l.meta_lead_id COLLATE utf8mb4_unicode_ci AND q.call_state = 'called' AND q.mode_at_enqueue = 'live')) AS cl,
                     EXISTS (SELECT 1 FROM he_message x WHERE x.lead_id = l.id AND x.direction = 'in') AS rp,
                     EXISTS (SELECT 1 FROM he_match x WHERE x.lead_id = l.id AND x.state IN ('confirmed','arrived','selected')) AS cf,
                     EXISTS (SELECT 1 FROM he_match x WHERE x.lead_id = l.id AND x.state IN ('arrived','selected')) AS ar,

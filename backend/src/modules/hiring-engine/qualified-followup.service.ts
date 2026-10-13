@@ -3,6 +3,8 @@
  * first source wins and later sources are appended to also_in_sources. The row tag comes from the per-source screen switch (capped by
  * QUAL_FOLLOWUP_MODE); a source that is off makes no database call. Enqueue functions never throw.
  */
+import { formFillTime, isLiveFill } from "./he-source-attribution.js";
+import { loadLiveFrom } from "./he-source-attribution.service.js";
 import { randomUUID } from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -130,9 +132,9 @@ const parseCfg = (v: unknown): Record<string, unknown> | null => {
 export async function enqueueMetaLeadFollowup(metaLeadId: string, o: { switches?: FollowupSwitches; skipOutreach?: boolean } = {}): Promise<{ status: EnqueueStatus | "not_qualified"; id?: string }> {
   try {
     const sw = o.switches ?? (await loadFollowupSwitches());
-    if (sw.sourceModes.meta_live === "off") return { status: "skipped_off" };
+    if (sw.sourceModes.meta_live === "off" && sw.sourceModes.meta_old === "off") return { status: "skipped_off" };
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT r.id, r.screening_result, r.parsed_name, r.parsed_phone, r.parsed_email, r.campaign_id, r.ats_candidate_id, r.parsed_location,
+      `SELECT r.id, r.created_at, r.raw_payload ->> '$.created_time' AS meta_created, r.screening_result, r.parsed_name, r.parsed_phone, r.parsed_email, r.campaign_id, r.ats_candidate_id, r.parsed_location,
               r.requisition_id AS req_id, c.campaign_name, jr.id AS jr_id, jr.branch_name, jr.designation_name, jr.meta_screening_config,
               ac.current_address, ac.permanent_address, bm.city AS branch_city, bm.state AS branch_state
          FROM meta_lead_raw r
@@ -146,8 +148,13 @@ export async function enqueueMetaLeadFollowup(metaLeadId: string, o: { switches?
     if (r.screening_result !== "qualified") return { status: "not_qualified" };
     if (!r.req_id || !r.jr_id) return { status: "invalid" };
     const heldReason = o.skipOutreach ? "skip_outreach" : parseCfg(r.meta_screening_config)?.auto_notify === false ? "auto_notify_off" : null;
+    // The drive is the one the shared source rule gives: a form filled on or after the rolling cutoff is Live Meta, an earlier one Old Meta
+    // data (campaign status never reclassifies it). Each drive keeps its own switch, caps and funnel.
+    const fill = formFillTime(String(r.created_at ?? "").slice(0, 19).replace("T", " "), r.meta_created ? String(r.meta_created) : null);
+    const sourceType: SourceType = isLiveFill(fill, await loadLiveFrom()) ? "meta_live" : "meta_old";
+    if (sw.sourceModes[sourceType] === "off") return { status: "skipped_off" };
     const res = await enqueueQualifiedFollowup({
-      sourceType: "meta_live", // the ingest hook is the live path; campaign status must not reclassify it
+      sourceType,
       metaLeadId, requisitionId: r.req_id, campaignId: r.campaign_id ?? null, atsCandidateId: r.ats_candidate_id ?? null,
       originId: String(r.campaign_id ?? ""), originLabel: String(r.campaign_name ?? ""),
       phone: r.parsed_phone, email: r.parsed_email, fullName: r.parsed_name,

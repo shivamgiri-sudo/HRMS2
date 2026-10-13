@@ -3,6 +3,7 @@ import { Router } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logger } from "../../logger.js";
+import { db } from "../../db/mysql.js";
 import {
   DashboardScopeConfigurationError,
   resolveDashboardScopeForRequest,
@@ -33,6 +34,8 @@ import {
   employeeBranchId,
   issueOnboardingLink,
   emailOnboardingLink,
+  issueEsignKitLink,
+  emailEsignKitLink,
   enrichDetailRows,
   nudgeBranchPending,
   nudgeEmployee,
@@ -67,6 +70,12 @@ const NUDGE_ROLES = [
 const CLOSE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "payroll_head"];
 // Backfilling writes attendance records, which payroll reads: narrower again.
 const BACKFILL_ROLES = ["super_admin", "admin", "payroll_head"];
+// Named people who may VIEW every branch on this page although their role is branch-scoped
+// elsewhere (owner request 2026-10-12). View only: nudges (outward WhatsApp) stay in branch scope.
+const ALL_BRANCH_VIEWER_EMAILS: ReadonlySet<string> = new Set([
+  "huda.malik@teammas.in",
+  "dinesh.mehta@teammas.in",
+]);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
 
@@ -94,7 +103,31 @@ function todayIST(): string {
  * Branch ids the caller may see; null = org-wide. Only ORG_ALL and branch / process level scopes
  * carry a branch list - team / self scopes and unconfigured accounts get an empty set (fail closed).
  */
-async function allowedBranchIds(req: import("express").Request): Promise<Set<string> | null> {
+// Matches the login email first, then the person's employee-record emails (login and official mail can differ).
+async function isAllBranchViewer(req: import("express").Request): Promise<boolean> {
+  const user = (req as any).authUser as { id?: string; email?: string } | undefined;
+  if (ALL_BRANCH_VIEWER_EMAILS.has(String(user?.email ?? "").trim().toLowerCase())) return true;
+  if (!user?.id) return false;
+  try {
+    const emails = [...ALL_BRANCH_VIEWER_EMAILS];
+    const [rows] = await db.execute<any[]>(
+      `SELECT 1 FROM employees WHERE user_id = ? AND active_status = 1
+          AND (LOWER(official_email) IN (${emails.map(() => "?").join(",")})
+            OR LOWER(email) IN (${emails.map(() => "?").join(",")})) LIMIT 1`,
+      [user.id, ...emails, ...emails],
+    );
+    return (rows as any[]).length > 0;
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, "[ops-control-tower] all-branch viewer lookup failed");
+    return false;
+  }
+}
+
+async function allowedBranchIds(
+  req: import("express").Request,
+  opts: { view?: boolean } = {},
+): Promise<Set<string> | null> {
+  if (opts.view && (await isAllBranchViewer(req))) return null;
   try {
     const scope = await resolveDashboardScopeForRequest((req as any).authUser, "");
     if (scope.level === "ORG_ALL") return null;
@@ -129,7 +162,7 @@ opsControlTowerRouter.get("/", requireRole(...VIEW_ROLES), async (req, res) => {
       res.status(400).json({ error: "date must be YYYY-MM-DD" });
       return;
     }
-    const allowed = await allowedBranchIds(req);
+    const allowed = await allowedBranchIds(req, { view: true });
     const date = dateParam ?? todayIST();
     // Cached org-wide; scoping to the caller's branches happens on the cached copy, never inside it.
     res.json(scopeSummaryToBranches(await cachedSummary(date, () => getOpsControlTowerSummary(date)), allowed));
@@ -179,7 +212,7 @@ opsControlTowerRouter.get(
         return;
       }
       // The branchId comes from the URL, so it is only a request: it must sit inside the caller's scope.
-      const allowed = await allowedBranchIds(req);
+      const allowed = await allowedBranchIds(req, { view: true });
       if (allowed !== null && !allowed.has(branchId)) {
         res.status(403).json({ error: "Forbidden: this branch is outside your branch / assigned scope" });
         return;
@@ -236,7 +269,7 @@ opsControlTowerRouter.get("/sync-health", requireRole(...VIEW_ROLES), async (req
       res.status(403).json({ error: "Forbidden: this section is not available to your role" });
       return;
     }
-    const allowed = await allowedBranchIds(req);
+    const allowed = await allowedBranchIds(req, { view: true });
     const health = await getSyncHealth();
     const coverage = allowed === null ? health.coverage : health.coverage.filter((b) => allowed.has(b.branchId));
     res.json({ ...health, coverage, lowDays: coverage.reduce((n, b) => n + b.days.filter((d) => d.low).length, 0) });
@@ -354,9 +387,14 @@ opsControlTowerRouter.post("/onboarding-link", requireRole(...NUDGE_ROLES), asyn
       res.status(403).json({ error: "Forbidden: this employee is outside your branch / assigned scope" });
       return;
     }
-    const issued = await issueOnboardingLink(employeeId);
+    const isEsign = issue === "esign-pending";
+    const issued = isEsign ? await issueEsignKitLink(employeeId) : await issueOnboardingLink(employeeId);
     if (!issued) {
-      res.status(409).json({ error: "This employee has no onboarding link to issue (no onboarding record, or marked not joining)" });
+      res.status(409).json({
+        error: isEsign
+          ? "No live eSign joining-document link for this employee (no kit out for signing, or its signing session has expired - re-dispatch the kit from the Joining Control Room)"
+          : "This employee has no onboarding link to issue (no onboarding record, or marked not joining)",
+      });
       return;
     }
     void logSensitiveAction({
@@ -401,7 +439,10 @@ opsControlTowerRouter.post("/onboarding-link/email", requireRole(...NUDGE_ROLES)
       res.status(403).json({ error: "Forbidden: this employee is outside your branch / assigned scope" });
       return;
     }
-    const out = await emailOnboardingLink(employeeId);
+    const isEsign = issue === "esign-pending";
+    const out = isEsign
+      ? await emailEsignKitLink(employeeId, (req as any).authUser?.id ?? null)
+      : await emailOnboardingLink(employeeId);
     void logSensitiveAction({
       actor_user_id: (req as any).authUser?.id,
       action_type: "ONBOARDING_LINK_EMAILED",
@@ -413,7 +454,14 @@ opsControlTowerRouter.post("/onboarding-link/email", requireRole(...NUDGE_ROLES)
     });
     if (out.status === "sent") { res.json({ status: "sent", sentTo: out.sentTo }); return; }
     if (out.status === "no_email") { res.status(409).json({ error: "No valid email address on file for this employee" }); return; }
-    if (out.status === "no_link") { res.status(409).json({ error: "This employee has no onboarding link to issue (no onboarding record, or marked not joining)" }); return; }
+    if (out.status === "no_link") {
+      res.status(409).json({
+        error: isEsign
+          ? "No live eSign joining-document link for this employee (no kit out for signing, or its signing session has expired - re-dispatch the kit from the Joining Control Room)"
+          : "This employee has no onboarding link to issue (no onboarding record, or marked not joining)",
+      });
+      return;
+    }
     if (out.status === "not_found") { res.status(404).json({ error: "Employee not found" }); return; }
     res.status(502).json({ error: `Email could not be delivered: ${out.status === "failed" ? out.error : "unknown error"}` });
   } catch (err) {

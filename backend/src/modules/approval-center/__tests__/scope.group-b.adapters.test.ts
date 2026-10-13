@@ -170,6 +170,7 @@ describe("payroll adapters: only the responsible branch / org-wide person sees t
     const rows = [
       { id: "i1", employee_id: "e1", status: "submitted", proposed_ctc: 1, created_at: "2026-10-01" },
       { id: "i2", employee_id: "e2", status: "submitted", proposed_ctc: 1, created_at: "2026-10-01" },
+      { id: "i3", employee_id: "e1", status: "submitted", proposed_ctc: 1, created_at: "2026-10-01", source: "legacy" }, // db_bill history: hidden
     ];
     await table(salaryIncrementAdapter, (u) => ({ "GET /api/salary-increment/": gate(u, ["admin", "hr", "payroll_head", "super_admin"], { data: rows }) }), {
       hr1: ["i1"], hr2: ["i2"], admin1: ["i1"], admin2: ["i2"], bhAdmin1: ["i1"], ph: ["i1", "i2"], root: ["i1", "i2"],
@@ -207,9 +208,12 @@ describe("payroll adapters: only the responsible branch / org-wide person sees t
   });
 
   it("salary advance: admin / payroll see own branch, finance / payroll head org-wide, own advance excluded", async () => {
-    const rows = [{ id: "a1", employee_id: "e1", status: "pending", amount: 1 }, { id: "a2", employee_id: "e2", status: "pending", amount: 1 }];
+    const rows = [
+      { id: "a1", employee_id: "e1", status: "pending", amount: 1 }, { id: "a2", employee_id: "e2", status: "pending", amount: 1 },
+      { id: "a3", employee_id: "e1", status: "pending", amount: 1, legacy_loan_id: "55" }, // imported from the legacy system: hidden
+    ];
     await table(advancesAdapter, { "GET /api/payroll/advances": { data: rows } }, {
-      admin1: ["a1"], admin2: ["a2"], bhAdmin1: ["a1"], pay1: ["a1"], pay2: ["a2"], fin: ["a1", "a2"], ph: ["a1", "a2"], root: ["a1", "a2"],
+      admin1: ["a1"], admin2: ["a2"], bhAdmin1: ["a1"], pay1: ["a1"], pay2: ["a2"], fin: ["a1", "a2"], ph: ["a1", "a2"], root: [] /* super_admin is not a listed advance role */,
     }, { adminE1: [], payE1: [], phE1: ["a2"] });
   });
 
@@ -218,6 +222,7 @@ describe("payroll adapters: only the responsible branch / org-wide person sees t
       { id: "l1", employee_id: "e1", status: "pending_approval", amount: 1, created_by: "someone" },
       { id: "l2", employee_id: "e2", status: "pending_approval", amount: 1, created_by: "someone" },
       { id: "l3", employee_id: "e1", status: "pending_approval", amount: 1, created_by: "admin1" },
+      { id: "l4", employee_id: "e1", status: "pending_approval", amount: 1, created_by: "someone", legacy_loan_id: "L-9" }, // legacy import: hidden
     ];
     await table(loansAdapter, { "GET /api/payroll/loans/": { data: rows } }, {
       admin1: ["l1"], admin2: ["l2"], bhAdmin1: ["l1", "l3"], fh: ["l1", "l2", "l3"], ph: ["l1", "l2", "l3"], root: ["l1", "l2", "l3"],
@@ -236,7 +241,8 @@ describe("payroll adapters: only the responsible branch / org-wide person sees t
         ],
       }),
     });
-    await table(reimbursementsAdapter, queue, { mgr1: ["c1"], bh1: ["c2"], bh2: ["c3"], bhAdmin1: ["c2"], root: ["c2", "c3"] }, { bhE1: [] });
+    // root (super_admin without branch_head) is able to open the queue for every branch but is not the designated branch head
+    await table(reimbursementsAdapter, queue, { mgr1: ["c1"], bh1: ["c2"], bh2: ["c3"], bhAdmin1: ["c2"], root: [] }, { bhE1: [] });
   });
 
   it("incentive batch: admin own branch, finance org-wide, the uploader never", async () => {
@@ -248,7 +254,7 @@ describe("payroll adapters: only the responsible branch / org-wide person sees t
     await table(incentivesAdapter, (u) => ({
       "GET /api/incentives/batches": gate(u, ["admin", "finance", "super_admin"], { data: batches }),
       "GET /api/incentives/approvals/pending": { data: [] },
-    }), { admin1: ["b1"], admin2: ["b2"], bhAdmin1: ["b1", "b3"], fin: ["b1", "b2", "b3"], root: ["b1", "b2", "b3"] });
+    }), { admin1: ["b1"], admin2: ["b2"], bhAdmin1: ["b1", "b3"], fin: ["b1", "b2", "b3"], root: [] /* literal admin / finance only */ });
   });
 
   it("incentive approval chain: the step's role, in the batch's own branch only", async () => {
@@ -267,7 +273,7 @@ describe("payroll adapters: only the responsible branch / org-wide person sees t
     const mk = (id: string, o: any = {}) => ({ id, upload_batch_no: id, upload_type_code: "INCENTIVE_BULK", approval_status: "pending_branch_head", branch_id: "b1", uploaded_by: "up", ...o });
     const rows = [mk("u1"), mk("u2", { branch_id: "b2" }), mk("u3", { branch_id: null }), mk("u4", { approval_status: "pending_payroll_head" }), mk("u5", { uploaded_by: "bh1" })];
     await table(bulkUploadAdapter, { "GET /api/bulk-upload/approvals/pending": { data: rows } }, {
-      bh1: ["u1"], bh2: ["u2"], bhAdmin1: ["u1", "u5"], ph: ["u4"], root: ["u1", "u2", "u3", "u4", "u5"],
+      bh1: ["u1"], bh2: ["u2"], bhAdmin1: ["u1", "u5"], ph: ["u4"], root: [] /* super_admin must hold branch_head / payroll_head */,
     }, { phE1: ["u4"] });
   });
 
@@ -282,12 +288,12 @@ describe("finance adapters: branch-bound stages by the row's own branch, HO stag
   it("GRN: branch head stage only in own branch (even if the finance scope says all), accounts head / finance head stages org-wide", async () => {
     const g = (id: string, status: string, branch_id: string) => ({ id, status, branch_id, submitted_by: "maker", amount: 1 });
     const byStatus: Record<string, any[]> = {
-      submitted: [g("g1", "submitted", "b1"), g("g2", "submitted", "b2")],
+      submitted: [g("g1", "submitted", "b1"), g("g2", "submitted", "b2"), { ...g("g9", "submitted", "b1"), legacy_raised_by_name: "Old" }],
       branch_head_approved: [g("g3", "branch_head_approved", "b1")],
       accounts_head_approved: [g("g4", "accounts_head_approved", "b2")],
     };
     await table(grnAdapter, { "GET /api/finance/grns": (o: any) => ({ data: byStatus[o.query.status] ?? [] }) }, {
-      bh1: ["g1"], bh2: ["g2"], bhAdmin1: ["g1"], ah: ["g3"], fh: ["g4"], root: ["g1", "g2", "g3", "g4"],
+      bh1: ["g1"], bh2: ["g2"], bhAdmin1: ["g1"], ah: ["g3"], fh: ["g4"], root: [] /* super_admin holds no stage role */,
     });
   });
 
@@ -314,7 +320,7 @@ describe("finance adapters: branch-bound stages by the row's own branch, HO stag
       { id: "t3", status: "branch_head_approved", branch_id: "b1", requested_by: "x" },
     ];
     await table(budgetTopupAdapter, { "GET /api/finance/pnl/budget-topups": { data: rows } }, {
-      bh1: ["t1"], bh2: ["t2"], bhAdmin1: ["t1"], fh: ["t3"], root: ["t1", "t2", "t3"],
+      bh1: ["t1"], bh2: ["t2"], bhAdmin1: ["t1"], fh: ["t3"], root: [] /* super_admin holds no stage role */,
     });
   });
 
@@ -412,7 +418,7 @@ describe("admin adapters: requester / author branch decides who sees the row", (
     };
     await table(workflowAdapter, inbox, {
       hr1: ["w1"], hr2: ["w2"], admin1: ["w6"], admin2: ["w7"], bhAdmin1: ["w6"], mgr1: ["w3"], mgr2: ["w4"],
-    }, { rootMgr: ["w3", "w4"] });
+    }, { rootMgr: [] /* super_admin who also holds `manager` but is nobody's reporting manager: not designated */ });
   });
 
   it("company post: admin moderates own-branch authors only, hr head / super admin all, never the author", async () => {
@@ -428,6 +434,7 @@ describe("admin adapters: requester / author branch decides who sees the row", (
     const bhRows = [
       { id: "x1", status: "pending_branch_head", branch_id: "b1", branch_head_employee_id: "emp-bh1", requestor_employee_id: "e1" },
       { id: "x2", status: "pending_branch_head", branch_id: "b2", branch_head_employee_id: "emp-bh2", requestor_employee_id: "e2" },
+      { id: "x3", status: "pending_branch_head", branch_id: "b1", branch_head_employee_id: null, requestor_employee_id: "e1" }, // no head assigned
     ];
     const adRows = [
       { id: "y1", status: "pending_admin_approval", branch_id: "b1", requestor_employee_id: "e1" },
@@ -437,16 +444,18 @@ describe("admin adapters: requester / author branch decides who sees the row", (
       "GET /api/exit-passes/pending/branch-head": { data: bhRows },
       "GET /api/exit-passes/pending/admin": { data: adRows },
     }, {
-      bh1: ["x1"], bh2: ["x2"], admin1: ["x1", "y1"], admin2: ["x2", "y2"], bhAdmin1: ["x1", "y1"], branchAdmin1: ["y1"],
-      itHead: ["x1", "x2", "y1", "y2"], root: ["x1", "x2", "y1", "y2"],
+      // stage 1: the assigned head (an own-branch admin only when none is assigned); stage 2: it_head, own-branch admin, branch_admin
+      bh1: ["x1"], bh2: ["x2"], admin1: ["x3", "y1"], admin2: ["y2"], bhAdmin1: ["x3", "y1"], branchAdmin1: ["y1"],
+      itHead: ["y1", "y2"], root: [],
     }, { adminE1: [] /* adminE1 IS the requester e1; the b2 passes are not their branch */ });
   });
 
   it("visitor: assigned host, own-branch admin / branch roles; only super admin is global", async () => {
     const v = (id: string, branch_id: string, host: string) => ({ id, status: "pending_approval", branch_id, host_employee_id: host, visitor_name: "V" });
-    const rows = [v("v1", "b1", "emp-hostA"), v("v2", "b2", "emp-other")];
+    const rows = [v("v1", "b1", "emp-hostA"), v("v2", "b2", "emp-other"), v("v3", "b1", null as any)];
+    // admin / super_admin are able to decide any visit but are designated only for an un-hosted visit of their own branch (admin)
     await table(visitorAdapter, { "GET /api/visitor/visits": { data: rows } }, {
-      hostA: ["v1"], admin1: ["v1"], admin2: ["v2"], bhAdmin1: ["v1"], bh1: ["v1"], bh2: ["v2"], secHead1: ["v1"], root: ["v1", "v2"],
+      hostA: ["v1"], admin1: ["v3"], admin2: [], bhAdmin1: ["v1", "v3"], bh1: ["v1", "v3"], bh2: ["v2"], secHead1: ["v1", "v3"], root: [],
     });
   });
 
@@ -458,7 +467,7 @@ describe("admin adapters: requester / author branch decides who sees the row", (
       { id: "ar4", status: "pending", user_id: "admin1", user_email: "d", page_code: "P" },
     ];
     await table(accessRequestAdapter, (u) => ({ "GET /api/access/requests": gate(u, ["admin", "super_admin"], { data: rows }) }), {
-      admin1: ["ar1"], admin2: ["ar2"], bhAdmin1: ["ar1", "ar4"], root: ["ar1", "ar2", "ar3", "ar4"],
+      admin1: ["ar1"], admin2: ["ar2"], bhAdmin1: ["ar1", "ar4"], root: [] /* endpoint is admin-only: literal admin */,
     });
   });
 
@@ -469,7 +478,7 @@ describe("admin adapters: requester / author branch decides who sees the row", (
     ];
     await table(benefitsClaimAdapter, (u) => ({
       "GET /api/benefits/claims": has(u, "admin", "hr", "super_admin") ? { data: rows, stats: {} } : { data: [] },
-    }), { hr1: ["bc1"], hr2: ["bc2"], admin1: ["bc1"], admin2: ["bc2"], bhAdmin1: ["bc1"], root: ["bc1", "bc2"] }, { hrE1: [], adminE1: [] });
+    }), { hr1: ["bc1"], hr2: ["bc2"], admin1: ["bc1"], admin2: ["bc2"], bhAdmin1: ["bc1"], root: [] }, { hrE1: [], adminE1: [] });
   });
 
   it("DPDP withdrawal: hr / admin see own-branch requesters (admin is NOT the DPO), real dpo and org-wide see all, never the requester", async () => {

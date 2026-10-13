@@ -165,11 +165,45 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
     { kind: "masmis", sheet: "neemans_cart", table: "neemans_cart", dateExpr: "call_date" },
   ],
 
-  housing_owner: [
-    { kind: "masmis", sheet: "owner_sale", table: "owner_sale", dateExpr: "STR_TO_DATE(CONCAT(LPAD(`day`, 2, '0'), '-', LEFT(`month`, 3), '-', RIGHT(`month`, 2)), '%d-%b-%y')" },
-    { kind: "masmis", sheet: "Owner_cdr", table: "Owner_cdr", dateExpr: D_MON_YY("report_date") },
-    { kind: "masmis", sheet: "owner_agent_details", table: "owner_agent_details", note: "Agent roster/targets -- not date based." },
-  ],
+  housing_owner: (() => {
+    // Current-month rows show the CURRENT roster's AM and TL (matched by agent name against
+    // owner_agent_details.overall), not whatever the row itself stored -- the same rule the
+    // dashboard and MIS summary tables use. A row with no match, and every earlier month's row,
+    // keeps its own stored AM/TL unchanged.
+    const OWNER_SALE_DATE = "STR_TO_DATE(CONCAT(LPAD(`day`, 2, '0'), '-', LEFT(`month`, 3), '-', RIGHT(`month`, 2)), '%d-%b-%y')";
+    // A manual TL/AM reassignment (process_agent_assignment_override, latest effective_month <=
+    // this month) wins over the uploaded roster, which wins over the row's own stored value --
+    // the same precedence applyAssignmentOverridesToItems()/applyOverridesToItems() apply in the
+    // dashboard and MIS summaries.
+    const resolvedColumn = (field: "am" | "tl_name", dateExpr: string, agentCol: string) => {
+      const overrideCol = field === "am" ? "group_name" : "tl_name";
+      return {
+        header: field,
+        expr: `CASE WHEN ${dateExpr} >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+                 THEN COALESCE(
+                   (SELECT ao.${overrideCol} FROM db_masmis.process_agent_assignment_override ao
+                     WHERE ao.process_key = 'housing_owner' AND TRIM(ao.agent_name) = TRIM(\`${agentCol}\`)
+                       AND ao.effective_month <= DATE_FORMAT(CURDATE(), '%Y-%m')
+                     ORDER BY ao.effective_month DESC LIMIT 1),
+                   (SELECT ro.${field} FROM db_masmis.owner_agent_details ro WHERE TRIM(ro.overall) = TRIM(\`${agentCol}\`) LIMIT 1),
+                   \`${field}\`)
+                 ELSE \`${field}\` END`,
+      };
+    };
+    return [
+      {
+        kind: "masmis", sheet: "owner_sale", table: "owner_sale", dateExpr: OWNER_SALE_DATE,
+        excludeColumns: ["am", "tl_name"],
+        derivedColumns: [resolvedColumn("am", OWNER_SALE_DATE, "agent_name"), resolvedColumn("tl_name", OWNER_SALE_DATE, "agent_name")],
+      },
+      {
+        kind: "masmis", sheet: "Owner_cdr", table: "Owner_cdr", dateExpr: D_MON_YY("report_date"),
+        excludeColumns: ["am", "tl_name"],
+        derivedColumns: [resolvedColumn("am", D_MON_YY("report_date"), "agent"), resolvedColumn("tl_name", D_MON_YY("report_date"), "agent")],
+      },
+      { kind: "masmis", sheet: "owner_agent_details", table: "owner_agent_details", note: "Agent roster/targets -- not date based." },
+    ] satisfies RawSource[];
+  })(),
   housing_premium: [
     { kind: "masmis", sheet: "pre_sale", table: "pre_sale", dateExpr: "report_date" },
     { kind: "masmis", sheet: "Pre_cdr", table: "Pre_cdr", dateExpr: "report_date_iso" },

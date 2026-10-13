@@ -1,28 +1,48 @@
 /**
- * The Live Meta cutoff day from he_model_param, so the owner can move it without a deploy. he_model_param.value is DECIMAL(8,4) and cannot
- * hold a date, so the day is in the key (the plan.req.<id> pattern): a row 'meta.live_from.YYYY-MM-DD' with value 1 sets it; with several
- * such rows the latest day wins. Cached 60 s; a missing table, no row or an invalid day means LIVE_FROM_DEFAULT. Never throws.
+ * The Live Meta cutoff (he-source-attribution.ts). Default: ROLLING, 00:00 IST of the IST day (today - 7 days), so it moves with the date
+ * on its own. Overrides in he_model_param (value is DECIMAL(8,4), so a day lives in the key, the plan.req.<id> pattern):
+ *   - meta.live_days = N: N days instead of 7 (a whole number 0..365; anything else means 7);
+ *   - meta.live_mode = 1: 'fixed' mode, the latest 'meta.live_from.YYYY-MM-DD' row with value 1 is the cutoff (no such row: rolling).
+ *     Without meta.live_mode = 1 the meta.live_from.* rows are ignored.
+ * The param rows are cached 60 s; the day is computed from the clock on EVERY call, so the cutoff moves at midnight IST even inside a
+ * cache period. A missing table, no row or an invalid value means the rolling 7 days. Never throws.
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
-import { LIVE_FROM_DEFAULT, LIVE_FROM_PARAM, validDay } from "./he-source-attribution.js";
+import { LIVE_DAYS_PARAM, LIVE_FROM_PARAM, LIVE_MODE_PARAM, resolveLiveWindow, type LiveWindow } from "./he-source-attribution.js";
 
 const CACHE_MS = 60_000;
-let cached: { at: number; value: string } | null = null;
+interface LiveParams { liveDays?: unknown; liveMode?: unknown; fixedDays: string[] }
+let cached: { at: number; params: LiveParams } | null = null;
 
 export function clearLiveFromCache(): void { cached = null; }
 
-export async function loadLiveFrom(): Promise<string> {
-  if (cached && Date.now() - cached.at < CACHE_MS) return cached.value;
-  let value = LIVE_FROM_DEFAULT;
+async function readParams(): Promise<LiveParams> {
+  const out: LiveParams = { fixedDays: [] };
   try {
-    const [rows] = await db.execute<RowDataPacket[]>("SELECT param_key FROM he_model_param WHERE param_key LIKE ? AND value = 1", [`${LIVE_FROM_PARAM}.%`]);
-    const days = (rows ?? []).map((r) => validDay(String(r.param_key ?? "").slice(LIVE_FROM_PARAM.length + 1))).filter((d): d is string => !!d).sort();
-    if (days.length) value = days[days.length - 1];
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT param_key, value FROM he_model_param WHERE param_key IN (?, ?) OR param_key LIKE ?",
+      [LIVE_DAYS_PARAM, LIVE_MODE_PARAM, `${LIVE_FROM_PARAM}.%`]);
+    for (const r of rows ?? []) {
+      const key = String(r.param_key ?? "");
+      if (key === LIVE_DAYS_PARAM) out.liveDays = r.value;
+      else if (key === LIVE_MODE_PARAM) out.liveMode = r.value;
+      else if (key.startsWith(`${LIVE_FROM_PARAM}.`) && Number(r.value) === 1) out.fixedDays.push(key.slice(LIVE_FROM_PARAM.length + 1));
+    }
   } catch (err) {
-    logger.error({ code: (err as { code?: unknown })?.code ?? "unknown" }, "[he-source-attribution] cutoff read failed, using the default");
+    logger.error({ code: (err as { code?: unknown })?.code ?? "unknown" }, "[he-source-attribution] cutoff read failed, using the rolling default");
   }
-  cached = { at: Date.now(), value };
-  return value;
+  return out;
+}
+
+/** The cutoff at `now` with how it was set (rolling N days, or a fixed day). */
+export async function loadLiveWindow(now: Date = new Date()): Promise<LiveWindow> {
+  const t = now.getTime();
+  if (!cached || t < cached.at || t - cached.at >= CACHE_MS) cached = { at: t, params: await readParams() };
+  return resolveLiveWindow(cached.params, now);
+}
+
+/** The cutoff day 'YYYY-MM-DD' at `now`. */
+export async function loadLiveFrom(now: Date = new Date()): Promise<string> {
+  return (await loadLiveWindow(now)).liveFrom;
 }

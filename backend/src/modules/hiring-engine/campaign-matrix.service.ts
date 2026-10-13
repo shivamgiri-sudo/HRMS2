@@ -6,6 +6,7 @@
  * `partial` and read as unknown. 60 s cache per scope and filter.
  */
 import type { RowDataPacket } from "mysql2";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import { limitedDb } from "./he-read-limit.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import { closedReasonOf } from "../meta-campaign/campaign-requisition.service.js";
@@ -13,13 +14,17 @@ import { compileCriteria } from "../selection/compile-criteria.js";
 import { LOAD_ROW_SQL, toCriteriaRow } from "../selection/criteria-row.js";
 import { endDateEnforcementAllowed, endDateOf, endDatePassed, seatsLeft } from "./requisition-criteria.js";
 import { activityTypeSql, fillPhoneSql } from "./he-source-attribution.js";
-import { loadLiveFrom } from "./he-source-attribution.service.js";
+import { loadLiveWindow } from "./he-source-attribution.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import { engineMode } from "./he-policy.service.js";
 import { DRIVE_KINDS, matrixRows, type DriveKind, type MatrixFacts, type MatrixRow, type MatrixStream } from "./campaign-matrix.js";
 
 export interface MatrixQuery { branch?: string | null; requisitionId?: string | null; campaignId?: string | null }
-export interface CampaignMatrix { rows: MatrixRow[]; generatedAt: string; partial: string[]; enforcedEndDate: boolean }
+export interface CampaignMatrix {
+  rows: MatrixRow[]; generatedAt: string; partial: string[]; enforcedEndDate: boolean;
+  /** The Live Meta cutoff the Live / Old counts used (rolling: today IST minus liveDays; he-source-attribution.service.ts). */
+  liveFrom?: string; liveDays?: number; liveMode?: "rolling" | "fixed";
+}
 
 const CI = "COLLATE utf8mb4_unicode_ci";
 const ph = (n: number) => Array.from({ length: n }, () => "?").join(",");
@@ -36,7 +41,7 @@ const CAMPAIGNS_SQL = `SELECT mc.id, mc.campaign_name, mc.campaign_status, mc.me
   FROM meta_campaign mc LEFT JOIN meta_campaign_requisition l ON l.campaign_id = mc.id ${CI} AND l.removed_at IS NULL ORDER BY mc.created_at, l.is_primary DESC, l.sort_order`;
 const CAMPAIGNS_NO_LINKS_SQL = `SELECT mc.id, mc.campaign_name, mc.campaign_status, mc.meta_form_id, mc.requisition_id AS primary_id, mc.requisition_id AS link_id
   FROM meta_campaign mc ORDER BY mc.created_at`;
-const REQ_EXTRA = `jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.requisition_validity,
+const REQ_EXTRA = `jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.requisition_validity,
        (jr.bmi_assessment_url IS NOT NULL AND jr.bmi_assessment_url <> '') AS has_bmi,`;
 const reqSql = (n: number, branch: boolean): string => LOAD_ROW_SQL.replace("SELECT jr.id,", `SELECT jr.id, ${REQ_EXTRA}`)
   .replace("WHERE jr.id = ? LIMIT 1", `WHERE (jr.id IN (${n ? ph(n) : "NULL"}) OR (jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.closed_at IS NULL))${branch ? " AND jr.branch_name = ?" : ""}`);
@@ -63,6 +68,14 @@ const activitySql = (n: number, liveFrom: string): string => {
      WHERE hm.requisition_id IN (${ph(n)}) AND hm.created_at >= ? AND hm.direction = 'out' AND (hm.delivery_status IS NULL OR hm.delivery_status <> 'failed')
   ) x GROUP BY x.requisition_id, x.kind, x.campaign_id`;
 };
+/**
+ * People the unified follow-up contacted in 48 h (email, WhatsApp or call), per requisition, drive type and campaign. One indexed read on the
+ * follow-up table: exact for the engine's own sends, and it still answers when the wider activity read above times out.
+ */
+const followupActivitySql = (n: number): string => `SELECT requisition_id, source_type AS kind, campaign_id, COUNT(DISTINCT mobile10) AS n /* followup48h */
+  FROM qualified_followup
+ WHERE requisition_id IN (${ph(n)}) AND mode_at_enqueue = 'live' AND (email_sent_at >= ? OR wa_sent_at >= ? OR called_at >= ?)
+ GROUP BY requisition_id, source_type, campaign_id`;
 const responsesSql = (n: number, liveFrom: string): string => `SELECT cr.requisition_id, ${activityTypeSql({ lead: "l", first: "lf", fill: "f", ref: "cr.occurred_at", liveFrom })} AS kind, f.campaign_id, COUNT(DISTINCT cr.mobile10) AS n
   FROM candidate_response cr LEFT JOIN he_lead l ON l.mobile10 = cr.mobile10 ${CI} LEFT JOIN meta_lead_raw lf ON lf.id = l.meta_lead_id ${CI}
   LEFT JOIN meta_lead_raw f ON f.id = COALESCE(cr.meta_lead_id, l.meta_lead_id) ${CI}
@@ -82,7 +95,7 @@ export async function getCampaignMatrix(q: MatrixQuery, scope: BranchScope, now 
   const branch = scope.all ? (q.branch ?? null) : scope.branchName;
   if (!scope.all && !scope.branchName) return { rows: [], generatedAt: now.toISOString(), partial: [], enforcedEndDate: false };
   if (!scope.all && q.branch && q.branch !== scope.branchName) return { rows: [], generatedAt: now.toISOString(), partial: [], enforcedEndDate: false };
-  const key = JSON.stringify([branch, q.requisitionId ?? null, q.campaignId ?? null]);
+  const key = JSON.stringify([branch, q.requisitionId ?? null, q.campaignId ?? null, istDay(now)]); // the day: the Live Meta cutoff rolls at midnight IST
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
   const value = await build(q, branch, now);
@@ -92,11 +105,13 @@ export async function getCampaignMatrix(q: MatrixQuery, scope: BranchScope, now 
 
 async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<CampaignMatrix> {
   const partial: string[] = [];
-  const [campaigns, params, liveFrom] = await Promise.all([
+  const [campaigns, params, live] = await Promise.all([
     run(CAMPAIGNS_SQL, []).catch((e) => { if (noTable(e)) return run(CAMPAIGNS_NO_LINKS_SQL, []); throw e; }),
     run("SELECT param_key, value FROM he_model_param WHERE param_key IN ('policy.req_end_date_enforced', 'policy.shortlist.enrol', 'policy.engine_auto')", []).catch(() => [] as RowDataPacket[]),
-    loadLiveFrom(),
+    loadLiveWindow(now),
   ]);
+  const liveFrom = live.liveFrom;
+  const cut = { liveFrom, liveDays: live.days, liveMode: live.mode };
   const param = (k: string) => Number(params.find((p) => p.param_key === k)?.value ?? 0) === 1;
   const enforced = endDateEnforcementAllowed() && param("policy.req_end_date_enforced");
   const engineLive = engineMode(process.env, param("policy.engine_auto")) === "live";
@@ -106,21 +121,25 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
   const reqRows = await run(reqSql(referenced.length, !!branch), [...referenced, ...(branch ? [branch] : [])]);
   const reqById = new Map(reqRows.map((r) => [String(r.id), r]));
   const ids = [...reqById.keys()];
-  if (!ids.length) return { rows: [], generatedAt: now.toISOString(), partial, enforcedEndDate: enforced };
+  if (!ids.length) return { rows: [], generatedAt: now.toISOString(), partial, enforcedEndDate: enforced, ...cut };
 
   const since48 = istText(new Date(now.getTime() - 48 * 3600_000)), since3d = istText(new Date(now.getTime() - 72 * 3600_000));
   const today = istDay(now), in3 = istDay(new Date(now.getTime() + 3 * 86_400_000));
   const optional = async (name: string, sql: string, p: unknown[], absentIsNull = true): Promise<RowDataPacket[] | null> => {
     try { return await run(sql, p); } catch (e) { if (absentIsNull && noTable(e)) return null; partial.push(name); return null; }
   };
-  const [streams, activity, responses, drives, runs] = await Promise.all([
+  const [streams, activityWide, followupAct, responses, drives, runs] = await Promise.all([
     run(`SELECT id, requisition_id, source_type, origin_id, status FROM requisition_stream WHERE requisition_id IN (${ph(ids.length)}) ORDER BY updated_at DESC`, ids).catch((e) => { if (noTable(e)) return [] as RowDataPacket[]; throw e; }),
     optional("activity", activitySql(ids.length, liveFrom), [...ids, since48, ...ids, since48, ...ids, since48], false),
+    optional("followup48h", followupActivitySql(ids.length), [...ids, since48, since48, since48]),
     optional("responses", responsesSql(ids.length, liveFrom), [...ids, since3d]),
     run(`SELECT requisition_id, COUNT(*) AS n FROM he_drive WHERE requisition_id IN (${ph(ids.length)}) AND drive_date BETWEEN ? AND ? AND status IN ('active', 'draft') GROUP BY requisition_id`, [...ids, today, in3]),
     optional("shortlist", shortlistSql(ids.length), ids),
   ]);
 
+  // The wide read can time out; the follow-up's own contacts are exact and cheap, so the matrix reads both and is "unknown" only when both fail.
+  // When only the follow-up read answered, a drive with contacts is known to be running; one without stays "unknown" (the legacy sends were not read).
+  const activity: RowDataPacket[] | null = activityWide || followupAct ? [...(activityWide ?? []), ...(followupAct ?? [])] : null;
   // rows
   const inScope = (id: string) => reqById.has(id) && (!q.requisitionId || q.requisitionId === id);
   const activeCampaign = (c: RowDataPacket) => ["active", "draft"].includes(String(c.campaign_status));
@@ -164,12 +183,12 @@ async function build(q: MatrixQuery, branch: string | null, now: Date): Promise<
     return {
       campaign: c ? { id: String(c.id), name: String(c.campaign_name ?? ""), status: String(c.campaign_status ?? ""), hasForm: !!String(c.meta_form_id ?? "").trim() } : null,
       requisition: { id: rid, code: String(r.requisition_code ?? ""), branch: String(r.branch_name ?? ""), closedReason: closedReasonOf(r), endDate: endDateOf(v), endDatePassed: endDatePassed(v, istDay(now)),
-        seatsLeft: seatsLeft({ requestedHeadcount: Number(r.requested_headcount ?? 0), fulfilledHeadcount: Number(r.fulfilled_headcount ?? 0) }), bmiLinkPresent: Number(r.has_bmi) === 1,
+        seatsLeft: joinsLeft(Number(r.requested_headcount ?? 0), Number(r.joined_headcount ?? 0)), bmiLinkPresent: Number(r.has_bmi) === 1,
         completeness: compileCriteria(toCriteriaRow(r)).completeness },
-      streams: streamsOf, activity48h: activity ? per(activity) : null, responses3d: responses ? per(responses) : null,
+      streams: streamsOf, activity48h: activity ? (() => { const p = per(activity); return activityWide || p.meta_live + p.meta_old + p.he > 0 ? p : null; })() : null, responses3d: responses ? per(responses) : null,
       drivesNext3d: Number(drives.find((d) => String(d.requisition_id) === rid)?.n ?? 0), eligible, pendingApproval: pending,
       enrolmentOn: { meta_live: cfg?.auto_notify !== false || followupMode() !== "off", meta_old: enrolHe, he: enrolHe }, enforcedEndDate: enforced,
     };
   });
-  return { rows: matrixRows(facts), generatedAt: now.toISOString(), partial, enforcedEndDate: enforced };
+  return { rows: matrixRows(facts), generatedAt: now.toISOString(), partial, enforcedEndDate: enforced, ...cut };
 }

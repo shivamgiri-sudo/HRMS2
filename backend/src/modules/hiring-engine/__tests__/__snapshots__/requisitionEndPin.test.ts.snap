@@ -10,7 +10,7 @@ exports[`end-date pins (switch off) > auto-close reads streams with their requis
     },
   ],
   "statements": [
-    "SELECT s.*, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.id AS jr_id FROM requisition_stream s LEFT JOIN job_requisition jr ON jr.id = s.requisition_id COLLATE utf8mb4_unicode_ci WHERE s.status IN ('open','paused') ORDER BY s.created_at, s.id",
+    "SELECT s.*, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.id AS jr_id FROM requisition_stream s LEFT JOIN job_requisition jr ON jr.id = s.requisition_id COLLATE utf8mb4_unicode_ci WHERE s.status IN ('open','paused') ORDER BY s.created_at, s.id",
     "SELECT stream_id, day, kind FROM requisition_stream_day WHERE stream_id IN (?) ORDER BY day",
   ],
 }

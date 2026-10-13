@@ -1,6 +1,7 @@
 import type { ApprovalAdapter, ApprovalItem } from "../types.js";
 import { badge, date, f, fields, iso, long, str } from "../format.js";
 import { branchAllowed, callerScope, io } from "./scope-guard.js";
+import { holdsLiteralRole } from "./_scope.js";
 
 function scopeText(raw: unknown): string {
   const s = str(raw);
@@ -27,6 +28,7 @@ export const dpdpWithdrawalAdapter: ApprovalAdapter = {
   label: "DPDP consent withdrawal",
   category: "Admin",
   async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, "hr", "admin", "dpo", "compliance", "super_admin"))) return [];
     const [submitted, inReview] = await Promise.all([
       ctx.call("GET", "/api/privacy/dpdp-withdrawal", { query: { status: "submitted" } }),
       ctx.call("GET", "/api/privacy/dpdp-withdrawal", { query: { status: "in_review" } }).catch(() => null),

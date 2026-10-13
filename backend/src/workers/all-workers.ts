@@ -94,6 +94,7 @@ import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalat
 import { startQualityGapDetectorWorker, stopQualityGapDetectorWorker } from "./quality-gap-detector.worker.js";
 import { startProcessDashboardAlertsWorker, stopProcessDashboardAlertsWorker } from "../modules/process-dashboard/alerts/alerts.worker.js";
 import { startLeaveApprovalReminderWorker, stopLeaveApprovalReminderWorker } from "./leave-approval-reminder.worker.js";
+import { startNocSlaReminderWorker, stopNocSlaReminderWorker } from "./noc-sla-reminder.worker.js";
 import { startRejoinPendingReminderWorker, stopRejoinPendingReminderWorker } from "./rejoin-pending-reminder.worker.js";
 import { startGrnApprovalReminderWorker, stopGrnApprovalReminderWorker } from "./grn-approval-reminder.worker.js";
 import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
@@ -538,6 +539,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startLeaveApprovalReminderWorker(); return Promise.resolve(); },
   },
   {
+    // NOC SLA reminders + evidence-based auto-clearance sweep (noc_auto_clearance_enabled). Never
+    // registered anywhere until now; see server.ts. Gated by worker_config 'noc-sla-reminder'.
+    name: "noc-sla-reminder",
+    start: () => { startNocSlaReminderWorker(); return Promise.resolve(); },
+  },
+  {
     // Rejoin v3: nudges the branch head at 48h/96h and escalates to HR after 5 days.
     // Registered in BOTH this file and server.ts, same reasoning as leave-approval-reminder.
     name: "rejoin-pending-reminder",
@@ -679,6 +686,7 @@ function shutdown(): void {
   stopIntegrationScheduler();
   stopEsignComplianceWorker();
   stopLeaveApprovalReminderWorker();
+  stopNocSlaReminderWorker();
   stopRejoinPendingReminderWorker();
   stopGrnApprovalReminderWorker();
   // social-feed exports no stop — its timers are unref'd and die with the process.

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Truck, PhoneCall } from "lucide-react";
 import { ProcessDashboard } from "@/components/process-dashboard/ProcessDashboard";
 import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
 import { BellavitaSaleDashboard } from "@/components/process-performance/BellavitaSaleDashboard";
@@ -290,6 +290,20 @@ export function V2DashboardView({ company, dashboard, onOpenDashboard }: {
   );
 }
 
+/**
+ * AHM's "Dump" export, one row per outlet/SKU order line -- two uploaders (branch-level files, same shape), one
+ * shared table (sql/1875). See ahm-dump-bulk.service.ts. Lives here so ProcessPerformanceV2Page and the Process
+ * Operations page upload through the same list.
+ */
+export const AHM_UPLOADERS: UploaderHubItem[] = [
+  { code: "AHM_DUMP_MP", label: "Dump (MP)", description: "Upload AHM's order/survey-to-delivery export, MP branch", icon: Truck },
+  { code: "AHM_DUMP_MM", label: "Dump (MM)", description: "Upload AHM's order/survey-to-delivery export, MM branch", icon: Truck },
+  { code: "AHM_CALLS", label: "Call log", description: "Upload the call-attempt log (every dial): drives EC %, PC % and Incoming %", icon: PhoneCall },
+];
+
+/** Uploaders the Process Operations page offers beside a V2 company's dashboards (real UploaderWorkspace, not the stub grid). */
+export const V2_UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = { ahm: AHM_UPLOADERS };
+
 /** Process Operations process_master.process_code -> the V2 company keys whose dashboards belong to it. */
 const V2_COMPANIES_BY_PROCESS_CODE: Record<string, CompanyKey[]> = {
   BELLA_VITA: ["bellavita"],
@@ -300,6 +314,7 @@ const V2_COMPANIES_BY_PROCESS_CODE: Record<string, CompanyKey[]> = {
   DALMIA_CEMENT: ["dalmia"],
   DU_DIGITAL: ["du_thailand", "du_korea"],
   AHM: ["ahm"],
+  GODFREY_PHILIPS: ["ahm"],
   SBI_CARD: ["sbi_card"],
   ERESOLUTION: ["lp_feedback", "lp_onboarding"],
   HOUSING_OWNER: ["housing_owner"],
@@ -323,6 +338,9 @@ export function v2DashboardsForProcess(
   companyLabels: Record<string, string>,
 ): Array<{ company: CompanyKey; companyLabel: string; dashboard: V2Dashboard }> {
   let keys = V2_COMPANIES_BY_PROCESS_CODE[processCode?.toUpperCase()];
+  // AHM is Godfrey Phillips India's (GPI) process: every GPI / Godfrey Phillips cost-centre row ("GPI", "Godfrey Phillips India Ltd",
+  // BSS_OB_AHMH_JD_465 ...) opens the same dashboards and uploaders, whatever its code.
+  if (!keys && /\b(gpi|godfrey|goldfrey)\b/i.test(processName ?? "")) keys = ["ahm"];
   if (!keys) {
     const n = normKey(processName ?? "");
     const hit = (Object.keys(companyLabels) as CompanyKey[]).filter((k) => n && (normKey(k) === n || normKey(companyLabels[k]) === n));

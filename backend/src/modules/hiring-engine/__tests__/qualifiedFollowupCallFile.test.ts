@@ -18,7 +18,7 @@ import { mapHeaders } from "../he-bulk-call.js";
 import { buildCallFiles, callFileCsv, chunkRows, recoverStaleBatches, runCallFileBatch, type CallFileRow } from "../qualified-followup.callfile.js";
 
 const HEADER7 = "phone,name,role,interview_date,interview_time,branch_address,reference_id";
-const HEADER = `${HEADER7},requisition_code,other_requisitions,branch,drive_type,campaign,qualified_at,email_status,email_sent_at,whatsapp_status,whatsapp_sent_at,attempt,priority`;
+const HEADER = `${HEADER7},requisition_code,other_requisitions,branch,drive_type,campaign,qualified_at,email_status,email_sent_at,whatsapp_status,whatsapp_sent_at,attempt,priority,approach,earlier_contacts,earlier_connected`;
 const now = new Date("2026-10-07T10:00:00+05:30");
 const liveEnv = { QUAL_FOLLOWUP_MODE: "live" } as NodeJS.ProcessEnv;
 const testEnv = { QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true", QUAL_FOLLOWUP_TEST_TO_PHONE: "9111122222", QUAL_FOLLOWUP_TEST_TO_EMAIL: "qa@x.in" } as NodeJS.ProcessEnv;
@@ -26,7 +26,7 @@ const testEnv = { QUAL_FOLLOWUP_MODE: "live", QUAL_FOLLOWUP_TEST_MODE: "true", Q
 const row = (over: Partial<CallFileRow> = {}): CallFileRow => ({
   mobile10: "9876543210", name: "Asha", role: "Support", interviewDate: "2026-10-08", interviewTime: "10:30", branchAddress: "Sector 62", referenceId: "QF-0001",
   requisitionCode: "REQ-1", otherRequisitions: [], branch: "Noida", driveType: "Live Meta", campaign: "Oct Noida", qualifiedAt: "2026-10-07 08:10",
-  emailStatus: "sent", emailSentAt: "2026-10-07 08:30", waStatus: "sent", waSentAt: "2026-10-07 09:30", attempt: 1, priority: "P1", ...over,
+  emailStatus: "sent", emailSentAt: "2026-10-07 08:30", waStatus: "sent", waSentAt: "2026-10-07 09:30", attempt: 1, priority: "P1", approach: "", earlierContacts: 0, earlierConnected: 0, ...over,
 });
 const dbRow = (i: number, over: Record<string, unknown> = {}) => ({
   id: `id-${i}`, source_type: i % 2 ? "he" : "meta_live", mobile10: `98765432${String(10 + i)}`, full_name: "asha rao", role_name: "Support",
@@ -68,7 +68,7 @@ describe("call file format", () => {
 
   it("leaves slot and address blank when absent", () => {
     expect(callFileCsv([row({ interviewDate: null, interviewTime: null, branchAddress: null })]).split("\r\n")[1])
-      .toBe("9876543210,Asha,Support,,,,QF-0001,REQ-1,,Noida,Live Meta,Oct Noida,2026-10-07 08:10,sent,2026-10-07 08:30,sent,2026-10-07 09:30,1,P1");
+      .toBe("9876543210,Asha,Support,,,,QF-0001,REQ-1,,Noida,Live Meta,Oct Noida,2026-10-07 08:10,sent,2026-10-07 08:30,sent,2026-10-07 09:30,1,P1,,0,0");
   });
 
   it("the seven upload columns come first, so the bulk-call upload still reads the file", () => {
@@ -383,7 +383,7 @@ describe("slots: one batch per IST slot and tag", () => {
   it("the cool period from he_model_param lets an earlier-filed person back", async () => {
     world({ rows: [dbRow(1, { files_n: 1, last_file_at: "2026-09-01 10:00:00" })], params: [{ param_key: "policy.callfile_cool_days", value: "20.0000" }] });
     expect(await runCallFileBatch(readSwitches(liveEnv), "live", now)).toMatchObject({ status: "sent", rows: 1 });
-    expect(String(send.mock.calls[0][0].attachments[0].content)).toMatch(/,2,P1\r\n/);
+    expect(String(send.mock.calls[0][0].attachments[0].content)).toMatch(/,2,P1,[^\r\n]*,0,0\r\n/);
   });
 });
 
@@ -417,5 +417,50 @@ describe("unified call file (Task 10)", () => {
     world({ rows: [dbRow(0, { exported_recently: 1 })] });
     const r = await runCallFileBatch(readSwitches(liveEnv), "live", now, { slotKey: "2026-10-07 14:00" });
     expect(r.summary?.skipped).toEqual({ already_exported: 1 });
+  });
+});
+
+describe("the portal is the file's destination; the mail is a copy", () => {
+  const portalEnv = { SUPERBOT_EMAIL: "svc@example.test", SUPERBOT_PASSWORD: "pw", SUPERBOT_ACCOUNT_ID: "1965", SUPERBOT_CAMPAIGN_ID: "27425", SUPERBOT_UPLOAD_MODE: "live" };
+  const stubPortal = (ok: boolean) => vi.stubGlobal("fetch", vi.fn(async (url: string) => (url.endsWith("/login")
+    ? { status: 200, json: async () => ({ token: "t" }) }
+    : { status: ok ? 200 : 401, json: async () => (ok ? { success: true, message: "Bulk Upload Successful" } : { message: "Unauthenticated." }) })));
+  const withEnv = async (fn: () => Promise<void>) => {
+    for (const [k, v] of Object.entries(portalEnv)) vi.stubEnv(k, v);
+    try { await fn(); } finally { vi.unstubAllEnvs(); vi.unstubAllGlobals(); }
+  };
+
+  it("does not spend a mail on a file the portal already has", async () => {
+    await withEnv(async () => {
+      stubPortal(true);
+      world({ rows: [dbRow(1), dbRow(2)] });
+      const res = await runCallFileBatch(readSwitches(liveEnv), "live", now);
+      expect(res).toMatchObject({ status: "sent", rows: 2 });
+      expect(send).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps the batch sent when the owner's copy is on and the mailbox refuses it but the portal accepted the file", async () => {
+    await withEnv(async () => {
+      vi.stubEnv("QUAL_FOLLOWUP_CALLFILE_MAIL_COPY", "true");
+      stubPortal(true);
+      world({ rows: [dbRow(1), dbRow(2)] });
+      send.mockRejectedValue(new Error("550 Daily user sending limit exceeded"));
+      const res = await runCallFileBatch(readSwitches(liveEnv), "live", now);
+      expect(res).toMatchObject({ status: "sent", rows: 2 });
+      expect(calls(/SET call_file_batch_id = NULL WHERE call_file_batch_id = \?/)).toHaveLength(0);
+      expect(calls(/'\$\.mail'/)).toHaveLength(1);
+    });
+  });
+
+  it("still fails and releases the rows when neither the portal nor the mail took the file", async () => {
+    await withEnv(async () => {
+      stubPortal(false);
+      world({ rows: [dbRow(1)] });
+      send.mockRejectedValue(new Error("SMTP down"));
+      const res = await runCallFileBatch(readSwitches(liveEnv), "live", now);
+      expect(res).toMatchObject({ status: "failed", error: "SMTP down" });
+      expect(calls(/SET call_file_batch_id = NULL WHERE call_file_batch_id = \?/)).toHaveLength(1);
+    });
   });
 });

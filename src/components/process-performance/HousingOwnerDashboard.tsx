@@ -45,6 +45,8 @@ interface OutboundData {
 }
 
 type Win = { from: string; to: string };
+type HeroTab = "outbound" | "comparison";
+type CompareView = "overall" | "am" | "tl" | "vintage" | "agent";
 type Who = { agent: string; tl: string; am: string; vintage: string };
 type Pred = (f: Who) => boolean;
 interface Ctx { cdr: CdrFact[]; sales: SaleFact[]; roster: RosterFact[]; dataTo: string }
@@ -61,6 +63,12 @@ const shiftDays = (iso: string, n: number) => fromUtc(toUtc(iso) + n * 86400000)
 const daysBetween = (a: string, b: string) => Math.round((toUtc(b) - toUtc(a)) / 86400000);
 const dim = (iso: string) => { const [y, m] = parts(iso); return new Date(Date.UTC(y, m, 0)).getUTCDate(); };
 const monthStart = (iso: string) => `${iso.slice(0, 7)}-01`;
+/** Yesterday's date (local calendar) as YYYY-MM-DD. */
+const yesterdayIso = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
 /** Share of a month elapsed between two dates (each day = 1 / days-in-its-month). */
 function monthFraction(from: string, to: string): number {
@@ -149,7 +157,16 @@ function calc(ctx: Ctx, pred: Pred, w: Win) {
   let mtdRevenue = 0;
   for (const s of ctx.sales) if (s.date >= mFrom && s.date <= w.to && pred(s)) mtdRevenue += s.revenue;
   const mtdTarget = monthly * monthFraction(mFrom, mTo);
+  // MTD up to yesterday (local calendar), independent of the selected range: target prorated to yesterday, revenue to yesterday.
+  const ydIso = yesterdayIso();
+  const ydFrom = monthStart(ydIso);
+  let ydRevenue = 0;
+  for (const s of ctx.sales) if (s.date >= ydFrom && s.date <= ydIso && pred(s)) ydRevenue += s.revenue;
+  const ydTarget = monthly * monthFraction(ydFrom, ydIso);
   return {
+    ydTarget,
+    ydRevenue,
+    ydPct: ydTarget > 0 ? r1((ydRevenue / ydTarget) * 100) : 0,
     ...d,
     hasData: t.calls > 0 || t.saleCount > 0,
     monthlyTarget: monthly,
@@ -341,6 +358,24 @@ const MATRIX_ROWS: Array<{ label: string; hint?: string; cell: (m: M) => { text:
   { label: "Talk Time", hint: "Average talk time per agent-day (dialer report)", cell: (m) => ({ text: m.avgTalkSec > 0 ? fmtHms(m.avgTalkSec) : "—" }) },
 ];
 
+/* Totals across a set of agent rows, using the same formulas as calc(): ratios are recomputed from the summed
+   counts (never averaged), and talk time is left blank because per-agent averages cannot be combined exactly. */
+function sumTotals(ms: M[]) {
+  const calls = ms.reduce((s, m) => s + m.calls, 0);
+  const connected = ms.reduce((s, m) => s + m.connected, 0);
+  const saleCount = ms.reduce((s, m) => s + m.saleCount, 0);
+  const revenue = ms.reduce((s, m) => s + m.revenue, 0);
+  const monthlyTarget = ms.reduce((s, m) => s + m.monthlyTarget, 0);
+  return {
+    calls,
+    connectedPct: calls > 0 ? r1((connected / calls) * 100) : 0,
+    saleCount,
+    revenue,
+    monthlyTarget,
+    achPct: monthlyTarget > 0 ? r1((revenue / monthlyTarget) * 100) : 0,
+  };
+}
+
 interface MatrixCol { key: string; label: string; m: M; onClick: () => void }
 
 function MetricMatrix({ columns, total, firstColLabel = "Metric" }: { columns: MatrixCol[]; total?: MatrixCol; firstColLabel?: string }) {
@@ -436,17 +471,28 @@ export function HousingOwnerDashboard() {
   const ctx = useMemo<Ctx | null>(() => {
     if (!data) return null;
     const last = [data.cdrThrough, data.saleThrough].filter((x): x is string => !!x).sort().pop();
-    return { cdr: data.cdr, sales: data.sales, roster: data.roster, dataTo: last ?? data.to };
+    // Current month: a call or sale takes its TL and AM from the current agent roster (matched by
+    // agent name), and a row for an agent no longer on the roster is dropped -- it does not show
+    // under a stale TL/AM. Earlier months are untouched: they keep the TL and AM they had, and an
+    // agent who has since left the roster still appears in that history.
+    const now = new Date();
+    const curMonthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const rosterByName = new Map(data.roster.map((r) => [r.name.trim().toLowerCase(), r] as const));
+    const fromRoster = <T extends CdrFact | SaleFact>(rows: T[]): T[] => rows.flatMap((r) => {
+      if (r.date < curMonthStart) return [r];
+      const ro = rosterByName.get(String(r.agent ?? "").trim().toLowerCase());
+      return ro ? [{ ...r, tl: ro.tl, am: ro.am }] : [];
+    });
+    return { cdr: fromRoster(data.cdr), sales: fromRoster(data.sales), roster: data.roster, dataTo: last ?? data.to };
   }, [data]);
 
   /* Filter options: AM -> TL -> Agent narrow each other; Vintage is independent. */
-  const people = useMemo(() => {
-    const m = new Map<string, Who>();
-    for (const r of ctx?.roster ?? []) m.set(r.name, { agent: r.name, tl: r.tl, am: r.am, vintage: r.vintage });
-    for (const r of ctx?.cdr ?? []) if (!m.has(r.agent)) m.set(r.agent, r);
-    for (const r of ctx?.sales ?? []) if (!m.has(r.agent)) m.set(r.agent, r);
-    return [...m.values()];
-  }, [ctx]);
+  // The AM / TL / Agent / Vintage filters always reflect the current month's active roster, the
+  // same source the call log's TL and AM are resolved from -- not whatever date range is selected.
+  const people = useMemo(() => (ctx?.roster ?? [])
+    .filter((r) => r.status === "Active")
+    .map((r): Who => ({ agent: r.name, tl: r.tl, am: r.am, vintage: r.vintage })),
+  [ctx]);
   // Placeholder/roster-noise values -- never real AMs or TLs a user would filter by.
   const isRealFilterValue = (v: string) => !["-", "unassigned", "ojt"].includes(v.trim().toLowerCase());
   const amOptions = useMemo(() => [...new Set(people.map((p) => p.am))].filter(isRealFilterValue).sort(), [people]);
@@ -481,6 +527,46 @@ export function HousingOwnerDashboard() {
 
   const cur = useMemo(() => (ctx ? calc(ctx, basePred, range) : null), [ctx, basePred, range]);
   const prev = useMemo(() => (ctx ? calc(ctx, basePred, prevRange) : null), [ctx, basePred, prevRange]);
+  const [heroTab, setHeroTab] = useState<HeroTab>("outbound");
+  const lastMonthCalc = useMemo(() => (ctx ? calc(ctx, basePred, lmtdRange) : null), [ctx, basePred, lmtdRange]);
+  const thisMonthCalc = useMemo(() => (ctx ? calc(ctx, basePred, mtdRange) : null), [ctx, basePred, mtdRange]);
+  // Last month vs current month, till the same date: every KPI, with the change.
+  const compareRows = useMemo<string[][]>(() => {
+    if (!lastMonthCalc || !thisMonthCalc) return [];
+    const l = lastMonthCalc;
+    const t = thisMonthCalc;
+    const pc = (c: number, p: number) => (p > 0 ? `${r1(((c - p) / p) * 100)}%` : "—");
+    const pp = (c: number, p: number) => `${r1(c - p)} pp`;
+    const bothTarget = l.monthlyTarget > 0 && t.monthlyTarget > 0;
+    const bothMtd = l.mtdTarget > 0 && t.mtdTarget > 0;
+    return [
+      ["Total Calls", int(l.calls), int(t.calls), pc(t.calls, l.calls)],
+      ["Connected Calls", int(l.connected), int(t.connected), pc(t.connected, l.connected)],
+      ["Not Connected Calls", int(l.notConnected), int(t.notConnected), pc(t.notConnected, l.notConnected)],
+      ["Connected %", `${l.connectedPct}%`, `${t.connectedPct}%`, pp(t.connectedPct, l.connectedPct)],
+      ["Sale Count", int(l.saleCount), int(t.saleCount), pc(t.saleCount, l.saleCount)],
+      ["Revenue", formatINR(l.revenue), formatINR(t.revenue), pc(t.revenue, l.revenue)],
+      ["AOV", formatINR(l.aov), formatINR(t.aov), pc(t.aov, l.aov)],
+      ["Target", l.monthlyTarget > 0 ? formatINR(l.monthlyTarget) : "—", t.monthlyTarget > 0 ? formatINR(t.monthlyTarget) : "—", bothTarget ? pc(t.monthlyTarget, l.monthlyTarget) : "—"],
+      ["Ach %", l.monthlyTarget > 0 ? `${l.achPct}%` : "—", t.monthlyTarget > 0 ? `${t.achPct}%` : "—", bothTarget ? pp(t.achPct, l.achPct) : "—"],
+      ["MTD Target", l.mtdTarget > 0 ? formatINR(l.mtdTarget) : "—", t.mtdTarget > 0 ? formatINR(t.mtdTarget) : "—", bothMtd ? pc(t.mtdTarget, l.mtdTarget) : "—"],
+      ["MTD Ach %", l.mtdTarget > 0 ? `${l.mtdPct}%` : "—", t.mtdTarget > 0 ? `${t.mtdPct}%` : "—", bothMtd ? pp(t.mtdPct, l.mtdPct) : "—"],
+    ];
+  }, [lastMonthCalc, thisMonthCalc]);
+
+  // Comparison views beyond Overall: each group (AM, TL, vintage or agent) last month vs this month till date.
+  const [compareView, setCompareView] = useState<CompareView>("overall");
+  const compareGroups = useMemo(() => {
+    if (!ctx || compareView === "overall") return [];
+    const keyOf = (w: Who): string => (compareView === "am" ? w.am : compareView === "tl" ? w.tl : compareView === "vintage" ? w.vintage : w.agent);
+    const names = [...new Set(people.map(keyOf))].filter(isRealFilterValue);
+    if (compareView === "vintage") names.sort(byVintage);
+    else names.sort((a, b) => a.localeCompare(b));
+    return names.map((name) => {
+      const pred: Pred = (f) => basePred(f) && keyOf(f) === name;
+      return { name, l: calc(ctx, pred, lmtdRange), t: calc(ctx, pred, mtdRange) };
+    });
+  }, [ctx, compareView, people, basePred, lmtdRange, mtdRange]);
   const rows = useMemo(() => (ctx ? buildRows(ctx, basePred, range) : null), [ctx, basePred, range]);
 
   const pctDelta = (c: number, p: number | undefined) => (prev?.hasData && p && p > 0 ? r1(((c - p) / p) * 100) : null);
@@ -584,7 +670,7 @@ export function HousingOwnerDashboard() {
       const va = agentSort === "saleCount" ? a.m.saleCount : agentSort === "calls" ? a.m.calls : a.m.revenue;
       const vb = agentSort === "saleCount" ? b.m.saleCount : agentSort === "calls" ? b.m.calls : b.m.revenue;
       return vb - va;
-    }).slice(0, 10).map((r) => ({ name: r.agent.replace(/\s+MCN$/i, ""), full: r.agent, calls: r.m.calls, connected: r.m.connected, saleCount: r.m.saleCount, revenue: r.m.revenue, pred: r.pred })),
+    }).slice(0, 10),
     [agentRows, agentSort],
   );
 
@@ -656,6 +742,33 @@ export function HousingOwnerDashboard() {
   /* Export */
   const exportSlides = useMemo<ExportSlide[]>(() => {
     if (!cur) return [];
+    // Comparison slide: the same days last month vs the current month to date.
+    const lastMonth = ctx ? calc(ctx, basePred, lmtdRange) : null;
+    const thisMonth = ctx ? calc(ctx, basePred, mtdRange) : null;
+    const pctChange = (c: number, p: number) => (p > 0 ? `${r1(((c - p) / p) * 100)}%` : "—");
+    const ppChange = (c: number, p: number) => `${r1(c - p)} pp`;
+    const compareRows: string[][] = lastMonth && thisMonth && (lastMonth.hasData || thisMonth.hasData) ? [
+      ["Total Calls", int(lastMonth.calls), int(thisMonth.calls), pctChange(thisMonth.calls, lastMonth.calls)],
+      ["Connected Calls", int(lastMonth.connected), int(thisMonth.connected), pctChange(thisMonth.connected, lastMonth.connected)],
+      ["Connected %", `${lastMonth.connectedPct}%`, `${thisMonth.connectedPct}%`, ppChange(thisMonth.connectedPct, lastMonth.connectedPct)],
+      ["Sale Count", int(lastMonth.saleCount), int(thisMonth.saleCount), pctChange(thisMonth.saleCount, lastMonth.saleCount)],
+      ["Revenue", formatINR(lastMonth.revenue), formatINR(thisMonth.revenue), pctChange(thisMonth.revenue, lastMonth.revenue)],
+      ["AOV", formatINR(lastMonth.aov), formatINR(thisMonth.aov), pctChange(thisMonth.aov, lastMonth.aov)],
+      ["Ach %", lastMonth.monthlyTarget > 0 ? `${lastMonth.achPct}%` : "—", thisMonth.monthlyTarget > 0 ? `${thisMonth.achPct}%` : "—",
+        lastMonth.monthlyTarget > 0 && thisMonth.monthlyTarget > 0 ? ppChange(thisMonth.achPct, lastMonth.achPct) : "—"],
+    ] : [];
+    const compareSlide: ExportSlide = {
+      title: "Last Month vs Current Month (till date)",
+      kpis: [
+        { label: `Revenue (last month, till ${lmtdRange.to})`, value: lastMonth ? formatINR(lastMonth.revenue) : "—" },
+        { label: `Revenue (current month, till ${mtdRange.to})`, value: thisMonth ? formatINR(thisMonth.revenue) : "—" },
+      ],
+      tables: [{
+        title: "Till-date comparison",
+        columns: ["Metric", `Last month (${lmtdRange.from} to ${lmtdRange.to})`, `Current month (${mtdRange.from} to ${mtdRange.to})`, "Change"],
+        rows: compareRows,
+      }],
+    };
     const matrixTable = (title: string, set: { cols: MatrixCol[]; total: MatrixCol | undefined }) => {
       const all = set.total ? [...set.cols, set.total] : set.cols;
       return { title, columns: ["Metric", ...all.map((c) => c.label)], rows: MATRIX_ROWS.map((r) => [r.label, ...all.map((c) => r.cell(c.m).text)]) };
@@ -699,8 +812,8 @@ export function HousingOwnerDashboard() {
           }),
         },
       ],
-    }];
-  }, [cur, amCols, vintageCols, tlCols, agentRows]);
+    }, compareSlide];
+  }, [cur, ctx, basePred, lmtdRange, mtdRange, amCols, vintageCols, tlCols, agentRows]);
 
   const toolbar = (
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -785,11 +898,103 @@ export function HousingOwnerDashboard() {
   const dataNote = `Call data through ${data.cdrThrough ? formatShortDate(data.cdrThrough) : "—"} · Sale data through ${data.saleThrough ? formatShortDate(data.saleThrough) : "—"}`;
   const targetSub = cur.monthlyTarget > 0 ? `Target ${formatINR(cur.monthlyTarget)}` : "No target set";
 
+  const heroTabs: Array<{ key: HeroTab; label: string }> = [{ key: "outbound", label: "Outbound" }, { key: "comparison", label: "Comparison" }];
+
+  if (heroTab === "comparison") return (
+    <div className="space-y-3">
+      <DashboardHero<HeroTab>
+        icon={Home} eyebrow="Housing Owner · Calls • Sales • Revenue • Team Performance" title="Outbound Performance Dashboard"
+        tabs={heroTabs} activeTab={heroTab} onTabChange={setHeroTab}
+        gradient="from-orange-600 via-amber-600 to-orange-700"
+      />
+      <SectionCard icon={Home} title="Last month vs current month (till date)" tone="amber"
+        footnote={`Last month: ${lmtdRange.from} to ${lmtdRange.to} · Current month: ${mtdRange.from} to ${mtdRange.to}. Change is a percentage, or percentage points for ratios.`}
+      >
+        <div className="mb-3 inline-flex flex-wrap rounded-full bg-slate-100 p-1">
+          {([["overall", "Overall"], ["am", "AM-wise"], ["tl", "TL-wise"], ["vintage", "Vintage-wise"], ["agent", "Agent-wise"]] as Array<[CompareView, string]>).map(([k, label]) => (
+            <button
+              key={k} type="button" onClick={() => setCompareView(k)}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${compareView === k ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {compareView === "overall" ? (
+          compareRows.length === 0 ? <p className="py-16 text-center text-xs text-slate-400">No data for this comparison.</p> : (
+            <div className="overflow-x-auto rounded-xl border border-slate-100">
+              <table className="w-full min-w-[640px] text-left text-xs">
+                <thead>
+                  <tr className="bg-slate-800 text-[11px] uppercase tracking-wide text-white">
+                    <th className="px-3 py-2">KPI</th>
+                    <th className="px-3 py-2 text-right">Last month (till date)</th>
+                    <th className="px-3 py-2 text-right">Current month (till date)</th>
+                    <th className="px-3 py-2 text-right">Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {compareRows.map((r, i) => (
+                    <tr key={r[0]} className={`border-t border-slate-100 ${i % 2 ? "bg-white" : "bg-slate-50"}`}>
+                      <td className="px-3 py-2 font-semibold text-slate-800">{r[0]}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r[1]}</td>
+                      <td className="px-3 py-2 text-right font-semibold tabular-nums">{r[2]}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r[3]}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : (
+          compareGroups.length === 0 ? <p className="py-16 text-center text-xs text-slate-400">No data for this view.</p> : (
+            <div className="max-h-[560px] overflow-auto rounded-xl border border-slate-100">
+              <table className="w-full min-w-[980px] text-left text-xs">
+                <thead className="sticky top-0 bg-slate-800 text-[11px] uppercase tracking-wide text-white">
+                  <tr>
+                    <th className="px-2 py-2">{compareView === "am" ? "AM" : compareView === "tl" ? "TL" : compareView === "vintage" ? "Vintage" : "Agent"}</th>
+                    <th className="px-2 py-2 text-right">Calls (last)</th>
+                    <th className="px-2 py-2 text-right">Calls (current)</th>
+                    <th className="px-2 py-2 text-right">Sales (last)</th>
+                    <th className="px-2 py-2 text-right">Sales (current)</th>
+                    <th className="px-2 py-2 text-right">Revenue (last)</th>
+                    <th className="px-2 py-2 text-right">Revenue (current)</th>
+                    <th className="px-2 py-2 text-right">Revenue change</th>
+                    <th className="px-2 py-2 text-right">Ach % (last)</th>
+                    <th className="px-2 py-2 text-right">Ach % (current)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {compareGroups.map((g, i) => {
+                    const chg = g.l.revenue > 0 ? `${r1(((g.t.revenue - g.l.revenue) / g.l.revenue) * 100)}%` : "—";
+                    return (
+                      <tr key={g.name} className={`border-t border-slate-100 ${i % 2 ? "bg-white" : "bg-slate-50"}`}>
+                        <td className="px-2 py-1.5 font-semibold text-slate-800">{g.name}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{int(g.l.calls)}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{int(g.t.calls)}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{int(g.l.saleCount)}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{int(g.t.saleCount)}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{formatINR(g.l.revenue)}</td>
+                        <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{formatINR(g.t.revenue)}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{chg}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{g.l.monthlyTarget > 0 ? `${g.l.achPct}%` : "—"}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{g.t.monthlyTarget > 0 ? `${g.t.achPct}%` : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+      </SectionCard>
+    </div>
+  );
+
   return (
     <div className="space-y-3">
-      <DashboardHero<"outbound">
+      <DashboardHero<HeroTab>
         icon={Home} eyebrow="Housing Owner · Calls • Sales • Revenue • Team Performance" title="Outbound Performance Dashboard"
-        tabs={[{ key: "outbound", label: "Outbound" }]} activeTab="outbound" onTabChange={() => {}}
+        tabs={heroTabs} activeTab={heroTab} onTabChange={setHeroTab}
         gradient="from-orange-600 via-amber-600 to-orange-700"
       />
       {toolbar}
@@ -1067,25 +1272,60 @@ export function HousingOwnerDashboard() {
                 <Seg value={agentView} onChange={(v) => setAgentView(v)} options={[{ key: "chart", label: "Top 10" }, { key: "table", label: "All agents" }]} />
               </div>
             }
-            footnote={agentView === "chart" ? "Click a bar for that agent's week-wise and date-wise breakdown, or switch to All agents for the full table." : undefined}
+            footnote={agentView === "chart" ? "Click a row for that agent's week-wise and date-wise breakdown, or switch to All agents for the full table." : undefined}
           >
             {agentView === "chart" ? (
               topAgents.length === 0 ? <p className="py-16 text-center text-xs text-slate-400">No agent activity in this range.</p> : (
-                <ResponsiveContainer width="100%" height={260}>
-                  <ComposedChart data={topAgents} margin={{ top: 4, right: 8, left: -8, bottom: 30 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-28} textAnchor="end" height={54} />
-                    <YAxis yAxisId="l" tick={{ fontSize: 9 }} />
-                    <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 9 }} />
-                    <Tooltip {...TOOLTIP_PROPS} labelFormatter={(_, p) => String((p?.[0]?.payload as { full?: string })?.full ?? "")} formatter={(v: number, n: string) => (n === "Revenue" ? formatINR(v) : int(v))} />
-                    <Legend verticalAlign="top" wrapperStyle={{ fontSize: 11 }} />
-                    <Bar yAxisId="l" dataKey="calls" name="Total Calls" fill={COLORS.calls} radius={[3, 3, 0, 0]} maxBarSize={20} cursor="pointer"
-                      onClick={(d: { payload?: { full: string; pred: Pred } }) => { if (d?.payload) openEntity(d.payload.full, d.payload.pred); }} />
-                    <Bar yAxisId="l" dataKey="connected" name="Connected Calls" fill={COLORS.connected} radius={[3, 3, 0, 0]} maxBarSize={20} cursor="pointer"
-                      onClick={(d: { payload?: { full: string; pred: Pred } }) => { if (d?.payload) openEntity(d.payload.full, d.payload.pred); }} />
-                    <Line yAxisId="r" type="monotone" dataKey="saleCount" name="Sale Count" stroke={COLORS.sale} strokeWidth={2} dot={{ r: 3 }} />
-                  </ComposedChart>
-                </ResponsiveContainer>
+                <div className="max-h-[520px] overflow-auto rounded-xl border border-slate-100">
+                  <table className="w-full min-w-[1200px] text-left text-xs">
+                    <thead className="sticky top-0 bg-slate-800 text-[11px] uppercase tracking-wide text-white">
+                      <tr>
+                        <th className="px-2 py-2">#</th>
+                        <th className="px-2 py-2">Agent</th>
+                        <th className="px-2 py-2">TL</th>
+                        <th className="px-2 py-2">AM</th>
+                        <th className="px-2 py-2">Vintage</th>
+                        <th className="px-2 py-2 text-right">Calls</th>
+                        <th className="px-2 py-2 text-right">Connected</th>
+                        <th className="px-2 py-2 text-right">Conn %</th>
+                        <th className="px-2 py-2 text-right">Sales</th>
+                        <th className="px-2 py-2 text-right">Revenue</th>
+                        <th className="px-2 py-2 text-right">Target</th>
+                        <th className="px-2 py-2 text-right">Ach %</th>
+                        <th className="px-2 py-2">Stage</th>
+                        <th className="px-2 py-2 text-right">MTD Target</th>
+                        <th className="px-2 py-2 text-right">MTD %</th>
+                        <th className="px-2 py-2 text-right">Avg Talk</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topAgents.map((r, i) => (
+                        <tr
+                          key={r.agent}
+                          onClick={() => openEntity(r.agent, r.pred)}
+                          className={`cursor-pointer border-t border-slate-100 hover:bg-amber-50 ${i % 2 ? "bg-white" : "bg-slate-50"}`}
+                        >
+                          <td className="px-2 py-1.5 font-bold text-slate-500">{i + 1}</td>
+                          <td className="px-2 py-1.5 font-semibold text-slate-800">{r.agent}</td>
+                          <td className="px-2 py-1.5">{r.tl}</td>
+                          <td className="px-2 py-1.5">{r.am}</td>
+                          <td className="px-2 py-1.5">{r.vintage}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{int(r.m.calls)}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{int(r.m.connected)}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{r.m.connectedPct}%</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{int(r.m.saleCount)}</td>
+                          <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{formatINR(r.m.revenue)}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{r.m.monthlyTarget > 0 ? formatINR(r.m.monthlyTarget) : "—"}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{r.m.monthlyTarget > 0 ? `${r.m.achPct}%` : "—"}</td>
+                          <td className="px-2 py-1.5">{stageOf(r.m.achPct, r.m.monthlyTarget > 0)}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{r.m.mtdTarget > 0 ? formatINR(r.m.mtdTarget) : "—"}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{r.m.mtdTarget > 0 ? `${r.m.mtdPct}%` : "—"}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{r.m.avgTalkSec > 0 ? fmtHms(r.m.avgTalkSec) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )
             ) : (
               <div>
@@ -1146,6 +1386,27 @@ export function HousingOwnerDashboard() {
                       ))}
                       {tableSort.sorted.length === 0 && <tr><td colSpan={12} className="py-6 text-center text-slate-400">No agents match.</td></tr>}
                     </tbody>
+                    {tableSort.sorted.length > 0 && (() => {
+                      const t = sumTotals(tableSort.sorted.map((r) => r.m));
+                      return (
+                        <tfoot>
+                          <tr className="border-t-2 border-slate-300 bg-slate-100 font-bold text-slate-800">
+                            <td className="px-2 py-2 text-left">Total ({tableSort.sorted.length} agents)</td>
+                            <td className="px-2 py-2" />
+                            <td className="px-2 py-2" />
+                            <td className="px-2 py-2" />
+                            <td className="px-2 py-2">{int(t.calls)}</td>
+                            <td className="px-2 py-2 text-sky-700">{t.connectedPct}%</td>
+                            <td className="px-2 py-2">{int(t.saleCount)}</td>
+                            <td className="px-2 py-2 text-emerald-700">{formatINR(t.revenue)}</td>
+                            <td className="px-2 py-2">{t.monthlyTarget > 0 ? formatINR(t.monthlyTarget) : "—"}</td>
+                            <td className={`px-2 py-2 ${pctTone(t.achPct, t.monthlyTarget > 0)}`}>{t.monthlyTarget > 0 ? `${t.achPct}%` : "—"}</td>
+                            <td className="px-2 py-2" />
+                            <td className="px-2 py-2 text-slate-400">—</td>
+                          </tr>
+                        </tfoot>
+                      );
+                    })()}
                   </table>
                 </div>
               </div>
@@ -1188,7 +1449,14 @@ export function HousingOwnerDashboard() {
                   getSheets={() => [{
                     name: "Active agents",
                     columns: ["Agent", "TL", "AM", "Vintage", "Calls", "Connected", "Conn %", "Sales", "Revenue", "Target", "Ach %", "Avg Talk"],
-                    rows: activeAgents.map((a) => [a.agent, a.tl, a.am, a.vintage, a.m.calls, a.m.connected, `${a.m.connectedPct}%`, a.m.saleCount, Math.round(a.m.revenue), Math.round(a.m.monthlyTarget), a.m.monthlyTarget > 0 ? `${a.m.achPct}%` : "—", a.m.avgTalkSec > 0 ? fmtHms(a.m.avgTalkSec) : "—"]),
+                    rows: [
+                      ...activeAgents.map((a) => [a.agent, a.tl, a.am, a.vintage, a.m.calls, a.m.connected, `${a.m.connectedPct}%`, a.m.saleCount, Math.round(a.m.revenue), Math.round(a.m.monthlyTarget), a.m.monthlyTarget > 0 ? `${a.m.achPct}%` : "—", a.m.avgTalkSec > 0 ? fmtHms(a.m.avgTalkSec) : "—"]),
+                      ...(activeAgents.length > 0 ? (() => {
+                        const t = sumTotals(activeAgents.map((a) => a.m));
+                        const connected = activeAgents.reduce((s, a) => s + a.m.connected, 0);
+                        return [["Total", "", "", "", t.calls, connected, `${t.connectedPct}%`, t.saleCount, Math.round(t.revenue), Math.round(t.monthlyTarget), t.monthlyTarget > 0 ? `${t.achPct}%` : "—", "—"]];
+                      })() : []),
+                    ],
                   }]}
                 />
                 <button type="button" onClick={() => setActiveOpen(false)} aria-label="Close" className="rounded-lg p-1.5 text-white/85 hover:bg-white/15"><X className="h-5 w-5" /></button>
@@ -1220,6 +1488,25 @@ export function HousingOwnerDashboard() {
                   ))}
                   {activeAgents.length === 0 && <tr><td colSpan={10} className="py-8 text-center text-slate-400">None</td></tr>}
                 </tbody>
+                {activeAgents.length > 0 && (() => {
+                  const t = sumTotals(activeAgents.map((a) => a.m));
+                  return (
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-300 bg-slate-100 font-bold text-slate-800">
+                        <td className="whitespace-nowrap px-2 py-2 text-left">Total ({activeAgents.length} agents)</td>
+                        <td className="px-2 py-2" />
+                        <td className="px-2 py-2" />
+                        <td className="px-2 py-2" />
+                        <td className="px-2 py-2">{int(t.calls)}</td>
+                        <td className="px-2 py-2 text-sky-700">{t.connectedPct}%</td>
+                        <td className="px-2 py-2">{int(t.saleCount)}</td>
+                        <td className="px-2 py-2 text-emerald-700">{formatINR(t.revenue)}</td>
+                        <td className="px-2 py-2">{t.monthlyTarget > 0 ? formatINR(t.monthlyTarget) : "—"}</td>
+                        <td className={`px-2 py-2 ${pctTone(t.achPct, t.monthlyTarget > 0)}`}>{t.monthlyTarget > 0 ? `${t.achPct}%` : "—"}</td>
+                      </tr>
+                    </tfoot>
+                  );
+                })()}
               </table>
             </div>
           </aside>

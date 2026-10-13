@@ -27,12 +27,12 @@ export function istHour(d: Date): number {
   return new Date(d.getTime() + IST_MS).getUTCHours();
 }
 
-/** Mon-Sat 09:00 to under 20:00 IST (D3; one rule with the guard chain). */
+/** 09:00 to under 20:00 IST every day (D3; one rule with the guard chain). */
 export function withinSendWindow(now: Date): boolean {
   return inSendWindow(now);
 }
 
-/** Next Mon-Sat 09:00 IST at or after now. */
+/** Next send-day 09:00 IST at or after now. */
 export function nextWindowOpen(now: Date): Date {
   return nextSendWindowOpen(now);
 }

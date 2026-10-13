@@ -4,7 +4,8 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import {
-  PROCESSES, getTargetsPage, getTargetDetail, setOverride, deleteOverride, auditEntityId, normName, saveManualAgent, deleteManualAgent, type ProcessKey, type TargetLevel,
+  PROCESSES, getTargetsPage, getTargetDetail, setOverride, deleteOverride, auditEntityId, normName, saveManualAgent, deleteManualAgent,
+  setAssignmentOverride, deleteAssignmentOverride, type ProcessKey, type TargetLevel,
 } from "./process-targets.service.js";
 
 type Handler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -15,6 +16,8 @@ type Handler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
  *   GET    <base>/detail     one entity with its children and history
  *   PUT    <base>            change a target (audited)
  *   DELETE <base>/:id        reset to the roster target (audited)
+ *   PUT    <base>/assignment        reassign an agent's TL/AM (Center) (audited)
+ *   DELETE <base>/assignment/:id    reset to the roster's TL/AM (audited)
  * ACCESS IS BY EXPLICIT PER-USER GRANT ONLY. The page is a page_catalog entry (PP_HOUSING_OWNER_PROCESS_DETAILS /
  * PP_HOUSING_PREMIUM_PROCESS_DETAILS) that an admin assigns to individual users in Access Control (user_page_access): can_view to
  * read, can_edit to change targets or add / remove agents. No role carries these pages, so a role alone gives no access; a super admin
@@ -91,6 +94,46 @@ export function mountProcessTargetRoutes(
       req,
     });
     res.json({ success: true, data: change });
+  }));
+
+  // ---- TL / AM (group) reassignment for an existing roster agent (the uploaded roster is never touched)
+  const assignAudit = (name: string) => auditEntityId(process, "agent", name);
+
+  router.put(`${base}/assignment`, canEdit, h(async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const name = String(body.name ?? "");
+    let change;
+    try {
+      change = await setAssignmentOverride(process, {
+        entityName: name, effectiveMonth: String(body.month ?? ""), tl: String(body.tl ?? ""), group: String(body.group ?? ""),
+      }, req.authUser!.id);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "ER_NO_SUCH_TABLE") return res.status(409).json({ success: false, error: "The assignment table db_masmis.process_agent_assignment_override does not exist yet." });
+      return res.status(400).json({ success: false, error: err instanceof Error ? err.message : "Invalid assignment" });
+    }
+    const n = change.newValue;
+    await writeAuditLog({
+      actor_user_id: req.authUser!.id,
+      action_type: `${process.toUpperCase()}_ASSIGNMENT_${change.oldValue ? "UPDATE" : "CREATE"}`,
+      module_key: "process-performance", entity_type: "process_target", entity_id: assignAudit(n.agentName),
+      metadata: { process, name: n.agentName, month: n.effectiveMonth, reason: body.reason ? String(body.reason).slice(0, 500) : null, oldValue: change.oldValue, newValue: n },
+      req,
+    });
+    res.json({ success: true, data: change });
+  }));
+
+  router.delete(`${base}/assignment/:id`, canEdit, h(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ success: false, error: "Invalid id" });
+    const removed = await deleteAssignmentOverride(process, id);
+    if (!removed) return res.status(404).json({ success: false, error: "Assignment override not found" });
+    await writeAuditLog({
+      actor_user_id: req.authUser!.id, action_type: `${process.toUpperCase()}_ASSIGNMENT_DELETE`, module_key: "process-performance",
+      entity_type: "process_target", entity_id: assignAudit(removed.agentName),
+      metadata: { process, name: normName(removed.agentName), month: removed.effectiveMonth, reason: "reset to roster TL/AM", oldValue: removed, newValue: null }, req,
+    });
+    res.json({ success: true, data: removed });
   }));
 
   // ---- agents added by hand (merged into the roster at read time; the uploaded roster is never touched)

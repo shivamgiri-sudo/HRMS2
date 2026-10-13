@@ -51,6 +51,10 @@ import * as nocCaseService from '../payroll/noc-case.service.js';
 import { notifyInviteSent } from '../payroll/noc.notifications.js';
 import { inboxService } from '../inbox/inbox.service.js';
 import { resolveRoleHolderUserIds } from '../../shared/recipient-resolver.js';
+import {
+  isNocAutoClearanceEnabled,
+  NOC_OPEN_AHEAD_DAYS,
+} from '../payroll/noc-auto-profile.js';
 
 const TERMINAL_STATUSES = [
   'draft', 'exited', 'revoked', 'rejected', 'cancelled', 'withdrawn',
@@ -86,6 +90,9 @@ async function resolveBranchHrUserId(branchId: string | null): Promise<string | 
 }
 
 export async function runNocLwdTrigger(): Promise<NocLwdTriggerResult> {
+  // Auto-clearance profile: open up to NOC_OPEN_AHEAD_DAYS before the LWD so evidence-based
+  // stages clear during notice. Off => exactly the old on-or-after-LWD window.
+  const aheadDays = (await isNocAutoClearanceEnabled()) ? NOC_OPEN_AHEAD_DAYS : 0;
   const placeholders = TERMINAL_STATUSES.map(() => '?').join(',');
   const [rows] = await db.execute<TriggerRow[]>(
     `SELECT er.id       AS exit_request_id,
@@ -98,10 +105,10 @@ export async function runNocLwdTrigger(): Promise<NocLwdTriggerResult> {
        JOIN employees e ON e.id = er.employee_id
       WHERE er.last_working_day_confirmed IS NOT NULL
         AND er.last_working_day_confirmed >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-        AND er.last_working_day_confirmed <= CURDATE()
+        AND er.last_working_day_confirmed <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
         AND er.status NOT IN (${placeholders})
       ORDER BY er.last_working_day_confirmed ASC`,
-    [LOOKBACK_DAYS, ...TERMINAL_STATUSES],
+    [LOOKBACK_DAYS, aheadDays, ...TERMINAL_STATUSES],
   );
 
   const result: NocLwdTriggerResult = {
@@ -132,6 +139,14 @@ export async function runNocLwdTrigger(): Promise<NocLwdTriggerResult> {
 
       result.created++;
 
+      // Under the auto profile, clear whatever the evidence already proves right away rather
+      // than waiting for the next hourly sweep. No-op while the flag is off.
+      void import('../payroll/noc-auto-clear.service.js')
+        .then((m) => m.runAutoClearForCase(caseId))
+        .catch((e: unknown) =>
+          console.warn('[noc-lwd-trigger] auto-clear failed:', (e as Error).message),
+        );
+
       // Send the form invite. For absconding employees the email may not reach
       // them — HR will use "Record on behalf" from the clearance workspace.
       try {
@@ -156,7 +171,7 @@ export async function runNocLwdTrigger(): Promise<NocLwdTriggerResult> {
             : `Clearance chain opened on LWD. Form invite sent to the employee.`,
           entity_type: 'noc_case',
           entity_id: caseId,
-          action_url: `/payroll/noc?case=${caseId}`,
+          action_url: `/payroll/noc-cases?case=${caseId}`,
           priority: 'high',
         }).catch(() => undefined);
       }

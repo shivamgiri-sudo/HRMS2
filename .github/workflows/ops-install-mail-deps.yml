@@ -1,0 +1,38 @@
+# One-time install of the two packages the candidate-reply reader needs (imapflow, mailparser) on the production host. The deploy ships
+# only compiled code, so a new dependency is never installed by it; without these the reader fails every five minutes with
+# "Cannot find package 'imapflow'". Installs into backend/node_modules without touching package.json, then restarts the API process
+# (the reader runs there). Runs on the self-hosted runner because /var/www/HRMS2 and pm2 exist only on 192.168.11.225.
+
+name: Ops install mail reader packages
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-install-mail-deps
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Install imapflow and mailparser on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Install
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /var/www/HRMS2/backend
+          npm install --no-save --no-audit --no-fund --omit=dev imapflow@1.0.164 mailparser@3.7.2
+          node -e 'import("imapflow").then(()=>import("mailparser")).then(()=>console.log("packages load: ok")).catch((e)=>{console.error("load failed:", e.message); process.exit(1)})'
+      - name: Restart the API process
+        shell: bash
+        run: |
+          set -euo pipefail
+          pm2 restart hrms2-backend --update-env --no-color
+          pm2 save --no-color
+          pm2 status hrms2-backend --no-color

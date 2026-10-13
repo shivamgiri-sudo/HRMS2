@@ -26,7 +26,8 @@ beforeEach(() => {
   vi.resetModules();
   execute.mockReset();
   tableExists.mockReset();
-  tableExists.mockResolvedValue(true);
+  // The db_bill mirror leg (owner decision 2026-10-12) has its own tests; the fixtures here are about the HRMS legs.
+  tableExists.mockImplementation(async (t: string) => t !== "grn_entry_line_snapshot");
 
   execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
     const q = String(sql);

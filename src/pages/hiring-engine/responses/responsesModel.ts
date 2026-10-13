@@ -172,6 +172,11 @@ export function confirmPrompt(row: PromptRow, a: QueueAction): string | null {
 export function classifyBody(row: { matchedBy?: ResponseRow["matchedBy"] }, a: Extract<QueueAction, { answer: ResponseAnswer }>): { answer: ResponseAnswer; apply: boolean; confirmPerson?: true } {
   return { answer: a.answer, apply: a.apply, ...(row.matchedBy === "sender" && a.apply ? { confirmPerson: true as const } : {}) };
 }
+/** Replies HR can clear in one go: read as Will come with at least this much certainty, already tied to a booking, no conflict. */
+export const BULK_MIN_CONFIDENCE = 0.9;
+export function bulkWillCome<T extends Pick<ResponseRow, "suggested" | "confidence" | "matchId" | "conflict">>(rows: readonly T[]): T[] {
+  return rows.filter((r) => r.suggested === "confirm" && (r.confidence ?? 0) >= BULK_MIN_CONFIDENCE && !!r.matchId && !r.conflict);
+}
 export const queueBuckets = (c: QueueCounts | null | undefined): Array<{ label: string; n: number }> => [
   { label: "under 1 h", n: c?.under1h ?? 0 }, { label: "1 to 4 h", n: c?.h1to4 ?? 0 }, { label: "4 to 24 h", n: c?.h4to24 ?? 0 }, { label: "over 24 h", n: c?.over24h ?? 0 },
 ];

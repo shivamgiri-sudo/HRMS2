@@ -43,7 +43,9 @@ import {
 } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import * as nocCase from "./noc-case.service.js";
+import { approveNocFinal, listAwaitingFinalApproval, nocFinalApprovalFrom } from "./noc-final-approval.service.js";
 import { filterVisibleEmployeeIds, guardEmployee } from "./payroll-branch-scope.js";
+import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import {
   overrideNocRelease,
   nocBlockedEmployeesForRuns,
@@ -103,6 +105,8 @@ const READ_ROLES = [
   "manager",
   "tl",
   "team_leader",
+  "wfm",
+  "branch_wfm",
 ];
 
 /** Roles allowed to open a case and send the employee invite. */
@@ -217,12 +221,51 @@ async function canAccessCase(
 // Dashboard / list
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * How the caller may read NOC cases.
+ *   staff - holds one of READ_ROLES: branch/assignment scoped exactly as before.
+ *   self  - holds only the plain "employee" role: may read ONLY their own case(s).
+ *   none  - anything else.
+ * An employee sees their own clearance status and never anyone else's; every write route keeps its own
+ * role gate, so this adds no ability to act.
+ */
+async function readMode(
+  userId: string,
+): Promise<{ mode: "staff" } | { mode: "self"; employeeId: string } | { mode: "none" }> {
+  if (await hasAnyRole(userId, ...READ_ROLES)) return { mode: "staff" };
+  if (await hasAnyRole(userId, "employee")) {
+    const me = await getEmployeeForUser(userId);
+    if (me?.id) return { mode: "self", employeeId: String(me.id) };
+  }
+  return { mode: "none" };
+}
+
+/**
+ * Row scope for the case list, summary and filter options. One definition so the three can never
+ * disagree about what the caller is allowed to see.
+ */
+async function caseScope(
+  userId: string,
+  read: { mode: string; employeeId?: string },
+): Promise<{ sql: string; params: unknown[] }> {
+  if (read.mode === "self") {
+    return { sql: "c.employee_id = ?", params: [read.employeeId] as unknown[] };
+  }
+  return buildScopeWhereClause(
+    userId,
+    READ_ROLES,
+    { branchId: "c.branch_id", processId: "c.process_id", employeeId: "c.employee_id" },
+    { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
+  );
+}
+
 // GET /api/payroll/noc-cases
 nocCaseRouter.get(
   "/",
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (!(await hasAnyRole(userId, ...READ_ROLES))) {
+    const read = await readMode(userId);
+    if (read.mode === "none") {
       return refuse(
         res,
         403,
@@ -234,40 +277,97 @@ nocCaseRouter.get(
     // Row scoping through the same builder every other scoped list uses, so a branch user sees
     // their branch and Payroll Head / HR see everything. allowCeoAllRead keeps leadership read-only
     // visibility consistent with the rest of the payroll module.
-    const scope = await buildScopeWhereClause(
-      userId,
-      READ_ROLES,
-      {
-        branchId: "c.branch_id",
-        processId: "c.process_id",
-        employeeId: "c.employee_id",
-      },
-      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
-    );
+    const scope = await caseScope(userId, read);
 
     const {
       status,
+      statusGroup,
       branchId,
+      processId,
       stageKey,
       stageStatus,
       slaBreachedOnly,
+      awaitingFinal,
       search,
       limit,
+      offset,
     } = req.query as Record<string, string>;
 
-    const rows = await nocCase.listCases(
+    // "Awaiting final approval" only means something once the Payroll Head gate is switched on.
+    const awaitingFinalFrom =
+      awaitingFinal === "true" ? await nocFinalApprovalFrom() : null;
+    if (awaitingFinal === "true" && !awaitingFinalFrom) {
+      return res.json({ success: true, data: [], total: 0 });
+    }
+
+    const { rows, total } = await nocCase.listCasesPage(
       {
         status,
+        statusGroup: statusGroup === "open" ? "open" : undefined,
         branchId,
+        processId,
         stageKey,
         stageStatus,
-        search,
+        search: search?.trim() || undefined,
         slaBreachedOnly: slaBreachedOnly === "true",
+        awaitingFinalFrom,
         limit: limit ? Number(limit) : undefined,
+        offset: offset ? Number(offset) : undefined,
       },
       scope,
     );
-    return res.json({ success: true, data: rows });
+    return res.json({
+      success: true,
+      total,
+      data: read.mode === "self" ? rows.map((r) => nocCase.employeeSafeListRow(r)) : rows,
+    });
+  }),
+);
+
+/**
+ * GET /api/payroll/noc-cases/filters — the branches and processes that actually have a NOC case
+ * inside the caller's scope, so the dropdowns never offer an empty option or one the caller
+ * cannot see. Registered above the /:id routes.
+ */
+nocCaseRouter.get(
+  "/filters",
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    const read = await readMode(userId);
+    if (read.mode === "none") {
+      return refuse(res, 403, "NOC_ACCESS_DENIED", "You do not have access to NOC clearance records.");
+    }
+    const scope = await caseScope(userId, read);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT c.branch_id, b.branch_name, c.process_id, p.process_name, COUNT(*) AS cnt
+         FROM noc_case c
+         LEFT JOIN branch_master b ON b.id = c.branch_id
+         LEFT JOIN process_master p ON p.id = c.process_id
+        WHERE (${scope.sql})
+        GROUP BY c.branch_id, b.branch_name, c.process_id, p.process_name`,
+      scope.params,
+    );
+    const branches = new Map<string, { id: string; name: string; count: number }>();
+    const processes = new Map<string, { id: string; name: string; branchIds: string[]; count: number }>();
+    for (const r of rows) {
+      const n = Number(r.cnt);
+      if (r.branch_id) {
+        const b = branches.get(String(r.branch_id)) ?? { id: String(r.branch_id), name: String(r.branch_name ?? r.branch_id), count: 0 };
+        b.count += n;
+        branches.set(b.id, b);
+      }
+      if (r.process_id) {
+        const p = processes.get(String(r.process_id)) ?? { id: String(r.process_id), name: String(r.process_name ?? r.process_id), branchIds: [], count: 0 };
+        p.count += n;
+        if (r.branch_id && !p.branchIds.includes(String(r.branch_id))) p.branchIds.push(String(r.branch_id));
+        processes.set(p.id, p);
+      }
+    }
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+    return res.json({
+      success: true,
+      data: { branches: [...branches.values()].sort(byName), processes: [...processes.values()].sort(byName) },
+    });
   }),
 );
 
@@ -282,7 +382,8 @@ nocCaseRouter.get(
   "/summary",
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (!(await hasAnyRole(userId, ...READ_ROLES))) {
+    const read = await readMode(userId);
+    if (read.mode === "none") {
       return refuse(
         res,
         403,
@@ -290,16 +391,13 @@ nocCaseRouter.get(
         "You do not have access to NOC clearance records.",
       );
     }
-    const scope = await buildScopeWhereClause(
-      userId,
-      READ_ROLES,
-      {
-        branchId: "c.branch_id",
-        processId: "c.process_id",
-        employeeId: "c.employee_id",
-      },
-      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
-    );
+    const scope = await caseScope(userId, read);
+    // The board follows the page's branch / process filters, so its numbers always name the same
+    // population as the list under it.
+    const f = { sql: "", params: [] as unknown[] };
+    const q = req.query as Record<string, string>;
+    if (q.branchId) { f.sql += " AND c.branch_id = ?"; f.params.push(q.branchId); }
+    if (q.processId) { f.sql += " AND c.process_id = ?"; f.params.push(q.processId); }
 
     const [byRole] = await db.execute<RowDataPacket[]>(
       `SELECT s.display_no, s.stage_key, s.stage_label,
@@ -310,18 +408,18 @@ nocCaseRouter.get(
        FROM noc_signatory s
        JOIN noc_case c ON c.id = s.noc_case_id
       WHERE (${scope.sql})
-        AND c.status NOT IN ('completed','cancelled')
+        AND c.status NOT IN ('completed','cancelled')${f.sql}
       GROUP BY s.display_no, s.stage_key, s.stage_label
       ORDER BY s.display_no`,
-      scope.params,
+      [...scope.params, ...f.params],
     );
 
     const [byStatus] = await db.execute<RowDataPacket[]>(
       `SELECT c.status, COUNT(*) AS cnt
        FROM noc_case c
-      WHERE (${scope.sql})
+      WHERE (${scope.sql})${f.sql}
       GROUP BY c.status`,
-      scope.params,
+      [...scope.params, ...f.params],
     );
 
     return res.json({ success: true, data: { byRole, byStatus } });
@@ -378,7 +476,8 @@ nocCaseRouter.get(
   "/employee/:employeeId",
   h(async (req, res) => {
     const userId = req.authUser!.id;
-    if (!(await hasAnyRole(userId, ...READ_ROLES))) {
+    const read = await readMode(userId);
+    if (read.mode === "none") {
       return refuse(
         res,
         403,
@@ -386,14 +485,26 @@ nocCaseRouter.get(
         "You do not have access to NOC clearance records.",
       );
     }
-    if (!(await guardEmployee(req as any, res, String(req.params.employeeId)))) return;
+    if (read.mode === "self") {
+      if (read.employeeId !== String(req.params.employeeId)) {
+        return refuse(res, 403, "NOC_OUT_OF_SCOPE", "This NOC is outside your assigned scope.");
+      }
+    } else if (!(await guardEmployee(req as any, res, String(req.params.employeeId)))) {
+      return;
+    }
     const existing = await nocCase.getCaseByEmployee(
       String(req.params.employeeId),
     );
     const release = await nocReleaseStatusForEmployee(
       String(req.params.employeeId),
     );
-    return res.json({ success: true, data: { nocCase: existing, release } });
+    return res.json({
+      success: true,
+      data: {
+        nocCase: read.mode === "self" ? nocCase.employeeSafeCaseRow(existing as never) : existing,
+        release,
+      },
+    });
   }),
 );
 
@@ -405,7 +516,12 @@ nocCaseRouter.get(
     const row = await nocCase.getCase(String(req.params.id));
     if (!row)
       return refuse(res, 404, "NOC_CASE_NOT_FOUND", "NOC case not found");
-    if (!(await canAccessCase(userId, row, READ_ROLES))) {
+    const read = await readMode(userId);
+    const allowed =
+      read.mode === "self"
+        ? read.employeeId === String(row.employee_id)
+        : read.mode === "staff" && (await canAccessCase(userId, row, READ_ROLES));
+    if (!allowed) {
       return refuse(
         res,
         403,
@@ -414,9 +530,11 @@ nocCaseRouter.get(
       );
     }
     try {
+      const detail = await nocCase.getCaseDetail(String(req.params.id));
       return res.json({
         success: true,
-        data: await nocCase.getCaseDetail(String(req.params.id)),
+        // A leaver reading their own case gets the redacted view; staff get the full record.
+        data: read.mode === "self" ? nocCase.employeeSafeCaseDetail(detail) : detail,
       });
     } catch (err) {
       return fail(res, err);
@@ -985,6 +1103,66 @@ nocCaseRouter.post(
 // ─────────────────────────────────────────────────────────────────────────────
 // Finance: settlement route
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/payroll/noc-cases/final-approval/queue
+ *
+ * Completed NOCs waiting for the Payroll Head. Payroll Head and super_admin only (hasAnyRole
+ * grants super_admin). Registered ABOVE the /:id routes so "final-approval" is never read as an id.
+ */
+nocCaseRouter.get(
+  "/final-approval/queue",
+  h(async (req, res) => {
+    if (!(await hasAnyRole(req.authUser!.id, "payroll_head"))) {
+      return refuse(res, 403, "NOC_FINAL_APPROVAL_FORBIDDEN", "Only Payroll Head can see the final-approval queue.");
+    }
+    const from = await nocFinalApprovalFrom();
+    return res.json({
+      success: true,
+      data: { enabled: Boolean(from), from, rows: await listAwaitingFinalApproval() },
+    });
+  }),
+);
+
+/**
+ * POST /api/payroll/noc-cases/:id/final-approval
+ *
+ * body: { note?: string }
+ *
+ * The Payroll Head's single hard approval of a NOC every level has cleared. This is what unlocks
+ * F&F settlement. Not delegable and not automated: payroll_head (and super_admin) only.
+ */
+nocCaseRouter.post(
+  "/:id/final-approval",
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    if (!(await hasAnyRole(userId, "payroll_head"))) {
+      return refuse(res, 403, "NOC_FINAL_APPROVAL_FORBIDDEN", "Only Payroll Head can give final approval to a NOC.");
+    }
+    const actor = await resolveActor(req);
+    try {
+      await approveNocFinal({
+        caseId: String(req.params.id),
+        actorUserId: userId,
+        actorRole: actor.role,
+        actorName: actor.name,
+        note: (req.body as { note?: string })?.note ?? null,
+      });
+      await logSensitiveAction({
+        actor_user_id: userId,
+        actor_role: actor.role ?? undefined,
+        action_type: "noc_payroll_head_final_approved",
+        module_key: "payroll_noc",
+        entity_type: "noc_case",
+        entity_id: String(req.params.id),
+        req,
+      });
+      return res.json({ success: true, message: "NOC approved. F&F settlement is now unlocked for this employee." });
+    } catch (err) {
+      return fail(res, err);
+    }
+  }),
+);
 
 /** PATCH /api/payroll/noc-cases/:id/fnf-option */
 nocCaseRouter.patch(

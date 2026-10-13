@@ -29,7 +29,7 @@ const FUTURE = "TIMESTAMP(ml.interview_date, ml.interview_time) > DATE_ADD(NOW()
 const RECENT_EXPORT = `EXISTS (SELECT 1 FROM he_lead_event ev JOIN he_lead hl ON hl.id = ev.lead_id
    WHERE ev.event_type = 'exported_for_calling' AND ev.created_at > DATE_SUB(NOW(), INTERVAL 18 HOUR)
      AND hl.mobile10 = RIGHT(REGEXP_REPLACE(ml.parsed_phone, '[^0-9]', ''), 10))`;
-const OPEN_REQ = "jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount";
+const OPEN_REQ = "jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.joined_headcount < CEIL(jr.requested_headcount * 1.3)";
 
 /**
  * Campaigns HR can prepare a list from. HRMS status is not a reliable "is it live" signal (the live Ahmedabad campaign
@@ -138,7 +138,7 @@ export async function prepareMissedWalkins(o: MissedOptions): Promise<{ rows: Pr
 
   const [leads] = await db.execute<RowDataPacket[]>(
     `SELECT ml.id, ml.parsed_name, ml.parsed_phone, ml.meta_lead_id, ml.ats_candidate_id, ml.walkin_declined,
-            (jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount) AS req_open,
+            (jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.joined_headcount < CEIL(jr.requested_headcount * 1.3)) AS req_open,
             jr.designation_name, bm.address,
             ${o.includeRecentlyExported ? "0" : RECENT_EXPORT} AS recent_export
        FROM meta_lead_raw ml

@@ -11,6 +11,7 @@ import { logger } from "../../logger.js";
 import { buildOnboardingTokenEmail } from "../ats/ats.email.service.js";
 import { emailService } from "../communication/email.service.js";
 import { providerFactory } from "../communication/providers/provider.factory.js";
+import { autoRefreshKitLinkForReminder, resendKitEsignLink } from "../employees/joiningKitDispatch.service.js";
 import {
   allBranches,
   getAccountDetailsMissingDetail,
@@ -197,6 +198,48 @@ export async function issueOnboardingLink(employeeId: string, nowMs = Date.now()
   return { link: `${env.FRONTEND_URL || "http://localhost:5173"}/onboard-full?token=${token}`, expiresAt: exp.toISOString() };
 }
 
+/** Signing links minted by the joining-kit service stay valid this long (mintFreshKitSigningLink: 15 days). */
+const KIT_LINK_TTL_MS = 15 * 24 * 60 * 60 * 1000;
+
+/** The employee's kit that is out for signing, if any (the same condition the eSign Day 3 block counts). */
+async function sentKitId(employeeId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employee_joining_esign_kit
+      WHERE employee_id = ? AND status = 'sent'
+      ORDER BY created_at DESC LIMIT 1`,
+    [employeeId],
+  );
+  return rows[0]?.id ? String(rows[0].id) : null;
+}
+
+/**
+ * The joining-document eSign link for an eSign Day 3 joiner (NOT the onboarding link). A fresh kit token is
+ * minted and the previous one superseded, exactly as a Payroll HR "Resend signing link" does. Null when no kit
+ * is out for signing, or its provider session is already dead (a resend cannot fix that; the kit must be
+ * re-dispatched from the Joining Control Room).
+ */
+export async function issueEsignKitLink(employeeId: string, nowMs = Date.now()): Promise<{ link: string; expiresAt: string } | null> {
+  const kitId = await sentKitId(employeeId);
+  if (!kitId) return null;
+  const link = await autoRefreshKitLinkForReminder(kitId);
+  return link ? { link, expiresAt: new Date(nowMs + KIT_LINK_TTL_MS).toISOString() } : null;
+}
+
+/** Emails the joiner the eSign kit's signing link, through the same branded email as the Payroll HR resend. */
+export async function emailEsignKitLink(employeeId: string, actorUserId: string | null): Promise<EmailLinkResult> {
+  const kitId = await sentKitId(employeeId);
+  if (!kitId) return { status: "no_link" };
+  try {
+    const out = await resendKitEsignLink(kitId, actorUserId);
+    if (out.resent) return { status: "sent", sentTo: (out.emailedTo ?? []).join(", ") };
+    if (/no email address/i.test(out.message)) return { status: "no_email" };
+    if (/already failed or expired/i.test(out.message)) return { status: "no_link" };
+    return { status: "failed", error: out.message };
+  } catch (err) {
+    return { status: "failed", error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** How long the Ops "Email link" action waits for the mail server before reporting failure. */
 export const EMAIL_LINK_DEADLINE_MS = 25_000;
 
@@ -331,8 +374,14 @@ export async function nudgeEmployee(input: {
     return { employeeId, status: "skipped_unconfigured" };
   }
 
-  const token = await ensureLiveOnboardingToken(r, nowMs);
-  const link = token ? `${env.FRONTEND_URL || "http://localhost:5173"}/onboard-full?token=${token}` : null;
+  // eSign Day 3 must carry the joining-kit signing link; the onboarding link would not open the document.
+  let link: string | null;
+  if (issue === "esign-pending") {
+    link = (await issueEsignKitLink(employeeId, nowMs))?.link ?? null;
+  } else {
+    const token = await ensureLiveOnboardingToken(r, nowMs);
+    link = token ? `${env.FRONTEND_URL || "http://localhost:5173"}/onboard-full?token=${token}` : null;
+  }
   const body = buildNudgeMessage(issue, { name: r.full_name, daysOpen: Number(r.days_open ?? 0), link });
 
   try {

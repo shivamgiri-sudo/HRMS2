@@ -8,20 +8,19 @@ import {
   buildDowntimeTracker,
   buildFirstCall,
 } from "./sbi-card-report-builder.js";
-import { query } from "../../db/mysql.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 
 const router = Router();
 
-const VIEWER_ROLES = requireRole([
-  "super_admin",
-  "admin",
-  "hr_admin",
-  "finance",
-  "operations_manager",
-  "process_manager",
-  "branch_head",
-  "wfm",
-]);
+/** Rows-only query helper (db.execute returns [rows, fields]). */
+async function query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+  return rows as unknown as T[];
+}
+
+
+const VIEWER_ROLES = requireRole("super_admin", "admin", "hr_admin", "finance", "operations_manager", "process_manager", "branch_head", "wfm");
 
 interface ReportMeta {
   id: string;

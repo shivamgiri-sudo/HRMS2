@@ -11,6 +11,7 @@ import { describeError } from "./commandData";
 import { BTN, FIELD, LABEL } from "./StreamActions";
 import { TYPE_LABEL } from "./driveCommandModel";
 import type { SourceType } from "./driveCommandTypes";
+import { liveWindowNote } from "./charts/summaryView";
 import { cellView, filterRows, funnelFor, matrixPath, matrixSummary, rowHeader, type CampaignMatrixData, type CellAction, type CellView, type FunnelSource, type MatrixFilters, type MatrixRowData } from "./campaignMatrixModel";
 
 const KINDS: readonly SourceType[] = ["meta_live", "meta_old", "he"];
@@ -91,13 +92,14 @@ export function CampaignMatrixView({ data, loading, error, canWrite, filters, br
         <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800 dark:text-slate-100 sm:min-h-9">
           <input type="checkbox" className="h-4 w-4 cursor-pointer accent-blue-700" checked={filters.onlyProblems} onChange={(e) => onFilters({ ...filters, onlyProblems: e.target.checked })} /> Only problems
         </label>
-        {sum && <p className="text-xs text-slate-700 dark:text-slate-200">{sum.rows} rows: {sum.running} running, {sum.idle} idle, {sum.notMapped} not mapped</p>}
+        {sum && <p className="text-xs text-slate-700 dark:text-slate-200">{sum.rows} requisitions x 3 drive types = {sum.rows * 3} drives: {sum.running} running, {sum.idle} idle, {sum.notMapped} not mapped{sum.rows * 3 - sum.running - sum.idle - sum.notMapped > 0 ? `, ${sum.rows * 3 - sum.running - sum.idle - sum.notMapped} other` : ""}</p>}
       </div>
       {loading && !data && <div aria-busy="true" aria-label="Loading the campaign map" className="h-40 animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" />}
       {error && !data && (
         <p role="alert" className="flex flex-wrap items-center gap-2 text-sm text-rose-800 dark:text-rose-200"><AlertTriangle className="h-4 w-4" aria-hidden /> Could not load the campaign map: {error}
           <button type="button" className={BTN} onClick={onRetry}>Retry</button></p>
       )}
+      {data && liveWindowNote(data) && <p className="text-xs text-slate-700 dark:text-slate-200">{liveWindowNote(data)}</p>}
       {data && data.partial.length > 0 && <p className="text-xs text-amber-900 dark:text-amber-200">Some facts could not be read ({data.partial.join(", ")}); their reasons may be missing.</p>}
       {data && data.rows.length === 0 && <p className="text-sm text-slate-700 dark:text-slate-200">No campaign or open requisition in your scope.</p>}
       {data && data.rows.length > 0 && (

@@ -27,8 +27,9 @@ export const grnAdapter: ApprovalAdapter = {
   category: "Finance",
   async list(ctx) {
     const roles = await callerRoles(ctx);
-    const isSuper = hasRole(roles, "super_admin");
-    const statuses = Object.keys(STAGES).filter((s) => isSuper || hasRole(roles, STAGES[s].role));
+    // Stage-role designated: the module also lets super_admin review any stage (a bypass), but the popup is "pending ON ME", so the
+    // caller must literally hold the stage's role. super_admin alone sees nothing here.
+    const statuses = Object.keys(STAGES).filter((s) => hasRole(roles, STAGES[s].role));
     if (!statuses.length) return [];
     const scope = await callerBranchScope(ctx, roles);
     if (!scope) return [];
@@ -39,6 +40,8 @@ export const grnAdapter: ApprovalAdapter = {
       const res = await ctx.call("GET", "/api/finance/grns", { query: { status, limit: 100 } });
       for (const r of rowsOf(res)) {
         if (str(r.status) !== status) continue;
+        // Migrated GRNs carry legacy_raised_by_name (g.* in the list) and no live raiser: history, never listed.
+        if (str(r.legacy_raised_by_name)) continue;
         // Reads include Head Office bills shared onto a branch; the review route only admits the record's own branch.
         if (!inBranchScope(scope, r.branch_id)) continue;
         // Owner branch policy: the finance scope resolver treats `admin` as all-branch and unions assignment-granted branches, so a

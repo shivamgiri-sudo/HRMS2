@@ -12,7 +12,27 @@ export interface ListResult {
   counts: Record<string, number>;
   /** Kinds whose list call failed — shown as a soft warning, never hides the rest. */
   failed: Array<{ kind: string; label: string; reason: string }>;
+  /** Pending items older than the freshness window that are NOT listed (they remain on their module pages). */
+  staleHidden: number;
   generatedAt: string;
+  /** True while some queues are still computing; the client re-asks shortly and gets the full list from the cache. */
+  partial?: boolean;
+  pendingKinds?: string[];
+  /** Per-queue wall time in ms (diagnostics only, no personal data). */
+  timings?: Record<string, number>;
+}
+
+/**
+ * Freshness window: the popup is "pending on me, now". Items submitted more than this many days ago are not listed (they are
+ * counted in `staleHidden` and stay on their own pages). APPROVAL_CENTER_MAX_AGE_DAYS=0 disables the window. Read per call so
+ * tests and ops can change it without a restart-order dependency.
+ */
+export const DEFAULT_MAX_AGE_DAYS = 60;
+export function maxAgeDays(): number {
+  const raw = process.env.APPROVAL_CENTER_MAX_AGE_DAYS;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_MAX_AGE_DAYS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_AGE_DAYS;
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -32,48 +52,77 @@ async function mapLimit<T, R>(list: T[], limit: number, fn: (x: T) => Promise<R>
   return out;
 }
 
-/** One list build per user at a time: a double-open / refetch storm shares the in-flight build. */
-const building = new Map<string, Promise<ListResult>>();
-
 const PRIORITY_RANK = { high: 0, normal: 1 } as const;
 
+/** uids this person just decided, hidden from their list for a few minutes while module lists catch up. */
+const DECIDED_TTL_MS = 180_000;
+const decided = new Map<string, Map<string, number>>();
+function decidedUids(userId: string): Set<string> {
+  const m = decided.get(userId);
+  const out = new Set<string>();
+  if (!m) return out;
+  const now = Date.now();
+  for (const [uid, exp] of m) {
+    if (exp > now) out.add(uid);
+    else m.delete(uid);
+  }
+  return out;
+}
+function markDecided(userId: string, uid: string) {
+  let m = decided.get(userId);
+  if (!m) decided.set(userId, (m = new Map()));
+  m.set(uid, Date.now() + DECIDED_TTL_MS);
+}
+
+/**
+ * Drops the cached list AND detaches any in-flight build: a build that started before a decision would otherwise be shared
+ * with the next request and re-cached, showing the just-actioned item again.
+ */
 export function invalidateApprovalCache(userId: string) {
   cache.delete(userId);
+  builds.delete(userId);
 }
 
-export function listPendingApprovals(ctx: LoopbackCtx, opts: { fresh?: boolean } = {}): Promise<ListResult> {
-  const existing = building.get(ctx.userId);
-  if (existing) return existing;
-  const p = buildList(ctx, opts).finally(() => building.delete(ctx.userId));
-  building.set(ctx.userId, p);
-  return p;
+/**
+ * Soft deadline: a list request returns whatever queues have finished by then, flagged `partial`, while the rest keep
+ * computing in the background and land in the cache for the next request. A person with hundreds of rows in a few queues
+ * (200 locked-month overrides, 160 exit tasks) otherwise waits a minute for a popup. Read per call so ops can tune it.
+ */
+export function softDeadlineMs(): number {
+  const n = Number(process.env.APPROVAL_CENTER_SOFT_DEADLINE_MS);
+  return Number.isFinite(n) && n > 0 ? n : 12_000;
 }
 
-async function buildList(ctx: LoopbackCtx, opts: { fresh?: boolean }): Promise<ListResult> {
-  const hit = cache.get(ctx.userId);
-  if (!opts.fresh && hit && hit.exp > Date.now()) return hit.value;
+interface BuildState {
+  results: Map<string, ApprovalItem[]>;
+  failed: ListResult["failed"];
+  timings: Record<string, number>;
+  pendingKinds: Set<string>;
+  userId: string;
+  done: Promise<ListResult>;
+}
+const builds = new Map<string, BuildState>();
 
-  const failed: ListResult["failed"] = [];
-  // Adapters run a few at a time (loopback also caps in-flight calls process-wide) so listing never floods the DB pool.
-  const settled = await mapLimit(ADAPTERS, 4, async (a) => {
-      try {
-        return await withTimeout(a.list(ctx), ADAPTER_TIMEOUT_MS);
-      } catch (e: any) {
-        // 401/403 = this person simply has no queue here. Anything else is a real fault worth surfacing.
-        if (!(e instanceof LoopbackError && (e.status === 401 || e.status === 403))) {
-          failed.push({ kind: a.kind, label: a.label, reason: String(e?.message ?? e).slice(0, 200) });
-        }
-        return [] as ApprovalItem[];
-      }
-  });
-
+function compose(state: BuildState, partial: boolean): ListResult {
   const seen = new Set<string>();
   const items: ApprovalItem[] = [];
-  for (const batch of settled) {
+  const windowDays = maxAgeDays();
+  const cutoff = windowDays > 0 ? Date.now() - windowDays * 86_400_000 : null;
+  let staleHidden = 0;
+  const hide = decidedUids(state.userId);
+  for (const batch of state.results.values()) {
     for (const it of batch) {
-      if (seen.has(it.uid)) continue;
+      if (seen.has(it.uid) || hide.has(it.uid)) continue;
       seen.add(it.uid);
-      items.push(it);
+      // Items without a usable submittedAt cannot be aged, so they stay visible.
+      if (cutoff !== null && it.submittedAt) {
+        const t = new Date(it.submittedAt).getTime();
+        if (Number.isFinite(t) && t < cutoff) {
+          staleHidden++;
+          continue;
+        }
+      }
+      items.push({ ...it });
     }
   }
   items.sort((a, b) => {
@@ -81,19 +130,79 @@ async function buildList(ctx: LoopbackCtx, opts: { fresh?: boolean }): Promise<L
     if (p !== 0) return p;
     return String(a.submittedAt ?? "").localeCompare(String(b.submittedAt ?? ""));
   });
-
   const counts: Record<string, number> = {};
   for (const it of items) counts[it.kind] = (counts[it.kind] ?? 0) + 1;
-
   for (const it of items) {
     const m = it.meta ?? {};
     it.viewOnly = m.viewOnly === true;
     it.noReject = m.noReject === true || m.approveOnly === true || m.rejectUnsupported === true || m.rejectViewOnly === true;
     it.noApprove = m.approveViewOnly === true;
   }
-  const value: ListResult = { items, counts, failed, generatedAt: new Date().toISOString() };
-  cache.set(ctx.userId, { exp: Date.now() + CACHE_TTL_MS, value });
-  return value;
+  return {
+    items,
+    counts,
+    failed: [...state.failed],
+    staleHidden,
+    generatedAt: new Date().toISOString(),
+    ...(partial ? { partial: true, pendingKinds: [...state.pendingKinds] } : {}),
+    timings: { ...state.timings },
+  };
+}
+
+function startBuild(ctx: LoopbackCtx): BuildState {
+  const state: BuildState = {
+    results: new Map(),
+    failed: [],
+    timings: {},
+    pendingKinds: new Set(ADAPTERS.map((a) => a.kind)),
+    userId: ctx.userId,
+    done: Promise.resolve(null as unknown as ListResult),
+  };
+  // Adapters run a few at a time (loopback also caps in-flight calls process-wide) so listing never floods the DB pool.
+  state.done = (async () => {
+    await mapLimit(ADAPTERS, 4, async (a) => {
+      const t0 = Date.now();
+      try {
+        state.results.set(a.kind, await withTimeout(a.list(ctx), ADAPTER_TIMEOUT_MS));
+      } catch (e: any) {
+        // 401/403 = this person simply has no queue here. Anything else is a real fault worth surfacing.
+        if (!(e instanceof LoopbackError && (e.status === 401 || e.status === 403))) {
+          state.failed.push({ kind: a.kind, label: a.label, reason: String(e?.message ?? e).slice(0, 200) });
+        }
+        state.results.set(a.kind, []);
+      } finally {
+        state.timings[a.kind] = Date.now() - t0;
+        state.pendingKinds.delete(a.kind);
+      }
+    });
+    const value = compose(state, false);
+    // Only the build still registered for this user may cache; one detached by a decision is stale.
+    if (builds.get(ctx.userId) === state) {
+      cache.set(ctx.userId, { exp: Date.now() + CACHE_TTL_MS, value });
+      builds.delete(ctx.userId);
+    }
+    return value;
+  })();
+  return state;
+}
+
+export async function listPendingApprovals(ctx: LoopbackCtx, opts: { fresh?: boolean } = {}): Promise<ListResult> {
+  const hit = cache.get(ctx.userId);
+  if (!opts.fresh && hit && hit.exp > Date.now()) return hit.value;
+
+  // One build per user at a time: a double-open / refetch storm shares the in-flight build.
+  let state = builds.get(ctx.userId);
+  if (!state) {
+    state = startBuild(ctx);
+    builds.set(ctx.userId, state);
+  }
+  const deadline = new Promise<"deadline">((resolve) => {
+    const t = setTimeout(() => resolve("deadline"), softDeadlineMs());
+    (t as unknown as { unref?: () => void }).unref?.();
+  });
+  const winner = await Promise.race([state.done, deadline]);
+  if (winner !== "deadline") return winner;
+  return compose(state, true);
 }
 
 export function findAdapter(kind: string): ApprovalAdapter | undefined {
@@ -147,6 +256,7 @@ export async function decideApproval(
     const status = e instanceof LoopbackError ? e.status : 500;
     return { ok: false, status, message: String(e?.message ?? "Action failed") };
   }
+  markDecided(ctx.userId, uid);
   invalidateApprovalCache(ctx.userId);
   return { ok: true };
 }

@@ -4,6 +4,7 @@
  * them, WhatsApp follows an hour later, and so on. Runs from the engine tick (evening) and from "Plan tomorrow now" on the Master tab.
  */
 import type { RowDataPacket } from "mysql2";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import { db } from "../../db/mysql.js";
 import { createDrive, setDriveStatus, suggestMatches } from "./he-drive.service.js";
 import { bridgeAllMetaLeads, sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
@@ -86,11 +87,11 @@ export async function planNextDay(o: { date?: string; dryRun?: boolean } = {}): 
   for (const id of streamOwned && streamPlanned ? ids.filter((x) => !streamOwned.has(x) && !streamPlanned.has(x)) : []) {
     const k = cal?.get(id);
     const [rq] = await db.execute<RowDataPacket[]>(
-      `SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1`, [id]);
+      `SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount, joined_headcount FROM job_requisition WHERE id = ? LIMIT 1`, [id]);
     const r = rq[0];
     const base = { requisitionId: id, code: String(r?.requisition_code ?? id), role: String(r?.designation_name ?? ""), branch: String(r?.branch_name ?? ""), date, invitesWanted: n.invites, lined: 0, ...(k ? { invitesWanted: k.numbers.invites, showRate: k.showRate } : {}) };
     if (!r) { days.push({ ...base, status: "skipped", reason: "requisition not found" }); continue; }
-    if (r.approval_status !== "approved" || !r.active_status || Number(r.fulfilled_headcount) >= Number(r.requested_headcount)) { days.push({ ...base, status: "skipped", reason: "requisition is closed or filled" }); continue; }
+    if (r.approval_status !== "approved" || !r.active_status || fillTargetMet(Number(r.requested_headcount), Number(r.joined_headcount ?? 0))) { days.push({ ...base, status: "skipped", reason: "requisition is closed or filled" }); continue; }
     const [ex] = await db.execute<RowDataPacket[]>("SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1", [id, date]);
     if (ex[0] && ex[0].status !== "closed") { days.push({ ...base, status: "exists", driveId: String(ex[0].id) }); continue; }
     if (o.dryRun) { days.push({ ...base, status: "created", reason: "dry run" }); continue; }

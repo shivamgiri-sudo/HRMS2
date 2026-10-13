@@ -141,8 +141,11 @@ export interface DriveAnalytics {
   groups: DriveGroup[];
   cost: CostBlock | { available: false; note: string };
   insights: DriveInsight[];
-  /** Live Meta cutoff day (IST); Meta-origin people with an earlier form fill are Old Meta data. Absent on older servers. */
+  /** Live Meta cutoff day (IST): a FIRST form fill on or after its 00:00 IST is Live Meta, earlier is Old Meta data. Rolling (liveMode
+   *  'rolling'): today IST minus liveDays, so it moves every midnight; 'fixed' only when an admin pins a date. Absent on older servers. */
   liveFrom?: string;
+  liveDays?: number;
+  liveMode?: "rolling" | "fixed";
   /** Per Meta campaign and requisition progress in the window (events-based, same rules as `types`). Absent on older servers. */
   campaigns?: CampaignProgress[];
   /** WS3 C3: people at each stage per requisition and drive type (Hiring Engine included). Absent on older servers. */
@@ -201,7 +204,7 @@ export interface AttentionGroup { channel: AttentionChannel; cause: string; coun
 // backend/src/modules/hiring-engine/he-command.routes.ts
 export interface FollowupStatus {
   mode: FollowupMode;
-  callFiles: Array<{ id: string; createdAt: string; rows: number; status: string; error: string | null }>;
+  callFiles: Array<{ id: string; createdAt: string; rows: number; status: string; error: string | null; portal?: string }>;
   report: { running: boolean; last: { slot: string; ok: boolean; tries: number } | null };
 }
 

@@ -67,6 +67,19 @@ export type FfComputePreview = {
   notice: { recovery_amount: ComputedComponent };
   gratuity: { amount: number; status: "draft" | "not_eligible" | "pending_configuration"; note: string };
   advances_loans: { total_recovery: ComputedComponent };
+  attendance_check?: {
+    ok: boolean; unmarked_days: number; unmarked_dates: string[]; note: string;
+    present_days: number; leave_days: number; lwp_days: number; week_off_holiday_days: number;
+    from: string | null; to: string | null; post_exit_records: number;
+  };
+  final_month_salary?: {
+    month: string | null;
+    paid_via: "payroll" | "fnf_manual" | "none";
+    paid_days: number | null;
+    net_salary: number | null;
+    run_status: string | null;
+    note: string;
+  };
 };
 
 // ─── Constants & Helpers ──────────────────────────────────────────────────────
@@ -409,6 +422,41 @@ function PrepareFFForm({
           </ul>
         </div>
       )}
+      {preview?.attendance_check && (
+        <div
+          className={`rounded-2xl border p-4 text-sm ${
+            preview.attendance_check.ok ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-300 bg-rose-50 text-rose-900"
+          }`}
+        >
+          <p className="font-black">
+            Attendance {preview.attendance_check.ok ? "verified" : "has gaps"}
+            {preview.attendance_check.from ? ` (${preview.attendance_check.from} to ${preview.attendance_check.to})` : ""}
+          </p>
+          <p className="mt-1 text-xs">{preview.attendance_check.note}</p>
+          {preview.attendance_check.post_exit_records > 0 && (
+            <p className="mt-1 text-xs font-bold">
+              {preview.attendance_check.post_exit_records} record(s) after the last working day are excluded from pay.
+            </p>
+          )}
+        </div>
+      )}
+      {preview?.final_month_salary && (
+        <div
+          className={`rounded-2xl border p-4 text-sm ${
+            preview.final_month_salary.paid_via === "fnf_manual"
+              ? "border-amber-300 bg-amber-50 text-amber-900"
+              : "border-slate-200 bg-slate-50 text-slate-700"
+          }`}
+        >
+          <p className="font-black">
+            Final-month salary{preview.final_month_salary.month ? ` (${preview.final_month_salary.month})` : ""}
+            {preview.final_month_salary.paid_via === "payroll" && preview.final_month_salary.net_salary !== null
+              ? ` — ${INR(preview.final_month_salary.net_salary)} on ${preview.final_month_salary.paid_days ?? "?"} paid days, via payroll`
+              : ""}
+          </p>
+          <p className="mt-1 text-xs">{preview.final_month_salary.note}</p>
+        </div>
+      )}
       <div className="grid gap-4 sm:grid-cols-2">
         {fields.map(({ key, label, desc, type, deduction }) => {
           const isDeviating = deviating.includes(key);
@@ -637,6 +685,60 @@ export default function NativeFullFinal() {
     finally { setLoadingRequests(false); }
   };
 
+  // Why this settlement is locked, if it is (absconder without exception, NOC unsigned, awaiting
+  // Payroll Head final approval). Null while loading or when nothing blocks it.
+  const [gate, setGate] = useState<{
+    allowed: boolean;
+    code: string | null;
+    reason: string | null;
+    canGrantException?: boolean;
+    canApproveAsBranchHead?: boolean;
+    exception?: { branchHeadApproved: boolean; payrollHeadApproved: boolean } | null;
+  } | null>(null);
+  const [exceptionReason, setExceptionReason] = useState("");
+  const [grantingException, setGrantingException] = useState(false);
+
+  const loadGate = async (exitId: string) => {
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: NonNullable<typeof gate> }>(
+        `/api/exit/ff/${exitId}/gate`,
+      );
+      setGate(res.data ?? null);
+    } catch {
+      setGate(null);
+    }
+  };
+
+  const approveAsBranchHead = async () => {
+    if (!selectedRequest) return;
+    const reason = exceptionReason.trim();
+    if (reason.length < 15) return showMessage("Give a reason of at least 15 characters.", "error");
+    setGrantingException(true); setMessage("");
+    try {
+      await hrmsApi.post(`/api/exit/ff/${selectedRequest.id}/absconding-exception/branch-head`, { reason });
+      showMessage("Branch Head approval recorded. The Payroll Head can now decide.", "success");
+      setExceptionReason("");
+      await loadGate(selectedRequest.id);
+    } catch (err: unknown) {
+      showMessage((err as Error).message || "Could not record the approval.", "error");
+    } finally { setGrantingException(false); }
+  };
+
+  const grantException = async () => {
+    if (!selectedRequest) return;
+    const reason = exceptionReason.trim();
+    if (reason.length < 15) return showMessage("Give a reason of at least 15 characters.", "error");
+    setGrantingException(true); setMessage("");
+    try {
+      await hrmsApi.post(`/api/exit/ff/${selectedRequest.id}/absconding-exception`, { reason });
+      showMessage("Exception recorded. F&F still needs a fully signed NOC.", "success");
+      setExceptionReason("");
+      await loadGate(selectedRequest.id);
+    } catch (err: unknown) {
+      showMessage((err as Error).message || "Could not record the exception.", "error");
+    } finally { setGrantingException(false); }
+  };
+
   const loadFF = async (exitId: string) => {
     setLoadingFF(true); setFfCalc(null); setForm(EMPTY_FORM);
     try {
@@ -662,7 +764,8 @@ export default function NativeFullFinal() {
 
   const selectRequest = (req: ExitRequest) => {
     setSelectedRequest(req); setFfCalc(null); setForm(EMPTY_FORM); setPreview(null); setOverrideReason("");
-    void loadFF(req.id); void loadPreview(req.id);
+    setGate(null); setExceptionReason("");
+    void loadFF(req.id); void loadPreview(req.id); void loadGate(req.id);
   };
 
   // Approval Center deep link (?approvalId=<exit request id>): ring the row and open its settlement.
@@ -730,9 +833,17 @@ export default function NativeFullFinal() {
     if (!ffCalc) return;
     if (hasOpenClearance(selectedRequest)) return showMessage("Cannot approve: clearance is incomplete.", "error");
     if (Number(ffCalc.is_ff_provisional ?? 0) === 1) return showMessage("Cannot approve: F&F is still provisional.", "error");
+    // Attendance for the final month must be closed. Over a gap, approval needs a written reason.
+    let acknowledge: string | undefined;
+    const att = preview?.attendance_check;
+    if (att && !att.ok && att.unmarked_days > 0) {
+      const reason = window.prompt(`${att.note}\n\nTo approve anyway, type the reason (min 10 characters):`) ?? "";
+      if (reason.trim().length < 10) return showMessage("Approval stopped: attendance has gaps and no reason was given.", "error");
+      acknowledge = reason.trim();
+    }
     setApproving(true); setMessage("");
     try {
-      await hrmsApi.post(`/api/exit/ff/${ffCalc.id}/approve`, {});
+      await hrmsApi.post(`/api/exit/ff/${ffCalc.id}/approve`, acknowledge ? { acknowledge_attendance_gaps: acknowledge } : {});
       showMessage("F&F settlement approved.", "success");
       setFfCalc({ ...ffCalc, status: "approved", approved_at: new Date().toISOString() });
     } catch (err: unknown) { showMessage((err as Error).message || "Approval failed.", "error"); }
@@ -1048,6 +1159,77 @@ export default function NativeFullFinal() {
                   </div>
                 </div>
 
+                {/* Settlement lock: absconder without exception, unsigned NOC, or awaiting final approval */}
+                {gate && !gate.allowed && (
+                  <div className="rounded-3xl border border-amber-300 bg-amber-50 p-5">
+                    <p className="flex items-center gap-2 text-sm font-black text-amber-900">
+                      <Lock className="h-4 w-4" /> F&amp;F settlement is locked
+                    </p>
+                    <p className="mt-1 text-sm text-amber-900">{gate.reason}</p>
+                    {gate.code === "ABSCONDED_NO_EXCEPTION" && (
+                      <ol className="mt-3 space-y-1 text-xs font-semibold text-amber-900">
+                        <li>{gate.exception?.branchHeadApproved ? "✔" : "1."} Branch Head approval{gate.exception?.branchHeadApproved ? " — done" : " — pending"}</li>
+                        <li>{gate.exception?.payrollHeadApproved ? "✔" : "2."} Payroll Head exception{gate.exception?.payrollHeadApproved ? " — done" : " — after the Branch Head"}</li>
+                        <li>3. Fully signed NOC (every clearance level)</li>
+                      </ol>
+                    )}
+                    {gate.code === "ABSCONDED_NO_EXCEPTION" && gate.canApproveAsBranchHead && (
+                      <div className="mt-3">
+                        <label className="text-xs font-bold text-amber-900">
+                          Branch Head approval — reason (recorded against your name)
+                        </label>
+                        <textarea
+                          className="mt-1 w-full rounded-xl border border-amber-300 bg-white p-2 text-sm"
+                          rows={3}
+                          maxLength={500}
+                          value={exceptionReason}
+                          onChange={(e) => setExceptionReason(e.target.value)}
+                          placeholder="Why an F&F is being recommended for this absconded employee"
+                        />
+                        <button
+                          onClick={approveAsBranchHead}
+                          disabled={grantingException || exceptionReason.trim().length < 15}
+                          className="mt-2 rounded-xl bg-amber-700 px-4 py-2 text-sm font-bold text-white hover:bg-amber-800 disabled:opacity-50 cursor-pointer"
+                        >
+                          {grantingException ? "Recording…" : "Approve as Branch Head"}
+                        </button>
+                      </div>
+                    )}
+                    {gate.code === "ABSCONDED_NO_EXCEPTION" && gate.canGrantException && (
+                      <div className="mt-3">
+                        <label className="text-xs font-bold text-amber-900">
+                          Payroll Head exception — reason (recorded against your name)
+                        </label>
+                        <textarea
+                          className="mt-1 w-full rounded-xl border border-amber-300 bg-white p-2 text-sm"
+                          rows={3}
+                          maxLength={500}
+                          value={exceptionReason}
+                          onChange={(e) => setExceptionReason(e.target.value)}
+                          placeholder="Why an F&F is being allowed for this absconded employee"
+                        />
+                        <p className="mt-1 text-xs text-amber-800">
+                          A fully signed NOC is still required after the exception.
+                        </p>
+                        <button
+                          onClick={grantException}
+                          disabled={grantingException || exceptionReason.trim().length < 15}
+                          className="mt-2 rounded-xl bg-amber-700 px-4 py-2 text-sm font-bold text-white hover:bg-amber-800 disabled:opacity-50 cursor-pointer"
+                        >
+                          {grantingException ? "Recording…" : "Approve exception"}
+                        </button>
+                      </div>
+                    )}
+                    {gate.code === "ABSCONDED_NO_EXCEPTION" && !gate.canGrantException && !gate.canApproveAsBranchHead && (
+                      <p className="mt-2 text-xs font-semibold text-amber-800">
+                        {gate.exception?.branchHeadApproved
+                          ? "Waiting for the Payroll Head to decide the exception."
+                          : "Waiting for the employee's Branch Head to approve first; then the Payroll Head decides."}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* Prepare form (no existing ffCalc) */}
                 {!ffCalc ? (
                   <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
@@ -1108,6 +1290,11 @@ export default function NativeFullFinal() {
                           <p className="mt-1 text-4xl font-black text-white">{INR(ffCalc.net_payable)}</p>
                         </div>
                         <div className="text-right text-sm text-slate-300">
+                          {preview?.attendance_check && !preview.attendance_check.ok && (
+                            <div className="mb-2 rounded-2xl bg-amber-500/20 p-3 text-left font-bold text-amber-100">
+                              Attendance gaps: {preview.attendance_check.unmarked_days} unmarked day(s) — approval needs a reason.
+                            </div>
+                          )}
                           {approvalBlockedReasons.length > 0 ? (
                             <div className="rounded-2xl bg-rose-500/20 p-3 text-left font-bold text-rose-100">
                               Blocked: {approvalBlockedReasons.join(", ")}

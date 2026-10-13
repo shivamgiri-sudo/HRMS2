@@ -4,7 +4,12 @@ import { audienceSql } from "../he-drive.service.js";
 const d = (o: Partial<{ source_kind: string; source_ids: unknown; max_lead_age_days: number | null }>) => ({ source_kind: "pool", source_ids: null, max_lead_age_days: null, ...o });
 
 describe("drive audience", () => {
-  it("a pool drive adds no filter", () => expect(audienceSql(d({}), {})).toEqual({ sql: "", args: [] }));
+  it("a pool drive is the non-Meta pool: anyone who ever filled a Meta form is left out", () => {
+    const a = audienceSql(d({}), {});
+    expect(a.sql).toContain("l.meta_lead_id IS NULL");
+    expect(a.sql).toContain("NOT EXISTS (SELECT 1 FROM he_lead_campaign");
+    expect(a.args).toEqual([]);
+  });
   it("the daily plan's Meta-only flag only widens a pool drive to Meta leads", () => {
     const a = audienceSql(d({}), { metaOnly: true });
     expect(a.sql).toContain("he_lead_campaign");

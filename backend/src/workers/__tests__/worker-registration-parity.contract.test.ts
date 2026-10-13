@@ -61,6 +61,11 @@ describe("worker registration parity", () => {
     // restarts hrms2-backend only. Both pm2 apps read the same backend/.env, so a
     // copy in all-workers.ts would start a second ticker in hrms2-workers.
     "startMisEmailScheduler",
+    // AHM dashboard snapshot refresh (5 min, idempotent upsert): gated by its own
+    // AHM_SNAPSHOT_SCHEDULER_ENABLED (off by default), started outside the guards exactly like
+    // the MIS email scheduler, enable on ONE backend. A copy in all-workers.ts would start a
+    // second ticker in hrms2-workers from the same backend/.env.
+    "startAhmSnapshotScheduler",
   ];
 
   // server.ts with every `if (!WORKERS_EXTERNAL) { ... }` block cut out: what is

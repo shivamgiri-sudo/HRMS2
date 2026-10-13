@@ -45,6 +45,7 @@ export interface RequisitionInfo {
   closedAt: string | null;
   requestedHeadcount: number | null;
   fulfilledHeadcount: number | null;
+  joinedHeadcount?: number | null;
 }
 
 export interface ShortlistEvaluation {
@@ -161,6 +162,7 @@ export function closedReasonFor(r: RequisitionInfo): string | null {
     closedAt: r.closedAt,
     requestedHeadcount: r.requestedHeadcount,
     fulfilledHeadcount: r.fulfilledHeadcount,
+    joinedHeadcount: r.joinedHeadcount ?? null,
   });
 }
 
@@ -260,7 +262,7 @@ export async function loadRequisitionIndex(): Promise<RequisitionIndex> {
     `SELECT id, requisition_code, designation_name, branch_name, process_name,
             meta_target_age_min, meta_target_age_max, education_requirement,
             experience_min_years, experience_max_years, meta_screening_config,
-            approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount
+            approval_status, active_status, closed_at, requested_headcount, fulfilled_headcount, joined_headcount
        FROM job_requisition`
   );
   const campaigns = await loadAllCampaignCriteria().catch(() => []);
@@ -292,6 +294,7 @@ export async function loadRequisitionIndex(): Promise<RequisitionIndex> {
         closedAt: asIso(r.closed_at),
         requestedHeadcount: asNumber(r.requested_headcount),
         fulfilledHeadcount: asNumber(r.fulfilled_headcount),
+        joinedHeadcount: asNumber(r.joined_headcount),
       };
     }),
     campaigns

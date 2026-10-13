@@ -32,9 +32,14 @@ describe("visitorAdapter", () => {
     expect((await visitorAdapter.list(ctx)).map((i) => i.id)).toEqual(["a"]);
   });
   it("canDecideVisit mirrors decide rules", () => {
-    expect(canDecideVisit({ employeeId: null, branchId: null, roles: ["super_admin"] }, { branch_id: "z" })).toBe(true);
-    // admin is branch-scoped (owner ruling): own branch only, never every branch
+    // designated = host, a branch role of the visit's own branch, or admin of the own branch when the visit has no host.
+    // super_admin / admin are merely ABLE to decide and are not shown a hosted visit.
+    expect(canDecideVisit({ employeeId: null, branchId: null, roles: ["super_admin"] }, { branch_id: "z" })).toBe(false);
+    expect(canDecideVisit({ employeeId: null, branchId: "z", roles: ["super_admin"] }, { branch_id: "z", host_employee_id: "h" })).toBe(false);
+    expect(canDecideVisit({ employeeId: "h", branchId: null, roles: ["super_admin"] }, { branch_id: "z", host_employee_id: "h" })).toBe(true);
+    expect(canDecideVisit({ employeeId: null, branchId: "z", roles: ["admin"] }, { branch_id: "z", host_employee_id: "h" })).toBe(false);
     expect(canDecideVisit({ employeeId: null, branchId: "z", roles: ["admin"] }, { branch_id: "z" })).toBe(true);
+    expect(canDecideVisit({ employeeId: null, branchId: "z", roles: ["branch_head"] }, { branch_id: "z", host_employee_id: "h" })).toBe(true);
     expect(canDecideVisit({ employeeId: null, branchId: "y", roles: ["admin"] }, { branch_id: "z" })).toBe(false);
     expect(canDecideVisit({ employeeId: null, branchId: null, roles: ["admin"] }, { branch_id: "z" })).toBe(false);
     expect(canDecideVisit({ employeeId: null, branchId: "b", roles: ["visitor_security"] }, { branch_id: "b" })).toBe(false);

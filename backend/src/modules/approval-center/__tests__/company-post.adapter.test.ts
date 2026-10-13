@@ -1,8 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { companyPostAdapter } from "../adapters/company-post.js";
 import { fakeCtx } from "./_fakeCtx.js";
 import { beforeEach as __scopeBeforeEach } from "vitest";
 import { useScope, ORG_WIDE } from "./scope-fixture.js";
+import { heldRoles, rolesModule } from "./_literalRoles.js";
+vi.mock("../adapters/_roles.js", async () => (await import("./_literalRoles.js")).rolesModule);
+beforeEach(() => { heldRoles.list = ["admin"]; });
 __scopeBeforeEach(() => useScope(ORG_WIDE));
 
 const post = (o: any = {}) => ({

@@ -1,0 +1,68 @@
+# Points the server at the calling tool's portal campaign (HRMS): live calling files are uploaded to it after each batch and its call
+# results are read back hourly. The portal login comes from the repository secrets SUPERBOT_EMAIL / SUPERBOT_PASSWORD and is written
+# only to backend/.env on the server (never printed). mode=off turns the upload off (results can still be read while the login exists).
+#
+# Changes on 192.168.11.225: backend/.env SUPERBOT_* keys, then restarts hrms2-backend and hrms2-workers. A backup of .env is kept.
+
+name: Ops portal calling (enable/disable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "live (upload calling files + read results) | off (read results only) | remove (delete the portal settings)"
+        required: true
+        type: choice
+        default: live
+        options: [live, off, remove]
+      account_id:
+        description: "Portal account id"
+        required: true
+        default: "1965"
+      campaign_id:
+        description: "Portal campaign id (HRMS)"
+        required: true
+        default: "27425"
+
+concurrency:
+  group: ops-superbot-flag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  flag:
+    name: Set portal calling on 192.168.11.225
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Set .env and restart
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          ACCOUNT_ID: ${{ inputs.account_id }}
+          CAMPAIGN_ID: ${{ inputs.campaign_id }}
+          SB_EMAIL: ${{ secrets.SUPERBOT_EMAIL }}
+          SB_PASS: ${{ secrets.SUPERBOT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ "$ACCOUNT_ID" =~ ^[0-9]{1,9}$ && "$CAMPAIGN_ID" =~ ^[0-9]{1,9}$ ]] || { echo "::error::ids must be numbers"; exit 1; }
+          if [[ "$MODE" != "remove" ]]; then
+            [[ -n "$SB_EMAIL" && -n "$SB_PASS" ]] || { echo "::error::SUPERBOT_EMAIL / SUPERBOT_PASSWORD secrets are not set"; exit 1; }
+          fi
+          ENV_FILE="/var/www/HRMS2/backend/.env"
+          test -f "$ENV_FILE" || { echo "::error::$ENV_FILE not found."; exit 1; }
+          BACKUP="${ENV_FILE}.bak-superbot-$(date -u +%Y%m%dT%H%M%SZ)"
+          cp -a "$ENV_FILE" "$BACKUP"; echo "Backed up to $BACKUP"
+          if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then printf '\n' >> "$ENV_FILE"; fi
+          sed -i -E "/^SUPERBOT_(EMAIL|PASSWORD|ACCOUNT_ID|CAMPAIGN_ID|UPLOAD_MODE|LANGUAGE_ID|API_BASE)=/d" "$ENV_FILE"
+          if [[ "$MODE" != "remove" ]]; then
+            printf 'SUPERBOT_EMAIL=%s\nSUPERBOT_PASSWORD=%s\nSUPERBOT_ACCOUNT_ID=%s\nSUPERBOT_CAMPAIGN_ID=%s\nSUPERBOT_UPLOAD_MODE=%s\n' \
+              "$SB_EMAIL" "$SB_PASS" "$ACCOUNT_ID" "$CAMPAIGN_ID" "$MODE" >> "$ENV_FILE"
+          fi
+          echo "Portal settings now:"; grep -E "^SUPERBOT_(ACCOUNT_ID|CAMPAIGN_ID|UPLOAD_MODE)=" "$ENV_FILE" || echo "(none)"
+          pm2 restart hrms2-backend hrms2-workers --update-env --no-color
+          pm2 save --no-color
+          pm2 status --no-color

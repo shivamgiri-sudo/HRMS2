@@ -86,6 +86,26 @@ export interface CellDetail {
   uncoveredEmployees: { id: string; code: string; name: string }[];
   uncoveredTotal: number;
   trail: AlertTrailEntry[];
+  teamRoster: TeamRosterRequest[];
+}
+
+export interface TeamRosterRequest {
+  submissionId: number;
+  submissionNo: string | null;
+  status: string;
+  raisedBy: string | null;
+  managerApprover: string | null;
+  submittedAtMs: number | null;
+  managerDecision: string | null;
+  managerDecidedAtMs: number | null;
+  managerRemarks: string | null;
+  wfmDecision: string | null;
+  wfmDecidedAtMs: number | null;
+  wfmRemarks: string | null;
+  appliedAtMs: number | null;
+  raised: number;
+  applied: number;
+  skipped: number;
 }
 
 export interface TrackerFilters {

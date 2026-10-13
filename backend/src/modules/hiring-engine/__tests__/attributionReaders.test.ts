@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execute = vi.hoisted(() => vi.fn());
 const loadActiveStreams = vi.hoisted(() => vi.fn());
@@ -19,6 +19,9 @@ import * as attribution from "../he-source-attribution.js";
 // Every statement that returns a source_type for people on drives / messages / calls must type them with the shared rule
 // (he-source-attribution.ts): the Meta-origin check and the live-fill check against the cutoff, never a run_label or a bare 'he' default.
 const NOW = new Date("2026-10-14T06:00:00Z");
+// The build reads the rolling Live Meta cutoff from the clock: pinned to NOW, so the cutoff is 14 Oct - 7 days = 7 Oct 2026.
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
+afterEach(() => { vi.useRealTimers(); });
 const W = { from: "2026-10-01", to: "2026-10-14" };
 const zeroStage = { leads: 0, qualified: 0, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 };
 const grid = () => Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
@@ -59,7 +62,7 @@ describe("every source-typed reader uses the shared rule", () => {
     void attribution;
     for (const q of list) {
       // every typed statement returns the row signals of the shared rule (lead id, Meta credit / drive, activity against the cutoff) ...
-      expect(q).toMatch(/AS tl, \(.*\) AS tm, \(.* >= TIMESTAMP '2026-10-08 00:00:00'\) AS tr/s);
+      expect(q).toMatch(/AS tl, \(.*\) AS tm, \(.* >= TIMESTAMP '2026-10-07 00:00:00'\) AS tr/s);
       expect(q).not.toContain("run_label IS NOT NULL");
       expect(q).not.toContain("COALESCE(rs.source_type, 'he') AS source_type");
       expect(q).not.toMatch(/qf\.source_type/);

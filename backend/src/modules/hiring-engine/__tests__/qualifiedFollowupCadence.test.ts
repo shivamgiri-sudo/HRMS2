@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { dueTimes } from "../qualified-followup.schedule.js";
 import {
   assessmentText, chooseWaTemplate, d1SendAt, noShowDueAt, reinviteAllowed, REINVITE_MAX_30D, REINVITE_MIN_DAYS, t4SendAt,
 } from "../qualified-followup.cadence.js";
+
+// These cases pin the Mon-Sat rule; Sunday sending is the default now, so they run with FOLLOWUP_SUNDAY_SENDS=off (the Sunday default is covered in followupGuards.test.ts).
+beforeAll(() => { process.env.FOLLOWUP_SUNDAY_SENDS = "off"; });
+afterAll(() => { delete process.env.FOLLOWUP_SUNDAY_SENDS; });
+
 
 const ist = (s: string) => new Date(`${s}+05:30`);
 

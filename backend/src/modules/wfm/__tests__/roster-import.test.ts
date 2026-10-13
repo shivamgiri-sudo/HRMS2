@@ -4,6 +4,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Fixtures are dated Aug 2026; pin "today" before them so the past-week block (2026-10-13)
+// does not refuse every row.
+vi.mock('../../../utils/dateUtils.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/dateUtils.js')>()),
+  getIstDateString: () => '2026-07-27',
+}));
 import * as XLSX from 'xlsx';
 
 // ── Hoist shared state so vi.mock factory can reference it ──────────────
@@ -102,6 +109,27 @@ describe('roster-import service', () => {
       expect(summary.warnings).toBeGreaterThanOrEqual(1);
       expect(summary.dateRangeStart).toBe('2026-08-01');
       expect(summary.dateRangeEnd).toBe('2026-08-02');
+    });
+
+    it('marks rows dated before the current IST week as ERROR (past weeks closed 2026-10-13)', async () => {
+      // "today" is pinned to Mon 2026-07-27 above: 26-Jul is last week, 27-Jul is this week.
+      const buffer = buildXlsxBuffer(
+        ['Employee ID', '26-Jul-26', '27-Jul-26'],
+        [['EMP001', 'WO', 'WO']]
+      );
+
+      const { summary } = await createImportBatch({
+        processId: 'proc-1',
+        importMode: 'NEW',
+        fileBuffer: buffer,
+        fileName: 'roster.xlsx',
+        createdBy: 'user-1',
+      });
+
+      expect(summary.errors).toBe(1);
+      const errorRows = state.insertedRows.filter((p) => p[7] === 'ERROR');
+      expect(errorRows).toHaveLength(1);
+      expect(JSON.stringify(errorRows[0])).toContain('Past week');
     });
 
     it('returns HARD_ERROR for literal 0 cell', async () => {

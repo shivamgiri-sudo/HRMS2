@@ -26,8 +26,13 @@ vi.mock("../fact-cache.service.js", () => ({
   }),
 }));
 vi.mock("../facts-loader.service.js", () => ({ loadRawPeople: vi.fn(async () => ({ people: h.live, nextKey: null, skippedInvalidMobile: 0 })) }));
+vi.mock("../../hiring-engine/he-source-attribution.service.js", async () => {
+  const { rollingLiveFrom } = await import("../../hiring-engine/he-source-attribution.js");
+  return { loadLiveFrom: vi.fn(async (now: Date) => rollingLiveFrom(now)) };
+});
 
 import { previewCsv, previewRequisition } from "../preview.service.js";
+import { readFactCache } from "../fact-cache.service.js";
 import { baseFacts, ok } from "./fixtures/facts.js";
 
 const reqRow = (o: Record<string, unknown> = {}) => ({
@@ -88,6 +93,13 @@ describe("previewRequisition", () => {
     expect(p.start).toBe(1);
     expect(p.partial).toEqual(["facts_cache_empty_live_read"]);
   });
+  it("the live read (empty cache) counts a person once: several Meta form fills are one person, the newest record wins (as the cache does)", async () => {
+    const fill = (ref: string, age: number) => ({ person: { sourceKind: "meta_live", subSource: "meta_live", mobile: "9876543210", ats: null, lead: { age, education_rank: 5 }, profile: null, meta: null, dra: null,
+      system: baseFacts().system, contact: { lastFirstContactAt: null } }, sourceRef: ref });
+    h.live = [fill("M1", 22), fill("M2", 23)];
+    const p = await previewRequisition({ requisitionId: "r1", sourceKind: "meta_live", now: NOW });
+    expect(p.start).toBe(1);
+  });
   it("404 for an unknown requisition", async () => {
     h.row = undefined as never;
     await expect(previewRequisition({ requisitionId: "x", sourceKind: "he", now: NOW })).rejects.toMatchObject({ statusCode: 404 });
@@ -127,4 +139,14 @@ describe("performance budget", () => {
     expect(p.start).toBe(70_000);
     expect(ms).toBeLessThan(5000);
   }, 30_000);
+});
+
+describe("Live Meta preview under the rolling cutoff", () => {
+  it("reads the Live Meta cache with the cutoff of the preview's clock (people whose first fill left the window are not Live)", async () => {
+    h.cache = [person(1)];
+    await previewRequisition({ requisitionId: "r1", sourceKind: "meta_live", now: NOW });
+    expect(vi.mocked(readFactCache).mock.calls.at(-1)?.[0]).toMatchObject({ sourceKind: "meta_live", liveFrom: "2026-10-02" });
+    await previewRequisition({ requisitionId: "r1", sourceKind: "he", now: NOW });
+    expect(vi.mocked(readFactCache).mock.calls.at(-1)?.[0]).not.toHaveProperty("liveFrom");
+  });
 });

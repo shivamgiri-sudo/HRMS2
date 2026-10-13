@@ -1,6 +1,9 @@
 import { notificationEventService } from "../modules/communication/notification-event.service.js";
 import { isWorkerEnabled, markWorkerRun } from "../shared/worker-config.js";
 import { autoRefreshKitLinkForReminder } from "../modules/employees/joiningKitDispatch.service.js";
+import { emailService } from "../modules/communication/email.service.js";
+import { getDispatchBlock } from "../shared/notification-dispatch-block.js";
+import { env } from "../config/env.js";
 
 let db: any;
 try {
@@ -175,11 +178,20 @@ async function findPendingEsignItems(): Promise<any[]> {
          e.employee_code,
          e.reporting_manager_id,
          e.branch_id,
+         b.branch_name,
+         pm.process_name,
+         dm.designation_name,
+         e.date_of_joining,
+         COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS manager_name,
          DATEDIFF(NOW(), pt.created_at) AS days_pending
        FROM employee_joining_document_checklist c
        JOIN employee_joining_document_public_token pt
          ON pt.checklist_id = c.id AND pt.token_status = 'active'
        JOIN employees e ON e.id = c.employee_id
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
        WHERE c.status IN ('esign_initiated', 'pending_candidate_esign')
          AND pt.expires_at > NOW()
        ORDER BY days_pending DESC`,
@@ -220,6 +232,122 @@ async function getHrUsersForBranch(branchId: string | null): Promise<string[]> {
   }
 }
 
+/** Official mailbox of active holders of `roleKeys` in the branch, falling back to the login email. */
+async function getBranchRoleEmails(branchId: string | null, roleKeys: string[], limit: number): Promise<string[]> {
+  if (!branchId) return [];
+  try {
+    const [rows]: any = await db.execute(
+      `SELECT DISTINCT COALESCE(NULLIF(TRIM(e.official_email), ''), au.email) AS email
+         FROM employees e
+         JOIN user_roles ur ON ur.user_id = e.user_id AND ur.active_status = 1
+                           AND ur.role_key IN (${roleKeys.map(() => "?").join(",")})
+         LEFT JOIN auth_user au ON au.id = e.user_id
+        WHERE e.active_status = 1 AND e.branch_id = ?
+        LIMIT ${Math.max(1, Math.floor(limit))}`,
+      [...roleKeys, branchId],
+    );
+    return (rows || []).map((r: any) => String(r.email ?? "").trim()).filter((m: string) => m.includes("@"));
+  } catch {
+    return [];
+  }
+}
+
+function escapeHtml(v: unknown): string {
+  return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+interface HrEscalationItem {
+  employee_id: string;
+  checklist_id: string;
+  employee_name: string;
+  employee_code: string;
+  document_name: string;
+  days_pending: number;
+  deadline: string;
+  designation_name?: string | null;
+  process_name?: string | null;
+  date_of_joining?: string | null;
+  manager_name?: string | null;
+  link_sent?: string | null;
+  branch_name?: string | null;
+  claim: { ok: boolean; previousLastSentAt: string | null; existed: boolean };
+}
+
+/**
+ * One clubbed eSign HR escalation email per branch per cycle.
+ *
+ * This used to dispatch once per pending document, each fanning out to every HR user as an
+ * individual message, so one branch with 6 stuck joiners produced 6 x N emails. Now: a single
+ * message listing every overdue document, HR in To and the branch head in Cc. Claims are taken
+ * by the caller before this runs and released here when the send fails.
+ */
+async function sendHrEscalationDigest(branchId: string | null, items: HrEscalationItem[]): Promise<boolean> {
+  const release = async () => {
+    for (const i of items) await releaseClaim(i.employee_id, i.checklist_id, "hr_escalation", i.claim);
+  };
+  try {
+    const stop = await getDispatchBlock("esign_escalation_hr");
+    if (stop.blocked) { await release(); return false; }
+
+    const hr = await getBranchRoleEmails(branchId, ["payroll_hr", "hr"], 5);
+    const heads = await getBranchRoleEmails(branchId, ["branch_head"], 5);
+    const to = hr.length > 0 ? hr : heads;
+    const lower = new Set(to.map((e) => e.toLowerCase()));
+    const cc = hr.length > 0 ? heads.filter((e) => !lower.has(e.toLowerCase())) : [];
+    if (to.length === 0) { await release(); return false; }
+
+    const base = String(env.FRONTEND_URL).replace(/\/+$/, "");
+    const th = (t: string) => `<th style="padding:6px;border:1px solid #ddd;text-align:left;white-space:nowrap">${t}</th>`;
+    const td = (v: unknown) => `<td style="padding:6px;border:1px solid #ddd">${escapeHtml(v || "—")}</td>`;
+    const rows = items.map((i) =>
+      `<tr>${td(i.employee_name)}${td(i.employee_code)}${td(i.designation_name)}${td(i.process_name)}` +
+      `${td(fmtDate(i.date_of_joining))}${td(i.manager_name)}${td(i.document_name)}` +
+      `${td(fmtDate(i.link_sent))}${td(i.deadline)}${td(i.days_pending)}</tr>`,
+    ).join("");
+    const branchName = items.find((i) => i.branch_name)?.branch_name ?? "";
+    const html =
+      `<p>${branchName ? `<strong>${escapeHtml(branchName)}</strong> — ` : ""}${items.length} joining document eSign${items.length > 1 ? "s are" : " is"} ` +
+      `still pending and the signing link is about to expire. The employee has not responded to daily reminders` +
+      `${items.some((i) => i.manager_name) ? " or the reporting-manager escalation" : ""}. ` +
+      `Please follow up, or use manual override / re-issuance from the tracker.</p>` +
+      `<table style="border-collapse:collapse;font-size:13px"><thead><tr style="background:#f1f5f9">` +
+      `${th("Employee")}${th("Code")}${th("Designation")}${th("Process")}${th("DOJ")}${th("Reporting manager")}` +
+      `${th("Document")}${th("Link sent")}${th("Link expires")}${th("Days pending")}</tr></thead><tbody>${rows}</tbody></table>` +
+      `<p><a href="${base}/ats/joining-documents-tracker">Open Joining Documents Tracker</a></p>` +
+      `<p style="color:#64748b;font-size:12px">Sent to: ${escapeHtml(to.join(", "))}${cc.length ? ` · Cc (branch head): ${escapeHtml(cc.join(", "))}` : ""}</p>`;
+
+    await emailService.send({
+      to: to.join(","),
+      ...(cc.length > 0 ? { cc: cc.join(",") } : {}),
+      subject: `eSign pending${branchName ? ` — ${branchName}` : ""} — ${items.length} employee${items.length > 1 ? "s" : ""} non-responsive, links expiring`,
+      html,
+    });
+    return true;
+  } catch (err: any) {
+    console.error("[EsignComplianceWorker] HR escalation digest failed:", err.message);
+    await release();
+    return false;
+  }
+}
+
+const fmtDate = (v: unknown): string => (v ? new Date(String(v)).toLocaleDateString("en-IN") : "");
+
+/** Context an HR/manager needs to act without opening the tracker. Blank values are dropped at render. */
+function esignDetails(item: any, deadline: string, daysPending: number) {
+  return [
+    { label: "Employee", value: `${item.employee_name ?? ""} (${item.employee_code ?? ""})` },
+    { label: "Document", value: item.document_name },
+    { label: "Designation", value: item.designation_name },
+    { label: "Process", value: item.process_name },
+    { label: "Branch", value: item.branch_name },
+    { label: "Date of joining", value: fmtDate(item.date_of_joining) },
+    { label: "Reporting manager", value: item.manager_name },
+    { label: "Signing link sent", value: fmtDate(item.esign_link_created_at) },
+    { label: "Link expires", value: deadline },
+    { label: "Days pending", value: String(daysPending) },
+  ];
+}
+
 async function processEsignCompliance(): Promise<void> {
   if (!await isWorkerEnabled("esign-compliance")) return;
   await markWorkerRun("esign-compliance");
@@ -230,6 +358,7 @@ async function processEsignCompliance(): Promise<void> {
   let reminders = 0;
   let managerEscalations = 0;
   let hrEscalations = 0;
+  const hrByBranch = new Map<string, { branchId: string | null; items: HrEscalationItem[] }>();
 
   for (const item of items) {
     const daysPending = Number(item.days_pending ?? 0);
@@ -264,6 +393,7 @@ async function processEsignCompliance(): Promise<void> {
             eventCode: "esign_reminder",
             recipientEmployeeIds: [item.employee_id],
             actionUrl: freshLink ?? "",
+            details: esignDetails(item, deadline, daysPending).filter((d) => !["Reporting manager"].includes(d.label)),
             data: {
               document_name: item.document_name,
               days_pending: String(daysPending),
@@ -295,6 +425,7 @@ async function processEsignCompliance(): Promise<void> {
               const result_manager_escalation = await notificationEventService.dispatch({
                 eventCode: "esign_escalation_manager",
                 recipientEmployeeIds: [managerId],
+                details: esignDetails(item, deadline, daysPending),
                 data: {
                   employee_name: item.employee_name,
                   employee_code: item.employee_code,
@@ -317,39 +448,39 @@ async function processEsignCompliance(): Promise<void> {
       }
     }
 
-    // HR escalation (after 6 days — link about to expire)
+    // HR escalation (after 6 days — link about to expire). Collected here, sent once per
+    // branch after the loop so HR gets one clubbed email rather than one per document.
     if (daysPending >= HR_ESCALATION_DAYS) {
       if (await canSend(item.employee_id, item.checklist_id, "hr_escalation", ESCALATION_COOLDOWN_MS)) {
-        const hrIds = await getHrUsersForBranch(item.branch_id);
-        if (hrIds.length > 0) {
-          const claim_hr_escalation = await markSent(item.employee_id, item.checklist_id, "hr_escalation");
-          try {
-                        if (claim_hr_escalation.ok) {
-              const result_hr_escalation = await notificationEventService.dispatch({
-                eventCode: "esign_escalation_hr",
-                recipientEmployeeIds: hrIds,
-                data: {
-                  employee_name: item.employee_name,
-                  employee_code: item.employee_code,
-                  document_name: item.document_name,
-                  days_pending: String(daysPending),
-                  deadline,
-                },
-              });
-              // A dispatch that queued nothing must not hold the window shut.
-              if (reachedNobody(result_hr_escalation)) {
-                await releaseClaim(item.employee_id, item.checklist_id, "hr_escalation", claim_hr_escalation);
-              } else {
-                hrEscalations++;
-              }
-            }
-          } catch (err: any) {
-            console.error("[EsignComplianceWorker] HR escalation failed:", err.message);
-            if (claim_hr_escalation.ok) await releaseClaim(item.employee_id, item.checklist_id, "hr_escalation", claim_hr_escalation);
-          }
+        const claim = await markSent(item.employee_id, item.checklist_id, "hr_escalation");
+        if (claim.ok) {
+          const key = String(item.branch_id ?? "none");
+          const bucket: { branchId: string | null; items: HrEscalationItem[] } =
+            hrByBranch.get(key) ?? { branchId: item.branch_id ?? null, items: [] };
+          bucket.items.push({
+            employee_id: item.employee_id,
+            checklist_id: item.checklist_id,
+            employee_name: item.employee_name,
+            employee_code: item.employee_code,
+            document_name: item.document_name,
+            days_pending: daysPending,
+            deadline,
+            designation_name: item.designation_name,
+            process_name: item.process_name,
+            date_of_joining: item.date_of_joining,
+            manager_name: item.manager_name,
+            link_sent: item.esign_link_created_at,
+            branch_name: item.branch_name,
+            claim,
+          });
+          hrByBranch.set(key, bucket);
         }
       }
     }
+  }
+
+  for (const { branchId, items: group } of hrByBranch.values()) {
+    if (await sendHrEscalationDigest(branchId, group)) hrEscalations++;
   }
 
   if (reminders > 0 || managerEscalations > 0 || hrEscalations > 0) {

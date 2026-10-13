@@ -38,8 +38,10 @@ const messagesSql = (liveFrom: string) => (n: number, streams: boolean): string 
  WHERE h.requisition_id IN (${ph(n)}) AND h.created_at >= ? AND h.created_at < ? AND h.direction = 'out' AND h.channel IN ('whatsapp','email') AND h.delivery_status <> 'failed'
  GROUP BY ${TYPE_KEY_GROUP}, h.channel, mk, dy`;
 
-const callsSql = (liveFrom: string) => (n: number, streams: boolean): string => `SELECT ${typeKeyColsSql({ streams, d: "d", leadId: "COALESCE(c.lead_id, m.lead_id)", ref: "c.created_at", liveFrom })},
-       COUNT(*) AS calls, SUM(CEIL(COALESCE(c.duration_s, 0) / 60)) AS minutes
+// A call whose result carried no duration (calling-file results) is billed at the average of the calls that did, never less than 1 minute;
+// a call that failed to connect (CALL_FAILED...) is not billed. `avgMin` is a computed number, never user input.
+const callsSql = (liveFrom: string, avgMin = 1) => (n: number, streams: boolean): string => `SELECT ${typeKeyColsSql({ streams, d: "d", leadId: "COALESCE(c.lead_id, m.lead_id)", ref: "c.created_at", liveFrom })},
+       COUNT(*) AS calls, SUM(CASE WHEN c.duration_s > 0 THEN CEIL(c.duration_s / 60) WHEN c.outcome LIKE 'CALL_FAILED%' THEN 0 ELSE ${Math.max(1, Math.round(avgMin * 100) / 100)} END) AS minutes
   FROM he_call c
   LEFT JOIN he_match m ON m.id = c.match_id
   LEFT JOIN he_drive d ON d.id = COALESCE(c.drive_id, m.drive_id)
@@ -91,7 +93,8 @@ export async function readCostUsage(
     }),
     part("cost:calls", async () => {
       const pf = await pfP;
-      const rows = await batched(callsSql(pf.liveFrom), bounds, ids);
+      const [[avg]] = (await limitedDb.execute<RowDataPacket[]>("SELECT AVG(CEIL(duration_s / 60)) AS m FROM he_call WHERE duration_s > 0")) as unknown as [RowDataPacket[]];
+      const rows = await batched(callsSql(pf.liveFrom, Number(avg?.m) > 0 ? Number(avg.m) : 1), bounds, ids);
       await pf.loadRows(rows);
       for (const r of rows) {
         const t = typeOf(pf.typeOf(r));

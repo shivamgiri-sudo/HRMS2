@@ -40,7 +40,8 @@ function appFor(role: string) {
   app.use("/api/he", heRouter);
   return app;
 }
-const tomorrow = () => addDays(istToday(), 1);
+// The next working day: a stream never covers a Sunday, so "tomorrow" on a Saturday would be refused.
+const tomorrow = () => { let d = addDays(istToday(), 1); while (new Date(`${d}T00:00:00Z`).getUTCDay() === 0) d = addDays(d, 1); return d; };
 const noLeak = (body: unknown) => { const t = JSON.stringify(body); expect(t).not.toMatch(/\d{10}/); expect(t).not.toMatch(/SELECT/i); expect(t).not.toMatch(/\bat .*\.ts/); };
 
 // requisition lookups: RID lives in "Pune"; "hr" is scoped to Pune or to Delhi (outside) per test

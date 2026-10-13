@@ -32,6 +32,8 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 import { taxEngineService } from "../payroll-compliance/taxEngine.service.js";
+import { resolveGrossMonthly } from "./ff-gross.js";
+import { ffAttendanceCheck, type FfAttendanceCheck } from "./ff-attendance.js";
 import { ffService, type GratuityCalculation, type PayrollAlreadyPaid } from "./ff.service.js";
 
 export type ComputedStatus = "computed" | "not_applicable" | "pending_configuration";
@@ -100,6 +102,22 @@ export interface FfComputePreview {
   };
 
   payroll_already_paid: PayrollAlreadyPaid[];
+
+  /**
+   * The last month's salary, which payroll pays on paid days like anyone else's. Shown so HR can see
+   * what is being paid and where; F&F carries it only when NO payroll line will pay it, because
+   * adding it when payroll already pays it would pay the same days twice.
+   */
+  attendance_check: FfAttendanceCheck;
+
+  final_month_salary: {
+    month: string | null;
+    paid_via: "payroll" | "fnf_manual" | "none";
+    paid_days: number | null;
+    net_salary: number | null;
+    run_status: string | null;
+    note: string;
+  };
 }
 
 interface ExitRequestRow extends RowDataPacket {
@@ -110,32 +128,13 @@ interface ExitRequestRow extends RowDataPacket {
   served_days: number | null;
 }
 
-/**
- * Last active salary assignment's monthly gross (ctc_annual / 12) — the same
- * employee_salary_assignment/salary_structure_master lookup calculateGratuityFromEmployee
- * already uses. Shared here rather than queried twice per preview.
- */
-async function resolveGrossMonthly(employeeId: string): Promise<number | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT esa.ctc_annual
-       FROM employee_salary_assignment esa
-      WHERE esa.employee_id = ? AND esa.active_status = 1
-      ORDER BY esa.effective_from DESC
-      LIMIT 1`,
-    [employeeId]
-  );
-  const row = (rows as Array<{ ctc_annual: number }>)[0];
-  if (!row) return null;
-  return Number(row.ctc_annual) / 12;
-}
-
 async function resolveNoticeShortfall(
   exitRequestId: string,
   employeeId: string,
   grossMonthly: number | null
 ): Promise<FfComputePreview["notice"] & { lastWorkingDay: string | null }> {
   const [rows] = await db.execute<ExitRequestRow[]>(
-    `SELECT er.employee_id, er.notice_period_days, er.submitted_at,
+    `SELECT er.employee_id, er.exit_type, er.notice_period_days, er.submitted_at, er.notice_start_date,
             COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) AS last_working_day,
             DATEDIFF(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed), er.submitted_at) AS served_days
        FROM exit_request er
@@ -154,6 +153,16 @@ async function resolveNoticeShortfall(
     };
   }
 
+  // Notice is the employee's obligation to the employer. An employer-initiated exit has no
+  // recovery; showing "pending configuration" there sent HR hunting for a number that is not owed.
+  if (String(row.exit_type ?? "").toLowerCase() === "involuntary") {
+    const na = notApplicable(0, "Employer-initiated exit: no notice recovery applies.");
+    return {
+      required_days: na, served_days: null, shortfall_days: na,
+      per_day_rate: na, recovery_amount: na, lastWorkingDay,
+    };
+  }
+
   const requiredDays = Number(row.notice_period_days ?? 0);
   const servedDays = row.served_days === null ? null : Number(row.served_days);
 
@@ -167,7 +176,7 @@ async function resolveNoticeShortfall(
   const divisor = Number(await getPolicyValue("payroll", "calculation", "default_working_days", "26"));
   const perDayRate: ComputedComponent<number> = grossMonthly === null
     ? pending(0, "No active salary assignment found for employee.")
-    : computed(Math.round((grossMonthly / divisor) * 100) / 100, `Last gross monthly (${grossMonthly.toFixed(2)}) / ${divisor} working days.`);
+    : computed(Math.round((grossMonthly / divisor) * 100) / 100, `Monthly gross (${grossMonthly.toFixed(2)}, last paid payroll base, else CTC/12) / ${divisor} working days.`);
 
   if (requiredComponent.status === "pending_configuration" || perDayRate.status === "pending_configuration") {
     const zero = pending(0, "Cannot compute until required notice days and per-day rate are both known.");
@@ -187,7 +196,13 @@ async function resolveNoticeShortfall(
     served_days: servedDays,
     shortfall_days: shortfallComponent,
     per_day_rate: perDayRate,
-    recovery_amount: computed(recoveryAmount, `${shortfallDays} shortfall day(s) × ${perDayRate.value.toFixed(2)}/day.`),
+    recovery_amount: computed(
+      recoveryAmount,
+      `${shortfallDays} shortfall day(s) × ${perDayRate.value.toFixed(2)}/day.` +
+        (servedDays === 0 && shortfallDays > 0
+          ? " HR to confirm: notice starts and ends on the last working day (no notice served) — a waiver would make this 0."
+          : ""),
+    ),
     lastWorkingDay,
   };
 }
@@ -451,6 +466,45 @@ async function resolveTdsTrueUp(
   }
 }
 
+async function resolveFinalMonthSalary(
+  employeeId: string,
+  lastWorkingDay: string | null,
+): Promise<FfComputePreview["final_month_salary"]> {
+  if (!lastWorkingDay) {
+    return { month: null, paid_via: "none", paid_days: null, net_salary: null, run_status: null,
+      note: "No last working day recorded, so the final month cannot be located." };
+  }
+  const month = String(lastWorkingDay).slice(0, 7);
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT spr.status AS run_status, spl.net_salary, spl.final_payable_days
+         FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id
+        WHERE spl.employee_id = ? AND spr.run_month = ?
+          AND LOWER(spl.status) NOT IN ('excluded','blocked')
+          AND LOWER(spr.status) NOT IN ('draft','cancelled','rejected')
+        ORDER BY spr.created_at DESC LIMIT 1`,
+      [employeeId, month],
+    );
+    const r = rows[0];
+    if (r) {
+      return {
+        month, paid_via: "payroll",
+        paid_days: r.final_payable_days === null ? null : Number(r.final_payable_days),
+        net_salary: Number(r.net_salary ?? 0),
+        run_status: String(r.run_status),
+        note: `${month} salary is paid by the ${month} payroll run (${r.run_status}) on ${r.final_payable_days ?? "?"} paid days. Not added to F&F, so it cannot be paid twice.`,
+      };
+    }
+    return {
+      month, paid_via: "fnf_manual", paid_days: null, net_salary: null, run_status: null,
+      note: `No ${month} payroll line will pay this month. HR must enter the pending salary for the paid days in "Salary hold" — it is not derived automatically.`,
+    };
+  } catch (err) {
+    return { month, paid_via: "none", paid_days: null, net_salary: null, run_status: null,
+      note: `Final-month salary could not be determined: ${(err as Error).message}` };
+  }
+}
+
 export async function computeFfPreview(exitRequestId: string): Promise<FfComputePreview> {
   const [exitRows] = await db.execute<RowDataPacket[]>(
     "SELECT id, employee_id FROM exit_request WHERE id = ? LIMIT 1",
@@ -479,6 +533,8 @@ export async function computeFfPreview(exitRequestId: string): Promise<FfCompute
     leaveEncashment.amount.status === "computed" ? leaveEncashment.amount.value : null
   );
 
+  const finalMonthSalary = await resolveFinalMonthSalary(exitReq.employee_id, notice.lastWorkingDay);
+  const attendanceCheck = await ffAttendanceCheck(exitReq.employee_id, notice.lastWorkingDay);
   const { lastWorkingDay, ...noticeRest } = notice;
 
   return {
@@ -492,5 +548,7 @@ export async function computeFfPreview(exitRequestId: string): Promise<FfCompute
     asset_recovery: assetRecovery,
     tds_true_up: tdsTrueUp,
     payroll_already_paid: payrollAlreadyPaid,
+    final_month_salary: finalMonthSalary,
+    attendance_check: attendanceCheck,
   };
 }

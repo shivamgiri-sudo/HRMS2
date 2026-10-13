@@ -13,7 +13,7 @@ import { commandHash, defaultFilters, parseCommandHash } from "../command/driveC
 import {
   HE_META_NOTE, HISTORIC_NOTE, MAPPING_COLUMNS, MAPPING_NOTE, SHOW_ALL_TIME, atWidestRange, campaignMappingView, scopeToType, showAllTimeFilters, showHistoricNote, zeroNotes,
 } from "../command/sourceSectionModel";
-import { kpiView } from "../command/charts/summaryView";
+import { boundaryDayText, kpiView, liveWindowNote } from "../command/charts/summaryView";
 import { STAGES } from "../command/driveCommandTypes";
 import type { DriveAnalytics, SourceType, StageCounts } from "../command/driveCommandTypes";
 
@@ -66,7 +66,11 @@ describe("source sections without streams", () => {
     const early = { from: "2026-09-01", to: "2026-09-30" } as typeof filters;
     const a = fixture({ liveFrom: "2026-10-08", window: { from: "2026-09-01", to: "2026-09-30", days: 30 }, types: { ...fixture().types, meta_live: typ(sc()) } } as never);
     const notes = zeroNotes(a, "meta_live", { ...filters, ...early }, NOW);
-    expect(notes[0]).toEqual({ id: "before-cutoff", text: "Live Meta starts with form fills on 8 Oct 2026. This range ends before that, so its Meta leads are under Old Meta data." });
+    expect(notes[0]).toEqual({ id: "before-cutoff", text: "Live Meta starts with form fills on 08 Oct 2026. This range ends before that, so its Meta leads are under Old Meta data." });
+    // the rolling window says so and names the computed boundary
+    const rolling = { ...a, liveDays: 7, liveMode: "rolling" } as DriveAnalytics;
+    expect(zeroNotes(rolling, "meta_live", { ...filters, ...early }, NOW)[0]).toEqual({ id: "before-cutoff",
+      text: "Live Meta is the last 7 days: form fills on or after 08 Oct 2026. This range ends before that, so its Meta leads are under Old Meta data (first fill older than 7 days)." });
     expect(zeroNotes(fixture({ liveFrom: "2026-10-08" } as never), "meta_live", filters, NOW).map((n) => n.id)).not.toContain("before-cutoff");
     expect(zeroNotes(a, "meta_old", { ...filters, ...early }, NOW).map((n) => n.id)).not.toContain("before-cutoff");
     // never next to Live numbers: only when every Live stage is zero
@@ -173,5 +177,33 @@ describe("sourceSectionModel", () => {
     expect(v.rows[0].requisition).toBe("Not linked");
     expect(v.unmapped).toBe(1);
     expect(campaignMappingView(null).empty).toBe(true);
+  });
+});
+
+describe("rolling Live Meta window: the boundary is shown, never a fixed date", () => {
+  const rolling = (liveFrom: string, liveDays = 7) => fixture({ liveFrom, liveDays, liveMode: "rolling" } as never);
+  it("names the computed boundary per section and in the Summary", () => {
+    const a = rolling("2026-10-02");
+    expect(liveWindowNote(a, "meta_live")).toBe("Live Meta = form filled in the last 7 days, on or after 02 Oct 2026 (IST).");
+    expect(liveWindowNote(a, "meta_old")).toBe("Old Meta data = first form fill older than 7 days, before 02 Oct 2026 (IST). People move here when their first fill leaves the window; their follow-up continues.");
+    expect(liveWindowNote(a)).toBe("Live Meta = form filled in the last 7 days, on or after 02 Oct 2026 (IST); Old Meta data = first form fill older than that. The boundary moves every day at midnight IST.");
+    expect(liveWindowNote(a, "he")).toBe("");
+    expect(liveWindowNote(rolling("2026-10-08", 1), "meta_live")).toBe("Live Meta = form filled in the last 1 day, on or after 08 Oct 2026 (IST).");
+  });
+  it("a fixed cutoff (meta.live_mode = 1) or an older server without liveDays shows the date only; no cutoff shows nothing", () => {
+    expect(liveWindowNote(fixture({ liveFrom: "2026-10-08", liveDays: 7, liveMode: "fixed" } as never), "meta_live")).toBe("Live Meta = form filled on or after 08 Oct 2026 (IST), a fixed date.");
+    expect(liveWindowNote(fixture({ liveFrom: "2026-10-08" } as never), "meta_old")).toBe("Old Meta data = first form fill before 08 Oct 2026 (IST).");
+    expect(liveWindowNote(fixture(), "meta_live")).toBe("");
+    expect(liveWindowNote(fixture({ liveFrom: "not a day", liveDays: 7, liveMode: "rolling" } as never), "meta_live")).toBe("");
+    expect(boundaryDayText("2026-10-02")).toBe("02 Oct 2026");
+    expect(boundaryDayText("2026-12-31")).toBe("31 Dec 2026");
+  });
+  it("the Live and Old sections and the Summary KPI strip carry the note under the tiles", () => {
+    const a = rolling("2026-10-02");
+    expect(render(a, "meta_live")).toContain("Live Meta = form filled in the last 7 days, on or after 02 Oct 2026 (IST).");
+    expect(render(a, "meta_old")).toContain("Old Meta data = first form fill older than 7 days, before 02 Oct 2026 (IST).");
+    const summary = renderToStaticMarkup(<>{sectionParts("summary", a, undefined, undefined, undefined, 0, undefined, noop).gated}</>);
+    expect(summary).toContain("The boundary moves every day at midnight IST.");
+    expect(render(a, "meta_live")).not.toContain("8 Oct");
   });
 });

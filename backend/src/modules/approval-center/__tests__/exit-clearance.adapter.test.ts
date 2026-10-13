@@ -28,11 +28,18 @@ describe("exitClearanceAdapter", () => {
   });
 
   it("routes each owner_role to its own page", async () => {
-    roles.mockResolvedValue(["super_admin"]);
+    roles.mockResolvedValue(["manager", "hr", "admin", "wfm", "payroll", "it"]);
     const rows = ["manager", "hr", "admin", "wfm", "payroll", "it"].map((r, i) => task({ id: `t${i}`, clearance_area: r, owner_role: r }));
     const { ctx } = makeCtx({ "GET /api/exit/clearance/queue": { data: rows } });
     const paths = (await exitClearanceAdapter.list(ctx)).map((i) => i.viewPath.split("?")[0]);
     expect(paths).toEqual(["/provisioning/manager-handover", "/provisioning/hr-exit", "/provisioning/admin", "/provisioning/wfm-alignment", "/provisioning/payroll-exit", "/provisioning/it"]);
+  });
+
+  it("super_admin alone is not designated for departmental clearance tasks (only holders of the area's role)", async () => {
+    roles.mockResolvedValue(["super_admin"]);
+    const rows = ["hr", "it", "wfm", "payroll"].map((r, i) => task({ id: `s${i}`, clearance_area: r, owner_role: r }));
+    const { ctx } = makeCtx({ "GET /api/exit/clearance/queue": { data: rows } });
+    expect(await exitClearanceAdapter.list(ctx)).toEqual([]);
   });
 
   it("flags overdue and blocked tasks high", async () => {

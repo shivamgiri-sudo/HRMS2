@@ -3,6 +3,13 @@
  * Does nothing (not even a query) while QUAL_FOLLOWUP_MODE is off. A MySQL advisory lock keeps two processes from ticking together.
  */
 import type { PoolConnection } from "mysql2/promise";
+import { runBranchRosters } from "./he-branch-roster.service.js";
+import { autoMapPoolStreams } from "./he-auto-map.service.js";
+import { autoResolveReplies } from "./response-auto-apply.service.js";
+import { warmUnifiedFunnels } from "./he-unified-funnel.service.js";
+import { syncRecentMetaLeads } from "./he-lead.service.js";
+import { sweepLocationElsewhere } from "./location-sweep.service.js";
+import { refreshJoinedHeadcount } from "./requisition-joined.service.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
@@ -21,10 +28,18 @@ import { loadCallFileConfig, runCallFileBatch } from "./qualified-followup.callf
 import type { CallFileConfig } from "./qualified-followup.callfile-plan.js";
 import { getPinbotQuality } from "./he-pinbot-quality.service.js";
 import { runDailyReport } from "./qualified-followup.report.js";
+import { pullPortalResults, retryPortalUploads } from "./superbot-portal.sync.js";
+import { runSlotCorrections } from "./slot-corrections.js";
+import { sendQueuedReplies } from "./reply-agent.service.js";
+import { runMorningHealth } from "./ops-health.service.js";
 import type { FollowupMode, SourceType } from "./qualified-followup.types.js";
 
 export const LOCK_NAME = "qualified_followup_tick";
 const INTERVAL_MS = 5 * 60 * 1000;
+const FIRST_TICK_MS = 30 * 1000;
+/** The portal call list is read at most once an hour (calls are made around the clock inside the bot's own 9-9 window). */
+const PORTAL_PULL_MS = 60 * 60 * 1000;
+let lastPortalPullAt = 0;
 
 export interface TickReport {
   mode: FollowupMode;
@@ -139,8 +154,17 @@ export async function runQualifiedFollowupTick(o: { env?: NodeJS.ProcessEnv; now
 const add = (a: StepCounts, b: StepCounts): StepCounts =>
   ({ processed: a.processed + b.processed, sent: a.sent + b.sent, failed: a.failed + b.failed, blocked: a.blocked + b.blocked, held: a.held + b.held, dryRun: a.dryRun + b.dryRun });
 
+let lastJoinedRefresh = 0;
+let lastAutoMap = 0;
+let lastLocationSweep = 0;
+let lastMetaLeadSync = 0;
+let lastFunnelWarm = 0;
 async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources: SourceType[] }>, now: Date, deps: TickDeps): Promise<TickReport> {
   const r = blank(s.mode);
+  // Joined counts (employee code generated) decide when a requisition is filled; refreshed at most every 10 minutes.
+  if (Date.now() - lastJoinedRefresh > 10 * 60_000) { lastJoinedRefresh = Date.now(); await guarded("joined-refresh", () => refreshJoinedHeadcount(), 0); }
+  // New Meta form fills get a Hiring Engine lead so Lead pool, Master and person history match the Meta campaign page (first run reaches back 14 days). Runs before the send steps: a long e-mail batch must not hold it back.
+  if (Date.now() - lastMetaLeadSync > 10 * 60_000) { const first = lastMetaLeadSync === 0; lastMetaLeadSync = Date.now(); await guarded("meta-lead-sync", () => syncRecentMetaLeads(first ? 24 * 14 : 72), 0); }
   // One shared WhatsApp budget for the Pinbot number: every unprompted send today by any mechanism counts (D10).
   const budget = newBudget(await guarded("budget", async () => waDailyBudget(await deps.getPinbotQuality(), s.waDailyMax) - (await deps.sharedWaSentToday(now)), 0));
   for (const { tag, sources } of plan) {
@@ -154,13 +178,32 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
     if (!(s.killSwitch || s.sendsPaused) || tag === "dry_run") {
       await guarded("stage-b", () => deps.runStageB(s, tag, now, scope), null);
       // Answer-button switches are read once per tag pass (not per row), and not at all for dry_run rows (no email is sent).
-      t.email = await guarded("email", async () => runEmailStep(s, tag, now, scope, tag === "dry_run" ? EMAIL_BUTTONS_OFF : await loadEmailButtonSwitches()), emptyCounts());
+      // People who are already due their WhatsApp / call go first: the email step is the slow one (one SMTP send at a time) and a long
+      // email batch must never hold a WhatsApp that was due an hour ago.
       t.whatsapp = await guarded("whatsapp", () => runWhatsappStep(s, tag, now, scope), emptyCounts());
       t.call = await guarded("call", () => runCallStep(s, tag, now, scope), emptyCounts());
+      t.email = await guarded("email", async () => runEmailStep(s, tag, now, scope, tag === "dry_run" ? EMAIL_BUTTONS_OFF : await loadEmailButtonSwitches()), emptyCounts());
     }
     r.byTag[tag] = t;
     r.email = add(r.email, t.email); r.whatsapp = add(r.whatsapp, t.whatsapp); r.call = add(r.call, t.call);
   }
+
+  // Someone emailed for one day and later moved to another is sent the new slot (live rows only; the kill switch and pauses stop it).
+  if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("slot-corrections", () => runSlotCorrections(now), null);
+  // The Hiring Engine pool is mapped to the requisition at the front of each sequence (at most every 30 minutes).
+  if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastAutoMap > 30 * 60_000) { lastAutoMap = Date.now(); await guarded("auto-map", () => autoMapPoolStreams(now), null); }
+  // The walk-in funnel's preset ranges are computed ahead of the dashboards (every 10 minutes, in the background).
+  if (Date.now() - lastFunnelWarm > 10 * 60_000) { lastFunnelWarm = Date.now(); void warmUnifiedFunnels().catch(() => undefined); }
+  // People the records already place in another city are taken off the walk-in (a page of open journeys every 10 minutes).
+  if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastLocationSweep > 10 * 60_000) { lastLocationSweep = Date.now(); await guarded("location-sweep", () => sweepLocationElsewhere(), null); }
+  // Clear replies are applied by the engine (no HR step): Will come books, Cannot come records, Another time re-books.
+  if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("auto-replies", () => autoResolveReplies(now), null);
+  // The branch operations person's roster for the day (from 08:30 IST, once a day, only to staff at that branch).
+  await guarded("branch-roster", () => runBranchRosters(now), 0);
+  // One digest email a day (from 08:15 IST) of anything stuck or waiting. Runs even while sends are paused: it only emails the owner.
+  await guarded("morning-health", () => runMorningHealth(now), false);
+  // Replies the reply agent queued outside the 09:00-20:00 window go out when it opens (only in automatic mode).
+  if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("queued-replies", () => sendQueuedReplies(now), 0);
 
   // Both only email the owner, so they run while sends are paused. One calling file per tag and slot; one report (the first tag).
   const config = await guarded("call-file-config", () => deps.callFileConfig(), null);
@@ -194,10 +237,14 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
 export function startQualifiedFollowupWorker(): void {
   if (timer) return;
   if (readSwitches().mode === "off") return;
-  timer = setInterval(() => {
-    runQualifiedFollowupTick().catch((err) => logger.error({ err: (err as Error).message }, "[qualified-followup] tick failed"));
-  }, INTERVAL_MS);
+  const pull = () => { if (Date.now() - lastPortalPullAt < PORTAL_PULL_MS) return; lastPortalPullAt = Date.now(); pullPortalResults().catch((err) => logger.warn({ err: (err as Error).message }, "[superbot] results pull failed")); };
+  const retryUpload = () => { retryPortalUploads().catch(() => undefined); };
+  const tick = () => { pull(); retryUpload(); return runQualifiedFollowupTick().catch((err) => logger.error({ err: (err as Error).message }, "[qualified-followup] tick failed")); };
+  timer = setInterval(tick, INTERVAL_MS);
   timer.unref();
+  // A restart (a deploy or an env change) must not starve the pipeline for a whole interval: first tick shortly after start.
+  const first = setTimeout(tick, FIRST_TICK_MS);
+  first.unref();
 }
 
 export function stopQualifiedFollowupWorker(): void {

@@ -1,6 +1,5 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import { expandRoles, normalizeRoleInputs } from "../../../platform/policy/index.js";
 
 /** Active role keys for a user (same source requireRole falls back to). */
 export async function callerRoleKeys(userId: string): Promise<string[]> {
@@ -12,13 +11,11 @@ export async function callerRoleKeys(userId: string): Promise<string[]> {
 }
 
 /**
- * Mirrors requireRole(...allowed): super_admin passes everything, otherwise the caller's roles and the
- * allowed roles are both alias-expanded and must intersect. Used so an adapter only lists items the
- * module's decide endpoint will accept from this caller (several list endpoints are wider than decide).
+ * Literal role check: the caller must hold one of `allowed` exactly. Unlike requireRole, super_admin is not a wildcard and
+ * roles are not alias-expanded, so an adapter lists only items the caller is DESIGNATED for.
  */
 export async function callerHasRole(userId: string, ...allowed: string[]): Promise<boolean> {
-  const mine = normalizeRoleInputs(await callerRoleKeys(userId));
-  if (mine.includes("super_admin")) return true;
-  const have = expandRoles(mine);
-  return expandRoles(normalizeRoleInputs(allowed)).some((r) => have.includes(r));
+  // LITERAL match (no super_admin wildcard, no alias expansion): "pending ON ME" needs the exact stage role.
+  const mine = await callerRoleKeys(userId);
+  return allowed.some((r) => mine.includes(r));
 }

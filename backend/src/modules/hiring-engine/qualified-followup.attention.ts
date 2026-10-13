@@ -39,7 +39,9 @@ const DEFS: ChannelDef[] = [
 ];
 
 function retryInfo(channel: AttentionChannel, error: string | null, r: RowDataPacket): { retryable: boolean; retryReason: AttentionRow["retryReason"] } {
-  if (error === OUTCOME_UNKNOWN_ERROR) return { retryable: false, retryReason: "outcome_unknown" };
+  // An email whose outcome is unknown can be re-checked against our own send log (retryFollowupStep); WhatsApp and calls cannot,
+  // because a second send there is visible to the candidate or costs a call.
+  if (error === OUTCOME_UNKNOWN_ERROR) return { retryable: channel === "email", retryReason: "outcome_unknown" };
   if (Number(r.already_sent) === 1) return { retryable: false, retryReason: "already_sent" };
   if (channel === "call" && r.batch_id) return { retryable: false, retryReason: "already_in_file" };
   return { retryable: true, retryReason: null };
@@ -95,7 +97,20 @@ export async function retryFollowupStep(id: string, channel: AttentionChannel): 
   const r = rows[0];
   if (!r) return "not_found";
   if (r.stopped_reason) return "stopped";
-  if (r.err === OUTCOME_UNKNOWN_ERROR) return "outcome_unknown";
+  if (r.err === OUTCOME_UNKNOWN_ERROR) {
+    if (channel !== "email") return "outcome_unknown";
+    // The send log decides: an outgoing email to this person after the row was due means it did go out; none means it is safe to send again.
+    const [log] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(x.created_at) AS at FROM qualified_followup qf JOIN he_lead l ON l.mobile10 COLLATE utf8mb4_unicode_ci = qf.mobile10 COLLATE utf8mb4_unicode_ci
+         JOIN he_message x ON x.lead_id = l.id AND x.direction = 'out' AND x.channel = 'email' AND x.delivery_status <> 'failed'
+        WHERE qf.id = ? AND x.created_at >= COALESCE(qf.email_due_at, qf.created_at)`, [id]);
+    if (log[0]?.at) {
+      await db.execute("UPDATE qualified_followup SET email_status = 'sent', email_sent_at = ?, email_error = NULL WHERE id = ? AND email_error = ?", [log[0].at, id, OUTCOME_UNKNOWN_ERROR]);
+      return "already_sent";
+    }
+    const [reset] = await db.execute<any>(`UPDATE qualified_followup SET ${RESET_SQL.email} WHERE id = ? AND stopped_reason IS NULL AND owner = 'pipeline' AND email_error = ?`, [id, OUTCOME_UNKNOWN_ERROR]);
+    return Number(reset?.affectedRows ?? 0) > 0 ? "ok" : "not_retryable";
+  }
   if (Number(r.already_sent) === 1) return "already_sent";
   if (!Number(r.retryable)) return "not_retryable";
   const [res] = await db.execute<any>(

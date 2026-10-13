@@ -15,6 +15,7 @@ import { logText } from "./log-text.js";
 import { normaliseEmail } from "../../shared/email-domains.js";
 import { recordResponseSafe } from "./candidate-response.service.js";
 import { classifyReply, stripQuoted } from "./response-classifier.js";
+import { handleInboundReply } from "./reply-agent.service.js";
 import { resolveAnswerToken } from "./walkin-invite.service.js";
 
 export interface InboundEmailConfig { host: string; port: number; secure: boolean; user: string; pass: string; mailbox: string; replyTo: string | null; mode: "off" | "dry_run" | "live" }
@@ -120,7 +121,15 @@ export async function pollInboundEmail(now: Date, deps: Partial<PollDeps> = {}, 
       // One message failing (bad encoding, an oversized value) is counted and skipped; it never stalls the cursor.
       try {
         const who = (await byToken(m)) ?? (await byThread(m)) ?? (await bySender(m));
-        if (!who) { skip("unknown_sender"); continue; }
+        if (!who) {
+          skip("unknown_sender");
+          // Never lost: kept for HR with the sender and text (no reply is sent to a sender we cannot tie to a person).
+          if (live) {
+            const uref = (m.messageId ? m.messageId.slice(0, MSG_ID_MAX) : `uid:${cfg.mailbox}:${box.uidValidity}:${m.uid}`).slice(0, 120);
+            await handleInboundReply({ inboundRef: uref, fromEmail: m.from, subject: m.subject, text: m.text, messageId: m.messageId ?? null, references: m.references, who: null }, now);
+          }
+          continue;
+        }
         out.matched++;
         if (!live) continue;
         const top = stripQuoted(m.text).slice(0, 2000);
@@ -139,7 +148,12 @@ export async function pollInboundEmail(now: Date, deps: Partial<PollDeps> = {}, 
           mobile10: who.mobile10, leadId: who.leadId, matchId: who.matchId, inviteId: who.inviteId, metaLeadId: who.metaLeadId,
           sourceKind: SOURCE_KIND_BY_RULE[who.rule] ?? "inbound_email", sourceRef: ref, rawText: top, applied: false,
         });
-        if (r.created) out.recorded++; else skip("duplicate");
+        if (r.created) {
+          out.recorded++;
+          // The reply agent: classify, draft from the person's requisition facts, and send / hold per policy.reply_agent. Never blocks the reader.
+          await handleInboundReply({ inboundRef: ref, fromEmail: m.from, subject: m.subject, text: m.text, messageId: messageId, references: m.references,
+            who: { mobile10: who.mobile10, leadId: who.leadId, matchId: who.matchId } }, now).catch(() => undefined);
+        } else skip("duplicate");
       } catch (err) {
         skip("error");
         logger.warn({ uid: m.uid, err: logText(err) }, "[inbound-email] message skipped");

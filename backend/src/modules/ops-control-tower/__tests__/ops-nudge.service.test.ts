@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { dbExecute, send, isConfigured } = vi.hoisted(() => ({
+const { dbExecute, send, isConfigured, kitRefresh, kitResend } = vi.hoisted(() => ({
   dbExecute: vi.fn(),
   send: vi.fn(),
   isConfigured: vi.fn(),
+  kitRefresh: vi.fn(),
+  kitResend: vi.fn(),
+}));
+vi.mock('../../employees/joiningKitDispatch.service.js', () => ({
+  autoRefreshKitLinkForReminder: kitRefresh,
+  resendKitEsignLink: kitResend,
 }));
 vi.mock('../../../db/mysql.js', () => ({ db: { execute: dbExecute } }));
 vi.mock('../../../config/env.js', () => ({ env: { FRONTEND_URL: 'https://hrms.test' } }));
@@ -21,7 +27,7 @@ vi.mock('../ops-control-tower.service.js', () => ({
   getBgvPendingDetail: vi.fn(async () => []),
 }));
 
-import { nudgeEmployee, bulkNudge, getNudgeStats, runAutoNudgeSweep, issueOnboardingLink } from '../ops-nudge.service.js';
+import { nudgeEmployee, bulkNudge, getNudgeStats, runAutoNudgeSweep, issueOnboardingLink, issueEsignKitLink, emailEsignKitLink } from '../ops-nudge.service.js';
 
 const NOW = new Date('2026-10-02T10:00:00Z').getTime();
 let recipient: Record<string, unknown> | null;
@@ -34,16 +40,20 @@ let workItems: unknown[][] = [];
 let bridgeAffected: number;
 
 let joinersMove = true;
+let kitId: string | null = 'k1';
 
 beforeEach(() => {
   dbExecute.mockReset(); send.mockReset(); isConfigured.mockReset();
   inserts = []; updates = []; bridgeAffected = 1; sentCount = 1; escalated = false; workItems = [];
   recipient = { full_name: 'Asha Rao', branch_id: 'b1', emp_mobile: '9999999999', candidate_id: 'c1',
     cand_mobile: '8888888888', candidate_status: null, onboarding_token: 'tok', onboarding_token_expires_at: null, days_open: 4 };
-  lastSent = null; joinersMove = true;
+  lastSent = null; joinersMove = true; kitId = 'k1';
+  kitRefresh.mockReset(); kitResend.mockReset();
+  kitRefresh.mockResolvedValue('https://hrms.test/employee/joining-kit/esign/kit-tok');
   isConfigured.mockReturnValue(true);
   send.mockResolvedValue({ success: true });
   dbExecute.mockImplementation(async (sql: string, params: unknown[]) => {
+    if (sql.includes('FROM employee_joining_esign_kit')) return [kitId ? [{ id: kitId }] : []];
     if (sql.includes(' AS ok')) return [[{ ok: joinersMove ? 1 : 0 }]];
     if (sql.includes('FROM employees e')) return [recipient ? [recipient] : []];
     if (sql.includes('MAX(created_at) AS last_sent')) return [[{ last_sent: lastSent }]];
@@ -372,5 +382,44 @@ describe('isJoinersMove', () => {
     expect(JOINER_ACTION_SQL['penny-drop-missing']).toContain("'manual_review'");
     expect(JOINER_ACTION_SQL['digilocker-pending']).toBeNull();
     expect(JOINER_ACTION_SQL['account-details-missing']).toBeNull();
+  });
+});
+
+
+describe('eSign Day 3 carries the joining-kit signing link, not the onboarding link', () => {
+  it('nudge: WhatsApp holds the kit signing link and never the onboard-full link', async () => {
+    const r = await call({ issue: 'esign-pending' });
+    expect(r.status).toBe('sent');
+    expect(kitRefresh).toHaveBeenCalledWith('k1');
+    const body = send.mock.calls[0][2] as string;
+    expect(body).toContain('https://hrms.test/employee/joining-kit/esign/kit-tok');
+    expect(body).not.toContain('onboard-full');
+    expect(updates).toHaveLength(0);
+  });
+
+  it('nudge: a dead signing session sends the reminder without any link', async () => {
+    kitRefresh.mockResolvedValue(null);
+    await call({ issue: 'esign-pending' });
+    expect(send.mock.calls[0][2]).not.toContain('http');
+  });
+
+  it('issueEsignKitLink: kit link with a 15 day expiry, null without a sent kit', async () => {
+    const out = await issueEsignKitLink('e1', NOW);
+    expect(out?.link).toBe('https://hrms.test/employee/joining-kit/esign/kit-tok');
+    expect(out?.expiresAt).toBe(new Date(NOW + 15 * 24 * 3600_000).toISOString());
+    kitId = null;
+    expect(await issueEsignKitLink('e1', NOW)).toBeNull();
+  });
+
+  it('emailEsignKitLink maps the resend outcome', async () => {
+    kitResend.mockResolvedValue({ resent: true, message: 'ok', emailedTo: ['a@x.com', 'b@x.com'] });
+    expect(await emailEsignKitLink('e1', 'u1')).toEqual({ status: 'sent', sentTo: 'a@x.com, b@x.com' });
+    expect(kitResend).toHaveBeenCalledWith('k1', 'u1');
+    kitResend.mockResolvedValue({ resent: false, message: 'This employee has no email address on record.' });
+    expect(await emailEsignKitLink('e1', 'u1')).toEqual({ status: 'no_email' });
+    kitResend.mockResolvedValue({ resent: false, message: "The candidate's signing session has already failed or expired at the provider." });
+    expect(await emailEsignKitLink('e1', 'u1')).toEqual({ status: 'no_link' });
+    kitId = null;
+    expect(await emailEsignKitLink('e1', 'u1')).toEqual({ status: 'no_link' });
   });
 });

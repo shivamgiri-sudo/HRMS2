@@ -23,6 +23,7 @@
  * everything else by key. Counts and ids only.
  */
 import type { RowDataPacket } from "mysql2";
+import { joinsLeft } from "../../shared/requisition-fill.js";
 import { limitedDb } from "./he-read-limit.js";
 import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.js";
 import { driveCreditSql } from "./he-drive-credit.js";
@@ -198,7 +199,7 @@ export interface CampaignProgress {
 }
 // The BMI link itself never leaves the database: only whether it is set.
 const campaignsSql = (n: number): string => `SELECT mc.id, mc.campaign_name, mc.campaign_status, mc.meta_form_id, mc.requisition_id, jr.requisition_code,
-       jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.bmi_assessment_url IS NOT NULL AND jr.bmi_assessment_url <> '' AS has_bmi
+       jr.approval_status, jr.active_status, jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, jr.bmi_assessment_url IS NOT NULL AND jr.bmi_assessment_url <> '' AS has_bmi
   FROM meta_campaign mc LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id ${CI}
  WHERE mc.id IN (${ph(n)})`;
 
@@ -212,7 +213,7 @@ export function campaignBlockers(c: RowDataPacket | Record<string, unknown> | un
     const reason = requisitionClosedReason({
       activeStatus: c.active_status == null ? null : Number(c.active_status), closedAt: c.closed_at == null ? null : String(c.closed_at),
       approvalStatus: c.approval_status == null ? null : String(c.approval_status),
-      requestedHeadcount: c.requested_headcount == null ? null : Number(c.requested_headcount), fulfilledHeadcount: c.fulfilled_headcount == null ? null : Number(c.fulfilled_headcount),
+      requestedHeadcount: c.requested_headcount == null ? null : Number(c.requested_headcount), fulfilledHeadcount: c.fulfilled_headcount == null ? null : Number(c.fulfilled_headcount), joinedHeadcount: c.joined_headcount == null ? null : Number(c.joined_headcount),
     });
     if (reason) out.push({ code: "requisition_closed", text: `${code}: ${reason}, so outreach refuses its leads` });
     if (!Number(c.has_bmi)) out.push({ code: "no_bmi_link", text: `${code} has no BookMyInterview link, so the WhatsApp invite cannot carry a booking link` });
@@ -228,8 +229,8 @@ const nOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
 /** Open seats of a requisition row by the outreach path's own rule (lead-screener requisitionClosedReason): a closed, inactive or full requisition has none. */
 export const seatsOf = (r: RowDataPacket | Record<string, unknown>): { open: number; closedReason: string | null } => {
   const closedReason = requisitionClosedReason({ approvalStatus: r.approval_status == null ? null : String(r.approval_status), activeStatus: nOrNull(r.active_status),
-    closedAt: r.closed_at == null ? null : String(r.closed_at), requestedHeadcount: nOrNull(r.requested_headcount), fulfilledHeadcount: nOrNull(r.fulfilled_headcount) });
-  const open = Math.max(0, Math.floor((Number(r.requested_headcount) || 0) - (Number(r.fulfilled_headcount) || 0)));
+    closedAt: r.closed_at == null ? null : String(r.closed_at), requestedHeadcount: nOrNull(r.requested_headcount), fulfilledHeadcount: nOrNull(r.fulfilled_headcount), joinedHeadcount: nOrNull(r.joined_headcount) });
+  const open = r.joined_headcount != null ? joinsLeft(Number(r.requested_headcount) || 0, Number(r.joined_headcount) || 0) : Math.max(0, Math.floor((Number(r.requested_headcount) || 0) - (Number(r.fulfilled_headcount) || 0)));
   return { open: closedReason ? 0 : open, closedReason };
 };
 

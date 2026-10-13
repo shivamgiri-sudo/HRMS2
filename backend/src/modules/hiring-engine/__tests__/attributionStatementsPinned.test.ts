@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execute = vi.hoisted(() => vi.fn());
 const loadActiveStreams = vi.hoisted(() => vi.fn());
@@ -18,6 +18,9 @@ import { clearLiveFromCache } from "../he-source-attribution.service.js";
 // Pins every statement that types a match / person by source (Live Meta, Old Meta data, Hiring Engine) outside the analytics service
 // itself (driveAnalyticsOff pins that one), so a change to the attribution rule shows up here as a deliberate statement change.
 const NOW = new Date("2026-10-14T06:00:00Z");
+// The build reads the rolling Live Meta cutoff from the clock: pinned to NOW, so the cutoff is 14 Oct - 7 days = 7 Oct 2026.
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
+afterEach(() => { vi.useRealTimers(); });
 const W = { from: "2026-10-01", to: "2026-10-14" };
 const norm = (): Array<[string, unknown]> => execute.mock.calls.map((c) => [String(c[0]).replace(/\s+/g, " ").trim(), c[1]]);
 const zeroStage = { leads: 0, qualified: 0, invited: 0, confirmed: 0, arrived: 0, selected: 0, joined: 0 };

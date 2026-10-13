@@ -80,7 +80,8 @@ describe("row tag (screen switch capped by the env)", () => {
 });
 
 describe("enqueueMetaLeadFollowup", () => {
-  const lead = { id: "m1", screening_result: "qualified", parsed_phone: "9876543210", parsed_name: "A", parsed_email: null, campaign_id: "c1", req_id: "req-1", campaign_name: "Camp", jr_id: "req-1", meta_screening_config: null };
+  const nowIst = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 19).replace("T", " ");
+  const lead = { id: "m1", created_at: nowIst, meta_created: null, screening_result: "qualified", parsed_phone: "9876543210", parsed_name: "A", parsed_email: null, campaign_id: "c1", req_id: "req-1", campaign_name: "Camp", jr_id: "req-1", meta_screening_config: null };
   const wireLead = (row: Record<string, unknown>) => {
     let inserted: unknown = null;
     execute.mockImplementation(async (sql: string, p: unknown[] = []) => {
@@ -114,6 +115,11 @@ describe("enqueueMetaLeadFollowup", () => {
     expect(params[1]).toBe("meta_live");
     expect(params).toContain("c1");
     expect(params).toContain("Camp");
+  });
+  it("a form filled before the rolling cutoff is Old Meta data, not Live Meta", async () => {
+    wireLead({ ...lead, created_at: "2026-09-01 10:00:00" });
+    expect((await enqueueMetaLeadFollowup("m1", { switches: LIVE })).status).toBe("enqueued");
+    expect(insertCall()[1][1]).toBe("meta_old");
   });
   it("database error is returned as invalid", async () => {
     execute.mockRejectedValueOnce(new Error("boom"));

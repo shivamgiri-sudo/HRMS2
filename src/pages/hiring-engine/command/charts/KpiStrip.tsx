@@ -5,7 +5,7 @@ import { sparklinePath } from "../driveChartModel";
 import { seriesColor, useIsDark } from "../chartTheme";
 import ChartFrame, { Note } from "./ChartFrame";
 import { ShapeGlyph } from "./TypePatterns";
-import { CREDIT_NOTE, UNTRACKED_NOTE, kpiView } from "./summaryView";
+import { CREDIT_NOTE, UNTRACKED_NOTE, kpiView, liveWindowNote } from "./summaryView";
 import { COST_TITLE, costNoteFor, costTiles } from "./costView";
 
 const SPARK_W = 96;
@@ -19,12 +19,13 @@ export default function KpiStrip({ analytics, only }: { analytics: DriveAnalytic
   const cost = only ? null : costTiles(analytics);
   const note = costNoteFor(analytics) || "Cost per source arrives with Plan 5";
   const grid = only ? "grid gap-3" : "grid gap-3 sm:grid-cols-2 xl:grid-cols-4";
+  const windowNote = liveWindowNote(analytics, only);
   return (
     <ChartFrame
       title={only ? "At a glance" : "Drive types at a glance"}
       subtitle={`${analytics?.window?.from ?? ""} to ${analytics?.window?.to ?? ""}, change in arrivals against the previous period of the same length`}
       table={v.table} empty={only ? false : v.empty} aria={v.table.caption} kind="grid"
-      note={<div className="space-y-1">{v.untracked && <Note>{UNTRACKED_NOTE}</Note>}<Note>{CREDIT_NOTE}</Note></div>}
+      note={<div className="space-y-1">{windowNote && <Note>{windowNote}</Note>}{v.untracked && <Note>{UNTRACKED_NOTE}</Note>}<Note>{CREDIT_NOTE}</Note></div>}
     >
       <div className={grid}>
         {v.tiles.map((t) => {

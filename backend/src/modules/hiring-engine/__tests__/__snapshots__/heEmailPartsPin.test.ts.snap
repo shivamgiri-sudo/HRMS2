@@ -163,6 +163,7 @@ exports[`invite email markup pin > with answer buttons and opt-in 1`] = `
 <tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Reference</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><span style="font-family:Consolas,monospace">HE-ABC123</span> <span style="font-size:13px;color:#64748b">(show this at reception)</span></td></tr>
 <tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Questions</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">Riya 9999999999</td></tr>
 </table></td></tr>
+<tr><td style="padding:12px 28px 0;font-size:13px;color:#475569">This walk-in is at <b>NOIDA-2</b>. If you live in a different city, just reply to this email with your city name and we will take you off this list.</td></tr>
 <tr><td style="padding:12px 28px 0;font-size:13px;color:#475569">Want reminders and directions on WhatsApp? <a href="https://x.test/w/0123456789abcdef0123456789abcdef" style="color:#15803d;font-weight:bold">Turn on WhatsApp updates</a> (optional).</td></tr>
 <tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>MAS Callnet Hiring Team</b></td></tr>
 <tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with MAS Callnet or shared your profile with us. The interview is free of charge; we never ask for money.</td></tr>
@@ -175,6 +176,7 @@ Venue: NOIDA-2, C-27, Sector 62, Noida
 Directions: https://maps.google.com/?q=28.6,77.3
 Please carry: Aadhaar, PAN, 12th marksheet
 Reference: HE-ABC123
+This walk-in is at NOIDA-2. If you live in a different city, reply to this email with your city name and we will take you off this list.
 
 Will you come? Yes: https://x.test/w/0123456789abcdef0123456789abcdef?a=yes | Another time: https://x.test/w/0123456789abcdef0123456789abcdef?a=later | Cannot come: https://x.test/w/0123456789abcdef0123456789abcdef?a=no
 Questions: Riya 9999999999
@@ -206,6 +208,7 @@ exports[`invite email markup pin > without a token 1`] = `
 <tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Reference</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a"><span style="font-family:Consolas,monospace">HE-ABC123</span> <span style="font-size:13px;color:#64748b">(show this at reception)</span></td></tr>
 <tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">Questions</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">Riya 9999999999</td></tr>
 </table></td></tr>
+<tr><td style="padding:12px 28px 0;font-size:13px;color:#475569">This walk-in is at <b>NOIDA-2</b>. If you live in a different city, just reply to this email with your city name and we will take you off this list.</td></tr>
 
 <tr><td style="padding:22px 28px 26px;font-size:14px;color:#334155">All the best,<br/><b>MAS Callnet Hiring Team</b></td></tr>
 <tr><td style="background:#f8fafc;padding:14px 28px;font-size:11px;color:#94a3b8;line-height:1.5">You are receiving this because you applied for a job with MAS Callnet or shared your profile with us. The interview is free of charge; we never ask for money.</td></tr>
@@ -218,6 +221,7 @@ Venue: NOIDA-2, C-27, Sector 62, Noida
 Directions: https://maps.google.com/?q=28.6,77.3
 Please carry: Aadhaar, PAN, 12th marksheet
 Reference: HE-ABC123
+This walk-in is at NOIDA-2. If you live in a different city, reply to this email with your city name and we will take you off this list.
 Questions: Riya 9999999999
 All the best,
 MAS Callnet Hiring Team",

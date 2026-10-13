@@ -29,7 +29,7 @@ export async function loadOfferRows(mobiles: string[], tag: RowTag): Promise<Map
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT qf.id, qf.mobile10, qf.requisition_id, qf.source_type, jr.requisition_code, qf.qualified_at,
             ${OFFER_STARTED_SQL} AS started, hm.state = 'declined' AS declined,
-            hm.distance_km, hm.score, jr.requested_headcount - jr.fulfilled_headcount AS remaining
+            hm.distance_km, hm.score, GREATEST(0, CEIL(jr.requested_headcount * 1.3) - jr.joined_headcount) AS remaining
        FROM qualified_followup qf
        LEFT JOIN he_lead hl ON hl.mobile10 = qf.mobile10
        LEFT JOIN he_match hm ON hm.lead_id = hl.id AND hm.requisition_id = qf.requisition_id

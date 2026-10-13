@@ -1,5 +1,4 @@
 import { getUserRoles } from "../../access/access.service.js";
-import { normalizeRoleInputs } from "../../../platform/policy/index.js";
 import { resolveFinanceBranchScopeSet, type FinanceBranchScope } from "../../finance/finance-access-scope.js";
 import type { LoopbackCtx } from "../types.js";
 
@@ -15,7 +14,8 @@ export function callerRoles(ctx: LoopbackCtx): Promise<string[]> {
   if (!p) {
     p = getUserRoles(ctx.userId).then((rows) => {
       const keys = rows.map((r) => String(r.role_key));
-      return Array.from(new Set([...keys.map((k) => k.toLowerCase()), ...normalizeRoleInputs(keys).map(String)]));
+      // LITERAL role keys only (no alias expansion, no super_admin wildcard): a stage is designated by the exact role it names.
+      return Array.from(new Set(keys.map((k) => k.toLowerCase())));
     });
     roleCache.set(ctx, p);
   }

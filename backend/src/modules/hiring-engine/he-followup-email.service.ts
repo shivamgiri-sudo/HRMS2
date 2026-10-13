@@ -8,6 +8,7 @@
  * except the two that answer something the candidate just did (confirmed, reschedule_offer).
  */
 import type { RowDataPacket } from "mysql2";
+import { fillTargetMet, joinsLeft } from "../../shared/requisition-fill.js";
 import { randomUUID } from "node:crypto";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
@@ -91,7 +92,7 @@ ${c.contact ? row("Questions", esc(c.contact)) : ""}</table></td></tr>
 export async function sendFollowUpEmail(kind: FollowKind, matchId: string, o: { dryRun?: boolean; sentBy?: "followup" } = {}): Promise<SendResult> {
   const [mr] = await db.execute<RowRowData>(
     `SELECT m.id, m.lead_id, m.requisition_id, m.slot_at, m.token, d.id AS drive_id, d.drive_date, d.status AS drive_status, l.full_name, l.email, l.status AS lead_status, l.mobile10,
-            jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, bm.address, bm.latitude, bm.longitude
+            jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.joined_headcount, bm.address, bm.latitude, bm.longitude
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id LEFT JOIN he_drive d ON d.id = m.drive_id JOIN job_requisition jr ON jr.id = m.requisition_id
        LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1 WHERE m.id = ? LIMIT 1`, [matchId]);
   const m = mr[0];
@@ -101,7 +102,7 @@ export async function sendFollowUpEmail(kind: FollowKind, matchId: string, o: { 
   const to = normaliseEmail(String(m.email ?? ""));
   if (!to) return { status: "blocked", reason: "no_email" };
   if (!m.slot_at) return { status: "blocked", reason: "no_slot" };
-  const open = m.approval_status === "approved" && Boolean(m.active_status) && Number(m.fulfilled_headcount) < Number(m.requested_headcount);
+  const open = m.approval_status === "approved" && Boolean(m.active_status) && !fillTargetMet(Number(m.requested_headcount), Number(m.joined_headcount ?? 0));
   if (!open && kind !== "confirmed") return { status: "blocked", reason: "requisition_closed" };
   const h = istHour(new Date());
   if (!TRANSACTIONAL.includes(kind) && (h >= 20 || h < 9)) return { status: "blocked", reason: "quiet_hours" };

@@ -83,3 +83,17 @@ export function ownCompanyGrnSql(grnAlias: string): string {
   return `((${grnAlias}.branch_id IS NULL OR ${grnAlias}.branch_id NOT IN (${b}))`
     + ` AND (${grnAlias}.cost_centre_id IS NULL OR ${grnAlias}.cost_centre_id NOT IN (${c})))`;
 }
+
+/**
+ * A GRN written by the db_bill migration. bill_source_id alone misses part of it: the migration also
+ * created month-suffixed child rows ("Mas/5/26/124-Oct", 164 rows on 2026-09-01) with bill_source_id
+ * NULL, but always under its sentinel creator (00000000-...). `alias` is grn_request.
+ */
+export function legacyGrnSql(alias: string): string {
+  return `(${alias}.bill_source_id IS NOT NULL OR COALESCE(${alias}.created_by, '') LIKE '00000000-%')`;
+}
+
+/** The complement of legacyGrnSql: raised in HRMS. */
+export function hrmsRaisedGrnSql(alias: string): string {
+  return `${alias}.bill_source_id IS NULL AND COALESCE(${alias}.created_by, '') NOT LIKE '00000000-%'`;
+}

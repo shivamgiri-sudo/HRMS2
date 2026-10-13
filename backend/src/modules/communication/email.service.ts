@@ -24,6 +24,9 @@ export type EmailSendInput = {
    */
   bcc?: string;
   replyTo?: string;
+  /** Threading: the Message-Id this mail answers, and the thread's references. */
+  inReplyTo?: string;
+  references?: string[];
   subject: string;
   html: string;
   text?: string;
@@ -161,6 +164,8 @@ export const emailService = {
       ...(input.cc ? { cc: input.cc } : {}),
       ...(input.bcc ? { bcc: input.bcc } : {}),
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+      ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
+      ...(input.references?.length ? { references: input.references } : {}),
       subject: input.subject,
       html: input.html,
       text: input.text,

@@ -49,6 +49,7 @@ export const builtInTemplates: Record<string, BuiltInCommunicationTemplate> = {
       "{{notification.title}}",
       `<p>Hi <strong>{{employee.name}}</strong>,</p>
        <p>{{notification.message}}</p>
+       {{#if notification.details}}<table style="border-collapse:collapse;width:100%;font-size:14px;margin:8px 0">{{#each notification.details}}<tr><td style="padding:7px 10px;border:1px solid #e2e8f0;background:#f8fafc;font-weight:700;width:38%">{{label}}</td><td style="padding:7px 10px;border:1px solid #e2e8f0">{{value}}</td></tr>{{/each}}</table>{{/if}}
        {{#if notification.reference}}<p style="padding:12px 14px;border-radius:10px;background:#eff6ff"><strong>Reference:</strong> {{notification.reference}}</p>{{/if}}`,
       "Open HRMS",
       "{{notification.action_url}}",
@@ -56,7 +57,8 @@ export const builtInTemplates: Record<string, BuiltInCommunicationTemplate> = {
     body_text: `Hi {{employee.name}},
 
 {{notification.message}}
-{{#if notification.reference}}Reference: {{notification.reference}}{{/if}}
+{{#each notification.details}}{{label}}: {{value}}
+{{/each}}{{#if notification.reference}}Reference: {{notification.reference}}{{/if}}
 {{#if notification.action_url}}Open HRMS: {{notification.action_url}}{{/if}}
 
 Mas Callnet India Pvt Ltd`,
