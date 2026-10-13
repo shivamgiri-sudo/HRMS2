@@ -151,6 +151,7 @@ on:
           - grn-migrate-2026-27
           - book-nk-to-bluevine
           - repair-migrated-grn-ex-gst
+          - grn-accounts-head-pending-diagnose
 
       mode:
         description: "dry-run reports what it would do and writes nothing"
@@ -677,6 +678,10 @@ jobs:
             exception-control-audit)
               # Read-only in both modes.
               npx tsx scripts/exception-control-audit.ts
+              ;;
+            grn-accounts-head-pending-diagnose)
+              # Read-only in both modes.
+              npx tsx scripts/grn-accounts-head-pending-diagnose.ts nixon.sethi@teammas.in
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
