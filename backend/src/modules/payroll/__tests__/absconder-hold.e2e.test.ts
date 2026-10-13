@@ -11,6 +11,8 @@ import { describe, expect, it, beforeAll, vi } from "vitest";
 // The shared test setup replaces the database module with a mock. This file needs the real one.
 vi.unmock("../../../db/mysql.js");
 import { randomUUID } from "node:crypto";
+import jwt from "jsonwebtoken";
+import request from "supertest";
 
 const LOCAL = ["127.0.0.1", "localhost"].includes(String(process.env.DB_HOST ?? "").toLowerCase());
 const SAFE_DB = /(e2e|_test$|^test_)/i.test(String(process.env.DB_NAME ?? ""));
@@ -228,4 +230,94 @@ describe.skipIf(!ON)("absconder salary hold, end to end (real MySQL)", () => {
     await rel.requestHold({ exitRequestId: e3, reason: "new facts: property is still missing", actorUserId: ids.mgrUser });
     expect((await rel.getHoldState(e3)).state).toBe("hold_requested");
   }, 60_000);
+
+  // ── HTTP layer: real tokens, real routes, real role and scope checks ──────────────────────────────
+  describe("over HTTP", () => {
+    let app: any;
+    const e4 = randomUUID(), emp4 = randomUUID();
+    const secret = process.env.JWT_SECRET || "change-me-jwt-secret-32characters!!";
+    const tok = (sub: string, email: string) => ({ Authorization: `Bearer ${jwt.sign({ sub, email, iat: Math.floor(Date.now() / 1000) }, secret, { expiresIn: "1h" })}` });
+    const as = {
+      manager: () => tok(ids.mgrUser, "mgr@example.test"),
+      payrollHr: () => tok(ids.prUser, "pr@example.test"),
+      branchHead: () => tok(ids.bhUser, "bh@example.test"),
+      payrollHead: () => tok(ids.phUser, "ph@example.test"),
+      stranger: () => tok(ids.strangerUser, "st@example.test"),
+    };
+    const base = (id: string) => `/api/payroll/absconder-pay-release/${id}`;
+
+    beforeAll(async () => {
+      ({ app } = await import("../../../app.js"));
+      await mkEmp(emp4, "E2EABS4", { mgr: ids.mgrEmp, status: "absconded", active: 0 });
+      await mkSalary(emp4); await mkAttendance(emp4, 1, 5); await mkExit(e4, emp4);
+      await sql(`UPDATE salary_prep_run SET status = 'draft' WHERE id = ?`, [ids.run]);
+      await sql(`INSERT IGNORE INTO workforce_role_catalog (role_key, role_name) VALUES ('payroll_head','payroll_head')`);
+      await sql(`INSERT INTO user_roles (id, user_id, role_key, active_status) VALUES (?, ?, 'payroll_head', 1)`, [randomUUID(), ids.phUser]);
+    }, 60_000);
+
+    it("a stranger cannot see or act", async () => {
+      expect((await request(app).get(base(e4)).set(as.stranger())).status).toBeGreaterThanOrEqual(403);
+      expect((await request(app).post(`${base(e4)}/hold/request`).set(as.stranger()).send({ reason: REASON })).status).toBeGreaterThanOrEqual(403);
+    }, 30_000);
+
+    it("the reporting manager sees a Request action and nothing else", async () => {
+      const r = await request(app).get(base(e4)).set(as.manager());
+      expect(r.status).toBe(200);
+      expect(r.body.data).toMatchObject({ state: "not_held", canRequestHold: true, canDecideRequest: false, canPlaceHold: false, canRelease: false });
+    }, 30_000);
+
+    it("Payroll HR sees Place, not Request", async () => {
+      const r = await request(app).get(base(e4)).set(as.payrollHr());
+      expect(r.status).toBe(200);
+      expect(r.body.data).toMatchObject({ canRequestHold: false, canPlaceHold: true, canDecideRequest: false, canRelease: false });
+    }, 30_000);
+
+    it("the Branch Head and Payroll Head get no hold action at all", async () => {
+      for (const who of [as.branchHead(), as.payrollHead()]) {
+        const r = await request(app).get(base(e4)).set(who);
+        if (r.status === 200) {
+          expect(r.body.data).toMatchObject({ canRequestHold: false, canDecideRequest: false, canPlaceHold: false, canRelease: false });
+        } else expect(r.status).toBeGreaterThanOrEqual(403);
+        const post = await request(app).post(`${base(e4)}/hold/request`).set(who).send({ reason: REASON });
+        expect(post.status).toBeGreaterThanOrEqual(403);
+      }
+    }, 30_000);
+
+    it("manager requests over HTTP; Payroll HR now sees Approve / Decline", async () => {
+      const r = await request(app).post(`${base(e4)}/hold/request`).set(as.manager()).send({ reason: REASON });
+      expect(r.status).toBe(200);
+      const view = await request(app).get(base(e4)).set(as.payrollHr());
+      expect(view.body.data).toMatchObject({ state: "hold_requested", canDecideRequest: true });
+    }, 30_000);
+
+    it("Branch Head, Payroll Head and manager cannot approve over HTTP; Payroll HR can", async () => {
+      for (const who of [as.branchHead(), as.payrollHead(), as.manager()]) {
+        const r = await request(app).post(`${base(e4)}/hold/approve`).set(who).send({ reason: REASON });
+        expect(r.status).toBeGreaterThanOrEqual(403);
+      }
+      const ok = await request(app).post(`${base(e4)}/hold/approve`).set(as.payrollHr()).send({ reason: REASON });
+      expect(ok.status).toBe(200);
+      expect(await hold.isAbsconderPayHeld(emp4)).toBe(true);
+      const view = await request(app).get(base(e4)).set(as.payrollHr());
+      expect(view.body.data).toMatchObject({ state: "held", canRelease: true });
+    }, 60_000);
+
+    it("only Payroll HR can release over HTTP", async () => {
+      for (const who of [as.branchHead(), as.payrollHead(), as.manager()]) {
+        const r = await request(app).post(`${base(e4)}/hold/release`).set(who).send({ reason: REASON });
+        expect(r.status).toBeGreaterThanOrEqual(403);
+      }
+      const ok = await request(app).post(`${base(e4)}/hold/release`).set(as.payrollHr()).send({ reason: REASON });
+      expect(ok.status).toBe(200);
+      expect(await hold.isAbsconderPayHeld(emp4)).toBe(false);
+    }, 60_000);
+
+    it("payroll validation lists a held person by name over HTTP", async () => {
+      await calc.calculatePayrollRun(ids.run, "e2e");            // the person has a line in the run, as in production
+      await rel.placeHold({ exitRequestId: e4, reason: REASON, actorUserId: ids.prUser });
+      const r = await request(app).get(`/api/payroll/absconder-pay-release/held/${ids.run}`).set(as.payrollHead());
+      expect(r.status).toBe(200);
+      expect(r.body.data.map((h: any) => h.employee_code)).toContain("E2EABS4");
+    }, 60_000);
+  });
 });

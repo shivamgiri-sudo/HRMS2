@@ -3,9 +3,9 @@ import { AlertTriangle, CheckCircle2, Loader2, Lock, Unlock } from "lucide-react
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
 
-type HoldState = "not_held" | "hold_requested" | "request_rejected" | "held" | "released";
+export type HoldState = "not_held" | "hold_requested" | "request_rejected" | "held" | "released";
 
-interface HoldView {
+export interface HoldView {
   state: HoldState;
   held: boolean;
   route: string | null;
@@ -18,7 +18,7 @@ interface HoldView {
 
 const BASE = "/api/payroll/absconder-pay-release";
 
-const COPY: Record<HoldState, { tone: string; title: string; body: string }> = {
+export const COPY: Record<HoldState, { tone: string; title: string; body: string }> = {
   not_held: {
     tone: "border-slate-200 bg-slate-50 text-slate-800",
     title: "Salary is paid as normal",
@@ -47,10 +47,83 @@ const COPY: Record<HoldState, { tone: string; title: string; body: string }> = {
 };
 
 /**
- * An absconded employee is paid as normal. The reporting manager can request that the salary days be made 0;
- * only the branch Payroll HR approves, declines, places directly and releases. No Branch Head or Payroll Head step.
- * What each person can do comes from the server (can* flags), never guessed here.
+ * Pure view: what to show for a given state and what each person may do. Rendered by the panel below and
+ * tested directly. The can* flags come from the server, never guessed here.
  */
+export function AbsconderPayHoldView({
+  exitId, view, reason, busy, onReason, onAct,
+}: {
+  exitId: string;
+  view: HoldView;
+  reason: string;
+  busy: boolean;
+  onReason: (v: string) => void;
+  onAct: (path: string, success: string) => void;
+}) {
+  const c = COPY[view.state];
+  const anyAction = view.canRequestHold || view.canDecideRequest || view.canPlaceHold || view.canRelease;
+  return (
+    <section aria-label="Absconder salary hold" className={`rounded-xl border p-4 ${c.tone}`}>
+      <div className="flex items-start gap-2">
+        {view.state === "held" ? <Lock className="mt-0.5 h-5 w-5" /> : view.state === "released" ? <CheckCircle2 className="mt-0.5 h-5 w-5" /> : view.state === "hold_requested" ? <AlertTriangle className="mt-0.5 h-5 w-5" /> : <Unlock className="mt-0.5 h-5 w-5" />}
+        <div>
+          <p className="text-base font-bold">{c.title}</p>
+          {c.body && <p className="mt-0.5 text-sm">{c.body}</p>}
+          {view.lastEvent?.reason && (
+            <p className="mt-1 text-sm"><span className="font-semibold">Last note:</span> {view.lastEvent.reason}</p>
+          )}
+          {view.state === "released" && view.route && (
+            <p className="mt-1 text-sm">{view.route === "payroll" ? "Paid through the open payroll run." : "That month's payroll had closed: the salary is paid through the F&F."}</p>
+          )}
+        </div>
+      </div>
+
+      {anyAction && (
+        <div className="mt-3">
+          <label className="text-sm font-semibold" htmlFor={`hold-reason-${exitId}`}>Reason (recorded against your name)</label>
+          <textarea
+            id={`hold-reason-${exitId}`}
+            className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900"
+            rows={3}
+            maxLength={500}
+            value={reason}
+            onChange={(e) => onReason(e.target.value)}
+            placeholder="At least 15 characters"
+          />
+          <div className="mt-2 flex flex-wrap gap-2">
+            {view.canRequestHold && (
+              <button disabled={busy} onClick={() => onAct("hold/request", "Hold requested")} className="cursor-pointer rounded-lg bg-amber-700 px-4 py-2 text-sm font-bold text-white hover:bg-amber-800 disabled:opacity-50">
+                Request salary hold
+              </button>
+            )}
+            {view.canDecideRequest && (
+              <>
+                <button disabled={busy} onClick={() => onAct("hold/approve", "Hold approved — salary days are 0")} className="cursor-pointer rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-50">
+                  Approve hold
+                </button>
+                <button disabled={busy} onClick={() => onAct("hold/reject", "Request declined")} className="cursor-pointer rounded-lg border border-slate-400 bg-white px-4 py-2 text-sm font-bold text-slate-800 hover:bg-slate-100 disabled:opacity-50">
+                  Decline
+                </button>
+              </>
+            )}
+            {view.canPlaceHold && !view.canDecideRequest && (
+              <button disabled={busy} onClick={() => onAct("hold", "Salary is on hold")} className="cursor-pointer rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-50">
+                Hold salary
+              </button>
+            )}
+            {view.canRelease && (
+              <button disabled={busy} onClick={() => onAct("hold/release", "Hold released")} className="cursor-pointer rounded-lg bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800 disabled:opacity-50">
+                Release hold
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Loads the state for one exit and wires the actions. Shows nothing when the user has no access. */
 export function AbsconderPayHoldPanel({ exitId }: { exitId: string }) {
   const { toast } = useToast();
   const [view, setView] = useState<HoldView | null>(null);
@@ -89,67 +162,5 @@ export function AbsconderPayHoldPanel({ exitId }: { exitId: string }) {
 
   if (off) return null;
   if (!view) return <div className="py-3 text-sm text-slate-500"><Loader2 className="inline h-4 w-4 animate-spin" /> Checking salary hold…</div>;
-
-  const c = COPY[view.state];
-  const anyAction = view.canRequestHold || view.canDecideRequest || view.canPlaceHold || view.canRelease;
-
-  return (
-    <section aria-label="Absconder salary hold" className={`rounded-xl border p-4 ${c.tone}`}>
-      <div className="flex items-start gap-2">
-        {view.state === "held" ? <Lock className="mt-0.5 h-5 w-5" /> : view.state === "released" ? <CheckCircle2 className="mt-0.5 h-5 w-5" /> : view.state === "hold_requested" ? <AlertTriangle className="mt-0.5 h-5 w-5" /> : <Unlock className="mt-0.5 h-5 w-5" />}
-        <div>
-          <p className="text-base font-bold">{c.title}</p>
-          {c.body && <p className="mt-0.5 text-sm">{c.body}</p>}
-          {view.lastEvent?.reason && (
-            <p className="mt-1 text-sm"><span className="font-semibold">Last note:</span> {view.lastEvent.reason}</p>
-          )}
-          {view.state === "released" && view.route && (
-            <p className="mt-1 text-sm">{view.route === "payroll" ? "Paid through the open payroll run." : "That month's payroll had closed: the salary is paid through the F&F."}</p>
-          )}
-        </div>
-      </div>
-
-      {anyAction && (
-        <div className="mt-3">
-          <label className="text-sm font-semibold" htmlFor={`hold-reason-${exitId}`}>Reason (recorded against your name)</label>
-          <textarea
-            id={`hold-reason-${exitId}`}
-            className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 text-sm text-slate-900"
-            rows={3}
-            maxLength={500}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="At least 15 characters"
-          />
-          <div className="mt-2 flex flex-wrap gap-2">
-            {view.canRequestHold && (
-              <button disabled={busy} onClick={() => void act("hold/request", "Hold requested")} className="cursor-pointer rounded-lg bg-amber-700 px-4 py-2 text-sm font-bold text-white hover:bg-amber-800 disabled:opacity-50">
-                Request salary hold
-              </button>
-            )}
-            {view.canDecideRequest && (
-              <>
-                <button disabled={busy} onClick={() => void act("hold/approve", "Hold approved — salary days are 0")} className="cursor-pointer rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-50">
-                  Approve hold
-                </button>
-                <button disabled={busy} onClick={() => void act("hold/reject", "Request declined")} className="cursor-pointer rounded-lg border border-slate-400 bg-white px-4 py-2 text-sm font-bold text-slate-800 hover:bg-slate-100 disabled:opacity-50">
-                  Decline
-                </button>
-              </>
-            )}
-            {view.canPlaceHold && !view.canDecideRequest && (
-              <button disabled={busy} onClick={() => void act("hold", "Salary is on hold")} className="cursor-pointer rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-50">
-                Hold salary
-              </button>
-            )}
-            {view.canRelease && (
-              <button disabled={busy} onClick={() => void act("hold/release", "Hold released")} className="cursor-pointer rounded-lg bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800 disabled:opacity-50">
-                Release hold
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </section>
-  );
+  return <AbsconderPayHoldView exitId={exitId} view={view} reason={reason} busy={busy} onReason={setReason} onAct={(p, ok) => void act(p, ok)} />;
 }
