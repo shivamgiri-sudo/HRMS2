@@ -12,6 +12,7 @@ import {
   PhoneCall,
   Save,
   ShieldCheck,
+  TriangleAlert,
   UserRoundCheck,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -28,6 +29,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,6 +68,15 @@ interface StatutoryDetails {
   pan_verification_status?: VerificationStatus;
   aadhaar_verification_status?: VerificationStatus;
   pf_uan_verification_status?: VerificationStatus;
+  /** From GET /api/employees/me — employee_statutory_info.pf_eligible, 1/0 or boolean. */
+  pf_eligible?: number | boolean | null;
+}
+
+/** PF is being deducted but no UAN is on file yet — the case that must be nudged. */
+export function needsUanNudge(statutory?: StatutoryDetails | null): boolean {
+  if (!statutory) return false;
+  const pfDeducted = statutory.pf_eligible === 1 || statutory.pf_eligible === true;
+  return pfDeducted && !statutory.masked_uan;
 }
 
 interface EmergencyContact {
@@ -409,6 +425,59 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
             color="purple"
           />
         </div>
+
+        {needsUanNudge(statutory) && (
+          <div className="mt-5 rounded-2xl border border-amber-300 bg-amber-50 p-4">
+            <div className="flex gap-3">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-700" />
+              <div className="text-sm text-amber-900">
+                <p className="font-semibold">PF is being deducted from your salary, but we don't have your UAN on file.</p>
+                <p className="mt-1 text-pretty">
+                  We need it to file your PF contribution. If you already have a UAN from a
+                  previous job, enter it below. If you're not sure, or this is your first PF
+                  job, open the guide below first.
+                </p>
+              </div>
+            </div>
+            <Accordion type="single" collapsible className="mt-3">
+              <AccordionItem value="uan-guide" className="rounded-xl border border-amber-200 bg-white px-3">
+                <AccordionTrigger className="text-sm font-medium text-amber-900">
+                  I don't know my UAN / I'm a fresher — what do I do?
+                </AccordionTrigger>
+                <AccordionContent className="text-sm text-gray-700">
+                  <p className="font-semibold text-gray-900">
+                    Step 1 — Check if you already have a UAN (e.g. from a previous employer)
+                  </p>
+                  <ol className="ml-4 mt-1 list-decimal space-y-1">
+                    <li>
+                      Go to the EPFO member portal:{" "}
+                      <a
+                        href="https://unifiedportal-mem.epfindia.gov.in/memberinterface/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[#073f78] underline"
+                      >
+                        unifiedportal-mem.epfindia.gov.in
+                      </a>
+                    </li>
+                    <li>Click <strong>"Know Your UAN Status"</strong>.</li>
+                    <li>Enter your Aadhaar number and the mobile number linked to it, then verify the OTP.</li>
+                    <li>If a UAN already exists against your Aadhaar, it is shown on screen — enter it below.</li>
+                  </ol>
+                  <p className="mt-3 font-semibold text-gray-900">
+                    Step 2 — If this is genuinely your first PF-covered job
+                  </p>
+                  <p className="mt-1">
+                    You do not generate a UAN yourself. EPFO allots a new UAN automatically once
+                    we file your first PF contribution for you — there's nothing to do on your
+                    end right now. Leave the UAN field blank and submit the rest of this form; we'll
+                    let you know once your UAN is ready, and you can come back and add it then.
+                  </p>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          </div>
+        )}
 
         <div className="mt-5 flex gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-[#073f78]">
           <LockKeyhole className="mt-0.5 size-4 shrink-0" />
