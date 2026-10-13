@@ -1,0 +1,44 @@
+name: Ops Meta campaign link probe (manual, read-only)
+
+# Read-only: Meta ad campaigns (name, status, spend, lead forms) next to the HRMS campaigns and recent form fills. Writes nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      campaign_ids:
+        description: "Comma-separated Meta campaign ids"
+        required: true
+
+concurrency:
+  group: ops-meta-campaign-link-probe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Meta campaign link probe
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Probe (read-only)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          META_CAMPAIGN_IDS: ${{ inputs.campaign_ids }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::production .env not found"; exit 1; }
+          npx tsx scripts/meta-campaign-link-probe.ts
