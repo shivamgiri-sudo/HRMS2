@@ -169,8 +169,11 @@ async function computeOverview(f: InsightFilters): Promise<InsightOverview> {
       FROM ${CDR_TABLE} WHERE ${c.sql} GROUP BY UPPER(campaign_id) ORDER BY totalCdr DESC`, c.params),
   ]);
   const [hours, apr] = await Promise.all([
+    // StartTime is the call clock time (CallDate is date-only). It is present on the
+    // sibling cdr_ob_250; if cdr_ob_25 ever lacks it, drop the hourly chart, not the page.
     dialerQuery<RowDataPacket>(`SELECT HOUR(StartTime) AS hr, ${CDR_MEASURES}
-      FROM ${CDR_TABLE} WHERE ${c.sql} GROUP BY hr ORDER BY hr`, c.params),
+      FROM ${CDR_TABLE} WHERE ${c.sql} GROUP BY hr ORDER BY hr`, c.params)
+      .catch((err) => { console.warn('[reginald-insights] hourly CDR query failed:', err?.message ?? err); return [] as RowDataPacket[]; }),
     dialerQuery<RowDataPacket>(`SELECT ${APR_MEASURES} FROM ${APR_TABLE} WHERE ${a.sql}`, a.params),
   ]);
   const agentRows = await dialerQuery<RowDataPacket>(
