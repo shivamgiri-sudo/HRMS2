@@ -18,11 +18,10 @@ const q = async (sql: string, p: unknown[] = []) => {
 const show = (l: string, v: unknown) => console.log(`\n== ${l} ==\n${JSON.stringify(v, null, 1)}`);
 
 const emp = await q(
-  `SELECT e.id, e.user_id, e.employee_code, e.designation_id, d.designation_name, dp.department_name,
+  `SELECT e.id, e.user_id, e.employee_code, e.designation_id, d.designation_name,
           b.branch_name, e.branch_id, e.employment_status, e.active_status
      FROM employees e
      LEFT JOIN designation_master d ON d.id = e.designation_id
-     LEFT JOIN department_master dp ON dp.id = e.department_id
      LEFT JOIN branch_master b ON b.id = e.branch_id
     WHERE LOWER(e.official_email) = ? OR LOWER(e.office_email) = ? OR LOWER(e.email) = ? LIMIT 3`,
   [email, email, email],
