@@ -16,6 +16,10 @@ on:
         description: "Set to 'yes' to run the non-people (GRN / vendor) reconciliation instead (read-only)."
         required: false
         default: ""
+      nkmove:
+        description: "Set to 'dry-run' to print the Neelakanth-to-Jaldarshan cost-centre move and its before/after totals. This workflow never applies it."
+        required: false
+        default: ""
       nkrent:
         description: "Set to 'yes' to check Ahmedabad Neelakanth rent, db_bill vs HRMS (read-only)."
         required: false
@@ -83,9 +87,12 @@ jobs:
           INPUT_GRNCOMPARE: ${{ inputs.grncompare }}
           INPUT_GRNPROBE: ${{ inputs.grnprobe }}
           INPUT_NKRENT: ${{ inputs.nkrent }}
+          INPUT_NKMOVE: ${{ inputs.nkmove }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_NKRENT" = "yes" ]; then
+          if [ "$INPUT_NKMOVE" = "dry-run" ]; then
+            npx tsx scripts/pnl-nk-branch-move.ts
+          elif [ "$INPUT_NKRENT" = "yes" ]; then
             npx tsx scripts/pnl-nk-rent-check.ts
             npx tsx scripts/pnl-nk-rent-hrms.ts
           elif [ -n "$INPUT_GRNPROBE" ]; then
