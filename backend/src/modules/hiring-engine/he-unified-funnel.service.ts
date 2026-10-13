@@ -14,8 +14,11 @@ import type { SourceType } from "./qualified-followup.types.js";
 
 export interface FunnelCounts { enrolled: number; emailed: number; whatsapped: number; called: number; confirmed: number; walkedIn: number; selected: number; joined: number }
 export interface FunnelInsight { level: "info" | "warn"; text: string }
+export interface CampaignDay extends FunnelCounts { date: string; campaignId: string; campaignName: string; drive: SourceType }
 export interface UnifiedFunnel {
   generatedAt: string; from: string; to: string;
+  /** Every day x Meta campaign x drive (Live or Old Meta) with the funnel of the people first contacted that day. */
+  campaignDays: CampaignDay[];
   /** Per day: people first contacted, and branch registrations of people the engine contacted (cohort view). */
   daily: Array<{ date: string; enrolled: number; walkedIn: number }>;
   insights: FunnelInsight[];
@@ -84,11 +87,13 @@ export async function warmUnifiedFunnels(): Promise<void> {
 
 async function compute(fromD: string, to: string, key: string): Promise<UnifiedFunnel> {
   const [fu] = await db.execute<RowDataPacket[]>(
-    `SELECT mobile10, source_type, MIN(created_at) AS enrolled_at, MAX(email_sent_at IS NOT NULL) AS em, MAX(wa_sent_at IS NOT NULL) AS wa, MAX(call_state = 'called') AS ca
+    `SELECT mobile10, source_type, MIN(created_at) AS enrolled_at, MAX(email_sent_at IS NOT NULL) AS em, MAX(wa_sent_at IS NOT NULL) AS wa, MAX(call_state = 'called') AS ca, MAX(campaign_id) AS cid
        FROM qualified_followup WHERE mode_at_enqueue = 'live' GROUP BY mobile10, source_type`);
+  const campaignOf = new Map<string, string>();
   const people = new Map<string, { type: SourceType; enrolledDay: string; em: boolean; wa: boolean; ca: boolean }>();
   for (const r of fu) {
     const m = String(r.mobile10); const type = String(r.source_type) as SourceType;
+    if (r.cid && !campaignOf.has(m)) campaignOf.set(m, String(r.cid));
     const cur = people.get(m);
     const next = { type, enrolledDay: day(r.enrolled_at), em: Number(r.em) === 1, wa: Number(r.wa) === 1, ca: Number(r.ca) === 1 };
     if (!cur) { people.set(m, next); continue; }
@@ -106,9 +111,9 @@ async function compute(fromD: string, to: string, key: string): Promise<UnifiedF
   };
   const inFollowup = new Set(people.keys());
   const [fills] = await db.execute<RowDataPacket[]>(
-    `SELECT RIGHT(REGEXP_REPLACE(parsed_phone,'[^0-9]',''),10) AS m, MIN(created_at) AS first_fill FROM meta_lead_raw
+    `SELECT RIGHT(REGEXP_REPLACE(parsed_phone,'[^0-9]',''),10) AS m, MIN(created_at) AS first_fill, SUBSTRING_INDEX(GROUP_CONCAT(campaign_id ORDER BY created_at), ',', 1) AS cid FROM meta_lead_raw
       WHERE created_at >= ? AND parsed_phone IS NOT NULL GROUP BY m`, [since]);
-  for (const r of fills) { const m = String(r.m); if (m.length === 10) { const d = day(r.first_fill); add(m, d >= liveFrom ? "meta_live" : "meta_old", d, {}, false); } }
+  for (const r of fills) { const m = String(r.m); if (m.length === 10 && r.cid && !campaignOf.has(m)) campaignOf.set(m, String(r.cid)); if (m.length === 10) { const d = day(r.first_fill); add(m, d >= liveFrom ? "meta_live" : "meta_old", d, {}, false); } }
   const [msgs] = await db.execute<RowDataPacket[]>(
     `SELECT l.mobile10 AS m, h.channel, MIN(h.created_at) AS first_at FROM he_message h JOIN he_lead l ON l.id = h.lead_id
       WHERE h.direction = 'out' AND h.created_at >= ? AND h.channel IN ('email','whatsapp') AND (h.delivery_status IS NULL OR h.delivery_status <> 'failed') GROUP BY l.mobile10, h.channel`, [since]);
@@ -138,6 +143,7 @@ async function compute(fromD: string, to: string, key: string): Promise<UnifiedF
     c.enrolled++; if (p.em) c.emailed++; if (p.wa) c.whatsapped++; if (p.ca) c.called++; if (confirmed.has(m)) c.confirmed++;
   }
   const seen = new Set<string>();
+  const outcome = new Map<string, { sel: boolean; joi: boolean }>();
   const out = { registered: 0, selected: 0, joined: 0, fromDrives: 0, beforeEnrolment: 0, otherSources: { registered: 0, selected: 0, joined: 0 } };
   for (const r of ats) {
     const m = norm10(r.mobile);
@@ -146,7 +152,7 @@ async function compute(fromD: string, to: string, key: string): Promise<UnifiedF
     out.registered++; if (sel) out.selected++; if (joi) out.joined++;
     const p = people.get(m);
     if (p && String(r.walk_in_date).slice(0, 10) >= p.enrolledDay && !seen.has(m)) {
-      seen.add(m); out.fromDrives++;
+      seen.add(m); out.fromDrives++; outcome.set(m, { sel, joi });
       const c = drives[p.type]; c.walkedIn++; if (sel) c.selected++; if (joi) c.joined++;
     } else if (p) {
       out.beforeEnrolment++; // registered at a branch before the engine enrolled them, or a second registration of the same person
@@ -159,11 +165,24 @@ async function compute(fromD: string, to: string, key: string): Promise<UnifiedF
   const dayMap = new Map<string, { enrolled: number; walkedIn: number }>();
   for (let d = fromD; d <= to; d = addDay(d, 1)) dayMap.set(d, { enrolled: 0, walkedIn: 0 });
   for (const p of people.values()) { const x = dayMap.get(p.enrolledDay); if (x) x.enrolled++; }
+  const [camps] = await db.execute<RowDataPacket[]>("SELECT id, campaign_name FROM meta_campaign");
+  const nameOf = new Map(camps.map((c) => [String(c.id), String(c.campaign_name ?? "")]));
+  const bucket = new Map<string, CampaignDay>();
+  for (const [m, p] of people) {
+    const cid = campaignOf.get(m);
+    if (!cid || p.type === "he") continue;
+    const k = `${p.enrolledDay}|${cid}|${p.type}`;
+    let b = bucket.get(k);
+    if (!b) { b = { ...zero(), date: p.enrolledDay, campaignId: cid, campaignName: nameOf.get(cid) ?? cid, drive: p.type }; bucket.set(k, b); }
+    b.enrolled++; if (p.em) b.emailed++; if (p.wa) b.whatsapped++; if (p.ca) b.called++; if (confirmed.has(m)) b.confirmed++;
+    const o = outcome.get(m); if (o) { b.walkedIn++; if (o.sel) b.selected++; if (o.joi) b.joined++; }
+  }
+  const campaignDays = [...bucket.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.campaignName.localeCompare(b.campaignName)));
   const dayOfMobile = new Map<string, string>();
   for (const r of ats) { const m = norm10(r.mobile); if (seen.has(m) && !dayOfMobile.has(m)) dayOfMobile.set(m, String(r.walk_in_date).slice(0, 10)); }
   for (const dd of dayOfMobile.values()) { const x = dayMap.get(dd); if (x) x.walkedIn++; }
   const daily = [...dayMap].map(([date, v]) => ({ date, ...v }));
-  const value: UnifiedFunnel = { generatedAt: new Date().toISOString(), from, to, daily, insights: funnelInsights({ drives, total, ats: out }), drives, drivesTotal: total, ats: out };
+  const value: UnifiedFunnel = { generatedAt: new Date().toISOString(), from, to, campaignDays, daily, insights: funnelInsights({ drives, total, ats: out }), drives, drivesTotal: total, ats: out };
   cache.set(key, { at: Date.now(), value });
   return value;
 }
