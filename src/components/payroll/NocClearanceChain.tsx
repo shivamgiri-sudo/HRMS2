@@ -404,7 +404,7 @@ function sigStatusBadge(s: SignatoryStatus) {
   if (s === "declined")
     return { cls: "bg-red-100 text-red-800 border-red-200", label: "Declined" };
   return {
-    cls: "bg-slate-100 text-slate-600 border-slate-200",
+    cls: "bg-amber-100 text-amber-800 border-amber-300",
     label: "Pending",
   };
 }
@@ -955,7 +955,7 @@ export default function NocClearanceChain({
         </Card>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(320px,380px)_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
         {/* ── Tracking list ── */}
         <Card className="h-fit">
           <CardContent className="pt-5 space-y-3">
@@ -1178,8 +1178,8 @@ export default function NocClearanceChain({
           </CardContent>
         </Card>
 
-        {/* ── Case detail ── */}
-        <div className="space-y-4">
+        {/* ── Case detail ── min-w-0 so wide tables scroll inside the card instead of pushing the page */}
+        <div className="min-w-0 space-y-4">
           {!selectedId && (
             <Card>
               <CardContent className="py-16 text-center text-base text-slate-500">
@@ -1391,7 +1391,7 @@ export default function NocClearanceChain({
                         onValueChange={(v) => void setFnf(v)}
                       >
                         <SelectTrigger id="noc-fnf" className="mt-1 w-56">
-                          <SelectValue placeholder="Not set — Finance decides" />
+                          <SelectValue placeholder="Not set — HR decides" />
                         </SelectTrigger>
                         <SelectContent>
                           {Object.entries(FNF_LABELS).map(([k, v]) => (
@@ -1427,7 +1427,7 @@ export default function NocClearanceChain({
                   </div>
 
                   <div className="overflow-x-auto rounded-lg border border-slate-200">
-                    <table className="w-full text-base">
+                    <div className="overflow-x-auto"><table className="w-full text-base">
                       <caption className="sr-only">
                         The eight NOC signatories in the order printed on the
                         certificate, with each decision and timestamp
@@ -1575,7 +1575,7 @@ export default function NocClearanceChain({
                           );
                         })}
                       </tbody>
-                    </table>
+                    </table></div>
                   </div>
                 </CardContent>
               </Card>
@@ -1592,8 +1592,8 @@ export default function NocClearanceChain({
                         variant="outline"
                         className="bg-emerald-100 text-emerald-800 border-emerald-200"
                       >
-                        <CheckCircle2 className="h-3 w-3 mr-1" /> Finance not
-                        blocked
+                        <CheckCircle2 className="h-3 w-3 mr-1" /> Property
+                        returned
                       </Badge>
                     ) : (
                       <Badge
@@ -1601,7 +1601,7 @@ export default function NocClearanceChain({
                         className="bg-amber-100 text-amber-800 border-amber-200"
                       >
                         <AlertTriangle className="h-3 w-3 mr-1" />
-                        Finance blocked — {
+                        Admin blocked — {
                           detail.assetGate.outstanding.length
                         }{" "}
                         item(s)
@@ -1610,7 +1610,7 @@ export default function NocClearanceChain({
                   </div>
 
                   <div className="overflow-x-auto rounded-lg border border-slate-200">
-                    <table className="w-full text-base">
+                    <div className="overflow-x-auto"><table className="w-full text-base">
                       <caption className="sr-only">
                         Company property, return status, and any waiver
                       </caption>
@@ -1646,7 +1646,7 @@ export default function NocClearanceChain({
                               {Number(a.is_mandatory_for_finance) === 1 && (
                                 <span
                                   className="ml-2 text-xs font-semibold uppercase text-amber-700"
-                                  title="Blocks Finance sign-off until returned or waived"
+                                  title="Blocks the Admin sign-off until returned or waived"
                                 >
                                   required
                                 </span>
@@ -1716,7 +1716,7 @@ export default function NocClearanceChain({
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                    </table></div>
                   </div>
                 </CardContent>
               </Card>
@@ -1914,7 +1914,7 @@ export default function NocClearanceChain({
           </DialogHeader>
           <div className="space-y-2">
             <p className="text-base text-slate-600">
-              A waiver lets Finance sign off on property the company has not got
+              A waiver lets Admin sign off on property the company has not got
               back. It is recorded against your name, so the reason needs to
               stand on its own later.
             </p>

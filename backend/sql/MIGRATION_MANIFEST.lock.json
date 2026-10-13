@@ -1052,6 +1052,7 @@
     "migrations/2159_noc_payroll_head_final_approval_and_absconder_ff_exception.sql",
     "migrations/2162_ff_absconder_branch_head_approval.sql",
     "migrations/2163_noc_remove_finance_stage.sql",
+    "migrations/2164_noc_admin_stage_holds_property_check.sql",
     "migrations/2160_roster_import_row_tracker_indexes.sql",
     "migrations/2161_roster_import_row_batch_cover.sql"
   ],
@@ -1381,6 +1382,7 @@
     "migrations/2159_noc_payroll_head_final_approval_and_absconder_ff_exception.sql",
     "migrations/2162_ff_absconder_branch_head_approval.sql",
     "migrations/2163_noc_remove_finance_stage.sql",
+    "migrations/2164_noc_admin_stage_holds_property_check.sql",
     "migrations/2160_roster_import_row_tracker_indexes.sql",
     "migrations/2161_roster_import_row_batch_cover.sql"
   ],
