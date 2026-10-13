@@ -254,6 +254,15 @@ describe("ingest enqueue ordering", () => {
     await metaCampaignService.ingestLead({ formId: "f1", leadgenId: "g2", prefetchedDetail: { id: "g2", field_data: [] } as never, skipOutreach: true });
     expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ skipOutreach: true }));
   });
+  it("a fresh fill pulled by the sync (skipOutreach, created today) is enrolled to be contacted, not held", async () => {
+    setEnv({ QUAL_FOLLOWUP_MODE: "dry_run" });
+    const fresh = new Date(Date.now() - 3_600_000).toISOString().slice(0, 19) + "+0000";
+    await metaCampaignService.ingestLead({ formId: "f1", leadgenId: "g3", prefetchedDetail: { id: "g3", created_time: fresh, field_data: [] } as never, skipOutreach: true });
+    expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ skipOutreach: false }));
+    h.enqueue.mockClear();
+    await metaCampaignService.ingestLead({ formId: "f1", leadgenId: "g4", prefetchedDetail: { id: "g4", created_time: "2026-09-01T10:00:00+0000", field_data: [] } as never, skipOutreach: true });
+    expect(h.enqueue).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ skipOutreach: true }));
+  });
   it("a rejected enqueue never breaks ingest, and notifyQualifiedLead still runs", async () => {
     setEnv({ QUAL_FOLLOWUP_MODE: "dry_run" });
     h.enqueue.mockImplementation((() => Promise.reject(new Error("db down"))) as never);

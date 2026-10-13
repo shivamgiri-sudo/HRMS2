@@ -168,6 +168,16 @@ const CAMPAIGN_SELECT = `
 
 // ──────────────────────────── service ────────────────────────────
 
+/** A backfilled fill: Meta created it more than 2 days ago (the sync's BACKFILL_AGE_MS). No parsable created_time counts as old. */
+const OLD_FILL_MS = 2 * 86_400_000;
+export function isOldMetaFill(createdTime: string | number | null | undefined, now = Date.now()): boolean {
+  if (createdTime === null || createdTime === undefined || createdTime === '') return true;
+  const ms = typeof createdTime === 'number'
+    ? (createdTime < 1e12 ? createdTime * 1000 : createdTime)
+    : Date.parse(String(createdTime).replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+  return !Number.isFinite(ms) || now - ms > OLD_FILL_MS;
+}
+
 export const metaCampaignService = {
   async listCampaigns(filters: {
     requisitionId?: string;
@@ -734,7 +744,10 @@ export const metaCampaignService = {
       if (campaign?.id && (await heOwnsCampaign(campaign.id).catch(() => false))) await bridgeOneMetaLead(id);
       // Qualified-lead follow-up (a no-op while QUAL_FOLLOWUP_MODE is off, the default): fire-and-forget, fail-open so ingest is unaffected.
       // One Live Meta arrival path: a standing approval enrols through the criteria, otherwise the unified enrolment (both idempotent).
-      const enqueued = enrolMetaArrival(id, { skipOutreach: Boolean(args.skipOutreach) }).catch((e: unknown) =>
+      // skipOutreach holds only a real backfill (Meta created the fill over 2 days ago, or its age is unknown). The 30-minute sync pulls
+      // fresh fills through the same import path: held here they stayed held_manual and its notify step skipped them as enrolled.
+      const holdAsBackfill = Boolean(args.skipOutreach) && isOldMetaFill(detail.created_time);
+      const enqueued = enrolMetaArrival(id, { skipOutreach: holdAsBackfill }).catch((e: unknown) =>
         console.warn('[meta] enrolMetaArrival failed', e instanceof Error ? e.message : e)
       );
       // Not off: wait for the row so notifyQualifiedLead's guard can see it. Off: fire-and-forget as before.
