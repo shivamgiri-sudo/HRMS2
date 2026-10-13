@@ -459,7 +459,7 @@ export async function listCasesPage(
   }
   if (filters.awaitingFinalFrom) {
     conds.push(`(c.status = 'completed' AND c.override_at IS NULL
-                 AND c.payroll_head_approved_at IS NULL AND DATE(c.completed_at) >= ?)`);
+                 AND c.payroll_head_approved_at IS NULL AND c.legacy_source IS NULL AND DATE(c.completed_at) >= ?)`);
     params.push(filters.awaitingFinalFrom);
   }
 

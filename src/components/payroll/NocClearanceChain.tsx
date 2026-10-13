@@ -69,6 +69,7 @@ interface CaseListRow {
   employee_code: string | null;
   employee_name: string | null;
   branch_name: string | null;
+  legacy_source?: string | null;
   status: CaseStatus;
   last_working_day: string | null;
   signatory_total: number;
@@ -147,6 +148,10 @@ interface CaseDetail {
     fnf_option: string | null;
     fnf_option_suggested: string | null;
     override_at: string | null;
+    legacy_source?: string | null;
+    legacy_validated_by?: string | null;
+    legacy_validated_at?: string | null;
+    legacy_remarks?: string | null;
     payroll_head_approved_at?: string | null;
     payroll_head_approval_note?: string | null;
     override_reason: string | null;
@@ -1133,7 +1138,7 @@ export default function NocClearanceChain({
                           variant="outline"
                           className={`shrink-0 text-xs ${caseStatusClass(r.status)}`}
                         >
-                          {r.status.replace(/_/g, " ")}
+                          {r.legacy_source ? "cleared (old system)" : r.status.replace(/_/g, " ")}
                         </Badge>
                       </div>
                       <div className="mt-2 flex items-center gap-2">
@@ -1205,6 +1210,16 @@ export default function NocClearanceChain({
 
           {c && detail && (
             <>
+              {c.legacy_source && (
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-base text-emerald-900">
+                  <p className="font-bold">Cleared in the old system</p>
+                  <p className="mt-1 text-sm">
+                    NOC validated by {c.legacy_validated_by || "—"}
+                    {c.legacy_validated_at ? ` on ${fmt(c.legacy_validated_at)}` : ""}.
+                    {c.legacy_remarks ? ` Remarks: ${c.legacy_remarks}` : ""} This is a record of that clearance, not a new sign-off.
+                  </p>
+                </div>
+              )}
               {/* Header + identity */}
               <Card>
                 <CardContent className="pt-5">

@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1269,
-  "columnCount": 18445,
+  "columnCount": 18449,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -13668,7 +13668,11 @@
       "updated_at",
       "payroll_head_approved_by",
       "payroll_head_approved_at",
-      "payroll_head_approval_note"
+      "payroll_head_approval_note",
+      "legacy_source",
+      "legacy_validated_by",
+      "legacy_validated_at",
+      "legacy_remarks"
     ],
     "noc_case_event": [
       "id",

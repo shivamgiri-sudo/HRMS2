@@ -19,6 +19,16 @@ on:
         required: false
         default: ""
         type: string
+      apply:
+        description: "noc-legacy-import.ts only: 'true' to WRITE (needs confirm). Anything else is a dry run."
+        required: false
+        default: ""
+        type: string
+      confirm:
+        description: "noc-legacy-import.ts apply only: type noc-legacy-import"
+        required: false
+        default: ""
+        type: string
       exit_ids:
         description: "Optional comma list of exit_request ids (default: auto-pick one voluntary + one involuntary)"
         required: false
@@ -57,5 +67,7 @@ jobs:
           FF_AUDIT_EXIT_IDS: ${{ inputs.exit_ids }}
           FF_DBBILL_SCRIPT: ${{ inputs.script }}
           NOC_CHECK_EMAIL: ${{ inputs.check_email }}
+          NOC_IMPORT_APPLY: ${{ inputs.apply }}
+          NOC_IMPORT_CONFIRM: ${{ inputs.confirm }}
         run: |
-          if [ -n "${NOC_CHECK_EMAIL:-}" ]; then npx tsx scripts/noc-recipient-check.ts; elif [ -n "${FF_DBBILL_SCRIPT:-}" ]; then node "scripts/${FF_DBBILL_SCRIPT}"; else npx tsx scripts/ff-accuracy-audit.ts; fi
+          if [ -n "${NOC_CHECK_EMAIL:-}" ]; then npx tsx scripts/noc-recipient-check.ts; elif [ "${FF_DBBILL_SCRIPT:-}" = "noc-legacy-import.ts" ]; then npx tsx scripts/noc-legacy-import.ts; elif [ -n "${FF_DBBILL_SCRIPT:-}" ]; then node "scripts/${FF_DBBILL_SCRIPT}"; else npx tsx scripts/ff-accuracy-audit.ts; fi

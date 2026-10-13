@@ -117,7 +117,7 @@ export async function ffSettlementGate(
   }
 
   const [ncRows] = await db.execute<RowDataPacket[]>(
-    `SELECT status, override_at, completed_at, payroll_head_approved_at
+    `SELECT status, override_at, completed_at, payroll_head_approved_at, legacy_source
        FROM noc_case WHERE employee_id = ? LIMIT 1`,
     [employeeId],
   );
@@ -137,6 +137,8 @@ export async function ffSettlementGate(
       reason: `NOC clearance is ${String(nc.status).replace(/_/g, " ")}; F&F unlocks after every level clears and the Payroll Head gives final approval.`,
     };
   }
+  // Cleared in the old system is history, not a fresh sign-off: no Payroll Head approval to wait for.
+  if (nc.legacy_source) return { allowed: true, code: null, reason: null };
   const completedOn = String(nc.completed_at ?? "").slice(0, 10);
   if (completedOn && completedOn < from) return { allowed: true, code: null, reason: null };
   if (nc.payroll_head_approved_at) return { allowed: true, code: null, reason: null };

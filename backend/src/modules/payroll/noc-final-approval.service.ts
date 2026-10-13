@@ -59,6 +59,7 @@ export function awaitingFinalApprovalSql(alias = "nc"): string {
   return `(${alias}.status = 'completed'
            AND ${alias}.override_at IS NULL
            AND ${alias}.payroll_head_approved_at IS NULL
+           AND ${alias}.legacy_source IS NULL
            AND DATE(${alias}.completed_at) >= ?)`;
 }
 
