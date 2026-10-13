@@ -1,0 +1,40 @@
+name: Ops Email Feed + BBB Upload Diagnose (manual)
+
+# Read-only: Molecular/Reginald email sync history (worker logs), TCP test to the ticket DB,
+# HRMS email row counts, and Blabli Blu abandon upload sizes. Writes nothing anywhere.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ops-email-feed-diagnose-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Email feed + BBB upload diagnose
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          npx tsx scripts/molecular-feed-diagnose.ts

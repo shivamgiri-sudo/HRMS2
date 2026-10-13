@@ -4,6 +4,9 @@
  * - A plain TCP connect from this server to the ticketing DB host (no login, no query).
  * - What HRMS holds: newest email_ticket_daily_actual row per dashboard, molecular_email_ticket count.
  *
+ * - Blabli Blu abandon (Received Data) uploads: rows per file in the dashboard uploader and the Bulk Upload Hub,
+ *   to find where a ~2,000-row ceiling comes from.
+ *
  *   npx tsx scripts/molecular-feed-diagnose.ts
  */
 import "dotenv/config";
@@ -69,6 +72,19 @@ async function main() {
   console.log("=== email_ticket_daily_actual", JSON.stringify(d));
   const [t] = await db.query<RowDataPacket[]>(`SELECT COUNT(*) AS n, MAX(synced_at) AS last FROM molecular_email_ticket`);
   console.log("=== molecular_email_ticket", JSON.stringify(t));
+  const [bb] = await db.query<RowDataPacket[]>(
+    `SELECT batch_id, state, live_rows, date_from, date_to, DATE_FORMAT(uploaded_at,'%Y-%m-%d %H:%i') AS at
+       FROM bbb_upload_batch WHERE kind = 'received' ORDER BY uploaded_at DESC LIMIT 25`);
+  console.log("=== bbb_upload_batch (dashboard uploader, newest 25)");
+  for (const r of bb) console.log("  ", JSON.stringify(r));
+  const [hub] = await db.query<RowDataPacket[]>(
+    `SELECT b.upload_batch_no, b.batch_status, b.total_rows, b.valid_rows, b.imported_rows, b.error_rows,
+            (SELECT COUNT(*) FROM upload_batch_row r WHERE r.upload_batch_id = b.id) AS staged_rows,
+            LEFT(b.error_summary, 160) AS err, DATE_FORMAT(b.created_at,'%Y-%m-%d %H:%i') AS at
+       FROM upload_batch b
+      WHERE b.upload_type_code = 'BLA_BLI_BLU_ABANDON' ORDER BY b.created_at DESC LIMIT 25`).catch((e) => [[{ error: (e as Error).message }]] as never);
+  console.log("=== Bulk Upload Hub BLA_BLI_BLU_ABANDON batches (newest 25)");
+  for (const r of hub as RowDataPacket[]) console.log("  ", JSON.stringify(r));
   await db.end();
 }
 main().catch((e) => { console.error(e); process.exit(1); });
