@@ -1,0 +1,46 @@
+name: Ops unblock and apply pending migrations (manual)
+
+# Stops long reads (SELECT only) on the tables the pending migrations alter, then applies the pending migrations once.
+# Dry run unless "apply" is true.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "true to stop the reads and migrate, anything else is a dry run"
+        required: false
+        default: "false"
+
+concurrency:
+  group: ops-unblock-and-migrate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    name: Unblock and migrate
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Unblock and migrate (dry run unless apply)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          APPLY: ${{ inputs.apply == 'true' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::production .env not found"; exit 1; }
+          npx tsx scripts/unblock-and-migrate.ts
