@@ -1,0 +1,50 @@
+name: Ops GRN Accounts-Head Diagnose (manual, read-only)
+
+# One-off, read-only diagnostic: lists GRNs stuck at the Accounts Head approval bucket
+# (status='branch_head_approved'), resolves a given user's active roles, and flags whether
+# that user would be blocked by the maker-checker self-review guard vs the accounts_head
+# role gate. Split into its own workflow because ops-scripts.yml's run block is already over
+# GitHub's 21000-char expression limit and cannot take new entries without a separate trim.
+
+on:
+  workflow_dispatch:
+    inputs:
+      approver_email:
+        description: "User email to check roles/blocks for"
+        required: true
+        type: string
+
+concurrency:
+  group: ops-grn-accounts-head-diagnose
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: GRN Accounts-Head pending diagnose
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run diagnostic
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: npx tsx scripts/grn-accounts-head-pending-diagnose.ts "${{ inputs.approver_email }}"
