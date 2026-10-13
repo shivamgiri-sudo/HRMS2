@@ -10,8 +10,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+  SearchableSelect,
+  type SearchableOption,
+} from "@/components/ui/searchable-select";
+
+const LINE_TYPE_OPTIONS: SearchableOption[] = [
+  { value: "charge", label: "Charge" },
+  { value: "deduction", label: "Deduction" },
+];
 
 export interface LineItemDraft {
   particulars: string;
@@ -31,9 +37,15 @@ interface Props {
   showLineType?: boolean;
 }
 
-export function LineItemsEditor({ lines, onChange, showLineType = false }: Props) {
+export function LineItemsEditor({
+  lines,
+  onChange,
+  showLineType = false,
+}: Props) {
   function update(index: number, patch: Partial<LineItemDraft>) {
-    onChange(lines.map((line, i) => (i === index ? { ...line, ...patch } : line)));
+    onChange(
+      lines.map((line, i) => (i === index ? { ...line, ...patch } : line)),
+    );
   }
   function remove(index: number) {
     onChange(lines.filter((_, i) => i !== index));
@@ -51,8 +63,15 @@ export function LineItemsEditor({ lines, onChange, showLineType = false }: Props
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <Label className="text-xs">Line items *</Label>
-        <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={add}>
-          <Plus className="mr-1 h-3.5 w-3.5" />Add line
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs"
+          onClick={add}
+        >
+          <Plus className="mr-1 h-3.5 w-3.5" />
+          Add line
         </Button>
       </div>
 
@@ -71,7 +90,9 @@ export function LineItemsEditor({ lines, onChange, showLineType = false }: Props
                   className="h-8 text-sm"
                   placeholder="Particulars"
                   value={line.particulars}
-                  onChange={(e) => update(index, { particulars: e.target.value })}
+                  onChange={(e) =>
+                    update(index, { particulars: e.target.value })
+                  }
                 />
               </div>
               <div className="col-span-2">
@@ -94,18 +115,18 @@ export function LineItemsEditor({ lines, onChange, showLineType = false }: Props
               </div>
               {showLineType && (
                 <div className="col-span-2">
-                  <Select
+                  <SearchableSelect
+                    options={LINE_TYPE_OPTIONS}
                     value={line.lineType}
-                    onValueChange={(v) => update(index, { lineType: v as LineItemDraft["lineType"] })}
-                  >
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="charge">Charge</SelectItem>
-                      <SelectItem value="deduction">Deduction</SelectItem>
-                    </SelectContent>
-                  </Select>
+                    onChange={(v) =>
+                      update(index, {
+                        lineType: v as LineItemDraft["lineType"],
+                      })
+                    }
+                    aria-label="Line type"
+                    searchPlaceholder="Type…"
+                    className="h-8 text-xs"
+                  />
                 </div>
               )}
               <div className="col-span-1 flex items-center justify-end">
@@ -126,9 +147,15 @@ export function LineItemsEditor({ lines, onChange, showLineType = false }: Props
 
       {lines.length > 0 && (
         <p className="text-right text-xs text-muted-foreground">
-          Running taxable total: <span className="font-medium tabular-nums text-slate-900">
-            {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(runningTotal)}
-          </span> (GST computed server-side)
+          Running taxable total:{" "}
+          <span className="font-medium tabular-nums text-slate-900">
+            {new Intl.NumberFormat("en-IN", {
+              style: "currency",
+              currency: "INR",
+              maximumFractionDigits: 2,
+            }).format(runningTotal)}
+          </span>{" "}
+          (GST computed server-side)
         </p>
       )}
     </div>

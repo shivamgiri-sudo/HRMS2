@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import type { RowDataPacket } from "mysql2";
+import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { clientBillingNumberingService } from "./client-billing-numbering.service.js";
 
@@ -209,4 +209,48 @@ async function rejectInvoice(input: RejectInvoiceInput): Promise<RejectInvoiceRe
   }
 }
 
-export const clientBillingApprovalService = { approveInvoice, rejectInvoice };
+/**
+ * Rejection logic executed within a CALLER-owned transaction.
+ * The caller must beginTransaction / commit / rollback — this function only executes
+ * the DML (provision reversal, PO reversal, status update, audit log insert).
+ * Used by the change-request void-approval flow so the void decision and the rejection
+ * run atomically in the same transaction.
+ */
+async function rejectInvoiceInTransaction(
+  conn: PoolConnection,
+  input: RejectInvoiceInput,
+  auditAction = "rejected",
+): Promise<void> {
+  const [deductionRows] = await conn.execute<RowDataPacket[]>(
+    `SELECT id, provision_id, amount_used FROM client_provision_deduction WHERE invoice_id = ?`,
+    [input.invoiceId],
+  );
+  for (const d of deductionRows as Array<{ id: string; provision_id: string; amount_used: number }>) {
+    await conn.execute(
+      `UPDATE client_provision SET provision_balance = provision_balance + ? WHERE id = ?`,
+      [d.amount_used, d.provision_id],
+    );
+    await conn.execute(`DELETE FROM client_provision_deduction WHERE id = ?`, [d.id]);
+  }
+  const [poParticularRows] = await conn.execute<RowDataPacket[]>(
+    `SELECT id, po_id, amount_consumed FROM client_po_particular WHERE invoice_id = ?`,
+    [input.invoiceId],
+  );
+  for (const p of poParticularRows as Array<{ id: string; po_id: string; amount_consumed: number }>) {
+    await conn.execute(
+      `UPDATE client_po_number SET balance_amount = balance_amount + ? WHERE id = ?`,
+      [p.amount_consumed, p.po_id],
+    );
+    await conn.execute(`DELETE FROM client_po_particular WHERE id = ?`, [p.id]);
+  }
+  await conn.execute(
+    `UPDATE client_invoice SET invoice_status = 'rejected', rejected_reason = ?, rejected_by = ?, rejected_at = NOW() WHERE id = ?`,
+    [input.reason, input.userId, input.invoiceId],
+  );
+  await conn.execute(
+    `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id, reason) VALUES (?, ?, ?, ?, ?)`,
+    [randomUUID(), input.invoiceId, auditAction, input.userId, input.reason],
+  );
+}
+
+export const clientBillingApprovalService = { approveInvoice, rejectInvoice, rejectInvoiceInTransaction };

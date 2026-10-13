@@ -21,7 +21,9 @@ function invoiceComponentsEditorSource() {
 describe("BudgetLinkedGrnForm — InvoiceComponentsEditor GST Amount column (Group A3)", () => {
   it("adds a GST Amount GrnTh and drops the Note GrnTh in the desktop table header", () => {
     const src = invoiceComponentsEditorSource();
-    expect(src).toContain('<GrnTh sticky={false} align="right" className="w-32">GST Amount</GrnTh>');
+    expect(src).toContain(
+      '<GrnTh sticky={false} align="right" className="w-32">GST Amount</GrnTh>',
+    );
     expect(src).not.toContain(">Note</GrnTh>");
   });
 
@@ -39,8 +41,12 @@ describe("BudgetLinkedGrnForm — InvoiceComponentsEditor GST Amount column (Gro
 
   it("shows the GST amount as a read-only value in the mobile stacked card", () => {
     const src = invoiceComponentsEditorSource();
-    expect(src).toContain('<Label className="text-[11px] text-grn-ink-soft">GST Amount</Label>');
-    const gstAmountLabelIdx = src.indexOf('<Label className="text-[11px] text-grn-ink-soft">GST Amount</Label>');
+    expect(src).toContain(
+      '<Label className="text-[11px] text-grn-ink-soft">GST Amount</Label>',
+    );
+    const gstAmountLabelIdx = src.indexOf(
+      '<Label className="text-[11px] text-grn-ink-soft">GST Amount</Label>',
+    );
     const nearby = src.slice(gstAmountLabelIdx, gstAmountLabelIdx + 300);
     expect(nearby).toContain("{money(tax)}");
   });

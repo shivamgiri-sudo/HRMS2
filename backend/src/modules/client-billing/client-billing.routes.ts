@@ -10,6 +10,10 @@ import { clientBillingService } from "./client-billing.service.js";
 import { clientBillingApprovalService } from "./client-billing-approval.service.js";
 import { clientBillingCreditNoteService } from "./client-billing-credit-note.service.js";
 import { clientBillingPdfService } from "./client-billing-pdf.service.js";
+import { clientBillingEditService } from "./client-billing-edit.service.js";
+import { clientBillingSubmitService } from "./client-billing-submit.service.js";
+import { clientBillingChangeRequestService } from "./client-billing-change-request.service.js";
+import { checkPoCoverage, listAvailablePos } from "./client-billing-po.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -67,10 +71,16 @@ router.post(
       costCentreId?: string; category?: string; financeYear?: string; monthLabel?: string;
       invoiceDate?: string; description?: string; applyGst?: boolean;
       lines?: Array<{ particulars: string; qty: number; rate: number; lineType?: "charge" | "deduction" }>;
+      poNumbers?: string[]; grnNo?: string; grnDate?: string;
+      jccNo?: string; jccDate?: string; rcmApplicable?: boolean;
     };
     if (!body.costCentreId || !body.category || !body.financeYear || !body.monthLabel || !body.invoiceDate) {
       return res.status(400).json({ error: "costCentreId, category, financeYear, monthLabel, and invoiceDate are required" });
     }
+    const hasRefs = body.poNumbers?.length || body.grnNo || body.jccNo || body.rcmApplicable !== undefined;
+    const references = hasRefs
+      ? { poNumbers: body.poNumbers, grnNo: body.grnNo, grnDate: body.grnDate, jccNo: body.jccNo, jccDate: body.jccDate, rcmApplicable: body.rcmApplicable }
+      : undefined;
     const data = await clientBillingService.createProforma({
       costCentreId: body.costCentreId,
       category: body.category,
@@ -81,7 +91,8 @@ router.post(
       applyGst: body.applyGst,
       lines: body.lines ?? [],
       createdBy: req.authUser!.id,
-    });
+      ...(references ? { references } : {}),
+    } as Parameters<typeof clientBillingService.createProforma>[0]);
     res.status(201).json({ success: true, data });
   })
 );
@@ -309,7 +320,7 @@ router.get(
   "/proformas/:id/pdf",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const withLetterhead = req.query.letterhead !== "false";
+    const lhVal = req.query.letterhead; const withLetterhead = lhVal !== "false" && lhVal !== "0";
     const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id, withLetterhead);
     res.setHeader("Content-Type", "application/pdf");
     res.send(pdf);
@@ -387,7 +398,7 @@ router.get(
   "/invoices/:id/pdf",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const withLetterhead = req.query.letterhead !== "false";
+    const lhVal = req.query.letterhead; const withLetterhead = lhVal !== "false" && lhVal !== "0";
     const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id, withLetterhead);
     res.setHeader("Content-Type", "application/pdf");
     res.send(pdf);
@@ -557,10 +568,234 @@ router.get(
   "/credit-notes/:id/pdf",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const withLetterhead = req.query.letterhead !== "false";
+    const lhVal = req.query.letterhead; const withLetterhead = lhVal !== "false" && lhVal !== "0";
     const pdf = await clientBillingPdfService.generateCreditNotePdf(req.params.id, withLetterhead);
     res.setHeader("Content-Type", "application/pdf");
     res.send(pdf);
+  })
+);
+
+// ── P5: edit proforma ──────────────────────────────────────────────────────────
+router.put(
+  "/proformas/:id",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await clientBillingEditService.updateProforma({
+      invoiceId: req.params.id,
+      userId: req.authUser!.id,
+      ...req.body,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+// ── P5: PO / GRN / JCC helpers ────────────────────────────────────────────────
+router.get(
+  "/po/available",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { costCentreId, invoiceDate } = req.query as Record<string, string>;
+    if (!costCentreId || !invoiceDate) {
+      return res.status(400).json({ error: "costCentreId and invoiceDate are required" });
+    }
+    const rows = await listAvailablePos(costCentreId, invoiceDate);
+    res.json({ success: true, data: rows });
+  })
+);
+
+router.get(
+  "/po/check",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { costCentreId, invoiceDate, grandTotal, poNumbers } = req.query as Record<string, string>;
+    if (!costCentreId || !invoiceDate || !grandTotal) {
+      return res.status(400).json({ error: "costCentreId, invoiceDate, and grandTotal are required" });
+    }
+    const parsedPoNumbers = String(poNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    const { usableRows: _, ...result } = await checkPoCoverage({
+      costCentreId,
+      invoiceDate,
+      grandTotal: Number(grandTotal),
+      poNumbers: parsedPoNumbers,
+    });
+    res.json({ success: true, data: result });
+  })
+);
+
+// ── P5: bulk approve ───────────────────────────────────────────────────────────
+// Registered BEFORE /invoices/:id so Express does not try to match "bulk-approve" as an id.
+router.post(
+  "/invoices/bulk-approve",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { invoiceIds } = req.body as { invoiceIds: string[] };
+    if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+      return res.status(400).json({ error: "invoiceIds must be a non-empty array" });
+    }
+    const results = await clientBillingChangeRequestService.bulkApprove(
+      invoiceIds,
+      req.authUser!.id,
+    );
+    const approved = results.filter((r) => r.ok).length;
+    const failed = results.filter((r) => !r.ok).length;
+    res.json({ success: true, data: { approved, failed, results } });
+  })
+);
+
+// ── P5: submit to client ───────────────────────────────────────────────────────
+router.get(
+  "/invoices/:id/submissions",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const rows = await clientBillingSubmitService.listSubmissions(req.params.id);
+    res.json({ success: true, data: rows });
+  })
+);
+
+router.post(
+  "/invoices/:id/submit-to-client",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const body = req.body as {
+      to: string[] | string;
+      cc?: string[] | string;
+      subject?: string;
+      message?: string;
+      letterhead?: boolean;
+    };
+    const result = await clientBillingSubmitService.submitToClient({
+      invoiceId: req.params.id,
+      to: body.to,
+      cc: body.cc,
+      subject: body.subject,
+      message: body.message,
+      letterhead: body.letterhead !== false,
+      userId: req.authUser!.id,
+    });
+    res.json({ success: true, data: result });
+  })
+);
+
+// ── P5: change requests ────────────────────────────────────────────────────────
+router.post(
+  "/invoices/:id/change-requests",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const body = req.body as { requestType: string; reason: string; requestedValue?: string };
+    if (!body.requestType || !body.reason) {
+      return res.status(400).json({ error: "requestType and reason are required" });
+    }
+    const data = await clientBillingChangeRequestService.createChangeRequest({
+      invoiceId: req.params.id,
+      requestType: body.requestType as "void" | "status_change",
+      reason: body.reason,
+      requestedValue: body.requestedValue,
+      userId: req.authUser!.id,
+    });
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.get(
+  "/invoices/:id/change-requests",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT cicr.*, u.name AS requested_by_name
+       FROM client_invoice_change_request cicr
+       LEFT JOIN users u ON u.id = cicr.requested_by
+       WHERE cicr.invoice_id = ?
+       ORDER BY cicr.created_at DESC`,
+      [req.params.id],
+    );
+    res.json({ success: true, data: rows });
+  })
+);
+
+router.get(
+  "/change-requests",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { status, page = "1", limit = "50" } = req.query as Record<string, string>;
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
+    const offset = (pageNum - 1) * limitNum;
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (status) { conditions.push("cicr.request_status = ?"); params.push(status); }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT cicr.*,
+              COALESCE(ci.bill_no, ci.proforma_no) AS invoice_ref,
+              ci.invoice_status, ci.grand_total, ci.month_label,
+              ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name
+       FROM client_invoice_change_request cicr
+       LEFT JOIN client_invoice ci ON ci.id = cicr.invoice_id
+       LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+       ${where}
+       ORDER BY cicr.created_at DESC
+       LIMIT ${limitNum} OFFSET ${offset}`,
+      params,
+    );
+    const [[{ total }]] = await db.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM client_invoice_change_request cicr ${where}`,
+      params,
+    );
+    res.json({ success: true, data: rows, total: Number(total), page: pageNum, limit: limitNum });
+  })
+);
+
+router.get(
+  "/change-requests/:id",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT cicr.*,
+              COALESCE(ci.bill_no, ci.proforma_no) AS invoice_ref,
+              ci.invoice_status, ci.grand_total, ci.category, ci.finance_year,
+              ci.invoice_date, ci.month_label,
+              ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name
+       FROM client_invoice_change_request cicr
+       LEFT JOIN client_invoice ci ON ci.id = cicr.invoice_id
+       LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+       WHERE cicr.id = ? LIMIT 1`,
+      [req.params.id],
+    );
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: "Change request not found" });
+    const [auditLog] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM client_invoice_audit_log WHERE invoice_id = ? ORDER BY created_at DESC LIMIT 20`,
+      [row.invoice_id],
+    );
+    res.json({ success: true, data: { ...row, audit_log: auditLog } });
+  })
+);
+
+router.post(
+  "/change-requests/:id/approve",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await clientBillingChangeRequestService.decideChangeRequest({
+      requestId: req.params.id,
+      decision: "approve",
+      note: req.body?.note,
+      userId: req.authUser!.id,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/change-requests/:id/decline",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await clientBillingChangeRequestService.decideChangeRequest({
+      requestId: req.params.id,
+      decision: "decline",
+      note: req.body?.note,
+      userId: req.authUser!.id,
+    });
+    res.json({ success: true, data });
   })
 );
 

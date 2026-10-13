@@ -3,7 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { getAuditLog } from "@/lib/clientBillingApi";
 import { formatISTDate } from "@/lib/utils";
@@ -40,20 +43,27 @@ export function AuditLogDialog({ invoiceId, label, onOpenChange }: Props) {
             <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
           </div>
         ) : entries.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">No audit entries yet.</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            No audit entries yet.
+          </p>
         ) : (
           <div className="max-h-[60vh] space-y-2 overflow-y-auto">
             {entries.map((entry) => (
               <div key={entry.id} className="rounded-md border p-2 text-sm">
                 <div className="flex items-center justify-between">
-                  <Badge variant="outline" className={ACTION_CLASS[entry.action] ?? ""}>
+                  <Badge
+                    variant="outline"
+                    className={ACTION_CLASS[entry.action] ?? ""}
+                  >
                     {entry.action}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
                     {formatISTDate(entry.created_at)}
                   </span>
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">Actor: {entry.actor_id}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Actor: {entry.actor_id}
+                </p>
                 {entry.reason && <p className="mt-1 text-xs">{entry.reason}</p>}
               </div>
             ))}

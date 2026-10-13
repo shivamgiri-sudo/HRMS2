@@ -27,7 +27,18 @@ export type InvoiceStatus = "proforma" | "approved" | "rejected";
 export type GstType = "Integrated" | "Intrastate";
 export type CreditNoteStatus = "draft" | "approved";
 export type LineType = "charge" | "deduction";
-export type AuditAction = "created" | "edited" | "approved" | "rejected";
+export type AuditAction =
+  | "created"
+  | "edited"
+  | "approved"
+  | "rejected"
+  | "void_requested"
+  | "void_approved"
+  | "void_declined"
+  | "status_change_requested"
+  | "status_change_approved"
+  | "status_change_declined"
+  | "submitted_to_client";
 
 /** One row of `client_invoice`. Covers both the Proformas tab (`invoice_status='proforma'`)
  *  and the Invoices tab (`invoice_status='approved'`) — same table, different filter. */
@@ -69,6 +80,16 @@ export interface InvoiceRow {
    *  for anything created through the live workflow. */
   is_migrated?: 0 | 1;
   legacy_id?: number | null;
+  /** P5 (migration 1975): PO numbers (CSV, max 4), GRN, JCC, RCM flag and last "Submit to
+   *  Client" stamp. Undefined/null on rows created before the migration. */
+  po_numbers?: string | null;
+  grn_no?: string | null;
+  grn_date?: string | null;
+  jcc_no?: string | null;
+  jcc_date?: string | null;
+  rcm_applicable?: 0 | 1;
+  last_sent_at?: string | null;
+  last_sent_by?: string | null;
 }
 
 /** `GET /proformas/:id` and `GET /invoices/:id` (same route) attach `lines` to the invoice row. */
@@ -156,7 +177,17 @@ export interface ProformaLineInput {
   lineType?: LineType;
 }
 
-export interface CreateProformaPayload {
+/** PO / GRN / JCC / RCM block accepted by create and edit. */
+export interface InvoiceReferencesPayload {
+  poNumbers?: string[];
+  grnNo?: string;
+  grnDate?: string; // YYYY-MM-DD
+  jccNo?: string;
+  jccDate?: string; // YYYY-MM-DD
+  rcmApplicable?: boolean;
+}
+
+export interface CreateProformaPayload extends InvoiceReferencesPayload {
   costCentreId: string;
   category: string;
   financeYear: string;
@@ -166,6 +197,10 @@ export interface CreateProformaPayload {
   applyGst?: boolean;
   lines: ProformaLineInput[];
 }
+
+export type UpdateProformaPayload = Partial<
+  Omit<CreateProformaPayload, "costCentreId">
+>;
 
 export interface CreditNoteLineInput {
   particulars: string;
@@ -265,51 +300,83 @@ export interface PaginatedResult<T> {
 
 // ── Wrapper functions ──────────────────────────────────────────────────────────────────
 
-export function getSummary(): Promise<{ success: boolean; data: ClientBillingSummary }> {
+export function getSummary(): Promise<{
+  success: boolean;
+  data: ClientBillingSummary;
+}> {
   return hrmsApi.get("/api/client-billing/summary");
 }
 
 /** GET /api/client-billing/proformas — server-side filtered + paginated (2026-08-21).
  *  `filters.status` narrows to a single `invoice_status`; omit it (or pass "_all") for the
  *  Proformas/Invoices tabs' own client-side status split over one broader fetch. */
-export function listProformas(filters: ClientBillingListFilters = {}): Promise<PaginatedResult<InvoiceRow>> {
-  return hrmsApi.get(`/api/client-billing/proformas${buildQueryString(filters)}`);
+export function listProformas(
+  filters: ClientBillingListFilters = {},
+): Promise<PaginatedResult<InvoiceRow>> {
+  return hrmsApi.get(
+    `/api/client-billing/proformas${buildQueryString(filters)}`,
+  );
 }
 
-export function getProforma(id: string): Promise<{ success: boolean; data: InvoiceDetail }> {
+export function getProforma(
+  id: string,
+): Promise<{ success: boolean; data: InvoiceDetail }> {
   return hrmsApi.get(`/api/client-billing/proformas/${id}`);
 }
 
-export function createProforma(payload: CreateProformaPayload): Promise<{ success: boolean; data: ProformaCreateResult }> {
+export function createProforma(
+  payload: CreateProformaPayload,
+): Promise<{ success: boolean; data: ProformaCreateResult }> {
   return hrmsApi.post("/api/client-billing/proformas", payload);
 }
 
-export function approveInvoice(id: string, poNumbers?: string[]): Promise<{ success: boolean; data: ApproveInvoiceResult }> {
-  return hrmsApi.post(`/api/client-billing/invoices/${id}/approve`, poNumbers ? { poNumbers } : {});
+export function approveInvoice(
+  id: string,
+  poNumbers?: string[],
+): Promise<{ success: boolean; data: ApproveInvoiceResult }> {
+  return hrmsApi.post(
+    `/api/client-billing/invoices/${id}/approve`,
+    poNumbers ? { poNumbers } : {},
+  );
 }
 
-export function rejectInvoice(id: string, reason: string): Promise<{ success: boolean; data: RejectInvoiceResult }> {
+export function rejectInvoice(
+  id: string,
+  reason: string,
+): Promise<{ success: boolean; data: RejectInvoiceResult }> {
   return hrmsApi.post(`/api/client-billing/invoices/${id}/reject`, { reason });
 }
 
-export function getAuditLog(id: string): Promise<{ success: boolean; data: AuditLogEntry[] }> {
+export function getAuditLog(
+  id: string,
+): Promise<{ success: boolean; data: AuditLogEntry[] }> {
   return hrmsApi.get(`/api/client-billing/invoices/${id}/audit-log`);
 }
 
 /** GET /api/client-billing/credit-notes — server-side filtered + paginated (2026-08-21). */
-export function listCreditNotes(filters: ClientBillingListFilters = {}): Promise<PaginatedResult<CreditNoteRow>> {
-  return hrmsApi.get(`/api/client-billing/credit-notes${buildQueryString(filters)}`);
+export function listCreditNotes(
+  filters: ClientBillingListFilters = {},
+): Promise<PaginatedResult<CreditNoteRow>> {
+  return hrmsApi.get(
+    `/api/client-billing/credit-notes${buildQueryString(filters)}`,
+  );
 }
 
-export function getCreditNote(id: string): Promise<{ success: boolean; data: CreditNoteDetail }> {
+export function getCreditNote(
+  id: string,
+): Promise<{ success: boolean; data: CreditNoteDetail }> {
   return hrmsApi.get(`/api/client-billing/credit-notes/${id}`);
 }
 
-export function createCreditNote(payload: CreateCreditNotePayload): Promise<{ success: boolean; data: CreditNoteResult }> {
+export function createCreditNote(
+  payload: CreateCreditNotePayload,
+): Promise<{ success: boolean; data: CreditNoteResult }> {
   return hrmsApi.post("/api/client-billing/credit-notes", payload);
 }
 
-export function approveCreditNote(id: string): Promise<{ success: boolean; data: CreditNoteResult }> {
+export function approveCreditNote(
+  id: string,
+): Promise<{ success: boolean; data: CreditNoteResult }> {
   return hrmsApi.post(`/api/client-billing/credit-notes/${id}/approve`, {});
 }
 
@@ -332,14 +399,17 @@ export async function downloadInvoicePdf(
   kind: "proforma" | "invoice" | "credit-note",
   id: string,
   filename: string,
-  letterhead = true
+  letterhead = true,
 ): Promise<void> {
-  const path = kind === "proforma"
-    ? `/api/client-billing/proformas/${id}/pdf`
-    : kind === "invoice"
-      ? `/api/client-billing/invoices/${id}/pdf`
-      : `/api/client-billing/credit-notes/${id}/pdf`;
-  const blob = await hrmsApi.getBlob(`${path}?letterhead=${letterhead ? "true" : "false"}`);
+  const path =
+    kind === "proforma"
+      ? `/api/client-billing/proformas/${id}/pdf`
+      : kind === "invoice"
+        ? `/api/client-billing/invoices/${id}/pdf`
+        : `/api/client-billing/credit-notes/${id}/pdf`;
+  const blob = await hrmsApi.getBlob(
+    `${path}?letterhead=${letterhead ? "1" : "0"}`,
+  );
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -361,14 +431,17 @@ export async function downloadInvoicePdf(
 export async function previewInvoicePdfUrl(
   kind: "proforma" | "invoice" | "credit-note",
   id: string,
-  letterhead = true
+  letterhead = true,
 ): Promise<string> {
-  const path = kind === "proforma"
-    ? `/api/client-billing/proformas/${id}/pdf`
-    : kind === "invoice"
-      ? `/api/client-billing/invoices/${id}/pdf`
-      : `/api/client-billing/credit-notes/${id}/pdf`;
-  const blob = await hrmsApi.getBlob(`${path}?letterhead=${letterhead ? "true" : "false"}`);
+  const path =
+    kind === "proforma"
+      ? `/api/client-billing/proformas/${id}/pdf`
+      : kind === "invoice"
+        ? `/api/client-billing/invoices/${id}/pdf`
+        : `/api/client-billing/credit-notes/${id}/pdf`;
+  const blob = await hrmsApi.getBlob(
+    `${path}?letterhead=${letterhead ? "1" : "0"}`,
+  );
   return URL.createObjectURL(blob);
 }
 
@@ -380,9 +453,11 @@ export async function previewInvoicePdfUrl(
 export async function exportClientBillingCsv(
   kind: "proformas" | "credit-notes",
   filters: ClientBillingListFilters,
-  filename: string
+  filename: string,
 ): Promise<void> {
-  const blob = await hrmsApi.getBlob(`/api/client-billing/${kind}/export${buildQueryString(filters)}`);
+  const blob = await hrmsApi.getBlob(
+    `/api/client-billing/${kind}/export${buildQueryString(filters)}`,
+  );
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -391,4 +466,205 @@ export async function exportClientBillingCsv(
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+// ── P5: edit, PO check, change requests, bulk approve, submit-to-client ─────────────────
+
+export function updateProforma(
+  id: string,
+  payload: UpdateProformaPayload,
+): Promise<{
+  success: boolean;
+  data: { id: string; grandTotal: number; gstType: string; changed: string[] };
+}> {
+  return hrmsApi.put(`/api/client-billing/proformas/${id}`, payload);
+}
+
+export interface AvailablePo {
+  id: string;
+  po_number: string;
+  period_from: string;
+  period_to: string;
+  total_amount: string | number;
+  balance_amount: string | number;
+}
+
+/** POs of a cost centre whose period covers `invoiceDate` and that still have a balance. */
+export function listAvailablePos(
+  costCentreId: string,
+  invoiceDate: string,
+): Promise<{ success: boolean; data: AvailablePo[] }> {
+  const qs = new URLSearchParams({ costCentreId, invoiceDate });
+  return hrmsApi.get(`/api/client-billing/po/available?${qs.toString()}`);
+}
+
+export interface PoCheckResult {
+  ok: boolean;
+  errors: string[];
+  totalBalance: number;
+  poNumbers: string[];
+}
+
+export function checkPo(args: {
+  costCentreId: string;
+  invoiceDate: string;
+  grandTotal: number;
+  poNumbers: string[];
+}): Promise<{ success: boolean; data: PoCheckResult }> {
+  const qs = new URLSearchParams({
+    costCentreId: args.costCentreId,
+    invoiceDate: args.invoiceDate,
+    grandTotal: String(args.grandTotal),
+    poNumbers: args.poNumbers.join(","),
+  });
+  return hrmsApi.get(`/api/client-billing/po/check?${qs.toString()}`);
+}
+
+export type ChangeRequestType = "void" | "status_change";
+export type ChangeRequestStatus = "pending" | "approved" | "declined";
+
+export interface ChangeRequestRow {
+  id: string;
+  invoice_id: string;
+  request_type: ChangeRequestType;
+  current_value: string | null;
+  requested_value: string | null;
+  reason: string;
+  request_status: ChangeRequestStatus;
+  requested_by: string;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  proforma_no?: string | null;
+  bill_no?: string | null;
+  invoice_status?: InvoiceStatus;
+  grand_total?: string | number;
+  month_label?: string;
+  cost_centre_display_name?: string | null;
+}
+
+export interface ChangeRequestDetail extends ChangeRequestRow {
+  category?: string;
+  finance_year?: string;
+  invoice_date?: string;
+  audit_log: AuditLogEntry[];
+}
+
+export function createChangeRequest(
+  invoiceId: string,
+  payload: {
+    requestType: ChangeRequestType;
+    reason: string;
+    requestedValue?: string;
+  },
+): Promise<{ success: boolean; data: { id: string } }> {
+  return hrmsApi.post(
+    `/api/client-billing/invoices/${invoiceId}/change-requests`,
+    payload,
+  );
+}
+
+export function listInvoiceChangeRequests(
+  invoiceId: string,
+): Promise<{ success: boolean; data: ChangeRequestRow[] }> {
+  return hrmsApi.get(
+    `/api/client-billing/invoices/${invoiceId}/change-requests`,
+  );
+}
+
+export function listChangeRequests(
+  filters: { status?: string; page?: number; limit?: number } = {},
+): Promise<PaginatedResult<ChangeRequestRow>> {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.page) params.set("page", String(filters.page));
+  if (filters.limit) params.set("limit", String(filters.limit));
+  const qs = params.toString();
+  return hrmsApi.get(
+    `/api/client-billing/change-requests${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export function getChangeRequest(
+  id: string,
+): Promise<{ success: boolean; data: ChangeRequestDetail }> {
+  return hrmsApi.get(`/api/client-billing/change-requests/${id}`);
+}
+
+export function decideChangeRequest(
+  id: string,
+  decision: "approve" | "decline",
+  note?: string,
+): Promise<{
+  success: boolean;
+  data: { id: string; requestStatus: ChangeRequestStatus };
+}> {
+  return hrmsApi.post(`/api/client-billing/change-requests/${id}/${decision}`, {
+    note,
+  });
+}
+
+export interface BulkApproveResponse {
+  approved: number;
+  failed: number;
+  results: Array<{
+    invoiceId: string;
+    ok: boolean;
+    billNo?: string;
+    error?: string;
+  }>;
+}
+
+export function bulkApproveInvoices(
+  invoiceIds: string[],
+): Promise<{ success: boolean; data: BulkApproveResponse }> {
+  return hrmsApi.post("/api/client-billing/invoices/bulk-approve", {
+    invoiceIds,
+  });
+}
+
+export interface SubmissionRow {
+  id: string;
+  invoice_id: string;
+  to_emails: string;
+  cc_emails: string | null;
+  subject: string;
+  with_letterhead: 0 | 1;
+  send_status: "sent" | "failed";
+  message_id: string | null;
+  error_message: string | null;
+  sent_by: string;
+  sent_at: string;
+}
+
+export function listSubmissions(
+  invoiceId: string,
+): Promise<{ success: boolean; data: SubmissionRow[] }> {
+  return hrmsApi.get(`/api/client-billing/invoices/${invoiceId}/submissions`);
+}
+
+export function submitToClient(
+  invoiceId: string,
+  payload: {
+    to: string[];
+    cc?: string[];
+    subject?: string;
+    message?: string;
+    letterhead?: boolean;
+  },
+): Promise<{
+  success: boolean;
+  data: {
+    submissionId: string;
+    billNo: string;
+    to: string[];
+    cc: string[];
+    sentAt: string;
+  };
+}> {
+  return hrmsApi.post(
+    `/api/client-billing/invoices/${invoiceId}/submit-to-client`,
+    payload,
+  );
 }

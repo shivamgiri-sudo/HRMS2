@@ -217,9 +217,13 @@ function underThousand(n: number): string {
 }
 
 /** Indian crore/lakh convention, matching the reference sample's "Rupees ... Only" wording. */
-function amountInWords(value: number): string {
-  const n = Math.round(Math.abs(value));
-  if (n === 0) return "Rupees Zero Only";
+export function amountInWords(value: number): string {
+  const abs = Math.abs(value);
+  const rupees = Math.floor(abs);
+  const paiseRaw = Math.round((abs - rupees) * 100);
+  const paise = paiseRaw >= 100 ? 0 : paiseRaw;
+  const n = rupees + (paiseRaw >= 100 ? 1 : 0);
+  if (n === 0 && paise === 0) return "Rupees Zero Only";
   const parts: string[] = [];
   const crore = Math.floor(n / 10000000);
   const lakh = Math.floor((n % 10000000) / 100000);
@@ -229,7 +233,9 @@ function amountInWords(value: number): string {
   if (lakh) parts.push(`${underThousand(lakh)} Lakh`);
   if (thousand) parts.push(`${underThousand(thousand)} Thousand`);
   if (rest) parts.push(underThousand(rest));
-  return `Rupees ${parts.join(" ")} Only`;
+  const rupeePart = parts.length ? `Rupees ${parts.join(" ")}` : "Rupees Zero";
+  if (paise > 0) return `${rupeePart} and ${underThousand(paise)} Paise Only`;
+  return `${rupeePart} Only`;
 }
 
 async function loadCostCentre(costCentreId: string): Promise<CostCentreRow | undefined> {

@@ -2,9 +2,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { getCreditNote } from "@/lib/clientBillingApi";
 import { CreditStatusBadge, GstBreakdown, money } from "./shared";
 
@@ -27,7 +37,9 @@ export function CreditNoteDetailDialog({ creditNoteId, onOpenChange }: Props) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {creditNote?.credit_no || "Credit note detail"}
-            {creditNote && <CreditStatusBadge status={creditNote.credit_status} />}
+            {creditNote && (
+              <CreditStatusBadge status={creditNote.credit_status} />
+            )}
           </DialogTitle>
         </DialogHeader>
 
@@ -41,7 +53,9 @@ export function CreditNoteDetailDialog({ creditNoteId, onOpenChange }: Props) {
               <dt className="text-muted-foreground">Category</dt>
               <dd>{creditNote.category}</dd>
               <dt className="text-muted-foreground">Period</dt>
-              <dd>{creditNote.month_label} · {creditNote.finance_year}</dd>
+              <dd>
+                {creditNote.month_label} · {creditNote.finance_year}
+              </dd>
               <dt className="text-muted-foreground">Credit date</dt>
               <dd>{creditNote.credit_date}</dd>
               <dt className="text-muted-foreground">GST type</dt>
@@ -51,9 +65,14 @@ export function CreditNoteDetailDialog({ creditNoteId, onOpenChange }: Props) {
                   <dt className="text-muted-foreground">Tally reference</dt>
                   <dd>
                     {creditNote.tally_head ?? "—"}
-                    {creditNote.client_tally_name && creditNote.client_tally_name !== creditNote.tally_head && (
-                      <span className="text-muted-foreground"> ({creditNote.client_tally_name})</span>
-                    )}
+                    {creditNote.client_tally_name &&
+                      creditNote.client_tally_name !==
+                        creditNote.tally_head && (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          ({creditNote.client_tally_name})
+                        </span>
+                      )}
                   </dd>
                 </>
               )}
@@ -61,7 +80,10 @@ export function CreditNoteDetailDialog({ creditNoteId, onOpenChange }: Props) {
                 <>
                   <dt className="text-muted-foreground">Source</dt>
                   <dd className="text-muted-foreground">
-                    Historical record{creditNote.legacy_id ? ` (legacy id ${creditNote.legacy_id})` : ""}
+                    Historical record
+                    {creditNote.legacy_id
+                      ? ` (legacy id ${creditNote.legacy_id})`
+                      : ""}
                   </dd>
                 </>
               )}
@@ -80,7 +102,10 @@ export function CreditNoteDetailDialog({ creditNoteId, onOpenChange }: Props) {
                 <TableBody>
                   {creditNote.lines.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">
+                      <TableCell
+                        colSpan={4}
+                        className="py-6 text-center text-muted-foreground"
+                      >
                         No line items
                       </TableCell>
                     </TableRow>
@@ -88,9 +113,15 @@ export function CreditNoteDetailDialog({ creditNoteId, onOpenChange }: Props) {
                     creditNote.lines.map((line) => (
                       <TableRow key={line.id}>
                         <TableCell>{line.particulars}</TableCell>
-                        <TableCell className="text-right tabular-nums">{line.qty}</TableCell>
-                        <TableCell className="text-right tabular-nums">{money(line.rate)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{money(line.amount)}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {line.qty}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {money(line.rate)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {money(line.amount)}
+                        </TableCell>
                       </TableRow>
                     ))
                   )}

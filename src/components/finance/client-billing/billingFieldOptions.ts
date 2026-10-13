@@ -62,7 +62,20 @@ export function financeYearOptions(now: Date = new Date()): string[] {
   return years;
 }
 
-const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 /**
  * The twelve `Mmm-YY` labels belonging to a finance year, in Apr→Mar order — the exact
@@ -77,7 +90,11 @@ export function monthLabelOptions(financeYear: string): string[] {
     const calendarYear = index >= 3 ? startYear : startYear + 1;
     return { name, index, calendarYear };
   })
-    .sort((a, b) => (a.index >= 3 ? a.index - 3 : a.index + 9) - (b.index >= 3 ? b.index - 3 : b.index + 9))
+    .sort(
+      (a, b) =>
+        (a.index >= 3 ? a.index - 3 : a.index + 9) -
+        (b.index >= 3 ? b.index - 3 : b.index + 9),
+    )
     .map((m) => `${m.name}-${String(m.calendarYear % 100).padStart(2, "0")}`);
 }
 

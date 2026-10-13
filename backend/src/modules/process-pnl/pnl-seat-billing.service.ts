@@ -38,10 +38,10 @@ import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
  */
 
 export type SeatLineKind = "seat" | "fixed";
-export type ExcludedReason = "incentive" | "one_time" | "usage" | "revenue_share" | "zero_value";
+export type ExcludedReason =
+  "incentive" | "one_time" | "usage" | "revenue_share" | "zero_value";
 export type InvoiceLineClass =
-  | { kind: SeatLineKind }
-  | { kind: "excluded"; reason: ExcludedReason };
+  { kind: SeatLineKind } | { kind: "excluded"; reason: ExcludedReason };
 
 export const SEAT_LINE_KINDS: readonly SeatLineKind[] = ["seat", "fixed"];
 
@@ -75,11 +75,18 @@ export function shiftPeriod(period: string, delta: number): string {
 }
 
 /** Days in the month, and how many have elapsed as of `asOf` (YYYY-MM-DD, IST). */
-export function monthProgress(period: string, asOf: string): { daysInMonth: number; daysElapsed: number } {
+export function monthProgress(
+  period: string,
+  asOf: string,
+): { daysInMonth: number; daysElapsed: number } {
   const [year, month] = period.split("-").map(Number);
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const asOfPeriod = asOf.slice(0, 7);
-  if (asOfPeriod === period) return { daysInMonth, daysElapsed: Math.min(daysInMonth, Number(asOf.slice(8, 10))) };
+  if (asOfPeriod === period)
+    return {
+      daysInMonth,
+      daysElapsed: Math.min(daysInMonth, Number(asOf.slice(8, 10))),
+    };
   return { daysInMonth, daysElapsed: asOfPeriod > period ? daysInMonth : 0 };
 }
 
@@ -90,7 +97,10 @@ export function monthProgress(period: string, asOf: string): { daysInMonth: numb
  */
 export function isEstimateWindow(period: string, asOf: string): boolean {
   const current = asOf.slice(0, 7);
-  return period <= current && period >= shiftPeriod(current, -(ESTIMATE_WINDOW_MONTHS - 1));
+  return (
+    period <= current &&
+    period >= shiftPeriod(current, -(ESTIMATE_WINDOW_MONTHS - 1))
+  );
 }
 
 /**
@@ -115,19 +125,31 @@ export function classifyInvoiceLine(line: {
   const qty = n(line.qty);
   const amount = n(line.amount);
   if (amount <= 0) return { kind: "excluded", reason: "zero_value" };
-  if (/revenue share/.test(hay) || /\d\s*%/.test(hay)) return { kind: "excluded", reason: "revenue_share" };
-  if (/incentive|\br\s*&\s*r\b|\brnr\b|reward|bonus|penalt|arrear/.test(hay)) return { kind: "excluded", reason: "incentive" };
-  if (/set ?up|implementation|integration charge|customi[sz]ation|development|one[- ]?time/.test(hay)) {
+  if (/revenue share/.test(hay) || /\d\s*%/.test(hay))
+    return { kind: "excluded", reason: "revenue_share" };
+  if (/incentive|\br\s*&\s*r\b|\brnr\b|reward|bonus|penalt|arrear/.test(hay))
+    return { kind: "excluded", reason: "incentive" };
+  if (
+    /set ?up|implementation|integration charge|customi[sz]ation|development|one[- ]?time/.test(
+      hay,
+    )
+  ) {
     return { kind: "excluded", reason: "one_time" };
   }
-  if (/excess usage|top ?up|talk ?time|recharge|per (call|minute|transaction|lead|case)/.test(hay)) {
+  if (
+    /excess usage|top ?up|talk ?time|recharge|per (call|minute|transaction|lead|case)/.test(
+      hay,
+    )
+  ) {
     return { kind: "excluded", reason: "usage" };
   }
-  const seatWords = /seat|\bfte\b|manpower|deployment|resource|telecalling|calling|agent|advisor|executive|team leader|\btl\b|supervisor|service charge|call cent(er|re)/;
+  const seatWords =
+    /seat|\bfte\b|manpower|deployment|resource|telecalling|calling|agent|advisor|executive|team leader|\btl\b|supervisor|service charge|call cent(er|re)/;
   if (seatWords.test(hay) && rate > 0 && qty > 0) return { kind: "seat" };
   // Shape beats vocabulary: a seat-sized rate against a unit count that multiplies out to the
   // amount is per-seat billing whatever the LOB is called ("BVO Chat", "Abandon Cart", "Email").
-  if (rate >= 5000 && qty > 0 && Math.abs(rate * qty - amount) < 1) return { kind: "seat" };
+  if (rate >= 5000 && qty > 0 && Math.abs(rate * qty - amount) < 1)
+    return { kind: "seat" };
   return { kind: "fixed" };
 }
 
@@ -200,7 +222,10 @@ interface CcRow extends RowDataPacket {
   branch_name: string | null;
 }
 
-async function readOwnCostCentres(filters: { branchIds?: string[]; costCentreId?: string }): Promise<CcRow[]> {
+async function readOwnCostCentres(filters: {
+  branchIds?: string[];
+  costCentreId?: string;
+}): Promise<CcRow[]> {
   const where = [OWN_COMPANY_SQL, "ccm.active_status = 1"];
   const params: unknown[] = [];
   if (filters.branchIds?.length) {
@@ -243,11 +268,21 @@ interface ConfiguredRow extends RowDataPacket {
  * (billing_invoice_particular_snapshot.rate, is_seat_line = 1, a taxable value) before treating
  * seat-billing revenue as ex-GST.
  */
-function configuredLineValue(row: { line_kind: string; rate_monthly: unknown; seats: unknown; monthly_amount?: unknown }) {
-  return row.line_kind === "fixed" ? n(row.monthly_amount ?? row.rate_monthly) : n(row.rate_monthly) * n(row.seats);
+function configuredLineValue(row: {
+  line_kind: string;
+  rate_monthly: unknown;
+  seats: unknown;
+  monthly_amount?: unknown;
+}) {
+  return row.line_kind === "fixed"
+    ? n(row.monthly_amount ?? row.rate_monthly)
+    : n(row.rate_monthly) * n(row.seats);
 }
 
-async function readConfiguredLines(period: string, costCentreIds: string[]): Promise<Map<string, SeatBillingLine[]>> {
+async function readConfiguredLines(
+  period: string,
+  costCentreIds: string[],
+): Promise<Map<string, SeatBillingLine[]>> {
   const out = new Map<string, SeatBillingLine[]>();
   if (!costCentreIds.length || !(await tableExists(TABLE))) return out;
   const [rows] = await db.execute<ConfiguredRow[]>(
@@ -292,9 +327,16 @@ interface InvoiceRow extends RowDataPacket {
 }
 
 /** The most recent invoiced month (before `period`, within the lookback) for each cost centre. */
-async function readInvoiceLines(period: string, costCentreIds: string[]): Promise<Map<string, { sourcePeriod: string; rows: InvoiceRow[] }>> {
+async function readInvoiceLines(
+  period: string,
+  costCentreIds: string[],
+): Promise<Map<string, { sourcePeriod: string; rows: InvoiceRow[] }>> {
   const out = new Map<string, { sourcePeriod: string; rows: InvoiceRow[] }>();
-  if (!costCentreIds.length || !(await tableExists("billing_invoice_particular_snapshot"))) return out;
+  if (
+    !costCentreIds.length ||
+    !(await tableExists("billing_invoice_particular_snapshot"))
+  )
+    return out;
   // Both code columns are utf8mb4_unicode_ci, so a plain equality join keeps the index usable —
   // a COLLATE cast on either side would not.
   const [rows] = await db.execute<InvoiceRow[]>(
@@ -310,25 +352,38 @@ async function readInvoiceLines(period: string, costCentreIds: string[]): Promis
   for (const r of rows) {
     const key = String(r.cost_centre_id);
     const current = out.get(key);
-    if (!current) out.set(key, { sourcePeriod: String(r.period_code), rows: [r] });
-    else if (current.sourcePeriod === String(r.period_code)) current.rows.push(r);
+    if (!current)
+      out.set(key, { sourcePeriod: String(r.period_code), rows: [r] });
+    else if (current.sourcePeriod === String(r.period_code))
+      current.rows.push(r);
   }
   return out;
 }
 
 function invoiceLabel(r: InvoiceRow) {
-  const text = String(r.particulars ?? r.service ?? "").replace(/\s+/g, " ").trim();
+  const text = String(r.particulars ?? r.service ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
   return (text || "Invoice line").slice(0, 200);
 }
 
-function linesFromInvoice(rows: InvoiceRow[]): { lines: SeatBillingLine[]; excluded: ExcludedInvoiceLine[] } {
+function linesFromInvoice(rows: InvoiceRow[]): {
+  lines: SeatBillingLine[];
+  excluded: ExcludedInvoiceLine[];
+} {
   const lines: SeatBillingLine[] = [];
   const excluded: ExcludedInvoiceLine[] = [];
   for (const r of rows) {
     const cls = classifyInvoiceLine(r);
-    const sourceBillId = r.bill_source_id == null ? null : Number(r.bill_source_id);
+    const sourceBillId =
+      r.bill_source_id == null ? null : Number(r.bill_source_id);
     if (cls.kind === "excluded") {
-      excluded.push({ lineLabel: invoiceLabel(r), amount: n(r.amount), reason: cls.reason, sourceBillId });
+      excluded.push({
+        lineLabel: invoiceLabel(r),
+        amount: n(r.amount),
+        reason: cls.reason,
+        sourceBillId,
+      });
       continue;
     }
     lines.push({
@@ -349,7 +404,11 @@ function linesFromInvoice(rows: InvoiceRow[]): { lines: SeatBillingLine[]; exclu
 
 export async function getSeatBillingEstimate(
   period: string,
-  options: { branchIds?: string[]; costCentreId?: string; asOfDate?: string } = {},
+  options: {
+    branchIds?: string[];
+    costCentreId?: string;
+    asOfDate?: string;
+  } = {},
 ): Promise<SeatBillingEstimate> {
   if (!PERIOD_RE.test(period)) throw httpError(400, "period must be YYYY-MM");
   const asOfDate = options.asOfDate ?? getCurrentDateIST();
@@ -367,15 +426,25 @@ export async function getSeatBillingEstimate(
     const id = String(cc.id);
     const own = configured.get(id);
     const inv = invoiced.get(id);
-    const fromInvoice = inv ? linesFromInvoice(inv.rows) : { lines: [], excluded: [] };
-    const source: CostCentreSeatBilling["source"] = own?.length ? "configured" : fromInvoice.lines.length ? "invoice" : "none";
+    const fromInvoice = inv
+      ? linesFromInvoice(inv.rows)
+      : { lines: [], excluded: [] };
+    const source: CostCentreSeatBilling["source"] = own?.length
+      ? "configured"
+      : fromInvoice.lines.length
+        ? "invoice"
+        : "none";
     const lines = source === "configured" ? own! : fromInvoice.lines;
-    const monthlyValue = round2(lines.reduce((total, line) => total + line.monthlyValue, 0));
+    const monthlyValue = round2(
+      lines.reduce((total, line) => total + line.monthlyValue, 0),
+    );
     const perDay = daysInMonth > 0 ? monthlyValue / daysInMonth : 0;
     return {
       costCentreId: id,
       costCentreCode: String(cc.cost_centre_code ?? ""),
-      costCentreName: String(cc.cost_centre_name ?? cc.cost_centre_code ?? "Unnamed cost centre"),
+      costCentreName: String(
+        cc.cost_centre_name ?? cc.cost_centre_code ?? "Unnamed cost centre",
+      ),
       processName: cc.process_name ? String(cc.process_name) : null,
       branchId: cc.branch_id ? String(cc.branch_id) : null,
       branchName: cc.branch_name ? String(cc.branch_name) : null,
@@ -389,9 +458,14 @@ export async function getSeatBillingEstimate(
       toDate: round2(perDay * daysElapsed),
     };
   });
-  costCentres.sort((a, b) => b.monthlyValue - a.monthlyValue || a.costCentreCode.localeCompare(b.costCentreCode));
+  costCentres.sort(
+    (a, b) =>
+      b.monthlyValue - a.monthlyValue ||
+      a.costCentreCode.localeCompare(b.costCentreCode),
+  );
 
-  const sum = (pick: (cc: CostCentreSeatBilling) => number) => round2(costCentres.reduce((t, cc) => t + pick(cc), 0));
+  const sum = (pick: (cc: CostCentreSeatBilling) => number) =>
+    round2(costCentres.reduce((t, cc) => t + pick(cc), 0));
   return {
     period,
     asOfDate,
@@ -438,33 +512,69 @@ interface ValidLine {
 }
 
 export function validateLineInput(input: SeatBillingLineInput): ValidLine {
-  const lineLabel = String(input.lineLabel ?? "").replace(/\s+/g, " ").trim();
+  const lineLabel = String(input.lineLabel ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!lineLabel) throw httpError(400, "Line name (LOB) is required");
-  if (lineLabel.length > 200) throw httpError(400, "Line name must be 200 characters or fewer");
+  if (lineLabel.length > 200)
+    throw httpError(400, "Line name must be 200 characters or fewer");
   const lineKind = String(input.lineKind ?? "seat") as SeatLineKind;
-  if (!SEAT_LINE_KINDS.includes(lineKind)) throw httpError(400, "Line type must be seat or fixed");
+  if (!SEAT_LINE_KINDS.includes(lineKind))
+    throw httpError(400, "Line type must be seat or fixed");
   const effectiveFrom = String(input.effectiveFrom ?? "");
-  if (!PERIOD_RE.test(effectiveFrom)) throw httpError(400, "Effective from must be a month (YYYY-MM)");
+  if (!PERIOD_RE.test(effectiveFrom))
+    throw httpError(400, "Effective from must be a month (YYYY-MM)");
   const effectiveTo = input.effectiveTo ? String(input.effectiveTo) : null;
-  if (effectiveTo && !PERIOD_RE.test(effectiveTo)) throw httpError(400, "Effective to must be a month (YYYY-MM)");
-  if (effectiveTo && effectiveTo < effectiveFrom) throw httpError(400, "Effective to cannot be before effective from");
-  const notes = input.notes ? String(input.notes).trim().slice(0, 500) || null : null;
+  if (effectiveTo && !PERIOD_RE.test(effectiveTo))
+    throw httpError(400, "Effective to must be a month (YYYY-MM)");
+  if (effectiveTo && effectiveTo < effectiveFrom)
+    throw httpError(400, "Effective to cannot be before effective from");
+  const notes = input.notes
+    ? String(input.notes).trim().slice(0, 500) || null
+    : null;
 
   if (lineKind === "fixed") {
     const monthlyAmount = n(input.monthlyAmount ?? input.rateMonthly);
-    if (!(monthlyAmount > 0) || monthlyAmount > 100_000_000) throw httpError(400, "Monthly amount must be between 1 and 10,00,00,000");
-    return { lineLabel, lineKind, rateMonthly: monthlyAmount, seats: 0, monthlyAmount, effectiveFrom, effectiveTo, notes };
+    if (!(monthlyAmount > 0) || monthlyAmount > 100_000_000)
+      throw httpError(400, "Monthly amount must be between 1 and 10,00,00,000");
+    return {
+      lineLabel,
+      lineKind,
+      rateMonthly: monthlyAmount,
+      seats: 0,
+      monthlyAmount,
+      effectiveFrom,
+      effectiveTo,
+      notes,
+    };
   }
   const rateMonthly = n(input.rateMonthly);
   const seats = n(input.seats);
-  if (!(rateMonthly > 0) || rateMonthly > 10_000_000) throw httpError(400, "Seat rate must be between 1 and 1,00,00,000 per month");
-  if (!(seats > 0) || seats > 100_000) throw httpError(400, "Seats must be greater than 0");
-  return { lineLabel, lineKind, rateMonthly: round2(rateMonthly), seats: round2(seats), monthlyAmount: null, effectiveFrom, effectiveTo, notes };
+  if (!(rateMonthly > 0) || rateMonthly > 10_000_000)
+    throw httpError(
+      400,
+      "Seat rate must be between 1 and 1,00,00,000 per month",
+    );
+  if (!(seats > 0) || seats > 100_000)
+    throw httpError(400, "Seats must be greater than 0");
+  return {
+    lineLabel,
+    lineKind,
+    rateMonthly: round2(rateMonthly),
+    seats: round2(seats),
+    monthlyAmount: null,
+    effectiveFrom,
+    effectiveTo,
+    notes,
+  };
 }
 
 async function requireTable() {
   if (!(await tableExists(TABLE))) {
-    throw httpError(503, "Seat billing configuration is not enabled yet — its database table has not been created.");
+    throw httpError(
+      503,
+      "Seat billing configuration is not enabled yet — its database table has not been created.",
+    );
   }
 }
 
@@ -490,22 +600,33 @@ interface LineRow extends RowDataPacket {
 }
 
 async function readLine(id: string): Promise<LineRow> {
-  const [rows] = await db.execute<LineRow[]>(`SELECT * FROM ${TABLE} WHERE id = ?`, [id]);
+  const [rows] = await db.execute<LineRow[]>(
+    `SELECT * FROM ${TABLE} WHERE id = ?`,
+    [id],
+  );
   if (!rows[0]) throw httpError(404, "Seat billing line not found");
   return rows[0];
 }
 
 /** Branch of a MAS cost centre — the caller checks it against the user's finance scope. */
-export async function getOwnCostCentreBranch(costCentreId: string): Promise<{ branchId: string | null }> {
+export async function getOwnCostCentreBranch(
+  costCentreId: string,
+): Promise<{ branchId: string | null }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ccm.branch_id FROM cost_centre_master ccm WHERE ccm.id = ? AND ${OWN_COMPANY_SQL}`,
     [costCentreId],
   );
-  if (!rows[0]) throw httpError(404, "Cost centre not found or not a MAS Callnet cost centre");
+  if (!rows[0])
+    throw httpError(
+      404,
+      "Cost centre not found or not a MAS Callnet cost centre",
+    );
   return { branchId: rows[0].branch_id ? String(rows[0].branch_id) : null };
 }
 
-export async function getLineCostCentre(id: string): Promise<{ costCentreId: string }> {
+export async function getLineCostCentre(
+  id: string,
+): Promise<{ costCentreId: string }> {
   await requireTable();
   const row = await readLine(id);
   return { costCentreId: String(row.cost_centre_id) };
@@ -526,7 +647,14 @@ function lineSnapshot(row: Partial<LineRow> & Record<string, unknown>) {
   };
 }
 
-async function audit(action: string, id: string, userId: string, before: unknown, after: unknown, extra: Record<string, unknown> = {}) {
+async function audit(
+  action: string,
+  id: string,
+  userId: string,
+  before: unknown,
+  after: unknown,
+  extra: Record<string, unknown> = {},
+) {
   await writeAuditLog({
     actor_user_id: userId,
     action_type: action,
@@ -537,7 +665,15 @@ async function audit(action: string, id: string, userId: string, before: unknown
   });
 }
 
-export async function createSeatBillingLine(input: SeatBillingLineInput, userId: string, source: "manual" | "invoice" = "manual", sourceMeta: { sourcePeriod?: string | null; sourceBillId?: number | null } = {}) {
+export async function createSeatBillingLine(
+  input: SeatBillingLineInput,
+  userId: string,
+  source: "manual" | "invoice" = "manual",
+  sourceMeta: {
+    sourcePeriod?: string | null;
+    sourceBillId?: number | null;
+  } = {},
+) {
   await requireTable();
   const costCentreId = String(input.costCentreId ?? "");
   if (!costCentreId) throw httpError(400, "Cost centre is required");
@@ -550,19 +686,52 @@ export async function createSeatBillingLine(input: SeatBillingLineInput, userId:
         effective_from, effective_to, source, source_period, source_bill_id, notes,
         active_status, created_by, updated_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-    [id, costCentreId, v.lineLabel, v.lineKind, v.rateMonthly, v.seats, v.monthlyAmount,
-      v.effectiveFrom, v.effectiveTo, source, sourceMeta.sourcePeriod ?? null, sourceMeta.sourceBillId ?? null,
-      v.notes, userId, userId],
+    [
+      id,
+      costCentreId,
+      v.lineLabel,
+      v.lineKind,
+      v.rateMonthly,
+      v.seats,
+      v.monthlyAmount,
+      v.effectiveFrom,
+      v.effectiveTo,
+      source,
+      sourceMeta.sourcePeriod ?? null,
+      sourceMeta.sourceBillId ?? null,
+      v.notes,
+      userId,
+      userId,
+    ],
   );
-  const after = { cost_centre_id: costCentreId, line_label: v.lineLabel, line_kind: v.lineKind, rate_monthly: v.rateMonthly, seats: v.seats, monthly_amount: v.monthlyAmount, effective_from: v.effectiveFrom, effective_to: v.effectiveTo, active_status: 1, notes: v.notes };
+  const after = {
+    cost_centre_id: costCentreId,
+    line_label: v.lineLabel,
+    line_kind: v.lineKind,
+    rate_monthly: v.rateMonthly,
+    seats: v.seats,
+    monthly_amount: v.monthlyAmount,
+    effective_from: v.effectiveFrom,
+    effective_to: v.effectiveTo,
+    active_status: 1,
+    notes: v.notes,
+  };
   await audit("seat_billing_line_created", id, userId, null, after, { source });
   return { id, ...after };
 }
 
-export async function updateSeatBillingLine(id: string, input: SeatBillingLineInput, userId: string) {
+export async function updateSeatBillingLine(
+  id: string,
+  input: SeatBillingLineInput,
+  userId: string,
+) {
   await requireTable();
   const before = await readLine(id);
-  if (Number(before.active_status) !== 1) throw httpError(409, "This line is inactive; add a new line instead of editing it");
+  if (Number(before.active_status) !== 1)
+    throw httpError(
+      409,
+      "This line is inactive; add a new line instead of editing it",
+    );
   const merged: SeatBillingLineInput = {
     lineLabel: input.lineLabel ?? before.line_label,
     lineKind: input.lineKind ?? before.line_kind,
@@ -570,7 +739,8 @@ export async function updateSeatBillingLine(id: string, input: SeatBillingLineIn
     seats: input.seats ?? before.seats,
     monthlyAmount: input.monthlyAmount ?? before.monthly_amount ?? undefined,
     effectiveFrom: input.effectiveFrom ?? before.effective_from,
-    effectiveTo: input.effectiveTo === undefined ? before.effective_to : input.effectiveTo,
+    effectiveTo:
+      input.effectiveTo === undefined ? before.effective_to : input.effectiveTo,
     notes: input.notes === undefined ? before.notes : input.notes,
   };
   const v = validateLineInput(merged);
@@ -579,19 +749,60 @@ export async function updateSeatBillingLine(id: string, input: SeatBillingLineIn
         SET line_label = ?, line_kind = ?, rate_monthly = ?, seats = ?, monthly_amount = ?,
             effective_from = ?, effective_to = ?, notes = ?, updated_by = ?
       WHERE id = ?`,
-    [v.lineLabel, v.lineKind, v.rateMonthly, v.seats, v.monthlyAmount, v.effectiveFrom, v.effectiveTo, v.notes, userId, id],
+    [
+      v.lineLabel,
+      v.lineKind,
+      v.rateMonthly,
+      v.seats,
+      v.monthlyAmount,
+      v.effectiveFrom,
+      v.effectiveTo,
+      v.notes,
+      userId,
+      id,
+    ],
   );
-  const after = { ...lineSnapshot(before), line_label: v.lineLabel, line_kind: v.lineKind, rate_monthly: v.rateMonthly, seats: v.seats, monthly_amount: v.monthlyAmount, effective_from: v.effectiveFrom, effective_to: v.effectiveTo, notes: v.notes };
-  await audit("seat_billing_line_updated", id, userId, lineSnapshot(before), after);
+  const after = {
+    ...lineSnapshot(before),
+    line_label: v.lineLabel,
+    line_kind: v.lineKind,
+    rate_monthly: v.rateMonthly,
+    seats: v.seats,
+    monthly_amount: v.monthlyAmount,
+    effective_from: v.effectiveFrom,
+    effective_to: v.effectiveTo,
+    notes: v.notes,
+  };
+  await audit(
+    "seat_billing_line_updated",
+    id,
+    userId,
+    lineSnapshot(before),
+    after,
+  );
   return { id, ...after };
 }
 
-export async function deactivateSeatBillingLine(id: string, userId: string, reason?: string | null) {
+export async function deactivateSeatBillingLine(
+  id: string,
+  userId: string,
+  reason?: string | null,
+) {
   await requireTable();
   const before = await readLine(id);
   if (Number(before.active_status) !== 1) return { id, active_status: 0 };
-  await db.execute(`UPDATE ${TABLE} SET active_status = 0, updated_by = ? WHERE id = ?`, [userId, id]);
-  await audit("seat_billing_line_deactivated", id, userId, lineSnapshot(before), { ...lineSnapshot(before), active_status: 0 }, { reason: reason ?? null });
+  await db.execute(
+    `UPDATE ${TABLE} SET active_status = 0, updated_by = ? WHERE id = ?`,
+    [userId, id],
+  );
+  await audit(
+    "seat_billing_line_deactivated",
+    id,
+    userId,
+    lineSnapshot(before),
+    { ...lineSnapshot(before), active_status: 0 },
+    { reason: reason ?? null },
+  );
   return { id, active_status: 0 };
 }
 
@@ -600,41 +811,78 @@ export async function deactivateSeatBillingLine(id: string, userId: string, reas
  * so finance can then edit seats or rates per LOB. Refuses when the cost centre already has
  * configured lines for that period — importing again would silently double its revenue.
  */
-export async function importSeatBillingFromInvoice(costCentreId: string, period: string, userId: string) {
+export async function importSeatBillingFromInvoice(
+  costCentreId: string,
+  period: string,
+  userId: string,
+) {
   await requireTable();
   if (!PERIOD_RE.test(period)) throw httpError(400, "period must be YYYY-MM");
   await getOwnCostCentreBranch(costCentreId);
   const existing = await readConfiguredLines(period, [costCentreId]);
   if (existing.get(costCentreId)?.length) {
-    throw httpError(409, "This cost centre already has configured lines for this month. Edit them instead of importing again.");
+    throw httpError(
+      409,
+      "This cost centre already has configured lines for this month. Edit them instead of importing again.",
+    );
   }
-  const inv = (await readInvoiceLines(period, [costCentreId])).get(costCentreId);
-  if (!inv) throw httpError(404, `No invoice found for this cost centre in the ${INVOICE_LOOKBACK_MONTHS} months before ${period}`);
+  const inv = (await readInvoiceLines(period, [costCentreId])).get(
+    costCentreId,
+  );
+  if (!inv)
+    throw httpError(
+      404,
+      `No invoice found for this cost centre in the ${INVOICE_LOOKBACK_MONTHS} months before ${period}`,
+    );
   const { lines } = linesFromInvoice(inv.rows);
-  if (!lines.length) throw httpError(404, "The last invoice has no seat or fixed recurring lines to import");
+  if (!lines.length)
+    throw httpError(
+      404,
+      "The last invoice has no seat or fixed recurring lines to import",
+    );
   const created: Array<Awaited<ReturnType<typeof createSeatBillingLine>>> = [];
   for (const line of lines) {
-    created.push(await createSeatBillingLine({
-      costCentreId,
-      lineLabel: line.lineLabel,
-      lineKind: line.lineKind,
-      rateMonthly: line.rateMonthly,
-      seats: line.seats,
-      monthlyAmount: line.lineKind === "fixed" ? line.monthlyValue : undefined,
-      effectiveFrom: period,
-      notes: `Imported from ${inv.sourcePeriod} invoice`,
-    }, userId, "invoice", { sourcePeriod: inv.sourcePeriod, sourceBillId: line.sourceBillId }));
+    created.push(
+      await createSeatBillingLine(
+        {
+          costCentreId,
+          lineLabel: line.lineLabel,
+          lineKind: line.lineKind,
+          rateMonthly: line.rateMonthly,
+          seats: line.seats,
+          monthlyAmount:
+            line.lineKind === "fixed" ? line.monthlyValue : undefined,
+          effectiveFrom: period,
+          notes: `Imported from ${inv.sourcePeriod} invoice`,
+        },
+        userId,
+        "invoice",
+        { sourcePeriod: inv.sourcePeriod, sourceBillId: line.sourceBillId },
+      ),
+    );
   }
-  return { costCentreId, sourcePeriod: inv.sourcePeriod, imported: created.length, lines: created };
+  return {
+    costCentreId,
+    sourcePeriod: inv.sourcePeriod,
+    imported: created.length,
+    lines: created,
+  };
 }
 
 // ── drawer detail ────────────────────────────────────────────────────────────────────────────
 
-export async function getSeatBillingCostCentreDetail(costCentreId: string, period: string) {
+export async function getSeatBillingCostCentreDetail(
+  costCentreId: string,
+  period: string,
+) {
   if (!PERIOD_RE.test(period)) throw httpError(400, "period must be YYYY-MM");
   const estimate = await getSeatBillingEstimate(period, { costCentreId });
   const current = estimate.costCentres[0];
-  if (!current) throw httpError(404, "Cost centre not found or not an active MAS Callnet cost centre");
+  if (!current)
+    throw httpError(
+      404,
+      "Cost centre not found or not an active MAS Callnet cost centre",
+    );
 
   let history: Array<Record<string, unknown>> = [];
   let auditTrail: Array<Record<string, unknown>> = [];
@@ -678,7 +926,10 @@ export async function getSeatBillingCostCentreDetail(costCentreId: string, perio
           action: a.action_type,
           lineId: a.entity_id,
           actor: a.actor,
-          change: typeof a.metadata_json === "string" ? JSON.parse(a.metadata_json) : a.metadata_json,
+          change:
+            typeof a.metadata_json === "string"
+              ? JSON.parse(a.metadata_json)
+              : a.metadata_json,
         }));
       } catch {
         // The audit trail is supplementary; a failure to read it must not hide the lines.
@@ -706,7 +957,8 @@ export async function getSeatBillingCostCentreDetail(costCentreId: string, perio
         rate: n(r.rate),
         qty: n(r.qty),
         amount: n(r.amount),
-        classification: cls.kind === "excluded" ? `excluded:${cls.reason}` : cls.kind,
+        classification:
+          cls.kind === "excluded" ? `excluded:${cls.reason}` : cls.kind,
       };
     });
   }

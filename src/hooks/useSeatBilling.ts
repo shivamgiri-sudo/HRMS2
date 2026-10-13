@@ -105,7 +105,11 @@ export interface SeatBillingCostCentreDetail {
     action: string;
     lineId: string;
     actor: string | null;
-    change: { before?: Record<string, unknown> | null; after?: Record<string, unknown> | null; reason?: string | null } | null;
+    change: {
+      before?: Record<string, unknown> | null;
+      after?: Record<string, unknown> | null;
+      reason?: string | null;
+    } | null;
   }>;
 }
 
@@ -130,20 +134,27 @@ export function useSeatBilling(period: string, branchId?: string) {
     queryFn: async () => {
       const params = new URLSearchParams({ period });
       if (branchId) params.set("branchId", branchId);
-      const response = await hrmsApi.get<{ success: boolean; data: SeatBillingEstimate }>(
-        `/api/finance/pnl/seat-billing?${params.toString()}`,
-      );
+      const response = await hrmsApi.get<{
+        success: boolean;
+        data: SeatBillingEstimate;
+      }>(`/api/finance/pnl/seat-billing?${params.toString()}`);
       return response.data;
     },
   });
 }
 
-export function useSeatBillingCostCentre(costCentreId: string | null, period: string) {
+export function useSeatBillingCostCentre(
+  costCentreId: string | null,
+  period: string,
+) {
   return useQuery({
     queryKey: ["pnl-seat-billing-cc", costCentreId, period],
     enabled: Boolean(costCentreId) && /^\d{4}-\d{2}$/.test(period),
     queryFn: async () => {
-      const response = await hrmsApi.get<{ success: boolean; data: SeatBillingCostCentreDetail }>(
+      const response = await hrmsApi.get<{
+        success: boolean;
+        data: SeatBillingCostCentreDetail;
+      }>(
         `/api/finance/pnl/seat-billing/cost-centres/${encodeURIComponent(costCentreId ?? "")}?period=${period}`,
       );
       return response.data;
@@ -167,28 +178,54 @@ export function useSeatBillingMutations() {
 
   const createLine = useMutation({
     mutationFn: async (payload: SeatBillingLinePayload) =>
-      (await hrmsApi.post<{ success: boolean; data: unknown }>("/api/finance/pnl/seat-billing/lines", payload)).data,
+      (
+        await hrmsApi.post<{ success: boolean; data: unknown }>(
+          "/api/finance/pnl/seat-billing/lines",
+          payload,
+        )
+      ).data,
     onSuccess: invalidate,
   });
 
   const updateLine = useMutation({
-    mutationFn: async ({ id, ...payload }: SeatBillingLinePayload & { id: string }) =>
-      (await hrmsApi.patch<{ success: boolean; data: unknown }>(`/api/finance/pnl/seat-billing/lines/${encodeURIComponent(id)}`, payload)).data,
+    mutationFn: async ({
+      id,
+      ...payload
+    }: SeatBillingLinePayload & { id: string }) =>
+      (
+        await hrmsApi.patch<{ success: boolean; data: unknown }>(
+          `/api/finance/pnl/seat-billing/lines/${encodeURIComponent(id)}`,
+          payload,
+        )
+      ).data,
     onSuccess: invalidate,
   });
 
   const deactivateLine = useMutation({
     mutationFn: async ({ id, reason }: { id: string; reason?: string }) =>
-      (await hrmsApi.post<{ success: boolean; data: unknown }>(`/api/finance/pnl/seat-billing/lines/${encodeURIComponent(id)}/deactivate`, { reason })).data,
+      (
+        await hrmsApi.post<{ success: boolean; data: unknown }>(
+          `/api/finance/pnl/seat-billing/lines/${encodeURIComponent(id)}/deactivate`,
+          { reason },
+        )
+      ).data,
     onSuccess: invalidate,
   });
 
   const importFromInvoice = useMutation({
-    mutationFn: async ({ costCentreId, period }: { costCentreId: string; period: string }) =>
-      (await hrmsApi.post<{ success: boolean; data: { imported: number; sourcePeriod: string } }>(
-        "/api/finance/pnl/seat-billing/import",
-        { costCentreId, period },
-      )).data,
+    mutationFn: async ({
+      costCentreId,
+      period,
+    }: {
+      costCentreId: string;
+      period: string;
+    }) =>
+      (
+        await hrmsApi.post<{
+          success: boolean;
+          data: { imported: number; sourcePeriod: string };
+        }>("/api/finance/pnl/seat-billing/import", { costCentreId, period })
+      ).data,
     onSuccess: invalidate,
   });
 

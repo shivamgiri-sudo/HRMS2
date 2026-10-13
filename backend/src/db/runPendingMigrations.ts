@@ -1336,6 +1336,8 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2134_qualified_followup_attempts.sql", // Registered 2026-10-07. qualified_followup: per-channel attempts/errors, wa_message_id, missing_details, step_claimed_at, test row tag, idx_qfu_callfile. information_schema-guarded, re-runnable.
   "migrations/2135_requisition_streams.sql", // Registered 2026-10-07. requisition_stream (+ _day, _event, _plan, _match), requisition_stream.version, created_at/updated_at DATETIME(6), requisition_stream_plan.idx_rsp_date and qualified_followup.owner. CREATE TABLE IF NOT EXISTS plus information_schema-guarded ALTERs, re-runnable.
   "migrations/2136_he_match_outcome_reason.sql", // Registered 2026-10-08. he_match_outcome_reason (one no-show/decline reason per he_match, last tap wins). CREATE TABLE IF NOT EXISTS only, re-runnable.
+  "migrations/1975_client_billing_invoice_engine_p5.sql", // Registered 2026-10-13. P5 invoice engine: adds po_numbers/grn_no/grn_date/jcc_no/jcc_date/rcm_applicable/last_sent_at/last_sent_by to client_invoice; widens audit_log action ENUM; creates client_invoice_change_request and client_invoice_submission. All guarded, idempotent, additive only.
+  "migrations/1976_client_billing_tally_tables.sql", // Registered 2026-10-13. Tally GST export: tally_export_config, tally_voucher_batch (includes generated_at), tally_voucher_batch_line, tally_voucher_export. CREATE TABLE IF NOT EXISTS, idempotent.
 ];
 
 export type MigrationHealth = {

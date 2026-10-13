@@ -4,7 +4,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,7 +25,12 @@ interface Props {
 
 /** `rejectInvoice(id, reason)` requires a non-empty reason (client-billing.routes.ts's
  *  `POST /invoices/:id/reject` 400s without one) — this dialog is the reason capture UI. */
-export function RejectInvoiceDialog({ invoiceId, label, onOpenChange, onRejected }: Props) {
+export function RejectInvoiceDialog({
+  invoiceId,
+  label,
+  onOpenChange,
+  onRejected,
+}: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
@@ -33,12 +43,18 @@ export function RejectInvoiceDialog({ invoiceId, label, onOpenChange, onRejected
     mutationFn: () => rejectInvoice(invoiceId as string, reason.trim()),
     onSuccess: () => {
       toast({ title: "Proforma rejected" });
-      void queryClient.invalidateQueries({ queryKey: ["client-billing", "proformas"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["client-billing", "proformas"],
+      });
       onRejected();
       onOpenChange(false);
     },
     onError: (error: Error) => {
-      toast({ title: "Could not reject", description: error.message, variant: "destructive" });
+      toast({
+        title: "Could not reject",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -48,7 +64,8 @@ export function RejectInvoiceDialog({ invoiceId, label, onOpenChange, onRejected
         <DialogHeader>
           <DialogTitle>Reject {label}</DialogTitle>
           <DialogDescription>
-            A reason is required and is recorded on the invoice&rsquo;s audit log.
+            A reason is required and is recorded on the invoice&rsquo;s audit
+            log.
           </DialogDescription>
         </DialogHeader>
         <div>
@@ -62,7 +79,11 @@ export function RejectInvoiceDialog({ invoiceId, label, onOpenChange, onRejected
           />
         </div>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
           <Button
@@ -71,7 +92,9 @@ export function RejectInvoiceDialog({ invoiceId, label, onOpenChange, onRejected
             disabled={!reason.trim() || rejectMutation.isPending}
             onClick={() => rejectMutation.mutate()}
           >
-            {rejectMutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+            {rejectMutation.isPending && (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            )}
             Reject
           </Button>
         </DialogFooter>

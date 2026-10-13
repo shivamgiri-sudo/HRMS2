@@ -1,7 +1,13 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { CostCentreInput } from "@/hooks/useCostCentreManagement";
 
 interface BillingSectionProps {
@@ -36,14 +42,20 @@ const paymentTerms = [
   { value: "immediate", label: "Immediate" },
 ];
 
-export function BillingSection({ data, onChange, disabled }: BillingSectionProps) {
+export function BillingSection({
+  data,
+  onChange,
+  disabled,
+}: BillingSectionProps) {
   return (
     <div className="grid gap-4 p-4">
       <div className="grid grid-cols-2 gap-6">
         <div className="flex items-center justify-between rounded-lg border p-3">
           <div>
             <Label className="font-medium">Revenue Generating</Label>
-            <p className="text-sm text-muted-foreground">This cost centre generates revenue</p>
+            <p className="text-sm text-muted-foreground">
+              This cost centre generates revenue
+            </p>
           </div>
           <Switch
             checked={data.revenue_flag ?? false}
@@ -54,7 +66,9 @@ export function BillingSection({ data, onChange, disabled }: BillingSectionProps
         <div className="flex items-center justify-between rounded-lg border p-3">
           <div>
             <Label className="font-medium">Billing Enabled</Label>
-            <p className="text-sm text-muted-foreground">Enable billing for this cost centre</p>
+            <p className="text-sm text-muted-foreground">
+              Enable billing for this cost centre
+            </p>
           </div>
           <Switch
             checked={data.billing_flag ?? false}
@@ -92,7 +106,13 @@ export function BillingSection({ data, onChange, disabled }: BillingSectionProps
             step="0.01"
             min={0}
             value={data.fixed_amount ?? ""}
-            onChange={(e) => onChange({ fixed_amount: e.target.value ? Number(e.target.value) : undefined })}
+            onChange={(e) =>
+              onChange({
+                fixed_amount: e.target.value
+                  ? Number(e.target.value)
+                  : undefined,
+              })
+            }
             placeholder="0.00"
             disabled={disabled}
           />

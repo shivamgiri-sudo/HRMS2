@@ -1,16 +1,41 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Download, FileWarning, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+  FileWarning,
+  RefreshCw,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { money } from "@/components/finance/grn/grn-format";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import {
-  GRN_TR, GrnAlert, GrnCard, GrnCardHeader, GrnChip, GrnEmptyState, GrnIconButton,
-  GrnKv, GrnKvList, GrnMetric, GrnMetricStrip, GrnSelect, GrnTable, GrnTd, GrnTh,
+  GRN_TR,
+  GrnAlert,
+  GrnCard,
+  GrnCardHeader,
+  GrnChip,
+  GrnEmptyState,
+  GrnIconButton,
+  GrnKv,
+  GrnKvList,
+  GrnMetric,
+  GrnMetricStrip,
+  GrnSelect,
+  GrnTable,
+  GrnTd,
+  GrnTh,
 } from "@/components/finance/grn/grn-ui";
 import {
-  listRegistrations, listBatches, generateBatch, getBatch, getExceptions, downloadBatchCsv,
-  type GstExportBatch, type GstExportType,
+  listRegistrations,
+  listBatches,
+  generateBatch,
+  getBatch,
+  getExceptions,
+  downloadBatchCsv,
+  type GstExportBatch,
+  type GstExportType,
 } from "@/lib/gstExportApi";
 
 /**
@@ -38,7 +63,9 @@ function currentPeriodMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function statusTone(status: GstExportBatch["status"]): "success" | "warn" | "crit" | "neutral" {
+function statusTone(
+  status: GstExportBatch["status"],
+): "success" | "warn" | "crit" | "neutral" {
   if (status === "exported") return "success";
   if (status === "superseded") return "neutral";
   if (status === "validated") return "warn";
@@ -62,7 +89,12 @@ export function GstTallyExportPanel() {
 
   const batchesQuery = useQuery({
     queryKey: ["gst-export-batches", exportType, companyGstin, periodMonth],
-    queryFn: () => listBatches({ exportType, companyGstin: companyGstin || undefined, limit: 30 }),
+    queryFn: () =>
+      listBatches({
+        exportType,
+        companyGstin: companyGstin || undefined,
+        limit: 30,
+      }),
   });
   const batches = batchesQuery.data ?? [];
 
@@ -70,7 +102,10 @@ export function GstTallyExportPanel() {
     mutationFn: () => generateBatch({ exportType, companyGstin, periodMonth }),
     onSuccess: (result) => {
       toast({
-        title: result.exceptionRows > 0 ? "Batch generated — some rows need attention" : "Batch generated",
+        title:
+          result.exceptionRows > 0
+            ? "Batch generated — some rows need attention"
+            : "Batch generated",
         description: `${result.totalRows} row(s), ${result.exceptionRows} exception(s). Invoice value ${money(result.totals.invoiceValue)}.`,
         variant: result.exceptionRows > 0 ? "default" : "default",
       });
@@ -95,21 +130,30 @@ export function GstTallyExportPanel() {
   const exceptionsQuery = useQuery({
     queryKey: ["gst-export-exceptions", selectedBatchId],
     queryFn: () => getExceptions(selectedBatchId as string),
-    enabled: Boolean(selectedBatchId) && (detailQuery.data?.batch.exception_rows ?? 0) > 0,
+    enabled:
+      Boolean(selectedBatchId) &&
+      (detailQuery.data?.batch.exception_rows ?? 0) > 0,
   });
 
   const [downloading, setDownloading] = useState(false);
-  async function handleDownload(batch: GstExportBatch, includeExceptions: boolean) {
+  async function handleDownload(
+    batch: GstExportBatch,
+    includeExceptions: boolean,
+  ) {
     setDownloading(true);
     try {
       await downloadBatchCsv(batch, { includeExceptions });
-      toast({ title: "Downloaded", description: `${batch.export_type}-${batch.company_gstin}-${batch.period_month}.csv` });
+      toast({
+        title: "Downloaded",
+        description: `${batch.export_type}-${batch.company_gstin}-${batch.period_month}.csv`,
+      });
       void qc.invalidateQueries({ queryKey: ["gst-export-batch", batch.id] });
       void qc.invalidateQueries({ queryKey: ["gst-export-batches"] });
     } catch (error) {
       toast({
         title: "Download failed",
-        description: error instanceof Error ? error.message : "Unable to download CSV",
+        description:
+          error instanceof Error ? error.message : "Unable to download CSV",
         variant: "destructive",
       });
     } finally {
@@ -117,7 +161,9 @@ export function GstTallyExportPanel() {
     }
   }
 
-  const selectedRegistration = registrations.find((r) => r.company_gstin === companyGstin);
+  const selectedRegistration = registrations.find(
+    (r) => r.company_gstin === companyGstin,
+  );
 
   return (
     <div className="space-y-4">
@@ -126,8 +172,13 @@ export function GstTallyExportPanel() {
           title="GST / Tally export"
           description="Generate the outward-supply batch for one registration and month, resolve anything flagged before filing, then download the Tally / preparer hand-off file."
           action={
-            <GrnIconButton aria-label="Refresh batches" onClick={() => batchesQuery.refetch()}>
-              <RefreshCw className={`h-3.5 w-3.5 ${batchesQuery.isFetching ? "animate-spin" : ""}`} />
+            <GrnIconButton
+              aria-label="Refresh batches"
+              onClick={() => batchesQuery.refetch()}
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${batchesQuery.isFetching ? "animate-spin" : ""}`}
+              />
             </GrnIconButton>
           }
         />
@@ -135,19 +186,30 @@ export function GstTallyExportPanel() {
         <div className="flex flex-wrap items-end gap-2 border-b border-grn-line px-4 py-3">
           <label className="text-[11px] font-semibold text-grn-ink">
             Export type
-            <GrnSelect className="mt-1 w-[190px]" value={exportType} onChange={(e) => setExportType(e.target.value as GstExportType)}>
+            <GrnSelect
+              className="mt-1 w-[190px]"
+              value={exportType}
+              onChange={(e) => setExportType(e.target.value as GstExportType)}
+            >
               {EXPORT_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
               ))}
             </GrnSelect>
           </label>
           <label className="text-[11px] font-semibold text-grn-ink">
             Registration
-            <GrnSelect className="mt-1 w-[300px]" value={companyGstin} onChange={(e) => setCompanyGstin(e.target.value)}>
+            <GrnSelect
+              className="mt-1 w-[300px]"
+              value={companyGstin}
+              onChange={(e) => setCompanyGstin(e.target.value)}
+            >
               <option value="">— choose a registration —</option>
               {registrations.map((r) => (
                 <option key={r.company_gstin} value={r.company_gstin}>
-                  {r.company_name ?? "(unnamed)"} · {r.company_gstin} · {r.branch_count} branch{r.branch_count === 1 ? "" : "es"}
+                  {r.company_name ?? "(unnamed)"} · {r.company_gstin} ·{" "}
+                  {r.branch_count} branch{r.branch_count === 1 ? "" : "es"}
                 </option>
               ))}
             </GrnSelect>
@@ -176,26 +238,34 @@ export function GstTallyExportPanel() {
           </GrnChip>
         </div>
 
-        {!companyGstin && registrations.length === 0 && !registrationsQuery.isLoading && (
-          <div className="p-4">
-            <GrnAlert tone="warn">
-              No branch carries a GSTIN yet — nothing can be generated until at least one is set on
-              branch_master.
-            </GrnAlert>
-          </div>
-        )}
+        {!companyGstin &&
+          registrations.length === 0 &&
+          !registrationsQuery.isLoading && (
+            <div className="p-4">
+              <GrnAlert tone="warn">
+                No branch carries a GSTIN yet — nothing can be generated until
+                at least one is set on branch_master.
+              </GrnAlert>
+            </div>
+          )}
 
-        {companyGstin && selectedRegistration && !selectedRegistration.latest_invoice_date && (
-          <div className="px-4 pt-3">
-            <GrnAlert tone="warn">
-              This registration has no invoices recorded at all — a generated batch for it will be empty.
-            </GrnAlert>
-          </div>
-        )}
+        {companyGstin &&
+          selectedRegistration &&
+          !selectedRegistration.latest_invoice_date && (
+            <div className="px-4 pt-3">
+              <GrnAlert tone="warn">
+                This registration has no invoices recorded at all — a generated
+                batch for it will be empty.
+              </GrnAlert>
+            </div>
+          )}
       </GrnCard>
 
       <GrnCard>
-        <GrnCardHeader title="Recent batches" description="Newest first. Select one to review its rows and download." />
+        <GrnCardHeader
+          title="Recent batches"
+          description="Newest first. Select one to review its rows and download."
+        />
         {batches.length === 0 ? (
           <GrnEmptyState
             icon={<FileWarning className="h-full w-full" />}
@@ -203,48 +273,62 @@ export function GstTallyExportPanel() {
             description="Generate one above for a registration and month."
           />
         ) : (
-            <GrnTable>
-              <thead>
-                <tr>
-                  <GrnTh>Period</GrnTh>
-                  <GrnTh>Registration</GrnTh>
-                  <GrnTh>Type</GrnTh>
-                  <GrnTh align="right">Rows</GrnTh>
-                  <GrnTh align="right">Exceptions</GrnTh>
-                  <GrnTh>Status</GrnTh>
-                  <GrnTh>Downloaded</GrnTh>
-                </tr>
-              </thead>
-              <tbody>
-                {batches.map((b) => (
-                  <tr
-                    key={b.id}
-                    className={`${GRN_TR} cursor-pointer ${selectedBatchId === b.id ? "bg-grn-line-soft" : ""}`}
-                    onClick={() => setSelectedBatchId(b.id)}
-                  >
-                    <GrnTd className="font-grn-mono">{b.period_month}</GrnTd>
-                    <GrnTd className="font-grn-mono">{b.company_gstin}</GrnTd>
-                    <GrnTd>{b.export_type}</GrnTd>
-                    <GrnTd align="right" className="tabular-nums">{b.total_rows}</GrnTd>
-                    <GrnTd align="right" className="tabular-nums">
-                      {b.exception_rows > 0 ? (
-                        <span className="font-semibold text-amber-700">{b.exception_rows}</span>
-                      ) : "0"}
-                    </GrnTd>
-                    <GrnTd>
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide ${
-                        statusTone(b.status) === "success" ? "bg-emerald-100 text-emerald-800"
-                        : statusTone(b.status) === "warn" ? "bg-amber-100 text-amber-800"
-                        : "bg-slate-100 text-slate-600"
-                      }`}>
-                        {b.status}
+          <GrnTable>
+            <thead>
+              <tr>
+                <GrnTh>Period</GrnTh>
+                <GrnTh>Registration</GrnTh>
+                <GrnTh>Type</GrnTh>
+                <GrnTh align="right">Rows</GrnTh>
+                <GrnTh align="right">Exceptions</GrnTh>
+                <GrnTh>Status</GrnTh>
+                <GrnTh>Downloaded</GrnTh>
+              </tr>
+            </thead>
+            <tbody>
+              {batches.map((b) => (
+                <tr
+                  key={b.id}
+                  className={`${GRN_TR} cursor-pointer ${selectedBatchId === b.id ? "bg-grn-line-soft" : ""}`}
+                  onClick={() => setSelectedBatchId(b.id)}
+                >
+                  <GrnTd className="font-grn-mono">{b.period_month}</GrnTd>
+                  <GrnTd className="font-grn-mono">{b.company_gstin}</GrnTd>
+                  <GrnTd>{b.export_type}</GrnTd>
+                  <GrnTd align="right" className="tabular-nums">
+                    {b.total_rows}
+                  </GrnTd>
+                  <GrnTd align="right" className="tabular-nums">
+                    {b.exception_rows > 0 ? (
+                      <span className="font-semibold text-amber-700">
+                        {b.exception_rows}
                       </span>
-                    </GrnTd>
-                    <GrnTd>{b.downloaded_at ? new Date(b.downloaded_at).toLocaleDateString() : "—"}</GrnTd>
-                  </tr>
-                ))}
-              </tbody>
-            </GrnTable>
+                    ) : (
+                      "0"
+                    )}
+                  </GrnTd>
+                  <GrnTd>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide ${
+                        statusTone(b.status) === "success"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : statusTone(b.status) === "warn"
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {b.status}
+                    </span>
+                  </GrnTd>
+                  <GrnTd>
+                    {b.downloaded_at
+                      ? new Date(b.downloaded_at).toLocaleDateString()
+                      : "—"}
+                  </GrnTd>
+                </tr>
+              ))}
+            </tbody>
+          </GrnTable>
         )}
       </GrnCard>
 
@@ -269,7 +353,9 @@ export function GstTallyExportPanel() {
                 {detailQuery.data.batch.exception_rows > 0 && (
                   <GrnChip
                     active={false}
-                    onClick={() => handleDownload(detailQuery.data!.batch, true)}
+                    onClick={() =>
+                      handleDownload(detailQuery.data!.batch, true)
+                    }
                   >
                     Download with exceptions
                   </GrnChip>
@@ -279,8 +365,14 @@ export function GstTallyExportPanel() {
           />
 
           <GrnMetricStrip>
-            <GrnMetric label="Rows" value={String(detailQuery.data.batch.total_rows)} />
-            <GrnMetric label="Valid" value={String(detailQuery.data.batch.valid_rows)} />
+            <GrnMetric
+              label="Rows"
+              value={String(detailQuery.data.batch.total_rows)}
+            />
+            <GrnMetric
+              label="Valid"
+              value={String(detailQuery.data.batch.valid_rows)}
+            />
             <GrnMetric
               label="Exceptions"
               value={String(detailQuery.data.batch.exception_rows)}
@@ -289,7 +381,10 @@ export function GstTallyExportPanel() {
             <GrnMetric
               label="Invoice value"
               value={money(
-                detailQuery.data.rows.reduce((sum, r) => sum + Number(r.invoice_value ?? 0), 0)
+                detailQuery.data.rows.reduce(
+                  (sum, r) => sum + Number(r.invoice_value ?? 0),
+                  0,
+                ),
               )}
             />
           </GrnMetricStrip>
@@ -297,7 +392,10 @@ export function GstTallyExportPanel() {
           {detailQuery.data.batch.exception_rows > 0 && (
             <div className="px-4 pt-3">
               <GrnAlert tone="crit">
-                <span className="font-semibold">{detailQuery.data.batch.exception_rows} row(s) need attention before this is filed.</span>{" "}
+                <span className="font-semibold">
+                  {detailQuery.data.batch.exception_rows} row(s) need attention
+                  before this is filed.
+                </span>{" "}
                 Shown below with the exact reason for each.
               </GrnAlert>
             </div>
@@ -317,18 +415,33 @@ export function GstTallyExportPanel() {
                 </thead>
                 <tbody>
                   {exceptionsQuery.data!.map((r) => {
-                    let reasons: Array<{ code: string; message: string; severity: string }> = [];
-                    try { reasons = JSON.parse(r.validation_errors ?? "[]"); } catch { /* leave empty */ }
+                    let reasons: Array<{
+                      code: string;
+                      message: string;
+                      severity: string;
+                    }> = [];
+                    try {
+                      reasons = JSON.parse(r.validation_errors ?? "[]");
+                    } catch {
+                      /* leave empty */
+                    }
                     return (
                       <tr key={r.sequence_no} className={GRN_TR}>
-                        <GrnTd className="font-grn-mono">{r.bill_no ?? "—"}</GrnTd>
+                        <GrnTd className="font-grn-mono">
+                          {r.bill_no ?? "—"}
+                        </GrnTd>
                         <GrnTd>{r.invoice_date ?? "—"}</GrnTd>
                         <GrnTd>{r.client_name ?? "—"}</GrnTd>
-                        <GrnTd align="right" className="tabular-nums">{money(r.invoice_value)}</GrnTd>
+                        <GrnTd align="right" className="tabular-nums">
+                          {money(r.invoice_value)}
+                        </GrnTd>
                         <GrnTd>
                           <div className="space-y-0.5">
                             {reasons.map((e, i) => (
-                              <div key={i} className={`flex items-start gap-1 text-[11.5px] ${e.severity === "error" ? "text-red-700" : "text-amber-700"}`}>
+                              <div
+                                key={i}
+                                className={`flex items-start gap-1 text-[11.5px] ${e.severity === "error" ? "text-red-700" : "text-amber-700"}`}
+                              >
                                 <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
                                 <span>{e.message}</span>
                               </div>
@@ -365,14 +478,28 @@ export function GstTallyExportPanel() {
                     <GrnTd className="font-grn-mono">{r.bill_no ?? "—"}</GrnTd>
                     <GrnTd>{r.invoice_date ?? "—"}</GrnTd>
                     <GrnTd>{r.client_name ?? "—"}</GrnTd>
-                    <GrnTd className="font-grn-mono">{r.client_gstin ?? "—"}</GrnTd>
-                    <GrnTd>{r.place_of_supply ?? "—"}</GrnTd>
-                    <GrnTd>{r.source_type === "credit_note" ? "Credit note" : "Invoice"}</GrnTd>
-                    <GrnTd align="right" className="tabular-nums">{money(r.taxable_value)}</GrnTd>
-                    <GrnTd align="right" className="tabular-nums">
-                      {money(Number(r.igst_amount) + Number(r.cgst_amount) + Number(r.sgst_amount))}
+                    <GrnTd className="font-grn-mono">
+                      {r.client_gstin ?? "—"}
                     </GrnTd>
-                    <GrnTd align="right" className="tabular-nums">{money(r.invoice_value)}</GrnTd>
+                    <GrnTd>{r.place_of_supply ?? "—"}</GrnTd>
+                    <GrnTd>
+                      {r.source_type === "credit_note"
+                        ? "Credit note"
+                        : "Invoice"}
+                    </GrnTd>
+                    <GrnTd align="right" className="tabular-nums">
+                      {money(r.taxable_value)}
+                    </GrnTd>
+                    <GrnTd align="right" className="tabular-nums">
+                      {money(
+                        Number(r.igst_amount) +
+                          Number(r.cgst_amount) +
+                          Number(r.sgst_amount),
+                      )}
+                    </GrnTd>
+                    <GrnTd align="right" className="tabular-nums">
+                      {money(r.invoice_value)}
+                    </GrnTd>
                     <GrnTd>
                       {r.validation_status === "exception" ? (
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-700">
@@ -392,10 +519,14 @@ export function GstTallyExportPanel() {
 
           <div className="border-t border-grn-line-soft px-4 py-3">
             <GrnKvList>
-              <GrnKv label="Generated">{new Date(detailQuery.data.batch.generated_at).toLocaleString()}</GrnKv>
+              <GrnKv label="Generated">
+                {new Date(detailQuery.data.batch.generated_at).toLocaleString()}
+              </GrnKv>
               <GrnKv label="Downloaded">
                 {detailQuery.data.batch.downloaded_at
-                  ? new Date(detailQuery.data.batch.downloaded_at).toLocaleString()
+                  ? new Date(
+                      detailQuery.data.batch.downloaded_at,
+                    ).toLocaleString()
                   : "Not yet"}
               </GrnKv>
             </GrnKvList>

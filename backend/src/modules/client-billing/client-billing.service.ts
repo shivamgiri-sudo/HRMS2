@@ -2,6 +2,33 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { clientBillingNumberingService } from "./client-billing-numbering.service.js";
+import { deriveGstType } from "./client-billing-tax.js";
+
+export interface CostCentreTaxRow {
+  gstType: string;
+  stateCode: string | null;
+  supplierGstin?: string | null;
+  clientGstin?: string | null;
+  clientStateCode?: string | null;
+}
+
+/**
+ * Resolves the operative GST type for an invoice, preferring GSTIN-derived state comparison
+ * over the potentially-stale `gst_type` flag on cost_centre_master.
+ */
+export function resolveGstType(
+  _costCentreId: string,
+  row: CostCentreTaxRow,
+): { gstType: "Integrated" | "Intrastate" } {
+  const derived = deriveGstType({
+    supplierStateCode: row.stateCode,
+    clientStateCode: row.clientStateCode ?? null,
+    clientGstin: row.clientGstin ?? null,
+    fallbackFlag: row.gstType,
+  });
+  const gstType = derived.gstType ?? (row.gstType === "Intrastate" ? "Intrastate" : "Integrated");
+  return { gstType };
+}
 
 export interface ProformaLineInput {
   particulars: string;

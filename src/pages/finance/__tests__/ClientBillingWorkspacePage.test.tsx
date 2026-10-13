@@ -81,9 +81,15 @@ vi.mock("@/hooks/useApprovalFocus", () => ({ useApprovalFocus: () => null }));
 // which is what lets Section A assert Invoices/Credit Notes content in the same pass.
 vi.mock("@/components/ui/tabs", () => ({
   Tabs: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  TabsList: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  TabsTrigger: ({ children }: { children: React.ReactNode }) => <button type="button">{children}</button>,
-  TabsContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  TabsList: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  TabsTrigger: ({ children }: { children: React.ReactNode }) => (
+    <button type="button">{children}</button>
+  ),
+  TabsContent: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
 }));
 
 import ClientBillingWorkspacePage from "@/pages/finance/ClientBillingWorkspacePage";
@@ -97,18 +103,42 @@ import ClientBillingWorkspacePage from "@/pages/finance/ClientBillingWorkspacePa
  * step with the page's own EMPTY_FILTERS.
  */
 const EMPTY_FILTERS = (status: string) => ({
-  status, fromDate: "", toDate: "", costCentreId: "", search: "", page: 1,
+  status,
+  fromDate: "",
+  toDate: "",
+  costCentreId: "",
+  search: "",
+  page: 1,
 });
 
-function renderPage(seed?: { proformas?: unknown[]; invoices?: unknown[]; creditNotes?: unknown[] }) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+function renderPage(seed?: {
+  proformas?: unknown[];
+  invoices?: unknown[];
+  creditNotes?: unknown[];
+}) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   // `total` accompanies `data` in the real list responses — the page reads it for pagination.
-  const list = (data: unknown[]) => ({ success: true, data, total: data.length });
-  client.setQueryData(["client-billing", "proformas", EMPTY_FILTERS("proforma")], list(seed?.proformas ?? []));
+  const list = (data: unknown[]) => ({
+    success: true,
+    data,
+    total: data.length,
+  });
+  client.setQueryData(
+    ["client-billing", "proformas", EMPTY_FILTERS("proforma")],
+    list(seed?.proformas ?? []),
+  );
   // Invoices is its own server-filtered query now (listProformas with the status overridden to
   // "approved"), not a client-side filter over the proformas response, so it needs its own seed.
-  client.setQueryData(["client-billing", "invoices", EMPTY_FILTERS("approved")], list(seed?.invoices ?? []));
-  client.setQueryData(["client-billing", "credit-notes", EMPTY_FILTERS("_all")], list(seed?.creditNotes ?? []));
+  client.setQueryData(
+    ["client-billing", "invoices", EMPTY_FILTERS("approved")],
+    list(seed?.invoices ?? []),
+  );
+  client.setQueryData(
+    ["client-billing", "credit-notes", EMPTY_FILTERS("_all")],
+    list(seed?.creditNotes ?? []),
+  );
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <ClientBillingWorkspacePage />
@@ -218,7 +248,10 @@ describe("ClientBillingWorkspacePage — rendering", () => {
     // (listProformas with status forced to "approved"), so the approved row is seeded there.
     // The proforma row is seeded on the Proformas tab in the same pass to prove the two lists
     // stay separate rather than both rendering everything.
-    const html = renderPage({ proformas: [proformaRow], invoices: [approvedInvoiceRow] });
+    const html = renderPage({
+      proformas: [proformaRow],
+      invoices: [approvedInvoiceRow],
+    });
 
     expect(html).toContain("BILL/2026-27/0007");
     // Approved rows get an Audit log action, not Approve/Reject.
@@ -265,18 +298,30 @@ const pageSource = readFileSync(
   "utf8",
 );
 const createProformaSheetSource = readFileSync(
-  resolve(process.cwd(), "src/components/finance/client-billing/CreateProformaSheet.tsx"),
+  resolve(
+    process.cwd(),
+    "src/components/finance/client-billing/CreateProformaSheet.tsx",
+  ),
   "utf8",
 );
 const createCreditNoteSheetSource = readFileSync(
-  resolve(process.cwd(), "src/components/finance/client-billing/CreateCreditNoteSheet.tsx"),
+  resolve(
+    process.cwd(),
+    "src/components/finance/client-billing/CreateCreditNoteSheet.tsx",
+  ),
   "utf8",
 );
 const rejectDialogSource = readFileSync(
-  resolve(process.cwd(), "src/components/finance/client-billing/RejectInvoiceDialog.tsx"),
+  resolve(
+    process.cwd(),
+    "src/components/finance/client-billing/RejectInvoiceDialog.tsx",
+  ),
   "utf8",
 );
-const apiSource = readFileSync(resolve(process.cwd(), "src/lib/clientBillingApi.ts"), "utf8");
+const apiSource = readFileSync(
+  resolve(process.cwd(), "src/lib/clientBillingApi.ts"),
+  "utf8",
+);
 
 describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () => {
   it("create-proforma Sheet submits createProforma with the payload clientBillingApi.ts actually declares", () => {
@@ -284,7 +329,9 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
     expect(apiSource).toContain("export interface CreateProformaPayload {");
     expect(apiSource).toContain("costCentreId: string;");
     expect(apiSource).toContain("lines: ProformaLineInput[];");
-    expect(apiSource).toContain("export function createProforma(payload: CreateProformaPayload)");
+    expect(apiSource).toContain(
+      "export function createProforma(payload: CreateProformaPayload)",
+    );
 
     expect(createProformaSheetSource).toContain(
       "mutationFn: (payload: CreateProformaPayload) => createProforma(payload),",
@@ -293,12 +340,20 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
     expect(createProformaSheetSource).toContain("createMutation.mutate({");
     expect(createProformaSheetSource).toContain("costCentreId,");
     expect(createProformaSheetSource).toContain("category: category.trim(),");
-    expect(createProformaSheetSource).toContain("financeYear: financeYear.trim(),");
-    expect(createProformaSheetSource).toContain("monthLabel: monthLabel.trim(),");
+    expect(createProformaSheetSource).toContain(
+      "financeYear: financeYear.trim(),",
+    );
+    expect(createProformaSheetSource).toContain(
+      "monthLabel: monthLabel.trim(),",
+    );
     expect(createProformaSheetSource).toContain("invoiceDate,");
     expect(createProformaSheetSource).toContain("applyGst,");
-    expect(createProformaSheetSource).toContain("lines: validLines.map((l) => ({");
-    expect(createProformaSheetSource).toContain("particulars: l.particulars.trim(),");
+    expect(createProformaSheetSource).toContain(
+      "lines: validLines.map((l) => ({",
+    );
+    expect(createProformaSheetSource).toContain(
+      "particulars: l.particulars.trim(),",
+    );
     expect(createProformaSheetSource).toContain("qty: Number(l.qty),");
     expect(createProformaSheetSource).toContain("rate: Number(l.rate),");
     expect(createProformaSheetSource).toContain("lineType: l.lineType,");
@@ -306,18 +361,26 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
 
   it("Approve (Proformas tab) calls approveInvoice with the row id", () => {
     expect(apiSource).toContain("export function approveInvoice(id: string,");
-    expect(pageSource).toContain("mutationFn: (id: string) => approveInvoice(id),");
+    expect(pageSource).toContain(
+      "mutationFn: (id: string) => approveInvoice(id),",
+    );
     // wired from the confirm AlertDialog, not a bare click — matches the plan's "confirm dialog" step.
-    expect(pageSource).toContain("if (approveTarget) approveMutation.mutate(approveTarget.id);");
+    expect(pageSource).toContain(
+      "if (approveTarget) approveMutation.mutate(approveTarget.id);",
+    );
   });
 
   it("Reject (via its reason dialog) calls rejectInvoice with a non-empty reason", () => {
-    expect(apiSource).toContain("export function rejectInvoice(id: string, reason: string)");
+    expect(apiSource).toContain(
+      "export function rejectInvoice(id: string, reason: string)",
+    );
     expect(rejectDialogSource).toContain(
       "mutationFn: () => rejectInvoice(invoiceId as string, reason.trim()),",
     );
     // Reason is mandatory client-side too, not just left to the backend's 400.
-    expect(rejectDialogSource).toContain("disabled={!reason.trim() || rejectMutation.isPending}");
+    expect(rejectDialogSource).toContain(
+      "disabled={!reason.trim() || rejectMutation.isPending}",
+    );
   });
 
   it("PDF download button calls downloadInvoicePdf", () => {
@@ -345,7 +408,9 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
     expect(apiSource).toContain("export interface CreateCreditNotePayload {");
     expect(apiSource).toContain("invoiceId: string;");
     expect(apiSource).toContain("lines: CreditNoteLineInput[];");
-    expect(apiSource).toContain("export function createCreditNote(payload: CreateCreditNotePayload)");
+    expect(apiSource).toContain(
+      "export function createCreditNote(payload: CreateCreditNotePayload)",
+    );
 
     expect(createCreditNoteSheetSource).toContain(
       "mutationFn: (payload: CreateCreditNotePayload) => createCreditNote(payload),",
@@ -353,17 +418,27 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
     expect(createCreditNoteSheetSource).toContain("createMutation.mutate({");
     expect(createCreditNoteSheetSource).toContain("invoiceId,");
     expect(createCreditNoteSheetSource).toContain("category: category.trim(),");
-    expect(createCreditNoteSheetSource).toContain("financeYear: financeYear.trim(),");
-    expect(createCreditNoteSheetSource).toContain("monthLabel: monthLabel.trim(),");
+    expect(createCreditNoteSheetSource).toContain(
+      "financeYear: financeYear.trim(),",
+    );
+    expect(createCreditNoteSheetSource).toContain(
+      "monthLabel: monthLabel.trim(),",
+    );
     expect(createCreditNoteSheetSource).toContain("creditDate,");
     expect(createCreditNoteSheetSource).toContain("applyGst,");
     // Credit note lines carry no lineType (design doc: "no charge/deduction split" for credit notes).
-    expect(createCreditNoteSheetSource).not.toContain("lineType: l.lineType,\n      })),\n    });");
+    expect(createCreditNoteSheetSource).not.toContain(
+      "lineType: l.lineType,\n      })),\n    });",
+    );
   });
 
   it("Credit Notes: Approve calls approveCreditNote with the row id", () => {
-    expect(apiSource).toContain("export function approveCreditNote(id: string)");
-    expect(pageSource).toContain("mutationFn: (id: string) => approveCreditNote(id),");
+    expect(apiSource).toContain(
+      "export function approveCreditNote(id: string)",
+    );
+    expect(pageSource).toContain(
+      "mutationFn: (id: string) => approveCreditNote(id),",
+    );
     expect(pageSource).toContain(
       "if (approveCreditTarget) approveCreditMutation.mutate(approveCreditTarget.id);",
     );
