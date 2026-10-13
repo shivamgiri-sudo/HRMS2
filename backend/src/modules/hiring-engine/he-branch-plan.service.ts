@@ -89,9 +89,12 @@ async function booked(): Promise<BranchBooked[]> {
 }
 
 interface PlanInputs { today: string; seats: BranchSeats[]; history: BranchHistory[]; pace: BranchPace[]; booked: BranchBooked[]; spendByBranch: Record<string, number> }
-// The inputs scan the recruiter ledger and every branch's cost usage: seconds on production, and they move slowly. Cached for 10 minutes
+// The inputs scan the recruiter ledger and every branch's cost usage: seconds on production, and they move slowly. Cached for 20 minutes
 // per history window with single-flight, so a visit (and every what-if change, which only re-runs the pure maths) is instant after the first.
-const INPUT_TTL_MS = 10 * 60_000;
+// 20 minutes, against the 14-minute warm-up in he-planner.service.ts, so the cache never lapses between refreshes.
+const INPUT_TTL_MS = 20 * 60_000;
+/** Engine cost usage is the slowest input (its messages query times out on production) and the least material: it never holds the plan up. */
+const COST_WAIT_MS = 8_000;
 const inputCache = new Map<number, { at: number; value: Promise<PlanInputs> }>();
 
 async function loadInputs(months: number): Promise<PlanInputs> {
@@ -100,8 +103,12 @@ async function loadInputs(months: number): Promise<PlanInputs> {
   const value = (async (): Promise<PlanInputs> => {
     const [d] = await db.execute<RowDataPacket[]>(`SELECT DATE(${IST_NOW}) AS today, DATE_SUB(DATE(${IST_NOW}), INTERVAL ${PACE_DAYS - 1} DAY) AS start`);
     const today = String(d[0].today).slice(0, 10), start = String(d[0].start).slice(0, 10);
-    const [seatRows, history_, pace_, booked_, cost] = await Promise.all([seats(), history(months), pace(), booked(), getCostByBranch(start, today)]);
-    return { today, seats: seatRows, history: history_, pace: pace_, booked: booked_, spendByBranch: Object.fromEntries(cost.rows.map((r) => [r.branch, r.total])) };
+    const costP = Promise.race([
+      getCostByBranch(start, today).catch(() => null),
+      new Promise<null>((resolve) => { const t = setTimeout(() => resolve(null), COST_WAIT_MS); t.unref?.(); }),
+    ]);
+    const [seatRows, history_, pace_, booked_, cost] = await Promise.all([seats(), history(months), pace(), booked(), costP]);
+    return { today, seats: seatRows, history: history_, pace: pace_, booked: booked_, spendByBranch: cost ? Object.fromEntries(cost.rows.map((r) => [r.branch, r.total])) : {} };
   })();
   inputCache.set(months, { at: Date.now(), value });
   value.catch(() => inputCache.delete(months));
