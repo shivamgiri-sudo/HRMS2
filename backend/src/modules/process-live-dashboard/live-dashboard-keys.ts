@@ -44,8 +44,12 @@ export function detectLiveDashboard(processName: string, processCode?: string | 
 
 /**
  * Endpoint group (first path segment under /api/process-live) → the dashboards
- * that call it. The Reginald dashboard carries Molecular and Reginald Email tabs,
- * so it reads those groups too. A group missing here is refused for everyone
+ * that call it. The Reginald dashboard carries the Reginald Email tab, so it reads
+ * that group too. Molecular Email is no longer a Reginald tab (REG-07): it is the
+ * separate Molecular Email Dashboard (/molecular-email-dashboard), and the old tab
+ * is now a link to it — Reginald viewers keep reading 'molecular-email' so everyone
+ * who saw the tab can still open the dashboard (no Molecular process exists in
+ * process_master to scope it by on its own). A group missing here is refused for everyone
  * but super_admin/admin/ceo — live-dashboard-keys.test.ts fails when a route
  * group in process-live-dashboard.routes.ts has no entry.
  */

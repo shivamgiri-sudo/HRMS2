@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1265,
-  "columnCount": 18398,
+  "tableCount": 1267,
+  "columnCount": 18417,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -20930,6 +20930,29 @@
       "approved_at",
       "created_at",
       "updated_at"
+    ],
+    "molecular_email_ticket": [
+      "ticket_id",
+      "created_at",
+      "agent_user_id",
+      "agent_name",
+      "category",
+      "priority",
+      "status",
+      "first_closed_at",
+      "final_closed_at",
+      "reopen_count",
+      "first_reopened_at",
+      "last_reopened_at",
+      "closure_basis",
+      "dq_flag",
+      "raw_created_at",
+      "synced_at"
+    ],
+    "molecular_email_ticket_reopen_event": [
+      "ticket_id",
+      "seq",
+      "event_at"
     ]
   }
 }

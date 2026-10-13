@@ -28,6 +28,7 @@ const ProcessDashboardAdminPage = lazy(() => import("@/pages/ProcessDashboardAdm
 const KpiStudioPage = lazy(() => import("@/pages/KpiStudioPage"));
 const DashboardStudioPage = lazy(() => import("@/pages/DashboardStudioPage"));
 const ProcessOperationsPage = lazy(() => import("@/pages/ProcessOperationsPage"));
+const MolecularEmailDashboardPage = lazy(() => import("@/pages/process-live/MolecularEmailDashboardPage"));
 const OpsControlTowerPage = lazy(() => import("@/pages/ops/OpsControlTowerPage"));
 const ProcessPerformanceV2Page = lazy(() => import("@/pages/ProcessPerformanceV2Page"));
 const ProcessOperationsDemoPage = lazy(() => import("@/pages/ProcessOperationsDemoPage"));
@@ -143,6 +144,8 @@ export const performanceRouteElements = (
       <Route path="/dashboard-builder" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardStudioPage /></Gate></ProtectedRoute>} />
       <Route path="/dashboard-builder/:id" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardStudioPage /></Gate></ProtectedRoute>} />
       <Route path="/process-operations" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader','wfm','branch_wfm']}><Gate pageCode="PROCESS_OPERATIONS"><ProcessOperationsPage /></Gate></ProtectedRoute>} />
+      {/* Molecular Email Dashboard (own module; was a tab of the Reginald live dashboard). Same roles/page as Process Operations; the API applies process scope. */}
+      <Route path="/molecular-email-dashboard" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader','wfm','branch_wfm']}><Gate pageCode="PROCESS_OPERATIONS"><MolecularEmailDashboardPage /></Gate></ProtectedRoute>} />
       <Route path="/ops/control-tower" element={<ProtectedRoute roles={['super_admin','admin','ceo','hr','hr_admin','branch_head','operations_manager','wfm','payroll_head','payroll_hr']}><Gate pageCode="OPS_CONTROL_TOWER"><OpsControlTowerPage /></Gate></ProtectedRoute>} />
       <Route path="/performance/process-performance-v2" element={<TpzRoute><ProcessPerformanceV2Page /></TpzRoute>} />
       <Route path="/process-performance-v2" element={<Navigate to="/performance/process-performance-v2" replace />} />

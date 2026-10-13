@@ -1364,6 +1364,8 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2164_noc_admin_stage_holds_property_check.sql", // Registered 2026-10-13. Property-return gate moves from the removed Finance stage to Admin (template + pending Admin rows on open cases). Idempotent.
   "migrations/2160_roster_import_row_tracker_indexes.sql", // Registered 2026-10-12. Covering indexes on wfm_roster_import_row (roster_date,batch_id,employee_id_raw) and (employee_id_raw,roster_date,batch_id): Roster Upload Tracker took ~37s per load and ~120s per cell drawer because the table was only indexed by batch_id.
   "migrations/2161_roster_import_row_batch_cover.sql", // Registered 2026-10-12. Covering index (batch_id, roster_date, employee_id_raw) on wfm_roster_import_row: tracker coverage scan was 12.7s through idx_batch plus a table fetch per row.
+  "migrations/2180_molecular_email_ticket.sql", // Registered 2026-10-13. Molecular Email Dashboard (MOL-02..06): one row per Molecular ticket (unique ticket_id, created/first-closed/final-closed, reopen_count, dq_flag), synced read-only from molecular_db_email. No process_id (REG-07). CREATE TABLE IF NOT EXISTS only.
+  "migrations/2181_molecular_email_ticket_reopen_event.sql", // Registered 2026-10-13. Reopen events per Molecular ticket for the Closed vs Reopened trend. CREATE TABLE IF NOT EXISTS only.
 ];
 
 export type MigrationHealth = {
