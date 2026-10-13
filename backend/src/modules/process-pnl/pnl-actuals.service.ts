@@ -293,6 +293,87 @@ const ORDINARY_GRN_CONSUMED_SQL =
 const ORDINARY_GRN_RESERVED_SQL = "'branch_head_approved','accounts_head_approved'";
 
 /**
+ * Leg 3 of readGrnSpend: db_bill vouchers (the mirror, grn_entry_line_snapshot) that HRMS does not carry. Line level, because only the line
+ * carries the cost centre; branch from the cost centre because the mirror's branch ids are db_bill's, not branch_master's.
+ *
+ * The two duplicate guards (see LEGACY_TWIN_MIN_AMOUNT) used to be correlated NOT EXISTS subqueries inside one UNION. On production that
+ * made the consumed read take 33-46 s for every month that has mirror lines (Oct 2026, with none, took 3 s): every line re-scanned
+ * grn_request. They are now three plain queries (the period's mirror lines, the HRMS-raised GRNs that carry those numbers, the period's
+ * HRMS-raised GRN totals) and the same two rules are applied here, in code. Same results, a fraction of the work.
+ */
+export async function readLegacyMirrorSpend(
+  periodCode: string,
+  scope: { sql: string; params: unknown[] },
+  withProcess: boolean,
+  processJoin: (alias: string) => string,
+  processCol: (first: string | null, alias: string) => string,
+  withDetail: boolean,
+): Promise<RowDataPacket[]> {
+  const [lines] = await db.execute<RowDataPacket[]>(
+    `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id, ${processCol(null, "pc3")} AS process_id, l.amount AS amount,
+            COALESCE(ge.grn_no, l.bill_source_id) AS grn_ref, ge.vendor AS vendor, l.particular AS particular
+       FROM grn_entry_line_snapshot l
+       JOIN grn_entry_snapshot ge ON ge.bill_source_id = l.grn_source_id
+       LEFT JOIN cost_centre_master ccm ON ccm.cost_centre_code = l.cost_centre_code COLLATE utf8mb4_unicode_ci
+       ${processJoin("pc3")}
+      WHERE ge.period_code = ? AND ge.is_rejected = 0 AND ${scope.sql}`,
+    [periodCode, ...scope.params],
+  );
+  if (!lines.length) return [];
+
+  // Guard 1: an HRMS-raised GRN the P&L actually counts carries the same GRN number.
+  const numbers = [...new Set(lines.map((l) => String(l.grn_ref ?? "").trim().toUpperCase()).filter(Boolean))];
+  const counted = new Set<string>();
+  for (let i = 0; i < numbers.length; i += 500) {
+    const part = numbers.slice(i, i + 500);
+    const [found] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT UPPER(TRIM(gr.grn_number)) AS g FROM grn_request gr
+        WHERE UPPER(TRIM(gr.grn_number)) IN (${part.map(() => "?").join(",")}) AND ${HRMS_RAISED_GRN_SQL} AND ${HRMS_COUNTED_SQL}`,
+      part,
+    );
+    for (const r of found) counted.add(String(r.g));
+  }
+
+  // Guard 2: the same invoice keyed under another number in both systems (amount twin, same branch and period).
+  const [twins] = await db.execute<RowDataPacket[]>(
+    `SELECT gr.branch_id AS branch_id,
+            (SELECT SUM(${grnAllocationExGstSql("a3")}) FROM grn_cost_allocation a3 WHERE a3.grn_request_id = gr.id AND a3.lifecycle_status IN ('consumed', 'reserved')) AS ex_total,
+            (SELECT SUM(COALESCE(a4.amount_with_tax, 0)) FROM grn_cost_allocation a4 WHERE a4.grn_request_id = gr.id AND a4.lifecycle_status IN ('consumed', 'reserved')) AS gross_total
+       FROM grn_request gr WHERE gr.accounting_period = ? AND ${HRMS_RAISED_GRN_SQL}`,
+    [periodCode],
+  );
+  const twinsByBranch = new Map<string, Array<{ ex: number | null; gross: number | null }>>();
+  for (const t of twins) {
+    const key = String(t.branch_id ?? "");
+    const list = twinsByBranch.get(key) ?? [];
+    list.push({ ex: t.ex_total == null ? null : Number(t.ex_total), gross: t.gross_total == null ? null : Number(t.gross_total) });
+    twinsByBranch.set(key, list);
+  }
+
+  const kept = new Map<string, RowDataPacket>();
+  for (const l of lines) {
+    const ref = String(l.grn_ref ?? "").trim();
+    if (ref && counted.has(ref.toUpperCase())) continue;
+    const amount = Number(l.amount ?? 0);
+    if (amount >= LEGACY_TWIN_MIN_AMOUNT && l.branch_id) {
+      const candidates = twinsByBranch.get(String(l.branch_id)) ?? [];
+      if (candidates.some((c) => (c.ex !== null && Math.abs(c.ex - amount) <= 1) || (c.gross !== null && Math.abs(c.gross - amount) <= 1))) continue;
+    }
+    const label = [l.vendor, l.particular].map((v) => String(v ?? "").trim()).filter(Boolean).join(" — ") || null;
+    const key = withDetail
+      ? `${l.branch_id}|${l.cost_centre_id}|${l.process_id}|${ref}|${label}`
+      : `${l.branch_id}|${l.cost_centre_id}|${l.process_id}`;
+    const cur = kept.get(key);
+    if (cur) cur.amount = Number(cur.amount) + amount;
+    else kept.set(key, {
+      branch_id: l.branch_id, cost_centre_id: l.cost_centre_id, process_id: withProcess ? l.process_id : null, amount,
+      source: withDetail ? "db_bill_mirror" : null, grn_ref: withDetail ? ref || null : null, label: withDetail ? label : null, bill_date: null,
+    } as unknown as RowDataPacket);
+  }
+  return [...kept.values()];
+}
+
+/**
  * An HRMS-raised GRN that the P&L actually counts (legs 1 and 2): it has consumed or reserved allocation rows, or it is an ordinary GRN with a
  * budget line in a consumed / reserved status. The mirror leg's voucher-number guard may only defer to such a GRN. Deferring to an HRMS GRN that
  * is not counted (no budget line, e.g. an imprest, or a status outside both sets) dropped the voucher from the P&L altogether (found 2026-10-13:
@@ -376,57 +457,17 @@ export async function readGrnSpend(
   );
   params.push(periodCode, ...scope.params);
 
-  // Leg 3 — the db_bill mirror, for vouchers HRMS does not carry (see LEGACY_TWIN_MIN_AMOUNT). Line level, because only the line
-  // carries the cost centre; branch from the cost centre because the mirror's branch ids are db_bill's, not branch_master's.
-  // Consumed only: a mirrored bill is billed history, never "reserved". Read for both kinds it counted every line twice.
-  if (kind === "consumed" && (await tableExists("grn_entry_line_snapshot"))) {
-    legs.push(
-      `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-              ${processCol(null, "pc3")} AS process_id, l.amount AS amount,
-              ${detailCols(
-                "db_bill_mirror",
-                "COALESCE(ge.grn_no, l.bill_source_id)",
-                "CONCAT_WS(' — ', NULLIF(TRIM(ge.vendor), ''), NULLIF(TRIM(l.particular), ''))",
-                "ge.bill_date",
-              )}
-         FROM grn_entry_line_snapshot l
-         JOIN grn_entry_snapshot ge ON ge.bill_source_id = l.grn_source_id
-         LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-         ${processJoin("pc3")}
-        WHERE ge.period_code = ? AND ge.is_rejected = 0 AND ${scope.sql}
-          AND NOT EXISTS (
-                SELECT 1 FROM grn_request gr2
-                 WHERE gr2.grn_number = ge.grn_no
-                   AND ${HRMS_RAISED_GRN_SQL.replace(/gr\./g, "gr2.")}
-                   AND ${"(" + HRMS_COUNTED_SQL.replace(/gr\./g, "gr2.") + ")"}
-              )
-          AND NOT EXISTS (
-                SELECT 1
-                  FROM grn_request gr3
-                 WHERE gr3.accounting_period = ge.period_code
-                   AND gr3.branch_id = ccm.branch_id
-                   AND ${HRMS_RAISED_GRN_SQL.replace(/gr\./g, "gr3.")}
-                   AND l.amount >= ${LEGACY_TWIN_MIN_AMOUNT}
-                   AND (ABS((SELECT SUM(${grnAllocationExGstSql("a3")})
-                               FROM grn_cost_allocation a3
-                              WHERE a3.grn_request_id = gr3.id
-                                AND a3.lifecycle_status IN ('consumed', 'reserved')) - l.amount) <= 1
-                        OR ABS((SELECT SUM(COALESCE(a4.amount_with_tax, 0))
-                                  FROM grn_cost_allocation a4
-                                 WHERE a4.grn_request_id = gr3.id
-                                   AND a4.lifecycle_status IN ('consumed', 'reserved')) - l.amount) <= 1)
-              )`,
-    );
-    params.push(periodCode, ...scope.params);
-  }
-
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date, SUM(amount) AS amount
        FROM (${legs.join("\n UNION ALL \n")}) t
       GROUP BY branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date`,
     params,
   );
+  // Leg 3 — the db_bill mirror, read separately (see readLegacyMirrorSpend). Consumed only: a mirrored bill is billed history, never
+  // "reserved". Read for both kinds it counted every line twice.
+  if (kind === "consumed" && (await tableExists("grn_entry_line_snapshot"))) {
+    rows.push(...(await readLegacyMirrorSpend(periodCode, scope, withProcess, processJoin, processCol, withDetail)));
+  }
   const text = (v: unknown) =>
     v === null || v === undefined || v === "" ? null : String(v);
   return rows
