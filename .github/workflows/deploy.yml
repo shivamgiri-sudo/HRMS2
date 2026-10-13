@@ -397,7 +397,14 @@ jobs:
             # Same trade-off the original comment already accepted: waiting too long costs minutes;
             # giving up too early costs a rolled-back good release with code and schema now
             # disagreeing, which is the more expensive mistake.
-            for attempt in $(seq 1 200); do
+            # The budget is wall-clock time, not an attempt count: a refused connection returns at once, so 200
+            # attempts of "refused + sleep 2" were only ~6.7 minutes, not the 16.5 the message claimed. On
+            # 2026-10-13 a busy database made the boot's migration check take ~4 minutes and three good releases
+            # were rolled back at ~6.7 minutes while the server was still starting.
+            local deadline=$(( $(date +%s) + 990 ))
+            local attempt=0
+            while [ "$(date +%s)" -lt "$deadline" ]; do
+              attempt=$((attempt + 1))
               if curl -fsS --max-time 3 http://127.0.0.1:5055/api/health >/dev/null; then
                 if [ "$attempt" -gt 30 ]; then
                   echo "Backend became healthy on attempt ${attempt} — slower than the old 30-attempt budget."
@@ -405,10 +412,10 @@ jobs:
                 fi
                 return 0
               fi
-              echo "Waiting for backend health (${attempt}/200)"
-              sleep 2
+              echo "Waiting for backend health (attempt ${attempt}, $(( deadline - $(date +%s) )) s left)"
+              sleep 5
             done
-            echo "Backend did not become healthy within 200 attempts (~16.5 minutes)."
+            echo "Backend did not become healthy within 16.5 minutes."
             return 1
           }
 
