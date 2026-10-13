@@ -165,7 +165,7 @@ const addDays = (s: string, n: number) => { const d = new Date(s + "T00:00:00Z")
     for (const g of long) {
       const day = (d: string) => blocks
         .filter((b) => b.cosecUserId === g.cosecUserId && b.punchDate === d)
-        .map((b) => `${b.part} ${b.firstPunch.slice(11, 16)}-${b.lastPunch.slice(11, 16)}(${b.totalPunches})`).join(" ") || "none";
+        .map((b) => `${b.firstPunch.slice(11, 16)}-${b.lastPunch.slice(11, 16)}(${b.totalPunches})`).join(" ") || "none";
       console.log(`    ${g.cosecUserId} | ${g.punchDate} | ${g.firstPunch.slice(5, 16)} -> ${g.lastPunch.slice(5, 16)} | ${g.totalPunches} | ${(g.workingMinutes / 60).toFixed(1)}h | D: ${day(g.punchDate)} | D-1: ${day(addDays(g.punchDate, -1))}`);
     }
   }
