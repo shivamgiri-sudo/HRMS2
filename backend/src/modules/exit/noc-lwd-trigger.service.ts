@@ -171,7 +171,7 @@ export async function runNocLwdTrigger(): Promise<NocLwdTriggerResult> {
             : `Clearance chain opened on LWD. Form invite sent to the employee.`,
           entity_type: 'noc_case',
           entity_id: caseId,
-          action_url: `/payroll/noc?case=${caseId}`,
+          action_url: `/payroll/noc-cases?case=${caseId}`,
           priority: 'high',
         }).catch(() => undefined);
       }

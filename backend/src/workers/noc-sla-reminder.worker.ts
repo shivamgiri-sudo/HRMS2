@@ -56,7 +56,7 @@ const ESCALATE_FROM_REMINDER = 2;
  * per-event daily cap (max_per_day), and hitting that would starve genuinely new reminders for the
  * rest of the day.
  */
-const MAX_PER_RUN = 40;
+const MAX_PER_RUN = 15;
 
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 let startupRef: ReturnType<typeof setTimeout> | undefined;
@@ -101,6 +101,7 @@ async function findOverdueStages(): Promise<OverdueStage[]> {
        FROM noc_signatory s
        JOIN noc_case c ON c.id = s.noc_case_id
       WHERE s.status = 'pending'
+        AND s.stage_key NOT IN ('accounts', 'finance')
         AND s.sla_due_at IS NOT NULL
         AND s.sla_due_at < NOW()
         AND s.reminder_count < ?

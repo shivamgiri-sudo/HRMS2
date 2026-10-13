@@ -331,7 +331,9 @@ export async function runAutoClearForCase(
         const row = sigs.find((x) => x.id === s.id);
         if (row?.status === "pending" && !row.notified_at && budget.left > 0) {
           budget.left--;
-          await m.notifySignatoryPending(caseId, s.stage_key);
+          // Inbox only: the automatic sweep never sends email. Emails go out only when a person's
+          // action opens the next stage (noc-case.routes.ts), one case at a time.
+          await m.notifySignatoryPending(caseId, s.stage_key, { inboxOnly: true });
         }
       }
     }

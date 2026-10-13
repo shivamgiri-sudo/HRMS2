@@ -604,6 +604,12 @@ export default function NocClearanceChain({
     if (selectedId) void loadDetail(selectedId);
   }, [selectedId, loadDetail]);
 
+  // Deep link from an email or Work Inbox task: /payroll/noc-cases?case=<id> opens that case.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("case");
+    if (id && /^[0-9a-f-]{20,}$/i.test(id)) setSelectedId(id);
+  }, []);
+
   const refreshBoth = useCallback(async () => {
     await loadList();
     await loadSummary();

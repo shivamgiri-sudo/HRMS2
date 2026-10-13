@@ -33,13 +33,20 @@ import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 import { normaliseEmail } from "../../shared/email-domains.js";
 import { inboxService } from "../inbox/inbox.service.js";
 
+/**
+ * Stages whose holders are never mailed about a NOC. Accounts is cleared by the system from the dues
+ * snapshot and Finance is not a stage any more, so a sign-off or overdue mail to the Accounts or
+ * Finance heads would only ask people for something nobody needs from them.
+ */
+const NEVER_NOTIFY_STAGES = new Set(["accounts", "finance"]);
+
 function frontendBaseUrl(): string {
   return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(/\/+$/, "");
 }
 
 /** Deep link to the authenticated case screen — where a signatory records their decision. */
 function caseUrl(caseId: string): string {
-  return `${frontendBaseUrl()}/payroll/noc?case=${caseId}`;
+  return `${frontendBaseUrl()}/payroll/noc-cases?case=${caseId}`;
 }
 
 /**
@@ -190,7 +197,7 @@ async function inboxForStage(
       description: `${nocCase.employee_name ?? ""} (${nocCase.employee_code ?? ""}) — ${stage.stage_label} clearance`,
       entity_type: "noc_case",
       entity_id: nocCase.id,
-      action_url: `/payroll/noc?case=${nocCase.id}`,
+      action_url: `/payroll/noc-cases?case=${nocCase.id}`,
       priority,
     }).catch(() => { /* the bell is a mirror; never the reason a notification fails */ });
   }
@@ -328,10 +335,25 @@ export async function notifyEmployeeSubmitted(caseId: string): Promise<void> {
 // 3. Signatory pending
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function notifySignatoryPending(caseId: string, stageKey: string): Promise<void> {
+export async function notifySignatoryPending(
+  caseId: string,
+  stageKey: string,
+  opts: { inboxOnly?: boolean } = {},
+): Promise<void> {
+  if (NEVER_NOTIFY_STAGES.has(stageKey)) return;
   try {
     const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return;
+
+    // Backlog sweeps pass inboxOnly: the task appears in the person's Work Inbox, with no email.
+    if (opts.inboxOnly) {
+      await inboxForStage(stage, nocCase, "noc_signatory_pending",
+        `NOC clearance awaiting your sign-off — ${nocCase.employee_name ?? nocCase.employee_code ?? ""}`);
+      await db.execute(
+        `UPDATE noc_signatory SET notified_at = COALESCE(notified_at, NOW())
+          WHERE noc_case_id = ? AND stage_key = ?`, [caseId, stageKey]).catch(() => undefined);
+      return;
+    }
 
     await notificationGateway.notify({
       eventCode: "noc_signatory_pending",
@@ -389,6 +411,7 @@ export async function notifySignatoryReminder(
   reminderNo: number,
   escalate: boolean,
 ): Promise<boolean> {
+  if (NEVER_NOTIFY_STAGES.has(stageKey)) return false;
   try {
     const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return false;
@@ -474,7 +497,7 @@ export async function notifyDeclined(caseId: string, stageKey: string): Promise<
         description: nocCase.decline_reason ?? stage.remarks ?? "No reason recorded",
         entity_type: "noc_case",
         entity_id: caseId,
-        action_url: `/payroll/noc?case=${caseId}`,
+        action_url: `/payroll/noc-cases?case=${caseId}`,
         priority: "high",
       }).catch(() => undefined);
     }
@@ -538,7 +561,7 @@ export async function notifyCompleted(caseId: string): Promise<void> {
           description: `Salary and F&F release is unblocked. Settlement route: ${route ? (FNF_LABEL[route] ?? route) : "not set"}.`,
           entity_type: "noc_case",
           entity_id: caseId,
-          action_url: `/payroll/noc?case=${caseId}`,
+          action_url: `/payroll/noc-cases?case=${caseId}`,
           priority: "normal",
         }).catch(() => undefined);
       }

@@ -36,7 +36,7 @@ export async function resolveFfAwaitingApproval(ffId: string): Promise<void> {
 export async function notifyFfUnlocked(employeeId: string, employeeLabel: string, caseId: string): Promise<void> {
   try {
     const seen = new Set<string>();
-    for (const role of ["hr", "finance", "payroll"]) {
+    for (const role of ["hr", "payroll"]) {
       for (const userId of await resolveRoleHolderUserIds(role, null)) {
         if (seen.has(userId)) continue;
         seen.add(userId);

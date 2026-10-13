@@ -155,7 +155,7 @@ export async function queueForFinalApproval(caseId: string): Promise<void> {
         description: "All clearance levels are complete. Approve to unlock F&F settlement.",
         entity_type: "noc_case",
         entity_id: caseId,
-        action_url: `/payroll/noc?case=${caseId}`,
+        action_url: `/payroll/noc-cases?case=${caseId}`,
         priority: "high",
       })
       .catch(() => undefined);
