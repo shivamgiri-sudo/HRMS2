@@ -14,7 +14,7 @@ const h =
     fn(req, res).catch(next);
 
 salaryAttCompareRouter.use(requireAuth);
-salaryAttCompareRouter.use(requireRole(["SUPER_ADMIN", "HR_ADMIN", "FINANCE", "PAYROLL_HEAD"]));
+salaryAttCompareRouter.use(requireRole("SUPER_ADMIN", "HR_ADMIN", "FINANCE", "PAYROLL_HEAD"));
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -47,7 +47,7 @@ salaryAttCompareRouter.get(
 
     // ── db_bill salary summary for month ──────────────────────────────────
     let whereClause = `sd.SalDate BETWEEN ? AND ?`;
-    const params: unknown[] = [startDate, endDate];
+    const params: string[] = [startDate, endDate];
 
     if (search) {
       whereClause += ` AND (sd.EmpCode LIKE ? OR sd.EmpName LIKE ?)`;
