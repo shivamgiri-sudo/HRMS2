@@ -41,7 +41,7 @@ export function funnelInsights(d: { drives: Record<SourceType, FunnelCounts>; to
   const t = d.total;
   if (!t.enrolled) return [{ level: "info", text: "Nobody was first contacted in this period." }];
   const steps: Array<[string, number, number]> = [["contacted by email, WhatsApp or call", t.enrolled, Math.max(t.emailed, t.whatsapped)], ["confirmed a slot", t.enrolled, t.confirmed], ["walked in", t.confirmed, t.walkedIn], ["were selected", t.walkedIn, t.selected], ["joined", t.selected, t.joined]];
-  out.push({ level: "info", text: `${t.enrolled.toLocaleString("en-IN")} people were first contacted; ${pc(t.confirmed, t.enrolled)}% confirmed, ${pc(t.walkedIn, t.enrolled)}% walked in, ${pc(t.joined, t.enrolled * 1)}% joined.` });
+  out.push({ level: "info", text: `${t.enrolled.toLocaleString("en-IN")} people were first contacted; ${pc(t.confirmed, t.enrolled)}% confirmed, ${(t.walkedIn / t.enrolled * 100).toFixed(1)}% walked in, ${(t.joined / t.enrolled * 100).toFixed(1)}% joined.` });
   if (t.confirmed > 0) out.push({ level: pc(t.walkedIn, t.confirmed) < 50 ? "warn" : "info", text: `Of ${t.confirmed.toLocaleString("en-IN")} who confirmed a slot, ${t.walkedIn.toLocaleString("en-IN")} walked in (${pc(t.walkedIn, t.confirmed)}%). ${pc(t.walkedIn, t.confirmed) < 50 ? "Most confirmations do not turn into visits: reminders and the confirm step are the biggest lever." : ""}`.trim() });
   const rates = (Object.keys(d.drives) as SourceType[]).filter((k) => d.drives[k].enrolled >= 50).map((k) => ({ k, r: d.drives[k].walkedIn / d.drives[k].enrolled }));
   if (rates.length > 1) {
@@ -64,6 +64,25 @@ export async function getUnifiedFunnel(fromIn?: string, toIn?: string): Promise<
   const key = `${fromD}|${to}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.value;
+  // Stale-while-revalidate: an older answer is returned at once and refreshed in the background, so the dashboards never wait on the heavy read.
+  if (hit && Date.now() - hit.at < 6 * 3600_000) { void refresh(fromD, to, key).catch(() => undefined); return hit.value; }
+  return refresh(fromD, to, key);
+}
+
+const inflight = new Map<string, Promise<UnifiedFunnel>>();
+function refresh(fromD: string, to: string, key: string): Promise<UnifiedFunnel> {
+  const run = inflight.get(key) ?? compute(fromD, to, key).finally(() => inflight.delete(key));
+  inflight.set(key, run);
+  return run;
+}
+
+/** Warms the three preset ranges (7, 30 and 90 days); called by the worker every 10 minutes. */
+export async function warmUnifiedFunnels(): Promise<void> {
+  const today = istToday();
+  for (const days of [30, 7, 90]) { try { await refresh(addDay(today, -(days - 1)), today, `${addDay(today, -(days - 1))}|${today}`); } catch { /* next round */ } }
+}
+
+async function compute(fromD: string, to: string, key: string): Promise<UnifiedFunnel> {
   const [fu] = await db.execute<RowDataPacket[]>(
     `SELECT mobile10, source_type, MIN(created_at) AS enrolled_at, MAX(email_sent_at IS NOT NULL) AS em, MAX(wa_sent_at IS NOT NULL) AS wa, MAX(call_state = 'called') AS ca
        FROM qualified_followup WHERE mode_at_enqueue = 'live' GROUP BY mobile10, source_type`);
@@ -140,7 +159,9 @@ export async function getUnifiedFunnel(fromIn?: string, toIn?: string): Promise<
   const dayMap = new Map<string, { enrolled: number; walkedIn: number }>();
   for (let d = fromD; d <= to; d = addDay(d, 1)) dayMap.set(d, { enrolled: 0, walkedIn: 0 });
   for (const p of people.values()) { const x = dayMap.get(p.enrolledDay); if (x) x.enrolled++; }
-  for (const m of seen) { const r = ats.find((a) => norm10(a.mobile) === m); const x = r ? dayMap.get(String(r.walk_in_date).slice(0, 10)) : undefined; if (x) x.walkedIn++; }
+  const dayOfMobile = new Map<string, string>();
+  for (const r of ats) { const m = norm10(r.mobile); if (seen.has(m) && !dayOfMobile.has(m)) dayOfMobile.set(m, String(r.walk_in_date).slice(0, 10)); }
+  for (const dd of dayOfMobile.values()) { const x = dayMap.get(dd); if (x) x.walkedIn++; }
   const daily = [...dayMap].map(([date, v]) => ({ date, ...v }));
   const value: UnifiedFunnel = { generatedAt: new Date().toISOString(), from, to, daily, insights: funnelInsights({ drives, total, ats: out }), drives, drivesTotal: total, ats: out };
   cache.set(key, { at: Date.now(), value });
