@@ -63,6 +63,7 @@ function formatCell(value: unknown, format: string): string {
         day: "2-digit",
         month: "short",
         year: "numeric",
+        timeZone: "Asia/Kolkata",
       });
     } catch { return String(value); }
   }

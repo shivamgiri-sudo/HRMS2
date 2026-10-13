@@ -141,7 +141,7 @@ function formatValue(value: unknown, format: ColumnFormat): string {
       return Number(value).toLocaleString("en-IN");
     case "date":
       if (typeof value === "string") {
-        if (value.includes("T")) return new Date(value).toLocaleDateString("en-IN");
+        if (value.includes("T")) return new Date(value).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
         return value;
       }
       return String(value);
