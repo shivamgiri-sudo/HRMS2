@@ -466,6 +466,15 @@ async function computeProcessOperations(
   const proc = (procRows as any[])[0];
   if (!proc) return null;
 
+  // AHM is Godfrey Phillips India's (GPI) process: its order/delivery metrics are rolled up under the "AHM" process row, so a
+  // GPI / Godfrey process also reads those (and only those, AHM_*) rather than showing an empty KPI deck. Read-through, no copy.
+  let ahmAliasId: string | null = null;
+  if (/\b(gpi|godfrey)\b/i.test(String(proc.process_name ?? ""))) {
+    const [ahm] = await db.execute<RowDataPacket[]>(`SELECT id FROM process_master WHERE process_code = 'AHM' LIMIT 1`);
+    const id = (ahm as any[])[0]?.id ? String((ahm as any[])[0].id) : null;
+    if (id && id !== processId) ahmAliasId = id;
+  }
+
   const today = new Date();
   const range = periodRange(period, today);
   // A period view needs this period's days AND the prior equivalent period's,
@@ -482,10 +491,10 @@ async function computeProcessOperations(
             a.updated_at, m.metric_name, m.unit, m.direction
        FROM process_metric_actual a
        LEFT JOIN kpi_metric_master m ON m.metric_code = a.metric_key
-      WHERE a.process_id = ?
+      WHERE (a.process_id = ? OR (a.process_id = ? AND a.metric_key LIKE 'AHM\\_%'))
         AND a.score_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
       ORDER BY a.metric_key, a.score_date`,
-    [processId, fetchDays],
+    [processId, ahmAliasId ?? processId, fetchDays],
   );
 
   // The real configured SLA per metric, where one exists -- not invented. Read
