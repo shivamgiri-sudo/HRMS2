@@ -8,13 +8,14 @@
  * gate is (noc-release-gate.service.ts).
  *
  * PAID AS NORMAL BY DEFAULT. An absconded employee is paid by the system like anyone else. A hold exists
- * only when the employee's reporting manager, the branch Payroll HR or the Branch Head decides to make the
- * salary days 0 and places it (exit_request.pay_hold_*, absconder-pay-release.service.ts).
+ * only when the reporting manager asks for the salary days to be made 0 and the branch Payroll HR approves
+ * (or the Payroll HR places it directly). That approval sets exit_request.pay_hold_at. The same Payroll HR
+ * lifts it (pay_hold_released_at). No Branch Head or Payroll Head step is involved
+ * (absconder-pay-release.service.ts).
  *
  * Held means: the employee's LATEST exit is a live absconding/abandonment exit (not revoked, withdrawn,
- * rejected, cancelled or draft), a hold has been placed on it, and the Payroll Head has not yet recorded the
- * release (exit_request.ff_exception_at, which the existing chain only allows after the Branch Head step, by
- * a different person). Withdrawing the hold clears pay_hold_at.
+ * rejected, cancelled or draft), the hold has been approved (pay_hold_at set), and it has not been
+ * released (pay_hold_released_at is NULL).
  *
  * SWITCH. Off unless payroll_config_flags has absconder_salary_hold_enabled = 'true'; while off, no hold can
  * be placed or applied. Fails OFF: an unreadable flag must not silently zero anybody's salary.
@@ -49,7 +50,7 @@ const HELD_PREDICATE = `
    OR LOWER(COALESCE(er.exit_sub_type, '')) IN ('absconding','abandonment'))
   AND LOWER(COALESCE(er.status, '')) NOT IN ('draft','revoked','rejected','cancelled','withdrawn')
   AND er.pay_hold_at IS NOT NULL
-  AND er.ff_exception_at IS NULL
+  AND er.pay_hold_released_at IS NULL
   AND er.id = (SELECT x.id FROM exit_request x WHERE x.employee_id = er.employee_id
                 ORDER BY x.created_at DESC, x.id DESC LIMIT 1)`;
 
@@ -83,7 +84,6 @@ export interface HeldAbsconder {
   employee_code: string | null;
   employee_name: string | null;
   exit_request_id: string;
-  branch_head_approved: boolean;
 }
 
 /**
@@ -96,7 +96,7 @@ export async function heldAbsconderLinesForRuns(runIds: string[]): Promise<HeldA
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT DISTINCT e.id AS employee_id, e.employee_code,
             COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS employee_name,
-            er.id AS exit_request_id, (er.ff_exception_bh_at IS NOT NULL) AS bh
+            er.id AS exit_request_id
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
        JOIN exit_request er ON er.employee_id = e.id
@@ -109,6 +109,5 @@ export async function heldAbsconderLinesForRuns(runIds: string[]): Promise<HeldA
     employee_code: r.employee_code ?? null,
     employee_name: r.employee_name ?? null,
     exit_request_id: String(r.exit_request_id),
-    branch_head_approved: Boolean(Number(r.bh)),
   }));
 }

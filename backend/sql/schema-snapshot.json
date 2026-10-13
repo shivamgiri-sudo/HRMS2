@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1270,
-  "columnCount": 18462,
+  "columnCount": 18468,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -8831,7 +8831,13 @@
       "pay_hold_at",
       "pay_hold_by",
       "pay_hold_role",
-      "pay_hold_reason"
+      "pay_hold_reason",
+      "pay_hold_requested_at",
+      "pay_hold_requested_by",
+      "pay_hold_requested_reason",
+      "pay_hold_released_at",
+      "pay_hold_released_by",
+      "pay_hold_released_reason"
     ],
     "exit_retention_action": [
       "id",

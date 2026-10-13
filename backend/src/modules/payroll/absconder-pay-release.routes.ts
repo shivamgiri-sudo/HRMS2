@@ -1,29 +1,28 @@
 /**
- * /api/payroll/absconder-pay-release — the Branch Head then Payroll Head release of an absconder's held pay.
+ * /api/payroll/absconder-pay-release — hold and release of an absconder's salary.
  *
- * Roles are asserted here, branch scope by guardExitEmployee (the same guard the F&F exception routes use).
- * The work lives in absconder-pay-release.service.ts.
+ * The reporting manager requests; the branch Payroll HR approves, rejects, places directly and releases.
+ * The Branch Head and Payroll Head have no part. Who may act is decided in the service (it knows the
+ * employee's manager and branch); branch scope is also enforced by guardExitEmployee.
  */
 import { Router } from "express";
+import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
+import { db } from "../../db/mysql.js";
 import { guardExitEmployee } from "../exit/exitScope.js";
 import * as release from "./absconder-pay-release.service.js";
-import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
 
 export const absconderPayReleaseRouter = Router();
 absconderPayReleaseRouter.use(requireAuth);
 
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-const VIEW_ROLES = ["branch_head", "payroll_head", "hr", "branch_hr", "payroll", "payroll_hr", "admin"];
-
 function fail(res: any, err: unknown) {
   const e = err as { statusCode?: number; code?: string; message: string };
   return res.status(e.statusCode ?? 500).json({ success: false, code: e.code, message: e.message });
 }
-const bodyReason = (req: AuthenticatedRequest) => String((req.body as { reason?: string })?.reason ?? "");
+const reasonOf = (req: AuthenticatedRequest) => String((req.body as { reason?: string })?.reason ?? "");
 
 absconderPayReleaseRouter.get(
   "/:exitRequestId",
@@ -31,102 +30,51 @@ absconderPayReleaseRouter.get(
   h(async (req, res) => {
     const userId = req.authUser!.id;
     try {
-      const state = await release.getReleaseState(req.params.exitRequestId);
-      const isBh = await hasAnyRole(userId, "branch_head");
-      const isPh = await hasAnyRole(userId, "payroll_head");
-      const isHr = await hasAnyRole(userId, "hr", "branch_hr");
-      const [emp] = await db.execute<RowDataPacket[]>(
-        `SELECT er.employee_id, e.branch_id, er.pay_hold_at, er.ff_exception_at FROM exit_request er JOIN employees e ON e.id = er.employee_id WHERE er.id = ? LIMIT 1`,
+      const state = await release.getHoldState(req.params.exitRequestId);
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.branch_id, mgr.user_id AS manager_user_id
+           FROM exit_request er JOIN employees e ON e.id = er.employee_id
+           LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
+          WHERE er.id = ? LIMIT 1`,
         [req.params.exitRequestId],
       );
-      const decider = emp[0] ? await release.holdDeciderRole(userId, { employee_id: String(emp[0].employee_id), branch_id: emp[0].branch_id ?? null }) : null;
-      // The reporting manager is not in the role list but is one of the three who decide.
-      if (!decider && !(await hasAnyRole(userId, ...VIEW_ROLES))) {
-        return res.status(403).json({ success: false, code: "RELEASE_FORBIDDEN", message: "You cannot view this approval." });
-      }
+      const isManager = String(rows[0]?.manager_user_id ?? "") === userId;
+      const isPayrollHr = await release.isBranchPayrollHr(userId, rows[0]?.branch_id ?? null);
+      const canSee = isManager || isPayrollHr || (await hasAnyRole(userId, "hr", "branch_hr", "payroll_head", "payroll", "branch_head", "admin"));
+      if (!canSee) return res.status(403).json({ success: false, code: "HOLD_FORBIDDEN", message: "You cannot view this." });
       return res.json({
         success: true,
         data: {
           ...state,
-          // Placing / withdrawing a hold is the call of the reporting manager, branch Payroll HR or Branch Head.
-          canPlaceHold: Boolean(decider) && !emp[0]?.pay_hold_at && !emp[0]?.ff_exception_at,
-          canWithdrawHold: Boolean(decider) && Boolean(emp[0]?.pay_hold_at) && !emp[0]?.ff_exception_at,
-          canBranchHeadDecide: isBh && (state.state === "awaiting_branch_head"),
-          canPayrollHeadDecide: isPh && state.state === "awaiting_payroll_head",
-          canReRequest: (isHr || isBh || isPh) && (state.state === "rejected_by_branch_head" || state.state === "rejected_by_payroll_head"),
+          canRequestHold: isManager && (state.state === "not_held" || state.state === "request_rejected" || state.state === "released"),
+          canDecideRequest: isPayrollHr && state.state === "hold_requested",
+          canPlaceHold: isPayrollHr && (state.state === "not_held" || state.state === "request_rejected" || state.state === "released"),
+          canRelease: isPayrollHr && state.state === "held",
         },
       });
     } catch (err) { return fail(res, err); }
   }),
 );
 
-function decision(role: "branch_head" | "payroll_head", kind: "approve" | "reject") {
-  return h(async (req, res) => {
-    const userId = req.authUser!.id;
-    if (!(await hasAnyRole(userId, role))) {
-      const who = role === "branch_head" ? "the employee's Branch Head" : "the Payroll Head";
-      return res.status(403).json({ success: false, code: "RELEASE_FORBIDDEN", message: `Only ${who} can do this.` });
-    }
-    const p = { exitRequestId: req.params.exitRequestId, reason: bodyReason(req), actorUserId: userId, actorRole: role };
-    try {
-      if (role === "branch_head") {
-        if (kind === "approve") await release.branchHeadApprove(p); else await release.branchHeadReject(p);
-        return res.json({ success: true, message: kind === "approve" ? "Approved. The Payroll Head decides next." : "Rejected. Salary stays held at 0." });
-      }
-      if (kind === "approve") {
-        const r = await release.payrollHeadApprove(p);
-        return res.json({
-          success: true,
-          data: r,
-          message: r.route === "payroll"
-            ? "Released. Attendance days are restored in the open payroll run."
-            : "Released. That month's payroll run is closed, so the salary is paid through the F&F.",
-        });
-      }
-      await release.payrollHeadReject(p);
-      return res.json({ success: true, message: "Rejected. Salary stays held at 0." });
-    } catch (err) { return fail(res, err); }
-  });
+type Action = (p: { exitRequestId: string; reason: string; actorUserId: string }) => Promise<unknown>;
+function post(path: string, run: Action, ok: (r: any) => string) {
+  absconderPayReleaseRouter.post(
+    `/:exitRequestId/${path}`,
+    guardExitEmployee("exitRequestId"),
+    h(async (req, res) => {
+      try {
+        const out = await run({ exitRequestId: req.params.exitRequestId, reason: reasonOf(req), actorUserId: req.authUser!.id });
+        return res.json({ success: true, data: out ?? null, message: ok(out) });
+      } catch (err) { return fail(res, err); }
+    }),
+  );
 }
 
-absconderPayReleaseRouter.post("/:exitRequestId/branch-head/approve", guardExitEmployee("exitRequestId"), decision("branch_head", "approve"));
-absconderPayReleaseRouter.post("/:exitRequestId/branch-head/reject", guardExitEmployee("exitRequestId"), decision("branch_head", "reject"));
-absconderPayReleaseRouter.post("/:exitRequestId/payroll-head/approve", guardExitEmployee("exitRequestId"), decision("payroll_head", "approve"));
-absconderPayReleaseRouter.post("/:exitRequestId/payroll-head/reject", guardExitEmployee("exitRequestId"), decision("payroll_head", "reject"));
-
-absconderPayReleaseRouter.post(
-  "/:exitRequestId/re-request",
-  guardExitEmployee("exitRequestId"),
-  h(async (req, res) => {
-    const userId = req.authUser!.id;
-    if (!(await hasAnyRole(userId, "hr", "branch_hr", "branch_head", "payroll_head"))) {
-      return res.status(403).json({ success: false, code: "RELEASE_FORBIDDEN", message: "Only HR, the Branch Head or the Payroll Head can re-request." });
-    }
-    try {
-      await release.reRequest({ exitRequestId: req.params.exitRequestId, reason: bodyReason(req), actorUserId: userId });
-      return res.json({ success: true, message: "Re-requested. The Branch Head decides again." });
-    } catch (err) { return fail(res, err); }
-  }),
-);
-
-absconderPayReleaseRouter.post(
-  "/:exitRequestId/hold",
-  guardExitEmployee("exitRequestId"),
-  h(async (req, res) => {
-    try {
-      const out = await release.placeHold({ exitRequestId: req.params.exitRequestId, reason: bodyReason(req), actorUserId: req.authUser!.id });
-      return res.json({ success: true, data: out, message: "Salary is on hold at 0 days. The Branch Head and then the Payroll Head release it." });
-    } catch (err) { return fail(res, err); }
-  }),
-);
-
-absconderPayReleaseRouter.post(
-  "/:exitRequestId/hold/withdraw",
-  guardExitEmployee("exitRequestId"),
-  h(async (req, res) => {
-    try {
-      await release.withdrawHold({ exitRequestId: req.params.exitRequestId, reason: bodyReason(req), actorUserId: req.authUser!.id });
-      return res.json({ success: true, message: "Hold withdrawn. Normal salary days are restored." });
-    } catch (err) { return fail(res, err); }
-  }),
-);
+post("hold/request", release.requestHold, () => "Requested. The branch Payroll HR decides next; salary is unchanged until then.");
+post("hold/approve", release.approveHoldRequest, () => "Hold approved. Salary days are 0 until you release it.");
+post("hold/reject", release.rejectHoldRequest, () => "Request declined. Salary continues as normal.");
+post("hold", release.placeHold, () => "Salary is on hold at 0 days until you release it.");
+post("hold/release", release.releaseHold, (r) =>
+  r?.route === "payroll"
+    ? "Released. Attendance days are restored in the open payroll run."
+    : "Released. That month's payroll run is closed, so the salary is paid through the F&F.");

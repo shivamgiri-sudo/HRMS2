@@ -58,21 +58,23 @@ describe("held employees", () => {
     const held = await heldAbsconderEmployeeIds(["e1", "e2"]);
     expect([...held]).toEqual(["e2"]);
     const [sql, params] = query.mock.calls[0];
-    expect(String(sql)).toContain("er.ff_exception_at IS NULL");
+    expect(String(sql)).toContain("er.pay_hold_released_at IS NULL");
     expect(String(sql)).toContain("'absconding','abandonment'");
     expect(String(sql)).toMatch(/NOT IN \('draft','revoked','rejected','cancelled','withdrawn'\)/);
     expect(String(sql)).toContain("ORDER BY x.created_at DESC");
     expect(params).toEqual([["e1", "e2"]]);
     expect(String(sql)).toContain("er.pay_hold_at IS NOT NULL");
+    expect(String(sql)).toContain("er.pay_hold_released_at IS NULL");
+    expect(String(sql)).not.toContain("ff_exception");
   });
 
   it("reports held lines by name only when the hold is on", async () => {
     flags({});
     expect(await heldAbsconderLinesForRuns(["r1"])).toEqual([]);
     flags({ absconder_salary_hold_enabled: "true" });
-    query.mockResolvedValue([[{ employee_id: "e1", employee_code: "MAS1", employee_name: "A B", exit_request_id: "x1", bh: 1 }]]);
+    query.mockResolvedValue([[{ employee_id: "e1", employee_code: "MAS1", employee_name: "A B", exit_request_id: "x1" }]]);
     expect(await heldAbsconderLinesForRuns(["r1"])).toEqual([
-      { employee_id: "e1", employee_code: "MAS1", employee_name: "A B", exit_request_id: "x1", branch_head_approved: true },
+      { employee_id: "e1", employee_code: "MAS1", employee_name: "A B", exit_request_id: "x1" },
     ]);
   });
 });
