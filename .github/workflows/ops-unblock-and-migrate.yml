@@ -40,6 +40,7 @@ jobs:
           DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
           NODE_ENV: production
           APPLY: ${{ inputs.apply == 'true' && '1' || '0' }}
+          MIGRATION_LOCK_WAIT_SECONDS: "120"
         run: |
           set -euo pipefail
           test -f "$DOTENV_CONFIG_PATH" || { echo "::error::production .env not found"; exit 1; }

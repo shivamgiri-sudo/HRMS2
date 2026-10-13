@@ -16,6 +16,14 @@ const TABLES = ["exit_request", "absconder_pay_release_event", "molecular_email_
       WHERE COMMAND = 'Query' AND TIME >= 60 AND ID <> CONNECTION_ID() AND (INFO LIKE 'SELECT%' OR INFO LIKE '(SELECT%' OR INFO LIKE 'WITH%')
         AND (${TABLES.map(() => "INFO LIKE ?").join(" OR ")})`, TABLES.map((t) => `%${t}%`));
   console.log(`== long reads on ${TABLES.join(", ")}: ${rows.length}`);
+  try {
+    const [t] = await db.execute<RowDataPacket[]>(
+      `SELECT t.trx_mysql_thread_id id, TIMESTAMPDIFF(SECOND, t.trx_started, NOW()) age_s, t.trx_state, t.trx_tables_locked, t.trx_rows_locked, p.USER, p.COMMAND, p.TIME,
+              LEFT(COALESCE(t.trx_query, p.INFO, ''), 120) q
+         FROM information_schema.INNODB_TRX t LEFT JOIN information_schema.PROCESSLIST p ON p.ID = t.trx_mysql_thread_id ORDER BY t.trx_started LIMIT 15`);
+    console.log(`== open transactions: ${t.length}`);
+    for (const x of t) console.log(JSON.stringify(x));
+  } catch (e) { console.log("open transactions unavailable:", (e as Error).message.slice(0, 120)); }
   for (const r of rows) console.log(`${r.ID} ${r.USER} ${r.TIME}s | ${r.q}`);
   if (!apply) { console.log("DRY RUN: nothing stopped, no migration run"); await db.end?.(); return; }
   for (const r of rows) {
