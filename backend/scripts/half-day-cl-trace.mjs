@@ -64,6 +64,25 @@ try {
     [start, start],
   );
   await show(
+    `approved half-day CL/ML in ${MONTH} with NO balance deduction: why (roster week-off / holiday / ledger)`,
+    `SELECT e.employee_code, lt.leave_code, lr.from_date, DAYNAME(lr.from_date) dow, lr.status, lr.approved_at,
+            (SELECT GROUP_CONCAT(CONCAT(IFNULL(w.roster_status, '-'), '/wo=', IFNULL(w.is_week_off, '-')))
+               FROM wfm_roster_assignment w WHERE w.employee_id = lr.employee_id AND w.roster_date = lr.from_date) roster,
+            (SELECT GROUP_CONCAT(h.holiday_name) FROM leave_holiday_master h WHERE h.holiday_date = lr.from_date) holiday,
+            (SELECT CONCAT(a.attendance_status, IF(a.is_locked, '/L', ''), ' lwp=', a.lwp_value, ' src=', IFNULL(a.source_system, '-'))
+               FROM attendance_daily_record a WHERE a.employee_id = lr.employee_id AND a.record_date = lr.from_date LIMIT 1) att,
+            (SELECT CONCAT('alloc=', l.allocated_days, ' used=', l.used_days) FROM leave_balance_ledger l
+              WHERE l.employee_id = lr.employee_id AND l.leave_type_id = lr.leave_type_id AND l.balance_year = YEAR(lr.from_date) LIMIT 1) ledger,
+            (SELECT GROUP_CONCAT(CONCAT(al.action, '@', al.action_at)) FROM leave_approval_log al WHERE al.leave_request_id = lr.id) log
+       FROM leave_request lr JOIN employees e ON e.id = lr.employee_id
+       JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+      WHERE lt.leave_code IN ('CL','ML') AND lr.status IN ('approved','branch_head_approved')
+        AND lr.from_date >= ? AND lr.from_date <= LAST_DAY(?)
+        AND NOT EXISTS (SELECT 1 FROM leave_balance_deduction d WHERE d.leave_request_id = lr.id)
+      ORDER BY lr.total_days, e.employee_code, lr.from_date LIMIT 60`,
+    [start, start],
+  );
+  await show(
     `CL/ML requests in ${MONTH} by total_days x single-day (company)`,
     `SELECT lr.total_days, lr.from_date = lr.to_date single_day, lr.status, COUNT(*) n
        FROM leave_request lr JOIN leave_type_master lt ON lt.id = lr.leave_type_id

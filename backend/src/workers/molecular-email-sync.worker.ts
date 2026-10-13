@@ -2,6 +2,7 @@ import {
   EMAIL_DASHBOARD_SOURCES,
   syncRecentEmailTickets,
 } from "../modules/process-live-dashboard/molecular-email-sync.service.js";
+import { syncMolecularTickets } from "../modules/process-live-dashboard/molecular-ticket-sync.service.js";
 import { closeMolecularEmailPools } from "../db/molecularEmailDb.js";
 
 const WORKER_NAME = "molecular-email-sync";
@@ -17,6 +18,15 @@ async function runSync(): Promise<void> {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[${WORKER_NAME}] sync failed:`, message);
+  }
+  // Per-ticket table behind the Molecular Email Dashboard (sql/migrations/2180).
+  // Separate try: a failure here must not hide the daily-count sync above.
+  try {
+    const t = await syncMolecularTickets();
+    console.log(`[${WORKER_NAME}] Molecular tickets (${t.mode}): ${t.tickets} upserted; columns ${JSON.stringify(t.columns)}`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[${WORKER_NAME}] Molecular ticket sync failed:`, message);
   }
 }
 

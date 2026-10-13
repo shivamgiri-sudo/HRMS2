@@ -6,6 +6,7 @@ import type { RowDataPacket } from "mysql2";
 import { selectionsStillNeeded } from "../../shared/requisition-fill.js";
 import { db } from "../../db/mysql.js";
 import { buildPlan, type Plan, type SourceHistory } from "./he-planner.js";
+import { warmBranchPlan } from "./he-branch-plan.service.js";
 
 export interface PlannerRequest { requisitionId?: string | null; branch?: string | null; process?: string | null; targetSelected?: number | null; deadline?: string | null; months?: number | null; bufferPct?: number | null }
 export interface PlannerResponse extends Plan {
@@ -95,6 +96,7 @@ let warmTimer: ReturnType<typeof setInterval> | null = null;
 export async function warmPlannerHistory(): Promise<void> {
   try {
     await history("", [], 6);
+    void warmBranchPlan();
     const [r] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT branch_name, process_name FROM job_requisition
         WHERE active_status = 1 AND approval_status = 'approved' AND joined_headcount < CEIL(requested_headcount * 1.3) AND branch_name IS NOT NULL AND process_name IS NOT NULL LIMIT 8`);

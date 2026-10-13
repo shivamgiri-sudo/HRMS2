@@ -16,6 +16,21 @@ type Filters = { from?: string; to?: string };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+/** null stays null (KPI not applicable / no signal) instead of collapsing to 0. */
+function pctOrNull(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const x = Number(v);
+  return Number.isFinite(x) ? round(x) : null;
+}
+
+// Email SLA % weighted by tickets, not an average of per-analyst-day percentages.
+const EMAIL_SLA_WEIGHTED = `SUM(sla_within_15min * mail_received) / NULLIF(SUM(CASE WHEN sla_within_15min IS NULL THEN 0 ELSE mail_received END), 0)`;
+// Data Card within-TAT % weighted by tasks that carry a TAT value; rows with no TAT signal
+// (tat_known_count = 0, or legacy rows where within_tat defaulted to 0) are excluded, so a
+// blank source yields NULL (N/A), never 0%.
+const DK_TAT_WEIGHT = `CASE WHEN within_tat IS NULL THEN 0 WHEN tat_known_count IS NOT NULL THEN tat_known_count WHEN within_tat > 0 THEN task_count ELSE 0 END`;
+const DK_TAT_WEIGHTED = `SUM(within_tat * ${DK_TAT_WEIGHT}) / NULLIF(SUM(${DK_TAT_WEIGHT}), 0)`;
+
 function iso(d: unknown): string {
   if (!d) return '';
   if (d instanceof Date) return d.toISOString().slice(0, 10);
@@ -130,7 +145,7 @@ export interface Gs1EmailAnalyst {
   tasks: number;
   gtin: number;
   images: number;
-  sla15Pct: number;
+  sla15Pct: number | null;
 }
 
 export interface Gs1EmailDaily {
@@ -144,7 +159,7 @@ export interface Gs1Email {
   tasks: number;
   gtin: number;
   images: number;
-  sla15Pct: number;
+  sla15Pct: number | null;
   byAnalyst: Gs1EmailAnalyst[];
   daily: Gs1EmailDaily[];
   generatedAt: string;
@@ -157,7 +172,7 @@ export async function getGs1Email(filters: Filters): Promise<Gs1Email> {
     `SELECT COALESCE(SUM(mail_received),0)           AS tasks,
             COALESCE(SUM(gtin_processed),0)          AS gtin,
             COALESCE(SUM(image_count),0)             AS images,
-            COALESCE(AVG(sla_within_15min), 0)   AS sla15Pct
+            ${EMAIL_SLA_WEIGHTED}                    AS sla15Pct
      FROM gs1_email_daily_actual
      WHERE mail_date BETWEEN ? AND ?`,
     [from, to],
@@ -168,7 +183,7 @@ export async function getGs1Email(filters: Filters): Promise<Gs1Email> {
             COALESCE(SUM(mail_received),0)            AS tasks,
             COALESCE(SUM(gtin_processed),0)           AS gtin,
             COALESCE(SUM(image_count),0)              AS images,
-            COALESCE(AVG(sla_within_15min), 0)    AS sla15Pct
+            ${EMAIL_SLA_WEIGHTED}                     AS sla15Pct
      FROM gs1_email_daily_actual
      WHERE mail_date BETWEEN ? AND ?
      GROUP BY analyst_name
@@ -192,13 +207,13 @@ export async function getGs1Email(filters: Filters): Promise<Gs1Email> {
     tasks:     n(totals[0]?.tasks),
     gtin:      n(totals[0]?.gtin),
     images:    n(totals[0]?.images),
-    sla15Pct:  round(n(totals[0]?.sla15Pct)),
+    sla15Pct:  pctOrNull(totals[0]?.sla15Pct),
     byAnalyst: byAnalystRows.map(r => ({
       analyst:  String(r.analyst ?? ''),
       tasks:    n(r.tasks),
       gtin:     n(r.gtin),
       images:   n(r.images),
-      sla15Pct: round(n(r.sla15Pct)),
+      sla15Pct: pctOrNull(r.sla15Pct),
     })),
     daily: dailyRows.map(r => ({
       date:   iso(r.date),
@@ -216,7 +231,7 @@ export interface Gs1DataKartAnalyst {
   analyst: string;
   tasks: number;
   gtin: number;
-  withinTatPct: number;
+  withinTatPct: number | null;
   avgGtin: number;
 }
 
@@ -224,13 +239,13 @@ export interface Gs1DataKartDaily {
   date: string;
   tasks: number;
   gtin: number;
-  withinTatPct: number;
+  withinTatPct: number | null;
 }
 
 export interface Gs1DataKart {
   tasks: number;
   gtin: number;
-  withinTatPct: number;
+  withinTatPct: number | null;
   avgGtinPerTask: number;
   byAnalyst: Gs1DataKartAnalyst[];
   daily: Gs1DataKartDaily[];
@@ -243,7 +258,7 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
   const [totals] = await db.query<RowDataPacket[]>(
     `SELECT COALESCE(SUM(task_count),0)                     AS tasks,
             COALESCE(SUM(gtin_count),0)                     AS gtin,
-            COALESCE(AVG(within_tat), 0)                AS withinTatPct,
+            ${DK_TAT_WEIGHTED}                            AS withinTatPct,
             CASE WHEN COALESCE(SUM(task_count),0) > 0
                  THEN COALESCE(SUM(gtin_count),0) / SUM(task_count)
                  ELSE 0 END                                 AS avgGtinPerTask
@@ -256,7 +271,7 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
     `SELECT analyst_name                                        AS analyst,
             COALESCE(SUM(task_count),0)                       AS tasks,
             COALESCE(SUM(gtin_count),0)                       AS gtin,
-            COALESCE(AVG(within_tat), 0)                  AS withinTatPct,
+            ${DK_TAT_WEIGHTED}                              AS withinTatPct,
             CASE WHEN COALESCE(SUM(task_count),0) > 0
                  THEN COALESCE(SUM(gtin_count),0) / SUM(task_count)
                  ELSE 0 END                                   AS avgGtin
@@ -271,7 +286,7 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
     `SELECT DATE_FORMAT(task_date,'%Y-%m-%d')                 AS date,
             COALESCE(SUM(task_count),0)                       AS tasks,
             COALESCE(SUM(gtin_count),0)                       AS gtin,
-            COALESCE(AVG(within_tat), 0)                  AS withinTatPct
+            ${DK_TAT_WEIGHTED}                              AS withinTatPct
      FROM gs1_datakart_daily_actual
      WHERE task_date BETWEEN ? AND ?
      GROUP BY date
@@ -282,20 +297,20 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
   return {
     tasks:          n(totals[0]?.tasks),
     gtin:           n(totals[0]?.gtin),
-    withinTatPct:   round(n(totals[0]?.withinTatPct)),
+    withinTatPct:   pctOrNull(totals[0]?.withinTatPct),
     avgGtinPerTask: round(n(totals[0]?.avgGtinPerTask)),
     byAnalyst: byAnalystRows.map(r => ({
       analyst:      String(r.analyst ?? ''),
       tasks:        n(r.tasks),
       gtin:         n(r.gtin),
-      withinTatPct: round(n(r.withinTatPct)),
+      withinTatPct: pctOrNull(r.withinTatPct),
       avgGtin:      round(n(r.avgGtin)),
     })),
     daily: dailyRows.map(r => ({
       date:         iso(r.date),
       tasks:        n(r.tasks),
       gtin:         n(r.gtin),
-      withinTatPct: round(n(r.withinTatPct)),
+      withinTatPct: pctOrNull(r.withinTatPct),
     })),
     generatedAt: new Date().toISOString(),
   };

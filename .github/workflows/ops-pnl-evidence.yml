@@ -16,6 +16,10 @@ on:
         description: "Set to 'yes' to run the non-people (GRN / vendor) reconciliation instead (read-only)."
         required: false
         default: ""
+      timing:
+        description: "Set to 'yes' to time the P&L and branch-plan reads piece by piece (read-only)."
+        required: false
+        default: ""
       nkmove:
         description: "Set to 'dry-run' to print the Neelakanth-to-Jaldarshan cost-centre move and its before/after totals. This workflow never applies it."
         required: false
@@ -88,9 +92,12 @@ jobs:
           INPUT_GRNPROBE: ${{ inputs.grnprobe }}
           INPUT_NKRENT: ${{ inputs.nkrent }}
           INPUT_NKMOVE: ${{ inputs.nkmove }}
+          INPUT_TIMING: ${{ inputs.timing }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_NKMOVE" = "dry-run" ]; then
+          if [ "$INPUT_TIMING" = "yes" ]; then
+            npx tsx scripts/pnl-timing-profile.ts
+          elif [ "$INPUT_NKMOVE" = "dry-run" ]; then
             npx tsx scripts/pnl-nk-branch-move.ts
           elif [ "$INPUT_NKRENT" = "yes" ]; then
             npx tsx scripts/pnl-nk-rent-check.ts

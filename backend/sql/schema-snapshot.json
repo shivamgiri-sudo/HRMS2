@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1265,
-  "columnCount": 18398,
+  "tableCount": 1269,
+  "columnCount": 18445,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -10298,7 +10298,11 @@
       "data_source",
       "source_reference",
       "created_by",
-      "created_at"
+      "created_at",
+      "completed_count",
+      "category_counts",
+      "tat_known_count",
+      "duration_known_count"
     ],
     "gs1_email_daily_actual": [
       "id",
@@ -10317,7 +10321,11 @@
       "data_source",
       "source_reference",
       "created_by",
-      "created_at"
+      "created_at",
+      "status_counts",
+      "sla_bucket_counts",
+      "query_type_counts",
+      "duration_known_count"
     ],
     "gst_export_batch": [
       "id",
@@ -20939,6 +20947,53 @@
       "approved_at",
       "created_at",
       "updated_at"
+    ],
+    "molecular_email_ticket": [
+      "ticket_id",
+      "created_at",
+      "agent_user_id",
+      "agent_name",
+      "category",
+      "priority",
+      "status",
+      "first_closed_at",
+      "final_closed_at",
+      "reopen_count",
+      "first_reopened_at",
+      "last_reopened_at",
+      "closure_basis",
+      "dq_flag",
+      "raw_created_at",
+      "synced_at"
+    ],
+    "molecular_email_ticket_reopen_event": [
+      "ticket_id",
+      "seq",
+      "event_at"
+    ],
+    "bla_bli_blu_sales_upload_reject": [
+      "id",
+      "upload_batch_id",
+      "row_no",
+      "field_name",
+      "uploaded_value",
+      "reason_code",
+      "reason",
+      "required_format",
+      "category",
+      "severity",
+      "report_month",
+      "created_at"
+    ],
+    "bla_bli_blu_sales_upload_date": [
+      "upload_batch_id",
+      "report_date",
+      "existing_count",
+      "upload_count",
+      "updated_count",
+      "inserted_count",
+      "after_count",
+      "created_at"
     ]
   }
 }

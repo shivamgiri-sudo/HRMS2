@@ -733,9 +733,11 @@ function sourceStatus(row: {
  */
 function readPeriodSources(period: string) {
   return cachedPnlRead("pnl-reconciliation:period-sources", { period }, async () => {
+    // One read of consumed GRN spend serves both the per-cost-centre totals and the legacy-offset below (it used to be read twice).
+    const consumedP = readGrnSpend(period, "consumed", { withDetail: true });
     const [revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, forecasts, openBudget] = await Promise.all([
       readRevenue(period),
-      readGrn(period),
+      consumedP.then((rows) => sumByCostCentre(rows)),
       readGrnCommitted(period),
       readBudgets(period),
       readPayroll(period),
@@ -753,8 +755,7 @@ function readPeriodSources(period: string) {
       readOpenBudgetReserve(period),
     ]);
     // Legacy (db_bill mirror) spend used up budget the HRMS lines never saw: take it off the open headroom so it is not counted twice.
-    const legacy = (await readGrnSpend(period, "consumed", { withDetail: true }).catch(() => [] as GrnSpendRow[]))
-      .filter((row) => row.source === "db_bill_mirror");
+    const legacy = (await consumedP.catch(() => [] as GrnSpendRow[])).filter((row) => row.source === "db_bill_mirror");
     const openBudgetAdjusted = legacy.length ? offsetReserveByLegacySpend(openBudget, legacy) : openBudget;
     return { revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, forecasts, openBudget: openBudgetAdjusted };
   });

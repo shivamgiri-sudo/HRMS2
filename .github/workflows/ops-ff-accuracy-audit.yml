@@ -14,6 +14,11 @@ on:
         required: false
         default: ""
         type: string
+      check_email:
+        description: "noc-recipient-check.ts only: the address to look up"
+        required: false
+        default: ""
+        type: string
       exit_ids:
         description: "Optional comma list of exit_request ids (default: auto-pick one voluntary + one involuntary)"
         required: false
@@ -51,5 +56,6 @@ jobs:
           NODE_ENV: production
           FF_AUDIT_EXIT_IDS: ${{ inputs.exit_ids }}
           FF_DBBILL_SCRIPT: ${{ inputs.script }}
+          NOC_CHECK_EMAIL: ${{ inputs.check_email }}
         run: |
-          if [ -n "${FF_DBBILL_SCRIPT:-}" ]; then node "scripts/${FF_DBBILL_SCRIPT}"; else npx tsx scripts/ff-accuracy-audit.ts; fi
+          if [ -n "${NOC_CHECK_EMAIL:-}" ]; then npx tsx scripts/noc-recipient-check.ts; elif [ -n "${FF_DBBILL_SCRIPT:-}" ]; then node "scripts/${FF_DBBILL_SCRIPT}"; else npx tsx scripts/ff-accuracy-audit.ts; fi

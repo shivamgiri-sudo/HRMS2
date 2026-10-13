@@ -768,8 +768,30 @@ function LiveDashboardTab({ data, loading }: { data: any; loading: boolean }) {
   // forced through the generic summary/daily shape every other dashboard uses.
   if (dashboard === "gs1") {
     const s = summary;
+    // N/A when a KPI has no signal (e.g. blank source TAT), never a fake 0%.
+    const pctOrNa = (v: unknown) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "N/A" : `${Number(v).toFixed(1)}%`);
+    const c = s.consolidated;
     return (
       <div className="space-y-8">
+        {c && (
+          <div>
+            <h3 className="text-sm font-bold text-white mb-3">Consolidated</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+              <LiveMetricCard label="Total Work Items" value={c.overall.hasData ? Number(c.overall.received).toLocaleString() : "No Data"} sub="Email + Data Card + Approval" />
+              <LiveMetricCard label="Processed / Closed" value={c.overall.processed === null ? "N/A" : Number(c.overall.processed).toLocaleString()} />
+              <LiveMetricCard label="Closure %" value={pctOrNa(c.overall.closurePct)} />
+              <LiveMetricCard label="Last Refresh" value={c.lastRefresh ? new Date(c.lastRefresh).toLocaleString() : "—"} sub={c.reconciled ? "Totals reconcile" : "Reconciliation mismatch"} />
+            </div>
+            <LiveDailyTable rows={c.comparison.map((r: any) => ({ ...r, date: r.label }))} columns={[
+              { key: "date", label: "LOB" }, { key: "received", label: "Received" },
+              { key: "processed", label: "Processed", fmt: (v) => (v === null ? "N/A" : Number(v).toLocaleString()) },
+              { key: "pending", label: "Pending", fmt: (v) => (v === null ? "N/A" : Number(v).toLocaleString()) },
+              { key: "closurePct", label: "Closure %", fmt: pctOrNa },
+              { key: "withinSlaPct", label: "Within SLA %", fmt: pctOrNa },
+            ]} />
+            <p className="text-[10px] text-slate-500 mt-2">{c.overall.unitNote}</p>
+          </div>
+        )}
         <div>
           <h3 className="text-sm font-bold text-white mb-3">Overview</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -787,7 +809,7 @@ function LiveDashboardTab({ data, loading }: { data: any; loading: boolean }) {
             <LiveMetricCard label="Tasks Assigned" value={s.email.tasks} />
             <LiveMetricCard label="GTIN Processed" value={s.email.gtin} />
             <LiveMetricCard label="Images Uploaded" value={s.email.images} />
-            <LiveMetricCard label="SLA ≤15min %" value={`${Number(s.email.sla15Pct).toFixed(1)}%`} sub="Target ≥ 80%" />
+            <LiveMetricCard label="SLA ≤15min %" value={pctOrNa(s.email.sla15Pct)} sub="Target ≥ 80%, ticket-weighted" />
           </div>
           <LiveDailyTable rows={s.email.daily} columns={[
             { key: "date", label: "Date" }, { key: "tasks", label: "Tasks" }, { key: "gtin", label: "GTIN" }, { key: "images", label: "Images" },
@@ -798,11 +820,11 @@ function LiveDashboardTab({ data, loading }: { data: any; loading: boolean }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <LiveMetricCard label="Data Received" value={s.dataKart.tasks} />
             <LiveMetricCard label="GTIN Count" value={s.dataKart.gtin} />
-            <LiveMetricCard label="Within TAT %" value={`${Number(s.dataKart.withinTatPct).toFixed(1)}%`} sub="Target ≥ 80%" />
+            <LiveMetricCard label="Within TAT %" value={pctOrNa(s.dataKart.withinTatPct)} sub={s.dataKart.withinTatPct === null ? "Source TAT is blank" : "Target ≥ 80%"} />
             <LiveMetricCard label="Avg GTIN/Task" value={Number(s.dataKart.avgGtinPerTask).toFixed(1)} />
           </div>
           <LiveDailyTable rows={s.dataKart.daily} columns={[
-            { key: "date", label: "Date" }, { key: "tasks", label: "Tasks" }, { key: "gtin", label: "GTIN" }, { key: "withinTatPct", label: "TAT%", fmt: (v) => `${Number(v).toFixed(1)}%` },
+            { key: "date", label: "Date" }, { key: "tasks", label: "Tasks" }, { key: "gtin", label: "GTIN" }, { key: "withinTatPct", label: "TAT%", fmt: pctOrNa },
           ]} />
         </div>
         <div>
@@ -811,7 +833,7 @@ function LiveDashboardTab({ data, loading }: { data: any; loading: boolean }) {
             <LiveMetricCard label="Total SKU" value={s.approval.totalSku} />
             <LiveMetricCard label="Audit Count" value={s.approval.auditCount} />
             <LiveMetricCard label="Audit Errors" value={s.approval.auditErrors} />
-            <LiveMetricCard label="Error Rate %" value={`${Number(s.approval.errorRate).toFixed(1)}%`} sub="Target < 5%" />
+            <LiveMetricCard label="Error Rate %" value={s.approval.auditCount > 0 ? `${Number(s.approval.errorRate).toFixed(1)}%` : "N/A"} sub="Target < 5%" />
             <LiveMetricCard label="Unique GCP" value={s.approval.uniqueGcp} />
           </div>
           <LiveDailyTable rows={s.approval.daily} columns={[

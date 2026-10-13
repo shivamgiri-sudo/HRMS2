@@ -55,7 +55,7 @@ export const TEMPLATES: Template[] = [
     },
   },
   {
-    key: "bbb_sales", name: "Bla Bli Blu sales", description: "Orders and revenue by campaign, agent, payment and time of day.", dataset: "bla_bli_blu_sales", theme: "gold",
+    key: "bbb_sales", name: "Blabli Blu sales", description: "Orders and revenue by campaign, agent, payment and time of day.", dataset: "bla_bli_blu_sales", theme: "gold",
     build: () => {
       const d = "bla_bli_blu_sales"; const r = { preset: "last_90" as const };
       const rts = [{ field: "business", op: "eq" as const, value: "Real Time Sales" }];

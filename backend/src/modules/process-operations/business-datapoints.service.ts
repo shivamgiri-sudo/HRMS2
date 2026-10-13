@@ -100,7 +100,7 @@ async function bla(from: string, to: string): Promise<DatapointGroup[]> {
   return d.blocks.filter((b) => b.mtd.realTimeSale > 0 || b.mtd.freshWorkable > 0).map((b): DatapointGroup => {
     const m = b.mtd;
     return {
-      key: `bla-${b.lob}`, title: `${b.lob}`, source: "Bla Bli Blu Overall Sales upload + Received Data",
+      key: `bla-${b.lob}`, title: `${b.lob}`, source: "Blabli Blu Overall Sales upload + Received Data",
       cards: [
         card("sales", "Real-time sales", m.realTimeSale, "count", { hero: true, target: b.hasTarget ? Math.round(m.targetSale) : null, direction: "higher_is_better", hint: b.hasTarget ? `${Math.round(m.saleAchievement * 100)}% of target` : "no target set" }),
         card("revenue", "Revenue", m.revenue, "currency", { hero: true, target: b.hasTarget ? Math.round(m.targetRevenue) : null, direction: "higher_is_better" }),

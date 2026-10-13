@@ -78,7 +78,7 @@ const PROCESS_MASMIS_UPLOADS: Record<string, Array<{ code: string; label: string
 // Process code → sales dashboard type. Derived from live process list 2026-09-15.
 const PROCESS_SALES_MAP: Record<string, { type: string; label: string }> = {
   BELLA_VITA:          { type: "bellavita", label: "Bellavita / BVO" },
-  BLA_BLI_BLU:         { type: "blabliblu", label: "BLA / BLI / BLU" },
+  BLA_BLI_BLU:         { type: "blabliblu", label: "Blabli Blu" },
   NEEMANS:             { type: "neemans",   label: "Neemans" },
   GNC:                 { type: "gnc",       label: "GNC" },
   APPRICIATE_WEALTH:   { type: "aw",        label: "AW (Aarohan Wealth)" },
@@ -257,7 +257,7 @@ function BellavitaBvoToggle({ month, canUpload }: { month: string; canUpload: bo
       <div className="flex items-center gap-2">
         <span className="text-xs font-bold uppercase tracking-widest text-slate-400">View:</span>
         <div className="flex gap-1 p-1 rounded-xl bg-slate-100 w-fit">
-          {([["bellavita", "Bellavita (Fresh)"], ["bvo", "BVO / Repeat"], ["blabliblu", "BLA / BLI / BLU"]] as const).map(([k, lbl]) => (
+          {([["bellavita", "Bellavita (Fresh)"], ["bvo", "BVO / Repeat"], ["blabliblu", "Blabli Blu"]] as const).map(([k, lbl]) => (
             <button key={k} onClick={() => setSub(k)}
               className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
               style={sub === k ? { background: "#1A1A1A", color: "#D4AF37" } : { color: "#64748B" }}>

@@ -21,6 +21,10 @@ import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { pickSheetWithHeader, readCampaignSheets, describeCampaignRead, dropBlankRows, isSbiCardCode, SHEET_NAME_AS_CAMPAIGN_CODES } from "@/lib/excelSheetPicker";
+import {
+  SERVER_VALIDATED_UPLOAD_CODES, canonicalizeRowKeys, describeSalesImport, describeSalesPreview, displayUploadTypeName,
+  missingRequiredHeaders, type SalesImportSummary, type SalesPreview,
+} from "@/lib/bbbSalesUpload";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -1492,10 +1496,12 @@ export default function BulkUploadHub() {
       // through NativeEmailTemplateBulkImport.tsx, which has its own preview/confirm flow
       // against /api/admin/email-templates/import/*. Offering a second, broken door to the
       // same feature is worse than offering one, so this hub hides it rather than mapping it.
-      const loadedTemplates = (templatesResult.data || []).filter(
-        (template) =>
-          String(template.upload_type_code || "").toUpperCase() !== "EMAIL_TEMPLATE_IMPORT",
-      );
+      const loadedTemplates = (templatesResult.data || [])
+        .filter(
+          (template) =>
+            String(template.upload_type_code || "").toUpperCase() !== "EMAIL_TEMPLATE_IMPORT",
+        )
+        .map((template) => ({ ...template, upload_type_name: displayUploadTypeName(template.upload_type_name || "") }));
       setTemplates(loadedTemplates);
       setBatches(batchesResult.data || []);
 
@@ -1794,14 +1800,31 @@ export default function BulkUploadHub() {
         const health = buildCsvHealth(selectedTemplate, parsed);
         setCsvHealth(health);
 
-        if (csvHealthHasBlockingError(health)) {
-          throw new Error(
-            "CSV structure issue found. Please download the safe template for this upload type and keep every column/blank comma position intact."
-          );
-        }
+        if (SERVER_VALIDATED_UPLOAD_CODES.has(String(selectedTemplate.upload_type_code).toUpperCase())) {
+          // Validated row by row on the server (reason per rejected row). Only the file's structure is checked
+          // here: the mandatory columns must exist under some spelling; extra/missing optional columns are fine.
+          const missing = missingRequiredHeaders(parsed.headers, selectedTemplate.required_columns || []);
+          if (missing.length > 0) {
+            throw new Error(
+              `File structure check failed: no ${missing.map((m) => `"${m}"`).join(" / ")} column found (any spelling such as "Order ID" is accepted). Columns in the file: ${parsed.headers.join(", ") || "none"}.`
+            );
+          }
+          const headers = getTemplateHeaders(selectedTemplate);
+          parsedRows = parsed.rows;
+          stagedRows = parsed.rows.map((row, index) => {
+            const normalized = canonicalizeRowKeys(row, headers);
+            return { rowNo: index + 1, rawData: row, normalizedData: normalized, status: "valid", errors: [] as string[] };
+          });
+        } else {
+          if (csvHealthHasBlockingError(health)) {
+            throw new Error(
+              "CSV structure issue found. Please download the safe template for this upload type and keep every column/blank comma position intact."
+            );
+          }
 
-        parsedRows = parsed.rows;
-        stagedRows = validateRows(selectedTemplate, parsedRows);
+          parsedRows = parsed.rows;
+          stagedRows = validateRows(selectedTemplate, parsedRows);
+        }
       }
 
       // Nothing to stage means nothing this batch could ever import — the import
@@ -1903,6 +1926,21 @@ export default function BulkUploadHub() {
       return;
     }
 
+    const serverValidated = SERVER_VALIDATED_UPLOAD_CODES.has(String(batch.upload_type_code).toUpperCase());
+    if (serverValidated) {
+      // Warn before an import that would update existing orders, with the rows that would be rejected and why.
+      try {
+        const preview = await hrmsApi.get<{ data: SalesPreview }>(`/api/bulk-upload/batches/${batch.id}/bbb-sales-preview`, 120000);
+        if (!window.confirm(describeSalesPreview(preview.data))) {
+          setMessage(`Import of ${batch.upload_batch_no} cancelled; nothing was changed.`);
+          return;
+        }
+      } catch (error) {
+        const why = error instanceof Error ? error.message : "unknown error";
+        if (!window.confirm(`The pre-import check could not run (${why}). Existing orders with the same OrderID will be updated. Continue with the import?`)) return;
+      }
+    }
+
     setIsProcessing(true);
     setActiveImportBatchId(batch.id);
     setImportProgress(null);
@@ -1960,9 +1998,12 @@ export default function BulkUploadHub() {
         result.importedRows ?? result.imported_rows ?? result.staged ?? 0,
       );
       const errorRows = Number(result.errorRows ?? result.error_rows ?? result.failed ?? 0);
-      const successMsg = `Import completed for ${batch.upload_batch_no}. Imported ${importedRows} row(s).${
-        errorRows ? ` ${errorRows} row(s) failed and are visible in View Rows.` : ""
-      }`;
+      const salesSummary = (result as { summary?: SalesImportSummary }).summary;
+      const successMsg = serverValidated && salesSummary
+        ? describeSalesImport(batch.upload_batch_no, salesSummary)
+        : `Import completed for ${batch.upload_batch_no}. Imported ${importedRows} row(s).${
+          errorRows ? ` ${errorRows} row(s) failed and are visible in View Rows.` : ""
+        }`;
 
       setMessage(successMsg);
       window.alert(successMsg);

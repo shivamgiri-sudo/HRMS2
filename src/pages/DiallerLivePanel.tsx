@@ -7,7 +7,7 @@
  * Process mapping (by name substring, case-insensitive):
  *   "bla" | "bli" | "blu" | "inbound" | "b-3"  → B-3 IB (inbound)
  *   "reginald" + ("cart" | "abandon")           → Reginald Abandoned Cart
- *   "molecular"                                 → Molecular Email (APR)
+ *   "molecular"                                 → Molecular Email Dashboard (own module; not a Reginald tab)
  *   "reginald" + "email"                        → Reginald Email (APR)
  *
  * Everything renders inside the caller's layout — no DashboardLayout wrapper.
@@ -21,6 +21,9 @@ import {
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { getAuthToken } from "@/lib/hrmsApi";
+import { ReginaldOverview, ReginaldDaywise, ReginaldMonthly, ReginaldTpr } from "@/components/process-live/reginald";
+import { MolecularEmailDashboard, MolecularMovedLink } from "@/components/process-live/molecular/MolecularEmailDashboard";
+import { Gs1Dashboard as Gs1ConsolidatedDashboard } from "@/components/process-live/gs1/Gs1Dashboard";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type DiallerProcess =
@@ -890,13 +893,13 @@ const emailDailyTrend = (proc: "molecular-email" | "reginald-email" | "finnable"
   ],
 });
 
-// ── Reginald All Dashboard — Cart + Molecular Email + Reginald Email in one place ──
-type ReginaldTab = "cart" | "molecular" | "email";
+// ── Reginald All Dashboard — Cart + Reginald Email. Molecular Email is its own
+// dashboard (REG-07): the old tab is now only a link to it, with no Molecular data here.
+type ReginaldTab = "cart" | "email";
 function ReginaldAllDashboard({ f }: { f: Filters }) {
   const [tab, setTab] = useState<ReginaldTab>("cart");
   const TABS: { key: ReginaldTab; label: string; badge?: string }[] = [
     { key: "cart",     label: "Abandoned Cart" },
-    { key: "molecular", label: "Molecular Email", badge: "APR" },
     { key: "email",    label: "Reginald Email",   badge: "APR" },
   ];
   return (
@@ -914,9 +917,9 @@ function ReginaldAllDashboard({ f }: { f: Filters }) {
             {t.badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, background: tab === t.key ? "#e0edff" : "rgba(255,255,255,.12)", color: tab === t.key ? "#2f6fed" : "#9cb8d4", borderRadius: 4, padding: "1px 5px" }}>{t.badge}</span>}
           </button>
         ))}
+        <MolecularMovedLink compact />
       </div>
       {tab === "cart"      && <CartDashboard f={f} />}
-      {tab === "molecular" && <EmailAprDashboard proc="molecular-email" label="Molecular Email" campaign="MOEMAIL" f={f} />}
       {tab === "email"     && <EmailAprDashboard proc="reginald-email"  label="Reginald Email"  campaign="EMAIL"   f={f} />}
     </div>
   );
@@ -926,11 +929,6 @@ function CartDashboard({ f }: { f: Filters }) {
   const [sub, setSub] = useState<CartSub>("sales");
   const drill = useDrill();
   const fmtD = fmtDay;
-  const summQ = useQuery({ queryKey: ["pld", "cart", "summary", f], queryFn: () => fetchLive<CartSummaryT>("reginald-cart/summary", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
-  const dayQ = useQuery({ queryKey: ["pld", "cart", "daily", f], queryFn: () => fetchLive<CartDayT[]>("reginald-cart/daily", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "daily" });
-  const monthFrom = monthlyFrom(f);
-  const monthQ = useQuery({ queryKey: ["pld", "cart", "monthly", monthFrom, f.to], queryFn: () => fetchLive<{ month: string; monthLabel: string; totalDialed: number; uniqueDialed: number; uniqueConnected: number; connectPct: number; loginCount: number; avgTalk: string; aht: string; avgWrap: string }[]>("reginald-cart/monthly", { from: monthFrom, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "monthly" });
-  const analystQ = useQuery({ queryKey: ["pld", "cart", "analysts", f], queryFn: () => fetchLive<CartAnalystT[]>("reginald-cart/analysts", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "analysts" });
   const aprQ = useQuery({ queryKey: ["pld", "cart", "apr", f], queryFn: () => fetchLive<{ user: string; agentName: string | null; aprCalls: number; netLoginTime: string; talk: string; wait: string; dispo: string; pause: string; lbTime: string; tbTime: string; wbTime: string; mbTime: string; qbTime: string; utilization: number }[]>("reginald-cart/apr", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "apr" });
   const salesQ = useQuery({ queryKey: ["pld", "cart", "sales", f], queryFn: () => fetchLive<CartSalesT>("reginald-cart/sales", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "sales" });
   const emailAprSummQ = useQuery({ queryKey: ["pld", "reginald-email", "summary", f], queryFn: () => fetchLive<{ totalLoginTime: string; totalTalk: string; totalPause: string; totalLbTime: string; totalTbTime: string; avgUtilization: number; agentCount: number }>("reginald-email/summary", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "email-apr" });
@@ -943,44 +941,11 @@ function CartDashboard({ f }: { f: Filters }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
         {subs.map(s => <button key={s.key} onClick={() => setSub(s.key)} style={{ height: 30, border: "none", borderRadius: 8, padding: "0 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", transition: ".15s", background: sub === s.key ? "linear-gradient(135deg,#153f69,#2673a0)" : "#edf3f9", color: sub === s.key ? "#fff" : "#334155" }}>{s.label}</button>)}
       </div>
-      {sub === "overview" && (summQ.isLoading ? <Spinner /> : summQ.error || !summQ.data ? <Err msg="Failed to load summary" /> : (() => {
-        const d = summQ.data;
-        const kpis = [{ label: "Total Dialled", value: d.offered.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[0] }, { label: "Connected", value: d.connected.toLocaleString(), sub: `Connect: ${d.connectPct.toFixed(1)}%`, color: "linear-gradient(135deg,#047857,#10b981)" }, { label: "Not Connected", value: d.abandoned.toLocaleString(), sub: `${(100 - d.connectPct).toFixed(1)}% drop`, color: "linear-gradient(135deg,#be123c,#f43f5e)" }, { label: "Unique Dialled", value: d.uniqueDialed.toLocaleString(), sub: "Distinct phones", color: KPIG[4] }, { label: "Unique Connected", value: d.uniqueConnected.toLocaleString(), sub: "Distinct answered", color: "linear-gradient(135deg,#065f46,#059669)" }, { label: "Avg Talk", value: d.avgTalk, sub: "Per connected call", color: KPIG[3] }, { label: "AHT", value: d.aht, sub: "Talk+Wrap+Dead÷connected", color: KPIG[9] }, { label: "< 30 Sec", value: d.lt30.toLocaleString(), sub: "Short connections", color: KPIG[5] }, { label: "≥ 30 Sec", value: d.ge30.toLocaleString(), sub: "Quality connections", color: KPIG[4] }];
-        return (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 10, marginBottom: 14 }}>
-              {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={drill ? () => drill({ type: "kpi", label: k.label, value: k.value, sub: k.sub, trend: cartDailyTrend(f) }) : undefined} />)}
-            </div>
-            <Panel title="By Campaign">
-              <DataTable cols={[{ h: "Campaign", k: "campaign" as const, left: true }, { h: "Offered", k: "offered" as const }, { h: "Connected", k: "connected" as const }, { h: "Unique Dialled", k: "uniqueDialed" as const }, { h: "Unique Connected", k: "uniqueConnected" as const }, { h: "Connect%", k: "connectPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> }, { h: "Avg Talk", k: "avgTalk" as const }]} rows={d.byCampaign} />
-            </Panel>
-          </div>
-        );
-      })())}
-      {sub === "daily" && (dayQ.isLoading ? <Spinner /> : dayQ.error || !dayQ.data ? <Err msg="Failed to load daily" /> : (
-        <div>
-          <Panel title="Day-wise Performance" sub={`${dayQ.data.length} days`}>
-            <DataTable<CartDayT> cols={[{ h: "Date", k: "date", left: true, fmt: fmtD }, { h: "Total CDR", k: "totalDialed" }, { h: "Unique Dialled", k: "uniqueDialed" }, { h: "Unique Connected", k: "uniqueConnected" }, { h: "Connect%", k: "connectPct", fmt: v => <PctBadge v={Number(v)} /> }, { h: "Login Count", k: "loginCount" }, { h: "Avg Talk", k: "avgTalk" }, { h: "AHT", k: "aht" }, { h: "Avg Wrap", k: "avgWrap" }, { h: "Avg Idle", k: "avgIdle" }]} rows={dayQ.data} />
-          </Panel>
-        </div>
-      ))}
-      {sub === "monthly" && (monthQ.isLoading ? (
-        <div>
-          <Spinner />
-          <div style={{ textAlign: "center", fontSize: 12, color: "#697586", marginTop: -20 }}>
-            Totalling {monthFrom.slice(0, 7)} to {f.to.slice(0, 7)} from the dialler's full call log. A month not viewed recently can take a minute or two; after that it opens instantly.
-          </div>
-        </div>
-      ) : monthQ.error || !monthQ.data ? <Err msg="Could not load monthly data" /> : (
-        <Panel title="Monthly Performance">
-          <DataTable cols={[{ h: "Month", k: "monthLabel" as const, left: true }, { h: "Total CDR", k: "totalDialed" as const }, { h: "Unique Dialled", k: "uniqueDialed" as const }, { h: "Unique Connected", k: "uniqueConnected" as const }, { h: "Connect%", k: "connectPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> }, { h: "Avg Daily Login", k: "loginCount" as const }, { h: "Avg Talk", k: "avgTalk" as const }, { h: "AHT", k: "aht" as const }, { h: "Avg Wrap", k: "avgWrap" as const }]} rows={monthQ.data} />
-        </Panel>
-      ))}
-      {sub === "analysts" && (analystQ.isLoading ? <Spinner /> : analystQ.error || !analystQ.data ? <Err msg="Failed to load analysts" /> : (
-        <Panel title="Analyst-wise Performance (CDR + APR)" sub={`${analystQ.data.length} analysts`}>
-          <DataTable<CartAnalystT> cols={[nameCol("analystName"), { h: "Analyst ID", k: "analyst", left: true }, { h: "Login Days", k: "loginDays" }, { h: "Total CDR", k: "totalDialed" }, { h: "Unique Dialled", k: "uniqueDialed" }, { h: "Unique Connected", k: "uniqueConnected" }, { h: "Connect%", k: "connectPct", fmt: v => <PctBadge v={Number(v)} /> }, { h: "<30s", k: "lt30" }, { h: "≥30s", k: "ge30" }, { h: "Avg Talk", k: "avgTalk" }, { h: "AHT", k: "aht" }, { h: "Avg Wrap", k: "avgWrap" }, { h: "Avg Wait", k: "avgWait" }, { h: "Net Login", k: "netLoginTime" }, { h: "Utilization", k: "utilization", fmt: v => <PctBadge v={Number(v)} /> }]} rows={analystQ.data} />
-        </Panel>
-      ))}
+      {/* Reginald management views (REG-01..06) live in src/components/process-live/reginald. */}
+      {sub === "overview" && <ReginaldOverview range={f} />}
+      {sub === "daily" && <ReginaldDaywise range={f} />}
+      {sub === "monthly" && <ReginaldMonthly range={f} />}
+      {sub === "analysts" && <ReginaldTpr range={f} />}
       {sub === "apr" && (aprQ.isLoading ? <Spinner /> : aprQ.error || !aprQ.data ? <Err msg="Failed to load APR" /> : (
         <Panel title="Agent Productivity Report (APR)" sub={`${aprQ.data.length} agents`}>
           <DataTable cols={[nameCol("agentName"), { h: "Agent ID", k: "user" as const, left: true }, { h: "APR Calls", k: "aprCalls" as const }, { h: "Net Login", k: "netLoginTime" as const }, { h: "Talk", k: "talk" as const }, { h: "Wait", k: "wait" as const }, { h: "Dispo", k: "dispo" as const }, { h: "Pause", k: "pause" as const }, { h: "LB", k: "lbTime" as const }, { h: "TB", k: "tbTime" as const }, { h: "WB", k: "wbTime" as const }, { h: "MB", k: "mbTime" as const }, { h: "QB", k: "qbTime" as const }, { h: "Utilization", k: "utilization" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> }]} rows={aprQ.data} />
@@ -1632,276 +1597,10 @@ function BillingDashboard({ f }: { f: Filters }) {
 }
 
 // ── GS1 INDIA LIVE DASHBOARD ──────────────────────────────────────────────────
-type GS1OverviewT = {
-  emailTasks: number; emailGtin: number;
-  dataKartTasks: number; dataKartGtin: number;
-  approvalSku: number; auditErrors: number;
-  daily: { date: string; emailTasks: number; dataKartTasks: number }[];
-};
-// Field names below are the ones gs1.service.ts actually returns. They were
-// previously invented (tasksAssigned/dataReceived/errorRatePct/slaPct/…), which
-// made three of the four GS1 sub-tabs throw on first render.
-type GS1EmailT = {
-  tasks: number; gtin: number; images: number; sla15Pct: number;
-  byAnalyst: { analyst: string; tasks: number; gtin: number; images: number; sla15Pct: number }[];
-  daily: { date: string; tasks: number; gtin: number; images: number }[];
-};
-type GS1DataKartT = {
-  tasks: number; gtin: number; withinTatPct: number; avgGtinPerTask: number;
-  byAnalyst: { analyst: string; tasks: number; gtin: number; withinTatPct: number; avgGtin: number }[];
-  daily: { date: string; tasks: number; gtin: number; withinTatPct: number }[];
-};
-type GS1ApprovalT = {
-  totalSku: number; auditCount: number; auditErrors: number; errorRate: number; uniqueGcp: number;
-  byCompany: { company: string; sku: number; audits: number; errors: number; errorPct: number }[];
-  byAnalyst: { analyst: string; audits: number; errors: number; errorPct: number }[];
-};
-
-type GS1Sub = "overview" | "email" | "datakart" | "approval";
-
-/** Each GS1 sub-tab drills into the day-wise (or company-wise) breakdown behind its KPIs. */
-const gs1Trends = (f: Filters): Record<GS1Sub, DrillTrend> => {
-  const params = { from: f.from, to: f.to };
-  const dateCol: Col<Record<string, unknown>> = { h: "Date", k: "date", left: true, fmt: fmtDay };
-  return {
-    overview: {
-      title: "Day-wise trend", queryKey: ["pld", "gs1", "overview", f], path: "gs1/overview", params,
-      pick: raw => (raw as GS1OverviewT).daily as unknown as Record<string, unknown>[],
-      emptyHint: "No daily data. Upload via Bulk Upload Hub → <em>GS1_EMAIL_DAILY / GS1_DATAKART_DAILY</em>.",
-      cols: [dateCol, { h: "Email Tasks", k: "emailTasks" }, { h: "Data Kart Tasks", k: "dataKartTasks" }],
-    },
-    email: {
-      title: "Day-wise email", queryKey: ["pld", "gs1", "email", f], path: "gs1/email", params,
-      pick: raw => (raw as GS1EmailT).daily as unknown as Record<string, unknown>[],
-      emptyHint: "No daily data. Upload via Bulk Upload Hub → <em>GS1_EMAIL_DAILY</em>.",
-      cols: [dateCol, { h: "Tasks", k: "tasks" }, { h: "GTIN", k: "gtin" }, { h: "Images", k: "images" }],
-    },
-    datakart: {
-      title: "Day-wise data kart", queryKey: ["pld", "gs1", "datakart", f], path: "gs1/datakart", params,
-      pick: raw => (raw as GS1DataKartT).daily as unknown as Record<string, unknown>[],
-      emptyHint: "No daily data. Upload via Bulk Upload Hub → <em>GS1_DATAKART_DAILY</em>.",
-      cols: [dateCol, { h: "Tasks", k: "tasks" }, { h: "GTIN", k: "gtin" }],
-    },
-    approval: {
-      title: "Company-wise approval", queryKey: ["pld", "gs1", "approval", f], path: "gs1/approval", params,
-      pick: raw => (raw as GS1ApprovalT).byCompany as unknown as Record<string, unknown>[],
-      emptyHint: "No company data. Upload via Bulk Upload Hub → <em>GS1_APPROVAL_AUDIT</em>.",
-      cols: [
-        { h: "Company", k: "company", left: true }, { h: "SKU", k: "sku" },
-        { h: "Audits", k: "audits" }, { h: "Errors", k: "errors" },
-        { h: "Error %", k: "errorPct", fmt: v => <PctBadge v={Number(v)} /> },
-      ],
-    },
-  };
-};
-
+// Consolidated overview + Email / Data Card / Approval drill-downs live in
+// src/components/process-live/gs1 (GS1-01..05).
 function GS1Dashboard({ f }: { f: Filters }) {
-  const [sub, setSub] = useState<GS1Sub>("overview");
-  const drill = useDrill();
-  const trends = gs1Trends(f);
-  const kpiDrill = (tab: GS1Sub) => (k: KpiSpec) => drill ? () => drill({ type: "kpi", label: k.label, value: k.value, sub: k.sub, trend: trends[tab] }) : undefined;
-  const fmtD = fmtDay;
-
-  const overviewQ = useQuery({ queryKey: ["pld", "gs1", "overview", f], queryFn: () => fetchLive<GS1OverviewT>("gs1/overview", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
-  const emailQ = useQuery({ queryKey: ["pld", "gs1", "email", f], queryFn: () => fetchLive<GS1EmailT>("gs1/email", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "email" });
-  const dataKartQ = useQuery({ queryKey: ["pld", "gs1", "datakart", f], queryFn: () => fetchLive<GS1DataKartT>("gs1/datakart", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "datakart" });
-  const approvalQ = useQuery({ queryKey: ["pld", "gs1", "approval", f], queryFn: () => fetchLive<GS1ApprovalT>("gs1/approval", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "approval" });
-
-  const subs: { key: GS1Sub; label: string }[] = [
-    { key: "overview", label: "Overview" },
-    { key: "email", label: "Email" },
-    { key: "datakart", label: "Data Kart" },
-    { key: "approval", label: "Approval" },
-  ];
-
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
-        {subs.map(s => (
-          <button key={s.key} onClick={() => setSub(s.key)} style={{ height: 30, border: "none", borderRadius: 8, padding: "0 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", transition: ".15s", background: sub === s.key ? "linear-gradient(135deg,#153f69,#2673a0)" : "#edf3f9", color: sub === s.key ? "#fff" : "#334155" }}>{s.label}</button>
-        ))}
-      </div>
-
-      {/* OVERVIEW */}
-      {sub === "overview" && (
-        overviewQ.isLoading ? <Spinner /> : overviewQ.error || !overviewQ.data ? <Err msg="Failed to load GS1 overview" /> : (() => {
-          const d = overviewQ.data;
-          const kpis = [
-            { label: "Email Tasks", value: d.emailTasks.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
-            { label: "Email GTIN", value: d.emailGtin.toLocaleString(), sub: "Total GTIN via email", color: KPIG[0] },
-            { label: "Data Kart Tasks", value: d.dataKartTasks.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[9] },
-            { label: "Data Kart GTIN", value: d.dataKartGtin.toLocaleString(), sub: "Total GTIN via data kart", color: KPIG[3] },
-            { label: "Approval SKU", value: d.approvalSku.toLocaleString(), sub: "SKU sent for approval", color: KPIG[1] },
-            { label: "Audit Errors", value: d.auditErrors.toLocaleString(), sub: "Errors in audit", color: d.auditErrors > 0 ? KPIG[2] : KPIG[1] },
-          ];
-          return (
-            <div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
-                {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={kpiDrill("overview")(k)} />)}
-              </div>
-              {d.daily && d.daily.length > 0 ? (
-                <Panel title="Daily Email + Data Kart Trend (Tasks Stacked)">
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={d.daily}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} />
-                      <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip labelFormatter={fmtD} />
-                      <Bar dataKey="emailTasks" fill="#2f6fed" name="Email Tasks" stackId="a" />
-                      <Bar dataKey="dataKartTasks" fill="#10b8d4" name="Data Kart Tasks" stackId="a" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </Panel>
-              ) : (
-                <InfoBox html="<strong>No daily trend data.</strong> Upload GS1 data via Bulk Upload Hub → <em>GS1_EMAIL_DAILY / GS1_DATAKART_DAILY / GS1_APPROVAL_AUDIT</em>." />
-              )}
-            </div>
-          );
-        })()
-      )}
-
-      {/* EMAIL */}
-      {sub === "email" && (
-        emailQ.isLoading ? <Spinner /> : emailQ.error || !emailQ.data ? <Err msg="Failed to load GS1 email data" /> : (() => {
-          const d = emailQ.data;
-          const kpis = [
-            { label: "Tasks Assigned", value: d.tasks.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
-            { label: "GTIN Processed", value: d.gtin.toLocaleString(), sub: "Total GTIN done", color: KPIG[0] },
-            { label: "Images Uploaded", value: d.images.toLocaleString(), sub: "Product images", color: KPIG[9] },
-            { label: "SLA ≤15min %", value: `${d.sla15Pct.toFixed(1)}%`, sub: "Target ≥ 80%", color: d.sla15Pct >= 80 ? KPIG[1] : KPIG[2] },
-          ];
-          return (
-            <div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
-                {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={kpiDrill("email")(k)} />)}
-              </div>
-              <SectionTitle title="By Analyst" />
-              {d.byAnalyst.length === 0 ? (
-                <InfoBox html="No analyst data. Upload GS1 data via Bulk Upload Hub → <em>GS1_EMAIL_DAILY</em>." />
-              ) : (
-                <Panel title="Analyst-wise Email Performance" sub={`${d.byAnalyst.length} analysts`}>
-                  <DataTable cols={[
-                    { h: "Analyst", k: "analyst" as const, left: true },
-                    { h: "Tasks", k: "tasks" as const },
-                    { h: "GTIN", k: "gtin" as const },
-                    { h: "Images", k: "images" as const },
-                    { h: "SLA %", k: "sla15Pct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
-                  ]} rows={d.byAnalyst} />
-                </Panel>
-              )}
-              <SectionTitle title="Day-wise" />
-              {d.daily.length === 0 ? (
-                <InfoBox html="No daily data. Upload GS1 data via Bulk Upload Hub → <em>GS1_EMAIL_DAILY</em>." />
-              ) : (
-                <Panel title="Daily Email Metrics" sub={`${d.daily.length} days`}>
-                  <DataTable cols={[
-                    { h: "Date", k: "date" as const, left: true, fmt: fmtD },
-                    { h: "Tasks", k: "tasks" as const },
-                    { h: "GTIN", k: "gtin" as const },
-                    { h: "Images", k: "images" as const },
-                  ]} rows={d.daily} />
-                </Panel>
-              )}
-            </div>
-          );
-        })()
-      )}
-
-      {/* DATA KART */}
-      {sub === "datakart" && (
-        dataKartQ.isLoading ? <Spinner /> : dataKartQ.error || !dataKartQ.data ? <Err msg="Failed to load GS1 Data Kart data" /> : (() => {
-          const d = dataKartQ.data;
-          const kpis = [
-            { label: "Data Received", value: d.tasks.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
-            { label: "GTIN Count", value: d.gtin.toLocaleString(), sub: "Total GTIN processed", color: KPIG[0] },
-            { label: "Within TAT %", value: `${d.withinTatPct.toFixed(1)}%`, sub: "Target ≥ 80%", color: d.withinTatPct >= 80 ? KPIG[1] : KPIG[2] },
-            { label: "Avg GTIN/Task", value: d.avgGtinPerTask.toFixed(1), sub: "GTIN per task", color: KPIG[9] },
-          ];
-          return (
-            <div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
-                {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={kpiDrill("datakart")(k)} />)}
-              </div>
-              <SectionTitle title="By Analyst" />
-              {d.byAnalyst.length === 0 ? (
-                <InfoBox html="No analyst data. Upload GS1 data via Bulk Upload Hub → <em>GS1_DATAKART_DAILY</em>." />
-              ) : (
-                <Panel title="Analyst-wise Data Kart Performance" sub={`${d.byAnalyst.length} analysts`}>
-                  <DataTable cols={[
-                    { h: "Analyst", k: "analyst" as const, left: true },
-                    { h: "Tasks", k: "tasks" as const },
-                    { h: "GTIN", k: "gtin" as const },
-                    { h: "Within TAT %", k: "withinTatPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
-                    { h: "Avg GTIN/Task", k: "avgGtin" as const, fmt: (v: unknown) => Number(v).toFixed(1) },
-                  ]} rows={d.byAnalyst} />
-                </Panel>
-              )}
-              <SectionTitle title="Day-wise" />
-              {d.daily.length === 0 ? (
-                <InfoBox html="No daily data. Upload GS1 data via Bulk Upload Hub → <em>GS1_DATAKART_DAILY</em>." />
-              ) : (
-                <Panel title="Daily Data Kart Metrics" sub={`${d.daily.length} days`}>
-                  <DataTable cols={[
-                    { h: "Date", k: "date" as const, left: true, fmt: fmtD },
-                    { h: "Tasks", k: "tasks" as const },
-                    { h: "GTIN", k: "gtin" as const },
-                  ]} rows={d.daily} />
-                </Panel>
-              )}
-            </div>
-          );
-        })()
-      )}
-
-      {/* APPROVAL */}
-      {sub === "approval" && (
-        approvalQ.isLoading ? <Spinner /> : approvalQ.error || !approvalQ.data ? <Err msg="Failed to load GS1 Approval data" /> : (() => {
-          const d = approvalQ.data;
-          const kpis = [
-            { label: "Total SKU", value: d.totalSku.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[4] },
-            { label: "Audit Count", value: d.auditCount.toLocaleString(), sub: "Total audits done", color: KPIG[0] },
-            { label: "Audit Errors", value: d.auditErrors.toLocaleString(), sub: "Errors found", color: d.auditErrors > 0 ? KPIG[2] : KPIG[1] },
-            { label: "Error Rate %", value: `${d.errorRate.toFixed(1)}%`, sub: "Target < 5%", color: d.errorRate < 5 ? KPIG[1] : KPIG[2] },
-            { label: "Unique GCP", value: d.uniqueGcp.toLocaleString(), sub: "Distinct companies", color: KPIG[9] },
-          ];
-          return (
-            <div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 10, marginBottom: 16 }}>
-                {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={kpiDrill("approval")(k)} />)}
-              </div>
-              <SectionTitle title="By Company" />
-              {d.byCompany.length === 0 ? (
-                <InfoBox html="No company data. Upload GS1 data via Bulk Upload Hub → <em>GS1_APPROVAL_AUDIT</em>." />
-              ) : (
-                <Panel title="Company-wise Approval" sub={`${d.byCompany.length} companies`}>
-                  <DataTable cols={[
-                    { h: "Company", k: "company" as const, left: true },
-                    { h: "SKU", k: "sku" as const },
-                    { h: "Audits", k: "audits" as const },
-                    { h: "Errors", k: "errors" as const },
-                    { h: "Error %", k: "errorPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
-                  ]} rows={d.byCompany} />
-                </Panel>
-              )}
-              <SectionTitle title="By Analyst" />
-              {d.byAnalyst.length === 0 ? (
-                <InfoBox html="No analyst data. Upload GS1 data via Bulk Upload Hub → <em>GS1_APPROVAL_AUDIT</em>." />
-              ) : (
-                <Panel title="Analyst-wise Audit" sub={`${d.byAnalyst.length} analysts`}>
-                  <DataTable cols={[
-                    { h: "Analyst", k: "analyst" as const, left: true },
-                    { h: "Audits", k: "audits" as const },
-                    { h: "Errors", k: "errors" as const },
-                    { h: "Error %", k: "errorPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> },
-                  ]} rows={d.byAnalyst} />
-                </Panel>
-              )}
-            </div>
-          );
-        })()
-      )}
-    </div>
-  );
+  return <Gs1ConsolidatedDashboard from={f.from} to={f.to} />;
 }
 
 // ── Main Export ───────────────────────────────────────────────────────────────
@@ -1914,7 +1613,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
     return (
       <div style={{ margin: "16px 0", padding: "16px 20px", background: "linear-gradient(135deg,#fff8e7,#fffaf0)", border: "1px solid #fde68a", borderRadius: 14, color: "#92400e", fontSize: 13, fontWeight: 700 }}>
         <strong>No live dialler data available</strong> for <em>{processName}</em>.
-        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: BLA BLI BLU Inbound, Reginald Abandoned Cart, Molecular Email, Reginald Email, Finnable, Domestic Billing, GS1 India, GNC, Bella-Vita Organic, Clovia, Neemans, Viega, Exicom, DU Digital.</div>
+        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: Blabli Blu Inbound, Reginald Abandoned Cart, Molecular Email Dashboard, Reginald Email, Finnable, Domestic Billing, GS1 India, GNC, Bella-Vita Organic, Clovia, Neemans, Viega, Exicom, DU Digital.</div>
       </div>
     );
   }
@@ -1926,7 +1625,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
         <DateRangeFilter f={filters} onChange={setFilters} />
         {proc === "inbound" && <InboundDashboard f={filters} />}
         {proc === "reginald-cart" && <ReginaldAllDashboard f={filters} />}
-        {proc === "molecular-email" && <EmailAprDashboard proc="molecular-email" label="Molecular Email" campaign="MOEMAIL" f={filters} />}
+        {proc === "molecular-email" && <MolecularEmailDashboard initialFrom={filters.from} initialTo={filters.to} />}
         {proc === "reginald-email" && <EmailAprDashboard proc="reginald-email" label="Reginald Email" campaign="EMAIL" f={filters} />}
         {proc === "billing" && <BillingDashboard f={filters} />}
         {proc === "gs1" && <GS1Dashboard f={filters} />}

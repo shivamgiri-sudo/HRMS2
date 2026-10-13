@@ -177,7 +177,7 @@ export default function BlaAnalytics({ from, to, funnel }: { from: string; to: s
               </LineChart>
             </ResponsiveContainer></div>
           </>
-        ) : <p className="text-xs text-slate-400">No active Bla Bli Blu process found in HRMS to read headcount from.</p>}
+        ) : <p className="text-xs text-slate-400">No active Blabli Blu process found in HRMS to read headcount from.</p>}
       </Card>
 
       <Card title={`Agent leaderboard · ${a.totals.agentsSelling} agents selling`} sub="Real Time Sales per agent. RTO % is red at 10% or more; treat it with care while many orders have no status yet.">

@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
 import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { bumpCount, capCountMap, durationStats, parseDurationMinutes, type CountMap } from "./gs1-item-rollup.js";
 
 /**
  * GS1 India — Email-based GTIN processing daily actuals.
@@ -83,6 +84,11 @@ interface DailyGroup {
   gtinTotal: number;
   imageTotal: number;
   slaHits: number;
+  statusCounts: CountMap;
+  slaBucketCounts: CountMap;
+  queryTypeCounts: CountMap;
+  durationSum: number;
+  durationKnown: number;
   rowNos: number[];
 }
 
@@ -150,12 +156,19 @@ export async function importGs1EmailDailyBatch(
 
       const key = `${mailDate}|${analystName}`;
       const g = groups.get(key) ?? {
-        mailDate, analystName, ticketCount: 0, gtinTotal: 0, imageTotal: 0, slaHits: 0, rowNos: [],
+        mailDate, analystName, ticketCount: 0, gtinTotal: 0, imageTotal: 0, slaHits: 0,
+        statusCounts: {}, slaBucketCounts: {}, queryTypeCounts: {}, durationSum: 0, durationKnown: 0,
+        rowNos: [],
       };
       g.ticketCount += 1;
       g.gtinTotal += parseCount(data["GTIN"]);
       g.imageTotal += parseCount(data["Image"]);
       if (isWithin15MinSla(data["SLA"])) g.slaHits += 1;
+      bumpCount(g.statusCounts, data["Status"]);
+      bumpCount(g.slaBucketCounts, data["SLA"]);
+      bumpCount(g.queryTypeCounts, data["Type Of Query"]);
+      const dur = parseDurationMinutes(data["Duration"]);
+      if (dur !== null) { g.durationSum += dur; g.durationKnown += 1; }
       g.rowNos.push(row.row_no);
       groups.set(key, g);
       rowIdsByGroup.set(key, [...(rowIdsByGroup.get(key) ?? []), row.id]);
@@ -166,12 +179,15 @@ export async function importGs1EmailDailyBatch(
   const groupKeys: string[] = [];
   for (const [key, g] of groups) {
     const slaPct = g.ticketCount > 0 ? Math.round((g.slaHits / g.ticketCount) * 100) : 0;
+    const [avgDuration, durationKnown] = durationStats(g.durationSum, g.durationKnown);
     toInsert.push({
       rowId: rowIdsByGroup.get(key)?.[0] ?? "",
       rowNo: 0,
       values: [
         randomUUID(), processId, g.mailDate, g.analystName, g.mailDate,
         g.ticketCount, g.gtinTotal, g.imageTotal, slaPct,
+        JSON.stringify(capCountMap(g.statusCounts)), JSON.stringify(capCountMap(g.slaBucketCounts)),
+        JSON.stringify(capCountMap(g.queryTypeCounts)), avgDuration, durationKnown,
         batchId, importedByUserId,
       ],
     });
@@ -181,13 +197,21 @@ export async function importGs1EmailDailyBatch(
   const inserted = await chunkedMasmisInsert({
     insertPrefix: `INSERT INTO gs1_email_daily_actual
            (id, process_id, report_date, analyst_name, mail_date, mail_received,
-            gtin_processed, image_count, sla_within_15min, data_source, source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+            gtin_processed, image_count, sla_within_15min,
+            status_counts, sla_bucket_counts, query_type_counts, tat_minutes, duration_known_count,
+            data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
             mail_received     = VALUES(mail_received),
             gtin_processed    = VALUES(gtin_processed),
             image_count       = VALUES(image_count),
-            sla_within_15min  = VALUES(sla_within_15min)`,
+            sla_within_15min  = VALUES(sla_within_15min),
+            status_counts     = VALUES(status_counts),
+            sla_bucket_counts = VALUES(sla_bucket_counts),
+            query_type_counts = VALUES(query_type_counts),
+            tat_minutes       = VALUES(tat_minutes),
+            duration_known_count = VALUES(duration_known_count),
+            source_reference  = VALUES(source_reference)`,
     rows: toInsert,
   });
 
