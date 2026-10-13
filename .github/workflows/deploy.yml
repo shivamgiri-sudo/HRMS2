@@ -362,6 +362,23 @@ jobs:
             if pm2 describe hrms2-workers >/dev/null 2>&1; then
               pm2 delete hrms2-workers --no-color || true
             fi
+            # The stopped processes leave their long reads running inside MySQL (a closed client does not stop a
+            # running SELECT). Those reads hold table metadata locks, and the new boot's migrations then hit
+            # "Lock wait timeout" and the server refuses to start (2026-10-13: a 27-minute report read on
+            # exit_request blocked migrations 2187/2189 and four releases in a row). Stop SELECTs of this app's
+            # database user that have run 60 s or more; only reads, never writes, and never this connection.
+            (
+              cd "$DEPLOY_ROOT/backend"
+              node --input-type=module -e '
+                import "dotenv/config";
+                import mysql from "mysql2/promise";
+                const c = await mysql.createConnection({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 3306), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
+                const [rows] = await c.query("SELECT ID, TIME, LEFT(INFO, 90) q FROM information_schema.PROCESSLIST WHERE USER = SUBSTRING_INDEX(CURRENT_USER(), \"@\", 1) AND COMMAND = \"Query\" AND TIME >= 60 AND ID <> CONNECTION_ID() AND (INFO LIKE \"SELECT%\" OR INFO LIKE \"(SELECT%\" OR INFO LIKE \"WITH%\")");
+                for (const r of rows) { try { await c.query("KILL QUERY " + Number(r.ID)); console.log("stopped orphaned read", r.ID, r.TIME + "s", String(r.q).replace(/\s+/g, " ")); } catch (e) { console.log("could not stop", r.ID, e.message); } }
+                console.log("orphaned long reads stopped:", rows.length);
+                await c.end();
+              ' || echo "orphaned read cleanup skipped"
+            ) || true
             (
               cd "$DEPLOY_ROOT/backend"
               NODE_ENV=production PORT=5055 WORKERS_PROCESS=external ENABLE_SCHEDULERS=false \
