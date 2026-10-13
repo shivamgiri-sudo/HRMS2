@@ -14,6 +14,13 @@ const show = async (tag: string, sql: string) => {
   await show("BOOT_LONG_QUERIES", "SELECT ID id, USER user, TIME secs, STATE state, LEFT(INFO, 160) q FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep' AND TIME > 20 ORDER BY TIME DESC LIMIT 12");
   await show("BOOT_LOCK_WAITS", "SELECT COUNT(*) AS waiting FROM information_schema.PROCESSLIST WHERE STATE LIKE '%metadata lock%' OR STATE LIKE '%Waiting for%'");
   await show("BOOT_CONN", "SELECT COUNT(*) AS connections, SUM(COMMAND <> 'Sleep') AS active FROM information_schema.PROCESSLIST");
+  // The queries that have run longest: who runs them (client host:port), for how long, and the statement text with every literal masked.
+  const [long] = await db.execute<RowDataPacket[]>("SELECT ID id, HOST host, DB db, TIME secs, STATE state, INFO FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep' AND TIME > 120 AND ID <> CONNECTION_ID() ORDER BY TIME DESC LIMIT 6");
+  for (const r of long) {
+    const text = String(r.INFO ?? r.info ?? "").replace(/'[^']*'/g, "'?'").replace(/\b\d{4,}\b/g, "N").replace(/\s+/g, " ");
+    const from = text.search(/\bFROM\b/i);
+    console.log("BOOT_LONG_FULL " + JSON.stringify({ id: r.id, host: String(r.host).replace(/:\d+$/, ""), secs: r.secs, state: r.state, selectCols: text.slice(0, 140), fromAndJoins: text.slice(from, from + 420), orderBy: (text.match(/ORDER BY .{0,80}/i) ?? [""])[0] }));
+  }
   await new Promise((resolve) => process.stdout.write("BOOT_DONE\n", resolve));
   process.exit(0);
 })();
