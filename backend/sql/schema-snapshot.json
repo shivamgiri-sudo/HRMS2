@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1270,
-  "columnCount": 18468,
+  "columnCount": 18469,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -21018,7 +21018,8 @@
       "actor_user_id",
       "actor_role",
       "reason",
-      "created_at"
+      "created_at",
+      "seq"
     ]
   }
 }

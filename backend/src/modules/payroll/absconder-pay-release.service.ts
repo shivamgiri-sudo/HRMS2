@@ -152,7 +152,7 @@ export async function getHoldState(exitRequestId: string): Promise<{
 }> {
   const x = await loadExit(exitRequestId);
   const [ev] = await db.execute<RowDataPacket[]>(
-    `SELECT action, reason, created_at FROM absconder_pay_release_event WHERE exit_request_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+    `SELECT action, reason, created_at FROM absconder_pay_release_event WHERE exit_request_id = ? ORDER BY seq DESC LIMIT 1`,
     [exitRequestId],
   );
   const last = ev[0] ? { action: String(ev[0].action), reason: ev[0].reason ?? null, at: String(ev[0].created_at) } : null;

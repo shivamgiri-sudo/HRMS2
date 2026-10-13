@@ -303,6 +303,44 @@ export async function getFnfPendingBlock(): Promise<CountBlock> {
   );
 }
 
+// ── 4b. Absconder salary-hold requests awaiting the branch Payroll HR ─────────────────────────
+// A reporting manager has asked for an absconder's salary days to be made 0 and Payroll HR has not
+// decided yet. That is a real, clearable pendency (unlike an absconder's F&F, which nobody can work).
+// Branch comes off the leaver's own record.
+export async function getAbsconderHoldPendingBlock(): Promise<CountBlock> {
+  const branches = await allBranches();
+  const rows = await query<RowDataPacket>(
+    "absconder-hold-pending",
+    `SELECT e.branch_id, COUNT(*) AS n
+       FROM exit_request er JOIN employees e ON e.id = er.employee_id
+      WHERE er.pay_hold_requested_at IS NOT NULL AND er.pay_hold_at IS NULL
+        AND LOWER(COALESCE(er.status,'')) NOT IN ('draft','revoked','rejected','cancelled','withdrawn')
+      GROUP BY e.branch_id`,
+  );
+  return rollupCounts(branches, new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])));
+}
+
+export async function getAbsconderHoldPendingDetail(branchId: string): Promise<NocDetailRow[]> {
+  const rows = await query<RowDataPacket>(
+    "absconder-hold-pending-detail",
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name,
+            DATEDIFF(CURDATE(), DATE(er.pay_hold_requested_at)) AS days_open
+       FROM exit_request er JOIN employees e ON e.id = er.employee_id
+      WHERE e.branch_id = ? AND er.pay_hold_requested_at IS NOT NULL AND er.pay_hold_at IS NULL
+        AND LOWER(COALESCE(er.status,'')) NOT IN ('draft','revoked','rejected','cancelled','withdrawn')
+      ORDER BY er.pay_hold_requested_at ASC
+      LIMIT 200`,
+    [branchId],
+  );
+  return rows.map((r) => ({
+    employeeId: String(r.employee_id),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.full_name ?? ""),
+    status: "hold requested",
+    daysOpen: Number(r.days_open ?? 0),
+  }));
+}
+
 export interface FnfDetailRow {
   employeeId: string;
   employeeCode: string;
@@ -1059,6 +1097,7 @@ export interface OpsControlTowerSummary {
   joining: JoiningBlock;
   fnfPending: CountBlock;
   nocPending: CountBlock;
+  absconderHoldPending: CountBlock;
   digilockerPending: CountBlock;
   esignPending: CountBlock;
   appointmentLetter: CountBlock;
@@ -1082,6 +1121,7 @@ export async function getOpsControlTowerSummary(
     joining,
     fnfPending,
     nocPending,
+    absconderHoldPending,
     digilockerPending,
     esignPending,
     appointmentLetter,
@@ -1099,6 +1139,7 @@ export async function getOpsControlTowerSummary(
     getJoiningBlock(onDate),
     getFnfPendingBlock(),
     getNocPendingBlock(),
+    getAbsconderHoldPendingBlock(),
     getDigilockerPendingBlock(),
     getEsignPendingBlock(nowMs),
     getAppointmentLetterBlock(nowMs),
@@ -1120,6 +1161,7 @@ export async function getOpsControlTowerSummary(
     joining,
     fnfPending,
     nocPending,
+    absconderHoldPending,
     digilockerPending,
     esignPending,
     appointmentLetter,

@@ -18,7 +18,7 @@ vi.mock("../../../shared/dashboardScope.js", () => ({
 }));
 vi.mock("../ops-control-tower.service.js", () => ({
   getOpsControlTowerSummary: (...a: unknown[]) => m.load(...a),
-  getAttendanceMismatchDetail: vi.fn(), getFnfPendingDetail: vi.fn(), getNocPendingDetail: vi.fn(),
+  getAttendanceMismatchDetail: vi.fn(), getFnfPendingDetail: vi.fn(), getNocPendingDetail: vi.fn(), getAbsconderHoldPendingDetail: vi.fn(),
   getDigilockerPendingDetail: vi.fn(), getEsignPendingDetail: vi.fn(), getAppointmentLetterDetail: vi.fn(),
   getPennyDropMissingDetail: vi.fn(), getAccountDetailsMissingDetail: vi.fn(), getDocsPendingDetail: vi.fn(),
   getBgvPendingDetail: vi.fn(), getAddressReviewPendingDetail: vi.fn(), getItProvisioningPendingDetail: vi.fn(), getAdminProvisioningPendingDetail: vi.fn(),

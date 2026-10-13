@@ -35,7 +35,7 @@ vi.mock('../../../shared/auditLog.js', () => ({ logSensitiveAction: (...a: unkno
 vi.mock('../../../shared/accessGuard.js', () => ({ hasRole: vi.fn(async () => m.fullTower) }));
 vi.mock('../ops-control-tower.service.js', () => ({
   getOpsControlTowerSummary: vi.fn(),
-  getAttendanceMismatchDetail: vi.fn(), getFnfPendingDetail: vi.fn(), getNocPendingDetail: vi.fn(),
+  getAttendanceMismatchDetail: vi.fn(), getFnfPendingDetail: vi.fn(), getNocPendingDetail: vi.fn(), getAbsconderHoldPendingDetail: vi.fn(),
   getDigilockerPendingDetail: (...a: unknown[]) => m.loader(...a),
   getEsignPendingDetail: vi.fn(), getAppointmentLetterDetail: vi.fn(), getPennyDropMissingDetail: vi.fn(),
   getAccountDetailsMissingDetail: vi.fn(), getDocsPendingDetail: vi.fn(), getBgvPendingDetail: vi.fn(), getAddressReviewPendingDetail: vi.fn(), getItProvisioningPendingDetail: vi.fn(),

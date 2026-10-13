@@ -53,6 +53,8 @@ export interface OpsControlTowerSummary {
   joining: JoiningBlock;
   fnfPending: CountBlock;
   nocPending: CountBlock;
+  /** Absconder salary-hold requests waiting for the branch Payroll HR. Optional so an older payload still renders. */
+  absconderHoldPending?: CountBlock;
   digilockerPending: CountBlock;
   esignPending: CountBlock;
   appointmentLetter: CountBlock;
@@ -70,6 +72,7 @@ export type DetailBlockKey =
   | "attendance-mismatch"
   | "fnf-pending"
   | "noc-pending"
+  | "absconder-hold-pending"
   | "digilocker-pending"
   | "esign-pending"
   | "appointment-letter"
