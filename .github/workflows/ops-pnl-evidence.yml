@@ -16,6 +16,10 @@ on:
         description: "Set to 'yes' to run the non-people (GRN / vendor) reconciliation instead (read-only)."
         required: false
         default: ""
+      bootdiag:
+        description: "Set to 'yes' to print the migration lock and long-running queries (read-only)."
+        required: false
+        default: ""
       dailytrend:
         description: "Set to 'yes' to time the parts of the P&L daily-trend read (read-only)."
         required: false
@@ -98,9 +102,12 @@ jobs:
           INPUT_NKMOVE: ${{ inputs.nkmove }}
           INPUT_TIMING: ${{ inputs.timing }}
           INPUT_DAILYTREND: ${{ inputs.dailytrend }}
+          INPUT_BOOTDIAG: ${{ inputs.bootdiag }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_DAILYTREND" = "yes" ]; then
+          if [ "$INPUT_BOOTDIAG" = "yes" ]; then
+            npx tsx scripts/ops-boot-diag.ts
+          elif [ "$INPUT_DAILYTREND" = "yes" ]; then
             npx tsx scripts/pnl-daily-trend-profile.ts
           elif [ "$INPUT_TIMING" = "yes" ]; then
             npx tsx scripts/pnl-timing-profile.ts
