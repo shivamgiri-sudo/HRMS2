@@ -16,6 +16,10 @@ on:
         description: "Set to 'yes' to run the non-people (GRN / vendor) reconciliation instead (read-only)."
         required: false
         default: ""
+      grncompare:
+        description: "Voucher-level GRN comparison (read-only): 'YYYY-MM|BRANCH,YYYY-MM|BRANCH'"
+        required: false
+        default: ""
       livesalary:
         description: "Set to 'yes' to check that the running-month salary reaches Live P&L (read-only)."
         required: false
@@ -68,9 +72,12 @@ jobs:
           INPUT_DIAG: ${{ inputs.diag }}
           INPUT_BRANCHPLAN: ${{ inputs.branchplan }}
           INPUT_LIVESALARY: ${{ inputs.livesalary }}
+          INPUT_GRNCOMPARE: ${{ inputs.grncompare }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_LIVESALARY" = "yes" ]; then
+          if [ -n "$INPUT_GRNCOMPARE" ]; then
+            npx tsx scripts/pnl-grn-voucher-compare.ts "$INPUT_GRNCOMPARE"
+          elif [ "$INPUT_LIVESALARY" = "yes" ]; then
             npx tsx scripts/pnl-live-salary-check.ts $INPUT_PERIODS
           elif [ "$INPUT_BRANCHPLAN" = "yes" ]; then
             npx tsx scripts/he-branch-plan-prod-check.ts
