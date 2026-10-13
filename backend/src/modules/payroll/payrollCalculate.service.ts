@@ -1961,10 +1961,13 @@ export async function calculatePayrollRunScoped(
         WHERE employee_id = ? AND status = 'active'`,
         [emp.employee_id],
       );
-      const advanceRecovery = Number(
-        (advRows as Array<{ monthly_recovery: number }>)[0]?.monthly_recovery ??
-          0,
-      );
+      // A held line pays nothing, so it recovers nothing; the advance stays whole for after release.
+      const advanceRecovery = isHeldAbsconder
+        ? 0
+        : Number(
+            (advRows as Array<{ monthly_recovery: number }>)[0]
+              ?.monthly_recovery ?? 0,
+          );
 
       // 5e. Loan EMI recovery from employee_loans
       let loanEmi = 0;

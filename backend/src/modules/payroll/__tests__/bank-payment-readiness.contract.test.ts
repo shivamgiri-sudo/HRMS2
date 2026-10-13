@@ -47,7 +47,7 @@ describe("only the payment file may emit a full account number", () => {
       "resolveAccountNumber must be called only by /payment-file. A new call site here means a " +
       "read endpoint can now emit an unmasked account number.",
     ).toBe(1);
-    const paymentFile = handlerAt(ROUTES, "/payment-file", 4000);
+    const paymentFile = handlerAt(ROUTES, "/payment-file", 5500);
     expect(paymentFile).toContain("resolveAccountNumber(");
   });
 

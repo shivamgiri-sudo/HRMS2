@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { heldAbsconderEmployeeIds } from "./absconder-hold.service.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
@@ -225,8 +226,13 @@ payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance
   (lines as RowDataPacket[]).forEach((l: any) => { l.account_number = resolveAccountNumber(l) ?? ""; });
   const isPayable = (l: RowDataPacket) =>
     Boolean(String((l as any).ifsc_code ?? "").trim()) && Boolean(String((l as any).account_number ?? "").trim());
-  const payable = (lines as RowDataPacket[]).filter(isPayable);
-  const unpayable = (lines as RowDataPacket[]).filter((l) => !isPayable(l));
+  // Absconders whose pay release is pending (Payroll HR has not released a hold): never a payment
+  // instruction, reported under TOTAL by name. A closed month cannot be recalculated, so a line that was
+  // positive before the hold is stopped here.
+  const heldIds = await heldAbsconderEmployeeIds((lines as RowDataPacket[]).map((l) => String(l.employee_id)));
+  const heldLines = (lines as RowDataPacket[]).filter((l) => heldIds.has(String(l.employee_id)));
+  const payable = (lines as RowDataPacket[]).filter((l) => !heldIds.has(String(l.employee_id)) && isPayable(l));
+  const unpayable = (lines as RowDataPacket[]).filter((l) => !heldIds.has(String(l.employee_id)) && !isPayable(l));
 
   const csvRows = ["Sr No,Employee Code,Employee Name,Bank Name,IFSC Code,Account Number,Net Amount,Remarks"];
   let srNo = 1;
@@ -252,6 +258,14 @@ payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance
       );
     }
   }
+  if (heldLines.length > 0) {
+    for (const line of heldLines) {
+      csvRows.push(
+        `HELD,${line.employee_code},${String(line.full_name ?? "").replace(/,/g, " ")},,,,${Number(line.net_salary).toFixed(2)},NOT PAID - absconder pay held awaiting Payroll HR release`,
+      );
+    }
+  }
+  res.setHeader("X-Neft-Held-Count", String(heldLines.length));
   res.setHeader("X-Neft-Excluded-Count", String(unpayable.length));
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", `attachment; filename="NEFT_${run.run_month}_${runId.slice(0, 8)}.csv"`);

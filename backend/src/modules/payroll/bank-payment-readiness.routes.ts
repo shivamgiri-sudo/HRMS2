@@ -24,6 +24,7 @@
  *   away access someone already has. The full-number export is NOT covered by that leniency: it
  *   requires an explicit scope_type = 'all'.
  */
+import { heldAbsconderEmployeeIds } from "./absconder-hold.service.js";
 import { Router } from "express";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
@@ -649,6 +650,8 @@ bankPaymentReadinessRouter.get(
     );
 
     const readyById = new Map(report.rows.filter((r) => r.payable).map((r) => [r.employee_id, r]));
+    // Absconders whose pay release is pending: reported as excluded with the reason, never paid.
+    const heldIds = await heldAbsconderEmployeeIds((lineRows as any[]).map((l) => String(l.employee_id)));
     const included: string[] = [];
     const excluded: Array<{ code: string; status: string; reason: string }> = [];
     const csv: string[] = [
@@ -658,6 +661,14 @@ bankPaymentReadinessRouter.get(
     let serial = 0;
 
     for (const line of lineRows as any[]) {
+      if (heldIds.has(String(line.employee_id))) {
+        excluded.push({
+          code: String(line.employee_code ?? ""),
+          status: "ABSCONDER_PAY_HELD",
+          reason: "absconder pay is held, awaiting branch Payroll HR release",
+        });
+        continue;
+      }
       const ready = readyById.get(line.employee_id);
       if (!ready) {
         const known = report.rows.find((r) => r.employee_id === line.employee_id);
