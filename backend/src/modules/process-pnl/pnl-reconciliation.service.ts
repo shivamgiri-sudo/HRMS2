@@ -12,7 +12,7 @@ import { peopleCostSql } from "./pnl-people-cost.js";
 import { nonVoidRunSql } from "../payroll/run-status.js";
 import { snapshotUncoveredByRunSql } from "./pnl-payroll-coverage.js";
 import { getForecastRevenueByCostCentre } from "./revenue-forecast.service.js";
-import { readOpenBudgetReserve } from "./pnl-open-budget.js";
+import { offsetReserveByLegacySpend, readOpenBudgetReserve } from "./pnl-open-budget.js";
 
 /**
  * Is a running month's accrued salary plausible? Expected = last month's payroll x days elapsed / days in month (salary is earned up to
@@ -752,7 +752,11 @@ function readPeriodSources(period: string) {
       getForecastRevenueByCostCentre(period),
       readOpenBudgetReserve(period),
     ]);
-    return { revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, forecasts, openBudget };
+    // Legacy (db_bill mirror) spend used up budget the HRMS lines never saw: take it off the open headroom so it is not counted twice.
+    const legacy = (await readGrnSpend(period, "consumed", { withDetail: true }).catch(() => [] as GrnSpendRow[]))
+      .filter((row) => row.source === "db_bill_mirror");
+    const openBudgetAdjusted = legacy.length ? offsetReserveByLegacySpend(openBudget, legacy) : openBudget;
+    return { revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, forecasts, openBudget: openBudgetAdjusted };
   });
 }
 

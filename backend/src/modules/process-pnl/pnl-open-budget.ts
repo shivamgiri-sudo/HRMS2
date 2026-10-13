@@ -101,3 +101,40 @@ export async function readOpenBudgetReserve(period: string): Promise<OpenBudgetR
   for (const [k, v] of out.unallocatedByBranch) out.unallocatedByBranch.set(k, Math.round(v * 100) / 100);
   return out;
 }
+
+/**
+ * Spend booked in the legacy billing system (the db_bill mirror leg of readGrnSpend) never consumed an HRMS budget line, so an open line still looks
+ * unspent and the same money was counted twice: once as GRN cost, once as budget headroom (September 2026: Rs 65 L of GRN against Rs 68 L of reserve
+ * on a Rs 98 L budget). Legacy spend on a cost centre uses up that cost centre's open headroom first; whatever is left over uses up the headroom of its
+ * branch's pooled lines. Never below zero, never adds. Pure.
+ */
+export function offsetReserveByLegacySpend(
+  reserve: OpenBudgetReserve,
+  legacy: Array<{ branchId: string | null; costCentreId: string | null; amount: number }>,
+): OpenBudgetReserve {
+  const byCc = new Map(reserve.byCostCentre);
+  const pooled = new Map(reserve.unallocatedByBranch);
+  const leftoverByBranch = new Map<string, number>();
+  const legacyByCc = new Map<string, { branchId: string; amount: number }>();
+  for (const row of legacy) {
+    if (!(row.amount > 0)) continue;
+    const key = row.costCentreId ?? "";
+    const cur = legacyByCc.get(key) ?? { branchId: row.branchId ?? "", amount: 0 };
+    cur.amount += row.amount;
+    legacyByCc.set(key, cur);
+  }
+  for (const [cc, item] of legacyByCc) {
+    const have = cc ? byCc.get(cc) ?? 0 : 0;
+    const used = Math.min(have, item.amount);
+    if (cc && have > 0) { const left = have - used; if (left > 0.005) byCc.set(cc, Math.round(left * 100) / 100); else byCc.delete(cc); }
+    const over = item.amount - used;
+    if (over > 0.005) leftoverByBranch.set(item.branchId, (leftoverByBranch.get(item.branchId) ?? 0) + over);
+  }
+  for (const [branch, over] of leftoverByBranch) {
+    const have = pooled.get(branch) ?? 0;
+    if (have <= 0) continue;
+    const left = have - Math.min(have, over);
+    if (left > 0.005) pooled.set(branch, Math.round(left * 100) / 100); else pooled.delete(branch);
+  }
+  return { byCostCentre: byCc, unallocatedByBranch: pooled };
+}
