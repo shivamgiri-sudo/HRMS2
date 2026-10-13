@@ -28,5 +28,5 @@ jobs:
         run: |
           for P in hrms2-backend hrms2-workers; do
             echo "=== $P ==="
-            pm2 logs "$P" --nostream --lines 20000 --no-color 2>&1 | grep -iE "migrat|listening|server started|startup|boot|uncaught|unhandled|fatal|ECONN|Error:|lock wait|exiting|SIGINT|SIGTERM|health" | tail -n 120 | cut -c1-400 || true
+            pm2 logs "$P" --nostream --lines 20000 --no-color 2>&1 | grep -iE "running on|\[startup\]|\[shutdown\]|\[migration\]|schema|timed out|uncaught|unhandled|fatal|ECONNREFUSED|heap|out of memory|exited" | tail -n 120 | cut -c1-400 || true
           done
