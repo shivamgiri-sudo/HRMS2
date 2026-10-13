@@ -21,6 +21,7 @@ import {
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { getAuthToken } from "@/lib/hrmsApi";
+import { ReginaldOverview, ReginaldDaywise, ReginaldMonthly, ReginaldTpr } from "@/components/process-live/reginald";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type DiallerProcess =
@@ -926,11 +927,6 @@ function CartDashboard({ f }: { f: Filters }) {
   const [sub, setSub] = useState<CartSub>("sales");
   const drill = useDrill();
   const fmtD = fmtDay;
-  const summQ = useQuery({ queryKey: ["pld", "cart", "summary", f], queryFn: () => fetchLive<CartSummaryT>("reginald-cart/summary", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000 });
-  const dayQ = useQuery({ queryKey: ["pld", "cart", "daily", f], queryFn: () => fetchLive<CartDayT[]>("reginald-cart/daily", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "daily" });
-  const monthFrom = monthlyFrom(f);
-  const monthQ = useQuery({ queryKey: ["pld", "cart", "monthly", monthFrom, f.to], queryFn: () => fetchLive<{ month: string; monthLabel: string; totalDialed: number; uniqueDialed: number; uniqueConnected: number; connectPct: number; loginCount: number; avgTalk: string; aht: string; avgWrap: string }[]>("reginald-cart/monthly", { from: monthFrom, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "monthly" });
-  const analystQ = useQuery({ queryKey: ["pld", "cart", "analysts", f], queryFn: () => fetchLive<CartAnalystT[]>("reginald-cart/analysts", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "analysts" });
   const aprQ = useQuery({ queryKey: ["pld", "cart", "apr", f], queryFn: () => fetchLive<{ user: string; agentName: string | null; aprCalls: number; netLoginTime: string; talk: string; wait: string; dispo: string; pause: string; lbTime: string; tbTime: string; wbTime: string; mbTime: string; qbTime: string; utilization: number }[]>("reginald-cart/apr", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "apr" });
   const salesQ = useQuery({ queryKey: ["pld", "cart", "sales", f], queryFn: () => fetchLive<CartSalesT>("reginald-cart/sales", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "sales" });
   const emailAprSummQ = useQuery({ queryKey: ["pld", "reginald-email", "summary", f], queryFn: () => fetchLive<{ totalLoginTime: string; totalTalk: string; totalPause: string; totalLbTime: string; totalTbTime: string; avgUtilization: number; agentCount: number }>("reginald-email/summary", { from: f.from, to: f.to }), staleTime: 2 * 60 * 1000, enabled: sub === "email-apr" });
@@ -943,44 +939,11 @@ function CartDashboard({ f }: { f: Filters }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
         {subs.map(s => <button key={s.key} onClick={() => setSub(s.key)} style={{ height: 30, border: "none", borderRadius: 8, padding: "0 12px", fontSize: 12, fontWeight: 800, cursor: "pointer", transition: ".15s", background: sub === s.key ? "linear-gradient(135deg,#153f69,#2673a0)" : "#edf3f9", color: sub === s.key ? "#fff" : "#334155" }}>{s.label}</button>)}
       </div>
-      {sub === "overview" && (summQ.isLoading ? <Spinner /> : summQ.error || !summQ.data ? <Err msg="Failed to load summary" /> : (() => {
-        const d = summQ.data;
-        const kpis = [{ label: "Total Dialled", value: d.offered.toLocaleString(), sub: `${f.from} – ${f.to}`, color: KPIG[0] }, { label: "Connected", value: d.connected.toLocaleString(), sub: `Connect: ${d.connectPct.toFixed(1)}%`, color: "linear-gradient(135deg,#047857,#10b981)" }, { label: "Not Connected", value: d.abandoned.toLocaleString(), sub: `${(100 - d.connectPct).toFixed(1)}% drop`, color: "linear-gradient(135deg,#be123c,#f43f5e)" }, { label: "Unique Dialled", value: d.uniqueDialed.toLocaleString(), sub: "Distinct phones", color: KPIG[4] }, { label: "Unique Connected", value: d.uniqueConnected.toLocaleString(), sub: "Distinct answered", color: "linear-gradient(135deg,#065f46,#059669)" }, { label: "Avg Talk", value: d.avgTalk, sub: "Per connected call", color: KPIG[3] }, { label: "AHT", value: d.aht, sub: "Talk+Wrap+Dead÷connected", color: KPIG[9] }, { label: "< 30 Sec", value: d.lt30.toLocaleString(), sub: "Short connections", color: KPIG[5] }, { label: "≥ 30 Sec", value: d.ge30.toLocaleString(), sub: "Quality connections", color: KPIG[4] }];
-        return (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 10, marginBottom: 14 }}>
-              {kpis.map((k, i) => <KpiCard key={i} {...k} onClick={drill ? () => drill({ type: "kpi", label: k.label, value: k.value, sub: k.sub, trend: cartDailyTrend(f) }) : undefined} />)}
-            </div>
-            <Panel title="By Campaign">
-              <DataTable cols={[{ h: "Campaign", k: "campaign" as const, left: true }, { h: "Offered", k: "offered" as const }, { h: "Connected", k: "connected" as const }, { h: "Unique Dialled", k: "uniqueDialed" as const }, { h: "Unique Connected", k: "uniqueConnected" as const }, { h: "Connect%", k: "connectPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> }, { h: "Avg Talk", k: "avgTalk" as const }]} rows={d.byCampaign} />
-            </Panel>
-          </div>
-        );
-      })())}
-      {sub === "daily" && (dayQ.isLoading ? <Spinner /> : dayQ.error || !dayQ.data ? <Err msg="Failed to load daily" /> : (
-        <div>
-          <Panel title="Day-wise Performance" sub={`${dayQ.data.length} days`}>
-            <DataTable<CartDayT> cols={[{ h: "Date", k: "date", left: true, fmt: fmtD }, { h: "Total CDR", k: "totalDialed" }, { h: "Unique Dialled", k: "uniqueDialed" }, { h: "Unique Connected", k: "uniqueConnected" }, { h: "Connect%", k: "connectPct", fmt: v => <PctBadge v={Number(v)} /> }, { h: "Login Count", k: "loginCount" }, { h: "Avg Talk", k: "avgTalk" }, { h: "AHT", k: "aht" }, { h: "Avg Wrap", k: "avgWrap" }, { h: "Avg Idle", k: "avgIdle" }]} rows={dayQ.data} />
-          </Panel>
-        </div>
-      ))}
-      {sub === "monthly" && (monthQ.isLoading ? (
-        <div>
-          <Spinner />
-          <div style={{ textAlign: "center", fontSize: 12, color: "#697586", marginTop: -20 }}>
-            Totalling {monthFrom.slice(0, 7)} to {f.to.slice(0, 7)} from the dialler's full call log. A month not viewed recently can take a minute or two; after that it opens instantly.
-          </div>
-        </div>
-      ) : monthQ.error || !monthQ.data ? <Err msg="Could not load monthly data" /> : (
-        <Panel title="Monthly Performance">
-          <DataTable cols={[{ h: "Month", k: "monthLabel" as const, left: true }, { h: "Total CDR", k: "totalDialed" as const }, { h: "Unique Dialled", k: "uniqueDialed" as const }, { h: "Unique Connected", k: "uniqueConnected" as const }, { h: "Connect%", k: "connectPct" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> }, { h: "Avg Daily Login", k: "loginCount" as const }, { h: "Avg Talk", k: "avgTalk" as const }, { h: "AHT", k: "aht" as const }, { h: "Avg Wrap", k: "avgWrap" as const }]} rows={monthQ.data} />
-        </Panel>
-      ))}
-      {sub === "analysts" && (analystQ.isLoading ? <Spinner /> : analystQ.error || !analystQ.data ? <Err msg="Failed to load analysts" /> : (
-        <Panel title="Analyst-wise Performance (CDR + APR)" sub={`${analystQ.data.length} analysts`}>
-          <DataTable<CartAnalystT> cols={[nameCol("analystName"), { h: "Analyst ID", k: "analyst", left: true }, { h: "Login Days", k: "loginDays" }, { h: "Total CDR", k: "totalDialed" }, { h: "Unique Dialled", k: "uniqueDialed" }, { h: "Unique Connected", k: "uniqueConnected" }, { h: "Connect%", k: "connectPct", fmt: v => <PctBadge v={Number(v)} /> }, { h: "<30s", k: "lt30" }, { h: "≥30s", k: "ge30" }, { h: "Avg Talk", k: "avgTalk" }, { h: "AHT", k: "aht" }, { h: "Avg Wrap", k: "avgWrap" }, { h: "Avg Wait", k: "avgWait" }, { h: "Net Login", k: "netLoginTime" }, { h: "Utilization", k: "utilization", fmt: v => <PctBadge v={Number(v)} /> }]} rows={analystQ.data} />
-        </Panel>
-      ))}
+      {/* Reginald management views (REG-01..06) live in src/components/process-live/reginald. */}
+      {sub === "overview" && <ReginaldOverview range={f} />}
+      {sub === "daily" && <ReginaldDaywise range={f} />}
+      {sub === "monthly" && <ReginaldMonthly range={f} />}
+      {sub === "analysts" && <ReginaldTpr range={f} />}
       {sub === "apr" && (aprQ.isLoading ? <Spinner /> : aprQ.error || !aprQ.data ? <Err msg="Failed to load APR" /> : (
         <Panel title="Agent Productivity Report (APR)" sub={`${aprQ.data.length} agents`}>
           <DataTable cols={[nameCol("agentName"), { h: "Agent ID", k: "user" as const, left: true }, { h: "APR Calls", k: "aprCalls" as const }, { h: "Net Login", k: "netLoginTime" as const }, { h: "Talk", k: "talk" as const }, { h: "Wait", k: "wait" as const }, { h: "Dispo", k: "dispo" as const }, { h: "Pause", k: "pause" as const }, { h: "LB", k: "lbTime" as const }, { h: "TB", k: "tbTime" as const }, { h: "WB", k: "wbTime" as const }, { h: "MB", k: "mbTime" as const }, { h: "QB", k: "qbTime" as const }, { h: "Utilization", k: "utilization" as const, fmt: (v: unknown) => <PctBadge v={Number(v)} /> }]} rows={aprQ.data} />

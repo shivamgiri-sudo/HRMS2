@@ -43,6 +43,9 @@ import {
   getCartSummary, getCartDaily, getCartMonthly, getCartAnalysts, getCartApr, getCartSales,
 } from './reginald-cart.service.js';
 import {
+  getInsightOverview, getInsightDaily, getInsightMonthly, getInsightTargets, getInsightAgents,
+} from './reginald-insights.service.js';
+import {
   getAprSummary, getAprDaily, getAprAgents, type EmailProcess,
 } from './apr.service.js';
 import { getEmailTickets } from './email-ticket.service.js';
@@ -92,6 +95,12 @@ router.get('/reginald-cart/monthly',  wrap(req => getCartMonthly(req.query as Q)
 router.get('/reginald-cart/daily',    wrap(req => getCartDaily(req.query as Q)));
 router.get('/reginald-cart/analysts', wrap(req => getCartAnalysts(req.query as Q)));
 router.get('/reginald-cart/apr',      wrap(req => getCartApr(req.query as Q)));
+// Management views (overview, CDR, monthly, day-wise target, TPR) — reginald-insights.service.ts
+router.get('/reginald-cart/insights/overview', wrap(req => getInsightOverview(req.query as Q)));
+router.get('/reginald-cart/insights/daily',    wrap(req => getInsightDaily(req.query as Q)));
+router.get('/reginald-cart/insights/monthly',  wrap(req => getInsightMonthly(req.query as Q)));
+router.get('/reginald-cart/insights/targets',  wrap(req => getInsightTargets(req.query as Q)));
+router.get('/reginald-cart/insights/agents',   wrap(req => getInsightAgents(req.query as Q)));
 // Sales from mas_hrms (uploaded via REGINALD_ABANDONED_CART_SALES bulk upload)
 router.get('/reginald-cart/sales',    wrap(req => getCartSales(req.query as Q)));
 
