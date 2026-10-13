@@ -47,6 +47,29 @@ blaBliBluDashboardRouter.get("/analytics", requireRole(...VIEWER_ROLES), h(async
   res.json({ success: true, data: await getBlaAnalytics(q(req, "from"), q(req, "to")) });
 }));
 
+// ── Data quality: months with data, freshness, Overall Sales upload status / rejection log, correction status ──
+blaBliBluDashboardRouter.get("/months", requireRole(...VIEWER_ROLES), h(async (_req, res) => {
+  const { listMonths } = await import("./bbb-sales-quality.service.js");
+  res.json({ success: true, data: await listMonths() });
+}));
+blaBliBluDashboardRouter.get("/freshness", requireRole(...VIEWER_ROLES), h(async (_req, res) => {
+  const { dataFreshness } = await import("./bbb-sales-quality.service.js");
+  res.json({ success: true, data: await dataFreshness() });
+}));
+blaBliBluDashboardRouter.get("/sales-uploads", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const { listSalesUploads } = await import("./bbb-sales-quality.service.js");
+  res.json({ success: true, data: await listSalesUploads(Number(q(req, "limit") ?? 60)) });
+}));
+blaBliBluDashboardRouter.get("/sales-uploads/:batchId", requireRole(...VIEWER_ROLES), hu(async (req, res) => {
+  const { getSalesUploadDetail } = await import("./bbb-sales-quality.service.js");
+  res.json({ success: true, data: await getSalesUploadDetail(String(req.params.batchId)) });
+}));
+blaBliBluDashboardRouter.get("/correction-status", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const { getCorrectionStatus } = await import("./bbb-sales-quality.service.js");
+  const { from, to } = svc.resolveRange(q(req, "from"), q(req, "to"));
+  res.json({ success: true, data: await getCorrectionStatus(from, to) });
+}));
+
 blaBliBluDashboardRouter.get("/targets", requireRole(...VIEWER_ROLES), h(async (_req, res) => {
   res.json({ success: true, data: await svc.getTargets() });
 }));

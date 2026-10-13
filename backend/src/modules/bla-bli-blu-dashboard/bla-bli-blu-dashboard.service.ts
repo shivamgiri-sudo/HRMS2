@@ -120,7 +120,8 @@ async function latestDataDate(): Promise<string | null> {
 export async function getDashboard(fromRaw?: string, toRaw?: string) {
   const { from, to } = resolveRange(fromRaw, toRaw);
   const [received, sales, targets, latest] = await Promise.all([loadReceived(from, to), loadSales(from, to), getTargets(), latestDataDate()]);
-  return { from, to, latestDataDate: latest, ...buildDashboard(received, sales, targets) };
+  // refreshedAt: when these figures were read from the committed tables (the dashboard's "Last Data Refresh").
+  return { from, to, latestDataDate: latest, refreshedAt: new Date().toISOString(), ...buildDashboard(received, sales, targets) };
 }
 
 /** "Product Wise Sales": SUMIFS of Count by category, split by Campaign and Payment status. */

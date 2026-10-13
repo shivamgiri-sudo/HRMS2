@@ -1613,7 +1613,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
     return (
       <div style={{ margin: "16px 0", padding: "16px 20px", background: "linear-gradient(135deg,#fff8e7,#fffaf0)", border: "1px solid #fde68a", borderRadius: 14, color: "#92400e", fontSize: 13, fontWeight: 700 }}>
         <strong>No live dialler data available</strong> for <em>{processName}</em>.
-        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: BLA BLI BLU Inbound, Reginald Abandoned Cart, Molecular Email Dashboard, Reginald Email, Finnable, Domestic Billing, GS1 India, GNC, Bella-Vita Organic, Clovia, Neemans, Viega, Exicom, DU Digital.</div>
+        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: Blabli Blu Inbound, Reginald Abandoned Cart, Molecular Email Dashboard, Reginald Email, Finnable, Domestic Billing, GS1 India, GNC, Bella-Vita Organic, Clovia, Neemans, Viega, Exicom, DU Digital.</div>
       </div>
     );
   }

@@ -1367,6 +1367,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2161_roster_import_row_batch_cover.sql", // Registered 2026-10-12. Covering index (batch_id, roster_date, employee_id_raw) on wfm_roster_import_row: tracker coverage scan was 12.7s through idx_batch plus a table fetch per row.
   "migrations/2180_molecular_email_ticket.sql", // Registered 2026-10-13. Molecular Email Dashboard (MOL-02..06): one row per Molecular ticket (unique ticket_id, created/first-closed/final-closed, reopen_count, dq_flag), synced read-only from molecular_db_email. No process_id (REG-07). CREATE TABLE IF NOT EXISTS only.
   "migrations/2181_molecular_email_ticket_reopen_event.sql", // Registered 2026-10-13. Reopen events per Molecular ticket for the Closed vs Reopened trend. CREATE TABLE IF NOT EXISTS only.
+  "migrations/2170_bbb_sales_upload_quality.sql", // Registered 2026-10-13. Blabli Blu Overall Sales upload quality: bla_bli_blu_sales_upload_reject (row / field / value / reason code / required format / business-vs-technical per rejected row) and bla_bli_blu_sales_upload_date (per upload + date: existing, uploaded, updated, inserted, after counts for the correction/variance view). Additive: new tables only.
 ];
 
 export type MigrationHealth = {
