@@ -55,6 +55,7 @@ import {
 } from './molecular-email.service.js';
 import { getBillingDashboard } from './domestic-billing.service.js';
 import { getGs1Overview, getGs1Email, getGs1DataKart, getGs1Approval } from './gs1.service.js';
+import { getGs1Dashboard } from './gs1-dashboard.service.js';
 import {
   getCdrStagingSummary, getCdrStagingDaily, getCdrStagingMonthly,
   type CdrClientCode,
@@ -140,6 +141,7 @@ router.get('/gs1/overview',  wrap(req => getGs1Overview(req.query as Q)));
 router.get('/gs1/email',     wrap(req => getGs1Email(req.query as Q)));
 router.get('/gs1/datakart',  wrap(req => getGs1DataKart(req.query as Q)));
 router.get('/gs1/approval',  wrap(req => getGs1Approval(req.query as Q)));
+router.get('/gs1/dashboard', wrap(req => getGs1Dashboard(req.query as Q)));
 
 // ── Domestic Billing Dashboard ────────────────────────────────────────────────
 router.get('/billing/dashboard', wrap(req => getBillingDashboard(req.query as Q)));

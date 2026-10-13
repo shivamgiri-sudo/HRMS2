@@ -35,6 +35,7 @@ import { getInboundSummary, getInboundMonthly, getInboundDaily } from "../proces
 import { getCartSummary, getCartMonthly, getCartDaily, getCartSales } from "../process-live-dashboard/reginald-cart.service.js";
 import { getAprSummary, getAprDaily, type EmailProcess } from "../process-live-dashboard/apr.service.js";
 import { getGs1Overview, getGs1Email, getGs1DataKart, getGs1Approval } from "../process-live-dashboard/gs1.service.js";
+import { getGs1Dashboard } from "../process-live-dashboard/gs1-dashboard.service.js";
 import {
   getCdrStagingSummary, getCdrStagingDaily, getCdrStagingMonthly, type CdrClientCode,
 } from "../process-live-dashboard/cdr-staging.service.js";
@@ -103,8 +104,9 @@ export async function getLiveDashboardForPortal(
     // GS1's 4 sub-tabs (Overview/Email/Data Kart/Approval) each have their own
     // aggregate KPIs -- the client-safe subset is the aggregates from all four,
     // minus each one's byAnalyst/byCompany rows (per-employee/per-company PII).
-    const [overview, email, dataKart, approval] = await Promise.all([
+    const [overview, email, dataKart, approval, consolidated] = await Promise.all([
       getGs1Overview(range), getGs1Email(range), getGs1DataKart(range), getGs1Approval(range),
+      getGs1Dashboard(range),
     ]);
     return {
       dashboard,
@@ -112,6 +114,13 @@ export async function getLiveDashboardForPortal(
         overview,
         email: { tasks: email.tasks, gtin: email.gtin, images: email.images, sla15Pct: email.sla15Pct, daily: email.daily },
         dataKart: { tasks: dataKart.tasks, gtin: dataKart.gtin, withinTatPct: dataKart.withinTatPct, avgGtinPerTask: dataKart.avgGtinPerTask, daily: dataKart.daily },
+        // Consolidated work-item totals and per-LOB comparison (no analyst rows).
+        consolidated: {
+          overall: consolidated.overall,
+          comparison: consolidated.comparison.rows,
+          reconciled: consolidated.reconciliation.every(r => r.ok),
+          lastRefresh: consolidated.lastRefresh.latest,
+        },
         approval: { totalSku: approval.totalSku, auditCount: approval.auditCount, auditErrors: approval.auditErrors, errorRate: approval.errorRate, uniqueGcp: approval.uniqueGcp, daily: approval.daily },
       },
       daily: [],
