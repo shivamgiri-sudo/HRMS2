@@ -40,7 +40,8 @@ export async function nocFinalApprovalFrom(): Promise<string | null> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT config_value FROM payroll_config_flags
-        WHERE branch_id IS NULL AND process_id IS NULL AND config_key = ? LIMIT 1`,
+        WHERE branch_id IS NULL AND process_id IS NULL AND config_key = ?
+        ORDER BY updated_at DESC, id DESC LIMIT 1`,
       [NOC_PH_FINAL_FROM_KEY],
     );
     const v = String(rows[0]?.config_value ?? "").trim();

@@ -7,7 +7,7 @@ import { resolveDashboardScope } from "../../shared/dashboardScope.js";
 import { attendanceInEmploymentWindowSql } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import multer from "multer";
 import { randomUUID } from "crypto";
 import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculation.service.js";
@@ -167,6 +167,23 @@ payrollMoreRouter.put("/config-flags", requireRole("admin", "super_admin", "fina
   const { randomUUID } = await import("crypto");
   const id = randomUUID();
   const actor = req.authUser?.id ?? "system";
+  // The unique key on (branch_id, process_id, config_key) cannot match when branch or process is NULL,
+  // so ON DUPLICATE KEY never fired for a company-wide flag: every save added a new row and readers
+  // then saw conflicting values. Update the existing row(s) in place first; insert only if none exist.
+  const [upd] = await db.execute<ResultSetHeader>(
+    `UPDATE payroll_config_flags
+        SET config_value = ?, description = COALESCE(?, description), updated_by = ?, updated_at = NOW()
+      WHERE config_key = ? AND branch_id <=> ? AND process_id <=> ?`,
+    [config_value, description ?? null, actor, config_key, branch_id ?? null, process_id ?? null]
+  );
+  if (upd.affectedRows > 0) {
+    const [done] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM payroll_config_flags WHERE config_key = ? AND (branch_id <=> ?) AND (process_id <=> ?)
+        ORDER BY updated_at DESC, id DESC LIMIT 1`,
+      [config_key, branch_id ?? null, process_id ?? null]
+    );
+    return res.json({ success: true, data: done[0] });
+  }
   await db.execute(
     `INSERT INTO payroll_config_flags (id, branch_id, process_id, config_key, config_value, description, updated_by)
      VALUES (?, ?, ?, ?, ?, ?, ?)
