@@ -1,0 +1,46 @@
+name: Ops Scan Inverted Employment Windows (manual, read-only)
+
+# One-off, read-only scan for employees whose employment window start is after its resolved
+# end (salary_start_date/DOJ > resolved exit date, or a stint start after its effective end).
+# Such a window is permanently empty, so employmentWindow.ts#isWithinWindows rejects every
+# attendance date for that employee, not just out-of-range ones. Found live on MAS63669 on
+# 2026-10-13 while validating an APR bulk upload's rejection report; this checks for others.
+# Standalone file, not ops-scripts.yml, to avoid colliding with concurrent edits there.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-scan-inverted-employment-windows
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan inverted employment windows
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run (read-only)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: npx tsx scripts/scan-inverted-employment-windows.ts
