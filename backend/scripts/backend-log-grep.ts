@@ -3,10 +3,13 @@
  * lines that follow it (stack / SQL error). Secrets-looking values are masked.
  *
  *   npx tsx scripts/backend-log-grep.ts "Error fetching requests"
+ *   npx tsx scripts/backend-log-grep.ts "first:Connection failed"   (earliest hits instead of latest)
  */
 import fs from "fs";
 
-const PHRASE = process.argv[2] ?? "";
+const RAW = process.argv[2] ?? "";
+const FIRST = RAW.startsWith("first:");
+const PHRASE = FIRST ? RAW.slice(6) : RAW;
 // pm2 writes the live logs under the runner user's ~/.pm2/logs (the repo logs/ dir is stale).
 const FILES = [
   "/home/masadmin/.pm2/logs/hrms2-backend-error.log", "/home/masadmin/.pm2/logs/hrms2-backend-out.log",
@@ -29,7 +32,7 @@ for (const f of FILES) {
   const hits: number[] = [];
   lines.forEach((l, i) => { if (l.includes(PHRASE)) hits.push(i); });
   console.log(`=== ${f}: ${hits.length} hit(s)`);
-  for (const i of hits.slice(-4)) {
+  for (const i of FIRST ? hits.slice(0, 4) : hits.slice(-4)) {
     console.log("---");
     for (const l of lines.slice(i, i + 14)) console.log("  " + mask(l).slice(0, 300));
   }
