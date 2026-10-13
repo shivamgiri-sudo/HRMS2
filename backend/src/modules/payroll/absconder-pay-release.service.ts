@@ -1,6 +1,10 @@
 /**
- * Release of held absconder pay: Branch Head approves, then a DIFFERENT Payroll Head, and the employee's
- * paid days build again.
+ * Hold and release of an absconder's pay.
+ *
+ * DEFAULT: an absconded employee is paid by the system as normal. Only the employee's reporting manager, the
+ * branch Payroll HR or the Branch Head can decide to make the salary days 0 (placeHold). That call needs no
+ * approval; it lasts until the Branch Head and then a DIFFERENT Payroll Head release it, or until it is
+ * withdrawn. On release the paid days build again.
  *
  * ONE CHAIN. The two approvals are the ones the F&F exception already uses (exit_request.ff_exception_bh_*
  * then ff_exception_*, ff-settlement-gate.service.ts, which also enforces the 15-character reason and the
@@ -15,14 +19,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { recordBranchHeadFfException, grantAbscondingFfException } from "../exit/ff-settlement-gate.service.js";
 import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculation.service.js";
 import { absconderHoldConfig, isAbsconderPayHeld } from "./absconder-hold.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
-import { branchHeadUserIds } from "./noc.notifications.js";
+import { branchHeadUserIds, branchOnlyRoleHolders } from "./noc.notifications.js";
 
 export type ReleaseState =
   | "not_held"
@@ -47,6 +51,10 @@ interface ExitRow extends RowDataPacket {
   ff_exception_bh_at: string | null;
   ff_exception_at: string | null;
   pay_release_route: string | null;
+  pay_hold_at: string | null;
+  exit_type: string | null;
+  exit_sub_type: string | null;
+  status: string | null;
 }
 
 async function loadExit(exitRequestId: string): Promise<ExitRow> {
@@ -55,7 +63,8 @@ async function loadExit(exitRequestId: string): Promise<ExitRow> {
             COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS employee_name,
             er.absconding_since,
             COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, er.absconding_since) AS last_working_day,
-            er.ff_exception_bh_at, er.ff_exception_at, er.pay_release_route
+            er.ff_exception_bh_at, er.ff_exception_at, er.pay_release_route, er.pay_hold_at,
+            er.exit_type, er.exit_sub_type, er.status
        FROM exit_request er JOIN employees e ON e.id = er.employee_id
       WHERE er.id = ? LIMIT 1`,
     [exitRequestId],
@@ -135,17 +144,83 @@ export async function getReleaseState(exitRequestId: string): Promise<{
   else if (last?.action === "ph_rejected") state = "rejected_by_payroll_head";
   else if (bh) state = "awaiting_payroll_head";
   else state = held ? "awaiting_branch_head" : "not_held";
+  // held already means: a hold was placed, the feature is on, and nothing has released it.
   return { state, held, branchHeadApproved: bh, payrollHeadApproved: ph, route: x.pay_release_route, lastEvent: last };
 }
 
-/** Called when an absconding exit is created: log the request, tell the Branch Head, drop open lines to 0. */
-export async function requestRelease(exitRequestId: string, actorUserId: string | null): Promise<void> {
-  // Nothing is held, so nothing to request, while the feature is off.
-  if (!(await absconderHoldConfig()).enabled) return;
-  const x = await loadExit(exitRequestId);
-  await writeEvent(x, "requested", actorUserId, null, null);
-  await notifyBranchHead(x);
-  await recalcOpenRuns(x, "Absconding confirmed: salary days held pending Branch Head and Payroll Head approval", actorUserId);
+/**
+ * Which of the three people who may decide this is the caller? null when none of them.
+ *   - the employee's reporting manager
+ *   - the Payroll HR of the employee's branch
+ *   - the Branch Head of the employee's branch
+ */
+export async function holdDeciderRole(
+  userId: string,
+  x: { employee_id: string; branch_id: string | null },
+): Promise<"reporting_manager" | "branch_payroll_hr" | "branch_head" | null> {
+  const [mgr] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM employees emp
+       JOIN employees m ON m.id = COALESCE(emp.reporting_manager_id, emp.manager_id)
+      WHERE emp.id = ? AND m.user_id = ? LIMIT 1`,
+    [x.employee_id, userId],
+  );
+  if (mgr.length) return "reporting_manager";
+  if ((await branchOnlyRoleHolders(["payroll_hr"], x.branch_id)).includes(userId)) return "branch_payroll_hr";
+  if ((await branchHeadUserIds(x.branch_id)).includes(userId)) return "branch_head";
+  return null;
+}
+
+function assertAbsconding(x: ExitRow): void {
+  const isAbs = [x.exit_type, x.exit_sub_type].some((v) => ["absconding", "abandonment"].includes(String(v ?? "").toLowerCase()));
+  const live = !["draft", "revoked", "rejected", "cancelled", "withdrawn"].includes(String(x.status ?? "").toLowerCase());
+  if (!isAbs || !live) throw refuse(409, "HOLD_NOT_ABSCONDING", "A pay hold can only be placed on a live absconding exit.");
+}
+
+/** Make an absconder's salary days 0. Reporting manager, branch Payroll HR or Branch Head only. */
+export async function placeHold(p: { exitRequestId: string; reason: string; actorUserId: string }): Promise<{ role: string }> {
+  if (!(await absconderHoldConfig()).enabled) {
+    throw refuse(409, "HOLD_FEATURE_OFF", "Holding an absconder's salary is not switched on.");
+  }
+  const reason = p.reason?.trim() ?? "";
+  if (reason.length < 15) throw refuse(400, "HOLD_REASON_REQUIRED", "A reason of at least 15 characters is required to hold salary.");
+  const x = await loadExit(p.exitRequestId);
+  assertAbsconding(x);
+  if (x.ff_exception_at) throw refuse(409, "HOLD_ALREADY_RELEASED", "Pay has already been released for this employee.");
+  if (x.pay_hold_at) throw refuse(409, "HOLD_ALREADY_PLACED", "Salary is already on hold for this employee.");
+  const role = await holdDeciderRole(p.actorUserId, x);
+  if (!role) {
+    throw refuse(403, "HOLD_NOT_YOUR_CALL", "Only the employee's reporting manager, the branch Payroll HR or the Branch Head can hold this salary.");
+  }
+  const [res] = await db.execute<ResultSetHeader>(
+    `UPDATE exit_request SET pay_hold_at = NOW(), pay_hold_by = ?, pay_hold_role = ?, pay_hold_reason = ?
+      WHERE id = ? AND pay_hold_at IS NULL AND ff_exception_at IS NULL`,
+    [p.actorUserId, role, reason.slice(0, 500), x.id],
+  );
+  if (res.affectedRows !== 1) throw refuse(409, "HOLD_ALREADY_PLACED", "Salary was just put on hold by someone else.");
+  await writeEvent(x, "hold_placed", p.actorUserId, role, reason);
+  // Drop the open lines to 0 now, not at the next nightly run.
+  await recalcOpenRuns(x, "Absconder salary held at 0 days on a reporting manager / Payroll HR / Branch Head decision", p.actorUserId);
+  if (role !== "branch_head") await notifyBranchHead(x);
+  return { role };
+}
+
+/** Lift a hold that was placed, before any release: salary returns to normal. Same three people (or Payroll Head). */
+export async function withdrawHold(p: { exitRequestId: string; reason: string; actorUserId: string }): Promise<void> {
+  const reason = p.reason?.trim() ?? "";
+  if (reason.length < 15) throw refuse(400, "HOLD_REASON_REQUIRED", "A reason of at least 15 characters is required to withdraw a hold.");
+  const x = await loadExit(p.exitRequestId);
+  if (!x.pay_hold_at) throw refuse(409, "HOLD_NOT_PLACED", "No hold is placed on this employee's salary.");
+  if (x.ff_exception_at) throw refuse(409, "HOLD_ALREADY_RELEASED", "Pay has already been released.");
+  const role = await holdDeciderRole(p.actorUserId, x);
+  if (!role) throw refuse(403, "HOLD_NOT_YOUR_CALL", "Only the employee's reporting manager, the branch Payroll HR or the Branch Head can withdraw this hold.");
+  await db.execute(
+    `UPDATE exit_request SET pay_hold_at = NULL, pay_hold_by = NULL, pay_hold_role = NULL, pay_hold_reason = NULL
+      WHERE id = ? AND ff_exception_at IS NULL`,
+    [x.id],
+  );
+  await writeEvent(x, "hold_withdrawn", p.actorUserId, role, reason);
+  await closeTasks(x.id, ["absconder_pay_release_bh", "absconder_pay_release_ph", "absconder_pay_release_rejected"]);
+  await recalcOpenRuns(x, "Absconder salary hold withdrawn: normal days restored", p.actorUserId);
 }
 
 async function notifyBranchHead(x: ExitRow): Promise<void> {
@@ -267,6 +342,9 @@ export async function payrollHeadApprove(p: { exitRequestId: string; reason: str
   await closeTasks(x.id, ["absconder_pay_release_bh", "absconder_pay_release_ph", "absconder_pay_release_rejected"]);
   // Hold is lifted (ff_exception_at is set). Rebuild the days in every open run; a closed month is paid
   // through the F&F instead, and the route is recorded once so the same days are never paid twice.
+  // Only when a hold had been placed: with no hold the employee was being paid normally, and there is
+  // nothing to rebuild or route.
+  if (!x.pay_hold_at) return { route: "payroll", openRunRecalculated: false };
   const { openRunRecalculated } = await recalcOpenRuns(x, "Absconder pay release approved: attendance days restored", p.actorUserId);
   const route = openRunRecalculated ? "payroll" : "fnf";
   await db.execute(`UPDATE exit_request SET pay_release_route = ? WHERE id = ? AND pay_release_route IS NULL`, [route, x.id]);

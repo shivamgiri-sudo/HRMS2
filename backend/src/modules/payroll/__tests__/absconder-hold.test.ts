@@ -1,9 +1,8 @@
 /**
  * Absconder salary hold, pinned.
  *   1. OFF by default and on any read failure: an unreadable switch must never zero anyone's salary.
- *   2. ON needs BOTH the enabled flag and a valid start date.
- *   3. The held query only ever asks about exits raised on/after that date, for the latest live exit,
- *      with no Payroll Head release yet; and never runs when the hold is off.
+ *   2. An absconder is paid as normal; only an exit with a PLACED hold (pay_hold_at) is ever held.
+ *   3. The held query asks about the latest live exit, not yet released, and never runs when the hold is off.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,24 +23,16 @@ describe("absconder hold switch", () => {
 
   it("is OFF when nothing is configured", async () => {
     flags({});
-    expect(await absconderHoldConfig()).toEqual({ enabled: false, from: null });
+    expect(await absconderHoldConfig()).toEqual({ enabled: false });
   });
-
-  it("is OFF with the flag but no valid start date", async () => {
-    flags({ absconder_salary_hold_enabled: "true", absconder_hold_from: "soon" });
+  it("is OFF when the flag is not 'true'", async () => {
+    flags({ absconder_salary_hold_enabled: "yes" });
     expect((await absconderHoldConfig()).enabled).toBe(false);
   });
-
-  it("is OFF with a start date but the flag not true", async () => {
-    flags({ absconder_salary_hold_enabled: "false", absconder_hold_from: "2026-10-01" });
-    expect((await absconderHoldConfig()).enabled).toBe(false);
+  it("is ON only for an explicit 'true'", async () => {
+    flags({ absconder_salary_hold_enabled: "true" });
+    expect(await absconderHoldConfig()).toEqual({ enabled: true });
   });
-
-  it("is ON with both", async () => {
-    flags({ absconder_salary_hold_enabled: "true", absconder_hold_from: "2026-10-01" });
-    expect(await absconderHoldConfig()).toEqual({ enabled: true, from: "2026-10-01" });
-  });
-
   it("fails OFF when the read throws", async () => {
     execute.mockRejectedValue(new Error("db down"));
     expect((await absconderHoldConfig()).enabled).toBe(false);
@@ -61,8 +52,8 @@ describe("held employees", () => {
     expect((await heldAbsconderEmployeeIds([])).size).toBe(0);
   });
 
-  it("holds exactly the employees the exit query returns, scoped by the start date", async () => {
-    flags({ absconder_salary_hold_enabled: "true", absconder_hold_from: "2026-10-01" });
+  it("holds exactly the employees the exit query returns (a hold placed, not yet released)", async () => {
+    flags({ absconder_salary_hold_enabled: "true" });
     query.mockResolvedValue([[{ employee_id: "e2" }]]);
     const held = await heldAbsconderEmployeeIds(["e1", "e2"]);
     expect([...held]).toEqual(["e2"]);
@@ -71,13 +62,14 @@ describe("held employees", () => {
     expect(String(sql)).toContain("'absconding','abandonment'");
     expect(String(sql)).toMatch(/NOT IN \('draft','revoked','rejected','cancelled','withdrawn'\)/);
     expect(String(sql)).toContain("ORDER BY x.created_at DESC");
-    expect(params).toEqual([["e1", "e2"], "2026-10-01"]);
+    expect(params).toEqual([["e1", "e2"]]);
+    expect(String(sql)).toContain("er.pay_hold_at IS NOT NULL");
   });
 
   it("reports held lines by name only when the hold is on", async () => {
     flags({});
     expect(await heldAbsconderLinesForRuns(["r1"])).toEqual([]);
-    flags({ absconder_salary_hold_enabled: "true", absconder_hold_from: "2026-10-01" });
+    flags({ absconder_salary_hold_enabled: "true" });
     query.mockResolvedValue([[{ employee_id: "e1", employee_code: "MAS1", employee_name: "A B", exit_request_id: "x1", bh: 1 }]]);
     expect(await heldAbsconderLinesForRuns(["r1"])).toEqual([
       { employee_id: "e1", employee_code: "MAS1", employee_name: "A B", exit_request_id: "x1", branch_head_approved: true },
