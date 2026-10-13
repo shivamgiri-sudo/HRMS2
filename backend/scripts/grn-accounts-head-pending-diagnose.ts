@@ -7,13 +7,17 @@
  * would be blocked by either the role gate (missing accounts_head) or the maker-checker
  * self-review guard (submitted_by / branch_head_reviewed_by === that user).
  *
- *   npx tsx scripts/grn-accounts-head-pending-diagnose.ts [user_email]
+ *   npx tsx scripts/grn-accounts-head-pending-diagnose.ts <user_email>
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 
-const EMAIL = process.argv[2] ?? "nixon.sethi@teammas.in";
+const EMAIL = process.argv[2];
+if (!EMAIL) {
+  console.error("Usage: npx tsx scripts/grn-accounts-head-pending-diagnose.ts <user_email>");
+  process.exit(1);
+}
 
 const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPacket[]>(sql, p))[0];
 

@@ -170,6 +170,11 @@ on:
         required: false
         default: ""
         type: string
+      approver_email:
+        description: "grn-accounts-head-pending-diagnose only: the user's email to check roles/blocks for"
+        required: false
+        default: ""
+        type: string
       confirm:
         description: "To APPLY, type the script name exactly. Ignored for a dry run."
         required: false
@@ -681,7 +686,11 @@ jobs:
               ;;
             grn-accounts-head-pending-diagnose)
               # Read-only in both modes.
-              npx tsx scripts/grn-accounts-head-pending-diagnose.ts nixon.sethi@teammas.in
+              if [ -z "${{ inputs.approver_email }}" ]; then
+                echo "::error::approver_email input is required for grn-accounts-head-pending-diagnose"
+                exit 1
+              fi
+              npx tsx scripts/grn-accounts-head-pending-diagnose.ts "${{ inputs.approver_email }}"
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
