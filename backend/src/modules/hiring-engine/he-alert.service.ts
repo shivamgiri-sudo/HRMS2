@@ -8,12 +8,9 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { emailService } from "../communication/email.service.js";
-import { PinbotWhatsAppProvider } from "../communication/providers/whatsapp/pinbot.provider.js";
 import { STALE_PING_MS, summarizeExpected, type ExpectedRow } from "./he-eta.js";
-import { buildParams } from "./he-template-catalog.js";
-import { sendsPaused } from "./he-send.service.js";
 
-const pinbot = new PinbotWhatsAppProvider();
+
 const WINDOW_MIN = 30;
 
 export interface AlertSummary { drives: number; alerted: number; skipped: number; recipients: number }
@@ -95,16 +92,7 @@ export async function runHrArrivalAlerts(o: { dryRun?: boolean } = {}): Promise<
            VALUES (UUID(), ?, 'he_arrival_alert', ?, ?, 'he_drive', ?, '/ats/hiring-engine', 'high', 0, 0, NOW())`, [h.user_id, title, detail, d.id])
           .then(() => { channels.inApp++; }).catch(() => undefined);
       }
-      if (!sendsPaused() && h.mobile && pinbot.isConfigured()) {
-        const [t] = await db.execute<RowDataPacket[]>("SELECT pinbot_name, language, approval_state FROM he_template WHERE template_key = 'he_hr_arrival_alert:en' LIMIT 1");
-        if (t[0]?.approval_state === "approved") {
-          try {
-            const params = buildParams("he_hr_arrival_alert", "en", { contact_name: String(h.full_name ?? "Team").split(/\s+/)[0], branch_name: d.branch_name, expected_count: s.expected, confirmed_count: s.confirmed, live_count: s.live, board_link: `${base}/ats/hiring-engine` });
-            const r = await pinbot.sendTemplate(String(h.mobile), String(t[0].pinbot_name), params, String(t[0].language));
-            if (r.success) channels.whatsapp++;
-          } catch (err) { logger.warn({ err: (err as Error).message }, "[he-alert] whatsapp skipped"); }
-        }
-      }
+      // No WhatsApp to HR and branch heads (owner decision 2026-10-13): staff get the in-app item and the email only.
       if (h.official_email && emailService.isConfigured()) {
         try { await emailService.send({ to: String(h.official_email), subject: title, html: `<p>${detail}</p><p><a href="${base}/ats/hiring-engine">Open the Hiring Engine</a></p>` }); channels.email++; }
         catch (err) { logger.warn({ err: (err as Error).message }, "[he-alert] email skipped"); }
