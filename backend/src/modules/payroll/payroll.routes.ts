@@ -48,6 +48,7 @@ import { assertRunEditable } from "./payrollWindowGuard.js";
 import { isRunClosed, runRankSql } from "./run-status.js";
 import { payslipService } from "./payslip.service.js";
 import { getPayslipLockState } from "./salary-transfer.service.js";
+import { heldAbsconderEmployeeIds } from "./absconder-hold.service.js";
 import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
 import { buildBankReadinessReport } from "./bank-payment-readiness.service.js";
@@ -3799,7 +3800,21 @@ const neftExportHandler = h(
     /** Employees actually written as payment instructions — the set reconciled against readiness. */
     const paidEmployeeIds: string[] = [];
 
+    // Absconders whose pay release is still pending (Branch Head, then Payroll Head). Their lines are
+    // normally 0 already; this also stops a line that was calculated before the hold began from being
+    // paid out of a run that has since closed. Listed in the EXCLUDED block with the reason.
+    const heldAbsconders = await heldAbsconderEmployeeIds((lines as RowDataPacket[]).map((l) => String(l.employee_id)));
+
     for (const line of lines as RowDataPacket[]) {
+      if (heldAbsconders.has(String(line.employee_id))) {
+        unpayable.push({
+          code: line.employee_code as string,
+          name: ((line.full_name as string | null) ?? "").replace(/,/g, " "),
+          amount: Number(line.net_salary),
+          reason: "ABSCONDER_PAY_HELD_AWAITING_APPROVAL",
+        });
+        continue;
+      }
       const accountNo = resolveAccountNumber({
         account_number_enc: (line as any).account_number_enc,
         account_number: (line as any).account_number_legacy,

@@ -384,6 +384,8 @@ export const ffService = {
          JOIN salary_prep_run spr ON spr.id = spl.run_id
         WHERE spl.employee_id = ?
           AND LOWER(spl.status) NOT IN ('excluded', 'blocked')
+          -- A held absconder's line is 0: nothing was paid, so it is not 'already paid'.
+          AND COALESCE(spl.net_salary, 0) > 0
           AND LOWER(spr.status) NOT IN ('draft', 'cancelled')
           AND spr.run_month BETWEEN DATE_FORMAT(DATE_SUB(?, INTERVAL 2 MONTH), '%Y-%m')
                                 AND DATE_FORMAT(?, '%Y-%m')

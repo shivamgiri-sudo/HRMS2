@@ -34,6 +34,7 @@ import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 import { taxEngineService } from "../payroll-compliance/taxEngine.service.js";
 import { resolveGrossMonthly } from "./ff-gross.js";
 import { ffAttendanceCheck, type FfAttendanceCheck } from "./ff-attendance.js";
+import { isAbsconderPayHeld } from "../payroll/absconder-hold.service.js";
 import { ffService, type GratuityCalculation, type PayrollAlreadyPaid } from "./ff.service.js";
 
 export type ComputedStatus = "computed" | "not_applicable" | "pending_configuration";
@@ -112,10 +113,12 @@ export interface FfComputePreview {
 
   final_month_salary: {
     month: string | null;
-    paid_via: "payroll" | "fnf_manual" | "none";
+    paid_via: "payroll" | "fnf_manual" | "held" | "none";
     paid_days: number | null;
     net_salary: number | null;
     run_status: string | null;
+    /** An ESTIMATE for HR to confirm and key into "Salary hold" (released absconder, closed run). */
+    suggested_amount?: number | null;
     note: string;
   };
 }
@@ -476,6 +479,29 @@ async function resolveFinalMonthSalary(
   }
   const month = String(lastWorkingDay).slice(0, 7);
   try {
+    // Absconder whose pay release is still pending: the month is held at 0 days, not paid by payroll,
+    // and must not be taken as settled. Released later, it is paid by payroll or, for a closed run, here.
+    if (await isAbsconderPayHeld(employeeId)) {
+      return {
+        month, paid_via: "held", paid_days: 0, net_salary: 0, run_status: null,
+        note: `${month} salary is HELD at 0 paid days until the Branch Head and then the Payroll Head approve the release. Do not enter a salary hold amount until it is released.`,
+      };
+    }
+    const [relRows] = await db.execute<RowDataPacket[]>(
+      `SELECT pay_release_route FROM exit_request WHERE employee_id = ? ORDER BY created_at DESC LIMIT 1`,
+      [employeeId],
+    );
+    if (String(relRows[0]?.pay_release_route ?? "") === "fnf") {
+      const att = await ffAttendanceCheck(employeeId, lastWorkingDay);
+      const gross = await resolveGrossMonthly(employeeId);
+      const dim = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+      const days = att.present_days + att.leave_days + att.week_off_holiday_days;
+      const est = gross ? Math.round((gross / dim) * days * 100) / 100 : null;
+      return {
+        month, paid_via: "fnf_manual", paid_days: days, net_salary: null, run_status: null, suggested_amount: est,
+        note: `Released absconder: that month's payroll run had closed, so ${month} is paid here. From attendance: ${att.present_days} present + ${att.leave_days} leave + ${att.week_off_holiday_days} off/holiday = ${days} days of ${dim}${est !== null ? `, about ${est.toFixed(2)} gross` : ""}. This is an estimate; confirm and enter it in "Salary hold".`,
+      };
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT spr.status AS run_status, spl.net_salary, spl.final_payable_days
          FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id

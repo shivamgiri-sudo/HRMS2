@@ -39,6 +39,7 @@
  *   two-person maker-checker, no workbook cell/sheet protection flags, no MFA step-up.
  *   Each is a separate, explicit decision — not silently skipped.
  */
+import { heldAbsconderEmployeeIds } from "./absconder-hold.service.js";
 import { randomUUID, createHash } from "crypto";
 import * as XLSX from "xlsx";
 import type { RowDataPacket } from "mysql2";
@@ -190,6 +191,8 @@ export async function getEligibleTransferRowsWithNocExclusions(
   // need no separate flag check — same contract that function documents for its own callers.
   const nocBlocked = await nocBlockedEmployeesForRuns([runId]);
   const nocBlockedIds = new Set(nocBlocked.map((b) => b.employee_id));
+  // Absconders whose pay release is still pending: reported by name, never silently dropped.
+  const heldIds = await heldAbsconderEmployeeIds([...readyIds]);
 
   const [lineRows] = await db.execute<RowDataPacket[]>(
     `SELECT spl.employee_id, spl.employee_code, spl.net_salary,
@@ -214,6 +217,14 @@ export async function getEligibleTransferRowsWithNocExclusions(
   const excludedByNoc: Array<{ employee_id: string; employee_code: string | null; reason: string }> = [];
   for (const line of lineRows as any[]) {
     if (!readyIds.has(line.employee_id) || alreadyOpen.has(line.employee_id)) continue;
+    if (heldIds.has(line.employee_id)) {
+      excludedByNoc.push({
+        employee_id: line.employee_id,
+        employee_code: line.employee_code ?? null,
+        reason: "Absconder pay is held: awaiting Branch Head and Payroll Head approval",
+      });
+      continue;
+    }
     if (nocBlockedIds.has(line.employee_id)) {
       const blocked = nocBlocked.find((b) => b.employee_id === line.employee_id);
       excludedByNoc.push({

@@ -18,6 +18,8 @@ const { execute, getConnection } = vi.hoisted(() => ({
   execute: vi.fn(),
   getConnection: vi.fn(),
 }));
+// The absconder hold has its own suite (absconder-hold.test.ts); here it is off, so these tests stay about NOC.
+vi.mock("../absconder-hold.service.js", () => ({ heldAbsconderEmployeeIds: vi.fn(async () => new Set<string>()) }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 vi.mock("../../../shared/fieldEncryption.js", () => ({
   // Pass the legacy plaintext straight through — decryption correctness is out of scope here.
