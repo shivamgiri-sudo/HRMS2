@@ -29,6 +29,7 @@ import CreateStreamDialog from "./CreateStreamDialog";
 import { StreamDialog } from "./RowStreamActions";
 import type { SourceType } from "./driveCommandTypes";
 import SourceOverview from "./SourceOverview";
+import DriveQuickFunnel from "./DriveQuickFunnel";
 import { Note } from "./charts/ChartFrame";
 import { HE_META_NOTE } from "./sourceSectionModel";
 import PlanSection from "./PlanSection";
@@ -167,12 +168,13 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
       gated: analytics && (
         <div className="space-y-4">
           <Note>{HE_META_NOTE}</Note>
-          <DriveFunnelDepth analytics={analytics} type="he" insights={typeInsights?.("he")} planHref={planHref} />
+          {!analytics.partial && <DriveFunnelDepth analytics={analytics} type="he" insights={typeInsights?.("he")} planHref={planHref} />}
           <DriveTypeSection type="he" groups={analytics.groups ?? []} today={istTodayClient()} title="Hiring Engine drives" actions={actions} />
         </div>
       ),
       always: (
         <>
+        <DriveQuickFunnel type="he" filters={filters ?? defaultFilters(now)} analyticsPartial={!!analytics?.partial} />
         {extra}
         <section aria-labelledby="all-drives-heading" className="space-y-2">
           <h3 id="all-drives-heading" className="text-base font-bold text-slate-900 dark:text-slate-100">All drives</h3>
@@ -186,12 +188,12 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
   return {
     gated: analytics && (
       <div className="space-y-4">
-        <SourceOverview analytics={analytics} type={type} filters={filters ?? defaultFilters(now)} onFilters={onFilters} now={now} />
-        <DriveFunnelDepth analytics={analytics} type={type} insights={typeInsights?.(type)} planHref={planHref} withFunnel={false} />
+        {!analytics.partial && <SourceOverview analytics={analytics} type={type} filters={filters ?? defaultFilters(now)} onFilters={onFilters} now={now} />}
+        {!analytics.partial && <DriveFunnelDepth analytics={analytics} type={type} insights={typeInsights?.(type)} planHref={planHref} withFunnel={false} />}
         <DriveTypeSection type={type} groups={analytics.groups ?? []} today={istTodayClient()} title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} actions={actions} />
       </div>
     ),
-    always: null,
+    always: <DriveQuickFunnel type={type} filters={filters ?? defaultFilters(now)} analyticsPartial={!!analytics?.partial} />,
   };
 }
 
