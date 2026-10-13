@@ -12,7 +12,7 @@
  * No candidate data in the result: counts, dates, ids and labels only.
  */
 import type { RowDataPacket } from "mysql2";
-import { limitedDb } from "./he-read-limit.js";
+import { limitedDb, withReadTimeout } from "./he-read-limit.js";
 import { logger } from "../../logger.js";
 import type { BranchScope } from "../meta-campaign/meta-access.js";
 import {
@@ -280,7 +280,7 @@ const cache = new Map<string, { at: number; data: DriveAnalytics }>();
 const scopeKey = (s: BranchScope): string => (s.all ? "all" : `b:${s.branchName ?? ""}`);
 /** Single flight: concurrent calls with the same key (scope included) share one build; removed when it settles. */
 const inflight = new Map<string, Promise<DriveAnalytics>>();
-export function clearDriveAnalyticsCache(): void { cache.clear(); inflight.clear(); }
+export function clearDriveAnalyticsCache(): void { cache.clear(); inflight.clear(); lastGood.clear(); slowRuns.clear(); }
 export function driveAnalyticsCacheSize(): number { return cache.size; }
 
 const text = (v: unknown, max: number): string | null | false => (v === undefined || v === null || v === "" ? null : typeof v === "string" && v.length <= max ? v : false);
@@ -316,12 +316,19 @@ export async function getDriveAnalytics(q: AnalyticsQuery, scope: BranchScope, n
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return structuredClone(hit.data); // a copy: a caller may extend or edit the result
   if (hit) cache.delete(key);
-
+  // A recent complete answer is returned at once while a background build (long time budget, nobody waiting) refreshes it: on a loaded
+  // database the 12-second build fails every time, which showed as zeros on every drive.
   let run = inflight.get(key);
   if (!run) {
     const p = (async () => {
-      const data = tidy(await build(w, requisitionId, branch, scope, now));
-      if (!data.partial) { // a partial result is shared with the callers already waiting, never cached
+      let data = tidy(await build(w, requisitionId, branch, scope, now));
+      if (data.partial && !process.env.VITEST) {
+        void slowBuild(key, w, requisitionId, branch, scope, now).catch(() => undefined); // the next caller finds a full answer
+        const good = lastGood.get(key);
+        if (good && Date.now() - good.at < 6 * 3600_000) data = structuredClone(good.data); // meanwhile the last complete answer, not zeros
+      }
+      if (!data.partial) {
+        lastGood.set(key, { at: Date.now(), data: structuredClone(data) }); // a partial result is shared with the callers already waiting, never cached
         const t = Date.now();
         for (const [k, v] of cache) if (t - v.at >= CACHE_MS) cache.delete(k); // expired entries go on every write, not only on overflow
         if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
@@ -336,11 +343,36 @@ export async function getDriveAnalytics(q: AnalyticsQuery, scope: BranchScope, n
   return structuredClone(await run); // every caller gets its own copy
 }
 
+const lastGood = new Map<string, { at: number; data: DriveAnalytics }>();
+const slowRuns = new Map<string, Promise<void>>();
+const SLOW_STATEMENT_MS = 90_000, SLOW_BUDGET_MS = 240_000;
+/** One background build per key with long statement and build budgets; a complete result becomes the answer for every caller. */
+function slowBuild(key: string, w: { from: string; to: string; days: number }, requisitionId: string | null, branch: string | null, scope: BranchScope, now: Date): Promise<void> {
+  const existing = slowRuns.get(key);
+  if (existing) return existing;
+  const p = withReadTimeout(SLOW_STATEMENT_MS, async () => {
+    const data = tidy(await build(w, requisitionId, branch, scope, now, SLOW_BUDGET_MS));
+    if (!data.partial) { lastGood.set(key, { at: Date.now(), data: structuredClone(data) }); cache.set(key, { at: Date.now(), data: structuredClone(data) }); }
+    else logger.warn({ failed: data.failedSections }, "[he-drive-analytics] background build still partial");
+  }).finally(() => slowRuns.delete(key));
+  slowRuns.set(key, p);
+  return p;
+}
+
+/** Called by the worker: keeps the default (all branches, last 14 days) answer built ahead of the dashboards. */
+export async function warmDriveAnalytics(now: Date = new Date()): Promise<void> {
+  const scope = { all: true, branchName: null } as unknown as BranchScope;
+  const w = resolveWindow({}, now);
+  if ("error" in w) return;
+  const key = `${scopeKey(scope)}|${istToday(now)}|${w.from}|${w.to}|*|*`;
+  await slowBuild(key, w, null, null, scope, now);
+}
+
 async function build(
-  w: { from: string; to: string; days: number }, requisitionId: string | null, branch: string | null, scope: BranchScope, now: Date,
+  w: { from: string; to: string; days: number }, requisitionId: string | null, branch: string | null, scope: BranchScope, now: Date, budgetMs: number = BUILD_BUDGET_MS,
 ): Promise<DriveAnalytics> {
   const failed: string[] = [];
-  const deadline = Date.now() + BUILD_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
   const sec = <T>(name: string, fn: () => Promise<T>, fallback: T): Promise<T> => section(name, failed, fn, fallback, deadline);
   const today = istToday(now);
   const prev = { from: addDays(w.from, -w.days), to: addDays(w.from, -1) };

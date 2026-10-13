@@ -6,6 +6,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { runBranchRosters } from "./he-branch-roster.service.js";
 import { autoMapPoolStreams } from "./he-auto-map.service.js";
 import { autoResolveReplies } from "./response-auto-apply.service.js";
+import { warmDriveAnalytics } from "./he-drive-analytics.service.js";
 import { warmUnifiedFunnels } from "./he-unified-funnel.service.js";
 import { syncRecentMetaLeads } from "./he-lead.service.js";
 import { sweepLocationElsewhere } from "./location-sweep.service.js";
@@ -159,6 +160,7 @@ let lastAutoMap = 0;
 let lastLocationSweep = 0;
 let lastMetaLeadSync = 0;
 let lastFunnelWarm = 0;
+let lastAnalyticsWarm = 0;
 async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources: SourceType[] }>, now: Date, deps: TickDeps): Promise<TickReport> {
   const r = blank(s.mode);
   // Joined counts (employee code generated) decide when a requisition is filled; refreshed at most every 10 minutes.
@@ -192,6 +194,8 @@ async function runSteps(s: FollowupSwitches, plan: Array<{ tag: RowTag; sources:
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live")) await guarded("slot-corrections", () => runSlotCorrections(now), null);
   // The Hiring Engine pool is mapped to the requisition at the front of each sequence (at most every 30 minutes).
   if (!(s.killSwitch || s.sendsPaused) && plan.some((p) => p.tag === "live") && Date.now() - lastAutoMap > 30 * 60_000) { lastAutoMap = Date.now(); await guarded("auto-map", () => autoMapPoolStreams(now), null); }
+  // The Drives analytics (default 14 days, all branches) is built in the background with long time limits, so the tab never opens to zeros.
+  if (Date.now() - lastAnalyticsWarm > 15 * 60_000) { lastAnalyticsWarm = Date.now(); void warmDriveAnalytics().catch(() => undefined); }
   // The walk-in funnel's preset ranges are computed ahead of the dashboards (every 10 minutes, in the background).
   if (Date.now() - lastFunnelWarm > 10 * 60_000) { lastFunnelWarm = Date.now(); void warmUnifiedFunnels().catch(() => undefined); }
   // People the records already place in another city are taken off the walk-in (a page of open journeys every 10 minutes).

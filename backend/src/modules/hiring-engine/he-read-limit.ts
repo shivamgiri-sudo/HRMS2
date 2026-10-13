@@ -4,11 +4,15 @@
  * across every build in this process (concurrent users queue here instead of draining the pool). Every statement also carries a MySQL
  * MAX_EXECUTION_TIME hint, so a slow read fails (ER_QUERY_TIMEOUT) and its section is flagged instead of holding a connection.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
 export const READ_CONCURRENCY = 4;
 export const STATEMENT_TIMEOUT_MS = 8000;
+const slow = new AsyncLocalStorage<number>();
+/** Runs `fn` with a longer statement timeout for every read inside it: for background builds nobody is waiting on. */
+export const withReadTimeout = <T>(ms: number, fn: () => Promise<T>): Promise<T> => slow.run(ms, fn);
 
 let active = 0;
 const waiting: Array<() => void> = [];
@@ -34,6 +38,6 @@ export function withStatementTimeout(sql: string, ms: number = STATEMENT_TIMEOUT
 /** `db.execute` behind the limiter and with the statement timeout; drop-in for the analytics reads. */
 export const limitedDb = {
   execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]> {
-    return limited(() => db.execute<T>(withStatementTimeout(sql), params as never) as unknown as Promise<[T, unknown]>);
+    return limited(() => db.execute<T>(withStatementTimeout(sql, slow.getStore() ?? STATEMENT_TIMEOUT_MS), params as never) as unknown as Promise<[T, unknown]>);
   },
 };
