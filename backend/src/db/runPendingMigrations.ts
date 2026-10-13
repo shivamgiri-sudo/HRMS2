@@ -1363,6 +1363,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2163_noc_remove_finance_stage.sql", // Registered 2026-10-13. Finance is not a NOC stage: template row inactive, pending Finance rows removed from open cases (acted rows and closed cases untouched). Idempotent.
   "migrations/2160_roster_import_row_tracker_indexes.sql", // Registered 2026-10-12. Covering indexes on wfm_roster_import_row (roster_date,batch_id,employee_id_raw) and (employee_id_raw,roster_date,batch_id): Roster Upload Tracker took ~37s per load and ~120s per cell drawer because the table was only indexed by batch_id.
   "migrations/2161_roster_import_row_batch_cover.sql", // Registered 2026-10-12. Covering index (batch_id, roster_date, employee_id_raw) on wfm_roster_import_row: tracker coverage scan was 12.7s through idx_batch plus a table fetch per row.
+  "migrations/2170_bbb_sales_upload_quality.sql", // Registered 2026-10-13. Blabli Blu Overall Sales upload quality: bla_bli_blu_sales_upload_reject (row / field / value / reason code / required format / business-vs-technical per rejected row) and bla_bli_blu_sales_upload_date (per upload + date: existing, uploaded, updated, inserted, after counts for the correction/variance view). Additive: new tables only.
 ];
 
 export type MigrationHealth = {

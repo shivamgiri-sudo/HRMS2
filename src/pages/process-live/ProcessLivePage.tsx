@@ -806,7 +806,7 @@ function EmailAprView({ process, label, f }: { process:"molecular-email"|"regina
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 const PROCESSES: { key:Tab; label:string; short:string; color:string }[] = [
-  { key:"inbound", label:"B-3 IB (Inbound)", short:"BLA BLI BLU", color:"#2f6fed" },
+  { key:"inbound", label:"B-3 IB (Inbound)", short:"Blabli Blu", color:"#2f6fed" },
   { key:"reginald-cart", label:"Reginald Cart", short:"Abandoned Cart", color:"#e89b19" },
   { key:"molecular-email", label:"Molecular Email", short:"APR only", color:"#18a866" },
   { key:"reginald-email", label:"Reginald Email", short:"APR only", color:"#7c5ce5" },

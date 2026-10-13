@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Loader2, Target, TrendingUp, Upload, Users, IndianRupee } from "lucide-react";
+import { Loader2, RefreshCw, Target, TrendingUp, Upload, Users, IndianRupee } from "lucide-react";
 import BlaAnalytics from "@/components/process-operations/BlaAnalytics";
 import BbbUploadedFiles from "@/components/process-operations/BbbUploadedFiles";
+import BbbMonthTrend, { type BbbMonth } from "@/components/process-operations/BbbMonthTrend";
+import BbbSalesUploadQuality from "@/components/process-operations/BbbSalesUploadQuality";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 /**
- * BLA / BLI / BLU (Bellavita Cart ABC / Inbound / Upgrade) Sales Dashboard.
+ * Blabli Blu (Bellavita Cart ABC / Inbound / Upgrade) Sales Dashboard. ("Blabli Blu" is the display spelling; the
+ * process is still stored as "Bla Bli Blu" in process_master, and lookups keep that name.)
  * All maths lives in backend bla-metrics.ts (Formula Demo sheet of BLA_BLI_BLU_Dashboard_Calculation);
  * this page only renders it and hosts the Received Data upload. Overall Sales is read from the existing
  * bla_bli_blu_overall_sales_raw table (Bulk Upload Hub); it is deliberately not uploadable a second time here.
@@ -22,7 +25,8 @@ interface Row {
   saleAchievement: number; conversionAchievement: number; prepaidAchievement: number; revenueAchievement: number;
 }
 interface Block { lob: string; hasTarget: boolean; daily: Row[]; weekly: Row[]; mtd: Row }
-interface Overview { from: string; to: string; latestDataDate?: string | null; lobs: string[]; blocks: Block[]; all: Block }
+interface Overview { from: string; to: string; latestDataDate?: string | null; refreshedAt?: string; lobs: string[]; blocks: Block[]; all: Block }
+interface Freshness { lastSalesChange: string | null; lastSalesImport: string | null; lastReceivedUpload: string | null }
 interface Product { product: string; cartAbc: number; inbound: number; upgrade: number; other?: number; total: number; contributionPct: number; paid: number; cod: number }
 interface ProductWise { grandTotal: number; products: Product[] }
 interface UploadResult { validRows: number; totalRows: number; storedRows: number; dateFrom: string | null; dateTo: string | null; skippedNoDate: number; duplicateSameDay?: number; skippedNoNumber?: number; fresh?: number; nc?: number; pending?: boolean }
@@ -31,6 +35,7 @@ const ALL = "All LOBs";
 const fmt = (n: number) => Math.round(n).toLocaleString("en-IN");
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 const inr = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
+const stamp = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—");
 
 function monthRange() {
   const d = new Date();
@@ -105,19 +110,30 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [filesKey, setFilesKey] = useState(0);
+  const [qualityKey, setQualityKey] = useState(0);
   const [jumpedTo, setJumpedTo] = useState<string | null>(null);
+  const [months, setMonths] = useState<BbbMonth[]>([]);
+  const [fresh, setFresh] = useState<Freshness | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const autoJumped = useRef(false);
+  const lastRefresh = useRef<string | null>(null);
 
   useEffect(() => { autoJumped.current = false; setJumpedTo(null); setRange(init); }, [init]);
 
-  const load = useCallback(async () => {
-    setLoading(true); setErr(null);
+  /** manual = the Refresh button: keep the current figures on screen and say so explicitly if the refresh fails. */
+  const load = useCallback(async (manual = false) => {
+    if (manual) setRefreshing(true); else setLoading(true);
+    setErr(null);
     try {
       const qs = `from=${range.from}&to=${range.to}`;
-      const [o, p] = await Promise.all([
+      const [o, p, mo, fr] = await Promise.all([
         hrmsApi.get<{ data: Overview }>(`/api/bla-bli-blu-dashboard/overview?${qs}`),
         hrmsApi.get<{ data: ProductWise }>(`/api/bla-bli-blu-dashboard/product-wise?${qs}`),
+        hrmsApi.get<{ data: BbbMonth[] }>("/api/bla-bli-blu-dashboard/months").then((r) => r.data).catch(() => null),
+        hrmsApi.get<{ data: Freshness }>("/api/bla-bli-blu-dashboard/freshness").then((r) => r.data).catch(() => null),
       ]);
+      if (mo) setMonths(mo);
+      if (fr) setFresh(fr);
       // The chosen month has nothing yet (e.g. the new month before its first upload): open on the newest month that does.
       const latest = o.data.latestDataDate;
       if (!autoJumped.current && o.data.all.daily.length === 0 && latest && latest < range.from) {
@@ -129,8 +145,12 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
         return;
       }
       setData(o.data); setProducts(p.data);
-    } catch (e) { setErr(e instanceof Error ? e.message : "Failed to load dashboard"); }
-    finally { setLoading(false); }
+      lastRefresh.current = o.data.refreshedAt ?? new Date().toISOString();
+      if (manual) setQualityKey((k) => k + 1);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load dashboard";
+      setErr(lastRefresh.current ? `Refresh failed: ${msg}. The figures below are from the last successful refresh (${stamp(lastRefresh.current)}).` : msg);
+    } finally { setLoading(false); setRefreshing(false); }
   }, [range.from, range.to]);
   useEffect(() => { void load(); }, [load]);
 
@@ -138,10 +158,27 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
   const m = block?.mtd;
   const rows = block ? (view === "daily" ? block.daily : block.weekly) : [];
   const empty = !!data && data.all.daily.length === 0;
+  // The month the date range covers exactly (1st to last day), if it does; otherwise the range is custom.
+  const rangeMonth = useMemo(() => {
+    const ym = range.from.slice(0, 7);
+    const [y, mo] = ym.split("-").map(Number);
+    const last = `${ym}-${String(new Date(y, mo, 0).getDate()).padStart(2, "0")}`;
+    return range.from.endsWith("-01") && range.to === last ? ym : "";
+  }, [range.from, range.to]);
+  const pickMonth = (ym: string) => {
+    const mo = months.find((x) => x.month === ym);
+    if (mo) { setJumpedTo(null); setRange({ from: mo.from, to: mo.to }); }
+  };
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+        <label className="flex items-center gap-2 text-sm text-slate-500">Month
+          <select aria-label="Month" value={rangeMonth} onChange={(e) => pickMonth(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-800">
+            {!rangeMonth || !months.some((x) => x.month === rangeMonth) ? <option value={rangeMonth}>{rangeMonth ? `${rangeMonth} (no data)` : "Custom range"}</option> : null}
+            {[...months].reverse().map((x) => <option key={x.month} value={x.month}>{x.label} · {fmt(x.orders)} sales records</option>)}
+          </select>
+        </label>
         <input type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-sm" />
         <span className="text-sm text-slate-400">to</span>
         <input type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} className="rounded-lg border border-slate-200 px-2 py-1 text-sm" />
@@ -153,10 +190,23 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-slate-100 bg-white px-3 py-2 text-xs text-slate-500 shadow-sm">
+        <span>Period: <span className="font-semibold text-slate-700">{range.from} to {range.to}</span></span>
+        <span>Last data refresh: <span className="font-semibold text-slate-700">{stamp(data?.refreshedAt)}</span></span>
+        {fresh && <span>Latest sales import: {stamp(fresh.lastSalesImport ?? fresh.lastSalesChange)}</span>}
+        {fresh?.lastReceivedUpload && <span>Latest Received Data upload: {stamp(fresh.lastReceivedUpload)}</span>}
+        <button type="button" onClick={() => void load(true)} disabled={refreshing || loading}
+          className="ml-auto inline-flex min-h-[32px] cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} aria-hidden />{refreshing ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+
       {jumpedTo && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">No data yet for the month you picked, so this shows {jumpedTo}, the latest month with data. Change the dates above to look elsewhere.</p>}
       {err && <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-600">{err}</p>}
       {loading && <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>}
-      {!loading && empty && <p className="rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No BLA / BLI / BLU data for this range. Upload Received Data below, and Overall Sales via the Bulk Upload Hub.</p>}
+      {!loading && empty && <p className="rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No Blabli Blu data for this range. Upload Received Data below, and Overall Sales via the Bulk Upload Hub.</p>}
+
+      {!loading && <BbbMonthTrend months={months} selected={rangeMonth || null} onSelect={(mo) => pickMonth(mo.month)} />}
 
       {!loading && m && !empty && (
         <>
@@ -267,11 +317,12 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
           <UploadBox title="Received Data" hint="Daily data allocation sheet (Date, Phone, LOB, Workable, Same Day Attempt, Final Dispo…). Each number is kept once per date; a repeat for the same date is skipped. Fresh / NC is worked out from the previous 3 days." endpoint="/api/bla-bli-blu-dashboard/upload/received-data" onDone={() => { void load(); setFilesKey((k) => k + 1); }} />
           <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
             <p className="text-sm font-semibold text-slate-700">Overall Sales</p>
-            <p className="text-xs text-slate-400">Both uploads are also in the Bulk Upload Hub: "Bla Bli Blu — Overall Sales Raw" (the workbook's Overall Sales sheet) and "Bla Bli Blu — Abandon (Received Data)" (the Received Data sheet). Rows are keyed by OrderID, so re-uploading a file does not duplicate orders.</p>
+            <p className="text-xs text-slate-400">Both uploads are also in the Bulk Upload Hub: "Blabli Blu — Overall Sales Raw" (the workbook's Overall Sales sheet) and "Blabli Blu — Abandon (Received Data)" (the Received Data sheet). Rows are keyed by OrderID, so re-uploading a file updates orders instead of duplicating them; the hub warns before an import updates existing orders. Upload results and rejected rows appear below.</p>
             <a href="/bulk-upload" className="mt-2 inline-block text-xs font-semibold text-blue-600 underline">Open Bulk Upload Hub</a>
           </div>
         </div>
       )}
+      <BbbSalesUploadQuality from={range.from} to={range.to} refreshKey={qualityKey} />
       {canUpload && <BbbUploadedFiles refreshKey={filesKey} onChanged={() => void load()} />}
     </div>
   );

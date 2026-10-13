@@ -832,6 +832,17 @@ router.get("/batches/:id/import-status", requireRole(...HUB_ROLES), restrictLobO
   });
 }));
 
+// Blabli Blu Overall Sales: read-only check of a staged batch before import -- rows that would be rejected and why,
+// OrderIDs repeated in the file, and how many existing orders the import will UPDATE (per date, with variance).
+router.get("/batches/:id/bbb-sales-preview", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { previewSalesBatch } = await import("../bla-bli-blu-dashboard/bbb-sales-quality.service.js");
+  try {
+    return res.json({ success: true, data: await previewSalesBatch(String(req.params.id)) });
+  } catch (e) {
+    if (e instanceof Error && /not found/.test(e.message)) return res.status(404).json({ success: false, error: e.message });
+    throw e;
+  }
+}));
 
 // DELETE /batches/:id — remove a batch log entry (does not undo already-imported rows)
 router.delete("/batches/:id", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {

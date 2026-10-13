@@ -3,94 +3,37 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
 import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
-import { parseDurationSeconds, parseFlexibleDate, parseFlexibleDateTime } from "./dalmia-import-helpers.js";
+import {
+  categoryOf, parseSalesNumber, planDateCorrections, rejectInFileDuplicates, rejectMessage, uploadSummary, validateSalesRow,
+  type DateCorrection, type SalesRecord, type SalesReject,
+} from "./bla-bli-blu-sales-validation.js";
 
 /**
- * Bla Bli Blu's own "B-3 Dashboard" workbook family's "Overall Sales Raw"
+ * Blabli Blu's own "B-3 Dashboard" workbook family's "Overall Sales Raw"
  * sheet -- agent-attributed order-level sales data with no DB backing
  * anywhere (see sql/1729's own comment for the cross-schema check that
  * confirmed this). Row identity is the sheet's own "OrderID" column.
+ *
+ * Validation lives in bla-bli-blu-sales-validation.ts: each rejected row gets a stored reason code, field, value
+ * and required format (bla_bli_blu_sales_upload_reject, sql 2170), and the per-date before/after counts of every
+ * upload are kept for the correction view (bla_bli_blu_sales_upload_date).
  */
 
-export const BLA_BLI_BLU_OVERALL_SALES_HEADERS = [
-  "Week", "Date", "EMP ID", "Emp_Name", "Customer Number", "Payment Status",
-  "Amount", "OrderID", "Campaign", "Calling Status", "Discount Code", "Count",
-  "Current Status", "Lineitem sku", "New sold line item", "Created By",
-  "Order Creation time", "Call Date & Time", "Call Duration",
-  "Countifs of calls", "Lead_Line_Item", "Source", "Business",
-  "New sold line item Categoty", "Alternate number", "Recording Link",
-] as const;
+// Parsers kept importable from here: the abandon importer and the coercion tests use them.
+export {
+  BLA_BLI_BLU_OVERALL_SALES_HEADERS, cleanText, parseCallDurationSeconds, parseDate, parseDateTime,
+} from "./bla-bli-blu-sales-validation.js";
 
-/** Plain integer Excel serial -> "YYYY-MM-DD". */
-export function parseDate(raw: unknown): string | null {
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(raw) * 86400000);
-    return d.toISOString().slice(0, 10);
-  }
-  const v = String(raw ?? "").trim();
-  if (!v) return null;
-  if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
-    return d.toISOString().slice(0, 10);
-  }
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
-  if (m) return m[0];
-  // The Hub reads CSV/Excel as displayed text ("01-09-26"), not serials.
-  return parseFlexibleDate(v);
-}
-
-/**
- * FRACTIONAL Excel serial (date + time-of-day) -> "YYYY-MM-DD HH:MM:SS",
- * floored per this session's clovia-crm-disposition-bulk.service.ts
- * convention (also reused for clovia_rechurn_calls_raw).
- */
-export function parseDateTime(raw: unknown): string | null {
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
-    const days = Math.floor(raw);
-    const secondsOfDay = Math.round((raw - days) * 86400);
-    const d = new Date(Date.UTC(1899, 11, 30) + days * 86400000 + secondsOfDay * 1000);
-    return d.toISOString().slice(0, 19).replace("T", " ");
-  }
-  const v = String(raw ?? "").trim();
-  if (!v) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(v);
-  if (m) return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
-  return parseFlexibleDateTime(v);
-}
-
-/**
- * "Call Duration" is stored as a fraction-of-a-day (e.g. 0.006018518... =
- * ~520 seconds), the same unit family as the date/time columns above --
- * NOT a day-count and NOT already-seconds, so parseSecondsFlexible's
- * ambiguity heuristic does not apply here; this column is unambiguous by
- * construction (a call never lasts a whole day).
- */
-export function parseCallDurationSeconds(raw: unknown): number | null {
-  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {
-    return Math.round(raw * 86400);
-  }
-  const v = String(raw ?? "").trim();
-  if (!v) return null;
-  if (v.includes(":")) return parseDurationSeconds(v); // "0:07:12"
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(n * 86400) : null;
-}
-
+/** Number or number-as-text ("1,234", "₹1,234") -> rounded integer; blank or unreadable -> null. */
 export function parseNullableInt(raw: unknown): number | null {
-  if (raw === null || raw === undefined || raw === "") return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? Math.round(n) : null;
+  const p = parseSalesNumber(raw);
+  return p.ok && p.value !== null ? Math.round(p.value) : null;
 }
 
+/** Number or number-as-text ("1,234.50", "₹1,234") -> number; blank or unreadable -> null. */
 export function parseNullableDecimal(raw: unknown): number | null {
-  if (raw === null || raw === undefined || raw === "") return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
-export function cleanText(raw: unknown): string | null {
-  const v = String(raw ?? "").trim();
-  return v || null;
+  const p = parseSalesNumber(raw);
+  return p.ok ? p.value : null;
 }
 
 interface BatchRow extends RowDataPacket {
@@ -100,10 +43,81 @@ interface BatchRow extends RowDataPacket {
 }
 interface Ref extends RowDataPacket { id: string }
 
+const SALES = "bla_bli_blu_overall_sales_raw";
+const CHUNK = 500;
+
+function recordValues(r: SalesRecord, processId: string, batchId: string, userId: string): unknown[] {
+  return [
+    randomUUID(), processId, r.orderId, r.reportDate, r.week, r.empCode, r.empName, r.customerNumber, r.alternateNumber,
+    r.paymentStatus, r.amount, r.campaign, r.callingStatus, r.discountCode, r.itemCount, r.currentStatus, r.lineitemSku,
+    r.newSoldLineItem, r.newSoldCategory, r.leadLineItem, r.source, r.business, r.orderCreationTime, r.callDateTime,
+    r.callDurationSeconds, r.callAttemptCount, r.createdBy, r.recordingLink, batchId, userId,
+  ];
+}
+
+async function existingOrderIds(processId: string, orderIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < orderIds.length; i += CHUNK) {
+    const part = orderIds.slice(i, i + CHUNK);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT order_id FROM ${SALES} WHERE process_id = ? AND order_id IN (${part.map(() => "?").join(",")})`, [processId, ...part]);
+    for (const r of rows) out.add(String(r.order_id));
+  }
+  return out;
+}
+
+async function countsByDate(processId: string, dates: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < dates.length; i += CHUNK) {
+    const part = dates.slice(i, i + CHUNK);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(report_date,'%Y-%m-%d') AS d, COUNT(*) AS n FROM ${SALES}
+        WHERE process_id = ? AND report_date IN (${part.map(() => "?").join(",")}) GROUP BY d`, [processId, ...part]);
+    for (const r of rows) out.set(String(r.d), Number(r.n));
+  }
+  return out;
+}
+
+/** Stores the structured rejects and warnings. Best effort: a database without sql 2170 still imports. */
+async function saveRejects(batchId: string, rows: number[], rejects: SalesReject[], monthOfRow: Map<number, string>): Promise<void> {
+  try {
+    for (let i = 0; i < rows.length; i += 1000) {
+      const part = rows.slice(i, i + 1000);
+      await db.execute(`DELETE FROM bla_bli_blu_sales_upload_reject WHERE upload_batch_id = ? AND row_no IN (${part.map(() => "?").join(",")})`, [batchId, ...part]);
+    }
+    for (let i = 0; i < rejects.length; i += CHUNK) {
+      const part = rejects.slice(i, i + CHUNK);
+      await db.execute(
+        `INSERT INTO bla_bli_blu_sales_upload_reject
+           (upload_batch_id, row_no, field_name, uploaded_value, reason_code, reason, required_format, category, severity, report_month)
+         VALUES ${part.map(() => "(?,?,?,?,?,?,?,?,?,?)").join(",")}`,
+        part.flatMap((r) => [batchId, r.row, r.field, r.value, r.code, r.reason.slice(0, 500), r.requiredFormat, r.category, r.severity, monthOfRow.get(r.row) ?? null]));
+    }
+  } catch (e) {
+    console.warn("[bla-bli-blu-overall-sales] reject log not stored:", e instanceof Error ? e.message : e);
+  }
+}
+
+async function saveDateCorrections(batchId: string, processId: string, plan: DateCorrection[]): Promise<void> {
+  if (!plan.length) return;
+  try {
+    const after = await countsByDate(processId, plan.map((p) => p.reportDate));
+    await db.execute(
+      `INSERT INTO bla_bli_blu_sales_upload_date
+         (upload_batch_id, report_date, existing_count, upload_count, updated_count, inserted_count, after_count)
+       VALUES ${plan.map(() => "(?,?,?,?,?,?,?)").join(",")}
+       ON DUPLICATE KEY UPDATE upload_count = upload_count + VALUES(upload_count), updated_count = updated_count + VALUES(updated_count),
+         inserted_count = inserted_count + VALUES(inserted_count), after_count = VALUES(after_count)`,
+      plan.flatMap((p) => [batchId, p.reportDate, p.existingCount, p.uploadCount, p.updatedCount, p.insertedCount, after.get(p.reportDate) ?? 0]));
+  } catch (e) {
+    console.warn("[bla-bli-blu-overall-sales] correction counts not stored:", e instanceof Error ? e.message : e);
+  }
+}
+
 export async function importBlaBliBluOverallSalesBatch(
   batchId: string,
   importedByUserId: string,
-): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
+): Promise<{ importedRows: number; errorRows: number; errors: string[]; warningRows?: number; summary?: ReturnType<typeof uploadSummary> & Record<string, unknown> }> {
   const [batchRows] = await db.execute<BatchRow[]>(
     `SELECT id, row_no, normalized_data FROM upload_batch_row
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
@@ -127,85 +141,61 @@ export async function importBlaBliBluOverallSalesBatch(
     return { importedRows: 0, errorRows: 0, errors: [] };
   }
 
+  // The process is looked up by its stored name; only the display spelling is "Blabli Blu".
   const [procRows] = await db.execute<Ref[]>(
     "SELECT id FROM process_master WHERE process_name = 'Bla Bli Blu' AND active_status = 1 LIMIT 1",
   );
   const processId = procRows[0]?.id ?? null;
 
-  const errors: string[] = [];
-  const errorUpdates: Array<{ rowId: string; message: string }> = [];
-
-  const toInsert: ChunkInsertRow[] = [];
+  const issues: SalesReject[] = [];
+  const accepted: Array<{ rowId: string; rowNo: number; record: SalesRecord }> = [];
+  const monthOfRow = new Map<number, string>();
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
         ? JSON.parse(row.normalized_data)
         : ((row.normalized_data ?? {}) as Record<string, unknown>);
-
+    const v = validateSalesRow(data, row.row_no);
+    if (v.record) monthOfRow.set(row.row_no, v.record.reportDate.slice(0, 7));
     if (!processId) {
-      const msg = `Row ${row.row_no}: no active "Bla Bli Blu" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
+      issues.push({
+        row: row.row_no, field: "Process", value: "Bla Bli Blu", code: "PROCESS_NOT_FOUND",
+        reason: "No active Blabli Blu process is configured in HRMS to attach this sale to. Ask an administrator.",
+        requiredFormat: null, category: categoryOf("PROCESS_NOT_FOUND"), severity: "reject",
+      });
+      continue;
     }
-
-    const orderId = cleanText(data["OrderID"]);
-    const reportDate = parseDate(data["Date"]);
-    if (!orderId || !reportDate) {
-      const problems = [
-        !orderId ? `"OrderID" is missing (it is this row's identity)` : null,
-        !reportDate ? `"Date" is missing or not a recognised date (got "${String(data["Date"] ?? "")}"; use YYYY-MM-DD or DD-MM-YYYY)` : null,
-      ].filter(Boolean);
-      const msg = `Row ${row.row_no}: ${problems.join("; ")}`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
-    }
-
-    toInsert.push({
-      rowId: row.id,
-      rowNo: row.row_no,
-      values: [
-        randomUUID(), processId, orderId, reportDate,
-        cleanText(data["Week"]),
-        cleanText(data["EMP ID"]),
-        cleanText(data["Emp_Name"]),
-        cleanText(data["Customer Number"]),
-        cleanText(data["Alternate number"]),
-        cleanText(data["Payment Status"]),
-        parseNullableDecimal(data["Amount"]),
-        cleanText(data["Campaign"]),
-        cleanText(data["Calling Status"]),
-        cleanText(data["Discount Code"]),
-        parseNullableDecimal(data["Count"]),
-        cleanText(data["Current Status"]),
-        cleanText(data["Lineitem sku"]),
-        cleanText(data["New sold line item"]),
-        cleanText(data["New sold line item Categoty"]),
-        cleanText(data["Lead_Line_Item"]),
-        cleanText(data["Source"]),
-        cleanText(data["Business"]),
-        parseDateTime(data["Order Creation time"]),
-        parseDateTime(data["Call Date & Time"]),
-        parseCallDurationSeconds(data["Call Duration"]),
-        parseNullableInt(data["Countifs of calls"]),
-        cleanText(data["Created By"]),
-        cleanText(data["Recording Link"]),
-        batchId,
-        importedByUserId,
-      ],
-    });
+    issues.push(...v.issues);
+    if (v.record) accepted.push({ rowId: row.id, rowNo: row.row_no, record: v.record });
   }
 
-  // Keep the current version of every order this file is about to replace, so a change stays traceable and a
-  // wrong upload can be undone. Best effort: a database without the history table still imports.
-  if (processId && toInsert.length) {
+  // Same OrderID twice in this file: keep the last, reject the earlier ones (never counted twice).
+  const dupes = rejectInFileDuplicates(accepted.map((a) => ({ row: a.rowNo, orderId: a.record.orderId })));
+  issues.push(...dupes);
+  const superseded = new Set(dupes.map((d) => d.row));
+  const toImport = accepted.filter((a) => !superseded.has(a.rowNo));
+
+  // Before/after per date for the correction view, and which orders this file updates rather than adds.
+  let plan: DateCorrection[] = [];
+  if (processId && toImport.length) {
+    const ids = [...new Set(toImport.map((a) => a.record.orderId))];
+    const dates = [...new Set(toImport.map((a) => a.record.reportDate))];
+    const [existingIds, before] = await Promise.all([existingOrderIds(processId, ids), countsByDate(processId, dates)]);
+    plan = planDateCorrections(toImport.map((a) => a.record), before, existingIds);
+    // Keep the current version of every order this file is about to replace, so a change stays traceable and a
+    // wrong upload can be undone. Best effort: a database without the history table still imports.
     try {
       const { snapshotSalesBeforeReplace } = await import("../bla-bli-blu-dashboard/bbb-uploads.service.js");
-      await snapshotSalesBeforeReplace(processId, toInsert.map((r) => String(r.values[2])), batchId, importedByUserId);
+      await snapshotSalesBeforeReplace(processId, ids, batchId, importedByUserId);
     } catch (e) {
       console.warn("[bla-bli-blu-overall-sales] history snapshot skipped:", e instanceof Error ? e.message : e);
     }
   }
 
-  const inserted = await chunkedMasmisInsert({
-    insertPrefix: `INSERT INTO bla_bli_blu_overall_sales_raw
+  const insertRows: ChunkInsertRow[] = toImport.map((a) => ({ rowId: a.rowId, rowNo: a.rowNo, values: recordValues(a.record, processId!, batchId, importedByUserId) }));
+  const inserted = insertRows.length
+    ? await chunkedMasmisInsert({
+      insertPrefix: `INSERT INTO ${SALES}
            (id, process_id, order_id, report_date, week_label, emp_code, emp_name,
             customer_number, alternate_number, payment_status, amount, campaign,
             calling_status, discount_code, item_count, current_status, lineitem_sku,
@@ -213,10 +203,10 @@ export async function importBlaBliBluOverallSalesBatch(
             source_channel, business_type, order_creation_time, call_date_time,
             call_duration_seconds, call_attempt_count, source_created_by,
             recording_link, data_source, source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
-    // Order ID is the business key: a re-uploaded order REPLACES the stored row with the latest values (Cancel ->
-    // RTO -> Delivered stays one row). Every uploaded column is updated, and the row now belongs to this batch.
-    insertSuffix: `ON DUPLICATE KEY UPDATE
+      placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+      // Order ID is the business key: a re-uploaded order REPLACES the stored row with the latest values (Cancel ->
+      // RTO -> Delivered stays one row). Every uploaded column is updated, and the row now belongs to this batch.
+      insertSuffix: `ON DUPLICATE KEY UPDATE
             report_date = VALUES(report_date), week_label = VALUES(week_label), emp_code = VALUES(emp_code),
             emp_name = VALUES(emp_name), customer_number = VALUES(customer_number), alternate_number = VALUES(alternate_number),
             payment_status = VALUES(payment_status), amount = VALUES(amount), campaign = VALUES(campaign),
@@ -227,35 +217,69 @@ export async function importBlaBliBluOverallSalesBatch(
             call_date_time = VALUES(call_date_time), call_duration_seconds = VALUES(call_duration_seconds),
             call_attempt_count = VALUES(call_attempt_count), source_created_by = VALUES(source_created_by),
             recording_link = VALUES(recording_link), source_reference = VALUES(source_reference)`,
-    rows: toInsert,
-  });
-  errorUpdates.push(...inserted.errorUpdates);
-  for (const u of inserted.errorUpdates) errors.push(u.message);
-  const importedRows = inserted.importedRows;
-  const errorRows = errorUpdates.length;
+      rows: insertRows,
+    })
+    : { importedRows: 0, errorUpdates: [] as Array<{ rowId: string; message: string }>, importedRowIds: [] as string[] };
 
-  if (importedRows > 0) {
-    const failedRowIds = new Set(inserted.errorUpdates.map((e) => e.rowId));
-    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
-    await markRowsImported(successRowIds);
+  // A database failure on a row is a technical reject, kept apart from the file's own (business) problems.
+  const rowNoOf = new Map(batchRows.map((r) => [r.id, r.row_no]));
+  for (const u of inserted.errorUpdates) {
+    issues.push({
+      row: rowNoOf.get(u.rowId) ?? 0, field: "(row)", value: null, code: "DB_ERROR",
+      reason: `The database refused this row: ${u.message.replace(/^Row \d+: /, "")}`.slice(0, 500),
+      requiredFormat: null, category: "technical", severity: "reject",
+    });
+  }
+  const failedIds = new Set(inserted.errorUpdates.map((e) => e.rowId));
+  if (inserted.importedRows > 0) {
+    await markRowsImported(toImport.filter((a) => !failedIds.has(a.rowId)).map((a) => a.rowId));
   }
 
-  if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
-    const ids = errorUpdates.map((u) => u.rowId);
+  // Rejected rows: row_status 'error' with the readable sentence per problem (warnings stay on the reject log).
+  const rejectsByRow = new Map<number, string[]>();
+  for (const i of issues) {
+    if (i.severity !== "reject") continue;
+    rejectsByRow.set(i.row, [...(rejectsByRow.get(i.row) ?? []), rejectMessage(i)]);
+  }
+  const rowIdOf = new Map(batchRows.map((r) => [r.row_no, r.id]));
+  const errorUpdates = [...rejectsByRow.entries()].map(([rowNo, messages]) => ({ rowId: rowIdOf.get(rowNo)!, messages })).filter((u) => u.rowId);
+  for (let i = 0; i < errorUpdates.length; i += 1000) {
+    const part = errorUpdates.slice(i, i + 1000);
     await db.execute(
-      `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
-        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
+      `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${part.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ")} END
+        WHERE id IN (${part.map(() => "?").join(",")})`,
+      [...part.flatMap((u) => [u.rowId, JSON.stringify(u.messages)]), ...part.map((u) => u.rowId)],
     );
   }
 
+  await saveRejects(batchId, batchRows.map((r) => r.row_no), issues, monthOfRow);
+  if (processId) await saveDateCorrections(batchId, processId, plan);
+
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
+  const warningRows = new Set(issues.filter((i) => i.severity === "warning" && !rejectsByRow.has(i.row)).map((i) => i.row)).size;
+  const summary = {
+    ...uploadSummary(batchRows.length, importedRows, errorRows),
+    updatedOrders: plan.reduce((s, p) => s + p.updatedCount, 0),
+    newOrders: plan.reduce((s, p) => s + p.insertedCount, 0),
+    duplicateInFile: dupes.length,
+    technicalRejects: new Set(issues.filter((i) => i.category === "technical").map((i) => i.row)).size,
+    warningRows,
+    months: [...new Set(toImport.map((a) => a.record.reportDate.slice(0, 7)))].sort(),
+  };
+
   const finalStatus =
     errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+  const errorSummary = errorRows
+    ? `${errorRows} of ${batchRows.length} row(s) rejected (${summary.successPct}% accepted). See the rejection log for row, field, value and reason.`
+    : null;
   await db.execute(
-    `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId],
+    `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ?, error_summary = COALESCE(?, error_summary),
+            metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.bbbSales', CAST(? AS JSON))
+      WHERE id = ?`,
+    [finalStatus, importedRows, errorRows, errorSummary, JSON.stringify(summary), batchId],
   );
 
-  return { importedRows, errorRows, errors };
+  const errors = [...rejectsByRow.entries()].map(([rowNo, m]) => `Row ${rowNo}: ${m.join("; ")}`);
+  return { importedRows, errorRows, errors, warningRows, summary };
 }

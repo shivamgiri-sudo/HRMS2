@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1265,
-  "columnCount": 18398,
+  "tableCount": 1267,
+  "columnCount": 18418,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -20930,6 +20930,30 @@
       "approved_at",
       "created_at",
       "updated_at"
+    ],
+    "bla_bli_blu_sales_upload_reject": [
+      "id",
+      "upload_batch_id",
+      "row_no",
+      "field_name",
+      "uploaded_value",
+      "reason_code",
+      "reason",
+      "required_format",
+      "category",
+      "severity",
+      "report_month",
+      "created_at"
+    ],
+    "bla_bli_blu_sales_upload_date": [
+      "upload_batch_id",
+      "report_date",
+      "existing_count",
+      "upload_count",
+      "updated_count",
+      "inserted_count",
+      "after_count",
+      "created_at"
     ]
   }
 }
