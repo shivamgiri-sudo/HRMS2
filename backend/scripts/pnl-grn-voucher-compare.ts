@@ -13,7 +13,7 @@ import "dotenv/config";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { billQuery, closeBillPool } from "../src/db/billDb.js";
-import { readGrnSpend } from "../src/modules/process-pnl/pnl-actuals.service.js";
+import { OWN_COMPANY_SQL, readGrnSpend } from "../src/modules/process-pnl/pnl-actuals.service.js";
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const r0 = (v: unknown) => Math.round(Number(v ?? 0));
@@ -21,7 +21,7 @@ const norm = (v: unknown) => String(v ?? "").trim().toUpperCase();
 
 async function one(period: string, branchName: string) {
   const [ccs] = await db.execute<RowDataPacket[]>(
-    `SELECT ccm.id, ccm.cost_centre_code AS code, ccm.bill_source_id AS src FROM cost_centre_master ccm JOIN branch_master bm ON bm.id = ccm.branch_id WHERE UPPER(TRIM(bm.branch_name)) = ?`, [norm(branchName)]);
+    `SELECT ccm.id, ccm.cost_centre_code AS code, ccm.bill_source_id AS src FROM cost_centre_master ccm JOIN branch_master bm ON bm.id = ccm.branch_id WHERE UPPER(TRIM(bm.branch_name)) = ? AND ${OWN_COMPANY_SQL}`, [norm(branchName)]); // IDC-company cost centres are not MAS (owner ruling): they are on neither side
   const ids = new Set(ccs.map((c) => String(c.id)));
   const codeById = new Map(ccs.map((c) => [String(c.id), String(c.code)]));
   const srcIds = new Set(ccs.filter((c) => c.src != null).map((c) => Number(c.src)));

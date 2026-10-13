@@ -283,12 +283,23 @@ const HRMS_RAISED_GRN_SQL = `gr.bill_source_id IS NULL AND COALESCE(gr.created_b
  */
 const LEGACY_TWIN_MIN_AMOUNT = 1000;
 
+
+
 /** grn_request statuses at which an ordinary (allocation-less) GRN's budget is consumed —
  *  Finance Head approval and everything after it (same set as grn-report's fully_approved). */
 const ORDINARY_GRN_CONSUMED_SQL =
   "'finance_head_approved','approved','pending_accounts_payment','payment_scheduled','partially_paid','paid'";
 /** …and at which it still holds a reservation (approved by Branch/Accounts Head, not yet Finance Head). */
 const ORDINARY_GRN_RESERVED_SQL = "'branch_head_approved','accounts_head_approved'";
+
+/**
+ * An HRMS-raised GRN that the P&L actually counts (legs 1 and 2): it has consumed or reserved allocation rows, or it is an ordinary GRN with a
+ * budget line in a consumed / reserved status. The mirror leg's voucher-number guard may only defer to such a GRN. Deferring to an HRMS GRN that
+ * is not counted (no budget line, e.g. an imprest, or a status outside both sets) dropped the voucher from the P&L altogether (found 2026-10-13:
+ * MAS/8/26/222, Rs 1,544).
+ */
+const HRMS_COUNTED_SQL = `(EXISTS (SELECT 1 FROM grn_cost_allocation ax WHERE ax.grn_request_id = gr.id AND ax.lifecycle_status IN ('consumed','reserved'))
+   OR (gr.budget_line_id IS NOT NULL AND gr.status IN (${ORDINARY_GRN_CONSUMED_SQL}, ${ORDINARY_GRN_RESERVED_SQL})))`;
 
 export async function readGrnSpend(
   periodCode: string,
@@ -388,7 +399,7 @@ export async function readGrnSpend(
                 SELECT 1 FROM grn_request gr2
                  WHERE gr2.grn_number = ge.grn_no
                    AND ${HRMS_RAISED_GRN_SQL.replace(/gr\./g, "gr2.")}
-                   AND gr2.status NOT IN ('draft','cancelled','rejected','consumption_reversed')
+                   AND ${"(" + HRMS_COUNTED_SQL.replace(/gr\./g, "gr2.") + ")"}
               )
           AND NOT EXISTS (
                 SELECT 1

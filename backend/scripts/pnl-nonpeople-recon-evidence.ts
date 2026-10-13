@@ -15,6 +15,7 @@ import "dotenv/config";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { billQuery, closeBillPool } from "../src/db/billDb.js";
+import { OWN_COMPANY_SQL } from "../src/modules/process-pnl/pnl-actuals.service.js";
 import { getPnlReconciliation } from "../src/modules/process-pnl/pnl-reconciliation.service.js";
 
 const MON = ["Apr", "May", "Jun", "Jul", "Aug", "Sep"];
@@ -24,7 +25,7 @@ const verdict = (h: number, s: number) => { const d = h - s; const pct = s ? (d 
 
 async function main() {
   const [ccs] = await db.execute<RowDataPacket[]>(
-    `SELECT ccm.bill_source_id AS src, ccm.cost_centre_code AS code, COALESCE(bm.branch_name,'Unassigned') AS branch FROM cost_centre_master ccm LEFT JOIN branch_master bm ON bm.id = ccm.branch_id WHERE ccm.bill_source_id IS NOT NULL`);
+    `SELECT ccm.bill_source_id AS src, ccm.cost_centre_code AS code, COALESCE(bm.branch_name,'Unassigned') AS branch FROM cost_centre_master ccm LEFT JOIN branch_master bm ON bm.id = ccm.branch_id WHERE ccm.bill_source_id IS NOT NULL AND ${OWN_COMPANY_SQL}`); // IDC-company cost centres are not MAS (owner ruling)
   const bySrc = new Map<number, { code: string; branch: string }>(ccs.map((r) => [Number(r.src), { code: String(r.code), branch: String(r.branch) }]));
 
   const rows = await billQuery<any>(

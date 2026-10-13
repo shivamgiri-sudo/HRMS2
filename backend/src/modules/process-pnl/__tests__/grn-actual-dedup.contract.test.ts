@@ -106,3 +106,15 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
     expect(service).not.toContain("FROM grn_cost_allocation");
   });
 });
+
+describe("legacy mirror leg defers only to an HRMS GRN the P&L actually counts", () => {
+  it("the voucher-number guard requires the HRMS twin to be countable (allocation rows, or budget line plus a consumed/reserved status)", () => {
+    const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
+    expect(service).toContain("const HRMS_COUNTED_SQL");
+    expect(service).toContain("gr.budget_line_id IS NOT NULL AND gr.status IN (");
+    const body = service.slice(service.indexOf("export async function readGrnSpend("));
+    expect(body).toContain('HRMS_COUNTED_SQL.replace(/gr\\./g, "gr2.")');
+    // The module-level constants must be defined before HRMS_COUNTED_SQL reads them (temporal dead zone).
+    expect(service.indexOf("const ORDINARY_GRN_RESERVED_SQL")).toBeLessThan(service.indexOf("const HRMS_COUNTED_SQL"));
+  });
+});
