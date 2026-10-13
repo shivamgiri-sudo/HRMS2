@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1265,
-  "columnCount": 18398,
+  "columnCount": 18406,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -10290,7 +10290,11 @@
       "data_source",
       "source_reference",
       "created_by",
-      "created_at"
+      "created_at",
+      "completed_count",
+      "category_counts",
+      "tat_known_count",
+      "duration_known_count"
     ],
     "gs1_email_daily_actual": [
       "id",
@@ -10309,7 +10313,11 @@
       "data_source",
       "source_reference",
       "created_by",
-      "created_at"
+      "created_at",
+      "status_counts",
+      "sla_bucket_counts",
+      "query_type_counts",
+      "duration_known_count"
     ],
     "gst_export_batch": [
       "id",

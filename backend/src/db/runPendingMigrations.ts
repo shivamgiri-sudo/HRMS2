@@ -1362,6 +1362,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2162_ff_absconder_branch_head_approval.sql", // Registered 2026-10-12. exit_request.ff_exception_bh_by/at/reason: Branch Head approval that must precede the Payroll Head absconder F&F exception. Nullable, additive, guarded.
   "migrations/2163_noc_remove_finance_stage.sql", // Registered 2026-10-13. Finance is not a NOC stage: template row inactive, pending Finance rows removed from open cases (acted rows and closed cases untouched). Idempotent.
   "migrations/2160_roster_import_row_tracker_indexes.sql", // Registered 2026-10-12. Covering indexes on wfm_roster_import_row (roster_date,batch_id,employee_id_raw) and (employee_id_raw,roster_date,batch_id): Roster Upload Tracker took ~37s per load and ~120s per cell drawer because the table was only indexed by batch_id.
+  "migrations/2185_gs1_item_level_rollups.sql", // Registered 2026-10-13. GS1 per-day roll-ups of per-item fields (email status/SLA bucket/query type counts, data card completed/category counts, duration and TAT-known counts) for the GS1 consolidated dashboard. Additive, nullable, idempotent.
   "migrations/2161_roster_import_row_batch_cover.sql", // Registered 2026-10-12. Covering index (batch_id, roster_date, employee_id_raw) on wfm_roster_import_row: tracker coverage scan was 12.7s through idx_batch plus a table fetch per row.
 ];
 

@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
 import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { bumpCount, capCountMap, durationStats, hasValue, parseDurationMinutes, type CountMap } from "./gs1-item-rollup.js";
 
 /**
  * GS1 India — DataKart task processing daily actuals.
@@ -86,6 +87,10 @@ interface DailyGroup {
   gtinTotal: number;
   tatKnown: number;
   tatHits: number;
+  completed: number;
+  categoryCounts: CountMap;
+  durationSum: number;
+  durationKnown: number;
   rowNos: number[];
 }
 
@@ -153,7 +158,8 @@ export async function importGs1DatakartDailyBatch(
 
       const key = `${taskDate}|${analystName}`;
       const g = groups.get(key) ?? {
-        taskDate, analystName, taskCount: 0, gtinTotal: 0, tatKnown: 0, tatHits: 0, rowNos: [],
+        taskDate, analystName, taskCount: 0, gtinTotal: 0, tatKnown: 0, tatHits: 0,
+        completed: 0, categoryCounts: {}, durationSum: 0, durationKnown: 0, rowNos: [],
       };
       g.taskCount += 1;
       g.gtinTotal += parseCount(data["GTIN Count"]);
@@ -162,6 +168,10 @@ export async function importGs1DatakartDailyBatch(
         g.tatKnown += 1;
         if (tat) g.tatHits += 1;
       }
+      if (hasValue(data["Date of completion"]) || hasValue(data["Complete time"])) g.completed += 1;
+      bumpCount(g.categoryCounts, data["Category"]);
+      const dur = parseDurationMinutes(data["Duration"]);
+      if (dur !== null) { g.durationSum += dur; g.durationKnown += 1; }
       g.rowNos.push(row.row_no);
       groups.set(key, g);
       rowIdsByGroup.set(key, [...(rowIdsByGroup.get(key) ?? []), row.id]);
@@ -173,7 +183,10 @@ export async function importGs1DatakartDailyBatch(
   const toInsert: ChunkInsertRow[] = [];
   const groupKeys: string[] = [];
   for (const [key, g] of groups) {
+    // within_tat stays 0 when the source has no TAT signal; tat_known_count = 0 marks that
+    // case so the dashboard shows N/A instead of a false 0%.
     const tatPct = g.tatKnown > 0 ? Math.round((g.tatHits / g.tatKnown) * 100) : 0;
+    const [avgDuration, durationKnown] = durationStats(g.durationSum, g.durationKnown);
     // rowId is the first raw row of the group — used by chunkedMasmisInsert for error attribution
     toInsert.push({
       rowId: rowIdsByGroup.get(key)?.[0] ?? "",
@@ -181,6 +194,7 @@ export async function importGs1DatakartDailyBatch(
       values: [
         randomUUID(), processId, g.taskDate, g.analystName, g.taskDate,
         g.taskCount, g.gtinTotal, tatPct,
+        g.tatKnown, g.completed, JSON.stringify(capCountMap(g.categoryCounts)), avgDuration, durationKnown,
         batchId, importedByUserId,
       ],
     });
@@ -190,12 +204,20 @@ export async function importGs1DatakartDailyBatch(
   const inserted = await chunkedMasmisInsert({
     insertPrefix: `INSERT INTO gs1_datakart_daily_actual
            (id, process_id, report_date, analyst_name, task_date,
-            task_count, gtin_count, within_tat, data_source, source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+            task_count, gtin_count, within_tat,
+            tat_known_count, completed_count, category_counts, tat_minutes, duration_known_count,
+            data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
     insertSuffix: `ON DUPLICATE KEY UPDATE
             task_count = VALUES(task_count),
             gtin_count = VALUES(gtin_count),
-            within_tat = VALUES(within_tat)`,
+            within_tat = VALUES(within_tat),
+            tat_known_count = VALUES(tat_known_count),
+            completed_count = VALUES(completed_count),
+            category_counts = VALUES(category_counts),
+            tat_minutes = VALUES(tat_minutes),
+            duration_known_count = VALUES(duration_known_count),
+            source_reference = VALUES(source_reference)`,
     rows: toInsert,
   });
 
