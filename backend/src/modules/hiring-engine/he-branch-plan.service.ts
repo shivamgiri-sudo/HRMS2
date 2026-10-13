@@ -88,18 +88,41 @@ async function booked(): Promise<BranchBooked[]> {
   return rows.map((r) => ({ branch: String(r.branch), invited: n(r.invited), confirmed: n(r.confirmed) }));
 }
 
+interface PlanInputs { today: string; seats: BranchSeats[]; history: BranchHistory[]; pace: BranchPace[]; booked: BranchBooked[]; spendByBranch: Record<string, number> }
+// The inputs scan the recruiter ledger and every branch's cost usage: seconds on production, and they move slowly. Cached for 10 minutes
+// per history window with single-flight, so a visit (and every what-if change, which only re-runs the pure maths) is instant after the first.
+const INPUT_TTL_MS = 10 * 60_000;
+const inputCache = new Map<number, { at: number; value: Promise<PlanInputs> }>();
+
+async function loadInputs(months: number): Promise<PlanInputs> {
+  const hit = inputCache.get(months);
+  if (hit && Date.now() - hit.at < INPUT_TTL_MS) return hit.value;
+  const value = (async (): Promise<PlanInputs> => {
+    const [d] = await db.execute<RowDataPacket[]>(`SELECT DATE(${IST_NOW}) AS today, DATE_SUB(DATE(${IST_NOW}), INTERVAL ${PACE_DAYS - 1} DAY) AS start`);
+    const today = String(d[0].today).slice(0, 10), start = String(d[0].start).slice(0, 10);
+    const [seatRows, history_, pace_, booked_, cost] = await Promise.all([seats(), history(months), pace(), booked(), getCostByBranch(start, today)]);
+    return { today, seats: seatRows, history: history_, pace: pace_, booked: booked_, spendByBranch: Object.fromEntries(cost.rows.map((r) => [r.branch, r.total])) };
+  })();
+  inputCache.set(months, { at: Date.now(), value });
+  value.catch(() => inputCache.delete(months));
+  if (inputCache.size > 6) inputCache.delete(inputCache.keys().next().value as number);
+  return value;
+}
+
 export async function planBranches(q: BranchPlanRequest = {}): Promise<BranchPlanResponse> {
   const months = Math.min(24, Math.max(1, Math.floor(q.months ?? 6)));
-  const [d] = await db.execute<RowDataPacket[]>(`SELECT DATE(${IST_NOW}) AS today, DATE_SUB(DATE(${IST_NOW}), INTERVAL ${PACE_DAYS - 1} DAY) AS start`);
-  const today = String(d[0].today).slice(0, 10), start = String(d[0].start).slice(0, 10);
+  const inputs = await loadInputs(months);
+  const { today } = inputs;
   const deadlineDays = q.deadline && /^\d{4}-\d{2}-\d{2}$/.test(q.deadline)
     ? Math.max(0, Math.ceil((Date.parse(`${q.deadline}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000)) : null;
-
-  const [s, h, p, b, cost] = await Promise.all([seats(), history(months), pace(), booked(), getCostByBranch(start, today)]);
-  const spendByBranch = Object.fromEntries(cost.rows.map((r) => [r.branch, r.total]));
-  const plan = buildBranchPlan({ today, seats: s, history: h, pace: p, booked: b, spendByBranch, overrides: q, deadlineDays });
+  const plan = buildBranchPlan({ today, seats: inputs.seats, history: inputs.history, pace: inputs.pace, booked: inputs.booked, spendByBranch: inputs.spendByBranch, overrides: q, deadlineDays });
   return {
     ...plan, asOf: today, historyMonths: months, paceDays: PACE_DAYS, joinBufferPct: Math.round((FILL_BUFFER - 1) * 100), deadlineDays,
     costNote: "Without a cost-per-walk-in input, cost is ENGINE spend only: the last 30 days of Meta ad spend that is synced, WhatsApp, bot calls and e-mail at the owner's rates, divided by walk-ins. It excludes recruiter pay, venue, referral and incentive cost, so it understates what a walk-in really costs. Enter an all-in cost per walk-in to plan with a real figure.",
   };
+}
+
+/** Warm the default window so the first person to open the Planner does not wait. */
+export async function warmBranchPlan(): Promise<void> {
+  try { await loadInputs(6); } catch { /* the plan still works cold */ }
 }
