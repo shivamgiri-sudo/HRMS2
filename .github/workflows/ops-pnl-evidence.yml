@@ -16,6 +16,10 @@ on:
         description: "Set to 'yes' to run the non-people (GRN / vendor) reconciliation instead (read-only)."
         required: false
         default: ""
+      dailytrend:
+        description: "Set to 'yes' to time the parts of the P&L daily-trend read (read-only)."
+        required: false
+        default: ""
       timing:
         description: "Set to 'yes' to time the P&L and branch-plan reads piece by piece (read-only)."
         required: false
@@ -93,9 +97,12 @@ jobs:
           INPUT_NKRENT: ${{ inputs.nkrent }}
           INPUT_NKMOVE: ${{ inputs.nkmove }}
           INPUT_TIMING: ${{ inputs.timing }}
+          INPUT_DAILYTREND: ${{ inputs.dailytrend }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_TIMING" = "yes" ]; then
+          if [ "$INPUT_DAILYTREND" = "yes" ]; then
+            npx tsx scripts/pnl-daily-trend-profile.ts
+          elif [ "$INPUT_TIMING" = "yes" ]; then
             npx tsx scripts/pnl-timing-profile.ts
           elif [ "$INPUT_NKMOVE" = "dry-run" ]; then
             npx tsx scripts/pnl-nk-branch-move.ts

@@ -3,7 +3,9 @@ import { LoopbackError } from "./types.js";
 import { ADAPTERS } from "./adapters/index.js";
 
 const ADAPTER_TIMEOUT_MS = 90_000;
-const CACHE_TTL_MS = 120_000;
+// 5 minutes (was 2): each build fans out to ~60 queues through internal calls, which loaded the whole backend on every approver's page open.
+// A decision drops the user's cache immediately (see invalidate below), so an actioned item never reappears; only brand-new items wait.
+const CACHE_TTL_MS = 300_000;
 const cache = new Map<string, { exp: number; value: ListResult }>();
 
 export interface ListResult {
@@ -90,7 +92,8 @@ export function invalidateApprovalCache(userId: string) {
  */
 export function softDeadlineMs(): number {
   const n = Number(process.env.APPROVAL_CENTER_SOFT_DEADLINE_MS);
-  return Number.isFinite(n) && n > 0 ? n : 12_000;
+  // 5 s (was 12 s, which is what every page showed as the approvals call time): the client already shows a partial list and re-asks.
+  return Number.isFinite(n) && n > 0 ? n : 5_000;
 }
 
 interface BuildState {
