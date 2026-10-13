@@ -87,6 +87,7 @@ jobs:
           set -euo pipefail
           if [ "$INPUT_NKRENT" = "yes" ]; then
             npx tsx scripts/pnl-nk-rent-check.ts
+            npx tsx scripts/pnl-nk-rent-hrms.ts
           elif [ -n "$INPUT_GRNPROBE" ]; then
             npx tsx scripts/pnl-grn-mirror-probe.ts "$INPUT_GRNPROBE"
           elif [ -n "$INPUT_GRNCOMPARE" ]; then
