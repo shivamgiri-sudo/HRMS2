@@ -1,0 +1,44 @@
+name: Ops Diagnose Mislinked Exit Requests (manual, read-only)
+
+# One-off, read-only dump of exit_request + exit_approval_log + audit_action_log for the 5
+# currently-Active employees found with a permanently-empty employment window (salary_start_date
+# after a resolved exit_request LWD) by scan-inverted-employment-windows.ts on 2026-10-13.
+# Standalone file, not ops-scripts.yml, to avoid colliding with concurrent edits there.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-diagnose-mislinked-exit-requests
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Diagnose mislinked exit requests
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run (read-only)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: npx tsx scripts/diagnose-mislinked-exit-requests.ts
