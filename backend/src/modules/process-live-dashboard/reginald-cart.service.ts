@@ -126,7 +126,9 @@ async function computeCartSummary(rawFilters: { from?: string; to?: string }): P
     abandoned: offered - connected,
     uniqueDialed: n(r.uniqueDialed),
     uniqueConnected: n(r.uniqueConnected),
-    connectPct: pct(connected, offered),
+    // Connect % = Unique Connect / Unique Dialed x 100 — the same definition the
+    // daily, monthly and analyst views use (it was raw connected / offered here).
+    connectPct: pct(n(r.uniqueConnected), n(r.uniqueDialed)),
     talkSec: Math.round(talkSec), talk: fmtSec(talkSec),
     avgTalkSec, avgTalk: fmtSec(avgTalkSec),
     ahtSec, aht: fmtSec(ahtSec),
@@ -140,7 +142,7 @@ async function computeCartSummary(rawFilters: { from?: string; to?: string }): P
         campaign: String(cr.campaign ?? ''),
         offered: co, connected: cc,
         uniqueDialed: n(cr.uniqueDialed), uniqueConnected: n(cr.uniqueConnected),
-        connectPct: pct(cc, co),
+        connectPct: pct(n(cr.uniqueConnected), n(cr.uniqueDialed)),
         avgTalkSec: ca, avgTalk: fmtSec(ca),
       };
     }),
