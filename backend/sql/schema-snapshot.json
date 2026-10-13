@@ -4868,7 +4868,15 @@
       "is_migrated",
       "legacy_id",
       "tally_head",
-      "client_tally_name"
+      "client_tally_name",
+      "po_numbers",
+      "grn_no",
+      "grn_date",
+      "jcc_no",
+      "jcc_date",
+      "rcm_applicable",
+      "last_sent_at",
+      "last_sent_by"
     ],
     "client_invoice_audit_log": [
       "id",
