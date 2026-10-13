@@ -127,6 +127,7 @@ on:
           - meta-whatsapp-diagnose
           - he-inbox-timing
           - backend-log-grep
+          - molecular-feed-diagnose
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
           - create-missing-esa-for-run-lines
@@ -542,6 +543,10 @@ jobs:
               # Dry-runs unless given --apply. Apply removes not-yet-joined zero-net lines and recalculates the rest, scoped.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/heal-zero-day-lines.ts $FLAG
+              ;;
+            molecular-feed-diagnose)
+              # Read-only: Molecular/Reginald email feed history from worker logs, TCP test to the ticket DB, HRMS row counts.
+              npx tsx scripts/molecular-feed-diagnose.ts
               ;;
             backend-log-grep)
               # Read-only: greps backend logs for the phrase given in employee_codes.
