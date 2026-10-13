@@ -1,0 +1,52 @@
+name: Ops Kill Runaway Query (manual, owner-approved)
+
+# Ends named runaway queries with KILL QUERY after re-checking each one (still the expected statement, running > 120 s, not from the app server).
+# Own workflow and concurrency group so it cannot be replaced by another session's pending ops run. Nothing else is touched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ids:
+        description: "Space-separated MySQL thread ids (1 to 5)"
+        required: true
+      confirm:
+        description: "Type KILL to confirm"
+        required: true
+
+concurrency:
+  group: ops-kill-query-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  kill:
+    name: Kill runaway queries
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Refuse without confirmation
+        shell: bash
+        run: |
+          if [ "${{ inputs.confirm }}" != "KILL" ]; then echo "::error::Type KILL in confirm"; exit 1; fi
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          INPUT_IDS: ${{ inputs.ids }}
+        run: |
+          set -euo pipefail
+          npx tsx scripts/ops-kill-runaway-query.ts $INPUT_IDS
