@@ -30,7 +30,7 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists }));
 vi.mock("../pnl-seat-revenue-forecast.service.js", () => ({ getSeatRevenueForecast }));
 
-import { getDailyTrend } from "../pnl-daily-trend.service.js";
+import { clearDailyTrendCache, getDailyTrend } from "../pnl-daily-trend.service.js";
 
 const PERIOD = "2026-09"; // 30 days
 
@@ -59,6 +59,7 @@ function fixture(opts: { attendance?: boolean } = {}) {
 }
 
 beforeEach(() => {
+  clearDailyTrendCache();
   execute.mockReset();
   tableExists.mockReset();
   getSeatRevenueForecast.mockReset();
@@ -181,5 +182,16 @@ describe("input handling", () => {
     const trend = await getDailyTrend("2026-02");
     expect(trend.points).toHaveLength(28);
     expect(trend.points.every((p) => p.totalCost === 0)).toBe(true);
+  });
+});
+
+describe("daily trend cache", () => {
+  it("serves a repeat call from the cache and recomputes after it is cleared", async () => {
+    const first = await getDailyTrend("2026-03");
+    const again = await getDailyTrend("2026-03");
+    expect(again).toBe(first);
+    clearDailyTrendCache();
+    const fresh = await getDailyTrend("2026-03");
+    expect(fresh).not.toBe(first);
   });
 });

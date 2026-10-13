@@ -176,7 +176,7 @@ async function monthlyPeopleCost(period: string, branchId?: string): Promise<num
   return 0;
 }
 
-export async function getDailyTrend(
+async function computeDailyTrend(
   period: string,
   options: { branchId?: string } = {},
 ): Promise<DailyTrend> {
@@ -188,57 +188,57 @@ export async function getDailyTrend(
   const monthStart = `${period}-01`;
   const nextMonth = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
 
-  const [forecast, peopleCostTotal] = await Promise.all([
+  // The four reads are independent: start them together (they used to run one after the other, so the page waited for their SUM:
+  // measured on prod 2026-10-13, seat forecast 9-11 s and attendance-by-day 14 s).
+  const grnP = (async () => {
+    const grnByDay = new Map<string, number>();
+    if (await tableExists("grn_request")) {
+      const branchSql = options.branchId ? "AND g.branch_id = ?" : "";
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(g.bill_date, '%Y-%m-%d') AS d,
+                SUM(${grnRequestExGstSql("g")}) AS amount
+           FROM grn_request g
+          WHERE g.status NOT IN ('draft','rejected','cancelled')
+            AND g.bill_source_id IS NULL AND COALESCE(g.created_by, '') NOT LIKE '00000000-%'
+            AND g.bill_date >= ? AND g.bill_date < ?
+            ${branchSql}
+          GROUP BY d`,
+        options.branchId ? [monthStart, nextMonth, options.branchId] : [monthStart, nextMonth],
+      );
+      for (const r of rows) grnByDay.set(String(r.d), n(r.amount));
+    }
+    return grnByDay;
+  })();
+  const attP = (async () => {
+    const attendanceByDay = new Map<string, { headcount: number; payable: number }>();
+    let totalPayable = 0;
+    if (await tableExists("attendance_daily_record")) {
+      const branchSql = options.branchId ? "AND a.branch_id = ?" : "";
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(a.record_date, '%Y-%m-%d') AS d,
+                COUNT(DISTINCT a.employee_id) AS headcount,
+                SUM(${PAYABLE_WEIGHT_SQL}) AS payable
+           FROM attendance_daily_record a
+          WHERE a.record_date >= ? AND a.record_date < ?
+            ${branchSql}
+          GROUP BY d`,
+        options.branchId ? [monthStart, nextMonth, options.branchId] : [monthStart, nextMonth],
+      );
+      for (const r of rows) {
+        const payable = n(r.payable);
+        attendanceByDay.set(String(r.d), { headcount: n(r.headcount), payable });
+        totalPayable += payable;
+      }
+    }
+    return { attendanceByDay, totalPayable };
+  })();
+  const [forecast, peopleCostTotal, grnByDay, { attendanceByDay, totalPayable }] = await Promise.all([
     getSeatRevenueForecast(period, options.branchId ? { branchId: options.branchId } : {}),
     monthlyPeopleCost(period, options.branchId),
+    grnP,
+    attP,
   ]);
   const monthlyRevenue = forecast.projectedMonthEnd;
-
-  // GRN spend by bill date.
-  // INTENTIONALLY diverges from pnl-actuals.service.ts's readGrnSpend() (the shared month-level GRN
-  // reader behind Statement / CEO / Live, 2026-09-23): this chart needs a DAY, which only bill_date
-  // carries (accounting_period is a month), and it reads grn_request headers only, so a month's
-  // daily bars need not sum exactly to the Statement's IDC. Amount is EX-GST (owner rule
-  // 2026-09-24: P&L GRN must be non-GST) — amount_without_tax via pnl-ex-gst.ts, the same basis
-  // readGrnSpend() uses; it replaced COALESCE(pnl_cost_amount, amount_with_tax).
-  const grnByDay = new Map<string, number>();
-  if (await tableExists("grn_request")) {
-    const branchSql = options.branchId ? "AND g.branch_id = ?" : "";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(g.bill_date, '%Y-%m-%d') AS d,
-              SUM(${grnRequestExGstSql("g")}) AS amount
-         FROM grn_request g
-        WHERE g.status NOT IN ('draft','rejected','cancelled')
-          AND g.bill_source_id IS NULL AND COALESCE(g.created_by, '') NOT LIKE '00000000-%'
-          AND g.bill_date >= ? AND g.bill_date < ?
-          ${branchSql}
-        GROUP BY d`,
-      options.branchId ? [monthStart, nextMonth, options.branchId] : [monthStart, nextMonth],
-    );
-    for (const r of rows) grnByDay.set(String(r.d), n(r.amount));
-  }
-
-  // Attendance: headcount present, and the payable weight that shapes the people-cost curve.
-  const attendanceByDay = new Map<string, { headcount: number; payable: number }>();
-  let totalPayable = 0;
-  if (await tableExists("attendance_daily_record")) {
-    const branchSql = options.branchId ? "AND a.branch_id = ?" : "";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(a.record_date, '%Y-%m-%d') AS d,
-              COUNT(DISTINCT a.employee_id) AS headcount,
-              SUM(${PAYABLE_WEIGHT_SQL}) AS payable
-         FROM attendance_daily_record a
-        WHERE a.record_date >= ? AND a.record_date < ?
-          ${branchSql}
-        GROUP BY d`,
-      options.branchId ? [monthStart, nextMonth, options.branchId] : [monthStart, nextMonth],
-    );
-    for (const r of rows) {
-      const payable = n(r.payable);
-      attendanceByDay.set(String(r.d), { headcount: n(r.headcount), payable });
-      totalPayable += payable;
-    }
-  }
 
   const points: DailyTrendPoint[] = [];
   let cumulativeRevenue = 0;
@@ -286,4 +286,25 @@ export async function getDailyTrend(
     monthlyPeopleCostBasis: peopleCostTotal,
     grnCostDatedByBillDate: true,
   };
+}
+
+/**
+ * Cached with single-flight, because the chart is the slowest call on the Statement tab. A CLOSED month's history does not change, so it is kept
+ * for 6 hours; the running month for 10 minutes (it moves with attendance and GRN entries).
+ */
+const trendCache = new Map<string, { at: number; ttl: number; value: Promise<DailyTrend> }>();
+/** For tests and for an operator who has just corrected data. */
+export function clearDailyTrendCache(): void { trendCache.clear(); }
+export async function getDailyTrend(period: string, options: { branchId?: string } = {}): Promise<DailyTrend> {
+  if (!/^\d{4}-\d{2}$/.test(period)) return computeDailyTrend(period, options);
+  const key = `${period}|${options.branchId ?? ""}`;
+  const hit = trendCache.get(key);
+  if (hit && Date.now() - hit.at < hit.ttl) return hit.value;
+  const current = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 7);
+  const ttl = period < current ? 6 * 3600_000 : 10 * 60_000;
+  const value = computeDailyTrend(period, options);
+  trendCache.set(key, { at: Date.now(), ttl, value });
+  value.catch(() => trendCache.delete(key));
+  if (trendCache.size > 60) trendCache.delete(trendCache.keys().next().value as string);
+  return value;
 }
