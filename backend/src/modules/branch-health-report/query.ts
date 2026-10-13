@@ -16,6 +16,7 @@ import { getPnlReconciliation } from "../process-pnl/pnl-reconciliation.service.
 import { readGrnSpend } from "../process-pnl/pnl-actuals.service.js";
 import { getBranchActivityByBranch } from "../ats/branch-activity-report/index.js";
 import { isShiftDueYet } from "../wfm/shift-due.util.js";
+import { budgetExGstSql } from "../process-pnl/pnl-ex-gst.js";
 import { ONFIDO_MANDATE_LOB_CODES } from "../onfido-process/onfido-mandate-manpower.service.js";
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ export async function fetchBudgetSummary(
   const ym = today.slice(0, 7); // YYYY-MM — period_code is in this format
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT h.period_code,
-            h.pnl_budget_amount                                 AS total_budget,
+            COALESCE(SUM(${budgetExGstSql("l")}), 0)             AS total_budget,
             COALESCE(SUM(l.consumed_amount), 0)                AS consumed,
             COALESCE(SUM(l.reserved_amount), 0)                AS reserved
        FROM finance_budget_header h
@@ -1306,7 +1307,7 @@ export async function fetchBudgetByHead(
 ): Promise<{ top: BudgetHeadRow[]; overBudget: BudgetHeadRow[] }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(l.head), ''), 'Unspecified')       AS head,
-            COALESCE(SUM(l.pnl_cost_amount), 0)                       AS budget,
+            COALESCE(SUM(${budgetExGstSql("l")}), 0)                 AS budget,
             COALESCE(SUM(l.consumed_amount + l.reserved_amount), 0)   AS charged
        FROM finance_budget_line l
        JOIN finance_budget_header h ON h.id = l.budget_id
@@ -1345,7 +1346,7 @@ export interface BudgetMonthProgress {
   periodCode: string;
   /** Header status of the budget used for the month; null when no budget exists. */
   headerStatus: string | null;
-  /** Sum of the declared line budgets (P&L cost basis). */
+  /** Sum of the declared line budgets, ex-GST (base amount, top-ups included). */
   declared: number;
   /** Consumed + reserved across all lines. */
   used: number;
@@ -1425,7 +1426,7 @@ export async function fetchBudgetHistory(
           `SELECT l.budget_id,
                   COALESCE(NULLIF(TRIM(l.head), ''), 'Unspecified') AS head,
                   COALESCE(l.sub_head, '')                         AS sub_head,
-                  COALESCE(SUM(l.pnl_cost_amount), 0)              AS budget,
+                  COALESCE(SUM(${budgetExGstSql("l")}), 0)              AS budget,
                   COALESCE(SUM(l.consumed_amount + l.reserved_amount), 0) AS used,
                   COALESCE(MAX(c.status), 'open')                  AS closure
              FROM finance_budget_line l

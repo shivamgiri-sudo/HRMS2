@@ -259,7 +259,7 @@ export function renderEmail(
         },
       ]) +
       note(
-        "Budget basis: P&amp;L cost (ex-GST on input-credit lines), approved branch budget for the month.",
+        "Budget basis: ex-GST (base amount, approved top-ups included), same as the P&amp;L.",
       )
     : `<p style="${FONT}font-size:12px;color:${C.muted};margin:0;">No budget found for ${raw.budget.periodCode ?? reportDate.slice(0, 7)}</p>`;
 
