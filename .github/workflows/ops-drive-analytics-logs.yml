@@ -28,5 +28,5 @@ jobs:
         run: |
           for P in hrms2-backend hrms2-workers; do
             echo "=== $P ==="
-            pm2 logs "$P" --nostream --lines 2500 --no-color 2>&1 | grep -iE "drive-analytics|he-drive|section failed|ER_QUERY_TIMEOUT|MAX_EXECUTION|read failed|analytics" | tail -n 40 | cut -c1-400 || true
+            pm2 logs "$P" --nostream --lines 2500 --no-color 2>&1 | grep -iE "background build|still partial|he-drive-analytics\] section|resp-summary|responses failed|summary failed" | tail -n 40 | cut -c1-400 || true
           done
