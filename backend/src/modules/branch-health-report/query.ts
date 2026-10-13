@@ -16,7 +16,7 @@ import { getPnlReconciliation } from "../process-pnl/pnl-reconciliation.service.
 import { readGrnSpend } from "../process-pnl/pnl-actuals.service.js";
 import { getBranchActivityByBranch } from "../ats/branch-activity-report/index.js";
 import { isShiftDueYet } from "../wfm/shift-due.util.js";
-import { budgetExGstSql } from "../process-pnl/pnl-ex-gst.js";
+import { budgetExGstSql, grnRequestExGstSql } from "../process-pnl/pnl-ex-gst.js";
 import { ONFIDO_MANDATE_LOB_CODES } from "../onfido-process/onfido-mandate-manpower.service.js";
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
@@ -241,8 +241,8 @@ async function fetchGrnBridge(
 ): Promise<GrnBridge> {
   const period = today.slice(0, 7);
   const monthStart = period + "-01";
-  // Cost is the budget engine's basis: P&L cost where set, else the ex-GST amount.
-  const cost = `COALESCE(NULLIF(g.pnl_cost_amount, 0), g.amount_without_tax, 0)`;
+  // Ex-GST taxable value: the basis budget lines are charged on and the P&L reads.
+  const cost = grnRequestExGstSql("g");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT CASE
               WHEN g.status IN (${GRN_AWAITING_STATUSES.map(() => "?").join(",")}) THEN 'awaiting'
@@ -375,7 +375,7 @@ async function fetchGrnByType(
     `SELECT COALESCE(NULLIF(grn_type, ''), 'other') AS type,
             COUNT(*) AS raised,
             COALESCE(SUM(amount_with_tax), 0) AS incl_gst,
-            COALESCE(SUM(COALESCE(NULLIF(pnl_cost_amount, 0), amount_without_tax, 0)), 0) AS ex_gst,
+            COALESCE(SUM(${grnRequestExGstSql("grn_request")}), 0) AS ex_gst,
             SUM(status IN (${GRN_APPROVED_STATUSES.map(() => "?").join(",")})) AS approved
        FROM grn_request
       WHERE branch_id = ? AND ${HRMS_GRN_SCOPE}
