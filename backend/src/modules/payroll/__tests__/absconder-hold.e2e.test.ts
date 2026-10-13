@@ -231,6 +231,34 @@ describe.skipIf(!ON)("absconder salary hold, end to end (real MySQL)", () => {
     expect((await rel.getHoldState(e3)).state).toBe("hold_requested");
   }, 60_000);
 
+  it("15. the attendance reconciliation does not raise a payable-days BLOCKER for a held line", async () => {
+    // Without the fix this job recomputes 5 payable days from attendance, sees the held 0, and files a blocker
+    // that stops the whole payroll run. A control (a normal line that genuinely disagrees) must still be flagged.
+    const { aprPayrollReconciliationService } = await import("../../wfm/apr-payroll-reconciliation.service.js");
+    const heldId = randomUUID(), heldEmp = randomUUID(), okEmp = randomUUID(), badEmp = randomUUID();
+    await mkEmp(heldEmp, "E2EHELD", { mgr: ids.mgrEmp, status: "absconded", active: 0 });
+    await mkSalary(heldEmp); await mkAttendance(heldEmp, 1, 5); await mkExit(heldId, heldEmp);
+    await mkEmp(okEmp, "E2EOK", { mgr: ids.mgrEmp }); await mkSalary(okEmp); await mkAttendance(okEmp, 1, 31);
+    await mkEmp(badEmp, "E2EBAD", { mgr: ids.mgrEmp }); await mkSalary(badEmp); await mkAttendance(badEmp, 1, 31);
+    await sql(`UPDATE salary_prep_run SET status = 'draft' WHERE id = ?`, [ids.run]);
+    for (const code of ["E2EHELD", "E2EOK", "E2EBAD"]) {
+      await sql(`INSERT INTO apr (campaign_id, ReportDate, UserID, Net_Login) VALUES ('e2e', '2026-10-02', ?, '08:00:00')`, [code]);
+    }
+    await calc.calculatePayrollRun(ids.run, "e2e");
+    await rel.placeHold({ exitRequestId: heldId, reason: REASON, actorUserId: ids.prUser });
+    expect(Number((await line(heldEmp)).final_payable_days)).toBe(0);
+    // make the control line genuinely wrong
+    await sql(`UPDATE salary_prep_line SET final_payable_days = 3 WHERE run_id = ? AND employee_id = ?`, [ids.run, badEmp]);
+    const r = await aprPayrollReconciliationService.audit({ from: "2026-10-01", to: "2026-10-31", runId: ids.run, apply: false });
+    const flagged = await sql(`SELECT e.employee_code FROM attendance_reconciliation_issue ari JOIN employees e ON e.id = ari.employee_id
+                                WHERE ari.issue_type = 'salary_payable_days_mismatch' AND ari.resolved_at IS NULL AND e.employee_code LIKE 'E2E%'`);
+    const codes = flagged.map((f: any) => f.employee_code);
+    expect(r.detectedIssues).toBeGreaterThanOrEqual(1);
+    expect(codes).toContain("E2EBAD");        // a real disagreement is still caught
+    expect(codes).not.toContain("E2EHELD");   // the hold is not reported as a payroll error
+    expect(codes).not.toContain("E2EOK");
+  }, 90_000);
+
   // ── HTTP layer: real tokens, real routes, real role and scope checks ──────────────────────────────
   describe("over HTTP", () => {
     let app: any;

@@ -1,4 +1,5 @@
 import type { RowDataPacket } from "mysql2";
+import { heldAbsconderEmployeeIds } from "../payroll/absconder-hold.service.js";
 import { isEmployedOn } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 
@@ -365,7 +366,11 @@ export const aprPayrollReconciliationService = {
             )) > 0.01`,
         [range.daysInMonth, range.start, range.end, range.start, range.end, runId, range.daysInMonth],
       );
+      // A held absconder's line is deliberately 0 days while attendance still shows the days worked.
+      // That is the hold working, not a payroll error, and filing it as a blocker would stop the whole run.
+      const heldAbsconders = await heldAbsconderEmployeeIds((lineRows as any[]).map((l) => String(l.employee_id)));
       for (const line of lineRows as any[]) {
+        if (heldAbsconders.has(String(line.employee_id))) continue;
         issues.push({
           issueDate: range.end,
           employeeId: line.employee_id,
