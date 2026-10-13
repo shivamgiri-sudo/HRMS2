@@ -296,17 +296,25 @@ export function attributeNightShifts(
       if (diffMinutes(c.first, c.last) <= MAX_SHIFT_SPAN_MIN || c.blocks.length < 2) return [c];
       const bl = [...c.blocks].sort((x, y) => x.firstPunch.localeCompare(y.firstPunch));
       // Prefer a silence that looks like "night shift's exit, then the day shift starts": the part
-      // before it ends 04:00-09:59 and the part after it begins 05:00-11:59. Otherwise the largest.
-      let best = -1, bestGap = 0, bestPref = -1, bestPrefGap = 0;
+      // before it ends 04:00-09:59 and the part after it begins 05:00-11:59. Among those take the
+      // LAST one whose two parts are both a plausible shift length - the exit is the end of the
+      // night's activity, and an earlier quiet stretch inside the night (MAS49499: 04:49 -> 06:59
+      // while his exit was 07:14) must not be mistaken for it. With no such silence, the largest.
+      let best = -1, bestGap = 0, bestPref = -1;
       let runEnd = bl[0].lastPunch;
       for (let i = 1; i < bl.length; i++) {
         const gap = diffMinutes(runEnd, bl[i].firstPunch);
         const endH = hourOf(runEnd), startH = hourOf(bl[i].firstPunch);
-        if (gap >= MIN_SPLIT_GAP_MIN && endH >= 4 && endH < 10 && startH >= 5 && startH < 12 && gap > bestPrefGap) { bestPrefGap = gap; bestPref = i; }
+        if (gap >= MIN_SPLIT_GAP_MIN && endH >= 4 && endH < 10 && startH >= 5 && startH < 12
+          && diffMinutes(c.first, runEnd) <= MAX_SHIFT_SPAN_MIN
+          && diffMinutes(bl[i].firstPunch, c.last) <= MAX_SHIFT_SPAN_MIN) bestPref = i;
         if (gap > bestGap) { bestGap = gap; best = i; }
         if (bl[i].lastPunch > runEnd) runEnd = bl[i].lastPunch;
       }
-      if (bestPref >= 0) { best = bestPref; bestGap = bestPrefGap; }
+      if (bestPref >= 0) {
+        best = bestPref;
+        bestGap = MIN_SPLIT_GAP_MIN; // a qualifying silence is already at least this long
+      }
       if (best < 0 || bestGap < MIN_SPLIT_GAP_MIN) return [c];
       const mkc = (part: PunchBlock[]): Cluster => ({
         first: part[0].firstPunch,

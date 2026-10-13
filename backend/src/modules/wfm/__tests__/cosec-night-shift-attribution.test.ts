@@ -168,4 +168,17 @@ describe("attributeNightShifts", () => {
     for (const g of groups) expect(g.workingMinutes).toBeLessThan(15 * 60);
     expect(consumedDates).toEqual([]);
   });
+
+  it("ends the night shift at its real exit, not at an earlier quiet stretch (MAS49499 real punches)", () => {
+    const pts = (d: string, list: string) => list.split(" ").map((h) => ({ punchDate: d, firstPunch: `${d} ${h}:00`, lastPunch: `${d} ${h}:00`, totalPunches: 1 }));
+    const { groups, consumedDates } = run([
+      ...pts("2026-10-03", "20:23 20:29 20:30 20:38 21:28 22:05 22:08"),
+      ...pts("2026-10-04", "00:14 02:13 02:57 03:01 04:45 04:47 04:49 06:59 07:04 07:14 08:49 09:14 09:17 09:25 13:23 13:27 13:36 13:40 14:11 16:01"),
+    ]);
+    const by = Object.fromEntries(groups.map((g) => [g.punchDate, g]));
+    expect(by["2026-10-03"].lastPunch).toBe("2026-10-04 07:14:00");
+    expect(by["2026-10-04"].firstPunch).toBe("2026-10-04 08:49:00");
+    expect(by["2026-10-04"].lastPunch).toBe("2026-10-04 16:01:00");
+    expect(consumedDates).toEqual([]);
+  });
 });
