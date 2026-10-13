@@ -296,6 +296,13 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     dojTo:          req.query.dojTo       as string | undefined,
   };
 
+  // A caller can send a "to" that predates "from" (e.g. a frontend filter left over from an
+  // earlier, wider query on the same report) — clamp rather than silently running an inverted
+  // or stale range. See ReportLibraryView.tsx's matching frontend fix for the same bug.
+  if (filters.from && filters.to && filters.to < filters.from) {
+    filters.to = filters.from;
+  }
+
   // Fetch at most EXPORT_ROW_CAP + 1 rows to detect overflow
   const options: ExecOptions = {
     limit: EXPORT_ROW_CAP + 1,

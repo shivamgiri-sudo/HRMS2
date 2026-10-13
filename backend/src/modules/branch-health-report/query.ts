@@ -908,12 +908,19 @@ export interface HeadcountProcessRow {
   mandateSource: "workforce" | "db_bill" | null;
 }
 
+export interface HeadcountLobRow {
+  lob: string;
+  active: number;
+}
+
 export interface HeadcountMovement {
   joinedToday: number;
   leftToday: number;
   joinedNames: string[];
   leftNames: string[];
   byProcess: HeadcountProcessRow[];
+  /** Active headcount grouped by Line of Business, independent of the process grouping above. */
+  byLob: HeadcountLobRow[];
   joinedMtd: number;
   leftMtd: number;
   /** Leavers with a last working day in the next 30 days (exit requests still running). */
@@ -1032,6 +1039,14 @@ export async function fetchHeadcountMovement(
       GROUP BY process`,
     [...onfidoLobs, ...onfidoLobs, branchId],
   );
+  const [activeRowsByLob] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(lm.lob_name, 'Unassigned') AS lob, COUNT(*) AS cnt
+       FROM employees e
+       LEFT JOIN lob_master lm ON lm.id = e.lob_id
+      WHERE e.branch_id = ? AND e.active_status = 1
+      GROUP BY lob`,
+    [branchId],
+  );
   const [joinRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name) AS name,
             COALESCE(pm.process_name, NULLIF(TRIM(ccm.cost_centre_name), ''), 'Unassigned')               AS process,
@@ -1135,6 +1150,9 @@ export async function fetchHeadcountMovement(
     joinedNames: todayOnly(joined),
     leftNames: todayOnly(left),
     byProcess: [...perProcess.values()].sort((a, b) => b.active - a.active),
+    byLob: (activeRowsByLob as any[])
+      .map((r) => ({ lob: String(r.lob), active: Number(r.cnt) }))
+      .sort((a, b) => b.active - a.active),
     joinedMtd: joined.length,
     leftMtd: left.length,
     upcomingExits: Number((upcomingRows[0] as any)?.cnt ?? 0),
@@ -1881,6 +1899,7 @@ export async function fetchAllBranchHealthData(
         joinedNames: [],
         leftNames: [],
         byProcess: [],
+        byLob: [],
         joinedMtd: 0,
         leftMtd: 0,
         upcomingExits: 0,

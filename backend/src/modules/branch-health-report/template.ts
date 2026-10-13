@@ -827,6 +827,11 @@ export function renderEmail(
     const html = `<span style="color:${gap < 0 ? C.danger : C.success};font-weight:700;">${text}</span>`;
     return strong ? `<strong>${html}</strong>` : html;
   };
+  const hcLobTotal = hc.byLob.reduce((n, r) => n + r.active, 0);
+  const hcLobRows = [
+    ...hc.byLob.map((r) => [r.lob, String(r.active)]),
+    [{ raw: "<strong>Total</strong>" }, { raw: `<strong>${hcLobTotal}</strong>` }],
+  ];
   const hcProcessRows = [
     ...hc.byProcess.map((r) => [
       r.mandateSource === "db_bill" ? `${r.process} *` : r.process,
@@ -921,6 +926,10 @@ export function renderEmail(
     ) +
     note(
       "Mandate seats = the process's mandated headcount at this branch (workforce mandate in force today; a * marks a mandate taken from the latest db_bill mandate-seat history because the process has no HRMS mandate). Active vs mandate = active headcount minus mandate; negative = short of the mandate. The total covers only processes that have a mandate.",
+    ) +
+    dataTable(["LOB", "Active"], hcLobRows, true) +
+    note(
+      "Active headcount by Line of Business (LOB), independent of the process grouping above. Employees with no LOB mapped are shown as Unassigned.",
     ) +
     namesLine("Joined today:", hc.joinedNames, C.success) +
     namesLine("Left today:", hc.leftNames, C.warn) +
