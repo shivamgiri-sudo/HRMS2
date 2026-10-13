@@ -19,10 +19,11 @@
  *   GET /api/process-live/reginald-cart/analysts
  *   GET /api/process-live/reginald-cart/apr
  *
- * Molecular Email APR:
+ * Molecular Email Dashboard (agent time from APR + per-ticket lifecycle):
  *   GET /api/process-live/molecular-email/summary
  *   GET /api/process-live/molecular-email/daily
  *   GET /api/process-live/molecular-email/agents
+ *   GET /api/process-live/molecular-email/overview|ticket-list|agent-daily|filter-options
  *
  * Reginald Email APR:
  *   GET /api/process-live/reginald-email/summary
@@ -46,6 +47,9 @@ import {
   getAprSummary, getAprDaily, getAprAgents, type EmailProcess,
 } from './apr.service.js';
 import { getEmailTickets } from './email-ticket.service.js';
+import {
+  getMolecularOverview, getMolecularTicketList, getMolecularAgentDaily, getMolecularFilterOptions,
+} from './molecular-email.service.js';
 import { getBillingDashboard } from './domestic-billing.service.js';
 import { getGs1Overview, getGs1Email, getGs1DataKart, getGs1Approval } from './gs1.service.js';
 import {
@@ -110,6 +114,12 @@ const mol = emailH('molecular');
 router.get('/molecular-email/summary', mol.summary);
 router.get('/molecular-email/daily',   mol.daily);
 router.get('/molecular-email/agents',  mol.agents);
+
+// ── Molecular Email Dashboard: per-ticket lifecycle/TAT (molecular_email_ticket, sql/migrations/2180) ──
+router.get('/molecular-email/overview',       wrap(req => getMolecularOverview(req.query as Q)));
+router.get('/molecular-email/ticket-list',    wrap(req => getMolecularTicketList(req.query as Q)));
+router.get('/molecular-email/agent-daily',    wrap(req => getMolecularAgentDaily(req.query as Q)));
+router.get('/molecular-email/filter-options', wrap(() => getMolecularFilterOptions()));
 
 const reg = emailH('reginald-email');
 router.get('/reginald-email/summary', reg.summary);

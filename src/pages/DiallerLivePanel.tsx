@@ -7,7 +7,7 @@
  * Process mapping (by name substring, case-insensitive):
  *   "bla" | "bli" | "blu" | "inbound" | "b-3"  → B-3 IB (inbound)
  *   "reginald" + ("cart" | "abandon")           → Reginald Abandoned Cart
- *   "molecular"                                 → Molecular Email (APR)
+ *   "molecular"                                 → Molecular Email Dashboard (own module; not a Reginald tab)
  *   "reginald" + "email"                        → Reginald Email (APR)
  *
  * Everything renders inside the caller's layout — no DashboardLayout wrapper.
@@ -21,6 +21,7 @@ import {
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { getAuthToken } from "@/lib/hrmsApi";
+import { MolecularEmailDashboard, MolecularMovedLink } from "@/components/process-live/molecular/MolecularEmailDashboard";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type DiallerProcess =
@@ -890,13 +891,13 @@ const emailDailyTrend = (proc: "molecular-email" | "reginald-email" | "finnable"
   ],
 });
 
-// ── Reginald All Dashboard — Cart + Molecular Email + Reginald Email in one place ──
-type ReginaldTab = "cart" | "molecular" | "email";
+// ── Reginald All Dashboard — Cart + Reginald Email. Molecular Email is its own
+// dashboard (REG-07): the old tab is now only a link to it, with no Molecular data here.
+type ReginaldTab = "cart" | "email";
 function ReginaldAllDashboard({ f }: { f: Filters }) {
   const [tab, setTab] = useState<ReginaldTab>("cart");
   const TABS: { key: ReginaldTab; label: string; badge?: string }[] = [
     { key: "cart",     label: "Abandoned Cart" },
-    { key: "molecular", label: "Molecular Email", badge: "APR" },
     { key: "email",    label: "Reginald Email",   badge: "APR" },
   ];
   return (
@@ -914,9 +915,9 @@ function ReginaldAllDashboard({ f }: { f: Filters }) {
             {t.badge && <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 800, background: tab === t.key ? "#e0edff" : "rgba(255,255,255,.12)", color: tab === t.key ? "#2f6fed" : "#9cb8d4", borderRadius: 4, padding: "1px 5px" }}>{t.badge}</span>}
           </button>
         ))}
+        <MolecularMovedLink compact />
       </div>
       {tab === "cart"      && <CartDashboard f={f} />}
-      {tab === "molecular" && <EmailAprDashboard proc="molecular-email" label="Molecular Email" campaign="MOEMAIL" f={f} />}
       {tab === "email"     && <EmailAprDashboard proc="reginald-email"  label="Reginald Email"  campaign="EMAIL"   f={f} />}
     </div>
   );
@@ -1914,7 +1915,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
     return (
       <div style={{ margin: "16px 0", padding: "16px 20px", background: "linear-gradient(135deg,#fff8e7,#fffaf0)", border: "1px solid #fde68a", borderRadius: 14, color: "#92400e", fontSize: 13, fontWeight: 700 }}>
         <strong>No live dialler data available</strong> for <em>{processName}</em>.
-        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: BLA BLI BLU Inbound, Reginald Abandoned Cart, Molecular Email, Reginald Email, Finnable, Domestic Billing, GS1 India, GNC, Bella-Vita Organic, Clovia, Neemans, Viega, Exicom, DU Digital.</div>
+        <div style={{ marginTop: 6, fontWeight: 500, fontSize: 12 }}>Live dashboards are available for: BLA BLI BLU Inbound, Reginald Abandoned Cart, Molecular Email Dashboard, Reginald Email, Finnable, Domestic Billing, GS1 India, GNC, Bella-Vita Organic, Clovia, Neemans, Viega, Exicom, DU Digital.</div>
       </div>
     );
   }
@@ -1926,7 +1927,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
         <DateRangeFilter f={filters} onChange={setFilters} />
         {proc === "inbound" && <InboundDashboard f={filters} />}
         {proc === "reginald-cart" && <ReginaldAllDashboard f={filters} />}
-        {proc === "molecular-email" && <EmailAprDashboard proc="molecular-email" label="Molecular Email" campaign="MOEMAIL" f={filters} />}
+        {proc === "molecular-email" && <MolecularEmailDashboard initialFrom={filters.from} initialTo={filters.to} />}
         {proc === "reginald-email" && <EmailAprDashboard proc="reginald-email" label="Reginald Email" campaign="EMAIL" f={filters} />}
         {proc === "billing" && <BillingDashboard f={filters} />}
         {proc === "gs1" && <GS1Dashboard f={filters} />}

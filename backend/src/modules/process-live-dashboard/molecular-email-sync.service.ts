@@ -64,6 +64,7 @@ import type { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { getMolecularEmailPool, type EmailTicketSource } from "../../db/molecularEmailDb.js";
+import { istToday } from "./molecular-email-kpi.js";
 
 export const LIVE_SYNC_SOURCE_REFERENCE = "live_sync";
 
@@ -343,7 +344,7 @@ export async function syncEmailDashboard(
 
 /** Syncs the last `daysBack` days (plus today) for both dashboards — used by the recurring worker. */
 export async function syncRecentEmailTickets(daysBack = 2): Promise<SyncResult[]> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istToday(); // IST: UTC's date lags until 05:30 IST and skipped the new day's first hours
   const fromDate = addDays(today, -daysBack);
   const results: SyncResult[] = [];
   for (const source of EMAIL_DASHBOARD_SOURCES) {
@@ -360,6 +361,6 @@ export async function backfillEmailDashboard(source: DashboardSource): Promise<S
   );
   const earliest = range[0]?.mn as string | undefined;
   if (!earliest) return { dashboardLabel: source.dashboardLabel, daysUpserted: 0 };
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istToday(); // IST: UTC's date lags until 05:30 IST and skipped the new day's first hours
   return syncEmailDashboard(source, earliest, today);
 }

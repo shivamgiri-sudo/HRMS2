@@ -21,7 +21,9 @@ describe('live dashboard scope map', () => {
     expect(served.filter((g) => !(g in LIVE_GROUP_USERS))).toEqual([]);
   });
 
-  it('lets a Reginald viewer read the Email tabs its dashboard carries', () => {
+  // Molecular left the Reginald dashboard (REG-07) but its old tab links to the
+  // Molecular Email Dashboard, so Reginald viewers keep the molecular-email group.
+  it('lets a Reginald viewer read its Email tab and the Molecular Email Dashboard it links to', () => {
     expect([...groupsForDashboards(['reginald-cart'])].sort())
       .toEqual(['molecular-email', 'reginald-cart', 'reginald-email']);
   });
@@ -31,6 +33,7 @@ describe('live dashboard scope map', () => {
     expect(inbound.has('inbound')).toBe(true);
     expect(inbound.has('reginald-cart')).toBe(false);
     expect(groupsForDashboards(['molecular-email']).has('reginald-cart')).toBe(false);
+    expect([...groupsForDashboards(['molecular-email'])]).toEqual(['molecular-email']);
     expect(groupsForDashboards([]).size).toBe(0);
   });
 });

@@ -808,7 +808,7 @@ function EmailAprView({ process, label, f }: { process:"molecular-email"|"regina
 const PROCESSES: { key:Tab; label:string; short:string; color:string }[] = [
   { key:"inbound", label:"B-3 IB (Inbound)", short:"BLA BLI BLU", color:"#2f6fed" },
   { key:"reginald-cart", label:"Reginald Cart", short:"Abandoned Cart", color:"#e89b19" },
-  { key:"molecular-email", label:"Molecular Email", short:"APR only", color:"#18a866" },
+  { key:"molecular-email", label:"Molecular Email Dashboard", short:"APR only", color:"#18a866" },
   { key:"reginald-email", label:"Reginald Email", short:"APR only", color:"#7c5ce5" },
 ];
 const IB_SUBS: { key:InboundSub; label:string }[] = [
@@ -883,7 +883,7 @@ export default function ProcessLivePage() {
         {proc==="reginald-cart"&&cartSub==="daily"     && <CartDaily f={filters}/>}
         {proc==="reginald-cart"&&cartSub==="analysts"  && <CartAnalysts f={filters}/>}
         {proc==="reginald-cart"&&cartSub==="apr"       && <CartApr f={filters}/>}
-        {proc==="molecular-email" && <EmailAprView process="molecular-email" label="Molecular Email" f={filters}/>}
+        {proc==="molecular-email" && <EmailAprView process="molecular-email" label="Molecular Email Dashboard" f={filters}/>}
         {proc==="reginald-email"  && <EmailAprView process="reginald-email"  label="Reginald Email"  f={filters}/>}
       </div>
     </DashboardLayout>
