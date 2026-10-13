@@ -9,7 +9,9 @@ import { hrmsApi } from "@/lib/hrmsApi";
 
 type Src = "meta_live" | "meta_old" | "he";
 interface Counts { enrolled: number; emailed: number; whatsapped: number; called: number; confirmed: number; walkedIn: number; selected: number; joined: number }
+interface CampaignDay extends Counts { date: string; campaignId: string; campaignName: string; drive: Src }
 interface Data {
+  campaignDays: CampaignDay[];
   generatedAt: string; from: string; to: string; daily: Array<{ date: string; enrolled: number; walkedIn: number }>; insights: Array<{ level: "info" | "warn"; text: string }>;
   drives: Record<Src, Counts>; drivesTotal: Counts;
   ats: { registered: number; selected: number; joined: number; fromDrives: number; beforeEnrolment: number; otherSources: { registered: number; selected: number; joined: number } };
@@ -26,6 +28,46 @@ const n = (v: number): string => v.toLocaleString("en-IN");
 const pct = (a: number, b: number): string => (b > 0 ? `${Math.round((a / b) * 100)}%` : "–");
 const istDay = (offset = 0): string => new Date(Date.now() + 330 * 60_000 + offset * 86_400_000).toISOString().slice(0, 10);
 const PRESETS = [{ id: "7", label: "7 days", days: 7 }, { id: "30", label: "30 days", days: 30 }, { id: "90", label: "90 days", days: 90 }] as const;
+
+function CampaignDays({ rows }: { rows: CampaignDay[] }) {
+  const [drive, setDrive] = useState<"meta_live" | "meta_old">("meta_live");
+  const [campaign, setCampaign] = useState("all");
+  const names = useMemo(() => [...new Map(rows.map((r) => [r.campaignId, r.campaignName])).entries()], [rows]);
+  const shown = rows.filter((r) => r.drive === drive && (campaign === "all" || r.campaignId === campaign));
+  const total = shown.reduce((a, r) => { for (const c of COLS) a[c.key] += r[c.key]; return a; }, { enrolled: 0, emailed: 0, whatsapped: 0, called: 0, confirmed: 0, walkedIn: 0, selected: 0, joined: 0 } as Counts);
+  return (
+    <div className="mt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Day by day, by Meta campaign</h3>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {(["meta_live", "meta_old"] as const).map((d) => (
+            <button key={d} type="button" aria-pressed={drive === d} onClick={() => setDrive(d)}
+              className={`min-h-9 cursor-pointer rounded-md border px-3 ${drive === d ? "border-violet-600 bg-violet-600 text-white" : "border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200"}`}>{d === "meta_live" ? "Live Meta" : "Old Meta data"}</button>
+          ))}
+          <select aria-label="Campaign" value={campaign} onChange={(e) => setCampaign(e.target.value)} className="min-h-9 max-w-[16rem] rounded-md border border-slate-300 px-2 dark:border-slate-600 dark:bg-slate-800">
+            <option value="all">All campaigns</option>
+            {names.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </select>
+        </div>
+      </div>
+      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Each row is the people first contacted that day for that campaign, followed to today.</p>
+      {shown.length === 0 ? <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">No people were first contacted for this drive and campaign in the range.</p> : (
+        <div className="mt-2 max-h-96 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
+          <table className="w-full min-w-[820px] text-left text-sm">
+            <thead className="sticky top-0 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:bg-slate-800"><tr><th className="px-3 py-2">Day</th><th className="px-2 py-2">Campaign</th>{COLS.map((c) => <th key={c.key} className="px-2 py-2 text-right">{c.label}</th>)}</tr></thead>
+            <tbody className="divide-y divide-slate-100 tabular-nums dark:divide-slate-700">
+              {shown.map((r) => (
+                <tr key={`${r.date}|${r.campaignId}`}><td className="whitespace-nowrap px-3 py-2 font-medium text-slate-900 dark:text-slate-100">{r.date}</td><td className="max-w-[14rem] truncate px-2 py-2 text-slate-700 dark:text-slate-200" title={r.campaignName}>{r.campaignName}</td>
+                  {COLS.map((c) => <td key={c.key} className="px-2 py-2 text-right text-slate-700 dark:text-slate-200">{n(r[c.key])}</td>)}</tr>
+              ))}
+              <tr className="sticky bottom-0 bg-slate-50 font-semibold text-slate-900 dark:bg-slate-800 dark:text-slate-100"><td className="px-3 py-2" colSpan={2}>Total</td>{COLS.map((c) => <td key={c.key} className="px-2 py-2 text-right">{n(total[c.key])}</td>)}</tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function WalkinFunnelPanel({ className = "" }: { className?: string }) {
   const [from, setFrom] = useState(istDay(-29));
@@ -97,6 +139,7 @@ export default function WalkinFunnelPanel({ className = "" }: { className?: stri
               <div key={d.date} className="flex-1 min-w-px bg-violet-400/80 dark:bg-violet-500" style={{ height: `${Math.max(d.enrolled ? 3 : 0, Math.round((d.enrolled / maxDay) * 100))}%` }} title={`${d.date}: ${d.enrolled} contacted, ${d.walkedIn} walked in`} />
             ))}
           </div>
+          <CampaignDays rows={data.campaignDays ?? []} />
           <h3 className="mt-4 text-sm font-semibold text-slate-900 dark:text-slate-100">ATS funnel: everyone registered at a branch in the range</h3>
           <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">
             <b>{n(data.ats.registered)}</b> registered, <b>{n(data.ats.selected)}</b> selected ({pct(data.ats.selected, data.ats.registered)}), <b>{n(data.ats.joined)}</b> joined ({pct(data.ats.joined, data.ats.selected)} of selected).

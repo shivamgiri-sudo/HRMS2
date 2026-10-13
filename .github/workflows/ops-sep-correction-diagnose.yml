@@ -1,0 +1,61 @@
+name: Ops attendance correction upload diagnose (read-only)
+
+# Manual, read-only. For a leave + attendance-regularization correction file, prints per row the
+# leave / regularization requests that already exist, the attendance record that day, the recent
+# upload batches and the payroll freeze state for the month. Writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "Month YYYY-MM"
+        required: true
+        default: "2026-09"
+      leave_rows:
+        description: "CODE:from:to:LEAVECODE:days;... (ISO dates)"
+        required: false
+        default: ""
+      reg_rows:
+        description: "CODE:date:status;... (ISO date)"
+        required: false
+        default: ""
+      half_day_codes:
+        description: "If set: run the half-day CL trace for these comma-separated codes instead"
+        required: false
+        default: ""
+
+concurrency:
+  group: ops-sep-correction-diagnose
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Diagnose
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          MONTH: ${{ inputs.month }}
+          LEAVE_ROWS: ${{ inputs.leave_rows }}
+          REG_ROWS: ${{ inputs.reg_rows }}
+          CODES: ${{ inputs.half_day_codes }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CODES" ]; then node scripts/half-day-cl-trace.mjs; else node scripts/sep-correction-diagnose.mjs; fi

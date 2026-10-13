@@ -156,16 +156,48 @@ async function stageVerifyHint(stageKey: string): Promise<string> {
  * gateway records as undeliverable. HR in cc does not prevent that throw; it is there so the
  * common case of "role holder exists but has no company email" still reaches a human.
  */
-function stageSpec(stage: StageContext, branchId: string | null): RecipientSpec {
+/**
+ * Users who hold one of these roles FOR THIS BRANCH, and nobody else.
+ *
+ * The shared resolver's branch scope also returns every holder of the role with an organisation-wide
+ * ("all") scope, which is how leadership accounts (CEO, COO, other cross-branch heads) ended up on
+ * every branch's NOC mail. A NOC stage is signed by the people of the leaver's own branch, so this
+ * takes only: a plain role grant for someone who sits in the branch, or a scope row naming the branch.
+ * Leadership roles are excluded outright, whatever else they hold.
+ */
+const LEADERSHIP_ROLES = ["ceo", "coo", "cxo", "md", "director", "chairman", "super_admin"];
+
+async function branchOnlyRoleHolders(roleKeys: string[], branchId: string | null): Promise<string[]> {
+  const keys = roleKeys.map((k) => k.trim().toLowerCase()).filter(Boolean);
+  if (!keys.length || !branchId) return [];
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT DISTINCT e.user_id
+       FROM employees e
+       JOIN auth_user au ON au.id = e.user_id
+      WHERE e.active_status = 1
+        AND (
+          (e.branch_id = ? AND EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = e.user_id AND r.active_status = 1 AND r.role_key IN (?)))
+          OR EXISTS (SELECT 1 FROM user_assignment_scope s
+                      WHERE s.user_id = e.user_id AND s.active_status = 1 AND s.role_key IN (?)
+                        AND s.scope_type IN ('branch','team') AND s.branch_id = ?)
+        )
+        AND NOT EXISTS (SELECT 1 FROM user_roles x WHERE x.user_id = e.user_id AND x.active_status = 1 AND x.role_key IN (?))
+      LIMIT 10`,
+    [branchId, keys, keys, branchId, LEADERSHIP_ROLES],
+  );
+  return rows.map((r) => String(r.user_id));
+}
+
+async function stageSpec(stage: StageContext, branchId: string | null): Promise<RecipientSpec> {
   const roleKeys = [stage.role_key, stage.fallback_role_key].filter((r): r is string => Boolean(r));
+  const holders = await branchOnlyRoleHolders(roleKeys, branchId);
   return {
-    to: [{
-      kind: "role_scope",
-      roleKeys,
-      scope: branchId ? { type: "branch", branchIds: [branchId] } : { type: "all" },
-      limit: 10,
-    }],
-    cc: branchId ? [{ kind: "branch_hr", branchId }] : [],
+    // Named users, so the shared resolver cannot widen the list; the fallback to branch HR keeps a
+    // stage with no resolvable holder from throwing EMPTY_TO.
+    to: holders.length
+      ? holders.map((userId) => ({ kind: "user" as const, userId }))
+      : branchId ? [{ kind: "branch_hr" as const, branchId }] : [],
+    cc: holders.length && branchId ? [{ kind: "branch_hr" as const, branchId }] : [],
   };
 }
 
@@ -186,9 +218,7 @@ async function inboxForStage(
 ): Promise<void> {
   const roleKeys = [stage.role_key, stage.fallback_role_key].filter((r): r is string => Boolean(r));
   const userIds = new Set<string>();
-  for (const rk of roleKeys) {
-    for (const id of await resolveRoleHolderUserIds(rk, nocCase.branch_id)) userIds.add(id);
-  }
+  for (const id of await branchOnlyRoleHolders(roleKeys, nocCase.branch_id)) userIds.add(id);
   for (const userId of userIds) {
     await inboxService.createItem({
       user_id: userId,
@@ -364,7 +394,7 @@ export async function notifySignatoryPending(
       entityType: "noc_case",
       entityId: caseId,
       correlationId: `noc_case:${caseId}`,
-      specOverride: stageSpec(stage, nocCase.branch_id),
+      specOverride: await stageSpec(stage, nocCase.branch_id),
       data: {
         employee_name: nocCase.employee_name,
         employee_code: nocCase.employee_code,
@@ -416,7 +446,7 @@ export async function notifySignatoryReminder(
     const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return false;
 
-    const spec = stageSpec(stage, nocCase.branch_id);
+    const spec = await stageSpec(stage, nocCase.branch_id);
     if (escalate && nocCase.branch_id) {
       spec.cc = [...(spec.cc ?? []), { kind: "branch_head", branchId: nocCase.branch_id }];
     }
