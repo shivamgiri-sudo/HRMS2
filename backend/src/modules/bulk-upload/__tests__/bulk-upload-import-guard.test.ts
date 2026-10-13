@@ -92,10 +92,26 @@ beforeEach(() => {
   importReportingManagerBatch.mockReset().mockResolvedValue({ importedRows: 720, errorRows: 98, errors: [] });
 });
 
+describe("POST /batches/:id/import — partly staged Hub file", () => {
+  it("refuses a Hub batch with fewer rows staged than the file had, and marks it failed", async () => {
+    execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // stale-claim release
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // claim
+    execute.mockResolvedValueOnce([[{ total_rows: 57920, imported_rows: 0, source: "frontend_bulk_upload_hub", staged: 2000 }], []]);
+    execute.mockResolvedValue([{ affectedRows: 1 }, []]);
+    const res = await request(app()).post(`/api/bulk-upload/batches/${BATCH_ID}/import`).send(importBody());
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("Only 2,000 of 57,920 rows");
+    const marked = execute.mock.calls.find((c) => /SET batch_status = 'validation_failed'/.test(sqlOf(c)));
+    expect(marked).toBeTruthy();
+    expect(execute.mock.calls.some((c) => sqlOf(c).includes("INSERT INTO bulk_import_queue"))).toBe(false);
+  });
+});
+
 describe("POST /batches/:id/import — concurrency guard", () => {
   it("claims the batch and starts the import on a clean call", async () => {
     execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // stale-claim release: nothing to release
     execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // claim succeeds
+    execute.mockResolvedValueOnce([[{ total_rows: 5, imported_rows: 0, source: "frontend_bulk_upload_hub", staged: 5 }], []]); // staged-coverage check: complete
     execute.mockResolvedValueOnce([[{ n: 818 }], []]);        // rows still to import
     execute.mockResolvedValue([{ affectedRows: 1 }, []]);     // metadata stamp + queue insert
 

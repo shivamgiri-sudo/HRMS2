@@ -119,6 +119,8 @@ const BULK_UPLOAD_BUCKET = "hrms-bulk-uploads";
 // withDeadlockRetry in bulk-upload.routes.ts), but a smaller chunk means a shorter lock hold
 // in the first place — fewer collisions to need retrying, not just a faster recovery from one.
 const STAGE_CHUNK_SIZE = 1000;
+/** Tries per staging request before the upload is reported as incomplete. */
+const STAGE_CHUNK_ATTEMPTS = 4;
 
 const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   EMPLOYEE_MASTER: "import_upload_batch",
@@ -1875,18 +1877,35 @@ export default function BulkUploadHub() {
         // ~1 lakh rows/day/file) — the request body limit and plain request size both
         // give out first. Slice into STAGE_CHUNK_SIZE-row requests instead, same as the
         // 30s-default fix below already reasons about for a single large request.
+        // Each chunk is retried: one dropped request used to end the loop with the rest of the file never sent,
+        // and the batch then imported only the rows that had arrived. Re-sending a chunk is safe (the server
+        // replaces that chunk's rows by row number).
         for (let offset = 0; offset < stagedRows.length; offset += STAGE_CHUNK_SIZE) {
           const slice = stagedRows.slice(offset, offset + STAGE_CHUNK_SIZE);
-          await hrmsApi.post(`/api/bulk-upload/batches/${batch.id}/rows`,
-            slice.map((row) => ({
-              row_no: row.rowNo,
-              raw_data: row.rawData,
-              normalized_data: row.normalizedData,
-              row_status: row.status,
-              error_messages: row.errors,
-            })),
-            180000
-          );
+          const payload = slice.map((row) => ({
+            row_no: row.rowNo,
+            raw_data: row.rawData,
+            normalized_data: row.normalizedData,
+            row_status: row.status,
+            error_messages: row.errors,
+          }));
+          for (let attempt = 1; ; attempt++) {
+            try {
+              await hrmsApi.post(`/api/bulk-upload/batches/${batch.id}/rows`, payload, 180000);
+              break;
+            } catch (stageError) {
+              if (attempt >= STAGE_CHUNK_ATTEMPTS) {
+                const why = stageError instanceof Error ? stageError.message : "request failed";
+                throw new Error(
+                  `Upload stopped after ${offset.toLocaleString("en-IN")} of ${stagedRows.length.toLocaleString("en-IN")} rows (${why}). `
+                  + `Batch ${batch.upload_batch_no ?? batchNo} is incomplete and will not import; upload the file again.`
+                );
+              }
+              setMessage(`Sending rows ${(offset + 1).toLocaleString("en-IN")}-${(offset + slice.length).toLocaleString("en-IN")} again (attempt ${attempt + 1} of ${STAGE_CHUNK_ATTEMPTS})...`);
+              await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+            }
+          }
+          setMessage(`Sent ${(offset + slice.length).toLocaleString("en-IN")} of ${stagedRows.length.toLocaleString("en-IN")} rows...`);
         }
       }
 

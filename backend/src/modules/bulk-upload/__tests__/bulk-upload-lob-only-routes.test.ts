@@ -121,6 +121,7 @@ describe.each(["branch_wfm", "ho_wfm", "wfm_spoc"])("LOB-only caller (%s)", (rol
     batchLookup(LOB, ME);
     execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // stale release
     execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // claim
+    execute.mockResolvedValueOnce([[{ total_rows: 5, imported_rows: 0, source: "frontend_bulk_upload_hub", staged: 5 }], []]); // staged-coverage check: complete
     execute.mockResolvedValueOnce([[{ n: 5 }], []]);          // pending rows
     execute.mockResolvedValueOnce([{}, []]);                  // queue insert
     const res = await post("/batches/b1/import", role, { rpc_name: "import_employee_lob_batch" });
@@ -228,6 +229,7 @@ describe("callers who already had the hub are unchanged", () => {
   it("wfm: importing a foreign batch of another type is not blocked by the LOB restriction", async () => {
     execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]);
     execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    execute.mockResolvedValueOnce([[{ total_rows: 5, imported_rows: 0, source: "frontend_bulk_upload_hub", staged: 5 }], []]); // staged-coverage check: complete
     execute.mockResolvedValueOnce([[{ n: 1 }], []]);
     execute.mockResolvedValueOnce([{}, []]);
     execute.mockResolvedValueOnce([{}, []]);
@@ -236,11 +238,13 @@ describe("callers who already had the hub are unchanged", () => {
     // stale-claim release, claim, pending count, then the hand-off to hrms-workers, which is
     // two statements since d9c6bc7ba (remember the rpc on the batch, queue the job) where it
     // used to be one. What this case is about is that none of them is the ownership lookup.
-    expect(execute).toHaveBeenCalledTimes(5);
+    // Plus the staged-coverage check after the claim (refuses a partly staged Hub file).
+    expect(execute).toHaveBeenCalledTimes(6);
     const statements = execute.mock.calls.map(([sql]) => String(sql));
     expect(statements.some((sql) => /SELECT upload_type_code, uploaded_by FROM upload_batch/.test(sql))).toBe(false);
-    expect(statements[3]).toContain("$.import_rpc_name");
-    expect(statements[4]).toContain("INSERT INTO bulk_import_queue");
+    expect(statements[2]).toContain("upload_batch_row r WHERE r.upload_batch_id");
+    expect(statements[4]).toContain("$.import_rpc_name");
+    expect(statements[5]).toContain("INSERT INTO bulk_import_queue");
   });
 
   it("wfm: GET /templates is unfiltered and GET /batches has no LOB narrowing", async () => {

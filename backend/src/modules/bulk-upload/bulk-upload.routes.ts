@@ -358,6 +358,22 @@ router.post("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatch
   if (!Array.isArray(rows) || rows.length === 0) {
     return res.status(400).json({ error: "rows array required" });
   }
+  // Staging happens before any import. Refuse once an import has started, so the replace below can never
+  // remove rows an import already consumed.
+  const [stateRows] = await db.execute<RowDataPacket[]>("SELECT batch_status FROM upload_batch WHERE id = ? LIMIT 1", [req.params.id]);
+  const batchStatus = String(stateRows[0]?.batch_status ?? "");
+  if (["importing", "imported", "imported_with_errors"].includes(batchStatus)) {
+    return res.status(409).json({ error: `Rows cannot be added to a batch that is already ${batchStatus}.` });
+  }
+  // A chunk the browser re-sends (its first request timed out after the server had saved it) replaces the
+  // rows it saved instead of adding them a second time: row_no is the file's row number, unique per batch.
+  const rowNos = rows.map((r) => Number(r.row_no)).filter((v) => Number.isFinite(v));
+  for (let i = 0; i < rowNos.length; i += 5000) {
+    const part = rowNos.slice(i, i + 5000);
+    await withDeadlockRetry(() => db.query(
+      `DELETE FROM upload_batch_row WHERE upload_batch_id = ? AND row_no IN (?)`, [req.params.id, part],
+    ), { attempts: 6, delayMs: 400 });
+  }
   // Build pre-assigned row objects with IDs fixed before any chunking, so a deadlock
   // retry on any chunk replays the identical INSERT and never double-stages a row.
   // IDs are assigned here once â€” not inside the retry lambda â€” for the same reason.
@@ -675,6 +691,24 @@ router.post("/batches/:id/import", requireRole(...HUB_ROLES), restrictLobOnlyBat
       success: false,
       error: "This batch is already being imported. Wait for it to finish, then refresh the page â€” do not resubmit.",
     });
+  }
+
+  // A Hub upload stages its rows in 1,000-row requests after creating the batch. If one of those requests failed,
+  // only part of the file is here while the batch still claims every row: importing it would quietly load a
+  // fraction of the file (a 57,920-row Blabli Blu abandon file went in as 2,000 rows on 2026-10-13).
+  const [cover] = await db.execute<RowDataPacket[]>(
+    `SELECT b.total_rows, b.imported_rows, JSON_UNQUOTE(JSON_EXTRACT(b.metadata, '$.source')) AS source,
+            (SELECT COUNT(*) FROM upload_batch_row r WHERE r.upload_batch_id = b.id) AS staged
+       FROM upload_batch b WHERE b.id = ? LIMIT 1`, [id]);
+  const cv = cover[0];
+  if (cv && cv.source === "frontend_bulk_upload_hub" && Number(cv.imported_rows ?? 0) === 0
+      && Number(cv.staged ?? 0) > 0 && Number(cv.staged) < Number(cv.total_rows ?? 0)) {
+    const message = `Only ${Number(cv.staged).toLocaleString("en-IN")} of ${Number(cv.total_rows).toLocaleString("en-IN")} rows of this file `
+      + `reached the server (the upload stopped partway). Nothing was imported. Upload the file again.`;
+    await db.execute(
+      `UPDATE upload_batch SET batch_status = 'validation_failed', error_summary = ?, updated_at = NOW() WHERE id = ?`,
+      [message, id]);
+    return res.status(409).json({ success: false, error: message });
   }
 
   // The permission checks have to run before the request is answered â€” a 202 must
