@@ -1,10 +1,10 @@
-name: Ops GRN Accounts-Head Diagnose (manual, read-only)
+name: Ops GRN Approval-Bucket Diagnose (manual, read-only)
 
-# One-off, read-only diagnostic: lists GRNs stuck at the Accounts Head approval bucket
-# (status='branch_head_approved'), resolves a given user's active roles, and flags whether
-# that user would be blocked by the maker-checker self-review guard vs the accounts_head
-# role gate. Split into its own workflow because ops-scripts.yml's run block is already over
-# GitHub's 21000-char expression limit and cannot take new entries without a separate trim.
+# One-off, read-only diagnostic: lists GRNs stuck at a given GRN approval stage, resolves a
+# user's active roles, and flags whether that user would be blocked by the maker-checker
+# self-review guard vs. the stage's role gate. Split into its own workflow because
+# ops-scripts.yml's run block is already over GitHub's 21000-char expression limit and
+# cannot take new entries without a separate trim.
 
 on:
   workflow_dispatch:
@@ -13,6 +13,14 @@ on:
         description: "User email to check roles/blocks for"
         required: true
         type: string
+      stage:
+        description: "Which bucket to check"
+        required: true
+        default: accounts_head
+        type: choice
+        options:
+          - accounts_head
+          - finance_head
 
 concurrency:
   group: ops-grn-accounts-head-diagnose
@@ -23,7 +31,7 @@ permissions:
 
 jobs:
   diagnose:
-    name: GRN Accounts-Head pending diagnose
+    name: GRN approval-bucket pending diagnose
     runs-on: self-hosted
     environment: production
     timeout-minutes: 10
@@ -47,4 +55,4 @@ jobs:
         env:
           DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
           NODE_ENV: production
-        run: npx tsx scripts/grn-accounts-head-pending-diagnose.ts "${{ inputs.approver_email }}"
+        run: npx tsx scripts/grn-accounts-head-pending-diagnose.ts "${{ inputs.approver_email }}" "${{ inputs.stage }}"
