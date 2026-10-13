@@ -81,9 +81,6 @@
     "wfm_roster_plan.published_at",
     "wfm_roster_plan.published_by"
   ],
-  "modules/selection/criteria-row.ts": [
-    "job_requisition.selection_rules"
-  ],
   "modules/hiring-engine/he-upload-bridge.service.ts": [
     "ats_candidate.annual_salary",
     "ats_candidate.current_designation",
