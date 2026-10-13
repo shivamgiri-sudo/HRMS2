@@ -12,6 +12,7 @@ import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import { guardExitEmployee } from "../exit/exitScope.js";
 import * as release from "./absconder-pay-release.service.js";
+import { heldAbsconderLinesForRuns } from "./absconder-hold.service.js";
 
 export const absconderPayReleaseRouter = Router();
 absconderPayReleaseRouter.use(requireAuth);
@@ -23,6 +24,21 @@ function fail(res: any, err: unknown) {
   return res.status(e.statusCode ?? 500).json({ success: false, code: e.code, message: e.message });
 }
 const reasonOf = (req: AuthenticatedRequest) => String((req.body as { reason?: string })?.reason ?? "");
+
+/** GET /held/:runId — absconders in this run whose salary is held, by name, for payroll validation. */
+absconderPayReleaseRouter.get(
+  "/held/:runId",
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    if (!(await hasAnyRole(userId, "payroll_head", "payroll", "payroll_hr", "payroll_branch", "finance", "finance_head", "admin"))) {
+      return res.status(403).json({ success: false, code: "HOLD_FORBIDDEN", message: "You cannot view held salaries." });
+    }
+    try {
+      const rows = await heldAbsconderLinesForRuns([String(req.params.runId)]);
+      return res.json({ success: true, data: rows });
+    } catch (err) { return fail(res, err); }
+  }),
+);
 
 absconderPayReleaseRouter.get(
   "/:exitRequestId",

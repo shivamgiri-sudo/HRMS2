@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { AbsconderPayHoldPanel } from "@/components/payroll/AbsconderPayHoldPanel";
 import { useToast } from "@/hooks/use-toast";
 import {
   CLEARANCE_OWNER_GROUPS,
@@ -529,6 +530,11 @@ export function NoticePeriodDrawer({
                     ))}
                   </div>
                 </section>
+              )}
+
+              {/* Absconded: paid as normal unless the reporting manager requests a salary hold and the branch Payroll HR approves */}
+              {["absconding", "abandonment"].includes(String(detail.exit_sub_type ?? "").toLowerCase()) && (
+                <AbsconderPayHoldPanel exitId={exitId} />
               )}
 
               {/* Full Timeline */}

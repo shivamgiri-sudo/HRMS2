@@ -7,6 +7,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { AbsconderPayHoldPanel } from "@/components/payroll/AbsconderPayHoldPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1158,6 +1159,10 @@ export default function NativeFullFinal() {
                     </div>
                   </div>
                 </div>
+
+                {["absconding", "abandonment"].includes(String(selectedRequest.exit_sub_type ?? "").toLowerCase()) && (
+                  <AbsconderPayHoldPanel exitId={selectedRequest.id} />
+                )}
 
                 {/* Settlement lock: absconder without exception, unsigned NOC, or awaiting final approval */}
                 {gate && !gate.allowed && (

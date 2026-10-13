@@ -349,6 +349,8 @@ export default function PayrollValidationScreen() {
   const [runs, setRuns] = useState<PayrollRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
   const [lines, setLines] = useState<PayrollLine[]>([]);
+  // Absconders in this run whose salary days are held at 0 (reporting manager asked, branch Payroll HR approved).
+  const [heldAbsconders, setHeldAbsconders] = useState<Array<{ employee_id: string; employee_code: string | null; employee_name: string | null }>>([]);
   const [loading, setLoading] = useState(false);
   const [runsLoading, setRunsLoading] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -389,6 +391,12 @@ export default function PayrollValidationScreen() {
       const raw = Array.isArray(data) ? data : (data?.lines ?? data?.data?.lines ?? (Array.isArray(data?.data) ? data?.data : null) ?? []);
       const list: PayrollLine[] = Array.isArray(raw) ? raw : [];
       setLines(list);
+      hrmsApi
+        .get<{ data: Array<{ employee_id: string; employee_code: string | null; employee_name: string | null }> }>(
+          `/api/payroll/absconder-pay-release/held/${runId}`,
+        )
+        .then((r) => setHeldAbsconders(r.data ?? []))
+        .catch(() => setHeldAbsconders([]));
     } catch (err: any) {
       toast.error(err?.message ?? "Failed to load payroll lines");
     } finally {
@@ -696,6 +704,12 @@ export default function PayrollValidationScreen() {
             </div>
           ) : (
             <div className="overflow-x-auto">
+              {heldAbsconders.length > 0 && (
+                <div role="alert" className="m-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+                  <p className="font-bold">{heldAbsconders.length} absconded employee{heldAbsconders.length === 1 ? "" : "s"} held at 0 paid days</p>
+                  <p className="mt-0.5">Held on the reporting manager's request and the branch Payroll HR's approval. They are not in the bank file until Payroll HR releases the hold: {heldAbsconders.slice(0, 12).map((h) => `${h.employee_name ?? ""} (${h.employee_code ?? ""})`).join(", ")}{heldAbsconders.length > 12 ? ` and ${heldAbsconders.length - 12} more` : ""}.</p>
+                </div>
+              )}
               <Table>
                 <TableHeader>
                   <TableRow className="bg-slate-50">
@@ -728,8 +742,11 @@ export default function PayrollValidationScreen() {
                       line.attendance_data_source === "SESSION_FALLBACK" ||
                       line.attendance_data_source === "NO_DATA";
 
+                    const isHeldAbsconder = heldAbsconders.some((h) => h.employee_id === String((line as { employee_id?: string }).employee_id ?? ""));
                     const rowBorder =
-                      line.needs_recalculation === 1
+                      isHeldAbsconder
+                        ? "border-l-4 border-l-red-500 bg-red-50/40"
+                        : line.needs_recalculation === 1
                         ? "border-l-4 border-l-amber-400"
                         : isFallback
                         ? "border-l-4 border-l-orange-400"
