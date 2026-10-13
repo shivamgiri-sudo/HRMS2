@@ -118,6 +118,47 @@ const addDays = (s: string, n: number) => { const d = new Date(s + "T00:00:00Z")
   console.log(`  exit-only dates to clear   : ${attributed.consumedDates.filter((d) => d.punchDate >= FROM && d.punchDate <= TO).length}`);
   console.log(`  overnight shifts over 15h  : ${crossLong}  (should be 0)`);
   console.log(`  same-date days over 15h    : ${sameDayLong}  (sparse punchers, legacy grouping, unchanged)`);
+
+  // ---- why do the remaining "differ stored" shifts differ? ----
+  if (changed.length) {
+    const [excl] = await db.execute<RowDataPacket[]>(`SELECT cosec_user_id FROM attendance_reconciliation_cosec_exclusion WHERE active_status = 1`).catch(() => [[]] as any);
+    const excluded = new Set((excl as any[]).map((r) => String(r.cosec_user_id ?? "").trim()));
+    const cids = [...new Set(changed.map((g) => g.cosecUserId))];
+    const known = new Map<string, { active: number; status: string }>();
+    for (let i = 0; i < cids.length; i += 400) {
+      const sl = cids.slice(i, i + 400);
+      const [rows] = await db.query<any[]>(
+        `SELECT COALESCE(ebe.cosec_user_id, e.biometric_code, e.employee_code) AS cid, e.employee_code, e.biometric_code, e.active_status, e.employment_status
+           FROM employees e LEFT JOIN employee_biometric_enrollment ebe ON ebe.employee_id = e.id
+          WHERE ebe.cosec_user_id IN (?) OR e.biometric_code IN (?) OR e.employee_code IN (?)`, [sl, sl, sl]);
+      for (const r of rows as any[]) for (const k of [r.cid, r.employee_code, r.biometric_code]) if (k) known.set(String(k).trim(), { active: Number(r.active_status), status: String(r.employment_status) });
+    }
+    const [stored] = await db.query<any[]>(
+      `SELECT cosec_user_id, DATE_FORMAT(punch_date,'%Y-%m-%d') AS d, total_punches, raw_minutes,
+              DATE_FORMAT(first_punch_in,'%Y-%m-%d %H:%i') AS fi, DATE_FORMAT(last_punch_out,'%Y-%m-%d %H:%i') AS lo
+         FROM biometric_attendance_log WHERE punch_date BETWEEN ? AND ?`, [FROM, TO]);
+    const st = new Map((stored as any[]).map((r) => [`${r.cosec_user_id}|${r.d}`, r]));
+    const reasons: Record<string, number> = {};
+    const samples: Record<string, string[]> = {};
+    const bump = (k: string, line: string) => { reasons[k] = (reasons[k] ?? 0) + 1; (samples[k] ??= []).length < 6 && samples[k].push(line); };
+    const today = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+    for (const g of changed) {
+      const k = g.cosecUserId, row = st.get(`${k}|${g.punchDate}`);
+      const line = `${k} ${g.punchDate} new ${g.firstPunch.slice(5, 16)}->${g.lastPunch.slice(5, 16)} (${g.totalPunches}p)` + (row ? ` | stored ${String(row.fi).slice(5)}->${String(row.lo ?? "-").slice(5)} (${row.total_punches}p, ${row.raw_minutes}m)` : " | stored: none");
+      const emp = known.get(k);
+      if (excluded.has(k)) bump("excluded cosec user (never written)", line);
+      else if (!emp) bump("unmapped cosec user (never written)", line);
+      else if (emp.active !== 1) bump(`inactive employee ${emp.status} (never written)`, line);
+      else if (!row) bump("mapped+active but NO stored row", line);
+      else if (g.punchDate >= today) bump("today / live shift", line);
+      else bump("stored row differs from what the code writes", line);
+    }
+    console.log("\n  WHY the remaining shifts differ:");
+    for (const [k, n] of Object.entries(reasons).sort((a, b) => b[1] - a[1])) {
+      console.log(`    ${n}  ${k}`);
+      for (const l of samples[k]) console.log(`        ${l}`);
+    }
+  }
   if (stillLong) {
     const long = inRange.filter((g) => g.workingMinutes > 900 && g.firstPunch.slice(0, 10) !== g.lastPunch.slice(0, 10)).slice(0, 12);
     console.log("  sample long shifts (user | date | first -> last | punches | hrs | blocks that day / day before):");
