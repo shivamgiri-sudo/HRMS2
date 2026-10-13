@@ -23,6 +23,8 @@
  */
 
 const DEFAULT_TTL_MS = 60_000;
+/** A month that has ended does not move minute to minute (its invoices, payroll and GRN are in); the running month keeps the short life. */
+const CLOSED_PERIOD_TTL_MS = 10 * 60_000;
 const MAX_ENTRIES = 300;
 
 interface Entry {
@@ -80,6 +82,15 @@ export function pnlCacheKey(namespace: string, inputs: Record<string, unknown>):
   return `${namespace}:${JSON.stringify(normalise(inputs))}`;
 }
 
+/** TTL for a read: the explicit one, else 10 minutes when `inputs.period` is a month before the current IST month, else 60 s. */
+export function ttlFor(inputs: Record<string, unknown>, explicit?: number): number {
+  if (explicit !== undefined) return explicit;
+  const period = typeof inputs.period === "string" ? inputs.period : "";
+  if (!/^\d{4}-\d{2}$/.test(period)) return DEFAULT_TTL_MS;
+  const current = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 7);
+  return period < current ? CLOSED_PERIOD_TTL_MS : DEFAULT_TTL_MS;
+}
+
 /**
  * Returns the cached result for `namespace` + `inputs`, or runs `compute` once and shares it.
  * Concurrent callers with the same key await the same promise.
@@ -88,7 +99,7 @@ export function cachedPnlRead<T>(
   namespace: string,
   inputs: Record<string, unknown>,
   compute: () => Promise<T>,
-  ttlMs: number = DEFAULT_TTL_MS,
+  ttlMs?: number,
 ): Promise<T> {
   if (!enabled) return compute();
   const key = pnlCacheKey(namespace, inputs);
@@ -98,7 +109,7 @@ export function cachedPnlRead<T>(
 
   const value = compute();
   store.delete(key); // re-inserted at the end, so eviction order stays oldest-first
-  store.set(key, { at: now, ttlMs, value });
+  store.set(key, { at: now, ttlMs: ttlFor(inputs, ttlMs), value });
   value.catch(() => {
     // Evict only our own entry: a newer one may already have replaced it.
     if (store.get(key)?.value === value) store.delete(key);

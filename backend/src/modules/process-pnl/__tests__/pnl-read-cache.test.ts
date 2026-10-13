@@ -114,7 +114,7 @@ describe("cachedPnlRead", () => {
     vi.setSystemTime(new Date("2026-09-24T10:00:00Z"));
     const { cachedPnlRead } = await loadCache();
     const compute = vi.fn(async () => ({ at: Date.now() }));
-    const inputs = { period: "2026-08" };
+    const inputs = { period: "2026-09" }; // the running month: 60 s
 
     await cachedPnlRead("ceo-ytd-summary", inputs, compute);
     vi.setSystemTime(new Date("2026-09-24T10:00:59Z"));
@@ -122,6 +122,21 @@ describe("cachedPnlRead", () => {
     expect(compute).toHaveBeenCalledTimes(1);
 
     vi.setSystemTime(new Date("2026-09-24T10:01:01Z"));
+    await cachedPnlRead("ceo-ytd-summary", inputs, compute);
+    expect(compute).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a finished month for 10 minutes, so a revisit does not pay the full build again", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-24T10:00:00Z"));
+    const { cachedPnlRead } = await loadCache();
+    const compute = vi.fn(async () => ({ at: Date.now() }));
+    const inputs = { period: "2026-08" };
+    await cachedPnlRead("ceo-ytd-summary", inputs, compute);
+    vi.setSystemTime(new Date("2026-09-24T10:05:00Z"));
+    await cachedPnlRead("ceo-ytd-summary", inputs, compute);
+    expect(compute).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(new Date("2026-09-24T10:10:01Z"));
     await cachedPnlRead("ceo-ytd-summary", inputs, compute);
     expect(compute).toHaveBeenCalledTimes(2);
   });

@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { OWN_COMPANY_SQL, PROCESS_BY_COST_CENTRE } from "./pnl-actuals.service.js";
+import { cachedPnlRead } from "./pnl-read-cache.js";
 
 /**
  * Where this month's seat revenue is heading, from seat count times seat rate.
@@ -116,7 +117,24 @@ async function latestClassificationPeriod(period: string): Promise<string | null
   return rows.length ? String(rows[0].period_code) : null;
 }
 
-export async function getSeatRevenueForecast(
+/**
+ * Cached (60 s for the running month, 10 minutes for a finished one: pnl-read-cache.ts). It took 9-17 s on production on every call, from the
+ * Statement tab, the daily trend and the CEO views, and none of them shared the result. The as-of date is part of the key.
+ */
+export function getSeatRevenueForecast(
+  period: string,
+  options: { asOfDate?: string; branchId?: string } = {},
+): Promise<SeatRevenueForecast> {
+  if (!/^\d{4}-\d{2}$/.test(period)) {
+    return Promise.reject(Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 }));
+  }
+  const asOfDate = options.asOfDate ?? new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  return cachedPnlRead("seat-revenue-forecast", { period, asOfDate, branchId: options.branchId ?? null }, () => computeSeatRevenueForecast(period, { ...options, asOfDate }));
+}
+
+async function computeSeatRevenueForecast(
   period: string,
   options: { asOfDate?: string; branchId?: string } = {},
 ): Promise<SeatRevenueForecast> {
