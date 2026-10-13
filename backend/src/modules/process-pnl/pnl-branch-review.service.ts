@@ -47,7 +47,10 @@ export interface BranchReviewResult {
 }
 
 /** Reconciliation flags after which a branch's cost (and so its margin) is incomplete. */
-export const COST_INCOMPLETE_ISSUES = ["PAYROLL_NOT_POSTED_FOR_PERIOD", "REVENUE_WITH_NO_PAYROLL", "PAYROLL_ACCRUED_NOT_FINAL"] as const;
+export const COST_INCOMPLETE_ISSUES = ["PAYROLL_NOT_POSTED_FOR_PERIOD", "PAYROLL_ACCRUED_NOT_FINAL"] as const;
+// REVENUE_WITH_NO_PAYROLL is deliberately not here: in a month with a finalized payroll it only means one cost centre bills with its staff paid
+// on another cost centre. It stays visible as a caveat on the card, but it does not make the whole branch's cost "not final" (September 2026
+// showed every branch as "Payroll is not in this month yet" for that reason, with payroll finalized).
 export const hasIncompleteCost = (issues: readonly string[]) => issues.some((i) => (COST_INCOMPLETE_ISSUES as readonly string[]).includes(i));
 
 const r2 = (n: number) => Math.round(n * 100) / 100;

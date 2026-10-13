@@ -22,7 +22,10 @@ describe("pnl branch review status", () => {
 describe("cost-incomplete detection", () => {
   it("payroll gaps make cost incomplete", () => {
     expect(hasIncompleteCost(["PAYROLL_NOT_POSTED_FOR_PERIOD"])).toBe(true);
-    expect(hasIncompleteCost(["REVENUE_WITH_NO_PAYROLL", "GRN_ESTIMATED_FROM_RESERVED"])).toBe(true);
+    expect(hasIncompleteCost(["PAYROLL_ACCRUED_NOT_FINAL", "GRN_ESTIMATED_FROM_RESERVED"])).toBe(true);
+  });
+  it("revenue with no payroll on one cost centre does not make a finalized month 'not final'", () => {
+    expect(hasIncompleteCost(["REVENUE_WITH_NO_PAYROLL"])).toBe(false);
   });
   it("other flags do not", () => {
     expect(hasIncompleteCost(["BRANCH_BUDGET_MISSING"])).toBe(false);
