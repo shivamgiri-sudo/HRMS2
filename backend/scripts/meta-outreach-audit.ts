@@ -2,17 +2,22 @@
  * Meta lead outreach audit. READ-ONLY.
  *
  * Qualified Meta leads from the last N days (default 7) that have no notification_sent_at,
- * grouped by the reason notifyQualifiedLead would refuse or skip them.
+ * grouped by the reason notifyQualifiedLead would refuse or skip them, and by the state of
+ * their follow-up row (the automatic path enrols them there instead of sending).
  *
  *   npx tsx scripts/meta-outreach-audit.ts [days]
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
 import { requisitionClosedReason } from "../src/modules/meta-campaign/lead-screener.service.js";
+import { loadFollowupSwitches } from "../src/modules/hiring-engine/qualified-followup.policy.js";
 import type { RowDataPacket } from "mysql2";
 
 const DAYS = Number(process.argv[2] ?? 7);
 const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPacket[]>(sql, p))[0];
+const safe = async (label: string, fn: () => Promise<void>) => {
+  try { await fn(); } catch (e) { console.log(`${label}: FAILED ${(e as Error).message}`); }
+};
 
 (async () => {
   const rows = await q(
@@ -57,6 +62,7 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
   const reqs = await q(
     `SELECT jr.requisition_code, jr.branch_name, jr.designation_name, jr.approval_status, jr.active_status,
             jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.created_at,
+            JSON_EXTRACT(jr.meta_screening_config, '$.auto_notify') AS auto_notify,
             COUNT(*) pending_leads, MIN(ml.created_at) first_lead, MAX(ml.created_at) last_lead
        FROM meta_lead_raw ml JOIN job_requisition jr ON jr.id = ml.requisition_id
       WHERE ml.screening_result = 'qualified' AND ml.notification_sent_at IS NULL
@@ -70,5 +76,58 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
        FROM meta_lead_raw WHERE screening_result='qualified' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
       GROUP BY DATE(created_at) ORDER BY d`, [DAYS]);
   console.table(days);
+
+  await safe("switches", async () => {
+    const s = await loadFollowupSwitches();
+    console.log("\nfollow-up switches:", JSON.stringify({
+      mode: s.mode, ceiling: s.ceiling, sourceModes: s.sourceModes, paused: [...s.pausedSources], killSwitch: s.killSwitch,
+      sendsPaused: s.sendsPaused, waDailyMax: s.waDailyMax, testMode: s.testMode, inboundGate: s.inboundGate,
+    }));
+  });
+
+  await safe("follow-up state of un-notified leads", async () => {
+    const st = await q(
+      `SELECT COALESCE(qf.source_type, '(no follow-up row)') source, COALESCE(qf.mode_at_enqueue, '-') mode,
+              COALESCE(qf.journey_state, '-') journey, COALESCE(qf.held_reason, '-') held, COALESCE(qf.owner, '-') owner,
+              COALESCE(qf.email_status, 'NULL') email, COALESCE(qf.wa_status, 'NULL') wa, COALESCE(qf.call_state, '-') call_state,
+              COALESCE(qf.stopped_reason, '-') stopped, COUNT(*) n,
+              MIN(qf.email_due_at) min_email_due, MIN(qf.wa_due_at) min_wa_due
+         FROM meta_lead_raw ml
+         LEFT JOIN qualified_followup qf ON qf.meta_lead_id = ml.id COLLATE utf8mb4_unicode_ci
+        WHERE ml.screening_result = 'qualified' AND ml.notification_sent_at IS NULL
+          AND ml.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        GROUP BY 1,2,3,4,5,6,7,8,9 ORDER BY n DESC LIMIT 40`, [DAYS]);
+    console.log("\nfollow-up state of the un-notified qualified leads:");
+    console.table(st);
+  });
+
+  await safe("errors", async () => {
+    const er = await q(
+      `SELECT LEFT(COALESCE(qf.email_error, '-'), 90) email_error, LEFT(COALESCE(qf.wa_error, '-'), 90) wa_error, COUNT(*) n
+         FROM meta_lead_raw ml JOIN qualified_followup qf ON qf.meta_lead_id = ml.id COLLATE utf8mb4_unicode_ci
+        WHERE ml.screening_result = 'qualified' AND ml.notification_sent_at IS NULL
+          AND ml.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        GROUP BY 1,2 ORDER BY n DESC LIMIT 20`, [DAYS]);
+    console.log("\nerrors on those follow-up rows:");
+    console.table(er);
+  });
+
+  await safe("sends per day", async () => {
+    const sd = await q(
+      `SELECT d, source_type, SUM(kind='email') email_sent, SUM(kind='wa') wa_sent FROM (
+          SELECT DATE(email_sent_at) d, source_type, 'email' kind FROM qualified_followup WHERE email_sent_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+          UNION ALL
+          SELECT DATE(wa_sent_at) d, source_type, 'wa' kind FROM qualified_followup WHERE wa_sent_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        ) x GROUP BY d, source_type ORDER BY d, source_type`, [DAYS, DAYS]);
+    console.log("\nfollow-up sends per day by source (email shares one Gmail quota, WhatsApp one daily budget):");
+    console.table(sd);
+    const ef = await q(
+      `SELECT DATE(updated_at) d, source_type, COUNT(*) n FROM qualified_followup
+        WHERE email_error LIKE '%sending limit%' AND updated_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+        GROUP BY 1,2 ORDER BY 1,2`, [DAYS]);
+    console.log("\nrows whose email hit the Gmail daily sending limit:");
+    console.table(ef);
+  });
+
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
