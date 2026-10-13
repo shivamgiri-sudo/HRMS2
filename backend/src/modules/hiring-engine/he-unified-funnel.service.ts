@@ -13,8 +13,12 @@ import { loadLiveFrom } from "./he-source-attribution.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
 
 export interface FunnelCounts { enrolled: number; emailed: number; whatsapped: number; called: number; confirmed: number; walkedIn: number; selected: number; joined: number }
+export interface FunnelInsight { level: "info" | "warn"; text: string }
 export interface UnifiedFunnel {
-  generatedAt: string; from: string;
+  generatedAt: string; from: string; to: string;
+  /** Per day: people first contacted, and branch registrations of people the engine contacted (cohort view). */
+  daily: Array<{ date: string; enrolled: number; walkedIn: number }>;
+  insights: FunnelInsight[];
   drives: Record<SourceType, FunnelCounts>;
   drivesTotal: FunnelCounts;
   /** Everyone registered at a branch in the window: the drives' walk-ins plus the rest. */
@@ -25,10 +29,41 @@ const RANK: SourceType[] = ["meta_live", "meta_old", "he"];
 const zero = (): FunnelCounts => ({ enrolled: 0, emailed: 0, whatsapped: 0, called: 0, confirmed: 0, walkedIn: 0, selected: 0, joined: 0 });
 const norm10 = (m: unknown): string => String(m ?? "").replace(/\D/g, "").slice(-10);
 const day = (v: unknown): string => (v instanceof Date ? v.toISOString() : String(v ?? "")).slice(0, 10);
-let cache: { at: number; value: UnifiedFunnel } | null = null;
+const cache = new Map<string, { at: number; value: UnifiedFunnel }>();
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const istToday = (): string => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+const addDay = (d: string, n: number): string => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const pc = (a: number, b: number): number => (b > 0 ? Math.round((a / b) * 100) : 0);
 
-export async function getUnifiedFunnel(): Promise<UnifiedFunnel> {
-  if (cache && Date.now() - cache.at < 5 * 60_000) return cache.value;
+/** Written findings from the counts: where people drop, which drive converts best, how big the drives are against the whole ATS. */
+export function funnelInsights(d: { drives: Record<SourceType, FunnelCounts>; total: FunnelCounts; ats: UnifiedFunnel["ats"] }): FunnelInsight[] {
+  const out: FunnelInsight[] = [];
+  const t = d.total;
+  if (!t.enrolled) return [{ level: "info", text: "Nobody was first contacted in this period." }];
+  const steps: Array<[string, number, number]> = [["contacted by email, WhatsApp or call", t.enrolled, Math.max(t.emailed, t.whatsapped)], ["confirmed a slot", t.enrolled, t.confirmed], ["walked in", t.confirmed, t.walkedIn], ["were selected", t.walkedIn, t.selected], ["joined", t.selected, t.joined]];
+  out.push({ level: "info", text: `${t.enrolled.toLocaleString("en-IN")} people were first contacted; ${pc(t.confirmed, t.enrolled)}% confirmed, ${pc(t.walkedIn, t.enrolled)}% walked in, ${pc(t.joined, t.enrolled * 1)}% joined.` });
+  if (t.confirmed > 0) out.push({ level: pc(t.walkedIn, t.confirmed) < 50 ? "warn" : "info", text: `Of ${t.confirmed.toLocaleString("en-IN")} who confirmed a slot, ${t.walkedIn.toLocaleString("en-IN")} walked in (${pc(t.walkedIn, t.confirmed)}%). ${pc(t.walkedIn, t.confirmed) < 50 ? "Most confirmations do not turn into visits: reminders and the confirm step are the biggest lever." : ""}`.trim() });
+  const rates = (Object.keys(d.drives) as SourceType[]).filter((k) => d.drives[k].enrolled >= 50).map((k) => ({ k, r: d.drives[k].walkedIn / d.drives[k].enrolled }));
+  if (rates.length > 1) {
+    rates.sort((a, b) => b.r - a.r);
+    const name: Record<SourceType, string> = { meta_live: "Live Meta", meta_old: "Old Meta data", he: "Hiring Engine" };
+    out.push({ level: "info", text: `${name[rates[0].k]} brings the most walk-ins per person contacted (${(rates[0].r * 100).toFixed(1)}%); ${name[rates[rates.length - 1].k]} the fewest (${(rates[rates.length - 1].r * 100).toFixed(1)}%).` });
+  }
+  if (d.ats.registered > 0) out.push({ level: pc(t.walkedIn, d.ats.registered) < 15 ? "warn" : "info", text: `The drives account for ${pc(t.walkedIn, d.ats.registered)}% of branch registrations (${t.walkedIn} of ${d.ats.registered}); the rest came from other sources, which produced ${d.ats.otherSources.joined} of the ${d.ats.joined} joiners.` });
+  if (t.selected > 0 && t.joined === 0) out.push({ level: "warn", text: "People selected from the drives have not joined yet: check offers and joining dates." });
+  void steps;
+  return out;
+}
+
+export async function getUnifiedFunnel(fromIn?: string, toIn?: string): Promise<UnifiedFunnel> {
+  const today = istToday();
+  const to = toIn && ISO.test(toIn) && toIn <= today ? toIn : today;
+  let fromD = fromIn && ISO.test(fromIn) ? fromIn : addDay(to, -29);
+  if (fromD > to) fromD = to;
+  if (fromD < addDay(to, -180)) fromD = addDay(to, -180);
+  const key = `${fromD}|${to}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.value;
   const [fu] = await db.execute<RowDataPacket[]>(
     `SELECT mobile10, source_type, MIN(created_at) AS enrolled_at, MAX(email_sent_at IS NOT NULL) AS em, MAX(wa_sent_at IS NOT NULL) AS wa, MAX(call_state = 'called') AS ca
        FROM qualified_followup WHERE mode_at_enqueue = 'live' GROUP BY mobile10, source_type`);
@@ -43,7 +78,7 @@ export async function getUnifiedFunnel(): Promise<UnifiedFunnel> {
   }
   // Earlier history: the last 30 days of Meta form fills and of outbound messages and bot calls, for people the live follow-up does not hold.
   // Typed Live / Old Meta by the first form fill against the cutoff, everyone else Hiring Engine; enrolled = first contact (or the fill day).
-  const since = new Date(Date.now() - 30 * 86_400_000 + 330 * 60_000).toISOString().slice(0, 10);
+  const since = addDay(fromD, -60);
   const liveFrom = String(await loadLiveFrom()).slice(0, 10);
   const add = (m: string, type: SourceType, d: string, f: { em?: boolean; wa?: boolean; ca?: boolean }, hasFollowup: boolean) => {
     const cur = people.get(m);
@@ -65,15 +100,17 @@ export async function getUnifiedFunnel(): Promise<UnifiedFunnel> {
   // (A person already in the follow-up keeps their type; earlier contacts only move their enrolment day back and add channels.)
   // A person first seen as a plain Hiring Engine message who also has a Meta fill is a Meta person.
   for (const r of fills) { const m = String(r.m); const p = people.get(m); if (p && !inFollowup.has(m) && p.type === "he") { const d = day(r.first_fill); people.set(m, { ...p, type: d >= liveFrom ? "meta_live" : "meta_old" }); } }
-  const from = [...people.values()].reduce((a, p) => (p.enrolledDay < a ? p.enrolledDay : a), day(new Date()));
+  // Only people first contacted inside the period are in the cohort.
+  for (const [m, p] of [...people]) if (p.enrolledDay < fromD || p.enrolledDay > to) people.delete(m);
+  const from = fromD;
 
   const confirmed = new Set<string>();
   const [cf] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT l.mobile10 FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.confirmed_at IS NOT NULL AND m.confirmed_at >= ?`, [from]);
+    `SELECT DISTINCT l.mobile10 FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.confirmed_at IS NOT NULL AND m.confirmed_at >= ?`, [fromD]);
   for (const r of cf) confirmed.add(String(r.mobile10));
 
   const [ats] = await db.execute<RowDataPacket[]>(
-    `SELECT mobile, status, current_stage, created_at, walk_in_date FROM ats_candidate WHERE active_status = 1 AND walk_in_date >= ?`, [from]);
+    `SELECT mobile, status, current_stage, created_at, walk_in_date FROM ats_candidate WHERE active_status = 1 AND walk_in_date >= ? AND walk_in_date <= ?`, [fromD, to]);
   const joinMap = await getEmployeeMobileJoinMap();
 
   const drives: Record<SourceType, FunnelCounts> = { meta_live: zero(), meta_old: zero(), he: zero() };
@@ -100,7 +137,12 @@ export async function getUnifiedFunnel(): Promise<UnifiedFunnel> {
   }
   const total = zero();
   for (const t of RANK) for (const k of Object.keys(total) as Array<keyof FunnelCounts>) total[k] += drives[t][k];
-  const value: UnifiedFunnel = { generatedAt: new Date().toISOString(), from, drives, drivesTotal: total, ats: out };
-  cache = { at: Date.now(), value };
+  const dayMap = new Map<string, { enrolled: number; walkedIn: number }>();
+  for (let d = fromD; d <= to; d = addDay(d, 1)) dayMap.set(d, { enrolled: 0, walkedIn: 0 });
+  for (const p of people.values()) { const x = dayMap.get(p.enrolledDay); if (x) x.enrolled++; }
+  for (const m of seen) { const r = ats.find((a) => norm10(a.mobile) === m); const x = r ? dayMap.get(String(r.walk_in_date).slice(0, 10)) : undefined; if (x) x.walkedIn++; }
+  const daily = [...dayMap].map(([date, v]) => ({ date, ...v }));
+  const value: UnifiedFunnel = { generatedAt: new Date().toISOString(), from, to, daily, insights: funnelInsights({ drives, total, ats: out }), drives, drivesTotal: total, ats: out };
+  cache.set(key, { at: Date.now(), value });
   return value;
 }

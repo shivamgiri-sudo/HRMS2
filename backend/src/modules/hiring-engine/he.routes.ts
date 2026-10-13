@@ -931,7 +931,7 @@ heRouter.get("/meta-funnel", requireAuth, requireRole(...VIEW_ROLES), async (_re
 
 /** One funnel from one person list: enrolled to joined per drive (they add up), plus the ATS funnel and what came from other sources. */
 heRouter.get("/funnel/unified", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
-  try { res.json({ success: true, data: await getUnifiedFunnel() }); }
+  try { res.json({ success: true, data: await getUnifiedFunnel(String(_req.query.from ?? ""), String(_req.query.to ?? "")) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] unified funnel failed"); res.status(500).json({ success: false, message: "Could not load the funnel" }); }
 });
 

@@ -1,3 +1,4 @@
+import WalkinFunnelPanel from "@/components/dashboard/WalkinFunnelPanel";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ShieldX } from "lucide-react";
@@ -656,6 +657,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
         {variant === "payroll" ? <PayrollReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "manager" ? <ManagerReferenceLayout data={data} managerName={employeeName} filters={filterControl} /> : null}
         {variant === "super_admin" ? <SuperAdminReferenceLayout data={data} filters={filterControl} /> : null}
+        {variant === "ceo" || variant === "super_admin" ? <WalkinFunnelPanel className="mt-4" /> : null}
         {variant === "quality" ? <QualityReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "operations" ? <OperationsReferenceLayout data={data} filters={filterControl} /> : null}
         {variant === "recruiter" ? <RecruiterReferenceLayout data={data} filters={filterControl} /> : null}

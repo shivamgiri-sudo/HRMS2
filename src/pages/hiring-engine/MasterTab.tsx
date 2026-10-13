@@ -15,7 +15,7 @@ import IntegrationsCard from "./IntegrationsCard";
 import DailyPlanCard from "./DailyPlanCard";
 import MetaFunnelCard from "./MetaFunnelCard";
 import CostByBranchCard from "./CostByBranchCard";
-import UnifiedFunnelCard from "./UnifiedFunnelCard";
+import WalkinFunnelPanel from "@/components/dashboard/WalkinFunnelPanel";
 import CampaignDashboardCard from "./CampaignDashboardCard";
 import CampaignSettingsCard from "./CampaignSettingsCard";
 import LaunchCard from "./LaunchCard";
@@ -153,7 +153,7 @@ export default function MasterTab() {
 
       <RecruiterBoard />
 
-      <UnifiedFunnelCard />
+      <WalkinFunnelPanel />
       <MetaFunnelCard />
       <CostByBranchCard />
       <CampaignSettingsCard />
