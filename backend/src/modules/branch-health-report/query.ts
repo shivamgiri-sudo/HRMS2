@@ -1332,6 +1332,153 @@ export async function fetchBudgetByHead(
   };
 }
 
+// ─── 1c. Previous months: budget progress and closure ────────────────────────
+
+export interface BudgetHistoryOpenRow {
+  head: string;
+  subHead: string;
+  budget: number;
+  used: number;
+}
+
+export interface BudgetMonthProgress {
+  periodCode: string;
+  /** Header status of the budget used for the month; null when no budget exists. */
+  headerStatus: string | null;
+  /** Sum of the declared line budgets (P&L cost basis). */
+  declared: number;
+  /** Consumed + reserved across all lines. */
+  used: number;
+  /**
+   * Budget after closure: a closed head/sub-head counts at what was actually used, an open one
+   * still counts at its declared amount, so the figure only comes down as heads are closed.
+   */
+  effective: number;
+  headsTotal: number;
+  headsClosed: number;
+  /** Open head/sub-heads, largest declared budget first, capped. */
+  openRows: BudgetHistoryOpenRow[];
+}
+
+const BUDGET_HISTORY_MONTHS = 2;
+const MAX_OPEN_BUDGET_ROWS = 6;
+
+function previousPeriods(today: string, count: number): string[] {
+  const out: string[] = [];
+  let y = Number(today.slice(0, 4));
+  let m = Number(today.slice(5, 7));
+  for (let i = 0; i < count; i++) {
+    m -= 1;
+    if (m === 0) {
+      m = 12;
+      y -= 1;
+    }
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+  }
+  return out;
+}
+
+/** Best budget first when a month has more than one non-draft header. */
+const HEADER_STATUS_RANK = [
+  "active",
+  "closed",
+  "accounts_head_approved",
+  "finance_head_approved",
+  "branch_head_approved",
+  "submitted",
+  "revision_required",
+];
+
+/**
+ * Last two months' budget progress with closure applied per head/sub-head
+ * (finance_budget_subhead_closure — a missing row is open). One budget per month: the
+ * highest-ranked non-draft, non-rejected header.
+ */
+export async function fetchBudgetHistory(
+  branchId: string,
+  today: string,
+): Promise<BudgetMonthProgress[]> {
+  const periods = previousPeriods(today, BUDGET_HISTORY_MONTHS);
+  const [headerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, period_code, status FROM finance_budget_header
+      WHERE branch_id = ? AND period_code IN (${periods.map(() => "?").join(",")})
+        AND status NOT IN ('draft', 'rejected')
+      ORDER BY created_at DESC`,
+    [branchId, ...periods],
+  );
+  const rank = (s: string) => {
+    const i = HEADER_STATUS_RANK.indexOf(s);
+    return i === -1 ? HEADER_STATUS_RANK.length : i;
+  };
+  const chosen = new Map<string, { id: string; status: string }>();
+  for (const h of headerRows as any[]) {
+    const code = String(h.period_code);
+    const cur = chosen.get(code);
+    // Rows arrive newest first, so a tie keeps the newest.
+    if (!cur || rank(String(h.status)) < rank(cur.status))
+      chosen.set(code, { id: String(h.id), status: String(h.status) });
+  }
+  const ids = [...chosen.values()].map((c) => c.id);
+  const lineRows = ids.length
+    ? ((
+        await db.execute<RowDataPacket[]>(
+          `SELECT l.budget_id,
+                  COALESCE(NULLIF(TRIM(l.head), ''), 'Unspecified') AS head,
+                  COALESCE(l.sub_head, '')                         AS sub_head,
+                  COALESCE(SUM(l.pnl_cost_amount), 0)              AS budget,
+                  COALESCE(SUM(l.consumed_amount + l.reserved_amount), 0) AS used,
+                  COALESCE(MAX(c.status), 'open')                  AS closure
+             FROM finance_budget_line l
+             LEFT JOIN finance_budget_subhead_closure c
+               ON c.budget_id = l.budget_id AND c.head = l.head
+              AND c.sub_head = COALESCE(l.sub_head, '')
+            WHERE l.budget_id IN (${ids.map(() => "?").join(",")})
+            GROUP BY l.budget_id, head, sub_head`,
+          ids,
+        )
+      )[0] as any[])
+    : [];
+  return periods.map((periodCode) => {
+    const header = chosen.get(periodCode);
+    const out: BudgetMonthProgress = {
+      periodCode,
+      headerStatus: header?.status ?? null,
+      declared: 0,
+      used: 0,
+      effective: 0,
+      headsTotal: 0,
+      headsClosed: 0,
+      openRows: [],
+    };
+    if (!header) return out;
+    const open: BudgetHistoryOpenRow[] = [];
+    for (const r of lineRows.filter((x) => String(x.budget_id) === header.id)) {
+      const budget = Number(r.budget);
+      const used = Number(r.used);
+      const closed = String(r.closure) === "closed";
+      out.headsTotal += 1;
+      out.declared += budget;
+      out.used += used;
+      if (closed) {
+        out.headsClosed += 1;
+        out.effective += used;
+      } else {
+        out.effective += budget;
+        open.push({
+          head: String(r.head),
+          subHead: String(r.sub_head),
+          budget,
+          used,
+        });
+      }
+    }
+    out.openRows = open
+      .sort((a, b) => b.budget - a.budget)
+      .slice(0, MAX_OPEN_BUDGET_ROWS);
+    return out;
+  });
+}
+
 // ─── 13. Consecutive absence ─────────────────────────────────────────────────
 
 export interface AbsenceFlag {
@@ -1657,6 +1804,7 @@ export interface BranchHealthRawData {
   runningPnl: RunningPnlStats;
   pendingActions: PendingAction[];
   budgetByHead: Awaited<ReturnType<typeof fetchBudgetByHead>>;
+  budgetHistory: BudgetMonthProgress[];
   absence: Awaited<ReturnType<typeof fetchConsecutiveAbsence>>;
   leaveAging: LeaveAgingStats;
   regularization: Awaited<ReturnType<typeof fetchRegularizationBacklog>>;
@@ -1774,6 +1922,7 @@ export async function fetchAllBranchHealthData(
       },
       pendingActions: [],
       budgetByHead: { top: [], overBudget: [] },
+      budgetHistory: [],
       absence: { total: 0, rows: [] },
       leaveAging: {
         pending: 0,
@@ -1821,6 +1970,7 @@ export async function fetchAllBranchHealthData(
     runningPnl,
     pendingActions,
     budgetByHead,
+    budgetHistory,
     absence,
     leaveAging,
     regularization,
@@ -1840,6 +1990,7 @@ export async function fetchAllBranchHealthData(
     fetchRunningPnl(branchId, today),
     fetchPendingActions(branchId),
     fetchBudgetByHead(branchId, today),
+    fetchBudgetHistory(branchId, today).catch(() => []),
     fetchConsecutiveAbsence(branchId, today),
     fetchLeaveAging(branchId, today),
     fetchRegularizationBacklog(branchId, today),
@@ -1862,6 +2013,7 @@ export async function fetchAllBranchHealthData(
     runningPnl,
     pendingActions,
     budgetByHead,
+    budgetHistory,
     absence,
     leaveAging,
     regularization,

@@ -287,6 +287,71 @@ export function renderEmail(
           : "")
       : "";
 
+  // ── 1c. Previous months: budget progress and closure ──
+  const monthLabel = (code: string) => {
+    const d = new Date(`${code}-01T00:00:00Z`);
+    return d.toLocaleString("en-GB", {
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  };
+  const budgetHistoryBody = raw.budgetHistory
+    .map((m) => {
+      const title = `${monthLabel(m.periodCode)} (${m.periodCode})`;
+      if (m.headerStatus === null)
+        return `<p style="${FONT}font-size:12px;color:${C.muted};margin:8px 0 0 0;"><b>${esc(title)}</b> — no approved budget found</p>`;
+      const allClosed = m.headsTotal > 0 && m.headsClosed === m.headsTotal;
+      const headerClosed = m.headerStatus === "closed";
+      const closureText =
+        allClosed || headerClosed
+          ? "CLOSED"
+          : `NOT CLOSED — ${m.headsClosed} of ${m.headsTotal} heads/sub-heads closed`;
+      const closureColor = allClosed || headerClosed ? C.success : C.danger;
+      const effPct = m.effective > 0 ? Math.round((m.used / m.effective) * 100) : 0;
+      const released = m.declared - m.effective;
+      return (
+        `<p style="${FONT}font-size:12px;color:${C.primary};margin:10px 0 3px 0;"><b>${esc(title)}</b> — <span style="color:${closureColor};font-weight:700;">${esc(closureText)}</span></p>` +
+        kpiStrip([
+          { label: "Declared budget", value: inr(m.declared) },
+          { label: "Spent (consumed + reserved)", value: inr(m.used) },
+          {
+            label: "Budget after closure",
+            value: inr(m.effective),
+            subtext:
+              released > 0
+                ? `${inr(released)} released by closing`
+                : "nothing released yet",
+          },
+          {
+            label: "Used of that budget",
+            value: `${effPct}%`,
+            color: effPct >= 100 ? C.danger : effPct >= 80 ? C.warn : C.success,
+          },
+        ]) +
+        (m.openRows.length > 0
+          ? dataTable(
+              ["Still open (not closed)", "Sub-head", "Budget held", "Spent"],
+              m.openRows.map((r) => [
+                r.head,
+                r.subHead || "—",
+                inr(r.budget),
+                inr(r.used),
+              ]),
+              true,
+            )
+          : "")
+      );
+    })
+    .join("");
+  const budgetHistoryBlock =
+    raw.budgetHistory.length > 0
+      ? `<p style="${FONT}font-size:10px;font-weight:700;color:${C.muted};margin:12px 0 0 0;letter-spacing:1px;">PREVIOUS 2 MONTHS — BUDGET CLOSURE</p>${budgetHistoryBody}` +
+        note(
+          "A head/sub-head that is not closed keeps its full declared budget even when spending is lower. Once closed, it counts only what was actually spent, so the branch budget comes down as each head is closed. Branch Admin or Finance Head closes them (due by the 7th of the next month).",
+        )
+      : "";
+
   // ── 2. GRN summary + tie-out to the budget ──
   const g = raw.grnStats;
   const br = g.bridge;
@@ -1258,7 +1323,7 @@ export function renderEmail(
     sectionHeader(
       `1. Budget vs Consumption — ${raw.budget.periodCode ?? reportDate.slice(0, 7)}`,
     ),
-    `<tr><td>${card(budgetBody + budgetHeadBody)}</td></tr>`,
+    `<tr><td>${card(budgetBody + budgetHeadBody + budgetHistoryBlock)}</td></tr>`,
     sectionHeader("2. GRN Summary — Month-to-Date, tied to the budget"),
     `<tr><td>${card(grnStatsBody + unbudgetedBody)}</td></tr>`,
     sectionHeader("3. Recent GRNs (Latest 15, excluding drafts)"),
