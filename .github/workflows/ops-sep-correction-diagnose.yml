@@ -19,6 +19,10 @@ on:
         description: "CODE:date:status;... (ISO date)"
         required: false
         default: ""
+      half_day_codes:
+        description: "If set: run the half-day CL trace for these comma-separated codes instead"
+        required: false
+        default: ""
 
 concurrency:
   group: ops-sep-correction-diagnose
@@ -51,6 +55,7 @@ jobs:
           MONTH: ${{ inputs.month }}
           LEAVE_ROWS: ${{ inputs.leave_rows }}
           REG_ROWS: ${{ inputs.reg_rows }}
+          CODES: ${{ inputs.half_day_codes }}
         run: |
           set -euo pipefail
-          node scripts/sep-correction-diagnose.mjs
+          if [ -n "$CODES" ]; then node scripts/half-day-cl-trace.mjs; else node scripts/sep-correction-diagnose.mjs; fi
