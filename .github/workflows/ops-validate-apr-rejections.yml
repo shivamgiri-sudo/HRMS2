@@ -1,0 +1,51 @@
+name: Ops Validate APR Upload Rejections (manual, read-only)
+
+# One-off, read-only check for a 2026-10-13 APR bulk attendance upload that rejected rows for
+# a fixed set of employee codes ("Employee not found or inactive" / outside the employment
+# window guard added in 9b92d6aff). Prints each code's real employee row, employment window
+# and employment_stint rows so the rejections can be checked against the actual record.
+# Standalone file (not ops-scripts.yml) so a one-off diagnostic does not collide with the many
+# concurrent edits to that shared workflow.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-validate-apr-rejections
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate APR upload rejections
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run (read-only)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          npx tsx scripts/validate-apr-upload-rejections.ts \
+            MAS63264 MAS63449 MAS63498 MAS63669 MAS63708 MAS63709 MAS63710 \
+            MAS63711 MAS63712 MAS63714 MAS63716 MAS63717 MAS63718 MAS63719 \
+            MAS63720 MAS63721 MAS63723
