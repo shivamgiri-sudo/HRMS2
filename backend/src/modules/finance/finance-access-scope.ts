@@ -55,11 +55,35 @@ const OVERRIDING_GLOBAL_FINANCE_ROLES = new Set([
   "hr_admin",
 ]);
 
-export function hasGlobalFinanceScope(primaryRole?: string, userRoles?: string[]) {
+/**
+ * GRN approval-stage roles, excluded from the global override when the caller is asking
+ * about the Branch Head stage specifically (`excludeStageRoles`).
+ *
+ * finance_head/accounts_head legitimately need "all branches" for THEIR OWN stage — a global
+ * Finance Head reviewing accounts_head_approved GRNs across every branch is the point of the
+ * override. But that same override also put every branch's Branch-Head-pending GRN in a
+ * finance_head holder's Branch Head queue, letting them clear Branch Head and their own stage
+ * on the same GRN — maker-checker then blocks them at their own stage, since they already
+ * acted as the "other" reviewer. Branch Head visibility must come from an actual branch grant
+ * (own employee branch or branch_admin/branch_head assignment), not from holding a later-stage
+ * role. See MAS "PND-9B020B7F" incident, 2026-10-13.
+ */
+const STAGE_SPECIFIC_FINANCE_ROLES = new Set(["finance_head", "accounts_head"]);
+
+export function hasGlobalFinanceScope(
+  primaryRole?: string,
+  userRoles?: string[],
+  excludeStageRoles = false
+) {
   const roles = Array.from(normalizedRoles(primaryRole, userRoles));
-  if (roles.some((role) => OVERRIDING_GLOBAL_FINANCE_ROLES.has(role))) return true;
+  const overrides = (role: string) =>
+    OVERRIDING_GLOBAL_FINANCE_ROLES.has(role) && !(excludeStageRoles && STAGE_SPECIFIC_FINANCE_ROLES.has(role));
+  const isGlobal = (role: string) =>
+    GLOBAL_FINANCE_ROLES.has(role) && !(excludeStageRoles && STAGE_SPECIFIC_FINANCE_ROLES.has(role));
+
+  if (roles.some(overrides)) return true;
   if (roles.some((role) => BRANCH_BOUND_FINANCE_ROLES.has(role))) return false;
-  return roles.some((role) => GLOBAL_FINANCE_ROLES.has(role));
+  return roles.some(isGlobal);
 }
 
 export async function getUserBranchId(userId: string) {
@@ -122,10 +146,12 @@ export async function resolveFinanceBranchScopeSet(input: {
   primaryRole?: string;
   userRoles?: string[];
   requestedBranchId?: string | null;
+  /** See STAGE_SPECIFIC_FINANCE_ROLES: pass true when resolving the Branch Head bucket. */
+  excludeStageRoles?: boolean;
 }): Promise<FinanceBranchScope> {
   const requested = input.requestedBranchId?.trim() || undefined;
 
-  if (hasGlobalFinanceScope(input.primaryRole, input.userRoles)) {
+  if (hasGlobalFinanceScope(input.primaryRole, input.userRoles, input.excludeStageRoles)) {
     return requested ? { mode: "branches", branchIds: [requested] } : { mode: "all" };
   }
 
@@ -252,6 +278,8 @@ export async function assertFinanceRecordBranch(input: {
   primaryRole?: string;
   userRoles?: string[];
   recordBranchId: string | null | undefined;
+  /** See STAGE_SPECIFIC_FINANCE_ROLES: pass true when the record is at the Branch Head stage. */
+  excludeStageRoles?: boolean;
 }) {
   const scope = await resolveFinanceBranchScopeSet({
     userId: input.userId,
@@ -260,6 +288,7 @@ export async function assertFinanceRecordBranch(input: {
     // Deliberately not forwarding a requested branch: this asks "may they touch THIS record",
     // which is answered by the full set, not by whatever branch the query string named.
     requestedBranchId: undefined,
+    excludeStageRoles: input.excludeStageRoles,
   });
   if (scope.mode === "all") return;
 

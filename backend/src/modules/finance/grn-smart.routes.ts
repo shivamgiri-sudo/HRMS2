@@ -138,6 +138,7 @@ async function authorizeGrn(
       primaryRole: user.role,
       userRoles: user.roles,
       recordBranchId: String(grn.branch_id),
+      excludeStageRoles: String(grn.status) === "submitted",
     });
     req.financeGrn = grn;
     next();

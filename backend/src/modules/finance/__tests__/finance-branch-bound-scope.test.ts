@@ -135,3 +135,71 @@ describe("assertFinanceRecordBranch — record-level guard for the id-addressed 
     ).resolves.toBeUndefined();
   });
 });
+
+/**
+ * excludeStageRoles — the GRN Branch Head bucket must not inherit finance_head/accounts_head's
+ * "see every branch" override.
+ *
+ * Live incident (PND-9B020B7F, 2026-10-13): a Finance Head who also holds Branch Head for one
+ * branch saw EVERY branch's Branch-Head-pending GRNs in their queue, because finance_head is in
+ * OVERRIDING_GLOBAL_FINANCE_ROLES. Clearing another branch's Branch Head stage, then trying to
+ * clear their own Finance Head stage on the same GRN, hit the maker-checker guard with no
+ * second Finance Head able to step in. excludeStageRoles=true (passed only for the Branch Head
+ * bucket / status='submitted') must pin them to their own branch instead, while every other
+ * caller of these functions — which never passes it — keeps the exact behaviour above.
+ */
+describe("excludeStageRoles — Branch Head bucket must not inherit finance_head/accounts_head's override", () => {
+  it("still grants global scope by default (excludeStageRoles omitted) — no regression", async () => {
+    const { hasGlobalFinanceScope } = await import("../finance-access-scope.js");
+    expect(hasGlobalFinanceScope("branch_admin", ["branch_admin", "finance_head"])).toBe(true);
+  });
+
+  it("denies global scope to finance_head when excludeStageRoles is set", async () => {
+    const { hasGlobalFinanceScope } = await import("../finance-access-scope.js");
+    expect(hasGlobalFinanceScope("branch_admin", ["branch_admin", "finance_head"], true)).toBe(false);
+    expect(hasGlobalFinanceScope("accounts_head", ["accounts_head"], true)).toBe(false);
+  });
+
+  it("leaves true global roles (super_admin, ceo) global even with excludeStageRoles", async () => {
+    const { hasGlobalFinanceScope } = await import("../finance-access-scope.js");
+    expect(hasGlobalFinanceScope("super_admin", ["super_admin"], true)).toBe(true);
+    expect(hasGlobalFinanceScope("ceo", ["ceo"], true)).toBe(true);
+  });
+
+  it("pins a Finance Head + Branch Head to their own branch for the Branch Head bucket", async () => {
+    const { assertFinanceRecordBranch } = await import("../finance-access-scope.js");
+    await expect(
+      assertFinanceRecordBranch({
+        userId: "u1",
+        primaryRole: "branch_head",
+        userRoles: ["branch_head", "finance_head"],
+        recordBranchId: "branch-someone-else",
+        excludeStageRoles: true,
+      }),
+    ).rejects.toThrow(/cannot access a finance record from another branch/i);
+
+    await expect(
+      assertFinanceRecordBranch({
+        userId: "u1",
+        primaryRole: "branch_head",
+        userRoles: ["branch_head", "finance_head"],
+        recordBranchId: "branch-own",
+        excludeStageRoles: true,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("still lets the same Finance Head read every branch's GRN at their own (later) stage", async () => {
+    // Same user, excludeStageRoles simply omitted — the accounts_head_approved/finance_head
+    // bucket's call site never passes it.
+    const { assertFinanceRecordBranch } = await import("../finance-access-scope.js");
+    await expect(
+      assertFinanceRecordBranch({
+        userId: "u1",
+        primaryRole: "branch_head",
+        userRoles: ["branch_head", "finance_head"],
+        recordBranchId: "branch-someone-else",
+      }),
+    ).resolves.toBeUndefined();
+  });
+});

@@ -203,6 +203,7 @@ async function authorizeGrnBranch(
       primaryRole: user.role,
       userRoles: user.roles,
       recordBranchId: grn.branch_id,
+      excludeStageRoles: String(grn.status) === "submitted",
     });
     req.financeGrn = grn;
     next();
@@ -674,6 +675,11 @@ grnRouter.get(
         primaryRole: user.role,
         userRoles: user.roles,
         requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+        // The Branch Head bucket (status='submitted') must stay pinned to the caller's own
+        // branch even when they also hold finance_head/accounts_head — those roles' "see every
+        // branch" override is for their OWN stage, not for a stage below them. See
+        // STAGE_SPECIFIC_FINANCE_ROLES.
+        excludeStageRoles: req.query.status === "submitted",
       });
 
       const source = req.query.source ? String(req.query.source) : "new";
