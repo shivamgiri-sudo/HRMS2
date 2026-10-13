@@ -895,12 +895,14 @@ const emailDailyTrend = (proc: "molecular-email" | "reginald-email" | "finnable"
 
 // ── Reginald All Dashboard — Cart + Reginald Email. Molecular Email is its own
 // dashboard (REG-07): the old tab is now only a link to it, with no Molecular data here.
+// The Reginald Email tab embeds the Reginald Email Dashboard (same view as Molecular,
+// source "reginald"; also its own page at /reginald-email-dashboard).
 type ReginaldTab = "cart" | "email";
 function ReginaldAllDashboard({ f }: { f: Filters }) {
   const [tab, setTab] = useState<ReginaldTab>("cart");
   const TABS: { key: ReginaldTab; label: string; badge?: string }[] = [
     { key: "cart",     label: "Abandoned Cart" },
-    { key: "email",    label: "Reginald Email",   badge: "APR" },
+    { key: "email",    label: "Reginald Email",   badge: "Tickets" },
   ];
   return (
     <div>
@@ -920,7 +922,7 @@ function ReginaldAllDashboard({ f }: { f: Filters }) {
         <MolecularMovedLink compact />
       </div>
       {tab === "cart"      && <CartDashboard f={f} />}
-      {tab === "email"     && <EmailAprDashboard proc="reginald-email"  label="Reginald Email"  campaign="EMAIL"   f={f} />}
+      {tab === "email"     && <MolecularEmailDashboard key={`${f.from}|${f.to}`} source="reginald" initialFrom={f.from} initialTo={f.to} />}
     </div>
   );
 }
@@ -1626,7 +1628,7 @@ export function DiallerLivePanel({ processName }: { processName: string }) {
         {proc === "inbound" && <InboundDashboard f={filters} />}
         {proc === "reginald-cart" && <ReginaldAllDashboard f={filters} />}
         {proc === "molecular-email" && <MolecularEmailDashboard initialFrom={filters.from} initialTo={filters.to} />}
-        {proc === "reginald-email" && <EmailAprDashboard proc="reginald-email" label="Reginald Email" campaign="EMAIL" f={filters} />}
+        {proc === "reginald-email" && <MolecularEmailDashboard key={`${filters.from}|${filters.to}`} source="reginald" initialFrom={filters.from} initialTo={filters.to} />}
         {proc === "billing" && <BillingDashboard f={filters} />}
         {proc === "gs1" && <GS1Dashboard f={filters} />}
         {proc === "finnable"   && <EmailAprDashboard proc="finnable"        label="Finnable"              campaign="FINNABLE" f={filters} />}

@@ -1,20 +1,23 @@
-/** Molecular Email Dashboard — Overview (MOL-02), lifecycle (MOL-04) and TAT/ageing (MOL-05). */
+/** Molecular / Reginald Email Dashboard — Overview (MOL-02), lifecycle (MOL-04) and TAT/ageing (MOL-05). */
 import { useQuery } from "@tanstack/react-query";
 import {
   Bar, BarChart, CartesianGrid, Legend, Line, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { Card, Kpi, Loading, Notice } from "./MolecularUi";
 import {
-  fmtHours, fmtPct, fmtStamp, molApi, orNA, TAT_BUCKETS, type MolDailyFallback, type MolFilters, type MolOverview, type TatBucket,
+  emailDashApi, EMAIL_DASHBOARDS, fmtHours, fmtPct, fmtStamp, orNA, type EmailDashSource, TAT_BUCKETS, type MolDailyFallback, type MolFilters, type MolOverview, type TatBucket,
 } from "./molecularApi";
 
-export function MolecularOverviewSection({ f, onDrill }: {
+export function MolecularOverviewSection({ f, onDrill, source = "molecular" }: {
   f: MolFilters;
+  source?: EmailDashSource;
   /** Opens the ticket table with these filters (so a card reconciles to rows). */
   onDrill: (patch: Partial<MolFilters>) => void;
 }) {
-  const q = useQuery({ queryKey: ["mol", "overview", f], queryFn: () => molApi.overview(f), staleTime: 60_000 });
-  const apr = useQuery({ queryKey: ["mol", "apr", f.from, f.to], queryFn: () => molApi.aprSummary(f), staleTime: 120_000 });
+  const api = emailDashApi(source);
+  const { sourceName, campaign } = EMAIL_DASHBOARDS[source];
+  const q = useQuery({ queryKey: ["mol", source, "overview", f], queryFn: () => api.overview(f), staleTime: 60_000 });
+  const apr = useQuery({ queryKey: ["mol", source, "apr", f.from, f.to], queryFn: () => api.aprSummary(f), staleTime: 120_000 });
 
   if (q.isLoading) return <Loading />;
   if (q.error || !q.data) return <Notice tone="error">{(q.error as Error)?.message ?? "Failed to load the overview."}</Notice>;
@@ -33,11 +36,11 @@ export function MolecularOverviewSection({ f, onDrill }: {
 
   return (
     <div className="space-y-4">
-      {!d.hasData && <FeedNotice d={d} />}
-      {!d.hasData && d.dailyFallback?.hasData && <DailyFallback fb={d.dailyFallback} />}
+      {!d.hasData && <FeedNotice d={d} sourceName={sourceName} />}
+      {!d.hasData && d.dailyFallback?.hasData && <DailyFallback fb={d.dailyFallback} sourceName={sourceName} />}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <Kpi label="Active Agents" value={apr.data ? apr.data.agentCount : apr.isLoading ? "…" : "N/A"} hint="Logged in on MOEMAIL in the period (APR)" />
+        <Kpi label="Active Agents" value={apr.data ? apr.data.agentCount : apr.isLoading ? "…" : "N/A"} hint={`Logged in on ${campaign} in the period (APR)`} />
         <Kpi label="Tickets Received" value={k.received} hint="Unique ticket IDs created" onClick={() => onDrill({ status: "", tatBucket: "" })} />
         <Kpi label="Tickets Closed" value={k.closed} tone="green" hint="Unique, currently closed" onClick={() => onDrill({ status: "closed", tatBucket: "" })} />
         <Kpi label="Pending / Open" value={k.pending} tone="amber" hint="Received − final closed" onClick={() => onDrill({ status: "open", tatBucket: "" })} />
@@ -93,7 +96,7 @@ export function MolecularOverviewSection({ f, onDrill }: {
             </BarChart>
           </ResponsiveContainer>
         </Card>
-        <Card title="Reopen rate by category" sub={d.fieldAvailability.category ? "Closed tickets per category" : "Category is not available in the Molecular source — shown as N/A"}>
+        <Card title="Reopen rate by category" sub={d.fieldAvailability.category ? "Closed tickets per category" : `Category is not available in the ${sourceName} source — shown as N/A`}>
           <div className="max-h-56 overflow-auto">
             <table className="w-full text-xs">
               <thead className="text-left text-slate-500"><tr><th className="py-1">Category</th><th className="text-right">Closed</th><th className="text-right">Reopened</th><th className="text-right">Reopen %</th></tr></thead>
@@ -142,18 +145,18 @@ export function MolecularOverviewSection({ f, onDrill }: {
 }
 
 /** Why the ticket KPIs are empty: no tickets in the period, or the ticket feed has never arrived. */
-function FeedNotice({ d }: { d: MolOverview }) {
+function FeedNotice({ d, sourceName }: { d: MolOverview; sourceName: string }) {
   const { ticketFeedLastSyncedAt, dailyFeedLastSyncedAt, dailyLatestDate } = d.feed;
   if (ticketFeedLastSyncedAt) {
     return (
       <Notice tone="warn">
-        No Molecular tickets were received in this period with these filters. Tickets sync hourly; last ticket sync {fmtStamp(ticketFeedLastSyncedAt)}.
+        No {sourceName} tickets were received in this period with these filters. Tickets sync hourly; last ticket sync {fmtStamp(ticketFeedLastSyncedAt)}.
       </Notice>
     );
   }
   return (
     <Notice tone="warn">
-      <strong>Ticket-level data has not arrived yet.</strong> HRMS has not been able to reach the Molecular ticketing server
+      <strong>Ticket-level data has not arrived yet.</strong> HRMS has not been able to reach the {sourceName} ticketing server
       {dailyFeedLastSyncedAt ? ` since ${fmtStamp(dailyFeedLastSyncedAt)}` : ""}, so the per-ticket feed behind these cards
       (closure, reopen, TAT, ageing, ticket table) has not run once. It fills automatically on the next hourly sync after the
       connection is restored.
@@ -163,9 +166,9 @@ function FeedNotice({ d }: { d: MolOverview }) {
 }
 
 /** Day-level counts from the older daily sync, shown while the per-ticket feed is empty. */
-function DailyFallback({ fb }: { fb: MolDailyFallback }) {
+function DailyFallback({ fb, sourceName }: { fb: MolDailyFallback; sourceName: string }) {
   return (
-    <Card title="Daily ticket summary (earlier daily feed)" sub="Counts per day as the Molecular source reported them. Not unique-ticket KPIs: closures here are agent replies, reopens are events.">
+    <Card title="Daily ticket summary (earlier daily feed)" sub={`Counts per day as the ${sourceName} source reported them. Not unique-ticket KPIs: closures here are agent replies, reopens are events.`}>
       <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Kpi label="Tickets Received" value={fb.totalTickets} />
         <Kpi label="Closures (replies)" value={fb.emailClosed} tone="green" />

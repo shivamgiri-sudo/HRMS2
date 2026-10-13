@@ -356,6 +356,7 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/recruiter-dashboard",
   "/recruitment/ijp",
   "/recruitment/job-requisition",
+  "/reginald-email-dashboard",
   "/reports",
   "/reports/control-room",
   "/reports/enterprise",

@@ -28,6 +28,20 @@ describe('live dashboard scope map', () => {
       .toEqual(['molecular-email', 'reginald-cart', 'reginald-email']);
   });
 
+  // The Reginald Email Dashboard (/reginald-email-dashboard, embedded in the Reginald
+  // "Reginald Email" tab) reads its per-ticket endpoints under the existing
+  // reginald-email group: Reginald Email and Reginald viewers may read them,
+  // Molecular-only viewers may not.
+  it('serves the Reginald Email Dashboard ticket endpoints under the reginald-email group', () => {
+    for (const ep of ['overview', 'ticket-list', 'agent-daily', 'filter-options']) {
+      expect(routesSource).toContain(`router.get('/reginald-email/${ep}'`);
+    }
+    expect(groupsForDashboards(['reginald-email']).has('reginald-email')).toBe(true);
+    expect(groupsForDashboards(['reginald-cart']).has('reginald-email')).toBe(true);
+    expect(groupsForDashboards(['molecular-email']).has('reginald-email')).toBe(false);
+    expect([...groupsForDashboards(['reginald-email'])]).toEqual(['reginald-email']);
+  });
+
   it('keeps one process from reading another process\'s group', () => {
     const inbound = groupsForDashboards(['inbound']);
     expect(inbound.has('inbound')).toBe(true);

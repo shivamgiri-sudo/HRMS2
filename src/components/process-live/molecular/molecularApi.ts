@@ -1,12 +1,42 @@
 /**
- * Molecular Email Dashboard — API client and shared types.
+ * Molecular / Reginald Email Dashboards — API client and shared types.
  * Mirrors backend/src/modules/process-live-dashboard/molecular-email.service.ts.
- * Every endpoint is under /api/process-live/molecular-email (scope group 'molecular-email').
+ * Both dashboards share one view and one per-ticket pipeline, split by source:
+ * Molecular endpoints are under /api/process-live/molecular-email (scope group
+ * 'molecular-email'), Reginald Email under /api/process-live/reginald-email
+ * (scope group 'reginald-email').
  */
 import { getAuthToken } from "@/lib/hrmsApi";
 
 export const MOLECULAR_TITLE = "Molecular Email Dashboard";
 export const MOLECULAR_ROUTE = "/molecular-email-dashboard";
+export const REGINALD_EMAIL_TITLE = "Reginald Email Dashboard";
+export const REGINALD_EMAIL_ROUTE = "/reginald-email-dashboard";
+
+export type EmailDashSource = "molecular" | "reginald";
+
+export interface EmailDashConfig {
+  source: EmailDashSource;
+  title: string;
+  route: string;
+  /** Endpoint group under /api/process-live (also its scope group). */
+  apiGroup: "molecular-email" | "reginald-email";
+  /** How the ticket source is named in notices ("the Molecular ticketing server"). */
+  sourceName: string;
+  /** Dialler APR campaign holding the agents' time. */
+  campaign: string;
+}
+
+export const EMAIL_DASHBOARDS: Record<EmailDashSource, EmailDashConfig> = {
+  molecular: {
+    source: "molecular", title: MOLECULAR_TITLE, route: MOLECULAR_ROUTE,
+    apiGroup: "molecular-email", sourceName: "Molecular", campaign: "MOEMAIL",
+  },
+  reginald: {
+    source: "reginald", title: REGINALD_EMAIL_TITLE, route: REGINALD_EMAIL_ROUTE,
+    apiGroup: "reginald-email", sourceName: "Reginald Men", campaign: "EMAIL",
+  },
+};
 
 export type TatBucket = "0-24h" | ">24-48h" | ">48-72h" | ">72h";
 export const TAT_BUCKETS: TatBucket[] = ["0-24h", ">24-48h", ">48-72h", ">72h"];
@@ -106,25 +136,30 @@ export function filterParams(f: MolFilters): Record<string, string> {
   return p;
 }
 
-async function get<T>(url: string, params: Record<string, string>): Promise<T> {
+async function get<T>(url: string, params: Record<string, string>, title = MOLECULAR_TITLE): Promise<T> {
   const token = getAuthToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
   const r = await fetch(`${url}?${new URLSearchParams(params).toString()}`, { headers });
-  if (r.status === 403) throw new Error("You do not have access to the Molecular Email Dashboard (process scope).");
+  if (r.status === 403) throw new Error(`You do not have access to the ${title} (process scope).`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const d = (await r.json()) as { ok: boolean; data: T; error?: string };
   if (!d.ok) throw new Error(d.error || "API error");
   return d.data;
 }
 
-export const molApi = {
-  overview: (f: MolFilters) => get<MolOverview>("/api/process-live/molecular-email/overview", filterParams(f)),
-  tickets: (f: MolFilters) => get<MolTicketList>("/api/process-live/molecular-email/ticket-list", filterParams(f)),
-  agentDaily: (f: MolFilters) => get<{ rows: MolAgentDayRow[] }>("/api/process-live/molecular-email/agent-daily", filterParams(f)),
-  filterOptions: () => get<MolFilterOptions>("/api/process-live/molecular-email/filter-options", {}),
-  aprSummary: (f: MolFilters) => get<MolAprSummary>("/api/process-live/molecular-email/summary", { from: f.from, to: f.to }),
-};
+export function emailDashApi(source: EmailDashSource) {
+  const { apiGroup: g, title } = EMAIL_DASHBOARDS[source];
+  return {
+    overview: (f: MolFilters) => get<MolOverview>(`/api/process-live/${g}/overview`, filterParams(f), title),
+    tickets: (f: MolFilters) => get<MolTicketList>(`/api/process-live/${g}/ticket-list`, filterParams(f), title),
+    agentDaily: (f: MolFilters) => get<{ rows: MolAgentDayRow[] }>(`/api/process-live/${g}/agent-daily`, filterParams(f), title),
+    filterOptions: () => get<MolFilterOptions>(`/api/process-live/${g}/filter-options`, {}, title),
+    aprSummary: (f: MolFilters) => get<MolAprSummary>(`/api/process-live/${g}/summary`, { from: f.from, to: f.to }, title),
+  };
+}
+
+export const molApi = emailDashApi("molecular");
 
 /** IST date "YYYY-MM-DD". */
 export function istDate(offsetDays = 0): string {

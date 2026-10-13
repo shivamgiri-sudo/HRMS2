@@ -1,7 +1,11 @@
 /**
- * Per-ticket sync for the Molecular Email Dashboard (MOL-02..MOL-06).
+ * Per-ticket sync for the Molecular and Reginald Email Dashboards (MOL-02..MOL-06).
  *
- * Reads molecular_db_email READ-ONLY (same pool and sources as
+ * One source at a time (email-ticket-source.ts): 'molecular' reads molecular_db_email,
+ * 'reginald' reads db_email (same server and schema). Rows are keyed by
+ * (source, ticket_id) since sql/migrations/2190.
+ *
+ * Reads the source database READ-ONLY (same pool and sources as
  * molecular-email-sync.service.ts) and upserts one molecular_email_ticket row
  * per source ticket (sql/migrations/2180) plus its reopen events (2181).
  *
@@ -24,10 +28,9 @@
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { getMolecularEmailPool } from '../../db/molecularEmailDb.js';
-import { EMAIL_DASHBOARD_SOURCES } from './molecular-email-sync.service.js';
+import { ticketSourceConfig, type TicketSource, type TicketSourceConfig } from './email-ticket-source.js';
 import { deriveTicketLifecycle, istNow, istToday, parseWallClock, type DerivedTicket } from './molecular-email-kpi.js';
 
-const DATABASE = 'molecular_db_email' as const;
 const CHUNK = 500;
 
 const PRIORITY_CANDIDATES = ['priority', 'ticket_priority'];
@@ -42,9 +45,8 @@ export interface SourceColumns {
   messageTicketId: boolean;
 }
 
-function excludedSender(): string {
-  const src = EMAIL_DASHBOARD_SOURCES.find((s) => s.database === DATABASE);
-  return `%${(src?.excludedSenderLike ?? 'info@molecularcompany.com').toLowerCase()}%`;
+function excludedSender(cfg: TicketSourceConfig): string {
+  return `%${cfg.excludedSenderLike.toLowerCase()}%`;
 }
 
 /** Picks optional columns from a whitelist (identifiers are never taken from data). */
@@ -60,8 +62,8 @@ export function pickColumns(cols: { table: string; column: string }[]): SourceCo
   };
 }
 
-async function probeColumns(): Promise<SourceColumns> {
-  const pool = await getMolecularEmailPool(DATABASE);
+async function probeColumns(cfg: TicketSourceConfig): Promise<SourceColumns> {
+  const pool = await getMolecularEmailPool(cfg.database);
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('tickets', 'ticket_messages', 'ticket_events')`,
@@ -71,8 +73,8 @@ async function probeColumns(): Promise<SourceColumns> {
 
 const str = (v: unknown): string | null => (v === null || v === undefined || v === '' ? null : String(v));
 
-async function readChunk(ids: string[], cols: SourceColumns, nowIst: string): Promise<{ rows: DerivedTicket[]; events: Map<string, string[]>; agentIds: Map<string, string | null> }> {
-  const pool = await getMolecularEmailPool(DATABASE);
+async function readChunk(cfg: TicketSourceConfig, ids: string[], cols: SourceColumns, nowIst: string): Promise<{ rows: DerivedTicket[]; events: Map<string, string[]>; agentIds: Map<string, string | null> }> {
+  const pool = await getMolecularEmailPool(cfg.database);
   const extra = [
     cols.priority ? `t.\`${cols.priority}\` AS priority` : 'NULL AS priority',
     cols.category ? `t.\`${cols.category}\` AS category` : 'NULL AS category',
@@ -103,7 +105,7 @@ async function readChunk(ids: string[], cols: SourceColumns, nowIst: string): Pr
           AND LOWER(TRIM(direction)) LIKE '%outbound%'
           AND from_email IS NOT NULL AND TRIM(from_email) <> ''
           AND LOWER(TRIM(from_email)) NOT LIKE ?`,
-      [ids, excludedSender()],
+      [ids, excludedSender(cfg)],
     );
     for (const r of msgRows) {
       const k = String(r.tid);
@@ -129,19 +131,19 @@ async function readChunk(ids: string[], cols: SourceColumns, nowIst: string): Pr
 /** A DATETIME column only takes a readable value; anything else is stored NULL (raw kept for audit). */
 const dt = (v: string | null, ok: boolean) => (ok ? v : null);
 
-async function writeChunk(rows: DerivedTicket[], events: Map<string, string[]>, agentIds: Map<string, string | null>): Promise<void> {
+async function writeChunk(source: TicketSource, rows: DerivedTicket[], events: Map<string, string[]>, agentIds: Map<string, string | null>): Promise<void> {
   if (rows.length === 0) return;
   const values = rows.map((r) => {
     const createdOk = r.dqFlag !== 'missing_created' && r.dqFlag !== 'invalid_created';
     return [
-      r.ticketId, dt(r.createdAt, createdOk), agentIds.get(r.ticketId) ?? null, r.agentName, r.category, r.priority, r.status,
+      source, r.ticketId, dt(r.createdAt, createdOk), agentIds.get(r.ticketId) ?? null, r.agentName, r.category, r.priority, r.status,
       r.firstClosedAt, r.finalClosedAt, r.reopenCount, r.firstReopenedAt, r.lastReopenedAt, r.closureBasis, r.dqFlag,
       r.createdAt === null ? null : String(r.createdAt).slice(0, 40),
     ];
   });
   await db.query(
     `INSERT INTO molecular_email_ticket
-       (ticket_id, created_at, agent_user_id, agent_name, category, priority, status,
+       (source, ticket_id, created_at, agent_user_id, agent_name, category, priority, status,
         first_closed_at, final_closed_at, reopen_count, first_reopened_at, last_reopened_at,
         closure_basis, dq_flag, raw_created_at)
      VALUES ?
@@ -155,23 +157,23 @@ async function writeChunk(rows: DerivedTicket[], events: Map<string, string[]>, 
     [values],
   );
   const ids = rows.map((r) => r.ticketId);
-  await db.query('DELETE FROM molecular_email_ticket_reopen_event WHERE ticket_id IN (?)', [ids]);
+  await db.query('DELETE FROM molecular_email_ticket_reopen_event WHERE source = ? AND ticket_id IN (?)', [source, ids]);
   const ev: (string | number)[][] = [];
-  for (const id of ids) (events.get(id) ?? []).forEach((at, i) => ev.push([id, i + 1, at]));
+  for (const id of ids) (events.get(id) ?? []).forEach((at, i) => ev.push([source, id, i + 1, at]));
   if (ev.length > 0) {
-    await db.query('INSERT INTO molecular_email_ticket_reopen_event (ticket_id, seq, event_at) VALUES ?', [ev]);
+    await db.query('INSERT INTO molecular_email_ticket_reopen_event (source, ticket_id, seq, event_at) VALUES ?', [ev]);
   }
 }
 
-export interface TicketSyncResult { mode: 'recent' | 'backfill'; tickets: number; columns: SourceColumns }
+export interface TicketSyncResult { source: TicketSource; mode: 'recent' | 'backfill'; tickets: number; columns: SourceColumns }
 
-async function syncIds(ids: string[], cols: SourceColumns): Promise<number> {
+async function syncIds(cfg: TicketSourceConfig, ids: string[], cols: SourceColumns): Promise<number> {
   const nowIst = istNow();
   let n = 0;
   for (let i = 0; i < ids.length; i += CHUNK) {
     const part = ids.slice(i, i + CHUNK);
-    const { rows, events, agentIds } = await readChunk(part, cols, nowIst);
-    await writeChunk(rows, events, agentIds);
+    const { rows, events, agentIds } = await readChunk(cfg, part, cols, nowIst);
+    await writeChunk(cfg.source, rows, events, agentIds);
     n += rows.length;
   }
   return n;
@@ -182,9 +184,10 @@ async function syncIds(ids: string[], cols: SourceColumns): Promise<number> {
  * or updated in the last `daysBack` days, plus every ticket not yet closed
  * (its status/age moves on without any new event).
  */
-export async function syncRecentMolecularTickets(daysBack = 3): Promise<TicketSyncResult> {
-  const cols = await probeColumns();
-  const pool = await getMolecularEmailPool(DATABASE);
+export async function syncRecentEmailTicketRows(source: TicketSource, daysBack = 3): Promise<TicketSyncResult> {
+  const cfg = ticketSourceConfig(source);
+  const cols = await probeColumns(cfg);
+  const pool = await getMolecularEmailPool(cfg.database);
   const since = `${new Date(Date.parse(`${istToday()}T00:00:00Z`) - daysBack * 86_400_000).toISOString().slice(0, 10)} 00:00:00`;
   const parts = [
     'SELECT id FROM tickets WHERE created_at >= ?',
@@ -196,20 +199,23 @@ export async function syncRecentMolecularTickets(daysBack = 3): Promise<TicketSy
   if (cols.messageTicketId) { parts.push('SELECT ticket_id AS id FROM ticket_messages WHERE sent_at >= ?'); params.push(since); }
   const [rows] = await pool.query<RowDataPacket[]>(parts.join(' UNION '), params);
   const ids = [...new Set(rows.map((r) => String(r.id)).filter((x) => x && x !== 'null'))];
-  return { mode: 'recent', tickets: await syncIds(ids, cols), columns: cols };
+  return { source, mode: 'recent', tickets: await syncIds(cfg, ids, cols), columns: cols };
 }
 
 /** Full history, in id pages. */
-export async function backfillMolecularTickets(): Promise<TicketSyncResult> {
-  const cols = await probeColumns();
-  const pool = await getMolecularEmailPool(DATABASE);
+export async function backfillEmailTicketRows(source: TicketSource): Promise<TicketSyncResult> {
+  const cfg = ticketSourceConfig(source);
+  const cols = await probeColumns(cfg);
+  const pool = await getMolecularEmailPool(cfg.database);
   const [rows] = await pool.query<RowDataPacket[]>('SELECT id FROM tickets ORDER BY id');
   const ids = rows.map((r) => String(r.id));
-  return { mode: 'backfill', tickets: await syncIds(ids, cols), columns: cols };
+  return { source, mode: 'backfill', tickets: await syncIds(cfg, ids, cols), columns: cols };
 }
 
-/** Worker entry: backfill once when the table is empty, then incremental. */
-export async function syncMolecularTickets(): Promise<TicketSyncResult> {
-  const [rows] = await db.query<RowDataPacket[]>('SELECT 1 AS x FROM molecular_email_ticket LIMIT 1');
-  return rows.length === 0 ? backfillMolecularTickets() : syncRecentMolecularTickets(3);
+/** Worker entry: backfill once when the source has no rows yet, then incremental. */
+export async function syncEmailTicketRows(source: TicketSource): Promise<TicketSyncResult> {
+  ticketSourceConfig(source);
+  const [rows] = await db.query<RowDataPacket[]>('SELECT 1 AS x FROM molecular_email_ticket WHERE source = ? LIMIT 1', [source]);
+  return rows.length === 0 ? backfillEmailTicketRows(source) : syncRecentEmailTicketRows(source, 3);
 }
+

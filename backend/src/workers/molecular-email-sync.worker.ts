@@ -2,7 +2,8 @@ import {
   EMAIL_DASHBOARD_SOURCES,
   syncRecentEmailTickets,
 } from "../modules/process-live-dashboard/molecular-email-sync.service.js";
-import { syncMolecularTickets } from "../modules/process-live-dashboard/molecular-ticket-sync.service.js";
+import { syncEmailTicketRows } from "../modules/process-live-dashboard/molecular-ticket-sync.service.js";
+import { TICKET_SOURCE_LIST } from "../modules/process-live-dashboard/email-ticket-source.js";
 import { closeMolecularEmailPools } from "../db/molecularEmailDb.js";
 
 const WORKER_NAME = "molecular-email-sync";
@@ -19,14 +20,16 @@ async function runSync(): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[${WORKER_NAME}] sync failed:`, message);
   }
-  // Per-ticket table behind the Molecular Email Dashboard (sql/migrations/2180).
-  // Separate try: a failure here must not hide the daily-count sync above.
-  try {
-    const t = await syncMolecularTickets();
-    console.log(`[${WORKER_NAME}] Molecular tickets (${t.mode}): ${t.tickets} upserted; columns ${JSON.stringify(t.columns)}`);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[${WORKER_NAME}] Molecular ticket sync failed:`, message);
+  // Per-ticket table behind the Molecular and Reginald Email Dashboards (sql/migrations/2180, 2190).
+  // One try per source: a failure on one (or on the daily sync above) must not hide the others.
+  for (const source of TICKET_SOURCE_LIST) {
+    try {
+      const t = await syncEmailTicketRows(source);
+      console.log(`[${WORKER_NAME}] ${source} tickets (${t.mode}): ${t.tickets} upserted; columns ${JSON.stringify(t.columns)}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[${WORKER_NAME}] ${source} ticket sync failed:`, message);
+    }
   }
 }
 

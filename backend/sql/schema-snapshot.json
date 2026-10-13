@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1270,
-  "columnCount": 18469,
+  "columnCount": 18480,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -20964,6 +20964,7 @@
       "updated_at"
     ],
     "molecular_email_ticket": [
+      "source",
       "ticket_id",
       "created_at",
       "agent_user_id",
@@ -20982,6 +20983,7 @@
       "synced_at"
     ],
     "molecular_email_ticket_reopen_event": [
+      "source",
       "ticket_id",
       "seq",
       "event_at"

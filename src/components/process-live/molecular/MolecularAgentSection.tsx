@@ -1,6 +1,6 @@
 /**
- * Molecular Email Dashboard — Daily / Agent performance (MOL-03).
- * Ticket counts (per assigned agent) and APR time (MOEMAIL campaign) are linked
+ * Molecular / Reginald Email Dashboard — Daily / Agent performance (MOL-03).
+ * Ticket counts (per assigned agent) and APR time (MOEMAIL / EMAIL campaign, by source) are linked
  * by agent name and date; a side with no record is shown as missing, never as 0.
  */
 import { useMemo, useState } from "react";
@@ -9,7 +9,7 @@ import {
   Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { Card, Loading, MissingBadge, Notice } from "./MolecularUi";
-import { fmtPct, fmtSecs, molApi, type MolAgentDayRow, type MolFilters } from "./molecularApi";
+import { emailDashApi, EMAIL_DASHBOARDS, fmtPct, fmtSecs, type EmailDashSource, type MolAgentDayRow, type MolFilters } from "./molecularApi";
 
 interface AgentAgg {
   agent: string;
@@ -51,8 +51,9 @@ function aggregate(rows: MolAgentDayRow[]): AgentAgg[] {
   return [...m.values()].sort((x, y) => (y.closed ?? -1) - (x.closed ?? -1));
 }
 
-export function MolecularAgentSection({ f }: { f: MolFilters }) {
-  const q = useQuery({ queryKey: ["mol", "agent-daily", f], queryFn: () => molApi.agentDaily(f), staleTime: 60_000 });
+export function MolecularAgentSection({ f, source = "molecular" }: { f: MolFilters; source?: EmailDashSource }) {
+  const q = useQuery({ queryKey: ["mol", source, "agent-daily", f], queryFn: () => emailDashApi(source).agentDaily(f), staleTime: 60_000 });
+  const campaign = EMAIL_DASHBOARDS[source].campaign;
   const [day, setDay] = useState<string>("");
 
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
@@ -120,7 +121,7 @@ export function MolecularAgentSection({ f }: { f: MolFilters }) {
             </LineChart>
           </ResponsiveContainer>
         </Card>
-        <Card title="Utilization per agent" sub="(Talk + Wait) ÷ Net login — APR, MOEMAIL campaign">
+        <Card title="Utilization per agent" sub={`(Talk + Wait) ÷ Net login — APR, ${campaign} campaign`}>
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={chartAgents}>
               <CartesianGrid strokeDasharray="3 3" />

@@ -29,6 +29,8 @@
  *   GET /api/process-live/reginald-email/summary
  *   GET /api/process-live/reginald-email/daily
  *   GET /api/process-live/reginald-email/agents
+ *   GET /api/process-live/reginald-email/overview|ticket-list|agent-daily|filter-options
+ *     (Reginald Email Dashboard: same per-ticket view as Molecular, source 'reginald')
  *
  * All query params: from=YYYY-MM-DD&to=YYYY-MM-DD (defaults to current month)
  */
@@ -135,6 +137,12 @@ const reg = emailH('reginald-email');
 router.get('/reginald-email/summary', reg.summary);
 router.get('/reginald-email/daily',   reg.daily);
 router.get('/reginald-email/agents',  reg.agents);
+
+// ── Reginald Email Dashboard: per-ticket lifecycle/TAT (molecular_email_ticket source 'reginald', sql/migrations/2190) ──
+router.get('/reginald-email/overview',       wrap(req => getMolecularOverview(req.query as Q, 'reginald')));
+router.get('/reginald-email/ticket-list',    wrap(req => getMolecularTicketList(req.query as Q, 'reginald')));
+router.get('/reginald-email/agent-daily',    wrap(req => getMolecularAgentDaily(req.query as Q, 'reginald')));
+router.get('/reginald-email/filter-options', wrap(() => getMolecularFilterOptions('reginald')));
 
 // ── GS1 India ─────────────────────────────────────────────────────────────────
 router.get('/gs1/overview',  wrap(req => getGs1Overview(req.query as Q)));

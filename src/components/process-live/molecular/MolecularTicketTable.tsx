@@ -1,8 +1,8 @@
-/** Molecular Email Dashboard — detailed ticket table (MOL-06): sort + CSV export, same filters as the KPIs. */
+/** Molecular / Reginald Email Dashboard — detailed ticket table (MOL-06): sort + CSV export, same filters as the KPIs. */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, Loading, Notice } from "./MolecularUi";
-import { fmtStamp, molApi, MOLECULAR_TITLE, orNA, type MolFilters, type MolTicket } from "./molecularApi";
+import { emailDashApi, EMAIL_DASHBOARDS, fmtStamp, orNA, type EmailDashSource, type MolFilters, type MolTicket } from "./molecularApi";
 
 type Col = { key: keyof MolTicket | "reopenFlag"; label: string; num?: boolean; render: (t: MolTicket) => string };
 
@@ -27,8 +27,8 @@ function csvCell(v: string): string {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
 
-export function MolecularTicketTable({ f }: { f: MolFilters }) {
-  const q = useQuery({ queryKey: ["mol", "tickets", f], queryFn: () => molApi.tickets(f), staleTime: 60_000 });
+export function MolecularTicketTable({ f, source = "molecular" }: { f: MolFilters; source?: EmailDashSource }) {
+  const q = useQuery({ queryKey: ["mol", source, "tickets", f], queryFn: () => emailDashApi(source).tickets(f), staleTime: 60_000 });
   const [sort, setSort] = useState<{ key: Col["key"]; dir: 1 | -1 }>({ key: "createdAt", dir: -1 });
 
   const rows = useMemo(() => {
@@ -55,7 +55,7 @@ export function MolecularTicketTable({ f }: { f: MolFilters }) {
     const blob = new Blob([`${header}\n${body}\n`], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${MOLECULAR_TITLE.replace(/ /g, "_")}_tickets_${f.from}_to_${f.to}.csv`;
+    a.download = `${EMAIL_DASHBOARDS[source].title.replace(/ /g, "_")}_tickets_${f.from}_to_${f.to}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   };

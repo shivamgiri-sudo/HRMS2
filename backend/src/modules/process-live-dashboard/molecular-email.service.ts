@@ -1,9 +1,11 @@
 /**
- * Molecular Email Dashboard read service (MOL-01..MOL-06).
+ * Molecular / Reginald Email Dashboard read service (MOL-01..MOL-06).
  *
- * Reads only HRMS tables: molecular_email_ticket / molecular_email_ticket_reopen_event
- * (sql/migrations/2180-2181, filled by molecular-ticket-sync.service.ts) and the
- * MOEMAIL campaign's dialler APR (vicidial_agent_log_10_25) for agent time.
+ * Every function takes a source (email-ticket-source.ts): 'molecular' (default) or
+ * 'reginald'. Reads only HRMS tables: molecular_email_ticket /
+ * molecular_email_ticket_reopen_event rows of that source (sql/migrations/2180-2181,
+ * 2190, filled by molecular-ticket-sync.service.ts) and the source's dialler APR
+ * campaign (MOEMAIL / EMAIL in vicidial_agent_log_10_25) for agent time.
  * Nothing here is attached to the Reginald process (REG-07).
  *
  * Period = tickets RECEIVED (created, IST) in the selected dates. Every KPI and
@@ -23,6 +25,7 @@ import {
   type DataQualityFlag, type EnrichedTicket, type MolecularKpis, type TatBucket,
 } from './molecular-email-kpi.js';
 import { getEmailTickets, type EmailTicketSummary } from './email-ticket.service.js';
+import { ticketSourceConfig, type TicketSource } from './email-ticket-source.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TABLE_ROW_LIMIT = 5000;
@@ -66,9 +69,9 @@ export function parseMolecularFilters(q: Record<string, unknown>): MolecularFilt
 const s = (v: unknown): string | null => (v === null || v === undefined || v === '' ? null : String(v));
 
 /** The filtered cohort: unique tickets created in the period, enriched with TAT/SLA. */
-async function loadCohort(f: MolecularFilters, nowIst: string): Promise<EnrichedTicket[]> {
-  const where = ['created_at >= ?', 'created_at < DATE_ADD(?, INTERVAL 1 DAY)'];
-  const params: unknown[] = [f.from, f.to];
+async function loadCohort(source: TicketSource, f: MolecularFilters, nowIst: string): Promise<EnrichedTicket[]> {
+  const where = ['source = ?', 'created_at >= ?', 'created_at < DATE_ADD(?, INTERVAL 1 DAY)'];
+  const params: unknown[] = [source, f.from, f.to];
   if (f.agent) { where.push('agent_name = ?'); params.push(f.agent); }
   if (f.category) { where.push('category = ?'); params.push(f.category); }
   if (f.priority) { where.push('priority = ?'); params.push(f.priority); }
@@ -101,9 +104,10 @@ async function loadCohort(f: MolecularFilters, nowIst: string): Promise<Enriched
 }
 
 /** Tickets with created_at outside readable range never enter a period; counted separately. */
-async function invalidCreatedCount(): Promise<number> {
+async function invalidCreatedCount(source: TicketSource): Promise<number> {
   const [rows] = await db.query<RowDataPacket[]>(
-    'SELECT COUNT(*) AS c FROM molecular_email_ticket WHERE created_at IS NULL',
+    'SELECT COUNT(*) AS c FROM molecular_email_ticket WHERE source = ? AND created_at IS NULL',
+    [source],
   );
   return n(rows[0]?.c);
 }
@@ -125,33 +129,35 @@ export interface MolecularOverview {
   feed: MolecularFeedStatus;
   /**
    * When the per-ticket table has nothing for the period, the daily counts the
-   * older hourly sync stored (email_ticket_daily_actual, MOLECULAR) so the page
+   * older hourly sync stored (email_ticket_daily_actual, MOLECULAR / REGINALD_MEN) so the page
    * is not blank. Day-level counts only, as the source reported them.
    */
   dailyFallback: EmailTicketSummary | null;
 }
 
 export interface MolecularFeedStatus {
-  /** Newest synced_at in molecular_email_ticket; null = the per-ticket sync has never completed. */
+  /** Newest synced_at in molecular_email_ticket for the source; null = the per-ticket sync has never completed. */
   ticketFeedLastSyncedAt: string | null;
-  /** Newest write by the daily sync for MOLECULAR (the last time HRMS reached the ticket server). */
+  /** Newest write by the daily sync for the source's label (the last time HRMS reached the ticket server). */
   dailyFeedLastSyncedAt: string | null;
-  /** Latest report_date the daily sync holds for MOLECULAR. */
+  /** Latest report_date the daily sync holds for the source's label. */
   dailyLatestDate: string | null;
 }
 
-async function feedStatus(ticketSyncedAt: string | null): Promise<MolecularFeedStatus> {
+async function feedStatus(source: TicketSource, ticketSyncedAt: string | null): Promise<MolecularFeedStatus> {
   const [r] = await db.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(MAX(updated_at), '%Y-%m-%d %H:%i:%s') AS synced, DATE_FORMAT(MAX(report_date), '%Y-%m-%d') AS latest
-       FROM email_ticket_daily_actual WHERE dashboard_label = 'MOLECULAR'`,
+       FROM email_ticket_daily_actual WHERE dashboard_label = ?`,
+    [ticketSourceConfig(source).dashboardLabel],
   );
   return { ticketFeedLastSyncedAt: ticketSyncedAt, dailyFeedLastSyncedAt: s(r[0]?.synced), dailyLatestDate: s(r[0]?.latest) };
 }
 
-export async function getMolecularOverview(q: Record<string, unknown>): Promise<MolecularOverview> {
+export async function getMolecularOverview(q: Record<string, unknown>, source: TicketSource = 'molecular'): Promise<MolecularOverview> {
+  const cfg = ticketSourceConfig(source);
   const f = parseMolecularFilters(q);
   const nowIst = istNow();
-  const cohort = await loadCohort(f, nowIst);
+  const cohort = await loadCohort(source, f, nowIst);
   const kpis = computeMolecularKpis(cohort, f.slaHours);
   const ids = new Set(cohort.map((t) => t.ticketId));
 
@@ -172,8 +178,8 @@ export async function getMolecularOverview(q: Record<string, unknown>): Promise<
   }
   const [ev] = ids.size === 0 ? [[] as RowDataPacket[]] : await db.query<RowDataPacket[]>(
     `SELECT ticket_id, DATE(event_at) AS d FROM molecular_email_ticket_reopen_event
-      WHERE event_at >= ? AND event_at < DATE_ADD(?, INTERVAL 1 DAY)`,
-    [f.from, f.to],
+      WHERE source = ? AND event_at >= ? AND event_at < DATE_ADD(?, INTERVAL 1 DAY)`,
+    [source, f.from, f.to],
   );
   const perDayTickets = new Map<string, Set<string>>();
   for (const r of ev) {
@@ -198,7 +204,8 @@ export async function getMolecularOverview(q: Record<string, unknown>): Promise<
   const [meta] = await db.query<RowDataPacket[]>(
     `SELECT COUNT(category) AS cat, COUNT(priority) AS pri, MAX(synced_at) AS synced,
             SUM(closure_basis = 'closed_at') AS byCol, SUM(closure_basis = 'last_agent_reply') AS byReply
-       FROM molecular_email_ticket`,
+       FROM molecular_email_ticket WHERE source = ?`,
+    [source],
   );
   const m = meta[0] ?? {};
 
@@ -216,11 +223,11 @@ export async function getMolecularOverview(q: Record<string, unknown>): Promise<
       .slice(0, 25),
     fieldAvailability: { category: n(m.cat) > 0, priority: n(m.pri) > 0, reopenReason: false },
     closureBasis: { closed_at: n(m.byCol), last_agent_reply: n(m.byReply) },
-    ticketsWithoutCreatedTime: await invalidCreatedCount(),
+    ticketsWithoutCreatedTime: await invalidCreatedCount(source),
     lastSyncedAt: s(m.synced),
     hasData: cohort.length > 0,
-    feed: await feedStatus(s(m.synced)),
-    dailyFallback: cohort.length > 0 ? null : await getEmailTickets('MOLECULAR', { from: f.from, to: f.to }),
+    feed: await feedStatus(source, s(m.synced)),
+    dailyFallback: cohort.length > 0 ? null : await getEmailTickets(cfg.dashboardLabel, { from: f.from, to: f.to }),
   };
 }
 
@@ -232,20 +239,23 @@ export interface MolecularTicketList {
   rows: EnrichedTicket[];
 }
 
-export async function getMolecularTicketList(q: Record<string, unknown>): Promise<MolecularTicketList> {
+export async function getMolecularTicketList(q: Record<string, unknown>, source: TicketSource = 'molecular'): Promise<MolecularTicketList> {
+  ticketSourceConfig(source);
   const f = parseMolecularFilters(q);
   const nowIst = istNow();
-  const cohort = await loadCohort(f, nowIst);
+  const cohort = await loadCohort(source, f, nowIst);
   cohort.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   return { filters: f, asOf: nowIst, total: cohort.length, truncated: cohort.length > TABLE_ROW_LIMIT, rows: cohort.slice(0, TABLE_ROW_LIMIT) };
 }
 
 export interface MolecularFilterOptions { agents: string[]; categories: string[]; priorities: string[] }
 
-export async function getMolecularFilterOptions(): Promise<MolecularFilterOptions> {
+export async function getMolecularFilterOptions(source: TicketSource = 'molecular'): Promise<MolecularFilterOptions> {
+  ticketSourceConfig(source);
   const list = async (col: 'agent_name' | 'category' | 'priority') => {
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT DISTINCT ${col} AS v FROM molecular_email_ticket WHERE ${col} IS NOT NULL AND ${col} <> '' ORDER BY v LIMIT 500`,
+      `SELECT DISTINCT ${col} AS v FROM molecular_email_ticket WHERE source = ? AND ${col} IS NOT NULL AND ${col} <> '' ORDER BY v LIMIT 500`,
+      [source],
     );
     return rows.map((r) => String(r.v));
   };
@@ -271,7 +281,8 @@ export interface MolecularAgentDayRow {
   dataStatus: 'both' | 'tickets_only' | 'apr_only';
 }
 
-export async function getMolecularAgentDaily(q: Record<string, unknown>): Promise<{ filters: MolecularFilters; rows: MolecularAgentDayRow[] }> {
+export async function getMolecularAgentDaily(q: Record<string, unknown>, source: TicketSource = 'molecular'): Promise<{ filters: MolecularFilters; rows: MolecularAgentDayRow[] }> {
+  const cfg = ticketSourceConfig(source);
   const f = parseMolecularFilters(q);
   const agentClause = f.agent ? ' AND agent_name = ?' : '';
   const agentParam = f.agent ? [f.agent] : [];
@@ -279,25 +290,25 @@ export async function getMolecularAgentDaily(q: Record<string, unknown>): Promis
     `SELECT DATE(created_at) AS d, agent_name AS a, COUNT(*) AS c,
             SUM(LOWER(TRIM(COALESCE(status, ''))) NOT IN ('closed', 'resolved', 'solved')) AS p
        FROM molecular_email_ticket
-      WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY) AND agent_name IS NOT NULL${agentClause}
+      WHERE source = ? AND created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY) AND agent_name IS NOT NULL${agentClause}
       GROUP BY DATE(created_at), agent_name`,
-    [f.from, f.to, ...agentParam],
+    [source, f.from, f.to, ...agentParam],
   );
   const [clos] = await db.query<RowDataPacket[]>(
     `SELECT DATE(final_closed_at) AS d, agent_name AS a, COUNT(*) AS c
        FROM molecular_email_ticket
-      WHERE final_closed_at >= ? AND final_closed_at < DATE_ADD(?, INTERVAL 1 DAY) AND agent_name IS NOT NULL
+      WHERE source = ? AND final_closed_at >= ? AND final_closed_at < DATE_ADD(?, INTERVAL 1 DAY) AND agent_name IS NOT NULL
         AND LOWER(TRIM(COALESCE(status, ''))) IN ('closed', 'resolved', 'solved')${agentClause}
       GROUP BY DATE(final_closed_at), agent_name`,
-    [f.from, f.to, ...agentParam],
+    [source, f.from, f.to, ...agentParam],
   );
   const apr = await dialerQuery<RowDataPacket>(
     `SELECT DATE(event_time) AS d, user,
             SUM(wait_sec) AS waitSec, SUM(talk_sec) AS talkSec, SUM(dispo_sec) AS dispoSec, SUM(pause_sec) AS pauseSec
        FROM vicidial_agent_log_10_25
-      WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND UPPER(campaign_id) = 'MOEMAIL'
+      WHERE event_time >= ? AND event_time < DATE_ADD(?, INTERVAL 1 DAY) AND UPPER(campaign_id) = ?
       GROUP BY DATE(event_time), user`,
-    [f.from, f.to],
+    [f.from, f.to, cfg.aprCampaign],
   ).catch(() => [] as RowDataPacket[]);
   const names = await resolveEmployeeNames(apr.map((r) => String(r.user ?? '')));
 

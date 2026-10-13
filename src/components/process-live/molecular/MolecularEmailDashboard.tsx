@@ -1,6 +1,8 @@
 /**
  * Molecular Email Dashboard (MOL-01..MOL-06) — its own module, no longer a tab of
  * the Reginald dashboard (REG-07). Sections: Overview, Daily / Agents, Tickets.
+ * The same view serves the Reginald Email Dashboard (source="reginald"): same
+ * ticketing schema, its own database (db_email), API group and APR campaign (EMAIL).
  * Filters (date range on ticket created date, agent, category, status, priority,
  * TAT bucket, SLA hours) apply to every section, so each KPI reconciles to the
  * ticket table.
@@ -11,7 +13,10 @@ import { useQuery } from "@tanstack/react-query";
 import { MolecularOverviewSection } from "./MolecularOverviewSection";
 import { MolecularAgentSection } from "./MolecularAgentSection";
 import { MolecularTicketTable } from "./MolecularTicketTable";
-import { defaultFilters, molApi, MOLECULAR_ROUTE, MOLECULAR_TITLE, TAT_BUCKETS, type MolFilters } from "./molecularApi";
+import {
+  defaultFilters, emailDashApi, EMAIL_DASHBOARDS, MOLECULAR_ROUTE, MOLECULAR_TITLE, TAT_BUCKETS,
+  type EmailDashSource, type MolFilters,
+} from "./molecularApi";
 
 type Section = "overview" | "agents" | "tickets";
 const SECTIONS: { key: Section; label: string }[] = [
@@ -37,12 +42,13 @@ function Select({ label, value, onChange, options, disabledHint }: {
   );
 }
 
-export function MolecularEmailDashboard({ initialFrom, initialTo, showTitle = true }: {
-  initialFrom?: string; initialTo?: string; showTitle?: boolean;
+export function MolecularEmailDashboard({ initialFrom, initialTo, showTitle = true, source = "molecular" }: {
+  initialFrom?: string; initialTo?: string; showTitle?: boolean; source?: EmailDashSource;
 }) {
+  const cfg = EMAIL_DASHBOARDS[source];
   const [f, setF] = useState<MolFilters>(() => defaultFilters(initialFrom, initialTo));
   const [section, setSection] = useState<Section>("overview");
-  const opts = useQuery({ queryKey: ["mol", "filter-options"], queryFn: molApi.filterOptions, staleTime: 5 * 60_000 });
+  const opts = useQuery({ queryKey: ["mol", source, "filter-options"], queryFn: emailDashApi(source).filterOptions, staleTime: 5 * 60_000 });
   const set = (patch: Partial<MolFilters>) => setF((p) => ({ ...p, ...patch }));
   const o = opts.data;
   const toOpts = (xs: string[] | undefined) => (xs ?? []).map((x) => ({ value: x, label: x }));
@@ -51,9 +57,9 @@ export function MolecularEmailDashboard({ initialFrom, initialTo, showTitle = tr
     <div className="space-y-4">
       {showTitle && (
         <div>
-          <h2 className="text-lg font-extrabold text-slate-900">{MOLECULAR_TITLE}</h2>
+          <h2 className="text-lg font-extrabold text-slate-900">{cfg.title}</h2>
           <p className="text-xs text-slate-500">
-            Molecular email tickets (unique ticket IDs, synced from the Molecular ticketing system) with agent time from the MOEMAIL dialler campaign.
+            {cfg.sourceName} email tickets (unique ticket IDs, synced from the {cfg.sourceName} ticketing system) with agent time from the {cfg.campaign} dialler campaign.
           </p>
         </div>
       )}
@@ -69,11 +75,11 @@ export function MolecularEmailDashboard({ initialFrom, initialTo, showTitle = tr
         </label>
         <Select label="Agent" value={f.agent} onChange={(v) => set({ agent: v })} options={toOpts(o?.agents)} />
         <Select label="Category / Queue" value={f.category} onChange={(v) => set({ category: v })} options={toOpts(o?.categories)}
-          disabledHint={o && o.categories.length === 0 ? "Category is not available in the Molecular source" : undefined} />
+          disabledHint={o && o.categories.length === 0 ? `Category is not available in the ${cfg.sourceName} source` : undefined} />
         <Select label="Status" value={f.status} onChange={(v) => set({ status: v as MolFilters["status"] })}
           options={[{ value: "open", label: "Pending / Open" }, { value: "closed", label: "Closed" }, { value: "reopened", label: "Reopened" }]} />
         <Select label="Priority" value={f.priority} onChange={(v) => set({ priority: v })} options={toOpts(o?.priorities)}
-          disabledHint={o && o.priorities.length === 0 ? "Priority is not available in the Molecular source" : undefined} />
+          disabledHint={o && o.priorities.length === 0 ? `Priority is not available in the ${cfg.sourceName} source` : undefined} />
         <Select label="TAT bucket" value={f.tatBucket} onChange={(v) => set({ tatBucket: v as MolFilters["tatBucket"] })}
           options={TAT_BUCKETS.map((b) => ({ value: b, label: b }))} />
         <label className="flex flex-col gap-0.5 text-xs font-semibold text-slate-600">
@@ -96,9 +102,9 @@ export function MolecularEmailDashboard({ initialFrom, initialTo, showTitle = tr
         ))}
       </div>
 
-      {section === "overview" && <MolecularOverviewSection f={f} onDrill={(patch) => { set(patch); setSection("tickets"); }} />}
-      {section === "agents" && <MolecularAgentSection f={f} />}
-      {section === "tickets" && <MolecularTicketTable f={f} />}
+      {section === "overview" && <MolecularOverviewSection f={f} source={source} onDrill={(patch) => { set(patch); setSection("tickets"); }} />}
+      {section === "agents" && <MolecularAgentSection f={f} source={source} />}
+      {section === "tickets" && <MolecularTicketTable f={f} source={source} />}
     </div>
   );
 }
