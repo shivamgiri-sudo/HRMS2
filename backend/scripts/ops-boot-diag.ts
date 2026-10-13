@@ -14,6 +14,10 @@ const show = async (tag: string, sql: string) => {
   await show("BOOT_LONG_QUERIES", "SELECT ID id, USER user, TIME secs, STATE state, LEFT(INFO, 160) q FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep' AND TIME > 20 ORDER BY TIME DESC LIMIT 12");
   await show("BOOT_LOCK_WAITS", "SELECT COUNT(*) AS waiting FROM information_schema.PROCESSLIST WHERE STATE LIKE '%metadata lock%' OR STATE LIKE '%Waiting for%'");
   await show("BOOT_CONN", "SELECT COUNT(*) AS connections, SUM(COMMAND <> 'Sleep') AS active FROM information_schema.PROCESSLIST");
+  // What exactly is waiting, and who holds what (sys.innodb_lock_waits and the metadata-lock wait states).
+  await show("BOOT_WAITERS", "SELECT ID id, HOST host, TIME secs, STATE state, LEFT(REGEXP_REPLACE(INFO, '[[:space:]]+', ' '), 150) q FROM information_schema.PROCESSLIST WHERE STATE LIKE '%metadata lock%' OR STATE LIKE '%Waiting for%' OR STATE LIKE '%lock%' ORDER BY TIME DESC LIMIT 10");
+  await show("BOOT_ROW_LOCK_WAITS", "SELECT waiting_pid, waiting_query_secs, LEFT(waiting_query, 100) AS waiting_query, blocking_pid, LEFT(blocking_query, 100) AS blocking_query, wait_age_secs FROM sys.innodb_lock_waits LIMIT 5");
+  await show("BOOT_MDL", "SELECT object_schema, object_name, lock_type, lock_status, owner_thread_id FROM performance_schema.metadata_locks WHERE lock_status = 'PENDING' LIMIT 10");
   // The queries that have run longest: who runs them (client host:port), for how long, and the statement text with every literal masked.
   const [long] = await db.execute<RowDataPacket[]>("SELECT ID id, HOST host, DB db, TIME secs, STATE state, INFO FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep' AND TIME > 120 AND ID <> CONNECTION_ID() ORDER BY TIME DESC LIMIT 6");
   for (const r of long) {
