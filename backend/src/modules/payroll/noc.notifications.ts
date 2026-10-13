@@ -167,7 +167,7 @@ async function stageVerifyHint(stageKey: string): Promise<string> {
  */
 const LEADERSHIP_ROLES = ["ceo", "coo", "cxo", "md", "director", "chairman", "super_admin"];
 
-async function branchOnlyRoleHolders(roleKeys: string[], branchId: string | null): Promise<string[]> {
+export async function branchOnlyRoleHolders(roleKeys: string[], branchId: string | null): Promise<string[]> {
   const keys = roleKeys.map((k) => k.trim().toLowerCase()).filter(Boolean);
   if (!keys.length || !branchId) return [];
   const [rows] = await db.query<RowDataPacket[]>(
@@ -197,7 +197,7 @@ async function branchOnlyRoleHolders(roleKeys: string[], branchId: string | null
  * Accounts and Finance heads and leadership are not on it. The people who must act on a stage (Team
  * Leader, Process Manager, HR ...) are told through their Work Inbox, not by email.
  */
-async function branchHeadUserIds(branchId: string | null): Promise<string[]> {
+export async function branchHeadUserIds(branchId: string | null): Promise<string[]> {
   if (!branchId) return [];
   const ids = new Set<string>(await branchOnlyRoleHolders(["branch_head"], branchId));
   const [rows] = await db.query<RowDataPacket[]>(

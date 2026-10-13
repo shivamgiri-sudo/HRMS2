@@ -106,6 +106,7 @@ import testDailyReportRouter from "./modules/ats/test-daily-report.routes.js";
 import mockDigilockerRouter from "./modules/ats/mock-digilocker.routes.js";
 import { queueRouter, queuePublicRouter } from "./modules/ats/queue.routes.js";
 import { exitRouter } from "./modules/exit/exit.routes.js";
+import { absconderPayReleaseRouter } from "./modules/payroll/absconder-pay-release.routes.js";
 import { exitSecureRouter } from "./modules/exit/exit.secure.routes.js";
 import { ffApprovalGuardCompatRouter } from "./modules/exit/ff-approval-guard.compat.routes.js";
 import { migrationRouter } from "./modules/migration/migration.routes.js";
@@ -747,6 +748,7 @@ app.use("/api/exit", exitSecureRouter);
 // with a header comment — see exit.secure.routes.ts's handleExitStatusUpdate.
 app.use("/api/exit", ffApprovalGuardCompatRouter);
 app.use("/api/exit", exitRouter);
+app.use("/api/payroll/absconder-pay-release", absconderPayReleaseRouter);
 app.use("/api/migration", migrationRouter);
 app.use("/api/access", accessRouter);
 app.use("/api/audit", auditLogRouter);

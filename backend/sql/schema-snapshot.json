@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1269,
-  "columnCount": 18449,
+  "tableCount": 1270,
+  "columnCount": 18458,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -8826,7 +8826,8 @@
       "ff_exception_reason",
       "ff_exception_bh_by",
       "ff_exception_bh_at",
-      "ff_exception_bh_reason"
+      "ff_exception_bh_reason",
+      "pay_release_route"
     ],
     "exit_retention_action": [
       "id",
@@ -20997,6 +20998,16 @@
       "updated_count",
       "inserted_count",
       "after_count",
+      "created_at"
+    ],
+    "absconder_pay_release_event": [
+      "id",
+      "exit_request_id",
+      "employee_id",
+      "action",
+      "actor_user_id",
+      "actor_role",
+      "reason",
       "created_at"
     ]
   }

@@ -601,6 +601,16 @@ export const exitService = {
       return null;
     });
 
+    // Absconding / abandonment: hold the salary days and ask the Branch Head to start the release chain.
+    // Fire-and-forget and a no-op while the hold is off; never blocks raising the exit.
+    if (/^(absconding|abandonment)$/i.test(String(input.exitSubType ?? ""))) {
+      void import("../payroll/absconder-pay-release.service.js")
+        .then((m) => m.requestRelease(id, userId))
+        .catch((err: unknown) => {
+          logger.error({ err, exitRequestId: id }, "[exit] absconder pay release request failed");
+        });
+    }
+
     if (isInvoluntary) {
       // Involuntary exits are immediately at 'exited' — create clearance tasks now so
       // HR can run asset recovery, IT deprovisioning, and F&F without a separate trigger.
