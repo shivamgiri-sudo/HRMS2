@@ -385,3 +385,33 @@ export async function getInsightMonthly(raw: Record<string, string>): Promise<In
   }
   return out;
 }
+
+// ── Per-analyst period totals (TPR view, REG-06) ─────────────────────────────
+
+export interface InsightAgentRow extends CdrBlock {
+  agent: string; agentName: string | null; apr: AprBlock;
+}
+
+export async function getInsightAgents(raw: Record<string, string>): Promise<InsightAgentRow[]> {
+  const f = parseInsightFilters(raw);
+  return cachedLive(cacheName('agents', f), f, () => computeAgents(f));
+}
+
+/** Uniques are distinct over the whole period per analyst (not summed day by day). */
+async function computeAgents(f: InsightFilters): Promise<InsightAgentRow[]> {
+  const c = cdrWhere(f), a = aprWhere(f);
+  const [cdr, apr] = await Promise.all([
+    dialerQuery<RowDataPacket>(`SELECT UPPER(TRIM(Agent)) AS agent, ${CDR_MEASURES}
+      FROM ${CDR_TABLE} WHERE ${c.sql} AND Agent IS NOT NULL AND Agent <> ''
+      GROUP BY agent ORDER BY totalCdr DESC LIMIT 300`, c.params),
+    dialerQuery<RowDataPacket>(`SELECT UPPER(TRIM(user)) AS agent, ${APR_MEASURES}
+      FROM ${APR_TABLE} WHERE ${a.sql} AND user IS NOT NULL AND user <> ''
+      GROUP BY agent LIMIT 300`, a.params),
+  ]);
+  const aprMap = new Map(apr.map(r => [String(r.agent), r]));
+  const names = await resolveEmployeeNames(cdr.map(r => String(r.agent)));
+  return cdr.map(r => {
+    const agent = String(r.agent);
+    return { agent, agentName: names.get(agent) ?? null, ...cdrBlock(r), apr: aprBlock(aprMap.get(agent)) };
+  });
+}
