@@ -19,6 +19,16 @@ describe("Process Performance V2 <-> Process Operations dashboard sync", () => {
     expect(orphans).toEqual([]);
   });
 
+  it("GPI / Godfrey Phillips processes (any code) open the AHM dashboards", () => {
+    for (const [code, name] of [["GODFREY_PHILIPS", "Godfrey Philips India Ltd"], ["BSS_OB_AHMH_JD_465", "GPI"], ["BSS_OB_AHMH_JD_474", "Godfrey Phillips India Ltd"]]) {
+      const t = v2DashboardsForProcess(code, name, V2_COMPANY_LABELS);
+      expect(t.length, name).toBeGreaterThan(0);
+      expect(t.every((x) => x.company === "ahm")).toBe(true);
+    }
+    expect(v2DashboardsForProcess("X", "Gpi Unrelated Co", V2_COMPANY_LABELS).length).toBeGreaterThan(0);
+    expect(v2DashboardsForProcess("X", "Bajaj Housing", V2_COMPANY_LABELS)).toEqual([]);
+  });
+
   it("falls back to an exact name match when the process code is unknown", () => {
     expect(v2DashboardsForProcess("SOMETHING_NEW", "Satya Retail", V2_COMPANY_LABELS).length).toBeGreaterThan(0);
     expect(v2DashboardsForProcess("SOMETHING_NEW", "Unrelated Process", V2_COMPANY_LABELS)).toEqual([]);

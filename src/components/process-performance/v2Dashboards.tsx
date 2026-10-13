@@ -314,6 +314,7 @@ const V2_COMPANIES_BY_PROCESS_CODE: Record<string, CompanyKey[]> = {
   DALMIA_CEMENT: ["dalmia"],
   DU_DIGITAL: ["du_thailand", "du_korea"],
   AHM: ["ahm"],
+  GODFREY_PHILIPS: ["ahm"],
   SBI_CARD: ["sbi_card"],
   ERESOLUTION: ["lp_feedback", "lp_onboarding"],
   HOUSING_OWNER: ["housing_owner"],
@@ -337,6 +338,9 @@ export function v2DashboardsForProcess(
   companyLabels: Record<string, string>,
 ): Array<{ company: CompanyKey; companyLabel: string; dashboard: V2Dashboard }> {
   let keys = V2_COMPANIES_BY_PROCESS_CODE[processCode?.toUpperCase()];
+  // AHM is Godfrey Phillips India's (GPI) process: every GPI / Godfrey Phillips cost-centre row ("GPI", "Godfrey Phillips India Ltd",
+  // BSS_OB_AHMH_JD_465 ...) opens the same dashboards and uploaders, whatever its code.
+  if (!keys && /\b(gpi|godfrey|goldfrey)\b/i.test(processName ?? "")) keys = ["ahm"];
   if (!keys) {
     const n = normKey(processName ?? "");
     const hit = (Object.keys(companyLabels) as CompanyKey[]).filter((k) => n && (normKey(k) === n || normKey(companyLabels[k]) === n));
