@@ -17,6 +17,17 @@ import { withEmployeeRosterLock, validateMinimumRest, applyRestDecision, isRestP
 import { checkEmployeeDateNotLocked } from '../roster/roster-lock-guard.js';
 import { parseShiftString } from './shift-parser.service.js';
 import { annotateImportPolicyWarnings, stampImportBatchRows } from './roster-offday-apply.js';
+import { getIstDateString } from '../../utils/dateUtils.js';
+
+export const PAST_WEEK_MESSAGE = 'Past week — roster for weeks before the current week cannot be uploaded';
+
+/** Monday (YYYY-MM-DD) of the current IST week. Rows dated before it belong to a past week. */
+export function currentIstWeekStart(today: string = getIstDateString()): string {
+  const d = new Date(`${today}T00:00:00Z`);
+  const weekday = (d.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
+  d.setUTCDate(d.getUTCDate() - weekday);
+  return d.toISOString().slice(0, 10);
+}
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -409,6 +420,20 @@ export async function createImportBatch(params: {
     }
   }
 
+  // ── Step 6a: past weeks are closed ─────────────────────────────────────
+  // Owner ruling 2026-10-13: a spreadsheet must not rewrite a week that has already started and
+  // ended — re-uploading an old week alters attendance/payroll data. Anything dated before the
+  // current IST week's Monday is an ERROR here and refused again at commit.
+  {
+    const weekStart = currentIstWeekStart();
+    for (const entry of rowEntries) {
+      if (entry.rosterDate && entry.rosterDate < weekStart) {
+        entry.validationState = 'ERROR';
+        if (!entry.messages.includes(PAST_WEEK_MESSAGE)) entry.messages.push(PAST_WEEK_MESSAGE);
+      }
+    }
+  }
+
   // ── Step 6b: roster-says-WORK vs approved leave ─────────────────────────
   // The check below (step 7) looks the other way round: roster says LEAVE, is there a request?
   // The direction that actually matters was missing — roster says WORK and the employee has
@@ -702,6 +727,8 @@ export interface CommitResult {
   blockedByRest: number;
   /** Rows refused because that employee/date's attendance is already locked for payroll. */
   blockedByLock: number;
+  /** Rows refused because their date falls in a week before the current IST week. */
+  blockedByPastWeek: number;
   /** Distinct employees who got a "your roster was published" work-inbox item for this batch. */
   employeesNotified: number;
 }
@@ -867,6 +894,9 @@ export async function commitImportBatch(
   let blockedByLeave = 0;
   let blockedByRest = 0;
   let blockedByLock = 0;
+  let blockedByPastWeek = 0;
+  // Re-checked at commit: a batch previewed last week must not write last week's dates now.
+  const pastWeekCutoff = currentIstWeekStart();
 
   // employee_id_raw holds the spreadsheet's employee CODE ('MAS56168'); wfm_roster_assignment
   // .employee_id is a char(36) UUID with a foreign key to employees.id. The code was being
@@ -950,6 +980,11 @@ export async function commitImportBatch(
     await withEmployeeRosterLock(employeeId, async (conn) => {
       for (const row of employeeRows) {
         const rosterDate = String(row.roster_date).slice(0, 10);
+
+        if (rosterDate < pastWeekCutoff) {
+          blockedByPastWeek++;
+          continue;
+        }
 
         const lockCheck = await checkEmployeeDateNotLocked(conn, employeeId, rosterDate);
         if (lockCheck.blocked) {
@@ -1162,7 +1197,7 @@ export async function commitImportBatch(
     }).catch(() => {});
   }
 
-  return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees, blockedByLeave, blockedByRest, blockedByLock, employeesNotified };
+  return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees, blockedByLeave, blockedByRest, blockedByLock, blockedByPastWeek, employeesNotified };
 }
 
 // ── getImportRows ─────────────────────────────────────────────────────────────
