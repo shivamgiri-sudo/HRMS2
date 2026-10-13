@@ -249,6 +249,10 @@ export function PnlStatementView({
         </div>
       ) : (
         <>
+        <p className="px-4 pb-1 text-[11px] text-slate-500" role="note">
+          Operating Profit here is revenue less people cost and GRN spend. Live P&amp;L and Branch Review also deduct the open-budget reserve (budgeted money not yet spent
+          on budget lines that are still open), so their profit for the same month and branch is lower by that amount until the lines are closed.
+        </p>
         {statement.revenueBasis && (
           <p className="px-4 pb-2 text-[11px] text-slate-500">
             {statement.revenueBasis === "invoiced"

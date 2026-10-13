@@ -449,10 +449,15 @@ function enrichColumn(
    * inherit the whole branch's Agent/DSC/BMC snapshot. See pick()'s doc comment for the live
    * numbers this was confirmed against (NOIDA, period 2026-07).
    */
+  // The "Unassigned" column of a branch view (processes with no branch). Every real branch column already carries ALL payroll, grouped by the
+  // employee's cost centre (people.byBranch), so the same people must not come back through the upstream process rows a second time: on
+  // production August 2026 this column added Rs 12.9 L (people 217.2 L against 204.3 L paid) and its profit of -12.8 L. It keeps only payroll
+  // that genuinely has no branch (the "" key), else nothing.
+  const unassignedBranchColumn = !key.processId && key.branchId === "unassigned" && people.byBranch.size > 0;
   const snapshot = key.processId
     ? people.byProcess.get(key.processId)
     : key.branchId
-      ? people.byBranch.get(key.branchId)
+      ? (unassignedBranchColumn ? people.byBranch.get("") : people.byBranch.get(key.branchId))
       : undefined;
   /*
    * Use the snapshot whenever it holds anything; fall back to the upstream figure when it does not.
@@ -479,9 +484,9 @@ function enrichColumn(
   const hasSnapshot = Boolean(snapshot)
     && (snapshot!.agent_salary + snapshot!.dsc_people + snapshot!.bmc_people) > 0;
 
-  const agentSalary = hasSnapshot ? snapshot!.agent_salary : n(out.agentSalary);
-  const dscSalary = hasSnapshot ? snapshot!.dsc_people : n(out.dscSalary ?? out.dscPeople);
-  const bmcSalary = hasSnapshot ? snapshot!.bmc_people : n(out.bmcSalary ?? out.bmcPeople);
+  const agentSalary = hasSnapshot ? snapshot!.agent_salary : unassignedBranchColumn ? 0 : n(out.agentSalary);
+  const dscSalary = hasSnapshot ? snapshot!.dsc_people : unassignedBranchColumn ? 0 : n(out.dscSalary ?? out.dscPeople);
+  const bmcSalary = hasSnapshot ? snapshot!.bmc_people : unassignedBranchColumn ? 0 : n(out.bmcSalary ?? out.bmcPeople);
   out.agentSalary = agentSalary;
   /*
    * Indirect Cost = GRN Consumed + GRN Committed (reserved), both ex-GST — owner rule 2026-09-24:
