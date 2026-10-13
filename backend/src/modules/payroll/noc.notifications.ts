@@ -188,17 +188,54 @@ async function branchOnlyRoleHolders(roleKeys: string[], branchId: string | null
   return rows.map((r) => String(r.user_id));
 }
 
-async function stageSpec(stage: StageContext, branchId: string | null): Promise<RecipientSpec> {
-  const roleKeys = [stage.role_key, stage.fallback_role_key].filter((r): r is string => Boolean(r));
-  const holders = await branchOnlyRoleHolders(roleKeys, branchId);
-  return {
-    // Named users, so the shared resolver cannot widen the list; the fallback to branch HR keeps a
-    // stage with no resolvable holder from throwing EMPTY_TO.
-    to: holders.length
-      ? holders.map((userId) => ({ kind: "user" as const, userId }))
-      : branchId ? [{ kind: "branch_hr" as const, branchId }] : [],
-    cc: holders.length && branchId ? [{ kind: "branch_hr" as const, branchId }] : [],
-  };
+/**
+ * Who NOC email goes to, for every NOC email about a leaver, and nobody else:
+ *   - the leaver's reporting manager
+ *   - that branch's IT SPOC (branch_it), Branch Admin (branch_admin) and Payroll HR (payroll_hr)
+ *   - that branch's Branch Head
+ * Each branch role is resolved branch-only (see branchOnlyRoleHolders), never org-wide, and the
+ * Accounts and Finance heads and leadership are not on it. The people who must act on a stage (Team
+ * Leader, Process Manager, HR ...) are told through their Work Inbox, not by email.
+ */
+async function branchHeadUserIds(branchId: string | null): Promise<string[]> {
+  if (!branchId) return [];
+  const ids = new Set<string>(await branchOnlyRoleHolders(["branch_head"], branchId));
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT DISTINCT e.user_id
+       FROM branch_head_assignments bha
+       JOIN branch_master b ON bha.branch_name IN (b.branch_name, b.branch_code)
+       JOIN employees e ON e.id = bha.branch_head_id
+      WHERE b.id = ? AND bha.is_active = 1 AND e.active_status = 1 AND e.user_id IS NOT NULL`,
+    [branchId],
+  );
+  for (const r of rows) ids.add(String(r.user_id));
+  return [...ids];
+}
+
+async function nocDistribution(nocCase: CaseContext): Promise<RecipientSpec["to"]> {
+  const branchId = nocCase.branch_id;
+  const userIds = new Set<string>();
+  for (const roleKey of ["branch_it", "branch_admin", "payroll_hr"]) {
+    for (const id of await branchOnlyRoleHolders([roleKey], branchId)) userIds.add(id);
+  }
+  for (const id of await branchHeadUserIds(branchId)) userIds.add(id);
+  const to: RecipientSpec["to"] = [{ kind: "reporting_manager", employeeId: nocCase.employee_id }];
+  for (const userId of userIds) to.push({ kind: "user", userId });
+  return to;
+}
+
+async function openParallelStageLabels(caseId: string, fallback: string): Promise<string> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT stage_label FROM noc_signatory
+      WHERE noc_case_id = ? AND status = 'pending' AND stage_key NOT IN ('hr','accounts','finance')
+      ORDER BY display_no`,
+    [caseId],
+  );
+  return rows.length ? rows.map((r) => String(r.stage_label)).join(", ") : fallback;
+}
+
+async function nocSpec(nocCase: CaseContext): Promise<RecipientSpec> {
+  return { to: await nocDistribution(nocCase) };
 }
 
 /**
@@ -334,6 +371,7 @@ export async function notifyEmployeeSubmitted(caseId: string): Promise<void> {
 
     await notificationGateway.notify({
       eventCode: "noc_employee_submitted",
+      specOverride: await nocSpec(nocCase),
       dedupeKey: `noc_case:${caseId}:employee_submitted`,
       context: { employeeId: nocCase.employee_id, branchId: nocCase.branch_id },
       entityType: "noc_case",
@@ -389,20 +427,21 @@ export async function notifySignatoryPending(
       eventCode: "noc_signatory_pending",
       // Stage-scoped so each of the eight is claimed independently — a single per-case key would
       // let the first stage's claim suppress the other seven.
-      dedupeKey: `noc_case:${caseId}:pending:${stageKey}`,
+      dedupeKey: `noc_case:${caseId}:pending:${stageKey === "hr" ? "hr" : "parallel"}`,
       context: { employeeId: nocCase.employee_id, branchId: nocCase.branch_id, processId: nocCase.process_id },
       entityType: "noc_case",
       entityId: caseId,
       correlationId: `noc_case:${caseId}`,
-      specOverride: await stageSpec(stage, nocCase.branch_id),
+      specOverride: await nocSpec(nocCase),
       data: {
         employee_name: nocCase.employee_name,
         employee_code: nocCase.employee_code,
         process_name: nocCase.process_name,
         reporting_manager_name: nocCase.reporting_manager_name,
         location: nocCase.location,
-        stage_label: stage.stage_label,
-        verify_hint: await stageVerifyHint(stageKey),
+        // One mail per case for the stages that open together, so name them all.
+        stage_label: stageKey === "hr" ? stage.stage_label : await openParallelStageLabels(caseId, stage.stage_label),
+        verify_hint: stageKey === "hr" ? await stageVerifyHint(stageKey) : "Each stage owner confirms their own part in the NOC page; open the case to see what is outstanding.",
         sla_due_at: stage.sla_due_at ? String(stage.sla_due_at).slice(0, 16).replace("T", " ") : "as soon as possible",
         noc_case_url: caseUrl(caseId),
       },
@@ -446,14 +485,11 @@ export async function notifySignatoryReminder(
     const [nocCase, stage] = await Promise.all([loadCase(caseId), loadStage(caseId, stageKey)]);
     if (!nocCase || !stage) return false;
 
-    const spec = await stageSpec(stage, nocCase.branch_id);
-    if (escalate && nocCase.branch_id) {
-      spec.cc = [...(spec.cc ?? []), { kind: "branch_head", branchId: nocCase.branch_id }];
-    }
+    const spec = await nocSpec(nocCase);
 
     const outcome = await notificationGateway.notify({
       eventCode: "noc_signatory_reminder",
-      dedupeKey: `noc_case:${caseId}:reminder:${stageKey}:${reminderNo}`,
+      dedupeKey: `noc_case:${caseId}:reminder:${reminderNo}`,
       context: { employeeId: nocCase.employee_id, branchId: nocCase.branch_id },
       entityType: "noc_case",
       entityId: caseId,
@@ -497,7 +533,7 @@ export async function notifyDeclined(caseId: string, stageKey: string): Promise<
         ? {
             specOverride: {
               to: bothTo,
-              cc: [{ kind: "branch_hr" as const }, { kind: "reporting_manager" as const }],
+              cc: await nocDistribution(nocCase),
             },
           }
         : {}),
@@ -559,7 +595,7 @@ export async function notifyCompleted(caseId: string): Promise<void> {
         ? {
             specOverride: {
               to: bothTo,
-              cc: [{ kind: "branch_hr" as const }, { kind: "branch_head" as const }],
+              cc: await nocDistribution(nocCase),
             },
           }
         : {}),
