@@ -11607,7 +11607,8 @@
       "meta_target_locations",
       "meta_target_radius_km",
       "meta_screening_config",
-      "ad_required"
+      "ad_required",
+      "selection_rules"
     ],
     "job_requisition_alert_log": [
       "id",
