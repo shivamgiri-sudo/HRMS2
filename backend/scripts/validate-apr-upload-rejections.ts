@@ -6,6 +6,7 @@
  *
  * Run: npx tsx scripts/validate-apr-upload-rejections.ts MAS63264 MAS63449 ...
  */
+import 'dotenv/config';
 import { createConnection } from 'mysql2/promise';
 import type { RowDataPacket } from 'mysql2';
 
