@@ -28,5 +28,5 @@ jobs:
         run: |
           for P in hrms2-backend hrms2-workers; do
             echo "=== $P ==="
-            pm2 logs "$P" --nostream --lines 20000 --no-color 2>&1 | grep -vE '" (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /' | grep -E "T1[78]:" | tail -n 300 | cut -c1-300 || true
+            pm2 logs "$P" --nostream --lines 20000 --no-color 2>&1 | grep -vE '"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /' | grep -E "T1[78]:" | tail -n 300 | cut -c1-300 || true
           done
