@@ -3,6 +3,7 @@
  * person's timeline and a drive's "confirmed to attend" list. HR actions (WRITE roles): manual confirm after an off-system call, classify a
  * free-text reply, ignore one. Scope is the caller's branch (outside scope answers 404). Errors carry fixed messages.
  */
+import { swr } from "./he-swr.js";
 import type { Request, Response, Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -71,7 +72,7 @@ export function registerResponseRoutes(r: Router, roles: { view: readonly string
   const summary = async (req: Request, res: Response, src: Record<string, unknown>) => {
     const f = filtersOf(src);
     if (typeof f === "string") return void bad(res, f);
-    try { res.json({ success: true, data: await responseSummary(f, await branchScopeOf(req as AuthenticatedRequest)) }); } catch (err) { readFail(res, err, "summary"); }
+    try { { const sc = await branchScopeOf(req as AuthenticatedRequest); res.json({ success: true, data: await swr(`resp-summary|${JSON.stringify([f, sc])}`, () => responseSummary(f, sc)) }); } } catch (err) { readFail(res, err, "summary"); }
   };
   const urlQuery = (req: Request, res: Response): Record<string, unknown> | null => {
     if ((req.query as Record<string, unknown>).q !== undefined) { bad(res, "Send the mobile search in the request body"); return null; }

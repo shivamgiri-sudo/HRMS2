@@ -39,6 +39,7 @@ import { getMasterSummary, getRecruiterProductivity, listPrefixes, refreshHistor
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import { getMetaFunnel } from "./he-meta-funnel.service.js";
 import { getCostByBranch } from "./he-cost-branch.service.js";
+import { swr, dropSwr } from "./he-swr.js";
 import { getUnifiedFunnel } from "./he-unified-funnel.service.js";
 import { getCampaignDashboard, scopeDriveGroups } from "./he-campaign-dashboard.service.js";
 import { listCampaignConfigs, setCampaignConfig } from "./he-campaign-config.service.js";
@@ -571,8 +572,7 @@ heRouter.get("/meta-recruitment", requireAuth, requireRole(...VIEW_ROLES), async
 // Recruitment master: rollup summary, and chunked history refresh (one 2-digit mobile prefix per call; omit prefix to list them).
 heRouter.get("/master/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try {
-    if (!masterCache || Date.now() - masterCache.at > 60_000) masterCache = { at: Date.now(), data: await getMasterSummary() };
-    res.json(masterCache.data);
+    res.json(await swr("master-summary", () => getMasterSummary()));
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] master summary failed");
     res.status(500).json({ message: "Could not load the master summary" });
@@ -584,7 +584,7 @@ heRouter.post("/master/refresh", requireAuth, requireRole(...ADMIN_ROLES), async
     const prefix = String((req.body as { prefix?: unknown })?.prefix ?? "");
     if (!prefix) return res.json({ prefixes: await listPrefixes() });
     if (!/^\d{2}$/.test(prefix)) return res.status(400).json({ message: "prefix must be 2 digits" });
-    masterCache = null;
+    masterCache = null; dropSwr("master-summary");
     const history = await refreshHistoryChunk({ prefix });
     const profiles = await refreshProfilesChunk(prefix);
     res.json({ ...history, profiles: profiles.profiles });
@@ -620,7 +620,7 @@ heRouter.post("/identity/clashes/:id/resolve", requireAuth, requireRole(...WRITE
 });
 
 heRouter.post("/master/ex-employees/refresh", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
-  masterCache = null;
+  masterCache = null; dropSwr("master-summary");
   try { const after = (req.body as { after?: unknown })?.after; res.json({ success: true, data: await refreshExEmployees({ after: typeof after === "string" ? after : null }) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] ex-employee refresh failed"); res.status(500).json({ message: "Could not refresh former employees" }); }
 });
@@ -644,7 +644,7 @@ heRouter.get("/planner", requireAuth, requireRole(...VIEW_ROLES), async (req, re
     const q = req.query as Record<string, string | undefined>;
     const deadline = q.deadline && /^\d{4}-\d{2}-\d{2}$/.test(q.deadline) ? q.deadline : null;
     const num = (v?: string) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
-    res.json({ success: true, data: await planHiring({ requisitionId: q.requisitionId ?? null, branch: q.branch ?? null, process: q.process ?? null, targetSelected: num(q.target), deadline, months: num(q.months), bufferPct: num(q.buffer) }) });
+    res.json({ success: true, data: await swr(`planner|${JSON.stringify(q)}`, () => planHiring({ requisitionId: q.requisitionId ?? null, branch: q.branch ?? null, process: q.process ?? null, targetSelected: num(q.target), deadline, months: num(q.months), bufferPct: num(q.buffer) })) });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] planner failed");
     res.status(500).json({ message: "Could not build the plan" });
@@ -672,7 +672,7 @@ heRouter.post("/candidates/import", requireAuth, requireRole(...WRITE_ROLES), as
     if (!INTAKE_SOURCES.includes(source)) return res.status(400).json({ message: `source must be one of ${INTAKE_SOURCES.join(", ")}` });
     if (!Array.isArray(b.rows)) return res.status(400).json({ message: "rows must be an array" });
     const bb = req.body as { mapping?: unknown; saveMapping?: unknown; label?: unknown; fileName?: unknown; consentAttested?: unknown };
-    masterCache = null;
+    masterCache = null; dropSwr("master-summary");
     res.json({ success: true, data: await ingestCandidates(b.rows as Array<Record<string, unknown>>, source, {
       dryRun: b.dryRun === true, mapping: bb.mapping, saveMapping: bb.saveMapping !== false, userId: (req as AuthenticatedRequest).authUser?.id ?? null,
       label: typeof bb.label === "string" ? bb.label : null, fileName: typeof bb.fileName === "string" ? bb.fileName : null, consentAttested: bb.consentAttested === true,
