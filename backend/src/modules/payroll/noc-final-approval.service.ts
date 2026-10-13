@@ -27,6 +27,7 @@ import { db } from "../../db/mysql.js";
 import { __writeNocEvent } from "./noc-case.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
+import { notifyFfUnlocked } from "../exit/ff-notify.js";
 
 export const NOC_PH_FINAL_FROM_KEY = "noc_ph_final_approval_from";
 
@@ -84,7 +85,7 @@ export async function approveNocFinal(params: {
   note?: string | null;
 }): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, status, override_at, payroll_head_approved_at, employee_name, branch_id
+    `SELECT id, employee_id, status, override_at, payroll_head_approved_at, employee_name, branch_id
        FROM noc_case WHERE id = ? LIMIT 1`,
     [params.caseId],
   );
@@ -123,6 +124,12 @@ export async function approveNocFinal(params: {
   await inboxService
     .resolveItems({ entity_type: "noc_case", entity_id: params.caseId, types: ["noc_final_approval_pending"] })
     .catch(() => undefined);
+
+  void notifyFfUnlocked(
+    String(c.employee_id ?? ""),
+    String(c.employee_name ?? ""),
+    params.caseId,
+  );
 }
 
 /**

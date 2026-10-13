@@ -7,6 +7,7 @@ import { recordMoneyEventAudit } from "../../shared/moneyEventAudit.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
 import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
 import { resolveGrossMonthly } from "./ff-gross.js";
+import { notifyFfAwaitingApproval, resolveFfAwaitingApproval } from "./ff-notify.js";
 import { assertFfSettlementAllowed } from "./ff-settlement-gate.service.js";
 import { notifyFullFinalReady, notifyFFApproved } from "./exit.notifications.js";
 // Type-only import — does not create a runtime circular dependency with
@@ -317,6 +318,14 @@ export const ffService = {
     // function's own try/catch - and skips itself rather than record workings it cannot establish.
     await recordGratuityAudit(exitRequestId, exitReq.employee_id, Number(data.gratuityAmount ?? 0));
 
+    {
+      const [nm] = await db.execute<RowDataPacket[]>(
+        "SELECT employee_code, full_name FROM employees WHERE id = ? LIMIT 1",
+        [exitReq.employee_id],
+      );
+      void notifyFfAwaitingApproval(id, exitRequestId, `${nm[0]?.full_name ?? ""} (${nm[0]?.employee_code ?? ""})`.trim(), Number(data.netPayable ?? 0));
+    }
+
     void logSensitiveAction({
       actor_user_id: preparedBy,
       action_type: "FULL_FINAL_CREATED",
@@ -437,6 +446,7 @@ export const ffService = {
     });
 
     void notifyFullFinalReady(rec.exit_request_id);
+    void resolveFfAwaitingApproval(id);
 
     // Notify employee of F&F approval
     const netPayable = Number(rec.net_payable ?? 0);
