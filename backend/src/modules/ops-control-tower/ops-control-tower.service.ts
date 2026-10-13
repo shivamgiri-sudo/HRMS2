@@ -349,9 +349,17 @@ export async function getNocPendingBlock(): Promise<CountBlock> {
   // locked behind them. Only counted once noc_ph_final_approval_from is switched on.
   const from = await nocFinalApprovalFrom();
   const awaiting = from ? ` OR ${awaitingFinalApprovalSql("noc_case")}` : "";
+  // An absconder cannot be worked until the Payroll Head records an F&F exception, so — like the F&F
+  // count — they are not a pendency anyone can clear. Excluded from the OPEN part only; a completed NOC
+  // awaiting the Payroll Head's final approval is still counted.
   const rows = await query<RowDataPacket>(
     "noc-pending",
-    `SELECT branch_id, COUNT(*) AS n FROM noc_case WHERE status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")})${awaiting} GROUP BY branch_id`,
+    `SELECT noc_case.branch_id, COUNT(*) AS n
+       FROM noc_case
+       LEFT JOIN exit_request er ON er.id = noc_case.exit_request_id
+       LEFT JOIN employees e ON e.id = noc_case.employee_id
+      WHERE (noc_case.status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")}) AND NOT ${abscondedWithoutExceptionSql("er", "e")})${awaiting}
+      GROUP BY noc_case.branch_id`,
     from ? [...NOC_OPEN_STATUSES, from] : NOC_OPEN_STATUSES,
   );
   return rollupCounts(
@@ -374,10 +382,14 @@ export async function getNocPendingDetail(
   const from = await nocFinalApprovalFrom();
   const rows = await query<RowDataPacket>(
     "noc-pending-detail",
-    `SELECT employee_id, employee_code, employee_name, status, DATEDIFF(CURDATE(), COALESCE(initiated_at, employee_submitted_at)) AS days_open
+    `SELECT noc_case.employee_id, noc_case.employee_code, noc_case.employee_name, noc_case.status,
+            DATEDIFF(CURDATE(), COALESCE(noc_case.initiated_at, noc_case.employee_submitted_at)) AS days_open
        FROM noc_case
-      WHERE branch_id = ? AND (status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")})${from ? ` OR ${awaitingFinalApprovalSql("noc_case")}` : ""})
-      ORDER BY initiated_at ASC
+       LEFT JOIN exit_request er ON er.id = noc_case.exit_request_id
+       LEFT JOIN employees e ON e.id = noc_case.employee_id
+      WHERE noc_case.branch_id = ?
+        AND ((noc_case.status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")}) AND NOT ${abscondedWithoutExceptionSql("er", "e")})${from ? ` OR ${awaitingFinalApprovalSql("noc_case")}` : ""})
+      ORDER BY noc_case.initiated_at ASC
       LIMIT 200`,
     [branchId, ...NOC_OPEN_STATUSES, ...(from ? [from] : [])],
   );
