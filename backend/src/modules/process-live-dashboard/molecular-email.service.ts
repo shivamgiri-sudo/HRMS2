@@ -22,6 +22,7 @@ import {
   computeMolecularKpis, enrichTicket, istNow, istToday, nameKey, TAT_BUCKETS,
   type DataQualityFlag, type EnrichedTicket, type MolecularKpis, type TatBucket,
 } from './molecular-email-kpi.js';
+import { getEmailTickets, type EmailTicketSummary } from './email-ticket.service.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TABLE_ROW_LIMIT = 5000;
@@ -121,6 +122,30 @@ export interface MolecularOverview {
   ticketsWithoutCreatedTime: number;
   lastSyncedAt: string | null;
   hasData: boolean;
+  feed: MolecularFeedStatus;
+  /**
+   * When the per-ticket table has nothing for the period, the daily counts the
+   * older hourly sync stored (email_ticket_daily_actual, MOLECULAR) so the page
+   * is not blank. Day-level counts only, as the source reported them.
+   */
+  dailyFallback: EmailTicketSummary | null;
+}
+
+export interface MolecularFeedStatus {
+  /** Newest synced_at in molecular_email_ticket; null = the per-ticket sync has never completed. */
+  ticketFeedLastSyncedAt: string | null;
+  /** Newest write by the daily sync for MOLECULAR (the last time HRMS reached the ticket server). */
+  dailyFeedLastSyncedAt: string | null;
+  /** Latest report_date the daily sync holds for MOLECULAR. */
+  dailyLatestDate: string | null;
+}
+
+async function feedStatus(ticketSyncedAt: string | null): Promise<MolecularFeedStatus> {
+  const [r] = await db.query<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(MAX(updated_at), '%Y-%m-%d %H:%i:%s') AS synced, DATE_FORMAT(MAX(report_date), '%Y-%m-%d') AS latest
+       FROM email_ticket_daily_actual WHERE dashboard_label = 'MOLECULAR'`,
+  );
+  return { ticketFeedLastSyncedAt: ticketSyncedAt, dailyFeedLastSyncedAt: s(r[0]?.synced), dailyLatestDate: s(r[0]?.latest) };
 }
 
 export async function getMolecularOverview(q: Record<string, unknown>): Promise<MolecularOverview> {
@@ -194,6 +219,8 @@ export async function getMolecularOverview(q: Record<string, unknown>): Promise<
     ticketsWithoutCreatedTime: await invalidCreatedCount(),
     lastSyncedAt: s(m.synced),
     hasData: cohort.length > 0,
+    feed: await feedStatus(s(m.synced)),
+    dailyFallback: cohort.length > 0 ? null : await getEmailTickets('MOLECULAR', { from: f.from, to: f.to }),
   };
 }
 

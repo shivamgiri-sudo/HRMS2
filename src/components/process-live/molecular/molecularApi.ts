@@ -61,6 +61,25 @@ export interface MolOverview {
   ticketsWithoutCreatedTime: number;
   lastSyncedAt: string | null;
   hasData: boolean;
+  feed: MolFeedStatus;
+  /** Day-level counts from the older daily sync, sent only when no tickets exist for the period. */
+  dailyFallback: MolDailyFallback | null;
+}
+
+export interface MolFeedStatus {
+  ticketFeedLastSyncedAt: string | null;
+  dailyFeedLastSyncedAt: string | null;
+  dailyLatestDate: string | null;
+}
+
+export interface MolDailyFallback {
+  totalTickets: number;
+  emailClosed: number;
+  openPending: number;
+  emailReopen: number;
+  daily: { date: string; totalTickets: number; emailClosed: number; openPending: number; emailReopen: number }[];
+  byAnalyst: { analyst: string; ticketsReceived: number; ticketsClosed: number; ticketsReopened: number; ticketsOpenPending: number }[];
+  hasData: boolean;
 }
 
 export interface MolTicketList { asOf: string; total: number; truncated: boolean; rows: MolTicket[] }

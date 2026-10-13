@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import { Card, Kpi, Loading, Notice } from "./MolecularUi";
 import {
-  fmtHours, fmtPct, fmtStamp, molApi, orNA, TAT_BUCKETS, type MolFilters, type TatBucket,
+  fmtHours, fmtPct, fmtStamp, molApi, orNA, TAT_BUCKETS, type MolDailyFallback, type MolFilters, type MolOverview, type TatBucket,
 } from "./molecularApi";
 
 export function MolecularOverviewSection({ f, onDrill }: {
@@ -33,12 +33,8 @@ export function MolecularOverviewSection({ f, onDrill }: {
 
   return (
     <div className="space-y-4">
-      {!d.hasData && (
-        <Notice tone="warn">
-          No Molecular tickets received in this period with these filters. Tickets sync hourly from the Molecular ticketing system.
-          {d.lastSyncedAt ? ` Last sync: ${fmtStamp(d.lastSyncedAt)}.` : " No sync has completed yet."}
-        </Notice>
-      )}
+      {!d.hasData && <FeedNotice d={d} />}
+      {!d.hasData && d.dailyFallback?.hasData && <DailyFallback fb={d.dailyFallback} />}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Kpi label="Active Agents" value={apr.data ? apr.data.agentCount : apr.isLoading ? "…" : "N/A"} hint="Logged in on MOEMAIL in the period (APR)" />
@@ -142,5 +138,70 @@ export function MolecularOverviewSection({ f, onDrill }: {
         {d.lastSyncedAt ? `, last sync ${fmtStamp(d.lastSyncedAt)}` : ""}.
       </Notice>
     </div>
+  );
+}
+
+/** Why the ticket KPIs are empty: no tickets in the period, or the ticket feed has never arrived. */
+function FeedNotice({ d }: { d: MolOverview }) {
+  const { ticketFeedLastSyncedAt, dailyFeedLastSyncedAt, dailyLatestDate } = d.feed;
+  if (ticketFeedLastSyncedAt) {
+    return (
+      <Notice tone="warn">
+        No Molecular tickets were received in this period with these filters. Tickets sync hourly; last ticket sync {fmtStamp(ticketFeedLastSyncedAt)}.
+      </Notice>
+    );
+  }
+  return (
+    <Notice tone="warn">
+      <strong>Ticket-level data has not arrived yet.</strong> HRMS has not been able to reach the Molecular ticketing server
+      {dailyFeedLastSyncedAt ? ` since ${fmtStamp(dailyFeedLastSyncedAt)}` : ""}, so the per-ticket feed behind these cards
+      (closure, reopen, TAT, ageing, ticket table) has not run once. It fills automatically on the next hourly sync after the
+      connection is restored.
+      {dailyLatestDate ? ` The daily summary below is what HRMS already holds, up to ${fmtStamp(dailyLatestDate)}.` : ""}
+    </Notice>
+  );
+}
+
+/** Day-level counts from the older daily sync, shown while the per-ticket feed is empty. */
+function DailyFallback({ fb }: { fb: MolDailyFallback }) {
+  return (
+    <Card title="Daily ticket summary (earlier daily feed)" sub="Counts per day as the Molecular source reported them. Not unique-ticket KPIs: closures here are agent replies, reopens are events.">
+      <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Kpi label="Tickets Received" value={fb.totalTickets} />
+        <Kpi label="Closures (replies)" value={fb.emailClosed} tone="green" />
+        <Kpi label="Reopen events" value={fb.emailReopen} tone="red" />
+        <Kpi label="Open (latest day)" value={fb.openPending} tone="amber" />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ResponsiveContainer width="100%" height={220}>
+          <ComposedChart data={fb.daily}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.slice(5)} />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="totalTickets" name="Received" fill="#94a3b8" />
+            <Line dataKey="emailClosed" name="Closures (replies)" stroke="#16a34a" strokeWidth={2} dot={false} />
+            <Line dataKey="emailReopen" name="Reopen events" stroke="#dc2626" strokeWidth={2} dot={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+        <div className="max-h-56 overflow-auto">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-white text-left text-slate-500">
+              <tr><th className="py-1">Agent</th><th className="text-right">Received</th><th className="text-right">Closed</th><th className="text-right">Reopened</th><th className="text-right">Open</th></tr>
+            </thead>
+            <tbody>
+              {fb.byAnalyst.map((a) => (
+                <tr key={a.analyst} className="border-t border-slate-100">
+                  <td className="py-1">{orNA(a.analyst)}</td><td className="text-right">{a.ticketsReceived}</td><td className="text-right">{a.ticketsClosed}</td>
+                  <td className="text-right">{a.ticketsReopened}</td><td className="text-right">{a.ticketsOpenPending}</td>
+                </tr>
+              ))}
+              {fb.byAnalyst.length === 0 && <tr><td colSpan={5} className="py-3 text-center text-slate-400">No agent rows</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Card>
   );
 }
