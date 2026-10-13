@@ -207,7 +207,7 @@ export const notificationGateway = {
       const { dispatchLogId } = await deliverer.deliver({
         eventCode: input.eventCode,
         templateKey: cfg.template_key,
-        data: input.data ?? {},
+        data: await enrichData(input),
         resolution,
         isCritical: Number(cfg.is_critical) === 1,
         correlationId: input.correlationId,
@@ -222,6 +222,47 @@ export const notificationGateway = {
     }
   },
 };
+
+/**
+ * Fills identity facts a producer did not pass (branch, designation, process, name, code) from
+ * the notification's own context, so every email can say whose, where and what role without each
+ * producer re-querying. Never overwrites a value the producer supplied, and never throws: a
+ * failed lookup just means a thinner email, not a lost escalation.
+ */
+async function enrichData(input: NotifyInput): Promise<Record<string, unknown>> {
+  const data: Record<string, unknown> = { ...(input.data ?? {}) };
+  const has = (k: string) => data[k] !== undefined && data[k] !== null && String(data[k]).trim() !== '';
+  try {
+    const ctx = input.context ?? {};
+    if (ctx.employeeId && !(has('employee_name') && has('employee_code') && has('designation') && has('process_name') && has('branch_name'))) {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS name, e.employee_code,
+                d.designation_name, pm.process_name, b.branch_name
+           FROM employees e
+           LEFT JOIN designation_master d ON d.id = e.designation_id
+           LEFT JOIN process_master pm ON pm.id = e.process_id
+           LEFT JOIN branch_master b ON b.id = e.branch_id
+          WHERE e.id = ? LIMIT 1`,
+        [ctx.employeeId],
+      );
+      const r = rows[0];
+      if (r) {
+        if (!has('employee_name') && r.name) data.employee_name = r.name;
+        if (!has('employee_code') && r.employee_code) data.employee_code = r.employee_code;
+        if (!has('designation') && r.designation_name) data.designation = r.designation_name;
+        if (!has('process_name') && r.process_name) data.process_name = r.process_name;
+        if (!has('branch_name') && r.branch_name) data.branch_name = r.branch_name;
+      }
+    }
+    if (ctx.branchId && !has('branch_name')) {
+      const [rows] = await db.execute<RowDataPacket[]>('SELECT branch_name FROM branch_master WHERE id = ? LIMIT 1', [ctx.branchId]);
+      if (rows[0]?.branch_name) data.branch_name = rows[0].branch_name;
+    }
+  } catch (err) {
+    console.warn('[notification-gateway] context enrichment skipped:', (err as Error).message);
+  }
+  return data;
+}
 
 /** Accepts a JSON column that mysql2 may hand back already parsed. */
 function normaliseSpec(raw: string | Record<string, unknown>): RecipientSpec {

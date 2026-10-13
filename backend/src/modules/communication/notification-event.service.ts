@@ -640,6 +640,8 @@ class NotificationEventService {
      * in-app inbox row is only ever created for someone who has a login.
      */
     actionUrl?: string;
+    /** Labelled facts rendered as a table in email (and lines in text). Empty values are dropped. */
+    details?: Array<{ label: string; value: unknown }>;
   }) {
     const definition = NOTIFICATION_EVENT_CATALOG[input.eventCode];
     if (!definition) throw new Error("Unknown notification event");
@@ -670,6 +672,9 @@ class NotificationEventService {
           category: definition.category,
           action_url: absoluteActionUrl(input.actionUrl ?? definition.actionUrl),
           reference: data.reference ?? null,
+          details: (input.details ?? [])
+            .map((d) => ({ label: d.label, value: String(d.value ?? "").trim() }))
+            .filter((d) => d.value && d.value !== "—"),
         },
       },
       portal: {
