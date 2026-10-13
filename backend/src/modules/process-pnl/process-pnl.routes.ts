@@ -1636,6 +1636,12 @@ router.get(
       ?? (entitled
         ? (requestedBranchIds.length ? requestedBranchIds.filter((b) => entitled.includes(b)) : entitled)
         : requestedBranchIds);
+    /*
+     * A scoped user who asks only for branches outside their entitlement used to end up with an
+     * EMPTY list here, and an empty list means "no branch filter" to the engine, so they got every
+     * branch back. An empty result for a scoped user is pinned to their own entitlement instead.
+     */
+    if (entitled && !branchIds.length) branchIds.push(...entitled);
     // Client / Search, as the process ids they match (audit item 19). Live P&L's grain is the cost
     // centre, so it narrows to the cost centres those processes' staff are posted to — the same
     // rule CEO Overview uses for a process filter.

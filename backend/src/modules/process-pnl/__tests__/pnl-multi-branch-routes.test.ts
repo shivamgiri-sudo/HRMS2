@@ -60,6 +60,14 @@ describe("multi-branch Branch Head on P&L views that take a list", () => {
     expect((await request(app()).get("/api/finance/pnl/reconciliation?period=2026-09&branchId=B9")).status).toBe(403);
   });
 
+  it("branchIds naming only foreign branches never becomes 'no filter' (all branches)", async () => {
+    const res = await request(app()).get("/api/finance/pnl/reconciliation?period=2026-09&branchIds=B8,B9");
+    expect(res.status).toBe(200);
+    expect([...recon.mock.calls[0][1].branchIds].sort()).toEqual(["B1", "B2"]);
+    await request(app()).get("/api/finance/pnl/reconciliation?period=2026-09&branchIds=B2,B9");
+    expect(recon.mock.calls[1][1].branchIds).toEqual(["B2"]);
+  });
+
   it("a single-branch view asks to choose a branch (400), not a server error", async () => {
     const res = await request(app()).get("/api/finance/pnl/daily-trend?period=2026-09");
     expect(res.status).toBe(400);

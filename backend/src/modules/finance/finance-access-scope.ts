@@ -2,6 +2,11 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getUserAssignmentScopes } from "../../shared/scopeAccess.js";
 
+/** A scope refusal is a 403, not a 500: callers that do not wrap the resolver still answer correctly. */
+function forbidden(message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode: 403 });
+}
+
 const GLOBAL_FINANCE_ROLES = new Set([
   "super_admin",
   "admin",
@@ -99,7 +104,7 @@ export async function getUserBranchId(userId: string) {
   );
   const branchId = rows[0]?.branch_id ? String(rows[0].branch_id) : null;
   if (!branchId) {
-    throw new Error("Your user account is not mapped to an active employee branch");
+    throw forbidden("Your user account is not mapped to an active employee branch");
   }
   return branchId;
 }
@@ -159,7 +164,7 @@ export async function resolveFinanceBranchScopeSet(input: {
 
   if (requested) {
     if (!allowed.includes(requested)) {
-      throw new Error("You can only access finance records for your assigned branch");
+      throw forbidden("You can only access finance records for your assigned branch");
     }
     return { mode: "branches", branchIds: [requested] };
   }
@@ -296,7 +301,7 @@ export async function assertFinanceRecordBranch(input: {
   // getCostCentreBranchId return null for a missing or unmapped record.
   const recordBranchId = input.recordBranchId ? String(input.recordBranchId) : null;
   if (!recordBranchId || !scope.branchIds.includes(recordBranchId)) {
-    throw new Error("You cannot access a finance record from another branch");
+    throw forbidden("You cannot access a finance record from another branch");
   }
 }
 
@@ -335,7 +340,7 @@ async function getUserProcessId(userId: string) {
   );
   const processId = rows[0]?.process_id ? String(rows[0].process_id) : null;
   if (!processId) {
-    throw new Error("Your user account is not mapped to an active employee process");
+    throw forbidden("Your user account is not mapped to an active employee process");
   }
   return processId;
 }
@@ -362,7 +367,7 @@ export async function resolveFinanceProcessScope(input: {
 
   const assignedProcessId = await getUserProcessId(input.userId);
   if (requested && requested !== assignedProcessId) {
-    throw new Error("You can only access finance records for your assigned process");
+    throw forbidden("You can only access finance records for your assigned process");
   }
   return assignedProcessId;
 }
