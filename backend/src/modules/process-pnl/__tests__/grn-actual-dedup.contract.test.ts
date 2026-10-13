@@ -31,15 +31,18 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
     return fn.slice(0, fn.indexOf("\n}\n"));
   }
 
-  it("readGrnSpend has ONE legacy leg, the db_bill mirror, guarded against a voucher HRMS already carries (owner decision 2026-10-12)", () => {
+  it("readGrnSpend has ONE legacy source, the db_bill mirror, read by a helper with guards applied in code (owner decision 2026-10-12)", () => {
+    const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
+    const mirror = service.slice(service.indexOf("async function readLegacyMirrorSpend("), service.indexOf("export async function readGrnSpend("));
+    expect(mirror.split("FROM grn_entry_line_snapshot").length - 1).toBe(1);
+    expect(mirror, "no correlated guard inside the mirror query: it made the consumed read take 33-46 s on prod").not.toContain("NOT EXISTS");
+    expect(mirror).toContain("UPPER(TRIM(gr.grn_number)) IN");
+    expect(mirror, "the voucher-number guard only matches HRMS-raised, countable GRNs").toContain("${HRMS_RAISED_GRN_SQL} AND ${HRMS_COUNTED_SQL}");
+    expect(mirror).toContain("LEGACY_TWIN_MIN_AMOUNT");
     const body = readerBody();
-    expect(body.split("FROM grn_entry_line_snapshot").length - 1).toBe(1);
-    expect(body).toContain("gr2.grn_number = ge.grn_no");
     expect(body, "billed history is consumed, never reserved: reading it for both kinds counted every line twice").toContain('kind === "consumed" && (await tableExists("grn_entry_line_snapshot"))');
-    expect(body).toContain("LEGACY_TWIN_MIN_AMOUNT");
     // Imported / migration-script grn_request rows are never read as legacy themselves: the mirror is the one legacy source.
     expect(body.split("${HRMS_RAISED_GRN_SQL}").length - 1).toBe(2);
-    expect(body, "the voucher-number guard only matches HRMS-raised GRNs").toContain('HRMS_RAISED_GRN_SQL.replace(/gr\\./g, "gr2.")');
   });
 
   it("both app legs are restricted to HRMS-raised GRNs (no bill_source_id, no system-user rows)", () => {
@@ -61,7 +64,7 @@ describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the sha
     expect(body).toContain('${grnRequestExGstSql("gr")} AS amount');
     expect(body).not.toContain("pnl_cost_amount");
     // OWN_COMPANY_SQL (via grnScope) on both legs.
-    expect(body.split("${scope.sql}").length - 1).toBe(3);
+    expect(body.split("${scope.sql}").length - 1).toBe(2);
     expect(body).toContain("gr.accounting_period = ?");
   });
 
@@ -113,7 +116,8 @@ describe("legacy mirror leg defers only to an HRMS GRN the P&L actually counts",
     expect(service).toContain("const HRMS_COUNTED_SQL");
     expect(service).toContain("gr.budget_line_id IS NOT NULL AND gr.status IN (");
     const body = service.slice(service.indexOf("export async function readGrnSpend("));
-    expect(body).toContain('HRMS_COUNTED_SQL.replace(/gr\\./g, "gr2.")');
+    const mirrorHelper = service.slice(service.indexOf("async function readLegacyMirrorSpend("), service.indexOf("export async function readGrnSpend("));
+    expect(mirrorHelper).toContain("${HRMS_RAISED_GRN_SQL} AND ${HRMS_COUNTED_SQL}");
     // The module-level constants must be defined before HRMS_COUNTED_SQL reads them (temporal dead zone).
     expect(service.indexOf("const ORDINARY_GRN_RESERVED_SQL")).toBeLessThan(service.indexOf("const HRMS_COUNTED_SQL"));
   });

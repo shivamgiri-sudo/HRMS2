@@ -897,11 +897,10 @@ describe("legal entity — this page is one company's P&L, not a consolidation",
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06");
     expect(out.indirectCost).toBeCloseTo(L(30), 0);
-    const spendSql = execute.mock.calls.map((c) => String(c[0])).find((q) => q.includes("FROM grn_entry_line_snapshot"));
-    expect(spendSql, "the mirror leg is in the one shared GRN query").toBeDefined();
-    expect(spendSql).toContain("gr2.grn_number = ge.grn_no");
-    expect(spendSql, "an imported copy of the bill must not hide the mirror line").toContain("gr2.bill_source_id IS NULL");
-    expect(spendSql).toContain("ABS((SELECT SUM(");
+    const sqls = execute.mock.calls.map((c) => String(c[0]));
+    const mirrorSql = sqls.find((q) => q.includes("FROM grn_entry_line_snapshot"));
+    expect(mirrorSql, "the mirror lines are read by one plain query (no correlated guards: they made the read take 40 s on prod)").toBeDefined();
+    expect(mirrorSql).not.toContain("NOT EXISTS");
   });
 
   it("does NOT filter payroll by company", async () => {
