@@ -427,6 +427,8 @@ describe("application shell routing contracts", () => {
       "/wfm/week-off-default",
       "/wfm/weekoff-day-rules",
       "/wfm/branch-spoc-config",
+      // db_bill vs HRMS salary / day-wise attendance comparison (payroll team, opened by URL).
+      "/payroll/salary-att-compare",
     ]);
     const navPaths = new Set(
       [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),

@@ -359,6 +359,7 @@ import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { vendorBankRouter } from "./modules/finance/vendor-bank.routes.js";
 import { gstExportRouter } from "./modules/gst/gst-export.routes.js";
+import { tallyVoucherRouter } from "./modules/gst/tally-voucher/tally-voucher.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { vendorApprovalRouter } from "./modules/finance/vendor-approval.routes.js";
 import { imprestRouter } from "./modules/finance/imprest.routes.js";
@@ -865,6 +866,11 @@ app.use("/api/finance", vendorPaymentRouter);
 // Its own /api/gst prefix, not bare /api/finance: every path here is period-and-registration
 // scoped, and mounting it alongside grnRouter's "/grns/:id"-shaped routes would expose it to the
 // same literal-segment shadowing that swallowed vendor-payments/aging.
+// Mounted BEFORE gstExportRouter so the longer prefix is matched first; the router is
+// role-gated per route (see tally-voucher.routes.ts). It was written and consumed by the frontend
+// (src/lib/tallyVoucherApi.ts) but never mounted, which failed the frontend endpoint contract test
+// and blocked every deploy.
+app.use("/api/gst/tally-vouchers", tallyVoucherRouter);
 app.use("/api/gst", gstExportRouter);
 app.use("/api/finance", grnRouter);
 // vendor-approval.routes.ts's paths are all literal ("/vendor-approval/raise", "/vendor-approval/

@@ -326,18 +326,20 @@ const apiSource = readFileSync(
 describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () => {
   it("create-proforma Sheet submits createProforma with the payload clientBillingApi.ts actually declares", () => {
     // Real declared shape, read from the module under test rather than assumed.
-    expect(apiSource).toContain("export interface CreateProformaPayload {");
+    expect(apiSource).toMatch(/export interface CreateProformaPayload\b[^{]*\{/);
     expect(apiSource).toContain("costCentreId: string;");
     expect(apiSource).toContain("lines: ProformaLineInput[];");
-    expect(apiSource).toContain(
-      "export function createProforma(payload: CreateProformaPayload)",
+    expect(apiSource).toMatch(
+      /export function createProforma\(\s*payload: CreateProformaPayload,?\s*\)/,
     );
 
-    expect(createProformaSheetSource).toContain(
-      "mutationFn: (payload: CreateProformaPayload) => createProforma(payload),",
+    // The Sheet now also edits (invoice engine P5): one mutation that updates when editing and
+    // otherwise creates through createProforma with the same declared payload.
+    expect(createProformaSheetSource).toMatch(
+      /mutationFn: async \(payload: CreateProformaPayload\) => \{[\s\S]*?return createProforma\(payload\);/,
     );
     // The exact payload construction at submit() — every field name matches CreateProformaPayload.
-    expect(createProformaSheetSource).toContain("createMutation.mutate({");
+    expect(createProformaSheetSource).toContain("saveMutation.mutate({");
     expect(createProformaSheetSource).toContain("costCentreId,");
     expect(createProformaSheetSource).toContain("category: category.trim(),");
     expect(createProformaSheetSource).toContain(
@@ -360,7 +362,7 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
   });
 
   it("Approve (Proformas tab) calls approveInvoice with the row id", () => {
-    expect(apiSource).toContain("export function approveInvoice(id: string,");
+    expect(apiSource).toMatch(/export function approveInvoice\(\s*id: string,/);
     expect(pageSource).toContain(
       "mutationFn: (id: string) => approveInvoice(id),",
     );
@@ -371,8 +373,8 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
   });
 
   it("Reject (via its reason dialog) calls rejectInvoice with a non-empty reason", () => {
-    expect(apiSource).toContain(
-      "export function rejectInvoice(id: string, reason: string)",
+    expect(apiSource).toMatch(
+      /export function rejectInvoice\(\s*id: string,\s*reason: string,?\s*\)/,
     );
     expect(rejectDialogSource).toContain(
       "mutationFn: () => rejectInvoice(invoiceId as string, reason.trim()),",
@@ -405,11 +407,11 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
   });
 
   it("Credit Notes: create Sheet submits createCreditNote with the payload clientBillingApi.ts actually declares", () => {
-    expect(apiSource).toContain("export interface CreateCreditNotePayload {");
+    expect(apiSource).toMatch(/export interface CreateCreditNotePayload\b[^{]*\{/);
     expect(apiSource).toContain("invoiceId: string;");
     expect(apiSource).toContain("lines: CreditNoteLineInput[];");
-    expect(apiSource).toContain(
-      "export function createCreditNote(payload: CreateCreditNotePayload)",
+    expect(apiSource).toMatch(
+      /export function createCreditNote\(\s*payload: CreateCreditNotePayload,?\s*\)/,
     );
 
     expect(createCreditNoteSheetSource).toContain(
@@ -433,8 +435,8 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
   });
 
   it("Credit Notes: Approve calls approveCreditNote with the row id", () => {
-    expect(apiSource).toContain(
-      "export function approveCreditNote(id: string)",
+    expect(apiSource).toMatch(
+      /export function approveCreditNote\(\s*id: string,?\s*\)/,
     );
     expect(pageSource).toContain(
       "mutationFn: (id: string) => approveCreditNote(id),",

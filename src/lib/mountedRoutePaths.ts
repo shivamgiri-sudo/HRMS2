@@ -279,6 +279,7 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/payroll/reimbursements",
   "/payroll/run-lifecycle",
   "/payroll/running-breakdown",
+  "/payroll/salary-att-compare",
   "/payroll/salary-certificates",
   "/payroll/salary-change",
   "/payroll/salary-disputes",
