@@ -16,6 +16,10 @@ on:
         description: "Set to 'yes' to run the non-people (GRN / vendor) reconciliation instead (read-only)."
         required: false
         default: ""
+      nkrent:
+        description: "Set to 'yes' to check Ahmedabad Neelakanth rent, db_bill vs HRMS (read-only)."
+        required: false
+        default: ""
       grnprobe:
         description: "Comma-separated GRN numbers to probe in the HRMS mirror (read-only)."
         required: false
@@ -78,9 +82,12 @@ jobs:
           INPUT_LIVESALARY: ${{ inputs.livesalary }}
           INPUT_GRNCOMPARE: ${{ inputs.grncompare }}
           INPUT_GRNPROBE: ${{ inputs.grnprobe }}
+          INPUT_NKRENT: ${{ inputs.nkrent }}
         run: |
           set -euo pipefail
-          if [ -n "$INPUT_GRNPROBE" ]; then
+          if [ "$INPUT_NKRENT" = "yes" ]; then
+            npx tsx scripts/pnl-nk-rent-check.ts
+          elif [ -n "$INPUT_GRNPROBE" ]; then
             npx tsx scripts/pnl-grn-mirror-probe.ts "$INPUT_GRNPROBE"
           elif [ -n "$INPUT_GRNCOMPARE" ]; then
             npx tsx scripts/pnl-grn-voucher-compare.ts "$INPUT_GRNCOMPARE"
