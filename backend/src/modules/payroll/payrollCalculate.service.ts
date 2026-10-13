@@ -32,6 +32,7 @@ import {
 } from "./holiday-work-auto.service.js";
 import { taxEngineService } from "../payroll-compliance/taxEngine.service.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
+import { heldAbsconderEmployeeIds } from "./absconder-hold.service.js";
 import { esiContributionPeriodStart } from "./payroll-governance.service.js";
 
 interface TaxDeclarationRow {
@@ -1321,6 +1322,10 @@ export async function calculatePayrollRunScoped(
   const stintScopes = stintPayrollOn ? await loadStintScopes(empIds, loopMonthStart, loopMonthEnd, new Map(employees.map((e) => [e.employee_id, e.salary_start_date ?? null])), new Map(employees.map((e) => [e.employee_id, e.employment_end_date ?? null]))) : new Map<string, StintScope>();
 
   try {
+    // Absconders confirmed but not yet released by Branch Head + Payroll Head: 0 paid days. Loaded once
+    // per run. Derived here on every calculation (never a stored line flag, which the upsert resets).
+    const heldAbsconders = await heldAbsconderEmployeeIds(empIds);
+
     for (const emp of employees) {
       const monthStart = `${run.run_month}-01`;
       const monthEnd = `${run.run_month}-${String(daysInMonth).padStart(2, "0")}`;
@@ -1329,6 +1334,7 @@ export async function calculatePayrollRunScoped(
       if (blockedEmployeeIds.has(emp.employee_id)) {
         continue;
       }
+      const isHeldAbsconder = heldAbsconders.has(emp.employee_id);
 
       // Manual override lock (migration 1697): this row was patched directly outside the engine
       // (e.g. the 2026-09-08 db_bill reconciliation override) and must not be recomputed. Leaving
@@ -1472,9 +1478,12 @@ export async function calculatePayrollRunScoped(
         daysInMonth,
       });
       // Use the (possibly reduced) paid base after reversal
-      const effectivePaidBase = reversalResult.newPaidBase;
+      const effectivePaidBase = isHeldAbsconder ? 0 : reversalResult.newPaidBase;
+      if (isHeldAbsconder) holidayWorkExtraPayout = 0;
       // Recalculate week-offs and holidays with new paid base if reversal happened
-      const finalWeekoffs = reversalResult.reversed
+      const finalWeekoffs = isHeldAbsconder
+        ? 0
+        : reversalResult.reversed
         ? await calculateWeekoffEligibility(
             emp.employee_id,
             effectivePaidBase,
@@ -1483,9 +1492,7 @@ export async function calculatePayrollRunScoped(
             ...stintWeekoffArg,
           )
         : eligibleWeekoffs;
-      const finalHolidays = reversalResult.reversed
-        ? eligibleHolidayCount
-        : eligibleHolidayCount;
+      const finalHolidays = isHeldAbsconder ? 0 : eligibleHolidayCount;
 
       // Step 6: Payable days with cap
       // active_calendar_days: the employee's actual employment window this month
@@ -1529,7 +1536,10 @@ export async function calculatePayrollRunScoped(
         emp.employee_id,
         run.run_month,
       );
-      const basePayableDays = payableDaysOverride ?? calculatedPayable;
+      // Held absconder: 0 days, applied AFTER the typed override so that cannot bypass the hold. Done on
+      // the input so the capped line below (pinned by stint-payroll-wiring.contract.test) is unchanged;
+      // activeCals is always >= 1, so MIN(0, activeCals) is 0.
+      const basePayableDays = isHeldAbsconder ? 0 : (payableDaysOverride ?? calculatedPayable);
       const finalPayableDays = Math.min(basePayableDays, activeCals);
 
       // Step 7: Read salary — prefer salary_component_assignments (direct assignment),
@@ -1712,7 +1722,7 @@ export async function calculatePayrollRunScoped(
       // Maternity employees receive full monthly gross (MBA 1961 s.5(1))
       // Per-employee component packages are earned component by component and summed, each
       // rounded to a whole rupee like db_bill's Gross1; the CTC fallback keeps the plain ratio.
-      const grossMonthly = isOnMaternityLeave
+      const grossMonthly = isOnMaternityLeave && !isHeldAbsconder
         ? monthlyGrossBase
         : hasFixedComponents
           ? sumProratedComponents(compAmounts, finalPayableDays, daysInMonth)
@@ -2231,8 +2241,7 @@ export async function calculatePayrollRunScoped(
         reconcileNetAndDeductions(
           calc.gross_salary +
             holidayWorkExtraPayout +
-            approvedIncentives +
-            approvedReimbursements,
+            (isHeldAbsconder ? 0 : approvedIncentives + approvedReimbursements),
           calc.total_deductions + advanceRecovery + loanEmi + miscDeductions,
         );
 
@@ -2471,7 +2480,8 @@ export async function calculatePayrollRunScoped(
           );
           const newStatus =
             newRecovered >= Number(adv.amount) ? "recovered" : "active";
-          batchAdvUpdates.push({ id: adv.id, newRecovered, newStatus });
+          // A held line pays nothing, so it must not mark an advance as recovered.
+          if (!isHeldAbsconder) batchAdvUpdates.push({ id: adv.id, newRecovered, newStatus });
         }
       }
 
