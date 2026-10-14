@@ -71,7 +71,7 @@ describe("GRN invoice-GST-components (unified vendor-GRN flow)", () => {
     // codes — many budget lines carry gst_type "none", which recorded real tax as neither — and
     // the budget line's gst_type is only the fallback when the state codes cannot decide.
     expect(service).toContain(
-      'const grnGstType: BudgetGstType = !_v2 || !_b2 ? "none" : _v2 === _b2 ? "cgst_sgst" : "igst";',
+      'const grnGstType: BudgetGstType = _gstOff2 || !_v2 || !_b2 ? "none" : _v2 === _b2 ? "cgst_sgst" : "igst";',
     );
     expect(service).toContain(
       'gstType: (grnGstType !== "none" ? grnGstType : String(line.gst_type)) as BudgetGstType',

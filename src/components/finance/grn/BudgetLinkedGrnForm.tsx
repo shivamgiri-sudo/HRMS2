@@ -748,12 +748,13 @@ export function BudgetLinkedGrnForm({
    */
   useEffect(() => {
     if (form.billingStateCode) return;
+    if (form.gstEnabled === false) return;
     if (!form.branchId) return;
     const branch = branches.find((b: any) => b.id === form.branchId);
     const code = String((branch as any)?.gst_state_code ?? "").trim();
     if (!code) return;
     setForm((current) => (current.billingStateCode ? current : { ...current, billingStateCode: code }));
-  }, [form.branchId, form.billingStateCode, branches]);
+  }, [form.branchId, form.billingStateCode, form.gstEnabled, branches]);
 
   useEffect(() => {
     if (!editGrnId) return;
@@ -2861,7 +2862,12 @@ export function BudgetLinkedGrnForm({
                           id="grn-gst-enabled"
                           checked={form.gstEnabled ?? true}
                           onCheckedChange={(checked) =>
-                            setForm((current) => ({ ...current, gstEnabled: checked }))
+                            setForm((current) => ({
+                              ...current,
+                              gstEnabled: checked,
+                              // No GST => no vendor/billing state; billing re-seeds from the branch when switched back on.
+                              ...(checked ? {} : { vendorStateCode: "", billingStateCode: "" }),
+                            }))
                           }
                         />
                         <span className="text-[12px] text-grn-ink">{form.gstEnabled === false ? "No (International)" : "Yes"}</span>
