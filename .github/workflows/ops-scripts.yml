@@ -43,7 +43,7 @@ on:
         type: choice
         options:
           - ledger-tally-dump
-          - tally-names-compare
+          - tally-ui-test-revert
           - backfill-tally-legacy-names
           - statutory-identifier-encrypt-backfill
           - backup-table-pii-scrub
@@ -245,7 +245,7 @@ jobs:
 
           case "${{ inputs.script }}" in
             backfill-tally-legacy-names) FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"; npx tsx scripts/backfill-tally-legacy-names.ts $FLAG ;;
-            tally-names-compare) npx tsx scripts/tally-names-compare.ts ;;
+            tally-ui-test-revert) FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"; TEST_T0="$INPUT_EMPLOYEE_CODES" npx tsx scripts/tally-ui-test-revert.ts $FLAG ;;
             ledger-tally-dump) npx tsx scripts/ledger-tally-dump.ts 2026-09 2026-10 ;;
             statutory-identifier-encrypt-backfill)
               FLAG=""; [ "$MODE" = "dry-run" ] && FLAG="--dry-run"
