@@ -22,6 +22,9 @@ import { billQuery } from "../../db/billDb.js";
  *             ("26-27/91" vs "2026-27/91")
  * Both are left out with the legacy GRN named, so Accounts can see it on the check sheet.
  *
+ * MAS Callnet only (db_bill CompId 1, "Mas/" GRN numbers): a bill another company (IDC) booked went to
+ * that company's Tally, not this one, so it does not make an HRMS MAS GRN a duplicate.
+ *
  * Two sources, so this keeps working after db_bill is switched off:
  *   - grn_request rows migrated from db_bill (bill_source_id set): always available.
  *   - db_bill itself (vendor GRNs with DownloadStatus = 1), read-only, only while BILL_DB_HOST is
@@ -125,7 +128,8 @@ export async function loadLegacyBills(executor: Executor, rows: RowDataPacket[])
     const [migrated] = (await executor.execute(
       `SELECT grn_number, invoice_number, amount_with_tax, amount, vendor_id, vendor_name, bill_date
          FROM grn_request
-        WHERE bill_source_id IS NOT NULL AND grn_type = 'vendor' AND bill_date >= ?`,
+        WHERE bill_source_id IS NOT NULL AND grn_type = 'vendor' AND bill_date >= ?
+          AND grn_number LIKE 'Mas/%'`,
       [since],
     )) as [RowDataPacket[], unknown];
     let keys = new Map<string, string>();
@@ -155,7 +159,7 @@ export async function loadLegacyBills(executor: Executor, rows: RowDataPacket[])
       const legacy = (await billQuery<any>(
         `SELECT m.GrnNo, m.bill_no, m.Amount, m.Vendor, m.bill_date, v.TallyHead
            FROM expense_entry_master m LEFT JOIN tbl_vendormaster v ON v.Id = m.Vendor
-          WHERE m.ExpenseEntryType = 'Vendor' AND m.DownloadStatus = 1 AND m.createdate >= ?`,
+          WHERE m.ExpenseEntryType = 'Vendor' AND m.DownloadStatus = 1 AND m.CompId = 1 AND m.createdate >= ?`,
         [since],
       )) as any[];
       for (const l of legacy)
