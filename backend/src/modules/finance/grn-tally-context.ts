@@ -174,21 +174,23 @@ export async function loadGrnTallyContext(
         state: r.state ? String(r.state) : null,
       });
     }
-    // Separate read: the columns arrive with migration 2210 (legacy db_bill tally_branch / tally_code).
+    // Legacy db_bill tally_branch / tally_code (migration 2210 side table; safeRows: empty before it exists).
     for (const r of await safeRows(
       executor,
-      `SELECT id, tally_cost_category, tally_cost_centre_code FROM branch_master WHERE id IN (${inList(branchIds)})`,
+      `SELECT entity_id, tally_name, tally_code FROM tally_legacy_name WHERE entity_type = 'branch' AND entity_id IN (${inList(branchIds)})`,
       branchIds,
     )) {
-      const b = ctx.branches.get(String(r.id));
+      const b = ctx.branches.get(String(r.entity_id));
       if (b) {
-        b.tallyCategory = String(r.tally_cost_category ?? "").trim() || null;
-        b.tallyCode = String(r.tally_cost_centre_code ?? "").trim() || null;
+        b.tallyCategory = String(r.tally_name ?? "").trim() || null;
+        b.tallyCode = String(r.tally_code ?? "").trim() || null;
       }
     }
   }
-  for (const r of await safeRows(executor, `SELECT sub_head_name, tally_ledger_name FROM finance_expense_sub_head_master WHERE tally_ledger_name IS NOT NULL AND TRIM(tally_ledger_name) <> ''`))
-    ctx.subHeadTally.set(String(r.sub_head_name).trim().toLowerCase(), String(r.tally_ledger_name).trim());
+  for (const r of await safeRows(executor, `SELECT s.sub_head_name, t.tally_name FROM tally_legacy_name t
+      JOIN finance_expense_sub_head_master s ON s.id = t.entity_id
+      WHERE t.entity_type = 'expense_sub_head' AND t.tally_name IS NOT NULL AND TRIM(t.tally_name) <> ''`))
+    ctx.subHeadTally.set(String(r.sub_head_name).trim().toLowerCase(), String(r.tally_name).trim());
   ctx.grnHolder = await resolveImprestHolders(executor, rows);
   const holderIds = [...new Set(ctx.grnHolder.values())];
   if (holderIds.length) {

@@ -56,13 +56,16 @@ async function byId(table: string, columns: string, ids: string[]): Promise<Map<
   return out;
 }
 
-/** byId, falling back to columns that exist before migration 2210 is applied. */
-async function byIdWithFallback(table: string, columns: string, fallback: string, ids: string[]): Promise<Map<string, any>> {
+/** Legacy Tally names (migration 2210 side table) for these ids; empty before the table exists. */
+async function legacyNames(entityType: "branch" | "expense_sub_head", ids: string[]): Promise<Map<string, { name: string | null; code: string | null }>> {
+  const out = new Map<string, { name: string | null; code: string | null }>();
+  if (!ids.length) return out;
   try {
-    return await byId(table, columns, ids);
-  } catch {
-    return byId(table, fallback, ids);
-  }
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT entity_id, tally_name, tally_code FROM tally_legacy_name WHERE entity_type = ? AND entity_id IN (${inList(ids)})`, [entityType, ...ids]);
+    for (const r of rows) out.set(String(r.entity_id), { name: String(r.tally_name ?? "").trim() || null, code: String(r.tally_code ?? "").trim() || null });
+  } catch { /* table not created yet */ }
+  return out;
 }
 
 export function ledgerVoucherXml(v: Pick<Voucher, "remoteId" | "type" | "number" | "date" | "narration" | "lines">): string {
@@ -113,11 +116,15 @@ async function glVouchers(month: string, masters: TallyMasters, exceptions: Ledg
   const vendors = await byId("vendor_master", "COALESCE(NULLIF(TRIM(tally_name), ''), vendor_name) AS n", idsOf("vendor"));
   const payables = await byId("payable_account_master", "tally_ledger_name AS n, account_name, account_type", idsOf("payable_account"));
   const banks = await byId("company_bank_account", "tally_ledger_name AS n", idsOf("bank_account"));
-  const subHeads = await byIdWithFallback("finance_expense_sub_head_master",
-    "COALESCE(NULLIF(TRIM(tally_ledger_name), ''), sub_head_name) AS n, pnl_bucket", "sub_head_name AS n, pnl_bucket", idsOf("expense_sub_head"));
-  const branches = await byIdWithFallback("branch_master",
-    "COALESCE(NULLIF(TRIM(tally_cost_category), ''), branch_name) AS n, branch_name, tally_cost_centre_code AS code", "branch_name AS n, branch_name, NULL AS code",
+  const subHeads = await byId("finance_expense_sub_head_master", "sub_head_name AS n, pnl_bucket", idsOf("expense_sub_head"));
+  for (const [id, l] of await legacyNames("expense_sub_head", [...subHeads.keys()])) if (l.name) subHeads.get(id).n = l.name;
+  const branches = await byId("branch_master", "branch_name AS n, branch_name, NULL AS code",
     [...new Set(entries.map((e) => String(e.branch_id ?? "")).filter(Boolean))]);
+  for (const [id, l] of await legacyNames("branch", [...branches.keys()])) {
+    const b = branches.get(id);
+    if (l.name) b.n = l.name;
+    b.code = l.code;
+  }
   const pvs = await byId("payment_voucher",
     "voucher_number, voucher_type, source_type, linked_imprest_manager_id, linked_client_invoice_id, transaction_ref, particulars, remarks",
     entries.filter((e) => e.source_type === "payment_voucher").map((e) => String(e.source_id)));
