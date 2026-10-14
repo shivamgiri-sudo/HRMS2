@@ -15,6 +15,7 @@ import {
   ShoppingCart,
   Receipt,
   CreditCard,
+  Workflow,
 } from "lucide-react";
 import {
   BarChart,
@@ -37,6 +38,7 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { MoneyFlowTab } from "@/components/finance/ledger/MoneyFlowTab";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -807,6 +809,7 @@ function PayablesAgingTab() {
 // ---------------------------------------------------------------------------
 
 const TABS = [
+  { key: "money-flow", label: "Money Flow", icon: Workflow },
   { key: "overview", label: "Overview", icon: BarChart3 },
   { key: "expense-trends", label: "Expense Trends", icon: ShoppingCart },
   { key: "revenue-collections", label: "Revenue & Collections", icon: Receipt },
@@ -816,15 +819,18 @@ const TABS = [
 type TabKey = (typeof TABS)[number]["key"];
 
 export function FinanceAnalyticsContent() {
-  const [activeTab, setActiveTab] = useState<TabKey>("overview");
+  const [activeTab, setActiveTab] = useState<TabKey>("money-flow");
+  const overview = activeTab === "overview";
   const snapshotQuery = useQuery<SnapshotData>({
     queryKey: ["finance-analytics-snapshot"],
+    enabled: overview,
     queryFn: () =>
       hrmsApi.get("/api/finance/analytics/snapshot").then((r) => r.data),
   });
 
   const agingQuery = useQuery<AgingRow[]>({
     queryKey: ["finance-analytics-ar-aging"],
+    enabled: overview,
     queryFn: () =>
       hrmsApi
         .get("/api/finance/analytics/ar-aging")
@@ -833,6 +839,7 @@ export function FinanceAnalyticsContent() {
 
   const trendQuery = useQuery<TrendRow[]>({
     queryKey: ["finance-analytics-collection-trend"],
+    enabled: overview,
     queryFn: () =>
       hrmsApi
         .get("/api/finance/analytics/collection-trend")
@@ -841,6 +848,7 @@ export function FinanceAnalyticsContent() {
 
   const forecastQuery = useQuery<ForecastRow[]>({
     queryKey: ["finance-analytics-cash-flow"],
+    enabled: overview,
     queryFn: () =>
       hrmsApi
         .get("/api/finance/analytics/cash-flow-forecast")
@@ -859,7 +867,7 @@ export function FinanceAnalyticsContent() {
         <div>
           <h1 className="text-xl font-bold">Finance Analytics</h1>
           <p className="text-blue-100 text-sm mt-0.5">
-            Receivables, aging, collections, expense trends and payables.
+            Money flow, receivables, aging, collections, expense trends and payables.
           </p>
         </div>
       </div>
@@ -886,6 +894,8 @@ export function FinanceAnalyticsContent() {
           );
         })}
       </div>
+
+      {activeTab === "money-flow" && <MoneyFlowTab />}
 
       {/* Overview tab */}
       {activeTab === "overview" && (

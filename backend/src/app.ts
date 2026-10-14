@@ -384,6 +384,7 @@ import { pnlBranchReviewRouter } from "./modules/process-pnl/pnl-branch-review.r
 import { clientPaymentTrackingRouter } from "./modules/finance/client-payment-tracking.routes.js";
 import mandateSeatTrackingRouter from "./modules/finance/mandate-seat-tracking.routes.js";
 import { financeAnalyticsRouter } from "./modules/finance/finance-analytics.routes.js";
+import { moneyFlowRouter } from "./modules/finance/money-flow.routes.js";
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
 import billabilityRouter from "./modules/process-pnl/billability.routes.js";
 import { annualBudgetSummaryRouter } from "./modules/process-pnl/annual-budget-summary.routes.js";
@@ -909,6 +910,7 @@ app.use("/api/finance/revenue-forecasts", revenueForecastRouter);
 app.use("/api/finance/pnl-branch-review", pnlBranchReviewRouter);
 app.use("/api/finance/client-payments", clientPaymentTrackingRouter);
 app.use("/api/finance/mandate-seats", mandateSeatTrackingRouter);
+app.use("/api/finance/money-flow", moneyFlowRouter);
 app.use("/api/finance/analytics", financeAnalyticsRouter);
 app.use("/api/finance", processPnlRouter);
 // Mounted on its own base after processPnlRouter. Owning /api/finance/billability/* outright
