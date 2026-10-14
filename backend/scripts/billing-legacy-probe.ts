@@ -122,7 +122,7 @@ async function main() {
   await bill("legacy latest bills", `SELECT bill_no, state_code, DATE_FORMAT(createdate,'%Y-%m-%d') AS created
      FROM tbl_invoice WHERE bill_no IS NOT NULL AND bill_no <> '' ORDER BY id DESC LIMIT 15`);
   await bill("legacy proforma counter", `SELECT * FROM bill_no_master`);
-  await hrms("HRMS bill/proforma sequences", `SELECT kind, scope_key, `last_value`, updated_at FROM client_invoice_number_sequence ORDER BY kind, scope_key`);
+  await hrms("HRMS bill/proforma sequences", `SELECT kind, scope_key, \`last_value\`, updated_at FROM client_invoice_number_sequence ORDER BY kind, scope_key`);
   await hrms("HRMS live invoices/provisions", `SELECT (SELECT COUNT(*) FROM client_invoice WHERE is_migrated = 0) AS live_invoices,
      (SELECT COUNT(*) FROM client_provision) AS provisions, (SELECT MAX(created_at) FROM client_invoice WHERE is_migrated = 0) AS last_live`);
 }
