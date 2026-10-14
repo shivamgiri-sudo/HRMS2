@@ -244,7 +244,9 @@ function enrichColumn(
    * every cost centre counted in the branch that runs it). When it has the column's branch, a BRANCH column uses it
    * for every period, so no two tabs can show a branch a different revenue. Process columns never use it.
    */
-  branchRevenue?: Map<string, number>
+  branchRevenue?: Map<string, number>,
+  /** Unspent headroom of open budget lines — added into Indirect Cost; see indirectCostTotal below. */
+  openBudgetReserve?: ActualsByKey
 ): Record<string, unknown> {
   /*
    * A6 FIX (2026-09-01): idc/seat must never inherit the WHOLE branch's total just because a
@@ -498,9 +500,17 @@ function enrichColumn(
    */
   const grnConsumed = pick(idc);
   const grnCommitted = committedIdc ? pick(committedIdc) : 0;
-  const indirectCostTotal = grnConsumed + grnCommitted;
+  /*
+   * Owner rule 2026-10-06: a budget line still OPEN is blocked at its full amount, so its unspent
+   * headroom is cost on top of consumed + reserved (cost = max(budget, consumed + reserved));
+   * closing the line releases it. Published as its own line so the total stays auditable and the
+   * Statement agrees with Live P&L, CEO Overview and the Branch Review for the same month.
+   */
+  const grnOpenBudget = openBudgetReserve ? pick(openBudgetReserve) : 0;
+  const indirectCostTotal = grnConsumed + grnCommitted + grnOpenBudget;
   out.grnConsumed = grnConsumed;
   out.grnCommitted = grnCommitted;
+  out.grnOpenBudget = grnOpenBudget;
 
   const directCostTotal = agentSalary + dscSalary + bmcSalary;
   const totalCost = directCostTotal + indirectCostTotal;
@@ -609,7 +619,7 @@ function enrichColumn(
  * is inserted twice. Labels match src/components/finance/pnl/pnlLabels.ts (GRN_CONSUMED /
  * GRN_COMMITTED), which the Statement view also applies by component key.
  */
-export const GRN_BREAKDOWN_COMPONENT_KEYS = { consumed: "grn_consumed", committed: "grn_committed" } as const;
+export const GRN_BREAKDOWN_COMPONENT_KEYS = { consumed: "grn_consumed", committed: "grn_committed", openBudget: "grn_open_budget" } as const;
 
 function withGrnBreakdownRows(components: ComponentDefinition[]): ComponentDefinition[] {
   const idcIndex = components.findIndex((c) => c.component_key === "total_idc");
@@ -635,6 +645,9 @@ function withGrnBreakdownRows(components: ComponentDefinition[]): ComponentDefin
     present.has(GRN_BREAKDOWN_COMPONENT_KEYS.committed)
       ? null
       : breakdown(GRN_BREAKDOWN_COMPONENT_KEYS.committed, "GRN Committed (reserved)", "grnCommitted", 0.2),
+    present.has(GRN_BREAKDOWN_COMPONENT_KEYS.openBudget)
+      ? null
+      : breakdown(GRN_BREAKDOWN_COMPONENT_KEYS.openBudget, "Open budget not yet spent", "grnOpenBudget", 0.3),
   ].filter((c): c is ComponentDefinition => c !== null);
   return [...components.slice(0, idcIndex + 1), ...extra, ...components.slice(idcIndex + 1)];
 }
@@ -658,6 +671,8 @@ export interface StatementDependencies {
   }>>;
   /** Live P&L's seat-rate revenue estimate for not-yet-billed cost centres (see enrichColumn). */
   getRevenueEstimate?: (period: string) => Promise<ActualsByKey>;
+  /** Unspent headroom of open budget lines, counted as cost (see enrichColumn). */
+  getOpenBudgetReserve?: (period: string) => Promise<ActualsByKey>;
   /** GRN Committed (reserved, ex-GST). When a caller injects getIndirectCost but not this, it is
    *  treated as none (a test double for consumed must not silently hit the live reserved reader). */
   getCommittedIndirectCost?: (period: string) => Promise<ActualsByKey>;
@@ -684,6 +699,33 @@ export async function getReconciledBranchRevenue(period: string): Promise<Map<st
   const rec = await getPnlReconciliation(period);
   const out = new Map<string, number>();
   for (const b of rec.branches) if (b.branchId) out.set(String(b.branchId), Number(b.revenue ?? 0));
+  return out;
+}
+
+/**
+ * Unspent headroom of OPEN budget lines per branch / process / cost centre (owner rule 2026-10-06:
+ * an open line counts at its full budget until it is closed, so cost = max(budget, consumed +
+ * reserved)). Read from getPnlReconciliation, the same figure Live P&L, CEO Overview and the
+ * Branch Review subtract, so no tab can show a different cost for the same month. Branch totals
+ * include budget lines pooled at branch level (no cost centre), exactly as the rollup does; a
+ * process column only gets what its cost centres carry (A6: nothing is broadcast into a process).
+ */
+export async function getOpenBudgetReserveActuals(period: string): Promise<ActualsByKey> {
+  const out = emptyEstimate();
+  const rec = await getPnlReconciliation(period);
+  const rows = rec.rows.filter((row) => (row.openBudgetReserve ?? 0) > 0);
+  const processByCc = await getCostCentreProcessIds(rows.map((row) => row.costCentreId));
+  out.ccKeys = new Map();
+  for (const row of rows) {
+    const amount = row.openBudgetReserve ?? 0;
+    out.byCostCentre.set(row.costCentreId, (out.byCostCentre.get(row.costCentreId) ?? 0) + amount);
+    out.ccKeys.set(row.costCentreId, { branchId: row.branchId, processId: processByCc.get(row.costCentreId) ?? null });
+    const processId = processByCc.get(row.costCentreId);
+    if (processId) out.byProcess.set(processId, (out.byProcess.get(processId) ?? 0) + amount);
+  }
+  for (const b of rec.branches) {
+    if (b.branchId && (b.openBudgetReserve ?? 0) > 0) out.byBranch.set(String(b.branchId), Number(b.openBudgetReserve));
+  }
   return out;
 }
 
@@ -840,7 +882,9 @@ export async function getStatement(
   const periodOpen = isOpenPeriod(periodCode);
   const committedReader = deps.getCommittedIndirectCost
     ?? (deps.getIndirectCost ? async () => emptyEstimate() : getCommittedIndirectCostActuals);
-  const [idc, committedIdc, driverRevenue, invoicedRevenueAll, seat, people, manualAdjustments] = await Promise.all([
+  const openBudgetReader = deps.getOpenBudgetReserve
+    ?? (deps.getIndirectCost ? async () => emptyEstimate() : getOpenBudgetReserveActuals);
+  const [idc, committedIdc, driverRevenue, invoicedRevenueAll, seat, people, manualAdjustments, openBudgetReserve] = await Promise.all([
     (deps.getIndirectCost ?? getIndirectCostActuals)(periodCode),
     committedReader(periodCode),
     (deps.getDriverRevenue ?? getDriverRevenueActuals)(periodCode),
@@ -848,6 +892,7 @@ export async function getStatement(
     (deps.getSeatRevenue ?? getSeatRevenueActuals)(periodCode),
     (deps.getPeopleCost ?? getRunningPeopleCost)(periodCode),
     (deps.getManualAdjustments ?? getApprovedAdjustmentsByProcess)(periodCode),
+    openBudgetReader(periodCode).catch(() => emptyEstimate()),
   ]);
   // Only a CLOSED month still inside the estimate window can carry one (see enrichColumn). Any
   // failure degrades to "no estimate", exactly as Live P&L and CEO Overview degrade.
@@ -884,6 +929,7 @@ export async function getStatement(
       committedIdc,
       forecastCcs.length ? forecast : undefined,
       branchRevenue,
+      openBudgetReserve,
     );
     // Coverage belongs on the column, not among the money rows: it qualifies how far the whole
     // column can be trusted, and a consumer must be able to see that before reading any figure in it.
