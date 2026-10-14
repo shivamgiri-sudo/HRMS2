@@ -12,9 +12,13 @@ import { billQuery } from "../../db/billDb.js";
  *
  * Two tiers, because the second entry is often typed differently:
  *   exact     same bill number (ignoring punctuation and case) and amount within Rs 2
- *   probable  amount within Rs 2 and either the same legacy vendor within 7 days of the bill date
- *             ("NA" bills, a mistyped bill number; a month apart is a new bill, e.g. monthly rent)
- *             or one bill number ending in the other
+ *   probable  amount within Rs 2 and any of:
+ *               - the same bill number once the financial-year part is dropped ("SSC/848/2026-27" vs
+ *                 "SSC/848/26-27"), or one bill number ending in the other ("26-27/91" vs "2026-27/91");
+ *               - the same vendor within 7 days of the bill date, the vendor matched by legacy id or by
+ *                 name (one starting with the other: "Travelling" / "Travelling Exp Payable (Ahm)",
+ *                 "RELIANCE JIO INFOCOMM LIMITED (GUJ)" / "Reliance Jio Infocomm Limited") — this is
+ *                 what catches "NA" and mistyped bill numbers. A month apart is a new bill (monthly rent).
  *             ("26-27/91" vs "2026-27/91")
  * Both are left out with the legacy GRN named, so Accounts can see it on the check sheet.
  *
@@ -30,8 +34,12 @@ export type LegacyBill = {
   grnNumber: string;
   amount: number;
   billKey: string;
+  /** billCore() of the bill number as written. */
+  billCore: string;
   /** "L<tbl_vendormaster.Id>" when known, else "H<vendor_master.id>". */
   vendorKey: string | null;
+  /** Vendor / Tally name, lower-case letters and digits only. */
+  vendorName: string;
   billDate: string | null; // YYYY-MM-DD
   source: "hrms-migrated" | "db_bill";
 };
@@ -41,6 +49,8 @@ export type LegacyBillIndex = {
   byBill: Map<string, LegacyBill[]>;
   /** HRMS vendor_master.id -> vendor key, for the GRNs being exported. */
   vendorKeys: Map<string, string>;
+  /** HRMS vendor_master.id -> loose vendor name (Tally name, else vendor name). */
+  vendorNames: Map<string, string>;
 };
 
 export type LegacyHit = { bill: LegacyBill; kind: "exact" | "probable" };
@@ -49,6 +59,16 @@ export type LegacyHit = { bill: LegacyBill; kind: "exact" | "probable" };
 export const normaliseBillNo = (value: unknown) => String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 const usable = (key: string) => key.length >= 2 && key !== "NA" && key !== "NIL";
+
+/** The bill number without its financial-year part: "SSC/848/2026-27" and "SSC/848/26-27" -> "SSC848". */
+export const billCore = (value: unknown) => {
+  const core = normaliseBillNo(String(value ?? "").replace(/(?<!\d)(?:20)?\d{2}\s*-\s*\d{2}(?!\d)/g, " "));
+  return core.length >= 3 ? core : normaliseBillNo(value);
+};
+
+const looseName = (value: unknown) => String(value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const sameVendorName = (a: string, b: string) =>
+  a.length >= 6 && b.length >= 6 && (a.startsWith(b) || b.startsWith(a));
 
 /** db_bill keeps dates as dd-mm-yyyy text; HRMS as DATE. */
 const isoDate = (value: unknown): string | null => {
@@ -66,7 +86,7 @@ const vendorKeyOf = (code: unknown, id: unknown) => {
 };
 
 export async function loadLegacyBills(executor: Executor, rows: RowDataPacket[]): Promise<LegacyBillIndex> {
-  const index: LegacyBillIndex = { bills: [], byBill: new Map(), vendorKeys: new Map() };
+  const index: LegacyBillIndex = { bills: [], byBill: new Map(), vendorKeys: new Map(), vendorNames: new Map() };
   const vendorRows = rows.filter((r) => r.grn_type !== "imprest");
   if (!vendorRows.length) return index;
 
@@ -77,12 +97,13 @@ export async function loadLegacyBills(executor: Executor, rows: RowDataPacket[])
     const out = new Map<string, string>();
     if (!ids.length) return out;
     const [found] = (await executor.execute(
-      `SELECT id, vendor_code FROM vendor_master WHERE id IN (${ids.map(() => "?").join(",")})`,
+      `SELECT id, vendor_code, COALESCE(NULLIF(TRIM(tally_name), ''), vendor_name) AS n FROM vendor_master WHERE id IN (${ids.map(() => "?").join(",")})`,
       ids,
     )) as [RowDataPacket[], unknown];
     for (const v of found) {
       const k = vendorKeyOf(v.vendor_code, v.id);
       if (k) out.set(String(v.id), k);
+      index.vendorNames.set(String(v.id), looseName(v.n));
     }
     return out;
   };
@@ -102,7 +123,7 @@ export async function loadLegacyBills(executor: Executor, rows: RowDataPacket[])
 
   try {
     const [migrated] = (await executor.execute(
-      `SELECT grn_number, invoice_number, amount_with_tax, amount, vendor_id, bill_date
+      `SELECT grn_number, invoice_number, amount_with_tax, amount, vendor_id, vendor_name, bill_date
          FROM grn_request
         WHERE bill_source_id IS NOT NULL AND grn_type = 'vendor' AND bill_date >= ?`,
       [since],
@@ -118,7 +139,9 @@ export async function loadLegacyBills(executor: Executor, rows: RowDataPacket[])
         grnNumber: String(m.grn_number ?? ""),
         amount: Number(m.amount_with_tax) > 0 ? Number(m.amount_with_tax) : Number(m.amount),
         billKey: normaliseBillNo(m.invoice_number),
+        billCore: billCore(m.invoice_number),
         vendorKey: keys.get(String(m.vendor_id ?? "")) ?? null,
+        vendorName: looseName(m.vendor_name),
         billDate: isoDate(m.bill_date),
         source: "hrms-migrated",
       });
@@ -130,8 +153,9 @@ export async function loadLegacyBills(executor: Executor, rows: RowDataPacket[])
   if (env.BILL_DB_HOST) {
     try {
       const legacy = (await billQuery<any>(
-        `SELECT GrnNo, bill_no, Amount, Vendor, bill_date FROM expense_entry_master
-          WHERE ExpenseEntryType = 'Vendor' AND DownloadStatus = 1 AND createdate >= ?`,
+        `SELECT m.GrnNo, m.bill_no, m.Amount, m.Vendor, m.bill_date, v.TallyHead
+           FROM expense_entry_master m LEFT JOIN tbl_vendormaster v ON v.Id = m.Vendor
+          WHERE m.ExpenseEntryType = 'Vendor' AND m.DownloadStatus = 1 AND m.createdate >= ?`,
         [since],
       )) as any[];
       for (const l of legacy)
@@ -139,7 +163,9 @@ export async function loadLegacyBills(executor: Executor, rows: RowDataPacket[])
           grnNumber: String(l.GrnNo ?? ""),
           amount: Number(l.Amount) || 0,
           billKey: normaliseBillNo(l.bill_no),
+          billCore: billCore(l.bill_no),
           vendorKey: l.Vendor ? `L${l.Vendor}` : null,
+          vendorName: looseName(l.TallyHead),
           billDate: isoDate(l.bill_date),
           source: "db_bill",
         });
@@ -166,12 +192,18 @@ export function legacyDuplicate(
     if (exact) return { bill: exact, kind: "exact" };
   }
   const vendorKey = index.vendorKeys.get(String(row.vendor_id ?? "")) ?? null;
+  const vendorName = index.vendorNames.get(String(row.vendor_id ?? "")) || looseName(row.vendor_name);
   const billDate = isoDate(row.bill_date);
+  const core = usable(billKey) ? billCore(row.invoice_number) : "";
   for (const b of index.bills) {
     if (!near(b)) continue;
-    if (vendorKey && b.vendorKey === vendorKey && days(b.billDate, billDate) <= 7) return { bill: b, kind: "probable" };
-    if (billKey.length >= 4 && b.billKey.length >= 4 && (billKey.endsWith(b.billKey) || b.billKey.endsWith(billKey)))
-      return { bill: b, kind: "probable" };
+    if (core && usable(b.billKey)) {
+      if (b.billCore === core && core.length >= 3) return { bill: b, kind: "probable" };
+      if (billKey.length >= 4 && b.billKey.length >= 4 && (billKey.endsWith(b.billKey) || b.billKey.endsWith(billKey)))
+        return { bill: b, kind: "probable" };
+    }
+    const sameVendor = (vendorKey && b.vendorKey === vendorKey) || sameVendorName(vendorName, b.vendorName);
+    if (sameVendor && days(b.billDate, billDate) <= 7) return { bill: b, kind: "probable" };
   }
   return null;
 }
