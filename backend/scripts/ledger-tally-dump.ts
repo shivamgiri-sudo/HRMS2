@@ -49,7 +49,7 @@ const months = process.argv.slice(2).filter((m) => /^\d{4}-\d{2}$/.test(m));
 console.log(`company setting (GRN_TALLY_COMPANY): ${tallyCompanyName() ?? "(not set)"}`);
 for (const month of months.length ? months : ["2026-09", "2026-10"]) {
   const from = `${month}-01`;
-  const to = `${month}-31`;
+  const to = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
 
   await tryRun(`month-${month}`, async () => {
     const { xml, summary } = await buildLedgerTallyExport({ month, kind: "all" });
@@ -91,7 +91,7 @@ for (const month of months.length ? months : ["2026-09", "2026-10"]) {
 
   await tryRun(`gst-${month}`, async () => {
     const { gstExportService } = await import("../src/modules/gst/gst-export.service.js");
-    const regs = ((await gstExportService.listRegistrations()) as any[]).slice(0, 6);
+    const regs = ((await gstExportService.listRegistrations()) as any[]).filter((r) => String(r.latest_invoice_date ?? "").slice(0, 7) >= month.slice(0, 7) || new Date(r.latest_invoice_date) >= new Date(from));
     console.log(`\ngst registrations: ${JSON.stringify(regs)}`);
     const kinds = listVoucherKinds().map((k: any) => k.kind);
     for (const r of regs) {
