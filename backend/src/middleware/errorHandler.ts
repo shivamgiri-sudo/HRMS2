@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { randomBytes } from "crypto";
 import { ZodError } from "zod";
+import { captureServerError } from "../lib/errorTracking.js";
 
 const IS_PROD = process.env.NODE_ENV === "production";
 
@@ -13,7 +14,7 @@ export function notFoundHandler(req: Request, res: Response) {
 
 export function errorHandler(
   error: unknown,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
 ) {
@@ -65,6 +66,8 @@ export function errorHandler(
     // standard way to tell a client how long to wait before trying again.
     if (operationalError.code === "CIRCUIT_BREAKER_OPEN") {
       const retryAfter = operationalError.retryAfter ?? 30;
+      // Recorded as a warning grouped by code: a DB reconnect is one issue, not one per request.
+      captureServerError(error, req, { level: "warning", code: operationalError.code, status: 503 });
       res.set("Retry-After", String(retryAfter));
       return res.status(503).json({
         success: false,
@@ -90,6 +93,13 @@ export function errorHandler(
     // product already had clear, actionable wording for, and left them with no idea
     // what to do next. Only genuinely unexpected throws (no statusCode) are masked.
     if (statusCode && statusCode >= 500) {
+      // A 5xx the code chose on purpose (DigiLocker down, BGV provider not configured) is an
+      // outage signal, not a bug: warning level, grouped by its code.
+      captureServerError(error, req, {
+        level: "warning",
+        code: operationalError.code ?? `HTTP_${statusCode}`,
+        status: statusCode,
+      });
       return res.status(statusCode).json({
         success: false,
         errorCode: operationalError.code ?? null,
@@ -100,6 +110,8 @@ export function errorHandler(
     // but return a reference the candidate can quote so the log line is findable.
     const reference = randomBytes(4).toString("hex");
     console.error(`API Error reference=${reference}`, error);
+    // Same reference the user is shown, so a Helpdesk ticket quoting it finds this event.
+    captureServerError(error, req, { reference, status: 500, code: operationalError.code ?? null });
     return res.status(500).json({
       success: false,
       reference,
@@ -111,6 +123,7 @@ export function errorHandler(
 
   const reference = randomBytes(4).toString("hex");
   console.error(`API Error reference=${reference}`, error);
+  captureServerError(error instanceof Error ? error : new Error(String(error)), req, { reference, status: 500 });
   return res.status(500).json({
     success: false,
     reference,

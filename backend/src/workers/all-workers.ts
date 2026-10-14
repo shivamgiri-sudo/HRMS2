@@ -1,5 +1,7 @@
 import "dotenv/config";
 import { readBuildInfo } from "../shared/buildInfo.js";
+import { captureJobError, flushErrorTracking, initErrorTracking } from "../lib/errorTracking.js";
+import { startUptimeHeartbeat, stopUptimeHeartbeat } from "../lib/uptimeHeartbeat.js";
 
 import { startAccessExpiryScheduler, stopAccessExpiryScheduler } from "./access-expiry.worker.js";
 import { startMobilityTransferWorker, stopMobilityTransferWorker } from "./mobility-transfer.worker.js";
@@ -655,14 +657,26 @@ async function startAllWorkers(): Promise<void> {
   console.log("================================================\n");
   console.log("[workers] biometric attendance sync uses cosec-sync worker; legacy migrate-ncosec script is manual-only");
 
+  // Both are no-ops unless their env vars are set (ERROR_TRACKING_WORKERS_DSN /
+  // UPTIME_KUMA_WORKERS_PUSH_URL). Error tracking starts first so a worker that fails to start
+  // is reported, not just logged.
+  await initErrorTracking("workers");
+  let started = 0;
+  const failed: string[] = [];
   for (const worker of WORKERS) {
     try {
       await worker.start();
+      started++;
       console.log(`  ✓ ${worker.name}`);
     } catch (err: any) {
+      failed.push(worker.name);
       console.error(`  ✗ ${worker.name} failed to start: ${err.message}`);
+      captureJobError(err, `start:${worker.name}`);
     }
   }
+  startUptimeHeartbeat(() =>
+    failed.length ? `${started}/${WORKERS.length} workers running; failed: ${failed.join(", ")}` : `${started}/${WORKERS.length} workers running`,
+  );
 
   console.log("\n[workers] All workers running. Press Ctrl+C to stop.\n");
 }
@@ -750,8 +764,10 @@ function shutdown(): void {
   stopHcGapAlertScheduler();
   stopCostCentreDriftAlertScheduler();
   clearAllTimers();
+  stopUptimeHeartbeat();
   console.log("[workers] Clean shutdown complete.");
-  process.exit(0);
+  // Send queued error reports (bounded, no-op when disabled), then exit.
+  void flushErrorTracking(1500).finally(() => process.exit(0));
 }
 
 process.on("SIGTERM", shutdown);
@@ -759,5 +775,6 @@ process.on("SIGINT", shutdown);
 
 startAllWorkers().catch(err => {
   console.error("[workers] Fatal startup error:", err);
-  process.exit(1);
+  captureJobError(err, "startup");
+  void flushErrorTracking(1500).finally(() => process.exit(1));
 });

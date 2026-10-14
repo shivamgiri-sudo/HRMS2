@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "next-themes";
 import App from "./App.tsx";
 import "./index.css";
+import { initErrorTracking } from "@/lib/errorTracking";
 
 const PUSH_SW_URL = "/sw-push.js";
 
@@ -113,6 +114,8 @@ function installChunkLoadRecovery() {
 
 void clearLegacyServiceWorkers().then(() => registerPushServiceWorker());
 installChunkLoadRecovery();
+// Error tracking: does nothing (and downloads nothing) unless VITE_ERROR_TRACKING_DSN is set.
+void initErrorTracking();
 
 createRoot(document.getElementById("root")!).render(
   <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} forcedTheme="light">

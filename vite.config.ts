@@ -23,6 +23,17 @@ function versionUpdatePlugin(): Plugin {
   };
 }
 
+// Release tag for error reports: the commit being built, so an error in GlitchTip points at the
+// exact deploy. CI provides GITHUB_SHA; a local build asks git; failure leaves it unset.
+if (!process.env.VITE_APP_RELEASE) {
+  try {
+    process.env.VITE_APP_RELEASE =
+      process.env.GITHUB_SHA || execFileSync("git", ["rev-parse", "HEAD"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    /* not a git checkout: release stays unset */
+  }
+}
+
 export default defineConfig(({ mode }) => ({
   server: {
     host: "0.0.0.0",
@@ -106,6 +117,8 @@ export default defineConfig(({ mode }) => ({
           if (id.includes("xlsx")) return "vendor-xlsx";
           if (id.includes("framer-motion")) return "vendor-motion";
           if (/[\\/]node_modules[\\/](@xyflow|@dagrejs)[\\/]/.test(id)) return "vendor-xyflow";
+          // Loaded only when error tracking is switched on (dynamic import in lib/errorTracking.ts).
+          if (id.includes("@sentry")) return "vendor-errortracking";
           return undefined;
         },
       },

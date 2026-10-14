@@ -1,11 +1,14 @@
 import type { Server } from "http";
 import { app } from "./app.js";
+import { initErrorTracking, flushErrorTracking } from "./lib/errorTracking.js";
 import { env } from "./config/env.js";
 import { db, setSessionMaxExecutionTime } from "./db/mysql.js";
 import { runPendingMigrations, verifySchemaVersion } from "./db/runPendingMigrations.js";
 import { backfillCriteriaVersions } from "./modules/selection/criteria.service.js";
 import { checkRequiredTables, REQUIRED_TABLES } from "./db/schema-presence-check.js";
 
+// Error tracking: a no-op unless ERROR_TRACKING_DSN is set (see lib/errorTracking.ts).
+void initErrorTracking("api");
 // API process only (hrms2-workers never loads server.ts): cap SELECTs at 5 min. 0 disables.
 setSessionMaxExecutionTime(Number(process.env.DB_API_MAX_EXECUTION_MS ?? 300_000));
 
@@ -164,6 +167,8 @@ async function gracefulShutdown(signal: string): Promise<void> {
     console.error("[shutdown] Error closing database:", error);
   }
 
+  // Send any queued error reports before exiting (bounded; no-op when disabled).
+  await flushErrorTracking(2000);
   console.log("[shutdown] Graceful shutdown complete");
 
   // Force exit after timeout if connections don't drain
