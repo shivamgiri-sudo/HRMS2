@@ -972,6 +972,10 @@ function applyFilterChange(prev: Record<string, string>, key: string, value: str
   if (!value) return next;
   if (key === "month") { delete next.from; delete next.to; }
   if (key === "from" || key === "to") delete next.month;
+  // "from" and "to" are independent inputs: editing "from" alone left a stale "to" from an earlier run
+  // riding along into the next export (reported: exporting 13 Oct returned rows through 18 Oct). Editing
+  // "from" re-syncs "to" to match, so a single-date pick is a single day; widening is a deliberate second edit.
+  if (key === "from") next.to = value;
   return next;
 }
 

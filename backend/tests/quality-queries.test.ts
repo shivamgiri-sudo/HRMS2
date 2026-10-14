@@ -1,489 +1,156 @@
 /**
- * Quality Query Builders Tests — Phase 7.1 Task D1
+ * Quality query builders (src/lib/query-builders/quality-queries.ts).
  *
- * Tests for:
- * - Query structure validation
- * - Parameter binding (no SQL injection)
- * - Sorting logic (date/cq/fatal)
+ * Rewritten for the call-centre KPI port (tausif-mis 12588927b): the CQ formula is now computed per
+ * call from the graded parameters (blank excluded) instead of trusting the stored quality_percentage,
+ * and the old buildCQScoreQuery / buildWeaknessDetailQuery were replaced by agent-scoped builders.
+ *
+ * Covers: result shape, parameter binding (user input never reaches the SQL text), the owner check on
+ * call detail, sorting, clamping of LIMIT/OFFSET and the shared CQ / fatal expressions.
  */
-
 import { describe, it, expect } from 'vitest';
 import {
-  buildCQScoreQuery,
-  buildWeaknessDetailQuery,
-  buildCallsReviewQuery,
+  CQ_PARAM_COLS,
+  CQ_SCORE_SQL,
+  FATAL_SQL,
+  QUALITY_GROUPS,
+  QUALITY_PARAMS,
+  buildAgentAuditedCallsQuery,
+  buildAgentClientsQuery,
+  buildAgentTotalsByClientQuery,
+  buildAgentWeeklyQuery,
   buildCallDetailQuery,
+  buildCallsReviewQuery,
+  buildPeerParamTotalsQuery,
   buildTotalCallsCountQuery,
 } from '../src/lib/query-builders/quality-queries.js';
 
-describe('Quality Query Builders', () => {
-  describe('buildCQScoreQuery', () => {
-    it('returns SQL query string and parameters for agent CQ score', () => {
-      const employeeCode = 'EMP-STF-001';
-      const daysBack = 7;
+const EMP = 'MAS60429';
 
-      const result = buildCQScoreQuery(employeeCode, daysBack);
-
-      expect(result).toHaveProperty('query');
-      expect(result).toHaveProperty('params');
-      expect(typeof result.query).toBe('string');
-      expect(Array.isArray(result.params)).toBe(true);
-    });
-
-    it('query contains required table and aggregation functions', () => {
-      const result = buildCQScoreQuery('EMP-STF-001', 7);
-
-      expect(result.query).toContain('call_quality_assessment');
-      expect(result.query).toContain('AVG(quality_percentage)');
-      expect(result.query).toContain('ROW_NUMBER()');
-    });
-
-    it('includes employee code in parameters (no SQL injection risk)', () => {
-      const employeeCode = 'EMP-STF-001';
-      const result = buildCQScoreQuery(employeeCode, 7);
-
-      expect(result.params).toContain(employeeCode);
-      // Parameters should be array of values, not string concatenation
-      expect(Array.isArray(result.params)).toBe(true);
-      expect(result.params.length).toBeGreaterThan(0);
-    });
-
-    it('calculates weekly breakdown', () => {
-      const result = buildCQScoreQuery('EMP-STF-001', 7);
-
-      expect(result.query).toContain('DAYNAME');
-      expect(result.query).toContain('GROUP BY');
-    });
-
-    it('respects daysBack parameter', () => {
-      const result7 = buildCQScoreQuery('EMP-STF-001', 7);
-      const result30 = buildCQScoreQuery('EMP-STF-001', 30);
-
-      // Both should include INTERVAL but with different values
-      expect(result7.query).toContain('INTERVAL 7 DAY');
-      expect(result30.query).toContain('INTERVAL 30 DAY');
-    });
-
-    it('includes peer average calculation', () => {
-      const result = buildCQScoreQuery('EMP-STF-001', 7);
-
-      expect(result.query).toContain('peer');
-      expect(result.query.toLowerCase()).toContain('peer');
-    });
-
-    it('includes rank calculation', () => {
-      const result = buildCQScoreQuery('EMP-STF-001', 7);
-
-      expect(result.query).toContain('rank');
-      expect(result.query.toLowerCase()).toContain('rank_position');
-    });
+describe('CQ expressions', () => {
+  it('score is graded-parameters-passed over graded, so a blank parameter is excluded from both sides', () => {
+    expect(CQ_SCORE_SQL).toContain('q.ClientId');
+    for (const col of CQ_PARAM_COLS) expect(CQ_SCORE_SQL).toContain(col);
+    expect(CQ_SCORE_SQL).toContain('NULLIF');
   });
 
-  describe('buildWeaknessDetailQuery', () => {
-    it('returns SQL query and parameters for dimensional scores', () => {
-      const employeeCode = 'EMP-STF-001';
-      const result = buildWeaknessDetailQuery(employeeCode);
-
-      expect(result).toHaveProperty('query');
-      expect(result).toHaveProperty('params');
-      expect(typeof result.query).toBe('string');
-      expect(Array.isArray(result.params)).toBe(true);
-    });
-
-    it('query targets call_quality_assessment table', () => {
-      const result = buildWeaknessDetailQuery('EMP-STF-001');
-
-      expect(result.query).toContain('call_quality_assessment');
-    });
-
-    it('includes binary flag columns for dimensions', () => {
-      const result = buildWeaknessDetailQuery('EMP-STF-001');
-
-      expect(result.query).toContain('professionalism_maintained');
-      expect(result.query).toContain('active_listening');
-      expect(result.query).toContain('call_answered_within_5_seconds');
-    });
-
-    it('parameter binding prevents SQL injection', () => {
-      const maliciousCode = "EMP-001'; DROP TABLE employees; --";
-      const result = buildWeaknessDetailQuery(maliciousCode);
-
-      // Parameters should include the malicious string as a value, not execute it
-      expect(result.params).toContain(maliciousCode);
-      expect(Array.isArray(result.params)).toBe(true);
-      // Query should not contain concatenation, only ?
-      expect(result.query).not.toContain(maliciousCode);
-    });
-
-    it('includes peer average comparison', () => {
-      const result = buildWeaknessDetailQuery('EMP-STF-001');
-
-      expect(result.query).toContain('peer');
-    });
-
-    it('calculates gap (peer_avg - score)', () => {
-      const result = buildWeaknessDetailQuery('EMP-STF-001');
-
-      expect(result.query).toContain('gap');
-    });
-
-    it('returns multiple weakness categories (5 dimensions)', () => {
-      const result = buildWeaknessDetailQuery('EMP-STF-001');
-
-      // Query should have UNION to combine 5 categories
-      const unionCount = (result.query.match(/UNION ALL/g) || []).length;
-      expect(unionCount).toBeGreaterThanOrEqual(4); // 5 categories = 4 UNIONs
-    });
+  it('fatal means every fatal parameter explicitly failed (= 0), not merely blank', () => {
+    expect(FATAL_SQL).toContain('= 0');
+    expect(FATAL_SQL).toContain(' AND ');
   });
 
-  describe('buildCallsReviewQuery', () => {
-    it('returns paginated query with LIMIT and OFFSET', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
+  it('every parameter belongs to one of the five groups', () => {
+    for (const p of QUALITY_PARAMS) expect(QUALITY_GROUPS).toContain(p.group);
+  });
+});
 
-      expect(result.query).toContain('LIMIT');
-      expect(result.query).toContain('OFFSET');
-    });
-
-    it('binds the employee code and inlines a clamped LIMIT/OFFSET', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 5, 'date');
-
-      // employeeCode stays a bound parameter — it is user input.
-      expect(result.params).toEqual(['EMP-STF-001']);
-      // limit/offset are no longer bound. buildCallsReviewQuery moved to
-      // sqlLimitOffset(), which validates them and writes them into the SQL, because
-      // mysql2 does not reliably accept placeholders in LIMIT/OFFSET on a prepared
-      // statement. Safety comes from coercion and clamping instead of binding — see
-      // the injection test below, which exercises exactly that.
-      expect(result.query).toContain('LIMIT 10 OFFSET 5');
-    });
-
-    it('sorts by date (default)', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
-
-      expect(result.query).toContain('ORDER BY');
-      expect(result.query).toContain('CallDate');
-    });
-
-    it('sorts by quality percentage (cq)', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'cq');
-
-      expect(result.query).toContain('ORDER BY');
-      expect(result.query).toContain('quality_percentage');
-      expect(result.query).toContain('ASC'); // Lower CQ first
-    });
-
-    it('sorts by fatal flag (fatal)', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'fatal');
-
-      expect(result.query).toContain('ORDER BY');
-      expect(result.query).toContain('CASE'); // Fatal detection logic
-    });
-
-    it('limits result to 50 records maximum', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 100, 0, 'date');
-
-      // Capped by sqlLimitOffset's maxLimit, and asserted in the SQL because that is
-      // where the number now lives.
-      expect(result.query).toContain('LIMIT 50');
-      expect(result.query).not.toContain('LIMIT 100');
-    });
-
-    it('validates offset is non-negative', () => {
-      expect(buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date').query).toContain('OFFSET 0');
-      // A negative offset is floored rather than emitted, which would be a syntax error.
-      expect(buildCallsReviewQuery('EMP-STF-001', 10, -5, 'date').query).toContain('OFFSET 0');
-    });
-
-    it('cannot be injected through limit or offset now that they are inlined', () => {
-      // The assertion that matters most after the move off bound parameters: hostile
-      // input must not reach the SQL. Number() makes each of these NaN, so sqlLimitOffset
-      // falls back to its default limit and a zero offset.
-      const hostile = buildCallsReviewQuery(
-        'EMP-STF-001',
-        '10; DROP TABLE call_quality_assessment' as unknown as number,
-        "0 UNION SELECT * FROM employees" as unknown as number,
-        'date',
-      );
-
-      expect(hostile.query).not.toMatch(/DROP\s+TABLE/i);
-      expect(hostile.query).not.toMatch(/UNION\s+SELECT/i);
-      expect(hostile.query).toMatch(/LIMIT \d+ OFFSET \d+/);
-      expect(hostile.params).toEqual(['EMP-STF-001']);
-    });
-
-    it('returns calls from 30 days period', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
-
-      expect(result.query).toContain('30 DAY');
-    });
-
-    it('filters for INBOUND campaigns only', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
-
-      expect(result.query).toContain('INBOUND');
-    });
-
-    it('parameter binding prevents SQL injection in sorting', () => {
-      // sort is user-controlled, so it must never reach the SQL verbatim. It selects
-      // from a fixed set of ORDER BY clauses; anything else falls back to the default.
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
-      expect(result.params).toEqual(['EMP-STF-001']);
-      expect(typeof result.query).toBe('string');
-
-      const hostileSort = buildCallsReviewQuery(
-        'EMP-STF-001', 10, 0, "date; DROP TABLE employees" as unknown as 'date',
-      );
-      expect(hostileSort.query).not.toMatch(/DROP\s+TABLE/i);
-      expect(hostileSort.query).toContain('ORDER BY CallDate DESC');
-    });
+describe('agent-scoped builders', () => {
+  it('weekly: binds the agent code, reads the audit table, groups by weekday', () => {
+    const r = buildAgentWeeklyQuery(EMP, 7);
+    expect(r.params).toEqual([EMP]);
+    expect(r.query).toContain('db_audit.call_quality_assessment');
+    expect(r.query).toContain('DAYNAME');
+    expect(r.query).toContain('INTERVAL 7 DAY');
+    expect(r.query).not.toContain(EMP);
   });
 
-  describe('buildCallDetailQuery', () => {
-    it('returns query for single call with all fields', () => {
-      const callId = '684407';
-      const result = buildCallDetailQuery(callId);
-
-      expect(result).toHaveProperty('query');
-      expect(result).toHaveProperty('params');
-    });
-
-    it('targets call_quality_assessment table', () => {
-      const result = buildCallDetailQuery('684407');
-
-      expect(result.query).toContain('call_quality_assessment');
-    });
-
-    it('includes call ID in WHERE clause', () => {
-      const result = buildCallDetailQuery('684407');
-
-      expect(result.query).toContain('WHERE');
-      expect(result.query).toContain('id');
-    });
-
-    it('includes sub-score calculations', () => {
-      const result = buildCallDetailQuery('684407');
-
-      // Should calculate dimensional scores
-      expect(result.query).toContain('opening');
-      expect(result.query).toContain('soft_skills');
-      expect(result.query).toContain('hold_procedure');
-      expect(result.query).toContain('resolution');
-      expect(result.query).toContain('closing');
-    });
-
-    it('includes peer scenario comparison', () => {
-      const result = buildCallDetailQuery('684407');
-
-      expect(result.query).toContain('scenario');
-      expect(result.query).toContain('peer');
-    });
-
-    it('parameter binding prevents injection', () => {
-      const maliciousId = "684407'; DELETE FROM calls; --";
-      const result = buildCallDetailQuery(maliciousId);
-
-      // Malicious string should be in params, not query
-      expect(result.params).toContain(maliciousId);
-      expect(result.query).not.toContain(maliciousId);
-    });
-
-    it('returns recording URL field', () => {
-      const result = buildCallDetailQuery('684407');
-
-      expect(result.query).toContain('recording');
-    });
-
-    it('returns transcript field', () => {
-      const result = buildCallDetailQuery('684407');
-
-      expect(result.query).toContain('transcript');
-    });
+  it('weekly: clamps the look-back to 1..90 days', () => {
+    expect(buildAgentWeeklyQuery(EMP, 5000).query).toContain('INTERVAL 90 DAY');
+    expect(buildAgentWeeklyQuery(EMP, -3).query).toContain('INTERVAL 1 DAY');
+    expect(buildAgentWeeklyQuery(EMP, NaN as unknown as number).query).toContain('INTERVAL 7 DAY');
   });
 
-  describe('buildTotalCallsCountQuery', () => {
-    it('returns count query for pagination', () => {
-      const result = buildTotalCallsCountQuery('EMP-STF-001');
-
-      expect(result.query).toContain('COUNT(*)');
-    });
-
-    it('includes employee code parameter', () => {
-      const result = buildTotalCallsCountQuery('EMP-STF-001');
-
-      expect(result.params).toContain('EMP-STF-001');
-    });
-
-    it('filters for 30-day period', () => {
-      const result = buildTotalCallsCountQuery('EMP-STF-001');
-
-      expect(result.query).toContain('30 DAY');
-    });
-
-    it('filters for INBOUND campaigns', () => {
-      const result = buildTotalCallsCountQuery('EMP-STF-001');
-
-      expect(result.query).toContain('INBOUND');
-    });
-
-    it('parameter binding safe', () => {
-      const result = buildTotalCallsCountQuery('EMP-STF-001');
-
-      expect(Array.isArray(result.params)).toBe(true);
-      expect(typeof result.query).toBe('string');
-    });
+  it('clients: distinct client ids the agent was audited in, at least a 30 day look-back', () => {
+    const r = buildAgentClientsQuery(EMP, 7);
+    expect(r.params).toEqual([EMP]);
+    expect(r.query).toContain('DISTINCT ClientId');
+    expect(r.query).toContain('INTERVAL 30 DAY');
   });
 
-  describe('Query Structure Validation', () => {
-    it('all queries return { query, params } objects', () => {
-      const queries = [
-        buildCQScoreQuery('EMP-STF-001', 7),
-        buildWeaknessDetailQuery('EMP-STF-001'),
-        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
-        buildCallDetailQuery('684407'),
-        buildTotalCallsCountQuery('EMP-STF-001'),
-      ];
-
-      queries.forEach(q => {
-        expect(q).toHaveProperty('query');
-        expect(q).toHaveProperty('params');
-        expect(typeof q.query).toBe('string');
-        expect(Array.isArray(q.params)).toBe(true);
-        expect(q.query.length).toBeGreaterThan(0);
-      });
-    });
-
-    it('all queries use parameterized statements (no string concat)', () => {
-      const queries = [
-        buildCQScoreQuery('EMP-STF-001', 7),
-        buildWeaknessDetailQuery('EMP-STF-001'),
-        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
-        buildCallDetailQuery('684407'),
-        buildTotalCallsCountQuery('EMP-STF-001'),
-      ];
-
-      queries.forEach(q => {
-        // Should not contain raw employee code in query string
-        expect(q.query).not.toContain('EMP-STF-001');
-        expect(q.query).not.toContain('684407');
-      });
-    });
-
-    it('queries target correct database tables', () => {
-      const result1 = buildCQScoreQuery('EMP-STF-001', 7);
-      const result2 = buildWeaknessDetailQuery('EMP-STF-001');
-      const result3 = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
-
-      // All should use db_audit.call_quality_assessment
-      expect(result1.query).toContain('db_audit.call_quality_assessment');
-      expect(result2.query).toContain('db_audit.call_quality_assessment');
-      expect(result3.query).toContain('db_audit.call_quality_assessment');
-    });
-
-    it('queries filter for INBOUND campaigns', () => {
-      const queries = [
-        buildCQScoreQuery('EMP-STF-001', 7),
-        buildWeaknessDetailQuery('EMP-STF-001'),
-        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
-        buildTotalCallsCountQuery('EMP-STF-001'),
-      ];
-
-      queries.forEach(q => {
-        expect(q.query).toContain('INBOUND');
-      });
-    });
-
-    it('queries exclude empty User values', () => {
-      const allQueries = [
-        buildCQScoreQuery('EMP-STF-001', 7),
-        buildWeaknessDetailQuery('EMP-STF-001'),
-        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
-        buildTotalCallsCountQuery('EMP-STF-001'),
-      ];
-
-      // All queries must guard against NULL users
-      allQueries.forEach(q => {
-        expect(q.query).toContain("User IS NOT NULL");
-      });
-
-      // Queries that filter empty-string users (cq-score, calls-review, total-count)
-      // weakness detail uses WHERE User = ? (parameterized) so the != '' guard is implicit
-      const queriesWithNotEmpty = [
-        buildCQScoreQuery('EMP-STF-001', 7),
-        buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date'),
-        buildTotalCallsCountQuery('EMP-STF-001'),
-      ];
-      queriesWithNotEmpty.forEach(q => {
-        expect(q.query).toContain("User != ''");
-      });
-    });
+  it('totals-by-client: one placeholder per client id, ids are bound not inlined', () => {
+    const r = buildAgentTotalsByClientQuery(['101', '468'], 7);
+    expect(r.params).toEqual(['101', '468']);
+    expect(r.query).toContain('IN (?,?)');
+    expect(r.query).not.toContain("'101'");
   });
 
-  describe('Parameter Safety', () => {
-    it('no SQL injection via employee code', () => {
-      const testCases = [
-        "EMP-001'; DROP TABLE --",
-        'EMP-001" OR 1=1 --',
-        "EMP-001); DELETE FROM employees; --",
-        'EMP-001\' UNION SELECT * FROM --',
-      ];
-
-      testCases.forEach(maliciousCode => {
-        const result = buildCQScoreQuery(maliciousCode, 7);
-        expect(result.query).not.toContain(maliciousCode);
-        expect(result.params).toContain(maliciousCode);
-      });
-    });
-
-    it('no SQL injection via call ID', () => {
-      const maliciousId = "684407' OR '1'='1";
-      const result = buildCallDetailQuery(maliciousId);
-
-      expect(result.query).not.toContain(maliciousId);
-      expect(result.params).toContain(maliciousId);
-    });
-
-    it('no SQL injection via numeric parameters', () => {
-      // limit/offset are inlined by sqlLimitOffset rather than bound, so "proper
-      // binding" is now "proper coercion": only digits may appear after LIMIT/OFFSET.
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
-
-      expect(Array.isArray(result.params)).toBe(true);
-      expect(result.params).toEqual(['EMP-STF-001']);
-      expect(result.query).toMatch(/LIMIT \d+ OFFSET \d+/);
-      expect(result.query).not.toMatch(/LIMIT\s+[^\d]/);
-    });
+  it('audited-calls: every parameter column present, newest first, bounded', () => {
+    const r = buildAgentAuditedCallsQuery(EMP, 7);
+    expect(r.params).toEqual([EMP]);
+    for (const p of QUALITY_PARAMS) expect(r.query).toContain(p.col);
+    expect(r.query).toContain('ORDER BY q.CallDate DESC');
+    expect(r.query).toContain('LIMIT 2000');
   });
 
-  describe('Sorting Logic', () => {
-    it('date sort orders by CallDate DESC', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
+  it('peer totals: a hit and an n column per parameter', () => {
+    const r = buildPeerParamTotalsQuery(['101'], 7);
+    for (const p of QUALITY_PARAMS) {
+      expect(r.query).toContain(`${p.col}__hit`);
+      expect(r.query).toContain(`${p.col}__n`);
+    }
+  });
+});
 
-      expect(result.query).toContain('ORDER BY');
-      expect(result.query).toContain('CallDate');
-      expect(result.query).toContain('DESC');
-    });
+describe('call review / detail / count', () => {
+  it('review: employee code is bound; LIMIT/OFFSET are validated and inlined', () => {
+    const r = buildCallsReviewQuery(EMP, 10, 5, 'date');
+    expect(r.params).toEqual([EMP]);
+    expect(r.query).toContain('LIMIT 10 OFFSET 5');
+    expect(r.query).toContain('db_audit.call_quality_assessment');
+  });
 
-    it('cq sort orders by quality_percentage ASC (lowest first)', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'cq');
+  it('review: sorts by date, score or fatal', () => {
+    expect(buildCallsReviewQuery(EMP, 10, 0, 'date').query).toContain('ORDER BY q.CallDate DESC');
+    expect(buildCallsReviewQuery(EMP, 10, 0, 'cq').query).toMatch(/ORDER BY .*ASC, q\.CallDate DESC/);
+    expect(buildCallsReviewQuery(EMP, 10, 0, 'fatal').query).toMatch(/ORDER BY .*DESC, q\.CallDate DESC/);
+  });
 
-      expect(result.query).toContain('ORDER BY');
-      expect(result.query).toContain('quality_percentage');
-      expect(result.query).toContain('ASC');
-    });
+  it('review: an unknown sort falls back to date and cannot inject', () => {
+    const r = buildCallsReviewQuery(EMP, 10, 0, "date; DROP TABLE x" as unknown as 'date');
+    expect(r.query).not.toContain('DROP TABLE');
+    expect(r.query).toContain('ORDER BY q.CallDate DESC');
+  });
 
-    it('fatal sort prioritizes calls with failures (CASE WHEN)', () => {
-      const result = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'fatal');
+  it('review: limit and offset are coerced to safe integers', () => {
+    const r = buildCallsReviewQuery(EMP, "10; DROP TABLE x" as unknown as number, -4, 'date');
+    expect(r.query).not.toContain('DROP');
+    expect(r.query).toMatch(/LIMIT \d+ OFFSET \d+/);
+  });
 
-      expect(result.query).toContain('CASE');
-      expect(result.query).toContain('quality_percentage');
-      expect(result.query).toContain('professionalism_maintained');
-    });
+  it('detail: the owner check stops one agent reading another agent\'s call by changing the id', () => {
+    const r = buildCallDetailQuery('684407', EMP);
+    expect(r.params).toEqual(['684407', EMP]);
+    expect(r.query).toContain('q.id = ?');
+    expect(r.query).toContain('q.User = ?');
+    expect(r.query).not.toContain('684407');
+    expect(r.query).toContain('recording_url');
+    expect(r.query).toContain('transcript_text');
+  });
 
-    it('default sort is date', () => {
-      const resultDefault = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
-      const resultExplicit = buildCallsReviewQuery('EMP-STF-001', 10, 0, 'date');
+  it('count: bound employee code over the same window and gate as the review list', () => {
+    const r = buildTotalCallsCountQuery(EMP);
+    expect(r.params).toEqual([EMP]);
+    expect(r.query).toContain('COUNT(*)');
+    expect(r.query).toContain('INTERVAL 30 DAY');
+  });
+});
 
-      expect(resultDefault.query).toEqual(resultExplicit.query);
-    });
+describe('parameter safety', () => {
+  it('no builder puts the agent code or a hostile string into the SQL text', () => {
+    const hostile = "MAS1' OR '1'='1";
+    const built = [
+      buildAgentWeeklyQuery(hostile, 7),
+      buildAgentClientsQuery(hostile, 7),
+      buildAgentAuditedCallsQuery(hostile, 7),
+      buildCallsReviewQuery(hostile, 10, 0, 'date'),
+      buildCallDetailQuery('1', hostile),
+      buildTotalCallsCountQuery(hostile),
+    ];
+    for (const q of built) {
+      expect(typeof q.query).toBe('string');
+      expect(Array.isArray(q.params)).toBe(true);
+      expect(q.query).not.toContain("OR '1'='1");
+      expect(q.params).toContain(hostile);
+    }
   });
 });

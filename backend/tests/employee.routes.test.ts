@@ -5,7 +5,20 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+const bankSave = vi.hoisted(() => ({ connExecute: vi.fn(), pennyDrop: vi.fn() }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: {
+    execute: vi.fn().mockResolvedValue([[], []]),
+    // The bank-details save runs on its own connection (short lock wait + retry).
+    getConnection: vi.fn(async () => ({
+      query: vi.fn().mockResolvedValue([[], []]),
+      execute: bankSave.connExecute,
+      release: vi.fn(),
+    })),
+  },
+  pingDb: vi.fn(),
+}));
+vi.mock("../src/modules/employees/employeeBankPennyDrop.js", () => ({ runEmployeeBankPennyDrop: bankSave.pennyDrop }));
 vi.mock("../src/modules/employees/employee.service.js", () => ({
   employeeService: {
     createEmployee: vi.fn(),
@@ -54,6 +67,10 @@ import { db } from "../src/db/mysql.js";
 import { app } from "../src/app.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
+beforeEach(() => {
+  bankSave.connExecute.mockReset().mockResolvedValue([[], []]);
+  bankSave.pennyDrop.mockReset().mockResolvedValue({ status: "success", beneficiaryName: "RAVI KUMAR", holderMatch: { tier: "exact", score: 100 }, employeeMatch: { tier: "exact", score: 100 }, message: "Account verified." });
+});
 const svc = employeeService as { [K in keyof typeof employeeService]: ReturnType<typeof vi.fn> };
 const AUTH = { Authorization: "Bearer mock-token-admin" };
 const COST_CENTRE_ID = "550e8400-e29b-41d4-a716-446655440010";
@@ -216,9 +233,32 @@ describe("PUT /api/employees/:employeeId/bank-details — format validation", ()
       ifsc_code: "hdfc0001234", account_type: "Savings", account_number: "50100234567890",
     });
     expect(r.status).toBe(200);
-    const insertCall = mockExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"));
+    const insertCall = bankSave.connExecute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"));
     expect(insertCall).toBeTruthy();
     expect(insertCall![1]).toContain("HDFC0001234");
+    // verified by the penny drop first, stored in full (plain column) and marked verified
+    expect(insertCall![1]).toContain("50100234567890");
+    expect(String(insertCall![0])).toContain("verified");
+    expect(bankSave.pennyDrop).toHaveBeenCalledWith(expect.objectContaining({ ifscCode: "HDFC0001234", accountNumber: "50100234567890" }));
+  });
+
+  it("saves nothing when the penny drop does not verify the same person (422)", async () => {
+    bankSave.pennyDrop.mockResolvedValueOnce({ status: "name_mismatch", beneficiaryName: "SOMEONE ELSE", holderMatch: null, employeeMatch: null, message: "The bank returned a different name. Nothing was saved." });
+    const r = await request(app).put("/api/employees/emp-1/bank-details").set(AUTH).send({
+      bank_name: "Test Bank", account_holder_name: "Ravi Kumar",
+      ifsc_code: "HDFC0001234", account_type: "Savings", account_number: "50100234567890",
+    });
+    expect(r.status).toBe(422);
+    expect(r.body.success).toBe(false);
+    expect(bankSave.connExecute.mock.calls.some((c) => String(c[0]).includes("INSERT INTO employee_bank_detail"))).toBe(false);
+  });
+
+  it("requires an account number — the account is verified before it is saved (400)", async () => {
+    const r = await request(app).put("/api/employees/emp-1/bank-details").set(AUTH).send({
+      bank_name: "Test Bank", account_holder_name: "Ravi Kumar", ifsc_code: "HDFC0001234", account_type: "Savings",
+    });
+    expect(r.status).toBe(400);
+    expect(bankSave.pennyDrop).not.toHaveBeenCalled();
   });
 });
 
