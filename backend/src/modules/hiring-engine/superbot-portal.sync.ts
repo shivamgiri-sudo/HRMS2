@@ -25,7 +25,7 @@ export async function uploadCallFile(batchId: string, rows: string[][]): Promise
   await notePayload(batchId, r.ok, r.message);
   try {
     await db.execute("UPDATE qualified_followup_call_batch SET summary = JSON_SET(COALESCE(summary, JSON_OBJECT()), '$.portal', CAST(? AS JSON)) WHERE id = ?",
-      [JSON.stringify({ ok: r.ok, total: clean.length, message: r.message, at: new Date().toISOString() }), batchId]);
+      [JSON.stringify({ ok: r.ok, total: clean.length, message: r.message, rejected: (r as { rejected?: number }).rejected ?? 0, at: new Date().toISOString() }), batchId]);
   } catch { /* the upload result is only a note */ }
   return { attempted: true, ok: r.ok, total: clean.length, message: r.message };
 }

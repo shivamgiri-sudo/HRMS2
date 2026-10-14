@@ -57,7 +57,22 @@ async function authed(c: BotConfig, path: string, init: { method?: string; json?
   }
 }
 
-export interface UploadResult { ok: boolean; status: number; message: string; total: number }
+export interface UploadResult { ok: boolean; status: number; message: string; total: number; rejected?: number; reasons?: string }
+
+/** The portal's per-row refusals as "reason xN" (phones and references are never kept): an accepted upload can still drop most of its rows. */
+export function summariseRejections(body: unknown): { rejected: number; reasons: string } {
+  const b = (body ?? {}) as { errors?: unknown; total_unaccepted_calls?: unknown };
+  const list = Array.isArray(b.errors) ? b.errors : [];
+  const counts = new Map<string, number>();
+  for (const e of list) {
+    const raw = typeof e === "string" ? e : String((e as { message?: unknown } | null)?.message ?? "unknown");
+    const k = raw.replace(/\d{6,}/g, "#").replace(/\s+/g, " ").trim().slice(0, 70) || "unknown";
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const rejected = Math.max(list.length, Number(b.total_unaccepted_calls) || 0);
+  const reasons = [...counts].sort((a, c) => c[1] - a[1]).slice(0, 3).map(([k, n]) => `${k} x${n}`).join("; ");
+  return { rejected, reasons };
+}
 
 /** Bulk-import rows (already shaped as BOT_PARAMS order, phone = 10 digits). Tries the India country as id 1, then as "+91". */
 export async function bulkImport(c: BotConfig, rows: string[][]): Promise<UploadResult> {
@@ -68,7 +83,9 @@ export async function bulkImport(c: BotConfig, rows: string[][]): Promise<Upload
       method: "POST", json: { language_id: c.languageId, country_code: country, parameters: [...BOT_PARAMS], data: rows, total_data: rows.length },
     });
     const b = (r.body ?? {}) as { success?: boolean; message?: string };
-    last = { ok: r.ok && b.success !== false, status: r.status, message: String(b.message ?? r.error ?? (r.ok ? "ok" : "rejected")).slice(0, 200), total: rows.length };
+    const rej = summariseRejections(r.body);
+    const note = rej.rejected ? ` | portal refused ${rej.rejected} of ${rows.length}${rej.reasons ? `: ${rej.reasons}` : ""}` : "";
+    last = { ok: r.ok && b.success !== false, status: r.status, message: `${String(b.message ?? r.error ?? (r.ok ? "ok" : "rejected"))}${note}`.slice(0, 400), total: rows.length, rejected: rej.rejected, reasons: rej.reasons };
     if (last.ok) return last;
     if (r.status === 0 || r.status === 401 || r.status >= 500) break; // transport or server error: another country value will not help
   }

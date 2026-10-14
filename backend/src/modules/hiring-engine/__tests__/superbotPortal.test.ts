@@ -116,3 +116,17 @@ describe("portal sign-in refused, then retried", () => {
     expect(urls.filter((u) => u.endsWith("/bulk-import"))).toHaveLength(1);
   });
 });
+
+describe("summariseRejections", () => {
+  it("counts the portal's per-row refusals by reason and never keeps phone numbers", async () => {
+    const { summariseRejections } = await import("../superbot-portal.client.js");
+    const r = summariseRejections({ errors: [
+      { phone: "9876543210", message: "Number 9876543210 already exists", reference_id: "QF-1" },
+      { phone: "9876543211", message: "Number 9876543211 already exists", reference_id: "QF-2" },
+      { phone: "123", message: "Invalid number", reference_id: "QF-3" },
+    ] });
+    expect(r.rejected).toBe(3);
+    expect(r.reasons).toBe("Number # already exists x2; Invalid number x1");
+    expect(summariseRejections(null)).toEqual({ rejected: 0, reasons: "" });
+  });
+});
