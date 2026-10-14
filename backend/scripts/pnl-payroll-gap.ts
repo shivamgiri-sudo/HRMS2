@@ -24,6 +24,7 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const lower = new Map(billCols.map((c) => [c.name.toLowerCase(), c.name]));
   const codeCol = ["empcode", "emp_code", "employeecode", "employee_code", "empid", "emp_id"].map((c) => lower.get(c)).find(Boolean) ?? null;
   const companyCol = ["company", "companyname", "company_name", "costcompany", "cost_company_name"].map((c) => lower.get(c)).find(Boolean) ?? null;
+  console.log("GAP_LINECOLS " + JSON.stringify([...have]));
   console.log("GAP_META " + JSON.stringify({ periods, billCodeColumn: codeCol, billCompanyColumn: companyCol, billColumns: billCols.map((c) => `${c.name}:${c.type}`) }));
   // db_bill stores every amount as varchar(50): cast the ones that explain a payroll difference.
   const SUM_COLS = ["Gross", "Gross1", "CTC", "ESICCompany", "EPFCompany", "AdminChrg", "Incentive", "ExtraDayIncentive", "Arrear", "PLI",
@@ -90,6 +91,33 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
       for (const [code, b] of bill) if (!hr.has(code)) { onlyB++; onlyBCost += b.ctc; }
       console.log("GAP_OVERLAP " + JSON.stringify({ period, both, onlyInHrms: onlyH, onlyInHrmsCost: r0(onlyHCost), onlyInDbBill: onlyB, onlyInDbBillCost: r0(onlyBCost), sumDiffWhereBoth: r0(diffSum) }));
       console.log("GAP_DIFF_BUCKETS " + JSON.stringify({ period, zero: bucket.le0, hrmsHigher_le1k: bucket.b1, hrmsHigher_1k_5k: bucket.b2, hrmsHigher_5k_20k: bucket.b3, hrmsHigher_gt20k: bucket.b4, hrmsLower_le1k: bucket.neg1, hrmsLower_gt1k: bucket.neg2 }));
+      // Matched employees: HRMS gross vs db_bill full gross (Gross) and earned gross (Gross1) and CTC.
+      const detail = await billQuery<any>(
+        `SELECT TRIM(\`${codeCol}\`) AS code,
+                SUM(COALESCE(${dec(lower.get("gross")!)}, 0)) AS gross_full, SUM(COALESCE(${dec(lower.get("gross1")!)}, 0)) AS gross_earned,
+                SUM(COALESCE(${dec(lower.get("ctc")!)}, 0)) AS ctc, SUM(COALESCE(${dec(lower.get("incentive")!)}, 0)) AS inc,
+                SUM(COALESCE(${dec(lower.get("arrear")!)}, 0)) AS arrear, SUM(COALESCE(${dec(lower.get("earneddays")!)}, 0)) AS earned_days,
+                MAX(TRIM(\`${lower.get("leftstatus")!}\`)) AS left_status, MAX(TRIM(\`${lower.get("fnfstatus")!}\`)) AS fnf_status
+           FROM salary_data WHERE ${where} GROUP BY TRIM(\`${codeCol}\`)`);
+      const hgross = new Map<string, number>();
+      for (const r of h) hgross.set(String(r.code), (hgross.get(String(r.code)) ?? 0) + num(r.gross));
+      const m = { n: 0, hGross: 0, bFull: 0, bEarned: 0, bCtc: 0, bInc: 0, bArrear: 0, nearFull: 0, nearEarned: 0, other: 0 };
+      const miss = { n: 0, ctc: 0, gross: 0, earnedDays: 0, left: 0, fnf: 0, zeroDays: 0 };
+      for (const r of detail) {
+        const code = String(r.code);
+        if (hr.has(code)) {
+          m.n++; m.hGross += hgross.get(code) ?? 0; m.bFull += num(r.gross_full); m.bEarned += num(r.gross_earned); m.bCtc += num(r.ctc); m.bInc += num(r.inc); m.bArrear += num(r.arrear);
+          const hg = hgross.get(code) ?? 0;
+          if (Math.abs(hg - num(r.gross_full)) <= 1) m.nearFull++; else if (Math.abs(hg - num(r.gross_earned)) <= 1) m.nearEarned++; else m.other++;
+        } else {
+          miss.n++; miss.ctc += num(r.ctc); miss.gross += num(r.gross_earned); miss.earnedDays += num(r.earned_days);
+          if (String(r.left_status ?? "").trim() && !/^(0|no|false|active)$/i.test(String(r.left_status).trim())) miss.left++;
+          if (String(r.fnf_status ?? "").trim() && !/^(0|no|false|none)$/i.test(String(r.fnf_status).trim())) miss.fnf++;
+          if (num(r.earned_days) <= 0) miss.zeroDays++;
+        }
+      }
+      console.log("GAP_MATCHED " + JSON.stringify({ period, employees: m.n, hrmsGross: r0(m.hGross), dbbillGrossFull: r0(m.bFull), dbbillGrossEarned: r0(m.bEarned), dbbillCtc: r0(m.bCtc), dbbillIncentive: r0(m.bInc), dbbillArrear: r0(m.bArrear), hrmsEqualsDbbillFullGross: m.nearFull, hrmsEqualsDbbillEarnedGross: m.nearEarned, neither: m.other }));
+      console.log("GAP_ONLY_DBBILL " + JSON.stringify({ period, employees: miss.n, ctc: r0(miss.ctc), earnedGross: r0(miss.gross), earnedDays: r0(miss.earnedDays), withLeftStatus: miss.left, withFnfStatus: miss.fnf, zeroEarnedDays: miss.zeroDays }));
       for (const [b, x] of byBranch) console.log("GAP_BRANCH " + JSON.stringify({ period, branch: b, bothCount: x.n, sumDiffWhereBoth: r0(x.diff), onlyInHrms: x.onlyH, onlyInHrmsCost: r0(x.onlyHCost) }));
     }
   }
