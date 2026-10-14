@@ -1050,9 +1050,17 @@ function columnsForMonth<T extends { key: string }>(
   const mo = Number(parts[1]);
   if (!Number.isFinite(yr) || !Number.isFinite(mo) || mo < 1 || mo > 12) return columns;
   const dim = new Date(yr, mo, 0).getDate();
+  // No column for a day that has not happened yet: in the current month stop at today, and a
+  // month still to come has no day columns at all (a register of blanks reads as "report ignores
+  // my filter"). Today is taken in IST, the calendar the attendance data is kept in.
+  const todayIst = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+  const monthKey = `${parts[0]}-${String(mo).padStart(2, "0")}`;
+  let lastDay = dim;
+  if (monthKey > todayIst.slice(0, 7)) lastDay = 0;
+  else if (monthKey === todayIst.slice(0, 7)) lastDay = Math.min(dim, Number(todayIst.slice(8, 10)));
   return columns.filter((c) => {
     const m = c.key.match(/^day_(\d+)$/);
-    return !m || Number(m[1]) <= dim;
+    return !m || Number(m[1]) <= lastDay;
   });
 }
 

@@ -483,9 +483,17 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
       const shortYY = String(Number(fyStr)).slice(2);
       // No such column as 31-Sep: drop day columns past the month's real length.
       const daysInSelectedMonth = new Date(Number(fyStr), fm, 0).getDate();
+      // ...and none for a day that has not happened yet (current month stops at today, IST).
+      const istToday = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+      const selectedKey = `${fyStr}-${String(fm).padStart(2, "0")}`;
+      const lastShownDay = selectedKey > istToday.slice(0, 7)
+        ? 0
+        : selectedKey === istToday.slice(0, 7)
+          ? Math.min(daysInSelectedMonth, Number(istToday.slice(8, 10)))
+          : daysInSelectedMonth;
       exportColumns = exportColumns.filter(c => {
         const dm = c.key.match(/^day_(\d+)$/);
-        return !dm || Number(dm[1]) <= daysInSelectedMonth;
+        return !dm || Number(dm[1]) <= lastShownDay;
       }).map(c => {
         const m = c.key.match(/^day_(\d+)$/);
         if (!m) return c;

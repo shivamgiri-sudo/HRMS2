@@ -33,6 +33,7 @@ import {
   appendFilterConditions,
   appendEmployeeStatusFilter,
   dateParam,
+  capAtToday,
   monthParam,
   monthRange,
   applyPagination,
@@ -604,7 +605,7 @@ export async function attendanceDaily(
   options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
-  const to = dateParam(filters.to, from);
+  const to = capAtToday(dateParam(filters.to, from));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -715,7 +716,7 @@ export async function dailyHcShift(
   options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
-  const to = dateParam(filters.to, from);
+  const to = capAtToday(dateParam(filters.to, from));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -796,7 +797,7 @@ export async function shiftAdherenceDetail(
   options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
-  const to = dateParam(filters.to, from);
+  const to = capAtToday(dateParam(filters.to, from));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1724,7 +1725,7 @@ export async function dailyShrinkageReport(
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
   const from = dateParam(filters.from, today);
-  const to = dateParam(filters.to, today);
+  const to = capAtToday(dateParam(filters.to, today));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1885,7 +1886,7 @@ export async function biometricReconciliation(
   options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
-  const to = dateParam(filters.to, from);
+  const to = capAtToday(dateParam(filters.to, from));
 
   const RECONCILIATION_CASE = `CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day','week_off_worked') THEN 'NO_BIOMETRIC_FOR_PRESENT'
                           WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
@@ -1961,7 +1962,7 @@ export async function punchRawExport(
   options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
-  const to = dateParam(filters.to, from);
+  const to = capAtToday(dateParam(filters.to, from));
 
   const clauses: string[] = ["1 = 1"];
   const params: unknown[] = [];

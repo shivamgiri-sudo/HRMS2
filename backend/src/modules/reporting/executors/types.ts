@@ -384,6 +384,20 @@ export function dateParam(value: unknown, fallback: string): string {
   return fallback;
 }
 
+/** Today's calendar date in India (IST), YYYY-MM-DD. toISOString() is UTC and is a day behind until 05:30. */
+export function todayIst(now: Date = new Date()): string {
+  return new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Attendance has not happened yet on a future date, so a day-by-day attendance report must not
+ * run past today. A range that starts after today therefore comes back empty (from > to).
+ */
+export function capAtToday(date: string, now: Date = new Date()): string {
+  const today = todayIst(now);
+  return date > today ? today : date;
+}
+
 export function monthParam(value: unknown): string {
   const today = new Date();
   const def = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
