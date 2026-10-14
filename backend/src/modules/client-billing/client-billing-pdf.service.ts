@@ -123,9 +123,13 @@ interface CostCentreRow extends RowDataPacket {
   billToAddress1: string | null;
   billToAddress2: string | null;
   billToAddress3: string | null;
+  billToAddress4: string | null;
+  billToAddress5: string | null;
   shipToAddress1: string | null;
   shipToAddress2: string | null;
   shipToAddress3: string | null;
+  shipToAddress4: string | null;
+  shipToAddress5: string | null;
   hsnCode: string | null;
   sacCode: string | null;
   serviceTaxNo: string | null;
@@ -159,6 +163,8 @@ const TDS_NOTE =
   'The Finance Act, 2017" for the payee engaged only in the business of operation of call centre.';
 /** No RCM flag exists in the schema yet — every sampled legacy row prints "NO". */
 const TAX_PAYABLE_UNDER_RCM = "NO";
+/** Signature line exactly as I-Spark prints it. */
+const SIGNATORY_FOR = "for MAS Callnet India Pvt. Ltd.";
 
 const ASSET_DIR = path.resolve(process.cwd(), "public", "client-billing");
 const LOGO_PATH = path.join(ASSET_DIR, "mas-logo.jpeg");
@@ -196,12 +202,16 @@ function generatedTimestamp(): string {
   }).format(new Date()) + " IST";
 }
 
-function money(n: number | null | undefined): string {
-  return Number(n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+/** Numbers exactly as I-Spark prints them: no grouping, no trailing .00 (142800, 4.08, 35000). */
+function plain(n: number | string | null | undefined): string {
+  const v = Number(n ?? 0);
+  if (!Number.isFinite(v)) return "";
+  return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0$/, "");
 }
 
-function addressLines(a1: string | null, a2: string | null, a3: string | null): string[] {
-  return [a1, a2, a3].filter((x): x is string => Boolean(x && x.trim().length > 0));
+
+function addressLines(...parts: Array<string | null>): string[] {
+  return parts.filter((x): x is string => Boolean(x && x.trim().length > 0));
 }
 
 /** A GSTIN's chars 3-12 (1-indexed) ARE the PAN by statutory GSTIN format — not a guess. */
@@ -245,7 +255,9 @@ export function amountInWords(value: number): string {
 async function loadCostCentre(costCentreId: string): Promise<CostCentreRow | undefined> {
   const [rows] = await db.execute<CostCentreRow[]>(
     `SELECT cc.bill_to_address1 AS billToAddress1, cc.bill_to_address2 AS billToAddress2, cc.bill_to_address3 AS billToAddress3,
+            cc.bill_to_address4 AS billToAddress4, cc.bill_to_address5 AS billToAddress5,
             cc.ship_to_address1 AS shipToAddress1, cc.ship_to_address2 AS shipToAddress2, cc.ship_to_address3 AS shipToAddress3,
+            cc.ship_to_address4 AS shipToAddress4, cc.ship_to_address5 AS shipToAddress5,
             cc.hsn_code AS hsnCode, cc.sac_code AS sacCode, cc.service_tax_no AS serviceTaxNo,
             cc.vendor_gst_no AS vendorGstNo, cc.vendor_gst_state AS vendorGstState, cc.vendor_state_code AS vendorStateCode,
             cc.billing_client_name AS billingClientName, cc.company_name AS companyName,
@@ -371,8 +383,9 @@ function drawLetterheadHeader(doc: Doc, costCentre: CostCentreRow | undefined) {
   const logo = existingPath(LOGO_PATH);
 
   const textWidth = logo ? width - 130 : width;
-  doc.font("Helvetica-Bold").fontSize(15).fillColor(INK).text(COMPANY_NAME, left, doc.y, { width: textWidth });
-  doc.font("Helvetica").fontSize(7.5).fillColor(MUTED)
+  // I-Spark header: large regular-weight name, bold "CIN :" and "Branch Address:" labels.
+  doc.font("Helvetica").fontSize(18).fillColor(INK).text(COMPANY_NAME, left, doc.y, { width: textWidth });
+  doc.font("Helvetica-Bold").fontSize(7.5).fillColor(INK)
     .text(`CIN : ${COMPANY_CIN}`, { width: textWidth });
   // branch_master.address, when populated, is already a complete multi-line address
   // (frequently with city/state/pincode embedded as free text) — only fall back to
@@ -383,11 +396,12 @@ function drawLetterheadHeader(doc: Doc, costCentre: CostCentreRow | undefined) {
     : [costCentre?.branchCity, costCentre?.branchState].filter(Boolean).join(", ") +
       (costCentre?.branchPincode ? ` - ${costCentre.branchPincode}` : "");
   if (branchAddr.trim().length > 1) {
-    doc.text(`Branch Address: ${branchAddr}`, { width: textWidth });
+    doc.font("Helvetica-Bold").text("Branch Address: ", { width: textWidth, continued: true })
+      .font("Helvetica").text(branchAddr);
   }
 
   if (logo) {
-    try { doc.image(logo, doc.page.width - PAGE.margin - 120, PAGE.margin - 2, { width: 120 }); } catch { /* ignore */ }
+    try { doc.image(logo, doc.page.width - PAGE.margin - 125, PAGE.margin - 6, { width: 125 }); } catch { /* ignore */ }
   }
   doc.moveDown(0.6);
 }
@@ -395,13 +409,14 @@ function drawLetterheadHeader(doc: Doc, costCentre: CostCentreRow | undefined) {
 /** Corporate address + ISO/LMS certification badges — the bottom "letterhead" block. */
 function drawLetterheadFooter(doc: Doc) {
   const left = PAGE.margin;
-  const width = doc.page.width - PAGE.margin * 2;
   const badges = BADGE_PATHS.map(existingPath).filter((p): p is string => Boolean(p));
-  const y = doc.page.height - PAGE.margin - 60;
+  // I-Spark puts the corporate block directly under the invoice box, not at the page bottom.
+  const y = Math.min(doc.y + 8, doc.page.height - PAGE.margin - 60);
 
-  doc.font("Helvetica-Bold").fontSize(7.5).fillColor(INK).text("Corporate Address:", left, y, { width: 220, continued: false });
-  doc.font("Helvetica").fontSize(7.5).fillColor(MUTED);
-  for (const line of CORPORATE_ADDRESS_LINES) doc.text(line, left, doc.y, { width: 220 });
+  doc.font("Helvetica-Bold").fontSize(7.5).fillColor(INK).text("Corporate Address: ", left, y, { width: 220, continued: true })
+    .font("Helvetica").text(CORPORATE_ADDRESS_LINES[0] ?? "");
+  doc.font("Helvetica").fontSize(7.5).fillColor(INK);
+  for (const line of CORPORATE_ADDRESS_LINES.slice(1)) doc.text(line, left, doc.y, { width: 220 });
   doc.text(`E-mail : ${CORPORATE_EMAIL}`, left, doc.y, { width: 220 });
   doc.text(`Web : ${CORPORATE_WEB}`, left, doc.y, { width: 220 });
 
@@ -436,8 +451,11 @@ function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentre
   const x1 = left, x2 = left + col1, x3 = left + col1 + col2;
 
   const clientName = printableClientName(costCentre);
-  const billTo = addressLines(costCentre?.billToAddress1 ?? null, costCentre?.billToAddress2 ?? null, costCentre?.billToAddress3 ?? null);
-  const shipToRaw = addressLines(costCentre?.shipToAddress1 ?? null, costCentre?.shipToAddress2 ?? null, costCentre?.shipToAddress3 ?? null);
+  // All five address lines, as I-Spark prints them (lines 4-5 hold city / state / PIN for most clients).
+  const billTo = addressLines(costCentre?.billToAddress1 ?? null, costCentre?.billToAddress2 ?? null, costCentre?.billToAddress3 ?? null,
+    costCentre?.billToAddress4 ?? null, costCentre?.billToAddress5 ?? null);
+  const shipToRaw = addressLines(costCentre?.shipToAddress1 ?? null, costCentre?.shipToAddress2 ?? null, costCentre?.shipToAddress3 ?? null,
+    costCentre?.shipToAddress4 ?? null, costCentre?.shipToAddress5 ?? null);
   const shipTo = shipToRaw.length ? shipToRaw : billTo;
 
   const gstBlock = (label: string) => [
@@ -464,7 +482,7 @@ function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentre
   doc.rect(x1, top, col1, headerH).fillAndStroke("#F3F4F6", BORDER);
   doc.rect(x2, top, col2, headerH).fillAndStroke("#F3F4F6", BORDER);
   doc.rect(x3, top, col3, headerH).fillAndStroke("#F3F4F6", BORDER);
-  doc.fillColor(INK).font("Helvetica-Bold").fontSize(7.5);
+  doc.fillColor(INK).font("Helvetica").fontSize(7.5);
   doc.text("Bill to Address", x1 + 3, top + 3, { width: col1 - 6 });
   doc.text("Ship to Address", x2 + 3, top + 3, { width: col2 - 6 });
   doc.text("Date", x3 + 3, top + 3, { width: col3 * 0.4 - 6 });
@@ -476,6 +494,7 @@ function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentre
   y1 = doc.y;
   doc.font("Helvetica").fontSize(7.5);
   for (const line of billTo) { doc.text(line, x1 + 3, y1, { width: col1 - 6 }); y1 = doc.y; }
+  y1 += 6;
   for (const line of gstBlock("bill")) { doc.text(line, x1 + 3, y1, { width: col1 - 6 }); y1 = doc.y; }
 
   let y2 = bodyTop + 3;
@@ -483,12 +502,15 @@ function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentre
   y2 = doc.y;
   doc.font("Helvetica").fontSize(7.5);
   for (const line of shipTo) { doc.text(line, x2 + 3, y2, { width: col2 - 6 }); y2 = doc.y; }
+  y2 += 6;
   for (const line of gstBlock("ship")) { doc.text(line, x2 + 3, y2, { width: col2 - 6 }); y2 = doc.y; }
 
   let y3 = bodyTop + 3;
   const metaLabelW = col3 * 0.55;
+  // Bold exactly where I-Spark is bold; the rest regular.
+  const boldMeta = new Set(["PO No", "GRN No", "GRN Date", "Place Of Supply", "TAX PAYABLE UNDER RCM"]);
   for (const [label, value] of meta) {
-    doc.font("Helvetica-Bold").fontSize(7.2).fillColor(INK).text(label, x3 + 3, y3, { width: metaLabelW - 3 });
+    doc.font(boldMeta.has(label) ? "Helvetica-Bold" : "Helvetica").fontSize(7.2).fillColor(INK).text(label, x3 + 3, y3, { width: metaLabelW - 3 });
     doc.font("Helvetica").fontSize(7.2).text(value || "", x3 + metaLabelW, y3, { width: col3 - metaLabelW - 3 });
     y3 = Math.max(y3 + 10, doc.y);
   }
@@ -515,10 +537,10 @@ function drawLineItemsTable(doc: Doc, lines: LineRow[]): void {
   doc.font("Helvetica-Bold").fontSize(8).fillColor(INK);
   let x = left;
   doc.text("S.No", x + 2, headerY + 4, { width: cols.sno - 4 }); x += cols.sno;
-  doc.text("Particulars", x + 2, headerY + 4, { width: cols.particulars - 4 }); x += cols.particulars;
-  doc.text("Qty", x, headerY + 4, { width: cols.qty - 4, align: "right" }); x += cols.qty;
-  doc.text("Rate", x, headerY + 4, { width: cols.rate - 4, align: "right" }); x += cols.rate;
-  doc.text("Amount", x, headerY + 4, { width: cols.amount - 6, align: "right" });
+  doc.text("Particulars", x, headerY + 4, { width: cols.particulars, align: "center" }); x += cols.particulars;
+  doc.text("Qty", x, headerY + 4, { width: cols.qty, align: "center" }); x += cols.qty;
+  doc.text("Rate", x, headerY + 4, { width: cols.rate, align: "center" }); x += cols.rate;
+  doc.text("Amount", x, headerY + 4, { width: cols.amount, align: "center" });
 
   doc.font("Helvetica").fontSize(8).fillColor(INK);
   let y = headerY + rowH;
@@ -528,11 +550,11 @@ function drawLineItemsTable(doc: Doc, lines: LineRow[]): void {
     const signedAmount = line.line_type === "deduction" ? -Number(line.amount) : Number(line.amount);
     x = left;
     const rowTop = y;
-    doc.text(String(i + 1) + ".", x + 2, rowTop + 3, { width: cols.sno - 4 }); x += cols.sno;
-    doc.text(line.particulars, x + 2, rowTop + 3, { width: cols.particulars - 4 }); x += cols.particulars;
-    doc.text(String(line.qty), x, rowTop + 3, { width: cols.qty - 4, align: "right" }); x += cols.qty;
-    doc.text(money(line.rate), x, rowTop + 3, { width: cols.rate - 4, align: "right" }); x += cols.rate;
-    doc.text(money(signedAmount), x, rowTop + 3, { width: cols.amount - 6, align: "right" });
+    doc.text(String(i + 1) + ".", x, rowTop + 3, { width: cols.sno, align: "center" }); x += cols.sno;
+    doc.text(line.particulars, x + 4, rowTop + 3, { width: cols.particulars - 8 }); x += cols.particulars;
+    doc.text(plain(line.qty), x, rowTop + 3, { width: cols.qty, align: "center" }); x += cols.qty;
+    doc.text(plain(line.rate), x, rowTop + 3, { width: cols.rate, align: "center" }); x += cols.rate;
+    doc.text(plain(signedAmount), x, rowTop + 3, { width: cols.amount, align: "center" });
     y = Math.max(y + rowH, doc.y + 4);
   });
   const bodyH = Math.max(minBodyH, y - bodyTop);
@@ -547,7 +569,8 @@ function drawLineItemsTable(doc: Doc, lines: LineRow[]): void {
   }
   doc.moveTo(left, headerY).lineTo(left + width, headerY).strokeColor(BORDER).lineWidth(0.6).stroke();
   doc.moveTo(left, bodyTop).lineTo(left + width, bodyTop).strokeColor(BORDER).lineWidth(0.6).stroke();
-  doc.moveTo(left, y).lineTo(left + width, y).strokeColor(BORDER).lineWidth(0.6).stroke();
+  // Only under Qty / Rate / Amount: S.No and Particulars run on into the totals, as in I-Spark.
+  doc.moveTo(left + cols.sno + cols.particulars, y).lineTo(left + width, y).strokeColor(BORDER).lineWidth(0.6).stroke();
 
   doc.y = y;
   doc.x = left;
@@ -559,17 +582,24 @@ function drawLineItemsTable(doc: Doc, lines: LineRow[]): void {
 function drawTaxSummary(doc: Doc, printable: PrintableDoc) {
   const width = doc.page.width - PAGE.margin * 2;
   const left = PAGE.margin;
-  const labelW = width * 0.85;
-  const amountW = width - labelW;
+  // Same column geometry as drawLineItemsTable: the S.No / Particulars columns run on beside
+  // the totals, the label sits under Qty+Rate and the value under Amount (I-Spark layout).
+  const sno = width * 0.06, particulars = width * 0.54, qty = width * 0.12, rate = width * 0.13;
+  const labelX = left + sno + particulars;
+  const labelW = qty + rate;
+  const valueX = labelX + labelW;
+  const valueW = left + width - valueX;
   const rowH = 14;
 
-  const row = (label: string, amount: number, bold = false) => {
+  const row = (label: string, amount: number) => {
     const y = doc.y;
-    doc.rect(left, y, width, rowH).stroke(BORDER);
-    doc.moveTo(left + labelW, y).lineTo(left + labelW, y + rowH).strokeColor(BORDER).lineWidth(0.6).stroke();
-    doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(8).fillColor(INK)
-      .text(label, left, y + 3, { width: labelW - 6, align: "right" })
-      .text(money(amount), left + labelW, y + 3, { width: amountW - 6, align: "right" });
+    doc.rect(labelX, y, labelW, rowH).stroke(BORDER);
+    doc.rect(valueX, y, valueW, rowH).stroke(BORDER);
+    doc.moveTo(left, y).lineTo(left, y + rowH).strokeColor(BORDER).lineWidth(0.6).stroke();
+    doc.moveTo(left + sno, y).lineTo(left + sno, y + rowH).strokeColor(BORDER).lineWidth(0.6).stroke();
+    doc.font("Helvetica-Bold").fontSize(8).fillColor(INK)
+      .text(label, labelX, y + 3, { width: labelW, align: "center" })
+      .text(plain(amount), valueX, y + 3, { width: valueW, align: "center" });
     doc.y = y + rowH;
   };
 
@@ -582,32 +612,42 @@ function drawTaxSummary(doc: Doc, printable: PrintableDoc) {
       row("SGST @ 9%", printable.sgstAmount);
     }
   }
-  row("G. Total", printable.grandTotal, true);
+  row("G. Total", printable.grandTotal);
   doc.x = left;
-  doc.moveDown(0.5);
 }
 
+/** The bordered notes box under the totals, as in I-Spark: amount in words (bold italic, its own
+ *  row), payment note, MSME + "for MAS Callnet India Pvt. Ltd.", memorandum, signatory, TDS. */
 function drawAmountInWordsAndNotes(doc: Doc, printable: PrintableDoc) {
   const left = PAGE.margin;
   const width = doc.page.width - PAGE.margin * 2;
+  const top = doc.y;
+  const pad = 3;
 
-  doc.font("Helvetica-Oblique").fontSize(8).fillColor(INK)
-    .text(`Amount In Words : ${amountInWords(printable.grandTotal)}`, left, doc.y, { width });
-  doc.moveDown(0.3);
+  doc.font("Helvetica-BoldOblique").fontSize(8).fillColor(INK)
+    .text(`Amount In Words : ${amountInWords(printable.grandTotal)}`, left + pad, top + pad, { width: width * 0.75 });
+  const wordsBottom = doc.y + pad;
+  doc.moveTo(left, wordsBottom).lineTo(left + width, wordsBottom).strokeColor(BORDER).lineWidth(0.6).stroke();
+  doc.moveTo(left + width * 0.78, top).lineTo(left + width * 0.78, wordsBottom).strokeColor(BORDER).lineWidth(0.6).stroke();
 
-  doc.font("Helvetica").fontSize(7.5).fillColor(INK);
-  doc.text(PAYMENT_NOTE, left, doc.y, { width });
+  doc.font("Helvetica").fontSize(7.5).text(PAYMENT_NOTE, left + pad, wordsBottom + pad, { width: width - 2 * pad });
+  const noteBottom = doc.y + 1;
+  doc.moveTo(left, noteBottom).lineTo(left + width, noteBottom).strokeColor(BORDER).lineWidth(0.6).stroke();
 
-  const noteY = doc.y;
-  doc.text(MSME_NOTE, left, noteY, { width: width * 0.65 });
-  doc.font("Helvetica").fontSize(7.5).text(`for ${COMPANY_NAME}.`, left + width * 0.65, noteY, { width: width * 0.35, align: "right" });
-  doc.text(ENTREPRENEURS_MEMO_NOTE, left, doc.y, { width: width * 0.65 });
+  const msmeY = noteBottom + pad;
+  doc.font("Helvetica-Bold").fontSize(7.5).text(MSME_NOTE, left + pad, msmeY, { width: width * 0.65 });
+  doc.text(SIGNATORY_FOR, left + width * 0.62, msmeY, { width: width * 0.38 - pad, align: "right" });
+  doc.text(ENTREPRENEURS_MEMO_NOTE, left + pad, doc.y, { width: width * 0.65 });
 
-  doc.moveDown(1.4);
-  doc.font("Helvetica-Bold").fontSize(7.5).text("Authorised Signatory", left, doc.y, { width, align: "right" });
-  doc.moveDown(0.4);
+  doc.moveDown(2.2);
+  doc.text("Authorised Signatory", left, doc.y, { width: width - 40, align: "right" });
+  doc.moveDown(0.8);
 
-  doc.font("Helvetica").fontSize(7).fillColor(MUTED).text(TDS_NOTE, left, doc.y, { width });
+  doc.font("Times-Bold").fontSize(8).fillColor(INK).text(TDS_NOTE, left + pad, doc.y, { width: width - 2 * pad });
+  const bottom = doc.y + pad;
+  doc.rect(left, top, width, bottom - top).stroke(BORDER);
+  doc.y = bottom;
+  doc.x = left;
 }
 
 function drawFooter(doc: Doc, withLetterhead: boolean) {

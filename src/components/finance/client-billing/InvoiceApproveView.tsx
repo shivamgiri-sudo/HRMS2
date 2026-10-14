@@ -53,13 +53,13 @@ export function InvoiceApproveView({ invoiceId, mode, onClose, onApproved }: {
   const lines = inv?.lines ?? [];
   const charges = lines.filter((l) => l.line_type !== "deduction");
   const deductions = lines.filter((l) => l.line_type === "deduction");
-  const billTo = [h?.bill_to_address1, h?.bill_to_address2, h?.bill_to_address3];
-  const shipTo = [h?.ship_to_address1 ?? h?.bill_to_address1, h?.ship_to_address2 ?? h?.bill_to_address2, h?.ship_to_address3 ?? h?.bill_to_address3];
+  const billTo = [h?.bill_to_address1, h?.bill_to_address2, h?.bill_to_address3, h?.bill_to_address4, h?.bill_to_address5];
+  const shipTo = (h?.ship_to_address1 ? [h?.ship_to_address1, h?.ship_to_address2, h?.ship_to_address3, h?.ship_to_address4, h?.ship_to_address5] : [h?.bill_to_address1, h?.bill_to_address2, h?.bill_to_address3, h?.bill_to_address4, h?.bill_to_address5]);
   const party = (title: string, a: Array<string | null | undefined>) => (
     <section className="rounded-md border text-sm" aria-label={title}>
       <h3 className="border-b bg-slate-50 px-2 py-1 text-xs text-slate-600">{title}</h3>
       <p className="border-b px-2 py-1 font-semibold">{h?.client_name ?? "—"}</p>
-      {[0, 1, 2, 3].map((i) => <p key={i} className="min-h-[26px] border-b px-2 py-1 font-medium last:border-b-0">{a[i] ?? ""}</p>)}
+      {[0, 1, 2, 3, 4].map((i) => <p key={i} className="min-h-[26px] border-b px-2 py-1 font-medium last:border-b-0">{a[i] ?? ""}</p>)}
     </section>
   );
   const kv: Array<[string, string]> = [

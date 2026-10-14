@@ -143,11 +143,17 @@ describe("approveInvoice", () => {
     conn.execute
       .mockResolvedValueOnce([[APPROVABLE_INVOICE], []]) // invoice lookup
       .mockResolvedValueOnce([[{ companyName: "Mas Callnet India Pvt Ltd", stateCode: "09" }], []]) // cost centre + branch lookup
+      .mockResolvedValueOnce([[{ payment_terms: "45 days" }], []]) // payment terms -> due date
       .mockResolvedValueOnce([{}, []]) // UPDATE client_invoice
       .mockResolvedValueOnce([{}, []]); // INSERT client_invoice_audit_log
     mintBillNumber.mockResolvedValueOnce("09-01/26-27");
 
     const result = await clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" });
+
+    // Due date fixed at billing: invoice date + 45 credit days from the cost centre's terms.
+    const billUpdate = conn.execute.mock.calls[3];
+    expect(String(billUpdate[0])).toMatch(/due_date = DATE_ADD\(invoice_date, INTERVAL \? DAY\)/);
+    expect(billUpdate[1]).toEqual(["09-01/26-27", 45, "inv-1"]);
 
     // Gap 3 fix: approveInvoice passes its own open-transaction `conn` through so the mint
     // runs on that connection instead of a separate pool-level call (avoids mixing pool-level
@@ -157,7 +163,7 @@ describe("approveInvoice", () => {
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(conn.release).toHaveBeenCalledTimes(1);
 
-    const auditCall = conn.execute.mock.calls[3];
+    const auditCall = conn.execute.mock.calls[4];
     expect(String(auditCall[0])).toMatch(/INSERT INTO client_invoice_audit_log/);
     expect(auditCall[1]).toEqual(expect.arrayContaining(["inv-1", "approved", "u-1"]));
   });
@@ -253,10 +259,18 @@ describe("rejectInvoice", () => {
     ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/already rejected/) });
   });
 
-  it("refunds every linked provision deduction, marks the invoice rejected, and writes one audit row", async () => {
+  it("refuses to reject a billed (approved) invoice: that goes through the guarded void request", async () => {
+    const conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "approved", is_migrated: 0 }], []]);
+    await expect(clientBillingApprovalService.rejectInvoice({ invoiceId: "inv-1", reason: "client disputed", userId: "u-1" }))
+      .rejects.toThrow(/raise a delete \(void\) request/);
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("refunds every linked provision deduction, marks the proforma rejected, and writes one audit row", async () => {
     const conn = mockConnection();
     conn.execute
-      .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "approved" }], []]) // invoice lookup
+      .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "proforma" }], []]) // invoice lookup
       .mockResolvedValueOnce([[ // deductions for this invoice
         { id: "ded-1", provision_id: "prov-1", amount_used: 5000 },
         { id: "ded-2", provision_id: "prov-2", amount_used: 3000 },
@@ -305,9 +319,9 @@ describe("rejectInvoice", () => {
   });
 
   it("Gap 1 fix: reversing an approved invoice's rejection also refunds every linked PO particular, not just provisions", async () => {
+    // Billed invoices are reversed by the approved void request, which calls rejectInvoiceInTransaction.
     const conn = mockConnection();
     conn.execute
-      .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "approved" }], []]) // invoice lookup
       .mockResolvedValueOnce([[], []]) // no provision deductions on this invoice
       .mockResolvedValueOnce([[ // PO particulars linked to this invoice
         { id: "part-1", po_id: "po-1", amount_consumed: 12000 },
@@ -317,20 +331,16 @@ describe("rejectInvoice", () => {
       .mockResolvedValueOnce([{}, []]) // UPDATE client_invoice
       .mockResolvedValueOnce([{}, []]); // INSERT audit log
 
-    const result = await clientBillingApprovalService.rejectInvoice({
+    await clientBillingApprovalService.rejectInvoiceInTransaction(conn as never, {
       invoiceId: "inv-1", reason: "PO cancelled by client", userId: "u-1",
-    });
+    }, "void_approved");
 
-    expect(result).toEqual({ id: "inv-1", invoiceStatus: "rejected" });
-
-    const poRefundCall = conn.execute.mock.calls[3];
+    const poRefundCall = conn.execute.mock.calls[2];
     expect(String(poRefundCall[0])).toMatch(/UPDATE client_po_number SET balance_amount = balance_amount \+ \?/);
     expect(poRefundCall[1]).toEqual([12000, "po-1"]);
 
-    const deleteParticularCall = conn.execute.mock.calls[4];
+    const deleteParticularCall = conn.execute.mock.calls[3];
     expect(String(deleteParticularCall[0])).toMatch(/DELETE FROM client_po_particular WHERE id = \?/);
     expect(deleteParticularCall[1]).toEqual(["part-1"]);
-
-    expect(conn.commit).toHaveBeenCalledTimes(1);
   });
 });

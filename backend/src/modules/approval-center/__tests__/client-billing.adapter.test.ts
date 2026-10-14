@@ -56,6 +56,8 @@ describe("client invoice adapter", () => {
       ["Invoice approval (mints the bill number)", "Approve & generate bill"],
     ]);
     expect(items[1].viewPath).toBe("/finance/client-billing?tab=invoice-approval&approvalId=i3");
+    // A different uid per step, so step 2 is not hidden as "just decided" after step 1.
+    expect(items.map((i) => i.uid)).toEqual(["client_invoice:i1:proforma", "client_invoice:i3:invoice"]);
   });
 });
 

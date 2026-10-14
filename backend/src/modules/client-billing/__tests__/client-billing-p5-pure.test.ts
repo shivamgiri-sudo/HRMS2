@@ -242,3 +242,19 @@ describe("amount in words (Indian)", () => {
     expect(amountInWords(0.5)).toBe("Rupees Zero and Fifty Paise Only");
   });
 });
+
+describe("tax rounding matches I-Spark (whole rupee, half up)", () => {
+  it("reproduces live legacy rows", async () => {
+    const { computeInvoiceAmounts } = await import("../client-billing-tax.js");
+    const igst = (t: number) => computeInvoiceAmounts([{ qty: 1, rate: t }], "Integrated", true);
+    const intra = (t: number) => computeInvoiceAmounts([{ qty: 1, rate: t }], "Intrastate", true);
+    expect(igst(44840)).toMatchObject({ igstAmount: 8071, grandTotal: 52911 });
+    expect(igst(3045020)).toMatchObject({ igstAmount: 548104, grandTotal: 3593124 });
+    expect(igst(1552754)).toMatchObject({ igstAmount: 279496, grandTotal: 1832250 });
+    expect(igst(142800)).toMatchObject({ igstAmount: 25704, grandTotal: 168504 });
+    expect(intra(120380)).toMatchObject({ cgstAmount: 10834, sgstAmount: 10834, grandTotal: 142048 });
+    expect(intra(218990)).toMatchObject({ cgstAmount: 19709, sgstAmount: 19709, grandTotal: 258408 });
+    // taxable keeps paise from qty x rate (6.16 x 34500 = 212520; 4.08 x 35000 = 142800)
+    expect(computeInvoiceAmounts([{ qty: 4.08, rate: 35000 }], "Integrated", true).totalAmount).toBe(142800);
+  });
+});

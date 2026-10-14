@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1270,
-  "columnCount": 18498,
+  "tableCount": 1272,
+  "columnCount": 18531,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -4883,7 +4883,8 @@
       "apply_tax_calc",
       "po_approved",
       "po_approved_by",
-      "po_approved_at"
+      "po_approved_at",
+      "due_date"
     ],
     "client_invoice_audit_log": [
       "id",
@@ -5054,7 +5055,8 @@
       "last_payment_date",
       "updated_by",
       "updated_at",
-      "created_at"
+      "created_at",
+      "other_deduction"
     ],
     "client_master": [
       "id",
@@ -5135,7 +5137,8 @@
       "edit_amount",
       "edit_remarks",
       "edit_requested_by",
-      "edit_requested_at"
+      "edit_requested_at",
+      "legacy_source_id"
     ],
     "client_provision_deduction": [
       "id",
@@ -21040,6 +21043,40 @@
       "reason",
       "created_at",
       "seq"
+    ],
+    "client_receipt": [
+      "id",
+      "receipt_no",
+      "finance_year",
+      "receipt_date",
+      "client_name",
+      "company_name",
+      "branch_id",
+      "amount_received",
+      "tds_amount",
+      "other_deduction",
+      "payment_mode",
+      "reference_no",
+      "bank_account_id",
+      "voucher_id",
+      "status",
+      "void_reason",
+      "voided_by",
+      "voided_at",
+      "remarks",
+      "created_by",
+      "created_at",
+      "is_migrated",
+      "legacy_source_id"
+    ],
+    "client_receipt_allocation": [
+      "id",
+      "receipt_id",
+      "invoice_id",
+      "received_amount",
+      "tds_amount",
+      "deduction_amount",
+      "created_at"
     ]
   }
 }

@@ -107,6 +107,9 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
   const [jccNo, setJccNo] = useState("");
   const [charges, setCharges] = useState<Line[]>([blank()]);
   const [deductions, setDeductions] = useState<Line[]>([blank()]);
+  // Shown inside the sheet: the app's toast layer (z-100) sits under sheets (z-110), so a toast
+  // raised while this sheet is open is never seen and Submit looks like it did nothing.
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const options = useBillingFilterOptions().data?.data;
   const ccOptions = costCentreSearchOptions(narrowCostCentres(options?.costCentres ?? [], scope.companyName, scope.branchId));
@@ -119,7 +122,7 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
     if (open) return;
     setStage(1); setScope({ companyName: "", branchId: "" }); setCostCentreId(""); setFinanceYear(currentFinanceYear());
     setMonthLabel(""); setInvoiceDate(todayLocalISO()); setDescription(""); setInvoiceType("Revenue"); setCategory("Others");
-    setApplyTaxCalc(true); setApplyGst(true); setPoNo(""); setJccNo(""); setCharges([blank()]); setDeductions([blank()]);
+    setApplyTaxCalc(true); setApplyGst(true); setPoNo(""); setJccNo(""); setCharges([blank()]); setDeductions([blank()]); setSaveError(null);
   }, [open]);
 
   useEffect(() => {
@@ -141,8 +144,9 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
   const total = useMemo(() => Math.round((validCharges.reduce((s, l) => s + amountOf(l), 0) - validDeductions.reduce((s, l) => s + amountOf(l), 0)) * 100) / 100, [validCharges, validDeductions]);
   const gstType = gstTypeOf(h);
   const taxOn = applyTaxCalc && applyGst;
-  const igst = taxOn && gstType === "Integrated" ? Math.round(total * 18) / 100 : 0;
-  const cgst = taxOn && gstType === "Intrastate" ? Math.round(total * 9) / 100 : 0;
+  // Whole-rupee tax, half up — same rule as the server and I-Spark.
+  const igst = taxOn && gstType === "Integrated" ? Math.round(Math.round(total * 100) * 18 / 10000) : 0;
+  const cgst = taxOn && gstType === "Intrastate" ? Math.round(Math.round(total * 100) * 9 / 10000) : 0;
   const grand = Math.round((total + igst + cgst * 2) * 100) / 100;
   const monthName = monthLabel ? monthLabel.slice(0, 3) : "";
   const stage1Ok = Boolean(costCentreId && financeYear && monthLabel && invoiceDate && invoiceType);
@@ -180,7 +184,11 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
       void queryClient.invalidateQueries({ queryKey: ["client-billing"] });
       onSaved(); onOpenChange(false);
     },
-    onError: (e: Error) => toast({ title: isEdit ? "Could not update proforma" : "Could not create proforma", description: e.message, variant: "destructive" }),
+    onMutate: () => setSaveError(null),
+    onError: (e: Error) => {
+      setSaveError(e.message);
+      toast({ title: isEdit ? "Could not update proforma" : "Could not create proforma", description: e.message, variant: "destructive" });
+    },
   });
 
   const field = (label: string, control: React.ReactNode) => (
@@ -285,7 +293,7 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {[{ t: "Bill To", a: [h?.bill_to_address1, h?.bill_to_address2, h?.bill_to_address3] }, { t: "Ship To", a: [h?.ship_to_address1 ?? h?.bill_to_address1, h?.ship_to_address2 ?? h?.bill_to_address2, h?.ship_to_address3 ?? h?.bill_to_address3] }].map((b) => (
+              {[{ t: "Bill To", a: [h?.bill_to_address1, h?.bill_to_address2, h?.bill_to_address3, h?.bill_to_address4, h?.bill_to_address5] }, { t: "Ship To", a: (h?.ship_to_address1 ? [h?.ship_to_address1, h?.ship_to_address2, h?.ship_to_address3, h?.ship_to_address4, h?.ship_to_address5] : [h?.bill_to_address1, h?.bill_to_address2, h?.bill_to_address3, h?.bill_to_address4, h?.bill_to_address5]) }].map((b) => (
                 <section key={b.t} className="rounded-md border text-sm" aria-label={b.t}>
                   <h3 className="border-b bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">{b.t}</h3>
                   <p className="bg-sky-600 px-3 py-1 font-semibold text-white">{h?.client_name ?? "—"}</p>
@@ -325,6 +333,11 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
               {!taxOn && <p className="px-3 py-1.5 text-xs text-amber-700">No tax: Apply Tax Calculation or Apply GST is unticked.</p>}
             </section>
 
+            {saveError && (
+              <p role="alert" className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                {isEdit ? "Could not update proforma" : "Could not create proforma"}: {saveError}
+              </p>
+            )}
             <div className="flex justify-end gap-2 pb-2">
               <Button variant="outline" onClick={() => setStage(1)}><ArrowLeft className="mr-1.5 h-4 w-4" />Back</Button>
               <Button disabled={validCharges.length === 0 || save.isPending} onClick={() => save.mutate()}>

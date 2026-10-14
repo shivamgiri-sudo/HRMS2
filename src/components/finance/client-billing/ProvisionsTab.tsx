@@ -4,7 +4,8 @@
  * Approve, Upload Provision, View & Edit Provision. A proforma can only draw from an APPROVED
  * provision for its own cost centre + month (enforced server-side in drawDownForInvoice).
  */
-import { useRef, useState } from "react";
+import { useContext, useRef, useState } from "react";
+import { AuthContext } from "@/contexts/AuthContext";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, Pencil, Plus, Upload, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -88,6 +89,8 @@ export function parseProvisionCsv(text: string): UploadProvisionRow[] {
 
 export function ProvisionsTab() {
   const { toast } = useToast();
+  // Read without useAuth() so the tab still renders where no AuthProvider is mounted (tests).
+  const myUserId = String((useContext(AuthContext) as { user?: { id?: string } } | undefined)?.user?.id ?? "");
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState({ companyName: "", branchId: "", financeYear: currentFinanceYear(), monthLabel: "", status: "pending", search: "", page: 1 });
   const [createOpen, setCreateOpen] = useState(false);
@@ -219,7 +222,10 @@ export function ProvisionsTab() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-1">
-                      {row.edit_requested_at && (
+                      {row.edit_requested_at && String(row.edit_requested_by) === myUserId && (
+                        <span className="text-xs text-amber-700">Waiting for another approver</span>
+                      )}
+                      {row.edit_requested_at && String(row.edit_requested_by) !== myUserId && (
                         <>
                           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-emerald-700" aria-label="Approve provision edit"
                             disabled={editDecision.isPending} onClick={() => editDecision.mutate({ id: row.id, decision: "approve" })}>Approve edit</Button>

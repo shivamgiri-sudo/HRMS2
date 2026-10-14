@@ -76,6 +76,18 @@ vi.mock("@/lib/clientBillingApi", () => ({
   rejectProvision: vi.fn(),
   uploadProvisions: vi.fn(),
   INVOICE_TYPES: ["Revenue", "Non Revenue"],
+  RECEIPT_PAYMENT_MODES: ["NEFT", "RTGS", "IMPS", "UPI", "Cheque", "DD", "Cash", "Other"],
+  listOutstandingBills: vi.fn(() => new Promise(() => {})),
+  listReceipts: vi.fn(() => new Promise(() => {})),
+  createReceipt: vi.fn(),
+  voidReceipt: vi.fn(),
+  listCompanyBankAccounts: vi.fn(() => new Promise(() => {})),
+  decideProvisionEdit: vi.fn(),
+  listPoMaster: vi.fn(() => new Promise(() => {})),
+  createPoMaster: vi.fn(),
+  approveInvoicePo: vi.fn(),
+  addInvoiceGrn: vi.fn(),
+  getBillingHeader: vi.fn(() => new Promise(() => {})),
 }));
 
 // DashboardLayout pulls in react-router's useLocation/useNavigate + AuthContext, none of which
@@ -248,6 +260,7 @@ describe("ClientBillingWorkspacePage — rendering", () => {
     expect(html).toContain("4 · Invoice Approval");
     expect(html).toContain("5 · Download Initial Invoice");
     expect(html).toContain("ADD PO");
+    expect(html).toContain("6 · Receipts");
     expect(html).toContain("Credit Notes");
     expect(html).toContain("Client Billing");
   });

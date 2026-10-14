@@ -49,7 +49,9 @@ export const clientInvoiceAdapter: ApprovalAdapter = {
       const client = str(r.cost_centre_display_name) || str(r.cost_centre_code);
       const invoiceStep = Boolean(r.proforma_approved_at);
       out.push({
-        uid: `client_invoice:${r.id}`,
+        // One uid per step: the Approval Center hides a just-decided uid for a few minutes, so a
+        // shared uid hid the same invoice's step-2 card right after step 1 was approved.
+        uid: `client_invoice:${r.id}:${invoiceStep ? "invoice" : "proforma"}`,
         kind: "client_invoice",
         kindLabel: "Client invoice (proforma)",
         category: "Finance",

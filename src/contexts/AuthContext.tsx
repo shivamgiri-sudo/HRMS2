@@ -27,7 +27,7 @@ interface AuthContextType {
   verifyTwoFactorCode: (otp: string) => Promise<{ error: Error | null }>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const DEMO_LOGIN_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_LOGIN === 'true';
 const AUTH_REQUEST_TIMEOUT_MS = 20000;
 

@@ -926,11 +926,103 @@ export interface BillingHeader {
   bill_to_address1: string | null;
   bill_to_address2: string | null;
   bill_to_address3: string | null;
+  bill_to_address4: string | null;
+  bill_to_address5: string | null;
   ship_to_address1: string | null;
   ship_to_address2: string | null;
   ship_to_address3: string | null;
+  ship_to_address4: string | null;
+  ship_to_address5: string | null;
 }
 
 export function getBillingHeader(costCentreId: string): Promise<{ success: boolean; data: BillingHeader }> {
   return hrmsApi.get(`/api/client-billing/cost-centres/${costCentreId}/billing-header`);
+}
+
+// ── Receipts (money received against bills) ─────────────────────────────────────────────
+
+export interface OutstandingBill {
+  id: string;
+  bill_no: string;
+  invoice_date: string;
+  due_date: string;
+  month_label: string;
+  finance_year: string;
+  total_amount: string | number;
+  grand_total: string | number;
+  description: string | null;
+  cost_centre_code: string;
+  company_name: string | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  client_name: string;
+  received: string | number;
+  tds: string | number;
+  deduction: string | number;
+  settled: string | number;
+  credited: string | number;
+  outstanding: string | number;
+  days_past_due: number;
+}
+
+export function listOutstandingBills(filters: { clientName?: string; branchId?: string; companyName?: string; search?: string } = {}): Promise<{ success: boolean; data: OutstandingBill[] }> {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
+  const qs = params.toString();
+  return hrmsApi.get(`/api/client-billing/receipts/outstanding${qs ? `?${qs}` : ""}`);
+}
+
+export type ReceiptState = "awaiting_bank" | "in_bank" | "voucher_rejected" | "void";
+export const RECEIPT_PAYMENT_MODES = ["NEFT", "RTGS", "IMPS", "UPI", "Cheque", "DD", "Cash", "Other"] as const;
+
+export interface ReceiptRow {
+  id: string;
+  receipt_no: string;
+  receipt_date: string;
+  client_name: string;
+  company_name: string | null;
+  branch_name: string | null;
+  amount_received: string | number;
+  tds_amount: string | number;
+  other_deduction: string | number;
+  payment_mode: string;
+  reference_no: string | null;
+  bank_account_name: string | null;
+  voucher_number: string | null;
+  voucher_status: string | null;
+  state: ReceiptState;
+  bill_nos: string | null;
+  void_reason: string | null;
+  is_migrated: 0 | 1;
+}
+
+export function listReceipts(filters: { fromDate?: string; toDate?: string; branchId?: string; companyName?: string; search?: string; status?: string; page?: number; limit?: number } = {}): Promise<PaginatedResult<ReceiptRow>> {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) if (v !== undefined && v !== "") params.set(k, String(v));
+  const qs = params.toString();
+  return hrmsApi.get(`/api/client-billing/receipts${qs ? `?${qs}` : ""}`);
+}
+
+export interface CreateReceiptPayload {
+  receiptDate: string;
+  bankAccountId: string;
+  paymentMode: string;
+  referenceNo?: string;
+  remarks?: string;
+  amountReceived: number;
+  allocations: Array<{ invoiceId: string; received: number; tds: number; deduction: number }>;
+}
+
+export function createReceipt(payload: CreateReceiptPayload): Promise<{ success: boolean; data: ReceiptRow }> {
+  return hrmsApi.post("/api/client-billing/receipts", payload);
+}
+
+export function voidReceipt(id: string, reason: string): Promise<{ success: boolean; data: ReceiptRow }> {
+  return hrmsApi.post(`/api/client-billing/receipts/${id}/void`, { reason });
+}
+
+export interface CompanyBankAccount { id: string; account_name: string; account_number_last4?: string | null; active_status?: number; bank_name?: string | null }
+
+export function listCompanyBankAccounts(): Promise<{ success: boolean; data: CompanyBankAccount[] }> {
+  return hrmsApi.get("/api/finance/bank-accounts");
 }

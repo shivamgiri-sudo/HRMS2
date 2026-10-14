@@ -136,7 +136,8 @@ describe("createProforma", () => {
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       id: expect.any(String), proformaNo: "PI/09/7972",
-      totalAmount: 4678, igstAmount: 0, cgstAmount: 421.02, sgstAmount: 421.02, grandTotal: 5520.04,
+      // Tax to the whole rupee, as I-Spark stores it: 4678 x 9% = 421.02 -> 421.
+      totalAmount: 4678, igstAmount: 0, cgstAmount: 421, sgstAmount: 421, grandTotal: 5520,
       provisionUsed: 0,
     });
   });
@@ -271,7 +272,9 @@ describe("createProforma", () => {
       costCentreId: "cc-1", financeYear: "2026-27", monthLabel: "Sep-26", amount: 778901,
     }));
     expect(result.provisionUsed).toBe(778901);
-    expect(result.grandTotal).toBe(919103.18);
+    // Same figures as the legacy screenshot: 778901 + IGST 140202 = 919103.
+    expect(result.igstAmount).toBe(140202);
+    expect(result.grandTotal).toBe(919103);
   });
 
   it("rolls back when the provision is missing or short", async () => {

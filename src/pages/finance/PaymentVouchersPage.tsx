@@ -245,6 +245,13 @@ export function PaymentVouchersContent() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const receiptsSettings = useQuery({
+    queryKey: ["client-billing", "receipts-settings"],
+    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: { receiptsAreSingleEntry: boolean } }>("/api/client-billing/receipts/settings")).data,
+    staleTime: 5 * 60_000,
+  });
+  const receiptsSingleEntry = receiptsSettings.data?.receiptsAreSingleEntry === true;
+
   const raiseReceiptMutation = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -320,7 +327,13 @@ export function PaymentVouchersContent() {
             {canRaise && (
               <Button
                 className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white transition-all duration-200"
-                onClick={() => { setReceiptForm(emptyReceiptForm); setReceiptOpen(true); }}
+                // After the I-Spark collections import, client receipts have one entry point:
+                // Client Billing -> Receipts (allocated to bills; it raises this voucher itself).
+                onClick={() => {
+                  if (receiptsSingleEntry) { window.location.assign("/finance/client-billing?tab=receipts"); return; }
+                  setReceiptForm(emptyReceiptForm); setReceiptOpen(true);
+                }}
+                title={receiptsSingleEntry ? "Opens Client Billing → Receipts, where the money is allocated to the client's bills" : undefined}
               >
                 <IndianRupee className="mr-1.5 h-4 w-4" /> Record Receipt
               </Button>

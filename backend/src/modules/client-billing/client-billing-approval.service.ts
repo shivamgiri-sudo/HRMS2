@@ -3,6 +3,7 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { clientBillingNumberingService } from "./client-billing-numbering.service.js";
 import { parsePoNumbers } from "./client-billing-po.js";
+import { creditDays } from "./client-billing-receipt.service.js";
 
 export interface ApproveInvoiceInput {
   invoiceId: string;
@@ -168,9 +169,16 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
       }
     }
 
+    // Due date = invoice date + the cost centre's credit days (payment terms text, default 30),
+    // fixed at billing time so a later change of terms does not move an issued bill's due date.
+    const [termRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT cc.payment_terms FROM cost_centre_master cc WHERE cc.id = ?`, [invoice.cost_centre_id]
+    );
+    const terms = Array.isArray(termRows) ? termRows[0] : undefined;
     await conn.execute(
-      `UPDATE client_invoice SET invoice_status = 'approved', bill_no = ? WHERE id = ?`,
-      [billNo, input.invoiceId]
+      `UPDATE client_invoice SET invoice_status = 'approved', bill_no = ?,
+              due_date = DATE_ADD(invoice_date, INTERVAL ? DAY) WHERE id = ?`,
+      [billNo, creditDays(terms?.payment_terms), input.invoiceId]
     );
 
     await conn.execute(
@@ -222,6 +230,12 @@ async function rejectInvoice(input: RejectInvoiceInput): Promise<RejectInvoiceRe
     }
     if (invoice.invoice_status === "rejected") {
       throw clientError(`Invoice ${input.invoiceId} is already rejected`);
+    }
+    // A billed invoice (bill number issued) is cancelled only through the delete/void change
+    // request, which a second person approves and which refuses while an approved credit note or
+    // a receipt exists. Direct reject here is for proformas only, so it cannot bypass those checks.
+    if (invoice.invoice_status === "approved") {
+      throw clientError("This invoice already has a bill number; raise a delete (void) request instead of rejecting it");
     }
 
     const [deductionRows] = await conn.execute<RowDataPacket[]>(

@@ -222,12 +222,17 @@ async function decideChangeRequest(
         }
         if (await tableExists(conn, "client_receipt_allocation")) {
           const [allocRows] = await conn.execute<RowDataPacket[]>(
-            `SELECT COUNT(*) AS n FROM client_receipt_allocation WHERE invoice_id = ?`,
+            // Only live receipts block a void: a voided receipt, or one whose bank voucher was
+            // rejected/withdrawn, no longer settles anything.
+            `SELECT COUNT(*) AS n FROM client_receipt_allocation a
+             JOIN client_receipt r ON r.id = a.receipt_id AND r.status = 'recorded'
+             LEFT JOIN payment_voucher pv ON pv.id = r.voucher_id
+             WHERE a.invoice_id = ? AND (pv.id IS NULL OR pv.status NOT IN ('rejected', 'withdrawn'))`,
             [invoiceId],
           );
           if (Number(allocRows[0]?.n ?? 0) > 0) {
             throw clientError(
-              "Receipts are allocated to this invoice; reverse them before voiding",
+              "Receipts are recorded against this invoice; void those receipts first",
             );
           }
         }

@@ -59,6 +59,7 @@ import { ProformaEntrySheet } from "@/components/finance/client-billing/Proforma
 import { InvoiceApproveView } from "@/components/finance/client-billing/InvoiceApproveView";
 import { DownloadInvoiceList, InvoiceApprovalList, ProformaApprovalList } from "@/components/finance/client-billing/LegacyBillingLists";
 import { AddGrnDialog, PoGrnTab } from "@/components/finance/client-billing/PoGrnTab";
+import { ReceiptsTab } from "@/components/finance/client-billing/ReceiptsTab";
 import { CreditNoteDetailDialog } from "@/components/finance/client-billing/CreditNoteDetailDialog";
 import { InvoiceDetailDialog } from "@/components/finance/client-billing/InvoiceDetailDialog";
 import { RejectInvoiceDialog } from "@/components/finance/client-billing/RejectInvoiceDialog";
@@ -96,7 +97,7 @@ const EMPTY_FILTERS = (status: string): ListFilterState => ({
   status, fromDate: "", toDate: "", costCentreId: "", companyName: "", branchId: "", search: "", page: 1,
 });
 
-const TABS: Array<BillingTab | "change-requests" | "po"> = ["provisions", "proformas", "invoice-approval", "invoices", "po", "credit-notes", "change-requests"];
+const TABS: Array<BillingTab | "change-requests" | "po" | "receipts"> = ["provisions", "proformas", "invoice-approval", "invoices", "receipts", "po", "credit-notes", "change-requests"];
 
 /**
  * Shown in the actions cell in place of Approve/Reject on a row the live workflow can
@@ -425,9 +426,9 @@ export default function ClientBillingWorkspacePage() {
   // Approval Center deep link: ?tab=<tab>&approvalId=<id> opens that record's detail.
   const deepLinkParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
   const deepLinkId = deepLinkParams.get("approvalId");
-  const rawTab = deepLinkParams.get("tab") as BillingTab | "change-requests" | "po" | null;
+  const rawTab = deepLinkParams.get("tab") as BillingTab | "change-requests" | "po" | "receipts" | null;
   const deepLinkTab = rawTab && TABS.includes(rawTab) ? rawTab : "proformas";
-  const [activeTab, setActiveTab] = useState<BillingTab | "change-requests" | "po">(deepLinkTab);
+  const [activeTab, setActiveTab] = useState<BillingTab | "change-requests" | "po" | "receipts">(deepLinkTab);
   const [changeRequestTarget, setChangeRequestTarget] = useState<ChangeRequestTarget | null>(null);
   const [submitTarget, setSubmitTarget] = useState<{ id: string; label: string } | null>(null);
   const [detailInvoiceId, setDetailInvoiceId] = useState<string | null>(
@@ -634,15 +635,17 @@ export default function ClientBillingWorkspacePage() {
             summary?.awaitingProformaApprovalCount,
             summary?.awaitingInvoiceApprovalCount,
             undefined,
+            undefined,
           ]}
         />
 
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as BillingTab | "change-requests" | "po")} className="flex flex-1 flex-col overflow-hidden">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as BillingTab | "change-requests" | "po" | "receipts")} className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="mx-4 mt-3 w-fit">
             <TabsTrigger value="provisions">1 · Provision</TabsTrigger>
             <TabsTrigger value="proformas">2–3 · View &amp; Approve Proforma</TabsTrigger>
             <TabsTrigger value="invoice-approval">4 · Invoice Approval</TabsTrigger>
             <TabsTrigger value="invoices">5 · Download Initial Invoice</TabsTrigger>
+            <TabsTrigger value="receipts">6 · Receipts</TabsTrigger>
             <TabsTrigger value="po">ADD PO</TabsTrigger>
             <TabsTrigger value="credit-notes">Credit Notes</TabsTrigger>
             <TabsTrigger value="change-requests">Delete / Status Change Approval</TabsTrigger>
@@ -690,6 +693,11 @@ export default function ClientBillingWorkspacePage() {
               onDeleteRequest={(r) => setChangeRequestTarget({ id: r.id, label: r.bill_no ?? r.id, category: r.category, requestType: "void" })}
               onAudit={(r) => setAuditInvoice({ id: r.id, label: r.bill_no ?? r.id })}
             />
+          </TabsContent>
+
+          {/* ── Money received against bills (the only place client receipts are recorded) ── */}
+          <TabsContent value="receipts" className="flex flex-1 flex-col overflow-hidden px-4 py-3 data-[state=inactive]:hidden">
+            <ReceiptsTab />
           </TabsContent>
 
           {/* ── Legacy "ADD PO" ── */}

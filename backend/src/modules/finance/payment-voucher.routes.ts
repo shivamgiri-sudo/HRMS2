@@ -135,6 +135,15 @@ paymentVoucherRouter.post(
   h(async (req, res) => {
     try {
       const a = actor(req);
+      // Once the I-Spark collections are imported (CLIENT_BILLING_LEGACY_COLLECTIONS_IMPORTED=true),
+      // client money has ONE entry point: Client Billing -> Receipts, which allocates it to the bills
+      // it pays and raises this sales_receipt voucher itself. Until then every live bill is an
+      // I-Spark bill that Receipts refuses, so this path stays open.
+      if ((req.body as { sourceType?: string })?.sourceType === "sales_receipt"
+        && String(process.env.CLIENT_BILLING_LEGACY_COLLECTIONS_IMPORTED ?? "false").toLowerCase() === "true") {
+        res.status(409).json({ success: false, error: "Client receipts are recorded in Client Billing → Receipts against the bills they pay; that raises the receipt voucher." });
+        return;
+      }
       const data = await paymentVoucherService.raise(req.body, a.id, a.role);
       res.status(201).json({ success: true, data });
     } catch (error) {

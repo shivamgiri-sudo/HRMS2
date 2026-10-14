@@ -17,6 +17,7 @@ import { checkPoCoverage, listAvailablePos } from "./client-billing-po.js";
 import { clientBillingProvisionService, provisionRequired } from "./client-billing-provision.service.js";
 import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { clientBillingPoGrnService } from "./client-billing-po-grn.service.js";
+import { clientBillingReceiptService, legacyBillsAllowed } from "./client-billing-receipt.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1104,8 +1105,8 @@ router.get(
       `SELECT cc.id, cc.cost_centre_code, cc.company_name, b.branch_name, b.gst_state_code AS state_code,
               ${COST_CENTRE_DISPLAY_NAME_SQL} AS client_name,
               cc.service_tax_no, cc.vendor_gst_no, cc.vendor_gst_state, cc.vendor_state_code, cc.gst_type,
-              cc.bill_to_address1, cc.bill_to_address2, cc.bill_to_address3,
-              cc.ship_to_address1, cc.ship_to_address2, cc.ship_to_address3
+              cc.bill_to_address1, cc.bill_to_address2, cc.bill_to_address3, cc.bill_to_address4, cc.bill_to_address5,
+              cc.ship_to_address1, cc.ship_to_address2, cc.ship_to_address3, cc.ship_to_address4, cc.ship_to_address5
        FROM cost_centre_master cc
        LEFT JOIN branch_master b ON b.id = cc.branch_id
        WHERE cc.id = ? LIMIT 1`,
@@ -1113,6 +1114,101 @@ router.get(
     );
     if (!rows[0]) return res.status(404).json({ error: "Cost centre not found" });
     res.json({ success: true, data: rows[0] });
+  })
+);
+
+// ── Receipts: money received against bills (Receivables & Money Flow phase 1) ──
+/** Branch-scoped callers see only their own branch; org-wide finance sees all (null). */
+async function receiptBranchScope(req: AuthenticatedRequest): Promise<string[] | null> {
+  const policy = await loadBranchPolicy(req.authUser!.id);
+  if (policy.orgWide) return null;
+  return policy.ownBranchId ? [policy.ownBranchId] : [];
+}
+
+/**
+ * Whether Receipts is THE place to record client money. False until the I-Spark collections are
+ * imported (CLIENT_BILLING_LEGACY_COLLECTIONS_IMPORTED=true): until then I-Spark bills cannot take
+ * receipts here, so the Payment Vouchers "Record Receipt" stays the working path.
+ */
+router.get(
+  "/receipts/settings",
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    res.json({ success: true, data: { receiptsAreSingleEntry: legacyBillsAllowed() } });
+  })
+);
+
+router.get(
+  "/receipts/outstanding",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const q = req.query as Record<string, string | undefined>;
+    const data = await clientBillingReceiptService.listOutstanding({
+      clientName: q.clientName, costCentreId: q.costCentreId, branchId: q.branchId, companyName: q.companyName,
+      search: q.search, branchIds: await receiptBranchScope(req),
+    });
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/receipts",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const q = req.query as Record<string, string | undefined>;
+    const status = q.status && ["void", "in_bank", "voucher_rejected", "awaiting_bank"].includes(q.status) ? q.status : undefined;
+    const data = await clientBillingReceiptService.listReceipts({
+      fromDate: q.fromDate, toDate: q.toDate, branchId: q.branchId, companyName: q.companyName, search: q.search, status,
+      page: Number(q.page) || 1, limit: Number(q.limit) || 50, branchIds: await receiptBranchScope(req),
+    });
+    res.json({ success: true, data: data.rows, total: data.total, page: data.page, limit: data.limit });
+  })
+);
+
+router.get(
+  "/receipts/:id",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await clientBillingReceiptService.getReceipt(req.params.id);
+    const scope = await receiptBranchScope(req);
+    if (scope && !scope.includes(String(data.branch_id ?? ""))) return res.status(403).json({ error: "Outside your branch" });
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/receipts",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const b = req.body as {
+      receiptDate?: string; bankAccountId?: string; paymentMode?: string; referenceNo?: string; remarks?: string;
+      amountReceived?: number; allocations?: Array<{ invoiceId: string; received: number; tds?: number; deduction?: number }>;
+    };
+    const scope = await receiptBranchScope(req);
+    if (scope && Array.isArray(b.allocations) && b.allocations.length) {
+      const ids = b.allocations.map((a) => String(a.invoiceId));
+      const [rows] = await db.query<RowDataPacket[]>(
+        `SELECT cc.branch_id FROM client_invoice ci JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id WHERE ci.id IN (${ids.map(() => "?").join(",")})`, ids,
+      );
+      if (rows.some((r) => !scope.includes(String(r.branch_id ?? "")))) return res.status(403).json({ error: "A bill is outside your branch" });
+    }
+    const data = await clientBillingReceiptService.createReceipt({
+      receiptDate: String(b.receiptDate ?? ""), bankAccountId: String(b.bankAccountId ?? ""), paymentMode: String(b.paymentMode ?? ""),
+      referenceNo: b.referenceNo, remarks: b.remarks, amountReceived: b.amountReceived, allocations: b.allocations ?? [],
+      userId: req.authUser!.id, userRole: req.authUser!.role,
+    });
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.post(
+  "/receipts/:id/void",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const current = await clientBillingReceiptService.getReceipt(req.params.id);
+    const scope = await receiptBranchScope(req);
+    if (scope && !scope.includes(String(current.branch_id ?? ""))) return res.status(403).json({ error: "Outside your branch" });
+    const data = await clientBillingReceiptService.voidReceipt(req.params.id, String((req.body as { reason?: string })?.reason ?? ""), req.authUser!.id, req.authUser!.role);
+    res.json({ success: true, data });
   })
 );
 

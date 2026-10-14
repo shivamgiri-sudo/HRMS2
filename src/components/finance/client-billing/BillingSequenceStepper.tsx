@@ -4,10 +4,10 @@
  * Provision -> Proforma -> Approve Proforma -> Invoice Approval -> Download.
  * Each step opens the tab where that work happens; the counts are what is waiting there.
  */
-import { CheckCircle2, ClipboardList, Download, FileSignature, FilePlus2, Stamp } from "lucide-react";
+import { CheckCircle2, ClipboardList, Download, FileSignature, FilePlus2, Stamp, Wallet } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type BillingTab = "provisions" | "proformas" | "invoice-approval" | "invoices" | "credit-notes";
+export type BillingTab = "provisions" | "proformas" | "invoice-approval" | "invoices" | "receipts" | "credit-notes";
 
 interface Step {
   tab: BillingTab;
@@ -22,6 +22,7 @@ const STEPS: Step[] = [
   { tab: "proformas", title: "Approve Proforma", hint: "Check figures", icon: FileSignature },
   { tab: "invoice-approval", title: "Invoice Approval", hint: "Bill no. generated", icon: Stamp },
   { tab: "invoices", title: "Download", hint: "PDF · Letter head · Export", icon: Download },
+  { tab: "receipts", title: "Received", hint: "Receipts · TDS · bank", icon: Wallet },
 ];
 
 export function BillingSequenceStepper({

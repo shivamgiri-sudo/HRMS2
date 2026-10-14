@@ -171,11 +171,16 @@ export function computeInvoiceAmounts(
   let igst = 0;
   let cgst = 0;
   let sgst = 0;
+  // Tax is rounded to the WHOLE RUPEE, half up, per component — exactly what I-Spark stores and
+  // prints (live db_bill: 44,840 x 18% = 8,071.20 -> igst 8071, grnd 52911; 1,20,380 x 9% =
+  // 10,834.20 -> cgst 10834 and sgst 10834). Integer arithmetic on paise, so no float drift:
+  // rupees = round(taxablePaise * pct / 10000).
+  const wholeRupeeTax = (pct: number) => Math.round((taxablePaise * pct) / 10000) * 100;
   if (applyGst) {
     if (gstType === "Integrated") {
-      igst = toPaise(fromPaise(taxablePaise) * 0.18);
+      igst = wholeRupeeTax(18);
     } else {
-      cgst = toPaise(fromPaise(taxablePaise) * 0.09);
+      cgst = wholeRupeeTax(9);
       sgst = cgst;
     }
   }
