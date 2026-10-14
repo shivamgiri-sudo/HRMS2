@@ -1,24 +1,49 @@
 import type { NextFunction, Response } from "express";
+import type { RowDataPacket } from "mysql2";
 import type { AuthenticatedRequest } from "./authMiddleware.js";
-import { getEmployeeForUser } from "../shared/accessGuard.js";
+import { getEmployeeForUser, hasRoleForRequest } from "../shared/accessGuard.js";
+import { db } from "../db/mysql.js";
 import { logger } from "../logger.js";
 
+export const MASID_RE = /^MAS\d+$/i;
+
 /**
- * Agent Authorization Middleware
- *
- * Ensures:
- * 1. User is authenticated (requireAuth should run first)
- * 2. User has an associated employee_code (agent/staff role)
- * 3. If ?agentCode query param is provided, verifies it matches the authenticated user's code
- *    (prevents one agent from accessing another's data)
- *
- * On success: attaches req.agentCode to the request
- * On failure: returns 403 Forbidden
+ * Roles that may open any agent's quality view via ?agentCode=. Org-wide quality roles only;
+ * super_admin and admin are implied by hasRole. Branch/process-scoped managers are deliberately
+ * not here yet — that needs row-scope enforcement against the agent's branch/process first.
+ */
+export const QUALITY_VIEW_ANY_AGENT_ROLES = ["qa", "quality_analyst", "tq_head"] as const;
+
+/**
+ * The agent's MASID as used by db_audit.call_quality_assessment.User / CallDetails.AgentName.
+ * It lives in employees.call_centre_code for some employees and in employees.employee_code for
+ * others (e.g. employee_code = "MAS60429"), so take whichever column actually holds a MAS code.
+ */
+async function resolveMasid(employeeId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT call_centre_code, employee_code FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  for (const v of [row.call_centre_code, row.employee_code]) {
+    const s = typeof v === "string" ? v.trim() : "";
+    if (MASID_RE.test(s)) return s.toUpperCase();
+  }
+  return null;
+}
+
+/**
+ * Resolves whose quality data the request may read and attaches it as req.agentCode (a MASID).
+ * - No ?agentCode: the caller's own MASID (403 if they are not a call-centre agent).
+ * - ?agentCode equal to the caller's own MASID: allowed.
+ * - ?agentCode for someone else: only for QUALITY_VIEW_ANY_AGENT_ROLES (and super_admin/admin);
+ *   every such access is logged.
  */
 export async function requireAgent(
   req: AuthenticatedRequest,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ): Promise<void> {
   try {
     if (!req.authUser?.id) {
@@ -26,24 +51,37 @@ export async function requireAgent(
       return;
     }
 
-    // Get employee record for this user
     const emp = await getEmployeeForUser(req.authUser.id);
-    if (!emp?.employee_code) {
-      logger.warn(`User ${req.authUser.id} has no employee_code`);
-      res.status(403).json({ success: false, message: "Forbidden: not an agent" });
-      return;
-    }
+    const ownMasid = emp ? await resolveMasid(emp.id) : null;
+    const requested = typeof req.query.agentCode === "string" ? req.query.agentCode.trim() : "";
 
-    // If query param ?agentCode is provided, verify it matches the user's code
-    const requestedAgentCode = req.query.agentCode as string | undefined;
-    if (requestedAgentCode && requestedAgentCode !== emp.employee_code) {
-      logger.warn(`User ${req.authUser.id} (${emp.employee_code}) attempted access for agent ${requestedAgentCode}`);
+    if (requested) {
+      if (!MASID_RE.test(requested)) {
+        res.status(400).json({ success: false, message: "agentCode must be a MASID like MAS60429" });
+        return;
+      }
+      const target = requested.toUpperCase();
+      if (ownMasid && target === ownMasid) {
+        (req as AuthenticatedRequest & { agentCode: string }).agentCode = ownMasid;
+        next();
+        return;
+      }
+      if (await hasRoleForRequest(req.authUser, ...QUALITY_VIEW_ANY_AGENT_ROLES)) {
+        logger.info(`[quality-view] user ${req.authUser.id} viewed quality data of agent ${target} (${req.method} ${req.originalUrl})`);
+        (req as AuthenticatedRequest & { agentCode: string }).agentCode = target;
+        next();
+        return;
+      }
+      logger.warn(`User ${req.authUser.id} (${ownMasid ?? "no MASID"}) attempted access for agent ${target}`);
       res.status(403).json({ success: false, message: "Forbidden: cannot access another agent's data" });
       return;
     }
 
-    // Attach agent code to request for use in route handlers
-    (req as AuthenticatedRequest & { agentCode: string }).agentCode = emp.employee_code;
+    if (!ownMasid) {
+      res.status(403).json({ success: false, message: "Forbidden: no call-centre quality data is linked to your account" });
+      return;
+    }
+    (req as AuthenticatedRequest & { agentCode: string }).agentCode = ownMasid;
     next();
   } catch (err) {
     logger.error("requireAgent middleware error:", err);

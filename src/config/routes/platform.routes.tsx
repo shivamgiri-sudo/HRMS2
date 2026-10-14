@@ -60,6 +60,7 @@ const NativeMobilityManagement      = lazy(() => import("@/pages/NativeMobilityM
 const NativeWorkInbox               = lazy(() => import("@/pages/NativeWorkInbox"));
 const NativeControlTower            = lazy(() => import("@/pages/NativeControlTower"));
 const NativeManagementDashboard     = lazy(() => import("@/pages/NativeManagementDashboard"));
+const AgentQualityDashboard         = lazy(() => import("@/pages/AgentQualityDashboard"));
 const NativeJobsPage                = lazy(() => import("@/pages/NativeJobsPage"));
 const NativeEngagement              = lazy(() => import("@/pages/NativeEngagement"));
 const NativeCompanyFeed             = lazy(() => import("@/pages/NativeCompanyFeed"));
@@ -250,6 +251,11 @@ export const platformRouteElements = (
       {/* Management dashboard */}
       <Route path="/management/dashboard"        element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><NativeManagementDashboard /></Gate></ProtectedRoute>} />
       <Route path="/management/ceo-command-center" element={<Navigate to="/ceo/dashboard" replace />} />
+
+      {/* My Quality Performance — self-service drill-down from the My Quality Performance
+          tile on /my-dashboard. Scoped server-side by requireAgent (/api/agent/*), so no
+          role list is needed here beyond being logged in. */}
+      <Route path="/my-quality-score"            element={<ProtectedRoute><AgentQualityDashboard /></ProtectedRoute>} />
 
       {/* Engagement */}
       <Route path="/engagement"                  element={<ProtectedRoute><NativeEngagement /></ProtectedRoute>} />

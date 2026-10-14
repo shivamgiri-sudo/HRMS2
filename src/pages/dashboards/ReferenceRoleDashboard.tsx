@@ -119,7 +119,7 @@ function employeeAttendanceFallback(summaryPayload: unknown): JsonRecord {
 }
 
 async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboardData> {
-  const [attendance, attendanceSummary, leave, onboarding, lms, engagement] = await Promise.all([
+  const [attendance, attendanceSummary, leave, onboarding, lms, quality, engagement] = await Promise.all([
     optionalGet("/api/wfm/my-attendance", "Attendance"),
     optionalGet("/api/dashboards/employee/summary", "Attendance fallback"),
     optionalGet("/api/leave/balance", "Leave balance"),
@@ -127,6 +127,11 @@ async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboa
     employeeId
       ? optionalGet(`/api/lms/learner-progress/${employeeId}`, "Learning progress")
       : Promise.resolve({ value: null, error: "Learning progress: employee mapping unavailable", asOf: null }),
+    // requireAgent resolves the employee record from the authenticated session itself
+    // (same pattern as /api/wfm/my-attendance above), so this needs no employeeId gate —
+    // it 404s/401s cleanly for a user with no employee_code mapping instead of silently
+    // calling a wrong id.
+    optionalGet("/api/agent/cq-score", "Quality performance"),
     optionalGet("/api/engagement/me", "Engagement"),
   ]);
 
@@ -144,7 +149,7 @@ async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboa
   const resolvedAttendance = attendanceHasValues ? attendanceRecord : fallbackAttendance;
   const leavePayload = leave.value;
   const leaveRecord = asRecord(leavePayload);
-  const errors = [attendance, attendanceSummary, leave, onboarding, lms, engagement]
+  const errors = [attendance, attendanceSummary, leave, onboarding, lms, quality, engagement]
     .map((payload) => payload.error)
     .filter((message): message is string => Boolean(message));
 
@@ -157,6 +162,7 @@ async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboa
     balances: Array.isArray(leavePayload) ? asArray(leavePayload) : asArray(leaveRecord.balances ?? leaveRecord.data),
     onboarding: asRecord(onboarding.value),
     lms: asRecord(lms.value),
+    quality: asRecord(quality.value),
     engagement: asRecord(engagement.value),
     sourceErrors: errors,
     sourceFreshness: {
@@ -164,6 +170,7 @@ async function loadEmployee(employeeId?: string | null): Promise<EmployeeDashboa
       leave: leave.asOf,
       onboarding: onboarding.asOf,
       lms: lms.asOf,
+      quality: quality.asOf,
       engagement: engagement.asOf,
     },
   };
@@ -174,6 +181,7 @@ const EMPTY_EMPLOYEE: EmployeeDashboardData = {
   balances: [],
   onboarding: {},
   lms: {},
+  quality: {},
   engagement: {},
   sourceErrors: [],
   sourceFreshness: {},

@@ -1,4 +1,5 @@
 import {
+  Award,
   BadgeCheck,
   BookOpen,
   Briefcase,
@@ -8,6 +9,7 @@ import {
   FileText,
   FolderOpen,
   Headphones,
+  ShieldCheck,
   Target,
   TrendingUp,
   TriangleAlert,
@@ -22,7 +24,7 @@ import {
   ReferenceQuickLink,
 } from "../ReferenceDashboardUI";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
-import { METRIC_NO_DATA_REASON, asNumber, formatValue, stringAt } from "../reference-dashboard-model";
+import { METRIC_NO_DATA_REASON, asNumber, asRecord, formatValue, stringAt } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
 import { LeaveApprovalPanel } from "./ReferenceSharedPanels";
 import { CompanyFeedSidePanel } from "@/components/dashboard/CompanyFeedSidePanel";
@@ -93,6 +95,22 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
       return false;
     }
   })();
+  const quality = data.employee.quality;
+  const qualityRank = asRecord(quality.rank);
+  const qualityTotalAgents = asNumber(qualityRank.total_agents);
+  const qualityRankPosition = asNumber(qualityRank.position);
+  const cqCurrent = asNumber(quality.cq_score_current);
+  const cq7day = asNumber(quality.cq_score_7day_avg);
+  const cq30day = asNumber(quality.cq_score_30day_avg);
+  const qualityGapPct = asNumber(quality.gap_pct);
+  const qualityStatus = quality.status === undefined ? null : String(quality.status);
+  const qualityTotalCalls = asNumber(quality.total_calls);
+  const qualityErrored = (data.employee.sourceErrors ?? []).some((message) =>
+    message.startsWith("Quality performance:"),
+  );
+  // total_calls === 0 means nothing was audited in range — distinct from a genuine 0% score.
+  const qualityNotApplicable = !qualityErrored && !qualityTotalCalls;
+  const qualityStatusTone = qualityStatus === "On Track" ? "text-[#16a34a] bg-[#eaf8ef]" : qualityStatus === "Below Target" ? "text-[#f97316] bg-[#fff4e8]" : "text-[#e11d48] bg-[#fdecef]";
   const onboardingPct = asNumber(onboarding.percentComplete ?? onboarding.percent_complete);
   const completedSteps = asNumber(onboarding.completedSteps ?? onboarding.completed_steps);
   const totalSteps = asNumber(onboarding.totalSteps ?? onboarding.total_steps);
@@ -174,6 +192,36 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
           { label: "Late days", value: late, text: "Late arrivals recorded during the current month.", icon: Clock3, tone: late && late > 3 ? "amber" : "blue" },
         ]} />
       </div>
+
+      <ReferencePanel
+        title="My Quality Performance"
+        bodyClassName="p-0"
+        action={<a href="/my-quality-score" className="text-xs font-semibold text-[#0b63e5]">View details</a>}
+      >
+        {qualityErrored ? (
+          <p className="px-5 py-6 text-xs text-[#94a3b8]">Quality performance is unavailable right now.</p>
+        ) : qualityNotApplicable ? (
+          <p className="px-5 py-6 text-xs text-[#94a3b8]">No calls of yours have been audited in the last 7 days.</p>
+        ) : (
+          <div className="grid min-h-[118px] grid-cols-2 divide-x divide-[#edf1f6] sm:grid-cols-4">
+            {[
+              { label: "Current Score", value: cqCurrent, suffix: "%", helper: qualityStatus ?? "Score", icon: ShieldCheck, tone: "green" as const },
+              { label: "7-Day Avg", value: cq7day, suffix: "%", helper: "Rolling average", icon: TrendingUp, tone: "blue" as const },
+              { label: "30-Day Avg", value: cq30day, suffix: "%", helper: "Rolling average", icon: TrendingUp, tone: "violet" as const },
+              { label: "Rank", value: qualityRankPosition, suffix: qualityTotalAgents ? ` / ${qualityTotalAgents}` : "", helper: qualityGapPct !== null ? `${qualityGapPct}% to target` : "Among peers", icon: Award, tone: "amber" as const },
+            ].map((item) => {
+              const Icon = item.icon;
+              return <div key={item.label} className="flex min-w-0 items-center gap-3 px-4 py-5"><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${item.tone === "violet" ? "bg-[#f3efff] text-[#7c3aed]" : item.tone === "green" ? "bg-[#eaf8ef] text-[#16a34a]" : item.tone === "amber" ? "bg-[#fff4e8] text-[#f97316]" : "bg-[#edf4ff] text-[#0b63e5]"}`}><Icon className="h-5 w-5" /></span><div className="min-w-0"><p className="truncate text-xs font-semibold text-[#1d2b45]">{item.label}</p><p className="mt-1 text-[23px] font-extrabold leading-none text-[#0b1f44]">{formatValue(item.value, item.suffix)}</p><p className="mt-2 truncate text-xs text-[#71809a]">{item.helper}</p></div></div>;
+            })}
+          </div>
+        )}
+        {qualityStatus && !qualityNotApplicable && !qualityErrored && (
+          <div className="flex items-center gap-2 border-t border-[#edf1f6] px-5 py-3">
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${qualityStatusTone}`}>{qualityStatus}</span>
+            <span className="text-xs text-[#71809a]">{qualityTotalCalls} audited calls · last 7 days · target 90%</span>
+          </div>
+        )}
+      </ReferencePanel>
 
       <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.05fr_0.95fr]">
         <ReferencePanel title="My Onboarding Status" bodyClassName="px-5 py-4">

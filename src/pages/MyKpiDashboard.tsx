@@ -3,6 +3,7 @@ import { TrendingUp, TrendingDown, Minus, Loader, RefreshCcw, Activity, Calendar
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { AIInsightPanel } from "@/components/ai";
+import { AgentKpiDashboard } from "@/components/agent-kpi/AgentKpiDashboard";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -266,15 +267,19 @@ export default function MyKpiDashboard() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 max-w-6xl mx-auto space-y-6">
+      <div className="p-4 md:p-6 max-w-[1600px] mx-auto space-y-6">
 
-        {/* Header */}
-        <div className="flex items-center justify-between">
+        {/* Call-centre agent dashboard: renders nothing for a user with no MASID (unless they
+            hold an org-wide quality role, who get an agent picker instead). */}
+        <AgentKpiDashboard />
+
+        {/* Assigned KPI scorecard (kpi_daily_actual via /api/kpi-master/live) */}
+        <div className="flex items-center justify-between border-t pt-6">
           <div className="flex items-center gap-3">
-            <Activity className="text-indigo-600" size={28} />
+            <Activity className="text-indigo-600" size={24} />
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">My KPI Performance</h1>
-              <p className="text-sm text-gray-500 mt-0.5">Your live performance metrics across categories</p>
+              <h2 className="text-xl font-bold text-gray-900">My KPI Scorecard</h2>
+              <p className="text-sm text-gray-500 mt-0.5">KPIs assigned to your role, scored against their targets</p>
             </div>
           </div>
           <button
