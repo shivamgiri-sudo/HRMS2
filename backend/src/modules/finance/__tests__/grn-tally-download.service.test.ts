@@ -14,10 +14,10 @@ const h = vi.hoisted(() => {
       return [[{ id: "v1", vendor_code: "DB_BILL_1537", n: "OESPL Private Limited" }, { id: "v9", vendor_code: "DB_BILL_9", n: "x" }, { id: "v5", vendor_code: "V00005", n: "Travelling" }], undefined];
     if (/FROM vendor_master/.test(sql))
       return [[{ id: "v1", n: "OESPL Private Limited", tds_enabled: 1, tds_section: "194I", tds_rate: null }], undefined];
-    if (/tally_cost_category/.test(sql) && h.state.legacyNames)
-      return [[{ id: "b1", tally_cost_category: "Noida", tally_cost_centre_code: "Noida" }], undefined];
-    if (/tally_ledger_name FROM finance_expense_sub_head_master/.test(sql) && h.state.legacyNames)
-      return [[{ sub_head_name: "Office Rent", tally_ledger_name: "Office Rent (Tally)" }], undefined];
+    if (/FROM tally_legacy_name WHERE entity_type = 'branch'/.test(sql) && h.state.legacyNames)
+      return [[{ entity_id: "b1", tally_name: "Noida", tally_code: "Noida" }], undefined];
+    if (/FROM tally_legacy_name t/.test(sql) && h.state.legacyNames)
+      return [[{ sub_head_name: "Office Rent", tally_name: "Office Rent (Tally)" }], undefined];
     if (/FROM branch_master/.test(sql))
       return [[{ id: "b1", branch_name: "NOIDA", gst_state_code: "09", state: "UP" }], undefined];
     if (/FROM tds_sub_head_default/.test(sql))

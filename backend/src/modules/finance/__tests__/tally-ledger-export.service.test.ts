@@ -15,7 +15,9 @@ const h = vi.hoisted(() => {
       ]), undefined];
     if (/FROM company_bank_account/.test(sql)) return [pick([{ id: "b1", n: "HDFC Bank CA" }, { id: "b2", n: "ICICI Bank CA" }]), undefined];
     if (/FROM finance_expense_sub_head_master/.test(sql)) return [pick([{ id: "s1", n: "Office Rent", pnl_bucket: "bmc_non_people" }]), undefined];
-    if (/FROM branch_master/.test(sql)) return [pick([{ id: "br1", n: "NOIDA-2", branch_name: "NOIDA-2", code: null }, { id: "br2", n: "NOIDA-DIALDESK", branch_name: "NOIDA-DIALDESK", code: "NOIDAD" }]), undefined];
+    if (/FROM branch_master/.test(sql)) return [pick([{ id: "br1", n: "NOIDA-2", branch_name: "NOIDA-2", code: null }, { id: "br2", n: "NOIDA-DIALDESK", branch_name: "NOIDA-DIALDESK", code: null }]), undefined];
+    if (/FROM tally_legacy_name/.test(sql) && params?.[0] === "branch")
+      return [[{ entity_id: "br2", tally_name: "NOIDA-DIALDESK", tally_code: "NOIDAD" }].filter((r) => params.includes(r.entity_id)), undefined];
     if (/FROM payment_voucher/.test(sql)) return [pick(state.pvs), undefined];
     if (/FROM imprest_manager/.test(sql)) return [pick([{ id: "im1", n: "Aman Lawaniya" }]), undefined];
     if (/FROM client_invoice/.test(sql)) return [[], undefined];
