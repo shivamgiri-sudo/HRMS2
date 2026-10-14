@@ -29,7 +29,7 @@ const h = vi.hoisted(() => {
     if (/FROM vendor_master/.test(sql))
       return [[{ id: "v1", n: "OESPL Private Limited" }], undefined];
     if (/FROM branch_master/.test(sql))
-      return [[{ id: "b1", n: "NOIDA" }], undefined];
+      return [[{ id: "b1", branch_name: "NOIDA", gst_state_code: "09", state: null }], undefined];
     if (/FROM grn_tally_export_batch WHERE status = 'claimed'/.test(sql))
       return [[], undefined];
     if (
@@ -119,6 +119,19 @@ describe("config", () => {
       } as any).from,
     ).toBeNull();
   });
+
+  it("ledger names default to the Tally company's and can be overridden, the TDS map merged", () => {
+    const names = readGrnTallyConfig({} as any).names;
+    expect(names.voucherType).toBe("JrnlP");
+    expect(names.roundOff).toBe("Short/Excess Written off");
+    const custom = readGrnTallyConfig({
+      GRN_TALLY_TDS_LEDGERS: '{"194H":"TDS COMMISSION"}',
+      GRN_TALLY_VOUCHER_TYPE: "JRNLP",
+    } as any).names;
+    expect(custom.voucherType).toBe("JRNLP");
+    expect(custom.tdsLedgers["194H"]).toBe("TDS COMMISSION");
+    expect(custom.tdsLedgers["194C"]).toBe("TDS CONTRACTOR 2021-22");
+  });
 });
 
 describe("runGrnTallyExport", () => {
@@ -142,8 +155,8 @@ describe("runGrnTallyExport", () => {
     const files = readdirSync(dir);
     expect(files).toEqual([r.fileName]);
     const xml = readFileSync(path.join(dir, r.fileName), "utf8");
-    expect(xml).toContain("<VOUCHERNUMBER>Mas/10/26/1</VOUCHERNUMBER>");
-    expect(xml).toContain("<VOUCHERNUMBER>Mas/10/26/2</VOUCHERNUMBER>");
+    expect(xml).toContain("<VOUCHERNUMBER>INV/Mas/10/26/1</VOUCHERNUMBER>");
+    expect(xml).toContain("<VOUCHERNUMBER>INV/Mas/10/26/2</VOUCHERNUMBER>");
     const reservations = calls.filter((c) =>
       /INSERT INTO grn_tally_export \(/.test(c.sql),
     );

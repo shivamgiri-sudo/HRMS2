@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, FileCode2, FileSpreadsheet, FileText } from "lucide-react";
+import { ClipboardCheck, Download, FileCode2, FileSpreadsheet, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -14,14 +14,15 @@ import {
  * Tally import test export — the screen onto GET /api/finance/grn-tally/download.
  *
  * Only GRNs raised in HRMS that already carry a GRN number (Finance Head approved or later), never
- * drafts or pending GRNs, never rows migrated from the legacy db_bill system. The XML is the same
- * voucher the Tally connector feed sends; Excel and CSV carry the same GRNs with their Dr/Cr split
- * so an import can be checked line by line.
+ * drafts or pending GRNs, never rows migrated from the legacy db_bill system. Excel and CSV are the
+ * legacy JrnlP import sheet (one row per ledger line, TDS and cost centre included); the XML is the
+ * same voucher the Tally connector feed sends; "Check sheet" lists every GRN with its TDS basis and
+ * the reason any was left out. The month is the posting month (approved in), as in the legacy file.
  *
  * A download here marks nothing as exported, so it cannot keep a GRN out of the connector feed.
  */
 
-type Format = "xml" | "xlsx" | "csv";
+type Format = "xml" | "xlsx" | "csv" | "check";
 
 type Summary = {
   grns: number;
@@ -29,14 +30,16 @@ type Summary = {
   exceptions: number;
   alreadySentToTally: number;
   grossInXml: number;
+  tdsInXml?: number;
   truncated: boolean;
   maxRows: number;
 };
 
 const FORMATS: { format: Format; label: string; icon: typeof FileCode2 }[] = [
   { format: "xml", label: "Tally XML", icon: FileCode2 },
-  { format: "xlsx", label: "Excel", icon: FileSpreadsheet },
+  { format: "xlsx", label: "Excel (Tally import)", icon: FileSpreadsheet },
   { format: "csv", label: "CSV", icon: FileText },
+  { format: "check", label: "Check sheet", icon: ClipboardCheck },
 ];
 
 const PICKER_CLASS =
@@ -83,7 +86,7 @@ export function GrnTallyDownloadPanel() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `GRN_Tally_${month || "all-months"}_${new Date().toISOString().slice(0, 10)}.${format}`;
+      a.download = `GRN_Tally_${format === "check" ? "Check_" : ""}${month || "all-months"}_${new Date().toISOString().slice(0, 10)}.${format === "check" ? "xlsx" : format}`;
       a.click();
       URL.revokeObjectURL(url);
       toast({ title: "Downloaded", description: a.download });
@@ -105,7 +108,7 @@ export function GrnTallyDownloadPanel() {
       />
       <div className="flex flex-wrap items-end gap-2 border-b border-grn-line px-4 py-3">
         <label className="text-[11px] font-semibold text-grn-ink">
-          Finance month
+          Posting month (approved in)
           <MonthYearPicker
             value={month}
             onChange={setMonth}
@@ -146,18 +149,18 @@ export function GrnTallyDownloadPanel() {
             <GrnMetric label="Numbered HRMS GRNs" value={summary.isLoading ? "…" : s?.grns ?? 0} />
             <GrnMetric label="In Tally XML" value={summary.isLoading ? "…" : s?.inXml ?? 0} tone="ok" />
             <GrnMetric label="Left out of XML" value={summary.isLoading ? "…" : s?.exceptions ?? 0} tone={s?.exceptions ? "warn" : undefined} />
-            <GrnMetric label="XML gross" value={summary.isLoading ? "…" : money(s?.grossInXml ?? 0)} />
+            <GrnMetric label="Gross / TDS" value={summary.isLoading ? "…" : `${money(s?.grossInXml ?? 0)} / ${money(s?.tdsInXml ?? 0)}`} />
             <GrnMetric label="Already sent by connector" value={summary.isLoading ? "…" : s?.alreadySentToTally ?? 0} tone="info" />
           </div>
         )}
         {!!s?.exceptions && (
           <GrnAlert tone="warn">
-            {s.exceptions} GRN{s.exceptions === 1 ? " is" : "s are"} not in the XML (missing sub-head, bill date or amount, or amounts
-            that don't add up). The Excel "Exceptions" sheet and the CSV give the reason for each.
+            {s.exceptions} GRN{s.exceptions === 1 ? " is" : "s are"} left out of the import (missing sub-head, branch GST state, imprest
+            holder or TDS ledger, or amounts that don't add up). The Check sheet gives the reason for each.
           </GrnAlert>
         )}
         {s?.truncated && (
-          <GrnAlert tone="warn">Only the first {s.maxRows} GRNs are included. Pick a finance month to get the rest.</GrnAlert>
+          <GrnAlert tone="warn">Only the first {s.maxRows} GRNs are included. Pick a month to get the rest.</GrnAlert>
         )}
       </div>
     </GrnCard>

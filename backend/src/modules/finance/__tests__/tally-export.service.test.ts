@@ -51,21 +51,23 @@ describe("tally-export.service buildVoucherXml", () => {
     expect(xml).toMatch(/<LEDGERNAME>Vendor Payables<\/LEDGERNAME>\s*<ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE>\s*<AMOUNT>50000\.00<\/AMOUNT>/);
   });
 
-  it("TDS withheld: three ledger lines that sum to zero — the party is debited the GROSS (net+TDS), split into two credits", () => {
+  it("payment with TDS withheld: TDS was booked on the GRN journal, so two lines for the net only", () => {
     const r = row({ net_amount: 45000, tds_ledger: "TDS Payable", tds_amount: 5000 });
     const xml = buildVoucherXml(r);
-    // Party debited for the full gross (net + tds), not just net.
-    expect(xml).toMatch(/<LEDGERNAME>Vendor Payables<\/LEDGERNAME>\s*<ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE>\s*<AMOUNT>-50000\.00<\/AMOUNT>/);
-    // Bank credited for the net cash that actually moved.
+    // The vendor's Tally balance is already net of TDS (GRN JrnlP), so the payment clears the net.
+    expect(xml).toMatch(/<LEDGERNAME>Vendor Payables<\/LEDGERNAME>\s*<ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE>\s*<AMOUNT>-45000\.00<\/AMOUNT>/);
     expect(xml).toMatch(/<LEDGERNAME>HDFC Current Account<\/LEDGERNAME>\s*<ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE>\s*<AMOUNT>45000\.00<\/AMOUNT>/);
-    // TDS Payable credited for the withheld portion.
-    expect(xml).toMatch(/<LEDGERNAME>TDS Payable<\/LEDGERNAME>\s*<ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE>\s*<AMOUNT>5000\.00<\/AMOUNT>/);
-
-    // The whole point of double-entry: every voucher's lines must net to zero, or Tally
-    // rejects the import outright.
+    expect(xml).not.toContain("TDS Payable");
     const amounts = [...xml.matchAll(/<AMOUNT>(-?\d+\.\d{2})<\/AMOUNT>/g)].map((m) => Number(m[1]));
-    const sum = amounts.reduce((a, b) => a + b, 0);
-    expect(Math.round(sum * 100) / 100).toBe(0);
+    expect(Math.round(amounts.reduce((a, b) => a + b, 0) * 100) / 100).toBe(0);
+  });
+
+  it("receipt with TDS: three ledger lines that sum to zero", () => {
+    const xml = buildVoucherXml(row({ voucher_type: "receipt", net_amount: 45000, tds_ledger: "TDS Receivable", tds_amount: 5000 }));
+    expect(xml).toMatch(/<LEDGERNAME>HDFC Current Account<\/LEDGERNAME>\s*<ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE>\s*<AMOUNT>-50000\.00<\/AMOUNT>/);
+    expect(xml).toMatch(/<LEDGERNAME>TDS Receivable<\/LEDGERNAME>\s*<ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE>\s*<AMOUNT>5000\.00<\/AMOUNT>/);
+    const amounts = [...xml.matchAll(/<AMOUNT>(-?\d+\.\d{2})<\/AMOUNT>/g)].map((m) => Number(m[1]));
+    expect(Math.round(amounts.reduce((a, b) => a + b, 0) * 100) / 100).toBe(0);
   });
 
   it("no TDS: exactly two ledger lines, still netting to zero", () => {
@@ -117,7 +119,7 @@ describe("tallyExportService.buildEnvelope isFinal", () => {
     expect(result.isFinal).toBe(false);
   });
 
-  it("collapses a multi-GRN voucher's several cash rows into ONE exported voucher, summing amounts and TDS", async () => {
+  it("collapses a multi-GRN voucher's several cash rows into ONE exported voucher, summing amounts", async () => {
     execute
       .mockResolvedValueOnce([[
         { voucher_id: "v1", voucher_number: "PV/HQ/202609/0002", voucher_type: "payment", entry_date: "2026-09-10", narration: "Vendor payment released — GRN A — voucher PV/HQ/202609/0002", created_at: "2026-09-10T08:00:00Z", bank_ledger: "Bank", party_ledger: "Vendor Payables", debit_amount: 8000, credit_amount: 0, period_status: "closed" },
@@ -130,6 +132,7 @@ describe("tallyExportService.buildEnvelope isFinal", () => {
     // One <VOUCHER> block, not two sharing the same VOUCHERNUMBER.
     expect((result.xml.match(/<VOUCHER /g) ?? []).length).toBe(1);
     expect(result.xml).toContain("<AMOUNT>13000.00</AMOUNT>"); // 8000 + 5000, the summed cash leg
-    expect(result.xml).toContain("<AMOUNT>300.00</AMOUNT>"); // combined TDS
+    // TDS (300) is on the GRN journals, not on this payment.
+    expect(result.xml).not.toContain("<AMOUNT>300.00</AMOUNT>");
   });
 });

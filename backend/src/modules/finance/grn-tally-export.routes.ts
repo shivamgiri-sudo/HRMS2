@@ -13,6 +13,7 @@ import {
   runGrnTallyExport,
 } from "./grn-tally-export.service.js";
 import {
+  buildGrnTallyCheckXlsx,
   buildGrnTallyCsv,
   buildGrnTallyXlsx,
   buildGrnTallyXml,
@@ -144,6 +145,11 @@ const DOWNLOAD_FORMATS: Record<
     ext: "xlsx",
   },
   csv: { contentType: "text/csv; charset=utf-8", ext: "csv" },
+  check: {
+    contentType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ext: "xlsx",
+  },
 };
 
 async function downloadFilters(req: AuthenticatedRequest) {
@@ -193,11 +199,11 @@ grnTallyRouter.get(
   async (req: AuthenticatedRequest, res) => {
     try {
       const format = String(req.query.format ?? "") as GrnTallyDownloadFormat;
-      const spec = DOWNLOAD_FORMATS[format];
+      const spec = Object.hasOwn(DOWNLOAD_FORMATS, format) ? DOWNLOAD_FORMATS[format] : undefined;
       if (!spec) {
         return res
           .status(400)
-          .json({ success: false, error: "format must be xml, xlsx or csv" });
+          .json({ success: false, error: "format must be xml, xlsx, csv or check" });
       }
       const filters = await downloadFilters(req);
       const data = await loadGrnTallyDownload(filters);
@@ -206,7 +212,9 @@ grnTallyRouter.get(
           ? Buffer.from(buildGrnTallyXml(data), "utf8")
           : format === "csv"
             ? Buffer.from("\uFEFF" + buildGrnTallyCsv(data), "utf8")
-            : await buildGrnTallyXlsx(data);
+            : format === "check"
+              ? await buildGrnTallyCheckXlsx(data)
+              : await buildGrnTallyXlsx(data);
       const summary = grnTallyDownloadSummary(data);
       await logSensitiveAction({
         actor_user_id: req.authUser!.id,
@@ -221,7 +229,7 @@ grnTallyRouter.get(
           ...summary,
         },
       });
-      const fileName = `GRN_Tally_${filters.month ?? "all-months"}_${new Date().toISOString().slice(0, 10)}.${spec.ext}`;
+      const fileName = `GRN_Tally_${format === "check" ? "Check_" : ""}${filters.month ?? "all-months"}_${new Date().toISOString().slice(0, 10)}.${spec.ext}`;
       res.setHeader("Content-Type", spec.contentType);
       res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
       res.setHeader("X-Grn-Count", String(summary.grns));

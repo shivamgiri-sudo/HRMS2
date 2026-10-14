@@ -10,9 +10,13 @@ const h = vi.hoisted(() => {
     state.calls.push({ sql, params });
     if (/FROM grn_request g/.test(sql)) return [state.rows, undefined];
     if (/FROM vendor_master/.test(sql))
-      return [[{ id: "v1", n: "OESPL Private Limited" }], undefined];
+      return [[{ id: "v1", n: "OESPL Private Limited", tds_enabled: 1, tds_section: "194I", tds_rate: null }], undefined];
     if (/FROM branch_master/.test(sql))
-      return [[{ id: "b1", n: "NOIDA" }], undefined];
+      return [[{ id: "b1", branch_name: "NOIDA", gst_state_code: "09", state: "UP" }], undefined];
+    if (/FROM tds_sub_head_default/.test(sql))
+      return [[{ sub_head_name: "Office Rent", section_code: "194I_LB", confidence: "firm" }], undefined];
+    if (/FROM tds_section_master/.test(sql))
+      return [[{ section_code: "194I_LB", rate_other: 10 }], undefined];
     return [[], undefined];
   });
   return { state, run };
@@ -22,6 +26,7 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 
 import {
+  buildGrnTallyCheckXlsx,
   buildGrnTallyCsv,
   buildGrnTallyXlsx,
   buildGrnTallyXml,
@@ -53,6 +58,7 @@ const row = (id: string, n: string, extra: Record<string, unknown> = {}) => ({
   gst_type: "cgst_sgst",
   recoverable_tax_pct: 100,
   approved_on: "2026-10-06 18:00:00",
+  gst_rate: 18,
   already_sent: 0,
   ...extra,
 });
@@ -74,7 +80,9 @@ describe("loadGrnTallyDownload", () => {
     expect(select.sql).toMatch(/COALESCE\(g\.created_by, ''\) NOT LIKE '00000000-%'/);
     expect(select.sql).toMatch(/g\.grn_number IS NOT NULL/);
     expect(select.sql).toMatch(/g\.status NOT IN/);
-    expect(select.params).toEqual(["cancelled", "consumption_reversed", "2026-09"]);
+    // The month is the posting (approval) month, as in the legacy import.
+    expect(select.sql).toMatch(/COALESCE\(g\.approved_at, g\.finance_head_reviewed_at\) >= \?/);
+    expect(select.params).toEqual(["cancelled", "consumption_reversed", "2026-09-01", "2026-09-30"]);
     expect(h.state.calls.some((c) => /INSERT|UPDATE|DELETE/i.test(c.sql))).toBe(false);
   });
 
@@ -90,47 +98,69 @@ describe("loadGrnTallyDownload", () => {
     const data = await loadGrnTallyDownload(all);
     expect(data.vouchersXml).toHaveLength(1);
     expect(data.rows[1].exception).toMatch(/Sub-head is missing/);
-    expect(grnTallyDownloadSummary(data)).toMatchObject({ grns: 2, inXml: 1, exceptions: 1, grossInXml: 118000 });
+    expect(grnTallyDownloadSummary(data)).toMatchObject({ grns: 2, inXml: 1, exceptions: 1, grossInXml: 118000, tdsInXml: 10000 });
   });
 });
 
+const LEGACY_HEADER = "Vch No,Date,Effective Date,Details,Debit Amount,Credit Amount,Cost Category,Cost Centre,Narration for Each Entry,Narration,VchType";
+
 describe("file builders", () => {
-  it("XML is a Tally import envelope with one Purchase voucher per GRN", async () => {
-    h.state.rows = [row("g1", "Mas/09/26/1")];
+  it("XML is a Tally import envelope with one JrnlP voucher per GRN", async () => {
+    h.state.rows = [row("g1", "Mas/9/26/1")];
     const xml = buildGrnTallyXml(await loadGrnTallyDownload(all));
     expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?><ENVELOPE>')).toBe(true);
     expect(xml).toContain("<TALLYREQUEST>Import Data</TALLYREQUEST>");
-    expect(xml).toContain("<VOUCHERNUMBER>Mas/09/26/1</VOUCHERNUMBER>");
-    expect(xml).toContain("<PARTYLEDGERNAME>OESPL Private Limited</PARTYLEDGERNAME>");
+    expect(xml).toContain("<VOUCHERNUMBER>INV-1/Mas/9/26/1</VOUCHERNUMBER>");
+    expect(xml).toContain('<VOUCHER VCHTYPE="JrnlP"');
+    expect(xml).toContain("<DATE>20261031</DATE>");
     expect(xml.match(/<VOUCHER /g)).toHaveLength(1);
   });
 
-  it("CSV has the ledger split and neutralises formula cells", async () => {
-    h.state.rows = [row("g1", "Mas/09/26/1")];
+  it("CSV is the legacy import sheet: same header, one row per ledger line, TDS and cost centre", async () => {
+    h.state.rows = [row("g1", "Mas/9/26/1")];
     const csv = buildGrnTallyCsv(await loadGrnTallyDownload(all));
-    const [header, line] = csv.trim().split("\r\n");
-    expect(header).toContain("GRN Number");
-    expect(line).toContain("Office Rent:Dr:100000.00 | Input CGST:Dr:9000.00 | Input SGST:Dr:9000.00 | OESPL Private Limited:Cr:118000.00");
-    expect(line).toContain(`"'=HYPERLINK(""x"")"`);
+    const [header, ...lines] = csv.trim().split("\r\n");
+    expect(header).toBe(LEGACY_HEADER);
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toMatch(/^INV-1\/Mas\/9\/26\/1,31-10-2026,01-09-2026,Office Rent,100000,,NOIDA,Noida\/2609,/);
+    expect(lines[1]).toContain("Input CGST @9%(Uttar Pradesh),9000,");
+    expect(lines[3]).toContain("OESPL Private Limited,,108000,");
+    expect(lines[4]).toContain("TDS RENT 2022-23,,10000,");
+    expect(lines[0]).toMatch(/,JrnlP$/);
+    // A formula-looking description is neutralised.
+    expect(lines[0]).toContain(`"'=HYPERLINK(""x"")"`);
   });
 
-  it("Excel opens with GRNs, balanced voucher lines and exceptions", async () => {
-    h.state.rows = [row("g1", "Mas/09/26/1"), row("g2", "Mas/09/26/2", { amount_with_tax: 0, amount: 0 })];
+  it("Excel import sheet: one worksheet, legacy columns, real dates, balanced, exceptions left out", async () => {
+    h.state.rows = [row("g1", "Mas/9/26/1"), row("g2", "Mas/9/26/2", { amount_with_tax: 0, amount: 0 })];
     const buf = await buildGrnTallyXlsx(await loadGrnTallyDownload(all));
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buf as any);
-    expect(wb.worksheets.map((w) => w.name)).toEqual(["GRNs", "Voucher Lines", "Exceptions"]);
-    expect(wb.getWorksheet("GRNs")!.rowCount).toBe(3);
-    const lines = wb.getWorksheet("Voucher Lines")!;
+    expect(wb.worksheets).toHaveLength(1);
+    const ws = wb.worksheets[0];
+    expect((ws.getRow(1).values as unknown[]).slice(1).join(",")).toBe(LEGACY_HEADER);
+    expect(ws.rowCount).toBe(6);
+    expect(ws.getRow(2).getCell(2).value).toBeInstanceOf(Date);
     let dr = 0;
     let cr = 0;
-    lines.eachRow((r, i) => {
+    ws.eachRow((r, i) => {
       if (i === 1) return;
-      dr += Number(r.getCell(6).value ?? 0);
-      cr += Number(r.getCell(7).value ?? 0);
+      dr += Number(r.getCell(5).value || 0);
+      cr += Number(r.getCell(6).value || 0);
     });
     expect(dr).toBe(118000);
     expect(cr).toBe(118000);
-    expect(wb.getWorksheet("Exceptions")!.rowCount).toBe(2);
+  });
+
+  it("check workbook lists every GRN with TDS basis and the reason any was left out", async () => {
+    h.state.rows = [row("g1", "Mas/9/26/1"), row("g2", "Mas/9/26/2", { amount_with_tax: 0, amount: 0 })];
+    const buf = await buildGrnTallyCheckXlsx(await loadGrnTallyDownload(all));
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf as any);
+    const ws = wb.getWorksheet("GRNs")!;
+    expect(ws.rowCount).toBe(3);
+    const text = JSON.stringify(ws.getSheetValues());
+    expect(text).toContain("Vendor master 194I_LB @ 10%");
+    expect(text).toContain("Amount is zero or missing.");
   });
 });

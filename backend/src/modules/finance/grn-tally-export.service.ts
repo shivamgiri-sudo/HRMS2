@@ -15,8 +15,12 @@ import {
   DEFAULT_LEDGER_NAMES,
   wrapTallyEnvelope,
   type GrnTallyLedgerNames,
-  type GrnVoucherInput,
 } from "./grn-tally-voucher.js";
+import {
+  GRN_TALLY_COLUMNS,
+  loadGrnTallyContext,
+  toVoucherInput,
+} from "./grn-tally-context.js";
 
 /**
  * Daily export of fully approved GRNs to a folder the Tally connector reads.
@@ -61,19 +65,31 @@ export function readGrnTallyConfig(
     dir: env.GRN_TALLY_EXPORT_DIR?.trim() || null,
     from: from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : null,
     company: env.GRN_TALLY_COMPANY?.trim() || null,
-    names: {
-      imprestLedger:
-        env.GRN_TALLY_IMPREST_LEDGER?.trim() ||
-        DEFAULT_LEDGER_NAMES.imprestLedger,
-      inputCgst:
-        env.GRN_TALLY_INPUT_CGST?.trim() || DEFAULT_LEDGER_NAMES.inputCgst,
-      inputSgst:
-        env.GRN_TALLY_INPUT_SGST?.trim() || DEFAULT_LEDGER_NAMES.inputSgst,
-      inputIgst:
-        env.GRN_TALLY_INPUT_IGST?.trim() || DEFAULT_LEDGER_NAMES.inputIgst,
-      roundOff:
-        env.GRN_TALLY_ROUND_OFF_LEDGER?.trim() || DEFAULT_LEDGER_NAMES.roundOff,
-    },
+    names: readLedgerNames(env),
+  };
+}
+
+/**
+ * Ledger names default to the MAS Callnet Tally company's own (see DEFAULT_LEDGER_NAMES); each can be
+ * overridden by env, the TDS map as JSON ({"194C":"TDS CONTRACTOR 2021-22", ...}, merged over the default).
+ */
+function readLedgerNames(env: NodeJS.ProcessEnv): GrnTallyLedgerNames {
+  const pick = (key: string, fallback: string) => env[key]?.trim() || fallback;
+  let tdsLedgers = DEFAULT_LEDGER_NAMES.tdsLedgers;
+  try {
+    const parsed = JSON.parse(env.GRN_TALLY_TDS_LEDGERS ?? "{}");
+    if (parsed && typeof parsed === "object") tdsLedgers = { ...tdsLedgers, ...parsed };
+  } catch {
+    /* keep the defaults when the override is malformed */
+  }
+  return {
+    voucherType: pick("GRN_TALLY_VOUCHER_TYPE", DEFAULT_LEDGER_NAMES.voucherType),
+    roundOff: pick("GRN_TALLY_ROUND_OFF_LEDGER", DEFAULT_LEDGER_NAMES.roundOff),
+    inputCgst: pick("GRN_TALLY_INPUT_CGST", DEFAULT_LEDGER_NAMES.inputCgst),
+    inputSgst: pick("GRN_TALLY_INPUT_SGST", DEFAULT_LEDGER_NAMES.inputSgst),
+    inputIgst: pick("GRN_TALLY_INPUT_IGST", DEFAULT_LEDGER_NAMES.inputIgst),
+    imprestLedgerPattern: pick("GRN_TALLY_IMPREST_LEDGER", DEFAULT_LEDGER_NAMES.imprestLedgerPattern),
+    tdsLedgers,
   };
 }
 
@@ -115,9 +131,7 @@ async function selectCandidates(
   const vendorIn = VENDOR_FINAL.map(() => "?").join(",");
   const imprestIn = IMPREST_FINAL.map(() => "?").join(",");
   const [rows] = (await executor.execute(
-    `SELECT g.id, g.grn_number, g.grn_type, g.bill_date, g.invoice_number, g.vendor_id, g.vendor_name, g.head, g.sub_head,
-            g.description, g.branch_id, g.amount, g.amount_without_tax, g.tax_amount, g.other_charges, g.round_off_amount,
-            g.amount_with_tax, g.gst_type, g.recoverable_tax_pct, COALESCE(g.approved_at, g.updated_at) AS approved_on
+    `SELECT ${GRN_TALLY_COLUMNS}, COALESCE(g.approved_at, g.updated_at) AS approved_on
        FROM grn_request g
       WHERE ${hrmsRaisedGrnSql("g")}
         AND g.grn_number IS NOT NULL AND TRIM(g.grn_number) <> ''
@@ -140,57 +154,6 @@ async function alreadyExported(
     ids,
   )) as [RowDataPacket[], unknown];
   return new Set(rows.map((r) => String(r.grn_request_id)));
-}
-
-export async function lookupNames(
-  executor: Executor,
-  table: "vendor_master" | "branch_master",
-  column: string,
-  ids: string[],
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  if (!ids.length) return out;
-  const [rows] = (await executor.execute(
-    table === "vendor_master"
-      ? `SELECT id, COALESCE(NULLIF(TRIM(tally_name), ''), vendor_name) AS n FROM vendor_master WHERE id IN (${ids.map(() => "?").join(",")})`
-      : `SELECT id, ${column} AS n FROM ${table} WHERE id IN (${ids.map(() => "?").join(",")})`,
-    ids,
-  )) as [RowDataPacket[], unknown];
-  for (const r of rows) out.set(String(r.id), String(r.n ?? ""));
-  return out;
-}
-
-export function toVoucherInput(
-  r: RowDataPacket,
-  vendors: Map<string, string>,
-  branches: Map<string, string>,
-): GrnVoucherInput {
-  const gross =
-    Number(r.amount_with_tax) > 0
-      ? Number(r.amount_with_tax)
-      : Number(r.amount);
-  return {
-    grnId: String(r.id),
-    grnNumber: String(r.grn_number ?? ""),
-    grnType: r.grn_type === "imprest" ? "imprest" : "vendor",
-    billDate: String(r.bill_date ?? "").slice(0, 10),
-    invoiceNumber: r.invoice_number ? String(r.invoice_number) : null,
-    vendorLedger:
-      vendors.get(String(r.vendor_id)) ||
-      (r.vendor_name ? String(r.vendor_name) : null),
-    expenseLedger: String(r.sub_head ?? ""),
-    headName: r.head ? String(r.head) : null,
-    branchName: branches.get(String(r.branch_id)) ?? null,
-    narrationText: r.description ? String(r.description) : null,
-    amountWithoutTax: Number(r.amount_without_tax ?? 0),
-    taxAmount: Number(r.tax_amount ?? 0),
-    otherCharges: Number(r.other_charges ?? 0),
-    roundOff: Number(r.round_off_amount ?? 0),
-    gross,
-    gstType: r.gst_type ? String(r.gst_type) : null,
-    recoverableTaxPct:
-      r.recoverable_tax_pct == null ? 100 : Number(r.recoverable_tax_pct),
-  };
 }
 
 /** Completes or releases batches a crash left half-done. */
@@ -256,19 +219,14 @@ export async function runGrnTallyExport(opts: {
       ? { status: "dry_run", wouldExport: 0, exceptions: [] }
       : { status: "nothing_to_export", exceptions: [] };
 
-  const vendors = await lookupNames(db, "vendor_master", "vendor_name", [
-    ...new Set(fresh.map((r) => String(r.vendor_id ?? "")).filter(Boolean)),
-  ]);
-  const branches = await lookupNames(db, "branch_master", "branch_name", [
-    ...new Set(fresh.map((r) => String(r.branch_id ?? "")).filter(Boolean)),
-  ]);
+  const context = await loadGrnTallyContext(db, fresh);
 
   const built: { id: string; grnNumber: string; xml: string; gross: number }[] =
     [];
   const exceptions: ExportException[] = [];
   for (const row of fresh) {
     const v = buildGrnVoucher(
-      toVoucherInput(row, vendors, branches),
+      toVoucherInput(row, context, config.names),
       config.names,
     );
     if (v.ok)

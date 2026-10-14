@@ -151,6 +151,7 @@ on:
           - grn-migrate-2026-27
           - book-nk-to-bluevine
           - repair-migrated-grn-ex-gst
+          - grn-tally-prod-dryrun
 
       mode:
         description: "dry-run reports what it would do and writes nothing"
@@ -362,6 +363,14 @@ jobs:
               export DB_USER="$(envv DB_USER)" DB_PASSWORD="$(envv DB_PASSWORD)" HRMS_DB_HOST="$(envv DB_HOST)" BILL_DB_HOST="$(envv BILL_DB_HOST)"
               if [ "$MODE" = "apply" ]; then node scripts/sync-db-bill-snapshot.mjs; fi
               node scripts/reconcile-db-bill-snapshot.mjs --hrms-host="$HRMS_DB_HOST" --bill-host="$BILL_DB_HOST"
+              ;;
+            grn-tally-prod-dryrun)
+              # Read-only: runs the GRN Tally export over prod GRNs; every statement is checked to be a SELECT. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::grn-tally-prod-dryrun is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/grn-tally-prod-dryrun.ts
               ;;
             repair-migrated-grn-ex-gst)
               # Dry-runs unless given --apply. Apply moves GST out of amount_without_tax on FY 2026-27 migrated GRNs (old values logged).
