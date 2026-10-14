@@ -36,6 +36,14 @@ jobs:
             console.log("### bank accounts: when created / last updated"); console.table(hist);
             const [aud] = await c.query("SELECT l.acted_at, l.action_type, COALESCE(u.email, l.actor_user_id) actor, LEFT(CAST(l.change_summary AS CHAR), 230) change_summary FROM sensitive_action_log l LEFT JOIN auth_user u ON u.id = l.actor_user_id WHERE l.entity_type = \"company_bank_account\" ORDER BY l.acted_at");
             console.log("### bank account audit trail (opening balance changes etc.)"); for (const x of aud) console.log(x.acted_at, x.action_type, x.actor, x.change_summary);
+            const [full] = await c.query("SELECT l.acted_at, l.action_type, l.reason, l.request_id, LEFT(CAST(l.old_value_json AS CHAR), 300) old_v, LEFT(CAST(l.new_value_json AS CHAR), 300) new_v, LEFT(l.user_agent, 60) ua FROM sensitive_action_log l WHERE l.entity_type = \"company_bank_account\" AND l.action_type LIKE \"%OPENING%\" ORDER BY l.acted_at");
+            console.log("### opening-balance audit rows, full"); for (const x of full) console.log(JSON.stringify(x));
+            const [ib] = await c.query("SELECT * FROM work_inbox_item WHERE title LIKE \"Opening balance changed%\" ORDER BY created_at LIMIT 12");
+            console.log("### inbox notifications about opening balance"); for (const x of ib) console.log(JSON.stringify(Object.fromEntries(Object.entries(x).filter(([k, v]) => v !== null && !/id$/.test(k) || k === "id")).slice ? x : Object.fromEntries(Object.entries(x).filter(([k, v]) => v !== null))).slice(0, 700));
+            const [je] = await c.query("SELECT je.entry_date, je.source_type, LEFT(je.narration, 120) narration, jl.account_type, jl.debit_amount, jl.credit_amount, je.posted_at FROM journal_entry_line jl JOIN journal_entry je ON je.id = jl.journal_entry_id WHERE jl.account_type = \"bank_account\" ORDER BY je.posted_at DESC LIMIT 15");
+            console.log("### journal lines on bank accounts (latest)"); console.table(je);
+            const [upd] = await c.query("SELECT action_type, COUNT(*) n, MIN(acted_at) first, MAX(acted_at) last FROM sensitive_action_log WHERE entity_type = \"company_bank_account\" AND acted_at >= \"2026-10-01\" GROUP BY action_type");
+            console.log("### bank-account audit actions since 1 Oct"); console.table(upd);
             const [rp] = await c.query("SELECT a.account_name, MIN(e.created_at) first_created, MAX(e.created_at) last_created, COUNT(*) n FROM bank_account_ledger_entry e JOIN company_bank_account a ON a.id = e.bank_account_id GROUP BY a.account_name");
             console.log("### when ledger rows were written into HRMS"); console.table(rp);
             const summary = [];
