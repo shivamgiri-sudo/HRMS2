@@ -49,23 +49,30 @@ for (const t of (await billQuery<any>(`SELECT Id, description, TDS FROM tds_mast
   tdsMaster.set(Number(t.Id), { ledger: String(t.description).trim(), rate: rate(t.TDS) });
 
 // ── 1. sub-heads ────────────────────────────────────────────────────────────────────────────────
-const legacySub = new Map<string, { enabled: number; rate: number; ledger: string | null; ids: string[] }>();
+// db_bill keeps old duplicate rows of some sub-heads (zero-padded ids like 000013 next to 11) with the
+// TDS fields blank. Where names repeat, the row this year's GRNs actually use is the one that counts.
+const usage = new Map<string, number>();
+for (const u of (await billQuery<any>(`SELECT SubHeadId, COUNT(*) n FROM expense_entry_master WHERE FinanceYear IN ('2025-26','2026-27') GROUP BY SubHeadId`)) as any[])
+  usage.set(String(u.SubHeadId), Number(u.n));
+const legacySub = new Map<string, { enabled: number; rate: number; ledger: string | null; id: string; used: number }>();
 const subById = new Map<string, { enabled: number | null; rate: number; ledger: string | null; name: string }>();
 const conflicts: string[] = [];
 for (const s of (await billQuery<any>(`SELECT SubHeadingId, SubHeadingDesc, SubHeadTDSEnabled, SubHeadTdsSection, SubHeadTds FROM tbl_bgt_expensesubheadingmaster`)) as any[]) {
   // Anything but Yes/1 is "no TDS" in the legacy import (the Sep-26 replay confirms blank sub-heads got none).
   const enabled = flag(s.SubHeadTDSEnabled) ?? 0;
   const section = tdsMaster.get(Number(s.SubHeadTdsSection));
-  const value = { enabled: enabled ?? 0, rate: enabled === 1 ? rate(s.SubHeadTds) || section?.rate || 0 : 0, ledger: enabled === 1 ? section?.ledger ?? null : null };
-  subById.set(String(s.SubHeadingId), { ...value, enabled, name: String(s.SubHeadingDesc) });
+  const value = { enabled, rate: enabled === 1 ? rate(s.SubHeadTds) || section?.rate || 0 : 0, ledger: enabled === 1 ? section?.ledger ?? null : null };
+  subById.set(String(s.SubHeadingId), { ...value, name: String(s.SubHeadingDesc) });
   const k = loose(s.SubHeadingDesc);
+  const used = usage.get(String(s.SubHeadingId)) ?? 0;
   const prev = legacySub.get(k);
   if (prev && (prev.enabled !== value.enabled || prev.rate !== value.rate || prev.ledger !== value.ledger)) {
-    conflicts.push(`${s.SubHeadingDesc}: ids ${prev.ids.join(",")} vs ${s.SubHeadingId} disagree — skipped`);
-    legacySub.set(k, { ...prev, enabled: -1 });
+    const keep = used > prev.used || (used === prev.used && value.enabled > prev.enabled) ? { ...value, id: String(s.SubHeadingId), used } : prev;
+    conflicts.push(`${s.SubHeadingDesc}: id ${prev.id} (${prev.used} GRNs) vs ${s.SubHeadingId} (${used} GRNs) differ — using ${keep.id}`);
+    legacySub.set(k, keep);
     continue;
   }
-  legacySub.set(k, { ...value, ids: [...(prev?.ids ?? []), String(s.SubHeadingId)] });
+  if (!prev || used > prev.used) legacySub.set(k, { ...value, id: String(s.SubHeadingId), used });
 }
 // Before migration 2205 is on the server the new columns are missing: a dry run then reads them as empty.
 const withFallback = async (full: string, base: string) => {
@@ -86,14 +93,13 @@ const subUnmatched: string[] = [];
 for (const h of hrmsSubs) {
   const l = legacySub.get(loose(h.sub_head_name));
   if (!l) { subUnmatched.push(String(h.sub_head_name)); continue; }
-  if (l.enabled === -1) continue;
   if (l.enabled === 1 && (!l.ledger || !l.rate)) { subDiffs.push(`${h.sub_head_name}: legacy TDS on but no ledger/rate — skipped`); continue; }
   if (h.tds_enabled == null) subUpdates.push({ id: h.id, name: h.sub_head_name, enabled: l.enabled, rate: l.rate || null, ledger: l.ledger });
   else if (Number(h.tds_enabled) !== l.enabled || Number(h.tds_rate ?? 0) !== l.rate || (h.tds_tally_ledger ?? null) !== l.ledger)
     subDiffs.push(`${h.sub_head_name}: HRMS ${h.tds_enabled}/${h.tds_rate}/${h.tds_tally_ledger} vs legacy ${l.enabled}/${l.rate}/${l.ledger} — kept HRMS`);
 }
 sample("sub-heads to set (legacy TDS)", subUpdates.map((u) => `${u.name}: ${u.enabled ? `${u.ledger} @ ${u.rate}%` : "no TDS"}`), 120);
-sample("sub-head conflicts inside db_bill", conflicts);
+sample("sub-heads named twice in db_bill (the one this year\'s GRNs use is taken)", conflicts);
 sample("sub-heads differing from an existing HRMS value", subDiffs);
 sample("HRMS sub-heads with no legacy setting (export falls back to the TDS engine defaults)", subUnmatched, 80);
 
