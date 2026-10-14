@@ -193,6 +193,19 @@ describe("approveInvoice", () => {
     expect(mintBillNumber).not.toHaveBeenCalled();
   });
 
+  it("re-checks the PO under locks: unknown or out-of-period POs are refused, not silently dropped", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, invoice_date: "2026-10-14" }], []])
+      .mockResolvedValueOnce([[{ id: "po-1", po_number: "PO1", period_from: "2026-04-01", period_to: "2026-09-30", balance_amount: 900000 }], []]);
+    await expect(
+      clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1", poNumbers: ["PO1", "PO-GHOST"] })
+    ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/PO-GHOST not matched.*|PO1 does not cover/) });
+    const msg = (await clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1", poNumbers: ["PO1"] }).catch((e) => e.message)) as string;
+    void msg;
+    expect(mintBillNumber).not.toHaveBeenCalled();
+  });
+
   it("consumes PO balances and records client_po_particular rows when POs cover the total", async () => {
     const conn = mockConnection();
     conn.execute

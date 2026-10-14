@@ -204,7 +204,7 @@ export interface InvoiceReferencesPayload {
 
 export interface CreateProformaPayload extends InvoiceReferencesPayload {
   costCentreId: string;
-  category: string;
+  category?: string;
   financeYear: string;
   monthLabel: string;
   invoiceDate: string; // YYYY-MM-DD
@@ -878,29 +878,88 @@ export async function exportInvoiceCsv(id: string, filename: string): Promise<vo
 
 // ── Legacy ADD PO / Approve PO / ADD GRN, and the proforma entry page header ───────────
 
-export interface PoRow {
+export type PoStatus = "active" | "expired" | "upcoming" | "exhausted";
+
+/** One row of the governed PO report (backend client-billing-po-master.service.ts). */
+export interface PoReportRow {
   id: string;
-  cost_centre_id: string;
-  cost_centre_code: string | null;
-  branch_name: string | null;
-  client_name: string | null;
-  po_number: string;
-  period_from: string;
-  period_to: string;
-  total_amount: string | number;
-  balance_amount: string | number;
-  created_at: string;
+  poNumber: string;
+  costCentreId: string;
+  costCentre: string;
+  branch: string;
+  client: string;
+  periodFrom: string;
+  periodTo: string;
+  amount: number;
+  drawn: number;
+  balance: number;
+  utilisation: number;
+  status: PoStatus;
+  bills: number;
+  lines: number;
+  hasDocument: boolean;
+  remarks: string | null;
 }
 
-export function listPoMaster(filters: { costCentreId?: string; branchId?: string; companyName?: string; search?: string } = {}): Promise<{ success: boolean; data: PoRow[] }> {
+export interface PoLine { particulars: string; qty: number; rate: number }
+
+export interface PoDetail {
+  po: {
+    id: string; poNumber: string; costCentreId: string; costCentre: string; branchId: string | null; branch: string; client: string;
+    periodFrom: string; periodTo: string; amount: number; balance: number; drawn: number; remarks: string | null;
+    document: { name: string; mime: string } | null;
+  };
+  lines: Array<PoLine & { lineNo: number; amount: number }>;
+  invoices: Array<{ id: string; number: string; date: string; month: string; grandTotal: number; status: string; drawn: number; stage: "billed" | "waiting" }>;
+  history: Array<{ action: string; changes: string; at: string; actor: string }>;
+}
+
+const PO_BASE = "/api/client-billing/po-master";
+
+export function listPoReport(filters: { costCentreId?: string; branchId?: string; companyName?: string; search?: string; status?: PoStatus } = {}): Promise<{ success: boolean; data: PoReportRow[] }> {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
   const qs = params.toString();
-  return hrmsApi.get(`/api/client-billing/po${qs ? `?${qs}` : ""}`);
+  return hrmsApi.get(`${PO_BASE}${qs ? `?${qs}` : ""}`);
 }
 
-export function createPoMaster(payload: { costCentreId: string; poNumber: string; periodFrom: string; periodTo: string; amount: number }): Promise<{ success: boolean; data: { id: string } }> {
-  return hrmsApi.post("/api/client-billing/po", payload);
+export function getPoDetail(id: string): Promise<{ success: boolean; data: PoDetail }> {
+  return hrmsApi.get(`${PO_BASE}/${id}`);
+}
+
+export interface SavePoPayload {
+  costCentreId?: string;
+  poNumber: string;
+  periodFrom: string;
+  periodTo: string;
+  lines: PoLine[];
+  remarks?: string | null;
+}
+
+/** Create (no id) or edit a PO; the document travels as multipart "file", the rest as JSON "data". */
+export function savePo(payload: SavePoPayload, file: File | null, id?: string): Promise<{ success: boolean; data: { id: string } }> {
+  const form = new FormData();
+  form.append("data", JSON.stringify(payload));
+  if (file) form.append("file", file);
+  return hrmsApi.postForm(id ? `${PO_BASE}/${id}` : PO_BASE, form);
+}
+
+export async function downloadPoDocument(id: string, name: string): Promise<void> {
+  const blob = await hrmsApi.getBlob(`${PO_BASE}/${id}/document`);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Correct narration / particulars at any stage; the server refuses a different total. */
+export function updateInvoiceNarration(
+  id: string,
+  payload: { description?: string | null; lines?: Array<PoLine & { lineType: "charge" | "deduction" }> },
+): Promise<{ success: boolean; data: { id: string; changed: string[] } }> {
+  return hrmsApi.put(`/api/client-billing/invoices/${id}/narration`, payload);
 }
 
 export function approveInvoicePo(id: string): Promise<{ success: boolean }> {
@@ -933,6 +992,23 @@ export interface BillingHeader {
   ship_to_address3: string | null;
   ship_to_address4: string | null;
   ship_to_address5: string | null;
+  /** Resolved by the server (client-billing-party.ts) — the same values the PDF prints. */
+  party?: BillingParty;
+}
+
+export interface BillingParty {
+  clientName: string;
+  billTo: string[];
+  shipTo: string[];
+  clientGstin: string;
+  clientStateCode: string;
+  clientStateName: string;
+  placeOfSupply: string;
+  ourGstin: string;
+  pan: string;
+  hsnCode: string;
+  sacCode: string;
+  warnings: string[];
 }
 
 export function getBillingHeader(costCentreId: string): Promise<{ success: boolean; data: BillingHeader }> {

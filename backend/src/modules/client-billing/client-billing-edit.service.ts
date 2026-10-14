@@ -119,7 +119,8 @@ async function updateProforma(
     const description =
       input.description === undefined ? invoice.description : input.description;
     const applyGst = input.applyGst ?? Boolean(invoice.apply_gst);
-    const applyTaxCalc = input.applyTaxCalc ?? Number(invoice.apply_tax_calc ?? 1) === 1;
+    // Apply GST is the one tax switch on the form; Apply Tax Calculation follows it when GST is sent.
+    const applyTaxCalc = input.applyTaxCalc ?? (input.applyGst !== undefined ? input.applyGst : Number(invoice.apply_tax_calc ?? 1) === 1);
     const invoiceType =
       input.invoiceType === undefined && invoice.invoice_type
         ? String(invoice.invoice_type)
@@ -150,7 +151,7 @@ async function updateProforma(
       lines = input.lines;
     } else {
       const [lineRows] = await conn.execute<RowDataPacket[]>(
-        `SELECT line_type, particulars, qty, rate FROM client_invoice_line WHERE invoice_id = ? ORDER BY created_at`,
+        `SELECT line_type, particulars, qty, rate FROM client_invoice_line WHERE invoice_id = ? ORDER BY COALESCE(line_no, 2147483647), created_at, id`,
         [input.invoiceId],
       );
       lines = lineRows.map((l) => ({
@@ -266,8 +267,8 @@ async function updateProforma(
       );
       for (const [index, line] of input.lines.entries()) {
         await conn.execute(
-          `INSERT INTO client_invoice_line (id, invoice_id, line_type, particulars, qty, rate, amount)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO client_invoice_line (id, invoice_id, line_type, particulars, qty, rate, amount, line_no)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             randomUUID(),
             input.invoiceId,
@@ -276,6 +277,7 @@ async function updateProforma(
             line.qty,
             line.rate,
             amounts.lineAmounts[index],
+            index + 1,
           ],
         );
       }

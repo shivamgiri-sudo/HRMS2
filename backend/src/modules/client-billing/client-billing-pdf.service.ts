@@ -33,6 +33,7 @@
  *     (2-digit state code + 10-char PAN + entity code + check digits), not a guess.
  */
 import fs from "node:fs";
+import { resolveBillingParty, type BillingParty } from "./client-billing-party.js";
 import path from "node:path";
 import PDFDocument from "pdfkit";
 import type { RowDataPacket } from "mysql2";
@@ -120,6 +121,11 @@ interface PrintableDoc {
 }
 
 interface CostCentreRow extends RowDataPacket {
+  billToCity?: string | null;
+  billToPincode?: string | null;
+  shipToCity?: string | null;
+  shipToPincode?: string | null;
+  branchGstin?: string | null;
   billToAddress1: string | null;
   billToAddress2: string | null;
   billToAddress3: string | null;
@@ -210,16 +216,6 @@ function plain(n: number | string | null | undefined): string {
 }
 
 
-function addressLines(...parts: Array<string | null>): string[] {
-  return parts.filter((x): x is string => Boolean(x && x.trim().length > 0));
-}
-
-/** A GSTIN's chars 3-12 (1-indexed) ARE the PAN by statutory GSTIN format — not a guess. */
-function panFromGstin(gstin: string | null | undefined): string {
-  const s = String(gstin ?? "").trim().toUpperCase();
-  return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z][Z][0-9A-Z]$/.test(s) ? s.slice(2, 12) : "";
-}
-
 const ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
   "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
 const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
@@ -258,6 +254,8 @@ async function loadCostCentre(costCentreId: string): Promise<CostCentreRow | und
             cc.bill_to_address4 AS billToAddress4, cc.bill_to_address5 AS billToAddress5,
             cc.ship_to_address1 AS shipToAddress1, cc.ship_to_address2 AS shipToAddress2, cc.ship_to_address3 AS shipToAddress3,
             cc.ship_to_address4 AS shipToAddress4, cc.ship_to_address5 AS shipToAddress5,
+            cc.bill_to_city AS billToCity, cc.bill_to_pincode AS billToPincode,
+            cc.ship_to_city AS shipToCity, cc.ship_to_pincode AS shipToPincode, b.gstin AS branchGstin,
             cc.hsn_code AS hsnCode, cc.sac_code AS sacCode, cc.service_tax_no AS serviceTaxNo,
             cc.vendor_gst_no AS vendorGstNo, cc.vendor_gst_state AS vendorGstState, cc.vendor_state_code AS vendorStateCode,
             cc.billing_client_name AS billingClientName, cc.company_name AS companyName,
@@ -287,7 +285,7 @@ async function loadInvoice(invoiceId: string): Promise<{ doc: PrintableDoc; line
 
   const [lineRows] = await db.execute<LineRow[]>(
     `SELECT line_type, particulars, qty, rate, amount
-     FROM client_invoice_line WHERE invoice_id = ? ORDER BY created_at`,
+     FROM client_invoice_line WHERE invoice_id = ? ORDER BY COALESCE(line_no, 2147483647), created_at, id`,
     [invoiceId]
   );
 
@@ -442,6 +440,20 @@ function drawTitle(doc: Doc, printable: PrintableDoc) {
 /** The bordered 3-column grid: Bill To | Ship To | invoice meta (Bill No, PO No, GST No,
  *  HSN/SAC, Pan No, GRN No/Date, Place Of Supply, TAX PAYABLE UNDER RCM) — matches the
  *  reference sample's layout exactly, including which fields sit in the meta column. */
+/** The PDF's camelCase row through the shared resolver (client-billing-party.ts). */
+function partyOf(cc: CostCentreRow | undefined): BillingParty {
+  return resolveBillingParty({
+    company_name: cc?.companyName, billing_client_name: cc?.billingClientName,
+    service_tax_no: cc?.serviceTaxNo, vendor_gst_no: cc?.vendorGstNo, vendor_gst_state: cc?.vendorGstState,
+    vendor_state_code: cc?.vendorStateCode, hsn_code: cc?.hsnCode, sac_code: cc?.sacCode,
+    bill_to_address1: cc?.billToAddress1, bill_to_address2: cc?.billToAddress2, bill_to_address3: cc?.billToAddress3,
+    bill_to_address4: cc?.billToAddress4, bill_to_address5: cc?.billToAddress5, bill_to_city: cc?.billToCity, bill_to_pincode: cc?.billToPincode,
+    ship_to_address1: cc?.shipToAddress1, ship_to_address2: cc?.shipToAddress2, ship_to_address3: cc?.shipToAddress3,
+    ship_to_address4: cc?.shipToAddress4, ship_to_address5: cc?.shipToAddress5, ship_to_city: cc?.shipToCity, ship_to_pincode: cc?.shipToPincode,
+    branch_state_code: cc?.stateCode, branch_gstin: cc?.branchGstin,
+  });
+}
+
 function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentreRow | undefined) {
   const left = PAGE.margin;
   const width = doc.page.width - PAGE.margin * 2;
@@ -451,29 +463,28 @@ function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentre
   const x1 = left, x2 = left + col1, x3 = left + col1 + col2;
 
   const clientName = printableClientName(costCentre);
-  // All five address lines, as I-Spark prints them (lines 4-5 hold city / state / PIN for most clients).
-  const billTo = addressLines(costCentre?.billToAddress1 ?? null, costCentre?.billToAddress2 ?? null, costCentre?.billToAddress3 ?? null,
-    costCentre?.billToAddress4 ?? null, costCentre?.billToAddress5 ?? null);
-  const shipToRaw = addressLines(costCentre?.shipToAddress1 ?? null, costCentre?.shipToAddress2 ?? null, costCentre?.shipToAddress3 ?? null,
-    costCentre?.shipToAddress4 ?? null, costCentre?.shipToAddress5 ?? null);
-  const shipTo = shipToRaw.length ? shipToRaw : billTo;
+  const party = partyOf(costCentre);
+  // All five address lines, as I-Spark prints them, plus city / PIN when not already in them.
+  const billTo = party.billTo;
+  const shipTo = party.shipTo;
 
-  const gstBlock = (label: string) => [
-    costCentre?.vendorGstNo ? `GST No : ${costCentre.vendorGstNo}` : null,
-    costCentre?.vendorGstState ? `GST STATE NAME : ${costCentre.vendorGstState}` : null,
-    costCentre?.vendorStateCode ? `GST STATE CODE : ${costCentre.vendorStateCode}` : null,
+  // State name / code follow the client GSTIN (the same source the tax type uses).
+  const gstBlock = (_label: string) => [
+    party.clientGstin ? `GST No : ${party.clientGstin}` : null,
+    party.clientStateName ? `GST STATE NAME : ${party.clientStateName}` : null,
+    party.clientStateCode ? `GST STATE CODE : ${party.clientStateCode}` : null,
   ].filter((x): x is string => Boolean(x));
 
   const meta: Array<[string, string]> = [
     [printable.numberLabel, printable.docNumber],
     ["PO No", printable.poNumbers],
-    ["GST No", costCentre?.serviceTaxNo ?? ""],
-    ["HSN Code", costCentre?.hsnCode ?? ""],
-    ["SAC Code", costCentre?.sacCode ?? "N/A"],
-    ["Pan No", panFromGstin(costCentre?.serviceTaxNo)],
+    ["GST No", party.ourGstin],
+    ["HSN Code", party.hsnCode],
+    ["SAC Code", party.sacCode || "N/A"],
+    ["Pan No", party.pan],
     ["GRN No", printable.grnNo],
     ["GRN Date", displayDate(printable.grnDate)],
-    ["Place Of Supply", costCentre?.vendorGstState ?? ""],
+    ["Place Of Supply", party.placeOfSupply],
     ["TAX PAYABLE UNDER RCM", printable.rcmApplicable ? "YES" : TAX_PAYABLE_UNDER_RCM],
   ];
 

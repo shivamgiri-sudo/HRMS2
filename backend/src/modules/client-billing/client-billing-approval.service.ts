@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { clientBillingNumberingService } from "./client-billing-numbering.service.js";
-import { parsePoNumbers } from "./client-billing-po.js";
+import { parsePoNumbers, validatePoCoverage, type PoRow } from "./client-billing-po.js";
 import { creditDays } from "./client-billing-receipt.service.js";
 
 export interface ApproveInvoiceInput {
@@ -83,7 +83,7 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
 
     const [invoiceRows] = await conn.execute<RowDataPacket[]>(
       `SELECT id, invoice_status, cost_centre_id, finance_year, grand_total, is_migrated,
-              proforma_approved_at, po_numbers
+              proforma_approved_at, po_numbers, invoice_date
        FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
       [input.invoiceId]
     );
@@ -91,6 +91,7 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
       | {
           id: string; invoice_status: string; cost_centre_id: string; finance_year: string; grand_total: number;
           is_migrated: number; proforma_approved_at: Date | string | null; po_numbers: string | null;
+          invoice_date: string;
         }
       | undefined;
     if (!invoice) {
@@ -122,18 +123,21 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     if (poNumbers.length > 0) {
       const placeholders = poNumbers.map(() => "?").join(", ");
       const [rows] = await conn.execute<RowDataPacket[]>(
-        `SELECT id, balance_amount FROM client_po_number WHERE po_number IN (${placeholders}) AND cost_centre_id = ? FOR UPDATE`,
+        `SELECT id, po_number, period_from, period_to, balance_amount FROM client_po_number
+         WHERE po_number IN (${placeholders}) AND cost_centre_id = ? FOR UPDATE`,
         [...poNumbers, invoice.cost_centre_id]
       );
-      poRows = rows as Array<{ id: string; balance_amount: number }>;
-      const totalPoBalance = poRows.reduce(
-        (sum, po) => sum + Number(po.balance_amount), 0
-      );
-      if (totalPoBalance < Number(invoice.grand_total)) {
-        throw clientError(
-          `Attached PO balance (${totalPoBalance}) is less than the invoice grand total (${invoice.grand_total})`
-        );
-      }
+      // Same rule as create / edit, now under the row locks: every PO must exist for this cost
+      // centre, its period must cover the bill date, and the usable balance must cover the bill.
+      // (Before, approval checked only the balance, so an unknown or out-of-period PO slipped through.)
+      const coverage = validatePoCoverage({
+        poNumbers,
+        poRows: rows as PoRow[],
+        invoiceDate: String(invoice.invoice_date).slice(0, 10),
+        grandTotal: Number(invoice.grand_total),
+      });
+      if (!coverage.ok) throw clientError(coverage.errors.join("; "));
+      poRows = coverage.usableRows as unknown as Array<{ id: string; balance_amount: number }>;
     }
 
     const [costCentreRows] = await conn.execute<RowDataPacket[]>(

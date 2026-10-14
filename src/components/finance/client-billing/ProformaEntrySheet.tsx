@@ -2,7 +2,9 @@
 /**
  * Legacy I-Spark "Initial Invoice/Proforma", two stages exactly like the old screens:
  *   Stage 1 "Proforma Invoice": Company, Branch, Cost Center, Finance Year, Month Year, Month,
- *     invoice Date, Invoice Description, Invoice Type, Apply Tax Calculation, Apply GST -> Go.
+ *     invoice Date, Invoice Description, Invoice Type, Apply GST -> Go. (Category and the separate
+ *     "Apply Tax Calculation" switch were removed on owner feedback 2026-10-14: Apply GST is the
+ *     one tax switch; category defaults to "Others" on the server.)
  *   Stage 2 "Proforma Entry": Branch / Cost Center / Financial Year / Month for / GST No. /
  *     Vendor GST No. strip, Bill To + Ship To, Details (Date, PO No., JCC No., GRN and Bill No.
  *     locked), the provision "Category / Total Revenue" strip, Add Particular, Add Deduction,
@@ -12,7 +14,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Loader2, Plus, Send, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Loader2, Plus, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -26,7 +28,8 @@ import {
   type BillingHeader, type CreateProformaPayload, type InvoiceType,
 } from "@/lib/clientBillingApi";
 import { BillingScopeSelects, costCentreSearchOptions, narrowCostCentres, useBillingFilterOptions } from "./BillingScopeSelects";
-import { BILLING_CATEGORY_OPTIONS, currentFinanceYear, financeYearOptions, monthLabelOptions, todayLocalISO } from "./billingFieldOptions";
+import { currentFinanceYear, financeYearOptions, monthLabelOptions, todayLocalISO } from "./billingFieldOptions";
+import { PoPicker } from "./PoPicker";
 import { ProvisionScopePanel } from "./ProvisionScopePanel";
 import { money } from "./shared";
 
@@ -100,10 +103,8 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
   const [invoiceDate, setInvoiceDate] = useState(todayLocalISO());
   const [description, setDescription] = useState("");
   const [invoiceType, setInvoiceType] = useState<InvoiceType>("Revenue");
-  const [category, setCategory] = useState("Others");
-  const [applyTaxCalc, setApplyTaxCalc] = useState(true);
   const [applyGst, setApplyGst] = useState(true);
-  const [poNo, setPoNo] = useState("");
+  const [poNumbers, setPoNumbers] = useState<string[]>([]);
   const [jccNo, setJccNo] = useState("");
   const [charges, setCharges] = useState<Line[]>([blank()]);
   const [deductions, setDeductions] = useState<Line[]>([blank()]);
@@ -116,13 +117,14 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
   const detail = useQuery({ queryKey: ["client-billing", "proforma-edit", editInvoiceId], queryFn: () => getProforma(editInvoiceId as string), enabled: open && isEdit });
   const header = useQuery({ queryKey: ["client-billing", "billing-header", costCentreId], queryFn: () => getBillingHeader(costCentreId), enabled: Boolean(costCentreId) && stage === 2 });
   const h = header.data?.data;
+  const party = h?.party;
   const editing = detail.data?.data;
 
   useEffect(() => {
     if (open) return;
     setStage(1); setScope({ companyName: "", branchId: "" }); setCostCentreId(""); setFinanceYear(currentFinanceYear());
-    setMonthLabel(""); setInvoiceDate(todayLocalISO()); setDescription(""); setInvoiceType("Revenue"); setCategory("Others");
-    setApplyTaxCalc(true); setApplyGst(true); setPoNo(""); setJccNo(""); setCharges([blank()]); setDeductions([blank()]); setSaveError(null);
+    setMonthLabel(""); setInvoiceDate(todayLocalISO()); setDescription(""); setInvoiceType("Revenue");
+    setApplyGst(true); setPoNumbers([]); setJccNo(""); setCharges([blank()]); setDeductions([blank()]); setSaveError(null);
   }, [open]);
 
   useEffect(() => {
@@ -130,9 +132,10 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
     setStage(2);
     setCostCentreId(editing.cost_centre_id); setFinanceYear(editing.finance_year); setMonthLabel(editing.month_label);
     setInvoiceDate(String(editing.invoice_date).slice(0, 10)); setDescription(editing.description ?? "");
-    setInvoiceType(editing.invoice_type === "Non Revenue" ? "Non Revenue" : "Revenue"); setCategory(editing.category);
-    setApplyTaxCalc(Number(editing.apply_tax_calc ?? 1) === 1); setApplyGst(Boolean(editing.apply_gst));
-    setPoNo(editing.po_numbers ?? ""); setJccNo(editing.jcc_no ?? "");
+    setInvoiceType(editing.invoice_type === "Non Revenue" ? "Non Revenue" : "Revenue");
+    // An I-Spark-style invoice saved with "no tax calculation" shows as GST off.
+    setApplyGst(Boolean(editing.apply_gst) && Number(editing.apply_tax_calc ?? 1) === 1);
+    setPoNumbers(String(editing.po_numbers ?? "").split(",").map((p) => p.trim()).filter(Boolean)); setJccNo(editing.jcc_no ?? "");
     const toLine = (l: { particulars: string; qty: string | number; rate: string | number }) => ({ particulars: l.particulars, qty: String(Number(l.qty)), rate: String(Number(l.rate)) });
     const c = editing.lines.filter((l) => l.line_type !== "deduction").map(toLine);
     const d = editing.lines.filter((l) => l.line_type === "deduction").map(toLine);
@@ -143,7 +146,7 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
   const validDeductions = deductions.filter(valid);
   const total = useMemo(() => Math.round((validCharges.reduce((s, l) => s + amountOf(l), 0) - validDeductions.reduce((s, l) => s + amountOf(l), 0)) * 100) / 100, [validCharges, validDeductions]);
   const gstType = gstTypeOf(h);
-  const taxOn = applyTaxCalc && applyGst;
+  const taxOn = applyGst;
   // Whole-rupee tax, half up — same rule as the server and I-Spark.
   const igst = taxOn && gstType === "Integrated" ? Math.round(Math.round(total * 100) * 18 / 10000) : 0;
   const cgst = taxOn && gstType === "Intrastate" ? Math.round(Math.round(total * 100) * 9 / 10000) : 0;
@@ -154,13 +157,13 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
   const save = useMutation({
     mutationFn: async () => {
       const payload: CreateProformaPayload = {
-        costCentreId, category, financeYear, monthLabel, invoiceDate, description: description.trim() || undefined,
-        applyGst, applyTaxCalc, invoiceType,
+        costCentreId, financeYear, monthLabel, invoiceDate, description: description.trim() || undefined,
+        applyGst, applyTaxCalc: applyGst, invoiceType,
         lines: [
           ...validCharges.map((l) => ({ particulars: l.particulars.trim(), qty: Number(l.qty), rate: Number(l.rate), lineType: "charge" as const })),
           ...validDeductions.map((l) => ({ particulars: l.particulars.trim(), qty: Number(l.qty), rate: Number(l.rate), lineType: "deduction" as const })),
         ],
-        poNumbers: poNo.split(",").map((p) => p.trim()).filter(Boolean),
+        poNumbers,
         jccNo: jccNo.trim() || undefined,
       };
       if (isEdit && editInvoiceId) {
@@ -251,19 +254,6 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
                   <SelectContent>{INVOICE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label className="text-xs">Category *</Label>
-                <Select value={category} onValueChange={setCategory}>
-                  <SelectTrigger className="mt-1 h-8 text-sm" aria-label="Category"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {[...(BILLING_CATEGORY_OPTIONS.includes(category as never) ? [] : [category]), ...BILLING_CATEGORY_OPTIONS].map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center gap-2 lg:col-span-2">
-                <Checkbox id="pf-tax" checked={applyTaxCalc} onCheckedChange={(v) => setApplyTaxCalc(v === true)} />
-                <Label htmlFor="pf-tax" className="text-sm">Apply Tax Calculation <span className="text-muted-foreground">(check for Yes — unticked means no tax at all)</span></Label>
-              </div>
               <div className="flex items-center gap-2 lg:col-span-2">
                 <Checkbox id="pf-gst" checked={applyGst} onCheckedChange={(v) => setApplyGst(v === true)} />
                 <Label htmlFor="pf-gst" className="text-sm">Apply GST <span className="text-muted-foreground">(Check for GST)</span></Label>
@@ -280,24 +270,34 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
             <div className="overflow-x-auto rounded-md border">
               <table className="w-full text-center text-sm">
                 <thead className="bg-slate-50 text-xs text-slate-600">
-                  <tr><th className="p-2">Branch</th><th className="p-2">Cost Center</th><th className="p-2">Financial Year</th><th className="p-2">Month for</th><th className="p-2">GST No.</th><th className="p-2">Vendor GST No.</th></tr>
+                  <tr><th className="p-2">Branch</th><th className="p-2">Cost Center</th><th className="p-2">Financial Year</th><th className="p-2">Month for</th><th className="p-2">GST No.</th><th className="p-2">Vendor GST No.</th><th className="p-2">Client GST State</th><th className="p-2">Place of Supply</th><th className="p-2">SAC</th></tr>
                 </thead>
                 <tbody>
                   <tr className="font-medium">
                     <td className="bg-sky-100 p-2">{h?.branch_name ?? "—"}</td><td className="bg-rose-100 p-2">{h?.cost_centre_code ?? "—"}</td>
                     <td className="bg-sky-100 p-2">{financeYear}</td><td className="bg-rose-100 p-2">{monthName}</td>
-                    <td className="bg-sky-100 p-2">{h?.service_tax_no ?? "—"}</td><td className="bg-rose-100 p-2">{h?.vendor_gst_no ?? "—"}</td>
+                    <td className="bg-sky-100 p-2">{party?.ourGstin || "—"}</td><td className="bg-rose-100 p-2">{party?.clientGstin || "—"}</td>
+                    <td className="bg-sky-100 p-2">{party?.clientStateName ? `${party.clientStateName} (${party.clientStateCode})` : "—"}</td>
+                    <td className="bg-rose-100 p-2">{party?.placeOfSupply || "—"}</td><td className="bg-sky-100 p-2">{party?.sacCode || party?.hsnCode || "—"}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
 
+            {party && party.warnings.length > 0 && (
+              <div role="status" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <p className="flex items-center gap-1.5 font-medium"><AlertTriangle className="h-4 w-4" />Check the cost centre master before billing:</p>
+                <ul className="ml-6 list-disc">{party.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {[{ t: "Bill To", a: [h?.bill_to_address1, h?.bill_to_address2, h?.bill_to_address3, h?.bill_to_address4, h?.bill_to_address5] }, { t: "Ship To", a: (h?.ship_to_address1 ? [h?.ship_to_address1, h?.ship_to_address2, h?.ship_to_address3, h?.ship_to_address4, h?.ship_to_address5] : [h?.bill_to_address1, h?.bill_to_address2, h?.bill_to_address3, h?.bill_to_address4, h?.bill_to_address5]) }].map((b) => (
+              {[{ t: "Bill To", a: party?.billTo ?? [] }, { t: "Ship To", a: party?.shipTo ?? [] }].map((b) => (
                 <section key={b.t} className="rounded-md border text-sm" aria-label={b.t}>
                   <h3 className="border-b bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">{b.t}</h3>
-                  <p className="bg-sky-600 px-3 py-1 font-semibold text-white">{h?.client_name ?? "—"}</p>
+                  <p className="bg-sky-600 px-3 py-1 font-semibold text-white">{party?.clientName || h?.client_name || "—"}</p>
                   <div className="space-y-0.5 px-3 py-2 font-medium text-slate-800">{addr(b.a)}</div>
+                  {party?.clientGstin && <p className="border-t px-3 py-1 text-xs text-slate-700">GSTIN {party.clientGstin} · {party.clientStateName} ({party.clientStateCode})</p>}
                 </section>
               ))}
             </div>
@@ -305,7 +305,7 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
             <section className="rounded-md border p-3 text-sm" aria-label="Details">
               <p className="mb-2 text-base text-slate-700">Date {invoiceDate}</p>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                {field("PO No.:", <Input aria-label="PO No." className="h-8" value={poNo} onChange={(e) => setPoNo(e.target.value)} placeholder="PO numbers, comma separated" />)}
+                {field("PO No.:", <PoPicker costCentreId={costCentreId} invoiceDate={invoiceDate} grandTotal={grand} value={poNumbers} onChange={setPoNumbers} />)}
                 {field("JCC No.:", <Input aria-label="JCC No." className="h-8" value={jccNo} onChange={(e) => setJccNo(e.target.value)} />)}
                 {field("GRN", <Input aria-label="GRN" className="h-8 bg-slate-100" disabled value={editing?.grn_no ?? ""} title="Added after billing (Download Initial Invoice → ADD GRN)" />)}
                 {field("Bill No.:", <Input aria-label="Bill No." className="h-8 bg-slate-100" disabled value={editing?.bill_no ?? ""} title="Generated at Invoice Approval" />)}
@@ -330,7 +330,7 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
                   <span className="px-3 py-1.5 tabular-nums">{money(Number(v))}</span>
                 </div>
               ))}
-              {!taxOn && <p className="px-3 py-1.5 text-xs text-amber-700">No tax: Apply Tax Calculation or Apply GST is unticked.</p>}
+              {!taxOn && <p className="px-3 py-1.5 text-xs text-amber-700">No tax: Apply GST is unticked.</p>}
             </section>
 
             {saveError && (

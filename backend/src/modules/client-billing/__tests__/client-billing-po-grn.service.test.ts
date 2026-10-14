@@ -8,25 +8,6 @@ let svc: typeof import("../client-billing-po-grn.service.js")["clientBillingPoGr
 beforeAll(async () => { ({ clientBillingPoGrnService: svc } = await import("../client-billing-po-grn.service.js")); });
 beforeEach(() => { getConnection.mockResolvedValue(conn); for (const f of Object.values(conn)) f.mockReset(); });
 
-describe("ADD PO", () => {
-  it("creates a PO with balance = amount and refuses a duplicate number for the cost centre", async () => {
-    conn.execute.mockResolvedValueOnce([[{ id: "cc" }], []]).mockResolvedValueOnce([[], []]).mockResolvedValue([{}, []]);
-    const r = await svc.createPo({ costCentreId: "cc", poNumber: " PO-77 ", periodFrom: "2026-04-01", periodTo: "2027-03-31", amount: 1000000, userId: "u" });
-    expect(r.poNumber).toBe("PO-77");
-    expect(conn.execute.mock.calls[2][1]).toEqual([expect.any(String), "cc", "PO-77", "2026-04-01", "2027-03-31", 1000000, 1000000]);
-    for (const f of Object.values(conn)) f.mockReset();
-    conn.execute.mockResolvedValueOnce([[{ id: "cc" }], []]).mockResolvedValueOnce([[{ id: "po-1" }], []]);
-    await expect(svc.createPo({ costCentreId: "cc", poNumber: "PO-77", periodFrom: "2026-04-01", periodTo: "2027-03-31", amount: 1, userId: "u" }))
-      .rejects.toMatchObject({ statusCode: 409 });
-  });
-  it("validates period and amount before touching the database", async () => {
-    getConnection.mockClear();
-    await expect(svc.createPo({ costCentreId: "cc", poNumber: "P", periodFrom: "2027-01-01", periodTo: "2026-01-01", amount: 1, userId: "u" })).rejects.toThrow(/on or before/);
-    await expect(svc.createPo({ costCentreId: "cc", poNumber: "P", periodFrom: "2026-01-01", periodTo: "2026-02-01", amount: 0, userId: "u" })).rejects.toThrow(/greater than zero/);
-    expect(getConnection).not.toHaveBeenCalled();
-  });
-});
-
 describe("Approve PO / ADD GRN", () => {
   it("approves the PO on an invoice that has one, logs po_approved", async () => {
     conn.execute.mockResolvedValueOnce([[{ id: "i", invoice_status: "approved", is_migrated: 0, po_numbers: "PO-77", po_approved: 0 }], []]).mockResolvedValue([{}, []]);

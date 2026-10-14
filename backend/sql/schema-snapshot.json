@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1272,
-  "columnCount": 18531,
+  "tableCount": 1274,
+  "columnCount": 18552,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -4902,7 +4902,8 @@
       "qty",
       "rate",
       "amount",
-      "created_at"
+      "created_at",
+      "line_no"
     ],
     "client_invoice_migration_staging": [
       "id",
@@ -5099,7 +5100,31 @@
       "total_amount",
       "balance_amount",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "attachment_path",
+      "attachment_name",
+      "attachment_mime",
+      "remarks",
+      "created_by",
+      "updated_by"
+    ],
+    "client_po_line": [
+      "id",
+      "po_id",
+      "line_no",
+      "particulars",
+      "qty",
+      "rate",
+      "amount",
+      "created_at"
+    ],
+    "client_po_audit": [
+      "id",
+      "po_id",
+      "action",
+      "actor_id",
+      "changes",
+      "created_at"
     ],
     "client_po_particular": [
       "id",
