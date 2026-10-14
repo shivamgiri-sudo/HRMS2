@@ -31,7 +31,7 @@ jobs:
         env:
           PATTERN: ${{ inputs.pattern }}
         run: |
-          [[ "$PATTERN" =~ ^[0-9T:-]{4,20}$ ]] || { echo "pattern must be digits, T, : or - only"; exit 1; }
+          [[ "$PATTERN" =~ ^[0-9T:|-]{4,80}$ ]] || { echo "pattern must be digits, T, :, - or | only"; exit 1; }
       - name: Error log lines in the window
         shell: bash
         env:
@@ -40,5 +40,5 @@ jobs:
           set +e
           for f in /home/masadmin/.pm2/logs/hrms2-backend-error.log /home/masadmin/.pm2/logs/hrms2-backend-out.log; do
             echo "### $f"
-            grep -F -- "$PATTERN" "$f" | grep -v -E '"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /' | head -n 60 | cut -c1-240 | sed -E 's/[0-9]{9,}/#########/g'
+            grep -E -- "$PATTERN" "$f" | grep -v -E '"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /|checksum mismatch|AI Registry|CANDIDATE_PORTAL_JWT_SECRET|report-suite' | head -n 80 | cut -c1-240 | sed -E 's/[0-9]{9,}/#########/g'
           done
