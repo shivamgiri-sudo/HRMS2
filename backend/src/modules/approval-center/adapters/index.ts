@@ -11,7 +11,7 @@ import { bgvReviewAdapter } from "./bgv-review.js";
 import { branchBudgetAdapter } from "./branch-budget.js";
 import { budgetTopupAdapter } from "./budget-topup.js";
 import { bulkUploadAdapter } from "./bulkUpload.js";
-import { clientInvoiceAdapter, clientCreditNoteAdapter } from "./client-billing.js";
+import { clientInvoiceAdapter, clientCreditNoteAdapter, clientProvisionAdapter } from "./client-billing.js";
 import { companyPostAdapter } from "./company-post.js";
 import { costCentreAdapter } from "./cost-centre.js";
 import { dpdpWithdrawalAdapter } from "./dpdp-withdrawal.js";
@@ -73,6 +73,7 @@ export const ADAPTERS: ApprovalAdapter[] = [
   bulkUploadAdapter,
   clientInvoiceAdapter,
   clientCreditNoteAdapter,
+  clientProvisionAdapter,
   companyPostAdapter,
   costCentreAdapter,
   dpdpWithdrawalAdapter,

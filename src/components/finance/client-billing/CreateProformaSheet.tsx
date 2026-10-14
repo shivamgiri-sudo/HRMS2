@@ -18,15 +18,26 @@ import {
   SearchableSelect,
   type SearchableOption,
 } from "@/components/ui/searchable-select";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { useCostCentreList } from "@/hooks/useCostCentreManagement";
 import {
   createProforma,
   getProforma,
   updateProforma,
+  INVOICE_TYPES,
   type CreateProformaPayload,
   type InvoiceDetail,
+  type InvoiceType,
 } from "@/lib/clientBillingApi";
+import {
+  BillingScopeSelects,
+  costCentreSearchOptions,
+  narrowCostCentres,
+  useBillingFilterOptions,
+} from "./BillingScopeSelects";
+import { ProvisionScopePanel } from "./ProvisionScopePanel";
 import {
   LineItemsEditor,
   emptyLine,
@@ -88,6 +99,9 @@ export function CreateProformaSheet({
   const isEdit = Boolean(editInvoiceId);
 
   const [costCentreId, setCostCentreId] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [branchId, setBranchId] = useState("");
+  const [invoiceType, setInvoiceType] = useState<InvoiceType>("Revenue");
   const [category, setCategory] = useState("");
   const [financeYear, setFinanceYear] = useState(currentFinanceYear());
   const [monthLabel, setMonthLabel] = useState("");
@@ -98,18 +112,13 @@ export function CreateProformaSheet({
   const [references, setReferences] =
     useState<InvoiceReferencesDraft>(emptyReferences());
 
-  // Reusing the same cost-centre list hook/table the Cost Centre Management page uses
-  // (src/hooks/useCostCentreManagement.ts's useCostCentreList) rather than building a
-  // new fetch — only "active" cost centres are billable.
-  const costCentreQuery = useCostCentreList({ status: "active", limit: 500 });
-  const costCentreOptions: SearchableOption[] = (
-    costCentreQuery.data?.data ?? []
-  ).map((cc) => ({
-    value: cc.id,
-    label: cc.cost_centre_name || cc.cost_centre_code || cc.id,
-    hint: cc.cost_centre_code,
-    keywords: `${cc.client_name ?? ""} ${cc.billing_client_name ?? ""} ${cc.branch_name ?? ""}`,
-  }));
+  // Legacy Initial Invoice order: Company -> Branch -> Cost Center. The cost-centre list is
+  // narrowed by the first two so a NOIDA-2 user is not scrolling 800 cost centres.
+  const filterOptionsQuery = useBillingFilterOptions();
+  const allCostCentres = filterOptionsQuery.data?.data.costCentres ?? [];
+  const costCentreOptions: SearchableOption[] = costCentreSearchOptions(
+    narrowCostCentres(allCostCentres, companyName, branchId),
+  );
 
   const detailQuery = useQuery({
     queryKey: ["client-billing", "proforma-edit", editInvoiceId],
@@ -121,6 +130,9 @@ export function CreateProformaSheet({
   useEffect(() => {
     if (!open) {
       setCostCentreId("");
+      setCompanyName("");
+      setBranchId("");
+      setInvoiceType("Revenue");
       setCategory("");
       setFinanceYear(currentFinanceYear());
       setMonthLabel("");
@@ -135,6 +147,7 @@ export function CreateProformaSheet({
   useEffect(() => {
     if (!editing) return;
     setCostCentreId(editing.cost_centre_id);
+    setInvoiceType(editing.invoice_type === "Non Revenue" ? "Non Revenue" : "Revenue");
     setCategory(editing.category);
     setFinanceYear(editing.finance_year);
     setMonthLabel(editing.month_label);
@@ -196,6 +209,18 @@ export function CreateProformaSheet({
   const validLines = lines.filter(
     (l) => l.particulars.trim() && Number(l.qty) > 0 && l.rate !== "",
   );
+  // Display only (the server computes the stored figure): charges minus deductions, paise-rounded.
+  const taxableTotal =
+    Math.round(
+      validLines.reduce((sum, l) => {
+        const amount = Math.round(Number(l.qty) * Number(l.rate) * 100);
+        return l.lineType === "deduction" ? sum - amount : sum + amount;
+      }, 0),
+    ) / 100;
+  const alreadyDrawn =
+    editing && editing.month_label === monthLabel && editing.finance_year === financeYear
+      ? Number(editing.total_amount)
+      : 0;
   const canSubmit = Boolean(
     costCentreId &&
     category.trim() &&
@@ -218,6 +243,7 @@ export function CreateProformaSheet({
       invoiceDate,
       description: description.trim() || undefined,
       applyGst,
+      invoiceType,
       lines: validLines.map((l) => ({
         particulars: l.particulars.trim(),
         qty: Number(l.qty),
@@ -250,6 +276,20 @@ export function CreateProformaSheet({
           </div>
         ) : (
           <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+            {!isEdit && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <BillingScopeSelects
+                  labelled
+                  companyName={companyName}
+                  branchId={branchId}
+                  onChange={(next) => {
+                    setCompanyName(next.companyName);
+                    setBranchId(next.branchId);
+                    setCostCentreId("");
+                  }}
+                />
+              </div>
+            )}
             <div>
               <Label className="text-xs">Cost centre *</Label>
               <SearchableSelect
@@ -257,7 +297,7 @@ export function CreateProformaSheet({
                 options={costCentreOptions}
                 value={costCentreId}
                 onChange={setCostCentreId}
-                loading={costCentreQuery.isLoading}
+                loading={filterOptionsQuery.isLoading}
                 disabled={isEdit}
                 placeholder="Select cost centre"
                 searchPlaceholder="Search by name, code, client…"
@@ -296,6 +336,18 @@ export function CreateProformaSheet({
             </div>
 
             <div>
+              <Label className="text-xs">Invoice type *</Label>
+              <Select value={invoiceType} onValueChange={(v) => setInvoiceType(v as InvoiceType)}>
+                <SelectTrigger className="mt-1 h-8 w-full text-sm sm:w-1/2" aria-label="Invoice type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {INVOICE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
               <Label className="text-xs">Description</Label>
               <Textarea
                 className="mt-1 min-h-[56px] text-sm"
@@ -328,6 +380,14 @@ export function CreateProformaSheet({
             />
 
             <LineItemsEditor lines={lines} onChange={setLines} showLineType />
+
+            <ProvisionScopePanel
+              costCentreId={costCentreId}
+              financeYear={financeYear}
+              monthLabel={monthLabel}
+              taxableTotal={taxableTotal}
+              alreadyDrawn={alreadyDrawn}
+            />
           </div>
         )}
 
@@ -358,3 +418,4 @@ export function CreateProformaSheet({
     </Sheet>
   );
 }
+

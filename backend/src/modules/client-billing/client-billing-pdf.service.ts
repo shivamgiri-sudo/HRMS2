@@ -21,14 +21,10 @@
  * proforma-creation time by `createProforma` — and never recomputed here.
  *
  * Known, documented gaps versus the reference sample (not fabricated to fill):
- *   - PO No: `client_po_number` has zero rows anywhere in this system today (confirmed
- *     live 2026-08-21) — always blank until that table is actually populated.
- *   - GRN No / GRN Date: legacy captured these per-invoice (`tbl_invoice.grn`/`grn_date`);
- *     the new schema never carried a per-invoice GRN field, and `CreateProformaSheet` has
- *     no GRN input field either — always blank. A real fix needs a schema + UI change,
- *     out of scope for a rendering-layer PDF fix.
- *   - TAX PAYABLE UNDER RCM: no RCM flag exists anywhere in the schema; printed as the
- *     static default "NO" (true for every sampled legacy row) until a real flag exists.
+ *   - PO No / GRN No / GRN Date / TAX PAYABLE UNDER RCM: printed from the invoice's own
+ *     po_numbers / grn_no / grn_date / rcm_applicable (migration 1975, captured on the
+ *     proforma form). Blank when not entered; RCM prints "NO" unless the flag is set.
+ *     Credit notes have none of these and print them blank / "NO".
  *   - Place Of Supply: derived from the client's own registered GST state
  *     (`cost_centre_master.vendor_gst_state`) — matches the reference sample exactly,
  *     since standard place-of-supply-for-services rules resolve to the recipient's state.
@@ -65,6 +61,10 @@ interface InvoiceRow extends RowDataPacket {
   sgst_amount: number;
   grand_total: number;
   created_at: string;
+  po_numbers: string | null;
+  grn_no: string | null;
+  grn_date: string | Date | null;
+  rcm_applicable: number | null;
 }
 
 interface LineRow extends RowDataPacket {
@@ -113,6 +113,10 @@ interface PrintableDoc {
   sgstAmount: number;
   grandTotal: number;
   isRejected: boolean;
+  poNumbers: string;
+  grnNo: string;
+  grnDate: string | null;
+  rcmApplicable: boolean;
 }
 
 interface CostCentreRow extends RowDataPacket {
@@ -259,7 +263,8 @@ async function loadInvoice(invoiceId: string): Promise<{ doc: PrintableDoc; line
   const [invoiceRows] = await db.execute<InvoiceRow[]>(
     `SELECT id, cost_centre_id, invoice_status, category, finance_year, month_label, invoice_date,
             description, proforma_no, bill_no, gst_type, apply_gst, total_amount, igst_amount,
-            cgst_amount, sgst_amount, grand_total, created_at
+            cgst_amount, sgst_amount, grand_total, created_at,
+            po_numbers, grn_no, grn_date, rcm_applicable
      FROM client_invoice WHERE id = ?`,
     [invoiceId]
   );
@@ -318,6 +323,10 @@ function invoiceToPrintableDoc(invoice: InvoiceRow): PrintableDoc {
     sgstAmount: Number(invoice.sgst_amount),
     grandTotal: Number(invoice.grand_total),
     isRejected,
+    poNumbers: String(invoice.po_numbers ?? "").split(",").map((p) => p.trim()).filter(Boolean).join(", "),
+    grnNo: String(invoice.grn_no ?? ""),
+    grnDate: invoice.grn_date ? String(invoice.grn_date instanceof Date ? invoice.grn_date.toISOString() : invoice.grn_date).slice(0, 10) : null,
+    rcmApplicable: Number(invoice.rcm_applicable ?? 0) === 1,
   };
 }
 
@@ -337,6 +346,10 @@ function creditNoteToPrintableDoc(creditNote: CreditNoteRow): PrintableDoc {
     sgstAmount: Number(creditNote.sgst_amount),
     grandTotal: Number(creditNote.grand_total),
     isRejected: false,
+    poNumbers: "",
+    grnNo: "",
+    grnDate: null,
+    rcmApplicable: false,
   };
 }
 
@@ -435,15 +448,15 @@ function drawPartyGrid(doc: Doc, printable: PrintableDoc, costCentre: CostCentre
 
   const meta: Array<[string, string]> = [
     [printable.numberLabel, printable.docNumber],
-    ["PO No", ""], // client_po_number has zero rows today — see file header note
+    ["PO No", printable.poNumbers],
     ["GST No", costCentre?.serviceTaxNo ?? ""],
     ["HSN Code", costCentre?.hsnCode ?? ""],
     ["SAC Code", costCentre?.sacCode ?? "N/A"],
     ["Pan No", panFromGstin(costCentre?.serviceTaxNo)],
-    ["GRN No", ""], // no per-invoice GRN column in this schema yet — see file header note
-    ["GRN Date", ""],
+    ["GRN No", printable.grnNo],
+    ["GRN Date", displayDate(printable.grnDate)],
     ["Place Of Supply", costCentre?.vendorGstState ?? ""],
-    ["TAX PAYABLE UNDER RCM", TAX_PAYABLE_UNDER_RCM],
+    ["TAX PAYABLE UNDER RCM", printable.rcmApplicable ? "YES" : TAX_PAYABLE_UNDER_RCM],
   ];
 
   const top = doc.y;

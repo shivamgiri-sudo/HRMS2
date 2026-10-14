@@ -25,7 +25,8 @@ const lineText = (l: any) => {
 };
 
 /**
- * Client-billing proforma awaiting approval. Endpoint roles (admin/finance/finance_head/accounts_head, super_admin)
+ * Client-billing proforma awaiting approval — two steps, same as legacy I-Spark:
+ * "Approve Proforma" (proforma_approved_at IS NULL) then "Invoice Approval" (mints the bill number). Endpoint roles (admin/finance/finance_head/accounts_head, super_admin)
  * are enforced by the module itself (403 -> empty). Migrated historical rows are never listed: the approve
  * route refuses them. Approving sends no PO numbers, exactly like the page's own Approve button.
  */
@@ -46,6 +47,7 @@ export const clientInvoiceAdapter: ApprovalAdapter = {
       const lines: any[] = Array.isArray((details[i] as any)?.lines) ? (details[i] as any).lines : [];
       const age = ageDays(r.created_at);
       const client = str(r.cost_centre_display_name) || str(r.cost_centre_code);
+      const invoiceStep = Boolean(r.proforma_approved_at);
       out.push({
         uid: `client_invoice:${r.id}`,
         kind: "client_invoice",
@@ -54,7 +56,7 @@ export const clientInvoiceAdapter: ApprovalAdapter = {
         id: String(r.id),
         title: `${str(r.proforma_no) || "Proforma"} — ${money("", r.grand_total).value}`,
         subtitle: [client, `${str(r.month_label)} ${str(r.finance_year)}`.trim()].filter(Boolean).join(" · "),
-        stage: "Finance approval (mints the bill number)",
+        stage: invoiceStep ? "Invoice approval (mints the bill number)" : "Proforma approval",
         fields: fields(
           f("Proforma number", r.proforma_no),
           f("Client / cost centre", client),
@@ -77,17 +79,29 @@ export const clientInvoiceAdapter: ApprovalAdapter = {
         ),
         submittedAt: iso(r.created_at),
         priority: age !== null && age > 5 ? "high" : "normal",
-        viewPath: `/finance/client-billing?tab=proformas&approvalId=${encodeURIComponent(String(r.id))}`,
+        viewPath: `/finance/client-billing?tab=${invoiceStep ? "invoice-approval" : "proformas"}&approvalId=${encodeURIComponent(String(r.id))}`,
         rejectNeedsReason: true,
-        approveLabel: "Approve & issue",
+        approveLabel: invoiceStep ? "Approve & generate bill" : "Approve proforma",
+        meta: { stage: invoiceStep ? "invoice" : "proforma" },
       });
     });
     return out;
   },
   async decide(ctx, item, action, remarks) {
-    const base = `/api/client-billing/invoices/${encodeURIComponent(item.id)}`;
-    if (action === "approve") await ctx.call("POST", `${base}/approve`, { body: {} });
-    else await ctx.call("POST", `${base}/reject`, { body: { reason: remarks } });
+    const id = encodeURIComponent(item.id);
+    const base = `/api/client-billing/invoices/${id}`;
+    if (action !== "approve") {
+      await ctx.call("POST", `${base}/reject`, { body: { reason: remarks } });
+      return;
+    }
+    // The card may be stale (approved as a proforma in another tab), so the row decides the step.
+    let stage = str(item.meta?.stage);
+    if (!stage) {
+      const detail: any = await ctx.call("GET", `/api/client-billing/proformas/${id}`).then((d) => d?.data ?? d).catch(() => null);
+      stage = detail?.proforma_approved_at ? "invoice" : "proforma";
+    }
+    if (stage === "invoice") await ctx.call("POST", `${base}/approve`, { body: {} });
+    else await ctx.call("POST", `/api/client-billing/proformas/${id}/approve`, { body: {} });
   },
 };
 
@@ -156,5 +170,56 @@ export const clientCreditNoteAdapter: ApprovalAdapter = {
       throw new LoopbackError(400, "Credit notes can only be approved here — the billing module has no decline step. Open it with View.");
     }
     await ctx.call("POST", `/api/client-billing/credit-notes/${encodeURIComponent(item.id)}/approve`, { body: {} });
+  },
+};
+
+/**
+ * Client provision (legacy "Provision Approve"). Pending provisions only; the maker never sees
+ * their own. An approved provision is what a proforma for that cost centre + month draws down.
+ */
+export const clientProvisionAdapter: ApprovalAdapter = {
+  kind: "client_provision",
+  label: "Client provision",
+  category: "Finance",
+  async list(ctx) {
+    if (!(await holdsLiteralRole(ctx.userId, ...BILLING_ROLES))) return [];
+    const res = await ctx.call("GET", "/api/client-billing/provisions", { query: { status: "pending", limit: 200 } });
+    const rows = await decidableBillingRows(ctx, await callerScope(ctx), rowsOf(res).filter((r) => str(r.provision_status) === "pending"));
+    return rows.slice(0, MAX_DETAIL).map((r): ApprovalItem => {
+      const age = ageDays(r.created_at);
+      const client = str(r.client_name) || str(r.cost_centre_code);
+      return {
+        uid: `client_provision:${r.id}`,
+        kind: "client_provision",
+        kindLabel: "Client provision",
+        category: "Finance",
+        id: String(r.id),
+        title: `Provision ${str(r.cost_centre_code)} ${str(r.month_label)} — ${money("", r.provision_amount).value}`,
+        subtitle: [client, str(r.branch_name)].filter(Boolean).join(" · "),
+        stage: "Provision approval",
+        fields: fields(
+          f("Company", r.company_name),
+          f("Branch", r.branch_name),
+          f("Cost centre", r.cost_centre_code),
+          f("Client", client),
+          f("Finance year", r.finance_year),
+          f("Month", r.month_label),
+          money("Provision amount", r.provision_amount),
+          date("Raised on", r.created_at),
+          f("Days pending", age),
+          long("Remarks", r.remarks),
+        ),
+        submittedAt: iso(r.created_at),
+        priority: age !== null && age > 3 ? "high" : "normal",
+        viewPath: `/finance/client-billing?tab=provisions&approvalId=${encodeURIComponent(String(r.id))}`,
+        rejectNeedsReason: true,
+        approveLabel: "Approve provision",
+      };
+    });
+  },
+  async decide(ctx, item, action, remarks) {
+    const base = `/api/client-billing/provisions/${encodeURIComponent(item.id)}`;
+    if (action === "approve") await ctx.call("POST", `${base}/approve`, { body: {} });
+    else await ctx.call("POST", `${base}/reject`, { body: { reason: remarks } });
   },
 };

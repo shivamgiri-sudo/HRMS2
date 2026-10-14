@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { clientBillingNumberingService } from "./client-billing-numbering.service.js";
+import { parsePoNumbers } from "./client-billing-po.js";
 
 export interface ApproveInvoiceInput {
   invoiceId: string;
@@ -19,6 +20,57 @@ function clientError(message: string): Error {
   return Object.assign(new Error(message), { statusCode: 400 });
 }
 
+export interface ApproveProformaResult {
+  id: string;
+  proformaApprovedAt: string;
+}
+
+/**
+ * Step 1 of 2 — legacy "View & Approve Proforma". Signs off the proforma's figures; no bill
+ * number yet. The invoice stays invoice_status='proforma' and moves to the Invoice Approval
+ * queue (proforma_approved_at IS NOT NULL), where approveInvoice mints the bill number.
+ */
+async function approveProforma(input: { invoiceId: string; userId: string }): Promise<ApproveProformaResult> {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.execute<RowDataPacket[]>(
+      `SELECT id, invoice_status, is_migrated, proforma_approved_at
+       FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
+      [input.invoiceId]
+    );
+    const invoice = rows[0] as
+      | { id: string; invoice_status: string; is_migrated: number; proforma_approved_at: Date | string | null }
+      | undefined;
+    if (!invoice) throw clientError(`Invoice ${input.invoiceId} not found`);
+    if (invoice.is_migrated) {
+      throw clientError(`Invoice ${input.invoiceId} is a migrated historical record (is_migrated=1) and cannot be approved through the live workflow`);
+    }
+    if (invoice.invoice_status !== "proforma") {
+      throw clientError(`Invoice ${input.invoiceId} is not in proforma status (currently: ${invoice.invoice_status})`);
+    }
+    if (invoice.proforma_approved_at) {
+      throw clientError(`Proforma ${input.invoiceId} is already approved — it is waiting in Invoice Approval`);
+    }
+    await conn.execute(
+      `UPDATE client_invoice SET proforma_approved_by = ?, proforma_approved_at = NOW() WHERE id = ?`,
+      [input.userId, input.invoiceId]
+    );
+    await conn.execute(
+      `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id) VALUES (?, ?, 'proforma_approved', ?)`,
+      [randomUUID(), input.invoiceId, input.userId]
+    );
+    await conn.commit();
+    return { id: input.invoiceId, proformaApprovedAt: new Date().toISOString() };
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+}
+
+/** Step 2 of 2 — legacy "Invoice Approval": mints the bill number and consumes PO balance. */
 async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoiceResult> {
   if (input.poNumbers && input.poNumbers.length > 4) {
     throw clientError("Cannot attach more than 4 PO numbers to a single invoice");
@@ -29,12 +81,16 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     await conn.beginTransaction();
 
     const [invoiceRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT id, invoice_status, cost_centre_id, finance_year, grand_total, is_migrated
+      `SELECT id, invoice_status, cost_centre_id, finance_year, grand_total, is_migrated,
+              proforma_approved_at, po_numbers
        FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
       [input.invoiceId]
     );
     const invoice = invoiceRows[0] as
-      | { id: string; invoice_status: string; cost_centre_id: string; finance_year: string; grand_total: number; is_migrated: number }
+      | {
+          id: string; invoice_status: string; cost_centre_id: string; finance_year: string; grand_total: number;
+          is_migrated: number; proforma_approved_at: Date | string | null; po_numbers: string | null;
+        }
       | undefined;
     if (!invoice) {
       throw clientError(`Invoice ${input.invoiceId} not found`);
@@ -48,13 +104,25 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     if (invoice.invoice_status !== "proforma") {
       throw clientError(`Invoice ${input.invoiceId} is not in proforma status (currently: ${invoice.invoice_status})`);
     }
+    if (!invoice.proforma_approved_at) {
+      throw clientError(`Proforma ${input.invoiceId} must be approved first (View & Approve Proforma) before the bill number is generated`);
+    }
+
+    // POs typed on the proforma are stored on the row; the page's Approve button sends none,
+    // so fall back to them — otherwise their balance was never consumed.
+    const poNumbers = input.poNumbers && input.poNumbers.length > 0
+      ? input.poNumbers
+      : parsePoNumbers(invoice.po_numbers);
+    if (poNumbers.length > 4) {
+      throw clientError("Cannot attach more than 4 PO numbers to a single invoice");
+    }
 
     let poRows: Array<{ id: string; balance_amount: number }> = [];
-    if (input.poNumbers && input.poNumbers.length > 0) {
-      const placeholders = input.poNumbers.map(() => "?").join(", ");
+    if (poNumbers.length > 0) {
+      const placeholders = poNumbers.map(() => "?").join(", ");
       const [rows] = await conn.execute<RowDataPacket[]>(
         `SELECT id, balance_amount FROM client_po_number WHERE po_number IN (${placeholders}) AND cost_centre_id = ? FOR UPDATE`,
-        [...input.poNumbers, invoice.cost_centre_id]
+        [...poNumbers, invoice.cost_centre_id]
       );
       poRows = rows as Array<{ id: string; balance_amount: number }>;
       const totalPoBalance = poRows.reduce(
@@ -253,4 +321,5 @@ async function rejectInvoiceInTransaction(
   );
 }
 
-export const clientBillingApprovalService = { approveInvoice, rejectInvoice, rejectInvoiceInTransaction };
+export const clientBillingApprovalService = {
+  approveProforma, approveInvoice, rejectInvoice, rejectInvoiceInTransaction };

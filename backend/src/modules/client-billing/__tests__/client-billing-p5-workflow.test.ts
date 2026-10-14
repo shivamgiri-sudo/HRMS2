@@ -34,6 +34,11 @@ vi.mock("../../communication/email.service.js", () => ({
 const { generateInvoicePdf } = vi.hoisted(() => ({
   generateInvoicePdf: vi.fn(),
 }));
+const { drawDownForInvoice } = vi.hoisted(() => ({ drawDownForInvoice: vi.fn() }));
+vi.mock("../client-billing-provision.service.js", () => ({
+  clientBillingProvisionService: { drawDownForInvoice },
+}));
+
 vi.mock("../client-billing-pdf.service.js", () => ({
   clientBillingPdfService: { generateInvoicePdf },
 }));
@@ -324,6 +329,7 @@ describe("updateProforma", () => {
   });
 
   it("recomputes amounts from the new lines, re-derives GST and writes an edited audit row", async () => {
+    drawDownForInvoice.mockResolvedValueOnce({ provisionId: "p-1", used: 10000 });
     conn.execute
       .mockResolvedValueOnce([[proforma], []]) // lock
       .mockResolvedValueOnce([
@@ -356,7 +362,24 @@ describe("updateProforma", () => {
       /client_invoice_audit_log/.test(String(c[0])),
     );
     expect(audit?.[1]).toEqual(expect.arrayContaining(["u"]));
+    expect(drawDownForInvoice).toHaveBeenCalledWith(conn, expect.objectContaining({
+      invoiceId: "i", costCentreId: "cc", monthLabel: "Aug-26", amount: 10000,
+    }));
+    expect(r.changed.join(" ")).toMatch(/provision used 10000/);
     expect(conn.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it("an edit after Approve Proforma clears the proforma approval", async () => {
+    drawDownForInvoice.mockResolvedValueOnce({ provisionId: null, used: 0 });
+    conn.execute
+      .mockResolvedValueOnce([[{ ...proforma, proforma_approved_at: "2026-10-14 10:00:00" }], []])
+      .mockResolvedValueOnce([[{ gstType: "Integrated", stateCode: "09" }], []])
+      .mockResolvedValueOnce([[{ line_type: "charge", particulars: "Seats", qty: 1, rate: 30000 }], []])
+      .mockResolvedValue([{}, []]);
+    const r = await editSvc.updateProforma({ invoiceId: "i", userId: "u", description: "changed" });
+    expect(r.changed.join(" ")).toMatch(/proforma approval cleared/);
+    const upd = conn.execute.mock.calls.find((c) => String(c[0]).includes("proforma_approved_at = NULL"));
+    expect(upd).toBeDefined();
   });
 
   it("rejects bad finance-year / month combinations before writing", async () => {

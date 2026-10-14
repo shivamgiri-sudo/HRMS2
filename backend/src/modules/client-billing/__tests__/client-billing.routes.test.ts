@@ -392,7 +392,7 @@ describe("GET /api/client-billing/credit-notes/:id", () => {
 });
 
 describe("GET /api/client-billing/summary", () => {
-  it("issues the four aggregates concurrently and shapes the response identically", async () => {
+  it("issues the five aggregates concurrently and shapes the response identically", async () => {
     let inFlight = 0;
     let maxInFlight = 0;
     execute.mockImplementation(async (sql: string) => {
@@ -407,13 +407,14 @@ describe("GET /api/client-billing/summary", () => {
         return [[{ credit_status: "draft", count: 1, total: "10" }], []];
       }
       if (sql.includes("DATE_FORMAT(invoice_date")) return [[{ count: 2, total: "200" }], []];
-      if (sql.includes("is_migrated = 0")) return [[{ count: 4 }], []];
+      if (sql.includes("is_migrated = 0")) return [[{ count: 4, awaitingProforma: 3, awaitingInvoice: 1 }], []];
+      if (sql.includes("FROM client_provision")) return [[{ count: 2 }], []];
       throw new Error(`unexpected sql ${sql}`);
     });
 
     const res = await request(app).get("/api/client-billing/summary");
     expect(res.status).toBe(200);
-    expect(maxInFlight).toBe(4);
+    expect(maxInFlight).toBe(5);
     expect(res.body.data).toEqual({
       invoices: {
         proforma: { count: 0, total: 0 },
@@ -423,6 +424,9 @@ describe("GET /api/client-billing/summary", () => {
       creditNotes: { draft: { count: 1, total: 10 }, approved: { count: 0, total: 0 } },
       thisMonthBilled: { count: 2, total: 200 },
       pendingApprovalCount: 4,
+      awaitingProformaApprovalCount: 3,
+      awaitingInvoiceApprovalCount: 1,
+      pendingProvisionCount: 2,
     });
   });
 });

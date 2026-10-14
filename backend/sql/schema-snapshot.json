@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1270,
-  "columnCount": 18480,
+  "columnCount": 18489,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -4876,7 +4876,10 @@
       "jcc_date",
       "rcm_applicable",
       "last_sent_at",
-      "last_sent_by"
+      "last_sent_by",
+      "proforma_approved_by",
+      "proforma_approved_at",
+      "invoice_type"
     ],
     "client_invoice_audit_log": [
       "id",
@@ -5117,7 +5120,13 @@
       "provision_amount",
       "provision_balance",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "provision_status",
+      "remarks",
+      "created_by",
+      "approved_by",
+      "approved_at",
+      "rejected_reason"
     ],
     "client_provision_deduction": [
       "id",

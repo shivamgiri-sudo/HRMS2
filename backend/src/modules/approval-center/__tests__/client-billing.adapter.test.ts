@@ -25,11 +25,37 @@ describe("client invoice adapter", () => {
     expect(items[0].viewPath).toBe("/finance/client-billing?tab=proformas&approvalId=i1");
     expect(items[0].rejectNeedsReason).toBe(true);
   });
-  it("decide approve (no PO) / reject reason", async () => {
-    const { ctx, calls } = fakeCtx({ "POST /api/client-billing/invoices/i1/approve": {}, "POST /api/client-billing/invoices/i1/reject": {} });
+  it("decide approve (no PO) / reject reason, per step", async () => {
+    const { ctx, calls } = fakeCtx({
+      "POST /api/client-billing/invoices/i1/approve": {},
+      "POST /api/client-billing/proformas/i1/approve": {},
+      "POST /api/client-billing/invoices/i1/reject": {},
+      "GET /api/client-billing/proformas/i1": { data: { proforma_approved_at: null } },
+    });
+    await clientInvoiceAdapter.decide(ctx, { id: "i1", meta: { stage: "invoice" } }, "approve", "");
+    await clientInvoiceAdapter.decide(ctx, { id: "i1", meta: { stage: "proforma" } }, "approve", "");
     await clientInvoiceAdapter.decide(ctx, { id: "i1" }, "approve", "");
     await clientInvoiceAdapter.decide(ctx, { id: "i1" }, "reject", "wrong rate");
-    expect(calls.map((c) => c.body)).toEqual([{}, { reason: "wrong rate" }]);
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual([
+      "/api/client-billing/invoices/i1/approve",
+      "/api/client-billing/proformas/i1/approve",
+      "/api/client-billing/proformas/i1/approve",
+      "/api/client-billing/invoices/i1/reject",
+    ]);
+  });
+
+  it("labels the step from proforma_approved_at", async () => {
+    const { ctx } = fakeCtx({
+      "GET /api/client-billing/proformas": { data: [inv(), inv({ id: "i3", proforma_approved_at: "2026-10-14" })] },
+      "GET /api/client-billing/proformas/i1": { data: { lines: [] } },
+      "GET /api/client-billing/proformas/i3": { data: { lines: [] } },
+    });
+    const items = await clientInvoiceAdapter.list(ctx);
+    expect(items.map((i) => [i.stage, i.approveLabel])).toEqual([
+      ["Proforma approval", "Approve proforma"],
+      ["Invoice approval (mints the bill number)", "Approve & generate bill"],
+    ]);
+    expect(items[1].viewPath).toBe("/finance/client-billing?tab=invoice-approval&approvalId=i3");
   });
 });
 

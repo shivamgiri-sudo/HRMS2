@@ -29,11 +29,65 @@ function mockConnection() {
 const APPROVABLE_INVOICE = {
   id: "inv-1", invoice_status: "proforma", cost_centre_id: "cc-1",
   finance_year: "2026-27", grand_total: 35400,
+  proforma_approved_at: "2026-10-14 10:00:00", po_numbers: null,
 };
 
 beforeEach(() => {
   getConnection.mockReset();
   mintBillNumber.mockReset();
+});
+
+describe("two-step approval (legacy View & Approve Proforma -> Invoice Approval)", () => {
+  it("approveInvoice refuses to mint a bill number before the proforma is approved", async () => {
+    const conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, is_migrated: 0, proforma_approved_at: null }], []]);
+    await expect(
+      clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" })
+    ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/must be approved first/) });
+    expect(mintBillNumber).not.toHaveBeenCalled();
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("approveProforma stamps the approver, logs proforma_approved and mints nothing", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "proforma", is_migrated: 0, proforma_approved_at: null }], []])
+      .mockResolvedValue([{}, []]);
+    const r = await clientBillingApprovalService.approveProforma({ invoiceId: "inv-1", userId: "u-9" });
+    expect(r.id).toBe("inv-1");
+    expect(mintBillNumber).not.toHaveBeenCalled();
+    const update = conn.execute.mock.calls.find((c) => String(c[0]).includes("proforma_approved_by = ?"));
+    expect(update?.[1]).toEqual(["u-9", "inv-1"]);
+    const audit = conn.execute.mock.calls.find((c) => String(c[0]).includes("'proforma_approved'"));
+    expect(audit).toBeDefined();
+    expect(conn.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it("approveProforma refuses an already approved proforma and a non-proforma", async () => {
+    let conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "proforma", is_migrated: 0, proforma_approved_at: "2026-10-14" }], []]);
+    await expect(clientBillingApprovalService.approveProforma({ invoiceId: "inv-1", userId: "u" }))
+      .rejects.toThrow(/already approved/);
+    conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "approved", is_migrated: 0, proforma_approved_at: null }], []]);
+    await expect(clientBillingApprovalService.approveProforma({ invoiceId: "inv-1", userId: "u" }))
+      .rejects.toThrow(/not in proforma status/);
+  });
+
+  it("approveInvoice consumes the PO numbers stored on the proforma when none are sent", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, is_migrated: 0, po_numbers: "PO-1" }], []])
+      .mockResolvedValueOnce([[{ id: "po-1", balance_amount: 50000 }], []])
+      .mockResolvedValueOnce([[{ companyName: "Mas Callnet India Pvt Ltd", stateCode: "09" }], []])
+      .mockResolvedValue([{}, []]);
+    mintBillNumber.mockResolvedValueOnce("09-171/26-27");
+    const r = await clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" });
+    expect(r.billNo).toBe("09-171/26-27");
+    expect(conn.execute.mock.calls[1][1]).toEqual(["PO-1", "cc-1"]);
+    const consume = conn.execute.mock.calls.find((c) => String(c[0]).includes("balance_amount = balance_amount - ?"));
+    expect(consume?.[1]).toEqual([35400, "po-1"]);
+  });
 });
 
 describe("approveInvoice", () => {

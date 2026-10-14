@@ -1064,9 +1064,11 @@
     "migrations/2161_roster_import_row_batch_cover.sql",
     "migrations/2180_molecular_email_ticket.sql",
     "migrations/2181_molecular_email_ticket_reopen_event.sql",
+    "migrations/2195_email_ticket_source.sql",
     "migrations/2170_bbb_sales_upload_quality.sql",
     "migrations/1975_client_billing_invoice_engine_p5.sql",
-    "migrations/1976_client_billing_tally_tables.sql"
+    "migrations/1976_client_billing_tally_tables.sql",
+    "migrations/2196_client_billing_legacy_sequence.sql"
   ],
   "approvedDeletions": [
     {
@@ -1406,9 +1408,11 @@
     "migrations/2161_roster_import_row_batch_cover.sql",
     "migrations/2180_molecular_email_ticket.sql",
     "migrations/2181_molecular_email_ticket_reopen_event.sql",
+    "migrations/2195_email_ticket_source.sql",
     "migrations/2170_bbb_sales_upload_quality.sql",
     "migrations/1975_client_billing_invoice_engine_p5.sql",
-    "migrations/1976_client_billing_tally_tables.sql"
+    "migrations/1976_client_billing_tally_tables.sql",
+    "migrations/2196_client_billing_legacy_sequence.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

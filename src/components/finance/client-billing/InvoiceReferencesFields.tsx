@@ -196,6 +196,7 @@ export function InvoiceReferencesFields({
         <div>
           <Label className="text-xs">GRN no.</Label>
           <Input
+            aria-label="GRN no."
             className="mt-1 h-8 text-sm"
             maxLength={60}
             value={value.grnNo}
@@ -205,6 +206,7 @@ export function InvoiceReferencesFields({
         <div>
           <Label className="text-xs">GRN date</Label>
           <Input
+            aria-label="GRN date"
             type="date"
             className="mt-1 h-8 text-sm"
             value={value.grnDate}
@@ -214,6 +216,7 @@ export function InvoiceReferencesFields({
         <div>
           <Label className="text-xs">JCC no.</Label>
           <Input
+            aria-label="JCC no."
             className="mt-1 h-8 text-sm"
             maxLength={60}
             value={value.jccNo}
@@ -223,6 +226,7 @@ export function InvoiceReferencesFields({
         <div>
           <Label className="text-xs">JCC date</Label>
           <Input
+            aria-label="JCC date"
             type="date"
             className="mt-1 h-8 text-sm"
             value={value.jccDate}

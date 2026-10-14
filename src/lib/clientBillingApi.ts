@@ -38,7 +38,8 @@ export type AuditAction =
   | "status_change_requested"
   | "status_change_approved"
   | "status_change_declined"
-  | "submitted_to_client";
+  | "submitted_to_client"
+  | "proforma_approved";
 
 /** One row of `client_invoice`. Covers both the Proformas tab (`invoice_status='proforma'`)
  *  and the Invoices tab (`invoice_status='approved'`) — same table, different filter. */
@@ -90,6 +91,15 @@ export interface InvoiceRow {
   rcm_applicable?: 0 | 1;
   last_sent_at?: string | null;
   last_sent_by?: string | null;
+  /** Migration 2196: legacy two-step approval. Set by "Approve Proforma"; the row then waits
+   *  in Invoice Approval (still invoice_status='proforma') until the bill number is minted. */
+  proforma_approved_at?: string | null;
+  proforma_approved_by?: string | null;
+  /** Legacy invoiceType: Revenue / Non Revenue. */
+  invoice_type?: string | null;
+  /** Joined by GET /proformas. */
+  company_name?: string | null;
+  branch_name?: string | null;
 }
 
 /** `GET /proformas/:id` and `GET /invoices/:id` (same route) attach `lines` to the invoice row. */
@@ -195,8 +205,12 @@ export interface CreateProformaPayload extends InvoiceReferencesPayload {
   invoiceDate: string; // YYYY-MM-DD
   description?: string;
   applyGst?: boolean;
+  invoiceType?: InvoiceType;
   lines: ProformaLineInput[];
 }
+
+export const INVOICE_TYPES = ["Revenue", "Non Revenue"] as const;
+export type InvoiceType = (typeof INVOICE_TYPES)[number];
 
 export type UpdateProformaPayload = Partial<
   Omit<CreateProformaPayload, "costCentreId">
@@ -228,6 +242,8 @@ export interface ProformaCreateResult {
   cgstAmount: number;
   sgstAmount: number;
   grandTotal: number;
+  /** Taxable total drawn from the month's approved provision. */
+  provisionUsed?: number;
 }
 
 /** Result shape returned by POST /invoices/:id/approve (clientBillingApprovalService.approveInvoice). */
@@ -262,6 +278,9 @@ export interface ClientBillingSummary {
   creditNotes: Record<CreditNoteStatus, { count: number; total: number }>;
   thisMonthBilled: { count: number; total: number };
   pendingApprovalCount: number;
+  awaitingProformaApprovalCount?: number;
+  awaitingInvoiceApprovalCount?: number;
+  pendingProvisionCount?: number;
 }
 
 /** Shared filter shape for both list endpoints and their CSV export siblings — the same
@@ -272,6 +291,12 @@ export interface ClientBillingListFilters {
   toDate?: string; // YYYY-MM-DD
   costCentreId?: string;
   search?: string;
+  companyName?: string;
+  branchId?: string;
+  financeYear?: string;
+  /** Legacy approval queue: "proforma_approval" (View & Approve Proforma) or
+   *  "invoice_approval" (Invoice Approval). Only meaningful on /proformas. */
+  stage?: "proforma_approval" | "invoice_approval";
   page?: number;
   limit?: number;
 }
@@ -283,6 +308,10 @@ function buildQueryString(filters: ClientBillingListFilters): string {
   if (filters.toDate) params.set("toDate", filters.toDate);
   if (filters.costCentreId) params.set("costCentreId", filters.costCentreId);
   if (filters.search) params.set("search", filters.search);
+  if (filters.companyName) params.set("companyName", filters.companyName);
+  if (filters.branchId) params.set("branchId", filters.branchId);
+  if (filters.financeYear) params.set("financeYear", filters.financeYear);
+  if (filters.stage) params.set("stage", filters.stage);
   if (filters.page) params.set("page", String(filters.page));
   if (filters.limit) params.set("limit", String(filters.limit));
   const qs = params.toString();
@@ -338,6 +367,13 @@ export function approveInvoice(
     `/api/client-billing/invoices/${id}/approve`,
     poNumbers ? { poNumbers } : {},
   );
+}
+
+/** Step 1 of 2 — legacy "View & Approve Proforma". No bill number yet. */
+export function approveProforma(
+  id: string,
+): Promise<{ success: boolean; data: { id: string; proformaApprovedAt: string } }> {
+  return hrmsApi.post(`/api/client-billing/proformas/${id}/approve`, {});
 }
 
 export function rejectInvoice(
@@ -667,4 +703,146 @@ export function submitToClient(
     `/api/client-billing/invoices/${invoiceId}/submit-to-client`,
     payload,
   );
+}
+
+// ── Legacy I-Spark sequence: filter options, provisions, per-invoice export ────────────
+
+export interface BillingCostCentreOption {
+  id: string;
+  cost_centre_code: string;
+  cost_centre_name: string | null;
+  company_name: string | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  client_name: string | null;
+  state_code: string | null;
+  gst_type: string | null;
+  vendor_gst_no: string | null;
+}
+
+export interface BillingFilterOptions {
+  companies: string[];
+  branches: Array<{ id: string; name: string }>;
+  costCentres: BillingCostCentreOption[];
+}
+
+/** Company / Branch / active cost centres for the legacy-style filters. */
+export function getBillingFilterOptions(): Promise<{ success: boolean; data: BillingFilterOptions }> {
+  return hrmsApi.get("/api/client-billing/filter-options");
+}
+
+export type ProvisionStatus = "pending" | "approved" | "rejected";
+
+export interface ProvisionRow {
+  id: string;
+  cost_centre_id: string;
+  cost_centre_code: string | null;
+  company_name: string | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  client_name: string | null;
+  finance_year: string;
+  month_label: string;
+  provision_amount: string | number;
+  provision_balance: string | number;
+  used_amount: string | number;
+  provision_status: ProvisionStatus;
+  remarks: string | null;
+  created_by: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_reason: string | null;
+  created_at: string;
+}
+
+export interface ProvisionListFilters {
+  financeYear?: string;
+  monthLabel?: string;
+  costCentreId?: string;
+  branchId?: string;
+  companyName?: string;
+  status?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export function listProvisions(filters: ProvisionListFilters = {}): Promise<PaginatedResult<ProvisionRow>> {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) {
+    if (v !== undefined && v !== "") params.set(k, String(v));
+  }
+  const qs = params.toString();
+  return hrmsApi.get(`/api/client-billing/provisions${qs ? `?${qs}` : ""}`);
+}
+
+export interface ProvisionScope {
+  id: string;
+  provision_status: ProvisionStatus;
+  provision_amount: string | number;
+  provision_balance: string | number;
+  remarks: string | null;
+}
+
+/** The provision a proforma for this cost centre + month will draw from (null if none). */
+export function getProvisionForScope(
+  costCentreId: string,
+  financeYear: string,
+  monthLabel: string,
+): Promise<{ success: boolean; data: ProvisionScope | null; required: boolean }> {
+  const qs = new URLSearchParams({ costCentreId, financeYear, monthLabel });
+  return hrmsApi.get(`/api/client-billing/provisions/scope?${qs.toString()}`);
+}
+
+export function createProvision(payload: {
+  costCentreId: string;
+  financeYear: string;
+  monthLabel: string;
+  amount: number;
+  remarks?: string;
+}): Promise<{ success: boolean; data: { id: string } }> {
+  return hrmsApi.post("/api/client-billing/provisions", payload);
+}
+
+export function updateProvision(
+  id: string,
+  payload: { amount?: number; remarks?: string | null },
+): Promise<{ success: boolean; data: { id: string; provisionAmount: number; provisionBalance: number } }> {
+  return hrmsApi.put(`/api/client-billing/provisions/${id}`, payload);
+}
+
+export function approveProvision(id: string): Promise<{ success: boolean; data: { id: string } }> {
+  return hrmsApi.post(`/api/client-billing/provisions/${id}/approve`, {});
+}
+
+export function rejectProvision(id: string, reason: string): Promise<{ success: boolean; data: { id: string } }> {
+  return hrmsApi.post(`/api/client-billing/provisions/${id}/reject`, { reason });
+}
+
+export interface UploadProvisionRow {
+  costCentreCode: string;
+  financeYear: string;
+  monthLabel: string;
+  amount: number;
+  remarks?: string;
+}
+
+export function uploadProvisions(rows: UploadProvisionRow[]): Promise<{
+  success: boolean;
+  data: { created: number; failed: number; results: Array<{ row: number; costCentreCode: string; ok: boolean; error?: string }> };
+}> {
+  return hrmsApi.post("/api/client-billing/provisions/upload", { rows });
+}
+
+/** Download Initial Invoice → Export: one invoice's header + lines + totals as CSV. */
+export async function exportInvoiceCsv(id: string, filename: string): Promise<void> {
+  const blob = await hrmsApi.getBlob(`/api/client-billing/invoices/${id}/export`);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }

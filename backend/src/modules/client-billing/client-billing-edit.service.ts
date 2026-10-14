@@ -11,9 +11,11 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import {
+  normaliseInvoiceType,
   resolveGstType,
   type CostCentreTaxRow,
 } from "./client-billing.service.js";
+import { clientBillingProvisionService } from "./client-billing-provision.service.js";
 import {
   checkPoCoverage,
   normaliseReferences,
@@ -41,6 +43,7 @@ export interface UpdateProformaInput {
   invoiceDate?: string;
   description?: string | null;
   applyGst?: boolean;
+  invoiceType?: string | null;
   lines?: EditLineInput[];
   references?: InvoiceReferenceInput;
 }
@@ -115,6 +118,10 @@ async function updateProforma(
     const description =
       input.description === undefined ? invoice.description : input.description;
     const applyGst = input.applyGst ?? Boolean(invoice.apply_gst);
+    const invoiceType =
+      input.invoiceType === undefined && invoice.invoice_type
+        ? String(invoice.invoice_type)
+        : normaliseInvoiceType(input.invoiceType);
 
     const [ccRows] = await conn.execute<RowDataPacket[]>(
       `SELECT cc.gst_type AS gstType, b.gst_state_code AS stateCode,
@@ -185,6 +192,7 @@ async function updateProforma(
     note("invoiceDate", String(invoice.invoice_date).slice(0, 10), invoiceDate);
     note("description", invoice.description, description);
     note("applyGst", invoice.apply_gst ? "yes" : "no", applyGst ? "yes" : "no");
+    note("invoiceType", invoice.invoice_type, invoiceType);
     note("gstType", invoice.gst_type, gstType);
     note("total", Number(invoice.total_amount), amounts.totalAmount);
     note("grandTotal", Number(invoice.grand_total), amounts.grandTotal);
@@ -204,7 +212,8 @@ async function updateProforma(
       `UPDATE client_invoice
        SET category = ?, finance_year = ?, month_label = ?, invoice_date = ?, description = ?,
            gst_type = ?, apply_gst = ?, total_amount = ?, igst_amount = ?, cgst_amount = ?,
-           sgst_amount = ?, grand_total = ?
+           sgst_amount = ?, grand_total = ?, invoice_type = ?,
+           proforma_approved_by = NULL, proforma_approved_at = NULL
        WHERE id = ?`,
       [
         category,
@@ -219,9 +228,15 @@ async function updateProforma(
         amounts.cgstAmount,
         amounts.sgstAmount,
         amounts.grandTotal,
+        invoiceType,
         input.invoiceId,
       ],
     );
+    // An edit after "Approve Proforma" sends it back for proforma approval — the approver
+    // signed off on the old figures, not these.
+    if (invoice.proforma_approved_at) {
+      changed.push("proforma approval cleared (re-approval needed)");
+    }
 
     if (refs) {
       await conn.execute<ResultSetHeader>(
@@ -261,6 +276,17 @@ async function updateProforma(
         );
       }
     }
+
+    // Re-draw the provision: refunds the old draw, then draws the new taxable total from the
+    // (possibly new) month's approved provision. Same rule as create.
+    const drawdown = await clientBillingProvisionService.drawDownForInvoice(conn, {
+      invoiceId: input.invoiceId,
+      costCentreId: String(invoice.cost_centre_id),
+      financeYear,
+      monthLabel,
+      amount: amounts.totalAmount,
+    });
+    if (drawdown.used > 0) changed.push(`provision used ${drawdown.used}`);
 
     await conn.execute(
       `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id, reason) VALUES (?, ?, 'edited', ?, ?)`,

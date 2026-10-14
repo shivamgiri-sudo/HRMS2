@@ -2,7 +2,13 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { clientBillingNumberingService } from "./client-billing-numbering.service.js";
-import { deriveGstType } from "./client-billing-tax.js";
+import {
+  assertMonthLabelInFinanceYear,
+  computeInvoiceAmounts,
+  deriveGstType,
+} from "./client-billing-tax.js";
+import { checkPoCoverage, normaliseReferences, type InvoiceReferenceInput } from "./client-billing-po.js";
+import { clientBillingProvisionService } from "./client-billing-provision.service.js";
 
 export interface CostCentreTaxRow {
   gstType: string;
@@ -37,6 +43,10 @@ export interface ProformaLineInput {
   lineType?: "charge" | "deduction";
 }
 
+/** Legacy `invoiceType` — 10,875 of the migrated bills are Revenue, 75 Non Revenue. */
+export const INVOICE_TYPES = ["Revenue", "Non Revenue"] as const;
+export type InvoiceType = (typeof INVOICE_TYPES)[number];
+
 export interface CreateProformaInput {
   costCentreId: string;
   category: string;
@@ -45,8 +55,10 @@ export interface CreateProformaInput {
   invoiceDate: string; // YYYY-MM-DD
   description?: string;
   applyGst?: boolean;
+  invoiceType?: string | null;
   lines: ProformaLineInput[];
   createdBy: string;
+  references?: InvoiceReferenceInput;
 }
 
 export interface ProformaResult {
@@ -57,29 +69,45 @@ export interface ProformaResult {
   cgstAmount: number;
   sgstAmount: number;
   grandTotal: number;
+  provisionUsed: number;
 }
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+function clientError(message: string): Error {
+  return Object.assign(new Error(message), { statusCode: 400 });
+}
+
+export function normaliseInvoiceType(value: unknown): InvoiceType {
+  const v = String(value ?? "").trim();
+  if (!v) return "Revenue";
+  const match = INVOICE_TYPES.find((t) => t.toLowerCase() === v.toLowerCase());
+  if (!match) throw clientError(`invoiceType must be one of ${INVOICE_TYPES.join(", ")}`);
+  return match;
+}
+
+function validateLines(lines: ProformaLineInput[]): void {
+  if (lines.length === 0) throw clientError("At least one line item is required");
+  for (const line of lines) {
+    if (!String(line.particulars ?? "").trim()) throw clientError("Every line needs particulars");
+    if (!Number.isFinite(line.qty) || line.qty <= 0) throw clientError("Line quantity must be greater than zero");
+    if (!Number.isFinite(line.rate) || line.rate < 0) throw clientError("Line rate must be zero or more");
+  }
 }
 
 /**
- * Matches legacy's tax_call block: 18% for an Integrated (inter-state) cost centre, or
- * 9%+9% CGST/SGST split for an Intrastate one. Skipped entirely when applyGst is false.
+ * Create = legacy Initial Invoice/Proforma. Uses the SAME rules as edit
+ * (client-billing-edit.service.ts) so an invoice cannot change tax just by being re-saved:
+ * GST type derived from the GSTIN states (stored flag only as fallback), single paise
+ * rounding via computeInvoiceAmounts, month-inside-FY check. PO/GRN/JCC typed on the form
+ * are stored (they used to be accepted by the route and silently dropped here), and the
+ * taxable total is drawn from the cost centre's approved provision for the month.
  */
-function computeGst(baseAmount: number, gstType: string, applyGst: boolean) {
-  if (!applyGst) return { igst: 0, cgst: 0, sgst: 0 };
-  if (gstType === "Integrated") {
-    return { igst: round2(baseAmount * 0.18), cgst: 0, sgst: 0 };
-  }
-  const half = round2(baseAmount * 0.09);
-  return { igst: 0, cgst: half, sgst: half };
-}
-
 async function createProforma(input: CreateProformaInput): Promise<ProformaResult> {
-  if (input.lines.length === 0) {
-    throw Object.assign(new Error("At least one line item is required"), { statusCode: 400 });
-  }
+  validateLines(input.lines);
+  assertMonthLabelInFinanceYear(input.monthLabel, input.financeYear);
+  const category = String(input.category ?? "").trim();
+  if (!category || category.length > 50) throw clientError("category is required (max 50 characters)");
+  const invoiceType = normaliseInvoiceType(input.invoiceType);
+  const refs = input.references ? normaliseReferences(input.references) : null;
 
   const conn = await db.getConnection();
   const invoiceId = randomUUID();
@@ -89,35 +117,45 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
 
     const [costCentreRows] = await conn.execute<RowDataPacket[]>(
       `SELECT cc.gst_type AS gstType, b.gst_state_code AS stateCode,
+              cc.service_tax_no AS supplierGstin, cc.vendor_gst_no AS clientGstin,
+              cc.vendor_state_code AS clientStateCode,
               cc.tally_head AS tallyHead, cc.billing_client_name AS clientTallyName
        FROM cost_centre_master cc
        LEFT JOIN branch_master b ON b.id = cc.branch_id
        WHERE cc.id = ?`,
       [input.costCentreId]
     );
-    const costCentre = costCentreRows[0] as {
-      gstType: string; stateCode: string | null;
+    const costCentre = costCentreRows[0] as (CostCentreTaxRow & {
       tallyHead: string | null; clientTallyName: string | null;
-    } | undefined;
+    }) | undefined;
     if (!costCentre) {
-      throw Object.assign(new Error(`cost_centre_master ${input.costCentreId} not found`), { statusCode: 400 });
+      throw clientError(`cost_centre_master ${input.costCentreId} not found`);
     }
     if (!costCentre.stateCode) {
-      throw Object.assign(new Error(`cost centre ${input.costCentreId} has no branch GST state code — cannot mint a proforma number`), { statusCode: 400 });
+      throw clientError(`cost centre ${input.costCentreId} has no branch GST state code — cannot mint a proforma number`);
     }
-    if (costCentre.gstType !== "Integrated" && costCentre.gstType !== "Intrastate") {
-      throw Object.assign(new Error(`cost centre ${input.costCentreId} has an unrecognized GST type '${costCentre.gstType}' — expected 'Integrated' or 'Intrastate'`), { statusCode: 400 });
+    // Same inputs as resolveGstType (used by edit), so create and edit always agree.
+    const derived = deriveGstType({
+      supplierStateCode: costCentre.stateCode,
+      clientStateCode: costCentre.clientStateCode ?? null,
+      clientGstin: costCentre.clientGstin ?? null,
+      fallbackFlag: costCentre.gstType,
+    });
+    if (!derived.gstType) {
+      throw clientError(`cost centre ${input.costCentreId} has an unrecognized GST type '${costCentre.gstType}' — expected 'Integrated' or 'Intrastate'`);
     }
+    const gstType = derived.gstType;
 
     const applyGst = input.applyGst ?? true;
-    const totalAmount = round2(
-      input.lines.reduce((sum, line) => {
-        const amount = round2(line.qty * line.rate);
-        return line.lineType === "deduction" ? sum - amount : sum + amount;
-      }, 0)
-    );
-    const { igst, cgst, sgst } = computeGst(totalAmount, costCentre.gstType, applyGst);
-    const grandTotal = round2(totalAmount + igst + cgst + sgst);
+    const amounts = computeInvoiceAmounts(input.lines, gstType, applyGst);
+
+    if (refs && refs.poNumbers.length > 0) {
+      const coverage = await checkPoCoverage(
+        { costCentreId: input.costCentreId, invoiceDate: input.invoiceDate, grandTotal: amounts.grandTotal, poNumbers: refs.poNumbers },
+        conn,
+      );
+      if (!coverage.ok) throw clientError(coverage.errors.join("; "));
+    }
 
     const proformaNo = await clientBillingNumberingService.mintProformaNumber(costCentre.stateCode, conn);
 
@@ -125,29 +163,59 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
       `INSERT INTO client_invoice
          (id, cost_centre_id, invoice_status, category, finance_year, month_label, invoice_date,
           description, proforma_no, gst_type, apply_gst, total_amount, igst_amount, cgst_amount,
-          sgst_amount, grand_total, created_by, tally_head, client_tally_name)
-       VALUES (?, ?, 'proforma', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          sgst_amount, grand_total, created_by, tally_head, client_tally_name, invoice_type)
+       VALUES (?, ?, 'proforma', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        invoiceId, input.costCentreId, input.category, input.financeYear, input.monthLabel,
-        input.invoiceDate, input.description ?? null, proformaNo, costCentre.gstType,
-        applyGst ? 1 : 0, totalAmount, igst, cgst, sgst, grandTotal, input.createdBy,
+        invoiceId, input.costCentreId, category, input.financeYear, input.monthLabel,
+        input.invoiceDate, input.description ?? null, proformaNo, gstType,
+        applyGst ? 1 : 0, amounts.totalAmount, amounts.igstAmount, amounts.cgstAmount,
+        amounts.sgstAmount, amounts.grandTotal, input.createdBy,
         // Frozen at creation time, same as legacy's own cost_TallyHead/cost_client_tally_name
         // snapshot — Tally posting must reflect what was true then, not whatever
         // cost_centre_master says later if the ledger head is renamed.
-        costCentre.tallyHead ?? null, costCentre.clientTallyName ?? null,
+        costCentre.tallyHead ?? null, costCentre.clientTallyName ?? null, invoiceType,
       ]
     );
 
-    for (const line of input.lines) {
+    if (refs) {
       await conn.execute<ResultSetHeader>(
-        `INSERT INTO client_invoice_line (id, invoice_id, line_type, particulars, qty, rate, amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [randomUUID(), invoiceId, line.lineType ?? "charge", line.particulars, line.qty, line.rate, round2(line.qty * line.rate)]
+        `UPDATE client_invoice
+         SET po_numbers = ?, grn_no = ?, grn_date = ?, jcc_no = ?, jcc_date = ?, rcm_applicable = ?
+         WHERE id = ?`,
+        [
+          refs.poNumbers.length > 0 ? refs.poNumbers.join(",") : null,
+          refs.grnNo, refs.grnDate, refs.jccNo, refs.jccDate, refs.rcmApplicable ? 1 : 0, invoiceId,
+        ]
       );
     }
 
+    for (const [index, line] of input.lines.entries()) {
+      await conn.execute<ResultSetHeader>(
+        `INSERT INTO client_invoice_line (id, invoice_id, line_type, particulars, qty, rate, amount)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [randomUUID(), invoiceId, line.lineType ?? "charge", line.particulars.trim(), line.qty, line.rate, amounts.lineAmounts[index]]
+      );
+    }
+
+    const drawdown = await clientBillingProvisionService.drawDownForInvoice(conn, {
+      invoiceId,
+      costCentreId: input.costCentreId,
+      financeYear: input.financeYear,
+      monthLabel: input.monthLabel,
+      amount: amounts.totalAmount,
+    });
+
+    await conn.execute(
+      `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id, reason) VALUES (?, ?, 'created', ?, ?)`,
+      [randomUUID(), invoiceId, input.createdBy, drawdown.used > 0 ? `provision used ${drawdown.used}` : null]
+    );
+
     await conn.commit();
-    return { id: invoiceId, proformaNo, totalAmount, igstAmount: igst, cgstAmount: cgst, sgstAmount: sgst, grandTotal };
+    return {
+      id: invoiceId, proformaNo, totalAmount: amounts.totalAmount, igstAmount: amounts.igstAmount,
+      cgstAmount: amounts.cgstAmount, sgstAmount: amounts.sgstAmount, grandTotal: amounts.grandTotal,
+      provisionUsed: drawdown.used,
+    };
   } catch (error) {
     await conn.rollback();
     throw error;

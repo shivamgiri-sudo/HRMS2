@@ -15,6 +15,11 @@ vi.mock("../client-billing-numbering.service.js", () => ({
   clientBillingNumberingService: { mintProformaNumber },
 }));
 
+const { drawDownForInvoice } = vi.hoisted(() => ({ drawDownForInvoice: vi.fn() }));
+vi.mock("../client-billing-provision.service.js", () => ({
+  clientBillingProvisionService: { drawDownForInvoice },
+}));
+
 let clientBillingService: typeof import("../client-billing.service.js")["clientBillingService"];
 beforeAll(async () => {
   ({ clientBillingService } = await import("../client-billing.service.js"));
@@ -23,6 +28,10 @@ beforeAll(async () => {
 beforeEach(() => {
   getConnection.mockResolvedValue(conn);
   conn.execute.mockReset();
+  // Any statement the test does not script (reference UPDATE, audit INSERT) succeeds.
+  conn.execute.mockResolvedValue([{}, []]);
+  drawDownForInvoice.mockReset();
+  drawDownForInvoice.mockResolvedValue({ provisionId: null, used: 0 });
   conn.beginTransaction.mockReset();
   conn.commit.mockReset();
   conn.rollback.mockReset();
@@ -108,6 +117,7 @@ describe("createProforma", () => {
     expect(result).toEqual({
       id: expect.any(String), proformaNo: "PI/09/7971",
       totalAmount: 30000, igstAmount: 5400, cgstAmount: 0, sgstAmount: 0, grandTotal: 35400,
+      provisionUsed: 0,
     });
   });
 
@@ -127,6 +137,7 @@ describe("createProforma", () => {
     expect(result).toEqual({
       id: expect.any(String), proformaNo: "PI/09/7972",
       totalAmount: 4678, igstAmount: 0, cgstAmount: 421.02, sgstAmount: 421.02, grandTotal: 5520.04,
+      provisionUsed: 0,
     });
   });
 
@@ -182,12 +193,13 @@ describe("createProforma", () => {
       lines: [{ particulars: "Base charge", qty: 1, rate: 10000 }], createdBy: "u-1",
     });
 
-    // Second conn.execute call is the client_invoice INSERT; its param array's last two
-    // positional values are tally_head/client_tally_name per the INSERT column list.
+    // Second conn.execute call is the client_invoice INSERT; tally_head/client_tally_name
+    // come right before invoice_type (the last column) in the INSERT column list.
     const insertCall = conn.execute.mock.calls[1];
     const params = insertCall[1] as unknown[];
-    expect(params[params.length - 2]).toBe("VODAFONE MOBILE SERVICES LTD. (DELHI)");
-    expect(params[params.length - 1]).toBe("Vodafone Mobile Services Ltd");
+    expect(params[params.length - 3]).toBe("VODAFONE MOBILE SERVICES LTD. (DELHI)");
+    expect(params[params.length - 2]).toBe("Vodafone Mobile Services Ltd");
+    expect(params[params.length - 1]).toBe("Revenue");
   });
 
   it("stores tally_head/client_tally_name as NULL when the cost centre has neither set", async () => {
@@ -203,8 +215,8 @@ describe("createProforma", () => {
     });
 
     const params = conn.execute.mock.calls[1][1] as unknown[];
+    expect(params[params.length - 3]).toBeNull();
     expect(params[params.length - 2]).toBeNull();
-    expect(params[params.length - 1]).toBeNull();
   });
 
   it("rolls back and releases the connection when a line insert fails", async () => {
@@ -225,5 +237,68 @@ describe("createProforma", () => {
     expect(conn.commit).not.toHaveBeenCalled();
     expect(conn.rollback).toHaveBeenCalledTimes(1);
     expect(conn.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores PO/GRN/JCC typed on the create form (they used to be dropped)", async () => {
+    mockCostCentreLookup({ gstType: "Integrated", stateCode: "09" });
+    mintProformaNumber.mockResolvedValueOnce("PI/09/7978");
+
+    await clientBillingService.createProforma({
+      costCentreId: "cc-1", category: "Subscription", financeYear: "2026-27",
+      monthLabel: "Sep-26", invoiceDate: "2026-09-30",
+      lines: [{ particulars: "Customer Service Charges for Sep-26", qty: 1, rate: 1000 }], createdBy: "u-1",
+      references: { grnNo: "GRN-77", grnDate: "2026-09-29", jccNo: "JCC-5", rcmApplicable: false },
+    });
+
+    const refUpdate = conn.execute.mock.calls.find((c) => String(c[0]).includes("SET po_numbers"));
+    expect(refUpdate).toBeDefined();
+    expect(refUpdate![1]).toEqual([null, "GRN-77", "2026-09-29", "JCC-5", null, 0, expect.any(String)]);
+  });
+
+  it("draws the taxable total (before GST) from the month's provision inside the transaction", async () => {
+    mockCostCentreLookup({ gstType: "Integrated", stateCode: "09" });
+    mintProformaNumber.mockResolvedValueOnce("PI/09/8157");
+    drawDownForInvoice.mockResolvedValueOnce({ provisionId: "p-1", used: 778901 });
+
+    const result = await clientBillingService.createProforma({
+      costCentreId: "cc-1", category: "Subscription", financeYear: "2026-27",
+      monthLabel: "Sep-26", invoiceDate: "2026-09-30",
+      lines: [{ particulars: "Customer Service Charges for Sep-26", qty: 1, rate: 778901 }], createdBy: "u-1",
+    });
+
+    expect(drawDownForInvoice).toHaveBeenCalledWith(conn, expect.objectContaining({
+      costCentreId: "cc-1", financeYear: "2026-27", monthLabel: "Sep-26", amount: 778901,
+    }));
+    expect(result.provisionUsed).toBe(778901);
+    expect(result.grandTotal).toBe(919103.18);
+  });
+
+  it("rolls back when the provision is missing or short", async () => {
+    mockCostCentreLookup({ gstType: "Integrated", stateCode: "09" });
+    mintProformaNumber.mockResolvedValueOnce("PI/09/8158");
+    drawDownForInvoice.mockRejectedValueOnce(Object.assign(new Error("No approved provision"), { statusCode: 400 }));
+
+    await expect(clientBillingService.createProforma({
+      costCentreId: "cc-1", category: "Subscription", financeYear: "2026-27",
+      monthLabel: "Sep-26", invoiceDate: "2026-09-30",
+      lines: [{ particulars: "x", qty: 1, rate: 10 }], createdBy: "u-1",
+    })).rejects.toThrow("No approved provision");
+    expect(conn.commit).not.toHaveBeenCalled();
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a month outside the finance year and an unknown invoice type before touching the database", async () => {
+    getConnection.mockClear();
+    await expect(clientBillingService.createProforma({
+      costCentreId: "cc-1", category: "Subscription", financeYear: "2026-27",
+      monthLabel: "Sep-25", invoiceDate: "2026-09-30",
+      lines: [{ particulars: "x", qty: 1, rate: 10 }], createdBy: "u-1",
+    })).rejects.toThrow(/outside finance year/);
+    await expect(clientBillingService.createProforma({
+      costCentreId: "cc-1", category: "Subscription", financeYear: "2026-27",
+      monthLabel: "Sep-26", invoiceDate: "2026-09-30", invoiceType: "Bogus",
+      lines: [{ particulars: "x", qty: 1, rate: 10 }], createdBy: "u-1",
+    })).rejects.toThrow(/invoiceType must be one of/);
+    expect(getConnection).not.toHaveBeenCalled();
   });
 });

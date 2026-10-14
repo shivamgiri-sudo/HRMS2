@@ -14,6 +14,8 @@ import { clientBillingEditService } from "./client-billing-edit.service.js";
 import { clientBillingSubmitService } from "./client-billing-submit.service.js";
 import { clientBillingChangeRequestService } from "./client-billing-change-request.service.js";
 import { checkPoCoverage, listAvailablePos } from "./client-billing-po.js";
+import { clientBillingProvisionService, provisionRequired } from "./client-billing-provision.service.js";
+import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -69,7 +71,7 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const body = req.body as {
       costCentreId?: string; category?: string; financeYear?: string; monthLabel?: string;
-      invoiceDate?: string; description?: string; applyGst?: boolean;
+      invoiceDate?: string; description?: string; applyGst?: boolean; invoiceType?: string;
       lines?: Array<{ particulars: string; qty: number; rate: number; lineType?: "charge" | "deduction" }>;
       poNumbers?: string[]; grnNo?: string; grnDate?: string;
       jccNo?: string; jccDate?: string; rcmApplicable?: boolean;
@@ -89,6 +91,7 @@ router.post(
       invoiceDate: body.invoiceDate,
       description: body.description,
       applyGst: body.applyGst,
+      invoiceType: body.invoiceType,
       lines: body.lines ?? [],
       createdBy: req.authUser!.id,
       ...(references ? { references } : {}),
@@ -122,6 +125,28 @@ function buildInvoiceListQuery(query: Record<string, unknown>) {
   if (typeof query.costCentreId === "string" && query.costCentreId) {
     conditions.push("ci.cost_centre_id = ?");
     params.push(query.costCentreId);
+  }
+  if (typeof query.branchId === "string" && query.branchId) {
+    conditions.push("cc.branch_id = ?");
+    params.push(query.branchId);
+  }
+  if (typeof query.companyName === "string" && query.companyName) {
+    conditions.push("cc.company_name = ?");
+    params.push(query.companyName);
+  }
+  if (typeof query.financeYear === "string" && query.financeYear) {
+    conditions.push("ci.finance_year = ?");
+    params.push(query.financeYear);
+  }
+  if (typeof query.invoiceType === "string" && query.invoiceType) {
+    conditions.push("ci.invoice_type = ?");
+    params.push(query.invoiceType);
+  }
+  // Legacy two-step approval queues: "View & Approve Proforma" vs "Invoice Approval".
+  if (query.stage === "proforma_approval") {
+    conditions.push("ci.invoice_status = 'proforma' AND ci.proforma_approved_at IS NULL");
+  } else if (query.stage === "invoice_approval") {
+    conditions.push("ci.invoice_status = 'proforma' AND ci.proforma_approved_at IS NOT NULL");
   }
   if (typeof query.search === "string" && query.search.trim()) {
     conditions.push(
@@ -172,9 +197,11 @@ router.get(
     // raw user input, so the text protocol is safe here.
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT ci.*, ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name,
-              cc.cost_centre_code AS cost_centre_code
+              cc.cost_centre_code AS cost_centre_code, cc.company_name AS company_name,
+              b.branch_name AS branch_name
        FROM client_invoice ci
        LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+       LEFT JOIN branch_master b ON b.id = cc.branch_id
        ${where}
        ORDER BY ci.invoice_date DESC, ci.created_at DESC, ci.id DESC
        LIMIT ? OFFSET ?`,
@@ -244,7 +271,7 @@ router.get(
     // are paginated (limit clamped to 200), so summing a page silently under-reports on
     // any dataset larger than that, same reasoning as grn.service.ts's getGrnSummary.
     // The four aggregates are independent read-only queries, so they run concurrently.
-    const [[invoiceRows], [creditNoteRows], [[thisMonth]], [[pendingActionable]]] = await Promise.all([
+    const [[invoiceRows], [creditNoteRows], [[thisMonth]], [[pendingActionable]], [[pendingProvisions]]] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT invoice_status, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
        FROM client_invoice GROUP BY invoice_status`
@@ -266,9 +293,14 @@ router.get(
       // The list endpoint still returns those rows — they are legitimate history to read —
       // this only stops them being reported as outstanding work.
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS count
+        `SELECT COUNT(*) AS count,
+                COALESCE(SUM(proforma_approved_at IS NULL), 0) AS awaitingProforma,
+                COALESCE(SUM(proforma_approved_at IS NOT NULL), 0) AS awaitingInvoice
        FROM client_invoice
        WHERE invoice_status = 'proforma' AND is_migrated = 0`
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count FROM client_provision WHERE provision_status = 'pending'`
       ),
     ]);
 
@@ -292,6 +324,10 @@ router.get(
         creditNotes,
         thisMonthBilled: { count: Number(thisMonth?.count ?? 0), total: Number(thisMonth?.total ?? 0) },
         pendingApprovalCount: Number(pendingActionable?.count ?? 0),
+        // Legacy two-step queues + pending provisions, for the step bar.
+        awaitingProformaApprovalCount: Number(pendingActionable?.awaitingProforma ?? 0),
+        awaitingInvoiceApprovalCount: Number(pendingActionable?.awaitingInvoice ?? 0),
+        pendingProvisionCount: Number(pendingProvisions?.count ?? 0),
       },
     });
   })
@@ -349,6 +385,21 @@ async function guardDecide(req: AuthenticatedRequest, res: Response, kind: "invo
   return false;
 }
 
+/** Step 1 of 2 — legacy "View & Approve Proforma" (no bill number yet). */
+router.post(
+  "/proformas/:id/approve",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardDecide(req, res, "invoice"))) return;
+    const data = await clientBillingApprovalService.approveProforma({
+      invoiceId: req.params.id,
+      userId: req.authUser!.id,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+/** Step 2 of 2 — legacy "Invoice Approval": mints the bill number. */
 router.post(
   "/invoices/:id/approve",
   requireRole(...ALLOWED_ROLES),
@@ -726,7 +777,7 @@ router.get(
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT cicr.*,
-              COALESCE(ci.bill_no, ci.proforma_no) AS invoice_ref,
+              COALESCE(ci.bill_no, ci.proforma_no) AS invoice_ref, ci.bill_no, ci.proforma_no,
               ci.invoice_status, ci.grand_total, ci.month_label,
               ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name
        FROM client_invoice_change_request cicr
@@ -751,7 +802,7 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cicr.*,
-              COALESCE(ci.bill_no, ci.proforma_no) AS invoice_ref,
+              COALESCE(ci.bill_no, ci.proforma_no) AS invoice_ref, ci.bill_no, ci.proforma_no,
               ci.invoice_status, ci.grand_total, ci.category, ci.finance_year,
               ci.invoice_date, ci.month_label,
               ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name
@@ -795,6 +846,190 @@ router.post(
       note: req.body?.note,
       userId: req.authUser!.id,
     });
+    res.json({ success: true, data });
+  })
+);
+
+// ── Legacy sequence: filter options (Company / Branch / cost centres) ──────────
+router.get(
+  "/filter-options",
+  requireRole(...ALLOWED_ROLES),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT cc.id, cc.cost_centre_code, cc.cost_centre_name, cc.company_name, cc.branch_id,
+              b.branch_name, ${COST_CENTRE_DISPLAY_NAME_SQL} AS client_name,
+              b.gst_state_code AS state_code, cc.gst_type, cc.vendor_gst_no
+       FROM cost_centre_master cc
+       LEFT JOIN branch_master b ON b.id = cc.branch_id
+       WHERE ${ownCompanyCostCentreSql("cc")} AND cc.active_status = 1
+       ORDER BY cc.company_name, b.branch_name, cc.cost_centre_code`,
+    );
+    const companies = [...new Set(rows.map((r) => String(r.company_name ?? "").trim()).filter(Boolean))];
+    const branchMap = new Map<string, string>();
+    for (const r of rows) if (r.branch_id) branchMap.set(String(r.branch_id), String(r.branch_name ?? r.branch_id));
+    const branches = [...branchMap.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ success: true, data: { companies, branches, costCentres: rows } });
+  })
+);
+
+// ── Legacy sequence: per-invoice Export (Download Initial Invoice → Export) ────
+router.get(
+  "/invoices/:id/export",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [invRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ci.*, ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name,
+              cc.cost_centre_code, cc.company_name, b.branch_name
+       FROM client_invoice ci
+       LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+       LEFT JOIN branch_master b ON b.id = cc.branch_id
+       WHERE ci.id = ? LIMIT 1`,
+      [req.params.id],
+    );
+    const inv = invRows[0];
+    if (!inv) return res.status(404).json({ error: "Invoice not found" });
+    const [lines] = await db.execute<RowDataPacket[]>(
+      `SELECT line_type, particulars, qty, rate, amount FROM client_invoice_line
+       WHERE invoice_id = ? ORDER BY created_at, id`,
+      [req.params.id],
+    );
+    const header: Array<[string, unknown]> = [
+      ["Company", inv.company_name], ["Branch", inv.branch_name], ["Cost Centre", inv.cost_centre_code],
+      ["Client", inv.cost_centre_display_name], ["Bill No", inv.bill_no], ["Proforma No", inv.proforma_no],
+      ["Invoice Date", inv.invoice_date ? String(inv.invoice_date instanceof Date ? inv.invoice_date.toISOString() : inv.invoice_date).slice(0, 10) : ""],
+      ["Finance Year", inv.finance_year], ["Month", inv.month_label], ["Invoice Type", inv.invoice_type],
+      ["Category", inv.category], ["Description", inv.description], ["PO No", inv.po_numbers],
+      ["GRN No", inv.grn_no], ["JCC No", inv.jcc_no],
+    ];
+    const csv: string[] = header.map(([k, v]) => [k, v].map(escape).join(","));
+    csv.push("");
+    csv.push(["S.No", "Type", "Particulars", "Rate", "Qty", "Amount"].map(escape).join(","));
+    lines.forEach((l, i) => {
+      csv.push([i + 1, l.line_type, l.particulars, l.rate, l.qty, l.amount].map(escape).join(","));
+    });
+    csv.push("");
+    csv.push(["Total", inv.total_amount].map(escape).join(","));
+    if (Number(inv.igst_amount) > 0) csv.push(["IGST @ 18%", inv.igst_amount].map(escape).join(","));
+    if (Number(inv.cgst_amount) > 0) csv.push(["CGST @ 9%", inv.cgst_amount].map(escape).join(","));
+    if (Number(inv.sgst_amount) > 0) csv.push(["SGST @ 9%", inv.sgst_amount].map(escape).join(","));
+    csv.push(["Grand Total", inv.grand_total].map(escape).join(","));
+    const fileName = String(inv.bill_no || inv.proforma_no || inv.id).replace(/[^A-Za-z0-9._-]+/g, "_");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="invoice-${fileName}.csv"`);
+    res.send(csv.join("\n"));
+  })
+);
+
+// ── Legacy sequence: Provision (create → approve → drawn down by invoices) ────
+async function guardProvisionDecide(req: AuthenticatedRequest, res: Response): Promise<boolean> {
+  const policy = await loadBranchPolicy(req.authUser!.id);
+  if (policy.orgWide) return true;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT cc.branch_id FROM client_provision cp LEFT JOIN cost_centre_master cc ON cc.id = cp.cost_centre_id WHERE cp.id = ? LIMIT 1`,
+    [req.params.id],
+  );
+  const row = (rows as RowDataPacket[])[0];
+  if (!row) return true;
+  if (policy.allows(row.branch_id)) return true;
+  res.status(403).json({ success: false, error: "Forbidden: this provision is outside your branch / assigned scope" });
+  return false;
+}
+
+router.get(
+  "/provisions",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const q = req.query as Record<string, string | undefined>;
+    const data = await clientBillingProvisionService.listProvisions({
+      financeYear: q.financeYear, monthLabel: q.monthLabel, costCentreId: q.costCentreId,
+      branchId: q.branchId, companyName: q.companyName, status: q.status, search: q.search,
+      page: Number(q.page) || 1, limit: Number(q.limit) || 50,
+    });
+    res.json({ success: true, data: data.rows, total: data.total, page: data.page, limit: data.limit });
+  })
+);
+
+// Registered before /provisions/:id routes so "scope" / "upload" are never read as an id.
+router.get(
+  "/provisions/scope",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { costCentreId, financeYear, monthLabel } = req.query as Record<string, string>;
+    if (!costCentreId || !financeYear || !monthLabel) {
+      return res.status(400).json({ error: "costCentreId, financeYear and monthLabel are required" });
+    }
+    const data = await clientBillingProvisionService.getProvisionForScope(costCentreId, financeYear, monthLabel);
+    res.json({ success: true, data, required: provisionRequired() });
+  })
+);
+
+router.post(
+  "/provisions/upload",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { rows } = req.body as { rows?: unknown };
+    const results = await clientBillingProvisionService.uploadProvisions(
+      rows as Parameters<typeof clientBillingProvisionService.uploadProvisions>[0],
+      req.authUser!.id,
+    );
+    res.json({
+      success: true,
+      data: { created: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, results },
+    });
+  })
+);
+
+router.post(
+  "/provisions",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const body = req.body as { costCentreId?: string; financeYear?: string; monthLabel?: string; amount?: number; remarks?: string };
+    if (!body.costCentreId || !body.financeYear || !body.monthLabel || body.amount === undefined) {
+      return res.status(400).json({ error: "costCentreId, financeYear, monthLabel and amount are required" });
+    }
+    const data = await clientBillingProvisionService.createProvision({
+      costCentreId: body.costCentreId, financeYear: body.financeYear, monthLabel: body.monthLabel,
+      amount: Number(body.amount), remarks: body.remarks, userId: req.authUser!.id,
+    });
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.put(
+  "/provisions/:id",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardProvisionDecide(req, res))) return;
+    const body = req.body as { amount?: number; remarks?: string | null };
+    const data = await clientBillingProvisionService.updateProvision({
+      id: req.params.id,
+      amount: body.amount === undefined ? undefined : Number(body.amount),
+      remarks: body.remarks,
+      userId: req.authUser!.id,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/provisions/:id/approve",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardProvisionDecide(req, res))) return;
+    const data = await clientBillingProvisionService.approveProvision(req.params.id, req.authUser!.id);
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/provisions/:id/reject",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardProvisionDecide(req, res))) return;
+    const reason = String((req.body as { reason?: string })?.reason ?? "");
+    const data = await clientBillingProvisionService.rejectProvision(req.params.id, reason, req.authUser!.id);
     res.json({ success: true, data });
   })
 );

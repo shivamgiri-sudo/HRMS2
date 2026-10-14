@@ -64,6 +64,17 @@ vi.mock("@/lib/clientBillingApi", () => ({
   createCreditNote: (...args: unknown[]) => createCreditNote(...args),
   approveCreditNote: (...args: unknown[]) => approveCreditNote(...args),
   downloadInvoicePdf: (...args: unknown[]) => downloadInvoicePdf(...args),
+  approveProforma: vi.fn(),
+  exportInvoiceCsv: vi.fn(),
+  getBillingFilterOptions: vi.fn(() => new Promise(() => {})),
+  getProvisionForScope: vi.fn(() => new Promise(() => {})),
+  listProvisions: vi.fn(() => new Promise(() => {})),
+  createProvision: vi.fn(),
+  updateProvision: vi.fn(),
+  approveProvision: vi.fn(),
+  rejectProvision: vi.fn(),
+  uploadProvisions: vi.fn(),
+  INVOICE_TYPES: ["Revenue", "Non Revenue"],
 }));
 
 // DashboardLayout pulls in react-router's useLocation/useNavigate + AuthContext, none of which
@@ -107,6 +118,8 @@ const EMPTY_FILTERS = (status: string) => ({
   fromDate: "",
   toDate: "",
   costCentreId: "",
+  companyName: "",
+  branchId: "",
   search: "",
   page: 1,
 });
@@ -126,7 +139,8 @@ function renderPage(seed?: {
     total: data.length,
   });
   client.setQueryData(
-    ["client-billing", "proformas", EMPTY_FILTERS("proforma")],
+    // The Proformas tab opens on the legacy "View & Approve Proforma" queue.
+    ["client-billing", "proformas", EMPTY_FILTERS("_awaiting")],
     list(seed?.proformas ?? []),
   );
   // Invoices is its own server-filtered query now (listProformas with the status overridden to
@@ -213,10 +227,18 @@ beforeEach(() => {
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 describe("ClientBillingWorkspacePage — rendering", () => {
-  it("renders the 3 tabs", () => {
+  it("renders the legacy I-Spark sequence: step bar and tabs in order", () => {
     const html = renderPage();
-    expect(html).toContain("Proformas");
-    expect(html).toContain("Invoices");
+    const order = ["Provision", "Proforma", "Approve Proforma", "Invoice Approval", "Download"];
+    let at = -1;
+    for (const step of order) {
+      const next = html.indexOf(step, at + 1);
+      expect(next, `${step} after previous step`).toBeGreaterThan(at);
+      at = next;
+    }
+    expect(html).toContain("1 · Provision");
+    expect(html).toContain("4 · Invoice Approval");
+    expect(html).toContain("5 · Invoices / Download");
     expect(html).toContain("Credit Notes");
     expect(html).toContain("Client Billing");
   });
@@ -232,8 +254,9 @@ describe("ClientBillingWorkspacePage — rendering", () => {
     // money() formats grand_total via Intl en-IN currency — the digits must survive regardless
     // of how the ₹ symbol itself is encoded in the output.
     expect(html).toContain("11,800.00");
-    // Proforma-status rows get Approve/Reject actions.
-    expect(html).toContain('title="Approve"');
+    // Not-yet-approved proformas get step 1 "Approve proforma" (no bill number), Edit and Reject.
+    expect(html).toContain('title="Approve proforma"');
+    expect(html).toContain('title="Edit"');
     expect(html).toContain('title="Reject"');
     expect(html).toContain('title="Download PDF"');
   });
