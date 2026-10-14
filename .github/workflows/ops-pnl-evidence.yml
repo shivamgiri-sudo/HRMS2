@@ -60,6 +60,10 @@ on:
         description: "Set to 'yes' to print per-branch component P&L (revenue, agent, DSC, BMC, GRN, OP) and the non-MAS (DialDesk / I-Spark / IDC) leak check for 'periods' (read-only)."
         required: false
         default: ""
+      bucketdry:
+        description: "Set to 'yes' to dry-run the Agent / DSC / BMC split with and without the 2026-09-04 seeded rules for 'periods' (read-only)."
+        required: false
+        default: ""
       trace:
         description: "People-cost trace (read-only, counts and totals only): 'YYYY-MM code1 code2 ...'. When set, runs the trace instead of the evidence."
         required: false
@@ -97,6 +101,7 @@ jobs:
           INPUT_PERIODS: ${{ inputs.periods }}
           INPUT_TRACE: ${{ inputs.trace }}
           INPUT_COMPONENTS: ${{ inputs.components }}
+          INPUT_BUCKETDRY: ${{ inputs.bucketdry }}
           INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
           INPUT_DIAG: ${{ inputs.diag }}
           INPUT_BRANCHPLAN: ${{ inputs.branchplan }}
@@ -110,7 +115,9 @@ jobs:
           INPUT_BOOTDIAG: ${{ inputs.bootdiag }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_COMPONENTS" = "yes" ]; then
+          if [ "$INPUT_BUCKETDRY" = "yes" ]; then
+            npx tsx scripts/pnl-bucket-dryrun.ts $INPUT_PERIODS
+          elif [ "$INPUT_COMPONENTS" = "yes" ]; then
             npx tsx scripts/pnl-branch-component-op.ts $INPUT_PERIODS
           elif [ "$INPUT_BOOTDIAG" = "yes" ]; then
             npx tsx scripts/ops-boot-diag.ts
