@@ -49,7 +49,46 @@ async function round2() {
      FROM provision_master WHERE finance_year = '2026-27' GROUP BY 1,2,3,4`);
 }
 
+/** Round 3: are client addresses / GST fields saved on every active MAS cost centre? */
+async function round3() {
+  const own = "REPLACE(REPLACE(REPLACE(LOWER(COALESCE(cc.company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'";
+  const blank = (c: string) => `(cc.${c} IS NULL OR TRIM(cc.${c}) = '')`;
+  await hrms("HRMS active MAS cost centres: missing billing fields", `SELECT COUNT(*) AS active,
+      SUM(${blank("bill_to_address1")}) AS no_bill_to, SUM(${blank("ship_to_address1")}) AS no_ship_to,
+      SUM(${blank("vendor_gst_no")}) AS no_client_gstin, SUM(${blank("vendor_gst_state")}) AS no_gst_state,
+      SUM(${blank("vendor_state_code")}) AS no_state_code, SUM(${blank("service_tax_no")}) AS no_our_gstin,
+      SUM(${blank("hsn_code")}) AS no_hsn, SUM(${blank("billing_client_name")}) AS no_client_name
+    FROM cost_centre_master cc WHERE ${own} AND cc.active_status = 1`);
+  await hrms("HRMS active MAS cost centres billed in FY 2026-27 (I-Spark mirror) with missing Bill To / GSTIN", `SELECT cc.cost_centre_code,
+      LEFT(COALESCE(NULLIF(cc.billing_client_name,''), cc.client_name),40) AS client,
+      ${blank("bill_to_address1")} AS no_bill_to, ${blank("vendor_gst_no")} AS no_gstin, ${blank("vendor_gst_state")} AS no_state
+    FROM cost_centre_master cc
+    WHERE ${own} AND cc.active_status = 1
+      AND EXISTS (SELECT 1 FROM client_invoice ci WHERE ci.cost_centre_id = cc.id AND ci.finance_year IN ('2025-26','2026-27'))
+      AND (${blank("bill_to_address1")} OR ${blank("vendor_gst_no")} OR ${blank("vendor_gst_state")})
+    ORDER BY cc.cost_centre_code`);
+  const cmCols = await bill("db_bill cost_master columns", "SHOW COLUMNS FROM cost_master");
+  console.log(`cost_master: ${cmCols.map((c) => c.Field).join(", ")}`);
+  const [hrRows] = await db.query<RowDataPacket[]>(`SELECT cc.cost_centre_code AS code, ${blank("bill_to_address1")} AS nb, ${blank("vendor_gst_no")} AS ng
+    FROM cost_centre_master cc WHERE ${own} AND cc.active_status = 1 AND (${blank("bill_to_address1")} OR ${blank("vendor_gst_no")})`);
+  const codes = hrRows.map((r) => String(r.code));
+  if (codes.length) {
+    const ph = codes.map(() => "?").join(",");
+    const legacy = await billQuery<RowDataPacket>(`SELECT cost_center, b_Address1, VendorGSTNo FROM cost_master WHERE cost_center IN (${ph})`, codes);
+    const byCode = new Map(legacy.map((r) => [String(r.cost_center), r]));
+    let fillAddr = 0, fillGst = 0, notInLegacy = 0;
+    for (const r of hrRows) {
+      const l = byCode.get(String(r.code));
+      if (!l) { notInLegacy++; continue; }
+      if (Number(r.nb) && String(l.b_Address1 ?? "").trim()) fillAddr++;
+      if (Number(r.ng) && String(l.VendorGSTNo ?? "").trim()) fillGst++;
+    }
+    console.log(`\n### backfill possible from I-Spark cost_master: ${hrRows.length} HRMS cost centres missing address or GSTIN; legacy has the address for ${fillAddr}, the GSTIN for ${fillGst}; ${notInLegacy} not in cost_master`);
+  }
+}
+
 async function main() {
+  if (process.env.PROBE_ROUND === "3") return round3();
   if (process.env.PROBE_ROUND === "2") return round2();
   // 1. Table shapes behind the screens.
   for (const t of ["tbl_invoice", "inv_particulars", "inv_deduct_particulars", "provision_master",
