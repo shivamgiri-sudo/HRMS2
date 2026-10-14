@@ -12,6 +12,7 @@ const { execute, getConnection } = vi.hoisted(() => ({
   execute: vi.fn(),
   getConnection: vi.fn(),
 }));
+vi.mock("../bank-ledger-anchor.js", () => ({ rebaseRunningBalances: vi.fn(async () => ({})), rebaseForVoucher: vi.fn(async () => []) }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 
 const { post } = vi.hoisted(() => ({ post: vi.fn().mockResolvedValue(undefined) }));
