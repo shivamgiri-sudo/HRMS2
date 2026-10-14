@@ -5,6 +5,7 @@ const { execute, logSensitiveAction } = vi.hoisted(() => ({
   logSensitiveAction: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../bank-ledger-anchor.js", () => ({ rebaseRunningBalances: vi.fn(async () => ({})), rebaseForVoucher: vi.fn(async () => []) }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 

@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import { rebaseRunningBalances } from "./bank-ledger-anchor.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
@@ -197,6 +198,8 @@ export const bankReconciliationPeriodService = {
       `UPDATE company_bank_account SET opening_balance = ?, opening_balance_as_of = ? WHERE id = ?`,
       [round2(statementClosingBalance), period.to_date, period.bank_account_id],
     );
+    // The statement closing balance becomes the new anchor: re-anchor the stored chain at to_date.
+    await rebaseRunningBalances(period.bank_account_id);
     await logSensitiveAction({
       actor_user_id: actorUserId, action_type: "BANK_RECONCILIATION_PERIOD_CLOSED", module_key: "FINANCE",
       entity_type: "bank_reconciliation_period", entity_id: periodId,

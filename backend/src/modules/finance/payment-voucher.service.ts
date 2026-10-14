@@ -1,4 +1,5 @@
 import { assertNoPaidTwin } from "./grn-duplicate-guard.js";
+import { rebaseForVoucher } from "./bank-ledger-anchor.js";
 import { randomUUID } from "crypto";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
@@ -1682,6 +1683,10 @@ export const paymentVoucherService = {
         transaction_ref: transactionRef,
         amount,
       });
+
+      // A back-dated payment date lands before newer entries; re-anchor every account this voucher
+      // touched (an internal transfer posts to two) so later running balances include it.
+      await rebaseForVoucher(id, connection);
 
       await connection.commit();
     } catch (error) {

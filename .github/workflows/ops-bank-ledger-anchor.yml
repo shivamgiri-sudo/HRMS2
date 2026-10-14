@@ -1,0 +1,61 @@
+name: Ops bank ledger anchor (manual)
+
+# Anchors each active company bank account's stored running balances at the opening balance finance
+# entered (scripts/bank-ledger-anchor-rebase.ts). dry-run (default) changes nothing and prints the
+# before/after balance per account; apply needs confirm = anchor-bank-ledger.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run or apply"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      as_of:
+        description: "Date the entered opening balances are as of (YYYY-MM-DD)"
+        required: true
+        default: "2026-10-07"
+        type: string
+      confirm:
+        description: "Type anchor-bank-ledger to apply"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ops-bank-ledger-anchor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Bank ledger anchor
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          MODE: ${{ inputs.mode }}
+          AS_OF: ${{ inputs.as_of }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          npx tsx scripts/bank-ledger-anchor-rebase.ts

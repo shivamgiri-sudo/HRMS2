@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { rebaseRunningBalances } from "./bank-ledger-anchor.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js";
@@ -117,6 +118,9 @@ export const bankReconciliationMatchService = {
       [ledgerEntryId, input.bankAccountId, line.txn_date, debit, credit, input.payableAccountId, input.narration, newBalance, "reconciliation_adjustment", input.actorUserId, input.statementLineId],
     );
     await db.execute(`UPDATE bank_statement_line SET match_status = 'adjusted', matched_ledger_entry_id = ? WHERE id = ?`, [ledgerEntryId, input.statementLineId]);
+    // A statement-dated adjustment can land before newer entries; re-anchor the chain so every
+    // later running balance includes it (bank-ledger-anchor.ts).
+    await rebaseRunningBalances(input.bankAccountId);
 
     // Journal Task 7 (Phase 7) — Dr/Cr Bank against the counter-account this adjustment was
     // raised under, mirroring the debit/credit the bank statement itself shows. This function
