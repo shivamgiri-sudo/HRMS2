@@ -931,16 +931,17 @@ export async function listHiringActivity(userId: string, role: string | undefine
     : Math.min(Math.max(1, Math.trunc(Number(filters.limit) || 50)), 100);
   const offset = (page - 1) * limit;
 
+  // The filter runs inside the derived table: ats_candidate / ats_queue_token also carry branch_name and
+  // created_by, so the unqualified scope columns were ambiguous (500) for every scoped, non-org-wide user.
   const rowsPromise = db.execute<RowDataPacket[]>(
     `SELECT arha.*,
             ac.profile_status   AS linked_profile_status,
             ac.final_decision   AS linked_final_decision,
             ac.status           AS linked_candidate_status,
             qt.queue_status     AS token_queue_status
-       FROM ats_recruiter_hiring_activity arha
+       FROM (SELECT * FROM ats_recruiter_hiring_activity WHERE ${sql}) arha
        LEFT JOIN ats_candidate ac ON ac.id = arha.linked_candidate_id
        LEFT JOIN ats_queue_token qt ON qt.id = arha.queue_token_id
-      WHERE ${sql}
       ORDER BY arha.activity_date DESC, arha.created_at DESC
       LIMIT ${limit} OFFSET ${offset}`,
     params
