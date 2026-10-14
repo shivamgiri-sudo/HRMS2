@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { listSubmissions, submitToClient } from "@/lib/clientBillingApi";
 import {
   DIALOG_60VW_CLASS,
+  InlineError,
   SECTION_LABEL_CLASS,
   formatDateTime,
 } from "./shared";
@@ -49,15 +50,6 @@ export function SubmitToClientDialog({ target, onOpenChange }: Props) {
   const [message, setMessage] = useState("");
   const [letterhead, setLetterhead] = useState("1");
 
-  useEffect(() => {
-    if (target) {
-      setTo("");
-      setCc("");
-      setSubject("");
-      setMessage("");
-      setLetterhead("1");
-    }
-  }, [target]);
 
   const historyQuery = useQuery({
     queryKey: ["client-billing", "submissions", target?.id],
@@ -95,6 +87,18 @@ export function SubmitToClientDialog({ target, onOpenChange }: Props) {
     },
   });
 
+  useEffect(() => {
+    if (target) {
+      setTo("");
+      setCc("");
+      setSubject("");
+      setMessage("");
+      setLetterhead("1");
+    }
+    mutation.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+
   return (
     <Dialog open={Boolean(target)} onOpenChange={onOpenChange}>
       <DialogContent className={DIALOG_60VW_CLASS}>
@@ -108,8 +112,9 @@ export function SubmitToClientDialog({ target, onOpenChange }: Props) {
 
         <div className="space-y-3">
           <div>
-            <Label className="text-xs">To * (comma separated)</Label>
+            <Label className="text-xs" htmlFor="stc-to">To * (comma separated)</Label>
             <Input
+              id="stc-to"
               className="mt-1 h-8 text-sm"
               value={to}
               onChange={(e) => setTo(e.target.value)}
@@ -118,8 +123,9 @@ export function SubmitToClientDialog({ target, onOpenChange }: Props) {
             />
           </div>
           <div>
-            <Label className="text-xs">Cc</Label>
+            <Label className="text-xs" htmlFor="stc-cc">Cc</Label>
             <Input
+              id="stc-cc"
               className="mt-1 h-8 text-sm"
               value={cc}
               onChange={(e) => setCc(e.target.value)}
@@ -190,6 +196,10 @@ export function SubmitToClientDialog({ target, onOpenChange }: Props) {
             )}
           </div>
         </div>
+
+        {mutation.isError && (
+          <InlineError title="Could not send the invoice" message={mutation.error.message} />
+        )}
 
         <DialogFooter className="mt-auto">
           <Button

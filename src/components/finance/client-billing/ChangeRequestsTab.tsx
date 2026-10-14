@@ -1,5 +1,9 @@
 // src/components/finance/client-billing/ChangeRequestsTab.tsx
 import { useState } from "react";
+import { Input } from "@/components/ui/input";
+import { useDebounce } from "@/hooks/useDebounce";
+import { auditActionLabel, auditActor } from "./auditLabels";
+import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +37,7 @@ import {
   SECTION_LABEL_CLASS,
   formatDateOnly,
   formatDateTime,
+  InlineError,
   money,
 } from "./shared";
 
@@ -48,6 +53,13 @@ const STATUS_CLASS: Record<string, string> = {
   approved: "border-emerald-200 bg-emerald-50 text-emerald-700",
   declined: "border-slate-200 bg-slate-100 text-slate-600",
 };
+
+const TYPE_OPTIONS = [
+  { value: "_all", label: "All types" },
+  { value: "void", label: "Void / delete" },
+  { value: "status_change", label: "Type change" },
+];
+const CR_PAGE = 50;
 
 const TYPE_LABEL: Record<string, string> = {
   void: "Void",
@@ -80,6 +92,7 @@ function ChangeRequestDrawer({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [note, setNote] = useState("");
+  const [confirmVoid, setConfirmVoid] = useState(false);
 
   const detailQuery = useQuery({
     queryKey: ["client-billing", "change-request", requestId],
@@ -103,6 +116,7 @@ function ChangeRequestDrawer({
             : "Request declined",
       });
       setNote("");
+      setConfirmVoid(false);
       void queryClient.invalidateQueries({ queryKey: ["client-billing"] });
     },
     onError: (error: Error) => {
@@ -162,9 +176,9 @@ function ChangeRequestDrawer({
                   </DetailRow>
                 )}
                 <DetailRow label="Reason">{request.reason}</DetailRow>
-                <DetailRow label="Raised by">{request.requested_by}</DetailRow>
+                <DetailRow label="Raised by">{request.requested_by_name || request.requested_by}</DetailRow>
                 <DetailRow label="Decided by">
-                  {request.decided_by ?? "—"}
+                  {request.decided_by_name || request.decided_by || "—"}
                 </DetailRow>
                 <DetailRow label="Decided at">
                   {formatDateTime(request.decided_at)}
@@ -215,7 +229,7 @@ function ChangeRequestDrawer({
                   <Button
                     size="sm"
                     disabled={decide.isPending}
-                    onClick={() => decide.mutate("approve")}
+                    onClick={() => (request.request_type === "void" ? setConfirmVoid(true) : decide.mutate("approve"))}
                   >
                     <Check className="mr-1.5 h-3.5 w-3.5" />
                     Approve
@@ -233,6 +247,20 @@ function ChangeRequestDrawer({
                 <p className="mt-1 text-xs text-muted-foreground">
                   The person who raised a request cannot decide it.
                 </p>
+                {decide.isError && !confirmVoid && (
+                  <div className="mt-2"><InlineError title="Could not record the decision" message={decide.error.message} /></div>
+                )}
+                <ConfirmActionDialog
+                  open={confirmVoid}
+                  destructive
+                  title={`Void ${request.bill_no ?? request.proforma_no ?? "this invoice"}?`}
+                  description={<>The invoice is cancelled and any PO / provision balance it used is returned. This cannot be undone; the bill number stays on the voided record.</>}
+                  confirmLabel="Approve void"
+                  pending={decide.isPending}
+                  error={decide.isError ? decide.error.message : null}
+                  onConfirm={() => decide.mutate("approve")}
+                  onCancel={() => { setConfirmVoid(false); decide.reset(); }}
+                />
               </section>
             )}
 
@@ -244,8 +272,8 @@ function ChangeRequestDrawer({
                 <ul className="mt-1 space-y-1.5">
                   {request.audit_log.map((a) => (
                     <li key={a.id} className="rounded border px-2 py-1 text-xs">
-                      <span className="font-medium">{a.action}</span> ·{" "}
-                      {formatDateTime(a.created_at)} · {a.actor_id}
+                      <span className="font-medium">{auditActionLabel(a.action)}</span> ·{" "}
+                      {formatDateTime(a.created_at)} · {auditActor(a)}
                       {a.reason && (
                         <p className="mt-0.5 text-muted-foreground">
                           {a.reason}
@@ -265,29 +293,49 @@ function ChangeRequestDrawer({
 
 export function ChangeRequestsTab() {
   const [status, setStatus] = useState("pending");
+  const [type, setType] = useState("_all");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [openId, setOpenId] = useState<string | null>(null);
+  const term = useDebounce(search.trim(), 300);
 
   const listQuery = useQuery({
-    queryKey: ["client-billing", "change-requests", status],
+    queryKey: ["client-billing", "change-requests", status, type, term, page],
     queryFn: () =>
       listChangeRequests({
         status: status === "_all" ? undefined : status,
-        limit: 100,
+        requestType: type === "_all" ? undefined : type,
+        search: term || undefined,
+        page,
+        limit: CR_PAGE,
       }),
   });
-  const rows: ChangeRequestRow[] = listQuery.data?.data ?? [];
+  // The origin/main route filters by status and pages only; type and search are also applied
+  // here to the page it returns, so they work today and become server-side once supported.
+  const lower = term.toLowerCase();
+  const rows: ChangeRequestRow[] = (listQuery.data?.data ?? []).filter((r) =>
+    (type === "_all" || r.request_type === type) &&
+    (!lower || [r.bill_no, r.proforma_no, r.cost_centre_display_name, r.reason, r.requested_value]
+      .some((v) => String(v ?? "").toLowerCase().includes(lower))));
+  const total = listQuery.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / CR_PAGE));
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <div className="w-48">
           <SearchableSelect
             options={STATUS_OPTIONS}
             value={status}
-            onChange={setStatus}
+            onChange={(v) => { setStatus(v); setPage(1); }}
             aria-label="Request status"
           />
         </div>
+        <div className="w-40">
+          <SearchableSelect options={TYPE_OPTIONS} value={type} onChange={(v) => { setType(v); setPage(1); }} aria-label="Request type" />
+        </div>
+        <Input className="h-8 w-56 text-xs" placeholder="Bill no., client, reason…" aria-label="Search requests"
+          value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
         <span className="text-xs text-muted-foreground">
           Void and invoice-type change requests awaiting a second approver.
         </span>
@@ -297,6 +345,11 @@ export function ChangeRequestsTab() {
         {listQuery.isLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+          </div>
+        ) : listQuery.isError ? (
+          <div className="py-8 text-center">
+            <p role="alert" className="text-sm text-rose-700">Could not load requests: {(listQuery.error as Error).message}</p>
+            <Button size="sm" variant="outline" className="mt-2 cursor-pointer" onClick={() => void listQuery.refetch()}>Retry</Button>
           </div>
         ) : (
           <Table>
@@ -369,6 +422,15 @@ export function ChangeRequestsTab() {
             </TableBody>
           </Table>
         )}
+      </div>
+
+      <div className="flex items-center justify-between border-t px-1 py-2 text-xs">
+        <span className="text-slate-500">{total} request(s){rows.length !== (listQuery.data?.data.length ?? 0) ? ` · ${rows.length} shown on this page after filters` : ""}</span>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="cursor-pointer" disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</Button>
+          <span className="font-semibold">{page} / {pages}</span>
+          <Button variant="outline" size="sm" className="cursor-pointer" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next</Button>
+        </div>
       </div>
 
       <ChangeRequestDrawer requestId={openId} onClose={() => setOpenId(null)} />

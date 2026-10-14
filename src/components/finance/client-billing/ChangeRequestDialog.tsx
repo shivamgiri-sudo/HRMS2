@@ -20,7 +20,7 @@ import {
   type ChangeRequestType,
 } from "@/lib/clientBillingApi";
 import { BILLING_CATEGORY_OPTIONS } from "./billingFieldOptions";
-import { DIALOG_60VW_CLASS } from "./shared";
+import { DIALOG_60VW_CLASS, InlineError } from "./shared";
 
 export interface ChangeRequestTarget {
   id: string;
@@ -51,13 +51,6 @@ export function ChangeRequestDialog({ target, onOpenChange }: Props) {
   const [requestedValue, setRequestedValue] = useState("");
   const [reason, setReason] = useState("");
 
-  useEffect(() => {
-    if (target) {
-      setRequestType(target.requestType);
-      setRequestedValue("");
-      setReason("");
-    }
-  }, [target]);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -83,6 +76,16 @@ export function ChangeRequestDialog({ target, onOpenChange }: Props) {
       });
     },
   });
+
+  useEffect(() => {
+    if (target) {
+      setRequestType(target.requestType);
+      setRequestedValue("");
+      setReason("");
+    }
+    mutation.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
 
   const typeOptions = BILLING_CATEGORY_OPTIONS.filter(
     (c) => c !== target?.category,
@@ -142,8 +145,9 @@ export function ChangeRequestDialog({ target, onOpenChange }: Props) {
           )}
 
           <div>
-            <Label className="text-xs">Reason *</Label>
+            <Label className="text-xs" htmlFor="cr-reason">Reason *</Label>
             <Textarea
+              id="cr-reason"
               className="mt-1 min-h-[96px] text-sm"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -151,6 +155,10 @@ export function ChangeRequestDialog({ target, onOpenChange }: Props) {
             />
           </div>
         </div>
+
+        {mutation.isError && (
+          <InlineError title="Could not raise the request" message={mutation.error.message} />
+        )}
 
         <DialogFooter className="mt-auto">
           <Button

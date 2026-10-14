@@ -150,3 +150,18 @@ export function formatDateOnly(value: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value ?? ""));
   return m ? `${m[3]}/${m[2]}/${m[1]}` : value ? String(value) : "—";
 }
+
+/** Inline error inside an open dialog / sheet, announced to screen readers. */
+export function InlineError({ message, title }: { message: string; title?: string }) {
+  return (
+    <p role="alert" className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+      {title && <span className="font-semibold">{title}: </span>}
+      {message}
+    </p>
+  );
+}
+
+/** Name for a `*_by` user id when the API joined one, else the raw id. */
+export function whoBy(name: string | null | undefined, id: string | null | undefined): string {
+  return name || id || "—";
+}

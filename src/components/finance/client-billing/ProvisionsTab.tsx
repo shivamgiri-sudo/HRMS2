@@ -30,6 +30,7 @@ import {
   BillingScopeSelects, costCentreSearchOptions, narrowCostCentres, useBillingFilterOptions,
 } from "./BillingScopeSelects";
 import { currentFinanceYear, financeYearOptions, monthLabelOptions } from "./billingFieldOptions";
+import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import { money } from "./shared";
 
 const ALL = "_all";
@@ -96,6 +97,7 @@ export function ProvisionsTab() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editRow, setEditRow] = useState<ProvisionRow | null>(null);
   const [rejectRow, setRejectRow] = useState<ProvisionRow | null>(null);
+  const [approveRow, setApproveRow] = useState<ProvisionRow | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const listQuery = useQuery({
@@ -109,8 +111,7 @@ export function ProvisionsTab() {
 
   const approveMutation = useMutation({
     mutationFn: (id: string) => approveProvision(id),
-    onSuccess: () => { toast({ title: "Provision approved" }); refresh(); },
-    onError: fail("Approval failed"),
+    onSuccess: () => { toast({ title: "Provision approved" }); setApproveRow(null); refresh(); },
   });
   const editDecision = useMutation({
     mutationFn: (v: { id: string; decision: "approve" | "decline" }) => decideProvisionEdit(v.id, v.decision),
@@ -241,7 +242,7 @@ export function ProvisionsTab() {
                       {row.provision_status === "pending" && (
                         <>
                           <Button size="icon" variant="ghost" className="h-7 w-7 text-emerald-600 hover:text-emerald-700" title="Approve" aria-label="Approve provision"
-                            disabled={approveMutation.isPending} onClick={() => approveMutation.mutate(row.id)}>
+                            disabled={approveMutation.isPending} onClick={() => { approveMutation.reset(); setApproveRow(row); }}>
                             <Check className="h-3.5 w-3.5" />
                           </Button>
                           <Button size="icon" variant="ghost" className="h-7 w-7 text-rose-600 hover:text-rose-700" title="Reject" aria-label="Reject provision" onClick={() => setRejectRow(row)}>
@@ -268,6 +269,16 @@ export function ProvisionsTab() {
 
       <CreateProvisionDialog open={createOpen} onOpenChange={setCreateOpen} onDone={refresh} />
       <EditProvisionDialog row={editRow} onClose={() => setEditRow(null)} onDone={refresh} />
+      <ConfirmActionDialog
+        open={Boolean(approveRow)}
+        title={`Approve provision ${approveRow?.cost_centre_code ?? ""} · ${approveRow?.month_label ?? ""}?`}
+        description={<>{money(approveRow?.provision_amount)} becomes available for proformas of this cost centre and month. Later changes need a second approver.</>}
+        confirmLabel="Approve provision"
+        pending={approveMutation.isPending}
+        error={approveMutation.isError ? approveMutation.error.message : null}
+        onConfirm={() => approveRow && approveMutation.mutate(approveRow.id)}
+        onCancel={() => setApproveRow(null)}
+      />
       <RejectProvisionDialog row={rejectRow} onClose={() => setRejectRow(null)} onDone={refresh} />
     </div>
   );

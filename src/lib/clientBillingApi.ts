@@ -39,7 +39,9 @@ export type AuditAction =
   | "status_change_approved"
   | "status_change_declined"
   | "submitted_to_client"
-  | "proforma_approved";
+  | "proforma_approved"
+  | "po_approved"
+  | "grn_added";
 
 /** One row of `client_invoice`. Covers both the Proformas tab (`invoice_status='proforma'`)
  *  and the Invoices tab (`invoice_status='approved'`) — same table, different filter. */
@@ -102,6 +104,15 @@ export interface InvoiceRow {
   /** Legacy approve_po (migration 2197). */
   po_approved?: 0 | 1;
   po_approved_at?: string | null;
+  /** Step-2 approver (bill number minted). Not a column on origin/main today — rendered only
+   *  when the API starts returning it; the audit log's "approved" entry is the fallback. */
+  approved_by?: string | null;
+  approved_at?: string | null;
+  /** Optional resolved names for the *_by user ids, when the API joins them. */
+  rejected_by_name?: string | null;
+  proforma_approved_by_name?: string | null;
+  approved_by_name?: string | null;
+  last_sent_by_name?: string | null;
   /** Joined by GET /proformas. */
   company_name?: string | null;
   branch_name?: string | null;
@@ -179,6 +190,9 @@ export interface AuditLogEntry {
   invoice_id: string;
   action: AuditAction;
   actor_id: string;
+  /** Resolved actor, when the API joins the user table (render `actor_name ?? actor_email ?? actor_id`). */
+  actor_name?: string | null;
+  actor_email?: string | null;
   reason: string | null;
   created_at: string;
 }
@@ -312,6 +326,8 @@ export interface ClientBillingListFilters {
   companyName?: string;
   branchId?: string;
   financeYear?: string;
+  /** Legacy invoiceType: "Revenue" / "Non Revenue" (buildInvoiceListQuery filters on it). */
+  invoiceType?: string;
   /** Legacy approval queue: "proforma_approval" (View & Approve Proforma) or
    *  "invoice_approval" (Invoice Approval). Only meaningful on /proformas. */
   stage?: "proforma_approval" | "invoice_approval";
@@ -329,6 +345,7 @@ function buildQueryString(filters: ClientBillingListFilters): string {
   if (filters.companyName) params.set("companyName", filters.companyName);
   if (filters.branchId) params.set("branchId", filters.branchId);
   if (filters.financeYear) params.set("financeYear", filters.financeYear);
+  if (filters.invoiceType) params.set("invoiceType", filters.invoiceType);
   if (filters.stage) params.set("stage", filters.stage);
   if (filters.page) params.set("page", String(filters.page));
   if (filters.limit) params.set("limit", String(filters.limit));
@@ -590,6 +607,8 @@ export interface ChangeRequestRow {
   decided_by: string | null;
   decided_at: string | null;
   decision_note: string | null;
+  requested_by_name?: string | null;
+  decided_by_name?: string | null;
   proforma_no?: string | null;
   bill_no?: string | null;
   invoice_status?: InvoiceStatus;
@@ -627,11 +646,15 @@ export function listInvoiceChangeRequests(
   );
 }
 
+/** `requestType` / `search` are sent for forward compatibility; on origin/main the route only
+ *  filters by status and pages, so callers also narrow the returned page themselves. */
 export function listChangeRequests(
-  filters: { status?: string; page?: number; limit?: number } = {},
+  filters: { status?: string; requestType?: string; search?: string; page?: number; limit?: number } = {},
 ): Promise<PaginatedResult<ChangeRequestRow>> {
   const params = new URLSearchParams();
   if (filters.status) params.set("status", filters.status);
+  if (filters.requestType) params.set("requestType", filters.requestType);
+  if (filters.search) params.set("search", filters.search);
   if (filters.page) params.set("page", String(filters.page));
   if (filters.limit) params.set("limit", String(filters.limit));
   const qs = params.toString();

@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { rejectInvoice } from "@/lib/clientBillingApi";
+import { InlineError } from "./shared";
 
 interface Props {
   invoiceId: string | null;
@@ -35,17 +36,11 @@ export function RejectInvoiceDialog({
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
 
-  useEffect(() => {
-    if (!invoiceId) setReason("");
-  }, [invoiceId]);
-
   const rejectMutation = useMutation({
     mutationFn: () => rejectInvoice(invoiceId as string, reason.trim()),
     onSuccess: () => {
-      toast({ title: "Proforma rejected" });
-      void queryClient.invalidateQueries({
-        queryKey: ["client-billing", "proformas"],
-      });
+      toast({ title: `${label} rejected`, description: "It is listed under Rejected / Void." });
+      void queryClient.invalidateQueries({ queryKey: ["client-billing"] });
       onRejected();
       onOpenChange(false);
     },
@@ -58,6 +53,12 @@ export function RejectInvoiceDialog({
     },
   });
 
+  useEffect(() => {
+    if (!invoiceId) setReason("");
+    rejectMutation.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceId]);
+
   return (
     <Dialog open={Boolean(invoiceId)} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -69,8 +70,9 @@ export function RejectInvoiceDialog({
           </DialogDescription>
         </DialogHeader>
         <div>
-          <Label className="text-xs">Reason *</Label>
+          <Label className="text-xs" htmlFor="reject-reason">Reason *</Label>
           <Textarea
+            id="reject-reason"
             className="mt-1 min-h-[96px] text-sm"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
@@ -78,6 +80,9 @@ export function RejectInvoiceDialog({
             autoFocus
           />
         </div>
+        {rejectMutation.isError && (
+          <InlineError title="Could not reject" message={rejectMutation.error.message} />
+        )}
         <DialogFooter>
           <Button
             variant="outline"
