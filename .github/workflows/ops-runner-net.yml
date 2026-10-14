@@ -35,4 +35,6 @@ jobs:
             echo "pid $pid: $(ps -o pid=,etime=,cmd= -p $pid 2>/dev/null | cut -c1-120 || echo 'not visible')  net ns: $(readlink /proc/$pid/ns/net 2>/dev/null)"
           done
           echo "--- pm2 daemons ---"; ps -eo pid,user,etime,cmd | grep -i "pm2" | grep -v grep | cut -c1-160
+          echo "--- root pm2 (read-only, needs passwordless sudo) ---"
+          sudo -n pm2 jlist 2>&1 | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{for(const p of JSON.parse(d)){const e=p.pm2_env||{};console.log(p.name,'pid='+p.pid,'status='+e.status,'restarts='+e.restart_time,'cwd='+e.pm_cwd,'script='+e.pm_exec_path,'out='+e.pm_out_log_path,'autorestart='+e.autorestart)}}catch(x){console.log('root pm2 not readable:',d.slice(0,200))}})"
           echo "--- container? ---"; [ -f /.dockerenv ] && echo "/.dockerenv present"; head -3 /proc/1/cgroup
