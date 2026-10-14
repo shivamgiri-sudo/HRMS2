@@ -596,7 +596,12 @@ function esignSql(scoped: boolean): string {
                       THEN e.created_at ELSE NULL END AS done_at
             FROM ats_onboarding_bridge b
             JOIN employees e ON e.id = b.employee_id
-           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}`;
+           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+             -- The kit cannot be dispatched until the Payroll Head approves the salary
+             -- (joiningKitDispatch: payroll_head_not_approved), so an unsent kit is not an
+             -- overdue signature. No review row counts as not approved, same as dispatch.
+             AND EXISTS (SELECT 1 FROM employee_payroll_head_review phr
+                          WHERE phr.employee_id = e.id AND phr.status = 'approved')`;
 }
 
 export async function getEsignPendingBlock(
