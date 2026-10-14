@@ -159,6 +159,7 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/finance/process-pnl/lobs",
   "/finance/process-pnl/period-close",
   "/finance/salary-voucher",
+  "/finance/tally-export",
   "/finance/unlinked-grn-review",
   "/finance/vendor-bank-details",
   "/finance/vendor-payment-tracking",
