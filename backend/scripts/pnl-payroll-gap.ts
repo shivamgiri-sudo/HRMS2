@@ -59,6 +59,31 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
     const dupLines = [...hr.values()].filter((x) => x.lines > 1);
     console.log("GAP_HRMS_DUP " + JSON.stringify({ period, employeesWithMultipleLines: dupLines.length, extraLines: dupLines.reduce((t, x) => t + x.lines - 1, 0), costOnThose: r0(dupLines.reduce((t, x) => t + x.cost, 0)) }));
 
+    // How the run itself computed pay: proration inputs and status mix (aggregates).
+    const c = (col: string) => (have.has(col) ? col : null);
+    const parts = [
+      "COUNT(*) AS n",
+      c("gross_salary") && "SUM(COALESCE(spl.gross_salary,0)) AS gross_salary",
+      c("gross_before_lwp") && "SUM(COALESCE(spl.gross_before_lwp,0)) AS gross_before_lwp",
+      c("base_gross_pay") && "SUM(COALESCE(spl.base_gross_pay,0)) AS base_gross_pay",
+      c("earned_salary_till_date") && "SUM(COALESCE(spl.earned_salary_till_date,0)) AS earned_salary_till_date",
+      c("lwp_days") && "SUM(CASE WHEN COALESCE(spl.lwp_days,0) > 0 THEN 1 ELSE 0 END) AS with_lwp_days",
+      c("lwp_days") && "SUM(COALESCE(spl.lwp_days,0)) AS lwp_days",
+      c("lwp_deduction") && "SUM(COALESCE(spl.lwp_deduction,0)) AS lwp_deduction",
+      c("present_days") && "SUM(COALESCE(spl.present_days,0)) AS present_days",
+      c("working_days") && "SUM(COALESCE(spl.working_days,0)) AS working_days",
+      c("final_payable_days") && "SUM(COALESCE(spl.final_payable_days,0)) AS final_payable_days",
+      c("active_calendar_days") && "SUM(COALESCE(spl.active_calendar_days,0)) AS active_calendar_days",
+      c("gross_before_lwp") && c("gross_salary") && "SUM(CASE WHEN ABS(COALESCE(spl.gross_salary,0) - COALESCE(spl.gross_before_lwp,0)) < 1 THEN 1 ELSE 0 END) AS gross_equals_before_lwp",
+      c("incentive_total") && "SUM(COALESCE(spl.incentive_total,0)) AS incentive_total",
+      c("arrears_amount") && "SUM(COALESCE(spl.arrears_amount,0)) AS arrears_amount",
+    ].filter(Boolean).join(", ");
+    const [mix] = await db.query<RowDataPacket[]>(
+      `SELECT ${c("calculation_status") ? "spl.calculation_status" : "'n/a'"} AS calc_status, ${c("status") ? "spl.status" : "'n/a'"} AS line_status, spr.status AS run_status, ${parts}
+         FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id AND spr.run_month = ? AND ${nonVoidRunSql("spr")}
+        GROUP BY calc_status, line_status, run_status`, [period]);
+    for (const row of mix) console.log("GAP_RUNLINES " + JSON.stringify({ period, ...Object.fromEntries(Object.entries(row).map(([k, v]) => [k, typeof v === "string" ? v : r0(v)])) }));
+
     // db_bill side.
     const sums = numericBill.map((c) => `SUM(COALESCE(${dec(c)}, 0)) AS \`s_${c}\``).join(", ");
     const where = `DATE_FORMAT(SalayDate,'%Y-%m') = '${period}'${companyCol ? ` AND LOWER(TRIM(COALESCE(\`${companyCol}\`, ''))) <> 'idc'` : ""}`;
