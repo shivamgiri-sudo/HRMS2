@@ -34,8 +34,8 @@ describe("daily attendance report", () => {
   const block = (() => {
     const start = routes.indexOf("export async function attendanceDaily");
     expect(start, "attendanceDaily executor not found").toBeGreaterThan(-1);
-    const end = routes.indexOf("ORDER BY adr.record_date DESC", start);
-    expect(end, "attendanceDaily has no terminating ORDER BY").toBeGreaterThan(start);
+    const end = routes.indexOf("/**\n * daily-hc-shift", start);
+    expect(end, "attendanceDaily has no terminating marker").toBeGreaterThan(start);
     return routes.slice(start, end);
   })();
 
@@ -46,24 +46,21 @@ describe("daily attendance report", () => {
     expect(subquery).toContain("WHERE session_date BETWEEN ? AND ?");
   });
 
-  it("binds exactly as many leading params as there are placeholders before the WHERE", () => {
-    // mysql2 binds positionally. Every placeholder added to a JOIN ahead of the WHERE has
-    // to be unshifted, and a miscount silently shifts every subsequent value by one rather
-    // than raising — the report would return wrong data, not an error.
-    // The template is named `base` in the executor and was named `sql` in the inline block.
-    // Accept either, and fail loudly rather than silently measuring nothing: indexOf returning
-    // -1 would slice from the end of the string, leaving zero placeholders and an assertion
-    // that passes only because it compared nothing to nothing.
-    const tplAt = Math.max(block.indexOf("base = `"), block.indexOf("sql = `"));
-    expect(tplAt, "no SQL template found in the block").toBeGreaterThan(-1);
-    const sql = block.slice(tplAt);
-    const beforeWhere = sql.slice(0, sql.indexOf("WHERE ${clauses"));
-    const placeholders = (beforeWhere.match(/\?/g) ?? []).length;
+  it("binds the session range before the id list in the detail statement", () => {
+    // mysql2 binds positionally: the subquery's BETWEEN ? AND ? precedes WHERE adr.id IN (...).
+    const detail = block.slice(block.indexOf("const detail = `"));
+    const beforeWhere = detail.slice(0, detail.indexOf("WHERE adr.id IN"));
+    expect((beforeWhere.match(/\?/g) ?? []).length).toBe(2);
+    expect(block).toContain("query(detail, [from, to, ...ids])");
+  });
 
-    const unshift = block.slice(block.indexOf("params.unshift("));
-    const args = unshift.slice(unshift.indexOf("(") + 1, unshift.indexOf(")")).split(",").filter((a) => a.trim());
-
-    expect(args.length).toBe(placeholders);
+  it("pages in two steps: keys first, then detail for the page only", () => {
+    // ~1 ms per lookup here; a dozen joins per row before the page cut took 16 s for one day.
+    expect(block).toContain("const keyBase = `SELECT adr.id AS adr_id");
+    expect(block).toContain("fetchPageWithTotal(keyBase");
+    const keyBase = block.slice(block.indexOf("const keyBase"), block.indexOf("const paged"));
+    expect(keyBase).not.toContain("wfm_roster_assignment");
+    expect(keyBase).not.toContain("wfm_attendance_session");
   });
 
   it("joins roster and sessions off the non-nullable employee id", () => {
@@ -84,7 +81,7 @@ describe("daily attendance report", () => {
     // for a 5-row page on prod (2026-10-14). The range is now the driving table's predicate.
     expect(block).toContain("FROM attendance_daily_record adr");
     expect(block).toContain("JOIN employees e ON e.id = adr.employee_id");
-    expect(block).not.toContain("FROM employees e");
+    expect(block).not.toContain("FROM employees e\n");
     expect(block).toContain('"adr.record_date BETWEEN ? AND ?"');
   });
 

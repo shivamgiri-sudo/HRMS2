@@ -29,6 +29,7 @@ const opts: any = { limit: 5, offset: 0, cursor: null, includeTotal: true, mode:
   console.log("business today:", today);
   const cases = [
     ["past 1 day", { from: "2026-10-10", to: "2026-10-10" }],
+    ["past 10 days", { from: "2026-10-01", to: "2026-10-10" }],
     ["wholly future", { from: "2026-10-20", to: "2026-10-31" }],
   ] as const;
   for (const [label, f] of cases) {

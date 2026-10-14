@@ -619,16 +619,36 @@ export async function attendanceDaily(
   const params: unknown[] = [from, to];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  // Exclude employees at inactive branches.
-  clauses.push(
-    "(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))",
-  );
-  // The session subquery's own BETWEEN sits earlier in the statement than the WHERE.
-  params.unshift(from, to);
+  // Exclude employees at inactive branches (b is the branch join the key query already carries).
+  clauses.push("(e.branch_id IS NULL OR b.active_status = 1)");
 
-  const base = `SELECT adr.record_date,
+  const nameSql = "COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))";
+  const orderSql = `ORDER BY adr.record_date DESC, b.branch_name, ${nameSql}, adr.id`;
+
+  // TWO STEPS, because every lookup costs ~1 ms on this database and the detail statement joins a
+  // dozen tables per row: measured 16 s for ONE day (1,068 rows) when those joins ran for every
+  // row before the page was cut. Step 1 finds the page using only what filtering and ordering
+  // need (attendance row, employee, branch); step 2 attaches the detail to those rows alone.
+  const keyBase = `SELECT adr.id AS adr_id
+    FROM attendance_daily_record adr
+    JOIN employees e ON e.id = adr.employee_id
+    LEFT JOIN branch_master b ON b.id = e.branch_id
+    WHERE ${clauses.join(" AND ")}
+    ${orderSql}`;
+
+  // One execution, not two: the page and its total come from the same fetch wherever the result
+  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
+  // statement to learn a number the first run already knew.
+  const paged = await fetchPageWithTotal(keyBase, params, options, query, count);
+  const total = paged.total;
+  const ids = (paged.rows as Array<{ adr_id: string }>).map((r) => r.adr_id);
+  if (ids.length === 0) {
+    return { rows: [], rowCount: options.includeTotal ? total : 0, isTruncated: false, nextCursor: null };
+  }
+
+  const detail = `SELECT adr.record_date,
          e.employee_code,
-         COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+         ${nameSql} AS employee_name,
          COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
          COALESCE(ccd.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
@@ -678,15 +698,11 @@ export async function attendanceDaily(
        WHERE session_date BETWEEN ? AND ?
        GROUP BY employee_id, session_date
     ) agg_ses ON agg_ses.employee_id = e.id AND agg_ses.session_date = adr.record_date
-              WHERE ${clauses.join(" AND ")}
-              ORDER BY adr.record_date DESC, b.branch_name, employee_name`;
+   WHERE adr.id IN (${ids.map(() => "?").join(",")})
+   ${orderSql}`;
 
-  // One execution, not two: the page and its total come from the same fetch wherever the result
-  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
-  // statement to learn a number the first run already knew.
-  const paged = await fetchPageWithTotal(base, params, options, query, count);
-  const total = paged.total;
-  const rows = paged.rows as Record<string, unknown>[];
+  // Leading placeholders (the session subquery's range) precede the id list.
+  const rows = (await query(detail, [from, to, ...ids])) as Record<string, unknown>[];
   return {
     rows,
     rowCount: options.includeTotal ? total : rows.length,
