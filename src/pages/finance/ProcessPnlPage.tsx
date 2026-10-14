@@ -308,6 +308,7 @@ export default function ProcessPnlPage() {
     indirect: pnlLabel("INDIRECT_COST"),
     grnConsumed: pnlLabel("GRN_CONSUMED"),
     grnCommitted: pnlLabel("GRN_COMMITTED"),
+    grnOpenBudget: "Open budget not yet spent",
     other: "Other cost (engine residual)",
   };
   const costLineHint: Record<HeaderCostLineKey, string> = {
@@ -315,6 +316,7 @@ export default function ProcessPnlPage() {
     indirect: pnlTooltip("INDIRECT_COST"),
     grnConsumed: pnlTooltip("GRN_CONSUMED"),
     grnCommitted: pnlTooltip("GRN_COMMITTED"),
+    grnOpenBudget: "Budget lines still open are blocked at their full amount: this is the unspent headroom on top of GRN consumed and reserved. It is released when the budget is closed.",
     other: "The engine's Operating Profit differs from Recognised Revenue minus the cost lines it publishes by this amount; shown so the tiles still add up.",
   };
   // Under the Live basis the header shows the Live P&L's own figure, so it carries that figure's
@@ -404,6 +406,7 @@ export default function ProcessPnlPage() {
     indirect: "bg-amber-500",
     grnConsumed: "bg-amber-500",
     grnCommitted: "bg-amber-300",
+    grnOpenBudget: "bg-orange-300",
     other: "bg-slate-400",
   };
   const costMixSegments = (basis?.costLines ?? []).map((line) => ({

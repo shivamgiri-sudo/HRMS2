@@ -27,7 +27,7 @@ import type { BpoPnlSummary } from "@/hooks/useBpoProcessPnl";
 
 export type HeaderBasisSource = "process" | "statement" | "live";
 
-export type HeaderCostLineKey = "people" | "indirect" | "grnConsumed" | "grnCommitted" | "other";
+export type HeaderCostLineKey = "people" | "indirect" | "grnConsumed" | "grnCommitted" | "grnOpenBudget" | "other";
 
 export interface HeaderCostLine {
   key: HeaderCostLineKey;
@@ -78,6 +78,9 @@ export function buildLiveBasis(totals: LiveTotals): HeaderKpiBasis {
     { key: "grnConsumed", value: totals.grnActual ?? 0 },
     // Always shown in Live mode, even at zero, so the OP subtraction is visible line by line.
     { key: "grnCommitted", value: totals.grnEstimated ?? 0 },
+    // Open budget lines are blocked at their full amount until closed: the unspent headroom is cost.
+    // Shown only when there is some, so a month with every line closed keeps the three-line shape.
+    ...((totals.openBudgetReserve ?? 0) > 0 ? [{ key: "grnOpenBudget" as const, value: totals.openBudgetReserve ?? 0 }] : []),
   ];
   return {
     source: "live",
@@ -106,12 +109,14 @@ export function buildStatementBasis(total: (componentKey: string) => number | nu
   // Total Indirect Cost = GRN Consumed + GRN Committed (reserved) — the Statement publishes both as
   // breakdown rows under total_idc. Consumed is taken as the remainder so the two always sum to it.
   const committed = total("grn_committed");
-  const hasSplit = committed !== null || total("grn_consumed") !== null;
+  const openBudget = total("grn_open_budget");
+  const hasSplit = committed !== null || openBudget !== null || total("grn_consumed") !== null;
   const lines: HeaderCostLine[] = hasSplit
     ? [
         { key: "people", value: people },
-        { key: "grnConsumed", value: indirect - (committed ?? 0) },
+        { key: "grnConsumed", value: indirect - (committed ?? 0) - (openBudget ?? 0) },
         { key: "grnCommitted", value: committed ?? 0 },
+        ...(openBudget !== null && openBudget !== 0 ? [{ key: "grnOpenBudget" as const, value: openBudget }] : []),
       ]
     : [
         { key: "people", value: people },
