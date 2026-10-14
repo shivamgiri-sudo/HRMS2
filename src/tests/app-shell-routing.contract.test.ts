@@ -385,7 +385,6 @@ describe("application shell routing contracts", () => {
       // drill-down. Remove an entry once it is linked or its route is retired.
       "/finance/ledger",
       "/finance/ledger-reports",
-      "/guide",
       "/payroll/attendance-register",
       "/payroll/noc-cases",
       "/payroll/salary-trend",

@@ -483,6 +483,9 @@ export const navGroups: NavGroup[] = [
   {
     title: "Support",
     items: [
+      // The self-service manual for every role. It existed at /guide with no menu entry, so the
+      // people it was written for could not find it.
+      { label: "HRMS Guide",     href: "/guide",                             icon: ic(BookOpen),    public: true, description: "Step-by-step help for every task, by role" },
       { label: "HRMS Guide",     href: "/guide",                             icon: ic(BookOpen),    description: "How to do everything, by role" },
       { label: "Helpdesk",       href: "/helpdesk",                          icon: ic(ShieldCheck), roles: ["admin","super_admin","hr","manager","process_manager","branch_head"], description: "Helpdesk" },
       { label: "Support Command",href: "/support/command-center",            icon: ic(ShieldCheck), pageCode: "SUPPORT_COMMAND_CENTER",    description: "Support ops" },
