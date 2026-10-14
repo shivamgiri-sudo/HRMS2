@@ -212,8 +212,8 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     const terms = Array.isArray(termRows) ? termRows[0] : undefined;
     await conn.execute(
       `UPDATE client_invoice SET invoice_status = 'approved', bill_no = ?,
-              due_date = DATE_ADD(invoice_date, INTERVAL ? DAY) WHERE id = ?`,
-      [billNo, creditDays(terms?.payment_terms), input.invoiceId]
+              due_date = DATE_ADD(invoice_date, INTERVAL ? DAY), approved_by = ?, approved_at = NOW() WHERE id = ?`,
+      [billNo, creditDays(terms?.payment_terms), input.userId, input.invoiceId]
     );
 
     await conn.execute(

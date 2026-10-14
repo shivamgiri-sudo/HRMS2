@@ -34,7 +34,10 @@ vi.mock("../client-billing-provision.service.js", () => ({
   provisionRequired: () => true,
 }));
 vi.mock("../client-billing-po-master.service.js", () => ({ clientPoMasterService: { decidePo: m.decidePo, branchOf: m.branchOf } }));
-vi.mock("../client-billing-receipt.service.js", () => ({ clientBillingReceiptService: {}, legacyBillsAllowed: () => false }));
+vi.mock("../client-billing-receipt.service.js", () => ({
+  clientBillingReceiptService: {}, legacyBillsAllowed: () => false,
+  SETTLEMENT_SQL: "SELECT settlement", CREDIT_NOTE_SQL: "SELECT credit_notes", PAID_TOLERANCE: 0.5,
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: m.execute, query: m.query } }));
 vi.mock("../../../shared/branchDecisionScope.js", () => ({
   loadBranchPolicy: async () => ({ ...policy, allows: (b: unknown) => policy.orgWide || (!!b && b === policy.ownBranchId) }),
@@ -203,5 +206,54 @@ describe("credit note reject route, receipts settings, PO approval routes", () =
     expect(m.decidePo).toHaveBeenCalledWith("po-1", "approve", "u-1", "ok");
     await request(app).post("/api/client-billing/po-master/po-1/reject").send({ reason: "wrong amount" });
     expect(m.decidePo).toHaveBeenLastCalledWith("po-1", "reject", "u-1", "wrong amount");
+  });
+});
+
+describe("list / detail extras for the UI (additive)", () => {
+  beforeEach(() => { policy.orgWide = true; });
+
+  it("list rows carry who did each step; detail too", async () => {
+    m.query.mockResolvedValueOnce([[{ id: "i1" }], []]);
+    m.execute.mockResolvedValueOnce([[{ total: 1 }], []]);
+    const res = await request(app).get("/api/client-billing/proformas");
+    expect(res.body).toEqual({ success: true, data: [{ id: "i1" }], total: 1, page: 1, limit: 50 });
+    const sql = String(m.query.mock.calls[0][0]);
+    for (const col of ["created_by_name", "proforma_approved_by_name", "approved_by_name", "rejected_by_name", "last_sent_by_name"]) {
+      expect(sql).toContain(`AS ${col}`);
+    }
+    m.execute.mockReset();
+    m.execute.mockResolvedValueOnce([[{ id: "i1", approved_by_name: "Asha" }], []]).mockResolvedValueOnce([[], []]);
+    const d = await request(app).get("/api/client-billing/proformas/i1");
+    expect(String(m.execute.mock.calls[0][0])).toContain("AS approved_by_name");
+    expect(d.body.data).toMatchObject({ approved_by_name: "Asha", lines: [] });
+  });
+
+  it("includeSettlement=1 adds received / settled / credited / outstanding per row; includeTotals=1 adds totals", async () => {
+    m.query
+      .mockResolvedValueOnce([[
+        { id: "i1", invoice_status: "approved", grand_total: "1180.00" },
+        { id: "i2", invoice_status: "proforma", grand_total: "500.00" },
+      ], []])
+      .mockResolvedValueOnce([[{ invoice_id: "i1", received: "900.00", tds: "100.00", deduction: "0.00", settled: "1000.00" }], []])
+      .mockResolvedValueOnce([[{ invoice_id: "i1", credited: "100.00" }], []]);
+    m.execute.mockResolvedValueOnce([[{ total: 2, total_amount: "1500.00", grand_total: "1680.00" }], []]);
+    const res = await request(app).get("/api/client-billing/proformas?includeSettlement=1&includeTotals=1");
+    expect(res.body.data[0]).toMatchObject({ received: 900, settled: 1000, credited: 100, outstanding: 80, is_paid: false });
+    expect(res.body.data[1]).toMatchObject({ received: 0, outstanding: null });
+    expect(res.body.totals).toEqual({ count: 2, total_amount: 1500, grand_total: 1680 });
+    expect(String(m.query.mock.calls[1][0])).toContain("FROM (SELECT settlement) s WHERE s.invoice_id IN (?,?)");
+    expect(m.query.mock.calls[1][1]).toEqual(["i1", "i2"]);
+  });
+
+  it("GET /change-requests filters by requestType and search and returns requester / decider names", async () => {
+    m.query.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[{ total: 0 }], []]);
+    await request(app).get("/api/client-billing/change-requests?status=pending&requestType=void&search=09-1");
+    const [sql, params] = m.query.mock.calls[0];
+    expect(String(sql)).toContain("cicr.request_type = ?");
+    expect(String(sql)).toContain("(ci.bill_no LIKE ? OR ci.proforma_no LIKE ? OR cicr.reason LIKE ?)");
+    expect(String(sql)).toContain("AS requested_by_name");
+    expect(String(sql)).toContain("AS decided_by_name");
+    expect(params).toEqual(["pending", "void", "%09-1%", "%09-1%", "%09-1%"]);
+    expect(m.query.mock.calls[1][1]).toEqual(params);
   });
 });

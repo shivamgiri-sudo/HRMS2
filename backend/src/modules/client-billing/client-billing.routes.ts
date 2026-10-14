@@ -18,7 +18,9 @@ import { checkPoCoverage, listAvailablePos } from "./client-billing-po.js";
 import { clientBillingProvisionService, provisionRequired } from "./client-billing-provision.service.js";
 import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { clientBillingPoGrnService } from "./client-billing-po-grn.service.js";
-import { clientBillingReceiptService, legacyBillsAllowed } from "./client-billing-receipt.service.js";
+import {
+  CREDIT_NOTE_SQL, PAID_TOLERANCE, SETTLEMENT_SQL, clientBillingReceiptService, legacyBillsAllowed,
+} from "./client-billing-receipt.service.js";
 import {
   billingBranchScope, branchScopeCondition, guardBillingRecord, partitionInvoicesByScope,
 } from "./client-billing-scope.js";
@@ -53,6 +55,19 @@ const COST_CENTRE_DISPLAY_NAME_SQL = `
     ELSE ${RAW_CLIENT_NAME_SQL}
   END
 `.trim();
+
+/** A user's display name: their employee full name, else their login e-mail. `col` holds an auth user id. */
+const userNameSql = (col: string) => `COALESCE(
+  (SELECT e.full_name FROM employees e WHERE e.user_id = ${col} ORDER BY e.active_status DESC, e.updated_at DESC LIMIT 1),
+  (SELECT au.email FROM auth_user au WHERE au.id = ${col} LIMIT 1))`;
+
+/** Who did each step of a bill (list + detail rows). */
+const INVOICE_PEOPLE_SQL = `
+  ${userNameSql("ci.created_by")} AS created_by_name,
+  ${userNameSql("ci.proforma_approved_by")} AS proforma_approved_by_name,
+  ${userNameSql("ci.approved_by")} AS approved_by_name,
+  ${userNameSql("ci.rejected_by")} AS rejected_by_name,
+  ${userNameSql("ci.last_sent_by")} AS last_sent_by_name`;
 
 /** Actor e-mail + name for audit-log rows (L1); `col` is the row's actor user id column. */
 const actorSql = (col: string) => `
@@ -122,6 +137,45 @@ router.post(
  * "the export doesn't match what I'm looking at" bug). Mirrors the filter/pagination
  * shape already established in grn.service.ts's listGrns.
  */
+/**
+ * Per-row money in (optional on the list): received = money that reached the client's payment
+ * (receipts' received part), settled = received + TDS + deductions, credited = approved credit
+ * notes, outstanding = grand total - settled - credited for an approved bill (null otherwise).
+ * Same live rule as Receipts (SETTLEMENT_SQL + CREDIT_NOTE_SQL), for the page's ids only.
+ */
+async function withSettlement(rows: RowDataPacket[]): Promise<RowDataPacket[]> {
+  const ids = rows.map((r) => String(r.id));
+  const marks = ids.map(() => "?").join(",");
+  const [settled] = await db.query<RowDataPacket[]>(
+    `SELECT s.invoice_id, s.received, s.tds, s.deduction, s.settled FROM (${SETTLEMENT_SQL}) s WHERE s.invoice_id IN (${marks})`,
+    ids,
+  );
+  const [credited] = await db.query<RowDataPacket[]>(
+    `SELECT cn.invoice_id, cn.credited FROM (${CREDIT_NOTE_SQL}) cn WHERE cn.invoice_id IN (${marks})`,
+    ids,
+  );
+  const sById = new Map((settled as RowDataPacket[]).map((r) => [String(r.invoice_id), r]));
+  const cById = new Map((credited as RowDataPacket[]).map((r) => [String(r.invoice_id), Number(r.credited ?? 0)]));
+  return rows.map((r) => {
+    const s = sById.get(String(r.id));
+    const settledAmt = Number(s?.settled ?? 0);
+    const creditedAmt = cById.get(String(r.id)) ?? 0;
+    const outstanding = r.invoice_status === "approved"
+      ? Math.round((Number(r.grand_total ?? 0) - settledAmt - creditedAmt) * 100) / 100
+      : null;
+    return {
+      ...r,
+      received: Number(s?.received ?? 0),
+      tds_received: Number(s?.tds ?? 0),
+      deduction_received: Number(s?.deduction ?? 0),
+      settled: settledAmt,
+      credited: creditedAmt,
+      outstanding,
+      is_paid: outstanding !== null && outstanding <= PAID_TOLERANCE,
+    } as RowDataPacket;
+  });
+}
+
 function buildInvoiceListQuery(query: Record<string, unknown>, branchIds: string[] | null = null) {
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -216,7 +270,7 @@ router.get(
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT ci.*, ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name,
               cc.cost_centre_code AS cost_centre_code, cc.company_name AS company_name,
-              b.branch_name AS branch_name
+              b.branch_name AS branch_name, ${INVOICE_PEOPLE_SQL}
        FROM client_invoice ci
        LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
        LEFT JOIN branch_master b ON b.id = cc.branch_id
@@ -226,15 +280,30 @@ router.get(
       [...params, limit, offset]
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM client_invoice ci LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id ${where}`,
+      `SELECT COUNT(*) AS total, COALESCE(SUM(ci.total_amount), 0) AS total_amount, COALESCE(SUM(ci.grand_total), 0) AS grand_total
+       FROM client_invoice ci LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id ${where}`,
       params
     );
+    const flag = (v: unknown) => v === "1" || v === "true";
+    let data: RowDataPacket[] = rows;
+    if (flag(req.query.includeSettlement) && rows.length > 0) {
+      data = await withSettlement(rows);
+    }
     res.json({
       success: true,
-      data: rows,
+      data,
       total: Number(countRows[0]?.total ?? 0),
       page,
       limit,
+      ...(flag(req.query.includeTotals)
+        ? {
+            totals: {
+              count: Number(countRows[0]?.total ?? 0),
+              total_amount: Number(countRows[0]?.total_amount ?? 0),
+              grand_total: Number(countRows[0]?.grand_total ?? 0),
+            },
+          }
+        : {}),
     });
   })
 );
@@ -363,7 +432,7 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     if (!(await guardBillingRecord(req, res, "invoice"))) return;
     const [invoiceRows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM client_invoice WHERE id = ? LIMIT 1`,
+      `SELECT ci.*, ${INVOICE_PEOPLE_SQL} FROM client_invoice ci WHERE ci.id = ? LIMIT 1`,
       [req.params.id]
     );
     const invoice = invoiceRows[0];
@@ -833,10 +902,8 @@ router.get(
     if (!(await guardBillingRecord(req, res, "invoice"))) return;
     // There is no `users` table; the requester's name comes from their employee record, e-mail as fallback.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cicr.*,
-              COALESCE((SELECT e.full_name FROM employees e WHERE e.user_id = cicr.requested_by
-                         ORDER BY e.active_status DESC, e.updated_at DESC LIMIT 1),
-                       (SELECT au.email FROM auth_user au WHERE au.id = cicr.requested_by LIMIT 1)) AS requested_by_name
+      `SELECT cicr.*, ${userNameSql("cicr.requested_by")} AS requested_by_name,
+              ${userNameSql("cicr.decided_by")} AS decided_by_name
        FROM client_invoice_change_request cicr
        WHERE cicr.invoice_id = ?
        ORDER BY cicr.created_at DESC`,
@@ -850,7 +917,7 @@ router.get(
   "/change-requests",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { status, page = "1", limit = "50" } = req.query as Record<string, string>;
+    const { status, requestType, search, page = "1", limit = "50" } = req.query as Record<string, string>;
     const pageNum = Math.max(1, parseInt(page, 10));
     const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
     const offset = (pageNum - 1) * limitNum;
@@ -859,12 +926,22 @@ router.get(
     const scope = branchScopeCondition("cc.branch_id", await billingBranchScope(req.authUser!.id));
     if (scope.sql) { conditions.push(scope.sql); params.push(...scope.params); }
     if (status) { conditions.push("cicr.request_status = ?"); params.push(status); }
+    if (requestType === "void" || requestType === "status_change") {
+      conditions.push("cicr.request_type = ?"); params.push(requestType);
+    }
+    if (typeof search === "string" && search.trim()) {
+      const like = `%${search.trim()}%`;
+      conditions.push("(ci.bill_no LIKE ? OR ci.proforma_no LIKE ? OR cicr.reason LIKE ?)");
+      params.push(like, like, like);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT cicr.*,
               COALESCE(ci.bill_no, ci.proforma_no) AS invoice_ref, ci.bill_no, ci.proforma_no,
               ci.invoice_status, ci.grand_total, ci.month_label,
-              ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name
+              ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name,
+              ${userNameSql("cicr.requested_by")} AS requested_by_name,
+              ${userNameSql("cicr.decided_by")} AS decided_by_name
        FROM client_invoice_change_request cicr
        LEFT JOIN client_invoice ci ON ci.id = cicr.invoice_id
        LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
@@ -893,7 +970,9 @@ router.get(
               COALESCE(ci.bill_no, ci.proforma_no) AS invoice_ref, ci.bill_no, ci.proforma_no,
               ci.invoice_status, ci.grand_total, ci.category, ci.finance_year,
               ci.invoice_date, ci.month_label,
-              ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name
+              ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name,
+              ${userNameSql("cicr.requested_by")} AS requested_by_name,
+              ${userNameSql("cicr.decided_by")} AS decided_by_name
        FROM client_invoice_change_request cicr
        LEFT JOIN client_invoice ci ON ci.id = cicr.invoice_id
        LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id

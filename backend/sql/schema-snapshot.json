@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1276,
-  "columnCount": 18576,
+  "columnCount": 18578,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -4896,7 +4896,9 @@
       "po_approved",
       "po_approved_by",
       "po_approved_at",
-      "due_date"
+      "due_date",
+      "approved_by",
+      "approved_at"
     ],
     "client_invoice_audit_log": [
       "id",

@@ -157,7 +157,8 @@ describe("approveInvoice", () => {
     expect(dupCheck[1]).toEqual(["09-01/26-27", "inv-1", "mascallnetindiapvtltd"]);
     const billUpdate = conn.execute.mock.calls[4];
     expect(String(billUpdate[0])).toMatch(/due_date = DATE_ADD\(invoice_date, INTERVAL \? DAY\)/);
-    expect(billUpdate[1]).toEqual(["09-01/26-27", 45, "inv-1"]);
+    expect(billUpdate[1]).toEqual(["09-01/26-27", 45, "u-1", "inv-1"]);
+    expect(String(billUpdate[0])).toMatch(/approved_by = \?, approved_at = NOW\(\)/);
 
     // Gap 3 fix: approveInvoice passes its own open-transaction `conn` through so the mint
     // runs on that connection instead of a separate pool-level call (avoids mixing pool-level

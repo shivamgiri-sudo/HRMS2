@@ -11,6 +11,8 @@
 --     rejected rows are moved over: approved_by/_at -> rejected_by/_at where rejected_by is NULL.
 --   * client_provision_audit: create / edit / approve / reject history of a provision.
 --   * client_invoice_audit_log.action gains receipt_recorded, receipt_voided, grn_changed.
+--   * client_invoice: approved_by / approved_at for step 2 (bill number minted). NULL on existing
+--     rows (nothing backfilled); set by approveInvoice from now on.
 --   * client_invoice_number_sequence: bill and credit_note counters keyed by a normalised company
 --     name (lower case, no spaces / dots / commas). Each normalised key takes the MAX of the raw
 --     keys that fold into it; raw-key rows are kept (no longer read).
@@ -19,7 +21,8 @@
 --     DROP COLUMN approval_requested_by, DROP COLUMN approval_decided_by, DROP COLUMN approval_decided_at,
 --     DROP COLUMN approval_note;
 --   ALTER TABLE client_credit_note DROP COLUMN rejected_by, DROP COLUMN rejected_at, DROP COLUMN rejected_reason;
---   ALTER TABLE client_provision DROP COLUMN rejected_by, DROP COLUMN rejected_at.
+--   ALTER TABLE client_provision DROP COLUMN rejected_by, DROP COLUMN rejected_at;
+--   ALTER TABLE client_invoice DROP COLUMN approved_by, DROP COLUMN approved_at.
 --   The normalised counter rows can stay (raising a counter never re-issues a number).
 
 CREATE TABLE IF NOT EXISTS client_credit_note_audit (
@@ -93,6 +96,19 @@ SET @add_cp_rejected = (
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'client_provision' AND COLUMN_NAME = 'rejected_by'
 );
 PREPARE _stmt FROM @add_cp_rejected;
+EXECUTE _stmt;
+DEALLOCATE PREPARE _stmt;
+
+SET @add_ci_approved = (
+  SELECT IF(
+    COUNT(*) = 0 AND (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'client_invoice') = 1,
+    "ALTER TABLE client_invoice ADD COLUMN approved_by CHAR(36) NULL, ADD COLUMN approved_at DATETIME NULL",
+    'SELECT 1 -- client_invoice.approved_by already exists (or table absent)'
+  )
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'client_invoice' AND COLUMN_NAME = 'approved_by'
+);
+PREPARE _stmt FROM @add_ci_approved;
 EXECUTE _stmt;
 DEALLOCATE PREPARE _stmt;
 
