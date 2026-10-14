@@ -3,146 +3,124 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import { loadBranchPolicy } from "../../shared/branchDecisionScope.js";
+import { MONEY_FLOW_ROLES } from "./money-flow.routes.js";
+import {
+  PAYABLE_AMOUNT_SQL, branchFilter, isoDay, loadBills, monthlyCollections, monthlyInvoiced, monthsAgo,
+  payablesFrom, sumRupees, type AnalyticsScope,
+} from "./finance-analytics-receivables.js";
+import type { BillRow } from "./money-flow.service.js";
 
 /**
  * Finance Analytics API — read-only analytical endpoints consumed by the analytics dashboard.
  *
- * Columns discovered via DESCRIBE (2026-09-20):
- *  - client_invoice: grand_total, invoice_date, cost_centre_id, invoice_status, is_migrated, legacy_id
- *  - cost_centre_master: id, company_name (used as client name for AR aging)
- *  - vendor_payment_tracking: due_amount (NOT net_payable), payment_status values:
- *      'Payment Pending' | 'Partially Paid' | 'Paid' | 'On Hold' | 'Rejected' | 'Closed'
- *  - client_bill_collection_run_snapshot: pay_date, pay_amount (used for collection trend)
- *  - company_bank_account: id, account_name, opening_balance, active_status
- *  - bank_account_ledger_entry: id, bank_account_id, running_balance
+ * Receivables (snapshot AR / overdue / DSO, ar-aging, collection-trend, cash-flow-forecast
+ * expected-in, revenue-collections) follow the Money Flow rules exactly; see
+ * finance-analytics-receivables.ts for the rule and the collections (no double count) rule.
+ *
+ * Access: the Money Flow roles (MONEY_FLOW_ROLES). Anyone not org-wide (isOrgWideUser) sees only
+ * their own branch; company bank balances are shown to org-wide users only.
+ *
+ * Responses keep their original fields and also carry the names FinanceAnalyticsPage reads
+ * (dso_days, bank_balance, days_* ageing keys, month_label, week_label).
  */
-
-const ANALYTICS_ROLES = [
-  "finance_head",
-  "accounts_head",
-  "ceo",
-  "super_admin",
-  "admin",
-] as const;
 
 export const financeAnalyticsRouter = Router();
 
 financeAnalyticsRouter.use(requireAuth);
-financeAnalyticsRouter.use(requireRole(...ANALYTICS_ROLES));
+financeAnalyticsRouter.use(requireRole(...MONEY_FLOW_ROLES));
 
 const h =
   (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: any, next: any) =>
     fn(req, res).catch(next);
 
-// ---------------------------------------------------------------------------
-// Helper: safe numeric — converts MySQL decimal strings / null to number
-// ---------------------------------------------------------------------------
 function num(v: unknown): number {
   if (v == null) return 0;
   const n = Number(v);
   return isNaN(n) ? 0 : n;
 }
 
+/** Branch scope of the caller: null for org-wide, else the own branch ([] when unknown — fail closed). */
+async function scopeOf(req: AuthenticatedRequest): Promise<AnalyticsScope> {
+  const userId = req.authUser?.id;
+  if (!userId) return { branchIds: [] };
+  const policy = await loadBranchPolicy(userId);
+  return { branchIds: policy.orgWide ? null : policy.ownBranchId ? [policy.ownBranchId] : [] };
+}
+
+const today = () => isoDay(new Date());
+const r2 = (n: number) => Math.round(n * 100) / 100;
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthLabel = (m: string) => `${MONTH_NAMES[Number(m.slice(5, 7)) - 1] ?? m.slice(5, 7)} ${m.slice(2, 4)}`;
+
 // ---------------------------------------------------------------------------
 // GET /api/finance/analytics/snapshot
 // ---------------------------------------------------------------------------
 financeAnalyticsRouter.get(
   "/snapshot",
-  h(async (_req, res) => {
-    // 1. Total receivables — only invoices NOT fully paid
+  h(async (req, res) => {
+    const scope = await scopeOf(req);
+    const asOf = today();
     let totalReceivables = 0;
     let overdueAmount = 0;
     let overdueCount = 0;
     let dso = 0;
-    // The four blocks below are independent, so they are started together and awaited once after
-    // the last one is defined. Each block keeps its own try/catch, so a failure still degrades only
-    // that block to its zero/empty fallback, exactly as when they ran back to back.
+    // Independent blocks run together; each degrades alone to its zero/empty fallback.
     const receivablesBlock = (async () => {
-    try {
-      // DSO's collected-total query does not depend on the receivables query; start it now so the
-      // two overlap. The no-op catch stops an unhandled rejection if the receivables await throws
-      // first (the awaited path below still surfaces the failure to the try/catch as before).
-      const collectedPromise = db.query<any[]>(
-        `SELECT SUM(pay_amount) / 12 AS avg_monthly_collected
-         FROM client_bill_collection_run_snapshot
-         WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`,
-      );
-      collectedPromise.catch(() => undefined);
-      const [receivableRows] = await db.query<any[]>(
-        `SELECT
-           SUM(ci.grand_total) AS total_receivables,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), ci.invoice_date) > 30
-                    AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')
-                    THEN ci.grand_total ELSE 0 END) AS overdue_amount,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), ci.invoice_date) > 30
-                    AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')
-                    THEN 1 ELSE 0 END) AS overdue_count
-         FROM client_invoice ci
-         LEFT JOIN client_invoice_payment_status cips ON cips.invoice_id = ci.id
-         WHERE ci.invoice_status = 'approved'
-           AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')`,
-      );
-      if (receivableRows.length > 0) {
-        totalReceivables = num(receivableRows[0].total_receivables);
-        overdueAmount = num(receivableRows[0].overdue_amount);
-        overdueCount = num(receivableRows[0].overdue_count);
+      try {
+        const collectedPromise = monthlyCollections(scope, monthsAgo(asOf, 12));
+        collectedPromise.catch(() => undefined);
+        const open = await loadBills(scope, asOf, { openOnly: true });
+        const overdue = open.filter((b) => b.daysOverdue > 0);
+        totalReceivables = sumRupees(open, (b) => b.outstanding);
+        overdueAmount = sumRupees(overdue, (b) => b.outstanding);
+        overdueCount = overdue.length;
+        // DSO = open AR / average monthly collection over 12 months * 30.
+        const collected = await collectedPromise;
+        const avgMonthly = [...collected.values()].reduce((s, v) => s + v, 0) / 12;
+        if (avgMonthly > 0) dso = Math.round((totalReceivables / avgMonthly) * 30 * 10) / 10;
+      } catch {
+        // fallback: leave 0s
       }
-
-      // DSO = (open AR / avg monthly collected over 12 months) * 30
-      const [collectedRows] = await collectedPromise;
-      const avgMonthly = num(collectedRows?.[0]?.avg_monthly_collected);
-      if (avgMonthly > 0) {
-        dso = Math.round((totalReceivables / avgMonthly) * 30 * 10) / 10;
-      }
-    } catch {
-      // fallback: leave 0s
-    }
     })();
 
-    // 2. Bank balances — last running_balance per account (or opening_balance if no entries)
     let bankBalances: { id: string; name: string; balance: number }[] = [];
     const bankBlock = (async () => {
-    try {
-      const [bankRows] = await db.query<any[]>(
-        `SELECT
-           cba.id,
-           cba.account_name AS name,
-           COALESCE(last_entry.running_balance, cba.opening_balance) AS balance
-         FROM company_bank_account cba
-         LEFT JOIN (
-           SELECT bank_account_id, MAX(id) AS last_id
-           FROM bank_account_ledger_entry
-           GROUP BY bank_account_id
-         ) latest ON cba.id = latest.bank_account_id
-         LEFT JOIN bank_account_ledger_entry last_entry ON last_entry.id = latest.last_id
-         WHERE cba.active_status = 1
-         ORDER BY cba.account_name`,
-      );
-      bankBalances = (bankRows ?? []).map((r) => ({
-        id: String(r.id),
-        name: String(r.name),
-        balance: num(r.balance),
-      }));
-    } catch {
-      // fallback: empty array
-    }
+      // Company bank balances are not a branch figure.
+      if (scope.branchIds) return;
+      try {
+        const [bankRows] = await db.query<any[]>(
+          `SELECT
+             cba.id,
+             cba.account_name AS name,
+             COALESCE(last_entry.running_balance, cba.opening_balance) AS balance
+           FROM company_bank_account cba
+           LEFT JOIN (
+             SELECT bank_account_id, MAX(id) AS last_id
+             FROM bank_account_ledger_entry
+             GROUP BY bank_account_id
+           ) latest ON cba.id = latest.bank_account_id
+           LEFT JOIN bank_account_ledger_entry last_entry ON last_entry.id = latest.last_id
+           WHERE cba.active_status = 1
+           ORDER BY cba.account_name`,
+        );
+        bankBalances = (bankRows ?? []).map((r) => ({ id: String(r.id), name: String(r.name), balance: num(r.balance) }));
+      } catch {
+        // fallback: empty array
+      }
     })();
 
-    // 3. Total payables — vendor_payment_tracking pending/partial
-    //    Actual status values: 'Payment Pending', 'Partially Paid'
     let totalPayables = 0;
     const payablesBlock = (async () => {
-    try {
-      const [payableRows] = await db.query<any[]>(
-        `SELECT SUM(due_amount) AS total_payables
-         FROM vendor_payment_tracking
-         WHERE payment_status IN ('Payment Pending', 'Partially Paid')`,
-      );
-      totalPayables = num(payableRows?.[0]?.total_payables);
-    } catch {
-      // fallback: 0
-    }
+      try {
+        const params: unknown[] = [];
+        const from = payablesFrom(scope, params);
+        const [payableRows] = await db.query<any[]>(`SELECT SUM(${PAYABLE_AMOUNT_SQL}) AS total_payables ${from}`, params);
+        totalPayables = num(payableRows?.[0]?.total_payables);
+      } catch {
+        // fallback: 0
+      }
     })();
 
     await Promise.all([receivablesBlock, bankBlock, payablesBlock]);
@@ -154,7 +132,9 @@ financeAnalyticsRouter.get(
         overdue_amount: overdueAmount,
         overdue_count: overdueCount,
         dso,
+        dso_days: dso,
         bank_balances: bankBalances,
+        bank_balance: r2(bankBalances.reduce((s, b) => s + b.balance, 0)),
         total_payables: totalPayables,
       },
     });
@@ -162,267 +142,122 @@ financeAnalyticsRouter.get(
 );
 
 // ---------------------------------------------------------------------------
-// GET /api/finance/analytics/ar-aging
+// GET /api/finance/analytics/ar-aging — by client, days past the due date
 // ---------------------------------------------------------------------------
+type AgingKey = "current" | "days_1_30" | "days_31_60" | "days_61_90" | "days_90_plus";
+const AGING_OF: Record<NonNullable<BillRow["ageBucket"]>, AgingKey> = {
+  not_due: "current", d0_30: "days_1_30", d31_60: "days_31_60", d61_90: "days_61_90", d90_plus: "days_90_plus",
+};
+
 financeAnalyticsRouter.get(
   "/ar-aging",
-  h(async (_req, res) => {
-    interface AgingRow {
-      client_name: string;
-      current: number;
-      d30: number;
-      d60: number;
-      d90_plus: number;
-      total: number;
-    }
-
-    let rows: AgingRow[] = [];
-    const totals = { current: 0, d30: 0, d60: 0, d90_plus: 0, total: 0 };
-
+  h(async (req, res) => {
+    const scope = await scopeOf(req);
+    type Acc = Record<AgingKey, number> & { total: number };
+    const blank = (): Acc => ({ current: 0, days_1_30: 0, days_31_60: 0, days_61_90: 0, days_90_plus: 0, total: 0 });
+    // Original keys kept: d30 = 31-60, d60 = 61-90, d90_plus = 90+ days past due.
+    const shape = (a: Acc) => ({
+      current: r2(a.current), days_1_30: r2(a.days_1_30), days_31_60: r2(a.days_31_60),
+      days_61_90: r2(a.days_61_90), days_90_plus: r2(a.days_90_plus),
+      d30: r2(a.days_31_60), d60: r2(a.days_61_90), d90_plus: r2(a.days_90_plus), total: r2(a.total),
+    });
+    let rows: Array<{ client_name: string } & ReturnType<typeof shape>> = [];
+    const totals = blank();
     try {
-      const [agingRows] = await db.query<any[]>(
-        `SELECT
-           COALESCE(ccm.company_name, ci.cost_centre_id) AS client_name,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), ci.invoice_date) <= 30 THEN ci.grand_total ELSE 0 END) AS current_bucket,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), ci.invoice_date) BETWEEN 31 AND 60 THEN ci.grand_total ELSE 0 END) AS d30,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), ci.invoice_date) BETWEEN 61 AND 90 THEN ci.grand_total ELSE 0 END) AS d60,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), ci.invoice_date) > 90 THEN ci.grand_total ELSE 0 END) AS d90_plus,
-           SUM(ci.grand_total) AS total
-         FROM client_invoice ci
-         LEFT JOIN cost_centre_master ccm ON ci.cost_centre_id = ccm.id
-         LEFT JOIN client_invoice_payment_status cips ON cips.invoice_id = ci.id
-         WHERE ci.invoice_status = 'approved'
-           AND ci.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 3 YEAR)
-           AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')
-         GROUP BY ci.cost_centre_id, ccm.company_name
-         ORDER BY total DESC
-         LIMIT 15`,
-      );
-
-      rows = (agingRows ?? []).map((r) => ({
-        client_name: String(r.client_name ?? "Unknown"),
-        current: num(r.current_bucket),
-        d30: num(r.d30),
-        d60: num(r.d60),
-        d90_plus: num(r.d90_plus),
-        total: num(r.total),
-      }));
-
-      for (const row of rows) {
-        totals.current += row.current;
-        totals.d30 += row.d30;
-        totals.d60 += row.d60;
-        totals.d90_plus += row.d90_plus;
-        totals.total += row.total;
+      const open = await loadBills(scope, today(), { openOnly: true });
+      const byClient = new Map<string, Acc>();
+      for (const b of open) {
+        const key = AGING_OF[b.ageBucket ?? "not_due"];
+        const a = byClient.get(b.client) ?? blank();
+        a[key] += b.outstanding;
+        a.total += b.outstanding;
+        totals[key] += b.outstanding;
+        totals.total += b.outstanding;
+        byClient.set(b.client, a);
       }
+      rows = [...byClient]
+        .sort((x, y) => y[1].total - x[1].total)
+        .slice(0, 15)
+        .map(([client, a]) => ({ client_name: client || "Unknown", ...shape(a) }));
     } catch {
       // fallback: empty
     }
-
-    res.json({ success: true, data: { rows, totals } });
+    res.json({ success: true, data: { rows, totals: shape(totals) } });
   }),
 );
 
 // ---------------------------------------------------------------------------
-// GET /api/finance/analytics/collection-trend
+// GET /api/finance/analytics/collection-trend — billed vs collected, last 12 months
 // ---------------------------------------------------------------------------
 financeAnalyticsRouter.get(
   "/collection-trend",
-  h(async (_req, res) => {
-    interface MonthEntry {
-      month: string;
-      invoiced: number;
-      collected: number;
-      gap: number;
-    }
-
-    const monthMap = new Map<string, MonthEntry>();
-
-    // The two queries are independent: start both, then fold the results into monthMap in the
-    // original order (invoiced first, collected second) so the output is unchanged.
-    const collectedQuery = db.query<any[]>(
-      `SELECT
-         DATE_FORMAT(pay_date, '%Y-%m') AS month,
-         SUM(pay_amount) AS collected
-       FROM client_bill_collection_run_snapshot
-       WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-       GROUP BY month
-       ORDER BY month ASC`,
-    );
-    collectedQuery.catch(() => undefined);
-
-    // Invoiced by month
-    try {
-      const [invoicedRows] = await db.query<any[]>(
-        `SELECT
-           DATE_FORMAT(invoice_date, '%Y-%m') AS month,
-           SUM(grand_total) AS invoiced
-         FROM client_invoice
-         WHERE invoice_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-           AND invoice_status = 'approved'
-         GROUP BY month
-         ORDER BY month ASC`,
-      );
-      for (const r of invoicedRows ?? []) {
-        const m = String(r.month);
-        const existing = monthMap.get(m);
-        if (existing) {
-          existing.invoiced += num(r.invoiced);
-        } else {
-          monthMap.set(m, {
-            month: m,
-            invoiced: num(r.invoiced),
-            collected: 0,
-            gap: 0,
-          });
-        }
-      }
-    } catch {
-      // fallback: skip
-    }
-
-    // Collected by month (from collection run snapshots)
-    try {
-      const [collectedRows] = await collectedQuery;
-      for (const r of collectedRows ?? []) {
-        const m = String(r.month);
-        const existing = monthMap.get(m);
-        if (existing) {
-          existing.collected += num(r.collected);
-        } else {
-          monthMap.set(m, {
-            month: m,
-            invoiced: 0,
-            collected: num(r.collected),
-            gap: 0,
-          });
-        }
-      }
-    } catch {
-      // fallback: skip
-    }
-
-    // Compute gap and sort
-    const months: MonthEntry[] = Array.from(monthMap.values())
-      .sort((a, b) => a.month.localeCompare(b.month))
-      .map((entry) => ({ ...entry, gap: entry.invoiced - entry.collected }));
-
+  h(async (req, res) => {
+    const scope = await scopeOf(req);
+    const from = monthsAgo(today(), 12);
+    const [inv, col] = await Promise.allSettled([monthlyInvoiced(scope, from), monthlyCollections(scope, from)]);
+    const invoiced = inv.status === "fulfilled" ? inv.value : new Map<string, number>();
+    const collected = col.status === "fulfilled" ? col.value : new Map<string, number>();
+    const months = [...new Set([...invoiced.keys(), ...collected.keys()])].sort().map((m) => {
+      const i = r2(invoiced.get(m) ?? 0);
+      const c = r2(collected.get(m) ?? 0);
+      return { month: m, month_label: monthLabel(m), invoiced: i, collected: c, gap: r2(i - c) };
+    });
     res.json({ success: true, data: { months } });
   }),
 );
 
 // ---------------------------------------------------------------------------
-// GET /api/finance/analytics/cash-flow-forecast
+// GET /api/finance/analytics/cash-flow-forecast — 14 weeks from this Monday
 // ---------------------------------------------------------------------------
 financeAnalyticsRouter.get(
   "/cash-flow-forecast",
-  h(async (_req, res) => {
-    interface WeekBucket {
-      week_start: string;
-      expected_in: number;
-      expected_out: number;
-      net: number;
-      cumulative: number;
-    }
-
-    // Build 14 weekly buckets starting from the Monday of the current week
-    function getWeekStart(offsetWeeks: number): Date {
+  h(async (req, res) => {
+    const scope = await scopeOf(req);
+    function weekStart(offsetWeeks: number): string {
       const now = new Date();
-      const day = now.getDay(); // 0=Sun, 1=Mon...
-      const diffToMonday = day === 0 ? -6 : 1 - day;
+      const day = now.getDay();
       const monday = new Date(now);
-      monday.setDate(now.getDate() + diffToMonday + offsetWeeks * 7);
-      monday.setHours(0, 0, 0, 0);
-      return monday;
+      monday.setDate(now.getDate() + (day === 0 ? -6 : 1 - day) + offsetWeeks * 7);
+      return isoDay(monday);
     }
-
-    function toISODate(d: Date): string {
-      return d.toISOString().slice(0, 10);
-    }
-
-    const weekBuckets: WeekBucket[] = Array.from({ length: 14 }, (_, i) => ({
-      week_start: toISODate(getWeekStart(i)),
-      expected_in: 0,
-      expected_out: 0,
-      net: 0,
-      cumulative: 0,
+    const starts = Array.from({ length: 15 }, (_, i) => weekStart(i));
+    const weeks = starts.slice(0, 14).map((ws) => ({
+      week_start: ws, week_label: `${ws.slice(8, 10)} ${MONTH_NAMES[Number(ws.slice(5, 7)) - 1]}`,
+      expected_in: 0, expected_out: 0, net: 0, cumulative: 0,
     }));
-
-    // The expected_in and expected_out queries are independent; both are started here and
-    // folded into the buckets in the original order.
-    const outQuery = db.query<any[]>(
-      `SELECT
-         due_date,
-         SUM(due_amount) AS amount
-       FROM vendor_payment_tracking
-       WHERE payment_status IN ('Payment Pending', 'Partially Paid')
-         AND due_date >= ?
-         AND due_date < ?
-       GROUP BY due_date`,
-      [toISODate(getWeekStart(0)), toISODate(getWeekStart(14))],
-    );
-    outQuery.catch(() => undefined);
-
-    // expected_in: invoices whose due date (invoice_date + 30 days) falls in each week
-    try {
-      const [inRows] = await db.query<any[]>(
-        `SELECT
-           DATE_ADD(ci.invoice_date, INTERVAL 30 DAY) AS due_date,
-           SUM(ci.grand_total) AS amount
-         FROM client_invoice ci
-         LEFT JOIN client_invoice_payment_status cips ON cips.invoice_id = ci.id
-         WHERE ci.invoice_status = 'approved'
-           AND ci.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-           AND DATE_ADD(ci.invoice_date, INTERVAL 30 DAY) >= ?
-           AND DATE_ADD(ci.invoice_date, INTERVAL 30 DAY) < ?
-           AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')
-         GROUP BY due_date`,
-        [toISODate(getWeekStart(0)), toISODate(getWeekStart(14))],
-      );
-      for (const r of inRows ?? []) {
-        const dueDate = new Date(r.due_date);
-        for (let i = 0; i < 14; i++) {
-          const ws = getWeekStart(i);
-          const we = getWeekStart(i + 1);
-          if (dueDate >= ws && dueDate < we) {
-            weekBuckets[i].expected_in += num(r.amount);
-            break;
-          }
-        }
+    const place = (date: string | null, amount: number, key: "expected_in" | "expected_out") => {
+      if (!date) return;
+      for (let i = 0; i < 14; i++) {
+        if (date >= starts[i] && date < starts[i + 1]) { weeks[i][key] = r2(weeks[i][key] + amount); return; }
       }
-    } catch {
-      // fallback: leave 0
-    }
+    };
 
-    // expected_out: vendor payments pending/partial due in each week
-    //   vendor_payment_tracking has a due_date column
-    try {
-      const [outRows] = await outQuery;
-      for (const r of outRows ?? []) {
-        if (!r.due_date) continue;
-        const dueDate = new Date(r.due_date);
-        for (let i = 0; i < 14; i++) {
-          const ws = getWeekStart(i);
-          const we = getWeekStart(i + 1);
-          if (dueDate >= ws && dueDate < we) {
-            weekBuckets[i].expected_out += num(r.amount);
-            break;
-          }
-        }
+    const outParams: unknown[] = [];
+    const outFrom = payablesFrom(scope, outParams);
+    const [inRes, outRes] = await Promise.allSettled([
+      // expected_in: what is still owed on open bills, in the week of each bill's due date.
+      loadBills(scope, today(), { openOnly: true }),
+      db.query<any[]>(
+        `SELECT vpt.due_date, SUM(${PAYABLE_AMOUNT_SQL}) AS amount ${outFrom}
+           AND vpt.due_date >= ? AND vpt.due_date < ?
+         GROUP BY vpt.due_date`,
+        [...outParams, starts[0], starts[14]],
+      ),
+    ]);
+    if (inRes.status === "fulfilled") for (const b of inRes.value) place(b.dueDate, b.outstanding, "expected_in");
+    if (outRes.status === "fulfilled") {
+      for (const r of outRes.value[0] ?? []) {
+        const d = r.due_date instanceof Date ? isoDay(r.due_date) : r.due_date ? String(r.due_date).slice(0, 10) : null;
+        place(d, num(r.amount), "expected_out");
       }
-    } catch {
-      // fallback: leave 0
     }
-
-    // Compute net and cumulative
     let cumulative = 0;
-    for (const bucket of weekBuckets) {
-      bucket.net = bucket.expected_in - bucket.expected_out;
-      cumulative += bucket.net;
-      bucket.cumulative = cumulative;
+    for (const w of weeks) {
+      w.net = r2(w.expected_in - w.expected_out);
+      cumulative = r2(cumulative + w.net);
+      w.cumulative = cumulative;
     }
-
-    res.json({ success: true, data: { weeks: weekBuckets } });
+    res.json({ success: true, data: { weeks } });
   }),
 );
 
@@ -432,17 +267,17 @@ financeAnalyticsRouter.get(
 financeAnalyticsRouter.get(
   "/expense-trends",
   h(async (req, res) => {
+    const scope = await scopeOf(req);
     const fy = (req.query.financialYear as string) || "2026-27";
     const [yearParts] = fy.split("-");
     const fyStart = `${yearParts}-04-01`;
     const fyEnd = `${parseInt(yearParts) + 1}-03-31`;
 
     let kpis = { total_spend: 0, pending_payments: 0, avg_approval_days: 0 };
-    let monthly: any[] = [];
     let topVendors: any[] = [];
 
-    // The monthly query does not depend on the KPI query; start it now so both run together.
-    // It is awaited below at the same point as before, inside its own try/catch.
+    const mParams: unknown[] = [fyStart, fyEnd];
+    const mScope = branchFilter(scope, "gr.branch_id", mParams);
     const monthQuery = db.query<any[]>(
       `SELECT
          DATE_FORMAT(gr.bill_date, '%Y-%m') AS month,
@@ -451,14 +286,16 @@ financeAnalyticsRouter.get(
        FROM grn_request gr
        WHERE gr.status = 'approved'
          AND gr.bill_date BETWEEN ? AND ?
-         AND gr.head IS NOT NULL
+         AND gr.head IS NOT NULL${mScope}
        GROUP BY month, gr.head
        ORDER BY month ASC`,
-      [fyStart, fyEnd],
+      mParams,
     );
     monthQuery.catch(() => undefined);
 
     try {
+      const kParams: unknown[] = [fyStart, fyEnd];
+      const kScope = branchFilter(scope, "gr.branch_id", kParams);
       const [kpiRows] = await db.query<any[]>(
         `SELECT
            SUM(gr.amount_with_tax) AS total_spend,
@@ -467,15 +304,14 @@ financeAnalyticsRouter.get(
          FROM grn_request gr
          LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = gr.id
          WHERE gr.status = 'approved'
-           AND gr.bill_date BETWEEN ? AND ?`,
-        [fyStart, fyEnd],
+           AND gr.bill_date BETWEEN ? AND ?${kScope}`,
+        kParams,
       );
       if (kpiRows.length > 0) {
         kpis = {
           total_spend: num(kpiRows[0].total_spend),
           pending_payments: num(kpiRows[0].pending_payments),
-          avg_approval_days:
-            Math.round(num(kpiRows[0].avg_approval_days) * 10) / 10,
+          avg_approval_days: Math.round(num(kpiRows[0].avg_approval_days) * 10) / 10,
         };
       }
     } catch {
@@ -484,40 +320,27 @@ financeAnalyticsRouter.get(
 
     try {
       const [monthRows] = await monthQuery;
-      // Pivot: month -> { month (string), [head]: number }
       const monthMap = new Map<string, Record<string, number | string>>();
-      const headSet = new Set<string>();
+      const headTotals: Record<string, number> = {};
       for (const r of monthRows) {
         const m = String(r.month);
         const h2 = String(r.expense_head);
-        headSet.add(h2);
         if (!monthMap.has(m)) monthMap.set(m, { month: m });
         const entry = monthMap.get(m)!;
         entry[h2] = ((entry[h2] as number) || 0) + num(r.amount);
+        headTotals[h2] = (headTotals[h2] || 0) + num(r.amount);
       }
-      // Keep only top 6 heads by total
-      const headTotals: Record<string, number> = {};
-      for (const row of monthRows) {
-        const h2 = String(row.expense_head);
-        headTotals[h2] = (headTotals[h2] || 0) + num(row.amount);
-      }
-      const topHeads = Object.entries(headTotals)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 6)
-        .map(([k]) => k);
-      monthly = Array.from(monthMap.values()).sort((a, b) =>
-        String(a.month).localeCompare(String(b.month)),
-      );
-      res.json({
-        success: true,
-        data: { kpis, monthly, topHeads, topVendors },
-      });
+      const topHeads = Object.entries(headTotals).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k]) => k);
+      const monthly = Array.from(monthMap.values()).sort((a, b) => String(a.month).localeCompare(String(b.month)));
+      res.json({ success: true, data: { kpis, monthly, topHeads, topVendors } });
       return;
     } catch {
       /* fallback */
     }
 
     try {
+      const vParams: unknown[] = [fyStart, fyEnd];
+      const vScope = branchFilter(scope, "gr.branch_id", vParams);
       const [vendorRows] = await db.query<any[]>(
         `SELECT
            COALESCE(v.vendor_name, gr.vendor_id) AS vendor_name,
@@ -526,11 +349,11 @@ financeAnalyticsRouter.get(
          FROM grn_request gr
          LEFT JOIN vendor_master v ON v.id = gr.vendor_id
          WHERE gr.status = 'approved'
-           AND gr.bill_date BETWEEN ? AND ?
+           AND gr.bill_date BETWEEN ? AND ?${vScope}
          GROUP BY gr.vendor_id, v.vendor_name
          ORDER BY total_spend DESC
          LIMIT 15`,
-        [fyStart, fyEnd],
+        vParams,
       );
       topVendors = vendorRows.map((r) => ({
         vendor_name: String(r.vendor_name ?? "Unknown"),
@@ -541,10 +364,7 @@ financeAnalyticsRouter.get(
       /* fallback */
     }
 
-    res.json({
-      success: true,
-      data: { kpis, monthly: [], topHeads: [], topVendors },
-    });
+    res.json({ success: true, data: { kpis, monthly: [], topHeads: [], topVendors } });
   }),
 );
 
@@ -554,105 +374,48 @@ financeAnalyticsRouter.get(
 financeAnalyticsRouter.get(
   "/revenue-collections",
   h(async (req, res) => {
-    const months = Math.min(
-      24,
-      Math.max(1, parseInt(String(req.query.months || "12"))),
-    );
+    const scope = await scopeOf(req);
+    const months = Math.min(24, Math.max(1, parseInt(String(req.query.months || "12")) || 12));
+    const asOf = today();
+    const from = monthsAgo(asOf, months);
 
-    let trend: any[] = [];
-    let clientBreakdown: any[] = [];
-    let paymentStatusSummary: any[] = [];
+    const [inv, col, bills] = await Promise.allSettled([
+      monthlyInvoiced(scope, from),
+      monthlyCollections(scope, from),
+      // Bills raised in the window, for the client split and the payment status split.
+      loadBills(scope, asOf, { from }),
+    ]);
 
-    // The four queries are independent of each other; start them all now and consume each in the
-    // original order inside its original try/catch, so a failing block still falls back alone.
-    const invQuery = db.query<any[]>(
-      `SELECT DATE_FORMAT(invoice_date, '%Y-%m') AS month, SUM(grand_total) AS invoiced
-         FROM client_invoice
-         WHERE invoice_status = 'approved'
-           AND invoice_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
-         GROUP BY month ORDER BY month`,
-      [months],
-    );
-    const colQuery = db.query<any[]>(
-      `SELECT DATE_FORMAT(pay_date, '%Y-%m') AS month, SUM(pay_amount) AS collected
-         FROM client_bill_collection_run_snapshot
-         WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
-         GROUP BY month ORDER BY month`,
-      [months],
-    );
-    const cbQuery = db.query<any[]>(
-      `SELECT
-           COALESCE(ccm.company_name, ci.cost_centre_id) AS client_name,
-           SUM(ci.grand_total) AS invoiced
-         FROM client_invoice ci
-         LEFT JOIN cost_centre_master ccm ON ci.cost_centre_id = ccm.id
-         WHERE ci.invoice_status = 'approved'
-           AND ci.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-         GROUP BY ci.cost_centre_id, ccm.company_name
-         ORDER BY invoiced DESC
-         LIMIT 5`,
-    );
-    const psQuery = db.query<any[]>(
-      `SELECT payment_status, COUNT(*) AS cnt, SUM(total_amount) AS amount
-         FROM client_invoice_payment_status
-         GROUP BY payment_status`,
-    );
-    for (const q of [invQuery, colQuery, cbQuery, psQuery]) q.catch(() => undefined);
-
-    try {
-      const monthMap = new Map<
-        string,
-        { month: string; invoiced: number; collected: number }
-      >();
-      const [invRows] = await invQuery;
-      for (const r of invRows) {
-        const m = String(r.month);
-        monthMap.set(m, { month: m, invoiced: num(r.invoiced), collected: 0 });
-      }
-      const [colRows] = await colQuery;
-      for (const r of colRows) {
-        const m = String(r.month);
-        const existing = monthMap.get(m);
-        if (existing) existing.collected = num(r.collected);
-        else
-          monthMap.set(m, {
-            month: m,
-            invoiced: 0,
-            collected: num(r.collected),
-          });
-      }
-      trend = Array.from(monthMap.values()).sort((a, b) =>
-        a.month.localeCompare(b.month),
-      );
-    } catch {
-      /* fallback */
-    }
-
-    try {
-      const [cbRows] = await cbQuery;
-      clientBreakdown = cbRows.map((r) => ({
-        client_name: String(r.client_name ?? "Unknown"),
-        invoiced: num(r.invoiced),
+    let trend: { month: string; month_label: string; invoiced: number; collected: number }[] = [];
+    if (inv.status === "fulfilled") {
+      const collected = col.status === "fulfilled" ? col.value : new Map<string, number>();
+      trend = [...new Set([...inv.value.keys(), ...collected.keys()])].sort().map((m) => ({
+        month: m, month_label: monthLabel(m), invoiced: r2(inv.value.get(m) ?? 0), collected: r2(collected.get(m) ?? 0),
       }));
-    } catch {
-      /* fallback */
     }
 
-    try {
-      const [psRows] = await psQuery;
-      paymentStatusSummary = psRows.map((r) => ({
-        status: String(r.payment_status),
-        count: num(r.cnt),
-        amount: num(r.amount),
-      }));
-    } catch {
-      /* fallback */
+    let clientBreakdown: { client_name: string; invoiced: number }[] = [];
+    let paymentStatusSummary: { status: string; count: number; amount: number }[] = [];
+    if (bills.status === "fulfilled") {
+      const byClient = new Map<string, number>();
+      const byStatus = new Map<string, { count: number; amount: number }>();
+      for (const b of bills.value) {
+        byClient.set(b.client, (byClient.get(b.client) ?? 0) + b.grandTotal);
+        // Same status rule as client_invoice_payment_status: paid when nothing is owed, partial
+        // when something was settled, else pending.
+        const status = b.outstanding === 0 ? "paid" : b.received + b.tds + b.deduction > 0 ? "partial" : "pending";
+        const s = byStatus.get(status) ?? { count: 0, amount: 0 };
+        s.count += 1;
+        s.amount += b.grandTotal;
+        byStatus.set(status, s);
+      }
+      clientBreakdown = [...byClient]
+        .sort((a, b) => b[1] - a[1]).slice(0, 5)
+        .map(([client, amount]) => ({ client_name: client || "Unknown", invoiced: r2(amount) }));
+      paymentStatusSummary = [...byStatus].map(([status, s]) => ({ status, count: s.count, amount: r2(s.amount) }));
     }
 
-    res.json({
-      success: true,
-      data: { trend, clientBreakdown, paymentStatusSummary },
-    });
+    res.json({ success: true, data: { trend, clientBreakdown, paymentStatusSummary } });
   }),
 );
 
@@ -661,35 +424,39 @@ financeAnalyticsRouter.get(
 // ---------------------------------------------------------------------------
 financeAnalyticsRouter.get(
   "/payables-aging",
-  h(async (_req, res) => {
+  h(async (req, res) => {
+    const scope = await scopeOf(req);
     let buckets = { b0_30: 0, b31_60: 0, b61_90: 0, b90_plus: 0, total: 0 };
     let topVendors: any[] = [];
 
-    // The vendor query is independent of the bucket query; start it now, consume it below.
+    const vParams: unknown[] = [];
+    const vFrom = payablesFrom(scope, vParams);
     const vendorQuery = db.query<any[]>(
       `SELECT
            COALESCE(vm.vendor_name, vpt.vendor_id) AS vendor_name,
-           SUM(vpt.due_amount) AS pending_amount,
+           SUM(${PAYABLE_AMOUNT_SQL}) AS pending_amount,
            MIN(vpt.due_date) AS oldest_due
-         FROM vendor_payment_tracking vpt
-         LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
-         WHERE vpt.payment_status IN ('Payment Pending', 'Partially Paid')
+         ${vFrom}
          GROUP BY vpt.vendor_id, vm.vendor_name
          ORDER BY pending_amount DESC
          LIMIT 10`,
+      vParams,
     );
     vendorQuery.catch(() => undefined);
 
     try {
+      const bParams: unknown[] = [];
+      const bFrom = payablesFrom(scope, bParams);
+      const age = "DATEDIFF(CURDATE(), COALESCE(vpt.due_date, vpt.created_at))";
       const [rows] = await db.query<any[]>(
         `SELECT
-           SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(due_date, created_at)) <= 30 THEN due_amount ELSE 0 END) AS b0_30,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(due_date, created_at)) BETWEEN 31 AND 60 THEN due_amount ELSE 0 END) AS b31_60,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(due_date, created_at)) BETWEEN 61 AND 90 THEN due_amount ELSE 0 END) AS b61_90,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(due_date, created_at)) > 90 THEN due_amount ELSE 0 END) AS b90_plus,
-           SUM(due_amount) AS total
-         FROM vendor_payment_tracking
-         WHERE payment_status IN ('Payment Pending', 'Partially Paid')`,
+           SUM(CASE WHEN ${age} <= 30 THEN ${PAYABLE_AMOUNT_SQL} ELSE 0 END) AS b0_30,
+           SUM(CASE WHEN ${age} BETWEEN 31 AND 60 THEN ${PAYABLE_AMOUNT_SQL} ELSE 0 END) AS b31_60,
+           SUM(CASE WHEN ${age} BETWEEN 61 AND 90 THEN ${PAYABLE_AMOUNT_SQL} ELSE 0 END) AS b61_90,
+           SUM(CASE WHEN ${age} > 90 THEN ${PAYABLE_AMOUNT_SQL} ELSE 0 END) AS b90_plus,
+           SUM(${PAYABLE_AMOUNT_SQL}) AS total
+         ${bFrom}`,
+        bParams,
       );
       if (rows.length > 0) {
         buckets = {
