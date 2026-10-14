@@ -348,6 +348,22 @@ describe("P&L reconciliation", () => {
   });
 });
 
+describe("P&L reconciliation — non-MAS branches are never read", () => {
+  it("restricts cost centres to MAS branches as well as MAS companies (NOIDA-DD cost centres are labelled Mas Callnet)", async () => {
+    mockDb();
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    await getPnlReconciliation("2026-09", {});
+    const ccQuery = execute.mock.calls
+      .map((c) => String(c[0]))
+      .find((q) => q.includes("FROM cost_centre_master ccm") && q.includes("LEFT JOIN branch_master bm"));
+    expect(ccQuery).toBeDefined();
+    // Branch test: a recorded company other than MAS Callnet, or a DialDesk / I-Spark branch name, hides the branch.
+    expect(ccQuery).toContain("LIKE '%mascallnet%'");
+    expect(ccQuery).toContain("NOT LIKE '%dialdesk%'");
+    expect(ccQuery).toContain("NOT LIKE '%ispark%'");
+  });
+});
+
 describe("P&L reconciliation — OP% scope rules (2026-09-15 OP% check)", () => {
   /** Wrap mockDb's answers, overriding the queries a test cares about. */
   function withOverrides(
