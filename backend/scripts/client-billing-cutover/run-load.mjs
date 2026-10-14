@@ -112,11 +112,17 @@ async function main() {
     const creditNos = creditNoteRows.map((r) => r.src_credit_no).filter(Boolean);
     const [billHits] = billNos.length
       ? await pool.query(
-          `SELECT bill_no, id, invoice_status, is_migrated, legacy_id FROM client_invoice WHERE bill_no IN (?)`, [billNos])
+          // Numbers are per company: IDC (DialDesk) and MAS share the "09-NNN/26-27" format, so only a
+          // MAS bill with the same number is a real duplicate.
+          `SELECT ci.bill_no, ci.id, ci.invoice_status, ci.is_migrated, ci.legacy_id FROM client_invoice ci
+           JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+           WHERE ci.bill_no IN (?) AND REPLACE(REPLACE(REPLACE(LOWER(COALESCE(cc.company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'`, [billNos])
       : [[]];
     const [creditHits] = creditNos.length
       ? await pool.query(
-          `SELECT credit_no, id, credit_status, legacy_id FROM client_credit_note WHERE credit_no IN (?)`, [creditNos])
+          `SELECT cn.credit_no, cn.id, cn.credit_status, cn.legacy_id FROM client_credit_note cn
+           JOIN client_invoice ci ON ci.id = cn.invoice_id JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+           WHERE cn.credit_no IN (?) AND REPLACE(REPLACE(REPLACE(LOWER(COALESCE(cc.company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'`, [creditNos])
       : [[]];
     console.log(`Number collisions with rows already in HRMS: bills=${billHits.length} credit notes=${creditHits.length}`);
     for (const h of billHits) console.log(`  COLLISION bill ${h.bill_no}: HRMS invoice ${h.id} status=${h.invoice_status} migrated=${h.is_migrated} legacy_id=${h.legacy_id ?? "-"}`);
