@@ -197,11 +197,18 @@ describe("journalVoucherService.approve", () => {
     expect(conn.commit).toHaveBeenCalled();
   });
 
-  it("refuses self-approval — the maker cannot approve their own voucher", async () => {
+  it("refuses self-approval for a non-Finance-Head approver (ceo)", async () => {
+    const ceo = { id: "ceo-1", roles: ["ceo"] };
+    const conn = connectionFor(draftRow({ status: "pending_approval", created_by: ceo.id }), pendingLines);
+    getConnection.mockResolvedValue(conn);
+    await expect(journalVoucherService.approve("jv-1", null, ceo)).rejects.toThrow(/cannot approve a voucher you made/i);
+    expect(journalPost).not.toHaveBeenCalled();
+  });
+
+  it("exempts the Finance Head from self-approval (owner ruling 2026-10-14)", async () => {
     const conn = connectionFor(draftRow({ status: "pending_approval", created_by: APPROVER.id }), pendingLines);
     getConnection.mockResolvedValue(conn);
-    await expect(journalVoucherService.approve("jv-1", null, APPROVER)).rejects.toThrow(/cannot approve a voucher you made/i);
-    expect(journalPost).not.toHaveBeenCalled();
+    await expect(journalVoucherService.approve("jv-1", null, APPROVER)).resolves.toBeDefined();
   });
 
   it("refuses approval from a role that is not finance_head/ceo/super_admin", async () => {

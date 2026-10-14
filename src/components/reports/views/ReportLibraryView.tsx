@@ -449,7 +449,7 @@ function buildFiltersForReport(code: string): FilterDef[] {
 
 // ─── Build CATALOG from central source + local filters ────────────────────────
 
-const SINGLE_MONTH_ONLY = new Set(["attendance-register-monthly", "attendance-register-grid", "attendance-source-sheet", "leave-balance", "leave-balance-export", "bank-advice", "neft-transfer-file", "pf-ecr-format"]);
+const SINGLE_MONTH_ONLY = new Set(["attendance-source-sheet", "leave-balance", "leave-balance-export", "bank-advice", "neft-transfer-file", "pf-ecr-format"]);
 
 /** Reports with no date of their own (current-state aggregates, masters, status snapshots). */
 const POINT_IN_TIME = new Set([
@@ -961,6 +961,8 @@ function FilterInput({ def, value, onChange }: { def: FilterDef; value: string; 
  */
 function applyFilterChange(prev: Record<string, string>, key: string, value: string): Record<string, string> {
   const next = { ...prev, [key]: value };
+  // A process belongs to one branch: a new branch invalidates the process picked under the old one.
+  if (key === "branchId" && prev.branchId !== value) delete next.processId;
   if (!value) return next;
   if (key === "month") { delete next.from; delete next.to; }
   if (key === "from" || key === "to") delete next.month;
@@ -1138,7 +1140,8 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
   });
   const { data: processData } = useQuery({
     queryKey: ["processes-all"],
-    queryFn: () => hrmsApi.get<{ data: { id: string; process_name: string }[] }>("/api/processes"),
+    // Active processes only: a closed process has no live employees to report on.
+    queryFn: () => hrmsApi.get<{ data: { id: string; process_name: string; branch_id?: string | null; active_status?: boolean }[] }>("/api/processes?activeStatus=active"),
     staleTime: 10 * 60_000,
   });
 
@@ -1298,7 +1301,18 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
       return { ...def, type: "select", options: branches.map(b => ({ value: b.id, label: b.branch_name })) };
     }
     if (def.key === "processId" && processes.length > 0) {
-      return { ...def, type: "select", options: processes.map(p => ({ value: p.id, label: (p as { id: string; process_name?: string }).process_name ?? p.id })) };
+      // Active processes of the chosen branch. With no branch picked, only processes in the
+      // branches this user can see (the branch list is already scoped to the caller).
+      const pickedBranch = filterValues.branchId;
+      const allowedBranches = new Set(branches.map(b => b.id));
+      const options = processes
+        .filter(p => p.active_status !== false)
+        .filter(p => pickedBranch
+          ? p.branch_id === pickedBranch
+          : !p.branch_id || allowedBranches.size === 0 || allowedBranches.has(p.branch_id))
+        .map(p => ({ value: p.id, label: p.process_name ?? p.id }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+      return { ...def, type: "select", options };
     }
     return def;
   }

@@ -2,6 +2,7 @@ export interface ProcessMaster {
   id: string;
   process_code: string;
   process_name: string;
+  branch_id?: string | null;
   department_id: string | null;
   process_type: string | null;
   branch_name: string | null;

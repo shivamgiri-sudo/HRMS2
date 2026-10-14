@@ -3089,23 +3089,7 @@ export const grnSmartService = {
             );
           }
         }
-        if (role === "finance_head") {
-          if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
-            throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who submitted this GRN"
-            );
-          }
-          if (grn.branch_head_reviewed_by && String(grn.branch_head_reviewed_by) === actorUserId) {
-            throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head review"
-            );
-          }
-          if (grn.accounts_head_reviewed_by && String(grn.accounts_head_reviewed_by) === actorUserId) {
-            throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who performed the Accounts Head review"
-            );
-          }
-        }
+        // Owner ruling 2026-10-14: the Finance Head is exempt from maker-checker at their own stage.
       }
 
       if (role === "branch_head") {

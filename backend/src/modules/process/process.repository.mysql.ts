@@ -27,6 +27,9 @@ function mapRow(row: RowDataPacket): ProcessMaster {
     id: row.id as string,
     process_code: row.process_code as string,
     process_name: row.process_name as string,
+    // The real FK column. Without it callers could not tell which branch a process belongs to
+    // (the Report Library's branch-scoped Process dropdown needs exactly that).
+    branch_id: (row.branch_id as string | null) ?? null,
     department_id: (row.department_id as string | null) ?? null,
     process_type: (row.process_type as string | null) ?? null,
     branch_name: (row.branch_name as string | null) ?? null,

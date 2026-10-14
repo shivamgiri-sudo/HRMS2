@@ -47,17 +47,25 @@ export async function rosterPublished(
   scope: ExecScope,
   options: ExecOptions,
 ): Promise<ExecResult> {
-  const today = new Date().toISOString().slice(0, 10);
-  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to = dateParam(filters.to, today);
+  // A roster is forward-looking: the week ahead is published days before it starts, so the old
+  // default upper bound of "today" hid every upcoming roster and a blank date range came back
+  // empty. Default to the calendar year so far plus the next 60 days.
+  const today = businessToday();
+  const horizon = new Date(`${today}T00:00:00Z`);
+  horizon.setUTCDate(horizon.getUTCDate() + 60);
+  const from = dateParam(filters.from, `${today.slice(0, 4)}-01-01`);
+  const to = dateParam(filters.to, horizon.toISOString().slice(0, 10));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
+  // 'approved_final' is the locked state of a published roster (payroll-input-ready); every other
+  // roster reader in this codebase treats it as published, this report did not and dropped
+  // those rows.
   clauses.push(
     "wra.roster_date BETWEEN ? AND ?",
-    "wra.publish_status = 'published'",
+    "wra.publish_status IN ('published','approved_final')",
   );
   params.push(from, to);
 
@@ -74,10 +82,12 @@ export async function rosterPublished(
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            wra.roster_date,
            ws.shift_name,
-           TIME_FORMAT(ws.start_time, '%H:%i') AS shift_start,
-           TIME_FORMAT(ws.end_time,   '%H:%i') AS shift_end,
+           COALESCE(NULLIF(wra.shift_start_time, ''), TIME_FORMAT(ws.start_time, '%H:%i')) AS shift_start,
+           COALESCE(NULLIF(wra.shift_end_time,   ''), TIME_FORMAT(ws.end_time,   '%H:%i')) AS shift_end,
            ws.required_minutes AS shift_duration_minutes,
+           COALESCE(wra.is_week_off, 0) AS week_off,
            wra.publish_status AS roster_status,
+           wra.employee_ack_status AS acknowledgement_status,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM wfm_roster_assignment wra

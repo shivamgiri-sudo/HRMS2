@@ -597,20 +597,19 @@ describe("GRN smart review maker-checker — runtime paths (DB mocked)", () => {
     ).rejects.toThrow(/Maker-checker violation/);
   });
 
-  it("finance_head cannot approve a GRN they submitted", async () => {
+  // Owner ruling 2026-10-14: the Finance Head is exempt from maker-checker at their own stage.
+  it("finance_head is not blocked by maker-checker on a GRN they submitted", async () => {
     setupReviewMocks({ status: "branch_head_approved", branch_head_reviewed_by: BH_REVIEWER });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await expect(
-      grnSmartService.review(GRN_ID, "approved", undefined, SUBMITTER, "finance_head"),
-    ).rejects.toThrow(/Maker-checker violation/);
+    const outcome = await grnSmartService.review(GRN_ID, "approved", undefined, SUBMITTER, "finance_head").catch((e: Error) => e);
+    expect(String((outcome as Error)?.message ?? "")).not.toMatch(/Maker-checker violation/);
   });
 
-  it("finance_head cannot approve a GRN where they were the branch_head reviewer", async () => {
+  it("finance_head is not blocked by maker-checker on a GRN where they were the branch_head reviewer", async () => {
     setupReviewMocks({ status: "branch_head_approved", branch_head_reviewed_by: FINANCE_HEAD });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await expect(
-      grnSmartService.review(GRN_ID, "approved", undefined, FINANCE_HEAD, "finance_head"),
-    ).rejects.toThrow(/Maker-checker violation/);
+    const outcome = await grnSmartService.review(GRN_ID, "approved", undefined, FINANCE_HEAD, "finance_head").catch((e: Error) => e);
+    expect(String((outcome as Error)?.message ?? "")).not.toMatch(/Maker-checker violation/);
   });
 
   it("approval is blocked when the GRN period is locked (P0-3)", async () => {

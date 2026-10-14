@@ -449,3 +449,7 @@ Verified on production data via the localhost preview API + Playwright (zero con
 - Console: no errors from the new code (only a pre-existing React key warning on the Branch/Process options, caused by the mock data).
 - Backend: vitest covers range expansion (year boundary, 12-month cap, inverted/half-filled ranges, single-month-only layouts), per-month merge and pagination, and row-date filtering; a contract test keeps the frontend pickers in step with what the backend honours. `tsc` and `npm run build` clean; all 67 reporting test files pass.
 - NOT verified: the real SQL executors against MySQL (no database here), real production data, the email-request worker path and the XLSX export path end to end (both changed but only type-checked), and login-gated access.
+
+## 2026-10-14 — Report Library process dropdown, attendance-register range, roster export; Finance Head maker-checker exemption
+- Verified: npm run build passes; backend tsc --noEmit clean; vitest over reporting, process, process-pnl and finance passes except 3 GRN-submit tests (duplicate-GRN guard, code not touched here).
+- NOT verified: no browser run and no real MySQL (no Docker daemon, no database). The roster SQL, Process dropdown rendering, stacked attendance-register export and Finance Head approvals were checked by type-check and unit tests only.
