@@ -12,6 +12,8 @@
  *   npx tsx scripts/pnl-branch-component-op.ts [YYYY-MM ...]   (default: April 2026 up to this month)
  */
 import "dotenv/config";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../src/db/mysql.js";
 import { bpoPnlAllocationOverlayService } from "../src/modules/process-pnl/bpo-pnl-allocation-overlay.service.js";
 import { getPnlReconciliation } from "../src/modules/process-pnl/pnl-reconciliation.service.js";
 
@@ -92,6 +94,16 @@ function defaultPeriods(): string[] {
       }));
     } catch (e) { console.log("COMP_ERROR " + JSON.stringify({ period, basis: "reconciliation", error: e instanceof Error ? e.message : String(e) })); }
   }
+  // People-bucket diagnostic (aggregates only): why a month can put agent pay into DSC.
+  const q = async (label: string, sql: string) => {
+    try { const [r] = await db.query<RowDataPacket[]>(sql); for (const row of r) console.log(`COMP_DIAG ${label} ${JSON.stringify(row)}`); }
+    catch (e) { console.log("COMP_ERROR " + JSON.stringify({ diag: label, error: e instanceof Error ? e.message : String(e) })); }
+  };
+  await q("rules", "SELECT scope_type, scope_key, process_id, branch_id, pnl_bucket, priority, effective_from, effective_to, created_at FROM pnl_cost_classification_rule WHERE active_status = 1 ORDER BY created_at DESC LIMIT 80");
+  await q("snapshot_bucket", "SELECT period_code, pnl_bucket, COUNT(*) AS n, ROUND(SUM(earned_salary_till_date)) AS cost, MAX(as_of_date) AS as_of FROM pnl_running_salary_snapshot WHERE period_code >= '2026-04' GROUP BY period_code, pnl_bucket ORDER BY period_code, pnl_bucket");
+  await q("runs", "SELECT run_month, status, COUNT(*) AS runs FROM salary_prep_run WHERE run_month >= '2026-04' GROUP BY run_month, status ORDER BY run_month, status");
+  await q("sep_dsc_mix", "SELECT department_name, designation_name, COUNT(*) AS n, ROUND(SUM(earned_salary_till_date)) AS cost FROM pnl_running_salary_snapshot WHERE period_code = '2026-09' AND pnl_bucket = 'dsc_people' GROUP BY department_name, designation_name ORDER BY cost DESC LIMIT 15");
+  await q("aug_dsc_mix", "SELECT department_name, designation_name, COUNT(*) AS n, ROUND(SUM(earned_salary_till_date)) AS cost FROM pnl_running_salary_snapshot WHERE period_code = '2026-08' AND pnl_bucket = 'dsc_people' GROUP BY department_name, designation_name ORDER BY cost DESC LIMIT 15");
   await new Promise((resolve) => process.stdout.write("COMP_DONE\n", resolve));
   process.exit(0);
 })();
