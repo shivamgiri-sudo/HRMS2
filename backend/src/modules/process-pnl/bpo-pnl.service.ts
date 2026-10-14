@@ -2594,3 +2594,6 @@ export const bpoPnlService = {
     return { id };
   },
 };
+
+/** People bucketing internals, exposed for read-only ops scripts (scripts/pnl-bucket-dryrun.ts). */
+export const bucketingInternals = { getPayrollPeople, getClassificationRules, matchClassification, isSupportRole };
