@@ -56,6 +56,10 @@ on:
         description: "Set to 'yes' to print what each GRN source holds per month (read-only)."
         required: false
         default: ""
+      components:
+        description: "Set to 'yes' to print per-branch component P&L (revenue, agent, DSC, BMC, GRN, OP) and the non-MAS (DialDesk / I-Spark / IDC) leak check for 'periods' (read-only)."
+        required: false
+        default: ""
       trace:
         description: "People-cost trace (read-only, counts and totals only): 'YYYY-MM code1 code2 ...'. When set, runs the trace instead of the evidence."
         required: false
@@ -92,6 +96,7 @@ jobs:
           NODE_ENV: production
           INPUT_PERIODS: ${{ inputs.periods }}
           INPUT_TRACE: ${{ inputs.trace }}
+          INPUT_COMPONENTS: ${{ inputs.components }}
           INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
           INPUT_DIAG: ${{ inputs.diag }}
           INPUT_BRANCHPLAN: ${{ inputs.branchplan }}
@@ -105,7 +110,9 @@ jobs:
           INPUT_BOOTDIAG: ${{ inputs.bootdiag }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_BOOTDIAG" = "yes" ]; then
+          if [ "$INPUT_COMPONENTS" = "yes" ]; then
+            npx tsx scripts/pnl-branch-component-op.ts $INPUT_PERIODS
+          elif [ "$INPUT_BOOTDIAG" = "yes" ]; then
             npx tsx scripts/ops-boot-diag.ts
           elif [ "$INPUT_DAILYTREND" = "yes" ]; then
             npx tsx scripts/pnl-daily-trend-profile.ts
