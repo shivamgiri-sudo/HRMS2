@@ -1382,6 +1382,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2198_client_receipts.sql", // Registered 2026-10-14. Client receipts: client_receipt + client_receipt_allocation (CREATE TABLE IF NOT EXISTS), client_invoice.due_date (NULL), client_invoice_payment_status.other_deduction (DEFAULT 0). Additive, guarded, idempotent; no row updated.
   "migrations/2205_grn_tally_legacy_ledgers.sql", // Registered 2026-10-14. GRN Tally export: finance_expense_sub_head_master gains tds_enabled/tds_rate/tds_tally_ledger and vendor_master gains tds_tally_ledger, the legacy db_bill TDS settings its JrnlP GRN import booked from. Guarded, additive, NULL on every row; filled by scripts/backfill-grn-tally-from-dbbill.ts.
   "migrations/2206_client_po_governance.sql", // Registered 2026-10-14. Client PO governance: client_po_line (qty x rate particulars), client_po_audit (create/edit history), client_po_number gains attachment_path/_name/_mime, remarks, created_by, updated_by; client_invoice_line gains line_no (entry order). Additive, guarded, idempotent; no row updated.
+  "migrations/2210_tally_legacy_names.sql", // Registered 2026-10-14. Tally names from db_bill: branch_master gains tally_cost_category/tally_cost_centre_code (legacy tally_branch/tally_code), finance_expense_sub_head_master gains tally_ledger_name. Guarded, additive, NULL on every row; filled by scripts/backfill-tally-legacy-names.ts.
 ];
 
 export type MigrationHealth = {

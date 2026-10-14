@@ -74,7 +74,9 @@ export function normalizeTdsSection(raw: unknown, hint?: string | null): string 
 
 export type GrnTallyContext = {
   vendors: Map<string, { ledger: string; tdsEnabled: number | null; tdsSection: string | null; tdsRate: number | null; tdsLedger?: string | null }>;
-  branches: Map<string, { name: string; gstStateCode: string | null; state: string | null }>;
+  branches: Map<string, { name: string; gstStateCode: string | null; state: string | null; tallyCategory?: string | null; tallyCode?: string | null }>;
+  /** Sub-head name (lower-case) -> the legacy Tally expense ledger, where the wording differs. */
+  subHeadTally: Map<string, string>;
   /** imprest_manager id -> its Tally ledger (tally_name, carried over from db_bill imprest_manager.TallyHead). */
   holders: Map<string, string | null>;
   /** GRN id -> imprest_manager id, resolved as approval resolves it (see resolveImprestHolders). */
@@ -125,6 +127,7 @@ export async function loadGrnTallyContext(
     grnHolder: new Map(),
     subHeadTds: new Map(),
     subHeadLegacy: new Map(),
+    subHeadTally: new Map(),
     sectionRates: new Map(),
     branchCodeOverrides: {},
   };
@@ -171,7 +174,21 @@ export async function loadGrnTallyContext(
         state: r.state ? String(r.state) : null,
       });
     }
+    // Separate read: the columns arrive with migration 2210 (legacy db_bill tally_branch / tally_code).
+    for (const r of await safeRows(
+      executor,
+      `SELECT id, tally_cost_category, tally_cost_centre_code FROM branch_master WHERE id IN (${inList(branchIds)})`,
+      branchIds,
+    )) {
+      const b = ctx.branches.get(String(r.id));
+      if (b) {
+        b.tallyCategory = String(r.tally_cost_category ?? "").trim() || null;
+        b.tallyCode = String(r.tally_cost_centre_code ?? "").trim() || null;
+      }
+    }
   }
+  for (const r of await safeRows(executor, `SELECT sub_head_name, tally_ledger_name FROM finance_expense_sub_head_master WHERE tally_ledger_name IS NOT NULL AND TRIM(tally_ledger_name) <> ''`))
+    ctx.subHeadTally.set(String(r.sub_head_name).trim().toLowerCase(), String(r.tally_ledger_name).trim());
   ctx.grnHolder = await resolveImprestHolders(executor, rows);
   const holderIds = [...new Set(ctx.grnHolder.values())];
   if (holderIds.length) {
@@ -314,10 +331,11 @@ export function toVoucherInput(
     invoiceNumber: r.invoice_number ? String(r.invoice_number) : null,
     vendorLedger: vendor?.ledger || (r.vendor_name ? String(r.vendor_name) : null),
     imprestLedger,
-    expenseLedger: subHead,
+    expenseLedger: ctx.subHeadTally.get(subHead.trim().toLowerCase()) ?? subHead,
     headName: r.head ? String(r.head) : null,
-    branchName: branch?.name ?? null,
-    branchCode: branch?.name ? grnBranchCode(branch.name, ctx.branchCodeOverrides) : null,
+    // The Tally company's own cost category / cost-centre code (legacy db_bill names) when known.
+    branchName: branch?.tallyCategory ?? branch?.name ?? null,
+    branchCode: branch?.tallyCode ?? (branch?.name ? grnBranchCode(branch.name, ctx.branchCodeOverrides) : null),
     gstStateName:
       gstStateName(r.billing_state_code) ?? gstStateName(branch?.gstStateCode) ?? (branch?.state?.trim() || null),
     narrationText: r.description ? String(r.description) : null,

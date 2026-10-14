@@ -56,6 +56,15 @@ async function byId(table: string, columns: string, ids: string[]): Promise<Map<
   return out;
 }
 
+/** byId, falling back to columns that exist before migration 2210 is applied. */
+async function byIdWithFallback(table: string, columns: string, fallback: string, ids: string[]): Promise<Map<string, any>> {
+  try {
+    return await byId(table, columns, ids);
+  } catch {
+    return byId(table, fallback, ids);
+  }
+}
+
 export function ledgerVoucherXml(v: Pick<Voucher, "remoteId" | "type" | "number" | "date" | "narration" | "lines">): string {
   const entries = v.lines
     .filter((l) => r2(l.amount) !== 0)
@@ -104,8 +113,11 @@ async function glVouchers(month: string, masters: TallyMasters, exceptions: Ledg
   const vendors = await byId("vendor_master", "COALESCE(NULLIF(TRIM(tally_name), ''), vendor_name) AS n", idsOf("vendor"));
   const payables = await byId("payable_account_master", "tally_ledger_name AS n, account_name, account_type", idsOf("payable_account"));
   const banks = await byId("company_bank_account", "tally_ledger_name AS n", idsOf("bank_account"));
-  const subHeads = await byId("finance_expense_sub_head_master", "sub_head_name AS n, pnl_bucket", idsOf("expense_sub_head"));
-  const branches = await byId("branch_master", "branch_name AS n", [...new Set(entries.map((e) => String(e.branch_id ?? "")).filter(Boolean))]);
+  const subHeads = await byIdWithFallback("finance_expense_sub_head_master",
+    "COALESCE(NULLIF(TRIM(tally_ledger_name), ''), sub_head_name) AS n, pnl_bucket", "sub_head_name AS n, pnl_bucket", idsOf("expense_sub_head"));
+  const branches = await byIdWithFallback("branch_master",
+    "COALESCE(NULLIF(TRIM(tally_cost_category), ''), branch_name) AS n, branch_name, tally_cost_centre_code AS code", "branch_name AS n, branch_name, NULL AS code",
+    [...new Set(entries.map((e) => String(e.branch_id ?? "")).filter(Boolean))]);
   const pvs = await byId("payment_voucher",
     "voucher_number, voucher_type, source_type, linked_imprest_manager_id, linked_client_invoice_id, transaction_ref, particulars, remarks",
     entries.filter((e) => e.source_type === "payment_voucher").map((e) => String(e.source_id)));
@@ -125,8 +137,10 @@ async function glVouchers(month: string, masters: TallyMasters, exceptions: Ledg
   const out: Voucher[] = [];
   for (const e of entries) {
     const date = ymd(e.entry_date);
-    const branch = branches.get(String(e.branch_id ?? ""))?.n as string | undefined;
-    const centre = branch ? `${grnBranchCode(branch)}/${date.slice(2, 4)}${date.slice(5, 7)}` : undefined;
+    const b = branches.get(String(e.branch_id ?? ""));
+    const branch = b?.n as string | undefined;
+    const code = (b?.code as string | null) || (b ? grnBranchCode(String(b.branch_name ?? b.n)) : null);
+    const centre = code ? `${code}/${date.slice(2, 4)}${date.slice(5, 7)}` : undefined;
     const pv = e.source_type === "payment_voucher" ? pvs.get(String(e.source_id)) : undefined;
     const ref = pv?.voucher_number ?? jvBy.get(String(e.id))?.number ?? `${e.source_type === "manual" ? "JE" : "BRA"}-${String(e.id).slice(0, 8)}`;
     let bad = "";
