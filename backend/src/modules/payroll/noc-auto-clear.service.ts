@@ -14,8 +14,8 @@
  *
  * WHAT IS AUTOMATED, AND ON WHAT EVIDENCE
  *
- *  it        domain_delete, email_delete and dialler_delete exit provisioning tasks are all
- *            actioned/confirmed/waived AND the asset register has no open assignment.
+ *  it        the asset register has no open assignment for the employee (no asset
+ *            assigned => nothing to return => passes).
  *  admin     biometric_delete is actioned/confirmed/waived AND every mandatory company-property
  *            row on the case is Returned or explicitly waived.
  *  accounts  Advances, loans and open reimbursement claims are SNAPSHOT onto the decision and are
@@ -95,26 +95,16 @@ async function openRegisterAssets(employeeId: string): Promise<number> {
 }
 
 async function itVerdict(c: nocCase.NocCaseRow): Promise<Verdict> {
-  const prov = await provisioningDone(c.employee_id, [
-    "domain_delete",
-    "email_delete",
-    "dialler_delete",
-  ]);
-  if (!prov.ok) {
+  // Owner rule 2026-10-14: an employee with no asset assigned in the register has nothing for IT
+  // to take back, so the IT stage passes without waiting for the access-removal tasks.
+  const open = await openRegisterAssets(c.employee_id);
+  if (open === 0) {
     return {
-      clear: false,
-      reason: `Access removal not confirmed: ${prov.missing.join(", ")}`,
+      clear: true,
+      reason: "Auto: no asset assigned to the employee in the asset register",
     };
   }
-  const open = await openRegisterAssets(c.employee_id);
-  if (open > 0) {
-    return { clear: false, reason: `${open} asset(s) still assigned in the register` };
-  }
-  return {
-    clear: true,
-    reason:
-      "Auto: domain, email and dialler/external IDs removed; asset register has no open assignment",
-  };
+  return { clear: false, reason: `${open} asset(s) still assigned in the register` };
 }
 
 async function adminVerdict(c: nocCase.NocCaseRow): Promise<Verdict> {

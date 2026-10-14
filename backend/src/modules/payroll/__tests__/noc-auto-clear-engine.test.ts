@@ -59,15 +59,15 @@ describe("IT stage evidence", () => {
     });
   });
 
-  it("does NOT clear when no provisioning task exists at all", async () => {
+  it("clears IT when no asset is assigned, even with no provisioning task", async () => {
     route([], 0);
     const r = await runAutoClearForCase("c1");
-    expect(r.cleared).toEqual([]);
-    expect(actOnSignatory).not.toHaveBeenCalled();
+    expect(r.cleared).toEqual(["it"]);
+    expect(actOnSignatory.mock.calls[0][0].remarks).toMatch(/no asset assigned/);
   });
 
-  it("does NOT clear when one access task is still open", async () => {
-    route([...ALL_DONE.slice(0, 2), { task_code: "dialler_delete", status: "pending" }], 0);
+  it("does NOT clear IT while an asset is assigned, whatever the access tasks say", async () => {
+    route([], 1);
     expect((await runAutoClearForCase("c1")).cleared).toEqual([]);
   });
 
@@ -90,6 +90,6 @@ describe("IT stage evidence", () => {
     expect(arg.decision).toBe("acknowledged");
     expect(arg.actorUserId).toBe("system:noc-auto-clear");
     expect(arg.actorRole).toBe("system");
-    expect(arg.remarks).toMatch(/domain, email and dialler/);
+    expect(arg.remarks).toMatch(/no asset assigned/);
   });
 });

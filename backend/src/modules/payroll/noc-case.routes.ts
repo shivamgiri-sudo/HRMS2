@@ -130,6 +130,26 @@ const INITIATE_ROLES = [
 /** HR administration: Last Working Day, record-on-behalf, reopening a declined case. */
 const HR_ROLES = ["hr", "branch_hr", "admin", "super_admin", "payroll_head"];
 
+/**
+ * Interim cover until NOC clearance is launched for every employee: payroll_hr may sign ANY
+ * stage (TL, PM, BM, IT, Admin, Accounts, HR) and record asset returns, still limited to their own
+ * branch scope. Switch off with payroll_config_flags noc_payroll_hr_all_stages = 'false'.
+ */
+const PAYROLL_HR_ALL_STAGES_KEY = "noc_payroll_hr_all_stages";
+async function payrollHrActsOnAllStages(): Promise<boolean> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT config_value FROM payroll_config_flags
+        WHERE branch_id IS NULL AND process_id IS NULL AND config_key = ?
+        ORDER BY updated_at DESC, id DESC LIMIT 1`,
+      [PAYROLL_HR_ALL_STAGES_KEY],
+    );
+    return String(rows[0]?.config_value ?? "true").trim().toLowerCase() !== "false";
+  } catch {
+    return true;
+  }
+}
+
 function refuse(
   res: Response,
   statusCode: number,
@@ -768,6 +788,7 @@ nocCaseRouter.post(
     const stageRoles = [stage.role_key, stage.fallback_role_key].filter(
       (r): r is string => Boolean(r),
     );
+    if (await payrollHrActsOnAllStages()) stageRoles.push("payroll_hr");
     if (!(await canAccessCase(userId, row, stageRoles))) {
       return refuse(
         res,
@@ -998,6 +1019,7 @@ nocCaseRouter.post(
  * edit them would let the gated party clear its own gate.
  */
 const ASSET_ROLES = [
+  "payroll_hr",
   "branch_admin",
   "admin",
   "branch_it",
