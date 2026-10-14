@@ -51,3 +51,4 @@ jobs:
         run: |
           set -euo pipefail
           npx tsx scripts/head-office-budget-diagnose.ts "$IN_PERIOD" "$IN_BRANCH"
+          npx tsx scripts/grn-drilldown-timing.ts "$IN_PERIOD" "$IN_BRANCH"
