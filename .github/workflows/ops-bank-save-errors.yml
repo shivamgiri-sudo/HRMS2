@@ -1,0 +1,33 @@
+name: Ops Bank Save Errors (manual, read-only)
+
+# Prints the most recent backend error-log lines that mention the employee bank-detail save
+# (PUT /api/employees/:id/bank-details, used by "Enter bank details" in Ops Control). Lines are
+# cut to 220 characters and digit runs of 9+ are masked, so no account number is printed.
+# Read-only: greps log files. workflow_dispatch only.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-bank-save-errors-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  find:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Search logs
+        shell: bash
+        run: |
+          set +e
+          for f in /var/www/HRMS2/backend/logs/backend-err.log; do
+            [ -f "$f" ] || continue
+            echo "### $f ($(stat -c %y "$f"))"
+            grep -n -i -E "employee_bank_detail|bank-details|bank_detail|BANK_DETAILS_HR_ENTRY|Invalid format|already on file|account_number_blind_index|account_number_enc|Data too long|Bind parameters" "$f" \
+              | tail -n 60 | cut -c1-220 | sed -E 's/[0-9]{9,}/#########/g'
+          done
