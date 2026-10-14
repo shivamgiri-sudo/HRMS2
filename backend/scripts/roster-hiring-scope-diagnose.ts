@@ -76,5 +76,22 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
       console.log(`${u.employee_code} ${u.full_name} ERROR ${(e as Error).message}`);
     }
   }
+
+  console.log("== roster live-monitoring: REAL scope + REAL services per user ==");
+  const { resolveLiveMonitoringScope } = await import("../src/modules/wfm/roster-intelligence.routes.js");
+  const ri = await import("../src/modules/wfm/roster-intelligence.service.js");
+  const sa = await import("../src/modules/wfm/shift-adherence.service.js");
+  const today = new Date().toISOString().slice(0, 10);
+  for (const u of users.filter((x) => /branch_wfm|wfm|process_manager|branch_head/.test(String(x.roles)))) {
+    try {
+      const scope = await resolveLiveMonitoringScope({ authUser: { id: String(u.id), role: "x" } } as never);
+      const digests = await ri.generateManagerDailyDigests(today, scope);
+      const absences = await ri.detectUnplannedAbsences(today, 30, scope);
+      console.log(`LIVE ${u.employee_code} ${u.full_name} scope=${JSON.stringify(scope)} digests=${digests.length} unplannedAbsences=${absences.length}`);
+    } catch (e) {
+      console.log(`LIVE ${u.employee_code} ${u.full_name} ERROR ${(e as Error).message}`);
+    }
+  }
+  void sa;
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
