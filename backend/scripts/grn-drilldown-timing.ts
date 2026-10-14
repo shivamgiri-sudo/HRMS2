@@ -11,6 +11,7 @@ import "dotenv/config";
 import { db } from "../src/db/mysql.js";
 import { grnService } from "../src/modules/finance/grn.service.js";
 import { branchBudgetService } from "../src/modules/process-pnl/branch-budget.service.js";
+import { refreshHiddenGrnScope } from "../src/shared/ownCompanyCostCentre.js";
 import type { RowDataPacket } from "mysql2";
 
 const PERIOD = process.argv[2] ?? "2026-10";
@@ -33,6 +34,11 @@ const time = async <T>(label: string, fn: () => Promise<T>) => {
   const [cc] = (await q(
     `SELECT id FROM cost_centre_master WHERE cost_centre_name = 'BSS-HR' LIMIT 1`)) as any[];
 
+  for (let i = 1; i <= 2; i++) await time(`refreshHiddenGrnScope (run ${i})`, () => refreshHiddenGrnScope());
+  await time("listGrns branch+period only", () => grnService.listGrns({ branchId: hdr.branch_id, accountingPeriod: PERIOD, excludeDraft: true, limit: 100 } as any));
+  await time("listGrns branch+period+costCentre", () => grnService.listGrns({ branchId: hdr.branch_id, accountingPeriod: PERIOD, costCentreId: cc?.id, excludeDraft: true, limit: 100 } as any));
+  await time("listGrns branch+period+cc+head", () => grnService.listGrns({ branchId: hdr.branch_id, accountingPeriod: PERIOD, costCentreId: cc?.id, head: line?.head, excludeDraft: true, limit: 100 } as any));
+  await time("COUNT head-office GRNs (all periods)", () => q(`SELECT COUNT(*) n FROM grn_request WHERE branch_id = ?`, [hdr.branch_id]));
   for (let i = 1; i <= 3; i++) {
     await time(`listGrns dialog (run ${i})`, () => grnService.listGrns({
       branchId: hdr.branch_id, accountingPeriod: PERIOD, costCentreId: cc?.id,
