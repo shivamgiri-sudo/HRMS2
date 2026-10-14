@@ -85,3 +85,25 @@ export function classifyQueueError(status: number, body: { message?: string; err
   if (status === 400) return "validation";
   return "provider_error";
 }
+
+/**
+ * Numbers Superbot did not accept from a queued batch, posted to our rejected-numbers webhook. The documented body is
+ * { errors: [{ phone, message, reference_id }], total_unaccepted_calls, ... }; the older { numbers: [{ reference_id, reason }] } and a bare
+ * { reference_id, reason } are still read. Entries without a reference are dropped (the reference is how we find the booking).
+ */
+export interface RejectedNumber { referenceId: string; phone: string | null; reason: string; badNumber: boolean }
+export function parseSuperbotRejected(body: unknown): RejectedNumber[] {
+  if (!body || typeof body !== "object") return [];
+  const b = body as { errors?: unknown; numbers?: unknown };
+  const list: unknown[] = Array.isArray(b.errors) ? b.errors : Array.isArray(b.numbers) ? b.numbers : [b];
+  const out: RejectedNumber[] = [];
+  for (const n of list.slice(0, 1000)) {
+    if (!n || typeof n !== "object") continue;
+    const e = n as { reference_id?: unknown; phone?: unknown; message?: unknown; reason?: unknown };
+    const ref = e.reference_id == null ? "" : String(e.reference_id).trim();
+    if (!ref) continue;
+    const reason = String(e.message ?? e.reason ?? "unknown").slice(0, 200);
+    out.push({ referenceId: ref.slice(0, 64), phone: e.phone == null ? null : String(e.phone), reason, badNumber: /incorrect|invalid/i.test(reason) });
+  }
+  return out;
+}

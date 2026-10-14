@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { callOutcome } from "../he-signals.js";
-import { classifyQueueError, mapSuperbotFeedback, sbDate, sbPhone, sbTime } from "../he-superbot.js";
+import { classifyQueueError, mapSuperbotFeedback, parseSuperbotRejected, sbDate, sbPhone, sbTime } from "../he-superbot.js";
 
 const fb = (feedback: Record<string, string>, extra: Record<string, unknown> = {}) => ({
   reference_id: "m-1", phone: "+919876543210", time: "2026-10-08T10:15:00", status: "answered", outcome: "disposed", call_duration: 75,
@@ -56,5 +56,22 @@ describe("classifyQueueError", () => {
     expect(classifyQueueError(400, { message: "Validation Failed" })).toBe("validation");
     expect(classifyQueueError(401, null)).toBe("auth");
     expect(classifyQueueError(500, null)).toBe("provider_error");
+  });
+});
+
+describe("parseSuperbotRejected", () => {
+  it("reads the documented errors[] body", () => {
+    const r = parseSuperbotRejected({ status: true, message: "", total_calls: 5, total_unaccepted_calls: 2, id: [1, 2, 3],
+      errors: [{ phone: "+91708175851", message: "Phone Number is incorrect", reference_id: "HRMS-001" }, { phone: "+91628349896", message: "Number already queued", reference_id: "HRMS-002" }] });
+    expect(r).toEqual([
+      { referenceId: "HRMS-001", phone: "+91708175851", reason: "Phone Number is incorrect", badNumber: true },
+      { referenceId: "HRMS-002", phone: "+91628349896", reason: "Number already queued", badNumber: false },
+    ]);
+  });
+  it("still reads numbers[] and a bare entry, and drops entries without a reference", () => {
+    expect(parseSuperbotRejected({ numbers: [{ reference_id: "HRMS-003", reason: "invalid" }, { phone: "+91999" }] }).map((x) => x.referenceId)).toEqual(["HRMS-003"]);
+    expect(parseSuperbotRejected({ reference_id: "HRMS-004", reason: "x" })[0].referenceId).toBe("HRMS-004");
+    expect(parseSuperbotRejected({ status: true, errors: [] })).toEqual([]);
+    expect(parseSuperbotRejected(null)).toEqual([]);
   });
 });

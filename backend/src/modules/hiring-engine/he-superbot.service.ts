@@ -6,8 +6,11 @@
 import axios from "axios";
 import { logger } from "../../logger.js";
 import { existingRef } from "./he-call-ref.service.js";
-import { superbotConfig } from "./he-secrets.service.js";
+import { superbotConfig, type SuperbotConfig } from "./he-secrets.service.js";
 import { classifyQueueError, sbPhone, type QueueFailure, type SuperbotParams } from "./he-superbot.js";
+
+/** Every per-campaign endpoint lives under /superbot/{id}/campaign/{campaign} (queue, bulk queue, dequeue). */
+const campaignUrl = (cfg: SuperbotConfig, campaignId?: string) => `${cfg.baseUrl}/superbot/${cfg.superbotId}/campaign/${campaignId || cfg.campaignId}`;
 
 export type SuperbotQueue = { ok: true; requestId: string; alreadyQueued?: boolean } | { ok: false; reason: "not_configured" | QueueFailure; error: string };
 
@@ -15,7 +18,7 @@ export async function queueSuperbotCall(a: { referenceId: string; mobile10: stri
   const cfg = await superbotConfig();
   if (!cfg) return { ok: false, reason: "not_configured", error: "superbot_not_configured" };
   try {
-    const { data } = await axios.post(`${cfg.baseUrl}/superbot/${cfg.superbotId}/campaign/${a.campaignId || cfg.campaignId}/call`,
+    const { data } = await axios.post(`${campaignUrl(cfg, a.campaignId)}/call`,
       { numbers: [{ parameters: a.params, phone: sbPhone(a.mobile10), reference_id: a.referenceId }], lang: cfg.lang },
       { headers: { apiKey: cfg.apiKey, "Content-Type": "application/json" }, timeout: 20000 });
     if (data?.status === false) return { ok: false, reason: "provider_error", error: String(data?.message ?? "rejected").slice(0, 200) };
@@ -38,23 +41,28 @@ export async function dequeueSuperbotCall(referenceId: string): Promise<boolean>
   try {
     const cfg = await superbotConfig();
     if (!cfg) return false;
-    const { data } = await axios.post(`${cfg.baseUrl}/contact/dequeue/`, { reference_id: referenceId }, { headers: { apiKey: cfg.apiKey }, timeout: 10000 });
+    const { data } = await axios.post(`${campaignUrl(cfg)}/contact/dequeue/`, { reference_id: referenceId }, { headers: { apiKey: cfg.apiKey, "Content-Type": "application/json" }, timeout: 10000 });
     return data?.status === true;
   } catch { return false; }
 }
 
-/** Dequeues a reference that cannot exist: 404 "Contact Not Found In Queue" proves the key and URL work, 401 proves they do not. No side effects. */
+/**
+ * Dequeues a reference that cannot exist. Only Superbot's own 404 "Contact Not Found In Queue" proves the key, Superbot id and campaign are right;
+ * a bare 404 (wrong path or id) or 401 does not. No side effects.
+ */
 export async function testSuperbotConnection(): Promise<{ ok: boolean; message: string }> {
   const cfg = await superbotConfig();
   if (!cfg) return { ok: false, message: "Enter the API key, Superbot id and campaign id first." };
   try {
-    await axios.post(`${cfg.baseUrl}/contact/dequeue/`, { reference_id: "HE-CONNECTION-TEST" }, { headers: { apiKey: cfg.apiKey }, timeout: 10000 });
+    await axios.post(`${campaignUrl(cfg)}/contact/dequeue/`, { reference_id: "HE-CONNECTION-TEST" }, { headers: { apiKey: cfg.apiKey, "Content-Type": "application/json" }, timeout: 10000 });
     return { ok: true, message: "Connected to Superbot." };
   } catch (err) {
     if (axios.isAxiosError(err) && err.response) {
+      const msg = String((err.response.data as { message?: unknown } | null)?.message ?? "");
       if (err.response.status === 401) return { ok: false, message: "Superbot rejected the API key (401)." };
-      if (err.response.status === 404 || err.response.status === 400) return { ok: true, message: "Connected to Superbot (key accepted)." };
-      return { ok: false, message: `Superbot answered ${err.response.status}.` };
+      if (err.response.status === 404 && /not found in queue/i.test(msg)) return { ok: true, message: "Connected to Superbot (key, Superbot id and campaign accepted)." };
+      if (err.response.status === 404) return { ok: false, message: "Superbot answered 404: check the Superbot id, campaign id and base URL." };
+      return { ok: false, message: `Superbot answered ${err.response.status}${msg ? `: ${msg.slice(0, 120)}` : ""}.` };
     }
     return { ok: false, message: "Could not reach Superbot. If this server's IP is not whitelisted by Superbot, ask them to add it." };
   }

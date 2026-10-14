@@ -17,7 +17,7 @@ import { completeBulkJob } from "./he-bulk-call.service.js";
 import { ingestCandidates } from "./he-intake.service.js";
 import { webhookToken } from "./he-secrets.service.js";
 import { matchForRef } from "./he-call-ref.service.js";
-import { mapSuperbotFeedback, type SuperbotFeedback } from "./he-superbot.js";
+import { mapSuperbotFeedback, parseSuperbotRejected, type SuperbotFeedback } from "./he-superbot.js";
 import { addEvent } from "./he-lead.service.js";
 
 export const heWebhookRouter = Router();
@@ -192,17 +192,17 @@ heWebhookRouter.post("/superbot", async (req, res) => {
   }
 });
 
-/** Numbers Superbot rejected from a queued batch: mark the lead so we stop chasing a bad number. Always 200. */
+/** Numbers Superbot rejected from a queued batch: record it on the lead, and mark a malformed number so we stop chasing it. Always 200. */
 heWebhookRouter.post("/superbot-rejected", async (req, res) => {
   if (!(await authorised(req, res))) return;
   try {
-    const b = req.body as { reference_id?: string; phone?: string; reason?: string; numbers?: Array<{ reference_id?: string; phone?: string; reason?: string }> };
-    const list = Array.isArray(b?.numbers) ? b.numbers : [b ?? {}];
-    for (const n of list) {
-      if (!n.reference_id) continue;
-      const rm = await matchForRef(n.reference_id);
+    for (const n of parseSuperbotRejected(req.body)) {
+      const rm = await matchForRef(n.referenceId);
       const [r] = rm ? await db.execute<RowDataPacket[]>("SELECT lead_id FROM he_match WHERE id = ? LIMIT 1", [rm]) : [[] as RowDataPacket[]];
-      if (r[0]) await addEvent(String(r[0].lead_id), "call_failed_to_place", { channel: "voice", detail: `superbot rejected: ${String(n.reason ?? "unknown").slice(0, 200)}` });
+      if (!r[0]) continue;
+      const leadId = String(r[0].lead_id);
+      if (n.badNumber) await db.execute("UPDATE he_lead SET last_outcome = 'wrong_number' WHERE id = ?", [leadId]);
+      await addEvent(leadId, "call_failed_to_place", { channel: "voice", detail: `superbot rejected: ${n.reason}` });
     }
   } catch (err) { logger.warn({ err: (err as Error).message }, "[he-hook] superbot-rejected failed"); }
   return res.status(200).json({ success: true });
