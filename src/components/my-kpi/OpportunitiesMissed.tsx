@@ -21,7 +21,11 @@ const OPPORTUNITY_TIPS: Record<string, string> = {
 export function OpportunitiesMissed() {
   const { data: weaknesses, isLoading } = useQuery<WeaknessCategory[]>({
     queryKey: ["weakness-detail"],
-    queryFn: () => hrmsApi.get("/api/agent/weakness-detail").then((r) => r.data?.data ?? r.data ?? []),
+    // The endpoint answers { weakness_areas: [...] }; older callers received a bare array.
+    queryFn: () => hrmsApi.get("/api/agent/weakness-detail").then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : Array.isArray(d?.weakness_areas) ? d.weakness_areas : [];
+    }),
     staleTime: 60_000,
   });
 

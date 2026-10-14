@@ -16,6 +16,7 @@ export interface EmployeeDashboardData {
   balances: JsonRecord[];
   onboarding: JsonRecord;
   lms: JsonRecord;
+  quality: JsonRecord;
   engagement: JsonRecord;
   sourceErrors?: string[];
   sourceFreshness?: Record<string, string | null>;

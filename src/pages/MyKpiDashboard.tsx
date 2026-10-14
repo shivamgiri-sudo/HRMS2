@@ -18,6 +18,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { AIInsightPanel } from "@/components/ai";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AgentKpiDashboard } from "@/components/agent-kpi/AgentKpiDashboard";
 import { HeroScoreDial } from "@/components/my-kpi/HeroScoreDial";
 import { CategorySummaryTile } from "@/components/my-kpi/CategorySummaryTile";
 import { CategoryRadarChart } from "@/components/my-kpi/CategoryRadarChart";
@@ -353,6 +354,7 @@ export default function MyKpiDashboard() {
             <TabsList className="bg-white/95 backdrop-blur-sm border border-white/60 rounded-xl p-1 h-auto gap-1 shadow-[0_1px_3px_rgba(37,99,235,0.08),_0_4px_12px_rgba(37,99,235,0.06)]">
               {[
                 { value: "performance", label: "Performance", icon: BarChart3 },
+                { value: "calls", label: "Call KPIs", icon: Activity },
                 { value: "quality", label: "Quality & CLAP", icon: ShieldCheck },
                 { value: "learning", label: "Learning & TNI", icon: GraduationCap },
                 { value: "live", label: "Live Activity", icon: Zap },
@@ -368,6 +370,12 @@ export default function MyKpiDashboard() {
                 </TabsTrigger>
               ))}
             </TabsList>
+
+            {/* Call-centre agent KPIs with date-wise drill-downs. Renders nothing for a user with no
+                MASID (org-wide quality roles get an agent picker instead). */}
+            <TabsContent value="calls" className="space-y-5 focus-visible:outline-none">
+              <AgentKpiDashboard />
+            </TabsContent>
 
             {/* ═══════════════════════════════════════════════════════
                 TAB 1: PERFORMANCE

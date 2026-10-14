@@ -54,7 +54,11 @@ type Props = {
 export function RealTimeGuidePanel({ refetchInterval = 30_000 }: Props) {
   const { data: weaknesses } = useQuery<WeaknessCategory[]>({
     queryKey: ["weakness-detail"],
-    queryFn: () => hrmsApi.get("/api/agent/weakness-detail").then((r) => r.data?.data ?? r.data ?? []),
+    // The endpoint answers { weakness_areas: [...] }; older callers received a bare array.
+    queryFn: () => hrmsApi.get("/api/agent/weakness-detail").then((r) => {
+      const d = r.data?.data ?? r.data;
+      return Array.isArray(d) ? d : Array.isArray(d?.weakness_areas) ? d.weakness_areas : [];
+    }),
     staleTime: 60_000,
     retry: qualityRetry(1),
   });
