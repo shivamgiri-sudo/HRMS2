@@ -58,6 +58,7 @@ on:
           - sbi-card-demo-seed
           - sbi-card-demo-remove
           - holiday-mapping-audit
+          - user-scope-audit-dinesh
           - exception-control-audit
           - payable-days-check
           - repair-bucket-regrade
@@ -677,6 +678,10 @@ jobs:
             exception-control-audit)
               # Read-only in both modes.
               npx tsx scripts/exception-control-audit.ts
+              ;;
+            user-scope-audit-dinesh)
+              # Read-only in both modes: prints login, roles, scope rows, resolved scope.
+              npx tsx scripts/user-scope-audit.ts dinesh.mehta@teammas.in
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
