@@ -239,7 +239,7 @@ export async function runGrnTallyExport(opts: {
   const exceptions: ExportException[] = [];
   for (const row of fresh) {
     const input = toVoucherInput(row, context, config.names);
-    const duplicate = input.grnType === "vendor" ? legacyDuplicate(legacyBills, row.invoice_number, input.gross) : null;
+    const duplicate = input.grnType === "vendor" ? legacyDuplicate(legacyBills, row, input.gross) : null;
     const v = duplicate
       ? ({ ok: false, grnId: input.grnId, grnNumber: input.grnNumber, reason: duplicateReason(duplicate) } as const)
       : buildGrnVoucher(input, config.names);

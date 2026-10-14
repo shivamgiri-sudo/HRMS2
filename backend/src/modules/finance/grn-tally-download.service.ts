@@ -173,7 +173,7 @@ export async function loadGrnTallyDownload(
       context,
       config.names,
     );
-    const duplicate = input.grnType === "vendor" ? legacyDuplicate(legacyBills, r.invoice_number, input.gross) : null;
+    const duplicate = input.grnType === "vendor" ? legacyDuplicate(legacyBills, r, input.gross) : null;
     const voucher = buildGrnVoucher(input, config.names);
     const built = duplicate
       ? ({ ok: false, grnId: input.grnId, grnNumber: input.grnNumber, reason: duplicateReason(duplicate) } as const)

@@ -22,7 +22,14 @@ const h = vi.hoisted(() => {
     if (/FROM imprest_manager WHERE branch_id IN/.test(sql))
       return [[{ id: "im2", branch_id: "b1", effective_from: "2026-01-01", effective_to: null }], undefined];
     if (/FROM grn_request\s+WHERE bill_source_id IS NOT NULL/.test(sql))
-      return [[{ grn_number: "Mas/9/26/139", invoice_number: "THUP/55292/26-27", amount_with_tax: 6278, amount: 6278 }], undefined];
+      return [[
+        { grn_number: "Mas/9/26/139", invoice_number: "THUP/55292/26-27", amount_with_tax: 6278, amount: 6278, vendor_id: "v9", bill_date: "2026-09-03" },
+        { grn_number: "Mas/8/26/391", invoice_number: "2026-27/91", amount_with_tax: 48722.2, amount: 48722.2, vendor_id: "v9", bill_date: "2026-09-01" },
+        { grn_number: "Mas/8/26/399", invoice_number: "NA", amount_with_tax: 119920, amount: 119920, vendor_id: "v1", bill_date: "2026-09-07" },
+        { grn_number: "Mas/8/26/126", invoice_number: "OESPL/26-27/0411", amount_with_tax: 118000, amount: 118000, vendor_id: "v1", bill_date: "2026-08-01" },
+      ], undefined];
+    if (/SELECT id, vendor_code FROM vendor_master/.test(sql))
+      return [[{ id: "v1", vendor_code: "DB_BILL_1537" }, { id: "v9", vendor_code: "DB_BILL_9" }], undefined];
     if (/FROM finance_expense_sub_head_master WHERE tds_enabled IS NOT NULL/.test(sql))
       return [[{ sub_head_name: "Fee & Subscription", tds_enabled: 1, tds_rate: 2, tds_tally_ledger: "TDS CONTRACTOR 2021-22" }, { sub_head_name: "Parking Charges", tds_enabled: 0, tds_rate: null, tds_tally_ledger: null }], undefined];
     if (/FROM tds_section_master/.test(sql))
@@ -145,6 +152,22 @@ describe("legacy duplicates and legacy TDS", () => {
     const data = await loadGrnTallyDownload(all);
     expect(data.vouchersXml).toHaveLength(0);
     expect(data.rows[0].exception).toMatch(/Already in Tally through legacy GRN Mas\/9\/26\/139/);
+  });
+
+  it("catches a bill written differently: number ending in the other, or same vendor and amount within a week", async () => {
+    h.state.rows = [
+      row("g1", "MAS/08/26/0040", { invoice_number: "26-27/91", amount_with_tax: 48722.01, amount: 48722.01, amount_without_tax: 41290, tax_amount: 7432.2, round_off_amount: -0.2 }),
+      row("g2", "MAS/08/26/0060", { invoice_number: "BS01/BS010018/00833", bill_date: "2026-09-08", amount_with_tax: 119920, amount: 119920, amount_without_tax: 119920, tax_amount: 0, gst_type: "none" }),
+    ];
+    const data = await loadGrnTallyDownload(all);
+    expect(data.rows[0].exception).toMatch(/Probably already in Tally through legacy GRN Mas\/8\/26\/391/);
+    expect(data.rows[1].exception).toMatch(/Probably already in Tally through legacy GRN Mas\/8\/26\/399/);
+  });
+
+  it("a month later, the same vendor and amount is a new bill (monthly rent)", async () => {
+    h.state.rows = [row("g1", "MAS/09/26/0001", { invoice_number: "OESPL/26-27/0511" })];
+    const data = await loadGrnTallyDownload(all);
+    expect(data.rows[0].exception).toBeNull();
   });
 
   it("sub-head legacy TDS wins over the vendor, and a legacy 'no TDS' sub-head stops the engine default", async () => {
