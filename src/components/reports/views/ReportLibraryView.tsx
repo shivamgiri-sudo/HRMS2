@@ -268,8 +268,8 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "org-structure-snapshot": [...branchOnly, EMPLOYEE_STATUS_FILTER],
     "cost-centre-headcount": [...branchOnly, EMPLOYEE_STATUS_FILTER],
     "employee-movement": [...dateFilters, ...branchProcess],
-    "confirmation-due-list": branchProcess,
-    "contract-expiry-list": branchOnly,
+    "confirmation-due-list": [...branchProcess, ...dateFilters],
+    "contract-expiry-list": [...branchOnly, ...dateFilters],
     "lifecycle-events": [...branchProcess, ...dateFilters],
     "increment-promotion-history": [...branchOnly, ...dateFilters],
     // No MONTH filter, deliberately. Both reports are ordered by a "days until" column that
@@ -281,19 +281,19 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "attendance-daily": [...dateFilters, ...branchProcess],
     "daily-hc-shift": [...dateFilters, ...branchProcess],
     "shift-adherence-detail": [...dateFilters, ...branchProcess],
-    "attendance-summary": [...monthFilter, ...branchProcess],
-    "attendance-register-monthly": [...monthFilter, ...branchProcess],
-    "attendance-source-sheet": [...monthFilter, ...branchProcess],
-    "attendance-register-grid": [...monthFilter, ...branchProcess],
-    "late-arrival-summary": [...monthFilter, ...branchProcess],
-    "overtime-summary": [...monthFilter, ...branchProcess],
+    "attendance-summary": [...monthFilter, ...dateFilters, ...branchProcess],
+    "attendance-register-monthly": [...monthFilter, ...dateFilters, ...branchProcess],
+    "attendance-source-sheet": [...monthFilter, ...dateFilters, ...branchProcess],
+    "attendance-register-grid": [...monthFilter, ...dateFilters, ...branchProcess],
+    "late-arrival-summary": [...monthFilter, ...dateFilters, ...branchProcess],
+    "overtime-summary": [...monthFilter, ...dateFilters, ...branchProcess],
     "biometric-reconciliation": [...dateFilters, ...branchProcess],
-    "regularization-summary": [...monthFilter, ...branchProcess, STATUS_FILTER],
-    "attendance-dispute-summary": [...monthFilter, ...branchProcess, STATUS_FILTER],
+    "regularization-summary": [...monthFilter, ...dateFilters, ...branchProcess, STATUS_FILTER],
+    "attendance-dispute-summary": [...monthFilter, ...dateFilters, ...branchProcess, STATUS_FILTER],
     // Date-ranged, not month-locked (unlike the two above) — an audit lookup usually spans
     // more than one month. Defaults to all time when both fields are left blank.
     "regularization-audit": [...dateFilters, ...branchProcess, STATUS_FILTER],
-    "habitual-absentee-list": [...monthFilter, ...branchProcess],
+    "habitual-absentee-list": [...monthFilter, ...dateFilters, ...branchProcess],
     "daily-shrinkage-report": [...dateFilters, ...branchProcess],
     "monthly-shrinkage-trend": [...dateFilters, ...branchProcess],
     "punch-raw-export": [...dateFilters, ...branchProcess],
@@ -302,51 +302,51 @@ function buildFiltersForReport(code: string): FilterDef[] {
     // Leave Balance shows every leave type as columns (CL / ML / EL / PTL-MTL),
     // so a Leave Type filter is meaningless here and has been removed. Month is
     // required and is passed identically to the preview API and the XLSX export.
-    "leave-balance": [...monthFilter, ...branchProcess],
-    "leave-balance-export": [...monthFilter, ...branchProcess],
+    "leave-balance": [...monthFilter, ...dateFilters, ...branchProcess],
+    "leave-balance-export": [...monthFilter, ...dateFilters, ...branchProcess],
     // Approved leave register: date range plus branch and process scope.
     "leave-utilization": [...dateFilters, ...branchProcess],
     // Retained only so an old deep link still renders sensible filters; these two
     // reports are no longer listed in the catalog.
     "maternity-paternity-register": [...branchOnly, YEAR_FILTER],
     "leave-encashment-register": [...branchOnly, YEAR_FILTER],
-    "holiday-master-list": [...branchOnly, YEAR_FILTER],
-    "payroll-register": [...monthFilter, ...branchProcess],
-    "payroll-variance": [...monthFilter, ...branchProcess],
-    "payroll-cost-summary": [...monthFilter, ...branchProcess, DEPT_FILTER],
-    "salary-sheet-onfido": [...monthFilter, ...branchProcess],
-    "bank-advice": [...monthFilter, ...branchProcess],
-    "neft-transfer-file": [...monthFilter, ...branchProcess],
-    "payroll-reconciliation": [...monthFilter, ...branchProcess],
-    "arrear-payment-register": [...monthFilter, ...branchProcess],
+    "holiday-master-list": [...branchOnly, YEAR_FILTER, ...dateFilters],
+    "payroll-register": [...monthFilter, ...dateFilters, ...branchProcess],
+    "payroll-variance": [...monthFilter, ...dateFilters, ...branchProcess],
+    "payroll-cost-summary": [...monthFilter, ...dateFilters, ...branchProcess, DEPT_FILTER],
+    "salary-sheet-onfido": [...monthFilter, ...dateFilters, ...branchProcess],
+    "bank-advice": [...monthFilter, ...dateFilters, ...branchProcess],
+    "neft-transfer-file": [...monthFilter, ...dateFilters, ...branchProcess],
+    "payroll-reconciliation": [...monthFilter, ...dateFilters, ...branchProcess],
+    "arrear-payment-register": [...monthFilter, ...dateFilters, ...branchProcess],
     "ytd-salary-summary": [{ key: "financialYear", label: "Financial Year", type: "text" as const, placeholder: "2025-26" }, ...branchProcess],
-    "cost-centre-salary-summary": [...monthFilter, ...branchProcess],
-    "process-lob-salary-cost": [...monthFilter, ...branchProcess],
-    "grade-salary-distribution": [...monthFilter, ...branchProcess],
-    "payslip-status": [...monthFilter, ...branchProcess],
-    "salary-advance-register": [...branchProcess],
-    "lwp-deduction-register": [...monthFilter, ...branchProcess],
+    "cost-centre-salary-summary": [...monthFilter, ...dateFilters, ...branchProcess],
+    "process-lob-salary-cost": [...monthFilter, ...dateFilters, ...branchProcess],
+    "grade-salary-distribution": [...monthFilter, ...dateFilters, ...branchProcess],
+    "payslip-status": [...monthFilter, ...dateFilters, ...branchProcess],
+    "salary-advance-register": [...branchProcess, ...dateFilters],
+    "lwp-deduction-register": [...monthFilter, ...dateFilters, ...branchProcess],
     "bank-missing": [...branchProcess],
     "bank-change-requests": [...branchProcess],
-    "increment-requests": [...branchProcess],
-    "payroll-readiness-status": [...monthFilter, ...branchProcess],
-    "pf-esi-optout-register": [...branchProcess],
-    "pf-esic-salary-register": [...monthFilter, ...branchProcess],
-    "pf-contribution-register": [...monthFilter, ...branchProcess],
-    "pf-monthly-summary": [...monthFilter, branchOnly[0]],
-    "pf-ecr-format": [...monthFilter, branchOnly[0]],
-    "esic-contribution-register": [...monthFilter, ...branchProcess],
-    "esic-monthly-summary": [...monthFilter, branchOnly[0]],
+    "increment-requests": [...branchProcess, ...dateFilters],
+    "payroll-readiness-status": [...monthFilter, ...dateFilters, ...branchProcess],
+    "pf-esi-optout-register": [...branchProcess, ...dateFilters],
+    "pf-esic-salary-register": [...monthFilter, ...dateFilters, ...branchProcess],
+    "pf-contribution-register": [...monthFilter, ...dateFilters, ...branchProcess],
+    "pf-monthly-summary": [...monthFilter, ...dateFilters, branchOnly[0]],
+    "pf-ecr-format": [...monthFilter, ...dateFilters, branchOnly[0]],
+    "esic-contribution-register": [...monthFilter, ...dateFilters, ...branchProcess],
+    "esic-monthly-summary": [...monthFilter, ...dateFilters, branchOnly[0]],
     "tds-computation-register": branchOnly,
     "form-16-status": branchOnly,
-    "investment-declaration-status": branchOnly,
-    "gratuity-liability-register": branchOnly,
+    "investment-declaration-status": [...branchOnly, ...dateFilters],
+    "gratuity-liability-register": [...branchOnly, ...dateFilters],
     "resignation-register": [...dateFilters, ...branchProcess],
     "exit-movement-report": [...dateFilters, ...branchProcess],
-    "fnf-pending-register": branchOnly,
+    "fnf-pending-register": [...branchOnly, ...dateFilters],
     "fnf-settlement-register": [...dateFilters, branchOnly[0]],
     "ff-settlement-register": [...dateFilters, branchOnly[0]],
-    "clearance-status-register": branchOnly,
+    "clearance-status-register": [...branchOnly, ...dateFilters],
     "monthly-attrition-summary": [...dateFilters, ...branchProcess],
     "exit-reason-analysis": [...dateFilters, ...branchProcess],
     "tenure-distribution": branchProcess,
@@ -365,10 +365,10 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "source-effectiveness": [...dateFilters, branchOnly[0]],
     "recruiter-productivity": [...dateFilters, branchOnly[0]],
     "offer-tracker": [...dateFilters, ...branchProcess],
-    "joining-pending": branchProcess,
-    "agent-performance-summary": [...monthFilter, ...branchProcess],
-    "productivity-individual-scorecard": [...monthFilter, ...branchProcess],
-    "team-performance-summary": [...monthFilter, ...branchProcess],
+    "joining-pending": [...branchProcess, ...dateFilters],
+    "agent-performance-summary": [...monthFilter, ...dateFilters, ...branchProcess],
+    "productivity-individual-scorecard": [...monthFilter, ...dateFilters, ...branchProcess],
+    "team-performance-summary": [...monthFilter, ...dateFilters, ...branchProcess],
     "quality-audit-log": [...dateFilters, ...branchProcess],
     "fatal-error-register": [...dateFilters, ...branchProcess],
     "roster-published": [...dateFilters, ...branchProcess],
@@ -376,19 +376,19 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "roster-variance": [...dateFilters, ...branchProcess],
     "shift-swap-register": [...dateFilters, ...branchProcess],
     "week-off-calendar": [...dateFilters, ...branchProcess],
-    "asset-inventory": branchOnly,
-    "asset-inventory-report": branchOnly,
-    "asset-allocation-register": branchOnly,
+    "asset-inventory": [...branchOnly, ...dateFilters],
+    "asset-inventory-report": [...branchOnly, ...dateFilters],
+    "asset-allocation-register": [...branchOnly, ...dateFilters],
     "asset-movement-log": [...dateFilters, branchOnly[0]],
-    "training-completion-status": branchProcess,
-    "certification-status": branchProcess,
+    "training-completion-status": [...branchProcess, ...dateFilters],
+    "certification-status": [...branchProcess, ...dateFilters],
     "training-batch-summary": [...dateFilters, ...branchProcess],
-    "document-expiry-tracker": branchOnly,
+    "document-expiry-tracker": [...branchOnly, ...dateFilters],
     "employee-document-compliance": branchOnly,
-    "document-verification-status": branchOnly,
-    "missing-documents-report": branchProcess,
+    "document-verification-status": [...branchOnly, ...dateFilters],
+    "missing-documents-report": [...branchProcess, ...dateFilters],
     "uan-status-report": branchOnly,
-    "uan-master-register": branchOnly,
+    "uan-master-register": [...branchOnly, ...dateFilters],
     "esic-status-report": branchOnly,
     "pan-verification-status": branchOnly,
     "bank-account-verification": branchOnly,
@@ -421,8 +421,8 @@ function buildFiltersForReport(code: string): FilterDef[] {
     // Reports that do NOT read a date range. These are masters, point-in-time snapshots and
     // exception worklists — a period genuinely does not apply, so offering one only invites
     // the reading that the report is broken when nothing changes:
-    "org-mapping-gaps":                        [...branchProcess],
-    "employee-status-conflicts":               [...branchProcess],
+    "org-mapping-gaps":                        [...branchProcess, ...dateFilters],
+    "employee-status-conflicts":               [...branchProcess, ...dateFilters],
     "process-master-report":                   [...branchOnly],
     "cost-centre-master-report":               [...branchOnly],
     "headcount-by-cost-centre-and-process":    [...branchProcess, COST_CENTRE_FILTER],
@@ -448,6 +448,19 @@ function buildFiltersForReport(code: string): FilterDef[] {
 }
 
 // ─── Build CATALOG from central source + local filters ────────────────────────
+
+const SINGLE_MONTH_ONLY = new Set(["attendance-register-monthly", "attendance-register-grid", "attendance-source-sheet", "leave-balance", "leave-balance-export", "bank-advice", "neft-transfer-file", "pf-ecr-format"]);
+
+/** Reports with no date of their own (current-state aggregates, masters, status snapshots). */
+const POINT_IN_TIME = new Set([
+  "headcount", "manager-mapping", "org-structure-snapshot", "cost-centre-headcount", "birthday-list", "anniversary-list",
+  "ytd-salary-summary", "bank-missing", "tds-computation-register", "form-16-status", "tenure-distribution",
+  "aon-bucket-headcount", "recruitment-pipeline", "ats-pipeline-summary", "employee-document-compliance", "uan-status-report",
+  "esic-status-report", "pan-verification-status", "bank-account-verification", "identity-source-snapshot",
+  "process-master-report", "cost-centre-master-report", "headcount-by-cost-centre-and-process",
+  "cost-centre-vs-billing-reconciliation", "leave-ledger-vs-requests-reconciliation", "leave-lapse-summary",
+  "aon-drilldown-employees", "attrition-risk-score", "loan-register", "bank-account-register", "nominee-register",
+]);
 
 const CATALOG: ReportDef[] = CENTRAL_CATALOG.map(r => ({
   ...r,
@@ -942,6 +955,33 @@ function FilterInput({ def, value, onChange }: { def: FilterDef; value: string; 
   return <input className={base} type="text" placeholder={def.placeholder ?? def.label} value={value} onChange={e => onChange(e.target.value)} />;
 }
 
+/**
+ * Month and From/To are two ways of naming the same period, so choosing one clears the other.
+ * Only matters on month-driven reports; elsewhere there is no Month control to collide with.
+ */
+function applyFilterChange(prev: Record<string, string>, key: string, value: string): Record<string, string> {
+  const next = { ...prev, [key]: value };
+  if (!value) return next;
+  if (key === "month") { delete next.from; delete next.to; }
+  if (key === "from" || key === "to") delete next.month;
+  return next;
+}
+
+/** Reports that read only a Month cannot show a range as one run; the hint says how it behaves. */
+function rangeHint(code: string, filters: FilterDef[]): string | null {
+  const hasMonth = filters.some(f => f.key === "month");
+  const hasRange = filters.some(f => f.key === "from");
+  if (hasMonth && hasRange) {
+    return SINGLE_MONTH_ONLY.has(code)
+      ? "Pick a Month, or From–To within one month. This report is produced for a single month."
+      : "Pick a Month, or a From–To range. A range runs every month it touches in full (up to 12) and adds a Month column.";
+  }
+  if (!hasRange && !hasMonth && POINT_IN_TIME.has(code)) {
+    return "Point-in-time report: it shows the current position, so a date range does not apply.";
+  }
+  return null;
+}
+
 // ─── Duplicate Key Detection ───────────────────────────────────────────────────
 
 function detectDuplicates(rows: Record<string, unknown>[], primaryKey: string[]): { hasDuplicates: boolean; duplicateCount: number } {
@@ -1037,6 +1077,17 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
   const [duplicateInfo, setDuplicateInfo] = useState<{ hasDuplicates: boolean; duplicateCount: number }>({ hasDuplicates: false, duplicateCount: 0 });
 
   const isSuperAdmin = userRoles.includes("super_admin");
+
+  /* A From–To range on a month-driven report returns several months stacked; the server tags each
+     row with report_month, which no catalog entry declares, so the grid adds the column itself. */
+  const displayColumns: ColumnDef[] = selectedReport
+    ? [
+        ...(rows.some(r => r.report_month != null)
+          ? [{ key: "report_month", label: "Month", format: "text", width: 90 } as ColumnDef]
+          : []),
+        ...columnsForMonth(selectedReport.columns, selectedReport.code, filterValues.month),
+      ]
+    : [];
 
   /**
    * Whether this user may download the selected report directly.
@@ -1167,7 +1218,8 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
       setCurrentPage(page);
 
       // Check for duplicates
-      const dupeCheck = detectDuplicates(data, selectedReport.primaryKey);
+      const stacked = data.some(r => r.report_month != null);
+      const dupeCheck = detectDuplicates(data, stacked ? [...selectedReport.primaryKey, "report_month"] : selectedReport.primaryKey);
       setDuplicateInfo(dupeCheck);
 
       setReportState(data.length === 0 ? "empty" : "success");
@@ -1405,7 +1457,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                       return (
                         <div key={def.key} className="space-y-1 w-full sm:w-auto sm:min-w-[140px] sm:max-w-[200px]">
                           <label className="block text-xs font-medium text-gray-500">{def.label}</label>
-                          <FilterInput def={resolved} value={filterValues[def.key] ?? ""} onChange={v => setFilterValues(prev => ({ ...prev, [def.key]: v }))} />
+                          <FilterInput def={resolved} value={filterValues[def.key] ?? ""} onChange={v => setFilterValues(prev => applyFilterChange(prev, def.key, v))} />
                         </div>
                       );
                     })}
@@ -1418,6 +1470,12 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                       {reportState === "loading" ? <><Loader2 size={14} className="animate-spin" /> Running...</> : <><Play size={14} /> Run</>}
                     </button>
                   </div>
+                  {rangeHint(selectedReport.code, selectedReport.filters) && (
+                    <p className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
+                      <Info size={12} className="shrink-0" />
+                      {rangeHint(selectedReport.code, selectedReport.filters)}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1556,7 +1614,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                             selectedReport.headerGroups ? "top-[33px]" : "top-0"
                           }`}
                         >
-                          {columnsForMonth(selectedReport.columns, selectedReport.code, filterValues.month).map(col => (
+                          {displayColumns.map(col => (
                             <th
                               key={col.key}
                               className={`px-3 py-2.5 font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap ${
@@ -1580,7 +1638,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                             : String(i);
                           return (
                           <tr key={rowKey} className={`hover:bg-blue-50/50 ${i % 2 === 0 ? "" : "bg-gray-50/50"}`}>
-                            {columnsForMonth(selectedReport.columns, selectedReport.code, filterValues.month).map(col => (
+                            {displayColumns.map(col => (
                               <td
                                 key={col.key}
                                 className={`px-3 py-2 text-gray-700 whitespace-nowrap max-w-[220px] truncate ${

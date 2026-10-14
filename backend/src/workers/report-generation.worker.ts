@@ -21,6 +21,7 @@ import {
 } from '../modules/reporting/executors/index.js';
 import { isBpoMasterCode, isIdentityBuilderCode } from '../modules/reporting/all-reports.registry.js';
 import { REPORT_CATALOG } from '../modules/reporting/report-catalog.js';
+import { filterRowsByDate, planMonthRange, planRowRange, tagMonth } from '../modules/reporting/month-range.js';
 
 // ── Configuration (all values from env) ───────────────────────────────────────
 const WORKER_NAME             = 'report-generation';
@@ -311,6 +312,18 @@ async function processOneRequest(): Promise<boolean> {
     let totalWritten = 0;
     const allRows: Record<string, unknown>[] = [];
 
+    // A From–To range on a month-driven report runs once per month touched (see month-range.ts);
+    // every other request is a single run with the filters as given.
+    const monthPlan = planMonthRange(req.report_code, filters as Record<string, unknown>);
+    const runs: { filters: ExecFilters; month: string | null }[] = monthPlan
+      ? monthPlan.months.map(m => ({
+          filters: { ...filters, from: undefined, to: undefined, month: m } as ExecFilters,
+          month: monthPlan.stacked ? m : null,
+        }))
+      : [{ filters, month: null }];
+
+    for (const run of runs) {
+    lastCursor = null;
     while (true) {
       const chunkOptions: ExecOptions = {
         limit: CHUNK_SIZE,
@@ -322,10 +335,12 @@ async function processOneRequest(): Promise<boolean> {
       };
 
       const batch: ExecResult = await dispatchWorkerReport(
-        req.report_code, filters, scope, chunkOptions
+        req.report_code, run.filters, scope, chunkOptions
       );
 
-      const cleanRows = stripCursorField(batch.rows);
+      const cleanRows = run.month
+        ? tagMonth(stripCursorField(batch.rows) as Record<string, unknown>[], run.month)
+        : stripCursorField(batch.rows);
       allRows.push(...cleanRows);
       totalWritten += cleanRows.length;
       lastCursor = batch.nextCursor ?? null;
@@ -355,6 +370,17 @@ async function processOneRequest(): Promise<boolean> {
         });
         break;
       }
+    }
+    if (totalWritten >= MAX_ROWS) break;
+    }
+
+    // Row-dated reports: keep only rows whose natural date column falls in the range.
+    const rowPlan = planRowRange(req.report_code, filters as Record<string, unknown>);
+    if (rowPlan) {
+      const kept = filterRowsByDate(allRows, rowPlan.column, rowPlan.from, rowPlan.to);
+      allRows.length = 0;
+      allRows.push(...kept);
+      totalWritten = kept.length;
     }
 
     await recordReportAuditEvent({

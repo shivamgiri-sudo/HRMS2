@@ -442,3 +442,10 @@ Verified on production data via the localhost preview API + Playwright (zero con
 - New weights: team losses up to 30 points, peer pay up to 10; absence streak 8->4, late marks and leave frequency and entry-level pay no longer scored. Caps: lifecycle 24, attendance 16, performance 20, pay 14, conduct 10, team 30.
 - Result on the test weeks: riskiest 10% / 20% / 30% flagged catches 36.7 / 53.1 / 61.2% of real leavers (old: 32.6 / 49.6 / 59.0). Tiers (same cut-offs 25/40/55): CRITICAL 5.9% of people, 61% left; HIGH 18.7%, 20% left; MEDIUM 29.8%, 9% left; LOW 45.7%, 6% left. The old score put only 1.9% of people in CRITICAL at similar precision.
 - Not verified: production behaviour after deploy (checked next); KPI, call quality, PIP and profile-gap points were not re-weighted because they have no history to learn from.
+
+## 2026-10-14 — Report Library: From–To date range on every report
+- Page: Reports → library (`ReportLibraryView`), driven in headless Chromium through a temporary harness (mocked `/api` and role hook, since login and a database are not available here; harness deleted afterwards).
+- Seen: payroll-register shows Month plus From/To; choosing a date clears the Month, and the request goes out as `from`/`to`. A stacked result renders a "Month" column first with one row per month. asset-inventory shows From/To. headcount shows no pickers and the note "Point-in-time report … a date range does not apply".
+- Console: no errors from the new code (only a pre-existing React key warning on the Branch/Process options, caused by the mock data).
+- Backend: vitest covers range expansion (year boundary, 12-month cap, inverted/half-filled ranges, single-month-only layouts), per-month merge and pagination, and row-date filtering; a contract test keeps the frontend pickers in step with what the backend honours. `tsc` and `npm run build` clean; all 67 reporting test files pass.
+- NOT verified: the real SQL executors against MySQL (no database here), real production data, the email-request worker path and the XLSX export path end to end (both changed but only type-checked), and login-gated access.

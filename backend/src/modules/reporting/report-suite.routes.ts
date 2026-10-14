@@ -18,6 +18,7 @@ import { REPORT_CATALOG } from "./report-catalog.js";
 import type { SensitivityLevel } from "./report-catalog.js";
 import { resolveFullScope } from "./reporting.scope.js";
 import { executeReport, ReportExecutorNotFoundError } from "./executors/index.js";
+import { MonthRangeError, filterRowsByDate, planMonthRange, planRowRange, tagMonth, withMonthRange } from "./month-range.js";
 import { resolvePayrollMonth } from "./payroll-month.js";
 import type { ExecFilters, ExecOptions } from "./executors/types.js";
 import {
@@ -354,8 +355,51 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
   }
 
   let result;
+  let rangeMonths: string[] | null = null;
   try {
-    result = await executeReport(code, filters, scope, options);
+    let plan;
+    try {
+      plan = planMonthRange(code, req.query);
+    } catch (err) {
+      if (err instanceof MonthRangeError) {
+        res.status(400).json({ error: 'INVALID_DATE_RANGE', message: err.message });
+        return;
+      }
+      throw err;
+    }
+    if (!plan) {
+      try { planRowRange(code, req.query); } catch (err) {
+        if (err instanceof MonthRangeError) {
+          res.status(400).json({ error: 'INVALID_DATE_RANGE', message: err.message });
+          return;
+        }
+        throw err;
+      }
+    }
+    if (plan && plan.stacked) {
+      // Date range on a month-driven report: one run per month touched, rows stacked and tagged.
+      rangeMonths = plan.months;
+      const stackedRows: Record<string, unknown>[] = [];
+      let stackedCount = 0;
+      for (const m of plan.months) {
+        const part = await executeReport(code, { ...filters, from: undefined, to: undefined, month: m }, scope, options);
+        stackedRows.push(...tagMonth(part.rows as Record<string, unknown>[], m));
+        stackedCount += part.rowCount;
+      }
+      result = { rows: stackedRows, rowCount: stackedCount, isTruncated: false };
+    } else if (plan) {
+      filters.month = plan.months[0];
+      filters.from = undefined;
+      filters.to = undefined;
+      result = await executeReport(code, filters, scope, options);
+    } else {
+      result = await executeReport(code, filters, scope, options);
+      const rowPlan = planRowRange(code, req.query);
+      if (rowPlan) {
+        const kept = filterRowsByDate(result.rows as Record<string, unknown>[], rowPlan.column, rowPlan.from, rowPlan.to);
+        result = { ...result, rows: kept, rowCount: kept.length, isTruncated: false };
+      }
+    }
   } catch (err) {
     if (err instanceof ReportExecutorNotFoundError) {
       res.status(404).json({ error: 'EXECUTOR_NOT_FOUND', message: 'This report is not yet available.' });
@@ -451,6 +495,9 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
           (c.align === "left" || c.align === "center" || c.align === "right") ? c.align : undefined;
         return { key: c.key, label: dateLabel, format: c.format, width: 55, align };
       });
+    }
+    if (rangeMonths) {
+      exportColumns = [...exportColumns, { key: 'report_month', label: 'Month', format: 'text', width: 90 } as CatalogWorkbookColumn];
     }
     const catalogBuffer = await buildCatalogWorkbook({
       rows,
@@ -639,7 +686,7 @@ reportSuiteRouter.post("/identity-source-snapshot/sync", requireRole("admin", "s
   return res.json({ success: true, data: result });
 }));
 
-reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddleware, h(async (req, res) => {
+reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddleware, withMonthRange(h(async (req, res) => {
   const code = String(req.params.code);
   const isExport = isExportRequest(req.query);
   const limit = limitParam(req.query.limit, isExport);
@@ -3393,4 +3440,4 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       fallback: data[0]?.report_status === "PENDING_DATA_BUILDER"
     }
   });
-}));
+})));
