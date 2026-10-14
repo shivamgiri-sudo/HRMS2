@@ -25,13 +25,17 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const codeCol = ["empcode", "emp_code", "employeecode", "employee_code", "empid", "emp_id"].map((c) => lower.get(c)).find(Boolean) ?? null;
   const companyCol = ["company", "companyname", "company_name", "costcompany", "cost_company_name"].map((c) => lower.get(c)).find(Boolean) ?? null;
   console.log("GAP_META " + JSON.stringify({ periods, billCodeColumn: codeCol, billCompanyColumn: companyCol, billColumns: billCols.map((c) => `${c.name}:${c.type}`) }));
-  const numericBill = billCols.filter((c) => /int|decimal|float|double/i.test(c.type)).map((c) => c.name);
+  // db_bill stores every amount as varchar(50): cast the ones that explain a payroll difference.
+  const SUM_COLS = ["Gross", "Gross1", "CTC", "ESICCompany", "EPFCompany", "AdminChrg", "Incentive", "ExtraDayIncentive", "Arrear", "PLI",
+    "ESIC", "EPF", "LeaveDeduction", "OtherDeduction", "LoanDed", "TotalDeduction", "NetSalary", "EarnedDays"].filter((c) => lower.has(c.toLowerCase()));
+  const numericBill = SUM_COLS.map((c) => lower.get(c.toLowerCase())!);
+  const dec = (c: string) => `CAST(NULLIF(TRIM(\`${c}\`), '') AS DECIMAL(18,2))`;
 
   for (const period of periods) {
     // HRMS side, per employee (payroll lines of non-void runs of the month).
     const [h] = await db.query<RowDataPacket[]>(
       `SELECT e.employee_code AS code, COALESCE(bm.branch_name, 'Unassigned') AS branch,
-              COUNT(*) AS lines,
+              COUNT(*) AS n_lines,
               SUM(${pick("gross_salary")}) AS gross, SUM(${pick("pf_employer")}) AS pf, SUM(${pick("esic_employer")}) AS esic,
               SUM(${pick("gratuity")}) AS gratuity, SUM(${pick("incentive_total")}) AS incentive,
               SUM(${pick("other_deductions")} + ${pick("loan_emi")} + ${pick("advance_recovery")}) AS other_ded,
@@ -47,15 +51,15 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
       const ctc = num(r.gross) + num(r.pf) + num(r.esic) + num(r.gratuity);
       const cost = ctc + num(r.incentive) - num(r.other_ded) - num(r.lwp);
       tot.ctc += ctc; tot.inc += num(r.incentive); tot.ded += num(r.other_ded); tot.lwp += num(r.lwp);
-      tot.gross += num(r.gross); tot.pf += num(r.pf); tot.esic += num(r.esic); tot.grat += num(r.gratuity); tot.lines += num(r.lines);
-      hr.set(String(r.code), { branch: String(r.branch), cost, ctc, inc: num(r.incentive), lines: num(r.lines) });
+      tot.gross += num(r.gross); tot.pf += num(r.pf); tot.esic += num(r.esic); tot.grat += num(r.gratuity); tot.lines += num(r.n_lines);
+      hr.set(String(r.code), { branch: String(r.branch), cost, ctc, inc: num(r.incentive), lines: num(r.n_lines) });
     }
     console.log("GAP_HRMS " + JSON.stringify({ period, employees: hr.size, lines: tot.lines, gross: r0(tot.gross), pfEmployer: r0(tot.pf), esicEmployer: r0(tot.esic), gratuity: r0(tot.grat), incentive: r0(tot.inc), otherDeductions: r0(tot.ded), lwp: r0(tot.lwp), ctcPaid: r0(tot.ctc), peopleCost: r0(tot.ctc + tot.inc - tot.ded - tot.lwp) }));
     const dupLines = [...hr.values()].filter((x) => x.lines > 1);
     console.log("GAP_HRMS_DUP " + JSON.stringify({ period, employeesWithMultipleLines: dupLines.length, extraLines: dupLines.reduce((t, x) => t + x.lines - 1, 0), costOnThose: r0(dupLines.reduce((t, x) => t + x.cost, 0)) }));
 
     // db_bill side.
-    const sums = numericBill.map((c) => `SUM(CAST(\`${c}\` AS DECIMAL(18,2))) AS \`s_${c}\``).join(", ");
+    const sums = numericBill.map((c) => `SUM(COALESCE(${dec(c)}, 0)) AS \`s_${c}\``).join(", ");
     const where = `DATE_FORMAT(SalayDate,'%Y-%m') = '${period}'${companyCol ? ` AND LOWER(TRIM(COALESCE(\`${companyCol}\`, ''))) <> 'idc'` : ""}`;
     const totals = await billQuery<any>(`SELECT COUNT(*) AS n, ${sums} FROM salary_data WHERE ${where}`);
     const t = totals[0] ?? {};
@@ -65,7 +69,7 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
     if (codeCol && lower.get("ctc")) {
       const rows = await billQuery<any>(
-        `SELECT TRIM(\`${codeCol}\`) AS code, SUM(CAST(\`${lower.get("ctc")}\` AS DECIMAL(18,2))) AS ctc, COUNT(*) AS n
+        `SELECT TRIM(\`${codeCol}\`) AS code, SUM(COALESCE(${dec(lower.get("ctc")!)}, 0)) AS ctc, COUNT(*) AS n
            FROM salary_data WHERE ${where} GROUP BY TRIM(\`${codeCol}\`)`);
       const bill = new Map(rows.map((r: any) => [String(r.code), { ctc: num(r.ctc), n: num(r.n) }]));
       const dupBill = rows.filter((r: any) => num(r.n) > 1);
