@@ -3,7 +3,13 @@ name: Ops Billing Legacy Probe (manual)
 # Read-only: describes the legacy I-Spark billing rules from db_bill (SELECT/SHOW only) and
 # the HRMS client-billing counters (SELECT only). Writes nothing anywhere.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      round:
+        description: "Probe round (1 = screen rules, 2 = number counters)"
+        required: false
+        default: "1"
+        type: string
 
 concurrency:
   group: ops-billing-legacy-probe-production
@@ -34,6 +40,7 @@ jobs:
         env:
           DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
           NODE_ENV: production
+          PROBE_ROUND: ${{ inputs.round }}
         run: |
           set -euo pipefail
           test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }

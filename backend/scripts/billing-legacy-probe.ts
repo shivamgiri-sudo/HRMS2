@@ -32,7 +32,25 @@ async function hrms(label: string, sql: string): Promise<void> {
   }
 }
 
+async function round2() {
+  await hrms("HRMS bill/proforma sequences", "SELECT kind, scope_key, `last_value`, updated_at FROM client_invoice_number_sequence ORDER BY kind, scope_key");
+  await hrms("HRMS live invoices", "SELECT proforma_no, bill_no, invoice_status, created_at FROM client_invoice WHERE is_migrated = 0");
+  await hrms("HRMS max migrated bill index per scope (2026-27)", `SELECT SUBSTRING_INDEX(bill_no,'-',1) AS st, MAX(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(bill_no,'/',1),'-',-1) AS UNSIGNED)) AS max_idx, COUNT(*) AS n
+     FROM client_invoice WHERE finance_year = '2026-27' AND bill_no LIKE '__-%/26-27' GROUP BY st`);
+  await bill("legacy max bill index per scope (2026-27)",
+    `SELECT state_code, cost_company_name, MAX(BillNoChange) AS max_idx, COUNT(*) AS n
+     FROM tbl_invoice WHERE bill_finance_year = '2026-27' OR finance_year = '2026-27' GROUP BY state_code, cost_company_name`);
+  await bill("legacy max proforma per state (2026-27)",
+    `SELECT SUBSTRING_INDEX(SUBSTRING_INDEX(proforma_bill_no,'/',2),'/',-1) AS st, MAX(CAST(SUBSTRING_INDEX(proforma_bill_no,'/',-1) AS UNSIGNED)) AS max_pi, COUNT(*) AS n
+     FROM tbl_invoice WHERE proforma_bill_no LIKE 'PI/%' GROUP BY st`);
+  await bill("provision_master_edit_request columns", "SHOW COLUMNS FROM provision_master_edit_request");
+  await bill("send_bps / out_source / billing flags (2026-27)",
+    `SELECT send_bps, (out_source_amt NOT IN ('','0')) AS has_outsource, billing_active, billing_status, COUNT(*) AS n
+     FROM provision_master WHERE finance_year = '2026-27' GROUP BY 1,2,3,4`);
+}
+
 async function main() {
+  if (process.env.PROBE_ROUND === "2") return round2();
   // 1. Table shapes behind the screens.
   for (const t of ["tbl_invoice", "inv_particulars", "inv_deduct_particulars", "provision_master",
     "provision_master_month_deductions", "po_number", "po_number_particulars", "bill_no_master"]) {
@@ -104,7 +122,7 @@ async function main() {
   await bill("legacy latest bills", `SELECT bill_no, state_code, DATE_FORMAT(createdate,'%Y-%m-%d') AS created
      FROM tbl_invoice WHERE bill_no IS NOT NULL AND bill_no <> '' ORDER BY id DESC LIMIT 15`);
   await bill("legacy proforma counter", `SELECT * FROM bill_no_master`);
-  await hrms("HRMS bill/proforma sequences", `SELECT kind, scope_key, last_value, updated_at FROM client_invoice_number_sequence ORDER BY kind, scope_key`);
+  await hrms("HRMS bill/proforma sequences", `SELECT kind, scope_key, `last_value`, updated_at FROM client_invoice_number_sequence ORDER BY kind, scope_key`);
   await hrms("HRMS live invoices/provisions", `SELECT (SELECT COUNT(*) FROM client_invoice WHERE is_migrated = 0) AS live_invoices,
      (SELECT COUNT(*) FROM client_provision) AS provisions, (SELECT MAX(created_at) FROM client_invoice WHERE is_migrated = 0) AS last_live`);
 }
