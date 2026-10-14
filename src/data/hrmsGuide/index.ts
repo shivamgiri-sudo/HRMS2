@@ -95,8 +95,46 @@ export function loadRoleGuide(key: string): Promise<RoleGuide> {
   return p;
 }
 
-export function loadAllRoleGuides(): Promise<RoleGuide[]> {
-  return Promise.all(ROLE_GUIDES.map((g) => loadRoleGuide(g.key)));
+export function loadAllRoleGuides(keys: string[] = ROLE_GUIDES.map((g) => g.key)): Promise<RoleGuide[]> {
+  return Promise.all(keys.filter((k) => LOADERS[k]).map((k) => loadRoleGuide(k)));
+}
+
+// ─── Role scoping ────────────────────────────────────────────────────────────
+
+/** Roles that administer everyone's access, so they may read every guide. */
+const SEE_ALL_ROLES = ["super_admin", "admin"];
+
+/**
+ * Guides a role may read on top of its own, because the job involves walking someone else through
+ * that guide (a recruiter helping a candidate fill the joining form, an ops manager sitting on the
+ * interview panel). Keyed by guide key.
+ */
+const RELATED_GUIDES: Record<string, string[]> = {
+  hr: ["new_joiner"],
+  recruiter: ["new_joiner", "interviewer"],
+  operations_manager: ["interviewer"],
+  process_manager: ["interviewer"],
+};
+
+/**
+ * The guide keys a user is allowed to open, in display order.
+ * - Super Admin / Admin: every guide.
+ * - Client-only logins: the Client guide only.
+ * - Everyone else: the guides matching their roles, plus Employee self-service and Getting Started,
+ *   plus the related guides above. With no resolvable role, Employee + Getting Started.
+ */
+export function allowedGuideKeys(roleKeys: string[]): string[] {
+  const have = new Set(roleKeys.map((r) => r.toLowerCase()));
+  if (SEE_ALL_ROLES.some((r) => have.has(r))) return ROLE_GUIDES.map((g) => g.key);
+
+  const own = guidesForRoles(roleKeys).map((g) => g.key);
+  if (own.length === 1 && own[0] === "client") return ["client"];
+
+  const keys = new Set<string>(own);
+  for (const k of own) for (const extra of RELATED_GUIDES[k] ?? []) keys.add(extra);
+  keys.add("employee");
+  keys.add("everyone");
+  return ROLE_GUIDES.map((g) => g.key).filter((k) => keys.has(k));
 }
 
 /** Guides that match the signed-in user's role keys, best match first. Always includes Employee for staff. */

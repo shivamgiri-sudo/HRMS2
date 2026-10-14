@@ -24,7 +24,7 @@ import {
   Users, Video, Wallet, Wrench, X, Zap,
 } from "lucide-react";
 import {
-  ROLE_GUIDES, ROLE_GUIDE_GROUPS, getRoleGuideMeta, guidesForRoles, loadAllRoleGuides,
+  ROLE_GUIDES, ROLE_GUIDE_GROUPS, allowedGuideKeys, getRoleGuideMeta, guidesForRoles, loadAllRoleGuides,
   loadRoleGuide, searchGuides,
   type GuideActivity, type GuideIconKey, type GuideModule, type GuideTone, type RoleGuide, type GuideSearchHit,
 } from "@/data/hrmsGuide";
@@ -305,7 +305,8 @@ function ActivityCard({
 
 // ─── Role picker ─────────────────────────────────────────────────────────────
 
-function RolePicker({ value, onChange, mine }: { value: string; onChange: (k: string) => void; mine: string[] }) {
+function RolePicker({ value, onChange, mine, allowed }: { value: string; onChange: (k: string) => void; mine: string[]; allowed: string[] }) {
+  const others = ROLE_GUIDES.filter((g) => allowed.includes(g.key) && !mine.includes(g.key));
   return (
     <select
       value={value}
@@ -319,9 +320,9 @@ function RolePicker({ value, onChange, mine }: { value: string; onChange: (k: st
           {mine.map((k) => <option key={`mine-${k}`} value={k} className="text-slate-800 bg-white">{getRoleGuideMeta(k)?.roleLabel}</option>)}
         </optgroup>
       )}
-      {ROLE_GUIDE_GROUPS.map((grp) => (
-        <optgroup key={grp} label={grp} className="text-slate-800 bg-white">
-          {ROLE_GUIDES.filter((g) => g.group === grp).map((g) => (
+      {ROLE_GUIDE_GROUPS.filter((grp) => others.some((g) => g.group === grp)).map((grp) => (
+        <optgroup key={grp} label={mine.length > 0 ? `Also available: ${grp}` : grp} className="text-slate-800 bg-white">
+          {others.filter((g) => g.group === grp).map((g) => (
             <option key={g.key} value={g.key} className="text-slate-800 bg-white">{g.roleLabel}</option>
           ))}
         </optgroup>
@@ -334,10 +335,18 @@ function RolePicker({ value, onChange, mine }: { value: string; onChange: (k: st
 
 export default function NativeHrmsGuide() {
   const [params, setParams] = useSearchParams();
-  const { data: roleData, isLoading: rolesLoading } = useUserRole();
+  const { data: roleData, isFetched: rolesFetched, isError: rolesError } = useUserRole();
+  // Until the role query has answered, nothing is shown: scoping must not flash another role's guide.
+  const rolesResolved = rolesFetched || rolesError;
+  const rolesLoading = !rolesResolved;
 
-  const myGuides = useMemo(() => guidesForRoles(roleData?.roleKeys ?? roleData?.roles ?? []), [roleData]);
-  const myGuideKeys = useMemo(() => myGuides.map((g) => g.key), [myGuides]);
+  const userRoleKeys = useMemo(() => (roleData?.roleKeys ?? roleData?.roles ?? []) as string[], [roleData]);
+  const allowedKeys = useMemo(() => allowedGuideKeys(userRoleKeys), [userRoleKeys]);
+  const myGuideKeys = useMemo(() => {
+    const own = guidesForRoles(userRoleKeys).map((g) => g.key).filter((k) => allowedKeys.includes(k));
+    return own.length > 0 ? own : allowedKeys.filter((k) => k !== "everyone").slice(0, 1);
+  }, [userRoleKeys, allowedKeys]);
+  const seesAllGuides = allowedKeys.length === ROLE_GUIDES.length;
 
   const urlRole = params.get("role") ?? "";
   const urlModule = params.get("module");
@@ -345,6 +354,7 @@ export default function NativeHrmsGuide() {
 
   const [roleKey, setRoleKey] = useState<string>(getRoleGuideMeta(urlRole) ? urlRole : "");
   const [autoPicked, setAutoPicked] = useState(false);
+  const [blockedRole, setBlockedRole] = useState<string | null>(null);
   const [guides, setGuides] = useState<Record<string, RoleGuide>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -357,22 +367,34 @@ export default function NativeHrmsGuide() {
   const [showRoutine, setShowRoutine] = useState(true);
   const scrolledRef = useRef(false);
 
-  // Auto-select the user's own guide once their roles are known.
+  // Once roles are known: open the user's own guide, and refuse a linked guide they do not hold.
   useEffect(() => {
-    if (roleKey || rolesLoading) return;
-    if (myGuideKeys.length > 0) {
+    if (!rolesResolved) return;
+    if (roleKey && !allowedKeys.includes(roleKey)) {
+      setBlockedRole(roleKey);
+      setRoleKey(myGuideKeys[0] ?? "");
+      setSelectedModule(null);
+      setOpenActs(new Set());
+      setHighlightAct(null);
+      setAutoPicked(true);
+      return;
+    }
+    if (!roleKey && myGuideKeys.length > 0) {
       setRoleKey(myGuideKeys[0]);
       setAutoPicked(true);
     }
-  }, [roleKey, rolesLoading, myGuideKeys]);
+  }, [roleKey, rolesResolved, allowedKeys, myGuideKeys]);
+
+  // The guide actually rendered: never one outside the user's scope.
+  const visibleRoleKey = rolesResolved && allowedKeys.includes(roleKey) ? roleKey : "";
 
   // Load the selected guide plus the shared sections.
   useEffect(() => {
-    if (!roleKey) return;
+    if (!visibleRoleKey) return;
     let cancelled = false;
     setLoadError(null);
-    const keys = [roleKey];
-    if (getRoleGuideMeta(roleKey)?.audience === "staff") keys.push("employee", "everyone");
+    const keys = [visibleRoleKey];
+    if (getRoleGuideMeta(visibleRoleKey)?.audience === "staff") keys.push("employee", "everyone");
     Promise.all(keys.map((k) => loadRoleGuide(k).then((g) => [k, g] as const)))
       .then((pairs) => {
         if (cancelled) return;
@@ -384,15 +406,15 @@ export default function NativeHrmsGuide() {
       })
       .catch(() => { if (!cancelled) setLoadError("The guide could not be loaded. Check your connection and try again."); });
     return () => { cancelled = true; };
-  }, [roleKey, reloadNonce]);
+  }, [visibleRoleKey, reloadNonce]);
 
   // Load every guide when the user searches across all roles.
   useEffect(() => {
     if (!searchAll || allGuides) return;
-    loadAllRoleGuides().then(setAllGuides).catch(() => setLoadError("Could not load all guides for searching."));
-  }, [searchAll, allGuides]);
+    loadAllRoleGuides(allowedKeys).then(setAllGuides).catch(() => setLoadError("Could not load all guides for searching."));
+  }, [searchAll, allGuides, allowedKeys]);
 
-  const primary = roleKey ? guides[roleKey] : undefined;
+  const primary = visibleRoleKey ? guides[visibleRoleKey] : undefined;
   const sections = useMemo(
     () => (primary ? buildSections(primary, guides.everyone, guides.employee) : []),
     [primary, guides.everyone, guides.employee],
@@ -427,8 +449,10 @@ export default function NativeHrmsGuide() {
   }, [highlightAct, activeModule]);
 
   const changeRole = (k: string) => {
+    if (!allowedKeys.includes(k)) return;
     setRoleKey(k);
     setAutoPicked(false);
+    setBlockedRole(null);
     setSelectedModule(null);
     setOpenActs(new Set());
     setHighlightAct(null);
@@ -456,6 +480,7 @@ export default function NativeHrmsGuide() {
     const actKey = `${mk}/${hit.activity.id}`;
     // A hit outside the current guide switches guide (keeping shared sections where they belong).
     const inCurrent = sections.some((s) => s.guideKey === guideKey);
+    if (!allowedKeys.includes(hit.roleKey)) return;
     if (!inCurrent) {
       setRoleKey(hit.roleKey);
       setAutoPicked(false);
@@ -513,7 +538,7 @@ export default function NativeHrmsGuide() {
 
             <div className="mt-5 flex flex-col lg:flex-row gap-3 lg:items-center">
               <label className="text-white/85 text-sm font-medium whitespace-nowrap" htmlFor="guide-role">Guide for:</label>
-              <div id="guide-role"><RolePicker value={roleKey} onChange={changeRole} mine={myGuideKeys} /></div>
+              <div id="guide-role"><RolePicker value={visibleRoleKey} onChange={changeRole} mine={myGuideKeys} allowed={allowedKeys} /></div>
               {primary && (
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/20 border border-white/30">
                   <Star className="h-3.5 w-3.5 text-yellow-300" aria-hidden="true" />
@@ -549,9 +574,9 @@ export default function NativeHrmsGuide() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" aria-hidden="true" />
               <input
                 type="search"
-                placeholder={roleKey ? "What do you want to do? e.g. apply leave, download payslip, approve GRN…" : "Search every guide… e.g. reset password, Form 16, roster upload"}
+                placeholder={visibleRoleKey ? "What do you want to do? e.g. apply leave, download payslip, approve GRN…" : "Search your guides… e.g. reset password, Form 16, roster upload"}
                 value={query}
-                onChange={(e) => { setQuery(e.target.value); if (!roleKey) setSearchAll(true); }}
+                onChange={(e) => { setQuery(e.target.value); if (!visibleRoleKey) setSearchAll(true); }}
                 aria-label="Search the guide"
                 className="w-full h-11 pl-9 pr-10 rounded-xl border-2 border-white/40 bg-white text-sm text-slate-700 placeholder-slate-400 focus:border-white focus:outline-none shadow-sm"
               />
@@ -561,14 +586,26 @@ export default function NativeHrmsGuide() {
                 </button>
               )}
             </div>
-            {roleKey && (
+            {visibleRoleKey && allowedKeys.length > sections.length && (
               <label className="mt-2 inline-flex items-center gap-2 text-xs text-white/90 cursor-pointer select-none">
                 <input type="checkbox" checked={searchAll} onChange={(e) => setSearchAll(e.target.checked)} className="rounded border-white/50" />
-                Search all roles' guides, not just this one
+                {seesAllGuides ? "Search every role's guide, not just this one" : "Search all the guides available to you"}
               </label>
             )}
           </div>
         </div>
+
+        {blockedRole && (
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 mt-4">
+            <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 flex items-center gap-3">
+              <Lock className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+              <span className="flex-1">
+                The link you opened is for the {getRoleGuideMeta(blockedRole)?.roleLabel ?? "another"} guide, which is not part of your role. Showing your own guide instead. If you need that role, ask your Super Admin.
+              </span>
+              <button type="button" onClick={() => setBlockedRole(null)} aria-label="Dismiss" className="text-amber-700 hover:text-amber-900"><X className="h-4 w-4" /></button>
+            </div>
+          </div>
+        )}
 
         {loadError && (
           <div className="max-w-6xl mx-auto px-4 sm:px-6 mt-4">
@@ -585,7 +622,7 @@ export default function NativeHrmsGuide() {
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-semibold text-slate-700">
-                {searchAll && !allGuides ? "Loading every guide…" : `${hits.length}${hits.length === 60 ? "+" : ""} result${hits.length === 1 ? "" : "s"} for "${query.trim()}"`}
+                {searchAll && !allGuides ? "Loading your guides…" : `${hits.length}${hits.length === 60 ? "+" : ""} result${hits.length === 1 ? "" : "s"} for "${query.trim()}"`}
                 {!searchAll && primary && <span className="font-normal text-slate-500"> in {primary.roleLabel} and shared sections</span>}
               </p>
               {searchAll && !allGuides && <Loader2 className="h-4 w-4 animate-spin text-indigo-500" aria-hidden="true" />}
@@ -622,9 +659,9 @@ export default function NativeHrmsGuide() {
                 <div className="rounded-xl border border-dashed border-slate-300 bg-white p-6 text-center">
                   <p className="text-sm text-slate-600">No activity matches "{query.trim()}".</p>
                   <p className="text-xs text-slate-500 mt-1">Try fewer or different words (for example "payslip" instead of "salary slip").</p>
-                  {!searchAll && roleKey && (
+                  {!searchAll && visibleRoleKey && allowedKeys.length > sections.length && (
                     <button type="button" onClick={() => setSearchAll(true)} className="mt-3 text-xs font-semibold text-indigo-600 hover:text-indigo-700">
-                      Search all roles' guides instead
+                      {seesAllGuides ? "Search every role's guide instead" : "Search all your guides instead"}
                     </button>
                   )}
                 </div>
@@ -634,7 +671,7 @@ export default function NativeHrmsGuide() {
         )}
 
         {/* ── No role selected ── */}
-        {!roleKey && !searching && (
+        {!visibleRoleKey && !searching && (
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10">
             {rolesLoading ? (
               <div className="flex items-center justify-center gap-2 text-sm text-slate-500 py-10">
@@ -649,11 +686,11 @@ export default function NativeHrmsGuide() {
                   </p>
                 </div>
                 <div className="space-y-6">
-                  {ROLE_GUIDE_GROUPS.map((grp) => (
+                  {ROLE_GUIDE_GROUPS.filter((grp) => ROLE_GUIDES.some((g) => g.group === grp && allowedKeys.includes(g.key))).map((grp) => (
                     <div key={grp}>
                       <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">{grp}</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {ROLE_GUIDES.filter((g) => g.group === grp).map((g) => (
+                        {ROLE_GUIDES.filter((g) => g.group === grp && allowedKeys.includes(g.key)).map((g) => (
                           <button
                             key={g.key}
                             type="button"
@@ -674,7 +711,7 @@ export default function NativeHrmsGuide() {
         )}
 
         {/* ── Guide content ── */}
-        {roleKey && !searching && (
+        {visibleRoleKey && !searching && (
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
             {!primary && !loadError && (
               <div className="flex items-center justify-center gap-2 text-sm text-slate-500 py-16">
