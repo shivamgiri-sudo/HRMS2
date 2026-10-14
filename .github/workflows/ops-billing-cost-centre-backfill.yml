@@ -1,0 +1,55 @@
+name: Ops Billing Cost Centre Backfill (manual)
+
+# Fills BLANK billing fields (Bill To / Ship To addresses, client GST state/code, HSN/SAC, our GSTIN)
+# on MAS cost centres from I-Spark's cost_master. dry-run (default) writes nothing; apply never
+# overwrites a value HRMS already has and needs confirm = fill-blank-billing-fields.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run or apply"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      confirm:
+        description: "Type fill-blank-billing-fields to apply"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ops-billing-cost-centre-backfill-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Billing cost centre backfill
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          npx tsx scripts/client-billing-backfill-billing-fields.ts
