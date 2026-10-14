@@ -149,7 +149,6 @@ export function VendorSheet({ vendor, mode, open, onOpenChange, onSaved, initial
         });
       } else if (status === 409 || body?.conflict) {
         const code = body?.conflict?.vendor_code;
-        const code = body?.conflict?.vendor_code;
         toast({
           title: "Duplicate vendor name",
           description: code
