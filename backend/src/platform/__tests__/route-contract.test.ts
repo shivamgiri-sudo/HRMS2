@@ -62,6 +62,10 @@ const KNOWN_GAPS: Record<string, string> = {
   // scaffolding that cannot fire, and should be built or deleted, not rushed.
 
   // Not a call at all — a scanner artifact.
+  "GET /api/a":
+    "NOT A REAL CALL. Placeholder path in the unit test src/lib/__tests__/hrmsApi-coalesce-get.test.ts (commit 7ea088685), which mocks fetch to prove two overlapping identical GETs share one request. No app code calls it; nothing to build.",
+  "GET /api/b":
+    "NOT A REAL CALL. Second placeholder path in src/lib/__tests__/hrmsApi-coalesce-get.test.ts (see GET /api/a). Nothing to build.",
   "GET /api/wfm/processes":
     "NOT A REAL CALL. The only occurrence is a string literal inside RosterBuilderPage.test.tsx, in a NEGATIVE assertion (`expect(pageSource).not.toContain('hrmsApi.get(\"/api/wfm/processes\"')`) that exists precisely to prove the page does NOT call this path. RosterBuilderPage.tsx calls `/api/processes` (mounted at app.ts:344), matching NativeWFMRoster.tsx:109. The scanner reads test sources verbatim and cannot tell an assertion-that-something-is-absent from a call. `/api/wfm/processes` is separately mounted as planningModeRouter (app.ts:581) but exposes no GET '/', which is why it surfaces as missing. Nothing to build or delete.",
 
