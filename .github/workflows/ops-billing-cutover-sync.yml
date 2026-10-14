@@ -3,17 +3,19 @@ name: Ops Billing Cutover Sync (manual)
 # Brings MAS Callnet bills / credit notes issued in I-Spark after the August cutover into HRMS.
 #   stage: db_bill (read-only) -> client_*_migration_staging (extract + validate), then prints the
 #          MAS rows that would load and the ones that fail validation. Writes staging tables only.
-#   apply: loads the valid MAS rows not yet in HRMS (idempotent on legacy_id). Needs
+#   check: the stage's dry-run load only, against what is already staged (fast; no extract).
+#   apply: loads the valid MAS rows not yet in HRMS (idempotent on legacy_id; refuses if a bill /
+#          credit-note NUMBER already exists in HRMS). Needs
 #          confirm = load-mas-bills.
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "stage or apply"
+        description: "stage, check or apply"
         required: true
         default: "stage"
         type: choice
-        options: [stage, apply]
+        options: [stage, check, apply]
       confirm:
         description: "Type load-mas-bills to apply"
         required: false
@@ -58,6 +60,8 @@ jobs:
           if [ "$MODE_IN" = "stage" ]; then
             npx tsx scripts/client-billing-cutover/extract.ts
             npx tsx scripts/client-billing-cutover/validate.ts
+            MODE=dry-run npx tsx scripts/client-billing-cutover/run-load.mjs
+          elif [ "$MODE_IN" = "check" ]; then
             MODE=dry-run npx tsx scripts/client-billing-cutover/run-load.mjs
           else
             [ "$CONFIRM" = "load-mas-bills" ] || { echo "::error::apply needs confirm = load-mas-bills"; exit 1; }
