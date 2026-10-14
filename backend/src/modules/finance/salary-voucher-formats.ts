@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import type { Voucher } from "./salary-voucher.service.js";
 import { wrapTallyEnvelope } from "./grn-tally-voucher.js";
+import { TallyMasters, type TallyGroup } from "./tally-ledger-masters.js";
 
 /**
  * Output formats for the salary voucher: CSV and Excel carry the reference sheet's columns in its
@@ -128,5 +129,30 @@ export function buildTallyXml(vouchers: Voucher[], company?: string | null, runI
       + `<VOUCHERTYPENAME>${xmlEscape(v.voucher_type)}</VOUCHERTYPENAME><VOUCHERNUMBER>${xmlEscape(v.voucher_no)}</VOUCHERNUMBER>`
       + `<NARRATION>${xmlEscape(`${v.narration} Vch No:${v.voucher_no}`)}</NARRATION><PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>${entries}</VOUCHER>`;
   });
-  return wrapTallyEnvelope(messages, company);
+  return wrapTallyEnvelope([...salaryMasters(vouchers).messages(), ...messages], company);
+}
+
+/**
+ * The ledgers, cost centres and voucher type the vouchers use. An existing master is left untouched (IMPORTDUPS
+ * ignore), a missing one is created, so a ledger absent from the company cannot reject the voucher.
+ */
+function salaryMasters(vouchers: Voucher[]): TallyMasters {
+  const m = new TallyMasters();
+  for (const v of vouchers) {
+    m.voucherType(v.voucher_type, "Journal");
+    m.costCentre(v.cost_category, v.cost_centre);
+    for (const l of v.lines) {
+      if (!(Math.abs(l.amount) > 0)) continue;
+      // Every salary line carries a cost-centre allocation, so every ledger it creates has cost centres on.
+      m.ledger(l.ledger_name, salaryLedgerGroup(l.ledger_name, l.debit_credit), true);
+    }
+  }
+  return m;
+}
+
+export function salaryLedgerGroup(name: string, side: "D" | "C"): TallyGroup {
+  if (/advance/i.test(name)) return "Loans & Advances (Asset)";
+  if (side === "D") return "Indirect Expenses";
+  if (/\btds\b|professional tax|\bpt\b|tax/i.test(name)) return "Duties & Taxes";
+  return "Current Liabilities";
 }
