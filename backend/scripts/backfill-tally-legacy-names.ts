@@ -8,9 +8,13 @@
  *   branches   branch_master.tally_cost_category / tally_cost_centre_code <- db_bill branch_master.tally_branch /
  *              tally_code, through grn_migration_branch_map. Where several db_bill branches map to one HRMS
  *              branch (HEAD OFFICE 3 and 10), the one this year's MAS GRNs use wins.
+ *              An active HRMS branch with no mapping is matched by name, ignoring "office"/"branch" (Delhi Office ->
+ *              DELHI / 07, the active db_bill branch).
  *   sub-heads  finance_expense_sub_head_master.tally_ledger_name <- the db_bill sub-head the legacy import used,
  *              when the wording differs from HRMS ("Computer software cost 26-27" -> "Computer Software Cost
  *              2026 - 27"). Matched ignoring case, spacing, punctuation and "2026 - 27" vs "26-27".
+ *   banks      company_bank_account.tally_ledger_name <- db_bill tbl_bank name, replacing the account-number placeholder
+ *              (no migration needed; applied even before 2210).
  * Tally itself matches names ignoring case and repeated spaces (tested on TallyPrime 7.2), so those differences
  * are reported but harmless.
  */
@@ -26,6 +30,7 @@ const out = (title: string, rows: unknown[], max = 80) => {
 };
 const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/(?:20)?(\d{2})\s*-\s*(\d{2})/g, "$1$2").replace(/[^a-z0-9]/g, "");
 const tallyEq = (a: unknown, b: unknown) => String(a ?? "").trim().replace(/\s+/g, " ").toLowerCase() === String(b ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+const branchKey = (s: unknown) => String(s ?? "").toLowerCase().replace(/\b(office|branch)\b/g, "").replace(/[^a-z0-9]/g, "");
 console.log(`mode: ${APPLY ? "APPLY" : "dry run (nothing is written)"}`);
 
 const hasCols = async () => {
@@ -47,7 +52,12 @@ const [hrmsBranches] = await db.query<RowDataPacket[]>(
 const branchUpdates: any[] = [];
 const branchNotes: string[] = [];
 for (const hb of hrmsBranches) {
-  const candidates = mapRows.filter((m) => String(m.hrms_branch_id) === String(hb.id)).map((m) => legacyBranches.get(Number(m.dbbill_branch_id))).filter(Boolean);
+  let candidates = mapRows.filter((m) => String(m.hrms_branch_id) === String(hb.id)).map((m) => legacyBranches.get(Number(m.dbbill_branch_id))).filter(Boolean);
+  // No GRN mapping (e.g. "Delhi Office", no GRNs yet): match the db_bill branch by name, ignoring "office"/"branch".
+  if (!candidates.length && Number(hb.active_status) === 1) {
+    const key = branchKey(hb.branch_name);
+    candidates = [...legacyBranches.values()].filter((l) => branchKey(l.branch_name) === key || branchKey(l.tally_branch) === key);
+  }
   if (!candidates.length) { if (Number(hb.active_status) === 1) branchNotes.push(`${hb.branch_name}: active in HRMS, no db_bill branch mapped — set its Tally cost category / code by hand`); continue; }
   candidates.sort((a, b) => (usage.get(Number(b.id)) ?? 0) - (usage.get(Number(a.id)) ?? 0) || Number(b.active) - Number(a.active) || Number(a.id) - Number(b.id));
   const l = candidates[0];
@@ -82,23 +92,52 @@ out("sub-heads: Tally expense ledger to set (wording differs)", subUpdates.map((
 out("sub-heads: same ledger to Tally (no change needed)", subSame, 100);
 out("sub-heads: not used by the legacy import since FY 2024-25 (Tally may not have them; the masters file creates them)", subNoLegacy, 100);
 
+// ── company bank accounts ───────────────────────────────────────────────────────────────────────
+// HRMS seeded tally_ledger_name with the bare account number; Tally knows these banks by the db_bill tbl_bank names
+// (deposit_bank / BankName on every legacy payment and receipt). Matched by IFSC + last 4 digits, from the
+// 2026-10-14 probe: MAS paid 2,125 GRNs from "ICICI Sim Aanan Vihar" since 2025-04, received 444 payments into
+// "Stata Bank of India-Power" in FY 2025-27, 2,695 receipts into "Stata Bank of India-CC" ("Stata" is how the
+// Tally ledger is spelled). The IDC ICICI account (inactive, other company) is left alone.
+const LEGACY_BANKS: { ifsc: string; last4: string; tally: string }[] = [
+  { ifsc: "ICIC0000827", last4: "5852", tally: "ICICI Sim Aanan Vihar" },
+  { ifsc: "SBIN0013913", last4: "3886", tally: "Stata Bank of India-Power" },
+  { ifsc: "SBIN0013913", last4: "4502", tally: "Stata Bank of India-CC" },
+];
+const legacyBankNames = new Set(((await billQuery<any>(`SELECT bank_name FROM tbl_bank`)) as any[]).map((r) => String(r.bank_name).trim()));
+const [hrmsBanks] = await db.query<RowDataPacket[]>(`SELECT id, account_name, account_number_last4, ifsc_code, tally_ledger_name FROM company_bank_account`);
+const bankUpdates: any[] = [];
+const bankNotes: string[] = [];
+for (const a of hrmsBanks) {
+  const m = LEGACY_BANKS.find((l) => l.ifsc === String(a.ifsc_code).trim().toUpperCase() && l.last4 === String(a.account_number_last4 ?? "").trim());
+  if (!m) { bankNotes.push(`${a.account_name} (…${a.account_number_last4}): no legacy Tally bank — kept "${a.tally_ledger_name}"`); continue; }
+  if (!legacyBankNames.has(m.tally)) { bankNotes.push(`${a.account_name}: "${m.tally}" not in db_bill tbl_bank — skipped`); continue; }
+  if (tallyEq(a.tally_ledger_name, m.tally)) continue;
+  // Only replace the seeded account-number placeholder, never a name someone typed.
+  if (/^\d+$/.test(String(a.tally_ledger_name ?? "").trim())) bankUpdates.push({ id: a.id, hrms: a.account_name, from: a.tally_ledger_name, to: m.tally });
+  else bankNotes.push(`${a.account_name}: HRMS "${a.tally_ledger_name}" vs legacy "${m.tally}" — kept HRMS`);
+}
+out("bank accounts: Tally ledger to set", bankUpdates.map((u) => `${u.hrms}: "${u.from}" -> "${u.to}"`));
+out("bank accounts: notes", bankNotes);
+
 if (APPLY) {
-  if (!ready) throw new Error("migration 2210 is not applied; deploy first");
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+    for (const u of bankUpdates)
+      await conn.execute(`UPDATE company_bank_account SET tally_ledger_name = ? WHERE id = ? AND tally_ledger_name = ?`, [u.to, u.id, u.from]);
+    if (!ready) { branchUpdates.length = 0; subUpdates.length = 0; console.log("(migration 2210 not applied: branches and sub-heads skipped; re-run after deploy)"); }
     for (const u of branchUpdates)
       await conn.execute(`UPDATE branch_master SET tally_cost_category = ?, tally_cost_centre_code = ? WHERE id = ? AND tally_cost_category IS NULL AND tally_cost_centre_code IS NULL`, [u.category || null, u.code || null, u.id]);
     for (const u of subUpdates)
       await conn.execute(`UPDATE finance_expense_sub_head_master SET tally_ledger_name = ? WHERE id = ? AND tally_ledger_name IS NULL`, [u.legacy, u.id]);
     await conn.commit();
-    console.log(`\nAPPLIED: ${branchUpdates.length} branches, ${subUpdates.length} sub-heads (empty fields only).`);
+    console.log(`\nAPPLIED: ${bankUpdates.length} bank accounts, ${branchUpdates.length} branches, ${subUpdates.length} sub-heads (empty fields only).`);
   } catch (e) {
     await conn.rollback();
     throw e;
   } finally {
     conn.release();
   }
-} else console.log(`\nDRY RUN: would set ${branchUpdates.length} branches, ${subUpdates.length} sub-heads.`);
+} else console.log(`\nDRY RUN: would set ${bankUpdates.length} bank accounts, ${branchUpdates.length} branches, ${subUpdates.length} sub-heads.`);
 await closeBillPool();
 process.exit(0);
