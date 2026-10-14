@@ -152,6 +152,7 @@ on:
           - book-nk-to-bluevine
           - repair-migrated-grn-ex-gst
           - grn-tally-prod-dryrun
+          - grn-tally-dbbill-probe
 
       mode:
         description: "dry-run reports what it would do and writes nothing"
@@ -336,6 +337,7 @@ jobs:
               node scripts/reconcile-db-bill-snapshot.mjs --hrms-host="$HRMS_DB_HOST" --bill-host="$BILL_DB_HOST"
               ;;
             grn-tally-prod-dryrun) npx tsx scripts/grn-tally-prod-dryrun.ts ;;
+            grn-tally-dbbill-probe) npx tsx scripts/grn-tally-dbbill-probe.ts ;;
             repair-migrated-grn-ex-gst)
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/repair-migrated-grn-ex-gst.ts $FLAG
