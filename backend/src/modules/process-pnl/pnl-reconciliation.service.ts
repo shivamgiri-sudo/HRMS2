@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { OWN_COMPANY_SQL, readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
+import { ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
 import { getSeatBillingEstimate, isEstimateWindow, shiftPeriod, type CostCentreSeatBilling } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
@@ -249,7 +250,11 @@ function isCurrentlyActive(cc: CostCentreRow): boolean {
  * isCurrentlyActive() only.
  */
 async function readCostCentres(filters: PnlReconciliationFilters): Promise<CostCentreRow[]> {
-  const where = [OWN_COMPANY_SQL];
+  // Company AND branch: NOIDA-DIALDESK cost centres NOIDA-DD/1046..1055 are mislabelled
+  // company 'Mas Callnet' in cost_centre_master, so the company test alone let Rs 6.4 L (Sep) and
+  // Rs 4.1 L (Oct) of Ispark Dataconnect revenue into the branch table and the company total while
+  // the Statement overlay already hid them (owner rule: DialDesk / I-Spark are never MAS).
+  const where = [OWN_COMPANY_SQL, ownCompanyBranchSql("bm")];
   const params: unknown[] = [];
   if (filters.branchIds?.length) {
     where.push(`ccm.branch_id IN (${marks(filters.branchIds)})`);
