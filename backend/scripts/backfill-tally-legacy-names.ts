@@ -5,12 +5,12 @@
  *   npx tsx scripts/backfill-tally-legacy-names.ts            # dry run
  *   npx tsx scripts/backfill-tally-legacy-names.ts --apply    # fills empty fields only, one transaction
  *
- *   branches   branch_master.tally_cost_category / tally_cost_centre_code <- db_bill branch_master.tally_branch /
+ *   branches   tally_legacy_name (branch: tally_name / tally_code) <- db_bill branch_master.tally_branch /
  *              tally_code, through grn_migration_branch_map. Where several db_bill branches map to one HRMS
  *              branch (HEAD OFFICE 3 and 10), the one this year's MAS GRNs use wins.
  *              An active HRMS branch with no mapping is matched by name, ignoring "office"/"branch" (Delhi Office ->
  *              DELHI / 07, the active db_bill branch).
- *   sub-heads  finance_expense_sub_head_master.tally_ledger_name <- the db_bill sub-head the legacy import used,
+ *   sub-heads  tally_legacy_name (expense_sub_head: tally_name) <- the db_bill sub-head the legacy import used,
  *              when the wording differs from HRMS ("Computer software cost 26-27" -> "Computer Software Cost
  *              2026 - 27"). Matched ignoring case, spacing, punctuation and "2026 - 27" vs "26-27".
  *   banks      company_bank_account.tally_ledger_name <- db_bill tbl_bank name, replacing the account-number placeholder
@@ -34,11 +34,11 @@ const branchKey = (s: unknown) => String(s ?? "").toLowerCase().replace(/\b(offi
 console.log(`mode: ${APPLY ? "APPLY" : "dry run (nothing is written)"}`);
 
 const hasCols = async () => {
-  try { await db.query(`SELECT tally_cost_category, tally_cost_centre_code FROM branch_master LIMIT 1`); await db.query(`SELECT tally_ledger_name FROM finance_expense_sub_head_master LIMIT 1`); return true; }
+  try { await db.query(`SELECT entity_type, entity_id, tally_name, tally_code FROM tally_legacy_name LIMIT 1`); return true; }
   catch { return false; }
 };
 const ready = await hasCols();
-if (!ready) console.log("(migration 2210 not applied yet: reading the new columns as empty; --apply will refuse)");
+if (!ready) console.log("(migration 2210 not applied yet: no tally_legacy_name table; branches and sub-heads read as empty)");
 
 // ── branches ────────────────────────────────────────────────────────────────────────────────────
 const legacyBranches = new Map<number, any>();
@@ -47,7 +47,8 @@ const usage = new Map<number, number>();
 for (const u of (await billQuery<any>(`SELECT BranchId, COUNT(*) n FROM expense_entry_master WHERE CompId = 1 AND FinanceYear = '2026-27' GROUP BY BranchId`)) as any[]) usage.set(Number(u.BranchId), Number(u.n));
 const [mapRows] = await db.query<RowDataPacket[]>(`SELECT dbbill_branch_id, hrms_branch_id FROM grn_migration_branch_map`);
 const [hrmsBranches] = await db.query<RowDataPacket[]>(
-  ready ? `SELECT id, branch_name, active_status, tally_cost_category, tally_cost_centre_code FROM branch_master`
+  ready ? `SELECT b.id, b.branch_name, b.active_status, t.tally_name AS tally_cost_category, t.tally_code AS tally_cost_centre_code
+             FROM branch_master b LEFT JOIN tally_legacy_name t ON t.entity_type = 'branch' AND t.entity_id = b.id`
         : `SELECT id, branch_name, active_status, NULL AS tally_cost_category, NULL AS tally_cost_centre_code FROM branch_master`);
 const branchUpdates: any[] = [];
 const branchNotes: string[] = [];
@@ -77,7 +78,8 @@ const legacySubs = (await billQuery<any>(`SELECT s.SubHeadingDesc d, COUNT(*) n 
 const legacyByNorm = new Map<string, string>();
 for (const l of legacySubs) if (!legacyByNorm.has(norm(l.d))) legacyByNorm.set(norm(l.d), String(l.d).trim());
 const [hrmsSubs] = await db.query<RowDataPacket[]>(
-  ready ? `SELECT id, sub_head_name, tally_ledger_name FROM finance_expense_sub_head_master WHERE active_status = 1`
+  ready ? `SELECT s.id, s.sub_head_name, t.tally_name AS tally_ledger_name FROM finance_expense_sub_head_master s
+             LEFT JOIN tally_legacy_name t ON t.entity_type = 'expense_sub_head' AND t.entity_id = s.id WHERE s.active_status = 1`
         : `SELECT id, sub_head_name, NULL AS tally_ledger_name FROM finance_expense_sub_head_master WHERE active_status = 1`);
 const subUpdates: any[] = [];
 const subSame: string[] = [];
@@ -127,9 +129,9 @@ if (APPLY) {
       await conn.execute(`UPDATE company_bank_account SET tally_ledger_name = ? WHERE id = ? AND tally_ledger_name = ?`, [u.to, u.id, u.from]);
     if (!ready) { branchUpdates.length = 0; subUpdates.length = 0; console.log("(migration 2210 not applied: branches and sub-heads skipped; re-run after deploy)"); }
     for (const u of branchUpdates)
-      await conn.execute(`UPDATE branch_master SET tally_cost_category = ?, tally_cost_centre_code = ? WHERE id = ? AND tally_cost_category IS NULL AND tally_cost_centre_code IS NULL`, [u.category || null, u.code || null, u.id]);
+      await conn.execute(`INSERT IGNORE INTO tally_legacy_name (entity_type, entity_id, tally_name, tally_code, source) VALUES ('branch', ?, ?, ?, ?)`, [u.id, u.category || null, u.code || null, u.from]);
     for (const u of subUpdates)
-      await conn.execute(`UPDATE finance_expense_sub_head_master SET tally_ledger_name = ? WHERE id = ? AND tally_ledger_name IS NULL`, [u.legacy, u.id]);
+      await conn.execute(`INSERT IGNORE INTO tally_legacy_name (entity_type, entity_id, tally_name, source) VALUES ('expense_sub_head', ?, ?, 'db_bill tbl_bgt_expensesubheadingmaster')`, [u.id, u.legacy]);
     await conn.commit();
     console.log(`\nAPPLIED: ${bankUpdates.length} bank accounts, ${branchUpdates.length} branches, ${subUpdates.length} sub-heads (empty fields only).`);
   } catch (e) {
