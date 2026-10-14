@@ -1,0 +1,75 @@
+name: Ops bank ledger verify (manual, read-only)
+
+# Read-only: is every company bank account's ledger internally consistent and reconciled?
+# Per account: running-balance chain breaks, balance vs opening + movements, statement matching,
+# reconciliation periods, and voucher <-> ledger consistency. Prints account names (no numbers
+# beyond last 4). Writes nothing.
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-bank-ledger-verify
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Bank ledger verify
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 8
+    steps:
+      - name: Verify
+        shell: bash
+        working-directory: /var/www/HRMS2/backend
+        run: |
+          node --input-type=module -e '
+            import "dotenv/config";
+            import mysql from "mysql2/promise";
+            const c = await mysql.createConnection({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 3306), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME, connectTimeout: 10000, dateStrings: true });
+            const p = (n) => Math.round(Number(n || 0) * 100);
+            const r = (x) => (x / 100).toFixed(2);
+            const [accts] = await c.query("SELECT a.id, a.account_name, a.account_number_last4 l4, a.opening_balance, a.opening_balance_as_of, a.active_status, b.bank_name FROM company_bank_account a LEFT JOIN bank_master b ON b.id = a.bank_id ORDER BY a.active_status DESC, a.account_name");
+            const summary = [];
+            for (const a of accts) {
+              const [e] = await c.query("SELECT id, entry_date, created_at, debit_amount d, credit_amount cr, running_balance rb, source_type, voucher_id, matched_statement_line_id m, reconciliation_period_id rp, is_migrated FROM bank_account_ledger_entry WHERE bank_account_id = ? ORDER BY created_at, id", [a.id]);
+              let breaks = 0, firstBreak = null, prev = null, credit = 0, debit = 0, matched = 0, inPeriod = 0;
+              for (const x of e) {
+                credit += p(x.cr); debit += p(x.d);
+                if (x.m) matched++; if (x.rp) inPeriod++;
+                if (prev !== null) {
+                  const exp = prev + p(x.cr) - p(x.d);
+                  if (Math.abs(exp - p(x.rb)) > 1) { breaks++; if (!firstBreak) firstBreak = { at: x.created_at, entry_date: x.entry_date, source: x.source_type, expected: r(exp), stored: r(p(x.rb)) }; }
+                }
+                prev = p(x.rb);
+              }
+              const first = e[0];
+              const anchor = first ? r(p(first.rb) - p(first.cr) + p(first.d)) : null;
+              const byDate = e.length ? [...e].sort((x, y) => (x.entry_date + x.created_at + x.id).localeCompare(y.entry_date + y.created_at + y.id)).at(-1) : null;
+              summary.push({
+                account: `${a.bank_name ?? ""} ${a.account_name} ..${a.l4 ?? ""}`.trim().slice(0, 48), active: a.active_status, entries: e.length,
+                opening_now: r(p(a.opening_balance)), opening_as_of: a.opening_balance_as_of, chain_starts_from: anchor,
+                credits: r(credit), debits: r(debit), last_running: e.length ? r(p(e.at(-1).rb)) : "-", last_by_entry_date: byDate ? r(p(byDate.rb)) : "-",
+                chain_breaks: breaks, matched_to_statement: matched, unmatched: e.length - matched, in_closed_period: inPeriod,
+              });
+              if (firstBreak) console.log("first chain break", a.account_name, JSON.stringify(firstBreak));
+            }
+            console.log("### per-account ledger"); console.table(summary);
+            const [periods] = await c.query("SELECT a.account_name, p.from_date, p.to_date, p.status, p.opening_balance, p.statement_closing_balance, p.computed_closing_balance, p.outstanding_total, (p.statement_closing_balance - p.computed_closing_balance) AS diff FROM bank_reconciliation_period p JOIN company_bank_account a ON a.id = p.bank_account_id ORDER BY a.account_name, p.from_date");
+            console.log("### reconciliation periods"); console.table(periods);
+            const [imp] = await c.query("SELECT a.account_name, COUNT(DISTINCT i.id) imports, COUNT(l.id) statement_lines, SUM(l.match_status = \"matched\") matched, SUM(COALESCE(l.match_status, \"\") <> \"matched\") not_matched, MIN(l.txn_date) first_txn, MAX(l.txn_date) last_txn FROM bank_statement_import i JOIN company_bank_account a ON a.id = i.bank_account_id LEFT JOIN bank_statement_line l ON l.import_id = i.id GROUP BY a.account_name");
+            console.log("### bank statements imported"); console.table(imp);
+            const [ms] = await c.query("SELECT match_status, COUNT(*) n FROM bank_statement_line GROUP BY match_status");
+            console.log("### statement line match status"); console.table(ms);
+            const [v1] = await c.query("SELECT COUNT(*) n, COALESCE(SUM(v.amount),0) amt FROM payment_voucher v WHERE v.status = \"released\" AND NOT EXISTS (SELECT 1 FROM bank_account_ledger_entry e WHERE e.voucher_id = v.id)");
+            const [v2] = await c.query("SELECT v.status, COUNT(*) n, COALESCE(SUM(e.debit_amount + e.credit_amount),0) amt FROM bank_account_ledger_entry e JOIN payment_voucher v ON v.id = e.voucher_id WHERE v.status <> \"released\" GROUP BY v.status");
+            const [v3] = await c.query("SELECT COUNT(*) n FROM bank_account_ledger_entry e WHERE e.voucher_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM payment_voucher v WHERE v.id = e.voucher_id)");
+            console.log("### vouchers released with NO ledger entry:", JSON.stringify(v1[0]));
+            console.log("### ledger entries whose voucher is NOT released:"); console.table(v2);
+            console.log("### ledger entries pointing at a missing voucher:", v3[0].n);
+            const [st] = await c.query("SELECT status, COUNT(*) n, COALESCE(SUM(amount),0) amt FROM payment_voucher GROUP BY status ORDER BY n DESC");
+            console.log("### payment vouchers by status"); console.table(st);
+            await c.end();
+          '
