@@ -878,7 +878,7 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean, branch?: st
 
   if (scopedOnly) {
     if (branch) {
-      clauses.push("(branch_name = ? OR created_by = ? OR recruiter_id = ?)");
+      clauses.push(branchScopeSql());
     } else {
       clauses.push("(created_by = ? OR recruiter_id = ?)");
     }
@@ -887,13 +887,38 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean, branch?: st
   return { sql: clauses.join(" AND "), params };
 }
 
+/**
+ * Tolerant branch scope for the hiring-entry list/export/dashboards. branch_name on an entry is free
+ * text (roster branch, branch code, import sheet location), so an exact `branch_name = ?` hid a
+ * branch's own entries from its HR team. Same match the analytics queries already use: trimmed,
+ * case-insensitive name or code, on branch_name or location_name. Own rows always stay visible.
+ */
+export function branchScopeSql(alias = ""): string {
+  const c = (col: string) => `LOWER(TRIM(COALESCE(${alias}${col}, '')))`;
+  return `(
+    ${c("branch_name")} = LOWER(TRIM(?))
+    OR ${c("location_name")} = LOWER(TRIM(?))
+    OR EXISTS (
+      SELECT 1 FROM branch_master bm_scope
+       WHERE LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))) = LOWER(TRIM(?))
+         AND (${c("branch_name")} IN (LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))), LOWER(TRIM(COALESCE(bm_scope.branch_code, ''))))
+           OR ${c("location_name")} IN (LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))), LOWER(TRIM(COALESCE(bm_scope.branch_code, '')))))
+    )
+    OR ${alias}created_by = ?
+    OR ${alias}recruiter_id = ?
+  )`;
+}
+export function branchScopeParams(branch: string, userId: string): string[] {
+  return [branch, branch, branch, userId, userId];
+}
+
 export async function listHiringActivity(userId: string, role: string | undefined, filters: HiringFilters) {
   const scopedOnly = !isOrgWideRole(role);
   const branch = scopedOnly ? await getActorBranch(userId) : null;
   const { sql, params } = buildFilterSql(filters, scopedOnly, branch);
   if (scopedOnly) {
     if (branch) {
-      params.push(branch, userId, userId);
+      params.push(...branchScopeParams(branch, userId));
     } else {
       params.push(userId, userId);
     }
@@ -1481,7 +1506,7 @@ async function applyActivityFilters(filters: HiringFilters, scopedOnly: boolean,
   const { sql, params } = buildFilterSql(filters, scopedOnly, branch);
   if (scopedOnly && userId) {
     if (branch) {
-      params.push(branch, userId, userId);
+      params.push(...branchScopeParams(branch, userId));
     } else {
       params.push(userId, userId);
     }

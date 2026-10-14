@@ -3509,6 +3509,37 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     availabilityStatus: 'validated',
   },
   {
+    code: "aon-process-monthly-attrition",
+    name: "Process-wise Monthly Attrition",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Monthly attrition per process: exits / average headcount, by process and month",
+    rowGrain: "One row per process per month",
+    primaryKey: ["month", "process_name"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 90 },
+      { key: "process_name", label: "Process", format: "text", width: 180 },
+      { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
+      { key: "avg_headcount", label: "Avg Headcount", format: "number", width: 130, align: "right" },
+      { key: "attrition_rate_pct", label: "Attrition Rate %", format: "percentage", width: 140, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "process_master"],
+    calculationNotes:
+      "Same definition as aon-overall-attrition-rate, grouped by employees.process_id: " +
+      "attrition_rate_pct = exits / avg_headcount, where avg_headcount is the average of headcount " +
+      "at the start and end of the month. Employees with no process on their record are shown as " +
+      "UNASSIGNED, so the monthly total reconciles to the overall rate.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
     code: "aon-bucket-shrinkage",
     name: "AON Bucket Shrinkage",
     category: "Attrition & Trends",

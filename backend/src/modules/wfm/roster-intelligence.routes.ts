@@ -64,7 +64,13 @@ export async function resolveLiveMonitoringScope(req: AuthenticatedRequest): Pro
     if (context.primaryRole === 'super_admin') return undefined;
     const scope = await resolveDashboardScopeForRequest(user, context.primaryRole);
     if (scope.level === 'ORG_ALL') return undefined;
-    return { branchIds: scope.branchIds, processIds: scope.processIds };
+    // BRANCH_ALL carries processIds: [] meaning "no process restriction". Passing that empty list on
+    // read as "zero processes" downstream (fail closed), so branch_wfm / branch_head saw nothing.
+    if (scope.level === 'TEAM_ONLY' || scope.level === 'SELF_ONLY') return { branchIds: [], processIds: [] };
+    return {
+      branchIds: scope.branchIds,
+      processIds: scope.processIds?.length ? scope.processIds : undefined,
+    };
   } catch {
     return { branchIds: [], processIds: [] };
   }

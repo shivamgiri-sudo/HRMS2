@@ -655,6 +655,86 @@ export async function overallAttritionRate(
   }
 }
 
+/**
+ * Process x month attrition: same population, month windows and average-of-endpoints
+ * denominator as overallAttritionRate, grouped by process. One scan of `employees` cross-joined
+ * against the month sequence. Employees with no process_id land in 'UNASSIGNED' so the
+ * per-month total still reconciles to aon-overall-attrition-rate.
+ */
+export async function processMonthlyAttrition(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const today = new Date();
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+  const from = dateParam(filters.from, iso(twelveMonthsAgo));
+  const to = dateParam(filters.to, iso(today));
+  const fromMonthStart = `${from.slice(0, 7)}-01`;
+
+  const clauses: string[] = ["e.id IS NOT NULL"];
+  const params: unknown[] = [];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  clauses.push(`${AON_REFERENCE_JOIN_DATE_SQL} IS NOT NULL`, RELIABLE_POPULATION);
+  const scopeSql = clauses.join(" AND ");
+
+  const base = `
+    SELECT DATE_FORMAT(m.month_start, '%Y-%m') AS month,
+           m.process_id,
+           m.process_name,
+           m.exits,
+           m.avg_headcount,
+           ROUND(m.exits * 100.0 / NULLIF(m.avg_headcount, 0), 2) AS attrition_rate_pct
+      FROM (
+        SELECT ms.month_start,
+               e.process_id,
+               COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+               SUM(
+                 CASE WHEN e.date_of_exit IS NOT NULL
+                           AND e.date_of_exit >= ms.month_start
+                           AND e.date_of_exit < DATE_ADD(ms.month_start, INTERVAL 1 MONTH)
+                      THEN 1 ELSE 0 END
+               ) AS exits,
+               (
+                 SUM(
+                   CASE WHEN ${AON_REFERENCE_JOIN_DATE_SQL} <= ms.month_start
+                             AND (e.date_of_exit IS NULL OR e.date_of_exit >= ms.month_start)
+                        THEN 1 ELSE 0 END
+                 )
+                 +
+                 SUM(
+                   CASE WHEN ${AON_REFERENCE_JOIN_DATE_SQL} <= LAST_DAY(ms.month_start)
+                             AND (e.date_of_exit IS NULL OR e.date_of_exit >= LAST_DAY(ms.month_start))
+                        THEN 1 ELSE 0 END
+                 )
+               ) / 2.0 AS avg_headcount
+          FROM employees e
+          LEFT JOIN process_master p ON p.id = e.process_id
+          CROSS JOIN (
+            SELECT DATE_ADD(DATE(?), INTERVAL n MONTH) AS month_start
+              FROM (SELECT 0 AS n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+                    UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9
+                    UNION SELECT 10 UNION SELECT 11) months
+             WHERE DATE_ADD(DATE(?), INTERVAL n MONTH) <= DATE(?)
+          ) ms
+         WHERE ${scopeSql}
+         GROUP BY ms.month_start, e.process_id, p.process_name
+      ) m
+     WHERE m.exits > 0 OR m.avg_headcount > 0
+     ORDER BY month, process_name`;
+
+  const finalParams = [fromMonthStart, fromMonthStart, to, ...params];
+
+  try {
+    const rows = await query(base, finalParams);
+    return { rows: rows as Record<string, unknown>[], rowCount: rows.length, isTruncated: false };
+  } catch (err) {
+    rethrowReportSchemaError("aon-process-monthly-attrition", err, base);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // aon-bucket-shrinkage  (aggregate — no row-level cursor)
 // ---------------------------------------------------------------------------
