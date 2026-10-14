@@ -8,6 +8,8 @@
  *   branches   branch_master.tally_cost_category / tally_cost_centre_code <- db_bill branch_master.tally_branch /
  *              tally_code, through grn_migration_branch_map. Where several db_bill branches map to one HRMS
  *              branch (HEAD OFFICE 3 and 10), the one this year's MAS GRNs use wins.
+ *              An active HRMS branch with no mapping is matched by name, ignoring "office"/"branch" (Delhi Office ->
+ *              DELHI / 07, the active db_bill branch).
  *   sub-heads  finance_expense_sub_head_master.tally_ledger_name <- the db_bill sub-head the legacy import used,
  *              when the wording differs from HRMS ("Computer software cost 26-27" -> "Computer Software Cost
  *              2026 - 27"). Matched ignoring case, spacing, punctuation and "2026 - 27" vs "26-27".
@@ -26,6 +28,7 @@ const out = (title: string, rows: unknown[], max = 80) => {
 };
 const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/(?:20)?(\d{2})\s*-\s*(\d{2})/g, "$1$2").replace(/[^a-z0-9]/g, "");
 const tallyEq = (a: unknown, b: unknown) => String(a ?? "").trim().replace(/\s+/g, " ").toLowerCase() === String(b ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+const branchKey = (s: unknown) => String(s ?? "").toLowerCase().replace(/\b(office|branch)\b/g, "").replace(/[^a-z0-9]/g, "");
 console.log(`mode: ${APPLY ? "APPLY" : "dry run (nothing is written)"}`);
 
 const hasCols = async () => {
@@ -47,7 +50,12 @@ const [hrmsBranches] = await db.query<RowDataPacket[]>(
 const branchUpdates: any[] = [];
 const branchNotes: string[] = [];
 for (const hb of hrmsBranches) {
-  const candidates = mapRows.filter((m) => String(m.hrms_branch_id) === String(hb.id)).map((m) => legacyBranches.get(Number(m.dbbill_branch_id))).filter(Boolean);
+  let candidates = mapRows.filter((m) => String(m.hrms_branch_id) === String(hb.id)).map((m) => legacyBranches.get(Number(m.dbbill_branch_id))).filter(Boolean);
+  // No GRN mapping (e.g. "Delhi Office", no GRNs yet): match the db_bill branch by name, ignoring "office"/"branch".
+  if (!candidates.length && Number(hb.active_status) === 1) {
+    const key = branchKey(hb.branch_name);
+    candidates = [...legacyBranches.values()].filter((l) => branchKey(l.branch_name) === key || branchKey(l.tally_branch) === key);
+  }
   if (!candidates.length) { if (Number(hb.active_status) === 1) branchNotes.push(`${hb.branch_name}: active in HRMS, no db_bill branch mapped — set its Tally cost category / code by hand`); continue; }
   candidates.sort((a, b) => (usage.get(Number(b.id)) ?? 0) - (usage.get(Number(a.id)) ?? 0) || Number(b.active) - Number(a.active) || Number(a.id) - Number(b.id));
   const l = candidates[0];
