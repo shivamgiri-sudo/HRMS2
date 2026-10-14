@@ -1,0 +1,34 @@
+name: Ops Superbot portal check (manual, read-only)
+
+# Logs into the Superbot portal with the server env and prints its upload history and call counts by day. Writes nothing.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ops-superbot-portal-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Audit
+        working-directory: backend
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
