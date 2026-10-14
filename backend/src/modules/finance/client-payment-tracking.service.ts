@@ -1,7 +1,13 @@
-import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { billQuery } from "../../db/billDb.js";
+import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
+
+/**
+ * MAS Callnet India Pvt Ltd only (owner rule): a db_bill invoice belongs to MAS when its
+ * cost_master row's company is MAS Callnet (IDC / Pikquick bills live in the same tables).
+ */
+const MAS_INVOICE_SQL = `EXISTS (SELECT 1 FROM cost_master mc WHERE mc.cost_center = i.cost_center AND ${ownCompanyCostCentreSql("mc")})`;
 
 export interface ClientInvoice {
   id: number;
@@ -48,22 +54,6 @@ export interface PaymentFilters {
   limit?: number;
 }
 
-export interface UpdatePaymentPayload {
-  invoice_ref_id: number;
-  client_name: string;
-  branch_name: string;
-  cost_centre: string;
-  invoice_month: string;
-  finance_year: string;
-  invoice_amount: number;
-  payment_status: "pending" | "partial" | "paid" | "overdue" | "disputed";
-  amount_received: number;
-  payment_date?: string;
-  payment_mode?: string;
-  transaction_ref?: string;
-  remarks?: string;
-}
-
 function monthLabelToPeriod(monthLabel: string, finYear: string): string {
   const months: Record<string, string> = {
     Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
@@ -85,7 +75,7 @@ export async function getClientInvoices(filters: PaymentFilters): Promise<{
   const limit = filters.limit ?? 50;
   const offset = (page - 1) * limit;
 
-  const conditions: string[] = [];
+  const conditions: string[] = [MAS_INVOICE_SQL];
   const params: (string | number)[] = [];
 
   if (filters.financeYear) {
@@ -186,7 +176,7 @@ export async function getClientPaymentTrends(
   branchName?: string,
   months = 12
 ): Promise<PaymentTrend[]> {
-  const conditions: string[] = [];
+  const conditions: string[] = [MAS_INVOICE_SQL];
   const params: (string | number)[] = [];
 
   if (clientName) {
@@ -229,108 +219,6 @@ export async function getClientPaymentTrends(
   });
 }
 
-export async function updateInvoicePayment(
-  payload: UpdatePaymentPayload,
-  userId: string
-): Promise<{ success: boolean; id: string }> {
-  // Written against the production shape of these tables (migration 1865):
-  //   client_invoice_payment_status — one row per HRMS client_invoice (invoice_id, NOT NULL
-  //     FK), carrying legacy_invoice_id = db_bill tbl_invoice.id; no mode/ref/remarks columns.
-  //   client_invoice_payment_log — payment_status_id, amount_paid, net_amount, mode, ref, remarks.
-  // The previous version wrote the 1560 draft's columns (invoice_ref_id, client_name,
-  // branch_name, tracking_id, ...), none of which exist, so recording a payment always failed.
-  const paymentDate = payload.payment_date ?? new Date().toISOString().slice(0, 10);
-
-  const [existing] = await db.execute<RowDataPacket[]>(
-    `SELECT id, amount_received FROM client_invoice_payment_status WHERE legacy_invoice_id = ? LIMIT 1`,
-    [payload.invoice_ref_id]
-  );
-
-  // The page edits the invoice's running total (its field is pre-filled with the amount
-  // already received), so the log records the change in that total, not the total itself.
-  // Otherwise a second instalment was logged as the whole amount and the history summed
-  // to more than was ever received.
-  const previouslyReceived = existing.length > 0 ? Number(existing[0].amount_received ?? 0) : 0;
-  const delta = Math.round((payload.amount_received - previouslyReceived) * 100) / 100;
-
-  let statusId: string;
-  if (existing.length > 0) {
-    statusId = String(existing[0].id);
-    await db.execute(
-      `UPDATE client_invoice_payment_status SET
-         payment_status = ?,
-         amount_received = ?,
-         net_received = ? - tds_deducted,
-         last_payment_date = ?,
-         updated_by = ?
-       WHERE id = ?`,
-      [
-        payload.payment_status,
-        payload.amount_received,
-        payload.amount_received,
-        payload.payment_date ?? null,
-        userId,
-        statusId,
-      ]
-    );
-  } else {
-    // invoice_id is a NOT NULL foreign key to client_invoice, so the db_bill invoice must
-    // already be mirrored into HRMS client billing (client_invoice.legacy_id).
-    const [inv] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM client_invoice WHERE legacy_id = ? LIMIT 1`,
-      [payload.invoice_ref_id]
-    );
-    if (inv.length === 0) {
-      throw Object.assign(
-        new Error(
-          `Invoice ${payload.invoice_ref_id} is not yet in HRMS client billing, so its payment cannot be tracked here.`
-        ),
-        { statusCode: 409 }
-      );
-    }
-    statusId = randomUUID();
-    await db.execute(
-      `INSERT INTO client_invoice_payment_status
-         (id, invoice_id, legacy_invoice_id, payment_status, total_amount,
-          amount_received, net_received, last_payment_date, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        statusId,
-        inv[0].id,
-        payload.invoice_ref_id,
-        payload.payment_status,
-        payload.invoice_amount,
-        payload.amount_received,
-        payload.amount_received,
-        payload.payment_date ?? null,
-        userId,
-      ]
-    );
-  }
-
-  if (delta !== 0) {
-    await db.execute(
-      `INSERT INTO client_invoice_payment_log
-         (id, payment_status_id, amount_paid, net_amount, payment_date, payment_mode,
-          transaction_ref, remarks, recorded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        randomUUID(),
-        statusId,
-        delta,
-        delta,
-        paymentDate,
-        payload.payment_mode ?? null,
-        payload.transaction_ref ?? null,
-        payload.remarks ?? null,
-        userId,
-      ]
-    );
-  }
-
-  return { success: true, id: statusId };
-}
-
 export async function getPaymentHistory(invoiceRefId: number): Promise<any[]> {
   const [logs] = await db.execute<RowDataPacket[]>(
     `SELECT l.*, u.full_name AS recorded_by_name
@@ -357,6 +245,7 @@ export async function getSeatRatesFromDbBill(
     params.push(branchName);
   }
 
+  conditions.push(ownCompanyCostCentreSql("cm"));
   conditions.push("p.qty IS NOT NULL AND p.qty != ''");
   conditions.push("CAST(p.qty AS DECIMAL(10,2)) >= 1");
   conditions.push("CAST(p.rate AS DECIMAL(12,2)) BETWEEN 10000 AND 100000");
@@ -448,6 +337,7 @@ export async function getClientSummary(): Promise<Array<{
      FROM tbl_invoice i
      WHERE i.finance_year IN ('2025-26', '2026-27')
        AND i.cost_client IS NOT NULL AND i.cost_client != ''
+       AND ${MAS_INVOICE_SQL}
      GROUP BY i.cost_client
      ORDER BY total_invoiced DESC
      LIMIT 50`

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import {
   AlertCircle,
   ArrowRight,
@@ -10,7 +11,6 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock,
-  CreditCard,
   FileText,
   Filter,
   IndianRupee,
@@ -22,22 +22,12 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -47,7 +37,6 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 
 interface ClientInvoice {
   id: number;
@@ -172,176 +161,7 @@ function KpiCard({
   );
 }
 
-function PaymentUpdateDialog({
-  invoice,
-  open,
-  onOpenChange,
-  onSubmit,
-}: {
-  invoice: ClientInvoice | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSubmit: (data: any) => void;
-}) {
-  const [status, setStatus] = useState(invoice?.hrms_status ?? "pending");
-  const [amount, setAmount] = useState(invoice?.amount_received?.toString() ?? "0");
-  const [paymentDate, setPaymentDate] = useState(invoice?.payment_date ?? "");
-  const [paymentMode, setPaymentMode] = useState("");
-  const [transactionRef, setTransactionRef] = useState("");
-  const [remarks, setRemarks] = useState("");
-
-  const handleSubmit = () => {
-    if (!invoice) return;
-    onSubmit({
-      invoice_ref_id: invoice.id,
-      client_name: invoice.client_name,
-      branch_name: invoice.branch_name,
-      cost_centre: invoice.cost_centre,
-      invoice_month: invoice.invoice_month,
-      finance_year: invoice.finance_year,
-      invoice_amount: invoice.invoice_amount,
-      payment_status: status,
-      amount_received: Number(amount),
-      payment_date: paymentDate || null,
-      payment_mode: paymentMode || null,
-      transaction_ref: transactionRef || null,
-      remarks: remarks || null,
-    });
-  };
-
-  if (!invoice) return null;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <CreditCard className="h-5 w-5 text-sky-500" />
-            Update Payment Status
-          </DialogTitle>
-          <DialogDescription>
-            Update payment details for invoice #{invoice.id}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          <div className="rounded-xl bg-slate-50 p-4">
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <span className="text-slate-500">Client:</span>
-                <span className="ml-2 font-medium">{invoice.client_name}</span>
-              </div>
-              <div>
-                <span className="text-slate-500">Branch:</span>
-                <span className="ml-2 font-medium">{invoice.branch_name}</span>
-              </div>
-              <div>
-                <span className="text-slate-500">Month:</span>
-                <span className="ml-2 font-medium">{invoice.invoice_month}</span>
-              </div>
-              <div>
-                <span className="text-slate-500">Invoice Amount:</span>
-                <span className="ml-2 font-bold text-emerald-600">
-                  {formatCurrency(invoice.invoice_amount)}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid gap-4">
-            <div className="space-y-2">
-              <Label>Payment Status</Label>
-              <Select value={status} onValueChange={setStatus}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PAYMENT_STATUSES.map((s) => (
-                    <SelectItem key={s.value} value={s.value}>
-                      {s.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Amount Received</Label>
-                <div className="relative">
-                  <IndianRupee className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                  <Input
-                    type="number"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="pl-9"
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Payment Date</Label>
-                <Input
-                  type="date"
-                  value={paymentDate}
-                  onChange={(e) => setPaymentDate(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Payment Mode</Label>
-                <Select value={paymentMode} onValueChange={setPaymentMode}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select mode" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="NEFT">NEFT</SelectItem>
-                    <SelectItem value="RTGS">RTGS</SelectItem>
-                    <SelectItem value="Cheque">Cheque</SelectItem>
-                    <SelectItem value="UPI">UPI</SelectItem>
-                    <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Transaction Reference</Label>
-                <Input
-                  value={transactionRef}
-                  onChange={(e) => setTransactionRef(e.target.value)}
-                  placeholder="UTR / Cheque No."
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Remarks</Label>
-              <Textarea
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                placeholder="Optional notes..."
-                rows={2}
-              />
-            </div>
-          </div>
-        </div>
-
-        <DialogFooter className="mt-4">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={handleSubmit} className="bg-sky-500 hover:bg-sky-600">
-            Update Payment
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function InvoicesTab() {
-  const queryClient = useQueryClient();
   const [filters, setFilters] = useState({
     financeYear: "2026-27",
     month: "",
@@ -349,8 +169,6 @@ function InvoicesTab() {
     branchName: "",
     page: 1,
   });
-  const [selectedInvoice, setSelectedInvoice] = useState<ClientInvoice | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["client-invoices", filters],
@@ -368,21 +186,6 @@ function InvoicesTab() {
         total: number;
         summary: { totalInvoiced: number; totalReceived: number; totalPending: number };
       };
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: async (payload: any) => {
-      const res = await hrmsApi.post("/api/finance/client-payments/update", payload);
-      return res.data;
-    },
-    onSuccess: () => {
-      toast.success("Payment status updated");
-      setDialogOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["client-invoices"] });
-    },
-    onError: (err: any) => {
-      toast.error(err.response?.data?.error || "Failed to update payment");
     },
   });
 
@@ -491,16 +294,13 @@ function InvoicesTab() {
                   <th className="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-slate-500">
                     Status
                   </th>
-                  <th className="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Action
-                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {isLoading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <tr key={i}>
-                      {Array.from({ length: 7 }).map((_, j) => (
+                      {Array.from({ length: 6 }).map((_, j) => (
                         <td key={j} className="px-4 py-3">
                           <Skeleton className="h-4 w-full" />
                         </td>
@@ -509,7 +309,7 @@ function InvoicesTab() {
                   ))
                 ) : invoices.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                    <td colSpan={6} className="px-4 py-12 text-center text-slate-500">
                       No invoices found
                     </td>
                   </tr>
@@ -533,19 +333,6 @@ function InvoicesTab() {
                       <td className="px-4 py-3 text-center">
                         <StatusBadge status={inv.hrms_status} />
                       </td>
-                      <td className="px-4 py-3 text-center">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedInvoice(inv);
-                            setDialogOpen(true);
-                          }}
-                        >
-                          <CreditCard className="mr-1 h-4 w-4" />
-                          Update
-                        </Button>
-                      </td>
                     </tr>
                   ))
                 )}
@@ -554,13 +341,6 @@ function InvoicesTab() {
           </div>
         </CardContent>
       </Card>
-
-      <PaymentUpdateDialog
-        invoice={selectedInvoice}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        onSubmit={(data) => updateMutation.mutate(data)}
-      />
     </div>
   );
 }
@@ -953,7 +733,7 @@ export default function ClientPaymentManagementPage() {
               Client Payment Management
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              Track invoice payments, collection trends, and predictive revenue
+              View invoice payments (MAS Callnet), collection trends, and predictive revenue
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -962,6 +742,26 @@ export default function ClientPaymentManagementPage() {
               Finance Head Portal
             </Badge>
           </div>
+        </div>
+
+        {/* Payments are no longer marked here: the server refuses POST /update (409). */}
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              This screen is read-only. Record client money in Client Billing → Receipts: a receipt
+              settles the bills, raises the bank voucher and updates every report.
+            </span>
+          </div>
+          <Button asChild size="sm" className="bg-amber-600 hover:bg-amber-700">
+            <Link to="/finance/client-billing?tab=receipts">
+              Open Receipts
+              <ArrowRight className="ml-1 h-4 w-4" />
+            </Link>
+          </Button>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>

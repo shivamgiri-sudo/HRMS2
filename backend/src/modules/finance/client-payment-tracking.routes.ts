@@ -8,16 +8,16 @@ import { requireRole } from "../../middleware/requireRole.js";
 import {
   getClientInvoices,
   getClientPaymentTrends,
-  updateInvoicePayment,
   getPaymentHistory,
   getSeatRatesFromDbBill,
   getPredictiveRevenue,
   getClientSummary,
   type PaymentFilters,
-  type UpdatePaymentPayload,
 } from "./client-payment-tracking.service.js";
 
 const router = Router();
+
+export const CLIENT_PAYMENTS_RETIRED_MESSAGE = "Record client money in Client Billing → Receipts";
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: any, next: any) => fn(req, res).catch(next);
 
@@ -132,28 +132,26 @@ router.get(
   })
 );
 
+/**
+ * Retired write path. Client money is recorded once, as a receipt in Client Billing -> Receipts,
+ * which settles the bills (SETTLEMENT_SQL), raises the bank voucher and keeps
+ * client_invoice_payment_status in step. Marking a bill paid here bypassed all of that and left
+ * Money Flow / Finance Analytics showing money that never reached a receipt or the bank. The
+ * route stays so an old browser tab gets a clear answer instead of a 404.
+ */
 router.post(
   "/update",
   requireAuth,
   requireWriteAccess,
   requireRole(...PAYMENT_WRITE_ROLES),
-  h(async (req, res) => {
-    const payload = req.body as UpdatePaymentPayload;
-
-    if (!payload.invoice_ref_id) {
-      return res.status(400).json({ error: "invoice_ref_id is required" });
-    }
-
-    const validStatuses = ["pending", "partial", "paid", "overdue", "disputed"];
-    if (!validStatuses.includes(payload.payment_status)) {
-      return res.status(400).json({
-        error: `payment_status must be one of: ${validStatuses.join(", ")}`,
-      });
-    }
-
-    const result = await updateInvoicePayment(payload, req.authUser.id);
-    res.json(result);
-  })
+  (_req: AuthenticatedRequest, res: any) => {
+    res.status(409).json({
+      success: false,
+      error: CLIENT_PAYMENTS_RETIRED_MESSAGE,
+      message: CLIENT_PAYMENTS_RETIRED_MESSAGE,
+      redirectTo: "/finance/client-billing?tab=receipts",
+    });
+  }
 );
 
 export const clientPaymentTrackingRouter = router;
