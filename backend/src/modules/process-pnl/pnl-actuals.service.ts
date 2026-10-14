@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { grnAllocationExGstSql, grnRequestExGstSql } from "./pnl-ex-gst.js";
 import { nonVoidRunSql } from "../payroll/run-status.js";
+import { hrmsBillRevenueEnabled, hrmsCreditRevenueSql, hrmsInvoiceRevenueSql } from "./pnl-hrms-bill-revenue.js";
 
 /**
  * The two P&L lines that already exist as data but were never read by the statement.
@@ -669,9 +670,19 @@ export async function getInvoicedRevenueActuals(
   //   Negative adjustments. Applied to whichever source contributed the positive amount; netted
   //   at period + cost_centre grain (no reliable per-invoice link available).
   //
-  // Result is a net figure: (A or B) minus C, grouped by branch / process / cost centre.
+  // SOURCE D — HRMS client_invoice / client_credit_note (pnl-hrms-bill-revenue.ts), only when
+  //   PNL_REVENUE_FROM_HRMS_BILLS is on. Bills raised in HRMS never reach the db_bill snapshots;
+  //   HRMS invoices count like SOURCE A (and so also reduce the provision fallback of their cost
+  //   centre), HRMS credit notes like SOURCE C. With the flag off the query below is byte-for-byte
+  //   the one that ran before.
+  //
+  // Result is a net figure: (A [+ D] or B) minus C [and D credit notes], grouped by branch /
+  // process / cost centre.
 
   const hasProvision = await tableExists("billing_provision_snapshot");
+  const hrms = hrmsBillRevenueEnabled();
+  const hrmsInv = hrms ? hrmsInvoiceRevenueSql(periodCode, OWN_COMPANY_SQL, PROCESS_BY_COST_CENTRE) : null;
+  const hrmsCn = hrms ? hrmsCreditRevenueSql(periodCode, OWN_COMPANY_SQL, PROCESS_BY_COST_CENTRE) : null;
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `${
@@ -701,7 +712,10 @@ export async function getInvoicedRevenueActuals(
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
         WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${OWN_COMPANY_SQL}
         GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id, ccm.id, COALESCE(pc.process_id, ccm.process_id)
-     ),
+     ),${hrmsInv ? `
+     hrms_invoice_actual AS (
+       ${hrmsInv.sql}
+     ),` : ""}
      /*
       * BUG-4 fix: invoice_actual is grouped by (cost_centre_code, branch_id, cost_centre_id,
       * process_id) — a cost centre that PROCESS_BY_COST_CENTRE maps to more than one process_id
@@ -717,13 +731,17 @@ export async function getInvoicedRevenueActuals(
       */
      invoice_by_cc AS (
        SELECT cost_centre_code, SUM(invoice_amount) AS invoice_amount
-         FROM invoice_actual
+         FROM ${hrmsInv ? `(SELECT cost_centre_code, invoice_amount FROM invoice_actual
+               UNION ALL SELECT cost_centre_code, invoice_amount FROM hrms_invoice_actual) all_inv` : "invoice_actual"}
         GROUP BY cost_centre_code
      )
      SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount FROM (
         SELECT branch_id, cost_centre_id, process_id, invoice_amount AS amount
           FROM invoice_actual
-        UNION ALL
+        UNION ALL${hrmsInv ? `
+        SELECT branch_id, cost_centre_id, process_id, invoice_amount AS amount
+          FROM hrms_invoice_actual
+        UNION ALL` : ""}
         SELECT p.branch_id, p.cost_centre_id, p.process_id,
                GREATEST(p.provision_amount - COALESCE(i.invoice_amount, 0), 0) AS amount
           FROM provision_actual p
@@ -736,7 +754,9 @@ export async function getInvoicedRevenueActuals(
                  ON ccm.cost_centre_code
                   = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
-         WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}
+         WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}${hrmsCn ? `
+        UNION ALL
+        ${hrmsCn.sql}` : ""}
      ) netted
       GROUP BY branch_id, cost_centre_id, process_id`
         : `
@@ -748,7 +768,9 @@ export async function getInvoicedRevenueActuals(
                  ON ccm.cost_centre_code
                   = p.cost_centre_code COLLATE utf8mb4_unicode_ci
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
-         WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
+         WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}${hrmsInv ? `
+        UNION ALL
+        SELECT branch_id, cost_centre_id, process_id, invoice_amount FROM (${hrmsInv.sql}) hrms_inv` : ""}
         UNION ALL
         SELECT ccm.branch_id, ccm.id, COALESCE(pc.process_id, ccm.process_id), -cn.total_amt
           FROM billing_credit_note_snapshot cn
@@ -756,13 +778,15 @@ export async function getInvoicedRevenueActuals(
                  ON ccm.cost_centre_code
                   = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
-         WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}
+         WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}${hrmsCn ? `
+        UNION ALL
+        ${hrmsCn.sql}` : ""}
      ) netted
       GROUP BY branch_id, cost_centre_id, process_id`
     }`,
     hasProvision
-      ? [periodCode, periodCode, periodCode]
-      : [periodCode, periodCode],
+      ? [periodCode, periodCode, ...(hrmsInv?.params ?? []), periodCode, ...(hrmsCn?.params ?? [])]
+      : [periodCode, ...(hrmsInv?.params ?? []), periodCode, ...(hrmsCn?.params ?? [])],
   );
   return accumulate(rows);
 }
