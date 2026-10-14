@@ -1,0 +1,61 @@
+name: Ops Billing Counter Sync (manual)
+
+# Raises HRMS client-billing bill/proforma counters to the legacy I-Spark (db_bill) counters so
+# HRMS never re-issues a number I-Spark already used. dry-run (default) writes nothing.
+# apply only ever RAISES counters (GREATEST) and needs confirm = raise-billing-counters.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run or apply"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      finance_year:
+        description: "Finance year, e.g. 2026-27"
+        required: true
+        default: "2026-27"
+        type: string
+      confirm:
+        description: "Type raise-billing-counters to apply"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ops-billing-counter-sync-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Billing counter sync
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          MODE: ${{ inputs.mode }}
+          FINANCE_YEAR: ${{ inputs.finance_year }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          npx tsx scripts/client-billing-sync-counters.ts
