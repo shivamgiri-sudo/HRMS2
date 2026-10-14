@@ -12,6 +12,7 @@ import {
   hasScopedAccess,
 } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
+import { runEmployeeBankPennyDrop } from "./employeeBankPennyDrop.js";
 import { mobilityService } from "../mobility/mobility.service.js";
 import { employeeController as c } from "./employee.controller.js";
 import { employeeService } from "./employee.service.js";
@@ -1209,7 +1210,28 @@ router.put(
       req,
     });
 
-    return res.json({ success: true, message: "Bank details saved" });
+    // Attach the penny drop: verify the account exists and that the bank's holder name matches
+    // both what HR typed and the employee. Never blocks the save — see employeeBankPennyDrop.ts.
+    // A save that did not touch the account number / IFSC has nothing new to verify.
+    let verification: Awaited<ReturnType<typeof runEmployeeBankPennyDrop>> | null = null;
+    if (account_number && ifsc_code) {
+      try {
+        verification = await runEmployeeBankPennyDrop({
+          employeeId: empId,
+          accountNumber: String(account_number),
+          ifscCode: String(ifsc_code),
+          holderName: account_holder_name ? String(account_holder_name) : null,
+        });
+      } catch (err) {
+        console.error("[bank-details] penny drop failed:", err instanceof Error ? err.message : err);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: verification ? verification.message : "Bank details saved",
+      verification,
+    });
   }),
 );
 
