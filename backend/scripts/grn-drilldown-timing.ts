@@ -24,6 +24,15 @@ const time = async <T>(label: string, fn: () => Promise<T>) => {
   return r;
 };
 
+const captured: { sql: string; params: unknown[]; ms: number }[] = [];
+const origQuery = (db as any).query.bind(db);
+(db as any).query = async (sql: any, params: any) => {
+  const t0 = Date.now();
+  const r = await origQuery(sql, params);
+  if (typeof sql === "string" && /grn_request g/.test(sql)) captured.push({ sql, params, ms: Date.now() - t0 });
+  return r;
+};
+
 (async () => {
   const [hdr] = (await q(
     `SELECT h.id, h.branch_id FROM finance_budget_header h JOIN branch_master bm ON bm.id = h.branch_id
@@ -47,6 +56,14 @@ const time = async <T>(label: string, fn: () => Promise<T>) => {
   }
   if (line) for (let i = 1; i <= 3; i++) {
     await time(`getGrnsForLine (run ${i})`, () => branchBudgetService.getGrnsForLine(line.id));
+  }
+  const slowest = captured.sort((a, b) => b.ms - a.ms)[0];
+  if (slowest) {
+    console.log(`\nslowest list SQL took ${slowest.ms} ms; EXPLAIN ANALYZE:`);
+    try {
+      const [r] = await origQuery(`EXPLAIN ANALYZE ${slowest.sql}`, slowest.params);
+      for (const row of r as any[]) console.log(Object.values(row)[0]);
+    } catch (e) { console.log("EXPLAIN ANALYZE failed:", (e as Error).message); }
   }
   console.log("\nEXPLAIN grn_request by branch+period (COALESCE form, as in listGrns):");
   console.table(await q(
