@@ -202,7 +202,7 @@ describe("file builders", () => {
     expect(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?><ENVELOPE>')).toBe(true);
     expect(xml).toContain("<TALLYREQUEST>Import Data</TALLYREQUEST>");
     expect(xml).toContain("<VOUCHERNUMBER>INV-1/Mas/9/26/1</VOUCHERNUMBER>");
-    expect(xml).toContain('<VOUCHER VCHTYPE="JrnlP"');
+    expect(xml).toContain('VCHTYPE="JrnlP"');
     expect(xml).toContain("<DATE>20261031</DATE>");
     expect(xml.match(/<VOUCHER /g)).toHaveLength(1);
   });

@@ -30,7 +30,7 @@ import { grnLedgerGroup, TallyMasters, type TallyGroup } from "./tally-ledger-ma
 export type LedgerTallyKind = "all" | "masters" | "grn" | "payments" | "journals";
 
 type Line = { ledger: string; amount: number; dr: boolean; group: TallyGroup; costCategory?: string; costCentre?: string };
-type Voucher = { kind: "grn" | "payments" | "journals"; type: string; number: string; date: string; narration: string; lines: Line[] };
+type Voucher = { kind: "grn" | "payments" | "journals"; remoteId: string; type: string; number: string; date: string; narration: string; lines: Line[] };
 export type LedgerTallySummary = {
   month: string;
   counts: Record<string, number>;
@@ -56,7 +56,7 @@ async function byId(table: string, columns: string, ids: string[]): Promise<Map<
   return out;
 }
 
-export function ledgerVoucherXml(v: Pick<Voucher, "type" | "number" | "date" | "narration" | "lines">): string {
+export function ledgerVoucherXml(v: Pick<Voucher, "remoteId" | "type" | "number" | "date" | "narration" | "lines">): string {
   const entries = v.lines
     .filter((l) => r2(l.amount) !== 0)
     .map((l) => {
@@ -67,7 +67,8 @@ export function ledgerVoucherXml(v: Pick<Voucher, "type" | "number" | "date" | "
       return `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${xmlEscape(l.ledger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${l.dr ? "Yes" : "No"}</ISDEEMEDPOSITIVE><AMOUNT>${signed}</AMOUNT>${alloc}</ALLLEDGERENTRIES.LIST>`;
     })
     .join("");
-  return `<VOUCHER VCHTYPE="${xmlEscape(v.type)}" ACTION="Create" OBJVIEW="Accounting Voucher View"><DATE>${tdate(v.date)}</DATE><VOUCHERTYPENAME>${xmlEscape(v.type)}</VOUCHERTYPENAME><VOUCHERNUMBER>${xmlEscape(v.number)}</VOUCHERNUMBER><NARRATION>${xmlEscape(v.narration.slice(0, 480))}</NARRATION><PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>${entries}</VOUCHER>`;
+  // REMOTEID: fixed per source record, so a second import of the same file is ignored, not duplicated.
+  return `<VOUCHER REMOTEID="${xmlEscape(v.remoteId)}" VCHTYPE="${xmlEscape(v.type)}" ACTION="Create" OBJVIEW="Accounting Voucher View"><DATE>${tdate(v.date)}</DATE><VOUCHERTYPENAME>${xmlEscape(v.type)}</VOUCHERTYPENAME><VOUCHERNUMBER>${xmlEscape(v.number)}</VOUCHERNUMBER><NARRATION>${xmlEscape(v.narration.slice(0, 480))}</NARRATION><PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>${entries}</VOUCHER>`;
 }
 
 /** Group for a payable_account_master head. */
@@ -179,7 +180,7 @@ async function glVouchers(month: string, masters: TallyMasters, exceptions: Ledg
       ? [pv.particulars, pv.remarks, e.narration, pv.transaction_ref ? `Ref ${pv.transaction_ref}` : "", `Vch ${pv.voucher_number}`].filter(Boolean).join(" | ")
       : jvBy.get(String(e.id))?.narration || String(e.narration ?? "");
     for (const l of lines) { masters.ledger(l.ledger, l.group); if (l.costCategory && l.costCentre) masters.costCentre(l.costCategory, l.costCentre); }
-    out.push({ kind, type, number: ref, date, narration, lines });
+    out.push({ kind, remoteId: `HRMS-JE-${e.id}`, type, number: ref, date, narration, lines });
   }
   return out;
 }
@@ -210,7 +211,7 @@ async function directImprestTopUps(month: string, masters: TallyMasters, excepti
     masters.ledger(holder, "Loans & Advances (Asset)");
     masters.ledger(bank, "Bank Accounts");
     out.push({
-      kind: "payments", type: "Payment", number: String(r.allocation_no), date: ymd(r.allocation_date),
+      kind: "payments", remoteId: `HRMS-IMP-${r.allocation_no}`, type: "Payment", number: String(r.allocation_no), date: ymd(r.allocation_date),
       narration: [`Imprest top-up ${r.allocation_no}`, r.remarks, r.reference_no ? `Ref ${r.reference_no}` : ""].filter(Boolean).join(" | "),
       lines: [{ ledger: holder, amount, dr: true, group: "Loans & Advances (Asset)" }, { ledger: bank, amount, dr: false, group: "Bank Accounts" }],
     });
@@ -233,7 +234,7 @@ export async function buildLedgerTallyExport(opts: { month: string; kind: Ledger
     for (const e of r.entries) masters.ledger(e.ledger, grnLedgerGroup(e.ledger, e.side, e.ledger === party, imprest));
     masters.costCentre(r.header.costCategory, r.header.costCentre);
     masters.voucherType(r.header.voucherType, "Journal");
-    vouchers.push({ kind: "grn", type: r.header.voucherType, number: r.header.voucherNumber, date: r.header.date, narration: r.header.narration, lines: [] });
+    vouchers.push({ kind: "grn", remoteId: `HRMS-GRN-${r.grnId}`, type: r.header.voucherType, number: r.header.voucherNumber, date: r.header.date, narration: r.header.narration, lines: [] });
   }
 
   vouchers.push(...(await glVouchers(month, masters, exceptions)), ...(await directImprestTopUps(month, masters, exceptions)));
