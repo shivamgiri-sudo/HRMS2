@@ -149,7 +149,40 @@ async function round5() {
   console.table(live.slice(-8).map((r) => ({ fy: r.financial_year, bill: r.bill_no, bill_amount: r.bill_amount, tds: r.tds_ded, net: r.net_amount, ded: r.deduction, status: r.status, date: r.pay_type_dates })));
 }
 
+/** Round 6: MAS 2026-27 bill numbers carried by more than one I-Spark row (the cutover top-up
+ *  found 61 legacy rows whose bill_no is already on a different migrated HRMS bill). Prints each
+ *  pair side by side (ids, dates, cost centre, amounts, deleted flag) — codes and amounts only. */
+async function round6() {
+  const rows = await billQuery<RowDataPacket>(
+    `SELECT id, bill_no, finance_year, month, invoiceDate, cost_center, branch_name, total, grnd, status, createdate
+     FROM tbl_invoice
+     WHERE cost_company_name LIKE '%Mas Callnet%' AND finance_year = '2026-27' AND bill_no IS NOT NULL AND bill_no <> ''
+       AND bill_no IN (SELECT bill_no FROM tbl_invoice WHERE cost_company_name LIKE '%Mas Callnet%' AND finance_year = '2026-27'
+                       GROUP BY bill_no HAVING COUNT(*) > 1)
+     ORDER BY bill_no, id`);
+  const [h] = await db.query<RowDataPacket[]>(`SELECT legacy_id, bill_no, invoice_status, grand_total FROM client_invoice WHERE legacy_id IS NOT NULL`);
+  const inHrms = new Map(h.map((r) => [Number(r.legacy_id), r]));
+  console.log(`\n### MAS 2026-27 bill numbers on more than one I-Spark row: ${new Set(rows.map((r) => r.bill_no)).size} numbers, ${rows.length} rows`);
+  const view = rows.map((r) => ({
+    bill: r.bill_no, id: r.id, inv_date: String(r.invoiceDate ?? "").slice(0, 10), month: r.month, cc: r.cost_center,
+    grnd: Number(r.grnd), deleted: Number(r.status) === 1 ? "Y" : "", created: String(r.createdate ?? "").slice(0, 10),
+    in_hrms: inHrms.has(Number(r.id)) ? `${inHrms.get(Number(r.id))!.invoice_status}` : "-",
+  }));
+  for (let i = 0; i < view.length; i += 60) console.table(view.slice(i, i + 60));
+  const groups = new Map<string, typeof view>();
+  for (const v of view) groups.set(String(v.bill), [...(groups.get(String(v.bill)) ?? []), v]);
+  let sameCcSameAmt = 0, oneDeleted = 0, differentCc = 0;
+  for (const g of groups.values()) {
+    const live = g.filter((x) => !x.deleted);
+    if (live.length < g.length) oneDeleted++;
+    if (new Set(g.map((x) => x.cc)).size > 1) differentCc++;
+    else if (new Set(g.map((x) => x.grnd)).size === 1) sameCcSameAmt++;
+  }
+  console.log(`groups: ${groups.size}; with a deleted row: ${oneDeleted}; different cost centres: ${differentCc}; same cost centre + same amount: ${sameCcSameAmt}`);
+}
+
 async function main() {
+  if (process.env.PROBE_ROUND === "6") return round6();
   if (process.env.PROBE_ROUND === "5") return round5();
   if (process.env.PROBE_ROUND === "4") return round4();
   if (process.env.PROBE_ROUND === "3") return round3();
