@@ -45,12 +45,24 @@ import { loadValidatedRows } from "./load.ts";
 async function main() {
   const pool = mysql.createPool({
     host: process.env.DB_HOST || "192.168.10.6",
-    port: 3306,
-    user: "shivam_user",
+    port: Number(process.env.DB_PORT || 3306),
+    user: process.env.DB_USER || "shivam_user",
     password: process.env.DB_PASSWORD,
-    database: "mas_hrms",
+    database: process.env.DB_NAME || "mas_hrms",
     connectionLimit: 5,
   });
+  // LOAD_ONLY_MAS=1: only MAS Callnet India Pvt Ltd rows not loaded yet (2026-10 top-up).
+  const onlyMas = process.env.LOAD_ONLY_MAS === "1";
+  const masInvoiceFilter = onlyMas
+    ? ` AND src_cost_company_name LIKE '%Mas Callnet%' AND NOT EXISTS (SELECT 1 FROM client_invoice ci WHERE ci.legacy_id = s.src_id)`
+    : "";
+  const masCreditFilter = onlyMas
+    ? ` AND NOT EXISTS (SELECT 1 FROM client_credit_note cn WHERE cn.legacy_id = s.src_id)
+        AND (EXISTS (SELECT 1 FROM client_invoice_migration_staging si WHERE si.target_id = s.target_invoice_id AND si.src_cost_company_name LIKE '%Mas Callnet%')
+             OR EXISTS (SELECT 1 FROM client_invoice ci JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+                        WHERE ci.id = s.target_invoice_id AND REPLACE(REPLACE(LOWER(cc.company_name),'.',''),' ','') LIKE '%mascallnet%'))`
+    : "";
+  console.log(`Scope: ${onlyMas ? "MAS Callnet only, rows not yet loaded" : "all valid staged rows"}; MODE=${process.env.MODE || "apply"}`);
 
   const loadDb = { getConnection: () => pool.getConnection() };
 
@@ -72,17 +84,28 @@ async function main() {
               src_category, src_finance_year, src_month, src_invoicedate,
               src_invoicedescription, src_invoicedeleteremarks, src_proforma_bill_no, src_bill_no,
               src_total, src_tax, src_igst, src_sgst, src_cgst, src_grnd, validation_status
-       FROM client_invoice_migration_staging WHERE validation_status = 'valid'`
+       FROM client_invoice_migration_staging s WHERE validation_status = 'valid'${masInvoiceFilter}`
     );
     const [creditNoteRows] = await pool.query(
       `SELECT id, src_id, target_id, target_cost_centre_id, target_invoice_id, target_gst_type, target_apply_gst,
               src_category, src_finance_year, src_month, src_creditdate,
               src_creditdescription, src_credit_no, src_credit_approve,
               src_total, src_tax, src_igst, src_sgst, src_cgst, src_grnd, validation_status
-       FROM client_credit_note_migration_staging WHERE validation_status = 'valid'`
+       FROM client_credit_note_migration_staging s WHERE validation_status = 'valid'${masCreditFilter}`
     );
 
     console.log(`Loading ${invoiceRows.length} invoice rows and ${creditNoteRows.length} credit-note rows...`);
+    for (const r of invoiceRows.slice(0, 200)) console.log(`  invoice legacy ${r.src_id}: ${r.src_bill_no || r.src_proforma_bill_no} grand ${r.src_grnd}`);
+    for (const r of creditNoteRows) console.log(`  credit note legacy ${r.src_id}: ${r.src_credit_no} grand ${r.src_grnd}`);
+    if (onlyMas) {
+      const [errs] = await pool.query(
+        `SELECT src_id, src_bill_no, validation_error FROM client_invoice_migration_staging s
+         WHERE validation_status = 'error' AND src_cost_company_name LIKE '%Mas Callnet%'
+           AND NOT EXISTS (SELECT 1 FROM client_invoice ci WHERE ci.legacy_id = s.src_id) AND src_finance_year >= '2025-26'`);
+      console.log(`MAS rows staged but NOT valid (not loaded): ${errs.length}`);
+      for (const e of errs) console.log(`  legacy ${e.src_id} ${e.src_bill_no}: ${e.validation_error}`);
+    }
+    if ((process.env.MODE || "apply") !== "apply") { console.log("Dry run: nothing loaded."); return; }
 
     const stats = await loadValidatedRows(
       loadDb,

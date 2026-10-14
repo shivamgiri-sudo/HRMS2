@@ -36,6 +36,8 @@ import {
   sanitizeLegacyDatetime,
 } from "./extract.transforms.js";
 
+const ONLY_MAS = process.env.EXTRACT_ONLY_MAS === "1";
+
 interface LegacyInvoiceRow extends RowDataPacket {
   id: number;
   invoiceType: string | null;
@@ -232,7 +234,11 @@ function recordCategoryNormalization(rawCategory: string | null, normalized: str
 }
 
 async function extractInvoices(stats: RunStats): Promise<void> {
-  const rows = await billQuery<LegacyInvoiceRow>(`SELECT * FROM tbl_invoice`);
+  // EXTRACT_ONLY_MAS=1: MAS Callnet India Pvt Ltd rows only (owner rule for the 2026-10 top-up;
+  // the August cutover took every company).
+  const rows = await billQuery<LegacyInvoiceRow>(
+    ONLY_MAS ? `SELECT * FROM tbl_invoice WHERE cost_company_name LIKE '%Mas Callnet%'` : `SELECT * FROM tbl_invoice`,
+  );
   stats.read += rows.length;
 
   for (const row of rows) {
@@ -374,7 +380,15 @@ async function extractInvoices(stats: RunStats): Promise<void> {
 }
 
 async function extractCreditNotes(stats: RunStats): Promise<void> {
-  const rows = await billQuery<LegacyCreditNoteRow>(`SELECT * FROM tbl_credit_note`);
+  // MAS and IDC reuse the same bill-number format (09-275/26-27 exists in both), so a credit note
+  // is MAS only when its referenced bill matches on bill number AND cost centre.
+  const rows = await billQuery<LegacyCreditNoteRow>(
+    ONLY_MAS
+      ? `SELECT c.* FROM tbl_credit_note c
+         WHERE EXISTS (SELECT 1 FROM tbl_invoice i WHERE i.bill_no = c.proforma_bill_no AND i.cost_center = c.cost_center
+                       AND i.cost_company_name LIKE '%Mas Callnet%')`
+      : `SELECT * FROM tbl_credit_note`,
+  );
   stats.read += rows.length;
 
   for (const row of rows) {
@@ -454,6 +468,7 @@ async function extractCreditNotes(stats: RunStats): Promise<void> {
 
 async function main(): Promise<void> {
   console.log("[extract] Client Billing Historical Cutover — Task 2 extraction starting");
+  console.log(`[extract] scope: ${ONLY_MAS ? "MAS Callnet India Pvt Ltd only" : "all companies"}`);
   console.log("[extract] db_bill access is READ-ONLY throughout (billQuery blocks non-SELECT).");
 
   // ── db_bill row-count proof, BEFORE ─────────────────────────────────────────

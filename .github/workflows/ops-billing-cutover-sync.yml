@@ -1,0 +1,65 @@
+name: Ops Billing Cutover Sync (manual)
+
+# Brings MAS Callnet bills / credit notes issued in I-Spark after the August cutover into HRMS.
+#   stage: db_bill (read-only) -> client_*_migration_staging (extract + validate), then prints the
+#          MAS rows that would load and the ones that fail validation. Writes staging tables only.
+#   apply: loads the valid MAS rows not yet in HRMS (idempotent on legacy_id). Needs
+#          confirm = load-mas-bills.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "stage or apply"
+        required: true
+        default: "stage"
+        type: choice
+        options: [stage, apply]
+      confirm:
+        description: "Type load-mas-bills to apply"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ops-billing-cutover-sync-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Billing cutover sync
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          MODE_IN: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          export LOAD_ONLY_MAS=1 EXTRACT_ONLY_MAS=1
+          if [ "$MODE_IN" = "stage" ]; then
+            npx tsx scripts/client-billing-cutover/extract.ts
+            npx tsx scripts/client-billing-cutover/validate.ts
+            MODE=dry-run npx tsx scripts/client-billing-cutover/run-load.mjs
+          else
+            [ "$CONFIRM" = "load-mas-bills" ] || { echo "::error::apply needs confirm = load-mas-bills"; exit 1; }
+            MODE=apply npx tsx scripts/client-billing-cutover/run-load.mjs
+          fi
