@@ -1,0 +1,47 @@
+name: Ops WFM pending audit (manual, read-only)
+
+# Read-only: lists open WFM provisioning requests for a branch and which queue filters hide them.
+# Runs on the production runner using the deployed .env. Writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch name fragment"
+        required: true
+        default: noida
+        type: string
+
+concurrency:
+  group: ops-wfm-pending-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run audit
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          BRANCH_FRAGMENT: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH"
+          npx tsx scripts/wfm-pending-audit.ts "$BRANCH_FRAGMENT"
