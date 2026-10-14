@@ -348,6 +348,7 @@ async function buildVouchersFromLines(
     }
     vouchers.push(buildVoucher(bucket, cohortCache.get(bucket.company)!, period, serial++));
   }
+  await applyLegacyCostCentres(vouchers, period);
 
   return {
     period,
@@ -355,6 +356,32 @@ async function buildVouchersFromLines(
     unassigned: [...new Set(unassigned)],
     unpaid: [...new Set(unpaid)],
   };
+}
+
+/**
+ * A branch the reference vouchers do not cover (e.g. "Delhi Office") would otherwise post to a cost centre named
+ * after the HRMS branch ("Delhi Office/2609"), which the Tally company does not have. For those branches only, use
+ * the Tally company's own cost category / code carried over from db_bill (tally_legacy_name, migration 2210):
+ * Delhi Office -> DELHI / 07/2609. Reference branches keep the reference spelling (AHM/2609, HO/2609).
+ */
+async function applyLegacyCostCentres(vouchers: Voucher[], period: string): Promise<void> {
+  const unknown = vouchers.filter((v) => !(v.branch_name.trim().toUpperCase() in BRANCH_SHORT_CODE));
+  if (!unknown.length) return;
+  const ids = [...new Set(unknown.map((v) => v.branch_id))];
+  let rows: RowDataPacket[] = [];
+  try {
+    [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT entity_id, tally_name, tally_code FROM tally_legacy_name WHERE entity_type = 'branch' AND entity_id IN (${ids.map(() => "?").join(",")})`, ids);
+  } catch { return; /* table not created yet */ }
+  const byId = new Map(rows.map((r) => [String(r.entity_id), r]));
+  const [year, month] = period.split("-");
+  for (const v of unknown) {
+    const l = byId.get(v.branch_id);
+    const code = String(l?.tally_code ?? "").trim();
+    if (!code) continue;
+    v.cost_category = String(l?.tally_name ?? "").trim() || v.cost_category;
+    v.cost_centre = `${code}/${year.slice(-2)}${month}`;
+  }
 }
 
 /** Sums one bucket into the reference voucher's ledger lines, in the reference order. */
