@@ -1,0 +1,38 @@
+name: Ops runner network check (manual, read-only)
+
+# Read-only: can the self-hosted runner reach the live backend on 127.0.0.1:5055 (what deploy.yml's
+# health wait uses)? Prints hostname, namespaces, listening sockets and the pm2 pids vs real pids.
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-runner-net
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  net:
+    name: Runner network check
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Check
+        shell: bash
+        run: |
+          set +e
+          echo "--- host ---"; hostname; id; echo "runner pid ns: $(readlink /proc/self/ns/pid)  net ns: $(readlink /proc/self/ns/net)"
+          echo "--- direct backend health (what deploy.yml curls) ---"
+          curl -sS --max-time 5 -o /dev/null -w "127.0.0.1:5055 -> %{http_code}\n" http://127.0.0.1:5055/api/health
+          curl -sS --max-time 5 -o /dev/null -w "localhost:5055 -> %{http_code}\n" http://localhost:5055/api/health
+          curl -sS --max-time 5 -k -o /dev/null -w "nginx 443 -> %{http_code}\n" -H "Host: mcnhrms.teammas.in" https://127.0.0.1/api/health
+          echo "--- listeners on 5055 ---"; (ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null) | grep -E ":5055\b" || echo "none visible from this namespace"
+          echo "--- pm2 view ---"
+          pm2 jlist 2>/dev/null | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{for(const p of JSON.parse(d)){if(!/hrms2/.test(p.name))continue;console.log(p.name,'pm2pid='+p.pid,'status='+p.pm2_env.status,'pm2_home='+p.pm2_env.PM2_HOME)}})"
+          for pid in $(pm2 jlist 2>/dev/null | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{for(const p of JSON.parse(d)){if(/hrms2/.test(p.name))console.log(p.pid)}})"); do
+            echo "pid $pid: $(ps -o pid=,etime=,cmd= -p $pid 2>/dev/null | cut -c1-120 || echo 'not visible')  net ns: $(readlink /proc/$pid/ns/net 2>/dev/null)"
+          done
+          echo "--- pm2 daemons ---"; ps -eo pid,user,etime,cmd | grep -i "pm2" | grep -v grep | cut -c1-160
+          echo "--- container? ---"; [ -f /.dockerenv ] && echo "/.dockerenv present"; head -3 /proc/1/cgroup
