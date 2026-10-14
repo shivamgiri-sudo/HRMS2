@@ -28,8 +28,7 @@ const opts: any = { limit: 5, offset: 0, cursor: null, includeTotal: true, mode:
   const today = businessToday();
   console.log("business today:", today);
   const cases = [
-    ["past 1 day", { from: "2026-10-10", to: "2026-10-10" }],
-    ["into the future", { from: "2026-10-14", to: "2026-10-31" }],
+    ["past 1 day", { from: "2026-10-10", to: "2026-10-10" }]
     ["wholly future", { from: "2026-10-20", to: "2026-10-31" }],
   ] as const;
   for (const [label, f] of cases) {
@@ -40,8 +39,8 @@ const opts: any = { limit: 5, offset: 0, cursor: null, includeTotal: true, mode:
   }
   const slow = captured.sort((a, b) => b.ms - a.ms)[0];
   if (slow) {
-    console.log(`\nslowest statement ${slow.ms} ms; EXPLAIN ANALYZE (3-day range captured last):`);
-    const last = captured[captured.length - 1];
+    console.log(`\nslowest statement ${slow.ms} ms; EXPLAIN ANALYZE of it:`);
+    const last = slow;
     try {
       const [r] = await origExecute(`EXPLAIN ANALYZE ${last.sql.replace(/\s+LIMIT \d+ OFFSET \d+\s*$/, " LIMIT 5")}`, last.params);
       for (const row of r as any[]) console.log(Object.values(row)[0]);
