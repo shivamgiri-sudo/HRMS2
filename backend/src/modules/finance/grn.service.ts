@@ -2007,6 +2007,7 @@ export const grnService = {
               AND gca.lifecycle_status IN ('draft', 'reserved', 'consumed')
               ${headMatch}
               ${subHeadMatch}
+              /*PAGE_IDS*/
             GROUP BY gca.grn_request_id
          ) ctx_alloc ON ctx_alloc.grn_request_id = g.id`;
       contextAllocationParams.push(filters.costCentreId);
@@ -2326,9 +2327,17 @@ export const grnService = {
          LEFT JOIN emp_names bhb ON bhb.user_id = g.branch_head_reviewed_by
          LEFT JOIN emp_names ahb ON ahb.user_id = g.accounts_head_reviewed_by
          LEFT JOIN emp_names fhb ON fhb.user_id = g.finance_head_reviewed_by
-         ${contextAllocationJoin}
+         ${contextAllocationJoin.replace(
+           "/*PAGE_IDS*/",
+           // Only the GRNs on this page need their allocation share summed. Without this the
+           // derived table GROUPs every allocation row of the cost centre (no index leads with
+           // cost_centre_id), which was most of the remaining time once paging moved inside.
+           `AND gca.grn_request_id IN (SELECT pg.id FROM (SELECT g.id FROM grn_request g ${where} ORDER BY g.created_at DESC LIMIT ? OFFSET ?) pg)`,
+         )}
         ORDER BY g.created_at DESC`,
-      [...params, limit, offset, ...contextAllocationParams],
+      filters.costCentreId
+        ? [...params, limit, offset, ...contextAllocationParams, ...params, limit, offset]
+        : [...params, limit, offset],
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM grn_request g ${where}`,
