@@ -43,6 +43,7 @@ on:
         type: choice
         options:
           - ledger-tally-dump
+          - tally-names-compare
           - statutory-identifier-encrypt-backfill
           - backup-table-pii-scrub
           - legacy-payslip-account-encrypt-backfill
@@ -242,6 +243,7 @@ jobs:
           MODE="${{ inputs.mode }}"
 
           case "${{ inputs.script }}" in
+            tally-names-compare) npx tsx scripts/tally-names-compare.ts ;;
             ledger-tally-dump) npx tsx scripts/ledger-tally-dump.ts 2026-09 2026-10 ;;
             statutory-identifier-encrypt-backfill)
               FLAG=""; [ "$MODE" = "dry-run" ] && FLAG="--dry-run"
