@@ -22,6 +22,7 @@ import {
   listHiringActivity,
   branchScopeSql,
   branchScopeParams,
+  getActorBranchLabels,
   mapSheetRow,
   parseRecruiterSheet,
   readImportBatch,
@@ -447,7 +448,7 @@ recruiterHiringRouter.get("/recruiter/hiring-activity/report", async (req: Authe
     const role = req.authUser?.role ?? "";
     if (!isOrgWideRole(role)) {
       // own rows, plus (hr / branch roles) every row of the caller's own branch
-      const actorBranch = await getActorBranch(req.authUser!.id);
+      const actorBranch = await getActorBranchLabels(req.authUser!.id);
       if (actorBranch) {
         conditions.push(branchScopeSql());
         params.push(...branchScopeParams(actorBranch, req.authUser!.id));

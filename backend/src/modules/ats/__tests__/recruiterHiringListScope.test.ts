@@ -16,5 +16,7 @@ describe('listHiringActivity scoping', () => {
     const rowsSql = String(execute.mock.calls.map((c) => c[0]).find((s) => /LEFT JOIN ats_candidate/.test(String(s))));
     expect(rowsSql).toMatch(/FROM \(SELECT \* FROM ats_recruiter_hiring_activity WHERE [\s\S]+\) arha\s+LEFT JOIN ats_candidate/);
     expect(rowsSql).not.toMatch(/LEFT JOIN ats_queue_token qt ON qt\.id = arha\.queue_token_id\s+WHERE/);
+    // no subquery over branch_master: its own branch_name column would capture the unqualified one (leak)
+    expect(rowsSql).not.toMatch(/branch_master/);
   });
 });

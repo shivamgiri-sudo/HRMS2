@@ -888,34 +888,50 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean, branch?: st
 }
 
 /**
- * Tolerant branch scope for the hiring-entry list/export/dashboards. branch_name on an entry is free
- * text (roster branch, branch code, import sheet location), so an exact `branch_name = ?` hid a
- * branch's own entries from its HR team. Same match the analytics queries already use: trimmed,
- * case-insensitive name or code, on branch_name or location_name. Own rows always stay visible.
+ * Tolerant branch scope for the hiring-entry list/export/dashboards/report. branch_name on an entry is
+ * free text (roster branch, branch code, import sheet location), so an exact match hid a branch's own
+ * entries from its HR team. Matches the caller's branch NAME or CODE (trimmed, case-insensitive) on
+ * branch_name or location_name; own rows always stay visible.
+ *
+ * Deliberately NO subquery: an unqualified branch_name inside a branch_master subquery binds to
+ * branch_master's own column, which made the predicate true for every row (a cross-branch leak).
  */
-export function branchScopeSql(alias = ""): string {
-  const c = (col: string) => `LOWER(TRIM(COALESCE(${alias}${col}, '')))`;
+export function branchScopeSql(): string {
   return `(
-    ${c("branch_name")} = LOWER(TRIM(?))
-    OR ${c("location_name")} = LOWER(TRIM(?))
-    OR EXISTS (
-      SELECT 1 FROM branch_master bm_scope
-       WHERE LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))) = LOWER(TRIM(?))
-         AND (${c("branch_name")} IN (LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))), LOWER(TRIM(COALESCE(bm_scope.branch_code, ''))))
-           OR ${c("location_name")} IN (LOWER(TRIM(COALESCE(bm_scope.branch_name, ''))), LOWER(TRIM(COALESCE(bm_scope.branch_code, '')))))
-    )
-    OR ${alias}created_by = ?
-    OR ${alias}recruiter_id = ?
+    LOWER(TRIM(COALESCE(branch_name, ''))) IN (?, ?)
+    OR LOWER(TRIM(COALESCE(location_name, ''))) IN (?, ?)
+    OR created_by = ?
+    OR recruiter_id = ?
   )`;
 }
-export function branchScopeParams(branch: string, userId: string): string[] {
-  return [branch, branch, branch, userId, userId];
+export function branchScopeParams(labels: string[], userId: string): string[] {
+  const l0 = labels[0] ?? "";
+  const l1 = labels[1] ?? l0;
+  return [l0, l1, l0, l1, userId, userId];
+}
+
+/** The caller's branch name and code, normalised for the tolerant match; null when unresolved. */
+export async function getActorBranchLabels(userId: string): Promise<string[] | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT b.branch_name, b.branch_code
+       FROM employees e
+       JOIN branch_master b ON b.id = e.branch_id
+      WHERE e.user_id = ? AND e.active_status = 1
+      LIMIT 1`,
+    [userId]
+  );
+  const r = rows[0];
+  if (!r) return null;
+  const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
+  const name = norm(r.branch_name);
+  const code = norm(r.branch_code) || name;
+  return name || code ? [name || code, code] : null;
 }
 
 export async function listHiringActivity(userId: string, role: string | undefined, filters: HiringFilters) {
   const scopedOnly = !isOrgWideRole(role);
-  const branch = scopedOnly ? await getActorBranch(userId) : null;
-  const { sql, params } = buildFilterSql(filters, scopedOnly, branch);
+  const branch = scopedOnly ? await getActorBranchLabels(userId) : null;
+  const { sql, params } = buildFilterSql(filters, scopedOnly, branch ? branch[0] : null);
   if (scopedOnly) {
     if (branch) {
       params.push(...branchScopeParams(branch, userId));
@@ -1503,8 +1519,8 @@ export async function getActorBranch(userId: string): Promise<string | null> {
 }
 
 async function applyActivityFilters(filters: HiringFilters, scopedOnly: boolean, userId?: string) {
-  const branch = (scopedOnly && userId) ? await getActorBranch(userId) : null;
-  const { sql, params } = buildFilterSql(filters, scopedOnly, branch);
+  const branch = (scopedOnly && userId) ? await getActorBranchLabels(userId) : null;
+  const { sql, params } = buildFilterSql(filters, scopedOnly, branch ? branch[0] : null);
   if (scopedOnly && userId) {
     if (branch) {
       params.push(...branchScopeParams(branch, userId));
