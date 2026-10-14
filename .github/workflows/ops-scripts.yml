@@ -154,6 +154,7 @@ on:
           - grn-tally-prod-dryrun
           - grn-tally-dbbill-probe
           - backfill-grn-tally-from-dbbill
+          - imprest-float-reconcile
 
       mode:
         description: "dry-run reports what it would do and writes nothing"
@@ -339,6 +340,7 @@ jobs:
               ;;
             grn-tally-prod-dryrun) npx tsx scripts/grn-tally-prod-dryrun.ts ;;
             grn-tally-dbbill-probe) npx tsx scripts/grn-tally-dbbill-probe.ts ;;
+            imprest-float-reconcile) npx tsx scripts/imprest-float-reconcile.ts ;;
             backfill-grn-tally-from-dbbill) FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"; npx tsx scripts/backfill-grn-tally-from-dbbill.ts $FLAG ;;
             repair-migrated-grn-ex-gst)
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
