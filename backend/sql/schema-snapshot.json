@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1274,
-  "columnCount": 18552,
+  "tableCount": 1276,
+  "columnCount": 18576,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -4780,7 +4780,19 @@
       "is_migrated",
       "legacy_id",
       "tally_head",
-      "client_tally_name"
+      "client_tally_name",
+      "rejected_by",
+      "rejected_at",
+      "rejected_reason"
+    ],
+    "client_credit_note_audit": [
+      "id",
+      "credit_note_id",
+      "invoice_id",
+      "action",
+      "actor_id",
+      "reason",
+      "created_at"
     ],
     "client_credit_note_line": [
       "id",
@@ -5106,7 +5118,13 @@
       "attachment_mime",
       "remarks",
       "created_by",
-      "updated_by"
+      "updated_by",
+      "approval_status",
+      "approved_amount",
+      "approval_requested_by",
+      "approval_decided_by",
+      "approval_decided_at",
+      "approval_note"
     ],
     "client_po_line": [
       "id",
@@ -5163,7 +5181,17 @@
       "edit_remarks",
       "edit_requested_by",
       "edit_requested_at",
-      "legacy_source_id"
+      "legacy_source_id",
+      "rejected_by",
+      "rejected_at"
+    ],
+    "client_provision_audit": [
+      "id",
+      "provision_id",
+      "action",
+      "actor_id",
+      "details",
+      "created_at"
     ],
     "client_provision_deduction": [
       "id",
