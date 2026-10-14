@@ -10,6 +10,11 @@ const { execute, sync } = vi.hoisted(() => ({ execute: vi.fn(), sync: vi.fn() })
 vi.mock("../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../config/env.js", () => ({ env: { DIGILOCKER_RECONCILIATION_ENABLED: false } }));
 vi.mock("../../modules/integrations/luckpay/luckpay-status.service.js", () => ({ syncDigilockerStatus: sync }));
+// The worker also runs an always-on onboarding-bridge heal tick regardless of the reconciliation flag; it has
+// its own suite, and left real it reads the db mock above, which made the flag-off assertion below meaningless.
+vi.mock("../../modules/ats/onboarding-bridge-heal.js", () => ({
+  healOnboardingBridge: vi.fn().mockResolvedValue({ digilocker: 0, pennyDrop: 0, address: 0 }),
+}));
 
 const worker = await import("../digilocker-reconciliation.worker.js");
 
@@ -43,7 +48,9 @@ describe("runDigilockerReconciliationOnce", () => {
 
   it("does not start while the flag is off", async () => {
     await worker.startDigilockerReconciliationWorker();
+    worker.stopDigilockerReconciliationWorker();
     expect(execute).not.toHaveBeenCalled();
+    expect(sync).not.toHaveBeenCalled();
   });
 });
 

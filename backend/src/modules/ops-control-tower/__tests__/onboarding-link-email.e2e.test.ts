@@ -37,7 +37,8 @@ let emailLog: unknown[][];
 beforeEach(() => {
   h.dbExecute.mockReset(); h.sendMail.mockReset(); emailLog = [];
   h.env.SMTP_USER = "u"; h.env.SMTP_PASS = "ab cd ef";
-  bridge = { candidate_id: "c1", employee_id: "e1", token: "old-token", expires: new Date(NOW + 5 * 86_400_000) };
+  // The public validator reads the real clock, so a live token must stay live relative to it (a fixed 2026-10-03 + 5d went stale).
+  bridge = { candidate_id: "c1", employee_id: "e1", token: "old-token", expires: new Date(Math.max(NOW, Date.now()) + 5 * 86_400_000) };
   cand = { email: "asha@example.com", mobile: "9999999999", status: null };
   emp = { full_name: "Asha <Rao>", personal_email: "asha.personal@example.com", email: null, mobile: "9999999999" };
   h.sendMail.mockResolvedValue({});

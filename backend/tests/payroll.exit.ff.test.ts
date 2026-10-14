@@ -11,6 +11,19 @@ vi.mock("../src/shared/auditLog.js", () => ({
   logSensitiveAction: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../src/modules/engagement/badge.service.js", () => ({ queueAutoAwards: vi.fn() }));
+// approveFF now runs the settlement gate (NOC / exception / payroll-head sign-off), which issues its own
+// db.execute reads and so shifted the queued responses below. The gate has its own suite
+// (ff-settlement-gate.test.ts); here it is an open door so these tests keep exercising approveFF itself.
+// approveFF also resolves the "awaiting approval" inbox item fire-and-forget (ff-notify.ts): same race
+// against the queued db.execute responses as the notifications above.
+vi.mock("../src/modules/exit/ff-notify.js", () => ({
+  notifyFfAwaitingApproval: vi.fn().mockResolvedValue(undefined),
+  resolveFfAwaitingApproval: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../src/modules/exit/ff-settlement-gate.service.js", () => ({
+  assertFfSettlementAllowed: vi.fn().mockResolvedValue(undefined),
+  ffSettlementGate: vi.fn().mockResolvedValue({ allowed: true, code: null, reason: null }),
+}));
 // approveFF fires notifyFullFinalReady without awaiting it. Unmocked, it issues its
 // own db.execute calls that race with the assertions and consume queued mock
 // responses, so the mocks the test lines up land on the wrong query.

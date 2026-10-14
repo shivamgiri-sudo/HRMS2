@@ -810,6 +810,155 @@ function Overview({ from, to, branchId, designationId, headlineRate }: { from: s
 
 /* ── Cohort survival ───────────────────────────────────────────────────────── */
 
+/* ── Process x Month attrition ─────────────────────────────────────────────── */
+
+function ProcessMonthly({ from, to, branchId, designationId }: { from: string; to: string; branchId: string; designationId: string }) {
+  const q = useReport("aon-process-monthly-attrition", {
+    from, to, ...(branchId ? { branchId } : {}), ...(designationId ? { designationId } : {}),
+  });
+  const [chartTop, setChartTop] = useState(6);
+
+  const model = useMemo(() => {
+    const rows = q.data ?? [];
+    const months = Array.from(new Set(rows.map(r => s(r.month)))).sort();
+    const byProc = new Map<string, { name: string; cells: Map<string, { exits: number; hc: number }>; exits: number; hc: number }>();
+    const monthTotals = new Map<string, { exits: number; hc: number }>();
+    for (const r of rows) {
+      const name = s(r.process_name) || "UNASSIGNED";
+      const m = s(r.month);
+      const exits = n(r.exits);
+      const hc = n(r.avg_headcount);
+      const p = byProc.get(name) ?? { name, cells: new Map(), exits: 0, hc: 0 };
+      p.cells.set(m, { exits, hc });
+      p.exits += exits;
+      p.hc += hc;
+      byProc.set(name, p);
+      const t = monthTotals.get(m) ?? { exits: 0, hc: 0 };
+      t.exits += exits;
+      t.hc += hc;
+      monthTotals.set(m, t);
+    }
+    const procs = Array.from(byProc.values()).sort((a, b) => b.exits - a.exits || a.name.localeCompare(b.name));
+    const rate = (e: number, h: number) => (h > 0 ? (e * 100) / h : null);
+    const chartProcs = procs.filter(p => p.name !== "UNASSIGNED").slice(0, chartTop);
+    const chartData = months.map(m => {
+      const row: Record<string, string | number | null> = { month: m };
+      for (const p of chartProcs) {
+        const c = p.cells.get(m);
+        row[p.name] = c ? rate(c.exits, c.hc) : null;
+      }
+      return row;
+    });
+    const unassigned = byProc.get("UNASSIGNED");
+    const totalExits = procs.reduce((a, p) => a + p.exits, 0);
+    return { months, procs, monthTotals, chartProcs, chartData, rate, totalExits, unassignedExits: unassigned?.exits ?? 0 };
+  }, [q.data, chartTop]);
+
+  const cellTone = (r: number | null) =>
+    r == null ? undefined : { backgroundColor: `rgba(227,73,72,${Math.min(0.55, (r / 12) * 0.55).toFixed(2)})` };
+
+  return (
+    <div className="space-y-4">
+      {model.totalExits > 0 && model.unassignedExits / model.totalExits >= 0.2 && (
+        <GapBanner items={[{
+          label: "Process on employee record",
+          detail: `${Math.round((model.unassignedExits * 100) / model.totalExits)}% of exits in this range have no process on the employee record and are shown as UNASSIGNED.`,
+        }]} />
+      )}
+
+      <ChartCard
+        title="Monthly attrition % by process"
+        subtitle="Exits in the month / average of start- and end-of-month headcount. Top processes by exits; a month with no headcount is a gap in the line."
+      >
+        <div className="mb-2 flex items-center gap-2 text-[11px] text-slate-500">
+          Show top
+          <select className={inputCls + " !h-7"} value={chartTop} onChange={e => setChartTop(Number(e.target.value))}>
+            {[4, 6, 8, 10].map(k => <option key={k} value={k}>{k}</option>)}
+          </select>
+          processes
+        </div>
+        {q.isLoading ? (
+          <ChartSkeleton height={300} />
+        ) : q.isError ? (
+          <EmptyState label="Could not load process-wise attrition" />
+        ) : model.chartData.length === 0 || model.chartProcs.length === 0 ? (
+          <EmptyState label="No process attrition data in range" />
+        ) : (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={model.chartData} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+              <CartesianGrid {...GRID_PROPS} />
+              <XAxis dataKey="month" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+              <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} width={48} unit="%" />
+              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number | string) => pct(Number(v))} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              {model.chartProcs.map((p, i) => (
+                <Line key={p.name} type="monotone" dataKey={p.name} stroke={SERIES[i % SERIES.length]}
+                  strokeWidth={1.75} dot={{ r: 2 }} connectNulls={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </ChartCard>
+
+      <ChartCard
+        title="Process x month attrition table"
+        subtitle="Attrition % per cell (exits below). Darker = higher. Sorted by total exits."
+      >
+        {q.isLoading ? (
+          <ChartSkeleton height={240} />
+        ) : model.procs.length === 0 ? (
+          <EmptyState label="No process attrition data in range" />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-collapse text-[12px]">
+              <thead>
+                <tr className="bg-slate-50 text-slate-600">
+                  <th className="sticky left-0 z-10 bg-slate-50 px-2 py-1.5 text-left font-semibold">Process</th>
+                  {model.months.map(m => <th key={m} className="px-2 py-1.5 text-right font-semibold">{m}</th>)}
+                  <th className="px-2 py-1.5 text-right font-semibold">Total exits</th>
+                </tr>
+              </thead>
+              <tbody>
+                {model.procs.map(p => (
+                  <tr key={p.name} className="border-t border-slate-100">
+                    <td className="sticky left-0 z-10 bg-white px-2 py-1.5 font-medium text-slate-800">{p.name}</td>
+                    {model.months.map(m => {
+                      const c = p.cells.get(m);
+                      const r = c ? model.rate(c.exits, c.hc) : null;
+                      return (
+                        <td key={m} className="px-2 py-1.5 text-right tabular-nums" style={cellTone(r)}
+                          title={c ? `${num(c.exits)} exits / ${num(Math.round(c.hc))} avg headcount` : "no headcount"}>
+                          {r == null ? "–" : pct(r)}
+                          {c && c.exits > 0 && <div className="text-[10px] text-slate-500">{num(c.exits)}</div>}
+                        </td>
+                      );
+                    })}
+                    <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{num(p.exits)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+                  <td className="sticky left-0 z-10 bg-slate-50 px-2 py-1.5">All processes</td>
+                  {model.months.map(m => {
+                    const t = model.monthTotals.get(m);
+                    const r = t ? model.rate(t.exits, t.hc) : null;
+                    return (
+                      <td key={m} className="px-2 py-1.5 text-right tabular-nums">
+                        {r == null ? "–" : pct(r)}
+                        {t && <div className="text-[10px] font-normal text-slate-500">{num(t.exits)}</div>}
+                      </td>
+                    );
+                  })}
+                  <td className="px-2 py-1.5 text-right tabular-nums">{num(model.totalExits)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </ChartCard>
+    </div>
+  );
+}
+
 function CohortSurvival({ from, to, branchId, designationId }: { from: string; to: string; branchId: string; designationId: string }) {
   const q = useReport("aon-cohort-survival", {
     from, to, ...(branchId ? { branchId } : {}), ...(designationId ? { designationId } : {}),
@@ -1229,10 +1378,10 @@ function isoLocal(d: Date) {
 
 export default function AonAnalyticsView() {
   const today = new Date();
-  const [tab, setTab] = useState<"alerts" | "prediction" | "insights" | "overview" | "cohort" | "deep">("alerts");
+  const [tab, setTab] = useState<"alerts" | "prediction" | "insights" | "overview" | "process" | "cohort" | "deep">("alerts");
   const [predictionFilters, setPredictionFilters] = useState<PredictionFilters>({});
   const openPrediction = (f: PredictionFilters) => { setPredictionFilters(f); setTab("prediction"); };
-  const legacyTab = tab === "overview" || tab === "cohort" || tab === "deep";
+  const legacyTab = tab === "overview" || tab === "process" || tab === "cohort" || tab === "deep";
   const [from, setFrom] = useState(isoLocal(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate())));
   const [to, setTo] = useState(isoLocal(today));
   const [branchId, setBranchId] = useState("");
@@ -1268,7 +1417,7 @@ export default function AonAnalyticsView() {
       <div role="tablist" aria-label="Attrition views" className="flex gap-1 overflow-x-auto rounded-lg bg-slate-50 p-1">
         {([
           ["alerts", "Alerts"], ["prediction", "Prediction"], ["insights", "Insights"],
-          ["overview", "Overview"], ["cohort", "Cohort Survival"], ["deep", "Attrition Deep Dive"],
+          ["overview", "Overview"], ["process", "Process x Month"], ["cohort", "Cohort Survival"], ["deep", "Attrition Deep Dive"],
         ] as const).map(([k, label]) => (
           <button
             key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
@@ -1284,7 +1433,7 @@ export default function AonAnalyticsView() {
 
       {legacyTab && (
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-        <span className="basis-full text-[11px] text-slate-500">Filters below apply to the Overview, Cohort Survival and Attrition Deep Dive views only.</span>
+        <span className="basis-full text-[11px] text-slate-500">Filters below apply to the Overview, Process x Month, Cohort Survival and Attrition Deep Dive views only.</span>
         <Field label={tab === "cohort" ? "Joined from" : "From"}>
           <input type="date" className={inputCls} value={from} onChange={e => setFrom(e.target.value)} />
         </Field>
@@ -1314,6 +1463,7 @@ export default function AonAnalyticsView() {
       {tab === "prediction" && <PredictionTab filters={predictionFilters} setFilters={setPredictionFilters} />}
       {tab === "insights" && <InsightsTab />}
       {tab === "overview" && <Overview from={from} to={to} branchId={branchId} designationId={designationId} headlineRate={headline} />}
+      {tab === "process" && <ProcessMonthly from={from} to={to} branchId={branchId} designationId={designationId} />}
       {tab === "cohort" && <CohortSurvival from={from} to={to} branchId={branchId} designationId={designationId} />}
       {tab === "deep" && <DeepDive from={from} to={to} branchId={branchId} designationId={designationId} />}
     </div>

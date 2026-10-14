@@ -71,19 +71,12 @@ describe("BudgetLinkedGrnForm — InvoiceComponentsEditor GST Amount column (Gro
 
 describe("BudgetLinkedGrnForm — Vendor dropdown de-duplication (Group A2)", () => {
   it("de-duplicates vendors by normalized name before building SearchableSelect options", () => {
+    // The de-dup moved into buildVendorOptions (grn-draft-prefill.ts), which also keeps a saved
+    // draft's vendor selectable; its behaviour is covered in grn-draft-prefill.test.ts.
     const form = read();
-    const optionsIdx = form.indexOf("options={Array.from(");
-    expect(optionsIdx).toBeGreaterThan(-1);
-    const block = form.slice(optionsIdx, optionsIdx + 400);
-    expect(block).toContain("new Map(");
-    expect(block).toContain(".values()");
-    expect(block).toContain(".trim().toUpperCase()");
-    // The dedup Map construction must precede the actual options .map(...) that builds
-    // {value, label, hint} entries — i.e. it wraps `vendors`, not the other way round.
-    const vendorsMapIdx = form.indexOf("vendors.map((vendor) => [", optionsIdx);
-    const finalMapIdx = form.indexOf(".map((vendor) => ({", optionsIdx);
-    expect(vendorsMapIdx).toBeGreaterThan(-1);
-    expect(finalMapIdx).toBeGreaterThan(-1);
-    expect(vendorsMapIdx).toBeLessThan(finalMapIdx);
+    expect(form).toContain("options={buildVendorOptions(");
+    const helper = fs.readFileSync(path.resolve(__dirname, "../grn-draft-prefill.ts"), "utf8");
+    expect(helper).toContain(".toUpperCase()");
+    expect(helper).toContain("byName.set(key, vendor)");
   });
 });

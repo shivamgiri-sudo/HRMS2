@@ -105,7 +105,26 @@ async function main() {
       console.log(`MAS rows staged but NOT valid (not loaded): ${errs.length}`);
       for (const e of errs) console.log(`  legacy ${e.src_id} ${e.src_bill_no}: ${e.validation_error}`);
     }
+    // A legacy bill / credit note whose NUMBER is already used by a different HRMS row would create a
+    // duplicate document number (HRMS minted its own bills before the counters were synced). legacy_id
+    // only guards re-loading the same row, so check numbers too and refuse to load if any collide.
+    const billNos = invoiceRows.map((r) => r.src_bill_no).filter(Boolean);
+    const creditNos = creditNoteRows.map((r) => r.src_credit_no).filter(Boolean);
+    const [billHits] = billNos.length
+      ? await pool.query(
+          `SELECT bill_no, id, invoice_status, is_migrated, legacy_id FROM client_invoice WHERE bill_no IN (?)`, [billNos])
+      : [[]];
+    const [creditHits] = creditNos.length
+      ? await pool.query(
+          `SELECT credit_no, id, credit_status, legacy_id FROM client_credit_note WHERE credit_no IN (?)`, [creditNos])
+      : [[]];
+    console.log(`Number collisions with rows already in HRMS: bills=${billHits.length} credit notes=${creditHits.length}`);
+    for (const h of billHits) console.log(`  COLLISION bill ${h.bill_no}: HRMS invoice ${h.id} status=${h.invoice_status} migrated=${h.is_migrated} legacy_id=${h.legacy_id ?? "-"}`);
+    for (const h of creditHits) console.log(`  COLLISION credit note ${h.credit_no}: HRMS ${h.id} status=${h.credit_status} legacy_id=${h.legacy_id ?? "-"}`);
     if ((process.env.MODE || "apply") !== "apply") { console.log("Dry run: nothing loaded."); return; }
+    if (billHits.length || creditHits.length) {
+      throw new Error("Refusing to load: document numbers above already exist in HRMS. Resolve them first (nothing was written).");
+    }
 
     const stats = await loadValidatedRows(
       loadDb,

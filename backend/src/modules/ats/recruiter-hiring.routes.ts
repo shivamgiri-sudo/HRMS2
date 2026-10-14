@@ -20,6 +20,8 @@ import {
   importHiringActivityRows,
   listFollowups,
   listHiringActivity,
+  branchScopeSql,
+  branchScopeParams,
   mapSheetRow,
   parseRecruiterSheet,
   readImportBatch,
@@ -33,7 +35,13 @@ export const recruiterHiringRouter = Router();
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 // Allow HR domain roles (hr, branch_head), admin roles, and recruiters
-const authRoles = requireRole("admin", "hr", "super_admin", "recruiter", "branch_head");
+/** Branch labels on entries are free text: compare trimmed and case-insensitively. */
+function sameBranchLabel(a: unknown, b: unknown): boolean {
+  const n = (v: unknown) => String(v ?? "").trim().toLowerCase();
+  return n(a) !== "" && n(a) === n(b);
+}
+
+const authRoles = requireRole("admin", "hr", "branch_hr", "hr_branch", "super_admin", "recruiter", "branch_head");
 
 // Scoped to the paths this router owns, not applied at its root.
 //
@@ -111,7 +119,7 @@ async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
     [userId]
   );
   const actorBranch = branchRows[0]?.branch_name;
-  if (actorBranch && row.branch_name === actorBranch) return { allowed: true, row };
+  if (actorBranch && sameBranchLabel(row.branch_name, actorBranch)) return { allowed: true, row };
   return { allowed: false, row };
 }
 
@@ -441,8 +449,8 @@ recruiterHiringRouter.get("/recruiter/hiring-activity/report", async (req: Authe
       // own rows, plus (hr / branch roles) every row of the caller's own branch
       const actorBranch = await getActorBranch(req.authUser!.id);
       if (actorBranch) {
-        conditions.push("(recruiter_id = ? OR created_by = ? OR branch_name = ?)");
-        params.push(req.authUser!.id, req.authUser!.id, actorBranch);
+        conditions.push(branchScopeSql());
+        params.push(...branchScopeParams(actorBranch, req.authUser!.id));
       } else {
         conditions.push("(recruiter_id = ? OR created_by = ?)");
         params.push(req.authUser!.id, req.authUser!.id);
@@ -546,7 +554,7 @@ recruiterHiringRouter.delete("/recruiter/hiring-activity/:id", async (req: Authe
     let isAdmin = isOrgWideRole(role);
     if (!isAdmin && ["admin", "hr", "ho_hr"].includes(role)) {
       const actorBranch = await getActorBranch(userId);
-      isAdmin = !!actorBranch && row.branch_name === actorBranch;
+      isAdmin = !!actorBranch && sameBranchLabel(row.branch_name, actorBranch);
     }
     const isOwner = row.created_by === userId || row.recruiter_id === userId;
     if (!isOwner && !isAdmin) {

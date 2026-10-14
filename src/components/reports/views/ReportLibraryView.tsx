@@ -413,6 +413,7 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "leave-lwp-reconciliation":                [...dateFilters, ...branchProcess],
     "salary-sheet-export":                     [...dateFilters, ...branchProcess],
     "aon-overall-attrition-rate":              [...dateFilters, ...branchProcess, COST_CENTRE_FILTER],
+    "aon-process-monthly-attrition":           [...dateFilters, ...branchProcess, COST_CENTRE_FILTER],
     "leave-attendance-reconciliation":         [...dateFilters, ...branchProcess],
     "attendance-issues-register":              [...dateFilters, ...branchProcess],
     "doj-change-register":                     [...dateFilters, ...branchOnly],

@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { clientBillingNarrationService } from "./client-billing-narration.service.js";
+import { BILLING_PARTY_SQL, resolveBillingParty } from "./client-billing-party.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
@@ -78,8 +80,8 @@ router.post(
       poNumbers?: string[]; grnNo?: string; grnDate?: string;
       jccNo?: string; jccDate?: string; rcmApplicable?: boolean;
     };
-    if (!body.costCentreId || !body.category || !body.financeYear || !body.monthLabel || !body.invoiceDate) {
-      return res.status(400).json({ error: "costCentreId, category, financeYear, monthLabel, and invoiceDate are required" });
+    if (!body.costCentreId || !body.financeYear || !body.monthLabel || !body.invoiceDate) {
+      return res.status(400).json({ error: "costCentreId, financeYear, monthLabel, and invoiceDate are required" });
     }
     const hasRefs = body.poNumbers?.length || body.grnNo || body.jccNo || body.rcmApplicable !== undefined;
     const references = hasRefs
@@ -348,7 +350,7 @@ router.get(
     if (!invoice) return res.status(404).json({ error: "Invoice not found" });
 
     const [lineRows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM client_invoice_line WHERE invoice_id = ?`,
+      `SELECT * FROM client_invoice_line WHERE invoice_id = ? ORDER BY COALESCE(line_no, 2147483647), created_at, id`,
       [req.params.id]
     );
     res.json({ success: true, data: { ...invoice, lines: lineRows } });
@@ -629,6 +631,21 @@ router.get(
   })
 );
 
+// ── Narration / particulars at any stage; the total must not change ─────────────
+router.put(
+  "/invoices/:id/narration",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardDecide(req, res, "invoice"))) return;
+    const body = req.body as { description?: string | null; lines?: Array<{ particulars: string; qty: number; rate: number; lineType?: "charge" | "deduction" }> };
+    if (body.lines !== undefined && !Array.isArray(body.lines)) return res.status(400).json({ error: "lines must be a list" });
+    const data = await clientBillingNarrationService.updateNarration({
+      invoiceId: req.params.id, userId: req.authUser!.id, description: body.description, lines: body.lines,
+    });
+    res.json({ success: true, data });
+  })
+);
+
 // ── P5: edit proforma ──────────────────────────────────────────────────────────
 router.put(
   "/proformas/:id",
@@ -895,7 +912,7 @@ router.get(
     if (!inv) return res.status(404).json({ error: "Invoice not found" });
     const [lines] = await db.execute<RowDataPacket[]>(
       `SELECT line_type, particulars, qty, rate, amount FROM client_invoice_line
-       WHERE invoice_id = ? ORDER BY created_at, id`,
+       WHERE invoice_id = ? ORDER BY COALESCE(line_no, 2147483647), created_at, id`,
       [req.params.id],
     );
     const header: Array<[string, unknown]> = [
@@ -1050,31 +1067,7 @@ router.post(
   })
 );
 
-// ── Legacy ADD PO / Approve PO / ADD GRN ──────────────────────────────────────
-router.get(
-  "/po",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const q = req.query as Record<string, string | undefined>;
-    const data = await clientBillingPoGrnService.listPos({ costCentreId: q.costCentreId, branchId: q.branchId, companyName: q.companyName, search: q.search });
-    res.json({ success: true, data });
-  })
-);
-
-router.post(
-  "/po",
-  requireRole(...ALLOWED_ROLES),
-  h(async (req: AuthenticatedRequest, res: Response) => {
-    const b = req.body as { costCentreId?: string; poNumber?: string; periodFrom?: string; periodTo?: string; amount?: number };
-    if (!b.costCentreId) return res.status(400).json({ error: "costCentreId is required" });
-    const data = await clientBillingPoGrnService.createPo({
-      costCentreId: b.costCentreId, poNumber: String(b.poNumber ?? ""), periodFrom: String(b.periodFrom ?? ""),
-      periodTo: String(b.periodTo ?? ""), amount: Number(b.amount), userId: req.authUser!.id,
-    });
-    res.status(201).json({ success: true, data });
-  })
-);
-
+// ── Legacy Approve PO / ADD GRN (the PO master lives in client-billing-po.routes.ts) ──
 router.post(
   "/invoices/:id/approve-po",
   requireRole(...ALLOWED_ROLES),
@@ -1102,18 +1095,14 @@ router.get(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cc.id, cc.cost_centre_code, cc.company_name, b.branch_name, b.gst_state_code AS state_code,
-              ${COST_CENTRE_DISPLAY_NAME_SQL} AS client_name,
-              cc.service_tax_no, cc.vendor_gst_no, cc.vendor_gst_state, cc.vendor_state_code, cc.gst_type,
-              cc.bill_to_address1, cc.bill_to_address2, cc.bill_to_address3, cc.bill_to_address4, cc.bill_to_address5,
-              cc.ship_to_address1, cc.ship_to_address2, cc.ship_to_address3, cc.ship_to_address4, cc.ship_to_address5
+      `SELECT cc.id, b.gst_state_code AS state_code, ${COST_CENTRE_DISPLAY_NAME_SQL} AS client_name, ${BILLING_PARTY_SQL}
        FROM cost_centre_master cc
        LEFT JOIN branch_master b ON b.id = cc.branch_id
        WHERE cc.id = ? LIMIT 1`,
       [req.params.id],
     );
     if (!rows[0]) return res.status(404).json({ error: "Cost centre not found" });
-    res.json({ success: true, data: rows[0] });
+    res.json({ success: true, data: { ...rows[0], party: resolveBillingParty(rows[0]) } });
   })
 );
 

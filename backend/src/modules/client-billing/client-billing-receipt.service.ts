@@ -61,7 +61,7 @@ export const CREDIT_NOTE_SQL = `
   SELECT invoice_id, SUM(grand_total) AS credited FROM client_credit_note
   WHERE credit_status = 'approved' GROUP BY invoice_id`;
 
-const CLIENT_NAME_SQL = `COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name)`;
+export const CLIENT_NAME_SQL = `COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name)`;
 
 /** The finance year a date falls in (Apr-Mar), e.g. 2026-10-14 -> 2026-27. */
 export function financeYearOf(dateIso: string): string {

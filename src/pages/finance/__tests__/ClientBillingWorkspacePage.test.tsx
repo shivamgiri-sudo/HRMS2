@@ -83,8 +83,8 @@ vi.mock("@/lib/clientBillingApi", () => ({
   voidReceipt: vi.fn(),
   listCompanyBankAccounts: vi.fn(() => new Promise(() => {})),
   decideProvisionEdit: vi.fn(),
-  listPoMaster: vi.fn(() => new Promise(() => {})),
-  createPoMaster: vi.fn(),
+  listPoReport: vi.fn(() => new Promise(() => {})),
+  savePo: vi.fn(),
   approveInvoicePo: vi.fn(),
   addInvoiceGrn: vi.fn(),
   getBillingHeader: vi.fn(() => new Promise(() => {})),
@@ -368,7 +368,10 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
     // Legacy two-stage entry: one mutation, update when editing, otherwise createProforma.
     expect(entrySheetSource).toContain("return createProforma(payload);");
     expect(entrySheetSource).toContain("const payload: CreateProformaPayload = {");
-    for (const f of ["costCentreId, category, financeYear, monthLabel, invoiceDate,", "applyGst, applyTaxCalc, invoiceType,",
+    // Category is no longer asked (server defaults it); Apply GST is the one tax switch.
+    expect(entrySheetSource).not.toContain('aria-label="Category"');
+    expect(entrySheetSource).not.toContain("Apply Tax Calculation <");
+    for (const f of ["costCentreId, financeYear, monthLabel, invoiceDate,", "applyGst, applyTaxCalc: applyGst, invoiceType,",
       'lineType: "charge" as const', 'lineType: "deduction" as const']) expect(entrySheetSource).toContain(f);
     // Edit keeps the GRN already on the invoice (the edit route replaces the whole references block).
     expect(entrySheetSource).toContain("grnNo: editing?.grn_no ?? null");

@@ -166,6 +166,7 @@ import { skillRoadmapRouter } from "./modules/skill-roadmap/skill-roadmap.routes
 import ijpRouter from "./modules/ijp/ijp.routes.js";
 import { erpRouter } from "./modules/erp/erp.routes.js";
 import { clientBillingRouter } from "./modules/client-billing/client-billing.routes.js";
+import { clientPoRouter } from "./modules/client-billing/client-billing-po.routes.js";
 import { inboxRouter } from "./modules/inbox/inbox.routes.js";
 import { approvalActionPublicRouter } from "./modules/approval-center/approval-action.public.routes.js";
 import { approvalCenterRouter } from "./modules/approval-center/approval-center.routes.js";
@@ -385,6 +386,7 @@ import { pnlBranchReviewRouter } from "./modules/process-pnl/pnl-branch-review.r
 import { clientPaymentTrackingRouter } from "./modules/finance/client-payment-tracking.routes.js";
 import mandateSeatTrackingRouter from "./modules/finance/mandate-seat-tracking.routes.js";
 import { financeAnalyticsRouter } from "./modules/finance/finance-analytics.routes.js";
+import { moneyFlowRouter } from "./modules/finance/money-flow.routes.js";
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
 import billabilityRouter from "./modules/process-pnl/billability.routes.js";
 import { annualBudgetSummaryRouter } from "./modules/process-pnl/annual-budget-summary.routes.js";
@@ -857,6 +859,7 @@ app.use("/api/career", careerRouter);
 app.use("/api/skill-roadmap", skillRoadmapRouter);
 app.use("/api/ijp", ijpRouter);
 app.use("/api/erp", erpRouter);
+app.use("/api/client-billing/po-master", clientPoRouter);
 app.use("/api/client-billing", clientBillingRouter);
 app.use("/api/finance/annual-budget-summary", annualBudgetSummaryRouter);
 app.use("/api/finance/unlinked-grn-review", unlinkedGrnReviewRouter);
@@ -911,6 +914,7 @@ app.use("/api/finance/revenue-forecasts", revenueForecastRouter);
 app.use("/api/finance/pnl-branch-review", pnlBranchReviewRouter);
 app.use("/api/finance/client-payments", clientPaymentTrackingRouter);
 app.use("/api/finance/mandate-seats", mandateSeatTrackingRouter);
+app.use("/api/finance/money-flow", moneyFlowRouter);
 app.use("/api/finance/analytics", financeAnalyticsRouter);
 app.use("/api/finance", processPnlRouter);
 // Mounted on its own base after processPnlRouter. Owning /api/finance/billability/* outright

@@ -5,6 +5,7 @@ const h = vi.hoisted(() => {
   const state = {
     calls: [] as { sql: string; params: any[] }[],
     rows: [] as any[],
+    legacyNames: false,
   };
   const run = vi.fn(async (sql: string, params: any[] = []) => {
     state.calls.push({ sql, params });
@@ -13,6 +14,10 @@ const h = vi.hoisted(() => {
       return [[{ id: "v1", vendor_code: "DB_BILL_1537", n: "OESPL Private Limited" }, { id: "v9", vendor_code: "DB_BILL_9", n: "x" }, { id: "v5", vendor_code: "V00005", n: "Travelling" }], undefined];
     if (/FROM vendor_master/.test(sql))
       return [[{ id: "v1", n: "OESPL Private Limited", tds_enabled: 1, tds_section: "194I", tds_rate: null }], undefined];
+    if (/tally_cost_category/.test(sql) && h.state.legacyNames)
+      return [[{ id: "b1", tally_cost_category: "Noida", tally_cost_centre_code: "Noida" }], undefined];
+    if (/tally_ledger_name FROM finance_expense_sub_head_master/.test(sql) && h.state.legacyNames)
+      return [[{ sub_head_name: "Office Rent", tally_ledger_name: "Office Rent (Tally)" }], undefined];
     if (/FROM branch_master/.test(sql))
       return [[{ id: "b1", branch_name: "NOIDA", gst_state_code: "09", state: "UP" }], undefined];
     if (/FROM tds_sub_head_default/.test(sql))
@@ -85,6 +90,7 @@ const row = (id: string, n: string, extra: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   h.state.calls.length = 0;
   h.state.rows = [];
+  h.state.legacyNames = false;
 });
 
 const all = { branchScope: { mode: "all" as const } };
@@ -192,6 +198,16 @@ describe("legacy duplicates and legacy TDS", () => {
     expect(data.rows[0].tdsBasis).toMatch(/Sub-head \(legacy\)/);
     expect(data.rows[1].tdsBasis).toBe("No TDS (legacy sub-head setting)");
     expect(data.rows[1].entries.some((e) => /^TDS/.test(e.ledger))).toBe(false);
+  });
+});
+
+describe("legacy Tally names", () => {
+  it("cost category, cost-centre code and expense ledger come from the Tally company's own names", async () => {
+    h.state.legacyNames = true;
+    h.state.rows = [row("g1", "MAS/09/26/1", { invoice_number: "LN-1" })];
+    const data = await loadGrnTallyDownload(all);
+    expect(data.rows[0].header).toMatchObject({ costCategory: "Noida", costCentre: "Noida/2609" });
+    expect(data.rows[0].entries[0].ledger).toBe("Office Rent (Tally)");
   });
 });
 

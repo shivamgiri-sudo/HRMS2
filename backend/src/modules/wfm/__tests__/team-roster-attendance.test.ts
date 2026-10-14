@@ -37,6 +37,8 @@ function registerRoutes(records: Array<Record<string, unknown>>) {
   fake.on(/FROM employees e LEFT JOIN attendance_daily_record adr/, () => rows(records));
   fake.on(/SELECT id, lob_id FROM employees WHERE id IN/, () => rows([{ id: "e1", lob_id: null }, { id: "e2", lob_id: null }]));
   fake.on(/SELECT id, employee_code FROM employees WHERE employee_code IN/, () => rows([{ id: "e1", employee_code: "MAS1" }, { id: "e2", employee_code: "MAS2" }]));
+  // The register overlays HR's payable-days overrides on the day-count totals; none are set in these fixtures.
+  fake.on(/FROM payroll_payable_days_override/, () => rows([]));
 }
 
 const records = () => [

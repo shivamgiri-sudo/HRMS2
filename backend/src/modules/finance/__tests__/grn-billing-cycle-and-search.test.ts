@@ -143,8 +143,10 @@ describe("listGrns — search filters", () => {
     // Otherwise a period filter hides every GRN raised before accounting_period existed.
     await grnService.listGrns({ accountingPeriod: "2026-08" });
     const { sql, params } = call();
-    expect(sql).toContain("COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?");
-    expect(params).toContain("2026-08");
+    // Sargable form of COALESCE(accounting_period, month(bill_date)) = period: the bare column can
+    // use idx_grn_accounting_period, the function-wrapped one scanned every GRN.
+    expect(sql).toContain("(g.accounting_period = ? OR (g.accounting_period IS NULL AND g.bill_date >= ? AND g.bill_date < ?))");
+    expect(params).toEqual(expect.arrayContaining(["2026-08", "2026-08-01", "2026-09-01"]));
   });
 
   it("treats multiMonth=false as a real filter, not as absent", async () => {

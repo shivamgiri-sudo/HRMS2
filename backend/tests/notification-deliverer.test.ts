@@ -101,7 +101,10 @@ describe('templates', () => {
     (templateService.renderTemplate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
     await call({ templateKey: 'DOES_NOT_EXIST' });
     expect(emailService.send).toHaveBeenCalledTimes(1);
-    expect(sent().html).toContain('no template');
+    // The fallback is a complete event email now (event-email-content.ts), no longer an apology about the
+    // missing template: assert it was built and delivered, not that it mentions the template.
+    expect(sent().html.length).toBeGreaterThan(0);
+    expect(sent().subject).toBeTruthy();
   });
 
   it('still sends when template rendering throws', async () => {

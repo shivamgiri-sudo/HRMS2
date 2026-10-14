@@ -49,7 +49,8 @@ export type InvoiceType = (typeof INVOICE_TYPES)[number];
 
 export interface CreateProformaInput {
   costCentreId: string;
-  category: string;
+  /** Not asked on the form any more; defaults to "Others". */
+  category?: string;
   financeYear: string;
   monthLabel: string;
   invoiceDate: string; // YYYY-MM-DD
@@ -106,8 +107,9 @@ function validateLines(lines: ProformaLineInput[]): void {
 async function createProforma(input: CreateProformaInput): Promise<ProformaResult> {
   validateLines(input.lines);
   assertMonthLabelInFinanceYear(input.monthLabel, input.financeYear);
-  const category = String(input.category ?? "").trim();
-  if (!category || category.length > 50) throw clientError("category is required (max 50 characters)");
+  // Category is no longer asked on the proforma (owner feedback 2026-10-14); the column is NOT NULL.
+  const category = String(input.category ?? "").trim() || "Others";
+  if (category.length > 50) throw clientError("category is at most 50 characters");
   const invoiceType = normaliseInvoiceType(input.invoiceType);
   const refs = input.references ? normaliseReferences(input.references) : null;
 
@@ -149,7 +151,8 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
     const gstType = derived.gstType;
 
     const applyGst = input.applyGst ?? true;
-    const applyTaxCalc = input.applyTaxCalc ?? true;
+    // One switch on the form: Apply GST. Apply Tax Calculation follows it unless sent explicitly.
+    const applyTaxCalc = input.applyTaxCalc ?? applyGst;
     const amounts = computeInvoiceAmounts(input.lines, gstType, applyTaxCalc && applyGst);
 
     if (refs && refs.poNumbers.length > 0) {
@@ -194,9 +197,9 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
 
     for (const [index, line] of input.lines.entries()) {
       await conn.execute<ResultSetHeader>(
-        `INSERT INTO client_invoice_line (id, invoice_id, line_type, particulars, qty, rate, amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [randomUUID(), invoiceId, line.lineType ?? "charge", line.particulars.trim(), line.qty, line.rate, amounts.lineAmounts[index]]
+        `INSERT INTO client_invoice_line (id, invoice_id, line_type, particulars, qty, rate, amount, line_no)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [randomUUID(), invoiceId, line.lineType ?? "charge", line.particulars.trim(), line.qty, line.rate, amounts.lineAmounts[index], index + 1]
       );
     }
 

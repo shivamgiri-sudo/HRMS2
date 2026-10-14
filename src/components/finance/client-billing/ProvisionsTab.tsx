@@ -332,47 +332,75 @@ function CreateProvisionDialog({ open, onOpenChange, onDone }: { open: boolean; 
   );
 }
 
+/**
+ * Edit provision (owner feedback 2026-10-14): show what was approved, what invoices already used
+ * and the balance; the user enters how much to ADD (minus to reduce) and sees the new total and
+ * new balance before saving. An approved provision's change waits for a second approver.
+ */
 function EditProvisionDialog({ row, onClose, onDone }: { row: ProvisionRow | null; onClose: () => void; onDone: () => void }) {
   const { toast } = useToast();
-  const [amount, setAmount] = useState("");
+  const [add, setAdd] = useState("");
   const [remarks, setRemarks] = useState("");
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   if (row && loadedFor !== row.id) {
     setLoadedFor(row.id);
-    setAmount(String(Number(row.provision_amount)));
+    setAdd("");
     setRemarks(row.remarks ?? "");
   }
+  const p = (v: unknown) => Math.round(Number(v ?? 0) * 100);
+  const currentP = p(row?.provision_amount);
+  const usedP = p(row?.used_amount);
+  const addP = add.trim() === "" || add.trim() === "-" ? 0 : p(add);
+  const newTotalP = currentP + addP;
+  const newBalanceP = newTotalP - usedP;
+  const addValid = add.trim() === "" || Number.isFinite(Number(add));
+  const changed = addP !== 0 || (remarks.trim() || null) !== (row?.remarks ?? null);
+  const problem = !addValid ? "Enter a number (use minus to reduce)."
+    : newTotalP <= 0 ? "The new total must be above zero."
+    : newTotalP < usedP ? `The new total cannot go below ${money(usedP / 100)} already used by invoices.`
+    : !changed ? "Enter an amount to add, or change the remarks." : null;
+  const approved = row?.provision_status === "approved";
   const mutation = useMutation({
-    mutationFn: () => updateProvision(row!.id, { amount: Number(amount), remarks: remarks.trim() || null }),
+    mutationFn: () => updateProvision(row!.id, { amount: newTotalP / 100, remarks: remarks.trim() || null }),
     onSuccess: (res) => {
       toast({ title: res.data.editPending ? "Edit sent for approval" : "Provision updated",
-        description: res.data.editPending ? "A second person approves it in the Provision tab or Approval Center." : undefined });
+        description: res.data.editPending ? `New total ${money(newTotalP / 100)} applies after a second person approves it.` : `New total ${money(newTotalP / 100)}.` });
       onDone(); onClose();
     },
     onError: (e: Error) => toast({ title: "Could not update provision", description: e.message, variant: "destructive" }),
   });
+  const stat = (label: string, v: number, cls = "") => (
+    <div className="rounded-md border px-3 py-2"><p className="text-[11px] text-slate-600">{label}</p><p className={`text-sm font-semibold tabular-nums ${cls}`}>{money(v / 100)}</p></div>
+  );
   return (
     <Dialog open={Boolean(row)} onOpenChange={(o) => { if (!o) { setLoadedFor(null); onClose(); } }}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>Edit provision · {row?.cost_centre_code} · {row?.month_label}</DialogTitle></DialogHeader>
-        <p className="text-xs text-muted-foreground">
-          Used by invoices so far: {money(row?.used_amount ?? 0)}. The amount cannot go below this.
-          {row?.provision_status === "approved" && " This provision is approved, so the change is applied only after a second person approves it."}
-        </p>
+        <div className="grid grid-cols-3 gap-2">
+          {stat(approved ? "Approved amount" : "Current amount", currentP)}
+          {stat("Used by invoices", usedP)}
+          {stat("Balance", currentP - usedP)}
+        </div>
         <div className="space-y-3">
           <div>
-            <Label className="text-xs" htmlFor="edit-provision-amount">Provision amount (₹)</Label>
-            <Input id="edit-provision-amount" type="number" min="0" step="0.01" className="mt-1 h-8 text-sm" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <Label className="text-xs" htmlFor="edit-provision-add">Amount to add (₹) <span className="text-slate-500">— use minus to reduce</span></Label>
+            <Input id="edit-provision-add" inputMode="decimal" className="mt-1 h-8 text-sm" placeholder="e.g. 50000 or -20000" value={add} onChange={(e) => setAdd(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-2 rounded-md bg-slate-50 p-2">
+            <div><p className="text-[11px] text-slate-600">New total</p><p className="text-base font-semibold tabular-nums">{money(newTotalP / 100)}</p></div>
+            <div><p className="text-[11px] text-slate-600">New balance</p><p className={`text-base font-semibold tabular-nums ${newBalanceP < 0 ? "text-rose-700" : ""}`}>{money(newBalanceP / 100)}</p></div>
           </div>
           <div>
             <Label className="text-xs" htmlFor="edit-provision-remarks">Remarks</Label>
             <Textarea id="edit-provision-remarks" className="mt-1 min-h-[56px] text-sm" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
           </div>
+          {approved && <p className="text-xs text-amber-800">This provision is approved, so the change applies only after a second person approves it.</p>}
+          {problem && <p className="text-xs text-slate-600">{problem}</p>}
         </div>
         <DialogFooter>
           <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" disabled={!(Number(amount) > 0) || mutation.isPending} onClick={() => mutation.mutate()}>
-            {mutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}Save
+          <Button size="sm" disabled={Boolean(problem) || mutation.isPending} onClick={() => mutation.mutate()}>
+            {mutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}{approved ? "Send for approval" : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>

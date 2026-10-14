@@ -20,7 +20,7 @@ import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 /** Roles that work at branch level: their own employees.branch_id is their default scope. */
 export const BRANCH_LEVEL_ROLES = [
   "admin", "hr", "hr_admin", "payroll_hr", "branch_head", "branch_hr", "hr_branch", "branch_admin",
-  "wfm", "wfm_spoc", "payroll", "payroll_branch", "rta", "operations_manager",
+  "wfm", "branch_wfm", "wfm_spoc", "payroll", "payroll_branch", "rta", "operations_manager",
 ];
 
 /** Reporting / process-level roles: their own employees.process_id is a default process scope. */

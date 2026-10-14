@@ -245,8 +245,9 @@ function StepBank({ employeeId }: { employeeId: string }) {
         account_number: form.account_number.trim() || null,
       });
     },
-    onSuccess: () => {
-      toast({ title: "Saved", description: "Bank details saved. Verification happens separately." });
+    onSuccess: (res: any) => {
+      const v = res?.verification ?? res?.data?.verification;
+      toast({ title: "Verified and saved", description: v?.message ?? "Bank details verified and saved." });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message || "Failed to save bank details.", variant: "destructive" });
@@ -254,7 +255,7 @@ function StepBank({ employeeId }: { employeeId: string }) {
   });
 
   return (
-    <StepCard icon={Landmark} title="Bank Details" description="No penny-drop verification here — plain entry only, saved as pending verification">
+    <StepCard icon={Landmark} title="Bank Details" description="Verified with a penny drop first — saved only if the account is valid and the bank's holder name matches the name entered and the employee">
       <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
         This step does not preload previously saved values. Submitting again safely updates the existing bank record.
       </div>

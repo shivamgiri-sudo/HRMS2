@@ -32,7 +32,7 @@ const WFM_ROLES = ['wfm', 'admin', 'super_admin'];
 // guarding these pure-read routes, so every one of those page-granted roles hit a page they could
 // navigate to and immediately got a 403 "Access denied" banner the moment the table query fired.
 // Confirmed live 2026-09-11. Keep WFM_ROLES itself unchanged for the write endpoints below.
-const WFM_VIEW_ROLES = [...WFM_ROLES, 'manager', 'process_manager', 'team_leader', 'tl'];
+const WFM_VIEW_ROLES = [...WFM_ROLES, 'branch_wfm', 'manager', 'process_manager', 'team_leader', 'tl'];
 
 export const rosterImportRouter = Router();
 

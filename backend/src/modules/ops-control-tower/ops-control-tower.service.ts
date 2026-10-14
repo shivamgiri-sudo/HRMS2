@@ -59,6 +59,16 @@ const SLOW_QUERY_MS = 2_000;
  * F&F and NOC are exit trackers and deliberately still list people who have left.
  */
 export const STILL_WITH_US = "(e.active_status = 1 OR LOWER(COALESCE(e.employment_status, '')) = 'preboarding')";
+
+/**
+ * Payroll Head has approved this joiner's salary. Everything that comes after that step (joining
+ * kit eSign, joining documents, appointment letter, IT/Admin/WFM provisioning) cannot start until
+ * then — joiningKitDispatch refuses with payroll_head_not_approved — so while approval is pending
+ * the waiting is on the Payroll Head and none of those later steps is an overdue pendency.
+ * No review row counts as not approved, the same as dispatch.
+ */
+const PAYROLL_HEAD_APPROVED_SQL = `EXISTS (SELECT 1 FROM employee_payroll_head_review phr
+                          WHERE phr.employee_id = e.id AND phr.status = 'approved')`;
 export const ACTIVE_STAFF_ONLY = "e.active_status = 1";
 
 async function query<T extends RowDataPacket>(
@@ -597,11 +607,7 @@ function esignSql(scoped: boolean): string {
             FROM ats_onboarding_bridge b
             JOIN employees e ON e.id = b.employee_id
            WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
-             -- The kit cannot be dispatched until the Payroll Head approves the salary
-             -- (joiningKitDispatch: payroll_head_not_approved), so an unsent kit is not an
-             -- overdue signature. No review row counts as not approved, same as dispatch.
-             AND EXISTS (SELECT 1 FROM employee_payroll_head_review phr
-                          WHERE phr.employee_id = e.id AND phr.status = 'approved')`;
+             AND ${PAYROLL_HEAD_APPROVED_SQL}`;
 }
 
 export async function getEsignPendingBlock(
@@ -654,7 +660,8 @@ function appointmentLetterSql(scoped: boolean): string {
             FROM employees e
             LEFT JOIN appointment_letter_issue al ON al.employee_id = e.id
            WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
-             AND ${APPOINTMENT_TASK_CLOSED_SQL}`;
+             AND ${APPOINTMENT_TASK_CLOSED_SQL}
+             AND ${PAYROLL_HEAD_APPROVED_SQL}`;
 }
 
 export async function getAppointmentLetterBlock(
@@ -794,6 +801,7 @@ export async function getDocsPendingBlock(): Promise<CountBlock> {
        FROM employees e
        JOIN employee_joining_document_checklist c ON c.employee_id = e.id
       WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+        AND ${PAYROLL_HEAD_APPROVED_SQL}
         AND c.mandatory = 1
         AND UPPER(COALESCE(c.document_code, '')) NOT IN (${DOCS_COMPLETION_EXCLUDED_CODES.map(() => "?").join(",")})
         AND LOWER(COALESCE(c.status, '')) NOT IN (${CHECKLIST_CLOSED_STATUSES.map(() => "?").join(",")})
@@ -819,6 +827,7 @@ export async function getDocsPendingDetail(
        FROM employees e
        JOIN employee_joining_document_checklist c ON c.employee_id = e.id
       WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+        AND ${PAYROLL_HEAD_APPROVED_SQL}
         AND c.mandatory = 1
         AND UPPER(COALESCE(c.document_code, '')) NOT IN (${DOCS_COMPLETION_EXCLUDED_CODES.map(() => "?").join(",")})
         AND LOWER(COALESCE(c.status, '')) NOT IN (${CHECKLIST_CLOSED_STATUSES.map(() => "?").join(",")})
@@ -1038,6 +1047,7 @@ async function provisioningPendingBlock(
         AND ipr.assigned_role IN (${roles.map(() => "?").join(",")})
         AND ipr.status IN (${PROVISIONING_PENDING_STATUSES.map(() => "?").join(",")})
         AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+        AND ${PAYROLL_HEAD_APPROVED_SQL}
       GROUP BY e.branch_id`,
     [...roles, ...PROVISIONING_PENDING_STATUSES, NEW_JOINER_WINDOW_DAYS],
   );
@@ -1062,6 +1072,7 @@ async function provisioningPendingDetail(
         AND ipr.assigned_role IN (${roles.map(() => "?").join(",")})
         AND ipr.status IN (${PROVISIONING_PENDING_STATUSES.map(() => "?").join(",")})
         AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+        AND ${PAYROLL_HEAD_APPROVED_SQL}
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [

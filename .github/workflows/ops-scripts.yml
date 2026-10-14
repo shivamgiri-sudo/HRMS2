@@ -44,6 +44,7 @@ on:
         options:
           - ledger-tally-dump
           - tally-names-compare
+          - backfill-tally-legacy-names
           - statutory-identifier-encrypt-backfill
           - backup-table-pii-scrub
           - legacy-payslip-account-encrypt-backfill
@@ -243,6 +244,7 @@ jobs:
           MODE="${{ inputs.mode }}"
 
           case "${{ inputs.script }}" in
+            backfill-tally-legacy-names) FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"; npx tsx scripts/backfill-tally-legacy-names.ts $FLAG ;;
             tally-names-compare) npx tsx scripts/tally-names-compare.ts ;;
             ledger-tally-dump) npx tsx scripts/ledger-tally-dump.ts 2026-09 2026-10 ;;
             statutory-identifier-encrypt-backfill)

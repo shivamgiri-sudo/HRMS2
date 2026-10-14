@@ -88,6 +88,8 @@ beforeEach(() => {
 describe("submitForApproval raises a branch_head bell alert", () => {
   it("creates one item per branch_head-role holder in the GRN's branch", async () => {
     execute.mockImplementation(async (sql: string) => {
+      // The paid-twin duplicate guard (grn-duplicate-guard.ts) also selects FROM grn_request: no twin here.
+      if (/JOIN grn_request g2/i.test(sql)) return [[], []];
       if (/FROM grn_request/i.test(sql) && /SELECT/i.test(sql)) return [[DRAFT_GRN], []];
       if (/UPDATE grn_request/i.test(sql)) return [{ affectedRows: 1 }, []];
       return [[], []];
@@ -109,6 +111,8 @@ describe("submitForApproval raises a branch_head bell alert", () => {
 
   it("does not block submission when the notification helper itself throws", async () => {
     execute.mockImplementation(async (sql: string) => {
+      // The paid-twin duplicate guard (grn-duplicate-guard.ts) also selects FROM grn_request: no twin here.
+      if (/JOIN grn_request g2/i.test(sql)) return [[], []];
       if (/FROM grn_request/i.test(sql) && /SELECT/i.test(sql)) return [[DRAFT_GRN], []];
       if (/UPDATE grn_request/i.test(sql)) return [{ affectedRows: 1 }, []];
       return [[], []];

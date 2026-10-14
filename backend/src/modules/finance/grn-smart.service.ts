@@ -23,6 +23,7 @@ import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
 import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
+import { applyDraftHeaderEdit, type DraftHeaderInput } from "./grn-draft-header.js";
 import { assertBranchSplitAllowed, resolveBranchBackOffice } from "./grn-branch-split.js";
 import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
@@ -64,7 +65,7 @@ export interface SmartAllocationInput {
   remarks?: string;
 }
 
-export interface SmartGrnInvoiceInput {
+export interface SmartGrnInvoiceInput extends DraftHeaderInput {
   invoiceNumber?: string;
   /** E-invoice reference number (IRN) — optional, Finance Head visible. */
   irn?: string | null;
@@ -114,7 +115,7 @@ export interface CostCentreSplitRowInput {
   remarks?: string;
 }
 
-export interface SmartGrnComponentSplitInput {
+export interface SmartGrnComponentSplitInput extends DraftHeaderInput {
   invoiceNumber?: string;
   servicePeriodStart?: string | null;
   servicePeriodEnd?: string | null;
@@ -221,6 +222,21 @@ function normalizeInvoiceNumber(value: unknown) {
 function dateOrNull(value: unknown) {
   const text = String(value ?? "").trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
+}
+
+/** Applies a draft's header edits on the caller's transaction, updates the locked row in place
+ *  for the rest of the save, and audits what changed. */
+async function saveDraftHeader(
+  connection: PoolConnection,
+  grn: Record<string, any>,
+  input: DraftHeaderInput,
+  actorUserId: string,
+  actorRole: string
+) {
+  const { set, changes } = await applyDraftHeaderEdit(connection, grn, input);
+  if (!Object.keys(changes).length) return;
+  Object.assign(grn, set);
+  await writeAuditInTransaction(connection, "DRAFT_HEADER_UPDATED", String(grn.id), actorUserId, actorRole, changes);
 }
 
 async function lockGrn(connection: PoolConnection, grnId: string) {
@@ -1160,6 +1176,9 @@ export const grnSmartService = {
       if (String(grn.status) !== "draft") {
         throw new Error("Allocations can only be changed while the GRN is a draft");
       }
+      // Header edits on a re-opened draft (bill date, remarks) — applied first, so the period
+      // checks below read the header as saved. See grn-draft-header.ts.
+      await saveDraftHeader(connection, grn, input, actorUserId, actorRole);
       // Imprest = petty cash out of the branch float. No tax invoice, no ITC, so the funding
       // budget line's planned tax treatment must not split a GST component out of it and the
       // whole amount is P&L cost. See applyImprestNoGst for the full rationale.
@@ -1171,7 +1190,10 @@ export const grnSmartService = {
       // the budget template.
       const _v1 = String(grn.vendor_state_code ?? "").trim();
       const _b1 = String(grn.billing_state_code ?? "").trim();
-      const grnGstType: BudgetGstType = isImprest || !_v1 || !_b1
+      // GST Applicable switched off (e.g. international vendor): no CGST/SGST/IGST split regardless
+      // of any state codes still on the row.
+      const _gstOff1 = grn.gst_enabled != null && !Number(grn.gst_enabled);
+      const grnGstType: BudgetGstType = isImprest || _gstOff1 || !_v1 || !_b1
         ? "none"
         : _v1 === _b1 ? "cgst_sgst" : "igst";
 
@@ -1695,10 +1717,17 @@ export const grnSmartService = {
       if (String(grn.grn_type) !== "vendor") {
         throw new Error("Invoice-component GRNs are only supported for vendor GRNs");
       }
+      // Header edits on a re-opened draft (vendor, bill/due date, terms, remarks) — applied
+      // first, so the period checks below read the header as saved. See grn-draft-header.ts.
+      await saveDraftHeader(connection, grn, input, actorUserId, actorRole);
       // Derive GST type from state codes (same logic as saveAllocations).
       const _v2 = String(input.vendorStateCode?.trim() || grn.vendor_state_code || "").trim();
       const _b2 = String(input.billingStateCode?.trim() || grn.billing_state_code || "").trim();
-      const grnGstType: BudgetGstType = !_v2 || !_b2 ? "none" : _v2 === _b2 ? "cgst_sgst" : "igst";
+      // Effective GST switch: this save's value, else what the GRN already has (NULL = applicable).
+      const _gstOff2 = input.gstEnabled != null
+        ? !input.gstEnabled
+        : grn.gst_enabled != null && !Number(grn.gst_enabled);
+      const grnGstType: BudgetGstType = _gstOff2 || !_v2 || !_b2 ? "none" : _v2 === _b2 ? "cgst_sgst" : "igst";
 
       // UNBUDGETED EXPENSES: a split row with no budgetLineId but a costCentreId is unbudgeted
       // for that cost centre only — resolved independently per row, not gated by a single
@@ -2316,8 +2345,8 @@ export const grnSmartService = {
                 is_late_invoice  = COALESCE(?, is_late_invoice),
                 late_invoice_reason = COALESCE(?, late_invoice_reason),
                 gst_enabled = COALESCE(?, gst_enabled),
-                vendor_state_code = COALESCE(?, vendor_state_code),
-                billing_state_code = COALESCE(?, billing_state_code),
+                vendor_state_code = IF(?, NULL, COALESCE(?, vendor_state_code)),
+                billing_state_code = IF(?, NULL, COALESCE(?, billing_state_code)),
                 is_unbudgeted = ?
           WHERE id = ?`,
         [
@@ -2355,7 +2384,11 @@ export const grnSmartService = {
           input.lateInvoiceReason?.trim() || null,
           // GST fields (migration 1218 columns)
           input.gstEnabled != null ? (input.gstEnabled ? 1 : 0) : null,
+          // GST off: state codes are cleared on the row (they have no meaning without GST and would
+          // otherwise keep driving the GST type and the approver's mismatch warning).
+          _gstOff2 ? 1 : 0,
           input.vendorStateCode?.trim() || null,
+          _gstOff2 ? 1 : 0,
           input.billingStateCode?.trim() || null,
           // Same definition as the rows above: at least one rupee of this GRN has no budget line
           // behind it. Derived from the FUNDED grid, not from whether the raiser picked a line —
