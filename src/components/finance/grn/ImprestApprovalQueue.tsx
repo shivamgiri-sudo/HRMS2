@@ -5,6 +5,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import { dateLabel, grnDisplayNumber, grnStatusTone, labelStatus, money } from "@/components/finance/grn/grn-format";
+import { dropGrnFromQueues, invalidateGrnQueries } from "@/components/finance/grn/grnQueueCache";
 import {
   GRN_TR, GrnButton, GrnCard, GrnCardHeader, GrnCellSub, GrnChip, GrnEmptyState,
   GrnIconButton, GrnInput, GrnTable, GrnTd, GrnTextarea, GrnTh,
@@ -158,9 +159,12 @@ export function ImprestApprovalQueue() {
           : v.kind === "return" ? "Sent back to the Branch Head"
           : "Voucher rejected",
       });
+      // Leaves the queue at once (a refetch of this list is slow on production); the refetch confirms.
+      dropGrnFromQueues(queryClient, { id: v.id, status: null });
       setAction(null);
       setReason("");
       refresh();
+      invalidateGrnQueries(queryClient);
     },
     onError: (e: Error) => toast({ title: "Could not complete", description: e.message, variant: "destructive" }),
   });

@@ -1,4 +1,5 @@
 import { assertGrnReadAccess, getBranchSplitOptions, getBranchSplitPreview } from "./grn-branch-split.js";
+import { bustGrnSummaryCache, cachedGrnSummary, summaryCacheKey } from "./grn-summary-cache.js";
 import { existsSync, mkdirSync } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -254,6 +255,17 @@ grNRouterBudgetCoverageRoutes(grnRouter);
 function grNRouterBudgetCoverageRoutes(router: Router) {
   router.use(budgetCoverageRouter);
 }
+
+// Any successful GRN write (review, submit, cancel, return, payment...) makes the cached header
+// summary stale; see grn-summary-cache.ts. Registered before the smart router so both are covered.
+grnRouter.use("/grns", (req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+    res.on("finish", () => {
+      if (res.statusCode < 400) bustGrnSummaryCache();
+    });
+  }
+  next();
+});
 
 // Allocation-aware smart GRNs are handled first. Legacy GRNs fall through to the
 // existing handlers below, preserving all historical records and API contracts.
@@ -788,10 +800,15 @@ grnRouter.get(
         userRoles: user.roles,
         requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
       });
-      const result = await grnService.getGrnSummary({
-        branchScope,
-        financialYear: req.query.financialYear ? String(req.query.financialYear) : undefined,
-      });
+      const financialYear = req.query.financialYear ? String(req.query.financialYear) : undefined;
+      const result = await cachedGrnSummary(
+        summaryCacheKey({
+          mode: branchScope.mode,
+          branchIds: branchScope.mode === "all" ? [] : branchScope.branchIds,
+          financialYear,
+        }),
+        () => grnService.getGrnSummary({ branchScope, financialYear }),
+      );
       res.json({ data: result });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to summarise GRNs";

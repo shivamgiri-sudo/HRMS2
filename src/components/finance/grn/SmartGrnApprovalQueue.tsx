@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { dropGrnFromQueues, invalidateGrnQueries } from "./grnQueueCache";
 import { useSearchParams } from "react-router-dom";
 import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import {
@@ -563,11 +564,17 @@ export function SmartGrnApprovalQueue({
       }),
     onSuccess: (_, input) => {
       toast({ title: `GRN ${input.decision}` });
+      // The decided GRN leaves its bucket immediately; the refetch below only confirms it. Without
+      // this it sat in the queue until the (slow) list refetch landed, which read as "refresh the page".
+      dropGrnFromQueues(queryClient, {
+        id: input.id,
+        status: target?.id === input.id ? target.status : undefined,
+        amount: target?.id === input.id ? Number((target as any).amount_with_tax ?? (target as any).amount ?? 0) : 0,
+      });
       setTarget(null);
       setReviewNote("");
-      void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
-      // Chip counts and the page header read the summary aggregate, not this list.
-      void queryClient.invalidateQueries({ queryKey: ["grn-summary"] });
+      // Chip counts, history, workspaces and the dispatch page read their own keys.
+      invalidateGrnQueries(queryClient);
     },
     onError: (error: Error) =>
       toast({

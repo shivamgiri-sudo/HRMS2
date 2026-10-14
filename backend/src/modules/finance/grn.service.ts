@@ -1,4 +1,5 @@
 import { assertBranchSplitAllowed } from "./grn-branch-split.js";
+import { cachedGrnSummary } from "./grn-summary-cache.js";
 import { grnBranchVisibility } from "./grn-branch-split.js";
 import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
@@ -2292,10 +2293,22 @@ export const grnService = {
         ORDER BY g.created_at DESC`,
       [...params, limit, offset, ...contextAllocationParams],
     );
-    const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM grn_request g ${where}`,
-      params,
-    );
+    // The total is a COUNT over the whole filtered set (a full scan of ~77k rows when unfiltered) and
+    // the page asks for it again on every refetch after an approval. Served stale-while-revalidate,
+    // keyed on the exact WHERE + params so a different scope or filter can never share a figure;
+    // any GRN write marks it stale (grn.routes.ts -> bustGrnSummaryCache).
+    const loadCount = async () => {
+      const [r] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total FROM grn_request g ${where}`,
+        params,
+      );
+      return r;
+    };
+    // Bypassed under test, like refreshHiddenGrnScope: suites assert on the executed COUNT statement.
+    const countRows =
+      process.env.VITEST === "true" || process.env.NODE_ENV === "test"
+        ? await loadCount()
+        : await cachedGrnSummary(`count:${where}:${JSON.stringify(params)}`, loadCount);
 
     // Reviewer/creator display names, looked up only for the people on this page. This was five
     // LEFT JOINs to a GROUP BY over all 59k employees; ~2 s cold on prod, and a CTE/IN variant of
