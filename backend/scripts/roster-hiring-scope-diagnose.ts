@@ -67,6 +67,10 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
                   OR LOWER(TRIM(COALESCE(a.location_name,''))) IN (LOWER(TRIM(bm.branch_name)), LOWER(TRIM(COALESCE(bm.branch_code,''))))))
            OR a.created_by = ? OR a.recruiter_id = ?`, [actor ?? "", actor ?? "", actor ?? "", u.id, u.id]);
       const [own] = await q(`SELECT COUNT(*) AS n FROM ats_recruiter_hiring_activity WHERE created_by = ? OR recruiter_id = ?`, [u.id, u.id]);
+      const { listHiringActivity } = await import("../src/modules/ats/recruiter-hiring.service.js");
+      const roleCtx = await getUserRoleContext(String(u.id));
+      const real = await listHiringActivity(String(u.id), roleCtx.primaryRole, { export: "1", limit: 10000 } as never);
+      console.log(`REAL listHiringActivity(role=${roleCtx.primaryRole}) export rows=${real.data.length} total=${real.total}`);
       console.log(`${u.employee_code} ${u.full_name} [${u.roles}] empBranch=${u.branch_name} actorBranch=${actor} empRows=${rowsN.n}/active ${rowsN.active} own=${own.n} old=${o.n} new=${t.n}`);
     } catch (e) {
       console.log(`${u.employee_code} ${u.full_name} ERROR ${(e as Error).message}`);
