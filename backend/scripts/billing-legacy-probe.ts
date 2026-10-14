@@ -87,7 +87,17 @@ async function round3() {
   }
 }
 
+/** Round 4: is anyone entering client payments in HRMS today (Client Payments page / receipt vouchers)? */
+async function round4() {
+  await hrms("client_invoice_payment_log entries made in HRMS (not migrated), by month", `SELECT DATE_FORMAT(created_at,'%Y-%m') AS month, COUNT(*) AS n, COUNT(DISTINCT payment_status_id) AS invoices, SUM(amount_paid) AS amount
+     FROM client_invoice_payment_log WHERE COALESCE(is_migrated,0) = 0 GROUP BY month ORDER BY month DESC LIMIT 12`);
+  await hrms("client_invoice_payment_status rows by status", `SELECT payment_status, COUNT(*) AS n, SUM(amount_received) AS received FROM client_invoice_payment_status GROUP BY payment_status`);
+  await hrms("sales_receipt vouchers raised in HRMS, by month and status", `SELECT DATE_FORMAT(raised_at,'%Y-%m') AS month, status, COUNT(*) AS n, SUM(amount) AS amount
+     FROM payment_voucher WHERE source_type = 'sales_receipt' GROUP BY month, status ORDER BY month DESC LIMIT 20`);
+}
+
 async function main() {
+  if (process.env.PROBE_ROUND === "4") return round4();
   if (process.env.PROBE_ROUND === "3") return round3();
   if (process.env.PROBE_ROUND === "2") return round2();
   // 1. Table shapes behind the screens.
