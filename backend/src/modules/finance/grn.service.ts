@@ -2193,10 +2193,24 @@ export const grnService = {
     if (filters.accountingPeriod) {
       // Falls back to bill_date for rows raised before accounting_period existed, so a period
       // filter does not simply hide every historical GRN.
-      conditions.push(
-        "COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?",
-      );
-      params.push(filters.accountingPeriod);
+      // Written as an equality plus a bill_date range, not COALESCE(...) = ?: wrapping the column
+      // in a function stops MySQL using idx_grn_accounting_period (sql/1667) and scans every GRN.
+      const periodMatch = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(filters.accountingPeriod);
+      if (periodMatch) {
+        const year = Number(periodMatch[1]);
+        const month = Number(periodMatch[2]);
+        const from = `${periodMatch[1]}-${periodMatch[2]}-01`;
+        const to = month === 12 ? `${year + 1}-01-01` : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+        conditions.push(
+          "(g.accounting_period = ? OR (g.accounting_period IS NULL AND g.bill_date >= ? AND g.bill_date < ?))",
+        );
+        params.push(filters.accountingPeriod, from, to);
+      } else {
+        conditions.push(
+          "COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?",
+        );
+        params.push(filters.accountingPeriod);
+      }
     }
     if (filters.billDateFrom) {
       conditions.push("g.bill_date >= ?");
@@ -2240,8 +2254,19 @@ export const grnService = {
     // so query()'s text protocol is safe here.
     // Named per stage (not just the latest generic reviewed_by) so a history/timeline view can
     // show who actually acted at Branch Head vs Finance Head, not just who touched it last.
+    // The filter, sort and LIMIT run in the inner SELECT against grn_request alone, so the ~10
+    // lookup joins and the allocation-share join below touch at most `limit` rows. They used to be
+    // joined first and filtered after, which the live timing (2026-10-14, Head Office Oct-26
+    // Fee & Subscription drill-down) measured at 120-165 seconds per open.
+    // emp_names is a CTE so the employees table is grouped ONCE and shared by the five name
+    // joins below. They used to be five identical inline derived tables, i.e. five full scans and
+    // GROUP BYs of employees per list call, which is what made the budget drill-down dialog slow.
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT g.*,
+      `WITH emp_names AS (
+         SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name
+           FROM employees WHERE user_id IS NOT NULL GROUP BY user_id
+       )
+       SELECT g.*,
               bm.branch_name,
               pm.process_name,
               ccm.cost_centre_name,
@@ -2285,22 +2310,25 @@ export const grnService = {
               -- the allocation still at lifecycle_status='draft' (GRN not past Branch Head yet):
               -- real money in flight that neither Reserved nor Consumed contains.
               ${contextAllocationSelect}
-         FROM grn_request g
+         FROM (
+           SELECT g.* FROM grn_request g
+           ${where}
+           ORDER BY g.created_at DESC
+           LIMIT ? OFFSET ?
+         ) g
          LEFT JOIN branch_master bm ON bm.id = g.branch_id
          LEFT JOIN process_master pm ON pm.id = g.process_id
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
          LEFT JOIN finance_budget_header h ON h.id = g.budget_id
          LEFT JOIN finance_budget_line l ON l.id = g.budget_line_id
-         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) cb ON cb.user_id = g.created_by
-         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) rb ON rb.user_id = g.reviewed_by
-         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) bhb ON bhb.user_id = g.branch_head_reviewed_by
-         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) ahb ON ahb.user_id = g.accounts_head_reviewed_by
-         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) fhb ON fhb.user_id = g.finance_head_reviewed_by
+         LEFT JOIN emp_names cb ON cb.user_id = g.created_by
+         LEFT JOIN emp_names rb ON rb.user_id = g.reviewed_by
+         LEFT JOIN emp_names bhb ON bhb.user_id = g.branch_head_reviewed_by
+         LEFT JOIN emp_names ahb ON ahb.user_id = g.accounts_head_reviewed_by
+         LEFT JOIN emp_names fhb ON fhb.user_id = g.finance_head_reviewed_by
          ${contextAllocationJoin}
-         ${where}
-        ORDER BY g.created_at DESC
-        LIMIT ? OFFSET ?`,
-      [...contextAllocationParams, ...params, limit, offset],
+        ORDER BY g.created_at DESC`,
+      [...params, limit, offset, ...contextAllocationParams],
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM grn_request g ${where}`,
