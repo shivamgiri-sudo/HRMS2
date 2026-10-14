@@ -55,6 +55,7 @@ for (const month of MONTHS) {
   const okRows = data.rows.filter((r) => !r.exception);
   print("exceptions by reason", count(data.rows.filter((r) => r.exception).map((r) => r.exception!.replace(/[\d,]+\.\d{2}/g, "#"))));
   print("exception GRNs", data.rows.filter((r) => r.exception).map((r) => `${r.grnNumber} | ${r.branchName} | ${r.subHead} | ${r.vendorName} | ${r.exception}`));
+  print("imprest credit ledgers", count(okRows.filter((r) => r.grnType === "imprest").map((r) => r.entries.find((e) => e.side === "Cr")?.ledger ?? "")));
   print("TDS basis", count(data.rows.map((r) => r.tdsBasis.replace(/@ [\d.]+%/, "@ n%"))));
   print("voucher types / GRN types", count(data.rows.map((r) => `${r.voucherType ?? "-"} / ${r.grnType}`)));
 
@@ -82,6 +83,12 @@ const show = async (title: string, sql: string) => {
     console.log(`\n## ${title}\nERROR ${(e as Error).message}`);
   }
 };
+const recent = `g.bill_source_id IS NULL AND g.grn_number IS NOT NULL AND COALESCE(g.approved_at, g.finance_head_reviewed_at) >= '2026-09-01'`;
+await show("gst_type / tax_treatment / gst_enabled on recent HRMS GRNs", `SELECT g.grn_type, g.gst_type, g.tax_treatment, g.gst_enabled, COUNT(*) n, SUM(g.tax_amount > 0) with_tax FROM grn_request g WHERE ${recent} GROUP BY 1,2,3,4 ORDER BY n DESC`);
+await show("gst_rate values on recent HRMS GRNs", `SELECT g.gst_rate, COUNT(*) n FROM grn_request g WHERE ${recent} GROUP BY g.gst_rate ORDER BY n DESC`);
+await show("recent GRNs with tax but no claimable GST (ITC would be lost)", `SELECT g.grn_number, g.grn_type, g.gst_type, g.tax_treatment, g.gst_rate, g.recoverable_tax_pct, g.amount_without_tax, g.tax_amount, g.round_off_amount, g.amount_with_tax, g.vendor_gstin FROM grn_request g WHERE ${recent} AND g.tax_amount > 0 AND (g.gst_type IS NULL OR g.gst_type NOT IN ('cgst_sgst','igst') OR COALESCE(g.recoverable_tax_pct,100) = 0) ORDER BY g.grn_number LIMIT 60`);
+await show("recent GRNs with a non-slab gst_rate", `SELECT g.grn_number, g.gst_type, g.gst_rate, g.amount_without_tax, g.tax_amount, ROUND(100*g.tax_amount/NULLIF(g.amount_without_tax,0),2) eff FROM grn_request g WHERE ${recent} AND g.gst_rate IS NOT NULL AND g.gst_rate NOT IN (0,0.25,3,5,12,18,28,40) LIMIT 30`);
+await show("imprest managers", `SELECT im.branch_id, im.tally_name, im.effective_from, im.effective_to, im.active_status FROM imprest_manager im ORDER BY im.branch_id, im.effective_from`);
 await show("branches", `SELECT branch_name, branch_code, branch_seq, gst_state_code, state, active_status FROM branch_master ORDER BY branch_name`);
 await show("GRN number format config", `SELECT config_key, config_value FROM finance_config WHERE config_key LIKE 'grn%'`);
 await show("HRMS-raised GRN numbers, latest 15", `SELECT grn_number, accounting_period, branch_id, created_at FROM grn_request WHERE bill_source_id IS NULL AND grn_number IS NOT NULL ORDER BY created_at DESC LIMIT 15`);

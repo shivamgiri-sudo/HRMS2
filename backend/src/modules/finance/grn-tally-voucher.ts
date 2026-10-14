@@ -164,9 +164,12 @@ const fill = (pattern: string, values: Record<string, string>) =>
 
 const STANDARD_GST_RATES = [0.25, 3, 5, 12, 18, 28, 40];
 
-/** The GRN's own rate, else the standard slab nearest to tax / taxable value. */
+/**
+ * The GRN's own rate when it is a standard slab, else the slab nearest to tax / taxable value. A
+ * stored 17.42 or 8.32 (an effective rate typed into the rate field) never names a Tally ledger.
+ */
 export function effectiveGstRate(input: Pick<GrnVoucherInput, "gstRate" | "taxAmount" | "amountWithoutTax">): number | null {
-  if (input.gstRate && input.gstRate > 0) return Number(input.gstRate);
+  if (input.gstRate && STANDARD_GST_RATES.includes(Number(input.gstRate))) return Number(input.gstRate);
   if (!(input.amountWithoutTax > 0) || !(input.taxAmount > 0)) return null;
   const derived = (input.taxAmount / input.amountWithoutTax) * 100;
   const nearest = STANDARD_GST_RATES.reduce((best, r) => (Math.abs(r - derived) < Math.abs(best - derived) ? r : best));
@@ -239,7 +242,7 @@ export function buildGrnVoucher(
   const state = input.gstStateName?.trim() ?? "";
   if (inputTax > 0) {
     rate = effectiveGstRate(input);
-    if (!rate) return fail("GST rate is missing and cannot be read from the tax and taxable value.");
+    if (!rate) return fail("GST rate is not a standard slab (5/12/18/28%) and cannot be read from the tax and taxable value; check the GST on this GRN.");
     if (!state) return fail("Branch GST state is not set, so the input GST ledger cannot be named.");
   }
 

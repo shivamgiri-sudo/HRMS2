@@ -19,7 +19,7 @@ type Executor = { execute(sql: string, params?: any[]): Promise<[any, any]> };
 export const GRN_TALLY_COLUMNS = `g.id, g.grn_number, g.grn_type, g.bill_date, g.invoice_number, g.vendor_id, g.vendor_name,
   g.head, g.sub_head, g.description, g.branch_id, g.amount, g.amount_without_tax, g.tax_amount, g.other_charges,
   g.round_off_amount, g.amount_with_tax, g.gst_type, g.gst_rate, g.recoverable_tax_pct, g.accounting_period,
-  g.billing_state_code, g.imprest_manager_id`;
+  g.billing_state_code, g.imprest_manager_id, g.imprest_ledger_entry_id`;
 
 /** Cost-centre prefixes as the legacy GRN sheet prints them (HO/2609, AHM-JD/2609, Noida/2609). */
 const GRN_BRANCH_CODE: Record<string, string> = {
@@ -76,6 +76,8 @@ export type GrnTallyContext = {
   vendors: Map<string, { ledger: string; tdsEnabled: number | null; tdsSection: string | null; tdsRate: number | null }>;
   branches: Map<string, { name: string; gstStateCode: string | null; state: string | null }>;
   holders: Map<string, { tally: string | null; person: string | null }>;
+  /** GRN id -> imprest_manager id, resolved as approval resolves it (see resolveImprestHolders). */
+  grnHolder: Map<string, string>;
   subHeadTds: Map<string, { section: string; confidence: string }>;
   sectionRates: Map<string, number>;
   branchCodeOverrides: Record<string, string>;
@@ -94,6 +96,16 @@ async function safeRows(executor: Executor, sql: string, params: unknown[] = [])
 
 const inList = (ids: string[]) => ids.map(() => "?").join(",");
 
+const ymd = (value: unknown): string => {
+  if (!value) return "";
+  if (value instanceof Date) {
+    const local = new Date(value.getTime() - value.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 10);
+  }
+  return String(value).slice(0, 10);
+};
+
+
 export async function loadGrnTallyContext(
   executor: Executor,
   rows: RowDataPacket[],
@@ -102,12 +114,12 @@ export async function loadGrnTallyContext(
   const ids = (key: string) => [...new Set(rows.map((r) => String(r[key] ?? "")).filter(Boolean))];
   const vendorIds = ids("vendor_id");
   const branchIds = ids("branch_id");
-  const holderIds = ids("imprest_manager_id");
 
   const ctx: GrnTallyContext = {
     vendors: new Map(),
     branches: new Map(),
     holders: new Map(),
+    grnHolder: new Map(),
     subHeadTds: new Map(),
     sectionRates: new Map(),
     branchCodeOverrides: {},
@@ -147,6 +159,8 @@ export async function loadGrnTallyContext(
       });
     }
   }
+  ctx.grnHolder = await resolveImprestHolders(executor, rows);
+  const holderIds = [...new Set(ctx.grnHolder.values())];
   if (holderIds.length) {
     const holders = await safeRows(
       executor,
@@ -182,6 +196,50 @@ export async function loadGrnTallyContext(
 }
 
 /**
+ * Which float holder an imprest GRN settles from, the way Finance Head approval decides it
+ * (grn-smart.service.ts postImprestVoucherDebit): the manager named on the GRN; else the manager whose
+ * float the approval actually debited (imprest_transaction_ledger via imprest_ledger_entry_id); else
+ * the branch's appointment in force on the bill date.
+ */
+async function resolveImprestHolders(executor: Executor, rows: RowDataPacket[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const imprest = rows.filter((r) => r.grn_type === "imprest");
+  for (const r of imprest) if (r.imprest_manager_id) out.set(String(r.id), String(r.imprest_manager_id));
+
+  const ledgerIds = [...new Set(imprest.filter((r) => !out.has(String(r.id)) && r.imprest_ledger_entry_id).map((r) => String(r.imprest_ledger_entry_id)))];
+  if (ledgerIds.length) {
+    const byLedger = new Map<string, string>();
+    for (const l of await safeRows(executor, `SELECT id, imprest_manager_id FROM imprest_transaction_ledger WHERE id IN (${inList(ledgerIds)})`, ledgerIds))
+      if (l.imprest_manager_id) byLedger.set(String(l.id), String(l.imprest_manager_id));
+    for (const r of imprest) {
+      const m = byLedger.get(String(r.imprest_ledger_entry_id ?? ""));
+      if (m && !out.has(String(r.id))) out.set(String(r.id), m);
+    }
+  }
+
+  const pending = imprest.filter((r) => !out.has(String(r.id)) && r.branch_id);
+  const branchIds = [...new Set(pending.map((r) => String(r.branch_id)))];
+  if (branchIds.length) {
+    const appointments = await safeRows(
+      executor,
+      `SELECT id, branch_id, effective_from, effective_to FROM imprest_manager WHERE branch_id IN (${inList(branchIds)}) ORDER BY effective_from DESC`,
+      branchIds,
+    );
+    for (const r of pending) {
+      const day = ymd(r.bill_date);
+      const hit = appointments.find(
+        (a) =>
+          String(a.branch_id) === String(r.branch_id) &&
+          (!a.effective_from || ymd(a.effective_from) <= day) &&
+          (!a.effective_to || ymd(a.effective_to) >= day),
+      );
+      if (hit) out.set(String(r.id), String(hit.id));
+    }
+  }
+  return out;
+}
+
+/**
  * TDS for one GRN: the vendor's own section and rate when the vendor master has one, else the
  * sub-head's default section when that default is firm. A sub-head whose default needs review
  * (labour vs materials, say) gets no TDS and says so on the check sheet.
@@ -209,14 +267,6 @@ export function resolveGrnTds(
   return { rule: null, basis: "No TDS" };
 }
 
-const ymd = (value: unknown): string => {
-  if (!value) return "";
-  if (value instanceof Date) {
-    const local = new Date(value.getTime() - value.getTimezoneOffset() * 60000);
-    return local.toISOString().slice(0, 10);
-  }
-  return String(value).slice(0, 10);
-};
 
 export function toVoucherInput(
   r: RowDataPacket,
@@ -229,7 +279,7 @@ export function toVoucherInput(
       : Number(r.amount);
   const vendor = ctx.vendors.get(String(r.vendor_id ?? ""));
   const branch = ctx.branches.get(String(r.branch_id ?? ""));
-  const holder = ctx.holders.get(String(r.imprest_manager_id ?? ""));
+  const holder = ctx.holders.get(ctx.grnHolder.get(String(r.id)) ?? "");
   const imprestLedger =
     holder?.tally ?? (holder?.person ? names.imprestLedgerPattern.replace("{name}", holder.person) : null);
   const subHead = String(r.sub_head ?? "");

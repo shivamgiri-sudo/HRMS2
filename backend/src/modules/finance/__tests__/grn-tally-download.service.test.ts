@@ -15,6 +15,14 @@ const h = vi.hoisted(() => {
       return [[{ id: "b1", branch_name: "NOIDA", gst_state_code: "09", state: "UP" }], undefined];
     if (/FROM tds_sub_head_default/.test(sql))
       return [[{ sub_head_name: "Office Rent", section_code: "194I_LB", confidence: "firm" }], undefined];
+    if (/FROM imprest_transaction_ledger/.test(sql))
+      return [[{ id: "led1", imprest_manager_id: "im1" }], undefined];
+    if (/FROM imprest_manager WHERE id IN/.test(sql))
+      return [[{ id: "im1", employee_id: "e1", tally_name: null }, { id: "im2", employee_id: null, tally_name: "TRAVELLING A/C PAYABLE- HO" }], undefined];
+    if (/FROM imprest_manager WHERE branch_id IN/.test(sql))
+      return [[{ id: "im2", branch_id: "b1", effective_from: "2026-01-01", effective_to: null }], undefined];
+    if (/FROM employees/.test(sql))
+      return [[{ id: "e1", n: "Deepak  Kashyap" }], undefined];
     if (/FROM tds_section_master/.test(sql))
       return [[{ section_code: "194I_LB", rate_other: 10 }], undefined];
     return [[], undefined];
@@ -103,6 +111,21 @@ describe("loadGrnTallyDownload", () => {
 });
 
 const LEGACY_HEADER = "Vch No,Date,Effective Date,Details,Debit Amount,Credit Amount,Cost Category,Cost Centre,Narration for Each Entry,Narration,VchType";
+
+describe("imprest holder", () => {
+  it("named on the GRN, else the float the approval debited, else the branch appointment on the bill date", async () => {
+    const imp = { grn_type: "imprest", vendor_id: null, sub_head: "Tour Expenses", amount_without_tax: 1000, tax_amount: 0, amount_with_tax: 1000, amount: 1000, gst_type: "none" };
+    h.state.rows = [
+      row("g1", "MAS/09/26/1", { ...imp, imprest_ledger_entry_id: "led1" }),
+      row("g2", "MAS/09/26/2", { ...imp }),
+      row("g3", "MAS/09/26/3", { ...imp, bill_date: "2025-12-01" }),
+    ];
+    const data = await loadGrnTallyDownload(all);
+    expect(data.rows[0].entries.at(-1)).toEqual({ ledger: "Deepak Kashyap Imp A/C", side: "Cr", amount: 1000 });
+    expect(data.rows[1].entries.at(-1)).toEqual({ ledger: "TRAVELLING A/C PAYABLE- HO", side: "Cr", amount: 1000 });
+    expect(data.rows[2].exception).toMatch(/float holder/);
+  });
+});
 
 describe("file builders", () => {
   it("XML is a Tally import envelope with one JrnlP voucher per GRN", async () => {

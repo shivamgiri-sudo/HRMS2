@@ -228,6 +228,9 @@ describe("helpers", () => {
     expect(effectiveGstRate({ gstRate: 5, taxAmount: 0, amountWithoutTax: 0 })).toBe(5);
     expect(effectiveGstRate({ gstRate: null, taxAmount: 920, amountWithoutTax: 5111.16 })).toBe(18);
     expect(effectiveGstRate({ gstRate: null, taxAmount: 17.01, amountWithoutTax: 18994.5 })).toBeNull();
+    // A typed effective rate (17.42 seen on prod) is not a slab: read the slab from the figures.
+    expect(effectiveGstRate({ gstRate: 17.42, taxAmount: 1742, amountWithoutTax: 10000 })).toBe(18);
+    expect(effectiveGstRate({ gstRate: 8.32, taxAmount: 832, amountWithoutTax: 10000 })).toBeNull();
   });
 
   it("branch cost-centre codes as the legacy sheet prints them", () => {
