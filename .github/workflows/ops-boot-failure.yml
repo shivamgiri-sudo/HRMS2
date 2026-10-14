@@ -10,6 +10,11 @@ on:
         description: "UTC time prefix(es) to keep, regex on the pm2 --time stamp, e.g. 2026-10-14T13:(3[7-9]|4|5)"
         required: true
         type: string
+      keep:
+        description: "Line filter regex (default: boot / migration / fatal keywords; use . for everything)"
+        required: false
+        default: "migrat|lock|fatal|error|uncaught|unhandled|listen|started|boot|SIGINT|SIGTERM|exit|cannot|ER_|pool"
+        type: string
 
 concurrency:
   group: ops-boot-failure
@@ -29,10 +34,11 @@ jobs:
         shell: bash
         env:
           WINDOW: ${{ inputs.window }}
+          KEEP: ${{ inputs.keep }}
         run: |
           set +e
           for f in $(ls -1t /var/www/HRMS2/backend/logs/*.log "$HOME"/.pm2/logs/hrms2-backend*.log "$HOME"/.pm2/logs/hrms2-workers*.log 2>/dev/null | head -12); do
-            hits=$(grep -nE "$WINDOW" "$f" 2>/dev/null | grep -viE '"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /|meta-sync' | grep -iE "migrat|lock|fatal|error|uncaught|unhandled|listen|started|boot|SIGINT|SIGTERM|exit|cannot|ER_|pool" | head -120)
+            hits=$(grep -nE "$WINDOW" "$f" 2>/dev/null | grep -viE '"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /|meta-sync' | grep -iE "$KEEP" | grep -v "slow query" | head -200)
             if [ -n "$hits" ]; then echo "### $f"; echo "$hits" | cut -c1-400; fi
           done
           exit 0
