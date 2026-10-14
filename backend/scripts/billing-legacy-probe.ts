@@ -181,7 +181,30 @@ async function round6() {
   console.log(`groups: ${groups.size}; with a deleted row: ${oneDeleted}; different cost centres: ${differentCc}; same cost centre + same amount: ${sameCcSameAmt}`);
 }
 
+/** Round 7: migrated HRMS MAS 2026-27 bills whose bill_no differs from what I-Spark holds today for
+ *  the same legacy id (renumbered / re-raised in I-Spark after the HRMS load). */
+async function round7() {
+  const [h] = await db.query<RowDataPacket[]>(
+    `SELECT ci.legacy_id, ci.bill_no, ci.invoice_status, ci.grand_total, ci.invoice_date, cc.cost_centre_code
+     FROM client_invoice ci JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+     WHERE ci.is_migrated = 1 AND ci.finance_year = '2026-27' AND ci.legacy_id IS NOT NULL
+       AND REPLACE(REPLACE(LOWER(cc.company_name),'.',''),' ','') LIKE '%mascallnet%'`);
+  const ids = h.map((r) => Number(r.legacy_id));
+  const legacy = ids.length
+    ? await billQuery<RowDataPacket>(`SELECT id, bill_no, invoiceDate, cost_center, grnd, status, createdate FROM tbl_invoice WHERE id IN (${ids.join(",")})`)
+    : [];
+  const byId = new Map(legacy.map((r) => [Number(r.id), r]));
+  const diff = h.filter((r) => String(byId.get(Number(r.legacy_id))?.bill_no ?? "") !== String(r.bill_no ?? ""));
+  console.log(`\n### HRMS migrated MAS 2026-27 bills: ${h.length}; bill_no differs from I-Spark for ${diff.length}; legacy row missing: ${h.filter((r) => !byId.has(Number(r.legacy_id))).length}`);
+  console.table(diff.slice(0, 80).map((r) => {
+    const l = byId.get(Number(r.legacy_id));
+    return { legacy_id: r.legacy_id, hrms_bill: r.bill_no, ispark_bill: l?.bill_no ?? "(missing)", hrms_grand: Number(r.grand_total), ispark_grand: Number(l?.grnd ?? 0),
+      hrms_date: String(r.invoice_date).slice(0, 10), ispark_date: String(l?.invoiceDate ?? "").slice(0, 10), cc: r.cost_centre_code, ispark_cc: l?.cost_center, deleted: Number(l?.status) === 1 ? "Y" : "" };
+  }));
+}
+
 async function main() {
+  if (process.env.PROBE_ROUND === "7") return round7();
   if (process.env.PROBE_ROUND === "6") return round6();
   if (process.env.PROBE_ROUND === "5") return round5();
   if (process.env.PROBE_ROUND === "4") return round4();
