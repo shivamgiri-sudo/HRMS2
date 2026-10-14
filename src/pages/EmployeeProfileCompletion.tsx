@@ -247,13 +247,7 @@ function StepBank({ employeeId }: { employeeId: string }) {
     },
     onSuccess: (res: any) => {
       const v = res?.verification ?? res?.data?.verification;
-      if (v?.status === "success") {
-        toast({ title: "Saved and verified", description: v.message });
-      } else if (v) {
-        toast({ title: "Saved — not verified", description: v.message, variant: "destructive" });
-      } else {
-        toast({ title: "Saved", description: "Bank details saved." });
-      }
+      toast({ title: "Verified and saved", description: v?.message ?? "Bank details verified and saved." });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message || "Failed to save bank details.", variant: "destructive" });
@@ -261,7 +255,7 @@ function StepBank({ employeeId }: { employeeId: string }) {
   });
 
   return (
-    <StepCard icon={Landmark} title="Bank Details" description="Saved, then verified with a penny drop — the bank's account holder name must match the name entered and the employee">
+    <StepCard icon={Landmark} title="Bank Details" description="Verified with a penny drop first — saved only if the account is valid and the bank's holder name matches the name entered and the employee">
       <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
         This step does not preload previously saved values. Submitting again safely updates the existing bank record.
       </div>

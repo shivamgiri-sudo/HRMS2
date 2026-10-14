@@ -7,8 +7,10 @@
  * runs the same Luckpay /verifyPennyDrop call the payroll bank-change flow uses and compares the
  * name the bank returns against BOTH the account holder name HR typed and the employee's name.
  *
- * The save is never blocked by the provider: a Luckpay outage returns status 'failed' and the row
- * stays unverified, so HR can retry. Only a clean pass sets employee_bank_detail.verified = 1.
+ * The caller saves the account ONLY when this returns status 'success': the provider verified the
+ * account and the returned holder name is the same person as the typed name and the employee. A
+ * Luckpay outage returns 'failed' and nothing is saved, so HR can retry. This function writes only
+ * the bank_penny_drop_log audit row.
  */
 import { createHash, randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
@@ -50,11 +52,11 @@ export function judgeBeneficiaryName(
   const brief = (m: ReturnType<typeof classifyNameMatch> | null) => (m ? { tier: m.tier, score: m.score } : null);
   if (holderBad || empBad) {
     const which = holderBad && empBad
-      ? "neither the account holder name entered nor the employee's name"
+      ? "either the account holder name entered or the employee's name"
       : holderBad ? "the account holder name entered" : "the employee's name";
     return {
       status: "name_mismatch", beneficiaryName, holderMatch: brief(holder), employeeMatch: brief(emp),
-      message: `The bank returned "${beneficiaryName}", which does not match ${which}. Correct the details or send for manual review.`,
+      message: `The bank returned "${beneficiaryName}", which does not match ${which}. Nothing was saved — correct the details and try again.`,
     };
   }
   return {
@@ -117,7 +119,7 @@ export async function runEmployeeBankPennyDrop(input: {
     ? judgeBeneficiaryName(beneficiary, input.holderName, employeeName)
     : {
         status: "failed" as const, beneficiaryName: null, holderMatch: null, employeeMatch: null,
-        message: "The bank could not verify this account (provider unavailable or account not found). The details are saved but unverified — check them and retry.",
+        message: "The bank could not verify this account (provider unavailable or account not found). Nothing was saved — check the account number and IFSC and try again.",
       };
 
   await db.execute(
@@ -131,11 +133,5 @@ export async function runEmployeeBankPennyDrop(input: {
       sanitized ? JSON.stringify(sanitized) : null, logId,
     ],
   );
-  if (judged.status === "success") {
-    await db.execute(
-      "UPDATE employee_bank_detail SET verified = 1 WHERE employee_id = ? AND active_status = 1",
-      [input.employeeId],
-    );
-  }
   return judged;
 }

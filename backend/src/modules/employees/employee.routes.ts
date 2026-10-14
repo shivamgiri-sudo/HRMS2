@@ -1151,6 +1151,30 @@ router.put(
       }
     }
 
+    // The account is verified BEFORE anything is written: the penny drop must succeed and the
+    // bank's holder name must be the same person as both the name HR typed and the employee.
+    // A failed, unavailable or mismatching check saves nothing (see employeeBankPennyDrop.ts).
+    if (!account_number || !ifsc_code) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Account number and IFSC are required — the account is verified with a penny drop before it is saved.",
+      });
+    }
+    const verification = await runEmployeeBankPennyDrop({
+      employeeId: empId,
+      accountNumber: String(account_number),
+      ifscCode: String(ifsc_code),
+      holderName: account_holder_name ? String(account_holder_name) : null,
+    });
+    if (verification.status !== "success") {
+      return res.status(422).json({
+        success: false,
+        error: verification.message,
+        verification,
+      });
+    }
+
     // verification_status and masked_account_number are not real columns on
     // employee_bank_detail (this INSERT 500'd on every call — confirmed live). See the
     // matching fix and comment on PUT /me/bank-details above.
@@ -1161,6 +1185,7 @@ router.put(
       "bank_branch",
       "ifsc_code",
       "account_type",
+      "verified",
     ];
     const vals: any[] = [
       empId,
@@ -1169,6 +1194,7 @@ router.put(
       bank_branch,
       ifsc_code,
       account_type,
+      1,
     ];
     const onDup: string[] = [
       "bank_name = VALUES(bank_name)",
@@ -1176,9 +1202,17 @@ router.put(
       "bank_branch = VALUES(bank_branch)",
       "ifsc_code = VALUES(ifsc_code)",
       "account_type = VALUES(account_type)",
+      "verified = VALUES(verified)",
     ];
 
     if (account_number) {
+      // Stored in full as verified — no masking or truncation — in the plain column that the
+      // verified-copy path (copyVerifiedBankToEmployee) also fills; the encrypted copy and blind
+      // index below stay for the readers and the duplicate check that use them.
+      fields.push("account_number");
+      vals.push(String(account_number).replace(/\s/g, ""));
+      onDup.push("account_number = VALUES(account_number)");
+
       const enc = encryptField(String(account_number));
       fields.push("account_number_enc");
       vals.push(enc);
@@ -1210,26 +1244,9 @@ router.put(
       req,
     });
 
-    // Attach the penny drop: verify the account exists and that the bank's holder name matches
-    // both what HR typed and the employee. Never blocks the save — see employeeBankPennyDrop.ts.
-    // A save that did not touch the account number / IFSC has nothing new to verify.
-    let verification: Awaited<ReturnType<typeof runEmployeeBankPennyDrop>> | null = null;
-    if (account_number && ifsc_code) {
-      try {
-        verification = await runEmployeeBankPennyDrop({
-          employeeId: empId,
-          accountNumber: String(account_number),
-          ifscCode: String(ifsc_code),
-          holderName: account_holder_name ? String(account_holder_name) : null,
-        });
-      } catch (err) {
-        console.error("[bank-details] penny drop failed:", err instanceof Error ? err.message : err);
-      }
-    }
-
     return res.json({
       success: true,
-      message: verification ? verification.message : "Bank details saved",
+      message: verification.message,
       verification,
     });
   }),
