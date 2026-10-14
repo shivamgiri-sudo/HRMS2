@@ -91,7 +91,13 @@ export function PoGrnTab() {
                       <span className="text-xs tabular-nums">{r.utilisation}%</span>
                     </div>
                   </td>
-                  <td className="px-2 py-1.5"><span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-xs ring-1 ${STATUS[r.status].cls}`}>{STATUS[r.status].label}</span></td>
+                  <td className="px-2 py-1.5">
+                    {r.approvalStatus && r.approvalStatus !== "approved" ? (
+                      <span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-xs ring-1 ${r.approvalStatus === "pending" ? "bg-violet-50 text-violet-800 ring-violet-200" : "bg-rose-50 text-rose-800 ring-rose-200"}`}>
+                        {r.approvalStatus === "pending" ? "Waiting for approval" : "Rejected"}
+                      </span>
+                    ) : <span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-xs ring-1 ${STATUS[r.status].cls}`}>{STATUS[r.status].label}</span>}
+                  </td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{r.bills}</td>
                   <td className="px-2 py-1.5">{r.hasDocument ? <FileCheck2 className="h-4 w-4 text-emerald-600" aria-label="PO document on file" /> : <FileWarning className="h-4 w-4 text-amber-600" aria-label="No PO document" />}</td>
                 </tr>

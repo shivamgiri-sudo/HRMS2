@@ -64,6 +64,7 @@ export function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
 /** `client_credit_note.credit_status` badge — same shared palette. */
 export function CreditStatusBadge({ status }: { status: CreditNoteStatus }) {
   if (status === "approved") return <StatusBadge status="approved" />;
+  if (status === "rejected") return <StatusBadge status="rejected" />;
   return <StatusBadge status="draft" label="Draft" />;
 }
 

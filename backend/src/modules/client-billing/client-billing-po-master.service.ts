@@ -347,8 +347,11 @@ async function report(q: PoReportQuery) {
 /** One PO: its particulars, every invoice on it, and its edit history. */
 async function detail(id: string) {
   const [[po]] = await db.query<RowDataPacket[]>(
-    `SELECT po.*, cc.cost_centre_code, cc.branch_id, b.branch_name, COALESCE(NULLIF(cc.billing_client_name, ''), NULLIF(cc.client_name, ''), cc.company_name) AS client_name
+    `SELECT po.*, cc.cost_centre_code, cc.branch_id, b.branch_name, COALESCE(NULLIF(cc.billing_client_name, ''), NULLIF(cc.client_name, ''), cc.company_name) AS client_name,
+            COALESCE(ar.email, ac.email) AS approval_requested_by_email
      FROM client_po_number po JOIN cost_centre_master cc ON cc.id = po.cost_centre_id LEFT JOIN branch_master b ON b.id = cc.branch_id
+     LEFT JOIN auth_user ar ON ar.id = po.approval_requested_by
+     LEFT JOIN auth_user ac ON ac.id = po.created_by
      WHERE po.id = ?`,
     [id],
   );
@@ -392,7 +395,7 @@ async function detail(id: string) {
       document: po.attachment_name ? { name: String(po.attachment_name), mime: String(po.attachment_mime ?? "") } : null,
       approvalStatus: String(po.approval_status ?? "approved"),
       approvedAmount: po.approved_amount === null || po.approved_amount === undefined ? null : rupees(toPaise(po.approved_amount)),
-      approvalRequestedBy: po.approval_requested_by ? String(po.approval_requested_by) : null,
+      approvalRequestedBy: po.approval_requested_by_email ? String(po.approval_requested_by_email) : po.approval_requested_by ? String(po.approval_requested_by) : null,
       approvalNote: po.approval_note ? String(po.approval_note) : null,
     },
     lines: lines.map((l) => ({ lineNo: Number(l.line_no), particulars: String(l.particulars), qty: Number(l.qty), rate: Number(l.rate), amount: Number(l.amount) })),

@@ -25,7 +25,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 
 export type InvoiceStatus = "proforma" | "approved" | "rejected";
 export type GstType = "Integrated" | "Intrastate";
-export type CreditNoteStatus = "draft" | "approved";
+export type CreditNoteStatus = "draft" | "approved" | "rejected";
 export type LineType = "charge" | "deduction";
 export type AuditAction =
   | "created"
@@ -443,6 +443,19 @@ export function createCreditNote(
   payload: CreateCreditNotePayload,
 ): Promise<{ success: boolean; data: CreditNoteResult }> {
   return hrmsApi.post("/api/client-billing/credit-notes", payload);
+}
+
+/** Reject (or withdraw) a draft credit note; it never gets a number. */
+export function rejectCreditNote(id: string, reason: string): Promise<{ success: boolean; data: CreditNoteResult }> {
+  return hrmsApi.post(`/api/client-billing/credit-notes/${id}/reject`, { reason });
+}
+
+export function approvePo(id: string, note?: string): Promise<{ success: boolean; data: { id: string; approvalStatus: string } }> {
+  return hrmsApi.post(`/api/client-billing/po-master/${id}/approve`, { note: note || undefined });
+}
+
+export function rejectPo(id: string, reason: string): Promise<{ success: boolean; data: { id: string; approvalStatus: string } }> {
+  return hrmsApi.post(`/api/client-billing/po-master/${id}/reject`, { reason });
 }
 
 export function approveCreditNote(
@@ -922,6 +935,9 @@ export interface PoReportRow {
   lines: number;
   hasDocument: boolean;
   remarks: string | null;
+  /** New POs and amount increases wait for a second person (pending) before invoices can use them. */
+  approvalStatus?: "pending" | "approved" | "rejected";
+  approvalRequestedBy?: string | null;
 }
 
 export interface PoLine { particulars: string; qty: number; rate: number }
@@ -931,6 +947,10 @@ export interface PoDetail {
     id: string; poNumber: string; costCentreId: string; costCentre: string; branchId: string | null; branch: string; client: string;
     periodFrom: string; periodTo: string; amount: number; balance: number; drawn: number; remarks: string | null;
     document: { name: string; mime: string } | null;
+    approvalStatus?: "pending" | "approved" | "rejected";
+    approvedAmount?: number | null;
+    approvalRequestedBy?: string | null;
+    approvalNote?: string | null;
   };
   lines: Array<PoLine & { lineNo: number; amount: number }>;
   invoices: Array<{ id: string; number: string; date: string; month: string; grandTotal: number; status: string; drawn: number; stage: "billed" | "waiting" }>;
