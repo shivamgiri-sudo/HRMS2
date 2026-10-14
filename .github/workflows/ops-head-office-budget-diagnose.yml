@@ -67,5 +67,8 @@ jobs:
             hrms-only-budget-verify)
               npx tsx scripts/hrms-only-budget-verify.ts
               ;;
+            attendance-daily-timing)
+              npx tsx scripts/attendance-daily-timing.ts
+              ;;
             *) echo "unknown script"; exit 1 ;;
           esac

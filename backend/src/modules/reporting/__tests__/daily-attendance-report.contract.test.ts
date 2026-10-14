@@ -6,8 +6,8 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8"
 
 /**
  * The Daily Attendance Report had no test at all. It was rewritten on 31-Jul to drive from
- * `employees LEFT JOIN attendance_daily_record` so that employees with no attendance row
- * would still appear — the report's declared grain — and the commit reported "65/65
+ * `employees LEFT JOIN attendance_daily_record` (since reversed, see the last tests: the
+ * declared grain is one row per employee per attendance date) and the commit reported "65/65
  * reporting tests" passing, which was true and meaningless: none of them touch this report.
  *
  * The rewrite left the wfm_attendance_session subquery with no date predicate, so every
@@ -76,9 +76,19 @@ describe("daily attendance report", () => {
     expect(block).not.toContain("agg_ses.employee_id = adr.employee_id");
   });
 
-  it("keeps the date predicate in the JOIN, not the WHERE", () => {
-    // Moving it to WHERE would filter out the NULL side and silently collapse the LEFT
-    // JOIN back to an inner join, reintroducing the original defect.
-    expect(block).toContain("AND adr.record_date BETWEEN ? AND ?");
+  it("is driven from the attendance rows of the range (one row per employee per attendance date)", () => {
+    // The catalogue declares the grain "One row per employee per attendance date". The 31-Jul
+    // rewrite started at employees and LEFT JOINed the range, which returned every in-scope
+    // active employee even with no record in the range: a row with an empty date and status
+    // that read as "the date filter is ignored", and a full-employee join that took 4 min 23 s
+    // for a 5-row page on prod (2026-10-14). The range is now the driving table's predicate.
+    expect(block).toContain("FROM attendance_daily_record adr");
+    expect(block).toContain("JOIN employees e ON e.id = adr.employee_id");
+    expect(block).not.toContain("FROM employees e");
+    expect(block).toContain('"adr.record_date BETWEEN ? AND ?"');
+  });
+
+  it("never runs past today", () => {
+    expect(block).toContain("capAtToday(");
   });
 });

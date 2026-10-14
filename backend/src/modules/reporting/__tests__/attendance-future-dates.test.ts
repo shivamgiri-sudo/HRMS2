@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { capAtToday, todayIst } from "../executors/types.js";
+import { businessToday, capAtToday } from "../executors/types.js";
 
 /**
  * A day-by-day attendance report must not run past today (report-library complaint 2026-10-14:
  * "filters are not filtering — upcoming future dates are still shown").
  */
-describe("capAtToday / todayIst", () => {
+describe("capAtToday / businessToday", () => {
   // 2026-10-14 20:00 UTC is already 2026-10-15 01:30 in India.
   const lateUtc = new Date("2026-10-14T20:00:00Z");
 
-  it("todayIst follows the Indian calendar, not UTC", () => {
-    expect(todayIst(lateUtc)).toBe("2026-10-15");
-    expect(todayIst(new Date("2026-10-14T05:00:00Z"))).toBe("2026-10-14");
+  it("businessToday follows the Indian calendar, not UTC", () => {
+    expect(businessToday(lateUtc)).toBe("2026-10-15");
+    expect(businessToday(new Date("2026-10-14T05:00:00Z"))).toBe("2026-10-14");
   });
 
   it("caps a future end date at today", () => {

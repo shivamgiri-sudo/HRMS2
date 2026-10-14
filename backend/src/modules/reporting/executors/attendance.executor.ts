@@ -34,6 +34,7 @@ import {
   appendEmployeeStatusFilter,
   dateParam,
   capAtToday,
+  businessToday,
   monthParam,
   monthRange,
   applyPagination,
@@ -604,28 +605,26 @@ export async function attendanceDaily(
   scope: ExecScope,
   options: ExecOptions,
 ): Promise<ExecResult> {
-  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const from = dateParam(filters.from, businessToday());
   const to = capAtToday(dateParam(filters.to, from));
 
-  const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[] = [];
+  // Driven FROM the attendance rows of the range, not from every employee. The report used to
+  // start at employees and LEFT JOIN the range, so (a) every active employee in scope came back
+  // even with no record in the range — a row with an empty date and status, which read as "the
+  // date filter is ignored" — and (b) the whole employee table was joined to every other table
+  // before the range could narrow anything (4 min 23 s for a 5-row page on prod, 2026-10-14).
+  // An employee with no attendance record in the range has nothing to report here; the monthly
+  // register is where an absence with no record is shown.
+  const clauses: string[] = ["adr.record_date BETWEEN ? AND ?"];
+  const params: unknown[] = [from, to];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  // Same two-population rule as attendanceRegisterMonthly: active employees
-  // always, inactive employees only if they have a record in the date range.
-  clauses.push(
-    "(e.active_status = 1 OR EXISTS (" +
-      "  SELECT 1 FROM attendance_daily_record _x" +
-      "  WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?" +
-      "))",
-  );
   // Exclude employees at inactive branches.
   clauses.push(
     "(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))",
   );
-  // JOIN ON (adr + session subquery) binds go to the front; EXISTS binds follow.
-  params.unshift(from, to, from, to);
-  params.push(from, to);
+  // The session subquery's own BETWEEN sits earlier in the statement than the WHERE.
+  params.unshift(from, to);
 
   const base = `SELECT adr.record_date,
          e.employee_code,
@@ -655,10 +654,8 @@ export async function attendanceDaily(
          CASE WHEN adr.regularization_id IS NOT NULL THEN 'Regularized' ELSE NULL END AS regularization_status,
          adr.is_locked,
          CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
-    FROM employees e
-    LEFT JOIN attendance_daily_record adr
-           ON adr.employee_id = e.id
-          AND adr.record_date BETWEEN ? AND ?
+    FROM attendance_daily_record adr
+    JOIN employees e ON e.id = adr.employee_id
     LEFT JOIN branch_master b ON b.id = e.branch_id
     LEFT JOIN process_master p ON p.id = e.process_id
     LEFT JOIN cost_centre_master ccd ON ccd.id = e.cost_centre_id
@@ -715,7 +712,7 @@ export async function dailyHcShift(
   scope: ExecScope,
   options: ExecOptions,
 ): Promise<ExecResult> {
-  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const from = dateParam(filters.from, businessToday());
   const to = capAtToday(dateParam(filters.to, from));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
@@ -796,7 +793,7 @@ export async function shiftAdherenceDetail(
   scope: ExecScope,
   options: ExecOptions,
 ): Promise<ExecResult> {
-  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const from = dateParam(filters.from, businessToday());
   const to = capAtToday(dateParam(filters.to, from));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
@@ -1885,7 +1882,7 @@ export async function biometricReconciliation(
   scope: ExecScope,
   options: ExecOptions,
 ): Promise<ExecResult> {
-  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const from = dateParam(filters.from, businessToday());
   const to = capAtToday(dateParam(filters.to, from));
 
   const RECONCILIATION_CASE = `CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day','week_off_worked') THEN 'NO_BIOMETRIC_FOR_PRESENT'
@@ -1961,7 +1958,7 @@ export async function punchRawExport(
   scope: ExecScope,
   options: ExecOptions,
 ): Promise<ExecResult> {
-  const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
+  const from = dateParam(filters.from, businessToday());
   const to = capAtToday(dateParam(filters.to, from));
 
   const clauses: string[] = ["1 = 1"];
