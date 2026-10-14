@@ -386,6 +386,20 @@ jobs:
               NODE_ENV=production PORT=5055 WORKERS_PROCESS=external ENABLE_SCHEDULERS=false \
                 NODE_OPTIONS="--report-on-signal --report-signal=SIGUSR2 --report-directory=$DEPLOY_ROOT/backend/logs" \
                 pm2 start dist/src/server.js --name hrms2-backend --cwd "$DEPLOY_ROOT/backend" --time
+              # Workers are started by the caller AFTER the backend answers health (start_workers below) unless
+              # this is called without "backend-only" (the rollback path boots an already-migrated dist).
+              # Starting them with the backend let their long attrition/report reads of branch_master queue the
+              # boot's ALTER (migration 2210) behind them, while every later branch_master reader queued behind
+              # the ALTER: boot never finished and four releases rolled back on 2026-10-14.
+              if [ "${1:-}" != "backend-only" ]; then
+                start_workers
+              fi
+            )
+          }
+
+          start_workers() {
+            (
+              cd "$DEPLOY_ROOT/backend"
               NODE_ENV=production ENABLE_SCHEDULERS=true \
                 pm2 start dist/src/workers/all-workers.js --name hrms2-workers --cwd "$DEPLOY_ROOT/backend" --time
             )
@@ -494,7 +508,7 @@ jobs:
 
           mv "$STAGE_DIR" "$LIVE_DIR"
 
-          ensure_backend_pm2_processes
+          ensure_backend_pm2_processes backend-only
 
           if ! wait_for_backend_health; then
             echo "Backend health check failed, restoring previous dist"
@@ -505,6 +519,10 @@ jobs:
             fi
             exit 1
           fi
+
+          # Backend booted and migrated; now the workers (they were held back so their long reads could not
+          # queue the boot's migrations).
+          start_workers
 
           if ! curl -fsS -H "Origin: https://visitor-management-portal.shivam-giri.chatgpt.site" http://127.0.0.1:5055/api/visitor/public/branches >/dev/null; then
             echo "Visitor branches endpoint failed after backend deploy"
