@@ -231,8 +231,8 @@ export function CreateCreditNoteSheet({
             <div>
               <p className="text-sm font-medium">Apply GST</p>
               <p className="text-xs text-muted-foreground">
-                IGST vs CGST/SGST is decided by the underlying cost
-                centre&rsquo;s GST type.
+                Same GST type as the bill being credited (IGST or CGST + SGST), rounded the same way.
+                A bill raised without GST is credited without GST.
               </p>
             </div>
             <Switch checked={applyGst} onCheckedChange={setApplyGst} />
