@@ -259,11 +259,11 @@ export default function BranchCostCentreAttendance() {
    * org-wide scope rows.
    */
   const isHo = roles.some((r) => ["payroll_head", "super_admin", "admin", "payroll"].includes(r));
-  const canFinalize = roles.some((r) => ["payroll_hr", "wfm", "payroll_branch", "super_admin"].includes(r));
+  const canFinalize = roles.some((r) => ["payroll_hr", "wfm", "branch_wfm", "payroll_branch", "super_admin"].includes(r));
   const canBranchApprove = roles.some((r) => ["branch_head", "super_admin"].includes(r));
   const canHoApprove = roles.some((r) => ["payroll_head", "super_admin"].includes(r));
   const canRequestUnlock = roles.some((r) =>
-    ["payroll_hr", "wfm", "payroll_branch", "branch_head", "super_admin"].includes(r)
+    ["payroll_hr", "wfm", "branch_wfm", "payroll_branch", "branch_head", "super_admin"].includes(r)
   );
   // Only the HO Payroll Head can grant an unlock — the whole point of the escalation.
   const canReviewUnlock = roles.some((r) => ["payroll_head", "super_admin"].includes(r));

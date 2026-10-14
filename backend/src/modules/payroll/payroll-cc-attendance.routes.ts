@@ -83,11 +83,11 @@ const SCOPE_OPTIONS = { allowAdminBypass: true, requireScopeForNonAdmin: true };
  */
 const READ_ROLES = [
   "branch_head", "payroll_branch", "payroll_hr", "payroll_head",
-  "super_admin", "admin", "payroll", "wfm", "hr", "finance", "process_manager",
+  "super_admin", "admin", "payroll", "wfm", "branch_wfm", "hr", "finance", "process_manager",
 ] as const;
 
 /** The branch-side makers: Branch Payroll HR and the Branch WFM person, per the owner's ask. */
-const BRANCH_MAKER_ROLES = ["payroll_hr", "wfm", "payroll_branch", "super_admin"] as const;
+const BRANCH_MAKER_ROLES = ["payroll_hr", "wfm", "branch_wfm", "payroll_branch", "super_admin"] as const;
 const BRANCH_APPROVER_ROLES = ["branch_head", "super_admin"] as const;
 const HO_APPROVER_ROLES = ["payroll_head", "super_admin"] as const;
 
@@ -186,7 +186,7 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "branch_wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -206,7 +206,7 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "branch_wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -226,7 +226,7 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "branch_wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -252,7 +252,7 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "branch_wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -284,7 +284,7 @@ payrollCcAttendanceRouter.get(
   requireAuth,
   requireRole(...READ_ROLES),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "branch_wfm", "process_manager"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -340,7 +340,7 @@ payrollCcAttendanceRouter.post(
   "/:branchId/:costCentreId/finalize",
   requireAuth,
   requireRole(...BRANCH_MAKER_ROLES),
-  requireScopedRole(["payroll_hr", "wfm", "payroll_branch"], branchScopeTarget, SCOPE_OPTIONS),
+  requireScopedRole(["payroll_hr", "wfm", "branch_wfm", "payroll_branch"], branchScopeTarget, SCOPE_OPTIONS),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const costCentreId = assertCostCentreId(res, req.params.costCentreId);
@@ -468,7 +468,7 @@ async function scopeSendBackToBranch(
     }
     const ok = await hasScopedAccess(
       userId,
-      ["branch_head", "payroll_head", "payroll_branch", "payroll_hr", "wfm"],
+      ["branch_head", "payroll_head", "payroll_branch", "payroll_hr", "wfm", "branch_wfm"],
       branchScopeTarget(req),
       SCOPE_OPTIONS,
     );
@@ -518,9 +518,9 @@ payrollCcAttendanceRouter.post(
 payrollCcAttendanceRouter.post(
   "/:branchId/:costCentreId/request-unlock",
   requireAuth,
-  requireRole("payroll_hr", "wfm", "payroll_branch", "branch_head", "super_admin"),
+  requireRole("payroll_hr", "wfm", "branch_wfm", "payroll_branch", "branch_head", "super_admin"),
   requireScopedRole(
-    ["payroll_hr", "wfm", "payroll_branch", "branch_head"],
+    ["payroll_hr", "wfm", "branch_wfm", "payroll_branch", "branch_head"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
