@@ -18,7 +18,7 @@ import { GST_STATE_NAMES, normaliseStateCode, stateCodeFromGstin } from "./clien
 
 /** Columns the resolver needs; `cc` = cost_centre_master, `b` = branch_master. */
 export const BILLING_PARTY_SQL = `
-  cc.cost_centre_code, cc.company_name, cc.billing_client_name,
+  cc.cost_centre_code, cc.company_name, cc.billing_client_name, cc.client_name,
   cc.service_tax_no, cc.vendor_gst_no, cc.vendor_gst_state, cc.vendor_state_code, cc.gst_type,
   cc.hsn_code, cc.sac_code,
   cc.bill_to_address1, cc.bill_to_address2, cc.bill_to_address3, cc.bill_to_address4, cc.bill_to_address5,
@@ -98,7 +98,8 @@ export function resolveBillingParty(r: Row): BillingParty {
   if (!sacCode && !str(r.hsn_code)) warnings.push("SAC / HSN code is blank on the cost centre.");
 
   return {
-    clientName: str(r.billing_client_name) || str(r.company_name),
+    // company_name is OUR company; it is only the last resort for the client's name.
+    clientName: str(r.billing_client_name) || str(r.client_name) || str(r.company_name),
     billTo,
     shipTo: shipOwn.length ? shipOwn : billTo,
     clientGstin,

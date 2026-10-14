@@ -6,8 +6,9 @@
  *  - `void`           : request to cancel a proforma/approved invoice. On approval the invoice is
  *                       moved to `rejected` via the SAME code path as a direct reject
  *                       (clientBillingApprovalService.rejectInvoiceInTransaction), which gives
- *                       back provision and PO balances. Blocked while an approved credit note
- *                       or a receipt allocation exists against the invoice.
+ *                       back provision and PO balances. Blocked while an approved or DRAFT
+ *                       credit note or a receipt allocation exists against the invoice, and
+ *                       once the bill has been exported to Tally (raise a credit note instead).
  *  - `status_change`  : request to change the invoice's TYPE/CATEGORY (legacy "invoice type"
  *                       change). On approval `client_invoice.category` is updated.
  *
@@ -55,6 +56,31 @@ async function tableExists(
   return rows.length > 0;
 }
 
+/**
+ * Void is refused once the bill is in Tally, or while a draft credit note waits on it (audit
+ * 2026-10-14). Caller holds the invoice lock.
+ */
+async function assertNoTallyOrDraftCredit(conn: PoolConnection, invoiceId: string): Promise<void> {
+  const [exported] = await conn.execute<RowDataPacket[]>(
+    `SELECT 1 AS present FROM tally_voucher_export WHERE source_type = 'invoice' AND source_id = ? LIMIT 1`,
+    [invoiceId],
+  );
+  if (Array.isArray(exported) && exported.length > 0) {
+    throw clientError(
+      "This bill has already been exported to Tally, so it cannot be voided — raise a credit note instead",
+    );
+  }
+  const [drafts] = await conn.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM client_credit_note WHERE invoice_id = ? AND credit_status = 'draft'`,
+    [invoiceId],
+  );
+  if (Number(drafts[0]?.n ?? 0) > 0) {
+    throw clientError(
+      "A draft credit note is waiting on this bill; reject that credit note first, then void the bill",
+    );
+  }
+}
+
 async function createChangeRequest(
   input: CreateChangeRequestInput,
 ): Promise<{ id: string }> {
@@ -96,6 +122,9 @@ async function createChangeRequest(
     }
     if (invoice.invoice_status === "rejected") {
       throw clientError("The invoice is already rejected/void");
+    }
+    if (input.requestType === "void") {
+      await assertNoTallyOrDraftCredit(conn, input.invoiceId);
     }
     if (
       input.requestType === "status_change" &&
@@ -211,6 +240,7 @@ async function decideChangeRequest(
       }
 
       if (isVoid) {
+        await assertNoTallyOrDraftCredit(conn, invoiceId);
         const [cnRows] = await conn.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS n FROM client_credit_note WHERE invoice_id = ? AND credit_status = 'approved'`,
           [invoiceId],

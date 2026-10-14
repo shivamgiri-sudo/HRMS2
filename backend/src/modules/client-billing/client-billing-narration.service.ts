@@ -9,6 +9,11 @@
  * so tax, grand total, provision draw-down, PO consumption and the bill number are untouched,
  * and an approval already given stays valid. Migrated (I-Spark) and rejected bills are not
  * editable. Every change is written to the invoice audit log.
+ *
+ * Owner decision (audit 2026-10-14): narration stays editable at every stage, but particulars on
+ * an APPROVED bill only until it has gone out — sent to the client (last_sent_at, or a successful
+ * client_invoice_submission) or exported to Tally (tally_voucher_export). After that the client /
+ * Tally hold the printed lines, so particulars are refused (narration still saves).
  */
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
@@ -34,6 +39,24 @@ function clientError(message: string): Error {
 }
 
 const EDITABLE = new Set(["proforma", "approved"]);
+
+type Executor = { execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]> };
+
+/** Why an approved bill's particulars are frozen ("sent to the client" / "exported to Tally"), or null. */
+export async function billHasGoneOut(conn: Executor, invoiceId: string, lastSentAt: unknown): Promise<string | null> {
+  if (lastSentAt) return "sent to the client";
+  const [sent] = await conn.execute(
+    `SELECT 1 AS present FROM client_invoice_submission WHERE invoice_id = ? AND send_status = 'sent' LIMIT 1`,
+    [invoiceId],
+  );
+  if (Array.isArray(sent) && sent.length > 0) return "sent to the client";
+  const [exported] = await conn.execute(
+    `SELECT 1 AS present FROM tally_voucher_export WHERE source_type = 'invoice' AND source_id = ? LIMIT 1`,
+    [invoiceId],
+  );
+  if (Array.isArray(exported) && exported.length > 0) return "exported to Tally";
+  return null;
+}
 const rupees = (p: number) => (p / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 async function updateNarration(input: UpdateNarrationInput) {
@@ -60,13 +83,21 @@ async function updateNarration(input: UpdateNarrationInput) {
   try {
     await conn.beginTransaction();
     const [rows] = await conn.execute<RowDataPacket[]>(
-      `SELECT id, invoice_status, is_migrated, description, total_amount, gst_type FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
+      `SELECT id, invoice_status, is_migrated, description, total_amount, gst_type, last_sent_at FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
       [input.invoiceId],
     );
     const inv = rows[0];
     if (!inv) throw Object.assign(new Error("Invoice not found"), { statusCode: 404 });
     if (Number(inv.is_migrated) === 1) throw clientError("I-Spark (migrated) bills cannot be edited here");
     if (!EDITABLE.has(String(inv.invoice_status))) throw clientError(`A ${inv.invoice_status} invoice cannot be edited`);
+    if (lines && inv.invoice_status === "approved") {
+      const gone = await billHasGoneOut(conn, input.invoiceId, inv.last_sent_at);
+      if (gone) {
+        throw clientError(
+          `Particulars can no longer be changed: this bill has already been ${gone}. Only the narration can still be edited.`,
+        );
+      }
+    }
 
     const changed: string[] = [];
     let lineAmounts: number[] = [];

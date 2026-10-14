@@ -10,7 +10,6 @@
 import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
-import { round2 } from "./client-billing-tax.js";
 
 function clientError(message: string, statusCode = 400): Error {
   return Object.assign(new Error(message), { statusCode });
@@ -34,7 +33,7 @@ async function inTransaction<T>(fn: (conn: PoolConnection) => Promise<T>): Promi
 
 async function lockLiveInvoice(conn: PoolConnection, invoiceId: string) {
   const [rows] = await conn.execute<RowDataPacket[]>(
-    `SELECT id, invoice_status, is_migrated, po_numbers, po_approved FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
+    `SELECT id, invoice_status, is_migrated, po_numbers, po_approved, grn_no, grn_date FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
     [invoiceId],
   );
   const inv = rows[0];
@@ -61,19 +60,37 @@ async function approvePo(invoiceId: string, userId: string) {
   });
 }
 
-async function addGrn(invoiceId: string, input: { grnNo: string; grnDate?: string | null; userId: string }) {
+/**
+ * ADD GRN. The first GRN on a bill is simply recorded. Replacing a GRN that is already there
+ * (audit 2026-10-14 M6) needs a reason of at least 5 characters, and the log keeps before -> after.
+ */
+async function addGrn(invoiceId: string, input: { grnNo: string; grnDate?: string | null; reason?: string | null; userId: string }) {
   const grnNo = String(input.grnNo ?? "").trim();
   if (!grnNo || grnNo.length > 60) throw clientError("GRN number is required (max 60 characters)");
   const grnDate = input.grnDate ? String(input.grnDate) : null;
   if (grnDate && !DATE_RE.test(grnDate)) throw clientError("GRN date must be YYYY-MM-DD");
+  const reason = String(input.reason ?? "").trim();
   return inTransaction(async (conn) => {
-    await lockLiveInvoice(conn, invoiceId);
+    const inv = await lockLiveInvoice(conn, invoiceId);
+    const label = (no: unknown, date: unknown) => `${String(no ?? "").trim() || "—"}${date ? ` (${String(date).slice(0, 10)})` : ""}`;
+    const before = String(inv.grn_no ?? "").trim();
+    const replacing = before !== "";
+    if (replacing) {
+      if (before === grnNo && String(inv.grn_date ?? "").slice(0, 10) === String(grnDate ?? "")) {
+        return { id: invoiceId, grnNo, grnDate, changed: false };
+      }
+      if (reason.length < 5) {
+        throw clientError(`This bill already has GRN ${label(inv.grn_no, inv.grn_date)} — give a reason (at least 5 characters) to change it`);
+      }
+    }
     await conn.execute(`UPDATE client_invoice SET grn_no = ?, grn_date = ? WHERE id = ?`, [grnNo, grnDate, invoiceId]);
     await conn.execute(
-      `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id, reason) VALUES (?, ?, 'grn_added', ?, ?)`,
-      [randomUUID(), invoiceId, input.userId, `${grnNo}${grnDate ? ` (${grnDate})` : ""}`],
+      `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id, reason) VALUES (?, ?, ?, ?, ?)`,
+      replacing
+        ? [randomUUID(), invoiceId, "grn_changed", input.userId, `${label(inv.grn_no, inv.grn_date)} → ${label(grnNo, grnDate)}: ${reason}`.slice(0, 2000)]
+        : [randomUUID(), invoiceId, "grn_added", input.userId, label(grnNo, grnDate)],
     );
-    return { id: invoiceId, grnNo, grnDate };
+    return { id: invoiceId, grnNo, grnDate, changed: true };
   });
 }
 

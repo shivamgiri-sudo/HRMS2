@@ -10,19 +10,25 @@
  *    on it, and the number only while nothing references it. Every create / edit is audited.
  *  - The PO report shows amount, drawn, balance, utilisation and period status; each PO opens
  *    every invoice on it (drawn at billing, plus proformas still waiting that quote it).
+ *  - Maker-checker (audit 2026-10-14): a NEW PO and any amount INCREASE start 'pending' and must be
+ *    approved by someone other than the person who created / edited it. Pending and rejected POs
+ *    are not offered to invoices and fail the coverage check. An edit that brings the amount back
+ *    within the last approved amount returns the PO to 'approved' without a new approval.
  * Invoices are governed by client-billing-po.ts (create / edit) and approveInvoice (under locks).
  */
 import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
+import { fromPaise, toPaise as taxToPaise } from "./client-billing-tax.js";
 
 function clientError(message: string, statusCode = 400): Error {
   return Object.assign(new Error(message), { statusCode });
 }
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const toPaise = (n: unknown) => Math.round(Number(n ?? 0) * 100);
-const rupees = (p: number) => Math.round(p) / 100;
+// Paise-safe (L7): the module's single rounding rule.
+const toPaise = (n: unknown) => taxToPaise(Number(n ?? 0) || 0);
+const rupees = (p: number) => fromPaise(Math.round(p));
 const fmt = (p: number) => (p / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export interface PoLineInput { particulars: string; qty: number; rate: number }
@@ -49,11 +55,11 @@ export function normaliseLines(lines: unknown): Array<PoLineInput & { amountPais
     if (particulars.length > 255) throw clientError(`Particular ${i + 1}: at most 255 characters`);
     if (!Number.isFinite(qty) || qty <= 0) throw clientError(`Particular ${i + 1}: qty must be greater than zero`);
     if (!Number.isFinite(rate) || rate < 0) throw clientError(`Particular ${i + 1}: rate must be zero or more`);
-    const twoDecimals = (n: number) => Math.abs(Math.round(n * 100) - n * 100) < 1e-6;
+    const twoDecimals = (n: number) => Math.abs(taxToPaise(n) - n * 100) < 1e-6;
     if (!twoDecimals(qty) || !twoDecimals(rate)) {
       throw clientError(`Particular ${i + 1}: qty and rate take at most 2 decimals`);
     }
-    return { particulars, qty, rate, amountPaise: Math.round(qty * rate * 100) };
+    return { particulars, qty, rate, amountPaise: taxToPaise(qty * rate) };
   });
 }
 
@@ -126,14 +132,15 @@ async function createPo(input: CreatePoInput) {
     const amount = rupees(totalPaise);
     await conn.execute(
       `INSERT INTO client_po_number (id, cost_centre_id, po_number, period_from, period_to, total_amount, balance_amount,
-         attachment_path, attachment_name, attachment_mime, remarks, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         attachment_path, attachment_name, attachment_mime, remarks, created_by,
+         approval_status, approved_amount, approval_requested_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)`,
       [id, input.costCentreId, poNumber, input.periodFrom, input.periodTo, amount, amount,
-        doc.path, doc.name, doc.mime, remarks, input.userId],
+        doc.path, doc.name, doc.mime, remarks, input.userId, input.userId],
     );
     await writeLines(conn, id, lines);
-    await audit(conn, id, "created", input.userId, `PO ${poNumber}, ${input.periodFrom} to ${input.periodTo}, ₹${fmt(totalPaise)}, ${lines.length} particular(s)`);
-    return { id, poNumber, amount };
+    await audit(conn, id, "created", input.userId, `PO ${poNumber}, ${input.periodFrom} to ${input.periodTo}, ₹${fmt(totalPaise)}, ${lines.length} particular(s) — waiting for approval`);
+    return { id, poNumber, amount, approvalStatus: "pending" as const };
   });
 }
 
@@ -210,18 +217,74 @@ async function updatePo(input: UpdatePoInput) {
     note("remarks", po.remarks, remarks);
     const att = input.attachment ?? null;
     if (att) note("document", po.attachment_name, att.name);
-    if (!changes.length) return { id: input.id, changed: [] as string[] };
+    if (!changes.length) return { id: input.id, changed: [] as string[], approvalStatus: String(po.approval_status ?? "approved") };
 
+    const next = nextApprovalState(po, totalPaise, input.userId);
+    if (next.status !== String(po.approval_status ?? "approved")) changes.push(`approval: ${po.approval_status ?? "approved"} → ${next.status}`);
     await conn.execute(
       `UPDATE client_po_number SET po_number = ?, period_from = ?, period_to = ?, total_amount = ?, balance_amount = ?,
          remarks = ?, attachment_path = COALESCE(?, attachment_path), attachment_name = COALESCE(?, attachment_name),
-         attachment_mime = COALESCE(?, attachment_mime), updated_by = ?
+         attachment_mime = COALESCE(?, attachment_mime), updated_by = ?,
+         approval_status = ?, approval_requested_by = ?
        WHERE id = ?`,
       [poNumber, from, to, rupees(totalPaise), rupees(totalPaise - drawnPaise), remarks,
-        att?.path ?? null, att?.name ?? null, att?.mime ?? null, input.userId, input.id],
+        att?.path ?? null, att?.name ?? null, att?.mime ?? null, input.userId,
+        next.status, next.requestedBy, input.id],
     );
     await audit(conn, input.id, "edited", input.userId, changes.join("; "));
-    return { id: input.id, changed: changes };
+    return { id: input.id, changed: changes, approvalStatus: next.status };
+  });
+}
+
+/** Last approved PO amount in paise; legacy rows (approved_amount NULL) count their current amount. */
+function approvedPaise(po: RowDataPacket): number {
+  if (po.approved_amount === null || po.approved_amount === undefined) {
+    return String(po.approval_status ?? "approved") === "approved" ? toPaise(po.total_amount) : 0;
+  }
+  return toPaise(po.approved_amount);
+}
+
+/**
+ * Approval state after an edit that leaves the PO at `newTotalPaise`:
+ *  - above the last approved amount -> pending (the editor becomes the requester);
+ *  - still pending / rejected and within an approved amount > 0 -> approved again;
+ *  - pending (never approved) stays pending, with the editor as requester;
+ *  - otherwise unchanged.
+ */
+export function nextApprovalState(po: RowDataPacket, newTotalPaise: number, editorId: string): { status: string; requestedBy: string | null } {
+  const current = String(po.approval_status ?? "approved");
+  const approved = approvedPaise(po);
+  if (newTotalPaise > approved) return { status: "pending", requestedBy: editorId };
+  if (current !== "approved") {
+    if (approved > 0) return { status: "approved", requestedBy: null };
+    return { status: "pending", requestedBy: editorId };
+  }
+  return { status: "approved", requestedBy: po.approval_requested_by ? String(po.approval_requested_by) : null };
+}
+
+/** Approve / reject a pending PO (or a pending amount increase). The creator / editor cannot decide it. */
+async function decidePo(id: string, decision: "approve" | "reject", userId: string, note?: string | null) {
+  const why = String(note ?? "").trim();
+  if (decision === "reject" && why.length < 5) throw clientError("A reason of at least 5 characters is required to reject a PO");
+  return inTransaction(async (conn) => {
+    const [rows] = await conn.execute<RowDataPacket[]>(`SELECT * FROM client_po_number WHERE id = ? LIMIT 1 FOR UPDATE`, [id]);
+    const po = rows[0];
+    if (!po) throw clientError("PO not found", 404);
+    if (String(po.approval_status ?? "approved") !== "pending") {
+      throw clientError(`PO ${po.po_number} is ${po.approval_status ?? "approved"} — only a pending PO can be ${decision === "approve" ? "approved" : "rejected"}`);
+    }
+    const maker = String(po.approval_requested_by ?? "") === String(userId)
+      || (approvedPaise(po) === 0 && String(po.created_by ?? "") === String(userId));
+    if (maker) throw clientError(`You created or changed this PO — another approver must ${decision} it`, 403);
+    const status = decision === "approve" ? "approved" : "rejected";
+    await conn.execute(
+      `UPDATE client_po_number SET approval_status = ?, approved_amount = IF(? = 'approved', total_amount, approved_amount),
+         approval_decided_by = ?, approval_decided_at = NOW(), approval_note = ?
+       WHERE id = ?`,
+      [status, status, userId, why ? why.slice(0, 500) : null, id],
+    );
+    await audit(conn, id, status, userId, `${status === "approved" ? "Approved" : "Rejected"} at ₹${fmt(toPaise(po.total_amount))}${why ? `: ${why}` : ""}`);
+    return { id, approvalStatus: status };
   });
 }
 
@@ -248,7 +311,8 @@ async function report(q: PoReportQuery) {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT po.id, po.po_number, po.period_from, po.period_to, po.total_amount, po.balance_amount, po.remarks,
             po.attachment_name, po.created_at, po.cost_centre_id, cc.cost_centre_code, cc.branch_id, b.branch_name,
-            COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name) AS client_name,
+            po.approval_status, po.approved_amount, po.approval_requested_by, po.created_by,
+            COALESCE(NULLIF(cc.billing_client_name, ''), NULLIF(cc.client_name, ''), cc.company_name) AS client_name,
             (SELECT COUNT(*) FROM client_po_line l WHERE l.po_id = po.id) AS line_count,
             (SELECT COUNT(DISTINCT pp.invoice_id) FROM client_po_particular pp JOIN client_invoice ci ON ci.id = pp.invoice_id
               WHERE pp.po_id = po.id AND ci.invoice_status = 'approved') AS bill_count
@@ -273,6 +337,8 @@ async function report(q: PoReportQuery) {
       utilisation: total > 0 ? Math.round(((total - balance) / total) * 1000) / 10 : 0,
       status, bills: Number(r.bill_count ?? 0), lines: Number(r.line_count ?? 0),
       hasDocument: Boolean(r.attachment_name), remarks: r.remarks ? String(r.remarks) : null,
+      approvalStatus: String(r.approval_status ?? "approved"),
+      approvalRequestedBy: r.approval_requested_by ? String(r.approval_requested_by) : (String(r.approval_status ?? "approved") === "pending" && r.created_by ? String(r.created_by) : null),
     };
   });
   return q.status ? out.filter((r) => r.status === q.status) : out;
@@ -281,7 +347,7 @@ async function report(q: PoReportQuery) {
 /** One PO: its particulars, every invoice on it, and its edit history. */
 async function detail(id: string) {
   const [[po]] = await db.query<RowDataPacket[]>(
-    `SELECT po.*, cc.cost_centre_code, cc.branch_id, b.branch_name, COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name) AS client_name
+    `SELECT po.*, cc.cost_centre_code, cc.branch_id, b.branch_name, COALESCE(NULLIF(cc.billing_client_name, ''), NULLIF(cc.client_name, ''), cc.company_name) AS client_name
      FROM client_po_number po JOIN cost_centre_master cc ON cc.id = po.cost_centre_id LEFT JOIN branch_master b ON b.id = cc.branch_id
      WHERE po.id = ?`,
     [id],
@@ -324,6 +390,10 @@ async function detail(id: string) {
       amount: rupees(toPaise(po.total_amount)), balance: rupees(toPaise(po.balance_amount)),
       drawn: rupees(toPaise(po.total_amount) - toPaise(po.balance_amount)), remarks: po.remarks ? String(po.remarks) : null,
       document: po.attachment_name ? { name: String(po.attachment_name), mime: String(po.attachment_mime ?? "") } : null,
+      approvalStatus: String(po.approval_status ?? "approved"),
+      approvedAmount: po.approved_amount === null || po.approved_amount === undefined ? null : rupees(toPaise(po.approved_amount)),
+      approvalRequestedBy: po.approval_requested_by ? String(po.approval_requested_by) : null,
+      approvalNote: po.approval_note ? String(po.approval_note) : null,
     },
     lines: lines.map((l) => ({ lineNo: Number(l.line_no), particulars: String(l.particulars), qty: Number(l.qty), rate: Number(l.rate), amount: Number(l.amount) })),
     invoices: [...drawn.map((r) => inv(r, "billed")), ...pending.map((r) => inv(r, "waiting"))],
@@ -346,4 +416,4 @@ async function branchOf(id: string): Promise<string | null | undefined> {
   return r ? (r.branch_id ? String(r.branch_id) : null) : undefined;
 }
 
-export const clientPoMasterService = { createPo, updatePo, report, detail, attachmentOf, branchOf };
+export const clientPoMasterService = { createPo, updatePo, decidePo, report, detail, attachmentOf, branchOf };

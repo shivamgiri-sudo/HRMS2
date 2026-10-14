@@ -63,6 +63,9 @@ vi.mock("../client-billing-po.js", () => ({
 vi.mock("../../../db/mysql.js", () => ({
   db: { execute: m.execute, query: m.execute },
 }));
+vi.mock("../../../shared/branchDecisionScope.js", () => ({
+  loadBranchPolicy: async () => ({ orgWide: true, ownBranchId: null, allows: () => true }),
+}));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
     req.authUser = {

@@ -127,4 +127,45 @@ describe("provision maker-checker", () => {
     expect(conn.execute.mock.calls[1][1]).toEqual([1500, 1500, "more seats", "p-1"]);
     expect(String(conn.execute.mock.calls[2][0])).toMatch(/edit_amount = NULL/);
   });
+
+  it("H5 maker-checker: the creator neither approves nor rejects (403); approve / reject are audited", async () => {
+    const pending = { id: "p-1", provision_status: "pending", created_by: "maker" };
+    conn.execute.mockResolvedValueOnce([[pending], []]);
+    await expect(svc.approveProvision("p-1", "maker")).rejects.toMatchObject({ statusCode: 403, message: expect.stringMatching(/another approver must approve/) });
+    conn.execute.mockReset();
+    conn.execute.mockResolvedValueOnce([[pending], []]);
+    await expect(svc.rejectProvision("p-1", "wrong month", "maker")).rejects.toMatchObject({ statusCode: 403 });
+    conn.execute.mockReset();
+    conn.execute.mockResolvedValueOnce([[pending], []]).mockResolvedValue([{}, []]);
+    await svc.approveProvision("p-1", "checker");
+    expect(conn.execute.mock.calls[2][1]).toEqual([expect.any(String), "p-1", "approved", "checker", null]);
+  });
+
+  it("H5: reject writes rejected_by / rejected_at and leaves approved_by alone", async () => {
+    conn.execute.mockResolvedValueOnce([[{ id: "p-1", provision_status: "pending", created_by: "maker" }], []]).mockResolvedValue([{}, []]);
+    await svc.rejectProvision("p-1", "wrong month", "checker");
+    const upd = conn.execute.mock.calls[1];
+    expect(String(upd[0])).toMatch(/rejected_by = \?, rejected_at = NOW\(\)/);
+    expect(String(upd[0])).not.toMatch(/approved_by/);
+    expect(upd[1]).toEqual(["wrong month", "checker", "p-1"]);
+    expect(conn.execute.mock.calls[2][1]).toEqual([expect.any(String), "p-1", "rejected", "checker", "wrong month"]);
+  });
+
+  it("audits edits, edit requests and edit decisions", async () => {
+    conn.execute.mockResolvedValueOnce([[{ id: "p-1", provision_status: "approved", provision_amount: 1000, provision_balance: 400, edit_requested_at: null }], []]).mockResolvedValue([{}, []]);
+    await svc.updateProvision({ id: "p-1", amount: 1500, userId: "maker" });
+    expect(conn.execute.mock.calls.find((c) => String(c[0]).includes("client_provision_audit"))?.[1]).toEqual([expect.any(String), "p-1", "edit_requested", "maker", "1000 → 1500"]);
+    conn.execute.mockReset();
+    conn.execute.mockResolvedValueOnce([[{ id: "p-1", provision_status: "approved", provision_amount: 1000, provision_balance: 400, edit_amount: 1500, edit_requested_by: "maker", edit_requested_at: "x" }], []]).mockResolvedValue([{}, []]);
+    await svc.decideProvisionEdit("p-1", "decline", "checker");
+    expect(conn.execute.mock.calls.find((c) => String(c[0]).includes("client_provision_audit"))?.[1]).toEqual([expect.any(String), "p-1", "edit_declined", "checker", "1000 → 1500"]);
+  });
+
+  it("upload: a branch-scoped uploader cannot create provisions for another branch's cost centre", async () => {
+    getConnection.mockClear();
+    poolExecute.mockResolvedValueOnce([[{ id: "cc-9", branch_id: "b-other" }], []]);
+    const r = await svc.uploadProvisions([{ costCentreCode: "CC9", financeYear: "2026-27", monthLabel: "Sep-26", amount: 10 }], "u", ["b-mine"]);
+    expect(r).toEqual([{ row: 1, costCentreCode: "CC9", ok: false, error: "cost centre CC9 is outside your branch" }]);
+    expect(getConnection).not.toHaveBeenCalled();
+  });
 });

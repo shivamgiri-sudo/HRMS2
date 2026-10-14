@@ -7,8 +7,9 @@
  *   MODE=apply CONFIRM=raise-billing-counters   writes, inside one transaction.
  *
  * Scopes match client-billing-numbering.service.ts:
- *   bill:     `${state_code}|${company_name}|${finance_year}`  (legacy MAX(BillNoChange) per
- *             state_code + cost_company_name for that FY)
+ *   bill:     `${state_code}|${normalised company}|${finance_year}` (counterScopeKey: company lower
+ *             case without spaces / dots / commas; legacy MAX(BillNoChange) per state_code +
+ *             cost_company_name for that FY, spellings of one company folded together with MAX)
  *   proforma: `GLOBAL` (legacy proforma numbers share one counter across states: PI/09 and
  *             PI/24 interleave up to bill_no_master's value)
  * Run this at go-live, after I-Spark stops issuing numbers; I-Spark keeps counting until then.
@@ -17,6 +18,7 @@ import "dotenv/config";
 import type { RowDataPacket } from "mysql2";
 import { billQuery, closeBillPool } from "../src/db/billDb.js";
 import { db } from "../src/db/mysql.js";
+import { counterScopeKey } from "../src/modules/client-billing/client-billing-numbering.service.js";
 
 const MODE = (process.env.MODE ?? "dry-run").trim();
 const FINANCE_YEAR = (process.env.FINANCE_YEAR ?? "2026-27").trim();
@@ -47,10 +49,13 @@ async function main() {
   const current = new Map(seqRows.map((r) => [`${r.kind}::${r.scope_key}`, Number(r.v)]));
 
   const plans: Plan[] = [];
+  const legacyByKey = new Map<string, number>();
   for (const r of legacyBills) {
-    const scopeKey = `${r.state_code}|${r.company}|${FINANCE_YEAR}`;
+    const scopeKey = counterScopeKey(String(r.state_code), String(r.company), FINANCE_YEAR);
+    legacyByKey.set(scopeKey, Math.max(legacyByKey.get(scopeKey) ?? 0, Number(r.max_idx ?? 0)));
+  }
+  for (const [scopeKey, legacy] of legacyByKey) {
     const hrms = current.get(`bill::${scopeKey}`) ?? null;
-    const legacy = Number(r.max_idx ?? 0);
     plans.push({ kind: "bill", scopeKey, hrms, legacy, target: Math.max(hrms ?? 0, legacy) });
   }
   const piLegacy = Number(legacyPi?.max_pi ?? 0);

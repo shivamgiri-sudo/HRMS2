@@ -2,12 +2,12 @@ import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { clientBillingNumberingService } from "./client-billing-numbering.service.js";
+import { normaliseCompanyKey, toPaise } from "./client-billing-tax.js";
 import { parsePoNumbers, validatePoCoverage, type PoRow } from "./client-billing-po.js";
 import { creditDays } from "./client-billing-receipt.service.js";
 
 export interface ApproveInvoiceInput {
   invoiceId: string;
-  poNumbers?: string[];
   userId: string;
 }
 
@@ -17,8 +17,21 @@ export interface ApproveInvoiceResult {
   invoiceStatus: "approved";
 }
 
-function clientError(message: string): Error {
-  return Object.assign(new Error(message), { statusCode: 400 });
+function clientError(message: string, statusCode = 400): Error {
+  return Object.assign(new Error(message), { statusCode });
+}
+
+/** Owner rule (audit 2026-10-14 C2): whoever created a proforma never approves it, at either step. */
+export const MAKER_CHECKER_MESSAGE = "You created this proforma — another approver must approve it";
+export function assertNotMaker(createdBy: unknown, userId: string): void {
+  if (createdBy && String(createdBy) === String(userId)) throw clientError(MAKER_CHECKER_MESSAGE, 403);
+}
+
+/** H6: a bill needs a positive taxable total (at least one charge line outweighing deductions). */
+export function assertPositiveTaxable(totalAmount: unknown): void {
+  if (!(toPaise(Number(totalAmount ?? 0)) > 0)) {
+    throw clientError("The taxable total must be greater than zero — add at least one charge line");
+  }
 }
 
 export interface ApproveProformaResult {
@@ -36,12 +49,15 @@ async function approveProforma(input: { invoiceId: string; userId: string }): Pr
   try {
     await conn.beginTransaction();
     const [rows] = await conn.execute<RowDataPacket[]>(
-      `SELECT id, invoice_status, is_migrated, proforma_approved_at
+      `SELECT id, invoice_status, is_migrated, proforma_approved_at, created_by, total_amount
        FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
       [input.invoiceId]
     );
     const invoice = rows[0] as
-      | { id: string; invoice_status: string; is_migrated: number; proforma_approved_at: Date | string | null }
+      | {
+          id: string; invoice_status: string; is_migrated: number; proforma_approved_at: Date | string | null;
+          created_by?: string | null; total_amount?: number | string | null;
+        }
       | undefined;
     if (!invoice) throw clientError(`Invoice ${input.invoiceId} not found`);
     if (invoice.is_migrated) {
@@ -53,6 +69,8 @@ async function approveProforma(input: { invoiceId: string; userId: string }): Pr
     if (invoice.proforma_approved_at) {
       throw clientError(`Proforma ${input.invoiceId} is already approved — it is waiting in Invoice Approval`);
     }
+    assertNotMaker(invoice.created_by, input.userId);
+    assertPositiveTaxable(invoice.total_amount);
     await conn.execute(
       `UPDATE client_invoice SET proforma_approved_by = ?, proforma_approved_at = NOW() WHERE id = ?`,
       [input.userId, input.invoiceId]
@@ -73,17 +91,13 @@ async function approveProforma(input: { invoiceId: string; userId: string }): Pr
 
 /** Step 2 of 2 — legacy "Invoice Approval": mints the bill number and consumes PO balance. */
 async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoiceResult> {
-  if (input.poNumbers && input.poNumbers.length > 4) {
-    throw clientError("Cannot attach more than 4 PO numbers to a single invoice");
-  }
-
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
     const [invoiceRows] = await conn.execute<RowDataPacket[]>(
       `SELECT id, invoice_status, cost_centre_id, finance_year, grand_total, is_migrated,
-              proforma_approved_at, po_numbers, invoice_date
+              proforma_approved_at, po_numbers, invoice_date, created_by, total_amount
        FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
       [input.invoiceId]
     );
@@ -91,7 +105,7 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
       | {
           id: string; invoice_status: string; cost_centre_id: string; finance_year: string; grand_total: number;
           is_migrated: number; proforma_approved_at: Date | string | null; po_numbers: string | null;
-          invoice_date: string;
+          invoice_date: string; created_by?: string | null; total_amount?: number | string | null;
         }
       | undefined;
     if (!invoice) {
@@ -110,11 +124,12 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
       throw clientError(`Proforma ${input.invoiceId} must be approved first (View & Approve Proforma) before the bill number is generated`);
     }
 
-    // POs typed on the proforma are stored on the row; the page's Approve button sends none,
-    // so fall back to them — otherwise their balance was never consumed.
-    const poNumbers = input.poNumbers && input.poNumbers.length > 0
-      ? input.poNumbers
-      : parsePoNumbers(invoice.po_numbers);
+    assertNotMaker(invoice.created_by, input.userId);
+    assertPositiveTaxable(invoice.total_amount);
+
+    // H10: always the PO numbers stored on the proforma (validated at create / edit); a request can
+    // no longer swap in different POs at approval time.
+    const poNumbers = parsePoNumbers(invoice.po_numbers);
     if (poNumbers.length > 4) {
       throw clientError("Cannot attach more than 4 PO numbers to a single invoice");
     }
@@ -123,7 +138,7 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     if (poNumbers.length > 0) {
       const placeholders = poNumbers.map(() => "?").join(", ");
       const [rows] = await conn.execute<RowDataPacket[]>(
-        `SELECT id, po_number, period_from, period_to, balance_amount FROM client_po_number
+        `SELECT id, po_number, period_from, period_to, balance_amount, approval_status FROM client_po_number
          WHERE po_number IN (${placeholders}) AND cost_centre_id = ? FOR UPDATE`,
         [...poNumbers, invoice.cost_centre_id]
       );
@@ -155,6 +170,22 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     const billNo = await clientBillingNumberingService.mintBillNumber(
       costCentre.stateCode, costCentre.companyName, invoice.finance_year, conn
     );
+    // H11: bill_no cannot carry a UNIQUE index (I-Spark history has duplicates), so refuse a number
+    // another live bill of the same company already carries; throwing rolls the counter back too.
+    const [dupRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT ci.id FROM client_invoice ci
+       JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+       WHERE ci.bill_no = ? AND ci.id <> ? AND ci.invoice_status <> 'rejected'
+         AND LOWER(REPLACE(REPLACE(REPLACE(COALESCE(cc.company_name, ''), ' ', ''), '.', ''), ',', '')) = ?
+       LIMIT 1`,
+      [billNo, input.invoiceId, normaliseCompanyKey(costCentre.companyName)]
+    );
+    if (Array.isArray(dupRows) && dupRows.length > 0) {
+      throw clientError(
+        `Bill number ${billNo} is already used by another bill of this company — the bill counter needs re-seeding (scripts/client-billing-sync-counters.ts). Nothing was approved.`,
+        409,
+      );
+    }
 
     if (poRows.length > 0) {
       let remaining = Number(invoice.grand_total);

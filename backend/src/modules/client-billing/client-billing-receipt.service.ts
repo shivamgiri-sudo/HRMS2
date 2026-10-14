@@ -17,12 +17,17 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { paymentVoucherService } from "../finance/payment-voucher.service.js";
 import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
+import { fromPaise as taxFromPaise, toPaise as taxToPaise } from "./client-billing-tax.js";
 
 function clientError(message: string, statusCode = 400): Error {
   return Object.assign(new Error(message), { statusCode });
 }
-const toPaise = (n: unknown) => Math.round(Number(n ?? 0) * 100);
-const fromPaise = (p: number) => Math.round(p) / 100;
+// Paise-safe (L7): the module's single rounding rule, robust to 1.005 * 100 = 100.4999….
+const toPaise = (n: unknown) => taxToPaise(Number(String(n ?? 0).replace(/,/g, "")) || 0);
+const fromPaise = (p: number) => taxFromPaise(Math.round(p));
+
+/** H9: TDS on one bill may not exceed 10% of that bill's taxable value. */
+export const MAX_TDS_RATE = 0.1;
 
 /** Rounding slack for "fully paid": half a rupee, as I-Spark bills are whole rupees. */
 export const PAID_TOLERANCE = 0.5;
@@ -61,7 +66,8 @@ export const CREDIT_NOTE_SQL = `
   SELECT invoice_id, SUM(grand_total) AS credited FROM client_credit_note
   WHERE credit_status = 'approved' GROUP BY invoice_id`;
 
-export const CLIENT_NAME_SQL = `COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name)`;
+/** Client name: billing name, then the cost centre's client_name, and only last our company_name. */
+export const CLIENT_NAME_SQL = `COALESCE(NULLIF(cc.billing_client_name, ''), NULLIF(cc.client_name, ''), cc.company_name)`;
 
 /** The finance year a date falls in (Apr-Mar), e.g. 2026-10-14 -> 2026-27. */
 export function financeYearOf(dateIso: string): string {
@@ -143,7 +149,7 @@ export interface CreateReceiptInput {
 async function lockBills(conn: PoolConnection, invoiceIds: string[]) {
   const ids = [...new Set(invoiceIds)].sort();
   const [rows] = await conn.query<RowDataPacket[]>(
-    `SELECT ci.id, ci.bill_no, ci.invoice_status, ci.is_migrated, ci.grand_total, ci.cost_centre_id,
+    `SELECT ci.id, ci.bill_no, ci.invoice_status, ci.is_migrated, ci.grand_total, ci.total_amount, ci.cost_centre_id,
             cc.company_name, cc.branch_id, ${CLIENT_NAME_SQL} AS client_name, (${ownCompanyCostCentreSql("cc")}) AS is_mas
      FROM client_invoice ci JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
      WHERE ci.id IN (${ids.map(() => "?").join(",")})
@@ -168,6 +174,7 @@ async function lockBills(conn: PoolConnection, invoiceIds: string[]) {
       is_migrated: Number(r.is_migrated), client_name: String(r.client_name), company_name: r.company_name as string | null,
       is_mas: Number(r.is_mas) === 1,
       branch_id: (r.branch_id as string | null) ?? null,
+      taxablePaise: toPaise(r.total_amount),
       outstandingPaise: toPaise(r.grand_total) - toPaise(s?.settled) - toPaise(s?.credited),
     };
   });
@@ -236,6 +243,10 @@ async function createReceipt(input: CreateReceiptInput) {
     if (l.received < 0 || l.tds < 0 || l.deduction < 0) throw clientError("Amounts cannot be negative");
     if (l.received + l.tds + l.deduction === 0) throw clientError("Every allocated bill needs an amount");
   }
+  const remarks = String(input.remarks ?? "").trim();
+  if (lines.some((l) => l.deduction > 0) && remarks.length < 5) {
+    throw clientError("A deduction needs a reason — write it in the remarks (at least 5 characters)");
+  }
   const receivedPaise = lines.reduce((s, l) => s + l.received, 0);
   const tdsPaise = lines.reduce((s, l) => s + l.tds, 0);
   const deductionPaise = lines.reduce((s, l) => s + l.deduction, 0);
@@ -270,6 +281,11 @@ async function createReceipt(input: CreateReceiptInput) {
     }
     for (const l of lines) {
       const b = byId.get(l.invoiceId)!;
+      if (l.tds > 0 && l.tds * 10 > b.taxablePaise) {
+        throw clientError(
+          `${b.bill_no}: TDS ${fromPaise(l.tds)} is more than 10% of the bill's taxable value ${fromPaise(b.taxablePaise)} — check the TDS amount`,
+        );
+      }
       const settle = l.received + l.tds + l.deduction;
       if (settle > b.outstandingPaise) {
         throw clientError(`${b.bill_no}: ${fromPaise(settle)} is more than its outstanding ${fromPaise(b.outstandingPaise)}`);
@@ -287,13 +303,18 @@ async function createReceipt(input: CreateReceiptInput) {
       [receiptId, receiptNo, financeYear, input.receiptDate, clientName, bills[0].company_name ?? null,
         branches.size === 1 ? (bills[0].branch_id ?? null) : null, fromPaise(receivedPaise), fromPaise(tdsPaise),
         fromPaise(deductionPaise), input.paymentMode, String(input.referenceNo ?? "").trim().slice(0, 100) || null,
-        input.bankAccountId, String(input.remarks ?? "").trim().slice(0, 500) || null, input.userId],
+        input.bankAccountId, remarks.slice(0, 500) || null, input.userId],
     );
     for (const l of lines) {
       await conn.execute(
         `INSERT INTO client_receipt_allocation (id, receipt_id, invoice_id, received_amount, tds_amount, deduction_amount)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [randomUUID(), receiptId, l.invoiceId, fromPaise(l.received), fromPaise(l.tds), fromPaise(l.deduction)],
+      );
+      await conn.execute(
+        `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id, reason) VALUES (?, ?, 'receipt_recorded', ?, ?)`,
+        [randomUUID(), l.invoiceId, input.userId,
+          `${receiptNo}: received ${fromPaise(l.received)}, TDS ${fromPaise(l.tds)}, deduction ${fromPaise(l.deduction)}${l.deduction > 0 ? ` (${remarks})` : ""}`.slice(0, 2000)],
       );
     }
     await refreshPaymentStatus(conn, lines.map((l) => l.invoiceId));
@@ -341,11 +362,24 @@ async function voidInternal(receiptId: string, reason: string, userId: string) {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-    await conn.execute(
+    const [upd] = await conn.execute(
       `UPDATE client_receipt SET status = 'void', void_reason = ?, voided_by = ?, voided_at = NOW() WHERE id = ? AND status = 'recorded'`,
       [reason, userId, receiptId],
     );
-    const [alloc] = await conn.query<RowDataPacket[]>(`SELECT invoice_id FROM client_receipt_allocation WHERE receipt_id = ?`, [receiptId]);
+    const [alloc] = await conn.query<RowDataPacket[]>(
+      `SELECT a.invoice_id, a.received_amount, a.tds_amount, a.deduction_amount, r.receipt_no
+       FROM client_receipt_allocation a JOIN client_receipt r ON r.id = a.receipt_id WHERE a.receipt_id = ?`,
+      [receiptId],
+    );
+    if (Number((upd as { affectedRows?: number })?.affectedRows ?? 0) > 0) {
+      for (const a of alloc) {
+        await conn.execute(
+          `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id, reason) VALUES (?, ?, 'receipt_voided', ?, ?)`,
+          [randomUUID(), String(a.invoice_id), userId,
+            `${a.receipt_no ?? receiptId}: received ${Number(a.received_amount)}, TDS ${Number(a.tds_amount)}, deduction ${Number(a.deduction_amount)} — ${reason}`.slice(0, 2000)],
+        );
+      }
+    }
     await refreshPaymentStatus(conn, alloc.map((a) => String(a.invoice_id)));
     await conn.commit();
   } catch (e) {

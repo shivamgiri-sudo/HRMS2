@@ -9,7 +9,9 @@
  *   2. every PO number must exist for the invoice's cost centre;
  *   3. the invoice date must fall inside that PO's [period_from, period_to];
  *   4. the invoice grand total must NOT exceed the combined remaining balance of the POs
- *      that cover it (block only when total > balance).
+ *      that cover it (block only when total > balance);
+ *   5. a PO still waiting for approval in the PO master (new, or amount increased) or rejected
+ *      there cannot be used (maker-checker, audit 2026-10-14).
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -24,6 +26,8 @@ export interface PoRow {
   period_from?: string | null;
   period_to?: string | null;
   balance_amount: number | string;
+  /** PO master approval; absent = approved (callers that do not select it). */
+  approval_status?: string | null;
 }
 
 export interface PoCoverageInput {
@@ -115,6 +119,15 @@ export function validatePoCoverage(input: PoCoverageInput): PoCoverageResult {
   const usableRows: PoRow[] = [];
   const outOfPeriod = new Set<string>();
   for (const row of input.poRows) {
+    const approval = row.approval_status ?? "approved";
+    if (approval !== "approved") {
+      errors.push(
+        approval === "pending"
+          ? `PO Number ${row.po_number ?? row.id} is waiting for approval in the PO master and cannot be used yet`
+          : `PO Number ${row.po_number ?? row.id} was rejected in the PO master and cannot be used`,
+      );
+      continue;
+    }
     const from = dateOnly(row.period_from);
     const to = dateOnly(row.period_to);
     if (invoiceDate && from && to && (invoiceDate < from || invoiceDate > to)) {
@@ -165,7 +178,7 @@ export async function checkPoCoverage(
   }
   const placeholders = poNumbers.map(() => "?").join(", ");
   const [rows] = await executor.execute<RowDataPacket[]>(
-    `SELECT id, po_number, period_from, period_to, balance_amount
+    `SELECT id, po_number, period_from, period_to, balance_amount, approval_status
      FROM client_po_number
      WHERE cost_centre_id = ? AND po_number IN (${placeholders})`,
     [args.costCentreId, ...poNumbers],
@@ -188,6 +201,7 @@ export async function listAvailablePos(
     `SELECT id, po_number, period_from, period_to, total_amount, balance_amount
      FROM client_po_number
      WHERE cost_centre_id = ? AND ? BETWEEN period_from AND period_to AND balance_amount > 0
+       AND approval_status = 'approved'
      ORDER BY period_to DESC, po_number ASC
      LIMIT 200`,
     [costCentreId, invoiceDate],

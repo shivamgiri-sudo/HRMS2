@@ -40,9 +40,9 @@ beforeEach(() => {
 });
 
 /** cost_centre_master + branch_master lookup row the SELECT returns. */
-function mockCostCentreLookup(overrides: Partial<{ gstType: string; stateCode: string; tallyHead: string | null; clientTallyName: string | null }> = {}) {
+function mockCostCentreLookup(overrides: Partial<{ gstType: string; stateCode: string; tallyHead: string | null; clientTallyName: string | null; activeStatus: number; isMas: number }> = {}) {
   conn.execute.mockResolvedValueOnce([
-    [{ gstType: "Integrated", stateCode: "09", tallyHead: null, clientTallyName: null, ...overrides }],
+    [{ gstType: "Integrated", stateCode: "09", tallyHead: null, clientTallyName: null, activeStatus: 1, isMas: 1, ...overrides }],
     [],
   ]);
 }
@@ -317,5 +317,37 @@ describe("createProforma", () => {
     expect(r).toMatchObject({ totalAmount: 583440, igstAmount: 0, cgstAmount: 0, sgstAmount: 0, grandTotal: 583440 });
     const params = conn.execute.mock.calls[1][1] as unknown[];
     expect(params[params.length - 1]).toBe(0);
+  });
+
+  it("M2: refuses an inactive or non-MAS cost centre", async () => {
+    const base = {
+      costCentreId: "cc-1", category: "Subscription", financeYear: "2026-27", monthLabel: "Sep-26",
+      invoiceDate: "2026-09-30", lines: [{ particulars: "x", qty: 1, rate: 10 }], createdBy: "u-1",
+    };
+    mockCostCentreLookup({ activeStatus: 0 });
+    await expect(clientBillingService.createProforma(base)).rejects.toThrow(/inactive/);
+    mockCostCentreLookup({ isMas: 0 });
+    await expect(clientBillingService.createProforma(base)).rejects.toThrow(/not a MAS Callnet India/);
+    expect(String(conn.execute.mock.calls[0][0])).toMatch(/mascallnet/);
+    expect(mintProformaNumber).not.toHaveBeenCalled();
+  });
+
+  it("M1 / L3 / H6: invoice date inside the FY, line type, description length, positive taxable total", async () => {
+    getConnection.mockClear();
+    const base = {
+      costCentreId: "cc-1", category: "Subscription", financeYear: "2026-27", monthLabel: "Sep-26",
+      invoiceDate: "2026-09-30", lines: [{ particulars: "x", qty: 1, rate: 10 }], createdBy: "u-1",
+    };
+    await expect(clientBillingService.createProforma({ ...base, invoiceDate: "2027-04-02" })).rejects.toThrow(/outside finance year 2026-27/);
+    await expect(clientBillingService.createProforma({ ...base, invoiceDate: "2026-02-30" })).rejects.toThrow(/YYYY-MM-DD|not a real calendar date/);
+    await expect(clientBillingService.createProforma({ ...base, lines: [{ particulars: "x", qty: 1, rate: 10, lineType: "bonus" as never }] })).rejects.toThrow(/lineType must be one of/);
+    await expect(clientBillingService.createProforma({ ...base, description: "d".repeat(256) })).rejects.toThrow(/at most 255/);
+    await expect(clientBillingService.createProforma({ ...base, lines: [{ particulars: "x", qty: 1, rate: 10, lineType: "deduction" }] })).rejects.toThrow(/charge line/);
+    expect(getConnection).not.toHaveBeenCalled();
+    mockCostCentreLookup();
+    await expect(clientBillingService.createProforma({ ...base, lines: [
+      { particulars: "a", qty: 1, rate: 10 }, { particulars: "b", qty: 1, rate: 10, lineType: "deduction" },
+    ] })).rejects.toThrow(/taxable total must be greater than zero/);
+    expect(mintProformaNumber).not.toHaveBeenCalled();
   });
 });

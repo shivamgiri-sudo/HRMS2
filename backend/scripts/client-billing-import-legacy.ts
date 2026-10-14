@@ -26,6 +26,8 @@ if (MODE === "apply" && process.env.CONFIRM !== "import-mas-legacy") throw new E
 const APPLY = MODE === "apply";
 
 const MAS_HRMS = "REPLACE(REPLACE(REPLACE(LOWER(COALESCE(cc.company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'";
+/** Same normalised MAS predicate on the db_bill side ("MAS Call Net", "Mas Callnet India Pvt. Ltd." …). */
+const masBill = (col: string) => `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(${col}, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'`;
 const paise = (v: unknown) => Math.round(Number(String(v ?? "0").replace(/,/g, "")) * 100);
 const rupees = (p: number) => p / 100;
 const fyShort = (fy: string) => { const m = /^(\d{2})(\d{2})-(\d{2})$/.exec(fy.trim()); return m ? `${m[2]}-${m[3]}` : fy.trim(); };
@@ -49,7 +51,7 @@ async function importProvisions() {
   const rows = await billQuery<RowDataPacket>(
     `SELECT p.id, p.cost_center, p.finance_year, p.month, p.invoiceType1, p.provision, p.provision_balance, p.remarks
      FROM provision_master p JOIN cost_master c ON c.cost_center = p.cost_center
-     WHERE p.finance_year = ? AND c.company_name LIKE '%Mas Callnet%' ORDER BY p.id`, [FY]);
+     WHERE p.finance_year = ? AND ${masBill("c.company_name")} ORDER BY p.id`, [FY]);
   const [ccRows] = await db.query<RowDataPacket[]>(`SELECT cc.id, cc.cost_centre_code FROM cost_centre_master cc WHERE ${MAS_HRMS}`);
   const ccByCode = new Map(ccRows.map((r) => [String(r.cost_centre_code), String(r.id)]));
   const [done] = await db.query<RowDataPacket[]>(`SELECT legacy_source_id FROM client_provision WHERE legacy_source_id LIKE 'pm:%'`);
@@ -89,12 +91,12 @@ async function importCollections() {
   const rows = await billQuery<RowDataPacket>(
     `SELECT id, company_name, branch_name, financial_year, pay_type, pay_no, bank_name, pay_type_dates, createdate,
             bill_no, bill_amount, tds_ded, net_amount, deduction, status, remarks
-     FROM bill_pay_particulars WHERE company_name LIKE '%Mas Callnet%' AND COALESCE(delete_status, 0) <> 1 ORDER BY id`);
+     FROM bill_pay_particulars WHERE ${masBill("company_name")} AND COALESCE(delete_status, 0) <> 1 ORDER BY id`);
   const [bills] = await db.query<RowDataPacket[]>(
     `SELECT ci.id, ci.bill_no, ci.grand_total, ci.invoice_status, cc.branch_id, cc.company_name,
-            COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name) AS client_name
+            COALESCE(NULLIF(cc.billing_client_name, ''), NULLIF(cc.client_name, ''), cc.company_name) AS client_name
      FROM client_invoice ci JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
-     WHERE ci.bill_no IS NOT NULL AND ${MAS_HRMS}`);
+     WHERE ci.bill_no IS NOT NULL AND ci.invoice_status = 'approved' AND ${MAS_HRMS}`);
   const billByNo = new Map<string, RowDataPacket>();
   const dupBillNos = new Set<string>();
   for (const b of bills) { const k = String(b.bill_no); if (billByNo.has(k)) dupBillNos.add(k); billByNo.set(k, b); }
@@ -105,6 +107,11 @@ async function importCollections() {
     `SELECT a.invoice_id, SUM(a.received_amount + a.tds_amount + a.deduction_amount) AS s FROM client_receipt_allocation a
      JOIN client_receipt r ON r.id = a.receipt_id AND r.status = 'recorded' GROUP BY a.invoice_id`);
   for (const p of prior) settled.set(String(p.invoice_id), paise(p.s));
+  // Approved credit notes reduce what a bill can still take, so they count toward "over-settles".
+  const credited = new Map<string, number>();
+  const [cnRows] = await db.query<RowDataPacket[]>(
+    `SELECT invoice_id, SUM(grand_total) AS c FROM client_credit_note WHERE credit_status = 'approved' GROUP BY invoice_id`);
+  for (const c of cnRows) credited.set(String(c.invoice_id), paise(c.c));
   const user = await actorId();
   const unmatchedByFy = new Map<string, number>();
   let add = 0, skipDone = 0, unmatched = 0, over = 0, zero = 0, ambiguous = 0, sumNet = 0, sumTds = 0, sumDed = 0;
@@ -119,26 +126,38 @@ async function importCollections() {
     const net = paise(r.net_amount), tds = paise(r.tds_ded), ded = paise(r.deduction);
     if (net + tds + ded <= 0) { zero++; continue; }
     const already = settled.get(String(bill.id)) ?? 0;
-    if (already + net + tds + ded > paise(bill.grand_total) + 100) {
+    const creditNotes = credited.get(String(bill.id)) ?? 0;
+    if (already + creditNotes + net + tds + ded > paise(bill.grand_total) + 100) {
       over++;
-      console.log(`  over-settles ${billNo}: grand ${bill.grand_total}, already ${rupees(already)}, this row ${rupees(net + tds + ded)} (bpp:${r.id}) - skipped`);
+      console.log(`  over-settles ${billNo}: grand ${bill.grand_total}, already ${rupees(already)}, credit notes ${rupees(creditNotes)}, this row ${rupees(net + tds + ded)} (bpp:${r.id}) - skipped`);
       continue;
     }
     settled.set(String(bill.id), already + net + tds + ded);
     add++; sumNet += net; sumTds += tds; sumDed += ded;
     const date = isoDate(r.pay_type_dates) ?? isoDate(r.createdate) ?? "2000-01-01";
     if (APPLY) {
+      // One transaction per collection row: the receipt and its allocation land together or not at all.
       const id = randomUUID();
-      await db.execute(
-        `INSERT INTO client_receipt (id, receipt_no, finance_year, receipt_date, client_name, company_name, branch_id, amount_received,
-           tds_amount, other_deduction, payment_mode, reference_no, bank_account_id, remarks, created_by, is_migrated, legacy_source_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?)`,
-        [id, `ISPARK/${r.id}`, String(r.financial_year ?? FY).slice(0, 10), date, bill.client_name, bill.company_name ?? null, bill.branch_id ?? null,
-          rupees(net), rupees(tds), rupees(ded), payMode(r.pay_type), String(r.pay_no ?? "").trim().slice(0, 100) || null,
-          `I-Spark collection ${r.status ?? ""}${r.bank_name ? ` · ${r.bank_name}` : ""}`.slice(0, 500), user, key]);
-      await db.execute(
-        `INSERT INTO client_receipt_allocation (id, receipt_id, invoice_id, received_amount, tds_amount, deduction_amount) VALUES (?, ?, ?, ?, ?, ?)`,
-        [randomUUID(), id, bill.id, rupees(net), rupees(tds), rupees(ded)]);
+      const conn = await db.getConnection();
+      try {
+        await conn.beginTransaction();
+        await conn.execute(
+          `INSERT INTO client_receipt (id, receipt_no, finance_year, receipt_date, client_name, company_name, branch_id, amount_received,
+             tds_amount, other_deduction, payment_mode, reference_no, bank_account_id, remarks, created_by, is_migrated, legacy_source_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?)`,
+          [id, `ISPARK/${r.id}`, String(r.financial_year ?? FY).slice(0, 10), date, bill.client_name, bill.company_name ?? null, bill.branch_id ?? null,
+            rupees(net), rupees(tds), rupees(ded), payMode(r.pay_type), String(r.pay_no ?? "").trim().slice(0, 100) || null,
+            `I-Spark collection ${r.status ?? ""}${r.bank_name ? ` · ${r.bank_name}` : ""}`.slice(0, 500), user, key]);
+        await conn.execute(
+          `INSERT INTO client_receipt_allocation (id, receipt_id, invoice_id, received_amount, tds_amount, deduction_amount) VALUES (?, ?, ?, ?, ?, ?)`,
+          [randomUUID(), id, bill.id, rupees(net), rupees(tds), rupees(ded)]);
+        await conn.commit();
+      } catch (e) {
+        await conn.rollback();
+        throw e;
+      } finally {
+        conn.release();
+      }
       touched.push(String(bill.id));
     }
   }

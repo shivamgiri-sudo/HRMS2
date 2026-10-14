@@ -132,6 +132,8 @@ describe("createChangeRequest", () => {
         ],
         [],
       ])
+      .mockResolvedValueOnce([[], []]) // not exported to Tally
+      .mockResolvedValueOnce([[{ n: 0 }], []]) // no draft credit note
       .mockResolvedValueOnce([[{ id: "r1" }], []]);
     await expect(
       changeSvc.createChangeRequest({
@@ -207,6 +209,8 @@ describe("decideChangeRequest (maker-checker)", () => {
         [{ id: "i", invoice_status: "approved", is_migrated: 0 }],
         [],
       ]) // invoice lock
+      .mockResolvedValueOnce([[], []]) // not exported to Tally
+      .mockResolvedValueOnce([[{ n: 0 }], []]) // no draft credit note
       .mockResolvedValueOnce([[{ n: 0 }], []]) // approved credit notes
       .mockResolvedValueOnce([[], []]) // receipt table absent
       .mockResolvedValue([{}, []]);
@@ -237,6 +241,8 @@ describe("decideChangeRequest (maker-checker)", () => {
         [{ id: "i", invoice_status: "approved", is_migrated: 0 }],
         [],
       ])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[{ n: 0 }], []])
       .mockResolvedValueOnce([[{ n: 1 }], []]);
     await expect(
       changeSvc.decideChangeRequest({
@@ -245,6 +251,27 @@ describe("decideChangeRequest (maker-checker)", () => {
         userId: "checker",
       }),
     ).rejects.toThrow(/credit note/);
+    expect(rejectInvoiceInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("blocks a void once the bill is in Tally (raise a credit note instead), and while a draft credit note waits", async () => {
+    conn.execute
+      .mockResolvedValueOnce([[pendingVoid], []])
+      .mockResolvedValueOnce([[{ id: "i", invoice_status: "approved", is_migrated: 0 }], []])
+      .mockResolvedValueOnce([[{ present: 1 }], []]);
+    await expect(changeSvc.decideChangeRequest({ requestId: "r1", decision: "approve", userId: "checker" }))
+      .rejects.toThrow(/exported to Tally.*raise a credit note instead/);
+    const tallySql = conn.execute.mock.calls[2];
+    expect(String(tallySql[0])).toMatch(/tally_voucher_export WHERE source_type = 'invoice' AND source_id = \?/);
+    expect(tallySql[1]).toEqual(["i"]);
+
+    conn.execute.mockReset();
+    conn.execute
+      .mockResolvedValueOnce([[{ id: "i", invoice_status: "approved", category: "Others", is_migrated: 0 }], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[{ n: 2 }], []]);
+    await expect(changeSvc.createChangeRequest({ invoiceId: "i", requestType: "void", reason: "billed twice", userId: "maker" }))
+      .rejects.toThrow(/draft credit note.*reject that credit note first/);
     expect(rejectInvoiceInTransaction).not.toHaveBeenCalled();
   });
 

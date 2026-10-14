@@ -108,8 +108,8 @@ export const clientInvoiceAdapter: ApprovalAdapter = {
 };
 
 /**
- * Client credit note in draft. The module has an approve endpoint only (no reject), so Decline is refused
- * with a clear message; meta.approveOnly lets the popup hide Decline if the lead adds support.
+ * Client credit note in draft. Approve mints the credit number; Decline rejects the draft (reason
+ * required). Both go through the module's own routes, so its maker-checker, branch and cap checks apply.
  */
 export const clientCreditNoteAdapter: ApprovalAdapter = {
   kind: "client_credit_note",
@@ -160,18 +160,20 @@ export const clientCreditNoteAdapter: ApprovalAdapter = {
         submittedAt: iso(r.created_at),
         priority: age !== null && age > 5 ? "high" : "normal",
         viewPath: `/finance/client-billing?tab=credit-notes&approvalId=${encodeURIComponent(String(r.id))}`,
-        rejectNeedsReason: false,
+        rejectNeedsReason: true,
         approveLabel: "Approve credit note",
-        meta: { approveOnly: true },
       });
     });
     return out;
   },
-  async decide(ctx, item, action) {
+  async decide(ctx, item, action, remarks) {
+    const base = `/api/client-billing/credit-notes/${encodeURIComponent(item.id)}`;
     if (action === "reject") {
-      throw new LoopbackError(400, "Credit notes can only be approved here — the billing module has no decline step. Open it with View.");
+      if (String(remarks ?? "").trim().length < 5) throw new LoopbackError(400, "Give a reason of at least 5 characters to reject this credit note");
+      await ctx.call("POST", `${base}/reject`, { body: { reason: remarks } });
+      return;
     }
-    await ctx.call("POST", `/api/client-billing/credit-notes/${encodeURIComponent(item.id)}/approve`, { body: {} });
+    await ctx.call("POST", `${base}/approve`, { body: {} });
   },
 };
 

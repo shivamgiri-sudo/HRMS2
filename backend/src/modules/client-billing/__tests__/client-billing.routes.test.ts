@@ -224,15 +224,15 @@ describe("POST /api/client-billing/invoices/:id/approve", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true, data: { id: "inv-1", billNo: "09-01/26-27", invoiceStatus: "approved" } });
-    expect(approveInvoice).toHaveBeenCalledWith({ invoiceId: "inv-1", poNumbers: undefined, userId: "u-1" });
+    expect(approveInvoice).toHaveBeenCalledWith({ invoiceId: "inv-1", userId: "u-1" });
   });
 
-  it("passes poNumbers through when supplied", async () => {
+  it("H10: ignores a poNumbers override in the body (the stored PO numbers are used)", async () => {
     approveInvoice.mockResolvedValueOnce({ id: "inv-1", billNo: "09-01/26-27", invoiceStatus: "approved" });
 
     await request(app).post("/api/client-billing/invoices/inv-1/approve").send({ poNumbers: ["PO1", "PO2"] });
 
-    expect(approveInvoice).toHaveBeenCalledWith({ invoiceId: "inv-1", poNumbers: ["PO1", "PO2"], userId: "u-1" });
+    expect(approveInvoice).toHaveBeenCalledWith({ invoiceId: "inv-1", userId: "u-1" });
   });
 
   it("surfaces a service statusCode error via the shared error handler", async () => {
@@ -400,13 +400,13 @@ describe("GET /api/client-billing/summary", () => {
       maxInFlight = Math.max(maxInFlight, inFlight);
       await new Promise((r) => setTimeout(r, 5));
       inFlight--;
-      if (sql.includes("GROUP BY invoice_status")) {
+      if (sql.includes("GROUP BY ci.invoice_status")) {
         return [[{ invoice_status: "approved", count: 3, total: "300.50" }], []];
       }
-      if (sql.includes("GROUP BY credit_status")) {
+      if (sql.includes("GROUP BY ccn.credit_status")) {
         return [[{ credit_status: "draft", count: 1, total: "10" }], []];
       }
-      if (sql.includes("DATE_FORMAT(invoice_date")) return [[{ count: 2, total: "200" }], []];
+      if (sql.includes("DATE_FORMAT(ci.invoice_date")) return [[{ count: 2, total: "200" }], []];
       if (sql.includes("is_migrated = 0")) return [[{ count: 4, awaitingProforma: 3, awaitingInvoice: 1 }], []];
       if (sql.includes("FROM client_provision")) return [[{ count: 2 }], []];
       throw new Error(`unexpected sql ${sql}`);
@@ -421,7 +421,7 @@ describe("GET /api/client-billing/summary", () => {
         approved: { count: 3, total: 300.5 },
         rejected: { count: 0, total: 0 },
       },
-      creditNotes: { draft: { count: 1, total: 10 }, approved: { count: 0, total: 0 } },
+      creditNotes: { draft: { count: 1, total: 10 }, approved: { count: 0, total: 0 }, rejected: { count: 0, total: 0 } },
       thisMonthBilled: { count: 2, total: 200 },
       pendingApprovalCount: 4,
       awaitingProformaApprovalCount: 3,

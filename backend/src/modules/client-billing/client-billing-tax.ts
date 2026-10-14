@@ -248,3 +248,13 @@ export function assertMonthLabelInFinanceYear(
     );
   }
 }
+
+/**
+ * The company part of a bill / credit-note counter key. The same company is spelt several ways on
+ * cost centres ("MAS Callnet India Pvt Ltd", "Mas Callnet India Pvt. Ltd."), and each spelling used
+ * to open its own counter, so two spellings could issue the same bill number. Lower case with
+ * spaces, dots and commas removed — the same fold migration 2210 applied to the stored counters.
+ */
+export function normaliseCompanyKey(companyName: string | null | undefined): string {
+  return String(companyName ?? "").toLowerCase().replace(/[ .,]/g, "");
+}

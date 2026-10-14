@@ -14,7 +14,7 @@ beforeEach(() => {
 });
 
 const today = new Date().toISOString().slice(0, 10);
-const bill = (o: Record<string, unknown> = {}) => ({ id: "i1", bill_no: "09-192/26-27", invoice_status: "approved", is_migrated: 0, grand_total: "425000.00", cost_centre_id: "cc", company_name: "Mas Callnet India Pvt Ltd", branch_id: "b1", client_name: "Onfido Limited", is_mas: 1, ...o });
+const bill = (o: Record<string, unknown> = {}) => ({ id: "i1", bill_no: "09-192/26-27", invoice_status: "approved", is_migrated: 0, grand_total: "425000.00", total_amount: "425000.00", cost_centre_id: "cc", company_name: "Mas Callnet India Pvt Ltd", branch_id: "b1", client_name: "Onfido Limited", is_mas: 1, ...o });
 
 describe("rules", () => {
   it("credit days from free-text payment terms, default 30", () => {
@@ -58,6 +58,26 @@ describe("createReceipt", () => {
     expect(poolExecute).toHaveBeenCalledWith("UPDATE client_receipt SET voucher_id = ? WHERE id = ?", ["pv1", expect.any(String)]);
     const status = conn.execute.mock.calls.find((c) => String(c[0]).includes("client_invoice_payment_status"));
     expect(status?.[1]?.[3]).toBe("paid");
+    const audit = conn.execute.mock.calls.find((c) => String(c[0]).includes("'receipt_recorded'"));
+    expect(audit?.[1]).toEqual([expect.any(String), "i1", "u", expect.stringMatching(/^RCPT\/\d{2}-\d{2}\/00007: received 382500, TDS 42500, deduction 0$/)]);
+  });
+
+  it("H9: TDS above 10% of the bill's taxable value is refused", async () => {
+    scriptHappyPath();
+    conn.query.mockReset();
+    conn.query
+      .mockResolvedValueOnce([[{ id: "bank", active_status: 1 }], []])
+      .mockResolvedValueOnce([[bill({ total_amount: "360169.49" })], []])
+      .mockResolvedValueOnce([[{ id: "i1", settled: "0", credited: "0" }], []]);
+    await expect(mod.clientBillingReceiptService.createReceipt({ ...base, allocations: [{ invoiceId: "i1", received: 382500, tds: 42500 }] }))
+      .rejects.toThrow(/TDS 42500 is more than 10% of the bill's taxable value 360169.49/);
+    expect(raise).not.toHaveBeenCalled();
+  });
+
+  it("H9: a deduction needs a reason in the remarks (5+ characters)", async () => {
+    await expect(mod.clientBillingReceiptService.createReceipt({ ...base, remarks: "sla", allocations: [{ invoiceId: "i1", received: 100, deduction: 50 }] }))
+      .rejects.toThrow(/deduction needs a reason/);
+    expect(getConnection).not.toHaveBeenCalled();
   });
 
   it("refuses settling more than the outstanding", async () => {
@@ -103,7 +123,13 @@ describe("voidReceipt", () => {
       .mockResolvedValue([[{ id: "r1", allocations: [] }], []]);
     conn.query.mockResolvedValue([[], []]);
     conn.execute.mockResolvedValue([{}, []]);
+    conn.query.mockReset();
+    conn.query.mockResolvedValueOnce([[{ invoice_id: "i1", received_amount: "100.00", tds_amount: "0.00", deduction_amount: "0.00", receipt_no: "RCPT/26-27/00001" }], []]).mockResolvedValue([[], []]);
+    conn.execute.mockReset();
+    conn.execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]).mockResolvedValue([{}, []]);
     await mod.clientBillingReceiptService.voidReceipt("r1", "entered twice by mistake", "u", "finance_head");
     expect(withdraw).toHaveBeenCalledWith("pv1", "u", "finance_head", expect.stringContaining("voided"));
+    const audit = conn.execute.mock.calls.find((c) => String(c[0]).includes("'receipt_voided'"));
+    expect(audit?.[1]).toEqual([expect.any(String), "i1", "u", "RCPT/26-27/00001: received 100, TDS 0, deduction 0 — entered twice by mistake"]);
   });
 });
