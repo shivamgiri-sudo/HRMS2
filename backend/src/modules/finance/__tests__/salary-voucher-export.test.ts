@@ -218,6 +218,14 @@ describe("Tally HTTP gateway push", () => {
     expect(buildTallyXml([])).not.toContain("SVCURRENTCOMPANY");
   });
 
+  it("salary ledger groups for ledgers Tally does not have yet", async () => {
+    const { salaryLedgerGroup } = await import("../salary-voucher-formats.js");
+    expect(salaryLedgerGroup("Gross Salary", "D")).toBe("Indirect Expenses");
+    expect(salaryLedgerGroup("TDS SALARY 2026-27", "C")).toBe("Duties & Taxes");
+    expect(salaryLedgerGroup("Advance Against Salary (Noida)", "C")).toBe("Loans & Advances (Asset)");
+    expect(salaryLedgerGroup("ESIC Payable", "C")).toBe("Current Liabilities");
+  });
+
   it("re-import safe: shared envelope with IMPORTDUPS and a REMOTEID fixed per run / company / branch", async () => {
     const { buildTallyXml } = await import("../salary-voucher-formats.js");
     const v: any = {
@@ -232,6 +240,11 @@ describe("Tally HTTP gateway push", () => {
     // a re-export with a new serial keeps the same REMOTEID
     expect(buildTallyXml([{ ...v, voucher_no: "AHMEDABAD-JALDARSHAN/MAS/09/26/8" }], null, "run-9")).toContain('REMOTEID="HRMS-SAL-run-9-MAS-br-1"');
     expect(xml).toContain("<CATEGORY>AHMEDABAD-JALDARSHAN</CATEGORY><COSTCENTREALLOCATIONS.LIST><NAME>AHM/2609</NAME><AMOUNT>-100.00</AMOUNT>");
+    // masters first, so a ledger missing from the company is created instead of rejecting the voucher
+    expect(xml.indexOf('<LEDGER NAME="Gross Salary"')).toBeLessThan(xml.indexOf("<VOUCHER "));
+    expect(xml).toContain('<LEDGER NAME="Salary Payable A/C" ACTION="Create"><NAME>Salary Payable A/C</NAME><PARENT>Current Liabilities</PARENT><ISCOSTCENTRESON>Yes</ISCOSTCENTRESON>');
+    expect(xml).toContain('<COSTCENTRE NAME="AHM/2609" ACTION="Create"><NAME>AHM/2609</NAME><CATEGORY>AHMEDABAD-JALDARSHAN</CATEGORY>');
+    expect(xml).toContain('<VOUCHERTYPE NAME="JRNLSAL" ACTION="Create">');
   });
 });
 
