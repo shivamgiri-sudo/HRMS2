@@ -13,7 +13,7 @@ const bill = (o: Record<string, unknown> = {}) => ({
   id: "i1", bill_no: "09-192", invoice_date: "2026-09-01", grand_total: "118000.00", is_migrated: 0, last_sent_at: null,
   due_date: "2026-10-01", client_name: "Onfido", cost_centre_code: "OF/1", branch_id: "b1", branch_name: "Noida",
   s_invoice_id: null, s_received: null, s_tds: null, s_deduction: null, s_banked: null,
-  cips_invoice_id: null, cips_received: null, cips_tds: null, cips_deduction: null, credited: "0", ...o,
+  cips_invoice_id: null, cips_received: null, cips_tds: null, cips_deduction: null, has_allocation: 0, credited: "0", ...o,
 });
 
 describe("toBillRow", () => {
@@ -36,6 +36,17 @@ describe("toBillRow", () => {
     const r = mod.toBillRow(bill({ s_invoice_id: "i1", s_received: "1000.00", s_tds: "0", s_deduction: "0", s_banked: "1000.00", cips_invoice_id: "i1", cips_received: "118000.00" }) as any, TODAY);
     expect(r.received).toBe(1000);
     expect(r.outstanding).toBe(117000);
+  });
+
+  it("a bill whose only receipt was voided does not fall back to the stale Client Payments row", () => {
+    // SETTLEMENT_SQL drops void receipts, so s_* is null, but the allocation row still exists.
+    const r = mod.toBillRow(bill({ has_allocation: 1, cips_invoice_id: "i1", cips_received: "118000.00", cips_tds: "0", cips_deduction: "0" }) as any, TODAY);
+    expect(r).toMatchObject({ received: 0, outstanding: 118000, settlementSource: "receipts", stage: "billed_not_sent" });
+  });
+
+  it("a bill never touched by receipts still falls back to Client Payments", () => {
+    const r = mod.toBillRow(bill({ has_allocation: 0, cips_invoice_id: "i1", cips_received: "118000.00", cips_tds: "0", cips_deduction: "0" }) as any, TODAY);
+    expect(r).toMatchObject({ received: 118000, outstanding: 0, settlementSource: "client_payments" });
   });
 
   it("approved credit notes reduce outstanding; up to 50 paise left counts as paid", () => {
