@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { Voucher } from "./salary-voucher.service.js";
+import { wrapTallyEnvelope } from "./grn-tally-voucher.js";
 
 /**
  * Output formats for the salary voucher: CSV and Excel carry the reference sheet's columns in its
@@ -101,12 +102,16 @@ const xmlEscape = (value: unknown) =>
     .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 
 /**
- * Tally import XML (ENVELOPE > BODY > DATA > TALLYMESSAGE > VOUCHER), same sign convention as the
- * bank-voucher export: a debit is ISDEEMEDPOSITIVE=Yes with a NEGATIVE amount, a credit is
- * ISDEEMEDPOSITIVE=No with a POSITIVE amount. Cohort split columns are not carried — XML has one
- * amount per ledger line. Zero-value lines are skipped, since Tally rejects a zero ledger entry.
+ * Tally import XML, same sign convention as the bank-voucher export: a debit is ISDEEMEDPOSITIVE=Yes with a
+ * NEGATIVE amount, a credit is ISDEEMEDPOSITIVE=No with a POSITIVE amount. Cohort split columns are not
+ * carried — XML has one amount per ledger line. Zero-value lines are skipped, since Tally rejects a zero
+ * ledger entry.
+ *
+ * Shared envelope (wrapTallyEnvelope: "All Masters" + IMPORTDUPS ignore, company when set) and, given the run
+ * id, a REMOTEID fixed per run / company / branch: a second import of the same file, or of a re-export with
+ * new serials, is ignored by Tally instead of booking the salary twice.
  */
-export function buildTallyXml(vouchers: Voucher[], company?: string): string {
+export function buildTallyXml(vouchers: Voucher[], company?: string | null, runId?: string): string {
   const messages = vouchers.map((v) => {
     const date = v.date.slice(0, 10).replace(/-/g, "");
     const entries = v.lines
@@ -114,47 +119,14 @@ export function buildTallyXml(vouchers: Voucher[], company?: string): string {
       .map((l) => {
         const debit = l.debit_credit === "D";
         const amount = (debit ? -Math.abs(l.amount) : Math.abs(l.amount)).toFixed(2);
-        return `        <ALLLEDGERENTRIES.LIST>
-          <LEDGERNAME>${xmlEscape(l.ledger_name)}</LEDGERNAME>
-          <ISDEEMEDPOSITIVE>${debit ? "Yes" : "No"}</ISDEEMEDPOSITIVE>
-          <AMOUNT>${amount}</AMOUNT>
-          <CATEGORYALLOCATIONS.LIST>
-            <CATEGORY>${xmlEscape(v.cost_category)}</CATEGORY>
-            <COSTCENTREALLOCATIONS.LIST>
-              <NAME>${xmlEscape(v.cost_centre)}</NAME>
-              <AMOUNT>${amount}</AMOUNT>
-            </COSTCENTREALLOCATIONS.LIST>
-          </CATEGORYALLOCATIONS.LIST>
-        </ALLLEDGERENTRIES.LIST>`;
+        return `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${xmlEscape(l.ledger_name)}</LEDGERNAME><ISDEEMEDPOSITIVE>${debit ? "Yes" : "No"}</ISDEEMEDPOSITIVE><AMOUNT>${amount}</AMOUNT>`
+          + `<CATEGORYALLOCATIONS.LIST><CATEGORY>${xmlEscape(v.cost_category)}</CATEGORY><COSTCENTREALLOCATIONS.LIST><NAME>${xmlEscape(v.cost_centre)}</NAME><AMOUNT>${amount}</AMOUNT></COSTCENTREALLOCATIONS.LIST></CATEGORYALLOCATIONS.LIST></ALLLEDGERENTRIES.LIST>`;
       })
-      .join("\n");
-    return `      <TALLYMESSAGE xmlns:UDF="TallyUDF">
-        <VOUCHER VCHTYPE="${xmlEscape(v.voucher_type)}" ACTION="Create">
-          <DATE>${date}</DATE>
-          <VOUCHERTYPENAME>${xmlEscape(v.voucher_type)}</VOUCHERTYPENAME>
-          <VOUCHERNUMBER>${xmlEscape(v.voucher_no)}</VOUCHERNUMBER>
-          <NARRATION>${xmlEscape(`${v.narration} Vch No:${v.voucher_no}`)}</NARRATION>
-${entries}
-        </VOUCHER>
-      </TALLYMESSAGE>`;
+      .join("");
+    const remoteId = runId ? ` REMOTEID="${xmlEscape(`HRMS-SAL-${runId}-${v.company_code}-${v.branch_id}`)}"` : "";
+    return `<VOUCHER${remoteId} VCHTYPE="${xmlEscape(v.voucher_type)}" ACTION="Create" OBJVIEW="Accounting Voucher View"><DATE>${date}</DATE>`
+      + `<VOUCHERTYPENAME>${xmlEscape(v.voucher_type)}</VOUCHERTYPENAME><VOUCHERNUMBER>${xmlEscape(v.voucher_no)}</VOUCHERNUMBER>`
+      + `<NARRATION>${xmlEscape(`${v.narration} Vch No:${v.voucher_no}`)}</NARRATION><PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW>${entries}</VOUCHER>`;
   });
-  return `<ENVELOPE>
-  <HEADER>
-    <VERSION>1</VERSION>
-    <TALLYREQUEST>Import</TALLYREQUEST>
-    <TYPE>Data</TYPE>
-    <ID>Vouchers</ID>
-  </HEADER>
-  <BODY>
-    ${company ? `<DESC>
-      <STATICVARIABLES>
-        <SVCURRENTCOMPANY>${xmlEscape(company)}</SVCURRENTCOMPANY>
-      </STATICVARIABLES>
-    </DESC>` : "<DESC></DESC>"}
-    <DATA>
-${messages.join("\n")}
-    </DATA>
-  </BODY>
-</ENVELOPE>
-`;
+  return wrapTallyEnvelope(messages, company);
 }

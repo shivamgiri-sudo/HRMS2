@@ -110,6 +110,7 @@ export const financeRouteElements = (
       <Route path="/finance/ledger-reports"   element={<Navigate to="/finance/ledger?tab=ledger-reports" replace />} />
       <Route path="/finance/vendor-payment-tracking" element={<Navigate to="/finance/ledger?tab=payments" replace />} />
       <Route path="/finance/journal-vouchers" element={<Navigate to="/finance/ledger?tab=journal" replace />} />
+      <Route path="/finance/tally-export"     element={<Navigate to="/finance/ledger?tab=tally" replace />} />
 
       {/* Finance */}
       <Route path="/finance/grn"                     element={<ProtectedRoute roles={grnRoles}><Gate pageCode="FINANCE_GRN"><NativeGRNManagement /></Gate></ProtectedRoute>} />

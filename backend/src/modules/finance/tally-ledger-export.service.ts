@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { grnBranchCode } from "./grn-tally-context.js";
 import { loadGrnTallyDownload } from "./grn-tally-download.service.js";
+import { readGrnTallyConfig } from "./grn-tally-export.service.js";
 import { monthEnd, wrapTallyEnvelope, xmlEscape } from "./grn-tally-voucher.js";
 import { grnLedgerGroup, TallyMasters, type TallyGroup } from "./tally-ledger-masters.js";
 
@@ -47,6 +48,8 @@ const ymd = (v: unknown) => {
 };
 const tdate = (d: string) => d.replace(/-/g, "");
 const inList = (ids: string[]) => ids.map(() => "?").join(",");
+/** The Tally company the files import into (GRN_TALLY_COMPANY, the same setting the GRN download uses). */
+export const tallyCompanyName = () => readGrnTallyConfig().company;
 
 async function byId(table: string, columns: string, ids: string[]): Promise<Map<string, any>> {
   const out = new Map<string, any>();
@@ -93,15 +96,33 @@ function payableGroup(accountType: string, name: string): TallyGroup {
   return "Current Liabilities";
 }
 
-/** Vouchers posted to the general ledger in the month: payment vouchers, journal vouchers, bank adjustments. */
-async function glVouchers(month: string, masters: TallyMasters, exceptions: LedgerTallySummary["exceptions"]): Promise<Voucher[]> {
-  const from = `${month}-01`;
-  const [entries] = await db.query<RowDataPacket[]>(
-    `SELECT id, entry_date, narration, source_type, source_id, branch_id FROM journal_entry
-      WHERE entry_date >= ? AND entry_date <= ? AND source_type IN ('payment_voucher','manual','bank_reconciliation_adjustment')
-      ORDER BY entry_date, posted_at`,
-    [from, monthEnd(from)],
-  );
+/**
+ * Vouchers posted to the general ledger: payment vouchers, journal vouchers, bank adjustments — for a month, or
+ * for chosen payment vouchers (the Bank Ledger tab's "Tally XML", so both files carry the same voucher).
+ */
+async function glVouchers(
+  scope: { month: string } | { paymentVoucherIds: string[] },
+  masters: TallyMasters,
+  exceptions: LedgerTallySummary["exceptions"],
+): Promise<Voucher[]> {
+  let entries: RowDataPacket[];
+  if ("month" in scope) {
+    const from = `${scope.month}-01`;
+    [entries] = await db.query<RowDataPacket[]>(
+      `SELECT id, entry_date, narration, source_type, source_id, branch_id FROM journal_entry
+        WHERE entry_date >= ? AND entry_date <= ? AND source_type IN ('payment_voucher','manual','bank_reconciliation_adjustment')
+        ORDER BY entry_date, posted_at`,
+      [from, monthEnd(from)],
+    );
+  } else {
+    if (!scope.paymentVoucherIds.length) return [];
+    [entries] = await db.query<RowDataPacket[]>(
+      `SELECT id, entry_date, narration, source_type, source_id, branch_id FROM journal_entry
+        WHERE source_type = 'payment_voucher' AND source_id IN (${inList(scope.paymentVoucherIds)})
+        ORDER BY entry_date, posted_at`,
+      scope.paymentVoucherIds,
+    );
+  }
   if (!entries.length) return [];
   const entryIds = entries.map((e) => String(e.id));
   const [lineRows] = await db.query<RowDataPacket[]>(
@@ -258,7 +279,7 @@ export async function buildLedgerTallyExport(opts: { month: string; kind: Ledger
     vouchers.push({ kind: "grn", remoteId: `HRMS-GRN-${r.grnId}`, type: r.header.voucherType, number: r.header.voucherNumber, date: r.header.date, narration: r.header.narration, lines: [] });
   }
 
-  vouchers.push(...(await glVouchers(month, masters, exceptions)), ...(await directImprestTopUps(month, masters, exceptions)));
+  vouchers.push(...(await glVouchers({ month }, masters, exceptions)), ...(await directImprestTopUps(month, masters, exceptions)));
 
   const wanted = (k: Voucher["kind"]) => kind === "all" || kind === k;
   const messages: string[] = [];
@@ -276,5 +297,18 @@ export async function buildLedgerTallyExport(opts: { month: string; kind: Ledger
     masters: masters.counts,
     exceptions,
   };
-  return { xml: wrapTallyEnvelope(messages), summary };
+  return { xml: wrapTallyEnvelope(messages, tallyCompanyName()), summary };
+}
+
+/**
+ * Chosen released payment vouchers as Tally XML, built exactly as the Tally Export tab builds them (same ledger
+ * names, same REMOTEID), with the masters they use. The Bank Ledger tab's "Tally XML" uses this, so importing
+ * that file and the month file never books a payment twice.
+ */
+export async function buildPaymentVoucherTallyXml(paymentVoucherIds: string[]): Promise<{ xml: string; count: number; exceptions: LedgerTallySummary["exceptions"] }> {
+  const masters = new TallyMasters();
+  const exceptions: LedgerTallySummary["exceptions"] = [];
+  const vouchers = await glVouchers({ paymentVoucherIds }, masters, exceptions);
+  const messages = [...masters.messages(), ...vouchers.map(ledgerVoucherXml)];
+  return { xml: wrapTallyEnvelope(messages, tallyCompanyName()), count: vouchers.length, exceptions };
 }

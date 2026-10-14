@@ -1,6 +1,7 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GstTallyExportPanel } from "@/components/finance/gst/GstTallyExportPanel";
 import { TallyPaymentImportPanel } from "@/components/finance/gst/TallyPaymentImportPanel";
+import { TallyVouchersSection } from "@/components/finance/gst/TallyVouchersSection";
 
 /**
  * GST / Tally Export — its own page rather than a Client Billing tab: the audience (who
@@ -12,6 +13,8 @@ export default function GstTallyExportPage() {
     <DashboardLayout>
       <div className="grn-scope p-4 md:p-6">
         <GstTallyExportPanel />
+        {/* Sales / credit-note vouchers as a Tally import file (XML); the panel above is the GST return CSV. */}
+        <div className="mt-4"><TallyVouchersSection /></div>
         <div className="mt-4"><TallyPaymentImportPanel /></div>
       </div>
     </DashboardLayout>

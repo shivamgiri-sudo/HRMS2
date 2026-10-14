@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { refuse } from "../process-pnl/finance-error.js";
 import { splitByLock, tallyExportLock } from "./tally-export-lock.service.js";
+import { buildPaymentVoucherTallyXml } from "./tally-ledger-export.service.js";
 
 /**
  * Tally XML export (PRD §6.2.1) — the ENVELOPE > BODY > DATA > TALLYMESSAGE > VOUCHER format,
@@ -362,7 +363,7 @@ ${body}
     // Payments carry no TDS leg (booked on the GRN journal); receipts still do.
     const totalDebit = rows.reduce((sum, r) => sum + r.net_amount + (r.voucher_type === "receipt" ? r.tds_amount : 0), 0);
     const totalCredit = totalDebit; // every voucher is individually balanced by construction
-    return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit, voucherNumbers: rows.map((r) => r.voucher_number) };
+    return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit, voucherNumbers: rows.map((r) => r.voucher_number), voucherIds: [...new Set(rows.map((r) => r.voucher_id))] };
   },
 
   /**
@@ -433,6 +434,20 @@ ${body}
       }
     }
 
+    // The file itself is built by the Tally Export tab's builder (tally-ledger-export.service.ts): same ledger
+    // names (vendor's own Tally ledger, not the payable head) and same REMOTEID per voucher, so importing this
+    // file and the month file never books a payment twice. The rows above still decide WHICH vouchers (range,
+    // final vs preview, locks, journal/bank-ledger parity).
+    const built = await buildPaymentVoucherTallyXml(result.voucherIds);
+    if (built.exceptions.length || built.count !== result.entryCount) {
+      if (claimedKeys.length)
+        await tallyExportLock.release("bank_voucher", bankAccountId, claimedKeys, actorUserId, actorRole, "Export aborted: Tally names missing").catch(() => undefined);
+      const why = built.exceptions.slice(0, 5).map((e) => `${e.ref}: ${e.reason}`).join("; ");
+      throw refuse(409, "TALLY_EXPORT_NAMES_MISSING",
+        `Tally file not built: ${why || `${result.entryCount - built.count} voucher(s) are not posted to the general ledger`}. Fix the Tally names (vendor / bank / ledger head) and export again.`);
+    }
+    result = { ...result, xml: result.isFinal ? built.xml : built.xml.replace("<ENVELOPE>", "<ENVELOPE><!-- PROVISIONAL EXPORT: no bank_reconciliation for this period is closed yet. Not for final Tally posting. -->") };
+
     await logSensitiveAction({
       actor_user_id: actorUserId,
       actor_role: actorRole,
@@ -482,6 +497,6 @@ ${body}
 `;
     const totalDebit = rows.reduce((sum, r) => sum + r.net_amount + r.tds_amount, 0);
     const totalCredit = totalDebit;
-    return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit, voucherNumbers: rows.map((r) => r.voucher_number) };
+    return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit, voucherNumbers: rows.map((r) => r.voucher_number), voucherIds: [...new Set(rows.map((r) => r.voucher_id))] };
   },
 };
