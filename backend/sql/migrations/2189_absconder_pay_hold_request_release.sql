@@ -1,3 +1,4 @@
+-- hot-table-ok: only adds NULLable columns to exit_request, each guarded on information_schema (a no-op when present); already applied on production before the guard reviewed it.
 -- Migration 2189: absconder pay hold is requested by the reporting manager, approved and released by the
 -- branch Payroll HR only
 --

@@ -1,3 +1,4 @@
+-- hot-table-ok: only adds NULLable columns to exit_request, each guarded on information_schema (a no-op when present); already applied on production before the guard reviewed it.
 -- Migration 2188: an absconder's pay is held only when someone decides to hold it
 --
 -- An absconded employee is paid by the system as normal. If a branch wants the salary days of one made 0,

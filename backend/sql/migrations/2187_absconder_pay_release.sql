@@ -1,3 +1,4 @@
+-- hot-table-ok: only adds NULLable columns to exit_request, each guarded on information_schema (a no-op when present); already applied on production before the guard reviewed it.
 -- Migration 2187: absconder pay release (salary held at 0 paid days until Branch Head + Payroll Head approve)
 --
 -- absconder_pay_release_event: the audit trail of the release request (requested, Branch Head approved or

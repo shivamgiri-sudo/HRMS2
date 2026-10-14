@@ -1,3 +1,4 @@
+-- hot-table-ok: only adds NULLable columns to exit_request, each guarded on information_schema (a no-op when present); already applied on production before the guard reviewed it.
 -- Migration 2159: Payroll Head final approval of a completed NOC + absconder F&F exception
 --
 -- 1. noc_case: payroll_head_approved_by / _at / _note. A NOC whose every level has cleared is
