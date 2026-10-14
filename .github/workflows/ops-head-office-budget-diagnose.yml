@@ -1,0 +1,53 @@
+name: Ops Head Office Budget Diagnose (manual, read-only)
+
+# Read-only. Lists budget headers, lines and GRN allocations for a branch + month so a
+# "budget is full but no GRN raised" report can be traced. Writes nothing.
+# Separate from ops-scripts.yml, whose run block is at GitHub's expression-length limit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      period:
+        description: "Budget period YYYY-MM"
+        required: true
+        default: "2026-10"
+        type: string
+      branch_like:
+        description: "branch_name LIKE pattern"
+        required: true
+        default: "%head office%"
+        type: string
+
+concurrency:
+  group: ops-ho-budget-diagnose
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          IN_PERIOD: ${{ inputs.period }}
+          IN_BRANCH: ${{ inputs.branch_like }}
+        run: |
+          set -euo pipefail
+          npx tsx scripts/head-office-budget-diagnose.ts "$IN_PERIOD" "$IN_BRANCH"

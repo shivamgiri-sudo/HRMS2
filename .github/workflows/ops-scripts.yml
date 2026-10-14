@@ -58,7 +58,6 @@ on:
           - sbi-card-demo-seed
           - sbi-card-demo-remove
           - holiday-mapping-audit
-          - head-office-budget-diagnose
           - exception-control-audit
           - payable-days-check
           - repair-bucket-regrade
@@ -678,10 +677,6 @@ jobs:
             exception-control-audit)
               # Read-only in both modes.
               npx tsx scripts/exception-control-audit.ts
-              ;;
-            head-office-budget-diagnose)
-              # Read-only in both modes.
-              npx tsx scripts/head-office-budget-diagnose.ts 2026-10
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
