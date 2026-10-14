@@ -93,16 +93,38 @@ describe("provision maker-checker", () => {
     await expect(svc.approveProvision("p-1", "u-2")).resolves.toEqual({ id: "p-1", provisionStatus: "approved" });
   });
 
-  it("edit cannot drop the amount below what invoices already used; balance moves by the delta", async () => {
-    conn.execute.mockResolvedValueOnce([[{ id: "p-1", provision_status: "approved", provision_amount: 1000, provision_balance: 400, remarks: null }], []]);
+  it("pending provision: edited in place, never below used; balance moves by the delta", async () => {
+    conn.execute.mockResolvedValueOnce([[{ id: "p-1", provision_status: "pending", provision_amount: 1000, provision_balance: 400, remarks: null }], []]);
     await expect(svc.updateProvision({ id: "p-1", amount: 500, userId: "u" })).rejects.toThrow(/already used \(600\)/);
     conn.execute.mockReset();
     conn.execute
-      .mockResolvedValueOnce([[{ id: "p-1", provision_status: "approved", provision_amount: 1000, provision_balance: 400, remarks: null }], []])
+      .mockResolvedValueOnce([[{ id: "p-1", provision_status: "pending", provision_amount: 1000, provision_balance: 400, remarks: null }], []])
       .mockResolvedValue([{}, []]);
     const r = await svc.updateProvision({ id: "p-1", amount: 1200, userId: "u" });
-    expect(r).toEqual({ id: "p-1", provisionAmount: 1200, provisionBalance: 600 });
+    expect(r).toEqual({ id: "p-1", editPending: false, provisionAmount: 1200, provisionBalance: 600 });
     // balance assignment must come before amount (MySQL applies SET left to right)
     expect(String(conn.execute.mock.calls[1][0])).toMatch(/SET provision_balance = provision_balance \+ \(\? - provision_amount\), provision_amount = \?/);
+  });
+
+  it("approved provision: edit is parked as a request, amount unchanged until a second person approves", async () => {
+    conn.execute
+      .mockResolvedValueOnce([[{ id: "p-1", provision_status: "approved", provision_amount: 1000, provision_balance: 400, remarks: null, edit_requested_at: null }], []])
+      .mockResolvedValue([{}, []]);
+    const r = await svc.updateProvision({ id: "p-1", amount: 1500, remarks: "more seats", userId: "maker" });
+    expect(r.editPending).toBe(true);
+    expect(r.provisionAmount).toBe(1000);
+    expect(String(conn.execute.mock.calls[1][0])).toMatch(/SET edit_amount = \?/);
+    expect(conn.execute.mock.calls[1][1]).toEqual([1500, "more seats", "maker", "p-1"]);
+  });
+
+  it("edit request: requester cannot approve; another person's approval applies the amount", async () => {
+    const pendingEdit = { id: "p-1", provision_status: "approved", provision_amount: 1000, provision_balance: 400, edit_amount: 1500, edit_remarks: "more seats", edit_requested_by: "maker", edit_requested_at: "2026-10-14" };
+    conn.execute.mockResolvedValueOnce([[pendingEdit], []]);
+    await expect(svc.decideProvisionEdit("p-1", "approve", "maker")).rejects.toMatchObject({ statusCode: 403 });
+    conn.execute.mockReset();
+    conn.execute.mockResolvedValueOnce([[pendingEdit], []]).mockResolvedValue([{}, []]);
+    await expect(svc.decideProvisionEdit("p-1", "approve", "checker")).resolves.toEqual({ id: "p-1", decision: "approve" });
+    expect(conn.execute.mock.calls[1][1]).toEqual([1500, 1500, "more seats", "p-1"]);
+    expect(String(conn.execute.mock.calls[2][0])).toMatch(/edit_amount = NULL/);
   });
 });

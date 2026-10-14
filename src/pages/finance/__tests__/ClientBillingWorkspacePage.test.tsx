@@ -35,6 +35,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { currentFinanceYear } from "@/components/finance/client-billing/billingFieldOptions";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -128,6 +129,7 @@ function renderPage(seed?: {
   proformas?: unknown[];
   invoices?: unknown[];
   creditNotes?: unknown[];
+  awaitingInvoice?: unknown[];
 }) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
@@ -153,6 +155,11 @@ function renderPage(seed?: {
     ["client-billing", "credit-notes", EMPTY_FILTERS("_all")],
     list(seed?.creditNotes ?? []),
   );
+  // The legacy list screens (LegacyBillingLists.tsx) key on their own search-bar filters.
+  const legacy = { companyName: "", branchId: "", financeYear: currentFinanceYear(), number: "" };
+  client.setQueryData(["client-billing", "legacy-proformas", legacy, 1], list(seed?.proformas ?? []));
+  client.setQueryData(["client-billing", "legacy-invoice-approval", { ...legacy, financeYear: "" }, 1], list(seed?.awaitingInvoice ?? []));
+  client.setQueryData(["client-billing", "legacy-download", legacy, 1], list(seed?.invoices ?? []));
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <ClientBillingWorkspacePage />
@@ -237,48 +244,42 @@ describe("ClientBillingWorkspacePage — rendering", () => {
       at = next;
     }
     expect(html).toContain("1 · Provision");
+    expect(html).toContain("2–3 · View &amp; Approve Proforma");
     expect(html).toContain("4 · Invoice Approval");
-    expect(html).toContain("5 · Invoices / Download");
+    expect(html).toContain("5 · Download Initial Invoice");
+    expect(html).toContain("ADD PO");
     expect(html).toContain("Credit Notes");
     expect(html).toContain("Client Billing");
   });
 
-  it("Proformas tab renders a list from a mocked listProformas response", () => {
-    const html = renderPage({ proformas: [proformaRow] });
-
+  it("View Proforma Invoice: legacy columns, filters and actions", () => {
+    const html = renderPage({ proformas: [{ ...proformaRow, branch_name: "NOIDA-2", po_numbers: "PO-1", description: "Customer Service Charges for Aug-26" }] });
+    for (const h of ["Sr. No.", "Branch Name", "Proforma No.", "Amount", "PO No.", "Description", "Action", "Download"]) expect(html).toContain(h);
+    for (const f of ["Select Finance year", "Proforma No.", "search", "Initial Invoice/Proforma"]) expect(html).toContain(f);
     expect(html).toContain("PF/2026-27/0001");
-    expect(html).toContain("CC-CLIENT-100");
-    expect(html).toContain("Subscription");
-    expect(html).toContain("Aug-26");
-    expect(html).toContain("Intrastate");
-    // money() formats grand_total via Intl en-IN currency — the digits must survive regardless
-    // of how the ₹ symbol itself is encoded in the output.
-    expect(html).toContain("11,800.00");
-    // Not-yet-approved proformas get step 1 "Approve proforma" (no bill number), Edit and Reject.
-    expect(html).toContain('title="Approve proforma"');
-    expect(html).toContain('title="Edit"');
-    expect(html).toContain('title="Reject"');
-    expect(html).toContain('title="Download PDF"');
+    expect(html).toContain("NOIDA-2");
+    // Amount is the taxable total (legacy shows 778901, not the grand total).
+    expect(html).toContain("10,000");
+    expect(html).not.toContain("11,800");
+    for (const a of [">Edit<", ">Approve<", ">Reject<", ">PDF<", ">Letter Head<"]) expect(html).toContain(a);
   });
 
-  it("Proformas tab shows the empty state when listProformas returns nothing", () => {
-    const html = renderPage({ proformas: [] });
-    expect(html).toContain("No proformas found");
+  it("lists show the legacy empty state", () => {
+    expect(renderPage({ proformas: [] })).toContain("No records found");
   });
 
-  it("Invoices tab renders approved rows from its own status-filtered query", () => {
-    // The Invoices tab no longer client-filters the proformas response: it runs its own query
-    // (listProformas with status forced to "approved"), so the approved row is seeded there.
-    // The proforma row is seeded on the Proformas tab in the same pass to prove the two lists
-    // stay separate rather than both rendering everything.
-    const html = renderPage({
-      proformas: [proformaRow],
-      invoices: [approvedInvoiceRow],
-    });
+  it("Invoice Approval: Select Branch, view / Edit per row", () => {
+    const html = renderPage({ awaitingInvoice: [{ ...proformaRow, proforma_approved_at: "2026-10-14", branch_name: "NOIDA-2" }] });
+    expect(html).toContain("Select Branch");
+    expect(html).toContain("view PF/2026-27/0001");
+    expect(html).toContain("Edit PF/2026-27/0001");
+  });
 
+  it("Download Initial Invoice: Invoice No., PDF / Letter Head / Export, Files", () => {
+    const html = renderPage({ invoices: [approvedInvoiceRow] });
     expect(html).toContain("BILL/2026-27/0007");
-    // Approved rows get an Audit log action, not Approve/Reject.
-    expect(html).toContain('title="Audit log"');
+    for (const h of ["Invoice No.", "Files", ">Export<", "Bill No."]) expect(html).toContain(h);
+    expect(html).toContain("More actions for BILL/2026-27/0007");
   });
 
   it("Credit Notes tab renders a list from a mocked listCreditNotes response", () => {
@@ -297,16 +298,10 @@ describe("ClientBillingWorkspacePage — rendering", () => {
     expect(html).toContain("No credit notes found");
   });
 
-  it("New Proforma and New Credit Note buttons render (open their respective create Sheets)", () => {
+  it("Initial Invoice/Proforma and New Credit Note buttons render", () => {
     const html = renderPage();
-    expect(html).toContain("New Proforma");
+    expect(html).toContain("Initial Invoice/Proforma");
     expect(html).toContain("New Credit Note");
-    // CreateProformaSheet/CreateCreditNoteSheet are always mounted, but unlike the Tabs mock
-    // above, Sheet is a real (unmocked) Radix Dialog underneath — its content is correctly gated
-    // by the real `open` state (both start false), so their form fields are genuinely absent from
-    // the tree here. That's correct app behaviour, not a gap: only the trigger button is expected
-    // to render before a click, and there's no jsdom click available in this repo to open it (see
-    // file header) — Section B verifies the Sheet's submit-time wiring from source instead.
   });
 });
 
@@ -320,11 +315,12 @@ const pageSource = readFileSync(
   resolve(process.cwd(), "src/pages/finance/ClientBillingWorkspacePage.tsx"),
   "utf8",
 );
-const createProformaSheetSource = readFileSync(
-  resolve(
-    process.cwd(),
-    "src/components/finance/client-billing/CreateProformaSheet.tsx",
-  ),
+const entrySheetSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/client-billing/ProformaEntrySheet.tsx"),
+  "utf8",
+);
+const approveViewSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/client-billing/InvoiceApproveView.tsx"),
   "utf8",
 );
 const createCreditNoteSheetSource = readFileSync(
@@ -356,43 +352,21 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
       /export function createProforma\(\s*payload: CreateProformaPayload,?\s*\)/,
     );
 
-    // The Sheet now also edits (invoice engine P5): one mutation that updates when editing and
-    // otherwise creates through createProforma with the same declared payload.
-    expect(createProformaSheetSource).toMatch(
-      /mutationFn: async \(payload: CreateProformaPayload\) => \{[\s\S]*?return createProforma\(payload\);/,
-    );
-    // The exact payload construction at submit() — every field name matches CreateProformaPayload.
-    expect(createProformaSheetSource).toContain("saveMutation.mutate({");
-    expect(createProformaSheetSource).toContain("costCentreId,");
-    expect(createProformaSheetSource).toContain("category: category.trim(),");
-    expect(createProformaSheetSource).toContain(
-      "financeYear: financeYear.trim(),",
-    );
-    expect(createProformaSheetSource).toContain(
-      "monthLabel: monthLabel.trim(),",
-    );
-    expect(createProformaSheetSource).toContain("invoiceDate,");
-    expect(createProformaSheetSource).toContain("applyGst,");
-    expect(createProformaSheetSource).toContain(
-      "lines: validLines.map((l) => ({",
-    );
-    expect(createProformaSheetSource).toContain(
-      "particulars: l.particulars.trim(),",
-    );
-    expect(createProformaSheetSource).toContain("qty: Number(l.qty),");
-    expect(createProformaSheetSource).toContain("rate: Number(l.rate),");
-    expect(createProformaSheetSource).toContain("lineType: l.lineType,");
+    // Legacy two-stage entry: one mutation, update when editing, otherwise createProforma.
+    expect(entrySheetSource).toContain("return createProforma(payload);");
+    expect(entrySheetSource).toContain("const payload: CreateProformaPayload = {");
+    for (const f of ["costCentreId, category, financeYear, monthLabel, invoiceDate,", "applyGst, applyTaxCalc, invoiceType,",
+      'lineType: "charge" as const', 'lineType: "deduction" as const']) expect(entrySheetSource).toContain(f);
+    // Edit keeps the GRN already on the invoice (the edit route replaces the whole references block).
+    expect(entrySheetSource).toContain("grnNo: editing?.grn_no ?? null");
   });
 
-  it("Approve (Proformas tab) calls approveInvoice with the row id", () => {
-    expect(apiSource).toMatch(/export function approveInvoice\(\s*id: string,/);
-    expect(pageSource).toContain(
-      "mutationFn: (id: string) => approveInvoice(id),",
-    );
-    // wired from the confirm AlertDialog, not a bare click — matches the plan's "confirm dialog" step.
-    expect(pageSource).toContain(
-      "if (approveTarget) approveMutation.mutate(approveTarget.id);",
-    );
+  it("Approve Proforma page: step 1 approveProforma, step 2 approveInvoice (bill number)", () => {
+    expect(approveViewSource).toContain("if (mode === \"invoice\") return { billNo: (await approveInvoice(invoiceId!)).data.billNo };");
+    expect(approveViewSource).toContain("await approveProforma(invoiceId!);");
+    expect(pageSource).toContain('onApprove={(r) => setApproveView({ id: r.id, mode: "proforma" })}');
+    expect(pageSource).toContain('onView={(r) => setApproveView({ id: r.id, mode: "invoice" })}');
+    expect(pageSource).toContain("Generated Successfully. And moved to Branch");
   });
 
   it("Reject (via its reason dialog) calls rejectInvoice with a non-empty reason", () => {
@@ -421,12 +395,10 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
     expect(pageSource).toContain(
       "await downloadInvoicePdf(kind, id, `${docNumber || id}${suffix}.pdf`, letterhead);",
     );
-    // All three tabs route through one shared DownloadPdfButton bound to that same handler,
-    // rather than each wiring its own onClick — so the kinds are asserted on the button props.
-    expect(pageSource).toContain('<DownloadPdfButton kind="proforma"');
-    expect(pageSource).toContain('<DownloadPdfButton kind="invoice"');
+    // PDF = with letterhead, Letter Head = plain, on both legacy lists; credit notes keep the button.
+    expect(pageSource).toContain('onDownload={(r, lh) => void handleDownload("proforma", r.id, r.proforma_no ?? r.id, lh)}');
+    expect(pageSource).toContain('onDownload={(r, lh) => void handleDownload("invoice", r.id, r.bill_no ?? r.id, lh)}');
     expect(pageSource).toContain('<DownloadPdfButton kind="credit-note"');
-    expect(pageSource).toContain("onDownload={handleDownload}");
   });
 
   it("Credit Notes: create Sheet submits createCreditNote with the payload clientBillingApi.ts actually declares", () => {

@@ -183,11 +183,50 @@ export const clientProvisionAdapter: ApprovalAdapter = {
   category: "Finance",
   async list(ctx) {
     if (!(await holdsLiteralRole(ctx.userId, ...BILLING_ROLES))) return [];
-    const res = await ctx.call("GET", "/api/client-billing/provisions", { query: { status: "pending", limit: 200 } });
-    const rows = await decidableBillingRows(ctx, await callerScope(ctx), rowsOf(res).filter((r) => str(r.provision_status) === "pending"));
+    const [pendingRes, editRes] = await Promise.all([
+      ctx.call("GET", "/api/client-billing/provisions", { query: { status: "pending", limit: 200 } }),
+      ctx.call("GET", "/api/client-billing/provisions", { query: { status: "edit_pending", limit: 200 } }),
+    ]);
+    const me = await callerScope(ctx);
+    const newOnes = await decidableBillingRows(ctx, me, rowsOf(pendingRes).filter((r) => str(r.provision_status) === "pending"));
+    // An edit of an approved provision: the person who asked for it never sees it as a task.
+    const edits = await decidableBillingRows(
+      ctx, me,
+      rowsOf(editRes).filter((r) => r.edit_requested_at && String(r.edit_requested_by) !== String(ctx.userId)).map((r) => ({ ...r, created_by: r.edit_requested_by })),
+    );
+    const rows = [...edits.map((r) => ({ ...r, _edit: true })), ...newOnes.map((r) => ({ ...r, _edit: false }))];
     return rows.slice(0, MAX_DETAIL).map((r): ApprovalItem => {
-      const age = ageDays(r.created_at);
+      const isEdit = Boolean(r._edit);
+      const age = ageDays(isEdit ? r.edit_requested_at : r.created_at);
       const client = str(r.client_name) || str(r.cost_centre_code);
+      if (isEdit) {
+        return {
+          uid: `client_provision:${r.id}:edit`,
+          kind: "client_provision",
+          kindLabel: "Client provision edit",
+          category: "Finance",
+          id: String(r.id),
+          title: `Provision edit ${str(r.cost_centre_code)} ${str(r.month_label)} — ${money("", r.provision_amount).value} → ${money("", r.edit_amount).value}`,
+          subtitle: [client, str(r.branch_name)].filter(Boolean).join(" · "),
+          stage: "Provision edit approval",
+          fields: fields(
+            f("Branch", r.branch_name),
+            f("Cost centre", r.cost_centre_code),
+            f("Month", r.month_label),
+            money("Current amount", r.provision_amount),
+            money("New amount", r.edit_amount),
+            money("Used by invoices", r.used_amount),
+            date("Asked on", r.edit_requested_at),
+            long("Remarks", r.edit_remarks),
+          ),
+          submittedAt: iso(r.edit_requested_at),
+          priority: age !== null && age > 3 ? "high" : "normal",
+          viewPath: `/finance/client-billing?tab=provisions&approvalId=${encodeURIComponent(String(r.id))}`,
+          rejectNeedsReason: false,
+          approveLabel: "Approve edit",
+          meta: { edit: true },
+        };
+      }
       return {
         uid: `client_provision:${r.id}`,
         kind: "client_provision",
@@ -219,6 +258,10 @@ export const clientProvisionAdapter: ApprovalAdapter = {
   },
   async decide(ctx, item, action, remarks) {
     const base = `/api/client-billing/provisions/${encodeURIComponent(item.id)}`;
+    if (item.meta?.edit) {
+      await ctx.call("POST", `${base}/edit/${action === "approve" ? "approve" : "decline"}`, { body: {} });
+      return;
+    }
     if (action === "approve") await ctx.call("POST", `${base}/approve`, { body: {} });
     else await ctx.call("POST", `${base}/reject`, { body: { reason: remarks } });
   },

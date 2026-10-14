@@ -18,8 +18,8 @@ import { useEffect, useState } from "react";
 import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, ArrowRight, Ban, Download, Mail, Eye, FileClock, FileSpreadsheet, FileText, Loader2, Pencil, Plus, RefreshCw,
-  Search, Stamp, ThumbsUp, X, XCircle,
+  ArrowLeft, ArrowRight, Download, Eye, FileText, Loader2, Plus, RefreshCw,
+  Search, ThumbsUp, X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
@@ -41,8 +41,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
   approveCreditNote,
-  approveInvoice,
-  approveProforma,
+  approveInvoicePo,
   exportInvoiceCsv,
   downloadInvoicePdf,
   exportClientBillingCsv,
@@ -53,15 +52,17 @@ import {
   type ClientBillingListFilters,
   type CreditNoteRow,
   type InvoiceRow,
-  type InvoiceStatus,
 } from "@/lib/clientBillingApi";
 import { AuditLogDialog } from "@/components/finance/client-billing/AuditLogDialog";
 import { CreateCreditNoteSheet } from "@/components/finance/client-billing/CreateCreditNoteSheet";
-import { CreateProformaSheet } from "@/components/finance/client-billing/CreateProformaSheet";
+import { ProformaEntrySheet } from "@/components/finance/client-billing/ProformaEntrySheet";
+import { InvoiceApproveView } from "@/components/finance/client-billing/InvoiceApproveView";
+import { DownloadInvoiceList, InvoiceApprovalList, ProformaApprovalList } from "@/components/finance/client-billing/LegacyBillingLists";
+import { AddGrnDialog, PoGrnTab } from "@/components/finance/client-billing/PoGrnTab";
 import { CreditNoteDetailDialog } from "@/components/finance/client-billing/CreditNoteDetailDialog";
 import { InvoiceDetailDialog } from "@/components/finance/client-billing/InvoiceDetailDialog";
 import { RejectInvoiceDialog } from "@/components/finance/client-billing/RejectInvoiceDialog";
-import { CreditStatusBadge, InvoiceStatusBadge, money, moneyCompact } from "@/components/finance/client-billing/shared";
+import { CreditStatusBadge, money, moneyCompact } from "@/components/finance/client-billing/shared";
 import {
   BillingScopeSelects, costCentreSearchOptions, narrowCostCentres, useBillingFilterOptions,
 } from "@/components/finance/client-billing/BillingScopeSelects";
@@ -73,15 +74,6 @@ import { SubmitToClientDialog } from "@/components/finance/client-billing/Submit
 
 const PAGE_SIZE = 25;
 
-/** "_awaiting" = legacy "View & Approve Proforma" queue (proforma not yet approved). */
-const AWAITING_PROFORMA = "_awaiting";
-const PROFORMA_STATUS_FILTERS: Array<{ value: InvoiceStatus | "_all" | typeof AWAITING_PROFORMA; label: string }> = [
-  { value: AWAITING_PROFORMA, label: "Awaiting proforma approval" },
-  { value: "_all", label: "All statuses" },
-  { value: "proforma", label: "Proforma (both steps)" },
-  { value: "approved", label: "Approved" },
-  { value: "rejected", label: "Rejected" },
-];
 
 const CREDIT_NOTE_STATUS_FILTERS = [
   { value: "_all", label: "All statuses" },
@@ -104,7 +96,7 @@ const EMPTY_FILTERS = (status: string): ListFilterState => ({
   status, fromDate: "", toDate: "", costCentreId: "", companyName: "", branchId: "", search: "", page: 1,
 });
 
-const TABS: Array<BillingTab | "change-requests"> = ["provisions", "proformas", "invoice-approval", "invoices", "credit-notes", "change-requests"];
+const TABS: Array<BillingTab | "change-requests" | "po"> = ["provisions", "proformas", "invoice-approval", "invoices", "po", "credit-notes", "change-requests"];
 
 /**
  * Shown in the actions cell in place of Approve/Reject on a row the live workflow can
@@ -422,20 +414,20 @@ export default function ClientBillingWorkspacePage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const [proformaFilters, setProformaFilters] = useState<ListFilterState>(EMPTY_FILTERS(AWAITING_PROFORMA));
-  const [invoiceApprovalFilters, setInvoiceApprovalFilters] = useState<ListFilterState>(EMPTY_FILTERS("proforma"));
-  const [invoiceFilters, setInvoiceFilters] = useState<ListFilterState>(EMPTY_FILTERS("approved"));
+  const [entry, setEntry] = useState<{ open: boolean; editId: string | null }>({ open: false, editId: null });
+  const [approveView, setApproveView] = useState<{ id: string; mode: "proforma" | "invoice" | "view" } | null>(null);
+  const [grnTarget, setGrnTarget] = useState<{ id: string; label: string; grnNo?: string | null; grnDate?: string | null } | null>(null);
+  // Legacy confirmation, word for word: "Bill No. 09-171/26-27 to Branch NOIDA-2 for amount 778901 for Sep-26 Generated Successfully. And moved to Branch"
+  const [billBanner, setBillBanner] = useState<string | null>(null);
   const [creditNoteFilters, setCreditNoteFilters] = useState<ListFilterState>(EMPTY_FILTERS("_all"));
 
-  const [createProformaOpen, setCreateProformaOpen] = useState(false);
   const [createCreditNoteOpen, setCreateCreditNoteOpen] = useState(false);
-  const [editProformaId, setEditProformaId] = useState<string | null>(null);
   // Approval Center deep link: ?tab=<tab>&approvalId=<id> opens that record's detail.
   const deepLinkParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
   const deepLinkId = deepLinkParams.get("approvalId");
-  const rawTab = deepLinkParams.get("tab") as BillingTab | "change-requests" | null;
+  const rawTab = deepLinkParams.get("tab") as BillingTab | "change-requests" | "po" | null;
   const deepLinkTab = rawTab && TABS.includes(rawTab) ? rawTab : "proformas";
-  const [activeTab, setActiveTab] = useState<BillingTab | "change-requests">(deepLinkTab);
+  const [activeTab, setActiveTab] = useState<BillingTab | "change-requests" | "po">(deepLinkTab);
   const [changeRequestTarget, setChangeRequestTarget] = useState<ChangeRequestTarget | null>(null);
   const [submitTarget, setSubmitTarget] = useState<{ id: string; label: string } | null>(null);
   const [detailInvoiceId, setDetailInvoiceId] = useState<string | null>(
@@ -444,8 +436,6 @@ export default function ClientBillingWorkspacePage() {
   const [detailCreditNoteId, setDetailCreditNoteId] = useState<string | null>(deepLinkId && deepLinkTab === "credit-notes" ? deepLinkId : null);
   const [auditInvoice, setAuditInvoice] = useState<{ id: string; label: string } | null>(null);
   const [rejectInvoiceTarget, setRejectInvoiceTarget] = useState<{ id: string; label: string } | null>(null);
-  const [approveTarget, setApproveTarget] = useState<{ id: string; label: string } | null>(null);
-  const [approveProformaTarget, setApproveProformaTarget] = useState<{ id: string; label: string } | null>(null);
   const [approveCreditTarget, setApproveCreditTarget] = useState<{ id: string; label: string } | null>(null);
   const [previewTarget, setPreviewTarget] = useState<{ kind: "proforma" | "invoice" | "credit-note"; id: string; label: string } | null>(null);
 
@@ -465,13 +455,9 @@ export default function ClientBillingWorkspacePage() {
   });
   const summary = summaryQuery.data?.data;
 
-  function toApiFilters(
-    f: ListFilterState, statusOverride?: string, stage?: ClientBillingListFilters["stage"],
-  ): ClientBillingListFilters {
-    const awaiting = !statusOverride && f.status === AWAITING_PROFORMA;
+  function toApiFilters(f: ListFilterState, statusOverride?: string): ClientBillingListFilters {
     return {
-      status: statusOverride ?? (awaiting ? "proforma" : f.status === "_all" ? undefined : f.status),
-      stage: awaiting ? "proforma_approval" : stage,
+      status: statusOverride ?? (f.status === "_all" ? undefined : f.status),
       companyName: f.companyName || undefined,
       branchId: f.branchId || undefined,
       fromDate: f.fromDate || undefined,
@@ -483,35 +469,13 @@ export default function ClientBillingWorkspacePage() {
     };
   }
 
-  const proformasQuery = useQuery({
-    queryKey: ["client-billing", "proformas", proformaFilters],
-    queryFn: () => listProformas(toApiFilters(proformaFilters)),
-  });
-  const proformaRows: InvoiceRow[] = proformasQuery.data?.data ?? [];
-  const proformaTotal = proformasQuery.data?.total ?? 0;
-
-  // Legacy "Invoice Approval": proformas already approved once, waiting for the bill number.
-  const invoiceApprovalQuery = useQuery({
-    queryKey: ["client-billing", "invoice-approval", invoiceApprovalFilters],
-    queryFn: () => listProformas(toApiFilters(invoiceApprovalFilters, "proforma", "invoice_approval")),
-  });
-  const invoiceApprovalRows: InvoiceRow[] = invoiceApprovalQuery.data?.data ?? [];
-  const invoiceApprovalTotal = invoiceApprovalQuery.data?.total ?? 0;
-
-  const invoicesQuery = useQuery({
-    queryKey: ["client-billing", "invoices", invoiceFilters],
-    queryFn: () => listProformas(toApiFilters(invoiceFilters, "approved")),
-  });
-  const invoiceRows: InvoiceRow[] = invoicesQuery.data?.data ?? [];
-  const invoiceTotal = invoicesQuery.data?.total ?? 0;
-
   const creditNotesQuery = useQuery({
     queryKey: ["client-billing", "credit-notes", creditNoteFilters],
     queryFn: () => listCreditNotes(toApiFilters(creditNoteFilters)),
   });
   const creditNoteRows: CreditNoteRow[] = creditNotesQuery.data?.data ?? [];
   const creditNoteTotal = creditNotesQuery.data?.total ?? 0;
-  useApprovalFocus(!proformasQuery.isLoading && !creditNotesQuery.isLoading && !invoiceApprovalQuery.isLoading);
+  useApprovalFocus(!creditNotesQuery.isLoading);
 
   // A dedicated, unpaginated fetch for the "New Credit Note" picker — it needs every
   // approved invoice to search over, not just whatever page the Invoices tab happens to be
@@ -526,35 +490,10 @@ export default function ClientBillingWorkspacePage() {
     void queryClient.invalidateQueries({ queryKey: ["client-billing"] });
   }
 
-  const approveProformaMutation = useMutation({
-    mutationFn: (id: string) => approveProforma(id),
-    onSuccess: () => {
-      toast({ title: "Proforma approved", description: "Moved to Invoice Approval for the bill number." });
-      invalidateAll();
-      setApproveProformaTarget(null);
-    },
-    onError: (error: Error) => {
-      toast({ title: "Approval failed", description: error.message, variant: "destructive" });
-      setApproveProformaTarget(null);
-    },
-  });
-
-  const approveMutation = useMutation({
-    mutationFn: (id: string) => approveInvoice(id),
-    onSuccess: (res) => {
-      // Same wording as the legacy confirmation: "Bill No. 09-171/26-27 ... Generated Successfully".
-      toast({ title: "Invoice approved", description: res.data?.billNo ? `Bill No. ${res.data.billNo} generated successfully` : undefined });
-      invalidateAll();
-      setApproveTarget(null);
-    },
-    // Dismiss the confirm dialog on failure too, not only on success. It used to stay open
-    // over the toast: the click appeared to do nothing, the error was hidden behind the
-    // dialog, and the still-live Approve button invited the user to try again forever.
-    // Observed live 2026-08-27 against a migrated proforma.
-    onError: (error: Error) => {
-      toast({ title: "Approval failed", description: error.message, variant: "destructive" });
-      setApproveTarget(null);
-    },
+  const approvePoMutation = useMutation({
+    mutationFn: (id: string) => approveInvoicePo(id),
+    onSuccess: () => { toast({ title: "PO approved" }); invalidateAll(); },
+    onError: (error: Error) => toast({ title: "Approve PO failed", description: error.message, variant: "destructive" }),
   });
 
   const approveCreditMutation = useMutation({
@@ -564,7 +503,7 @@ export default function ClientBillingWorkspacePage() {
       invalidateAll();
       setApproveCreditTarget(null);
     },
-    // Same reasoning as approveMutation above — close the dialog so the toast is visible.
+    // Close the dialog on failure too, so the toast is visible (it used to hide behind it).
     onError: (error: Error) => {
       toast({ title: "Approval failed", description: error.message, variant: "destructive" });
       setApproveCreditTarget(null);
@@ -572,17 +511,13 @@ export default function ClientBillingWorkspacePage() {
   });
 
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [exportingId, setExportingId] = useState<string | null>(null);
 
   async function handleInvoiceExport(row: InvoiceRow) {
-    setExportingId(row.id);
     try {
       const name = String(row.bill_no ?? row.proforma_no ?? row.id).replace(/[^A-Za-z0-9._-]+/g, "_");
       await exportInvoiceCsv(row.id, `invoice-${name}.csv`);
     } catch (error) {
       toast({ title: "Export failed", description: error instanceof Error ? error.message : "Unable to export", variant: "destructive" });
-    } finally {
-      setExportingId(null);
     }
   }
   const [exportingKind, setExportingKind] = useState<"proformas" | "credit-notes" | null>(null);
@@ -627,7 +562,7 @@ export default function ClientBillingWorkspacePage() {
     }
   }
 
-  const isRefreshing = proformasQuery.isFetching || invoiceApprovalQuery.isFetching || invoicesQuery.isFetching || creditNotesQuery.isFetching || summaryQuery.isFetching;
+  const isRefreshing = creditNotesQuery.isFetching || summaryQuery.isFetching;
 
   return (
     <DashboardLayout>
@@ -647,9 +582,7 @@ export default function ClientBillingWorkspacePage() {
             title="Refresh"
             aria-label="Refresh"
             onClick={() => {
-              void proformasQuery.refetch();
-              void invoiceApprovalQuery.refetch();
-              void invoicesQuery.refetch();
+              invalidateAll();
               void creditNotesQuery.refetch();
               void summaryQuery.refetch();
             }}
@@ -693,7 +626,7 @@ export default function ClientBillingWorkspacePage() {
         )}
 
         <BillingSequenceStepper
-          active={activeTab === "change-requests" ? "invoices" : activeTab}
+          active={activeTab === "change-requests" || activeTab === "po" ? "invoices" : activeTab}
           onSelect={setActiveTab}
           counts={[
             summary?.pendingProvisionCount,
@@ -704,14 +637,15 @@ export default function ClientBillingWorkspacePage() {
           ]}
         />
 
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as BillingTab | "change-requests")} className="flex flex-1 flex-col overflow-hidden">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as BillingTab | "change-requests" | "po")} className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="mx-4 mt-3 w-fit">
             <TabsTrigger value="provisions">1 · Provision</TabsTrigger>
-            <TabsTrigger value="proformas">2–3 · Proforma &amp; Approve</TabsTrigger>
+            <TabsTrigger value="proformas">2–3 · View &amp; Approve Proforma</TabsTrigger>
             <TabsTrigger value="invoice-approval">4 · Invoice Approval</TabsTrigger>
-            <TabsTrigger value="invoices">5 · Invoices / Download</TabsTrigger>
+            <TabsTrigger value="invoices">5 · Download Initial Invoice</TabsTrigger>
+            <TabsTrigger value="po">ADD PO</TabsTrigger>
             <TabsTrigger value="credit-notes">Credit Notes</TabsTrigger>
-            <TabsTrigger value="change-requests">Delete / Change Requests</TabsTrigger>
+            <TabsTrigger value="change-requests">Delete / Status Change Approval</TabsTrigger>
           </TabsList>
 
           {/* ── Legacy "Approval Invoice Delete Request" + "Invoice Status Change Approval" ── */}
@@ -724,345 +658,43 @@ export default function ClientBillingWorkspacePage() {
             <ProvisionsTab />
           </TabsContent>
 
-          {/* ── Proformas tab ── */}
+          {/* ── Legacy "Initial Invoice/Proforma" + "View & Approve Proforma" ── */}
           <TabsContent value="proformas" className="flex flex-1 flex-col overflow-hidden px-4 py-3 data-[state=inactive]:hidden">
-            <div className="flex items-center justify-between gap-2">
-              <ListToolbar
-                filters={proformaFilters}
-                onChange={setProformaFilters}
-                statusOptions={PROFORMA_STATUS_FILTERS}
-                costCentreOptions={costCentreOptions}
-                searchPlaceholder="Proforma / bill no, client…"
-                onExport={() => void handleExport("proformas", proformaFilters)}
-                isExporting={exportingKind === "proformas"}
-              />
-              <Button size="sm" className="h-8 shrink-0" onClick={() => setCreateProformaOpen(true)}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" />New Proforma
-              </Button>
-            </div>
-
-            {proformasQuery.isError && (
-              <div className="mb-2 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                {proformasQuery.error instanceof Error ? proformasQuery.error.message : "Unable to load proformas"}
-              </div>
-            )}
-
-            <div className="flex-1 overflow-y-auto rounded-md border">
-              {proformasQuery.isLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Proforma no.</TableHead>
-                      <TableHead>Cost centre</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Month</TableHead>
-                      <TableHead>GST type</TableHead>
-                      <TableHead className="text-right">Grand total</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {proformaRows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
-                          No proformas found
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      proformaRows.map((row) => (
-                        <TableRow key={row.id} data-approval-id={row.id}>
-                          <TableCell className="font-medium">
-                            <button
-                              type="button"
-                              className="text-left hover:underline"
-                              onClick={() => setDetailInvoiceId(row.id)}
-                            >
-                              {row.proforma_no ?? "—"}
-                            </button>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {row.cost_centre_display_name || row.cost_centre_code || row.cost_centre_id}
-                            {row.branch_name && <span className="block text-[11px]">{row.branch_name}</span>}
-                          </TableCell>
-                          <TableCell>{row.category}</TableCell>
-                          <TableCell>{row.month_label} · {row.finance_year}</TableCell>
-                          <TableCell>{row.gst_type}</TableCell>
-                          <TableCell className="text-right tabular-nums">{money(row.grand_total)}</TableCell>
-                          <TableCell>
-                            <InvoiceStatusBadge status={row.invoice_status} />
-                            {row.invoice_status === "proforma" && row.proforma_approved_at && (
-                              <span className="ml-1 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">In Invoice Approval</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                size="icon" variant="ghost" className="h-7 w-7" title="Preview" aria-label="Preview"
-                                onClick={() => setPreviewTarget({ kind: "proforma", id: row.id, label: row.proforma_no ?? row.id })}
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              <DownloadPdfButton kind="proforma" id={row.id} docNumber={row.proforma_no ?? row.id} downloadingId={downloadingId} onDownload={handleDownload} />
-                              {row.invoice_status === "proforma" && (
-                                row.is_migrated
-                                  ? <HistoricalRecordTag />
-                                  : (
-                                    <>
-                                      <Button
-                                        size="icon" variant="ghost" className="h-7 w-7"
-                                        title="Edit" aria-label="Edit proforma"
-                                        onClick={() => setEditProformaId(row.id)}
-                                      >
-                                        <Pencil className="h-3.5 w-3.5" />
-                                      </Button>
-                                      {!row.proforma_approved_at && (
-                                        <Button
-                                          size="icon" variant="ghost" className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
-                                          title="Approve proforma" aria-label="Approve proforma"
-                                          onClick={() => setApproveProformaTarget({ id: row.id, label: row.proforma_no ?? row.id })}
-                                        >
-                                          <ThumbsUp className="h-3.5 w-3.5" />
-                                        </Button>
-                                      )}
-                                      <Button
-                                        size="icon" variant="ghost" className="h-7 w-7 text-rose-600 hover:text-rose-700"
-                                        title="Reject" aria-label="Reject"
-                                        onClick={() => setRejectInvoiceTarget({ id: row.id, label: row.proforma_no ?? row.id })}
-                                      >
-                                        <XCircle className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </>
-                                  )
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
-            <PaginationFooter page={proformaFilters.page} total={proformaTotal} onPageChange={(page) => setProformaFilters((f) => ({ ...f, page }))} />
+            <ProformaApprovalList
+              onCreate={() => setEntry({ open: true, editId: null })}
+              onEdit={(r) => setEntry({ open: true, editId: r.id })}
+              onApprove={(r) => setApproveView({ id: r.id, mode: "proforma" })}
+              onReject={(r) => setRejectInvoiceTarget({ id: r.id, label: r.proforma_no ?? r.id })}
+              onDownload={(r, lh) => void handleDownload("proforma", r.id, r.proforma_no ?? r.id, lh)}
+            />
           </TabsContent>
 
-          {/* ── Invoice Approval tab (legacy "Invoice Approval": mints the bill number) ── */}
+          {/* ── Legacy "Invoice Approval": view -> Approved generates the bill number ── */}
           <TabsContent value="invoice-approval" className="flex flex-1 flex-col overflow-hidden px-4 py-3 data-[state=inactive]:hidden">
-            <ListToolbar
-              filters={invoiceApprovalFilters}
-              onChange={setInvoiceApprovalFilters}
-              costCentreOptions={costCentreOptions}
-              searchPlaceholder="Proforma no, client…"
-              onExport={() => void handleExport("proformas", invoiceApprovalFilters, "proforma")}
-              isExporting={exportingKind === "proformas"}
+            <InvoiceApprovalList
+              banner={billBanner}
+              onView={(r) => setApproveView({ id: r.id, mode: "invoice" })}
+              onEdit={(r) => setEntry({ open: true, editId: r.id })}
             />
-
-            {invoiceApprovalQuery.isError && (
-              <div className="mb-2 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                {invoiceApprovalQuery.error instanceof Error ? invoiceApprovalQuery.error.message : "Unable to load the approval queue"}
-              </div>
-            )}
-
-            <div className="flex-1 overflow-y-auto rounded-md border">
-              {invoiceApprovalQuery.isLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Branch</TableHead>
-                      <TableHead>Proforma no.</TableHead>
-                      <TableHead>Cost centre</TableHead>
-                      <TableHead>Description</TableHead>
-                      <TableHead>Month</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                      <TableHead className="text-right">Grand total</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {invoiceApprovalRows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
-                          Nothing waiting for invoice approval. Approve a proforma first.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      invoiceApprovalRows.map((row) => (
-                        <TableRow key={row.id} data-approval-id={row.id}>
-                          <TableCell className="text-xs">{row.branch_name ?? "—"}</TableCell>
-                          <TableCell className="font-medium">
-                            <button type="button" className="text-left hover:underline" onClick={() => setDetailInvoiceId(row.id)}>
-                              {row.proforma_no ?? "—"}
-                            </button>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {row.cost_centre_display_name || row.cost_centre_code || row.cost_centre_id}
-                          </TableCell>
-                          <TableCell className="max-w-[260px] truncate text-xs" title={row.description ?? ""}>{row.description ?? "—"}</TableCell>
-                          <TableCell>{row.month_label} · {row.finance_year}</TableCell>
-                          <TableCell className="text-right tabular-nums">{money(row.total_amount)}</TableCell>
-                          <TableCell className="text-right tabular-nums">{money(row.grand_total)}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                size="icon" variant="ghost" className="h-7 w-7" title="View" aria-label="View"
-                                onClick={() => setPreviewTarget({ kind: "proforma", id: row.id, label: row.proforma_no ?? row.id })}
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                size="icon" variant="ghost" className="h-7 w-7" title="Edit (sends it back for proforma approval)" aria-label="Edit proforma"
-                                onClick={() => setEditProformaId(row.id)}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                size="sm" variant="ghost" className="h-7 px-2 text-xs text-emerald-700 hover:text-emerald-800"
-                                title="Approve and generate bill number" aria-label="Approve invoice"
-                                onClick={() => setApproveTarget({ id: row.id, label: row.proforma_no ?? row.id })}
-                              >
-                                <Stamp className="mr-1 h-3.5 w-3.5" />Approve
-                              </Button>
-                              <Button
-                                size="icon" variant="ghost" className="h-7 w-7 text-rose-600 hover:text-rose-700"
-                                title="Reject" aria-label="Reject"
-                                onClick={() => setRejectInvoiceTarget({ id: row.id, label: row.proforma_no ?? row.id })}
-                              >
-                                <XCircle className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
-            <PaginationFooter page={invoiceApprovalFilters.page} total={invoiceApprovalTotal} onPageChange={(page) => setInvoiceApprovalFilters((f) => ({ ...f, page }))} />
           </TabsContent>
 
-          {/* ── Invoices tab ── */}
+          {/* ── Legacy "Download Initial Invoice" ── */}
           <TabsContent value="invoices" className="flex flex-1 flex-col overflow-hidden px-4 py-3 data-[state=inactive]:hidden">
-            <ListToolbar
-              filters={invoiceFilters}
-              onChange={setInvoiceFilters}
-              costCentreOptions={costCentreOptions}
-              searchPlaceholder="Bill no, client…"
-              onExport={() => void handleExport("proformas", invoiceFilters, "approved")}
-              isExporting={exportingKind === "proformas"}
+            <DownloadInvoiceList
+              onDownload={(r, lh) => void handleDownload("invoice", r.id, r.bill_no ?? r.id, lh)}
+              onExport={(r) => void handleInvoiceExport(r)}
+              onView={(r) => setApproveView({ id: r.id, mode: "view" })}
+              onAddGrn={(r) => setGrnTarget({ id: r.id, label: r.bill_no ?? r.id, grnNo: r.grn_no, grnDate: r.grn_date })}
+              onApprovePo={(r) => approvePoMutation.mutate(r.id)}
+              onSubmit={(r) => setSubmitTarget({ id: r.id, label: r.bill_no ?? r.id })}
+              onDeleteRequest={(r) => setChangeRequestTarget({ id: r.id, label: r.bill_no ?? r.id, category: r.category, requestType: "void" })}
+              onAudit={(r) => setAuditInvoice({ id: r.id, label: r.bill_no ?? r.id })}
             />
+          </TabsContent>
 
-            {invoicesQuery.isError && (
-              <div className="mb-2 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                {invoicesQuery.error instanceof Error ? invoicesQuery.error.message : "Unable to load invoices"}
-              </div>
-            )}
-
-            <div className="flex-1 overflow-y-auto rounded-md border">
-              {invoicesQuery.isLoading ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Bill no.</TableHead>
-                      <TableHead>Cost centre</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Month</TableHead>
-                      <TableHead>GST type</TableHead>
-                      <TableHead className="text-right">Grand total</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {invoiceRows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
-                          No approved invoices found
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      invoiceRows.map((row) => (
-                        <TableRow key={row.id}>
-                          <TableCell className="font-medium">
-                            <button
-                              type="button"
-                              className="text-left hover:underline"
-                              onClick={() => setDetailInvoiceId(row.id)}
-                            >
-                              {row.bill_no ?? "—"}
-                            </button>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {row.cost_centre_display_name || row.cost_centre_code || row.cost_centre_id}
-                          </TableCell>
-                          <TableCell>{row.category}</TableCell>
-                          <TableCell>{row.month_label} · {row.finance_year}</TableCell>
-                          <TableCell>{row.gst_type}</TableCell>
-                          <TableCell className="text-right tabular-nums">{money(row.grand_total)}</TableCell>
-                          <TableCell><InvoiceStatusBadge status={row.invoice_status} /></TableCell>
-                          <TableCell>
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                size="icon" variant="ghost" className="h-7 w-7" title="Preview" aria-label="Preview"
-                                onClick={() => setPreviewTarget({ kind: "invoice", id: row.id, label: row.bill_no ?? row.id })}
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              <DownloadPdfButton kind="invoice" id={row.id} docNumber={row.bill_no ?? row.id} downloadingId={downloadingId} onDownload={handleDownload} />
-                              <Button
-                                size="icon" variant="ghost" className="h-7 w-7"
-                                title="Export (CSV)" aria-label="Export invoice"
-                                disabled={exportingId === row.id}
-                                onClick={() => void handleInvoiceExport(row)}
-                              >
-                                {exportingId === row.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
-                              </Button>
-                              <Button
-                                size="icon" variant="ghost" className="h-7 w-7"
-                                title="Submit to client" aria-label="Submit to client"
-                                onClick={() => setSubmitTarget({ id: row.id, label: row.bill_no ?? row.id })}
-                              >
-                                <Mail className="h-3.5 w-3.5" />
-                              </Button>
-                              {!row.is_migrated && (
-                                <Button
-                                  size="icon" variant="ghost" className="h-7 w-7 text-rose-600 hover:text-rose-700"
-                                  title="Request delete / change" aria-label="Request delete or change"
-                                  onClick={() => setChangeRequestTarget({ id: row.id, label: row.bill_no ?? row.id, category: row.category, requestType: "void" })}
-                                >
-                                  <Ban className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
-                              <Button
-                                size="icon" variant="ghost" className="h-7 w-7"
-                                title="Audit log" aria-label="Audit log"
-                                onClick={() => setAuditInvoice({ id: row.id, label: row.bill_no ?? row.id })}
-                              >
-                                <FileClock className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
-            <PaginationFooter page={invoiceFilters.page} total={invoiceTotal} onPageChange={(page) => setInvoiceFilters((f) => ({ ...f, page }))} />
+          {/* ── Legacy "ADD PO" ── */}
+          <TabsContent value="po" className="flex flex-1 flex-col overflow-hidden px-4 py-3 data-[state=inactive]:hidden">
+            <PoGrnTab />
           </TabsContent>
 
           {/* ── Credit Notes tab ── */}
@@ -1177,17 +809,21 @@ export default function ClientBillingWorkspacePage() {
         </Tabs>
       </div>
 
-      <CreateProformaSheet
-        open={createProformaOpen}
-        onOpenChange={setCreateProformaOpen}
-        onCreated={() => invalidateAll()}
+      <ProformaEntrySheet
+        open={entry.open}
+        onOpenChange={(open) => !open && setEntry({ open: false, editId: null })}
+        onSaved={() => invalidateAll()}
+        editInvoiceId={entry.editId}
       />
-      <CreateProformaSheet
-        open={Boolean(editProformaId)}
-        onOpenChange={(open) => !open && setEditProformaId(null)}
-        onCreated={() => invalidateAll()}
-        editInvoiceId={editProformaId}
+      <InvoiceApproveView
+        invoiceId={approveView?.id ?? null}
+        mode={approveView?.mode ?? "view"}
+        onClose={() => setApproveView(null)}
+        onApproved={(r) => setBillBanner(
+          `Bill No. ${r.billNo ?? ""} to Branch ${r.branch ?? ""} for amount ${r.amount} for ${r.month} Generated Successfully. And moved to Branch`,
+        )}
       />
+      <AddGrnDialog target={grnTarget} onClose={() => setGrnTarget(null)} />
       <CreateCreditNoteSheet
         open={createCreditNoteOpen}
         onOpenChange={setCreateCreditNoteOpen}
@@ -1225,55 +861,6 @@ export default function ClientBillingWorkspacePage() {
         target={previewTarget}
         onOpenChange={(open) => !open && setPreviewTarget(null)}
       />
-
-      <AlertDialog open={Boolean(approveTarget)} onOpenChange={(open) => !open && setApproveTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Approve invoice {approveTarget?.label}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This generates the permanent bill number and moves it to Invoices / Download. This
-              cannot be undone from here.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={approveMutation.isPending}
-              onClick={(e) => {
-                e.preventDefault();
-                if (approveTarget) approveMutation.mutate(approveTarget.id);
-              }}
-            >
-              {approveMutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-              Approve
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={Boolean(approveProformaTarget)} onOpenChange={(open) => !open && setApproveProformaTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Approve proforma {approveProformaTarget?.label}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Step 3 of 5. The proforma moves to Invoice Approval; the bill number is generated there.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={approveProformaMutation.isPending}
-              onClick={(e) => {
-                e.preventDefault();
-                if (approveProformaTarget) approveProformaMutation.mutate(approveProformaTarget.id);
-              }}
-            >
-              {approveProformaMutation.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-              Approve proforma
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={Boolean(approveCreditTarget)} onOpenChange={(open) => !open && setApproveCreditTarget(null)}>
         <AlertDialogContent>

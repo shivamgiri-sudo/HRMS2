@@ -43,6 +43,7 @@ export interface UpdateProformaInput {
   invoiceDate?: string;
   description?: string | null;
   applyGst?: boolean;
+  applyTaxCalc?: boolean;
   invoiceType?: string | null;
   lines?: EditLineInput[];
   references?: InvoiceReferenceInput;
@@ -118,6 +119,7 @@ async function updateProforma(
     const description =
       input.description === undefined ? invoice.description : input.description;
     const applyGst = input.applyGst ?? Boolean(invoice.apply_gst);
+    const applyTaxCalc = input.applyTaxCalc ?? Number(invoice.apply_tax_calc ?? 1) === 1;
     const invoiceType =
       input.invoiceType === undefined && invoice.invoice_type
         ? String(invoice.invoice_type)
@@ -160,7 +162,7 @@ async function updateProforma(
       validateLines(lines);
     }
 
-    const amounts = computeInvoiceAmounts(lines, gstType, applyGst);
+    const amounts = computeInvoiceAmounts(lines, gstType, applyTaxCalc && applyGst);
 
     const poNumbers = refs
       ? refs.poNumbers
@@ -193,6 +195,7 @@ async function updateProforma(
     note("description", invoice.description, description);
     note("applyGst", invoice.apply_gst ? "yes" : "no", applyGst ? "yes" : "no");
     note("invoiceType", invoice.invoice_type, invoiceType);
+    note("applyTaxCalc", Number(invoice.apply_tax_calc ?? 1) === 1 ? "yes" : "no", applyTaxCalc ? "yes" : "no");
     note("gstType", invoice.gst_type, gstType);
     note("total", Number(invoice.total_amount), amounts.totalAmount);
     note("grandTotal", Number(invoice.grand_total), amounts.grandTotal);
@@ -212,7 +215,7 @@ async function updateProforma(
       `UPDATE client_invoice
        SET category = ?, finance_year = ?, month_label = ?, invoice_date = ?, description = ?,
            gst_type = ?, apply_gst = ?, total_amount = ?, igst_amount = ?, cgst_amount = ?,
-           sgst_amount = ?, grand_total = ?, invoice_type = ?,
+           sgst_amount = ?, grand_total = ?, invoice_type = ?, apply_tax_calc = ?,
            proforma_approved_by = NULL, proforma_approved_at = NULL
        WHERE id = ?`,
       [
@@ -229,6 +232,7 @@ async function updateProforma(
         amounts.sgstAmount,
         amounts.grandTotal,
         invoiceType,
+        applyTaxCalc ? 1 : 0,
         input.invoiceId,
       ],
     );

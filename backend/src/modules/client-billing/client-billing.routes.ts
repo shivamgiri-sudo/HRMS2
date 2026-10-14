@@ -16,6 +16,7 @@ import { clientBillingChangeRequestService } from "./client-billing-change-reque
 import { checkPoCoverage, listAvailablePos } from "./client-billing-po.js";
 import { clientBillingProvisionService, provisionRequired } from "./client-billing-provision.service.js";
 import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
+import { clientBillingPoGrnService } from "./client-billing-po-grn.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -71,7 +72,7 @@ router.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const body = req.body as {
       costCentreId?: string; category?: string; financeYear?: string; monthLabel?: string;
-      invoiceDate?: string; description?: string; applyGst?: boolean; invoiceType?: string;
+      invoiceDate?: string; description?: string; applyGst?: boolean; applyTaxCalc?: boolean; invoiceType?: string;
       lines?: Array<{ particulars: string; qty: number; rate: number; lineType?: "charge" | "deduction" }>;
       poNumbers?: string[]; grnNo?: string; grnDate?: string;
       jccNo?: string; jccDate?: string; rcmApplicable?: boolean;
@@ -91,6 +92,7 @@ router.post(
       invoiceDate: body.invoiceDate,
       description: body.description,
       applyGst: body.applyGst,
+      applyTaxCalc: body.applyTaxCalc,
       invoiceType: body.invoiceType,
       lines: body.lines ?? [],
       createdBy: req.authUser!.id,
@@ -985,13 +987,13 @@ router.post(
   "/provisions",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const body = req.body as { costCentreId?: string; financeYear?: string; monthLabel?: string; amount?: number; remarks?: string };
+    const body = req.body as { costCentreId?: string; financeYear?: string; monthLabel?: string; amount?: number; remarks?: string; invoiceType?: string };
     if (!body.costCentreId || !body.financeYear || !body.monthLabel || body.amount === undefined) {
       return res.status(400).json({ error: "costCentreId, financeYear, monthLabel and amount are required" });
     }
     const data = await clientBillingProvisionService.createProvision({
       costCentreId: body.costCentreId, financeYear: body.financeYear, monthLabel: body.monthLabel,
-      amount: Number(body.amount), remarks: body.remarks, userId: req.authUser!.id,
+      amount: Number(body.amount), remarks: body.remarks, invoiceType: body.invoiceType, userId: req.authUser!.id,
     });
     res.status(201).json({ success: true, data });
   })
@@ -1023,6 +1025,19 @@ router.post(
   })
 );
 
+/** Pending edit of an APPROVED provision (legacy provision_master_edit_request): approve / decline. */
+router.post(
+  "/provisions/:id/edit/:decision",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const decision = req.params.decision;
+    if (decision !== "approve" && decision !== "decline") return res.status(404).json({ error: "Unknown decision" });
+    if (!(await guardProvisionDecide(req, res))) return;
+    const data = await clientBillingProvisionService.decideProvisionEdit(req.params.id, decision, req.authUser!.id);
+    res.json({ success: true, data });
+  })
+);
+
 router.post(
   "/provisions/:id/reject",
   requireRole(...ALLOWED_ROLES),
@@ -1031,6 +1046,73 @@ router.post(
     const reason = String((req.body as { reason?: string })?.reason ?? "");
     const data = await clientBillingProvisionService.rejectProvision(req.params.id, reason, req.authUser!.id);
     res.json({ success: true, data });
+  })
+);
+
+// ── Legacy ADD PO / Approve PO / ADD GRN ──────────────────────────────────────
+router.get(
+  "/po",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const q = req.query as Record<string, string | undefined>;
+    const data = await clientBillingPoGrnService.listPos({ costCentreId: q.costCentreId, branchId: q.branchId, companyName: q.companyName, search: q.search });
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/po",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const b = req.body as { costCentreId?: string; poNumber?: string; periodFrom?: string; periodTo?: string; amount?: number };
+    if (!b.costCentreId) return res.status(400).json({ error: "costCentreId is required" });
+    const data = await clientBillingPoGrnService.createPo({
+      costCentreId: b.costCentreId, poNumber: String(b.poNumber ?? ""), periodFrom: String(b.periodFrom ?? ""),
+      periodTo: String(b.periodTo ?? ""), amount: Number(b.amount), userId: req.authUser!.id,
+    });
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.post(
+  "/invoices/:id/approve-po",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardDecide(req, res, "invoice"))) return;
+    const data = await clientBillingPoGrnService.approvePo(req.params.id, req.authUser!.id);
+    res.json({ success: true, data });
+  })
+);
+
+router.put(
+  "/invoices/:id/grn",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardDecide(req, res, "invoice"))) return;
+    const b = req.body as { grnNo?: string; grnDate?: string | null };
+    const data = await clientBillingPoGrnService.addGrn(req.params.id, { grnNo: String(b.grnNo ?? ""), grnDate: b.grnDate ?? null, userId: req.authUser!.id });
+    res.json({ success: true, data });
+  })
+);
+
+/** Header for the legacy proforma entry page: GST No, Vendor GST No, Bill To / Ship To. */
+router.get(
+  "/cost-centres/:id/billing-header",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT cc.id, cc.cost_centre_code, cc.company_name, b.branch_name, b.gst_state_code AS state_code,
+              ${COST_CENTRE_DISPLAY_NAME_SQL} AS client_name,
+              cc.service_tax_no, cc.vendor_gst_no, cc.vendor_gst_state, cc.vendor_state_code, cc.gst_type,
+              cc.bill_to_address1, cc.bill_to_address2, cc.bill_to_address3,
+              cc.ship_to_address1, cc.ship_to_address2, cc.ship_to_address3
+       FROM cost_centre_master cc
+       LEFT JOIN branch_master b ON b.id = cc.branch_id
+       WHERE cc.id = ? LIMIT 1`,
+      [req.params.id],
+    );
+    if (!rows[0]) return res.status(404).json({ error: "Cost centre not found" });
+    res.json({ success: true, data: rows[0] });
   })
 );
 

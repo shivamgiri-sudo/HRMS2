@@ -194,12 +194,13 @@ describe("createProforma", () => {
     });
 
     // Second conn.execute call is the client_invoice INSERT; tally_head/client_tally_name
-    // come right before invoice_type (the last column) in the INSERT column list.
+    // come right before invoice_type and apply_tax_calc (the last two columns).
     const insertCall = conn.execute.mock.calls[1];
     const params = insertCall[1] as unknown[];
-    expect(params[params.length - 3]).toBe("VODAFONE MOBILE SERVICES LTD. (DELHI)");
-    expect(params[params.length - 2]).toBe("Vodafone Mobile Services Ltd");
-    expect(params[params.length - 1]).toBe("Revenue");
+    expect(params[params.length - 4]).toBe("VODAFONE MOBILE SERVICES LTD. (DELHI)");
+    expect(params[params.length - 3]).toBe("Vodafone Mobile Services Ltd");
+    expect(params[params.length - 2]).toBe("Revenue");
+    expect(params[params.length - 1]).toBe(1); // apply_tax_calc defaults on
   });
 
   it("stores tally_head/client_tally_name as NULL when the cost centre has neither set", async () => {
@@ -215,8 +216,8 @@ describe("createProforma", () => {
     });
 
     const params = conn.execute.mock.calls[1][1] as unknown[];
+    expect(params[params.length - 4]).toBeNull();
     expect(params[params.length - 3]).toBeNull();
-    expect(params[params.length - 2]).toBeNull();
   });
 
   it("rolls back and releases the connection when a line insert fails", async () => {
@@ -300,5 +301,18 @@ describe("createProforma", () => {
       lines: [{ particulars: "x", qty: 1, rate: 10 }], createdBy: "u-1",
     })).rejects.toThrow(/invoiceType must be one of/);
     expect(getConnection).not.toHaveBeenCalled();
+  });
+
+  it("Apply Tax Calculation off means no GST even with Apply GST on (legacy app_tax_cal = 0)", async () => {
+    mockCostCentreLookup({ gstType: "Integrated", stateCode: "09" });
+    mintProformaNumber.mockResolvedValueOnce("PI/09/9001");
+    const r = await clientBillingService.createProforma({
+      costCentreId: "cc-1", category: "Subscription", financeYear: "2026-27",
+      monthLabel: "Sep-26", invoiceDate: "2026-09-30", applyGst: true, applyTaxCalc: false,
+      lines: [{ particulars: "x", qty: 1, rate: 583440 }], createdBy: "u-1",
+    });
+    expect(r).toMatchObject({ totalAmount: 583440, igstAmount: 0, cgstAmount: 0, sgstAmount: 0, grandTotal: 583440 });
+    const params = conn.execute.mock.calls[1][1] as unknown[];
+    expect(params[params.length - 1]).toBe(0);
   });
 });

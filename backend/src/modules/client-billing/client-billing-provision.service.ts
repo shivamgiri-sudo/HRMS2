@@ -18,6 +18,7 @@ import { randomUUID } from "crypto";
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { assertMonthLabelInFinanceYear, round2 } from "./client-billing-tax.js";
+import { normaliseInvoiceType } from "./client-billing.service.js";
 
 type Executor = Pick<PoolConnection, "execute">;
 
@@ -61,7 +62,9 @@ async function listProvisions(q: ProvisionListQuery) {
   if (q.costCentreId) { conditions.push("cp.cost_centre_id = ?"); params.push(q.costCentreId); }
   if (q.branchId) { conditions.push("cc.branch_id = ?"); params.push(q.branchId); }
   if (q.companyName) { conditions.push("cc.company_name = ?"); params.push(q.companyName); }
-  if (q.status && ["pending", "approved", "rejected"].includes(q.status)) {
+  if (q.status === "edit_pending") {
+    conditions.push("cp.edit_requested_at IS NOT NULL");
+  } else if (q.status && ["pending", "approved", "rejected"].includes(q.status)) {
     conditions.push("cp.provision_status = ?");
     params.push(q.status);
   }
@@ -101,12 +104,14 @@ export interface CreateProvisionInput {
   monthLabel: string;
   amount: number;
   remarks?: string | null;
+  invoiceType?: string | null;
   userId: string;
 }
 
 async function insertProvision(conn: Executor, input: CreateProvisionInput): Promise<{ id: string }> {
   assertMonthLabelInFinanceYear(input.monthLabel, input.financeYear);
   const amount = assertAmount(input.amount);
+  const invoiceType = normaliseInvoiceType(input.invoiceType);
   const [cc] = await conn.execute<RowDataPacket[]>(
     `SELECT id FROM cost_centre_master WHERE id = ? LIMIT 1`,
     [input.costCentreId],
@@ -128,10 +133,10 @@ async function insertProvision(conn: Executor, input: CreateProvisionInput): Pro
   await conn.execute<ResultSetHeader>(
     `INSERT INTO client_provision
        (id, cost_centre_id, finance_year, month_label, provision_amount, provision_balance,
-        provision_status, remarks, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+        provision_status, remarks, created_by, invoice_type)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
     [id, input.costCentreId, input.financeYear, input.monthLabel, amount, amount,
-      cleanRemarks(input.remarks), input.userId],
+      cleanRemarks(input.remarks), input.userId, invoiceType],
   );
   return { id };
 }
@@ -161,6 +166,7 @@ export interface UploadProvisionRow {
   monthLabel: string;
   amount: number;
   remarks?: string | null;
+  invoiceType?: string | null;
 }
 
 export interface UploadProvisionResult {
@@ -194,6 +200,7 @@ async function uploadProvisions(rows: UploadProvisionRow[], userId: string): Pro
         monthLabel: String(row.monthLabel ?? "").trim(),
         amount: Number(row.amount),
         remarks: row.remarks,
+        invoiceType: row.invoiceType,
         userId,
       }));
       results.push({ row: index + 1, costCentreCode: code, ok: true, id: created.id });
@@ -227,9 +234,11 @@ export interface UpdateProvisionInput {
 }
 
 /**
- * View & Edit Provision. A pending provision can change freely. An approved one can change
- * its amount as long as it does not drop below what invoices have already drawn; the balance
- * moves by the same delta, atomically. A rejected one is read-only (raise a new one).
+ * View & Edit Provision. A PENDING provision is changed in place (nobody has approved it yet).
+ * An APPROVED provision is not changed here: the new amount/remarks are parked as an edit
+ * request and applied only when a second person approves it — legacy
+ * provision_master_edit_request. The new amount can never drop below what invoices already used.
+ * A rejected provision is read-only (raise a new one).
  */
 async function updateProvision(input: UpdateProvisionInput) {
   return inTransaction(async (conn) => {
@@ -241,15 +250,49 @@ async function updateProvision(input: UpdateProvisionInput) {
       throw clientError(`Amount cannot be less than what invoices already used (${used})`);
     }
     const remarks = input.remarks === undefined ? row.remarks : cleanRemarks(input.remarks);
-    // Balance first: MySQL applies single-table SET assignments left to right, so a later
-    // assignment sees the earlier one's new value — amount first would make the delta 0.
+    if (row.provision_status === "approved") {
+      if (row.edit_requested_at) throw clientError("An edit of this provision is already waiting for approval");
+      await conn.execute(
+        `UPDATE client_provision SET edit_amount = ?, edit_remarks = ?, edit_requested_by = ?, edit_requested_at = NOW() WHERE id = ?`,
+        [amount, remarks == null ? null : String(remarks), input.userId, input.id],
+      );
+      return { id: input.id, editPending: true, provisionAmount: Number(row.provision_amount), provisionBalance: Number(row.provision_balance) };
+    }
+    await applyAmount(conn, input.id, amount, remarks == null ? null : String(remarks));
+    return { id: input.id, editPending: false, provisionAmount: amount, provisionBalance: round2(amount - used) };
+  });
+}
+
+// Balance first: MySQL applies single-table SET assignments left to right, so a later
+// assignment sees the earlier one's new value — amount first would make the delta 0.
+async function applyAmount(conn: Executor, id: string, amount: number, remarks: string | null) {
+  await conn.execute(
+    `UPDATE client_provision
+     SET provision_balance = provision_balance + (? - provision_amount), provision_amount = ?, remarks = ?
+     WHERE id = ?`,
+    [amount, amount, remarks ?? null, id],
+  );
+}
+
+/** Approve / decline a pending edit of an approved provision. The requester cannot decide it. */
+async function decideProvisionEdit(id: string, decision: "approve" | "decline", userId: string) {
+  return inTransaction(async (conn) => {
+    const row = await lockProvision(conn, id);
+    if (!row.edit_requested_at) throw clientError("No edit of this provision is waiting for approval");
+    if (String(row.edit_requested_by) === String(userId)) {
+      throw clientError("The person who asked for the edit cannot approve it", 403);
+    }
+    if (decision === "approve") {
+      const used = round2(Number(row.provision_amount) - Number(row.provision_balance));
+      const amount = Number(row.edit_amount);
+      if (amount < used) throw clientError(`Amount cannot be less than what invoices already used (${used})`);
+      await applyAmount(conn, id, amount, row.edit_remarks == null ? null : String(row.edit_remarks));
+    }
     await conn.execute(
-      `UPDATE client_provision
-       SET provision_balance = provision_balance + (? - provision_amount), provision_amount = ?, remarks = ?
-       WHERE id = ?`,
-      [amount, amount, remarks, input.id],
+      `UPDATE client_provision SET edit_amount = NULL, edit_remarks = NULL, edit_requested_by = NULL, edit_requested_at = NULL WHERE id = ?`,
+      [id],
     );
-    return { id: input.id, provisionAmount: amount, provisionBalance: round2(amount - used) };
+    return { id, decision };
   });
 }
 
@@ -369,6 +412,7 @@ export const clientBillingProvisionService = {
   createProvision,
   uploadProvisions,
   updateProvision,
+  decideProvisionEdit,
   approveProvision,
   rejectProvision,
   getProvisionForScope,

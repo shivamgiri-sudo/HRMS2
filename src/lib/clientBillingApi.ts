@@ -97,6 +97,11 @@ export interface InvoiceRow {
   proforma_approved_by?: string | null;
   /** Legacy invoiceType: Revenue / Non Revenue. */
   invoice_type?: string | null;
+  /** Legacy app_tax_cal: 0 = no tax at all (migration 2197). */
+  apply_tax_calc?: 0 | 1;
+  /** Legacy approve_po (migration 2197). */
+  po_approved?: 0 | 1;
+  po_approved_at?: string | null;
   /** Joined by GET /proformas. */
   company_name?: string | null;
   branch_name?: string | null;
@@ -205,6 +210,8 @@ export interface CreateProformaPayload extends InvoiceReferencesPayload {
   invoiceDate: string; // YYYY-MM-DD
   description?: string;
   applyGst?: boolean;
+  /** Legacy "Apply Tax Calculation": false = no tax at all. */
+  applyTaxCalc?: boolean;
   invoiceType?: InvoiceType;
   lines: ProformaLineInput[];
 }
@@ -214,7 +221,18 @@ export type InvoiceType = (typeof INVOICE_TYPES)[number];
 
 export type UpdateProformaPayload = Partial<
   Omit<CreateProformaPayload, "costCentreId">
->;
+> & {
+  /** PUT /proformas/:id reads PO/GRN/JCC/RCM only from this block (flat fields are ignored)
+   *  and replaces all of them, so send the current values for anything not being changed. */
+  references?: {
+    poNumbers?: string[];
+    grnNo?: string | null;
+    grnDate?: string | null;
+    jccNo?: string | null;
+    jccDate?: string | null;
+    rcmApplicable?: boolean;
+  };
+};
 
 export interface CreditNoteLineInput {
   particulars: string;
@@ -753,6 +771,12 @@ export interface ProvisionRow {
   approved_at: string | null;
   rejected_reason: string | null;
   created_at: string;
+  invoice_type?: string | null;
+  /** A pending edit of an approved provision (applied after a second person approves). */
+  edit_amount?: string | number | null;
+  edit_remarks?: string | null;
+  edit_requested_by?: string | null;
+  edit_requested_at?: string | null;
 }
 
 export interface ProvisionListFilters {
@@ -800,14 +824,19 @@ export function createProvision(payload: {
   monthLabel: string;
   amount: number;
   remarks?: string;
+  invoiceType?: InvoiceType;
 }): Promise<{ success: boolean; data: { id: string } }> {
   return hrmsApi.post("/api/client-billing/provisions", payload);
+}
+
+export function decideProvisionEdit(id: string, decision: "approve" | "decline"): Promise<{ success: boolean }> {
+  return hrmsApi.post(`/api/client-billing/provisions/${id}/edit/${decision}`, {});
 }
 
 export function updateProvision(
   id: string,
   payload: { amount?: number; remarks?: string | null },
-): Promise<{ success: boolean; data: { id: string; provisionAmount: number; provisionBalance: number } }> {
+): Promise<{ success: boolean; data: { id: string; editPending: boolean; provisionAmount: number; provisionBalance: number } }> {
   return hrmsApi.put(`/api/client-billing/provisions/${id}`, payload);
 }
 
@@ -845,4 +874,63 @@ export async function exportInvoiceCsv(id: string, filename: string): Promise<vo
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+// ── Legacy ADD PO / Approve PO / ADD GRN, and the proforma entry page header ───────────
+
+export interface PoRow {
+  id: string;
+  cost_centre_id: string;
+  cost_centre_code: string | null;
+  branch_name: string | null;
+  client_name: string | null;
+  po_number: string;
+  period_from: string;
+  period_to: string;
+  total_amount: string | number;
+  balance_amount: string | number;
+  created_at: string;
+}
+
+export function listPoMaster(filters: { costCentreId?: string; branchId?: string; companyName?: string; search?: string } = {}): Promise<{ success: boolean; data: PoRow[] }> {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
+  const qs = params.toString();
+  return hrmsApi.get(`/api/client-billing/po${qs ? `?${qs}` : ""}`);
+}
+
+export function createPoMaster(payload: { costCentreId: string; poNumber: string; periodFrom: string; periodTo: string; amount: number }): Promise<{ success: boolean; data: { id: string } }> {
+  return hrmsApi.post("/api/client-billing/po", payload);
+}
+
+export function approveInvoicePo(id: string): Promise<{ success: boolean }> {
+  return hrmsApi.post(`/api/client-billing/invoices/${id}/approve-po`, {});
+}
+
+export function addInvoiceGrn(id: string, grnNo: string, grnDate: string | null): Promise<{ success: boolean }> {
+  return hrmsApi.put(`/api/client-billing/invoices/${id}/grn`, { grnNo, grnDate });
+}
+
+export interface BillingHeader {
+  id: string;
+  cost_centre_code: string;
+  company_name: string | null;
+  branch_name: string | null;
+  state_code: string | null;
+  client_name: string | null;
+  service_tax_no: string | null;
+  vendor_gst_no: string | null;
+  vendor_gst_state: string | null;
+  vendor_state_code: string | null;
+  gst_type: string | null;
+  bill_to_address1: string | null;
+  bill_to_address2: string | null;
+  bill_to_address3: string | null;
+  ship_to_address1: string | null;
+  ship_to_address2: string | null;
+  ship_to_address3: string | null;
+}
+
+export function getBillingHeader(costCentreId: string): Promise<{ success: boolean; data: BillingHeader }> {
+  return hrmsApi.get(`/api/client-billing/cost-centres/${costCentreId}/billing-header`);
 }

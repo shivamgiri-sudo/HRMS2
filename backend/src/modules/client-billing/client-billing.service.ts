@@ -55,6 +55,8 @@ export interface CreateProformaInput {
   invoiceDate: string; // YYYY-MM-DD
   description?: string;
   applyGst?: boolean;
+  /** Legacy "Apply Tax Calculation" (app_tax_cal). false = no tax at all, whatever applyGst says. */
+  applyTaxCalc?: boolean;
   invoiceType?: string | null;
   lines: ProformaLineInput[];
   createdBy: string;
@@ -147,7 +149,8 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
     const gstType = derived.gstType;
 
     const applyGst = input.applyGst ?? true;
-    const amounts = computeInvoiceAmounts(input.lines, gstType, applyGst);
+    const applyTaxCalc = input.applyTaxCalc ?? true;
+    const amounts = computeInvoiceAmounts(input.lines, gstType, applyTaxCalc && applyGst);
 
     if (refs && refs.poNumbers.length > 0) {
       const coverage = await checkPoCoverage(
@@ -163,8 +166,8 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
       `INSERT INTO client_invoice
          (id, cost_centre_id, invoice_status, category, finance_year, month_label, invoice_date,
           description, proforma_no, gst_type, apply_gst, total_amount, igst_amount, cgst_amount,
-          sgst_amount, grand_total, created_by, tally_head, client_tally_name, invoice_type)
-       VALUES (?, ?, 'proforma', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          sgst_amount, grand_total, created_by, tally_head, client_tally_name, invoice_type, apply_tax_calc)
+       VALUES (?, ?, 'proforma', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         invoiceId, input.costCentreId, category, input.financeYear, input.monthLabel,
         input.invoiceDate, input.description ?? null, proformaNo, gstType,
@@ -173,7 +176,7 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
         // Frozen at creation time, same as legacy's own cost_TallyHead/cost_client_tally_name
         // snapshot — Tally posting must reflect what was true then, not whatever
         // cost_centre_master says later if the ledger head is renamed.
-        costCentre.tallyHead ?? null, costCentre.clientTallyName ?? null, invoiceType,
+        costCentre.tallyHead ?? null, costCentre.clientTallyName ?? null, invoiceType, applyTaxCalc ? 1 : 0,
       ]
     );
 

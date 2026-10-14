@@ -22,8 +22,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
-  approveProvision, createProvision, listProvisions, rejectProvision, updateProvision, uploadProvisions,
-  type ProvisionRow, type UploadProvisionRow,
+  approveProvision, createProvision, decideProvisionEdit, listProvisions, rejectProvision, updateProvision, uploadProvisions,
+  INVOICE_TYPES, type InvoiceType, type ProvisionRow, type UploadProvisionRow,
 } from "@/lib/clientBillingApi";
 import {
   BillingScopeSelects, costCentreSearchOptions, narrowCostCentres, useBillingFilterOptions,
@@ -109,6 +109,11 @@ export function ProvisionsTab() {
     onSuccess: () => { toast({ title: "Provision approved" }); refresh(); },
     onError: fail("Approval failed"),
   });
+  const editDecision = useMutation({
+    mutationFn: (v: { id: string; decision: "approve" | "decline" }) => decideProvisionEdit(v.id, v.decision),
+    onSuccess: (_r, v) => { toast({ title: v.decision === "approve" ? "Provision edit approved" : "Provision edit declined" }); refresh(); },
+    onError: fail("Could not decide the edit"),
+  });
   const uploadMutation = useMutation({
     mutationFn: (rowsToUpload: UploadProvisionRow[]) => uploadProvisions(rowsToUpload),
     onSuccess: (res) => {
@@ -144,6 +149,7 @@ export function ProvisionsTab() {
             <SelectTrigger className="h-8 w-40 text-xs" aria-label="Status"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="pending">Pending approval</SelectItem>
+              <SelectItem value="edit_pending">Edit waiting approval</SelectItem>
               <SelectItem value="approved">Approved</SelectItem>
               <SelectItem value="rejected">Rejected</SelectItem>
               <SelectItem value={ALL}>All statuses</SelectItem>
@@ -199,7 +205,12 @@ export function ProvisionsTab() {
                     <span className="block text-muted-foreground">{row.client_name}</span>
                   </TableCell>
                   <TableCell>{row.month_label} · {row.finance_year}</TableCell>
-                  <TableCell className="text-right tabular-nums">{money(row.provision_amount)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(row.provision_amount)}
+                    {row.edit_requested_at && (
+                      <span className="block text-[11px] font-medium text-amber-700" title={row.edit_remarks ?? ""}>edit → {money(row.edit_amount)} (waiting approval)</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">{money(row.used_amount)}</TableCell>
                   <TableCell className="text-right tabular-nums font-semibold">{money(row.provision_balance)}</TableCell>
                   <TableCell><ProvisionStatusBadge status={row.provision_status} /></TableCell>
@@ -208,7 +219,15 @@ export function ProvisionsTab() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-1">
-                      {row.provision_status !== "rejected" && (
+                      {row.edit_requested_at && (
+                        <>
+                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-emerald-700" aria-label="Approve provision edit"
+                            disabled={editDecision.isPending} onClick={() => editDecision.mutate({ id: row.id, decision: "approve" })}>Approve edit</Button>
+                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-rose-700" aria-label="Decline provision edit"
+                            disabled={editDecision.isPending} onClick={() => editDecision.mutate({ id: row.id, decision: "decline" })}>Decline</Button>
+                        </>
+                      )}
+                      {row.provision_status !== "rejected" && !row.edit_requested_at && (
                         <Button size="icon" variant="ghost" className="h-7 w-7" title="Edit" aria-label="Edit provision" onClick={() => setEditRow(row)}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
@@ -254,11 +273,12 @@ function CreateProvisionDialog({ open, onOpenChange, onDone }: { open: boolean; 
   const [scope, setScope] = useState({ companyName: "", branchId: "" });
   const [costCentreId, setCostCentreId] = useState("");
   const [period, setPeriod] = useState({ financeYear: currentFinanceYear(), monthLabel: "" });
+  const [invoiceType, setInvoiceType] = useState<InvoiceType>("Revenue");
   const [amount, setAmount] = useState("");
   const [remarks, setRemarks] = useState("");
   const reset = () => { setScope({ companyName: "", branchId: "" }); setCostCentreId(""); setPeriod({ financeYear: currentFinanceYear(), monthLabel: "" }); setAmount(""); setRemarks(""); };
   const mutation = useMutation({
-    mutationFn: () => createProvision({ costCentreId, ...period, amount: Number(amount), remarks: remarks.trim() || undefined }),
+    mutationFn: () => createProvision({ costCentreId, ...period, amount: Number(amount), remarks: remarks.trim() || undefined, invoiceType }),
     onSuccess: () => { toast({ title: "Provision created", description: "Pending approval" }); onDone(); reset(); onOpenChange(false); },
     onError: (e: Error) => toast({ title: "Could not create provision", description: e.message, variant: "destructive" }),
   });
@@ -279,6 +299,13 @@ function CreateProvisionDialog({ open, onOpenChange, onDone }: { open: boolean; 
           <div><Label className="text-xs">Year *</Label></div>
           <div><Label className="text-xs">Month *</Label></div>
           <FyMonthSelects financeYear={period.financeYear} monthLabel={period.monthLabel} onChange={setPeriod} />
+          <div className="col-span-2">
+            <Label className="text-xs">Invoice Type *</Label>
+            <Select value={invoiceType} onValueChange={(v) => setInvoiceType(v as InvoiceType)}>
+              <SelectTrigger className="mt-1 h-8 text-sm" aria-label="Invoice type"><SelectValue /></SelectTrigger>
+              <SelectContent>{INVOICE_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
           <div className="col-span-2">
             <Label className="text-xs" htmlFor="provision-amount">Provision amount (₹, before GST) *</Label>
             <Input id="provision-amount" type="number" min="0" step="0.01" inputMode="decimal" className="mt-1 h-8 text-sm" value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -311,14 +338,21 @@ function EditProvisionDialog({ row, onClose, onDone }: { row: ProvisionRow | nul
   }
   const mutation = useMutation({
     mutationFn: () => updateProvision(row!.id, { amount: Number(amount), remarks: remarks.trim() || null }),
-    onSuccess: () => { toast({ title: "Provision updated" }); onDone(); onClose(); },
+    onSuccess: (res) => {
+      toast({ title: res.data.editPending ? "Edit sent for approval" : "Provision updated",
+        description: res.data.editPending ? "A second person approves it in the Provision tab or Approval Center." : undefined });
+      onDone(); onClose();
+    },
     onError: (e: Error) => toast({ title: "Could not update provision", description: e.message, variant: "destructive" }),
   });
   return (
     <Dialog open={Boolean(row)} onOpenChange={(o) => { if (!o) { setLoadedFor(null); onClose(); } }}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Edit provision · {row?.cost_centre_code} · {row?.month_label}</DialogTitle></DialogHeader>
-        <p className="text-xs text-muted-foreground">Used by invoices so far: {money(row?.used_amount ?? 0)}. The amount cannot go below this.</p>
+        <p className="text-xs text-muted-foreground">
+          Used by invoices so far: {money(row?.used_amount ?? 0)}. The amount cannot go below this.
+          {row?.provision_status === "approved" && " This provision is approved, so the change is applied only after a second person approves it."}
+        </p>
         <div className="space-y-3">
           <div>
             <Label className="text-xs" htmlFor="edit-provision-amount">Provision amount (₹)</Label>
