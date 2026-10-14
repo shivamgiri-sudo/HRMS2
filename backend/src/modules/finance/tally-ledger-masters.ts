@@ -17,6 +17,7 @@ export type TallyGroup =
   | "Loans & Advances (Asset)"
   | "Current Liabilities"
   | "Indirect Incomes"
+  | "Sales Accounts"
   | "Fixed Assets";
 
 export class TallyMasters {
@@ -39,8 +40,8 @@ export class TallyMasters {
     this.centres.set(centre.trim(), category.trim());
   }
 
-  voucherType(name: string, parent: "Journal" | "Payment" | "Receipt" | "Contra") {
-    if (!["Journal", "Payment", "Receipt", "Contra", "Purchase", "Sales"].includes(name)) this.voucherTypes.set(name, parent);
+  voucherType(name: string, parent: "Journal" | "Payment" | "Receipt" | "Contra" | "Sales" | "Credit Note") {
+    if (!["Journal", "Payment", "Receipt", "Contra", "Purchase", "Sales", "Credit Note", "Debit Note"].includes(name)) this.voucherTypes.set(name, parent);
   }
 
   get counts() {
