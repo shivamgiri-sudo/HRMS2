@@ -7,6 +7,7 @@ vi.mock("../../../../db/mysql.js", () => ({
 
 import {
   buildSalesDocVoucher,
+  normaliseSalesRow,
   getVoucherKind,
   registerVoucherKind,
   listVoucherKinds,
@@ -363,5 +364,63 @@ describe("voucher kind registry", () => {
       buildVouchersXml("C", [built[0].model], () => "Create"),
     );
     expect(ledgerAmounts).toEqual([-1000, 1000]);
+  });
+});
+
+describe("sales document rules shared with the GST export", () => {
+  it("party ledger: client_tally_name, else billing_client_name, else client_name; blanks skipped", () => {
+    expect(buildSalesDocVoucher(baseDoc({ clientTallyName: "ACME (Tally)" }), "sales", ctx).model.partyLedger).toBe("ACME (Tally)");
+    const row = normaliseSalesRow({ id: "x", client_tally_name: "  ", billing_client_name: "", client_name: "Acme" } as never, false);
+    expect(buildSalesDocVoucher({ ...row, docNo: "B1", grandTotal: 0 }, "sales", ctx).model.partyLedger).toBe("Acme");
+  });
+
+  it("narration carries the invoice's own PO / JCC / GRN, not the cost centre master's", () => {
+    const row = normaliseSalesRow(
+      { id: "x", doc_no: "B1", po_numbers: "PO-1, PO-2", jcc_no: "JCC-9", grn_no: "GRN-3", grn: "CC-GRN", gst_state_code: "9" } as never,
+      false,
+    );
+    expect(row).toMatchObject({ poNo: "PO-1, PO-2", jccNo: "JCC-9", grnNo: "GRN-3" });
+    const { model } = buildSalesDocVoucher(row, "sales", ctx);
+    expect(model.narration).toContain("PO PO-1, PO-2");
+    expect(model.narration).toContain("JCC JCC-9");
+    expect(model.narration).toContain("GRN GRN-3");
+    expect(model.narration).not.toContain("CC-GRN");
+  });
+
+  it("pads a typed client state code so '9' is Uttar Pradesh and intra-state", () => {
+    const row = normaliseSalesRow({ id: "x", vendor_state_code: "9", gst_state_code: "9" } as never, false);
+    expect(row.clientStateCode).toBe("09");
+    expect(row.branchStateCode).toBe("09");
+    const { model, errors } = buildSalesDocVoucher(baseDoc({ clientGstinRaw: null, clientStateCode: "9" }), "sales", ctx);
+    expect(model.placeOfSupply).toBe("Uttar Pradesh");
+    expect(errors.map((e) => e.code)).not.toContain("SPLIT_STATE_MISMATCH");
+  });
+
+  it("supplier state follows the GSTIN the bill was issued under", () => {
+    const row = normaliseSalesRow({ id: "x", service_tax_no: MAS_GJ, branch_gstin: MAS_UP, gst_state_code: "09" } as never, false);
+    expect(row.branchStateCode).toBe("24");
+  });
+
+  it("a non-GSTIN service_tax_no is a blocking exception", () => {
+    const row = normaliseSalesRow({ id: "x", service_tax_no: "NA", branch_gstin: MAS_UP } as never, false);
+    const { errors } = buildSalesDocVoucher({ ...baseDoc(), invalidOurGstin: row.invalidOurGstin }, "sales", ctx);
+    expect(errors.find((e) => e.code === "OUR_GSTIN_ON_BILL_INVALID")?.severity).toBe("error");
+  });
+
+  it("collectors select by issued-under GSTIN and skip documents keyed into Tally by hand", async () => {
+    const execute = vi.fn(async () => [[], undefined]);
+    const c = { companyGstin: MAS_UP, periodMonth: "2026-10", config: DEFAULT_LEDGER_CONFIG, companyName: "MAS", query: { execute } as never };
+    await getVoucherKind("sales")!.collect(c);
+    await getVoucherKind("credit_note")!.collect(c);
+    const [salesSql, cnSql] = execute.mock.calls.map((x) => String((x as unknown[])[0]));
+    for (const sql of [salesSql, cnSql]) {
+      expect(sql).toContain("service_tax_no");
+      expect(sql).not.toContain("WHERE bm.gstin = ?");
+      expect(sql).not.toContain("cm.jcc_no");
+      expect(sql).not.toContain("cm.grn,");
+    }
+    expect(salesSql).toContain("ci.is_migrated = 0");
+    expect(cnSql).toContain("cn.is_migrated = 0");
+    expect(cnSql).toContain("oi.po_numbers");
   });
 });

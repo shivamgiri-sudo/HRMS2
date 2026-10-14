@@ -9,6 +9,14 @@
 
 import type { RowDataPacket } from "mysql2";
 import { gstinStateCode } from "../gst-export.service.js";
+import {
+  clientStateCodeOf,
+  invalidServiceTaxNo,
+  invoicePartyName,
+  invoiceReferences,
+  ourGstinOf,
+  ourGstinSql,
+} from "../invoice-party.js";
 import { checkVoucher } from "./tally-voucher-check.js";
 import { deriveVoucherGuid } from "./tally-voucher-xml.js";
 import type {
@@ -134,9 +142,13 @@ export interface SalesDocRow {
   hsnSac: string | null;
   description: string | null;
   monthLabel: string | null;
+  /** The invoice's own PO number(s), JCC and GRN (credit notes: those of the credited invoice). */
   poNo: string | null;
+  jccNo?: string | null;
   grnNo: string | null;
   branchStateCode: string | null;
+  /** Non-GSTIN text in cost_centre_master.service_tax_no (printed on the PDF as our GSTIN). */
+  invalidOurGstin?: string | null;
   /** Credit notes: bill_no of the invoice being credited. */
   originalBillNo: string | null;
 }
@@ -146,6 +158,9 @@ export function normaliseSalesRow(
   isCreditNote: boolean,
 ): SalesDocRow {
   const gstType = clean(r.gst_type);
+  const refs = invoiceReferences(r);
+  // The registration this bill was issued under decides the supplier state for the split check.
+  const ourGstin = ourGstinOf(r.service_tax_no, r.branch_gstin);
   return {
     id: String(r.id),
     docNo: clean(r.doc_no) || null,
@@ -162,13 +177,16 @@ export function normaliseSalesRow(
     clientName: clean(r.client_name) || null,
     costCentreCode: clean(r.cost_centre_code) || null,
     clientGstinRaw: r.vendor_gst_no ? String(r.vendor_gst_no) : null,
-    clientStateCode: clean(r.vendor_state_code) || null,
+    clientStateCode: clientStateCodeOf(r.vendor_state_code),
     hsnSac: clean(r.sac_code ?? r.hsn_code) || null,
     description: clean(r.description) || null,
     monthLabel: clean(r.month_label) || null,
-    poNo: clean(r.jcc_no) || null,
-    grnNo: clean(r.grn) || null,
-    branchStateCode: clean(r.gst_state_code) || null,
+    poNo: refs.poNo,
+    jccNo: refs.jccNo,
+    grnNo: refs.grnNo,
+    branchStateCode:
+      gstinStateCode(ourGstin) ?? clientStateCodeOf(r.gst_state_code),
+    invalidOurGstin: invalidServiceTaxNo(r.service_tax_no),
     originalBillNo: isCreditNote ? clean(r.original_bill_no) || null : null,
   };
 }
@@ -191,10 +209,14 @@ export function buildSalesDocVoucher(
   const isCredit = kind === "credit_note";
   const { config } = ctx;
   const partyLedger =
-    doc.billingClientName ?? doc.clientTallyName ?? doc.clientName ?? "";
+    invoicePartyName({
+      client_tally_name: doc.clientTallyName,
+      billing_client_name: doc.billingClientName,
+      client_name: doc.clientName,
+    }) ?? "";
   const partyGstin = normaliseGstin(doc.clientGstinRaw);
   const clientStateCode =
-    gstinStateCode(partyGstin) ?? (doc.clientStateCode || null);
+    gstinStateCode(partyGstin) ?? clientStateCodeOf(doc.clientStateCode);
   const companyStateCode = gstinStateCode(ctx.companyGstin);
   const salesLedger = isCredit
     ? config.creditNoteSalesLedger
@@ -252,7 +274,8 @@ export function buildSalesDocVoucher(
     isCredit && doc.originalBillNo ? `against ${doc.originalBillNo}` : null,
     doc.monthLabel,
     doc.costCentreCode ? `CC ${doc.costCentreCode}` : null,
-    doc.poNo ? `PO/JCC ${doc.poNo}` : null,
+    doc.poNo ? `PO ${doc.poNo}` : null,
+    doc.jccNo ? `JCC ${doc.jccNo}` : null,
     doc.grnNo ? `GRN ${doc.grnNo}` : null,
     doc.description,
   ].filter((p): p is string => Boolean(p && p.trim()));
@@ -306,6 +329,13 @@ export function buildSalesDocVoucher(
     clientStateCode,
     requiresOriginalBill: isCredit,
   });
+  if (doc.invalidOurGstin) {
+    errors.push({
+      code: "OUR_GSTIN_ON_BILL_INVALID",
+      severity: "error",
+      message: `The bill printed "${doc.invalidOurGstin}" as our GSTIN (cost centre GST No.), which is not a GSTIN; it was placed under the branch GSTIN. Fix the cost centre and reissue before exporting.`,
+    });
+  }
   return { model, errors };
 }
 
@@ -320,13 +350,20 @@ function scopeSql(
     : `AND DATE_FORMAT(${dateCol}, '%Y-%m') = ?`;
 }
 
+/**
+ * Documents are selected by the GSTIN the bill was issued under (what its PDF prints as ours:
+ * cost centre service_tax_no, else branch GSTIN), so a bill lands in the Tally company of the
+ * registration on its face, not by where its branch happens to be registered.
+ */
+const OUR_GSTIN = ourGstinSql("cm", "bm");
+
 function scopeParams(ctx: VoucherBuildContext): unknown[] {
   return [ctx.companyGstin, ctx.sourceId ?? ctx.periodMonth];
 }
 
 const SALES_DOC_COLUMNS = `
   cm.cost_centre_code, cm.billing_client_name, cm.client_name, cm.vendor_gst_no, cm.vendor_state_code,
-  cm.sac_code, cm.hsn_code, cm.jcc_no, cm.grn, bm.gst_state_code`;
+  cm.sac_code, cm.hsn_code, cm.service_tax_no, bm.gstin AS branch_gstin, bm.gst_state_code`;
 
 const salesKind: VoucherKindModule = {
   kind: "sales",
@@ -336,12 +373,16 @@ const salesKind: VoucherKindModule = {
     const [rows] = await ctx.query.execute<RowDataPacket[]>(
       `SELECT ci.id, ci.bill_no AS doc_no, ci.invoice_date AS doc_date, ci.month_label, ci.description,
               ci.gst_type, ci.apply_gst, ci.total_amount, ci.igst_amount, ci.cgst_amount, ci.sgst_amount,
-              ci.grand_total, ci.tally_head, ci.client_tally_name,${SALES_DOC_COLUMNS}
+              ci.grand_total, ci.tally_head, ci.client_tally_name,
+              ci.po_numbers, ci.jcc_no, ci.grn_no,${SALES_DOC_COLUMNS}
          FROM client_invoice ci
          JOIN cost_centre_master cm ON cm.id = ci.cost_centre_id
          JOIN branch_master bm ON bm.id = cm.branch_id
-        WHERE bm.gstin = ?
+        WHERE ${OUR_GSTIN} = ?
           AND ci.invoice_status = 'approved'
+          -- I-Spark bills (is_migrated = 1) were keyed into Tally by hand; exporting them again
+          -- would book the sale twice.
+          AND ci.is_migrated = 0
           ${scopeSql("ci.invoice_date", "ci.id", ctx)}
         ORDER BY ci.invoice_date, ci.bill_no`,
       scopeParams(ctx),
@@ -360,13 +401,17 @@ const creditNoteKind: VoucherKindModule = {
     const [rows] = await ctx.query.execute<RowDataPacket[]>(
       `SELECT cn.id, cn.credit_no AS doc_no, cn.credit_date AS doc_date, cn.month_label, cn.description,
               cn.gst_type, cn.apply_gst, cn.total_amount, cn.igst_amount, cn.cgst_amount, cn.sgst_amount,
-              cn.grand_total, cn.tally_head, cn.client_tally_name, oi.bill_no AS original_bill_no,${SALES_DOC_COLUMNS}
+              cn.grand_total, cn.tally_head, cn.client_tally_name, oi.bill_no AS original_bill_no,
+              oi.po_numbers, oi.jcc_no, oi.grn_no,${SALES_DOC_COLUMNS}
          FROM client_credit_note cn
          JOIN cost_centre_master cm ON cm.id = cn.cost_centre_id
          JOIN branch_master bm ON bm.id = cm.branch_id
          LEFT JOIN client_invoice oi ON oi.id = cn.invoice_id
-        WHERE bm.gstin = ?
+        WHERE ${OUR_GSTIN} = ?
           AND cn.credit_status = 'approved'
+          -- Same rule as sales: only a credit note that itself came from I-Spark was keyed by hand.
+          -- An HRMS credit note against a migrated bill is new and must reach Tally.
+          AND cn.is_migrated = 0
           ${scopeSql("cn.credit_date", "cn.id", ctx)}
         ORDER BY cn.credit_date, cn.credit_no`,
       scopeParams(ctx),

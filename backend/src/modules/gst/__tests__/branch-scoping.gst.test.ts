@@ -38,11 +38,11 @@ describe("gst export branch scoping", () => {
   it("branch_admin registrations are limited to its branch; finance sees all", async () => {
     await request(app("branch_admin")).get("/gst/registrations");
     const c = find(/FROM branch_master bm/)!;
-    expect(String(c[0])).toMatch(/bm\.id IN \(\?\)/);
+    expect(String(c[0])).toMatch(/x\.branch_id IN \(\?\)/);
     expect(c[1]).toEqual(["b1"]);
     execute.mockClear();
     await request(app("finance")).get("/gst/registrations");
-    expect(String(find(/FROM branch_master bm/)![0])).not.toMatch(/bm\.id IN/);
+    expect(String(find(/FROM branch_master bm/)![0])).not.toMatch(/branch_id IN/);
   });
   it("batch list only returns GSTINs of the caller's branch", async () => {
     await request(app("branch_admin")).get("/gst/exports?companyGstin=GST-OTHER");
