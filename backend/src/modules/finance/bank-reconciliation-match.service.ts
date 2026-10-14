@@ -32,15 +32,22 @@ function daysBetween(a: string, b: string): number {
   return Math.abs(new Date(a).getTime() - new Date(b).getTime()) / 86_400_000;
 }
 
-async function findCandidates(bankAccountId: string, txnDate: string, debit: number, credit: number) {
+/**
+ * `notAfter` is the end of the reconciliation period the statement line belongs to. An entry dated
+ * after it is not part of that period's balance, so matching it there made the close fail by exactly
+ * that amount while the real (in-period) entry stayed "outstanding" — found by simulation: a ₹7,278.50
+ * line of 24 Oct auto-matched to an unrelated ₹7,278.50 entry of 8 Nov (inside the 15-day window).
+ */
+async function findCandidates(bankAccountId: string, txnDate: string, debit: number, credit: number, notAfter: string | null) {
   const amountClause = debit > 0 ? "bale.debit_amount = ?" : "bale.credit_amount = ?";
   const amountParam = debit > 0 ? debit : credit;
   const [rows] = await db.execute<RowDataPacket[]>(
     // Never history from before reconciliation started — it is already inside the opening balance.
     `SELECT bale.id, bale.entry_date FROM bank_account_ledger_entry bale
       WHERE bale.bank_account_id = ? AND bale.matched_statement_line_id IS NULL AND ${amountClause}
-        AND bale.entry_date >= COALESCE((SELECT MIN(p.from_date) FROM bank_reconciliation_period p WHERE p.bank_account_id = ?), '1900-01-01')`,
-    [bankAccountId, amountParam, bankAccountId],
+        AND bale.entry_date >= COALESCE((SELECT MIN(p.from_date) FROM bank_reconciliation_period p WHERE p.bank_account_id = ?), '1900-01-01')
+        AND bale.entry_date <= COALESCE(?, '9999-12-31')`,
+    [bankAccountId, amountParam, bankAccountId, notAfter],
   );
   return (rows as RowDataPacket[]).filter((r) => daysBetween(String(r.entry_date).slice(0, 10), txnDate) <= MATCH_WINDOW_DAYS);
 }
@@ -53,16 +60,19 @@ async function linkLine(statementLineId: string, ledgerEntryId: string) {
 export const bankReconciliationMatchService = {
   async autoMatch(importId: string): Promise<{ matchedCount: number; unmatchedCount: number }> {
     const [lines] = await db.execute<RowDataPacket[]>(
-      `SELECT bsl.id, bsl.txn_date, bsl.debit_amount, bsl.credit_amount, bsi.bank_account_id
+      `SELECT bsl.id, bsl.txn_date, bsl.debit_amount, bsl.credit_amount, bsi.bank_account_id,
+              DATE_FORMAT(p.to_date, '%Y-%m-%d') AS period_to
          FROM bank_statement_line bsl
          JOIN bank_statement_import bsi ON bsi.id = bsl.import_id
-        WHERE bsl.import_id = ? AND bsl.match_status = 'unmatched'`,
+         LEFT JOIN bank_reconciliation_period p ON p.id = bsi.period_id
+        WHERE bsl.import_id = ? AND bsl.match_status = 'unmatched'
+        ORDER BY bsl.txn_date, bsl.id`,
       [importId],
     );
     let matchedCount = 0;
     let unmatchedCount = 0;
     for (const line of lines as RowDataPacket[]) {
-      const candidates = await findCandidates(String(line.bank_account_id), String(line.txn_date).slice(0, 10), Number(line.debit_amount), Number(line.credit_amount));
+      const candidates = await findCandidates(String(line.bank_account_id), String(line.txn_date).slice(0, 10), Number(line.debit_amount), Number(line.credit_amount), line.period_to ? String(line.period_to) : null);
       if (candidates.length === 1) {
         await linkLine(String(line.id), String(candidates[0].id));
         matchedCount++;
@@ -74,11 +84,21 @@ export const bankReconciliationMatchService = {
   },
 
   async manualMatch(statementLineId: string, ledgerEntryId: string, actorUserId: string): Promise<void> {
-    const [[line]] = await db.execute<RowDataPacket[]>(`SELECT id, debit_amount, credit_amount, match_status FROM bank_statement_line WHERE id = ?`, [statementLineId]);
+    const [[line]] = await db.execute<RowDataPacket[]>(
+      `SELECT bsl.id, bsl.debit_amount, bsl.credit_amount, bsl.match_status, DATE_FORMAT(p.to_date, '%Y-%m-%d') AS period_to
+         FROM bank_statement_line bsl
+         JOIN bank_statement_import bsi ON bsi.id = bsl.import_id
+         LEFT JOIN bank_reconciliation_period p ON p.id = bsi.period_id
+        WHERE bsl.id = ?`, [statementLineId]);
     if (!line) throw new BankReconciliationMatchError("Statement line not found.", 404);
     if (line.match_status !== "unmatched") throw new BankReconciliationMatchError("Statement line is already resolved.");
-    const [[entry]] = await db.execute<RowDataPacket[]>(`SELECT id, debit_amount, credit_amount FROM bank_account_ledger_entry WHERE id = ?`, [ledgerEntryId]);
+    const [[entry]] = await db.execute<RowDataPacket[]>(
+      `SELECT id, debit_amount, credit_amount, DATE_FORMAT(entry_date, '%Y-%m-%d') AS entry_date, matched_statement_line_id FROM bank_account_ledger_entry WHERE id = ?`, [ledgerEntryId]);
     if (!entry) throw new BankReconciliationMatchError("Ledger entry not found.", 404);
+    if (entry.matched_statement_line_id) throw new BankReconciliationMatchError("That ledger entry is already matched to another statement line.");
+    if (line.period_to && String(entry.entry_date) > String(line.period_to)) {
+      throw new BankReconciliationMatchError(`That ledger entry is dated ${entry.entry_date}, after this period ends (${line.period_to}); it belongs to a later period.`);
+    }
     const lineAmount = Number(line.debit_amount) > 0 ? Number(line.debit_amount) : Number(line.credit_amount);
     const entryAmount = Number(line.debit_amount) > 0 ? Number(entry.debit_amount) : Number(entry.credit_amount);
     if (lineAmount !== entryAmount) throw new BankReconciliationMatchError(`Amounts don't match: statement ₹${lineAmount} vs ledger ₹${entryAmount}.`);
