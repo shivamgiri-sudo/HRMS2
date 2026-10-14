@@ -64,5 +64,8 @@ jobs:
             legacy-grn-in-budget)
               npx tsx scripts/legacy-grn-in-budget.ts "$IN_PERIOD" "$IN_BRANCH"
               ;;
+            hrms-only-budget-verify)
+              npx tsx scripts/hrms-only-budget-verify.ts
+              ;;
             *) echo "unknown script"; exit 1 ;;
           esac
