@@ -218,7 +218,7 @@ describe("buildGrnVoucher — legacy JrnlP import shape", () => {
     expect(env).toContain("<SVCURRENTCOMPANY>MAS CALLNET INDIA PRIVATE LIMITED-2026-27</SVCURRENTCOMPANY>");
     expect(env.match(/<TALLYMESSAGE/g)).toHaveLength(1);
     // An existing master is left as it is (without this Tally re-groups it on "Create").
-    expect(env).toContain("<IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>");
+    expect(env).toContain("<REPORTNAME>All Masters</REPORTNAME><STATICVARIABLES><IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>");
   });
 });
 

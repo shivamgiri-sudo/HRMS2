@@ -338,9 +338,12 @@ export function buildGrnVoucher(
 /**
  * Wraps built vouchers (and masters) in the Tally import envelope.
  *
- * IMPORTDUPS @@DUPIGNORE: a master that already exists in the company is left exactly as it is. Without it,
- * a LEDGER ACTION="Create" for an existing name ALTERS it (tested on TallyPrime 7.2: the ledger was moved to
- * the group in the file), which would silently re-group Accounts' own ledgers.
+ * Tested on TallyPrime 7.2:
+ *   - LEDGER ACTION="Create" for a name that exists ALTERS it (moved it to the file's group), which would
+ *     silently re-group Accounts' own ledgers. IMPORTDUPS @@DUPIGNORE stops that, but only when the
+ *     request is "All Masters"; under "Vouchers" Tally ignores the setting.
+ *   - An "All Masters" request still imports the vouchers in it, and with a voucher's fixed REMOTEID a
+ *     second import of the same file is ignored (0 created, 0 altered), so a file can be re-imported safely.
  */
 export function wrapTallyEnvelope(
   vouchers: string[],
@@ -350,7 +353,7 @@ export function wrapTallyEnvelope(
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA>` +
-    `<REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>${company}</STATICVARIABLES></REQUESTDESC>` +
+    `<REQUESTDESC><REPORTNAME>All Masters</REPORTNAME><STATICVARIABLES><IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>${company}</STATICVARIABLES></REQUESTDESC>` +
     `<REQUESTDATA>${vouchers.map((v) => `<TALLYMESSAGE xmlns:UDF="TallyUDF">${v}</TALLYMESSAGE>`).join("")}</REQUESTDATA>` +
     `</IMPORTDATA></BODY></ENVELOPE>`
   );
