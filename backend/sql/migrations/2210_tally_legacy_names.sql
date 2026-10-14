@@ -9,6 +9,11 @@
 -- Rollback: ALTER TABLE branch_master DROP COLUMN tally_cost_category, DROP COLUMN tally_cost_centre_code;
 --           ALTER TABLE finance_expense_sub_head_master DROP COLUMN tally_ledger_name;
 
+-- branch_master is read by long attrition/report queries that the workers start at the same moment as boot;
+-- the runner default (15s x 3 attempts) lost the metadata-lock race and blocked every deploy on 2026-10-14.
+-- Wait for those reads to finish instead (bounded, well inside the deploy health budget).
+SET SESSION lock_wait_timeout = 300, SESSION innodb_lock_wait_timeout = 300;
+
 SET @a = (SELECT IF(COUNT(*) = 0, "ALTER TABLE branch_master ADD COLUMN tally_cost_category VARCHAR(200) NULL COMMENT 'Tally cost category (legacy db_bill tally_branch)'", 'SELECT 1')
   FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branch_master' AND COLUMN_NAME = 'tally_cost_category');
 PREPARE _s FROM @a; EXECUTE _s; DEALLOCATE PREPARE _s;
