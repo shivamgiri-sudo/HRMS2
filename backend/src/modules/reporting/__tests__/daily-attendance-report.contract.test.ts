@@ -57,8 +57,7 @@ describe("daily attendance report", () => {
   it("pages in two steps: keys first, then detail for the page only", () => {
     // ~1 ms per lookup here; a dozen joins per row before the page cut took 16 s for one day.
     expect(block).toContain("const keyBase = `SELECT adr.id AS adr_id");
-    expect(block).toContain("fetchPageWithTotal(keyBase");
-    const keyBase = block.slice(block.indexOf("const keyBase"), block.indexOf("const paged"));
+    const keyBase = block.slice(block.indexOf("const keyBase"), block.indexOf("let keyRows"));
     expect(keyBase).not.toContain("wfm_roster_assignment");
     expect(keyBase).not.toContain("wfm_attendance_session");
   });

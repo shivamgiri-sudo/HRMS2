@@ -636,12 +636,21 @@ export async function attendanceDaily(
     WHERE ${clauses.join(" AND ")}
     ${orderSql}`;
 
-  // One execution, not two: the page and its total come from the same fetch wherever the result
-  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
-  // statement to learn a number the first run already knew.
-  const paged = await fetchPageWithTotal(keyBase, params, options, query, count);
-  const total = paged.total;
-  const ids = (paged.rows as Array<{ adr_id: string }>).map((r) => r.adr_id);
+  // The ORDER BY forces every matching row to be visited anyway, so fetch ALL the keys once and
+  // cut the page in memory: the total is then free. fetchPageWithTotal ran this statement a second
+  // time, as a COUNT, whenever the range held more rows than its probe — 10,496 rows over ten
+  // days, 20 s per execution at ~1 ms a lookup. A key is one id, so even a month is small.
+  let keyRows: Array<{ adr_id: string }>;
+  let total: number;
+  if (options.mode === "worker") {
+    keyRows = (await query(`${keyBase} LIMIT ${options.limit}`, params)) as Array<{ adr_id: string }>;
+    total = keyRows.length;
+  } else {
+    const all = (await query(`${keyBase} LIMIT 500000`, params)) as Array<{ adr_id: string }>;
+    total = all.length;
+    keyRows = all.slice(options.offset, options.offset + options.limit);
+  }
+  const ids = keyRows.map((r) => r.adr_id);
   if (ids.length === 0) {
     return { rows: [], rowCount: options.includeTotal ? total : 0, isTruncated: false, nextCursor: null };
   }
