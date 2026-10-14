@@ -76,7 +76,15 @@ export async function assertNotInClosedPeriod(
 
 export const bankReconciliationPeriodService = {
   async create(bankAccountId: string, fromDate: string, toDate: string, actorUserId: string): Promise<{ id: string }> {
-    const [[account]] = await db.execute<RowDataPacket[]>(`SELECT opening_balance FROM company_bank_account WHERE id = ?`, [bankAccountId]);
+    const [[account]] = await db.execute<RowDataPacket[]>(
+      `SELECT opening_balance, DATE_FORMAT(opening_balance_as_of, '%Y-%m-%d') AS as_of FROM company_bank_account WHERE id = ?`, [bankAccountId]);
+    // The opening balance already contains everything up to its as-of date (bank-ledger-anchor.ts),
+    // so a period may only start after it — otherwise those entries are counted twice.
+    if (account?.as_of && String(fromDate).slice(0, 10) <= String(account.as_of)) {
+      throw new BankReconciliationPeriodError(
+        `The opening balance is as of ${account.as_of}; start the period on or after the next day.`,
+      );
+    }
     const [[openPeriod]] = await db.execute<RowDataPacket[]>(`SELECT id FROM bank_reconciliation_period WHERE bank_account_id = ? AND status = 'open'`, [bankAccountId]);
     if (openPeriod) throw new BankReconciliationPeriodError("This account already has an open reconciliation period. Close it before starting a new one.");
 
@@ -122,10 +130,14 @@ export const bankReconciliationPeriodService = {
     );
     const computedClosingBalance = round2(Number(last?.running_balance ?? 0));
 
+    // Outstanding = HRMS entries the bank has not shown yet, from the first reconciliation period on
+    // (uncleared items carry forward). History before reconciliation started is already inside the
+    // opening balance and is never "outstanding" — counting it made the first close impossible.
     const [[outstanding]] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(SUM(credit_amount - debit_amount), 0) AS total FROM bank_account_ledger_entry
-        WHERE bank_account_id = ? AND entry_date <= ? AND matched_statement_line_id IS NULL`,
-      [period.bank_account_id, period.to_date],
+        WHERE bank_account_id = ? AND entry_date <= ? AND matched_statement_line_id IS NULL
+          AND entry_date >= (SELECT MIN(p.from_date) FROM bank_reconciliation_period p WHERE p.bank_account_id = ?)`,
+      [period.bank_account_id, period.to_date, period.bank_account_id],
     );
     const outstandingTotal = round2(Number(outstanding.total));
 
@@ -158,9 +170,14 @@ export const bankReconciliationPeriodService = {
     // and real bank-ledger activity would actually diverge — exactly the moment a books-close
     // should catch it.
     const [[bankLedgerMovement]] = await db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(credit_amount - debit_amount), 0) AS net_change
-         FROM bank_account_ledger_entry
-        WHERE bank_account_id = ? AND entry_date BETWEEN ? AND ?`,
+      // Only bank-ledger postings that write journal lines take part: released payment vouchers and
+      // statement adjustments. Imprest allocations, direct vendor dispatches and internal transfers
+      // post no journal lines, so counting them made every month containing one impossible to close.
+      `SELECT COALESCE(SUM(e.credit_amount - e.debit_amount), 0) AS net_change
+         FROM bank_account_ledger_entry e
+        WHERE e.bank_account_id = ? AND e.entry_date BETWEEN ? AND ?
+          AND ((e.voucher_id IS NOT NULL AND EXISTS (SELECT 1 FROM journal_entry j WHERE j.source_type = 'payment_voucher' AND j.source_id = e.voucher_id))
+            OR EXISTS (SELECT 1 FROM journal_entry j WHERE j.source_type = 'bank_reconciliation_adjustment' AND j.source_id = e.id))`,
       [period.bank_account_id, period.from_date, period.to_date],
     );
     const [[journalMovement]] = await db.execute<RowDataPacket[]>(
@@ -194,11 +211,12 @@ export const bankReconciliationPeriodService = {
         WHERE bank_account_id = ? AND entry_date <= ? AND matched_statement_line_id IS NOT NULL AND reconciliation_period_id IS NULL`,
       [periodId, period.bank_account_id, period.to_date],
     );
+    // Roll the book anchor forward to the HRMS closing balance (not the statement's): outstanding
+    // items are still real money in the books, so anchoring at the statement figure would erase them.
     await db.execute(
       `UPDATE company_bank_account SET opening_balance = ?, opening_balance_as_of = ? WHERE id = ?`,
-      [round2(statementClosingBalance), period.to_date, period.bank_account_id],
+      [computedClosingBalance, period.to_date, period.bank_account_id],
     );
-    // The statement closing balance becomes the new anchor: re-anchor the stored chain at to_date.
     await rebaseRunningBalances(period.bank_account_id);
     await logSensitiveAction({
       actor_user_id: actorUserId, action_type: "BANK_RECONCILIATION_PERIOD_CLOSED", module_key: "FINANCE",

@@ -34,21 +34,52 @@ function columnIndex(headers: string[], name: string): number {
   return idx;
 }
 
-function toNumber(value: unknown): number {
+/**
+ * Amount cell -> number. Bank exports write "1,23,456.00", "₹ 500", "500.00 Cr", "250.00 Dr" or
+ * "(250.00)"; a cell that cannot be read used to become 0 and the row was silently skipped.
+ * Dr / brackets / a leading minus give a negative number (only meaningful in a signed amount column).
+ */
+export function toNumber(value: unknown): number {
   if (value === null || value === undefined || value === "") return 0;
-  const n = Number(String(value).replace(/,/g, ""));
-  return Number.isFinite(n) ? n : 0;
+  if (typeof value === "number") return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+  let str = String(value).trim();
+  if (!str || str === "-") return 0;
+  const negative = /\bdr\.?$/i.test(str) || /^\(.*\)$/.test(str) || str.startsWith("-");
+  str = str.replace(/\b(cr|dr)\.?$/i, "").replace(/[₹,\s()]|rs\.?|inr/gi, "").replace(/^-/, "");
+  const n = Number(str);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round((negative ? -n : n) * 100) / 100;
 }
 
-function toIsoDate(value: unknown): string | null {
+const MONTHS: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", sept: "09", oct: "10", nov: "11", dec: "12",
+};
+const pad = (n: string | number) => String(n).padStart(2, "0");
+const year4 = (y: string) => (y.length === 2 ? `20${y}` : y);
+
+/**
+ * Statement date cell -> YYYY-MM-DD. Indian bank exports are day-first: 03/10/2026, 03-10-26,
+ * 03-Oct-2026, 03 Oct 26, 2026-10-03, a real Excel date cell (Date object) or an Excel serial number.
+ */
+export function toIsoDate(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    // SheetJS builds date cells at (or 1 ms before) local midnight; shifting by half a day before
+    // reading local parts lands inside the right day either way.
+    const d = new Date(value.getTime() + 12 * 3_600_000);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+  if (typeof value === "number" && value > 20000 && value < 80000) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(value) * 86_400_000);
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  }
   const str = String(value).trim();
-  // DD/MM/YYYY (the common Indian bank export format)
-  const dmy = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
-  // YYYY-MM-DD already
+  const dmy = str.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})(?:\s|$)/);
+  if (dmy) return `${year4(dmy[3])}-${pad(dmy[2])}-${pad(dmy[1])}`;
   const iso = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  if (iso) return `${iso[1]}-${pad(iso[2])}-${pad(iso[3])}`;
+  const dMonY = str.match(/^(\d{1,2})[\s/.-]*([a-z]{3,4})[a-z]*[\s/.,-]*(\d{2}|\d{4})(?:\s|$)/i);
+  if (dMonY && MONTHS[dMonY[2].toLowerCase()]) return `${year4(dMonY[3])}-${MONTHS[dMonY[2].toLowerCase()]}-${pad(dMonY[1])}`;
   return null;
 }
 
@@ -71,8 +102,9 @@ export function parseStatementRows(headers: string[], rows: unknown[][], mapping
       const signed = toNumber(row[amountIdx]);
       if (signed < 0) debit_amount = Math.abs(signed); else credit_amount = signed;
     } else {
-      if (debitIdx !== -1) debit_amount = toNumber(row[debitIdx]);
-      if (creditIdx !== -1) credit_amount = toNumber(row[creditIdx]);
+      // Separate columns: the column says the direction, so a "Dr"/"Cr" suffix or brackets only decorate it.
+      if (debitIdx !== -1) debit_amount = Math.abs(toNumber(row[debitIdx]));
+      if (creditIdx !== -1) credit_amount = Math.abs(toNumber(row[creditIdx]));
     }
     if (debit_amount === 0 && credit_amount === 0) continue; // no actual movement — skip
 
@@ -90,9 +122,12 @@ export function parseStatementRows(headers: string[], rows: unknown[][], mapping
 export const bankStatementImportService = {
   /** Reads the first worksheet of an uploaded CSV/XLSX buffer into a plain header+rows shape. */
   parseWorkbook(buffer: Buffer): { headers: string[]; rows: unknown[][] } {
-    const workbook = XLSX.read(buffer, { type: "buffer" });
+    // raw: CSV text stays exactly as typed (no US month-first date guessing); cellDates: real Excel
+    // date cells arrive as Date objects. sheet_to_json raw keeps numbers as numbers. Formatted text
+    // turned 03/10/2026 into "3/10/26" and every row was dropped by the date check.
+    const workbook = XLSX.read(buffer, { type: "buffer", raw: true, cellDates: true });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: "" });
+    const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: "" });
     const [headerRow, ...dataRows] = matrix;
     return { headers: (headerRow ?? []).map((h) => String(h).trim()), rows: dataRows };
   },

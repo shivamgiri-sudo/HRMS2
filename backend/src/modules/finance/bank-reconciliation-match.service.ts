@@ -36,9 +36,11 @@ async function findCandidates(bankAccountId: string, txnDate: string, debit: num
   const amountClause = debit > 0 ? "bale.debit_amount = ?" : "bale.credit_amount = ?";
   const amountParam = debit > 0 ? debit : credit;
   const [rows] = await db.execute<RowDataPacket[]>(
+    // Never history from before reconciliation started — it is already inside the opening balance.
     `SELECT bale.id, bale.entry_date FROM bank_account_ledger_entry bale
-      WHERE bale.bank_account_id = ? AND bale.matched_statement_line_id IS NULL AND ${amountClause}`,
-    [bankAccountId, amountParam],
+      WHERE bale.bank_account_id = ? AND bale.matched_statement_line_id IS NULL AND ${amountClause}
+        AND bale.entry_date >= COALESCE((SELECT MIN(p.from_date) FROM bank_reconciliation_period p WHERE p.bank_account_id = ?), '1900-01-01')`,
+    [bankAccountId, amountParam, bankAccountId],
   );
   return (rows as RowDataPacket[]).filter((r) => daysBetween(String(r.entry_date).slice(0, 10), txnDate) <= MATCH_WINDOW_DAYS);
 }
