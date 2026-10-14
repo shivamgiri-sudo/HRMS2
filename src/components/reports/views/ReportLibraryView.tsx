@@ -434,6 +434,10 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "loan-register":                           [...branchOnly],
     "bank-account-register":                   [...branchOnly],
     "nominee-register":                        [...branchOnly],
+    // Added with the date-range sweep: this executor reads from/to (it pivots score_date), so the
+    // pickers belong; leave-allocation-register reads a year, not a range.
+    "reginald-abandoned-cart-sales-report":    [...dateFilters],
+    "leave-allocation-register":               [...branchProcess, YEAR_FILTER],
   };
 
   // Branch/process only, NOT date pickers.
@@ -460,6 +464,7 @@ const POINT_IN_TIME = new Set([
   "process-master-report", "cost-centre-master-report", "headcount-by-cost-centre-and-process",
   "cost-centre-vs-billing-reconciliation", "leave-ledger-vs-requests-reconciliation", "leave-lapse-summary",
   "aon-drilldown-employees", "attrition-risk-score", "loan-register", "bank-account-register", "nominee-register",
+  "notification-undeliverable-recipients",
 ]);
 
 const CATALOG: ReportDef[] = CENTRAL_CATALOG.map(r => ({
