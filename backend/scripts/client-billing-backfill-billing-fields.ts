@@ -25,6 +25,13 @@ const MAP: Array<[string, string]> = [
   ["hsn_code", "HSNCode"], ["sac_code", "SACCode"], ["service_tax_no", "ServiceTaxNo"],
 ];
 const blank = (v: unknown) => v === null || v === undefined || String(v).trim() === "";
+/** I-Spark placeholders that mean "no value" — never copied ("NA" is kept only for SAC, where I-Spark prints it). */
+const JUNK = new Set(["0", "-", "--", ".", "na", "n/a", "nil", "null", "none"]);
+const junk = (col: string, v: unknown) => {
+  const t = String(v ?? "").trim().toLowerCase();
+  if (col === "sac_code" && t === "na") return false;
+  return JUNK.has(t);
+};
 /** Legacy text has mojibake for the en dash ("Telangana ??? 500081"); store a plain hyphen. */
 const clean = (v: unknown) => String(v ?? "").replace(/\s*(\?{2,}|â€“|–|—)\s*/g, " - ").replace(/\s+/g, " ").trim().slice(0, 255);
 
@@ -48,7 +55,7 @@ async function main() {
     const l = byCode.get(String(r.cost_centre_code));
     if (!l) continue;
     const set: Record<string, string> = {};
-    for (const [h, lc] of MAP) if (blank(r[h]) && !blank(l[lc])) set[h] = clean(l[lc]);
+    for (const [h, lc] of MAP) if (blank(r[h]) && !blank(l[lc]) && !junk(h, l[lc])) set[h] = clean(l[lc]);
     if (Object.keys(set).length) plans.push({ id: String(r.id), code: String(r.cost_centre_code), active: Number(r.active_status), set });
   }
   const stillBlank = hrms.filter((r) => Number(r.active_status) === 1 && blank(r.bill_to_address1) && !plans.find((p) => p.id === r.id && p.set.bill_to_address1));
