@@ -213,6 +213,7 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/molecular-email-dashboard",
   "/my-dashboard",
   "/my-kpi",
+  "/my-quality-score",
   "/my-report-requests",
   "/my-roster",
   "/my-team",

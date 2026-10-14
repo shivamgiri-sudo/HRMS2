@@ -429,6 +429,8 @@ describe("application shell routing contracts", () => {
       "/wfm/branch-spoc-config",
       // db_bill vs HRMS salary / day-wise attendance comparison (payroll team, opened by URL).
       "/payroll/salary-att-compare",
+      // agent quality KPI page, reached from the My KPI tabs rather than the sidebar.
+      "/my-quality-score",
     ]);
     const navPaths = new Set(
       [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),
