@@ -35,7 +35,20 @@ const junk = (col: string, v: unknown) => {
 /** Legacy text has mojibake for the en dash ("Telangana ??? 500081"); store a plain hyphen. */
 const clean = (v: unknown) => String(v ?? "").replace(/\s*(\?{2,}|â€“|–|—)\s*/g, " - ").replace(/\s+/g, " ").trim().slice(0, 255);
 
+/** State code is the 2-digit GST state code; legacy rows sometimes hold a GSTIN (its first 2 digits are the code) or a state name (skipped). */
+const stateCode = (v: string): string | null => {
+  if (/^\d{1,2}$/.test(v)) return v.padStart(2, "0");
+  if (/^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$/i.test(v)) return v.slice(0, 2);
+  return null;
+};
+
 async function main() {
+  const [widthRows] = await db.query<RowDataPacket[]>(
+    `SELECT COLUMN_NAME AS name, CHARACTER_MAXIMUM_LENGTH AS len FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cost_centre_master'`,
+  );
+  const width = new Map(widthRows.map((w) => [String(w.name), Number(w.len) || 255]));
+  const skipped: string[] = [];
   const own = "REPLACE(REPLACE(REPLACE(LOWER(COALESCE(company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'";
   const [hrms] = await db.query<RowDataPacket[]>(
     `SELECT id, cost_centre_code, active_status, ${MAP.map(([h]) => h).join(", ")} FROM cost_centre_master WHERE ${own}`,
@@ -55,12 +68,23 @@ async function main() {
     const l = byCode.get(String(r.cost_centre_code));
     if (!l) continue;
     const set: Record<string, string> = {};
-    for (const [h, lc] of MAP) if (blank(r[h]) && !blank(l[lc]) && !junk(h, l[lc])) set[h] = clean(l[lc]);
+    for (const [h, lc] of MAP) {
+      if (!blank(r[h]) || blank(l[lc]) || junk(h, l[lc])) continue;
+      let v: string | null = clean(l[lc]);
+      if (h === "vendor_state_code") v = stateCode(v);
+      if (v === null || v.length > (width.get(h) ?? 255)) {
+        skipped.push(`${r.cost_centre_code} ${h}=${JSON.stringify(clean(l[lc]))}`);
+        continue;
+      }
+      set[h] = v;
+    }
     if (Object.keys(set).length) plans.push({ id: String(r.id), code: String(r.cost_centre_code), active: Number(r.active_status), set });
   }
   const stillBlank = hrms.filter((r) => Number(r.active_status) === 1 && blank(r.bill_to_address1) && !plans.find((p) => p.id === r.id && p.set.bill_to_address1));
   console.log(`MODE=${MODE}: ${hrms.length} MAS cost centres, ${plans.length} get blanks filled (${plans.filter((p) => p.active === 1).length} active).`);
   for (const p of plans) console.log(`${p.active ? "ACTIVE  " : "inactive"} ${p.code}: ${Object.entries(p.set).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(" | ")}`);
+  console.log(`\nLegacy values not copied (wrong format or too long for the column): ${skipped.length}`);
+  for (const s of skipped) console.log(`  ${s}`);
   console.log(`\nActive cost centres still without a Bill To address after this (need manual entry): ${stillBlank.length}`);
   for (const r of stillBlank) console.log(`  ${r.cost_centre_code}`);
 
