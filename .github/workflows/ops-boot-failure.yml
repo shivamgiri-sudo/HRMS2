@@ -1,0 +1,57 @@
+name: Ops boot failure logs (manual, read-only)
+
+# Read-only: why a deploy's new backend never became healthy. Greps the backend / pm2 logs for
+# boot, migration and fatal lines inside a UTC time window, and reads _migrations status for the
+# newest migrations. Writes nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      window:
+        description: "UTC time prefix(es) to keep, regex on the pm2 --time stamp, e.g. 2026-10-14T13:(3[7-9]|4|5)"
+        required: true
+        type: string
+
+concurrency:
+  group: ops-boot-failure
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  logs:
+    name: Boot failure logs
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 8
+    steps:
+      - name: Boot / migration / fatal lines in the window
+        shell: bash
+        env:
+          WINDOW: ${{ inputs.window }}
+        run: |
+          set +e
+          for f in $(ls -1t /var/www/HRMS2/backend/logs/*.log "$HOME"/.pm2/logs/hrms2-backend*.log "$HOME"/.pm2/logs/hrms2-workers*.log 2>/dev/null | head -12); do
+            hits=$(grep -nE "$WINDOW" "$f" 2>/dev/null | grep -viE '"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /|meta-sync' | grep -iE "migrat|lock|fatal|error|uncaught|unhandled|listen|started|boot|SIGINT|SIGTERM|exit|cannot|ER_|pool" | head -120)
+            if [ -n "$hits" ]; then echo "### $f"; echo "$hits" | cut -c1-400; fi
+          done
+          exit 0
+      - name: Newest migration records (read-only)
+        shell: bash
+        working-directory: /var/www/HRMS2/backend
+        run: |
+          set +e
+          node -e '
+            require("dotenv").config({ path: "/var/www/HRMS2/backend/.env" });
+            const mysql = require("mysql2/promise");
+            (async () => {
+              const c = await mysql.createConnection({ host: process.env.DB_HOST, port: +process.env.DB_PORT || 3306, user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME });
+              const [cols] = await c.query("SHOW COLUMNS FROM _migrations");
+              console.log("_migrations columns:", cols.map((x) => x.Field).join(","));
+              const [rows] = await c.query("SELECT * FROM _migrations WHERE migration_id LIKE ? OR migration_id LIKE ? OR migration_id LIKE ? ORDER BY migration_id", ["%2206%", "%221%", "%2205%"]);
+              console.table(rows);
+              const [pl] = await c.query("SELECT ID, TIME, STATE, LEFT(INFO, 160) AS info FROM information_schema.PROCESSLIST WHERE COMMAND <> \"Sleep\" AND TIME > 30 ORDER BY TIME DESC LIMIT 15");
+              console.table(pl);
+              await c.end();
+            })().catch((e) => { console.log("query failed:", e.message); });
+          '
