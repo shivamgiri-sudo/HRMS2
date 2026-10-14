@@ -381,7 +381,10 @@ jobs:
             ) || true
             (
               cd "$DEPLOY_ROOT/backend"
+              # --report-on-signal lets dump_boot_diag take a JS stack of a boot that never listens (SIGUSR2,
+              # non-fatal). 2026-10-14: three releases sat silent for minutes with port 5055 refused and no log line.
               NODE_ENV=production PORT=5055 WORKERS_PROCESS=external ENABLE_SCHEDULERS=false \
+                NODE_OPTIONS="--report-on-signal --report-signal=SIGUSR2 --report-directory=$DEPLOY_ROOT/backend/logs" \
                 pm2 start dist/src/server.js --name hrms2-backend --cwd "$DEPLOY_ROOT/backend" --time
               NODE_ENV=production ENABLE_SCHEDULERS=true \
                 pm2 start dist/src/workers/all-workers.js --name hrms2-workers --cwd "$DEPLOY_ROOT/backend" --time
@@ -402,6 +405,32 @@ jobs:
           # A deploy that waits too long costs minutes. A deploy that gives up too early rolls
           # back a good release and leaves code and schema at different versions, which is the
           # more expensive mistake, so the budget is generous rather than tight.
+          # Read-only snapshot of a boot that is not answering yet: who owns :5055, what pm2 thinks, the
+          # process state, its newest log lines and a JS stack (diagnostic report). Changes nothing.
+          dump_boot_diag() {
+            echo "::group::boot diagnostics after ${1}s"
+            ( ss -ltnp 2>/dev/null | grep -E ":5055\b" ) || echo "nothing listening on :5055"
+            local pid
+            pid=$(pm2 jlist 2>/dev/null | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{for(const p of JSON.parse(d)){if(p.name==='hrms2-backend')console.log(p.pid)}})" 2>/dev/null)
+            pm2 jlist 2>/dev/null | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{for(const p of JSON.parse(d)){if(/hrms2/.test(p.name))console.log(p.name,'pid='+p.pid,'status='+p.pm2_env.status,'restarts='+p.pm2_env.restart_time,'uptime_s='+Math.round((Date.now()-p.pm2_env.pm_uptime)/1000))}})" 2>/dev/null
+            if [ -n "$pid" ] && [ "$pid" != "0" ]; then
+              ps -o pid=,etime=,stat=,pcpu=,rss=,wchan:24=,cmd= -p "$pid" | cut -c1-200
+              grep -E "^(State|Threads|VmRSS)" /proc/"$pid"/status 2>/dev/null
+              echo "open fds: $(ls /proc/$pid/fd 2>/dev/null | wc -l); tcp: $(ss -tnp 2>/dev/null | grep -c "pid=$pid,")"
+              ss -tnp 2>/dev/null | grep "pid=$pid," | awk '{print $1, $4, $5}' | sort | uniq -c | sort -rn | head -10
+              kill -USR2 "$pid" 2>/dev/null; sleep 4
+              local rep
+              rep=$(ls -1t "$DEPLOY_ROOT"/backend/logs/report.*.json 2>/dev/null | head -1)
+              if [ -n "$rep" ]; then
+                node -e 'const r=require(process.argv[1]);const s=r.javascriptStack||{};console.log("JS stack:",s.message||"");for(const l of (s.stack||[]).slice(0,25))console.log("  ",l);console.log("active handles:",(r.libuv||[]).filter(h=>h.is_active).map(h=>h.type+(h.remoteEndpoint?"->"+(h.remoteEndpoint.host||"")+":"+(h.remoteEndpoint.port||""):"")).join(", ").slice(0,1200))' "$rep" 2>/dev/null
+              fi
+            fi
+            echo "--- newest hrms2-backend log lines ---"
+            tail -n 25 "$HOME/.pm2/logs/hrms2-backend-out.log" 2>/dev/null | cut -c1-220
+            tail -n 25 "$HOME/.pm2/logs/hrms2-backend-error.log" 2>/dev/null | cut -c1-220
+            echo "::endgroup::"
+          }
+
           wait_for_backend_health() {
             # 200 attempts, not 90. 90 (~7.5 min) was itself raised from an original 30 for the
             # same reason it is being raised again here: runPendingMigrations can retry against a
@@ -418,10 +447,17 @@ jobs:
             # attempts of "refused + sleep 2" were only ~6.7 minutes, not the 16.5 the message claimed. On
             # 2026-10-13 a busy database made the boot's migration check take ~4 minutes and three good releases
             # were rolled back at ~6.7 minutes while the server was still starting.
-            local deadline=$(( $(date +%s) + 990 ))
+            local start_ts=$(date +%s)
+            local deadline=$(( start_ts + 990 ))
             local attempt=0
+            local diag_done=""
             while [ "$(date +%s)" -lt "$deadline" ]; do
               attempt=$((attempt + 1))
+              local waited=$(( $(date +%s) - start_ts ))
+              if { [ "$waited" -ge 120 ] && [[ "$diag_done" != *a* ]]; } || { [ "$waited" -ge 300 ] && [[ "$diag_done" != *b* ]]; }; then
+                [ "$waited" -ge 300 ] && diag_done="${diag_done}b" || diag_done="${diag_done}a"
+                dump_boot_diag "$waited" || true
+              fi
               if curl -fsS --max-time 3 http://127.0.0.1:5055/api/health >/dev/null; then
                 if [ "$attempt" -gt 30 ]; then
                   echo "Backend became healthy on attempt ${attempt} — slower than the old 30-attempt budget."
