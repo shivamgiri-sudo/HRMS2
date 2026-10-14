@@ -15,7 +15,7 @@ const h = vi.hoisted(() => {
       ]), undefined];
     if (/FROM company_bank_account/.test(sql)) return [pick([{ id: "b1", n: "HDFC Bank CA" }, { id: "b2", n: "ICICI Bank CA" }]), undefined];
     if (/FROM finance_expense_sub_head_master/.test(sql)) return [pick([{ id: "s1", n: "Office Rent", pnl_bucket: "bmc_non_people" }]), undefined];
-    if (/FROM branch_master/.test(sql)) return [pick([{ id: "br1", n: "NOIDA-2" }]), undefined];
+    if (/FROM branch_master/.test(sql)) return [pick([{ id: "br1", n: "NOIDA-2", branch_name: "NOIDA-2", code: null }, { id: "br2", n: "NOIDA-DIALDESK", branch_name: "NOIDA-DIALDESK", code: "NOIDAD" }]), undefined];
     if (/FROM payment_voucher/.test(sql)) return [pick(state.pvs), undefined];
     if (/FROM imprest_manager/.test(sql)) return [pick([{ id: "im1", n: "Aman Lawaniya" }]), undefined];
     if (/FROM client_invoice/.test(sql)) return [[], undefined];
@@ -109,6 +109,13 @@ describe("buildLedgerTallyExport", () => {
     expect(xml).toContain('<LEDGER NAME="Office Rent" ACTION="Create"><NAME>Office Rent</NAME><PARENT>Indirect Expenses</PARENT><ISCOSTCENTRESON>Yes</ISCOSTCENTRESON>');
     expect(xml).toContain('<VOUCHERTYPE NAME="JrnlP" ACTION="Create"><NAME>JrnlP</NAME><PARENT>Journal</PARENT>');
     expect(summary.masters.ledgers).toBe(5);
+  });
+
+  it("uses the Tally company's own cost-centre code for the branch (legacy db_bill tally_code)", async () => {
+    h.state.entries = [entry("je6", "manual", null, "br2")];
+    h.state.lines = [line("je6", 1, "expense_sub_head", "s1", 500, 0), line("je6", 2, "payable_account", "chg", 0, 500)];
+    const { xml } = await buildLedgerTallyExport({ month: "2026-09", kind: "journals" });
+    expect(xml).toContain("<CATEGORY>NOIDA-DIALDESK</CATEGORY><COSTCENTREALLOCATIONS.LIST><NAME>NOIDAD/2609</NAME>");
   });
 
   it("a line with no Tally ledger name is left out with the reason", async () => {

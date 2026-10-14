@@ -473,9 +473,43 @@ export interface HrmsEnvelope<T = any> {
   error?: string;
 }
 
+/**
+ * Identical GETs issued while one is already in flight share that one request.
+ *
+ * A single page mounts several hooks that each fetch the same URL under their own query key —
+ * /api/employees/me alone was requested 3-4 times, and /api/approval-center/pending twice, on every
+ * Branch Budget load (measured live 2026-10-14: ~1.3-2.2 s each, serialised to ~5 s for six). Only
+ * overlapping calls are merged: once the request settles the next call goes to the network, so
+ * nothing is ever served stale. Calls carrying their own AbortSignal are left alone, since one
+ * caller's cancel must not cancel another's request. Each consumer gets its own copy of the payload
+ * so one component mutating its result cannot change what another one sees.
+ */
+const inflightGets = new Map<string, Promise<unknown>>();
+
+function coalescedGet<T>(path: string, timeoutMs?: number, signal?: AbortSignal): Promise<T> {
+  if (signal) return request<T>("GET", path, undefined, timeoutMs, signal);
+  const key = `${timeoutMs ?? ""}|${normalizeRequestPath(path)}`;
+  const existing = inflightGets.get(key);
+  if (existing) return (existing as Promise<T>).then((v) => cloneJson(v));
+  const promise = request<T>("GET", path, undefined, timeoutMs).finally(() => {
+    inflightGets.delete(key);
+  });
+  inflightGets.set(key, promise);
+  return promise;
+}
+
+function cloneJson<V>(value: V): V {
+  if (value === null || typeof value !== "object") return value;
+  try {
+    return structuredClone(value);
+  } catch {
+    return value;
+  }
+}
+
 export const hrmsApi = {
   get: <T = HrmsEnvelope>(path: string, timeoutMs?: number, signal?: AbortSignal) =>
-    request<T>("GET", path, undefined, timeoutMs, signal),
+    coalescedGet<T>(path, timeoutMs, signal),
   post: <T = HrmsEnvelope>(path: string, body?: unknown, timeoutMs?: number) => request<T>("POST", path, body, timeoutMs),
   put: <T = HrmsEnvelope>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T = HrmsEnvelope>(path: string, body?: unknown) => request<T>("PATCH", path, body),

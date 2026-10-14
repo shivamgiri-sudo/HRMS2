@@ -117,7 +117,7 @@ UPDATE client_provision
 SET rejected_by = approved_by, rejected_at = approved_at, approved_by = NULL, approved_at = NULL
 WHERE provision_status = 'rejected' AND rejected_by IS NULL AND approved_by IS NOT NULL;
 
-SET @widen_audit_action_2210 = (
+SET @widen_audit_action_2211 = (
   SELECT IF(
     COUNT(*) = 1 AND MAX(COLUMN_TYPE) NOT LIKE '%receipt_recorded%',
     "ALTER TABLE client_invoice_audit_log MODIFY COLUMN action ENUM('created','edited','approved','rejected','void_requested','void_approved','void_declined','status_change_requested','status_change_approved','status_change_declined','submitted_to_client','proforma_approved','po_approved','grn_added','receipt_recorded','receipt_voided','grn_changed') NOT NULL",
@@ -126,7 +126,7 @@ SET @widen_audit_action_2210 = (
   FROM information_schema.COLUMNS
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'client_invoice_audit_log' AND COLUMN_NAME = 'action'
 );
-PREPARE _stmt FROM @widen_audit_action_2210;
+PREPARE _stmt FROM @widen_audit_action_2211;
 EXECUTE _stmt;
 DEALLOCATE PREPARE _stmt;
 

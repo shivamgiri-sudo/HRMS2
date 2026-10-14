@@ -203,7 +203,15 @@ async function round7() {
   }));
 }
 
+/** Round 8: raw side-by-side of I-Spark rows behind the top-up bill-number clashes (codes/amounts only). */
+async function round8() {
+  const ids = "11475,11770,11476,11779,11477,11780,11478,11793,11491,11813,11545,11857";
+  await bill("clash pairs", `SELECT id, bill_no, finance_year, month, cost_company_name, cost_center, branch_name, invoiceDate,
+      total, grnd, status, proforma_approve, createdate FROM tbl_invoice WHERE id IN (${ids}) ORDER BY bill_no, id`);
+}
+
 async function main() {
+  if (process.env.PROBE_ROUND === "8") return round8();
   if (process.env.PROBE_ROUND === "7") return round7();
   if (process.env.PROBE_ROUND === "6") return round6();
   if (process.env.PROBE_ROUND === "5") return round5();

@@ -1241,7 +1241,12 @@ export async function listProvisioningRequests(filters: {
     params.push(...filters.branchIds);
   }
   if (filters.processIds?.length) {
-    conds.push(`e.process_id IN (${filters.processIds.map(() => '?').join(',')})`);
+    // WFM alignment is the step that assigns a joiner's process, so a fresh joiner has
+    // process_id NULL until the task is done. Filtering strictly on process hid every such
+    // joiner from the WFM queue while the pending counts elsewhere still included them.
+    // Branch scoping above still bounds what a WFM user can see.
+    const nullProcessOk = filters.assignedRole === 'wfm' ? ' OR e.process_id IS NULL' : '';
+    conds.push(`(e.process_id IN (${filters.processIds.map(() => '?').join(',')})${nullProcessOk})`);
     params.push(...filters.processIds);
   }
 
@@ -1292,7 +1297,9 @@ export async function getProvisioningStats(filters: {
     params.push(...filters.branchIds);
   }
   if (filters.processIds?.length) {
-    conds.push(`e.process_id IN (${filters.processIds.map(() => "?").join(",")})`);
+    // Same NULL-process allowance as listProvisioningRequests, so stat cards agree with the list.
+    const nullProcessOk = filters.assignedRole === "wfm" ? " OR e.process_id IS NULL" : "";
+    conds.push(`(e.process_id IN (${filters.processIds.map(() => "?").join(",")})${nullProcessOk})`);
     params.push(...filters.processIds);
   }
   const where = conds.join(" AND ");

@@ -1073,8 +1073,9 @@
     "migrations/2198_client_receipts.sql",
     "migrations/2205_grn_tally_legacy_ledgers.sql",
     "migrations/2206_client_po_governance.sql",
-    "migrations/2210_client_billing_governance.sql",
-    "migrations/2211_client_billing_unique_numbers.sql"
+    "migrations/2210_tally_legacy_names.sql",
+    "migrations/2211_client_billing_governance.sql",
+    "migrations/2212_client_billing_unique_numbers.sql"
   ],
   "approvedDeletions": [
     {
@@ -1423,8 +1424,9 @@
     "migrations/2198_client_receipts.sql",
     "migrations/2205_grn_tally_legacy_ledgers.sql",
     "migrations/2206_client_po_governance.sql",
-    "migrations/2210_client_billing_governance.sql",
-    "migrations/2211_client_billing_unique_numbers.sql"
+    "migrations/2210_tally_legacy_names.sql",
+    "migrations/2211_client_billing_governance.sql",
+    "migrations/2212_client_billing_unique_numbers.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

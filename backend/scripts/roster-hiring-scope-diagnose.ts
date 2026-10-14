@@ -51,19 +51,30 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
       WHERE branch_name LIKE ? OR location_name LIKE ? GROUP BY branch_name, location_name ORDER BY entries DESC LIMIT 30`,
     [`%${BRANCH}%`, `%${BRANCH}%`]));
 
+  const { getActorBranch } = await import("../src/modules/ats/recruiter-hiring.service.js");
+  console.log("== per HR user: branch used for scoping, employee rows, entries OLD exact vs NEW tolerant ==");
   const hr = users.filter((u) => /branch_hr|(^|,)hr(,|$)|recruiter/.test(String(u.roles)));
-  console.log("== per HR user: entries visible under OLD exact match vs NEW tolerant match ==");
   for (const u of hr) {
-    const name = String(u.branch_name);
-    const [o] = await q(`SELECT COUNT(*) AS n FROM ats_recruiter_hiring_activity WHERE branch_name = ? OR created_by = ? OR recruiter_id = ?`, [name, u.id, u.id]);
-    const [t] = await q(
-      `SELECT COUNT(*) AS n FROM ats_recruiter_hiring_activity a WHERE
-         LOWER(TRIM(COALESCE(a.branch_name,''))) = LOWER(TRIM(?)) OR LOWER(TRIM(COALESCE(a.location_name,''))) = LOWER(TRIM(?))
-         OR EXISTS (SELECT 1 FROM branch_master bm WHERE LOWER(TRIM(bm.branch_name)) = LOWER(TRIM(?))
-              AND (LOWER(TRIM(COALESCE(a.branch_name,''))) IN (LOWER(TRIM(bm.branch_name)), LOWER(TRIM(COALESCE(bm.branch_code,''))))
-                OR LOWER(TRIM(COALESCE(a.location_name,''))) IN (LOWER(TRIM(bm.branch_name)), LOWER(TRIM(COALESCE(bm.branch_code,''))))))
-         OR a.created_by = ? OR a.recruiter_id = ?`, [name, name, name, u.id, u.id]);
-    console.log(`${u.employee_code} ${u.full_name} [${u.roles}] old=${o.n} new=${t.n}`);
+    try {
+      const actor = await getActorBranch(String(u.id));
+      const [rowsN] = await q(`SELECT COUNT(*) AS n, SUM(active_status = 1) AS active FROM employees WHERE user_id = ?`, [u.id]);
+      const [o] = await q(`SELECT COUNT(*) AS n FROM ats_recruiter_hiring_activity WHERE branch_name = ? OR created_by = ? OR recruiter_id = ?`, [actor ?? "", u.id, u.id]);
+      const [t] = await q(
+        `SELECT COUNT(*) AS n FROM ats_recruiter_hiring_activity a WHERE
+           LOWER(TRIM(COALESCE(a.branch_name,''))) = LOWER(TRIM(?)) OR LOWER(TRIM(COALESCE(a.location_name,''))) = LOWER(TRIM(?))
+           OR EXISTS (SELECT 1 FROM branch_master bm WHERE LOWER(TRIM(bm.branch_name)) = LOWER(TRIM(?))
+                AND (LOWER(TRIM(COALESCE(a.branch_name,''))) IN (LOWER(TRIM(bm.branch_name)), LOWER(TRIM(COALESCE(bm.branch_code,''))))
+                  OR LOWER(TRIM(COALESCE(a.location_name,''))) IN (LOWER(TRIM(bm.branch_name)), LOWER(TRIM(COALESCE(bm.branch_code,''))))))
+           OR a.created_by = ? OR a.recruiter_id = ?`, [actor ?? "", actor ?? "", actor ?? "", u.id, u.id]);
+      const [own] = await q(`SELECT COUNT(*) AS n FROM ats_recruiter_hiring_activity WHERE created_by = ? OR recruiter_id = ?`, [u.id, u.id]);
+      const { listHiringActivity } = await import("../src/modules/ats/recruiter-hiring.service.js");
+      const roleCtx = await getUserRoleContext(String(u.id));
+      const real = await listHiringActivity(String(u.id), roleCtx.primaryRole, { export: "1", limit: 10000 } as never);
+      console.log(`REAL listHiringActivity(role=${roleCtx.primaryRole}) export rows=${real.data.length} total=${real.total}`);
+      console.log(`${u.employee_code} ${u.full_name} [${u.roles}] empBranch=${u.branch_name} actorBranch=${actor} empRows=${rowsN.n}/active ${rowsN.active} own=${own.n} old=${o.n} new=${t.n}`);
+    } catch (e) {
+      console.log(`${u.employee_code} ${u.full_name} ERROR ${(e as Error).message}`);
+    }
   }
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
