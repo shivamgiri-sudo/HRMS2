@@ -37,10 +37,15 @@ import { notDialDeskProcessSql } from "../src/shared/ownCompanyCostCentre.js";
   let changed = 0;
   for (const r of rows) {
     const target = r.target_process_id ? String(r.target_process_id) : null;
+    // The target process must itself be a MAS process: not named / coded for DialDesk / Ispark, and not
+    // on a DialDesk / Ispark branch (a process filed under NOIDA-DIALDESK is a data question, not a fix).
     const targetIsMas = target
-      ? !(/dial\s*desk|dialdesk|ispark|dataconnect/i.test(`${r.target_process} ${r.target_code} ${r.target_client}`))
-      : false;
-    const plan = !target ? "SKIP: cost centre has no process" : !targetIsMas ? "SKIP: cost centre's process is itself non-MAS" : "SET process_id to the cost centre's process";
+      && target !== String(r.cur_process_id)
+      && !(/dial\s*desk|dialdesk|ispark|dataconnect/i.test(`${r.target_process} ${r.target_code} ${r.target_client} ${r.target_branch}`));
+    const plan = !target ? "SKIP: cost centre has no process"
+      : target === String(r.cur_process_id) ? "SKIP: cost centre's process is the same process (filed under a non-MAS branch): needs a business decision"
+      : !targetIsMas ? "SKIP: cost centre's process is itself non-MAS"
+      : "SET process_id to the cost centre's process";
     console.log("FIX_ROW " + JSON.stringify({
       employeeCode: r.employee_code, employeeId: r.id, currentProcess: r.cur_process, currentProcessId: r.cur_process_id, costCentre: r.cc,
       targetProcess: r.target_process ?? null, targetProcessId: target, targetBranch: r.target_branch ?? null, plan,
