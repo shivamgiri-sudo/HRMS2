@@ -24,6 +24,8 @@ import { db } from "../src/db/mysql.js";
 
 const APPLY = process.argv.includes("--apply");
 const key = (s: unknown) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+/** "AC- Hire" and "AC-Hire", "UPS - Hire" and "UPS Hire" are the same sub-head. */
+const loose = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const flag = (v: unknown): number | null => {
   const s = String(v ?? "").trim().toLowerCase();
   if (["yes", "1", "y"].includes(s)) return 1;
@@ -51,12 +53,12 @@ const legacySub = new Map<string, { enabled: number; rate: number; ledger: strin
 const subById = new Map<string, { enabled: number | null; rate: number; ledger: string | null; name: string }>();
 const conflicts: string[] = [];
 for (const s of (await billQuery<any>(`SELECT SubHeadingId, SubHeadingDesc, SubHeadTDSEnabled, SubHeadTdsSection, SubHeadTds FROM tbl_bgt_expensesubheadingmaster`)) as any[]) {
-  const enabled = flag(s.SubHeadTDSEnabled);
+  // Anything but Yes/1 is "no TDS" in the legacy import (the Sep-26 replay confirms blank sub-heads got none).
+  const enabled = flag(s.SubHeadTDSEnabled) ?? 0;
   const section = tdsMaster.get(Number(s.SubHeadTdsSection));
   const value = { enabled: enabled ?? 0, rate: enabled === 1 ? rate(s.SubHeadTds) || section?.rate || 0 : 0, ledger: enabled === 1 ? section?.ledger ?? null : null };
   subById.set(String(s.SubHeadingId), { ...value, enabled, name: String(s.SubHeadingDesc) });
-  if (enabled === null) continue;
-  const k = key(s.SubHeadingDesc);
+  const k = loose(s.SubHeadingDesc);
   const prev = legacySub.get(k);
   if (prev && (prev.enabled !== value.enabled || prev.rate !== value.rate || prev.ledger !== value.ledger)) {
     conflicts.push(`${s.SubHeadingDesc}: ids ${prev.ids.join(",")} vs ${s.SubHeadingId} disagree — skipped`);
@@ -82,7 +84,7 @@ const subUpdates: any[] = [];
 const subDiffs: string[] = [];
 const subUnmatched: string[] = [];
 for (const h of hrmsSubs) {
-  const l = legacySub.get(key(h.sub_head_name));
+  const l = legacySub.get(loose(h.sub_head_name));
   if (!l) { subUnmatched.push(String(h.sub_head_name)); continue; }
   if (l.enabled === -1) continue;
   if (l.enabled === 1 && (!l.ledger || !l.rate)) { subDiffs.push(`${h.sub_head_name}: legacy TDS on but no ledger/rate — skipped`); continue; }
@@ -126,33 +128,38 @@ sample("vendor TDS to set", vendorTds.map((v) => `${v.name}: ${v.ledger} @ ${v.r
 sample("vendor TDS in db_bill that cannot be mapped", vendorTdsSkipped);
 
 // ── 3. imprest holders ──────────────────────────────────────────────────────────────────────────
-const legacyHolders = (await billQuery<any>(`SELECT Id, EmailId, TallyHead, Branch, Active FROM imprest_manager`)) as any[];
+const legacyHolders = (await billQuery<any>(`SELECT Id, UserName, EmailId, TallyHead, Branch, Active FROM imprest_manager`)) as any[];
 const [hrmsHolders] = await db.query<RowDataPacket[]>(
-  `SELECT im.id, im.tally_name, im.branch_id, im.user_id, im.active_status FROM imprest_manager im`,
+  `SELECT im.id, im.tally_name, im.branch_id, im.user_id, im.employee_id, im.active_status FROM imprest_manager im`,
 );
-const userIds = [...new Set(hrmsHolders.map((h) => String(h.user_id)))];
+const lookup = async (sql: string, ids: string[]) =>
+  ids.length ? (await db.query<RowDataPacket[]>(sql.replace("(?)", `(${ids.map(() => "?").join(",")})`), ids))[0] : [];
 const emails = new Map<string, string>();
-if (userIds.length) {
-  const [users] = await db.query<RowDataPacket[]>(`SELECT id, email FROM auth_user WHERE id IN (${userIds.map(() => "?").join(",")})`, userIds);
-  for (const u of users) emails.set(String(u.id), key(u.email));
-}
-const branchIds = [...new Set(hrmsHolders.map((h) => String(h.branch_id)))];
+for (const u of await lookup(`SELECT id, email FROM auth_user WHERE id IN (?)`, [...new Set(hrmsHolders.map((h) => String(h.user_id)))]))
+  emails.set(String(u.id), String(u.email ?? ""));
+const people = new Map<string, string>();
+for (const e of await lookup(`SELECT id, first_name, last_name FROM employees WHERE id IN (?)`, [...new Set(hrmsHolders.map((h) => String(h.employee_id ?? "")).filter(Boolean))]))
+  people.set(String(e.id), `${e.first_name ?? ""} ${e.last_name ?? ""}`);
 const branchNames = new Map<string, string>();
-if (branchIds.length) {
-  const [branches] = await db.query<RowDataPacket[]>(`SELECT id, branch_name FROM branch_master WHERE id IN (${branchIds.map(() => "?").join(",")})`, branchIds);
-  for (const b of branches) branchNames.set(String(b.id), key(b.branch_name));
-}
+for (const b of await lookup(`SELECT id, branch_name FROM branch_master WHERE id IN (?)`, [...new Set(hrmsHolders.map((h) => String(h.branch_id)))]))
+  branchNames.set(String(b.id), String(b.branch_name ?? ""));
 const holderUpdates: any[] = [];
 const holderMisses: string[] = [];
 for (const h of hrmsHolders) {
+  // Emails moved domain (teammas.in -> teammas.co.in) and one holder signs in with a personal address,
+  // so match on the part before @, else on the person's name — within the same branch either way.
   const email = emails.get(String(h.user_id)) ?? "";
+  const local = loose(email.split("@")[0]);
+  const person = loose(people.get(String(h.employee_id ?? "")) ?? "");
   const branch = branchNames.get(String(h.branch_id)) ?? "";
-  let hits = legacyHolders.filter((l) => key(l.EmailId) === email && String(l.TallyHead ?? "").trim());
-  if (hits.length > 1) hits = hits.filter((l) => key(l.Branch) === branch);
-  const ledgers = [...new Set(hits.map((l) => String(l.TallyHead).trim()))];
-  if (ledgers.length !== 1) { holderMisses.push(`${email || h.user_id} @ ${branch}: ${ledgers.length ? `ambiguous ${ledgers.join(" | ")}` : "no legacy imprest manager"}`); continue; }
-  if (!String(h.tally_name ?? "").trim()) holderUpdates.push({ id: h.id, who: `${email} @ ${branch}`, tally: ledgers[0] });
-  else if (key(h.tally_name) !== key(ledgers[0])) holderMisses.push(`${email} @ ${branch}: HRMS "${h.tally_name}" vs legacy "${ledgers[0]}" — kept HRMS`);
+  const sameBranch = legacyHolders.filter((l) => loose(l.Branch) === loose(branch) && String(l.TallyHead ?? "").trim());
+  let hits = sameBranch.filter((l) => local && loose(String(l.EmailId ?? "").split("@")[0]) === local);
+  if (!hits.length && person) hits = sameBranch.filter((l) => loose(l.UserName) === person);
+  if (hits.length > 1) hits = [hits.filter((l) => Number(l.Active) === 1).sort((x, y) => Number(y.Id) - Number(x.Id))[0] ?? hits[0]];
+  const ledger = hits[0] ? String(hits[0].TallyHead).trim() : "";
+  if (!ledger) { holderMisses.push(`${email || h.user_id} @ ${branch}: no legacy imprest manager at this branch`); continue; }
+  if (!String(h.tally_name ?? "").trim()) holderUpdates.push({ id: h.id, who: `${email} @ ${branch}`, tally: ledger });
+  else if (key(h.tally_name) !== key(ledger)) holderMisses.push(`${email} @ ${branch}: HRMS "${h.tally_name}" vs legacy "${ledger}" — kept HRMS`);
 }
 sample("imprest holder Tally ledgers to set", holderUpdates.map((u) => `${u.who} -> ${u.tally}`), 60);
 sample("imprest holders not set", holderMisses, 60);
