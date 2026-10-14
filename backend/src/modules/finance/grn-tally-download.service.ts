@@ -8,15 +8,25 @@ import {
   refreshHiddenGrnScope,
 } from "../../shared/ownCompanyCostCentre.js";
 import {
-  lookupNames,
   hrmsRaisedGrnSql,
   readGrnTallyConfig,
-  toVoucherInput,
 } from "./grn-tally-export.service.js";
 import {
+  GRN_TALLY_COLUMNS,
+  loadGrnTallyContext,
+  toVoucherInput,
+} from "./grn-tally-context.js";
+import {
+  duplicateReason,
+  legacyDuplicate,
+  loadLegacyBills,
+} from "./grn-tally-legacy-dup.js";
+import {
   buildGrnVoucher,
+  monthEnd,
   wrapTallyEnvelope,
   type GrnVoucherEntry,
+  type GrnVoucherHeader,
 } from "./grn-tally-voucher.js";
 
 /**
@@ -27,20 +37,32 @@ import {
  * GRNs are out by construction), and not cancelled or consumption-reversed — a spend that was
  * undone is not something to book. Same branch scope and own-company rule as the GRN Register.
  *
+ * Excel and CSV are the legacy billing system's GRN import sheet, column for column (Vch No, Date,
+ * Effective Date, Details, Debit Amount, Credit Amount, Cost Category, Cost Centre, Narration for
+ * Each Entry, Narration, VchType), one row per ledger line, only GRNs that build cleanly. The
+ * "check" workbook is for Accounts: every GRN, its TDS basis, and why any was left out.
+ *
+ * The month is the POSTING month (the month the GRN was approved in), as in the legacy import:
+ * a September file carries every GRN approved in September, dated 30-Sep, whatever month its
+ * cost centre points at.
+ *
  * Read-only, unlike runGrnTallyExport: nothing is written to grn_tally_export, so a test download
  * never stops the automatic connector feed from sending the same GRN later. The XML is built by
  * the same buildGrnVoucher the connector feed uses, so what is tested is what will be sent.
  */
 
-export type GrnTallyDownloadFormat = "xml" | "xlsx" | "csv";
+export type GrnTallyDownloadFormat = "xml" | "xlsx" | "csv" | "check";
 
 export type GrnTallyDownloadFilters = {
   branchScope: FinanceBranchScope;
   branchId?: string;
-  /** Finance month, YYYY-MM (accounting_period). */
+  /** Vendor GRNs only by default, as the legacy import; imprest GRNs go as JRNLIMP vouchers. */
+  grnType?: "vendor" | "imprest" | "all";
+  /** Posting month, YYYY-MM: the month the GRN was approved in. */
   month?: string;
 };
 
+const APPROVED_ON = "COALESCE(g.approved_at, g.finance_head_reviewed_at)";
 const EXCLUDED_STATUSES = ["cancelled", "consumption_reversed"] as const;
 const MAX_ROWS = 5000;
 
@@ -65,11 +87,16 @@ export type GrnTallyDownloadRow = {
   otherCharges: number;
   roundOff: number;
   gross: number;
+  tdsAmount: number;
+  tdsBasis: string;
   alreadySentToTally: boolean;
   voucherType: string | null;
+  header: GrnVoucherHeader | null;
   entries: GrnVoucherEntry[];
   /** Why this GRN is left out of the XML; null when it is in it. */
   exception: string | null;
+  /** GST on the bill that is not claimed as input credit (recoverable below 100%) — for Accounts to check. */
+  gstNote: string;
 };
 
 export type GrnTallyDownloadData = {
@@ -106,50 +133,57 @@ export async function loadGrnTallyDownload(
     conditions.push(scope.sql);
     params.push(...scope.params);
   }
+  const grnType = filters.grnType ?? "vendor";
+  if (grnType !== "all") {
+    conditions.push("g.grn_type = ?");
+    params.push(grnType);
+  }
   if (filters.branchId) {
     conditions.push("g.branch_id = ?");
     params.push(filters.branchId);
   }
   if (filters.month) {
-    conditions.push("g.accounting_period = ?");
-    params.push(filters.month);
+    conditions.push(`${APPROVED_ON} >= ? AND ${APPROVED_ON} < DATE_ADD(?, INTERVAL 1 DAY)`);
+    params.push(`${filters.month}-01`, monthEnd(`${filters.month}-01`));
   }
 
   // LIMIT is interpolated (a code constant): mysql2 rejects a bound LIMIT in execute().
   const [rows] = await db.query<RowDataPacket[]>(
-    `SELECT g.id, g.grn_number, g.grn_type, g.status, g.accounting_period, g.bill_date, g.invoice_number,
-            g.vendor_id, g.vendor_name, g.vendor_gstin, g.head, g.sub_head, g.description, g.branch_id,
-            g.amount, g.amount_without_tax, g.tax_amount, g.other_charges, g.round_off_amount,
-            g.amount_with_tax, g.gst_type, g.recoverable_tax_pct,
-            COALESCE(g.approved_at, g.finance_head_reviewed_at) AS approved_on,
+    `SELECT ${GRN_TALLY_COLUMNS}, g.status, g.vendor_gstin,
+            ${APPROVED_ON} AS approved_on,
             (gte.grn_request_id IS NOT NULL) AS already_sent
        FROM grn_request g
        LEFT JOIN grn_tally_export gte ON gte.grn_request_id = g.id
       WHERE ${conditions.join(" AND ")}
-      ORDER BY g.accounting_period ASC, g.grn_number ASC
+      ORDER BY approved_on ASC, g.grn_number ASC
       LIMIT ${MAX_ROWS + 1}`,
     params,
   );
   const truncated = rows.length > MAX_ROWS;
   const picked = rows.slice(0, MAX_ROWS);
 
-  const vendors = await lookupNames(db, "vendor_master", "vendor_name", [
-    ...new Set(picked.map((r) => String(r.vendor_id ?? "")).filter(Boolean)),
-  ]);
-  const branches = await lookupNames(db, "branch_master", "branch_name", [
-    ...new Set(picked.map((r) => String(r.branch_id ?? "")).filter(Boolean)),
-  ]);
   const config = readGrnTallyConfig();
+  const context = await loadGrnTallyContext(db, picked);
+  const legacyBills = await loadLegacyBills(db, picked);
 
   const vouchersXml: string[] = [];
   const out: GrnTallyDownloadRow[] = picked.map((r) => {
     const input = toVoucherInput(
       { ...r, bill_date: ymd(r.bill_date) } as RowDataPacket,
-      vendors,
-      branches,
+      context,
+      config.names,
     );
-    const built = buildGrnVoucher(input, config.names);
+    const duplicate = input.grnType === "vendor" ? legacyDuplicate(legacyBills, r, input.gross) : null;
+    const voucher = buildGrnVoucher(input, config.names);
+    const built = duplicate
+      ? ({ ok: false, grnId: input.grnId, grnNumber: input.grnNumber, reason: duplicateReason(duplicate) } as const)
+      : voucher;
     if (built.ok) vouchersXml.push(built.xml);
+    const recoverable = r.recoverable_tax_pct == null ? 100 : Number(r.recoverable_tax_pct);
+    const gstNote =
+      num(r.tax_amount) > 0 && recoverable < 100 && String(r.vendor_gstin ?? "").trim()
+        ? `GST ${num(r.tax_amount).toFixed(2)} on a GST-registered vendor is not claimed (recoverable ${recoverable}%); legacy claimed it — check`
+        : "";
     return {
       grnId: String(r.id),
       grnNumber: String(r.grn_number),
@@ -171,51 +205,52 @@ export async function loadGrnTallyDownload(
       otherCharges: num(r.other_charges),
       roundOff: num(r.round_off_amount),
       gross: input.gross,
+      tdsAmount: built.ok ? built.tdsAmount : 0,
+      tdsBasis: input.tdsBasis,
       alreadySentToTally: Number(r.already_sent) === 1,
       voucherType: built.ok ? built.voucherType : null,
+      header: built.ok ? built.header : null,
       entries: built.ok ? built.entries : [],
       exception: built.ok ? null : built.reason,
+      gstNote,
     };
   });
 
   return { rows: out, vouchersXml, truncated, company: config.company };
 }
 
-const GRN_COLUMNS: { header: string; key: keyof GrnTallyDownloadRow; width: number; money?: boolean }[] = [
-  { header: "GRN Number", key: "grnNumber", width: 22 },
-  { header: "GRN Type", key: "grnType", width: 10 },
-  { header: "Status", key: "status", width: 22 },
-  { header: "Finance Month", key: "financeMonth", width: 13 },
-  { header: "Bill Date", key: "billDate", width: 12 },
-  { header: "Approved On", key: "approvedOn", width: 12 },
-  { header: "Invoice No.", key: "invoiceNumber", width: 18 },
-  { header: "Vendor (Tally ledger)", key: "vendorName", width: 32 },
-  { header: "Vendor GSTIN", key: "vendorGstin", width: 18 },
-  { header: "Branch", key: "branchName", width: 16 },
-  { header: "Exp. Head", key: "head", width: 22 },
-  { header: "Exp. SubHead (expense ledger)", key: "subHead", width: 26 },
-  { header: "Description", key: "description", width: 36 },
-  { header: "GST Type", key: "gstType", width: 10 },
-  { header: "Taxable Amount", key: "amountWithoutTax", width: 15, money: true },
-  { header: "GST Amount", key: "taxAmount", width: 13, money: true },
-  { header: "Other Charges", key: "otherCharges", width: 13, money: true },
-  { header: "Round Off", key: "roundOff", width: 11, money: true },
-  { header: "Gross Amount", key: "gross", width: 15, money: true },
-  { header: "Tally Voucher Type", key: "voucherType", width: 14 },
-];
+/** The legacy GRN import sheet's columns, spelled and ordered exactly as in the MASSEP file. */
+export const GRN_IMPORT_COLUMNS = [
+  "Vch No", "Date", "Effective Date", "Details", "Debit Amount", "Credit Amount",
+  "Cost Category", "Cost Centre", "Narration for Each Entry", "Narration", "VchType",
+] as const;
 
-function plain(row: GrnTallyDownloadRow, key: keyof GrnTallyDownloadRow): string | number {
-  const v = row[key];
-  if (typeof v === "number") return v;
-  return v == null ? "" : String(v);
+/** One row per ledger line of every GRN that built cleanly. Dates stay YYYY-MM-DD here. */
+export function grnImportRows(data: GrnTallyDownloadData): (string | number)[][] {
+  const out: (string | number)[][] = [];
+  for (const r of data.rows) {
+    if (r.exception || !r.header) continue;
+    const h = r.header;
+    for (const e of r.entries) {
+      out.push([
+        h.voucherNumber, h.date, h.effectiveDate, e.ledger,
+        e.side === "Dr" ? e.amount : "", e.side === "Cr" ? e.amount : "",
+        h.costCategory, h.costCentre, h.narrationEntry, h.narration, h.voucherType,
+      ]);
+    }
+  }
+  return out;
 }
 
-const inXml = (r: GrnTallyDownloadRow) => (r.exception ? "No" : "Yes");
-const sent = (r: GrnTallyDownloadRow) => (r.alreadySentToTally ? "Yes" : "No");
+const DATE_COLUMNS = new Set([1, 2]);
+const MONEY_COLUMNS = new Set([4, 5]);
 
 export function buildGrnTallyXml(data: GrnTallyDownloadData): string {
   return wrapTallyEnvelope(data.vouchersXml, data.company);
 }
+
+/** Excel opens a CSV date as text unless it looks like one; dd-mm-yyyy is what the legacy sheet shows. */
+const dmy = (d: string) => `${d.slice(8, 10)}-${d.slice(5, 7)}-${d.slice(0, 4)}`;
 
 function csvCell(value: unknown): string {
   let text = String(value ?? "");
@@ -224,100 +259,94 @@ function csvCell(value: unknown): string {
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-/** One line per GRN: the voucher header plus the Dr/Cr split, in fixed ledger columns. */
 export function buildGrnTallyCsv(data: GrnTallyDownloadData): string {
-  const header = [
-    ...GRN_COLUMNS.map((c) => c.header),
-    "Ledger Lines (ledger:Dr/Cr:amount)",
-    "In Tally XML",
-    "Not in XML because",
-    "Already sent by connector feed",
-  ];
-  const lines = data.rows.map((r) =>
-    [
-      ...GRN_COLUMNS.map((c) => plain(r, c.key)),
-      r.entries.map((e) => `${e.ledger}:${e.side}:${e.amount.toFixed(2)}`).join(" | "),
-      inXml(r),
-      r.exception ?? "",
-      sent(r),
-    ]
-      .map(csvCell)
-      .join(","),
+  const lines = grnImportRows(data).map((row) =>
+    row.map((v, i) => csvCell(DATE_COLUMNS.has(i) ? dmy(String(v)) : v)).join(","),
   );
-  return [header.map(csvCell).join(","), ...lines].join("\r\n") + "\r\n";
+  return [GRN_IMPORT_COLUMNS.map(csvCell).join(","), ...lines].join("\r\n") + "\r\n";
 }
 
-/** Three sheets: GRNs, the voucher ledger lines exactly as the XML carries them, and exceptions. */
+/** The import sheet: one worksheet, legacy columns, real dates, numbers as numbers. */
 export async function buildGrnTallyXlsx(data: GrnTallyDownloadData): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "MAS PeopleOS";
   wb.created = new Date();
-  const moneyFmt = "#,##0.00";
+  const ws = wb.addWorksheet("Import");
+  ws.addRow([...GRN_IMPORT_COLUMNS]).font = { bold: true };
+  for (const row of grnImportRows(data)) {
+    ws.addRow(
+      row.map((v, i) => {
+        if (DATE_COLUMNS.has(i)) {
+          const [y, m, d] = String(v).split("-").map(Number);
+          return new Date(Date.UTC(y, m - 1, d));
+        }
+        return typeof v === "string" && /^[=+\-@]/.test(v) ? `'${v}` : v;
+      }),
+    );
+  }
+  DATE_COLUMNS.forEach((i) => (ws.getColumn(i + 1).numFmt = "dd-mmm-yy"));
+  MONEY_COLUMNS.forEach((i) => (ws.getColumn(i + 1).numFmt = "0.00"));
+  const widths = [34, 11, 11, 40, 14, 14, 22, 16, 40, 70, 8];
+  widths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
 
-  const grns = wb.addWorksheet("GRNs");
-  grns.columns = [
-    ...GRN_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width })),
-    { header: "In Tally XML", key: "inXml", width: 12 },
-    { header: "Not in XML because", key: "exception", width: 50 },
+const CHECK_COLUMNS: { header: string; key: keyof GrnTallyDownloadRow; width: number; money?: boolean }[] = [
+  { header: "GRN Number", key: "grnNumber", width: 18 },
+  { header: "GRN Type", key: "grnType", width: 10 },
+  { header: "Status", key: "status", width: 22 },
+  { header: "Accounting Month", key: "financeMonth", width: 13 },
+  { header: "Approved On", key: "approvedOn", width: 12 },
+  { header: "Bill Date", key: "billDate", width: 12 },
+  { header: "Bill No.", key: "invoiceNumber", width: 18 },
+  { header: "Party (Tally ledger)", key: "vendorName", width: 32 },
+  { header: "Vendor GSTIN", key: "vendorGstin", width: 18 },
+  { header: "Branch", key: "branchName", width: 16 },
+  { header: "Exp. Head", key: "head", width: 22 },
+  { header: "Exp. SubHead (expense ledger)", key: "subHead", width: 26 },
+  { header: "GST Type", key: "gstType", width: 10 },
+  { header: "Taxable Amount", key: "amountWithoutTax", width: 15, money: true },
+  { header: "GST Amount", key: "taxAmount", width: 13, money: true },
+  { header: "Round Off", key: "roundOff", width: 11, money: true },
+  { header: "Gross Amount", key: "gross", width: 15, money: true },
+  { header: "TDS", key: "tdsAmount", width: 12, money: true },
+  { header: "TDS basis", key: "tdsBasis", width: 44 },
+  { header: "GST note", key: "gstNote", width: 50 },
+];
+
+/** For Accounts, not for Tally: every GRN, TDS basis, exceptions. */
+export async function buildGrnTallyCheckXlsx(data: GrnTallyDownloadData): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "MAS PeopleOS";
+  wb.created = new Date();
+  const ws = wb.addWorksheet("GRNs");
+  ws.columns = [
+    { header: "Vch No", key: "vch", width: 32 },
+    ...CHECK_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width })),
+    { header: "In Tally import", key: "inXml", width: 12 },
+    { header: "Left out because", key: "exception", width: 60 },
     { header: "Already sent by connector feed", key: "sent", width: 14 },
   ];
   for (const r of data.rows) {
-    const values: Record<string, string | number> = {};
-    for (const c of GRN_COLUMNS) values[c.key] = plain(r, c.key);
-    values.inXml = inXml(r);
-    values.exception = r.exception ?? "";
-    values.sent = sent(r);
-    grns.addRow(values);
-  }
-  GRN_COLUMNS.forEach((c, i) => {
-    if (c.money) grns.getColumn(i + 1).numFmt = moneyFmt;
-  });
-
-  const lines = wb.addWorksheet("Voucher Lines");
-  lines.columns = [
-    { header: "Voucher No. (GRN)", key: "grn", width: 22 },
-    { header: "Voucher Type", key: "type", width: 12 },
-    { header: "Voucher Date (bill date)", key: "date", width: 14 },
-    { header: "Ledger", key: "ledger", width: 34 },
-    { header: "Dr/Cr", key: "side", width: 7 },
-    { header: "Debit", key: "debit", width: 14 },
-    { header: "Credit", key: "credit", width: 14 },
-  ];
-  for (const r of data.rows) {
-    for (const e of r.entries) {
-      lines.addRow({
-        grn: r.grnNumber,
-        type: r.voucherType ?? "",
-        date: r.billDate,
-        ledger: e.ledger,
-        side: e.side,
-        debit: e.side === "Dr" ? e.amount : null,
-        credit: e.side === "Cr" ? e.amount : null,
-      });
+    const values: Record<string, string | number> = { vch: r.header?.voucherNumber ?? "" };
+    for (const c of CHECK_COLUMNS) {
+      const v = r[c.key];
+      values[c.key] = typeof v === "number" ? v : v == null ? "" : String(v);
     }
+    values.inXml = r.exception ? "No" : "Yes";
+    values.exception = r.exception ?? "";
+    values.sent = r.alreadySentToTally ? "Yes" : "No";
+    ws.addRow(values);
   }
-  lines.getColumn("debit").numFmt = moneyFmt;
-  lines.getColumn("credit").numFmt = moneyFmt;
-
-  const ex = wb.addWorksheet("Exceptions");
-  ex.columns = [
-    { header: "GRN Number", key: "grn", width: 22 },
-    { header: "Finance Month", key: "month", width: 13 },
-    { header: "Gross Amount", key: "gross", width: 15 },
-    { header: "Not in XML because", key: "reason", width: 80 },
-  ];
-  for (const r of data.rows.filter((x) => x.exception)) {
-    ex.addRow({ grn: r.grnNumber, month: r.financeMonth, gross: r.gross, reason: r.exception });
-  }
-  ex.getColumn("gross").numFmt = moneyFmt;
-
-  for (const sheet of [grns, lines, ex]) {
-    sheet.getRow(1).font = { bold: true };
-    sheet.views = [{ state: "frozen", ySplit: 1 }];
-  }
+  CHECK_COLUMNS.forEach((c, i) => {
+    if (c.money) ws.getColumn(i + 2).numFmt = "#,##0.00";
+  });
+  ws.getRow(1).font = { bold: true };
+  ws.views = [{ state: "frozen", ySplit: 1 }];
   if (data.truncated) {
-    grns.addRow({});
-    grns.addRow({ grnNumber: `Only the first ${MAX_ROWS} GRNs are included. Pick a finance month to get the rest.` });
+    ws.addRow({});
+    ws.addRow({ vch: `Only the first ${MAX_ROWS} GRNs are included. Pick a month to get the rest.` });
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
@@ -330,6 +359,7 @@ export function grnTallyDownloadSummary(data: GrnTallyDownloadData) {
     exceptions: data.rows.length - inXmlRows.length,
     alreadySentToTally: data.rows.filter((r) => r.alreadySentToTally).length,
     grossInXml: Math.round(inXmlRows.reduce((s, r) => s + r.gross, 0) * 100) / 100,
+    tdsInXml: Math.round(inXmlRows.reduce((s, r) => s + r.tdsAmount, 0) * 100) / 100,
     truncated: data.truncated,
     maxRows: MAX_ROWS,
   };

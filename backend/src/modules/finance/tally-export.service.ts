@@ -28,6 +28,11 @@ import { splitByLock, tallyExportLock } from "./tally-export-lock.service.js";
  * (withheld): -(net+tds) + net + tds = 0. This is what makes the exported voucher double-entry
  * correct instead of only showing the net cash movement.
  *
+ * That third line is now RECEIPTS ONLY. For payments the TDS is booked on the GRN's own JrnlP
+ * journal (grn-tally-voucher.ts: Cr vendor gross - TDS, Cr TDS ledger), as the legacy billing
+ * system did, so the vendor's Tally balance is already net; the payment clears that net amount
+ * (Dr party net / Cr bank net). Booking TDS again here would credit the TDS ledger twice.
+ *
  * Every export is logged (finance_action_audit_log) with entry count and total debit/credit,
  * per PRD §6.3, so a re-export can be checked against the original for tamper/mismatch.
  *
@@ -188,12 +193,9 @@ export function buildVoucherXml(row: VoucherExportRow): string {
   const grossAmount = row.net_amount + row.tds_amount;
   const lines: string[] = [];
   if (isPayment) {
-    // Party is debited for the FULL liability being cleared (gross = net + TDS withheld).
-    lines.push(ledgerLine(row.party_ledger, "Yes", -grossAmount));
+    // TDS was booked on the GRN journal, so the party is owed (and debited for) the net only.
+    lines.push(ledgerLine(row.party_ledger, "Yes", -row.net_amount));
     lines.push(ledgerLine(row.bank_ledger, "No", row.net_amount));
-    if (row.tds_ledger && row.tds_amount > 0) {
-      lines.push(ledgerLine(row.tds_ledger, "No", row.tds_amount));
-    }
   } else {
     lines.push(ledgerLine(row.bank_ledger, "Yes", -grossAmount));
     lines.push(ledgerLine(row.party_ledger, "No", row.net_amount));
@@ -357,7 +359,8 @@ ${body}
   </BODY>
 </ENVELOPE>
 `;
-    const totalDebit = rows.reduce((sum, r) => sum + r.net_amount + r.tds_amount, 0);
+    // Payments carry no TDS leg (booked on the GRN journal); receipts still do.
+    const totalDebit = rows.reduce((sum, r) => sum + r.net_amount + (r.voucher_type === "receipt" ? r.tds_amount : 0), 0);
     const totalCredit = totalDebit; // every voucher is individually balanced by construction
     return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit, voucherNumbers: rows.map((r) => r.voucher_number) };
   },

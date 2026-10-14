@@ -13,6 +13,7 @@ import {
   runGrnTallyExport,
 } from "./grn-tally-export.service.js";
 import {
+  buildGrnTallyCheckXlsx,
   buildGrnTallyCsv,
   buildGrnTallyXlsx,
   buildGrnTallyXml,
@@ -144,6 +145,11 @@ const DOWNLOAD_FORMATS: Record<
     ext: "xlsx",
   },
   csv: { contentType: "text/csv; charset=utf-8", ext: "csv" },
+  check: {
+    contentType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ext: "xlsx",
+  },
 };
 
 async function downloadFilters(req: AuthenticatedRequest) {
@@ -152,6 +158,11 @@ async function downloadFilters(req: AuthenticatedRequest) {
   if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
     throw Object.assign(new Error("month must be YYYY-MM"), { status: 400 });
   }
+  const rawType = req.query.grnType ? String(req.query.grnType) : "vendor";
+  if (!["vendor", "imprest", "all"].includes(rawType)) {
+    throw Object.assign(new Error("grnType must be vendor, imprest or all"), { status: 400 });
+  }
+  const grnType = rawType as "vendor" | "imprest" | "all";
   const userId = req.authUser?.id;
   if (!userId) throw Object.assign(new Error("Not signed in"), { status: 401 });
   const branchScope = await resolveFinanceBranchScopeSet({
@@ -163,7 +174,7 @@ async function downloadFilters(req: AuthenticatedRequest) {
     // The only throw is a branch outside the caller's scope.
     throw Object.assign(error, { status: 403 });
   });
-  return { branchScope, branchId, month };
+  return { branchScope, branchId, month, grnType };
 }
 
 const statusOf = (error: unknown) =>
@@ -193,11 +204,11 @@ grnTallyRouter.get(
   async (req: AuthenticatedRequest, res) => {
     try {
       const format = String(req.query.format ?? "") as GrnTallyDownloadFormat;
-      const spec = DOWNLOAD_FORMATS[format];
+      const spec = Object.hasOwn(DOWNLOAD_FORMATS, format) ? DOWNLOAD_FORMATS[format] : undefined;
       if (!spec) {
         return res
           .status(400)
-          .json({ success: false, error: "format must be xml, xlsx or csv" });
+          .json({ success: false, error: "format must be xml, xlsx, csv or check" });
       }
       const filters = await downloadFilters(req);
       const data = await loadGrnTallyDownload(filters);
@@ -206,7 +217,9 @@ grnTallyRouter.get(
           ? Buffer.from(buildGrnTallyXml(data), "utf8")
           : format === "csv"
             ? Buffer.from("\uFEFF" + buildGrnTallyCsv(data), "utf8")
-            : await buildGrnTallyXlsx(data);
+            : format === "check"
+              ? await buildGrnTallyCheckXlsx(data)
+              : await buildGrnTallyXlsx(data);
       const summary = grnTallyDownloadSummary(data);
       await logSensitiveAction({
         actor_user_id: req.authUser!.id,
@@ -217,11 +230,12 @@ grnTallyRouter.get(
         change_summary: {
           format,
           month: filters.month ?? null,
+          grnType: filters.grnType,
           branchId: filters.branchId ?? null,
           ...summary,
         },
       });
-      const fileName = `GRN_Tally_${filters.month ?? "all-months"}_${new Date().toISOString().slice(0, 10)}.${spec.ext}`;
+      const fileName = `GRN_Tally_${format === "check" ? "Check_" : ""}${filters.grnType === "vendor" ? "" : `${filters.grnType}_`}${filters.month ?? "all-months"}_${new Date().toISOString().slice(0, 10)}.${spec.ext}`;
       res.setHeader("Content-Type", spec.contentType);
       res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
       res.setHeader("X-Grn-Count", String(summary.grns));
