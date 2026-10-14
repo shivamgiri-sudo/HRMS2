@@ -6,7 +6,7 @@
  */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, Loader2, Plus } from "lucide-react";
+import { Ban, Download, Loader2, Plus, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { listOutstandingBills, listReceipts, voidReceipt, type ReceiptRow, type ReceiptState } from "@/lib/clientBillingApi";
 import { BillingScopeSelects } from "./BillingScopeSelects";
+import { downloadCsv } from "./csv";
 import { RecordReceiptSheet } from "./RecordReceiptSheet";
 import { money } from "./shared";
 
@@ -25,12 +26,28 @@ const STATE: Record<ReceiptState, { label: string; cls: string }> = {
   void: { label: "Void", cls: "bg-slate-100 text-slate-600 ring-slate-200" },
 };
 const head = "whitespace-nowrap px-3 py-2 text-left text-xs font-semibold !text-slate-600";
+const REGISTER_PAGE = 50;
+const linkCls = "cursor-pointer text-sky-700 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 rounded-sm";
 
-export function ReceiptsTab() {
+function LoadError({ error, onRetry, colSpan }: { error: unknown; onRetry: () => void; colSpan: number }) {
+  return (
+    <tr><td colSpan={colSpan} className="py-8 text-center">
+      <p role="alert" className="text-sm text-rose-700">Could not load: {error instanceof Error ? error.message : "unknown error"}</p>
+      <Button size="sm" variant="outline" className="mt-2 cursor-pointer" onClick={onRetry}><RotateCw className="mr-1.5 h-3.5 w-3.5" />Retry</Button>
+    </td></tr>
+  );
+}
+
+/** `onOpenInvoice`: bill number click opens the invoice detail drawer (owned by the page). */
+export function ReceiptsTab({ onOpenInvoice }: { onOpenInvoice?: (invoiceId: string) => void } = {}) {
   const [view, setView] = useState<"outstanding" | "register">("outstanding");
   const [scope, setScope] = useState({ companyName: "", branchId: "" });
   const [search, setSearch] = useState("");
-  const [recordFor, setRecordFor] = useState<{ open: boolean; client?: string }>({ open: false });
+  const [recordFor, setRecordFor] = useState<{ open: boolean; client?: string; billId?: string }>({ open: false });
+  const [dates, setDates] = useState({ fromDate: "", toDate: "" });
+  const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
+  const { toast } = useToast();
   const [voidRow, setVoidRow] = useState<ReceiptRow | null>(null);
   const [status, setStatus] = useState("_all");
 
@@ -40,10 +57,47 @@ export function ReceiptsTab() {
     enabled: view === "outstanding",
   });
   const register = useQuery({
-    queryKey: ["client-billing", "receipts", scope, search, status],
-    queryFn: () => listReceipts({ ...scope, search: search || undefined, status: status === "_all" ? undefined : status, limit: 100 }),
+    queryKey: ["client-billing", "receipts", scope, search, status, dates, page],
+    queryFn: () => listReceipts(registerFilters(page, REGISTER_PAGE)),
     enabled: view === "register",
   });
+  function registerFilters(p: number, limit: number) {
+    return {
+      ...scope, search: search || undefined, status: status === "_all" ? undefined : status,
+      fromDate: dates.fromDate || undefined, toDate: dates.toDate || undefined, page: p, limit,
+    };
+  }
+  const registerTotal = register.data?.total ?? 0;
+  const registerPages = Math.max(1, Math.ceil(registerTotal / REGISTER_PAGE));
+
+  /** No server export route for receipts: page through the register (200 a call) and build the CSV here. */
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      if (view === "outstanding") {
+        downloadCsv("outstanding-bills.csv",
+          ["Client", "Bill no.", "Branch", "Bill date", "Due", "Days past due", "Grand total", "Received", "TDS", "Deduction", "Credit notes", "Outstanding"],
+          rows.map((r) => [r.client_name, r.bill_no, r.branch_name, String(r.invoice_date).slice(0, 10), String(r.due_date).slice(0, 10), r.days_past_due,
+            r.grand_total, r.received, r.tds, r.deduction, r.credited, r.outstanding]));
+        return;
+      }
+      const all: ReceiptRow[] = [];
+      for (let p = 1; p <= 50; p += 1) {
+        const res = await listReceipts(registerFilters(p, 200));
+        all.push(...res.data);
+        if (all.length >= res.total || res.data.length === 0) break;
+      }
+      downloadCsv("receipt-register.csv",
+        ["Receipt no.", "Date", "Client", "Company", "Branch", "Bills", "Received", "TDS", "Deduction", "Mode", "Reference", "Bank", "Voucher", "Status", "Void reason"],
+        all.map((r) => [r.receipt_no, String(r.receipt_date).slice(0, 10), r.client_name, r.company_name, r.branch_name, r.bill_nos, r.amount_received, r.tds_amount,
+          r.other_deduction, r.payment_mode, r.reference_no, r.bank_account_name, r.voucher_number, STATE[r.state]?.label ?? r.state, r.void_reason]));
+    } catch (e) {
+      toast({ title: "Export failed", description: e instanceof Error ? e.message : "Unable to export", variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const rows = outstanding.data?.data ?? [];
   const totals = useMemo(() => {
     let o = 0, overdue = 0;
@@ -63,10 +117,20 @@ export function ReceiptsTab() {
               </button>
             ))}
           </div>
-          <BillingScopeSelects compact companyName={scope.companyName} branchId={scope.branchId} onChange={setScope} />
-          <Input className="h-8 w-52 text-xs" placeholder={view === "outstanding" ? "Bill no, client…" : "Receipt no, client, UTR…"} aria-label="Search" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <BillingScopeSelects compact companyName={scope.companyName} branchId={scope.branchId} onChange={(s) => { setScope(s); setPage(1); }} />
+          <Input className="h-8 w-52 text-xs" placeholder={view === "outstanding" ? "Bill no, client…" : "Receipt no, client, UTR…"} aria-label="Search" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
           {view === "register" && (
-            <Select value={status} onValueChange={setStatus}>
+            <div className="flex shrink-0 items-center gap-1.5 rounded-md border bg-slate-50/60 px-2 py-1">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">From</span>
+              <Input type="date" aria-label="Receipts from date" className="h-6 w-32 border-0 bg-transparent px-1 text-xs shadow-none"
+                value={dates.fromDate} onChange={(e) => { setDates({ ...dates, fromDate: e.target.value }); setPage(1); }} />
+              <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">To</span>
+              <Input type="date" aria-label="Receipts to date" className="h-6 w-32 border-0 bg-transparent px-1 text-xs shadow-none"
+                value={dates.toDate} onChange={(e) => { setDates({ ...dates, toDate: e.target.value }); setPage(1); }} />
+            </div>
+          )}
+          {view === "register" && (
+            <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
               <SelectTrigger className="h-8 w-48 text-xs" aria-label="Receipt status"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="_all">All receipts</SelectItem>
@@ -75,7 +139,12 @@ export function ReceiptsTab() {
             </Select>
           )}
         </div>
-        <Button size="sm" className="h-8" onClick={() => setRecordFor({ open: true })}><Plus className="mr-1.5 h-3.5 w-3.5" />Record receipt</Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" className="h-8 cursor-pointer" disabled={exporting} onClick={() => void exportCsv()}>
+            {exporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}Export CSV
+          </Button>
+          <Button size="sm" className="h-8 cursor-pointer" onClick={() => setRecordFor({ open: true })}><Plus className="mr-1.5 h-3.5 w-3.5" />Record receipt</Button>
+        </div>
       </div>
 
       {view === "outstanding" ? (
@@ -95,11 +164,14 @@ export function ReceiptsTab() {
               </tr></thead>
               <tbody>
                 {outstanding.isLoading ? <tr><td colSpan={12} className="py-8 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" /></td></tr>
+                  : outstanding.isError ? <LoadError colSpan={12} error={outstanding.error} onRetry={() => void outstanding.refetch()} />
                   : rows.length === 0 ? <tr><td colSpan={12} className="py-8 text-center text-muted-foreground">No outstanding bills</td></tr>
                   : rows.map((r) => (
                     <tr key={r.id} className="border-t hover:bg-slate-50/60">
                       <td className="max-w-[220px] px-3 py-1.5 font-medium">{r.client_name}</td>
-                      <td className="whitespace-nowrap px-3 py-1.5">{r.bill_no}</td>
+                      <td className="whitespace-nowrap px-3 py-1.5">
+                        {onOpenInvoice ? <button type="button" className={linkCls} onClick={() => onOpenInvoice(r.id)} aria-label={`Details of ${r.bill_no}`}>{r.bill_no}</button> : r.bill_no}
+                      </td>
                       <td className="px-3 py-1.5 text-xs">{r.branch_name ?? "—"}</td>
                       <td className="whitespace-nowrap px-3 py-1.5">{String(r.invoice_date).slice(0, 10)}</td>
                       <td className="whitespace-nowrap px-3 py-1.5">
@@ -108,7 +180,7 @@ export function ReceiptsTab() {
                       </td>
                       {[r.grand_total, r.received, r.tds, r.deduction, r.credited].map((v, i) => <td key={i} className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums">{money(v)}</td>)}
                       <td className="whitespace-nowrap px-3 py-1.5 text-right font-semibold tabular-nums">{money(r.outstanding)}</td>
-                      <td className="px-3 py-1.5"><Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setRecordFor({ open: true, client: r.client_name })} aria-label={`Record receipt for ${r.client_name}`}>Receive</Button></td>
+                      <td className="px-3 py-1.5"><Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setRecordFor({ open: true, client: r.client_name, billId: r.id })} aria-label={`Record receipt for ${r.bill_no}`}>Receive</Button></td>
                     </tr>
                   ))}
               </tbody>
@@ -123,6 +195,7 @@ export function ReceiptsTab() {
             </tr></thead>
             <tbody>
               {register.isLoading ? <tr><td colSpan={12} className="py-8 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" /></td></tr>
+                : register.isError ? <LoadError colSpan={12} error={register.error} onRetry={() => void register.refetch()} />
                 : (register.data?.data ?? []).length === 0 ? <tr><td colSpan={12} className="py-8 text-center text-muted-foreground">No receipts</td></tr>
                 : (register.data?.data ?? []).map((r) => (
                   <tr key={r.id} className="border-t hover:bg-slate-50/60">
@@ -146,8 +219,18 @@ export function ReceiptsTab() {
           </table>
         </div>
       )}
+      {view === "register" && (
+        <div className="flex items-center justify-between border-t px-1 py-2 text-xs">
+          <span className="text-slate-500">{registerTotal} receipt(s)</span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="cursor-pointer" disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</Button>
+            <span className="font-semibold">{page} / {registerPages}</span>
+            <Button variant="outline" size="sm" className="cursor-pointer" disabled={page >= registerPages} onClick={() => setPage(page + 1)}>Next</Button>
+          </div>
+        </div>
+      )}
 
-      <RecordReceiptSheet open={recordFor.open} initialClient={recordFor.client} onOpenChange={(o) => setRecordFor({ open: o })} />
+      <RecordReceiptSheet open={recordFor.open} initialClient={recordFor.client} initialBillId={recordFor.billId} onOpenChange={(o) => setRecordFor({ open: o })} />
       <VoidReceiptDialog row={voidRow} onClose={() => setVoidRow(null)} />
     </div>
   );

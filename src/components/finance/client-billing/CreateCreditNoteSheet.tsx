@@ -1,6 +1,6 @@
 // src/components/finance/client-billing/CreateCreditNoteSheet.tsx
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,8 +19,10 @@ import {
   type SearchableOption,
 } from "@/components/ui/searchable-select";
 import { useToast } from "@/hooks/use-toast";
+import { useDebounce } from "@/hooks/useDebounce";
 import {
   createCreditNote,
+  listProformas,
   type CreateCreditNotePayload,
   type InvoiceRow,
 } from "@/lib/clientBillingApi";
@@ -30,25 +32,22 @@ import {
   emptyLine,
   type LineItemDraft,
 } from "./LineItemsEditor";
-import { money } from "./shared";
+import { InlineError, money } from "./shared";
 import { currentFinanceYear, todayLocalISO } from "./billingFieldOptions";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Approved invoices only — a credit note can only be issued against `invoice_status='approved'`
-   *  (client-billing-credit-note.service.ts's own guard). Sourced from the Invoices tab's own
-   *  query rather than a second fetch, per the design doc's "searchable select over the Invoices
-   *  tab's own data". */
-  approvedInvoices: InvoiceRow[];
   onCreated: () => void;
+  /** Pre-selected invoice ("Raise credit note" on a Download Initial Invoice row). */
+  initialInvoice?: InvoiceRow | null;
 }
 
 export function CreateCreditNoteSheet({
   open,
   onOpenChange,
-  approvedInvoices,
   onCreated,
+  initialInvoice = null,
 }: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -62,25 +61,33 @@ export function CreateCreditNoteSheet({
   const [applyGst, setApplyGst] = useState(true);
   const [lines, setLines] = useState<LineItemDraft[]>([emptyLine()]);
 
-  const invoiceOptions: SearchableOption[] = approvedInvoices.map((inv) => ({
+  // Server-side search over every approved invoice (bill no., proforma no., client) — a
+  // credit note is only allowed against invoice_status='approved' (credit-note service guard).
+  // The old picker preloaded 200 rows and silently could not find anything older.
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search.trim(), 300);
+  const [selected, setSelected] = useState<InvoiceRow | null>(null);
+  const invoicesQuery = useQuery({
+    queryKey: ["client-billing", "credit-note-invoice-picker", debouncedSearch],
+    queryFn: () => listProformas({ status: "approved", search: debouncedSearch || undefined, limit: 50 }),
+    enabled: open,
+  });
+  const found = invoicesQuery.data?.data ?? [];
+  const pickerRows = selected && !found.some((r) => r.id === selected.id) ? [selected, ...found] : found;
+  const invoiceOptions: SearchableOption[] = pickerRows.map((inv) => ({
     value: inv.id,
     label: inv.bill_no || inv.proforma_no || inv.id,
-    hint: money(inv.grand_total),
+    hint: `${inv.cost_centre_display_name ?? ""} ${money(inv.grand_total)}`.trim(),
     keywords: `${inv.category} ${inv.month_label} ${inv.finance_year}`,
   }));
 
   useEffect(() => {
-    if (!open) {
-      setInvoiceId("");
-      setCategory("");
-      setFinanceYear(currentFinanceYear());
-      setMonthLabel("");
-      setCreditDate(todayLocalISO());
-      setDescription("");
-      setApplyGst(true);
-      setLines([emptyLine()]);
+    if (open && initialInvoice) {
+      setSelected(initialInvoice);
+      setInvoiceId(initialInvoice.id);
     }
-  }, [open]);
+  }, [open, initialInvoice]);
+
 
   const createMutation = useMutation({
     mutationFn: (payload: CreateCreditNotePayload) => createCreditNote(payload),
@@ -103,6 +110,23 @@ export function CreateCreditNoteSheet({
       });
     },
   });
+
+  useEffect(() => {
+    if (!open) {
+      setSearch("");
+      setSelected(null);
+      createMutation.reset();
+      setInvoiceId("");
+      setCategory("");
+      setFinanceYear(currentFinanceYear());
+      setMonthLabel("");
+      setCreditDate(todayLocalISO());
+      setDescription("");
+      setApplyGst(true);
+      setLines([emptyLine()]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const validLines = lines.filter(
     (l) => l.particulars.trim() && Number(l.qty) > 0 && l.rate !== "",
@@ -152,15 +176,21 @@ export function CreateCreditNoteSheet({
               className="mt-1"
               options={invoiceOptions}
               value={invoiceId}
-              onChange={setInvoiceId}
+              onChange={(id) => {
+                setInvoiceId(id);
+                setSelected(pickerRows.find((r) => r.id === id) ?? null);
+              }}
+              search={search}
+              onSearchChange={setSearch}
+              loading={invoicesQuery.isFetching}
               placeholder="Select approved invoice"
-              searchPlaceholder="Search by bill no, category, month…"
-              emptyText="No approved invoices found."
+              searchPlaceholder="Search bill no., proforma no., client…"
+              emptyText={invoicesQuery.isError ? "Could not load invoices." : "No approved invoice matches."}
               aria-label="Invoice"
             />
-            {approvedInvoices.length === 0 && (
-              <p className="mt-1 text-xs text-amber-600">
-                No approved invoices yet — approve a proforma first.
+            {invoicesQuery.isError && (
+              <p className="mt-1 text-xs text-rose-700">
+                Could not search invoices: {(invoicesQuery.error as Error).message}
               </p>
             )}
           </div>
@@ -209,6 +239,9 @@ export function CreateCreditNoteSheet({
           </div>
 
           <LineItemsEditor lines={lines} onChange={setLines} />
+          {createMutation.isError && (
+            <InlineError title="Could not create credit note" message={createMutation.error.message} />
+          )}
         </div>
 
         <SheetFooter className="border-t px-4 py-3">

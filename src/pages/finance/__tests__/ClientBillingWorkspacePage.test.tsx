@@ -88,6 +88,23 @@ vi.mock("@/lib/clientBillingApi", () => ({
   approveInvoicePo: vi.fn(),
   addInvoiceGrn: vi.fn(),
   getBillingHeader: vi.fn(() => new Promise(() => {})),
+  getSummary: vi.fn(() => new Promise(() => {})),
+  exportClientBillingCsv: vi.fn(),
+  previewInvoicePdfUrl: vi.fn(() => new Promise(() => {})),
+  bulkApproveInvoices: vi.fn(),
+  listSubmissions: vi.fn(() => new Promise(() => {})),
+  listInvoiceChangeRequests: vi.fn(() => new Promise(() => {})),
+  listChangeRequests: vi.fn(() => new Promise(() => {})),
+  getChangeRequest: vi.fn(() => new Promise(() => {})),
+  decideChangeRequest: vi.fn(),
+  createChangeRequest: vi.fn(),
+  submitToClient: vi.fn(),
+  updateInvoiceNarration: vi.fn(),
+  updateProforma: vi.fn(),
+  listAvailablePos: vi.fn(() => new Promise(() => {})),
+  checkPo: vi.fn(() => new Promise(() => {})),
+  getPoDetail: vi.fn(() => new Promise(() => {})),
+  downloadPoDocument: vi.fn(),
 }));
 
 // DashboardLayout pulls in react-router's useLocation/useNavigate + AuthContext, none of which
@@ -142,6 +159,8 @@ function renderPage(seed?: {
   invoices?: unknown[];
   creditNotes?: unknown[];
   awaitingInvoice?: unknown[];
+  rejected?: unknown[];
+  outstanding?: unknown[];
 }) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
@@ -168,10 +187,14 @@ function renderPage(seed?: {
     list(seed?.creditNotes ?? []),
   );
   // The legacy list screens (LegacyBillingLists.tsx) key on their own search-bar filters.
-  const legacy = { companyName: "", branchId: "", financeYear: currentFinanceYear(), number: "" };
+  // Keep in step with legacyListParts.tsx's initialFilters().
+  const legacy = { companyName: "", branchId: "", financeYear: currentFinanceYear(), number: "", fromDate: "", toDate: "", costCentreId: "", invoiceType: "" };
   client.setQueryData(["client-billing", "legacy-proformas", legacy, 1], list(seed?.proformas ?? []));
   client.setQueryData(["client-billing", "legacy-invoice-approval", { ...legacy, financeYear: "" }, 1], list(seed?.awaitingInvoice ?? []));
   client.setQueryData(["client-billing", "legacy-download", legacy, 1], list(seed?.invoices ?? []));
+  client.setQueryData(["client-billing", "legacy-rejected", { ...legacy, financeYear: "" }, 1], list(seed?.rejected ?? []));
+  // Download list's received / outstanding lookup (same key the Receipts tab uses).
+  client.setQueryData(["client-billing", "outstanding", { companyName: "", branchId: "" }, ""], { success: true, data: seed?.outstanding ?? [] });
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <ClientBillingWorkspacePage />
@@ -281,11 +304,39 @@ describe("ClientBillingWorkspacePage — rendering", () => {
     expect(renderPage({ proformas: [] })).toContain("No records found");
   });
 
-  it("Invoice Approval: Select Branch, view / Edit per row", () => {
-    const html = renderPage({ awaitingInvoice: [{ ...proformaRow, proforma_approved_at: "2026-10-14", branch_name: "NOIDA-2" }] });
-    expect(html).toContain("Select Branch");
+  it("Invoice Approval: filters, view / Edit / Reject per row, row checkboxes for bulk approve", () => {
+    const html = renderPage({ awaitingInvoice: [{ ...proformaRow, proforma_approved_at: "2026-10-14", branch_name: "NOIDA-2", cost_centre_display_name: "Acme Ltd" }] });
+    for (const f of ["Branch", "Bill date from", "Bill date to", "Cost centre", "Export CSV"]) expect(html).toContain(f);
     expect(html).toContain("view PF/2026-27/0001");
     expect(html).toContain("Edit PF/2026-27/0001");
+    expect(html).toContain("Reject PF/2026-27/0001");
+    expect(html).toContain("Select PF/2026-27/0001");
+    expect(html).toContain("Select all on this page");
+    expect(html).toContain("Details of PF/2026-27/0001");
+    expect(html).toContain("Acme Ltd");
+    expect(html).toContain("Page total");
+  });
+
+  it("Proforma numbers open the detail drawer; lists carry export and a page total", () => {
+    const html = renderPage({ proformas: [{ ...proformaRow, branch_name: "NOIDA-2" }] });
+    expect(html).toContain("Details of PF/2026-27/0001");
+    expect(html).toContain("Export CSV");
+    expect(html).toContain("Page total");
+  });
+
+  it("Rejected / Void: reason, who / when, bill no. kept, clone action", () => {
+    const html = renderPage({
+      rejected: [{
+        ...approvedInvoiceRow, invoice_status: "rejected", proforma_no: "PF/2026-27/0009", bill_no: "BILL/2026-27/0099",
+        rejected_reason: "Wrong month billed", rejected_by: "user-77", rejected_at: "2026-10-01T10:00:00.000Z",
+      }],
+    });
+    expect(html).toContain("Rejected / Void");
+    expect(html).toContain("Wrong month billed");
+    expect(html).toContain("user-77");
+    expect(html).toContain("BILL/2026-27/0099");
+    expect(html).toContain("(void)");
+    expect(html).toContain("Clone as new proforma");
   });
 
   it("Download Initial Invoice: Invoice No., PDF / Letter Head / Export, Files", () => {
@@ -293,6 +344,27 @@ describe("ClientBillingWorkspacePage — rendering", () => {
     expect(html).toContain("BILL/2026-27/0007");
     for (const h of ["Invoice No.", "Files", ">Export<", "Bill No."]) expect(html).toContain(h);
     expect(html).toContain("More actions for BILL/2026-27/0007");
+  });
+
+  it("Download Initial Invoice: client, bill date, grand total, received / outstanding, sent to client", () => {
+    const html = renderPage({
+      invoices: [
+        { ...approvedInvoiceRow, cost_centre_display_name: "Acme Ltd", last_sent_at: null },
+        { ...approvedInvoiceRow, id: "inv-approved-2", bill_no: "BILL/2026-27/0008", last_sent_at: "2026-10-02T09:30:00.000Z" },
+      ],
+      outstanding: [{ id: "inv-approved-1", bill_no: "BILL/2026-27/0007", settled: "5000.00", outstanding: "6800.00", days_past_due: 12 }],
+    });
+    for (const h of ["Client", "Bill date", "Grand total", "Received", "Outstanding", "Sent to client", "Invoice type"]) expect(html).toContain(h);
+    expect(html).toContain("Acme Ltd");
+    expect(html).toContain("01/08/2026");
+    expect(html).toContain("11,800");
+    expect(html).toContain("5,000");
+    expect(html).toContain("6,800");
+    expect(html).toContain("12 days past due");
+    expect(html).toContain("Not sent");
+    expect(html).toContain("Not in the outstanding register");
+    // Approved by / at is not on origin/main rows, so the column stays hidden.
+    expect(html).not.toContain(">Approved<");
   });
 
   it("Credit Notes tab renders a list from a mocked listCreditNotes response", () => {
@@ -348,6 +420,10 @@ const rejectDialogSource = readFileSync(
     process.cwd(),
     "src/components/finance/client-billing/RejectInvoiceDialog.tsx",
   ),
+  "utf8",
+);
+const creditNotesTabSource = readFileSync(
+  resolve(process.cwd(), "src/components/finance/client-billing/CreditNotesTab.tsx"),
   "utf8",
 );
 const apiSource = readFileSync(
@@ -414,7 +490,7 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
     // PDF = with letterhead, Letter Head = plain, on both legacy lists; credit notes keep the button.
     expect(pageSource).toContain('onDownload={(r, lh) => void handleDownload("proforma", r.id, r.proforma_no ?? r.id, lh)}');
     expect(pageSource).toContain('onDownload={(r, lh) => void handleDownload("invoice", r.id, r.bill_no ?? r.id, lh)}');
-    expect(pageSource).toContain('<DownloadPdfButton kind="credit-note"');
+    expect(creditNotesTabSource).toContain('<DownloadPdfButton kind="credit-note"');
   });
 
   it("Credit Notes: create Sheet submits createCreditNote with the payload clientBillingApi.ts actually declares", () => {
@@ -455,5 +531,78 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
     expect(pageSource).toContain(
       "if (approveCreditTarget) approveCreditMutation.mutate(approveCreditTarget.id);",
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Section C — 2026-10-14 UI completion: entry points, confirmations, inline errors (source-verified)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+const cb = (file: string) => readFileSync(resolve(process.cwd(), "src/components/finance/client-billing", file), "utf8");
+
+describe("ClientBillingWorkspacePage — detail drawer, reject, confirmations, errors", () => {
+  it("every list's number opens InvoiceDetailDialog, which exposes preview / approve / narration / clone", () => {
+    expect(pageSource).toContain("const openDetail = (r: Pick<InvoiceRow, \"id\">) => setDetailInvoiceId(r.id);");
+    expect(pageSource.match(/onOpen=\{openDetail\}/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(pageSource).toContain("<ReceiptsTab onOpenInvoice={(id) => setDetailInvoiceId(id)} />");
+    const detail = cb("InvoiceDetailDialog.tsx");
+    for (const s of ["Preview PDF", "Approve invoice", "Approve proforma", "Edit narration", "Clone as new proforma", "<ApprovalTimeline"]) expect(detail).toContain(s);
+    expect(pageSource).toContain('onEditNarration: (inv) => setApproveView({ id: inv.id, mode: "view", initialEdit: true })');
+    expect(pageSource).toContain("cloneFromInvoiceId={entry.cloneFromId ?? null}");
+    expect(cb("ProformaEntrySheet.tsx")).toContain("return createProforma(payload);");
+  });
+
+  it("Reject is offered on Invoice Approval and inside the approve screen, via RejectInvoiceDialog", () => {
+    expect(pageSource).toContain('onReject={(r) => setRejectInvoiceTarget({ id: r.id, label: r.proforma_no ?? r.id })}');
+    expect(pageSource).toContain("onReject={(inv: InvoiceDetail) => setRejectInvoiceTarget({ id: inv.id, label: numberOf(inv) })}");
+    expect(approveViewSource).toContain("onClick={() => onReject(inv)}");
+  });
+
+  it("bill-number approval, Approve PO, void approval and provision approval ask for confirmation", () => {
+    expect(approveViewSource).toContain('onClick={() => (mode === "invoice" ? setConfirmOpen(true) : approve.mutate())}');
+    expect(approveViewSource).toContain("This generates the bill number.");
+    expect(pageSource).toContain('confirmLabel="Approve PO"');
+    expect(cb("ChangeRequestsTab.tsx")).toContain('request.request_type === "void" ? setConfirmVoid(true) : decide.mutate("approve")');
+    expect(cb("ProvisionsTab.tsx")).toContain('confirmLabel="Approve provision"');
+  });
+
+  it("approval with GST / Bill To warnings needs the 'I have checked' box and links to Cost Centres", () => {
+    expect(approveViewSource).toContain("approveDisabled = approve.isPending || editing || (blocking.length > 0 && !checked)");
+    expect(approveViewSource).toContain('export const COST_CENTRES_PATH = "/finance/cost-centres";');
+    expect(approveViewSource).toContain("Fix in Cost Centres");
+  });
+
+  it("tax rows come from the record, not hard-coded 18 / 9 labels", () => {
+    expect(approveViewSource).not.toContain("IGST @ 18.00%");
+    expect(approveViewSource).not.toContain("CGST @ 9.00%");
+    expect(approveViewSource).toContain("invoiceTaxRows(inv)");
+  });
+
+  it("dialog errors are shown inline (role=alert) and the toast layer sits above dialogs", () => {
+    for (const f of ["RejectInvoiceDialog.tsx", "SubmitToClientDialog.tsx", "ChangeRequestDialog.tsx", "CreateCreditNoteSheet.tsx", "NarrationEditor.tsx"]) {
+      expect(cb(f), f).toContain("<InlineError");
+    }
+    expect(approveViewSource).toContain('<InlineError title="Approval failed"');
+    const toast = readFileSync(resolve(process.cwd(), "src/components/ui/toast.tsx"), "utf8");
+    expect(toast).toContain("fixed top-0 z-[140]");
+  });
+
+  it("bulk approve posts the ticked ids to bulkApproveInvoices and lists each row's result", () => {
+    const list = cb("InvoiceApprovalList.tsx");
+    expect(list).toContain("mutationFn: (ids: string[]) => bulkApproveInvoices(ids),");
+    expect(list).toContain("onConfirm={() => bulk.mutate([...selected])}");
+    expect(list).toContain('failed — ${r.error ?? "unknown reason"}');
+  });
+
+  it("credit note picker searches the server and Download rows can raise a credit note", () => {
+    const sheet = cb("CreateCreditNoteSheet.tsx");
+    expect(sheet).toContain('listProformas({ status: "approved", search: debouncedSearch || undefined, limit: 50 })');
+    expect(sheet).toContain("onSearchChange={setSearch}");
+    expect(pageSource).toContain("onCreditNote={(r) => setCreditNoteSheet({ open: true, invoice: r })}");
+    expect(pageSource).not.toContain("limit: 200");
+  });
+
+  it("InvoiceReferencesFields.tsx (unused) is gone", () => {
+    expect(() => cb("InvoiceReferencesFields.tsx")).toThrow();
   });
 });

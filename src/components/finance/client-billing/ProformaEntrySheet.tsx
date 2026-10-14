@@ -86,15 +86,19 @@ function LineTable({ title, lines, onChange, tone }: { title: string; lines: Lin
   );
 }
 
-export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId = null }: {
+export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId = null, cloneFromInvoiceId = null }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
   editInvoiceId?: string | null;
+  /** "Clone as new proforma" from a rejected / void record: prefill everything, create new. */
+  cloneFromInvoiceId?: string | null;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const isEdit = Boolean(editInvoiceId);
+  const sourceId = editInvoiceId ?? cloneFromInvoiceId;
+  const isClone = !isEdit && Boolean(cloneFromInvoiceId);
   const [stage, setStage] = useState<1 | 2>(1);
   const [scope, setScope] = useState({ companyName: "", branchId: "" });
   const [costCentreId, setCostCentreId] = useState("");
@@ -114,11 +118,12 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
 
   const options = useBillingFilterOptions().data?.data;
   const ccOptions = costCentreSearchOptions(narrowCostCentres(options?.costCentres ?? [], scope.companyName, scope.branchId));
-  const detail = useQuery({ queryKey: ["client-billing", "proforma-edit", editInvoiceId], queryFn: () => getProforma(editInvoiceId as string), enabled: open && isEdit });
+  const detail = useQuery({ queryKey: ["client-billing", "proforma-edit", sourceId], queryFn: () => getProforma(sourceId as string), enabled: open && Boolean(sourceId) });
   const header = useQuery({ queryKey: ["client-billing", "billing-header", costCentreId], queryFn: () => getBillingHeader(costCentreId), enabled: Boolean(costCentreId) && stage === 2 });
   const h = header.data?.data;
   const party = h?.party;
-  const editing = detail.data?.data;
+  const source = detail.data?.data;
+  const editing = isEdit ? source : undefined;
 
   useEffect(() => {
     if (open) return;
@@ -128,19 +133,22 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
   }, [open]);
 
   useEffect(() => {
-    if (!editing) return;
-    setStage(2);
-    setCostCentreId(editing.cost_centre_id); setFinanceYear(editing.finance_year); setMonthLabel(editing.month_label);
-    setInvoiceDate(String(editing.invoice_date).slice(0, 10)); setDescription(editing.description ?? "");
-    setInvoiceType(editing.invoice_type === "Non Revenue" ? "Non Revenue" : "Revenue");
+    const src = open ? source : undefined;
+    if (!src) return;
+    // Edit opens on the entry stage; a clone opens on stage 1 so period and date are re-checked.
+    setStage(isEdit ? 2 : 1);
+    setCostCentreId(src.cost_centre_id); setFinanceYear(src.finance_year); setMonthLabel(src.month_label);
+    setInvoiceDate(isEdit ? String(src.invoice_date).slice(0, 10) : todayLocalISO()); setDescription(src.description ?? "");
+    setInvoiceType(src.invoice_type === "Non Revenue" ? "Non Revenue" : "Revenue");
     // An I-Spark-style invoice saved with "no tax calculation" shows as GST off.
-    setApplyGst(Boolean(editing.apply_gst) && Number(editing.apply_tax_calc ?? 1) === 1);
-    setPoNumbers(String(editing.po_numbers ?? "").split(",").map((p) => p.trim()).filter(Boolean)); setJccNo(editing.jcc_no ?? "");
+    setApplyGst(Boolean(src.apply_gst) && Number(src.apply_tax_calc ?? 1) === 1);
+    setPoNumbers(String(src.po_numbers ?? "").split(",").map((p) => p.trim()).filter(Boolean)); setJccNo(src.jcc_no ?? "");
     const toLine = (l: { particulars: string; qty: string | number; rate: string | number }) => ({ particulars: l.particulars, qty: String(Number(l.qty)), rate: String(Number(l.rate)) });
-    const c = editing.lines.filter((l) => l.line_type !== "deduction").map(toLine);
-    const d = editing.lines.filter((l) => l.line_type === "deduction").map(toLine);
+    const c = src.lines.filter((l) => l.line_type !== "deduction").map(toLine);
+    const d = src.lines.filter((l) => l.line_type === "deduction").map(toLine);
     setCharges(c.length ? c : [blank()]); setDeductions(d.length ? [...d, blank()] : [blank()]);
-  }, [editing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, open]);
 
   const validCharges = charges.filter(valid);
   const validDeductions = deductions.filter(valid);
@@ -205,10 +213,11 @@ export function ProformaEntrySheet({ open, onOpenChange, onSaved, editInvoiceId 
         <SheetHeader className="border-b px-4 py-3">
           <SheetTitle className="text-sm font-semibold">
             {stage === 1 ? "Proforma Invoice" : `Proforma Entry${editing?.proforma_no ? ` · ${editing.proforma_no}` : ""}`}
+            {isClone && source && <span className="ml-2 text-xs font-normal text-slate-500">new proforma copied from {source.bill_no ?? source.proforma_no}</span>}
           </SheetTitle>
         </SheetHeader>
 
-        {isEdit && detail.isLoading ? (
+        {sourceId && detail.isLoading ? (
           <div className="flex flex-1 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>
         ) : stage === 1 ? (
           <div className="flex-1 overflow-y-auto px-6 py-5">

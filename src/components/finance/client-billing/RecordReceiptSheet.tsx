@@ -39,7 +39,13 @@ export function autoAllocate(bills: OutstandingBill[], receivedP: number, tdsP: 
   return out;
 }
 
-export function RecordReceiptSheet({ open, onOpenChange, initialClient }: { open: boolean; onOpenChange: (o: boolean) => void; initialClient?: string }) {
+export function RecordReceiptSheet({ open, onOpenChange, initialClient, initialBillId }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  initialClient?: string;
+  /** "Receive" on an outstanding bill: that bill is preselected with its full outstanding amount. */
+  initialBillId?: string;
+}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [client, setClient] = useState("");
@@ -65,6 +71,18 @@ export function RecordReceiptSheet({ open, onOpenChange, initialClient }: { open
     return [...m.entries()].map(([name, p]) => ({ value: name, label: name, hint: money(rupees(p)) }));
   }, [all.data]);
   const bills = useMemo(() => (all.data?.data ?? []).filter((b) => b.client_name === client), [all.data, client]);
+  const [preselected, setPreselected] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || !initialBillId || preselected === initialBillId) return;
+    const bill = (all.data?.data ?? []).find((b) => b.id === initialBillId);
+    if (!bill) return;
+    const due = rupees(paise(bill.outstanding)).toFixed(2);
+    setClient(bill.client_name);
+    setAmount(due);
+    setAlloc({ [bill.id]: { received: due, tds: "", deduction: "" } });
+    setPreselected(initialBillId);
+  }, [open, initialBillId, all.data, preselected]);
+  useEffect(() => { if (!open) setPreselected(null); }, [open]);
 
   const sum = (k: keyof Alloc) => Object.values(alloc).reduce((s, a) => s + paise(a[k]), 0);
   const allocatedReceived = sum("received");
@@ -150,7 +168,7 @@ export function RecordReceiptSheet({ open, onOpenChange, initialClient }: { open
                   const a = alloc[b.id] ?? { received: "", tds: "", deduction: "" };
                   const left = paise(b.outstanding) - paise(a.received) - paise(a.tds) - paise(a.deduction);
                   return (
-                    <tr key={b.id} className="border-t">
+                    <tr key={b.id} className={`border-t ${b.id === initialBillId ? "bg-sky-50" : ""}`}>
                       <td className="px-3 py-1.5 font-medium">{b.bill_no}<span className="block text-[11px] text-muted-foreground">{b.cost_centre_code}</span></td>
                       <td className="px-3 py-1.5">{String(b.invoice_date).slice(0, 10)}</td>
                       <td className="px-3 py-1.5">

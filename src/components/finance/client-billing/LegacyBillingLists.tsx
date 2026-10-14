@@ -1,128 +1,63 @@
 // src/components/finance/client-billing/LegacyBillingLists.tsx
 /**
- * The three I-Spark list screens, same filters and columns as the old pages:
+ * The I-Spark list screens, same filters and columns as the old pages, plus a date range,
+ * cost-centre and type filter, CSV export, a page-totals row and a load-error Retry:
  *   View Proforma Invoice   — Select Company, Select Branch, Select Finance year, Proforma No., search.
  *                             Sr. No. | Branch Name | Proforma No. | Amount | PO No. | Description |
  *                             Action (Edit / Approve / Reject) | Download (PDF / Letter Head)
- *   Invoice Approval        — Select Branch. Sr. No. | Branch Name | Amount | Description | Action (view / Edit)
+ *   Invoice Approval        — InvoiceApprovalList.tsx (re-exported below).
  *   Download Initial Invoice— Select Company, Select Branch, Select Finance year, Bill No., search.
- *                             Sr. No. | Branch Name | Invoice No. | Amount | PO No. | Description |
+ *                             Sr. No. | Branch Name | Invoice No. | Client | Bill date | Amount |
+ *                             Grand total | Received | Outstanding | Sent | PO No. | Description |
  *                             Action (PDF / Letter Head / Export) | Files
  * "Amount" is the taxable total (legacy shows 778901, not the grand total).
  * PDF = with the MAS letterhead; Letter Head = plain, for printing on pre-printed letterhead.
+ * Proforma / bill numbers open the detail drawer (history, e-mails, change requests, audit).
  */
-import { useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, MoreHorizontal } from "lucide-react";
+import { MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { listProformas, type InvoiceRow } from "@/lib/clientBillingApi";
-import { BillingScopeSelects, useBillingFilterOptions } from "./BillingScopeSelects";
-import { currentFinanceYear, financeYearOptions } from "./billingFieldOptions";
+import { listOutstandingBills, type InvoiceRow, type OutstandingBill } from "@/lib/clientBillingApi";
+import {
+  PAGE, PageTotalCell, Pager, SearchBar, Table, initialFilters, link, num, pageSum, toListFilters, useList,
+  type ExportCsvHandler,
+} from "./legacyListParts";
+import { formatDateOnly, formatDateTime, whoBy } from "./shared";
 
-const PAGE = 25;
-const link = "cursor-pointer text-sky-700 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 rounded-sm disabled:opacity-50";
-const num = (v: unknown) => Number(v ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+export { InvoiceApprovalList } from "./InvoiceApprovalList";
 
-interface Filters { companyName: string; branchId: string; financeYear: string; number: string }
-
-function SearchBar({ value, onSearch, numberLabel, right }: { value: Filters; onSearch: (f: Filters) => void; numberLabel: string; right?: ReactNode }) {
-  const [draft, setDraft] = useState(value);
-  return (
-    <div className="mb-3 rounded-md border bg-white p-3">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <BillingScopeSelects labelled companyName={draft.companyName} branchId={draft.branchId} onChange={(s) => setDraft({ ...draft, ...s })} />
-        <div>
-          <Label className="text-xs">Select Finance year</Label>
-          <Select value={draft.financeYear} onValueChange={(v) => setDraft({ ...draft, financeYear: v })}>
-            <SelectTrigger className="mt-1 h-8 text-sm" aria-label="Select Finance year"><SelectValue /></SelectTrigger>
-            <SelectContent>{financeYearOptions().map((fy) => <SelectItem key={fy} value={fy}>{fy}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label className="text-xs" htmlFor={`num-${numberLabel}`}>{numberLabel}</Label>
-          <Input id={`num-${numberLabel}`} className="mt-1 h-8 text-sm" placeholder={numberLabel} value={draft.number}
-            onChange={(e) => setDraft({ ...draft, number: e.target.value })} onKeyDown={(e) => e.key === "Enter" && onSearch(draft)} />
-        </div>
-      </div>
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <Button size="sm" className="bg-sky-600 px-5 hover:bg-sky-700" onClick={() => onSearch(draft)}>search</Button>
-        {right}
-      </div>
-    </div>
-  );
-}
-
-function Pager({ page, total, onPage }: { page: number; total: number; onPage: (p: number) => void }) {
-  const pages = Math.max(1, Math.ceil(total / PAGE));
-  return (
-    <div className="flex items-center justify-between border-t px-1 py-2 text-xs">
-      <span className="text-slate-500">{total} record(s)</span>
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>Prev</Button>
-        <span className="font-semibold">{page} / {pages}</span>
-        <Button variant="outline" size="sm" disabled={page >= pages} onClick={() => onPage(page + 1)}>Next</Button>
-      </div>
-    </div>
-  );
-}
-
-function Table({ head, children, empty, loading }: { head: string[]; children: ReactNode; empty: boolean; loading: boolean }) {
-  return (
-    <div className="flex-1 overflow-auto rounded-md border">
-      <table className="w-full text-sm">
-        <thead className="sticky top-0 bg-sky-600 text-left text-white">
-          <tr>{head.map((h, i) => <th key={`${h}-${i}`} className="whitespace-nowrap px-2 py-2 font-semibold !text-white">{h}</th>)}</tr>
-        </thead>
-        <tbody>
-          {loading ? (
-            <tr><td colSpan={head.length} className="py-8 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" /></td></tr>
-          ) : empty ? (
-            <tr><td colSpan={head.length} className="py-8 text-center text-muted-foreground">No records found</td></tr>
-          ) : children}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function useList(key: string, f: Filters, page: number, extra: Parameters<typeof listProformas>[0]) {
-  return useQuery({
-    queryKey: ["client-billing", key, f, page],
-    queryFn: () => listProformas({
-      ...extra, companyName: f.companyName || undefined, branchId: f.branchId || undefined,
-      financeYear: f.financeYear || undefined, search: f.number.trim() || undefined, page, limit: PAGE,
-    }),
-  });
-}
-
-const initial = (): Filters => ({ companyName: "", branchId: "", financeYear: currentFinanceYear(), number: "" });
-
-export function ProformaApprovalList({ onCreate, onEdit, onApprove, onReject, onDownload }: {
+export function ProformaApprovalList({ onCreate, onEdit, onApprove, onReject, onDownload, onOpen, onExportCsv }: {
   onCreate: () => void;
   onEdit: (row: InvoiceRow) => void;
   onApprove: (row: InvoiceRow) => void;
   onReject: (row: InvoiceRow) => void;
   onDownload: (row: InvoiceRow, letterhead: boolean) => void;
+  /** Proforma number click: detail drawer. */
+  onOpen?: (row: InvoiceRow) => void;
+  onExportCsv?: ExportCsvHandler;
 }) {
-  const [f, setF] = useState(initial());
+  const [f, setF] = useState(initialFilters());
   const [page, setPage] = useState(1);
-  const q = useList("legacy-proformas", f, page, { status: "proforma", stage: "proforma_approval" });
+  const extra = { status: "proforma", stage: "proforma_approval" } as const;
+  const q = useList("legacy-proformas", f, page, extra);
   const rows = q.data?.data ?? [];
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <SearchBar value={f} numberLabel="Proforma No." onSearch={(n) => { setF(n); setPage(1); }}
-        right={<Button size="sm" onClick={onCreate}>Initial Invoice/Proforma</Button>} />
-      <Table loading={q.isLoading} empty={rows.length === 0}
-        head={["Sr. No.", "Branch Name", "Proforma No.", "Amount", "PO No.", "Description", "Action", "", "", "Download", ""]}>
+      <SearchBar value={f} defaults={initialFilters()} numberLabel="Proforma No." onSearch={(n) => { setF(n); setPage(1); }}
+        onExport={onExportCsv ? () => onExportCsv({ ...toListFilters(f), ...extra }, "proformas-awaiting-approval.csv") : undefined}
+        right={<Button size="sm" className="cursor-pointer" onClick={onCreate}>Initial Invoice/Proforma</Button>} />
+      <Table loading={q.isLoading} empty={rows.length === 0} error={q.error} onRetry={() => void q.refetch()}
+        head={["Sr. No.", "Branch Name", "Proforma No.", "Amount", "PO No.", "Description", "Action", "", "", "Download", ""]}
+        foot={<tr><PageTotalCell colSpan={3} /><td className="px-2 py-1.5 tabular-nums">{num(pageSum(rows, "total_amount"))}</td><td colSpan={7} /></tr>}>
         {rows.map((r, i) => (
           <tr key={r.id} data-approval-id={r.id} className="border-b odd:bg-slate-50">
             <td className="px-2 py-1.5">{(page - 1) * PAGE + i + 1}</td>
             <td className="px-2 py-1.5">{r.branch_name ?? "—"}</td>
-            <td className="px-2 py-1.5">{r.proforma_no}</td>
+            <td className="px-2 py-1.5">
+              {onOpen ? <button type="button" className={link} onClick={() => onOpen(r)} aria-label={`Details of ${r.proforma_no}`}>{r.proforma_no}</button> : r.proforma_no}
+            </td>
             <td className="px-2 py-1.5 tabular-nums">{num(r.total_amount)}</td>
             <td className="px-2 py-1.5">{r.po_numbers ?? ""}</td>
             <td className="max-w-[360px] px-2 py-1.5">{r.description ?? ""}</td>
@@ -141,42 +76,6 @@ export function ProformaApprovalList({ onCreate, onEdit, onApprove, onReject, on
   );
 }
 
-export function InvoiceApprovalList({ onView, onEdit, banner }: { onView: (row: InvoiceRow) => void; onEdit: (row: InvoiceRow) => void; banner?: string | null }) {
-  const [branchId, setBranchId] = useState("");
-  const [page, setPage] = useState(1);
-  const branches = useBillingFilterOptions().data?.data.branches ?? [];
-  const q = useList("legacy-invoice-approval", { ...initial(), financeYear: "", branchId }, page, { status: "proforma", stage: "invoice_approval" });
-  const rows = q.data?.data ?? [];
-  return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      {banner && <p role="status" className="mb-2 text-center text-sm font-semibold text-red-600">{banner}</p>}
-      <div className="mb-3 w-72">
-        <Label className="text-xs font-semibold">Select Branch</Label>
-        <Select value={branchId || "_all"} onValueChange={(v) => { setBranchId(v === "_all" ? "" : v); setPage(1); }}>
-          <SelectTrigger className="mt-1 h-8 text-sm" aria-label="Select Branch"><SelectValue placeholder="Select Branch" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="_all">All branches</SelectItem>
-            {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      </div>
-      <Table loading={q.isLoading} empty={rows.length === 0} head={["Sr. No.", "Branch Name", "Amount", "Description", "Action", ""]}>
-        {rows.map((r, i) => (
-          <tr key={r.id} data-approval-id={r.id} className="border-b odd:bg-slate-50">
-            <td className="px-2 py-1.5">{(page - 1) * PAGE + i + 1}</td>
-            <td className="px-2 py-1.5">{r.branch_name ?? "—"}</td>
-            <td className="px-2 py-1.5 tabular-nums">{num(r.total_amount)}</td>
-            <td className="px-2 py-1.5">{r.description ?? ""} <span className="text-xs text-slate-500">({r.proforma_no})</span></td>
-            <td className="px-2 py-1.5"><button type="button" className={link} onClick={() => onView(r)} aria-label={`view ${r.proforma_no}`}>view</button></td>
-            <td className="px-2 py-1.5"><button type="button" className={link} onClick={() => onEdit(r)} aria-label={`Edit ${r.proforma_no}`}>Edit</button></td>
-          </tr>
-        ))}
-      </Table>
-      <Pager page={page} total={q.data?.total ?? 0} onPage={setPage} />
-    </div>
-  );
-}
-
 export interface DownloadActions {
   onDownload: (row: InvoiceRow, letterhead: boolean) => void;
   onExport: (row: InvoiceRow) => void;
@@ -186,46 +85,91 @@ export interface DownloadActions {
   onSubmit: (row: InvoiceRow) => void;
   onDeleteRequest: (row: InvoiceRow) => void;
   onAudit: (row: InvoiceRow) => void;
+  /** Bill number click: detail drawer. */
+  onOpen?: (row: InvoiceRow) => void;
+  onCreditNote?: (row: InvoiceRow) => void;
+  onExportCsv?: ExportCsvHandler;
 }
 
+/**
+ * Received / outstanding per bill from the receipts register (GET /receipts/outstanding, the
+ * same rows the Receipts tab shows). That route only returns bills that still owe money, for
+ * MAS Callnet cost centres and live (non-migrated) bills, so a bill missing from it is shown as
+ * "—" with an explanation rather than guessed as paid.
+ */
+function useOutstandingMap(companyName: string, branchId: string) {
+  const q = useQuery({
+    queryKey: ["client-billing", "outstanding", { companyName, branchId }, ""],
+    queryFn: () => listOutstandingBills({ companyName: companyName || undefined, branchId: branchId || undefined }),
+    staleTime: 60_000,
+  });
+  return useMemo(() => new Map<string, OutstandingBill>((q.data?.data ?? []).map((b) => [b.id, b])), [q.data]);
+}
+
+const NOT_OUTSTANDING = "Not in the outstanding register: fully received, a historical bill, or another company's bill.";
+
 export function DownloadInvoiceList(a: DownloadActions) {
-  const [f, setF] = useState(initial());
+  const [f, setF] = useState(initialFilters());
   const [page, setPage] = useState(1);
   const q = useList("legacy-download", f, page, { status: "approved" });
   const rows = q.data?.data ?? [];
+  const outstanding = useOutstandingMap(f.companyName, f.branchId);
+  // "Approved by / at" is not a client_invoice column on origin/main; the column appears only
+  // once the API returns it (the detail drawer's history reads it from the audit log meanwhile).
+  const showApproved = rows.some((r) => r.approved_at !== undefined);
+  const head = ["Sr. No.", "Branch Name", "Invoice No.", "Client", "Bill date", "Amount", "Grand total", "Received", "Outstanding", "Sent to client",
+    ...(showApproved ? ["Approved"] : []), "PO No.", "Description", "Action", "", "", "Files", ""];
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <SearchBar value={f} numberLabel="Bill No." onSearch={(n) => { setF(n); setPage(1); }} />
-      <Table loading={q.isLoading} empty={rows.length === 0}
-        head={["Sr. No.", "Branch Name", "Invoice No.", "Amount", "PO No.", "Description", "Action", "", "", "Files", ""]}>
-        {rows.map((r, i) => (
-          <tr key={r.id} className="border-b odd:bg-slate-50">
-            <td className="px-2 py-1.5">{(page - 1) * PAGE + i + 1}</td>
-            <td className="px-2 py-1.5">{r.branch_name ?? "—"}</td>
-            <td className="px-2 py-1.5"><button type="button" className={link} onClick={() => a.onView(r)}>{r.bill_no}</button></td>
-            <td className="px-2 py-1.5 tabular-nums">{num(r.total_amount)}</td>
-            <td className="px-2 py-1.5">{r.po_numbers ?? ""}{r.po_numbers && r.po_approved ? <span className="ml-1 text-xs text-emerald-700">(approved)</span> : null}</td>
-            <td className="max-w-[360px] px-2 py-1.5">{r.description ?? ""}</td>
-            <td className="px-2 py-1.5"><button type="button" className={link} onClick={() => a.onDownload(r, true)}>PDF</button></td>
-            <td className="px-2 py-1.5"><button type="button" className={link} onClick={() => a.onDownload(r, false)}>Letter Head</button></td>
-            <td className="px-2 py-1.5"><button type="button" className={link} onClick={() => a.onExport(r)}>Export</button></td>
-            <td className="px-2 py-1.5 text-xs text-slate-400">—</td>
-            <td className="px-2 py-1.5">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`More actions for ${r.bill_no}`}><MoreHorizontal className="h-4 w-4" /></Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => a.onAddGrn(r)}>ADD GRN</DropdownMenuItem>
-                  {r.po_numbers && !r.po_approved && <DropdownMenuItem onSelect={() => a.onApprovePo(r)}>Approve PO</DropdownMenuItem>}
-                  <DropdownMenuItem onSelect={() => a.onSubmit(r)}>Submit to Client</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => a.onAudit(r)}>Audit log</DropdownMenuItem>
-                  {!r.is_migrated && <DropdownMenuItem className="text-rose-700" onSelect={() => a.onDeleteRequest(r)}>Invoice Delete / Status Change Request</DropdownMenuItem>}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </td>
-          </tr>
-        ))}
+      <SearchBar value={f} defaults={initialFilters()} numberLabel="Bill No." showInvoiceType onSearch={(n) => { setF(n); setPage(1); }}
+        onExport={a.onExportCsv ? () => a.onExportCsv!({ ...toListFilters(f), status: "approved" }, "invoices-export.csv") : undefined} />
+      <Table loading={q.isLoading} empty={rows.length === 0} error={q.error} onRetry={() => void q.refetch()} head={head}
+        foot={<tr><PageTotalCell colSpan={5} /><td className="px-2 py-1.5 tabular-nums">{num(pageSum(rows, "total_amount"))}</td>
+          <td className="px-2 py-1.5 tabular-nums">{num(pageSum(rows, "grand_total"))}</td><td colSpan={head.length - 7} /></tr>}>
+        {rows.map((r, i) => {
+          const o = outstanding.get(r.id);
+          return (
+            <tr key={r.id} className="border-b odd:bg-slate-50">
+              <td className="px-2 py-1.5">{(page - 1) * PAGE + i + 1}</td>
+              <td className="px-2 py-1.5">{r.branch_name ?? "—"}</td>
+              <td className="whitespace-nowrap px-2 py-1.5">
+                <button type="button" className={link} onClick={() => (a.onOpen ?? a.onView)(r)} aria-label={`Details of ${r.bill_no}`}>{r.bill_no}</button>
+              </td>
+              <td className="max-w-[200px] px-2 py-1.5">{r.cost_centre_display_name ?? "—"}</td>
+              <td className="whitespace-nowrap px-2 py-1.5">{formatDateOnly(r.invoice_date)}</td>
+              <td className="px-2 py-1.5 tabular-nums">{num(r.total_amount)}</td>
+              <td className="px-2 py-1.5 tabular-nums">{num(r.grand_total)}</td>
+              <td className="px-2 py-1.5 tabular-nums" title={o ? undefined : NOT_OUTSTANDING}>{o ? num(o.settled) : "—"}</td>
+              <td className={`px-2 py-1.5 tabular-nums ${o && o.days_past_due > 0 ? "font-semibold text-rose-700" : ""}`} title={o ? `${o.days_past_due > 0 ? `${o.days_past_due} days past due` : "Not yet due"}` : NOT_OUTSTANDING}>
+                {o ? num(o.outstanding) : "—"}
+              </td>
+              <td className="whitespace-nowrap px-2 py-1.5 text-xs">{r.last_sent_at ? formatDateTime(r.last_sent_at) : <span className="text-slate-400">Not sent</span>}</td>
+              {showApproved && <td className="whitespace-nowrap px-2 py-1.5 text-xs">{r.approved_at ? `${formatDateTime(r.approved_at)} · ${whoBy(r.approved_by_name, r.approved_by)}` : "—"}</td>}
+              <td className="px-2 py-1.5">{r.po_numbers ?? ""}{r.po_numbers && r.po_approved ? <span className="ml-1 text-xs text-emerald-700">(approved)</span> : null}</td>
+              <td className="max-w-[360px] px-2 py-1.5">{r.description ?? ""}</td>
+              <td className="px-2 py-1.5"><button type="button" className={link} onClick={() => a.onDownload(r, true)}>PDF</button></td>
+              <td className="px-2 py-1.5"><button type="button" className={link} onClick={() => a.onDownload(r, false)}>Letter Head</button></td>
+              <td className="px-2 py-1.5"><button type="button" className={link} onClick={() => a.onExport(r)}>Export</button></td>
+              <td className="px-2 py-1.5 text-xs text-slate-400">—</td>
+              <td className="px-2 py-1.5">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 cursor-pointer" aria-label={`More actions for ${r.bill_no}`}><MoreHorizontal className="h-4 w-4" /></Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => a.onView(r)}>View invoice</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => a.onAddGrn(r)}>ADD GRN</DropdownMenuItem>
+                    {r.po_numbers && !r.po_approved && <DropdownMenuItem onSelect={() => a.onApprovePo(r)}>Approve PO</DropdownMenuItem>}
+                    <DropdownMenuItem onSelect={() => a.onSubmit(r)}>Submit to Client</DropdownMenuItem>
+                    {a.onCreditNote && <DropdownMenuItem onSelect={() => a.onCreditNote!(r)}>Raise credit note</DropdownMenuItem>}
+                    <DropdownMenuItem onSelect={() => a.onAudit(r)}>Audit log</DropdownMenuItem>
+                    {!r.is_migrated && <DropdownMenuItem className="text-rose-700" onSelect={() => a.onDeleteRequest(r)}>Invoice Delete / Status Change Request</DropdownMenuItem>}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </td>
+            </tr>
+          );
+        })}
       </Table>
       <Pager page={page} total={q.data?.total ?? 0} onPage={setPage} />
     </div>
