@@ -141,7 +141,14 @@ export function VendorSheet({ vendor, mode, open, onOpenChange, onSaved, initial
     onError: (e: any) => {
       const status = e?.status ?? e?.response?.status;
       const body = e?.data ?? e?.response?.data ?? e;
-      if (status === 409 || body?.conflict) {
+      if (body?.conflict?.field === "gst_number") {
+        toast({
+          title: "Vendor already exists",
+          description: `This GST number already belongs to ${body.conflict.vendor_name} (code: ${body.conflict.vendor_code}). Use that vendor instead of creating a new one.`,
+          variant: "destructive",
+        });
+      } else if (status === 409 || body?.conflict) {
+        const code = body?.conflict?.vendor_code;
         const code = body?.conflict?.vendor_code;
         toast({
           title: "Duplicate vendor name",

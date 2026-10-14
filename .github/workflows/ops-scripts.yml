@@ -58,7 +58,6 @@ on:
           - sbi-card-demo-seed
           - sbi-card-demo-remove
           - holiday-mapping-audit
-          - vendor-gst-from-dbbill-audit
           - exception-control-audit
           - payable-days-check
           - repair-bucket-regrade
@@ -678,10 +677,6 @@ jobs:
             exception-control-audit)
               # Read-only in both modes.
               npx tsx scripts/exception-control-audit.ts
-              ;;
-            vendor-gst-from-dbbill-audit)
-              # Read-only in both modes (SELECT / information_schema only).
-              node scripts/vendor-gst-from-dbbill-audit.mjs
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"

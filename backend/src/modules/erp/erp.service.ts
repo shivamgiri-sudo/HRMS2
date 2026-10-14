@@ -208,6 +208,24 @@ export const vendorService = {
     return (rows[0] as { id: string; vendor_code: string } | undefined) ?? null;
   },
 
+  /**
+   * Another vendor already carrying this GSTIN (case/space-insensitive). Placeholders such as
+   * "NA" or "0000000000000" are not identifiers and never match.
+   */
+  async findByGst(
+    gst: unknown,
+    excludeId?: string
+  ): Promise<{ id: string; vendor_code: string; vendor_name: string } | null> {
+    const g = String(gst ?? "").trim().toUpperCase();
+    if (g.length < 15 || /^0+$/.test(g)) return null;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, vendor_code, vendor_name FROM vendor_master
+        WHERE UPPER(TRIM(gst_number)) = ? ${excludeId ? "AND id <> ?" : ""} LIMIT 1`,
+      excludeId ? [g, excludeId] : [g]
+    );
+    return (rows[0] as { id: string; vendor_code: string; vendor_name: string } | undefined) ?? null;
+  },
+
   async update(id: string, data: Record<string, unknown>) {
     const enriched = withDerivedGstStateCode(data);
 

@@ -93,6 +93,15 @@ router.post(
       });
     }
 
+    // Duplicate GSTIN check — one GSTIN, one vendor
+    const gstDup = await vendorService.findByGst(req.body.gst_number);
+    if (gstDup) {
+      return res.status(409).json({
+        error: `A vendor with this GST number already exists: ${gstDup.vendor_name} (code: ${gstDup.vendor_code})`,
+        conflict: { vendor_code: gstDup.vendor_code, vendor_name: gstDup.vendor_name, field: "gst_number" },
+      });
+    }
+
     // Auto-generate vendor_code when the caller does not supply one
     if (!req.body.vendor_code?.trim()) {
       req.body.vendor_code = await vendorService.generateNextCode();
@@ -143,6 +152,22 @@ router.put(
           error: `A vendor with this name already exists (code: ${existing.vendor_code})`,
           conflict: { vendor_code: existing.vendor_code },
         });
+      }
+    }
+
+    // Duplicate GSTIN check — only when the GSTIN is being changed, so legacy rows that already
+    // share one can still be edited.
+    if (req.body.gst_number) {
+      const current = await vendorService.getById(req.params.id);
+      const next = String(req.body.gst_number).trim().toUpperCase();
+      if (current && String(current.gst_number ?? "").trim().toUpperCase() !== next) {
+        const gstDup = await vendorService.findByGst(next, req.params.id);
+        if (gstDup) {
+          return res.status(409).json({
+            error: `A vendor with this GST number already exists: ${gstDup.vendor_name} (code: ${gstDup.vendor_code})`,
+            conflict: { vendor_code: gstDup.vendor_code, vendor_name: gstDup.vendor_name, field: "gst_number" },
+          });
+        }
       }
     }
 
