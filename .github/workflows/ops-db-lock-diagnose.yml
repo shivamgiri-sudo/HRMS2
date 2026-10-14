@@ -1,0 +1,36 @@
+name: Ops DB Lock Diagnose (manual, read-only)
+
+# Shows open transactions and lock waits (what blocks employee_bank_detail inserts). Writes nothing.
+# live backend error log. No names or full account numbers are printed. Writes nothing.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-db-lock-diagnose-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  stats:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Stats
+        working-directory: backend
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: node scripts/db-lock-diagnose.mjs
