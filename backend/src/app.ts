@@ -370,6 +370,7 @@ import { financeClientsRouter } from "./modules/finance/finance-clients.routes.j
 import { paymentVoucherRouter } from "./modules/finance/payment-voucher.routes.js";
 import { tdsRouter } from "./modules/finance/tds.routes.js";
 import { grnTallyRouter } from "./modules/finance/grn-tally-export.routes.js";
+import { ledgerTallyRouter } from "./modules/finance/tally-ledger-export.routes.js";
 import { journalVoucherRouter } from "./modules/finance/journal-voucher.routes.js";
 import { bankReconciliationRouter } from "./modules/finance/bank-reconciliation.routes.js";
 import { ledgerReportsRouter } from "./modules/finance/ledger-reports.routes.js";
@@ -891,6 +892,7 @@ app.use("/api/finance/clients", financeClientsRouter);
 app.use("/api/finance/payment-vouchers", paymentVoucherRouter);
 app.use("/api/finance/tds", tdsRouter);
 app.use("/api/finance/grn-tally", grnTallyRouter);
+app.use("/api/finance/ledger-tally", ledgerTallyRouter);
 app.use("/api/finance/journal-vouchers", journalVoucherRouter);
 app.use("/api/finance/bank-reconciliation", bankReconciliationRouter);
 // Journal Task 4 (Phase 4 of the double-entry plan) — Trial Balance / Vendor Ledger /

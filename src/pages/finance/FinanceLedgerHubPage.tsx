@@ -28,6 +28,7 @@ import { JournalVouchersContent } from "./JournalVouchersPage";
 import { FinancialStatementsContent } from "@/components/finance/ledger/FinancialStatementsContent";
 import { DayBookContent } from "@/components/finance/ledger/DayBookContent";
 import { TdsContent } from "@/components/finance/tds/TdsContent";
+import { TallyExportContent } from "@/components/finance/ledger/TallyExportContent";
 
 const TABS = [
   { key: "analytics", label: "Finance Analytics" },
@@ -40,6 +41,7 @@ const TABS = [
   { key: "day-book", label: "Day Book" },
   { key: "statements", label: "Financial Statements" },
   { key: "tds", label: "TDS" },
+  { key: "tally", label: "Tally Export" },
   { key: "ledger-heads", label: "Ledger Heads" },
   { key: "bank-directory", label: "Bank Directory" },
 ] as const;
@@ -103,6 +105,7 @@ export default function FinanceLedgerHubPage() {
           <TabsContent value="tds"><TdsContent /></TabsContent>
           <TabsContent value="ledger-heads"><LedgerHeadsContent /></TabsContent>
           <TabsContent value="bank-directory"><BankDirectoryContent /></TabsContent>
+          <TabsContent value="tally"><TallyExportContent /></TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>
