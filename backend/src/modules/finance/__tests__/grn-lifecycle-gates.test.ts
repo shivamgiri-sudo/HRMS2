@@ -370,24 +370,23 @@ describe("Maker-checker — enforced on identity, not on role name", () => {
     expect(sideEffects.reserved).toHaveLength(0);
   });
 
-  it("the Finance Head cannot approve a GRN they submitted", async () => {
+  // Owner ruling 2026-10-14: the Finance Head is exempt from maker-checker at their own stage.
+  it("the Finance Head is NOT blocked by maker-checker on a GRN they submitted", async () => {
     stateRef.current = makeState({
       grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-same", branch_head_reviewed_by: "u-bh" }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await expect(
-      grnSmartService.review("grn-1", "approved", "fine", "u-same", "finance_head")
-    ).rejects.toThrow(/Maker-checker/i);
+    const outcome = await grnSmartService.review("grn-1", "approved", "fine", "u-same", "finance_head").catch((e: Error) => e);
+    expect(String((outcome as Error)?.message ?? "")).not.toMatch(/Maker-checker/i);
   });
 
-  it("the Finance Head cannot approve a GRN they Branch-Head reviewed", async () => {
+  it("the Finance Head is NOT blocked by maker-checker on a GRN they Branch-Head reviewed", async () => {
     stateRef.current = makeState({
       grn: baseGrn({ status: "branch_head_approved", submitted_by: "u-raiser", branch_head_reviewed_by: "u-same" }),
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await expect(
-      grnSmartService.review("grn-1", "approved", "fine", "u-same", "finance_head")
-    ).rejects.toThrow(/Maker-checker/i);
+    const outcome = await grnSmartService.review("grn-1", "approved", "fine", "u-same", "finance_head").catch((e: Error) => e);
+    expect(String((outcome as Error)?.message ?? "")).not.toMatch(/Maker-checker/i);
   });
 
   it("REJECTION by the same person is allowed — it creates no financial commitment", async () => {

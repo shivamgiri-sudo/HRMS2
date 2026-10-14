@@ -691,7 +691,8 @@ export const costCentreManagementService = {
     // here on. Both creator and submitter are checked, since submitting is the act that
     // puts it in front of an approver.
     const actorId = actor?.id ?? null;
-    if (actorId && (actorId === existing.created_by || actorId === existing.submitted_by)) {
+    // Owner ruling 2026-10-14: the Finance Head is exempt from maker-checker.
+    if (actor?.role !== "finance_head" && actorId && (actorId === existing.created_by || actorId === existing.submitted_by)) {
       throw Object.assign(
         new Error(
           "L1 approval must come from someone other than the person who raised or submitted this cost centre",

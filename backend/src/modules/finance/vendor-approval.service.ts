@@ -101,6 +101,7 @@ export const vendorApprovalService = {
     reviewerId: string,
     editedPayload: Record<string, unknown> | null,
     reviewNotes?: string,
+    reviewerRoles: string[] = [],
   ): Promise<{ vendorId: string }> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM vendor_approval_request WHERE id = ? LIMIT 1`,
@@ -120,7 +121,8 @@ export const vendorApprovalService = {
     // APPROVAL_WRITE_ROLES, so without this check the same person could raise and
     // approve their own vendor create/update — the exact fraud vector vendor-bank.service.ts
     // guards against for bank-account changes. Fixed 2026-09-01.
-    if (String(request.raised_by) === String(reviewerId)) {
+    // Owner ruling 2026-10-14: the Finance Head is exempt from maker-checker.
+    if (!reviewerRoles.includes("finance_head") && String(request.raised_by) === String(reviewerId)) {
       throw Object.assign(
         new Error(
           "A vendor approval request must be approved by someone other than the person who raised it.",

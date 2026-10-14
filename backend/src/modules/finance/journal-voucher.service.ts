@@ -381,7 +381,8 @@ export const journalVoucherService = {
       if (!holdsAnyRole(actor.roles, ["finance_head", "ceo", "super_admin"])) {
         throw refuse(403, "JV_APPROVE_FORBIDDEN", "Only Finance Head or CEO can approve a journal voucher.");
       }
-      if (String(voucher.created_by) === actor.id) {
+      // Owner ruling 2026-10-14: the Finance Head is exempt from maker-checker.
+      if (!holdsAnyRole(actor.roles, ["finance_head"]) && String(voucher.created_by) === actor.id) {
         throw refuse(403, "JV_SELF_APPROVAL", "You cannot approve a voucher you made — a different approver must post it.");
       }
 
@@ -432,7 +433,8 @@ export const journalVoucherService = {
       if (!holdsAnyRole(actor.roles, ["finance_head", "ceo", "super_admin"])) {
         throw refuse(403, "JV_REJECT_FORBIDDEN", "Only Finance Head or CEO can reject a journal voucher.");
       }
-      if (String(voucher.created_by) === actor.id) {
+      // Owner ruling 2026-10-14: the Finance Head is exempt from maker-checker.
+      if (!holdsAnyRole(actor.roles, ["finance_head"]) && String(voucher.created_by) === actor.id) {
         throw refuse(403, "JV_SELF_APPROVAL", "You cannot decide on a voucher you made — withdraw it instead.");
       }
       const [result] = await connection.execute<ResultSetHeader>(
