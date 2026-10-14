@@ -361,3 +361,21 @@ describe("getCostCentrePeriods integration in refreshRunningSalarySnapshot", () 
     expect((queryCall[0] as string).match(/\(UUID\(\)/g)?.length).toBe(2);
   });
 });
+
+describe("matchRuleBucket (same scopes as bpo-pnl matchClassification)", () => {
+  const person = { id: "e1", employee_code: "MAS1", branch_id: "b1", process_id: "p1", cost_centre_id: null, department_name: "OPERATIONS", designation_name: "TEAM LEADER", department_id: "d1", designation_id: "g1" };
+  it("matches a designation rule, which the department-only SQL used to ignore", async () => {
+    const { matchRuleBucket } = await import("../pnl-running-salary.service.js");
+    const rules = [{ scope_type: "designation", scope_key: "TEAM LEADER", process_id: null, branch_id: null, pnl_bucket: "dsc_people" }];
+    expect(matchRuleBucket(person as any, rules)).toBe("dsc_people");
+  });
+  it("honours rule order and process / branch scope", async () => {
+    const { matchRuleBucket } = await import("../pnl-running-salary.service.js");
+    const rules = [
+      { scope_type: "department", scope_key: "operations", process_id: "other", branch_id: null, pnl_bucket: "bmc_people" },
+      { scope_type: "department", scope_key: "OPERATIONS", process_id: "p1", branch_id: null, pnl_bucket: "dsc_people" },
+    ];
+    expect(matchRuleBucket(person as any, rules)).toBe("dsc_people");
+    expect(matchRuleBucket({ ...person, department_name: "FINANCE" } as any, rules)).toBeNull();
+  });
+});
