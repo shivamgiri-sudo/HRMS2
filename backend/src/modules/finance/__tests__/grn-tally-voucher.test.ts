@@ -178,8 +178,10 @@ describe("buildGrnVoucher — legacy JrnlP import shape", () => {
 
   it("XML: JrnlP, month-end date, effective date, cost category/centre on every line, balanced", () => {
     const v = ok(base());
-    expect(v.xml).toContain(`<VOUCHER VCHTYPE="JrnlP"`);
+    expect(v.xml).toContain(`VCHTYPE="JrnlP"`);
     expect(v.xml).toContain("<DATE>20260930</DATE>");
+    // A fixed id per GRN: importing the same file twice leaves one voucher in Tally.
+    expect(v.xml).toContain('<VOUCHER REMOTEID="HRMS-GRN-g1"');
     expect(v.xml).toContain("<EFFECTIVEDATE>20260901</EFFECTIVEDATE>");
     expect(v.xml).toContain("<VOUCHERNUMBER>OESPL/26-27/0511/Mas/9/26/126</VOUCHERNUMBER>");
     expect(v.xml.match(/<COSTCENTREALLOCATIONS\.LIST><NAME>NOIDA-2\/2609<\/NAME>/g)).toHaveLength(5);
@@ -215,6 +217,8 @@ describe("buildGrnVoucher — legacy JrnlP import shape", () => {
     const env = wrapTallyEnvelope([v.xml], "MAS CALLNET INDIA PRIVATE LIMITED-2026-27");
     expect(env).toContain("<SVCURRENTCOMPANY>MAS CALLNET INDIA PRIVATE LIMITED-2026-27</SVCURRENTCOMPANY>");
     expect(env.match(/<TALLYMESSAGE/g)).toHaveLength(1);
+    // An existing master is left as it is (without this Tally re-groups it on "Create").
+    expect(env).toContain("<IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>");
   });
 });
 

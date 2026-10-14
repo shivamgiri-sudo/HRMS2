@@ -310,7 +310,8 @@ export function buildGrnVoucher(
   });
 
   const xml =
-    `<VOUCHER VCHTYPE="${xmlEscape(header.voucherType)}" ACTION="Create" OBJVIEW="Accounting Voucher View">` +
+    // REMOTEID: a fixed id per GRN, so importing the same file twice leaves one voucher, not two.
+    `<VOUCHER REMOTEID="HRMS-GRN-${xmlEscape(input.grnId)}" VCHTYPE="${xmlEscape(header.voucherType)}" ACTION="Create" OBJVIEW="Accounting Voucher View">` +
     `<DATE>${tallyDate(header.date)}</DATE>` +
     `<EFFECTIVEDATE>${tallyDate(header.effectiveDate)}</EFFECTIVEDATE>` +
     `<VOUCHERTYPENAME>${xmlEscape(header.voucherType)}</VOUCHERTYPENAME>` +
@@ -334,18 +335,22 @@ export function buildGrnVoucher(
   };
 }
 
-/** Wraps built vouchers in the Tally import envelope. */
+/**
+ * Wraps built vouchers (and masters) in the Tally import envelope.
+ *
+ * IMPORTDUPS @@DUPIGNORE: a master that already exists in the company is left exactly as it is. Without it,
+ * a LEDGER ACTION="Create" for an existing name ALTERS it (tested on TallyPrime 7.2: the ledger was moved to
+ * the group in the file), which would silently re-group Accounts' own ledgers.
+ */
 export function wrapTallyEnvelope(
   vouchers: string[],
   companyName?: string | null,
 ): string {
-  const company = companyName?.trim()
-    ? `<STATICVARIABLES><SVCURRENTCOMPANY>${xmlEscape(companyName.trim())}</SVCURRENTCOMPANY></STATICVARIABLES>`
-    : "";
+  const company = companyName?.trim() ? `<SVCURRENTCOMPANY>${xmlEscape(companyName.trim())}</SVCURRENTCOMPANY>` : "";
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA>` +
-    `<REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME>${company}</REQUESTDESC>` +
+    `<REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>${company}</STATICVARIABLES></REQUESTDESC>` +
     `<REQUESTDATA>${vouchers.map((v) => `<TALLYMESSAGE xmlns:UDF="TallyUDF">${v}</TALLYMESSAGE>`).join("")}</REQUESTDATA>` +
     `</IMPORTDATA></BODY></ENVELOPE>`
   );
