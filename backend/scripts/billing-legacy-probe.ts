@@ -210,7 +210,35 @@ async function round8() {
       total, grnd, status, proforma_approve, createdate FROM tbl_invoice WHERE id IN (${ids}) ORDER BY bill_no, id`);
 }
 
+/** Round 9: does db_bill record bank balances anywhere (opening / closing / balance updates)?
+ *  Lists candidate tables + columns, then for each candidate shows its newest rows by any date
+ *  column and the row count per month for the last 15 months. Amounts and bank names only. */
+async function round9() {
+  const tables = await billQuery<RowDataPacket>(`SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND (TABLE_NAME LIKE '%bank%' OR TABLE_NAME LIKE '%balance%' OR TABLE_NAME LIKE '%opening%'
+      OR TABLE_NAME LIKE '%closing%' OR TABLE_NAME LIKE '%fund%' OR TABLE_NAME LIKE '%cash%' OR TABLE_NAME LIKE '%transfer%' OR TABLE_NAME LIKE '%reconcil%')
+    ORDER BY TABLE_NAME`);
+  console.log("\n### candidate tables"); console.table(tables);
+  const colHits = await billQuery<RowDataPacket>(`SELECT TABLE_NAME, GROUP_CONCAT(COLUMN_NAME ORDER BY ORDINAL_POSITION) cols FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND (COLUMN_NAME LIKE '%balance%' OR COLUMN_NAME LIKE '%opening%' OR COLUMN_NAME LIKE '%closing%')
+    GROUP BY TABLE_NAME ORDER BY TABLE_NAME`);
+  console.log("\n### tables with balance / opening / closing columns"); console.table(colHits.map((r) => ({ table: r.TABLE_NAME, cols: String(r.cols).slice(0, 200) })));
+  const names = [...new Set([...tables.map((t) => String(t.TABLE_NAME)), ...colHits.map((t) => String(t.TABLE_NAME))])];
+  for (const t of names) {
+    const cols = await billQuery<RowDataPacket>(`SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${t.replace(/'/g, "")}' ORDER BY ORDINAL_POSITION`);
+    const all = cols.map((c) => String(c.COLUMN_NAME));
+    const dateCol = cols.find((c) => /date|time/i.test(String(c.DATA_TYPE)) && /date|created|updated|entry|txn|on$/i.test(String(c.COLUMN_NAME)))?.COLUMN_NAME
+      ?? cols.find((c) => /date|time/i.test(String(c.DATA_TYPE)))?.COLUMN_NAME;
+    console.log(`\n### ${t}: ${all.join(", ").slice(0, 400)}`);
+    if (!dateCol) { await bill(`${t} sample (no date column)`, `SELECT * FROM \`${t}\` ORDER BY 1 DESC LIMIT 5`); continue; }
+    await bill(`${t} newest by ${dateCol}`, `SELECT * FROM \`${t}\` ORDER BY \`${dateCol}\` DESC LIMIT 8`);
+    await bill(`${t} rows per month (last 15 months, ${dateCol})`, `SELECT DATE_FORMAT(\`${dateCol}\`, '%Y-%m') m, COUNT(*) n FROM \`${t}\`
+      WHERE \`${dateCol}\` >= DATE_SUB(CURDATE(), INTERVAL 15 MONTH) GROUP BY m ORDER BY m DESC`);
+  }
+}
+
 async function main() {
+  if (process.env.PROBE_ROUND === "9") return round9();
   if (process.env.PROBE_ROUND === "8") return round8();
   if (process.env.PROBE_ROUND === "7") return round7();
   if (process.env.PROBE_ROUND === "6") return round6();
