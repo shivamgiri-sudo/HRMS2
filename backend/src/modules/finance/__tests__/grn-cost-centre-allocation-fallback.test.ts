@@ -88,8 +88,9 @@ describe("grnService.listGrns — cost centre filter matches split-GRN allocatio
     expect(sql).toContain("ON ctx_alloc.grn_request_id = g.id");
     expect(sql).toContain("AND bl.head = ?");
     expect(sql).toContain("AND bl.sub_head = ?");
-    // Join params (cost centre, head, sub-head) come before the header WHERE's own bindings.
-    expect(params.slice(0, 3)).toEqual(["cc-noida-2-ops", "Rent", "Office"]);
+    // The page (WHERE + LIMIT/OFFSET) is a leading CTE now, so the join's own bindings (cost
+    // centre, head, sub-head) come after the header WHERE's bindings and the paging numbers.
+    expect(params.slice(-3)).toEqual(["cc-noida-2-ops", "Rent", "Office"]);
   });
 
   it("omits the head/sub-head narrowing from the join when they are not given", async () => {

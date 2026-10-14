@@ -2263,9 +2263,24 @@ export const grnService = {
     // joins below. They used to be five identical inline derived tables, i.e. five full scans and
     // GROUP BYs of employees per list call, which is what made the budget drill-down dialog slow.
     const [rows] = await db.query<RowDataPacket[]>(
-      `WITH emp_names AS (
+      `WITH page AS (
+         SELECT g.* FROM grn_request g
+         ${where}
+         ORDER BY g.created_at DESC
+         LIMIT ? OFFSET ?
+       ),
+       emp_names AS (
+         -- Only the people who actually appear on this page: grouping all of employees cost ~2 s
+         -- cold on prod (59k rows) for at most five names per GRN.
          SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name
-           FROM employees WHERE user_id IS NOT NULL GROUP BY user_id
+           FROM employees
+          WHERE user_id IN (
+                SELECT created_by FROM page
+                UNION SELECT reviewed_by FROM page
+                UNION SELECT branch_head_reviewed_by FROM page
+                UNION SELECT accounts_head_reviewed_by FROM page
+                UNION SELECT finance_head_reviewed_by FROM page)
+          GROUP BY user_id
        )
        SELECT g.*,
               bm.branch_name,
@@ -2311,12 +2326,7 @@ export const grnService = {
               -- the allocation still at lifecycle_status='draft' (GRN not past Branch Head yet):
               -- real money in flight that neither Reserved nor Consumed contains.
               ${contextAllocationSelect}
-         FROM (
-           SELECT g.* FROM grn_request g
-           ${where}
-           ORDER BY g.created_at DESC
-           LIMIT ? OFFSET ?
-         ) g
+         FROM page g
          LEFT JOIN branch_master bm ON bm.id = g.branch_id
          LEFT JOIN process_master pm ON pm.id = g.process_id
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
@@ -2327,17 +2337,9 @@ export const grnService = {
          LEFT JOIN emp_names bhb ON bhb.user_id = g.branch_head_reviewed_by
          LEFT JOIN emp_names ahb ON ahb.user_id = g.accounts_head_reviewed_by
          LEFT JOIN emp_names fhb ON fhb.user_id = g.finance_head_reviewed_by
-         ${contextAllocationJoin.replace(
-           "/*PAGE_IDS*/",
-           // Only the GRNs on this page need their allocation share summed. Without this the
-           // derived table GROUPs every allocation row of the cost centre (no index leads with
-           // cost_centre_id), which was most of the remaining time once paging moved inside.
-           `AND gca.grn_request_id IN (SELECT pg.id FROM (SELECT g.id FROM grn_request g ${where} ORDER BY g.created_at DESC LIMIT ? OFFSET ?) pg)`,
-         )}
+         ${contextAllocationJoin.replace("/*PAGE_IDS*/", "AND gca.grn_request_id IN (SELECT id FROM page)")}
         ORDER BY g.created_at DESC`,
-      filters.costCentreId
-        ? [...params, limit, offset, ...contextAllocationParams, ...params, limit, offset]
-        : [...params, limit, offset],
+      [...params, limit, offset, ...contextAllocationParams],
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM grn_request g ${where}`,
