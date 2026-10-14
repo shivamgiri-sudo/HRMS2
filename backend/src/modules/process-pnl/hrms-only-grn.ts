@@ -1,6 +1,5 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { grnAllocationExGstSql } from "./pnl-ex-gst.js";
 import { legacyGrnSql } from "../../shared/ownCompanyCostCentre.js";
 
 /**
@@ -27,7 +26,14 @@ export function hrmsAllocationSql(allocAlias: string): string {
 
 export interface LegacyCounter { reserved: number; consumed: number }
 
-/** Legacy share of reserved/consumed per budget line, ex-GST (the basis the counters are kept on). */
+/**
+ * Legacy share of reserved/consumed per budget line.
+ *
+ * GST-INCLUSIVE (amount_with_tax), not ex-GST: the 2026-08-22 remediation and the db_bill
+ * migration booked these rows into the counters at the bill's gross amount, while GRNs raised in
+ * HRMS since are booked ex-GST. Subtracting the ex-GST value left ~9% of every Apr-Aug figure
+ * behind (live check 2026-10-14: Apr stored Rs 78.6 L, view Rs 9.1 L after the ex-GST subtraction).
+ */
 export async function legacyCountersByLine(
   budgetIds: string[],
 ): Promise<Map<string, LegacyCounter>> {
@@ -35,8 +41,8 @@ export async function legacyCountersByLine(
   if (budgetIds.length === 0) return out;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.budget_line_id AS line_id,
-            SUM(CASE WHEN a.lifecycle_status = 'reserved' THEN ${grnAllocationExGstSql("a")} ELSE 0 END) AS reserved,
-            SUM(CASE WHEN a.lifecycle_status = 'consumed' THEN ${grnAllocationExGstSql("a")} ELSE 0 END) AS consumed
+            SUM(CASE WHEN a.lifecycle_status = 'reserved' THEN COALESCE(a.amount_with_tax, 0) ELSE 0 END) AS reserved,
+            SUM(CASE WHEN a.lifecycle_status = 'consumed' THEN COALESCE(a.amount_with_tax, 0) ELSE 0 END) AS consumed
        FROM grn_cost_allocation a
        JOIN finance_budget_line l ON l.id = a.budget_line_id
       WHERE l.budget_id IN (${budgetIds.map(() => "?").join(", ")})
