@@ -12,6 +12,7 @@ import { imprestLedgerService } from "./imprest-ledger.service.js";
 import { imprestService } from "./imprest.service.js";
 import { vendorExpenseMappingService } from "./vendor-expense-mapping.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
+import { refreshPaymentStatusForVoucher } from "./client-receipt-voucher-sync.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 import { journalService, type JournalLineInput } from "./journal.service.js";
 import {
@@ -780,6 +781,10 @@ export const paymentVoucherService = {
       if (result.affectedRows !== 1) {
         throw new PaymentVoucherError("Voucher was already decided by someone else", 409);
       }
+      // A rejected client-receipt voucher un-settles its bills; keep their stored status in step.
+      if (decision === "reject" && (voucher as any).source_type === "sales_receipt") {
+        await refreshPaymentStatusForVoucher(connection, id);
+      }
 
       await recordFinanceApprovalEvent(
         {
@@ -925,6 +930,10 @@ export const paymentVoucherService = {
       );
       if (result.affectedRows !== 1) {
         throw new PaymentVoucherError("Voucher status changed under you — reload and try again", 409);
+      }
+      // A withdrawn client-receipt voucher un-settles its bills; keep their stored status in step.
+      if (v.source_type === "sales_receipt") {
+        await refreshPaymentStatusForVoucher(connection, id);
       }
 
       await recordFinanceApprovalEvent(
