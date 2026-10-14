@@ -144,6 +144,13 @@ out("records merged into the person's current record", merges.map((m) => `${labe
 out("current holders (stay active)", [...current].map(label));
 out("holders to close (no activity since June); balance stays visible", deactivate.map((m) => label(m.id)), 80);
 
+// Scope decided 2026-10-14: the GRN-level history is too scrambled to re-attribute reliably (db_bill's own
+// per-user arithmetic does not give believable floats either), so moves and back-dated debits are REPORTED
+// above but NOT posted. Each current holder's float is set from the balance Accounts confirm, separately.
+// Posted here: missing top-ups, duplicate-record merges, closing obsolete holders.
+reattribute.length = 0;
+missing.length = 0;
+
 for (const p of [TODAY.slice(0, 7), "2026-09", "2026-08"]) console.log(`period ${p} locked: ${await isPeriodLocked(p)}`);
 console.log(`\nPLAN: move ${reattribute.length} debits (${r2(reattribute.reduce((s, r) => s + Number(r.d.amount), 0))}), post ${missing.length} missing debits (${r2(missing.reduce((s, r) => s + Number(r.g.amount), 0))}), add ${topups.filter((t) => t.to).length} top-ups (${r2(topups.filter((t) => t.to).reduce((s, t) => s + Number(t.a.Amount), 0))}), merge ${merges.length} records, close ${deactivate.length} holders.`);
 
