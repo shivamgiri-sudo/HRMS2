@@ -439,6 +439,17 @@ jobs:
                 node -e 'const r=require(process.argv[1]);const s=r.javascriptStack||{};console.log("JS stack:",s.message||"");for(const l of (s.stack||[]).slice(0,25))console.log("  ",l);console.log("active handles:",(r.libuv||[]).filter(h=>h.is_active).map(h=>h.type+(h.remoteEndpoint?"->"+(h.remoteEndpoint.host||"")+":"+(h.remoteEndpoint.port||""):"")).join(", ").slice(0,1200))' "$rep" 2>/dev/null
               fi
             fi
+            echo "--- database: this app's statements running > 5 s (what the boot is waiting on) ---"
+            ( cd "$DEPLOY_ROOT/backend" && timeout 20 node --input-type=module -e '
+                import "dotenv/config";
+                import mysql from "mysql2/promise";
+                const c = await mysql.createConnection({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 3306), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME, connectTimeout: 8000 });
+                const [rows] = await c.query("SELECT ID, USER, TIME, STATE, LEFT(REPLACE(REPLACE(INFO, CHAR(10), \" \"), CHAR(13), \" \"), 220) q FROM information_schema.PROCESSLIST WHERE COMMAND <> \"Sleep\" AND TIME >= 5 AND ID <> CONNECTION_ID() ORDER BY TIME DESC LIMIT 25");
+                for (const r of rows) console.log(r.ID, r.USER, r.TIME + "s", "[" + r.STATE + "]", r.q);
+                const [mdl] = await c.query("SELECT COUNT(*) n FROM information_schema.PROCESSLIST WHERE STATE LIKE \"Waiting for table metadata lock%\"");
+                console.log("waiting for metadata lock:", mdl[0].n);
+                await c.end();
+              ' ) 2>&1 | cut -c1-300 || echo "processlist read failed"
             echo "--- newest hrms2-backend log lines ---"
             tail -n 25 "$HOME/.pm2/logs/hrms2-backend-out.log" 2>/dev/null | cut -c1-220
             tail -n 25 "$HOME/.pm2/logs/hrms2-backend-error.log" 2>/dev/null | cut -c1-220
