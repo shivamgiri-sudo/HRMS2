@@ -41,7 +41,7 @@ function sameBranchLabel(a: unknown, b: unknown): boolean {
   return n(a) !== "" && n(a) === n(b);
 }
 
-const authRoles = requireRole("admin", "hr", "super_admin", "recruiter", "branch_head");
+const authRoles = requireRole("admin", "hr", "branch_hr", "hr_branch", "super_admin", "recruiter", "branch_head");
 
 // Scoped to the paths this router owns, not applied at its root.
 //
