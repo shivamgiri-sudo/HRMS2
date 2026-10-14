@@ -12,6 +12,11 @@ on:
         required: true
         default: "2026-10"
         type: string
+      script:
+        description: "Script under backend/scripts (no extension)"
+        required: true
+        default: "head-office-budget-diagnose"
+        type: string
       branch_like:
         description: "branch_name LIKE pattern"
         required: true
@@ -48,7 +53,16 @@ jobs:
           NODE_ENV: production
           IN_PERIOD: ${{ inputs.period }}
           IN_BRANCH: ${{ inputs.branch_like }}
+          IN_SCRIPT: ${{ inputs.script }}
         run: |
           set -euo pipefail
-          npx tsx scripts/head-office-budget-diagnose.ts "$IN_PERIOD" "$IN_BRANCH"
-          npx tsx scripts/grn-drilldown-timing.ts "$IN_PERIOD" "$IN_BRANCH"
+          case "$IN_SCRIPT" in
+            head-office-budget-diagnose)
+              npx tsx scripts/head-office-budget-diagnose.ts "$IN_PERIOD" "$IN_BRANCH"
+              npx tsx scripts/grn-drilldown-timing.ts "$IN_PERIOD" "$IN_BRANCH"
+              ;;
+            legacy-grn-in-budget)
+              npx tsx scripts/legacy-grn-in-budget.ts "$IN_PERIOD" "$IN_BRANCH"
+              ;;
+            *) echo "unknown script"; exit 1 ;;
+          esac
