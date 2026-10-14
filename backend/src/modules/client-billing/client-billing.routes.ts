@@ -7,7 +7,6 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
-import { loadBranchPolicy } from "../../shared/branchDecisionScope.js";
 import { clientBillingService } from "./client-billing.service.js";
 import { clientBillingApprovalService } from "./client-billing-approval.service.js";
 import { clientBillingCreditNoteService } from "./client-billing-credit-note.service.js";
@@ -19,7 +18,12 @@ import { checkPoCoverage, listAvailablePos } from "./client-billing-po.js";
 import { clientBillingProvisionService, provisionRequired } from "./client-billing-provision.service.js";
 import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { clientBillingPoGrnService } from "./client-billing-po-grn.service.js";
-import { clientBillingReceiptService, legacyBillsAllowed } from "./client-billing-receipt.service.js";
+import {
+  CREDIT_NOTE_SQL, PAID_TOLERANCE, SETTLEMENT_SQL, clientBillingReceiptService, legacyBillsAllowed,
+} from "./client-billing-receipt.service.js";
+import {
+  billingBranchScope, branchScopeCondition, guardBillingRecord, partitionInvoicesByScope,
+} from "./client-billing-scope.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -40,14 +44,35 @@ const ALLOWED_ROLES = ["admin", "finance", "finance_head", "accounts_head"];
  * had the matching fix via `printableClientName()`); truncates at the same " — " marker
  * so a table cell or CSV export never shows the raw disclosure sentence.
  */
+// Client name: billing name, else the cost centre's client_name, and only then company_name (our
+// own company — never the client's name, so it is the last resort; audit 2026-10-14 data #7).
+const RAW_CLIENT_NAME_SQL = `COALESCE(NULLIF(cc.billing_client_name, ''), NULLIF(cc.client_name, ''), cc.company_name)`;
 const COST_CENTRE_DISPLAY_NAME_SQL = `
   CASE
-    WHEN LOCATE(' — ', COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name)) > 0
-     AND LENGTH(COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name)) > 60
-    THEN SUBSTRING_INDEX(COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name), ' — ', 1)
-    ELSE COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name)
+    WHEN LOCATE(' — ', ${RAW_CLIENT_NAME_SQL}) > 0
+     AND LENGTH(${RAW_CLIENT_NAME_SQL}) > 60
+    THEN SUBSTRING_INDEX(${RAW_CLIENT_NAME_SQL}, ' — ', 1)
+    ELSE ${RAW_CLIENT_NAME_SQL}
   END
 `.trim();
+
+/** A user's display name: their employee full name, else their login e-mail. `col` holds an auth user id. */
+const userNameSql = (col: string) => `COALESCE(
+  (SELECT e.full_name FROM employees e WHERE e.user_id = ${col} ORDER BY e.active_status DESC, e.updated_at DESC LIMIT 1),
+  (SELECT au.email FROM auth_user au WHERE au.id = ${col} LIMIT 1))`;
+
+/** Who did each step of a bill (list + detail rows). */
+const INVOICE_PEOPLE_SQL = `
+  ${userNameSql("ci.created_by")} AS created_by_name,
+  ${userNameSql("ci.proforma_approved_by")} AS proforma_approved_by_name,
+  ${userNameSql("ci.approved_by")} AS approved_by_name,
+  ${userNameSql("ci.rejected_by")} AS rejected_by_name,
+  ${userNameSql("ci.last_sent_by")} AS last_sent_by_name`;
+
+/** Actor e-mail + name for audit-log rows (L1); `col` is the row's actor user id column. */
+const actorSql = (col: string) => `
+  (SELECT au.email FROM auth_user au WHERE au.id = ${col} LIMIT 1) AS actor_email,
+  (SELECT e.full_name FROM employees e WHERE e.user_id = ${col} ORDER BY e.active_status DESC, e.updated_at DESC LIMIT 1) AS actor_name`;
 
 /**
  * CSV cell escaping for both export routes.
@@ -83,6 +108,7 @@ router.post(
     if (!body.costCentreId || !body.financeYear || !body.monthLabel || !body.invoiceDate) {
       return res.status(400).json({ error: "costCentreId, financeYear, monthLabel, and invoiceDate are required" });
     }
+    if (!(await guardBillingRecord(req, res, "costCentre", String(body.costCentreId)))) return;
     const hasRefs = body.poNumbers?.length || body.grnNo || body.jccNo || body.rcmApplicable !== undefined;
     const references = hasRefs
       ? { poNumbers: body.poNumbers, grnNo: body.grnNo, grnDate: body.grnDate, jccNo: body.jccNo, jccDate: body.jccDate, rcmApplicable: body.rcmApplicable }
@@ -111,9 +137,50 @@ router.post(
  * "the export doesn't match what I'm looking at" bug). Mirrors the filter/pagination
  * shape already established in grn.service.ts's listGrns.
  */
-function buildInvoiceListQuery(query: Record<string, unknown>) {
+/**
+ * Per-row money in (optional on the list): received = money that reached the client's payment
+ * (receipts' received part), settled = received + TDS + deductions, credited = approved credit
+ * notes, outstanding = grand total - settled - credited for an approved bill (null otherwise).
+ * Same live rule as Receipts (SETTLEMENT_SQL + CREDIT_NOTE_SQL), for the page's ids only.
+ */
+async function withSettlement(rows: RowDataPacket[]): Promise<RowDataPacket[]> {
+  const ids = rows.map((r) => String(r.id));
+  const marks = ids.map(() => "?").join(",");
+  const [settled] = await db.query<RowDataPacket[]>(
+    `SELECT s.invoice_id, s.received, s.tds, s.deduction, s.settled FROM (${SETTLEMENT_SQL}) s WHERE s.invoice_id IN (${marks})`,
+    ids,
+  );
+  const [credited] = await db.query<RowDataPacket[]>(
+    `SELECT cn.invoice_id, cn.credited FROM (${CREDIT_NOTE_SQL}) cn WHERE cn.invoice_id IN (${marks})`,
+    ids,
+  );
+  const sById = new Map((settled as RowDataPacket[]).map((r) => [String(r.invoice_id), r]));
+  const cById = new Map((credited as RowDataPacket[]).map((r) => [String(r.invoice_id), Number(r.credited ?? 0)]));
+  return rows.map((r) => {
+    const s = sById.get(String(r.id));
+    const settledAmt = Number(s?.settled ?? 0);
+    const creditedAmt = cById.get(String(r.id)) ?? 0;
+    const outstanding = r.invoice_status === "approved"
+      ? Math.round((Number(r.grand_total ?? 0) - settledAmt - creditedAmt) * 100) / 100
+      : null;
+    return {
+      ...r,
+      received: Number(s?.received ?? 0),
+      tds_received: Number(s?.tds ?? 0),
+      deduction_received: Number(s?.deduction ?? 0),
+      settled: settledAmt,
+      credited: creditedAmt,
+      outstanding,
+      is_paid: outstanding !== null && outstanding <= PAID_TOLERANCE,
+    } as RowDataPacket;
+  });
+}
+
+function buildInvoiceListQuery(query: Record<string, unknown>, branchIds: string[] | null = null) {
   const conditions: string[] = [];
   const params: unknown[] = [];
+  const scope = branchScopeCondition("cc.branch_id", branchIds);
+  if (scope.sql) { conditions.push(scope.sql); params.push(...scope.params); }
   const status = typeof query.status === "string" ? query.status : undefined;
   if (status && ["proforma", "approved", "rejected"].includes(status)) {
     conditions.push("ci.invoice_status = ?");
@@ -191,7 +258,7 @@ router.get(
     //
     // The export below uses the identical ordering — see buildInvoiceListQuery's note on
     // why the two must never drift.
-    const { where, params } = buildInvoiceListQuery(req.query as Record<string, unknown>);
+    const { where, params } = buildInvoiceListQuery(req.query as Record<string, unknown>, await billingBranchScope(req.authUser!.id));
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
     const offset = (page - 1) * limit;
@@ -203,7 +270,7 @@ router.get(
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT ci.*, ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name,
               cc.cost_centre_code AS cost_centre_code, cc.company_name AS company_name,
-              b.branch_name AS branch_name
+              b.branch_name AS branch_name, ${INVOICE_PEOPLE_SQL}
        FROM client_invoice ci
        LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
        LEFT JOIN branch_master b ON b.id = cc.branch_id
@@ -213,15 +280,30 @@ router.get(
       [...params, limit, offset]
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM client_invoice ci LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id ${where}`,
+      `SELECT COUNT(*) AS total, COALESCE(SUM(ci.total_amount), 0) AS total_amount, COALESCE(SUM(ci.grand_total), 0) AS grand_total
+       FROM client_invoice ci LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id ${where}`,
       params
     );
+    const flag = (v: unknown) => v === "1" || v === "true";
+    let data: RowDataPacket[] = rows;
+    if (flag(req.query.includeSettlement) && rows.length > 0) {
+      data = await withSettlement(rows);
+    }
     res.json({
       success: true,
-      data: rows,
+      data,
       total: Number(countRows[0]?.total ?? 0),
       page,
       limit,
+      ...(flag(req.query.includeTotals)
+        ? {
+            totals: {
+              count: Number(countRows[0]?.total ?? 0),
+              total_amount: Number(countRows[0]?.total_amount ?? 0),
+              grand_total: Number(countRows[0]?.grand_total ?? 0),
+            },
+          }
+        : {}),
     });
   })
 );
@@ -233,7 +315,7 @@ router.get(
     // Registered before /proformas/:id — Express matches by registration order and
     // :id would otherwise swallow "export" as an id, 404ing this route (the exact trap
     // already documented next to the GRN aging route in vendor-payment.routes.ts).
-    const { where, params } = buildInvoiceListQuery(req.query as Record<string, unknown>);
+    const { where, params } = buildInvoiceListQuery(req.query as Record<string, unknown>, await billingBranchScope(req.authUser!.id));
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT ci.proforma_no, ci.bill_no, ci.invoice_status, ci.category, ci.finance_year, ci.month_label,
               ci.invoice_date, ci.gst_type, ci.total_amount, ci.igst_amount, ci.cgst_amount, ci.sgst_amount,
@@ -271,25 +353,30 @@ router.get(
 router.get(
   "/summary",
   requireRole(...ALLOWED_ROLES),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const scope = branchScopeCondition("cc.branch_id", await billingBranchScope(req.authUser!.id));
+    const and = scope.sql ? ` AND ${scope.sql}` : "";
+    const sp = scope.params;
     // Aggregated in SQL, not summed from a fetched page — listProformas/listCreditNotes
     // are paginated (limit clamped to 200), so summing a page silently under-reports on
     // any dataset larger than that, same reasoning as grn.service.ts's getGrnSummary.
     // The four aggregates are independent read-only queries, so they run concurrently.
     const [[invoiceRows], [creditNoteRows], [[thisMonth]], [[pendingActionable]], [[pendingProvisions]]] = await Promise.all([
       db.execute<RowDataPacket[]>(
-        `SELECT invoice_status, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
-       FROM client_invoice GROUP BY invoice_status`
+        `SELECT ci.invoice_status, COUNT(*) AS count, COALESCE(SUM(ci.grand_total), 0) AS total
+       FROM client_invoice ci LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+       WHERE 1 = 1${and} GROUP BY ci.invoice_status`, sp
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT credit_status, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
-       FROM client_credit_note GROUP BY credit_status`
+        `SELECT ccn.credit_status, COUNT(*) AS count, COALESCE(SUM(ccn.grand_total), 0) AS total
+       FROM client_credit_note ccn LEFT JOIN cost_centre_master cc ON cc.id = ccn.cost_centre_id
+       WHERE 1 = 1${and} GROUP BY ccn.credit_status`, sp
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
-       FROM client_invoice
-       WHERE invoice_status = 'approved'
-         AND DATE_FORMAT(invoice_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`
+        `SELECT COUNT(*) AS count, COALESCE(SUM(ci.grand_total), 0) AS total
+       FROM client_invoice ci LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+       WHERE ci.invoice_status = 'approved'
+         AND DATE_FORMAT(ci.invoice_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')${and}`, sp
       ),
       // "Pending approval" must count only proformas somebody can ACT on. Both
       // approveInvoice and rejectInvoice refuse any row with is_migrated = 1 (design §3 —
@@ -299,13 +386,14 @@ router.get(
       // this only stops them being reported as outstanding work.
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS count,
-                COALESCE(SUM(proforma_approved_at IS NULL), 0) AS awaitingProforma,
-                COALESCE(SUM(proforma_approved_at IS NOT NULL), 0) AS awaitingInvoice
-       FROM client_invoice
-       WHERE invoice_status = 'proforma' AND is_migrated = 0`
+                COALESCE(SUM(ci.proforma_approved_at IS NULL), 0) AS awaitingProforma,
+                COALESCE(SUM(ci.proforma_approved_at IS NOT NULL), 0) AS awaitingInvoice
+       FROM client_invoice ci LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+       WHERE ci.invoice_status = 'proforma' AND ci.is_migrated = 0${and}`, sp
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS count FROM client_provision WHERE provision_status = 'pending'`
+        `SELECT COUNT(*) AS count FROM client_provision cp LEFT JOIN cost_centre_master cc ON cc.id = cp.cost_centre_id
+       WHERE cp.provision_status = 'pending'${and}`, sp
       ),
     ]);
 
@@ -316,7 +404,7 @@ router.get(
       invoices[String(row.invoice_status)] = { count: Number(row.count), total: Number(row.total) };
     }
     const creditNotes: Record<string, { count: number; total: number }> = {
-      draft: { count: 0, total: 0 }, approved: { count: 0, total: 0 },
+      draft: { count: 0, total: 0 }, approved: { count: 0, total: 0 }, rejected: { count: 0, total: 0 },
     };
     for (const row of creditNoteRows) {
       creditNotes[String(row.credit_status)] = { count: Number(row.count), total: Number(row.total) };
@@ -342,8 +430,9 @@ router.get(
   "/proformas/:id",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "invoice"))) return;
     const [invoiceRows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM client_invoice WHERE id = ? LIMIT 1`,
+      `SELECT ci.*, ${INVOICE_PEOPLE_SQL} FROM client_invoice ci WHERE ci.id = ? LIMIT 1`,
       [req.params.id]
     );
     const invoice = invoiceRows[0];
@@ -361,6 +450,7 @@ router.get(
   "/proformas/:id/pdf",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "invoice"))) return;
     const lhVal = req.query.letterhead; const withLetterhead = lhVal !== "false" && lhVal !== "0";
     const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id, withLetterhead);
     res.setHeader("Content-Type", "application/pdf");
@@ -375,19 +465,7 @@ router.get(
  * service keeps its usual "not found" answer.
  */
 async function guardDecide(req: AuthenticatedRequest, res: Response, kind: "invoice" | "creditNote"): Promise<boolean> {
-  const policy = await loadBranchPolicy(req.authUser!.id);
-  if (policy.orgWide) return true;
-  const [rows] = await db.execute<RowDataPacket[]>(
-    kind === "invoice"
-      ? `SELECT cc.branch_id FROM client_invoice ci LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id WHERE ci.id = ? LIMIT 1`
-      : `SELECT cc.branch_id FROM client_credit_note ccn LEFT JOIN client_invoice ci ON ci.id = ccn.invoice_id LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id WHERE ccn.id = ? LIMIT 1`,
-    [req.params.id],
-  );
-  const row = (rows as RowDataPacket[])[0];
-  if (!row) return true;
-  if (policy.allows(row.branch_id)) return true;
-  res.status(403).json({ success: false, error: "Forbidden: this billing record is outside your branch / assigned scope" });
-  return false;
+  return guardBillingRecord(req, res, kind);
 }
 
 /** Step 1 of 2 — legacy "View & Approve Proforma" (no bill number yet). */
@@ -410,10 +488,9 @@ router.post(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     if (!(await guardDecide(req, res, "invoice"))) return;
-    const body = req.body as { poNumbers?: string[] };
+    // PO numbers come only from the stored proforma (H10): a request body cannot swap them at approval.
     const data = await clientBillingApprovalService.approveInvoice({
       invoiceId: req.params.id,
-      poNumbers: body.poNumbers,
       userId: req.authUser!.id,
     });
     res.json({ success: true, data });
@@ -442,8 +519,10 @@ router.get(
   "/invoices/:id/audit-log",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "invoice"))) return;
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM client_invoice_audit_log WHERE invoice_id = ? ORDER BY created_at ASC`,
+      `SELECT l.*, ${actorSql("l.actor_id")}
+       FROM client_invoice_audit_log l WHERE l.invoice_id = ? ORDER BY l.created_at ASC`,
       [req.params.id]
     );
     res.json({ success: true, data: rows });
@@ -454,6 +533,7 @@ router.get(
   "/invoices/:id/pdf",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "invoice"))) return;
     const lhVal = req.query.letterhead; const withLetterhead = lhVal !== "false" && lhVal !== "0";
     const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id, withLetterhead);
     res.setHeader("Content-Type", "application/pdf");
@@ -473,6 +553,7 @@ router.post(
     if (!body.invoiceId || !body.category || !body.financeYear || !body.monthLabel || !body.creditDate) {
       return res.status(400).json({ error: "invoiceId, category, financeYear, monthLabel, and creditDate are required" });
     }
+    if (!(await guardBillingRecord(req, res, "invoice", String(body.invoiceId)))) return;
     const data = await clientBillingCreditNoteService.createCreditNote({
       invoiceId: body.invoiceId, category: body.category, financeYear: body.financeYear,
       monthLabel: body.monthLabel, creditDate: body.creditDate, description: body.description,
@@ -494,13 +575,44 @@ router.post(
   })
 );
 
+/** Reject a DRAFT credit note (reason required; the creator cannot reject their own). */
+router.post(
+  "/credit-notes/:id/reject",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardDecide(req, res, "creditNote"))) return;
+    const reason = String((req.body as { reason?: string })?.reason ?? "").trim();
+    if (reason.length < 5) return res.status(400).json({ error: "A reason of at least 5 characters is required" });
+    const data = await clientBillingCreditNoteService.rejectCreditNote({
+      creditNoteId: req.params.id, reason, userId: req.authUser!.id,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/credit-notes/:id/audit-log",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "creditNote"))) return;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT a.*, ${actorSql("a.actor_id")}
+       FROM client_credit_note_audit a WHERE a.credit_note_id = ? ORDER BY a.created_at ASC`,
+      [req.params.id],
+    );
+    res.json({ success: true, data: rows });
+  })
+);
+
 /** Shared WHERE-builder for the credit-notes list + its CSV export — same reasoning as
  *  buildInvoiceListQuery. */
-function buildCreditNoteListQuery(query: Record<string, unknown>) {
+function buildCreditNoteListQuery(query: Record<string, unknown>, branchIds: string[] | null = null) {
   const conditions: string[] = [];
   const params: unknown[] = [];
+  const scope = branchScopeCondition("cc.branch_id", branchIds);
+  if (scope.sql) { conditions.push(scope.sql); params.push(...scope.params); }
   const status = typeof query.status === "string" ? query.status : undefined;
-  if (status && ["draft", "approved"].includes(status)) {
+  if (status && ["draft", "approved", "rejected"].includes(status)) {
     conditions.push("ccn.credit_status = ?");
     params.push(status);
   }
@@ -534,7 +646,7 @@ router.get(
     // Same display-name join as /proformas, plus the referenced invoice's own printable
     // number so the table can show "against 09-100/26-27" instead of a raw invoice UUID.
     // Server-side filter + pagination added 2026-08-21 (Phase 2), same shape as /proformas.
-    const { where, params } = buildCreditNoteListQuery(req.query as Record<string, unknown>);
+    const { where, params } = buildCreditNoteListQuery(req.query as Record<string, unknown>, await billingBranchScope(req.authUser!.id));
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
     const offset = (page - 1) * limit;
@@ -571,7 +683,7 @@ router.get(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     // Registered before /credit-notes/:id — same route-ordering reason as /proformas/export.
-    const { where, params } = buildCreditNoteListQuery(req.query as Record<string, unknown>);
+    const { where, params } = buildCreditNoteListQuery(req.query as Record<string, unknown>, await billingBranchScope(req.authUser!.id));
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT ccn.credit_no, COALESCE(ci.bill_no, ci.proforma_no) AS against_invoice_number,
               ccn.credit_status, ccn.category, ccn.finance_year, ccn.month_label, ccn.credit_date,
@@ -612,6 +724,7 @@ router.get(
   "/credit-notes/:id",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "creditNote"))) return;
     const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM client_credit_note WHERE id = ? LIMIT 1`, [req.params.id]);
     const creditNote = rows[0];
     if (!creditNote) return res.status(404).json({ error: "Credit note not found" });
@@ -624,6 +737,7 @@ router.get(
   "/credit-notes/:id/pdf",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "creditNote"))) return;
     const lhVal = req.query.letterhead; const withLetterhead = lhVal !== "false" && lhVal !== "0";
     const pdf = await clientBillingPdfService.generateCreditNotePdf(req.params.id, withLetterhead);
     res.setHeader("Content-Type", "application/pdf");
@@ -651,10 +765,17 @@ router.put(
   "/proformas/:id",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardDecide(req, res, "invoice"))) return;
+    // Whitelist (C1): only these fields reach the service, and the ids come from the server, last.
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const pick = <K extends keyof Parameters<typeof clientBillingEditService.updateProforma>[0]>(k: K) =>
+      (b[k as string] === undefined ? {} : { [k]: b[k as string] }) as Partial<Parameters<typeof clientBillingEditService.updateProforma>[0]>;
     const data = await clientBillingEditService.updateProforma({
+      ...pick("category"), ...pick("financeYear"), ...pick("monthLabel"), ...pick("invoiceDate"),
+      ...pick("description"), ...pick("applyGst"), ...pick("applyTaxCalc"), ...pick("invoiceType"),
+      ...pick("lines"), ...pick("references"),
       invoiceId: req.params.id,
       userId: req.authUser!.id,
-      ...req.body,
     });
     res.json({ success: true, data });
   })
@@ -669,6 +790,7 @@ router.get(
     if (!costCentreId || !invoiceDate) {
       return res.status(400).json({ error: "costCentreId and invoiceDate are required" });
     }
+    if (!(await guardBillingRecord(req, res, "costCentre", String(costCentreId)))) return;
     const rows = await listAvailablePos(costCentreId, invoiceDate);
     res.json({ success: true, data: rows });
   })
@@ -682,6 +804,7 @@ router.get(
     if (!costCentreId || !invoiceDate || !grandTotal) {
       return res.status(400).json({ error: "costCentreId, invoiceDate, and grandTotal are required" });
     }
+    if (!(await guardBillingRecord(req, res, "costCentre", String(costCentreId)))) return;
     const parsedPoNumbers = String(poNumbers ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     const { usableRows: _, ...result } = await checkPoCoverage({
       costCentreId,
@@ -703,10 +826,12 @@ router.post(
     if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
       return res.status(400).json({ error: "invoiceIds must be a non-empty array" });
     }
-    const results = await clientBillingChangeRequestService.bulkApprove(
-      invoiceIds,
-      req.authUser!.id,
-    );
+    // C3: every id is branch-checked first; out-of-scope ids are reported, never approved.
+    const { allowed, denied } = await partitionInvoicesByScope(req.authUser!.id, [...new Set(invoiceIds.map(String))]);
+    const results = [
+      ...(allowed.length ? await clientBillingChangeRequestService.bulkApprove(allowed, req.authUser!.id) : []),
+      ...denied.map((invoiceId) => ({ invoiceId, ok: false, error: "Outside your branch / assigned scope" })),
+    ];
     const approved = results.filter((r) => r.ok).length;
     const failed = results.filter((r) => !r.ok).length;
     res.json({ success: true, data: { approved, failed, results } });
@@ -718,6 +843,7 @@ router.get(
   "/invoices/:id/submissions",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "invoice"))) return;
     const rows = await clientBillingSubmitService.listSubmissions(req.params.id);
     res.json({ success: true, data: rows });
   })
@@ -734,6 +860,7 @@ router.post(
       message?: string;
       letterhead?: boolean;
     };
+    if (!(await guardBillingRecord(req, res, "invoice"))) return;
     const result = await clientBillingSubmitService.submitToClient({
       invoiceId: req.params.id,
       to: body.to,
@@ -756,6 +883,7 @@ router.post(
     if (!body.requestType || !body.reason) {
       return res.status(400).json({ error: "requestType and reason are required" });
     }
+    if (!(await guardBillingRecord(req, res, "invoice"))) return;
     const data = await clientBillingChangeRequestService.createChangeRequest({
       invoiceId: req.params.id,
       requestType: body.requestType as "void" | "status_change",
@@ -771,10 +899,12 @@ router.get(
   "/invoices/:id/change-requests",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "invoice"))) return;
+    // There is no `users` table; the requester's name comes from their employee record, e-mail as fallback.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cicr.*, u.name AS requested_by_name
+      `SELECT cicr.*, ${userNameSql("cicr.requested_by")} AS requested_by_name,
+              ${userNameSql("cicr.decided_by")} AS decided_by_name
        FROM client_invoice_change_request cicr
-       LEFT JOIN users u ON u.id = cicr.requested_by
        WHERE cicr.invoice_id = ?
        ORDER BY cicr.created_at DESC`,
       [req.params.id],
@@ -787,19 +917,31 @@ router.get(
   "/change-requests",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { status, page = "1", limit = "50" } = req.query as Record<string, string>;
+    const { status, requestType, search, page = "1", limit = "50" } = req.query as Record<string, string>;
     const pageNum = Math.max(1, parseInt(page, 10));
     const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10)));
     const offset = (pageNum - 1) * limitNum;
     const conditions: string[] = [];
     const params: unknown[] = [];
+    const scope = branchScopeCondition("cc.branch_id", await billingBranchScope(req.authUser!.id));
+    if (scope.sql) { conditions.push(scope.sql); params.push(...scope.params); }
     if (status) { conditions.push("cicr.request_status = ?"); params.push(status); }
+    if (requestType === "void" || requestType === "status_change") {
+      conditions.push("cicr.request_type = ?"); params.push(requestType);
+    }
+    if (typeof search === "string" && search.trim()) {
+      const like = `%${search.trim()}%`;
+      conditions.push("(ci.bill_no LIKE ? OR ci.proforma_no LIKE ? OR cicr.reason LIKE ?)");
+      params.push(like, like, like);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT cicr.*,
               COALESCE(ci.bill_no, ci.proforma_no) AS invoice_ref, ci.bill_no, ci.proforma_no,
               ci.invoice_status, ci.grand_total, ci.month_label,
-              ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name
+              ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name,
+              ${userNameSql("cicr.requested_by")} AS requested_by_name,
+              ${userNameSql("cicr.decided_by")} AS decided_by_name
        FROM client_invoice_change_request cicr
        LEFT JOIN client_invoice ci ON ci.id = cicr.invoice_id
        LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
@@ -809,7 +951,9 @@ router.get(
       params,
     );
     const [[{ total }]] = await db.query<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM client_invoice_change_request cicr ${where}`,
+      `SELECT COUNT(*) AS total FROM client_invoice_change_request cicr
+       LEFT JOIN client_invoice ci ON ci.id = cicr.invoice_id
+       LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id ${where}`,
       params,
     );
     res.json({ success: true, data: rows, total: Number(total), page: pageNum, limit: limitNum });
@@ -820,12 +964,15 @@ router.get(
   "/change-requests/:id",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "changeRequest"))) return;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cicr.*,
               COALESCE(ci.bill_no, ci.proforma_no) AS invoice_ref, ci.bill_no, ci.proforma_no,
               ci.invoice_status, ci.grand_total, ci.category, ci.finance_year,
               ci.invoice_date, ci.month_label,
-              ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name
+              ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name,
+              ${userNameSql("cicr.requested_by")} AS requested_by_name,
+              ${userNameSql("cicr.decided_by")} AS decided_by_name
        FROM client_invoice_change_request cicr
        LEFT JOIN client_invoice ci ON ci.id = cicr.invoice_id
        LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
@@ -835,7 +982,8 @@ router.get(
     const row = rows[0];
     if (!row) return res.status(404).json({ error: "Change request not found" });
     const [auditLog] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM client_invoice_audit_log WHERE invoice_id = ? ORDER BY created_at DESC LIMIT 20`,
+      `SELECT l.*, ${actorSql("l.actor_id")}
+       FROM client_invoice_audit_log l WHERE l.invoice_id = ? ORDER BY l.created_at DESC LIMIT 20`,
       [row.invoice_id],
     );
     res.json({ success: true, data: { ...row, audit_log: auditLog } });
@@ -846,6 +994,7 @@ router.post(
   "/change-requests/:id/approve",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "changeRequest"))) return;
     const data = await clientBillingChangeRequestService.decideChangeRequest({
       requestId: req.params.id,
       decision: "approve",
@@ -860,6 +1009,7 @@ router.post(
   "/change-requests/:id/decline",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "changeRequest"))) return;
     const data = await clientBillingChangeRequestService.decideChangeRequest({
       requestId: req.params.id,
       decision: "decline",
@@ -874,15 +1024,17 @@ router.post(
 router.get(
   "/filter-options",
   requireRole(...ALLOWED_ROLES),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const scope = branchScopeCondition("cc.branch_id", await billingBranchScope(req.authUser!.id));
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cc.id, cc.cost_centre_code, cc.cost_centre_name, cc.company_name, cc.branch_id,
               b.branch_name, ${COST_CENTRE_DISPLAY_NAME_SQL} AS client_name,
               b.gst_state_code AS state_code, cc.gst_type, cc.vendor_gst_no
        FROM cost_centre_master cc
        LEFT JOIN branch_master b ON b.id = cc.branch_id
-       WHERE ${ownCompanyCostCentreSql("cc")} AND cc.active_status = 1
+       WHERE ${ownCompanyCostCentreSql("cc")} AND cc.active_status = 1${scope.sql ? ` AND ${scope.sql}` : ""}
        ORDER BY cc.company_name, b.branch_name, cc.cost_centre_code`,
+      scope.params,
     );
     const companies = [...new Set(rows.map((r) => String(r.company_name ?? "").trim()).filter(Boolean))];
     const branchMap = new Map<string, string>();
@@ -899,6 +1051,7 @@ router.get(
   "/invoices/:id/export",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "invoice"))) return;
     const [invRows] = await db.execute<RowDataPacket[]>(
       `SELECT ci.*, ${COST_CENTRE_DISPLAY_NAME_SQL} AS cost_centre_display_name,
               cc.cost_centre_code, cc.company_name, b.branch_name
@@ -944,17 +1097,7 @@ router.get(
 
 // ── Legacy sequence: Provision (create → approve → drawn down by invoices) ────
 async function guardProvisionDecide(req: AuthenticatedRequest, res: Response): Promise<boolean> {
-  const policy = await loadBranchPolicy(req.authUser!.id);
-  if (policy.orgWide) return true;
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT cc.branch_id FROM client_provision cp LEFT JOIN cost_centre_master cc ON cc.id = cp.cost_centre_id WHERE cp.id = ? LIMIT 1`,
-    [req.params.id],
-  );
-  const row = (rows as RowDataPacket[])[0];
-  if (!row) return true;
-  if (policy.allows(row.branch_id)) return true;
-  res.status(403).json({ success: false, error: "Forbidden: this provision is outside your branch / assigned scope" });
-  return false;
+  return guardBillingRecord(req, res, "provision");
 }
 
 router.get(
@@ -966,6 +1109,7 @@ router.get(
       financeYear: q.financeYear, monthLabel: q.monthLabel, costCentreId: q.costCentreId,
       branchId: q.branchId, companyName: q.companyName, status: q.status, search: q.search,
       page: Number(q.page) || 1, limit: Number(q.limit) || 50,
+      branchIds: await billingBranchScope(req.authUser!.id),
     });
     res.json({ success: true, data: data.rows, total: data.total, page: data.page, limit: data.limit });
   })
@@ -980,6 +1124,7 @@ router.get(
     if (!costCentreId || !financeYear || !monthLabel) {
       return res.status(400).json({ error: "costCentreId, financeYear and monthLabel are required" });
     }
+    if (!(await guardBillingRecord(req, res, "costCentre", String(costCentreId)))) return;
     const data = await clientBillingProvisionService.getProvisionForScope(costCentreId, financeYear, monthLabel);
     res.json({ success: true, data, required: provisionRequired() });
   })
@@ -993,6 +1138,7 @@ router.post(
     const results = await clientBillingProvisionService.uploadProvisions(
       rows as Parameters<typeof clientBillingProvisionService.uploadProvisions>[0],
       req.authUser!.id,
+      await billingBranchScope(req.authUser!.id),
     );
     res.json({
       success: true,
@@ -1009,6 +1155,7 @@ router.post(
     if (!body.costCentreId || !body.financeYear || !body.monthLabel || body.amount === undefined) {
       return res.status(400).json({ error: "costCentreId, financeYear, monthLabel and amount are required" });
     }
+    if (!(await guardBillingRecord(req, res, "costCentre", String(body.costCentreId)))) return;
     const data = await clientBillingProvisionService.createProvision({
       costCentreId: body.costCentreId, financeYear: body.financeYear, monthLabel: body.monthLabel,
       amount: Number(body.amount), remarks: body.remarks, invoiceType: body.invoiceType, userId: req.authUser!.id,
@@ -1067,6 +1214,20 @@ router.post(
   })
 );
 
+router.get(
+  "/provisions/:id/audit-log",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardProvisionDecide(req, res))) return;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT a.*, ${actorSql("a.actor_id")}
+       FROM client_provision_audit a WHERE a.provision_id = ? ORDER BY a.created_at ASC`,
+      [req.params.id],
+    );
+    res.json({ success: true, data: rows });
+  })
+);
+
 // ── Legacy Approve PO / ADD GRN (the PO master lives in client-billing-po.routes.ts) ──
 router.post(
   "/invoices/:id/approve-po",
@@ -1083,8 +1244,10 @@ router.put(
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     if (!(await guardDecide(req, res, "invoice"))) return;
-    const b = req.body as { grnNo?: string; grnDate?: string | null };
-    const data = await clientBillingPoGrnService.addGrn(req.params.id, { grnNo: String(b.grnNo ?? ""), grnDate: b.grnDate ?? null, userId: req.authUser!.id });
+    const b = req.body as { grnNo?: string; grnDate?: string | null; reason?: string };
+    const data = await clientBillingPoGrnService.addGrn(req.params.id, {
+      grnNo: String(b.grnNo ?? ""), grnDate: b.grnDate ?? null, reason: b.reason, userId: req.authUser!.id,
+    });
     res.json({ success: true, data });
   })
 );
@@ -1094,6 +1257,7 @@ router.get(
   "/cost-centres/:id/billing-header",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardBillingRecord(req, res, "costCentre"))) return;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cc.id, b.gst_state_code AS state_code, ${COST_CENTRE_DISPLAY_NAME_SQL} AS client_name, ${BILLING_PARTY_SQL}
        FROM cost_centre_master cc
@@ -1109,9 +1273,7 @@ router.get(
 // ── Receipts: money received against bills (Receivables & Money Flow phase 1) ──
 /** Branch-scoped callers see only their own branch; org-wide finance sees all (null). */
 async function receiptBranchScope(req: AuthenticatedRequest): Promise<string[] | null> {
-  const policy = await loadBranchPolicy(req.authUser!.id);
-  if (policy.orgWide) return null;
-  return policy.ownBranchId ? [policy.ownBranchId] : [];
+  return billingBranchScope(req.authUser!.id);
 }
 
 /**
@@ -1121,6 +1283,7 @@ async function receiptBranchScope(req: AuthenticatedRequest): Promise<string[] |
  */
 router.get(
   "/receipts/settings",
+  requireRole(...ALLOWED_ROLES),
   h(async (_req: AuthenticatedRequest, res: Response) => {
     res.json({ success: true, data: { receiptsAreSingleEntry: legacyBillsAllowed() } });
   })

@@ -3,8 +3,9 @@
  * Upload Provision, View & Edit Provision) and its draw-down by invoices.
  *
  * One provision per (cost centre, finance year, month) that is not rejected. It is raised as
- * 'pending', approved by a second person's click (maker-checker is enforced in the Approval
- * Center, which hides a maker's own rows), and only an APPROVED provision can be drawn down.
+ * 'pending', approved or rejected by a second person (maker-checker enforced here, and the
+ * Approval Center also hides a maker's own rows), and only an APPROVED provision can be drawn
+ * down. Every create / edit / approve / reject is written to client_provision_audit.
  *
  * Draw-down happens when a proforma is created or edited: the invoice's taxable total
  * (`total_amount`, before GST — the screenshot's "Total Revenue 778901") is deducted from the
@@ -42,6 +43,14 @@ function cleanRemarks(remarks: unknown): string | null {
   return s ? s.slice(0, 500) : null;
 }
 
+/** Provision history row (client_provision_audit). Caller owns the transaction. */
+async function audit(conn: Executor, provisionId: string, action: string, actorId: string, details: string | null) {
+  await conn.execute(
+    `INSERT INTO client_provision_audit (id, provision_id, action, actor_id, details) VALUES (?, ?, ?, ?, ?)`,
+    [randomUUID(), provisionId, action, actorId, details ? details.slice(0, 2000) : null],
+  );
+}
+
 export interface ProvisionListQuery {
   financeYear?: string;
   monthLabel?: string;
@@ -52,6 +61,8 @@ export interface ProvisionListQuery {
   search?: string;
   page?: number;
   limit?: number;
+  /** Branch-scoped callers: only these branch ids (null = org-wide). */
+  branchIds?: string[] | null;
 }
 
 async function listProvisions(q: ProvisionListQuery) {
@@ -62,6 +73,10 @@ async function listProvisions(q: ProvisionListQuery) {
   if (q.costCentreId) { conditions.push("cp.cost_centre_id = ?"); params.push(q.costCentreId); }
   if (q.branchId) { conditions.push("cc.branch_id = ?"); params.push(q.branchId); }
   if (q.companyName) { conditions.push("cc.company_name = ?"); params.push(q.companyName); }
+  if (q.branchIds) {
+    if (q.branchIds.length === 0) conditions.push("1 = 0");
+    else { conditions.push(`cc.branch_id IN (${q.branchIds.map(() => "?").join(",")})`); params.push(...q.branchIds); }
+  }
   if (q.status === "edit_pending") {
     conditions.push("cp.edit_requested_at IS NOT NULL");
   } else if (q.status && ["pending", "approved", "rejected"].includes(q.status)) {
@@ -80,7 +95,7 @@ async function listProvisions(q: ProvisionListQuery) {
   // .query(): LIMIT/OFFSET cannot be bound through execute() on this server (see routes).
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT cp.*, cc.cost_centre_code, cc.company_name, cc.branch_id, b.branch_name,
-            COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name) AS client_name,
+            COALESCE(NULLIF(cc.billing_client_name, ''), NULLIF(cc.client_name, ''), cc.company_name) AS client_name,
             (cp.provision_amount - cp.provision_balance) AS used_amount
      FROM client_provision cp
      LEFT JOIN cost_centre_master cc ON cc.id = cp.cost_centre_id
@@ -138,6 +153,7 @@ async function insertProvision(conn: Executor, input: CreateProvisionInput): Pro
     [id, input.costCentreId, input.financeYear, input.monthLabel, amount, amount,
       cleanRemarks(input.remarks), input.userId, invoiceType],
   );
+  await audit(conn, id, "created", input.userId, `${input.monthLabel} ${input.financeYear}: ${amount}`);
   return { id };
 }
 
@@ -180,7 +196,11 @@ export interface UploadProvisionResult {
 const UPLOAD_MAX_ROWS = 1000;
 
 /** Upload Provision: each row is its own transaction, so one bad row never blocks the rest. */
-async function uploadProvisions(rows: UploadProvisionRow[], userId: string): Promise<UploadProvisionResult[]> {
+async function uploadProvisions(
+  rows: UploadProvisionRow[],
+  userId: string,
+  branchIds: string[] | null = null,
+): Promise<UploadProvisionResult[]> {
   if (!Array.isArray(rows) || rows.length === 0) throw clientError("rows must be a non-empty array");
   if (rows.length > UPLOAD_MAX_ROWS) throw clientError(`At most ${UPLOAD_MAX_ROWS} rows per upload`);
   const results: UploadProvisionResult[] = [];
@@ -189,11 +209,15 @@ async function uploadProvisions(rows: UploadProvisionRow[], userId: string): Pro
     try {
       if (!code) throw clientError("cost centre code is required");
       const [cc] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM cost_centre_master WHERE cost_centre_code = ? LIMIT 2`,
+        `SELECT id, branch_id FROM cost_centre_master WHERE cost_centre_code = ? LIMIT 2`,
         [code],
       );
       if (cc.length === 0) throw clientError(`cost centre ${code} not found`);
       if (cc.length > 1) throw clientError(`cost centre code ${code} matches more than one cost centre`);
+      // Branch-scoped uploaders: each row's cost centre must be in their own branch.
+      if (branchIds && !(cc[0].branch_id && branchIds.includes(String(cc[0].branch_id)))) {
+        throw clientError(`cost centre ${code} is outside your branch`, 403);
+      }
       const created = await inTransaction((conn) => insertProvision(conn, {
         costCentreId: String(cc[0].id),
         financeYear: String(row.financeYear ?? "").trim(),
@@ -256,9 +280,11 @@ async function updateProvision(input: UpdateProvisionInput) {
         `UPDATE client_provision SET edit_amount = ?, edit_remarks = ?, edit_requested_by = ?, edit_requested_at = NOW() WHERE id = ?`,
         [amount, remarks == null ? null : String(remarks), input.userId, input.id],
       );
+      await audit(conn, input.id, "edit_requested", input.userId, `${Number(row.provision_amount)} → ${amount}`);
       return { id: input.id, editPending: true, provisionAmount: Number(row.provision_amount), provisionBalance: Number(row.provision_balance) };
     }
     await applyAmount(conn, input.id, amount, remarks == null ? null : String(remarks));
+    await audit(conn, input.id, "edited", input.userId, `${Number(row.provision_amount)} → ${amount}`);
     return { id: input.id, editPending: false, provisionAmount: amount, provisionBalance: round2(amount - used) };
   });
 }
@@ -292,8 +318,17 @@ async function decideProvisionEdit(id: string, decision: "approve" | "decline", 
       `UPDATE client_provision SET edit_amount = NULL, edit_remarks = NULL, edit_requested_by = NULL, edit_requested_at = NULL WHERE id = ?`,
       [id],
     );
+    await audit(conn, id, decision === "approve" ? "edit_approved" : "edit_declined", userId,
+      `${Number(row.provision_amount)} → ${Number(row.edit_amount)}`);
     return { id, decision };
   });
+}
+
+/** H5 maker-checker: whoever raised a provision neither approves nor rejects it. */
+function assertNotProvisionMaker(row: RowDataPacket, userId: string, verb: "approve" | "reject") {
+  if (row.created_by && String(row.created_by) === String(userId)) {
+    throw clientError(`You created this provision — another approver must ${verb} it`, 403);
+  }
 }
 
 async function approveProvision(id: string, userId: string) {
@@ -302,10 +337,12 @@ async function approveProvision(id: string, userId: string) {
     if (row.provision_status !== "pending") {
       throw clientError(`Provision is ${row.provision_status}, only a pending provision can be approved`);
     }
+    assertNotProvisionMaker(row, userId, "approve");
     await conn.execute(
       `UPDATE client_provision SET provision_status = 'approved', approved_by = ?, approved_at = NOW() WHERE id = ?`,
       [userId, id],
     );
+    await audit(conn, id, "approved", userId, null);
     return { id, provisionStatus: "approved" as const };
   });
 }
@@ -318,12 +355,15 @@ async function rejectProvision(id: string, reason: string, userId: string) {
     if (row.provision_status !== "pending") {
       throw clientError(`Provision is ${row.provision_status}, only a pending provision can be rejected`);
     }
+    assertNotProvisionMaker(row, userId, "reject");
+    // H5: the rejecter goes into rejected_by / rejected_at; approved_by stays for real approvals.
     await conn.execute(
       `UPDATE client_provision
-       SET provision_status = 'rejected', rejected_reason = ?, approved_by = ?, approved_at = NOW()
+       SET provision_status = 'rejected', rejected_reason = ?, rejected_by = ?, rejected_at = NOW()
        WHERE id = ?`,
       [why.slice(0, 500), userId, id],
     );
+    await audit(conn, id, "rejected", userId, why);
     return { id, provisionStatus: "rejected" as const };
   });
 }

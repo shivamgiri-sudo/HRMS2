@@ -223,6 +223,7 @@ import customizationRouter from "./modules/customization/customization.routes.js
 import { rosterMasterRouter } from "./modules/roster/roster-master.routes.js";
 import rosterCapacityRouter from "./modules/roster/roster-capacity.routes.js";
 import { reportingRouter } from "./modules/reporting/reporting.routes.js";
+import { branchHealthExportRouter } from "./modules/branch-health-report/export.routes.js";
 import { reportingLeaveBalanceRouter } from "./modules/reporting/reporting.leave-balance.routes.js";
 import { reportAdminAuditRouter } from "./modules/reporting/report-admin-audit.routes.js";
 import { aonRetentionFlagRouter } from "./modules/reporting/aon-retention-flag.routes.js";
@@ -1010,6 +1011,7 @@ app.use("/api/reports", reportLimiter, reportingLeaveBalanceRouter);
 app.use("/api/reports", reportLimiter, enterpriseReportsRouter);
 app.use("/api/reports", reportLimiter, reportingRouter);
 app.use("/api/reports/aon-analytics", reportLimiter, aonRetentionFlagRouter);
+app.use("/api/reports/branch-health", reportLimiter, branchHealthExportRouter);
 app.use("/api/admin/report-requests", reportAdminAuditRouter);
 app.use("/api/assistant/context", assistantContextRouter);
 app.use("/api/control-tower", controlTowerRouter);

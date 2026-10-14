@@ -17,6 +17,13 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import {
+  clientStateCodeOf,
+  invalidServiceTaxNo,
+  invoicePartyName,
+  invoiceReferences,
+  ourGstinSql,
+} from "./invoice-party.js";
 
 export type GstExportType = "GSTR1" | "GSTR3B_OUTWARD" | "TALLY_SALES";
 
@@ -230,7 +237,7 @@ export const gstExportService = {
     try {
       await connection.beginTransaction();
 
-      const rows = await collectRows(connection, companyGstin, stateCode, periodMonth);
+      const rows = await collectRows(connection, companyGstin, stateCode, periodMonth, exportType);
 
       const batchId = randomUUID();
       const totals = rows.reduce(
@@ -356,21 +363,32 @@ export const gstExportService = {
    * periods still need it, and the picker flags it by its null latest_invoice_date. Only
    * approved invoices count towards that date, matching collectRows(), so the figure means
    * "the last invoice this registration actually raised", not "the last one someone drafted".
+   *
+   * Registrations are every branch GSTIN plus every GSTIN a bill was issued under (ourGstinSql:
+   * a cost centre's own GST No.), since collectRows selects by the latter.
    */
   async listRegistrations(scope?: FinanceBranchScope) {
     // Branch scoping: a branch-limited caller (branch_admin) only sees the registrations of its own branch(es).
-    const sf = scope && scope.mode === "branches" ? financeBranchFilter(scope, "bm.id") : null;
+    const sf = scope && scope.mode === "branches" ? financeBranchFilter(scope, "x.branch_id") : null;
+    const our = ourGstinSql("cm", "bm");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT bm.gstin                        AS company_gstin,
-              MAX(bm.gst_state_code)          AS gst_state_code,
-              MAX(bm.company_name)            AS company_name,
-              COUNT(DISTINCT bm.id)           AS branch_count,
-              MAX(ci.invoice_date)            AS latest_invoice_date
-         FROM branch_master bm
-         LEFT JOIN cost_centre_master cm ON cm.branch_id = bm.id
-         LEFT JOIN client_invoice ci ON ci.cost_centre_id = cm.id AND ci.invoice_status = 'approved'
-        WHERE bm.gstin IS NOT NULL AND bm.gstin <> ''${sf ? ` AND ${sf.sql}` : ""}
-        GROUP BY bm.gstin
+      `SELECT x.company_gstin                 AS company_gstin,
+              MAX(LEFT(x.company_gstin, 2))   AS gst_state_code,
+              MAX(x.company_name)             AS company_name,
+              COUNT(DISTINCT x.branch_id)     AS branch_count,
+              MAX(x.invoice_date)             AS latest_invoice_date
+         FROM (
+           SELECT UPPER(TRIM(bm.gstin)) AS company_gstin, bm.company_name, bm.id AS branch_id, NULL AS invoice_date
+             FROM branch_master bm
+           UNION ALL
+           SELECT ${our} AS company_gstin, bm.company_name, bm.id AS branch_id, ci.invoice_date
+             FROM client_invoice ci
+             JOIN cost_centre_master cm ON cm.id = ci.cost_centre_id
+             JOIN branch_master bm ON bm.id = cm.branch_id
+            WHERE ci.invoice_status = 'approved'
+         ) x
+        WHERE x.company_gstin IS NOT NULL AND x.company_gstin <> ''${sf ? ` AND ${sf.sql}` : ""}
+        GROUP BY x.company_gstin
         ORDER BY company_name, company_gstin`,
       sf ? sf.params : undefined
     );
@@ -386,8 +404,10 @@ export const gstExportService = {
     if (scope && scope.mode === "branches") {
       // Only batches of a GSTIN carried by one of the caller's own branches.
       const sf = financeBranchFilter(scope, "id");
-      where.push(`company_gstin IN (SELECT gstin FROM branch_master WHERE gstin IS NOT NULL AND ${sf.sql})`);
-      params.push(...sf.params);
+      const sc = financeBranchFilter(scope, "branch_id");
+      where.push(`(company_gstin IN (SELECT gstin FROM branch_master WHERE gstin IS NOT NULL AND ${sf.sql})`
+        + ` OR company_gstin IN (SELECT UPPER(TRIM(service_tax_no)) FROM cost_centre_master WHERE service_tax_no IS NOT NULL AND ${sc.sql}))`);
+      params.push(...sf.params, ...sc.params);
     }
     if (filters.exportType) { where.push("export_type = ?"); params.push(filters.exportType); }
     if (filters.companyGstin) { where.push("company_gstin = ?"); params.push(String(filters.companyGstin).toUpperCase()); }
@@ -415,6 +435,17 @@ export const gstExportService = {
       `SELECT branch_name FROM branch_master WHERE gstin = ? AND ${sf.sql}`,
       [batch.company_gstin, ...sf.params]
     );
+    if (own.length === 0) {
+      // A registration that is a cost centre's own GST No. (ourGstinSql): the caller's branches
+      // whose cost centres issue bills under it.
+      const sc = financeBranchFilter(scope, "bm.id");
+      const [viaCc] = await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT bm.branch_name FROM cost_centre_master cm JOIN branch_master bm ON bm.id = cm.branch_id
+          WHERE UPPER(TRIM(cm.service_tax_no)) = ? AND ${sc.sql}`,
+        [batch.company_gstin, ...sc.params]
+      );
+      own.push(...viaCc);
+    }
     if (own.length === 0) {
       throw Object.assign(new Error("Forbidden: this GST export batch is outside your branch / assigned scope"), { statusCode: 403 });
     }
@@ -489,29 +520,39 @@ function financialYearOf(periodMonth: string): string {
 /**
  * Pull every outward document for this registration and period.
  *
- * Scoping is by the SUPPLYING BRANCH's GSTIN, not by company: two branches of one legal entity in
- * different states file separate returns, and putting a Gujarat invoice into the UP return is a
- * misdeclaration in both.
+ * Scoping is by the GSTIN the bill was ISSUED UNDER, not by company: two branches of one legal
+ * entity in different states file separate returns, and putting a Gujarat invoice into the UP
+ * return is a misdeclaration in both. "Issued under" = what the bill's PDF prints as our GSTIN
+ * (cost centre service_tax_no, else the branch GSTIN; see ourGstinSql), because the return must
+ * match the document the customer holds and claims credit against. Before, selection was
+ * WHERE bm.gstin = ?, so a bill printed with a cost centre GSTIN of another state was filed under
+ * the branch's registration.
+ *
+ * TALLY_SALES leaves out I-Spark bills (is_migrated = 1) and I-Spark credit notes: they were keyed
+ * into Tally by hand. GST returns keep them; the return covers every document of the period.
  */
 async function collectRows(
   connection: PoolConnection,
   companyGstin: string,
   stateCode: string,
-  periodMonth: string
+  periodMonth: string,
+  exportType: GstExportType = "GSTR1"
 ): Promise<StagedRow[]> {
+  const skipMigrated = exportType === "TALLY_SALES";
   const [invoices] = await connection.execute<RowDataPacket[]>(
     `SELECT ci.id, ci.bill_no, ci.invoice_date, ci.finance_year, ci.month_label,
             ci.gst_type, ci.apply_gst, ci.total_amount, ci.igst_amount, ci.cgst_amount,
             ci.sgst_amount, ci.grand_total, ci.tally_head, ci.client_tally_name,
-            cm.cost_centre_code, cm.billing_client_name, cm.client_name,
-            cm.vendor_gst_no, cm.vendor_state_code, cm.sac_code, cm.hsn_code, cm.jcc_no, cm.grn,
+            ci.po_numbers, ci.jcc_no, ci.grn_no,
+            cm.cost_centre_code, cm.billing_client_name, cm.client_name, cm.service_tax_no,
+            cm.vendor_gst_no, cm.vendor_state_code, cm.sac_code, cm.hsn_code,
             bm.branch_name, bm.gstin AS branch_gstin, bm.gst_state_code, bm.company_name AS branch_company
        FROM client_invoice ci
        JOIN cost_centre_master cm ON cm.id = ci.cost_centre_id
        JOIN branch_master bm ON bm.id = cm.branch_id
-      WHERE bm.gstin = ?
+      WHERE ${ourGstinSql("cm", "bm")} = ?
         AND DATE_FORMAT(ci.invoice_date, '%Y-%m') = ?
-        AND ci.invoice_status = 'approved'
+        AND ci.invoice_status = 'approved'${skipMigrated ? "\n        AND ci.is_migrated = 0" : ""}
       ORDER BY ci.invoice_date, ci.bill_no`,
     [companyGstin, periodMonth]
   );
@@ -525,14 +566,18 @@ async function collectRows(
     `SELECT cn.id, cn.credit_no AS bill_no, cn.credit_date AS invoice_date, cn.finance_year,
             cn.month_label, cn.gst_type, cn.apply_gst, cn.total_amount, cn.igst_amount,
             cn.cgst_amount, cn.sgst_amount, cn.grand_total, cn.tally_head, cn.client_tally_name,
-            cm.cost_centre_code, cm.billing_client_name, cm.client_name,
-            cm.vendor_gst_no, cm.vendor_state_code, cm.sac_code, cm.hsn_code, cm.jcc_no, cm.grn,
+            oi.po_numbers, oi.jcc_no, oi.grn_no,
+            cm.cost_centre_code, cm.billing_client_name, cm.client_name, cm.service_tax_no,
+            cm.vendor_gst_no, cm.vendor_state_code, cm.sac_code, cm.hsn_code,
             bm.branch_name, bm.gstin AS branch_gstin, bm.gst_state_code, bm.company_name AS branch_company
        FROM client_credit_note cn
        JOIN cost_centre_master cm ON cm.id = cn.cost_centre_id
        JOIN branch_master bm ON bm.id = cm.branch_id
-      WHERE bm.gstin = ?
+       LEFT JOIN client_invoice oi ON oi.id = cn.invoice_id
+      WHERE ${ourGstinSql("cm", "bm")} = ?
         AND DATE_FORMAT(cn.credit_date, '%Y-%m') = ?
+        -- Only an approved credit note is issued; a draft / rejected one reduces nothing.
+        AND cn.credit_status = 'approved'${skipMigrated ? "\n        AND cn.is_migrated = 0" : ""}
       ORDER BY cn.credit_date, cn.credit_no`,
     [companyGstin, periodMonth]
   );
@@ -548,7 +593,10 @@ async function collectRows(
     // against a total of -165. It flips with everything else.
     row.roundOff = -row.roundOff;
     row.otherCharges = -Math.abs(row.otherCharges);
-    row.errors = validateRow({ ...row, taxableValue: Math.abs(row.taxableValue), igst: Math.abs(row.igst), cgst: Math.abs(row.cgst), sgst: Math.abs(row.sgst), invoiceValue: Math.abs(row.invoiceValue), roundOff: -row.roundOff, otherCharges: Math.abs(row.otherCharges) });
+    row.errors = [
+      ...validateRow({ ...row, taxableValue: Math.abs(row.taxableValue), igst: Math.abs(row.igst), cgst: Math.abs(row.cgst), sgst: Math.abs(row.sgst), invoiceValue: Math.abs(row.invoiceValue), roundOff: -row.roundOff, otherCharges: Math.abs(row.otherCharges) }),
+      ...ourGstinErrors(r, companyGstin),
+    ];
     staged.push(row);
   }
 
@@ -565,7 +613,10 @@ function buildRow(
   const rawClientGstin = String(r.vendor_gst_no ?? "").trim().toUpperCase();
   // 'NA', '0', '-' are real values in cost_centre_master. Treat them as absent, not as a GSTIN.
   const clientGstin = /^(NA|N\/A|0|-|)$/i.test(rawClientGstin) ? null : rawClientGstin;
-  const clientState = gstinStateCode(clientGstin) ?? (String(r.vendor_state_code ?? "").trim() || null);
+  // A typed state code "9" must read as "09", or it never equals the supplier's and every
+  // intra-state UP bill is flagged as an inter-state split error.
+  const clientState = gstinStateCode(clientGstin) ?? clientStateCodeOf(r.vendor_state_code);
+  const refs = invoiceReferences(r);
 
   const taxable = money(r.total_amount);
   const igst = money(r.igst_amount);
@@ -584,14 +635,17 @@ function buildRow(
     companyName: r.branch_company ? String(r.branch_company) : null,
     companyGstin,
     branchName: r.branch_name ? String(r.branch_name) : null,
-    branchStateCode: String(r.gst_state_code ?? stateCode) || stateCode,
-    clientName: String(r.client_tally_name ?? r.billing_client_name ?? r.client_name ?? "") || null,
+    // The registration the bill was issued under decides the supplier state, not the branch row.
+    branchStateCode: stateCode,
+    clientName: invoicePartyName(r),
     clientGstin,
     clientStateCode: clientState,
     placeOfSupply: clientState,
     processCode: r.cost_centre_code ? String(r.cost_centre_code) : null,
-    poNo: r.jcc_no ? String(r.jcc_no) : null,
-    grnNo: r.grn ? String(r.grn) : null,
+    // The invoice's own references (credit notes: the credited invoice's), never the cost centre
+    // master's jcc_no / grn defaults, which are not per bill.
+    poNo: refs.poNo ?? refs.jccNo,
+    grnNo: refs.grnNo,
     hsnSacCode: String(r.sac_code ?? r.hsn_code ?? "").trim() || null,
     supplyType: null,
     gstType: r.gst_type ? String(r.gst_type) : null,
@@ -609,6 +663,26 @@ function buildRow(
 
   const interState = Boolean(row.branchStateCode && row.clientStateCode && row.branchStateCode !== row.clientStateCode);
   row.supplyType = classifySupply(applyGst, Boolean(clientGstin) && isValidGstin(clientGstin), interState, total);
-  row.errors = validateRow(row);
+  row.errors = [...validateRow(row), ...ourGstinErrors(r, companyGstin)];
   return row;
+}
+
+/** The bill's printed GSTIN versus where it was filed (see collectRows). */
+function ourGstinErrors(r: RowDataPacket, companyGstin: string): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const badOurGstin = invalidServiceTaxNo(r.service_tax_no);
+  if (badOurGstin) {
+    errors.push({
+      code: "OUR_GSTIN_ON_BILL_INVALID",
+      severity: "error",
+      message: `The bill printed "${badOurGstin}" as our GSTIN (cost centre GST No.), which is not a GSTIN; it is listed under the branch GSTIN ${String(r.branch_gstin ?? "")}. Fix the cost centre and reissue.`,
+    });
+  } else if (String(r.branch_gstin ?? "").trim() && String(r.branch_gstin).trim().toUpperCase() !== companyGstin) {
+    errors.push({
+      code: "OUR_GSTIN_NOT_BRANCH",
+      severity: "warning",
+      message: `Issued under the cost centre GSTIN ${companyGstin}, not branch ${String(r.branch_name ?? "")} GSTIN ${String(r.branch_gstin).toUpperCase()}; filed here because the bill prints ${companyGstin}.`,
+    });
+  }
+  return errors;
 }

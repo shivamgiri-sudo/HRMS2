@@ -196,7 +196,7 @@ describe("Tally HTTP gateway push", () => {
   it("parses Tally's import response", async () => {
     const { parseTallyResponse } = await import("../salary-voucher-tally-push.service.js");
     expect(parseTallyResponse("<RESPONSE><CREATED>1</CREATED><ALTERED>0</ALTERED><ERRORS>0</ERRORS><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>"))
-      .toEqual({ created: 1, altered: 0, errors: 0, exceptions: 0, lineErrors: [] });
+      .toEqual({ created: 1, altered: 0, ignored: 0, errors: 0, exceptions: 0, lineErrors: [] });
     expect(parseTallyResponse("<RESPONSE><CREATED>0</CREATED><ERRORS>1</ERRORS><LINEERROR>Ledger 'X' does not exist!</LINEERROR></RESPONSE>"))
       .toMatchObject({ created: 0, errors: 1, lineErrors: ["Ledger 'X' does not exist!"] });
   });
@@ -215,7 +215,23 @@ describe("Tally HTTP gateway push", () => {
   it("sends the company to Tally when one is configured", async () => {
     const { buildTallyXml } = await import("../salary-voucher-formats.js");
     expect(buildTallyXml([], "MAS Callnet")).toContain("<SVCURRENTCOMPANY>MAS Callnet</SVCURRENTCOMPANY>");
-    expect(buildTallyXml([])).toContain("<DESC></DESC>");
+    expect(buildTallyXml([])).not.toContain("SVCURRENTCOMPANY");
+  });
+
+  it("re-import safe: shared envelope with IMPORTDUPS and a REMOTEID fixed per run / company / branch", async () => {
+    const { buildTallyXml } = await import("../salary-voucher-formats.js");
+    const v: any = {
+      voucher_no: "AHMEDABAD-JALDARSHAN/MAS/09/26/7", company_code: "MAS", branch_id: "br-1", branch_name: "AHMEDABAD-JALDARSHAN",
+      cost_category: "AHMEDABAD-JALDARSHAN", cost_centre: "AHM/2609", voucher_type: "JRNLSAL", date: "2026-09-30", narration: "Salary Sep Month",
+      lines: [{ ledger_name: "Gross Salary", debit_credit: "D", amount: 100 }, { ledger_name: "Salary Payable A/C", debit_credit: "C", amount: 100 }],
+    };
+    const xml = buildTallyXml([v], null, "run-9");
+    expect(xml).toContain("<REPORTNAME>All Masters</REPORTNAME>");
+    expect(xml).toContain("<IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>");
+    expect(xml).toContain('<VOUCHER REMOTEID="HRMS-SAL-run-9-MAS-br-1" VCHTYPE="JRNLSAL"');
+    // a re-export with a new serial keeps the same REMOTEID
+    expect(buildTallyXml([{ ...v, voucher_no: "AHMEDABAD-JALDARSHAN/MAS/09/26/8" }], null, "run-9")).toContain('REMOTEID="HRMS-SAL-run-9-MAS-br-1"');
+    expect(xml).toContain("<CATEGORY>AHMEDABAD-JALDARSHAN</CATEGORY><COSTCENTREALLOCATIONS.LIST><NAME>AHM/2609</NAME><AMOUNT>-100.00</AMOUNT>");
   });
 });
 

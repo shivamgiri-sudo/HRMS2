@@ -17,6 +17,9 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (req: any, _res: any, next: any) => { req.userRoles = [h.role]; next(); },
 }));
+vi.mock("../tally-ledger-export.service.js", () => ({
+  buildPaymentVoucherTallyXml: async (ids: string[]) => ({ xml: `<ENVELOPE>${ids.join(",")}</ENVELOPE>`, count: ids.length, exceptions: [] }),
+}));
 vi.mock("../finance-branch-guard.js", () => ({ callerBranchScope: async () => ({ mode: "all" }) }));
 vi.mock("../../gst/gst-export.service.js", () => ({
   gstExportService: { getBatch: async () => h.batch, markDownloaded: async () => ({ success: true }) },
@@ -37,7 +40,7 @@ describe.skipIf(!PORT)("bank voucher and GST sales locks", () => {
     let svc: typeof import("../tally-export.service.js").tallyExportService;
     const envelope = (nums: string[], isFinal: boolean, exclude?: Set<string>) => {
       const kept = nums.filter((n) => !exclude?.has(n));
-      return { xml: `<ENVELOPE>${kept.join(",")}</ENVELOPE>`, isFinal, entryCount: kept.length, totalDebit: kept.length * 10, totalCredit: kept.length * 10, voucherNumbers: kept };
+      return { xml: `<ENVELOPE>${kept.join(",")}</ENVELOPE>`, isFinal, entryCount: kept.length, totalDebit: kept.length * 10, totalCredit: kept.length * 10, voucherNumbers: kept, voucherIds: kept.map((n) => `id-${n}`) };
     };
     let all = ["PV-1", "PV-2"]; let final = true;
     beforeAll(async () => {

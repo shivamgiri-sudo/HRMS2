@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 
 /**
  * Receivables ageing, bucketed by days since invoice_date (NOT "days overdue" — this table has no
@@ -16,6 +17,10 @@ import { db } from "../../db/mysql.js";
  * render it as a visible warning badge (reusing the existing dataStatus/missing_rule badge pattern
  * from useProcessLobPnl / ProcessLobManagementPage) rather than presenting the buckets as an
  * authoritative live AR position.
+ *
+ * MAS Callnet India Pvt Ltd only (owner rule): billing_invoice_snapshot also carries IDC /
+ * Pikquick invoices. A bill counts only when its cost centre is a MAS cost centre; a bill whose
+ * cost centre code is not in cost_centre_master has no known company and is left out.
  */
 
 const n = (v: unknown): number => {
@@ -74,7 +79,8 @@ export async function getReceivablesAgeing(filters: { branchId?: string; process
        LEFT JOIN cost_centre_master ccm
               ON ccm.cost_centre_code = bis.cost_centre_code COLLATE utf8mb4_unicode_ci
        LEFT JOIN process_master pm ON pm.id = ccm.process_id
-      WHERE bis.payment_status = '0' AND bis.invoice_date IS NOT NULL ${branchClause} ${processClause}`,
+      WHERE bis.payment_status = '0' AND bis.invoice_date IS NOT NULL
+        AND ${ownCompanyCostCentreSql("ccm")} ${branchClause} ${processClause}`,
     params
   );
 

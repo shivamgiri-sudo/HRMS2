@@ -62,19 +62,28 @@ describe("client invoice adapter", () => {
 });
 
 describe("client credit note adapter", () => {
-  it("lists drafts; approve works, reject is refused", async () => {
+  it("lists drafts (no number yet); approve and reject-with-reason go to the module's routes", async () => {
     const { ctx, calls } = fakeCtx({
-      "GET /api/client-billing/credit-notes": { data: [{ id: "c1", credit_status: "draft", is_migrated: 0, credit_no: "CN/1", against_invoice_number: "09-100/26-27", cost_centre_display_name: "Acme", grand_total: 5900, total_amount: 5000, igst_amount: 900, apply_gst: 1, gst_type: "igst", credit_date: "2026-10-02", created_at: "2026-10-02T00:00:00Z" }] },
+      "GET /api/client-billing/credit-notes": { data: [{ id: "c1", credit_status: "draft", is_migrated: 0, credit_no: null, against_invoice_number: "09-100/26-27", cost_centre_display_name: "Acme", grand_total: 5900, total_amount: 5000, igst_amount: 900, apply_gst: 1, gst_type: "igst", credit_date: "2026-10-02", created_at: "2026-10-02T00:00:00Z" }] },
       "GET /api/client-billing/credit-notes/c1": { data: { lines: [{ particulars: "SLA credit", qty: 1, rate: 5000, amount: 5000 }] } },
       "POST /api/client-billing/credit-notes/c1/approve": {},
+      "POST /api/client-billing/credit-notes/c1/reject": {},
     });
     const items = await clientCreditNoteAdapter.list(ctx);
     expect(calls[0].query).toEqual({ status: "draft", limit: 200 });
     expect(field(items[0], "Against invoice")).toBe("09-100/26-27");
     expect(field(items[0], "Line detail")).toContain("SLA credit");
-    expect(items[0].meta).toEqual({ approveOnly: true });
+    expect(items[0].title).toMatch(/^Credit note — /);
+    expect(items[0].rejectNeedsReason).toBe(true);
     expect(items[0].viewPath).toBe("/finance/client-billing?tab=credit-notes&approvalId=c1");
     await clientCreditNoteAdapter.decide(ctx, { id: "c1" }, "approve", "");
-    await expect(clientCreditNoteAdapter.decide(ctx, { id: "c1" }, "reject", "x")).rejects.toThrow(/only be approved/);
+    await expect(clientCreditNoteAdapter.decide(ctx, { id: "c1" }, "reject", "x")).rejects.toThrow(/at least 5 characters/);
+    await clientCreditNoteAdapter.decide(ctx, { id: "c1" }, "reject", "wrong amount");
+    const posts = calls.filter((c) => c.method === "POST");
+    expect(posts.map((c) => c.path)).toEqual([
+      "/api/client-billing/credit-notes/c1/approve",
+      "/api/client-billing/credit-notes/c1/reject",
+    ]);
+    expect(posts[1].body).toEqual({ reason: "wrong amount" });
   });
 });

@@ -79,7 +79,8 @@ vendorApprovalRouter.patch(
       req.params.id,
       req.authUser!.id,
       editedPayload ?? null,
-      reviewNotes
+      reviewNotes,
+      [req.authUser!.role, ...(req.authUser!.roles ?? [])].map(String)
     );
     res.json({ success: true, data: result });
   })

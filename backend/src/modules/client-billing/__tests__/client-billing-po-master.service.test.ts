@@ -46,9 +46,10 @@ describe("createPo", () => {
   it("stores amount = balance = line total, the document, the lines and an audit row", async () => {
     conn.execute.mockResolvedValueOnce([[{ id: "cc" }], []]).mockResolvedValueOnce([[], []]).mockResolvedValue([{}, []]);
     const r = await mod.clientPoMasterService.createPo(base);
-    expect(r).toMatchObject({ poNumber: "AB/77-x", amount: 265000.5 });
+    expect(r).toMatchObject({ poNumber: "AB/77-x", amount: 265000.5, approvalStatus: "pending" });
     const insert = conn.execute.mock.calls[2];
-    expect(insert[1]).toEqual([expect.any(String), "cc", "AB/77-x", "2026-04-01", "2027-03-31", 265000.5, 265000.5, doc.path, doc.name, doc.mime, null, "u"]);
+    expect(String(insert[0])).toMatch(/'pending', 0, \?/);
+    expect(insert[1]).toEqual([expect.any(String), "cc", "AB/77-x", "2026-04-01", "2027-03-31", 265000.5, 265000.5, doc.path, doc.name, doc.mime, null, "u", "u"]);
     const sql = conn.execute.mock.calls.map((c) => String(c[0]));
     expect(sql.filter((q) => q.includes("INSERT INTO client_po_line"))).toHaveLength(2);
     expect(sql.some((q) => q.includes("INSERT INTO client_po_audit"))).toBe(true);
@@ -85,7 +86,20 @@ describe("updatePo", () => {
     expect(r.changed.join(" ")).toMatch(/amount: 1,00,000.00 → 1,50,000.00/);
     const upd = conn.execute.mock.calls.find((c) => String(c[0]).startsWith("UPDATE client_po_number"))!;
     expect(upd[1].slice(0, 5)).toEqual(["PO-1", "2026-04-01", "2027-03-31", 150000, 90000]);
+    // An increase above the approved amount sends the PO back for approval, the editor as requester.
+    expect(upd[1].slice(-3)).toEqual(["pending", "u", "po"]);
+    expect(r.approvalStatus).toBe("pending");
     expect(conn.execute.mock.calls.some((c) => String(c[0]).includes("INSERT INTO client_po_audit"))).toBe(true);
+  });
+  it("a decrease keeps an approved PO approved; bringing a pending increase back within the approved amount re-approves it", async () => {
+    script();
+    const r1 = await mod.clientPoMasterService.updatePo({ id: "po", userId: "u", lines: [{ particulars: "x", qty: 1, rate: 90000 }] });
+    expect(r1.approvalStatus).toBe("approved");
+    conn.execute.mockReset();
+    conn.execute.mockResolvedValueOnce([[{ ...po, total_amount: "150000.00", balance_amount: "90000.00", approval_status: "pending", approved_amount: "100000.00", approval_requested_by: "u" }], []])
+      .mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[{ n: 0 }], []]).mockResolvedValue([{}, []]);
+    const r2 = await mod.clientPoMasterService.updatePo({ id: "po", userId: "v", lines: [{ particulars: "x", qty: 1, rate: 100000 }] });
+    expect(r2.approvalStatus).toBe("approved");
   });
   it("no change -> nothing written", async () => {
     script();
@@ -108,5 +122,32 @@ describe("report", () => {
     expect(r[0]).toMatchObject({ drawn: 75, balance: 25, utilisation: 75, bills: 2 });
     await mod.clientPoMasterService.report({ branchIds: [] });
     expect(String(query.mock.calls.at(-1)![0])).toContain("1 = 0");
+  });
+});
+
+describe("PO approval (maker-checker)", () => {
+  const pending = { id: "po", po_number: "PO-9", total_amount: "5000.00", approval_status: "pending", approved_amount: "0.00", approval_requested_by: "maker", created_by: "maker" };
+  it("the creator / editor cannot approve or reject (403)", async () => {
+    conn.execute.mockResolvedValueOnce([[pending], []]);
+    await expect(mod.clientPoMasterService.decidePo("po", "approve", "maker")).rejects.toMatchObject({ statusCode: 403 });
+    expect(conn.execute).toHaveBeenCalledTimes(1);
+  });
+  it("another user approves: status approved, approved_amount = amount, audited", async () => {
+    conn.execute.mockResolvedValueOnce([[pending], []]).mockResolvedValue([{}, []]);
+    await expect(mod.clientPoMasterService.decidePo("po", "approve", "checker")).resolves.toEqual({ id: "po", approvalStatus: "approved" });
+    const upd = conn.execute.mock.calls[1];
+    expect(String(upd[0])).toMatch(/approved_amount = IF\(\? = 'approved', total_amount, approved_amount\)/);
+    expect(upd[1]).toEqual(["approved", "approved", "checker", null, "po"]);
+    expect(conn.execute.mock.calls[2][1]).toEqual(expect.arrayContaining(["po", "approved", "checker"]));
+  });
+  it("reject needs a reason; only a pending PO can be decided", async () => {
+    await expect(mod.clientPoMasterService.decidePo("po", "reject", "checker", "no")).rejects.toThrow(/at least 5/);
+    conn.execute.mockResolvedValueOnce([[{ ...pending, approval_status: "approved" }], []]);
+    await expect(mod.clientPoMasterService.decidePo("po", "approve", "checker")).rejects.toThrow(/only a pending PO/);
+  });
+  it("nextApprovalState: legacy rows (approved_amount NULL) count their amount as approved", () => {
+    const legacy = { approval_status: "approved", approved_amount: null, total_amount: "1000.00" } as never;
+    expect(mod.nextApprovalState(legacy, 100000, "e")).toMatchObject({ status: "approved" });
+    expect(mod.nextApprovalState(legacy, 100001, "e")).toEqual({ status: "pending", requestedBy: "e" });
   });
 });

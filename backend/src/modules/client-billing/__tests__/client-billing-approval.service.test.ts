@@ -28,7 +28,7 @@ function mockConnection() {
 
 const APPROVABLE_INVOICE = {
   id: "inv-1", invoice_status: "proforma", cost_centre_id: "cc-1",
-  finance_year: "2026-27", grand_total: 35400,
+  finance_year: "2026-27", grand_total: 35400, total_amount: 30000, created_by: "maker-1",
   proforma_approved_at: "2026-10-14 10:00:00", po_numbers: null,
 };
 
@@ -51,7 +51,7 @@ describe("two-step approval (legacy View & Approve Proforma -> Invoice Approval)
   it("approveProforma stamps the approver, logs proforma_approved and mints nothing", async () => {
     const conn = mockConnection();
     conn.execute
-      .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "proforma", is_migrated: 0, proforma_approved_at: null }], []])
+      .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "proforma", is_migrated: 0, proforma_approved_at: null, total_amount: 100, created_by: "maker-1" }], []])
       .mockResolvedValue([{}, []]);
     const r = await clientBillingApprovalService.approveProforma({ invoiceId: "inv-1", userId: "u-9" });
     expect(r.id).toBe("inv-1");
@@ -143,6 +143,7 @@ describe("approveInvoice", () => {
     conn.execute
       .mockResolvedValueOnce([[APPROVABLE_INVOICE], []]) // invoice lookup
       .mockResolvedValueOnce([[{ companyName: "Mas Callnet India Pvt Ltd", stateCode: "09" }], []]) // cost centre + branch lookup
+      .mockResolvedValueOnce([[], []]) // minted bill number not used by another live bill
       .mockResolvedValueOnce([[{ payment_terms: "45 days" }], []]) // payment terms -> due date
       .mockResolvedValueOnce([{}, []]) // UPDATE client_invoice
       .mockResolvedValueOnce([{}, []]); // INSERT client_invoice_audit_log
@@ -151,9 +152,13 @@ describe("approveInvoice", () => {
     const result = await clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" });
 
     // Due date fixed at billing: invoice date + 45 credit days from the cost centre's terms.
-    const billUpdate = conn.execute.mock.calls[3];
+    const dupCheck = conn.execute.mock.calls[2];
+    expect(String(dupCheck[0])).toMatch(/WHERE ci.bill_no = \? AND ci.id <> \? AND ci.invoice_status <> 'rejected'/);
+    expect(dupCheck[1]).toEqual(["09-01/26-27", "inv-1", "mascallnetindiapvtltd"]);
+    const billUpdate = conn.execute.mock.calls[4];
     expect(String(billUpdate[0])).toMatch(/due_date = DATE_ADD\(invoice_date, INTERVAL \? DAY\)/);
-    expect(billUpdate[1]).toEqual(["09-01/26-27", 45, "inv-1"]);
+    expect(billUpdate[1]).toEqual(["09-01/26-27", 45, "u-1", "inv-1"]);
+    expect(String(billUpdate[0])).toMatch(/approved_by = \?, approved_at = NOW\(\)/);
 
     // Gap 3 fix: approveInvoice passes its own open-transaction `conn` through so the mint
     // runs on that connection instead of a separate pool-level call (avoids mixing pool-level
@@ -163,31 +168,29 @@ describe("approveInvoice", () => {
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(conn.release).toHaveBeenCalledTimes(1);
 
-    const auditCall = conn.execute.mock.calls[4];
+    const auditCall = conn.execute.mock.calls[5];
     expect(String(auditCall[0])).toMatch(/INSERT INTO client_invoice_audit_log/);
     expect(auditCall[1]).toEqual(expect.arrayContaining(["inv-1", "approved", "u-1"]));
   });
 
-  it("rejects more than 4 PO numbers before touching the database further", async () => {
+  it("rejects more than 4 stored PO numbers before touching the database further", async () => {
     const conn = mockConnection();
-    conn.execute.mockResolvedValueOnce([[APPROVABLE_INVOICE], []]);
+    conn.execute.mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, po_numbers: "PO1,PO2,PO3,PO4,PO5" }], []]);
 
     await expect(
-      clientBillingApprovalService.approveInvoice({
-        invoiceId: "inv-1", userId: "u-1",
-        poNumbers: ["PO1", "PO2", "PO3", "PO4", "PO5"],
-      })
+      clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" })
     ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/more than 4/) });
+    expect(conn.execute).toHaveBeenCalledTimes(1);
   });
 
   it("rejects when the sum of PO balances is less than the invoice grand total", async () => {
     const conn = mockConnection();
     conn.execute
-      .mockResolvedValueOnce([[APPROVABLE_INVOICE], []]) // invoice lookup
+      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, po_numbers: "PO1" }], []]) // invoice lookup
       .mockResolvedValueOnce([[{ id: "po-1", balance_amount: 10000 }], []]); // PO lookup, one PO, insufficient
 
     await expect(
-      clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1", poNumbers: ["PO1"] })
+      clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" })
     ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/PO balance/) });
 
     expect(mintBillNumber).not.toHaveBeenCalled();
@@ -196,34 +199,109 @@ describe("approveInvoice", () => {
   it("re-checks the PO under locks: unknown or out-of-period POs are refused, not silently dropped", async () => {
     const conn = mockConnection();
     conn.execute
-      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, invoice_date: "2026-10-14" }], []])
+      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, invoice_date: "2026-10-14", po_numbers: "PO1,PO-GHOST" }], []])
       .mockResolvedValueOnce([[{ id: "po-1", po_number: "PO1", period_from: "2026-04-01", period_to: "2026-09-30", balance_amount: 900000 }], []]);
     await expect(
-      clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1", poNumbers: ["PO1", "PO-GHOST"] })
+      clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" })
     ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/PO-GHOST not matched.*|PO1 does not cover/) });
-    const msg = (await clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1", poNumbers: ["PO1"] }).catch((e) => e.message)) as string;
-    void msg;
     expect(mintBillNumber).not.toHaveBeenCalled();
   });
 
   it("consumes PO balances and records client_po_particular rows when POs cover the total", async () => {
     const conn = mockConnection();
     conn.execute
-      .mockResolvedValueOnce([[APPROVABLE_INVOICE], []]) // invoice lookup
+      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, po_numbers: "PO1" }], []]) // invoice lookup
       .mockResolvedValueOnce([[{ id: "po-1", balance_amount: 40000 }], []]) // PO lookup
       .mockResolvedValueOnce([[{ companyName: "Mas Callnet India Pvt Ltd", stateCode: "09" }], []]) // cost centre lookup
+      .mockResolvedValueOnce([[], []]) // bill-number duplicate check
       .mockResolvedValueOnce([{}, []]) // UPDATE client_po_number balance
       .mockResolvedValueOnce([{}, []]) // INSERT client_po_particular
       .mockResolvedValueOnce([{}, []]) // UPDATE client_invoice
       .mockResolvedValueOnce([{}, []]); // INSERT audit log
     mintBillNumber.mockResolvedValueOnce("09-01/26-27");
 
-    await clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1", poNumbers: ["PO1"] });
+    await clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" });
 
-    const poUpdateCall = conn.execute.mock.calls[3];
+    const poUpdateCall = conn.execute.mock.calls[4];
     expect(String(poUpdateCall[0])).toMatch(/UPDATE client_po_number/);
-    const poParticularCall = conn.execute.mock.calls[4];
+    const poParticularCall = conn.execute.mock.calls[5];
     expect(String(poParticularCall[0])).toMatch(/INSERT INTO client_po_particular/);
+  });
+});
+
+describe("maker-checker, taxable total, PO approval and bill-number guard (audit 2026-10-14)", () => {
+  it("approveProforma: the creator cannot approve their own proforma (403, nothing written)", async () => {
+    const conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "proforma", is_migrated: 0, proforma_approved_at: null, total_amount: 100, created_by: "u-1" }], []]);
+    await expect(clientBillingApprovalService.approveProforma({ invoiceId: "inv-1", userId: "u-1" }))
+      .rejects.toMatchObject({ statusCode: 403, message: "You created this proforma — another approver must approve it" });
+    expect(conn.execute).toHaveBeenCalledTimes(1);
+    expect(String(conn.execute.mock.calls[0][0])).toMatch(/created_by[\s\S]*FOR UPDATE/);
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("approveInvoice (step 2 and bulk): the creator cannot approve; someone else who did step 1 may", async () => {
+    let conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, is_migrated: 0, created_by: "u-1" }], []]);
+    await expect(clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" }))
+      .rejects.toMatchObject({ statusCode: 403 });
+    expect(mintBillNumber).not.toHaveBeenCalled();
+
+    conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, is_migrated: 0, proforma_approved_by: "u-2" }], []])
+      .mockResolvedValueOnce([[{ companyName: "Mas", stateCode: "09" }], []])
+      .mockResolvedValue([[], []]);
+    mintBillNumber.mockResolvedValueOnce("09-02/26-27");
+    await expect(clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-2" }))
+      .resolves.toMatchObject({ billNo: "09-02/26-27" });
+  });
+
+  it("refuses a zero / negative taxable total at both steps", async () => {
+    let conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "proforma", is_migrated: 0, proforma_approved_at: null, total_amount: "0.00", created_by: "m" }], []]);
+    await expect(clientBillingApprovalService.approveProforma({ invoiceId: "inv-1", userId: "u-9" })).rejects.toThrow(/taxable total must be greater than zero/);
+    conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, is_migrated: 0, total_amount: -500 }], []]);
+    await expect(clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-9" })).rejects.toThrow(/taxable total must be greater than zero/);
+    expect(mintBillNumber).not.toHaveBeenCalled();
+  });
+
+  it("ignores any PO override: only the stored PO numbers are locked and consumed", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, is_migrated: 0, po_numbers: "PO-STORED" }], []])
+      .mockResolvedValueOnce([[{ id: "po-1", po_number: "PO-STORED", balance_amount: 50000 }], []])
+      .mockResolvedValueOnce([[{ companyName: "Mas", stateCode: "09" }], []])
+      .mockResolvedValue([[], []]);
+    mintBillNumber.mockResolvedValueOnce("09-03/26-27");
+    await clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-9", poNumbers: ["PO-OTHER"] } as never);
+    expect(conn.execute.mock.calls[1][1]).toEqual(["PO-STORED", "cc-1"]);
+  });
+
+  it("refuses a PO that is still waiting for approval in the PO master", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, is_migrated: 0, po_numbers: "PO1" }], []])
+      .mockResolvedValueOnce([[{ id: "po-1", po_number: "PO1", balance_amount: 900000, approval_status: "pending" }], []]);
+    await expect(clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-9" }))
+      .rejects.toThrow(/PO1 is waiting for approval in the PO master/);
+    expect(String(conn.execute.mock.calls[1][0])).toMatch(/approval_status/);
+    expect(mintBillNumber).not.toHaveBeenCalled();
+  });
+
+  it("refuses (409) a minted bill number another live bill of the same company carries, rolling back the counter", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, is_migrated: 0 }], []])
+      .mockResolvedValueOnce([[{ companyName: "MAS Callnet India Pvt. Ltd.", stateCode: "09" }], []])
+      .mockResolvedValueOnce([[{ id: "other-bill" }], []]);
+    mintBillNumber.mockResolvedValueOnce("09-05/26-27");
+    await expect(clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-9" }))
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/09-05\/26-27 is already used/) });
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+    expect(conn.commit).not.toHaveBeenCalled();
+    expect(conn.execute.mock.calls.some((c) => String(c[0]).includes("SET invoice_status = 'approved'"))).toBe(false);
   });
 });
 

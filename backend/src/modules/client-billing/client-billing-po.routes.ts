@@ -132,3 +132,17 @@ clientPoRouter.post("/:id", upload.single("file"), h(async (req, res) => {
   });
   res.json({ success: true, data });
 }));
+
+/** Approve a pending PO / amount increase (maker-checker: not the creator / editor). */
+clientPoRouter.post("/:id/approve", h(async (req, res) => {
+  await assertPoInScope(req, req.params.id);
+  const note = (req.body as { note?: string } | undefined)?.note;
+  res.json({ success: true, data: await clientPoMasterService.decidePo(req.params.id, "approve", req.authUser!.id, note) });
+}));
+
+/** Reject a pending PO / amount increase (reason of at least 5 characters). */
+clientPoRouter.post("/:id/reject", h(async (req, res) => {
+  await assertPoInScope(req, req.params.id);
+  const reason = (req.body as { reason?: string } | undefined)?.reason;
+  res.json({ success: true, data: await clientPoMasterService.decidePo(req.params.id, "reject", req.authUser!.id, reason) });
+}));

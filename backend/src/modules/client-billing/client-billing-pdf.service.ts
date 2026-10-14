@@ -80,7 +80,7 @@ interface CreditNoteRow extends RowDataPacket {
   id: string;
   invoice_id: string;
   cost_centre_id: string;
-  credit_status: "draft" | "approved";
+  credit_status: "draft" | "approved" | "rejected";
   category: string;
   finance_year: string;
   month_label: string;
@@ -143,6 +143,7 @@ interface CostCentreRow extends RowDataPacket {
   vendorGstState: string | null;
   vendorStateCode: string | null;
   billingClientName: string | null;
+  clientName?: string | null;
   companyName: string | null;
   stateCode: string | null;
   branchAddress: string | null;
@@ -258,7 +259,7 @@ async function loadCostCentre(costCentreId: string): Promise<CostCentreRow | und
             cc.ship_to_city AS shipToCity, cc.ship_to_pincode AS shipToPincode, b.gstin AS branchGstin,
             cc.hsn_code AS hsnCode, cc.sac_code AS sacCode, cc.service_tax_no AS serviceTaxNo,
             cc.vendor_gst_no AS vendorGstNo, cc.vendor_gst_state AS vendorGstState, cc.vendor_state_code AS vendorStateCode,
-            cc.billing_client_name AS billingClientName, cc.company_name AS companyName,
+            cc.billing_client_name AS billingClientName, cc.client_name AS clientName, cc.company_name AS companyName,
             b.gst_state_code AS stateCode, b.address AS branchAddress, b.city AS branchCity,
             b.state AS branchState, b.pincode AS branchPincode
      FROM cost_centre_master cc
@@ -343,7 +344,8 @@ function invoiceToPrintableDoc(invoice: InvoiceRow): PrintableDoc {
 function creditNoteToPrintableDoc(creditNote: CreditNoteRow): PrintableDoc {
   return {
     kind: "credit_note",
-    titleLabel: creditNote.credit_status === "draft" ? "Credit Note — Draft" : "Credit Note",
+    titleLabel: creditNote.credit_status === "draft" ? "Credit Note — Draft"
+      : creditNote.credit_status === "rejected" ? "Credit Note — Rejected" : "Credit Note",
     numberLabel: "Credit Note No",
     docNumber: creditNote.credit_no ?? "—",
     docDate: creditNote.credit_date,
@@ -368,7 +370,8 @@ function creditNoteToPrintableDoc(creditNote: CreditNoteRow): PrintableDoc {
  *  but must never leak onto a customer-facing PDF verbatim. If the name looks like an audit
  *  note rather than a client name, print only the confirmed short name before the dash. */
 function printableClientName(costCentre: CostCentreRow | undefined): string {
-  const raw = costCentre?.billingClientName || costCentre?.companyName || "";
+  // Billing name, then the cost centre's client name; company_name (our own company) only last.
+  const raw = costCentre?.billingClientName || costCentre?.clientName || costCentre?.companyName || "";
   if (!raw) return "—";
   const dashIdx = raw.indexOf(" — ");
   return dashIdx > 0 && raw.length > 60 ? raw.slice(0, dashIdx).trim() : raw;
@@ -443,7 +446,7 @@ function drawTitle(doc: Doc, printable: PrintableDoc) {
 /** The PDF's camelCase row through the shared resolver (client-billing-party.ts). */
 function partyOf(cc: CostCentreRow | undefined): BillingParty {
   return resolveBillingParty({
-    company_name: cc?.companyName, billing_client_name: cc?.billingClientName,
+    company_name: cc?.companyName, billing_client_name: cc?.billingClientName, client_name: cc?.clientName,
     service_tax_no: cc?.serviceTaxNo, vendor_gst_no: cc?.vendorGstNo, vendor_gst_state: cc?.vendorGstState,
     vendor_state_code: cc?.vendorStateCode, hsn_code: cc?.hsnCode, sac_code: cc?.sacCode,
     bill_to_address1: cc?.billToAddress1, bill_to_address2: cc?.billToAddress2, bill_to_address3: cc?.billToAddress3,

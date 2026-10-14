@@ -18,6 +18,10 @@ export const MONTH_RANGE_MAX_MONTHS = 12;
 
 /** Month-driven reports that can be stacked across months. */
 export const MONTH_STACKABLE_CODES = new Set<string>([
+  // The two registers stack month by month like the other attendance reports: each month keeps
+  // its own day columns (Day 1..Day 31) and a Month column tells the blocks apart.
+  "attendance-register-monthly",
+  "attendance-register-grid",
   "attendance-summary",
   "late-arrival-summary",
   "overtime-summary",
@@ -48,8 +52,6 @@ export const MONTH_STACKABLE_CODES = new Set<string>([
 
 /** Month-driven reports whose layout is bound to exactly one month. */
 export const MONTH_SINGLE_ONLY_CODES = new Set<string>([
-  "attendance-register-monthly",
-  "attendance-register-grid",
   "attendance-source-sheet",
   "leave-balance",
   "leave-balance-export",

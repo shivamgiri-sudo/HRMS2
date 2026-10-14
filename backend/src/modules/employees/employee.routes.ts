@@ -13,6 +13,7 @@ import {
 } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import { runEmployeeBankPennyDrop } from "./employeeBankPennyDrop.js";
+import { logLockContext } from "./lockContextLog.js";
 import { mobilityService } from "../mobility/mobility.service.js";
 import { employeeController as c } from "./employee.controller.js";
 import { employeeService } from "./employee.service.js";
@@ -1226,10 +1227,40 @@ router.put(
     }
 
     const placeholders = fields.map(() => "?").join(", ");
-    await db.execute(
-      `INSERT INTO employee_bank_detail (${fields.join(", ")}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${onDup.join(", ")}`,
-      vals,
-    );
+    // Production logged ER_LOCK_WAIT_TIMEOUT (1205, 50 s default) on this INSERT when another
+    // transaction held the employee's row. Wait 8 s per attempt instead of 50, retry once, and
+    // answer with a clear "nothing saved, try again" rather than a 500 after a minute.
+    const saveConn = await db.getConnection();
+    try {
+      await saveConn.query("SET SESSION innodb_lock_wait_timeout = 8");
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          await saveConn.execute(
+            `INSERT INTO employee_bank_detail (${fields.join(", ")}) VALUES (${placeholders}) ON DUPLICATE KEY UPDATE ${onDup.join(", ")}`,
+            vals,
+          );
+          break;
+        } catch (err: any) {
+          const lockError = err?.errno === 1205 || err?.errno === 1213;
+          if (lockError && attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            continue;
+          }
+          if (lockError) {
+            await logLockContext(`PUT bank-details employee=${String(empId).slice(0, 8)} errno=${err?.errno}`);
+            return res.status(503).json({
+              success: false,
+              error:
+                "Another update to this employee's record is in progress, so the bank details were not saved. Please try again in a minute.",
+            });
+          }
+          throw err;
+        }
+      }
+    } finally {
+      await saveConn.query("SET SESSION innodb_lock_wait_timeout = DEFAULT").catch(() => undefined);
+      saveConn.release();
+    }
 
     void logSensitiveAction({
       actor_user_id: req.authUser!.id,

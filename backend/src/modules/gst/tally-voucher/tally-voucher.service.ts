@@ -12,6 +12,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
 import { logSensitiveAction } from "../../../shared/auditLog.js";
 import { isValidGstin } from "../gst-export.service.js";
+import { ourGstinSql } from "../invoice-party.js";
 import { hasBlockingError } from "./tally-voucher-check.js";
 import {
   getVoucherKind,
@@ -154,7 +155,15 @@ export async function resolveCompanyName(
     [companyGstin],
   );
   const name = String(b[0]?.company_name ?? "").trim();
-  return name || null;
+  if (name) return name;
+  // A registration that only appears as a cost centre's own GST No. (see ourGstinSql).
+  const [c] = await q.execute<RowDataPacket[]>(
+    `SELECT MAX(bm.company_name) AS company_name
+       FROM cost_centre_master cm JOIN branch_master bm ON bm.id = cm.branch_id
+      WHERE UPPER(TRIM(cm.service_tax_no)) = ?`,
+    [companyGstin],
+  );
+  return String(c[0]?.company_name ?? "").trim() || null;
 }
 
 async function loadTracking(
@@ -680,7 +689,7 @@ export const tallyVoucherService = {
     const table =
       sourceType === "invoice" ? "client_invoice" : "client_credit_note";
     const [g] = await db.execute<RowDataPacket[]>(
-      `SELECT bm.gstin FROM ${table} d
+      `SELECT ${ourGstinSql("cm", "bm")} AS gstin FROM ${table} d
          JOIN cost_centre_master cm ON cm.id = d.cost_centre_id
          JOIN branch_master bm ON bm.id = cm.branch_id
         WHERE d.id = ? LIMIT 1`,

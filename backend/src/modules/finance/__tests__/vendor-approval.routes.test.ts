@@ -132,7 +132,7 @@ describe("PATCH /api/finance/vendor-approval/:id/approve", () => {
       .send({ editedPayload: { gst_number: "22AAAAA0000A1Z5" }, reviewNotes: "looks fine" });
 
     expect(res.status).toBe(200);
-    expect(approve).toHaveBeenCalledWith("req-1", "user-1", { gst_number: "22AAAAA0000A1Z5" }, "looks fine");
+    expect(approve).toHaveBeenCalledWith("req-1", "user-1", { gst_number: "22AAAAA0000A1Z5" }, "looks fine", expect.arrayContaining(["finance_head"]));
   });
 
   it("rejects a branch_admin from approving", async () => {

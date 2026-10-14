@@ -54,11 +54,23 @@ describe("mintBillNumber", () => {
     expect(result).toBe("09-10/26-27");
   });
 
-  it("scopes the counter row to kind='bill', scope_key='<stateCode>|<companyName>|<financeYear>'", async () => {
+  it("scopes the counter row to kind='bill', scope_key='<stateCode>|<normalised company>|<financeYear>'", async () => {
     execute.mockResolvedValueOnce([{ insertId: 1 }, []]);
     await clientBillingNumberingService.mintBillNumber("09", "Mas Callnet India Pvt Ltd", "2026-27");
     const [, params] = execute.mock.calls[0];
-    expect(params).toEqual(["bill", "09|Mas Callnet India Pvt Ltd|2026-27"]);
+    expect(params).toEqual(["bill", "09|mascallnetindiapvtltd|2026-27"]);
+  });
+
+  it("two spellings of one company share one counter key", async () => {
+    execute.mockResolvedValue([{ insertId: 1 }, []]);
+    await clientBillingNumberingService.mintBillNumber("09", "MAS Callnet India Pvt. Ltd.", "2026-27");
+    await clientBillingNumberingService.mintBillNumber("09", "Mas Callnet India, Pvt Ltd", "2026-27");
+    expect(execute.mock.calls[0][1]).toEqual(execute.mock.calls[1][1]);
+  });
+
+  it("refuses a malformed finance year before touching the counter", async () => {
+    await expect(clientBillingNumberingService.mintBillNumber("09", "Mas", "2026-2027")).rejects.toThrow(/financeYear/);
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 
@@ -73,7 +85,7 @@ describe("mintCreditNoteNumber", () => {
     execute.mockResolvedValueOnce([{ insertId: 1 }, []]);
     await clientBillingNumberingService.mintCreditNoteNumber("09", "Mas Callnet India Pvt Ltd", "2026-27");
     const [, params] = execute.mock.calls[0];
-    expect(params).toEqual(["credit_note", "09|Mas Callnet India Pvt Ltd|2026-27"]);
+    expect(params).toEqual(["credit_note", "09|mascallnetindiapvtltd|2026-27"]);
   });
 });
 

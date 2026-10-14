@@ -93,7 +93,7 @@ describe("getHiringDashboard", () => {
     // every filtered query carries the same scope bindings
     const filtered = execute.mock.calls.filter(([sql]) => String(sql).includes("is_followup_attempt"));
     expect(filtered).toHaveLength(5);
-    for (const call of filtered) expect(call[1]).toEqual(["NOIDA", "NOIDA", "NOIDA", "u1", "u1"]);
+    for (const call of filtered) expect(call[1]).toEqual(["noida", "noida", "noida", "noida", "u1", "u1"]);
   });
 
   it("does not leave an unhandled rejection when the summary query fails", async () => {

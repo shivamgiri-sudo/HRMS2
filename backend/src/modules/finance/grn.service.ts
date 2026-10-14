@@ -1144,29 +1144,7 @@ export const grnService = {
             );
           }
         }
-        if (effectiveStage === "finance_head") {
-          if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
-            throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who submitted this GRN",
-            );
-          }
-          if (
-            grn.branch_head_reviewed_by &&
-            String(grn.branch_head_reviewed_by) === actorUserId
-          ) {
-            throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head review",
-            );
-          }
-          if (
-            grn.accounts_head_reviewed_by &&
-            String(grn.accounts_head_reviewed_by) === actorUserId
-          ) {
-            throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who performed the Accounts Head review",
-            );
-          }
-        }
+        // Owner ruling 2026-10-14: the Finance Head is exempt from maker-checker at their own stage.
       }
 
       if (effectiveStage === "branch_head") {
@@ -1973,6 +1951,8 @@ export const grnService = {
     limit?: number;
     /** Opt-in only — GRN Search and other existing callers must keep showing drafts by default. */
     excludeDraft?: boolean;
+    /** Opt-in: only GRNs raised in HRMS (drops the db_bill-migrated rows). Budget drill-down. */
+    hrmsOnly?: boolean;
   }) {
     // A GRN split across cost centres/heads keeps ONE header row but several grn_cost_allocation
     // rows, each with its own share. When a cost-centre drill-down is active (the case this exists
@@ -2112,6 +2092,9 @@ export const grnService = {
     }
     if (filters.excludeDraft) {
       conditions.push("g.status <> 'draft'");
+    }
+    if (filters.hrmsOnly) {
+      conditions.push(`(${hrmsRaisedGrnSql("g")})`);
     }
     if (filters.financialYear) {
       conditions.push("g.financial_year = ?");
@@ -2268,19 +2251,6 @@ export const grnService = {
          ${where}
          ORDER BY g.created_at DESC
          LIMIT ? OFFSET ?
-       ),
-       emp_names AS (
-         -- Only the people who actually appear on this page: grouping all of employees cost ~2 s
-         -- cold on prod (59k rows) for at most five names per GRN.
-         SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name
-           FROM employees
-          WHERE user_id IN (
-                SELECT created_by FROM page
-                UNION SELECT reviewed_by FROM page
-                UNION SELECT branch_head_reviewed_by FROM page
-                UNION SELECT accounts_head_reviewed_by FROM page
-                UNION SELECT finance_head_reviewed_by FROM page)
-          GROUP BY user_id
        )
        SELECT g.*,
               bm.branch_name,
@@ -2303,20 +2273,6 @@ export const grnService = {
               -- Branch Head / Finance Head approval stage — verified never populated across its
               -- full history), routed to whichever review column matches this row's own
               -- two-stage model: Branch Head for imprest, Finance Head for vendor/salary.
-              COALESCE(CONCAT(cb.first_name, ' ', cb.last_name), g.legacy_raised_by_name) AS created_by_name,
-              COALESCE(CONCAT(rb.first_name, ' ', rb.last_name), g.legacy_approved_by_name) AS reviewed_by_name,
-              COALESCE(
-                CONCAT(bhb.first_name, ' ', bhb.last_name),
-                CASE WHEN g.grn_type = 'imprest' THEN g.legacy_approved_by_name END
-              ) AS branch_head_reviewed_by_name,
-              -- No legacy fallback here: the Accounts Head approval stage postdates every
-              -- db_bill-migrated row (owner ruling, 2026-09-12) — a legacy row simply never has
-              -- one, which is honestly NULL rather than borrowed from legacy_approved_by_name.
-              CONCAT(ahb.first_name, ' ', ahb.last_name) AS accounts_head_reviewed_by_name,
-              COALESCE(
-                CONCAT(fhb.first_name, ' ', fhb.last_name),
-                CASE WHEN g.grn_type <> 'imprest' THEN g.legacy_approved_by_name END
-              ) AS finance_head_reviewed_by_name,
               -- This drill-down context's own share of a split GRN — NULL when costCentreId was
               -- not supplied, or when this GRN was never split (a single-cost-centre GRN has no
               -- rows in the allocation table at all, and the header amount already IS its whole
@@ -2332,11 +2288,6 @@ export const grnService = {
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
          LEFT JOIN finance_budget_header h ON h.id = g.budget_id
          LEFT JOIN finance_budget_line l ON l.id = g.budget_line_id
-         LEFT JOIN emp_names cb ON cb.user_id = g.created_by
-         LEFT JOIN emp_names rb ON rb.user_id = g.reviewed_by
-         LEFT JOIN emp_names bhb ON bhb.user_id = g.branch_head_reviewed_by
-         LEFT JOIN emp_names ahb ON ahb.user_id = g.accounts_head_reviewed_by
-         LEFT JOIN emp_names fhb ON fhb.user_id = g.finance_head_reviewed_by
          ${contextAllocationJoin.replace("/*PAGE_IDS*/", "AND gca.grn_request_id IN (SELECT id FROM page)")}
         ORDER BY g.created_at DESC`,
       [...params, limit, offset, ...contextAllocationParams],
@@ -2345,6 +2296,43 @@ export const grnService = {
       `SELECT COUNT(*) AS total FROM grn_request g ${where}`,
       params,
     );
+
+    // Reviewer/creator display names, looked up only for the people on this page. This was five
+    // LEFT JOINs to a GROUP BY over all 59k employees; ~2 s cold on prod, and a CTE/IN variant of
+    // it was far worse. Same rules as the SQL it replaces: MIN(first_name)/MIN(last_name) per
+    // user, CONCAT is NULL when either part is NULL, legacy_* names fill in when there is no user.
+    const userIds = new Set<string>();
+    for (const row of rows as RowDataPacket[]) {
+      for (const key of ["created_by", "reviewed_by", "branch_head_reviewed_by", "accounts_head_reviewed_by", "finance_head_reviewed_by"]) {
+        if (row[key]) userIds.add(String(row[key]));
+      }
+    }
+    const nameByUser = new Map<string, string | null>();
+    if (userIds.size > 0) {
+      const ids = [...userIds];
+      const [nameRows] = await db.query<RowDataPacket[]>(
+        `SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name
+           FROM employees WHERE user_id IN (?) GROUP BY user_id`,
+        [ids],
+      );
+      for (const r of nameRows) {
+        nameByUser.set(
+          String(r.user_id),
+          r.first_name == null || r.last_name == null ? null : `${r.first_name} ${r.last_name}`,
+        );
+      }
+    }
+    const personName = (id: unknown): string | null => (id ? nameByUser.get(String(id)) ?? null : null);
+    for (const row of rows as RowDataPacket[]) {
+      const imprest = row.grn_type === "imprest";
+      row.created_by_name = personName(row.created_by) ?? row.legacy_raised_by_name ?? null;
+      row.reviewed_by_name = personName(row.reviewed_by) ?? row.legacy_approved_by_name ?? null;
+      row.branch_head_reviewed_by_name =
+        personName(row.branch_head_reviewed_by) ?? (imprest ? row.legacy_approved_by_name ?? null : null);
+      row.accounts_head_reviewed_by_name = personName(row.accounts_head_reviewed_by);
+      row.finance_head_reviewed_by_name =
+        personName(row.finance_head_reviewed_by) ?? (!imprest ? row.legacy_approved_by_name ?? null : null);
+    }
 
     return {
       data: (rows as RowDataPacket[]).map(decorateGrnPendency),

@@ -47,13 +47,13 @@ async function tallyFetch(init: { method: "GET" | "POST"; body?: string }): Prom
   }
 }
 
-export type TallyImportResult = { created: number; altered: number; errors: number; exceptions: number; lineErrors: string[] };
+export type TallyImportResult = { created: number; altered: number; ignored: number; errors: number; exceptions: number; lineErrors: string[] };
 
 /** Pulls the counters and error text out of Tally's import response. Exported for tests. */
 export function parseTallyResponse(xml: string): TallyImportResult {
   const num = (tag: string) => Number((xml.match(new RegExp(`<${tag}>\\s*(-?\\d+)\\s*</${tag}>`, "i")) ?? [])[1] ?? 0);
   const lineErrors = [...xml.matchAll(/<LINEERROR>([\s\S]*?)<\/LINEERROR>/gi)].map((m) => m[1].trim()).filter(Boolean);
-  return { created: num("CREATED"), altered: num("ALTERED"), errors: num("ERRORS"), exceptions: num("EXCEPTIONS"), lineErrors };
+  return { created: num("CREATED"), altered: num("ALTERED"), ignored: num("IGNORED"), errors: num("ERRORS"), exceptions: num("EXCEPTIONS"), lineErrors };
 }
 
 export const salaryVoucherTallyPush = {
@@ -90,8 +90,10 @@ export const salaryVoucherTallyPush = {
       let outcome: "posted" | "failed" = "failed";
       let detail = "";
       try {
-        const parsed = parseTallyResponse(await tallyFetch({ method: "POST", body: buildTallyXml([v], cfg.company) }));
+        const parsed = parseTallyResponse(await tallyFetch({ method: "POST", body: buildTallyXml([v], cfg.company, runId) }));
         if (parsed.created + parsed.altered > 0 && parsed.errors === 0 && parsed.exceptions === 0) { outcome = "posted"; detail = `Created ${parsed.created}`; }
+        // Same REMOTEID already in Tally (posted earlier, e.g. by a file import): Tally ignores it, nothing is doubled.
+        else if (parsed.ignored > 0 && parsed.errors === 0 && parsed.exceptions === 0) { outcome = "posted"; detail = "Already in Tally (ignored, not doubled)"; }
         else detail = parsed.lineErrors.join("; ") || `Tally rejected it (created ${parsed.created}, errors ${parsed.errors}, exceptions ${parsed.exceptions}).`;
       } catch (error) {
         detail = (error as Error).message;

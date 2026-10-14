@@ -50,7 +50,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildPayslipEarningComponents, prorateToRupee, sumProratedComponents } from "../payrollCalculate.service.js";
+import { buildPayslipEarningComponents, prorateToRupee, sumProratedComponents, earnedGrossForPackage } from "../payrollCalculate.service.js";
 
 function sum(components: Array<{ amount: number }>): number {
   return Math.round(components.reduce((s, c) => s + c.amount, 0) * 100) / 100;
@@ -350,5 +350,22 @@ describe("buildPayslipEarningComponents — db_bill parity and proration", () =>
       convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
     expect(components.find((c) => c.code === "BASIC")?.amount).toBe(4000);
+  });
+});
+
+describe("earnedGrossForPackage - a package whose components do not add up to its gross", () => {
+  it("sums the rounded components when they add up to the stated gross", () => {
+    const pkg = { BASIC: 50000, HRA: 17568, BONUS: 4165, CONV: 1600 };
+    expect(earnedGrossForPackage(73333, pkg, 25, 31)).toBe(59140);
+  });
+
+  it("MAS63489: gross 23,500 with the 1,041 bonus missing from its components still earns the stated gross", () => {
+    const missingBonus = { BASIC: 11500, HRA: 7359, CONV: 1600, SPECIAL: 2000 }; // 22,459 of 23,500
+    expect(earnedGrossForPackage(23500, missingBonus, 31, 31)).toBe(23500);
+    expect(earnedGrossForPackage(23500, missingBonus, 20, 31)).toBe(Math.round((23500 * 20) / 31));
+  });
+
+  it("a sub-rupee gap is rounding, not a missing component", () => {
+    expect(earnedGrossForPackage(1000.4, { BASIC: 1000 }, 31, 31)).toBe(1000);
   });
 });

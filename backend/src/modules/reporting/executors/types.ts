@@ -370,18 +370,27 @@ export function appendFilterConditions(
  * Pinned to Asia/Kolkata rather than the host's local time so the answer does not depend on
  * how the server happens to be configured.
  */
-export function businessToday(): string {
+export function businessToday(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(new Date());
+  }).format(now);
 }
 
 export function dateParam(value: unknown, fallback: string): string {
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   return fallback;
+}
+
+/**
+ * Attendance has not happened yet on a future date, so a day-by-day attendance report must not
+ * run past today. A range that starts after today therefore comes back empty (from > to).
+ */
+export function capAtToday(date: string, now: Date = new Date()): string {
+  const today = businessToday(now);
+  return date > today ? today : date;
 }
 
 export function monthParam(value: unknown): string {

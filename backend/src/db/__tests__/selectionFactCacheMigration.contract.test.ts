@@ -15,7 +15,15 @@ describe("migration 2146 selection_person_fact", () => {
     const entries = [...manifest.matchAll(/^\s*"(migrations\/[^"]+\.sql)",/gm)].map((m) => m[1]);
     const at = entries.indexOf(`migrations/${FILE}`);
     expect(entries[at - 1]).toBe("migrations/2145_requisition_selection_rules.sql");
-    for (const e of entries.slice(at + 1)) expect(Number(e.match(/migrations\/(\d+)_/)![1]), e).toBeGreaterThan(2146);
+    // 1975 / 1976 (client billing P5 + Tally tables) were registered after this one although numbered below it:
+    // their numbers were allocated earlier on another branch and migration-manifest-guard.test.ts forbids
+    // reordering released entries. Both depend only on 1300/1301, registered long before.
+    const LATE_REGISTERED = new Set(["1975", "1976"]);
+    for (const e of entries.slice(at + 1)) {
+      const num = e.match(/migrations\/(\d+)_/)![1];
+      if (LATE_REGISTERED.has(num)) continue;
+      expect(Number(num), e).toBeGreaterThan(2146);
+    }
   });
   it("creates the cache table only if missing: one row per person and source kind, indexed for the preview read", () => {
     const st = splitSql(sql);

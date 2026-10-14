@@ -19,7 +19,15 @@ describe("migration 2145 selection rules", () => {
     const at = entries.indexOf(`migrations/${FILE}`);
     expect(at).toBeGreaterThan(-1);
     // registered after everything that was present; only later-numbered migrations may follow it
-    for (const e of entries.slice(at + 1)) expect(Number(e.match(/migrations\/(\d+)_/)![1]), e).toBeGreaterThan(2145);
+    // 1975 / 1976 (client billing P5 + Tally tables) were registered after this one although numbered below it:
+    // their numbers were allocated earlier on another branch and migration-manifest-guard.test.ts forbids
+    // reordering released entries. Both depend only on 1300/1301, registered long before.
+    const LATE_REGISTERED = new Set(["1975", "1976"]);
+    for (const e of entries.slice(at + 1)) {
+      const num = e.match(/migrations\/(\d+)_/)![1];
+      if (LATE_REGISTERED.has(num)) continue;
+      expect(Number(num), e).toBeGreaterThan(2145);
+    }
     expect(entries.filter((e) => e.includes("/2145_"))).toHaveLength(1);
   });
 

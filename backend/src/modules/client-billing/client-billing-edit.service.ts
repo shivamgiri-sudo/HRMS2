@@ -26,6 +26,8 @@ import {
   assertMonthLabelInFinanceYear,
   computeInvoiceAmounts,
 } from "./client-billing-tax.js";
+import { assertDateInFinanceYear, assertDescription, validateBillLines } from "./client-billing-validation.js";
+import { assertPositiveTotal } from "./client-billing.service.js";
 
 export interface EditLineInput {
   particulars: string;
@@ -65,25 +67,14 @@ function clientError(message: string): Error {
 }
 
 function validateLines(lines: EditLineInput[]): void {
-  if (lines.length === 0)
-    throw clientError("At least one line item is required");
-  for (const line of lines) {
-    if (!String(line.particulars ?? "").trim()) {
-      throw clientError("Every line needs particulars");
-    }
-    if (!Number.isFinite(line.qty) || line.qty <= 0) {
-      throw clientError("Line quantity must be greater than zero");
-    }
-    if (!Number.isFinite(line.rate) || line.rate < 0) {
-      throw clientError("Line rate must be zero or more");
-    }
-  }
+  validateBillLines(lines);
 }
 
 async function updateProforma(
   input: UpdateProformaInput,
 ): Promise<UpdateProformaResult> {
   if (input.lines) validateLines(input.lines);
+  assertDescription(input.description);
   const refs = input.references ? normaliseReferences(input.references) : null;
 
   const conn = await db.getConnection();
@@ -114,10 +105,13 @@ async function updateProforma(
     if (!category || category.length > 50) {
       throw clientError("category is required (max 50 characters)");
     }
-    const invoiceDate =
-      input.invoiceDate ?? String(invoice.invoice_date).slice(0, 10);
+    const invoiceDate = assertDateInFinanceYear(
+      input.invoiceDate ?? String(invoice.invoice_date).slice(0, 10),
+      financeYear,
+      "Invoice date",
+    );
     const description =
-      input.description === undefined ? invoice.description : input.description;
+      input.description === undefined ? invoice.description : (String(input.description ?? "").trim() || null);
     const applyGst = input.applyGst ?? Boolean(invoice.apply_gst);
     // Apply GST is the one tax switch on the form; Apply Tax Calculation follows it when GST is sent.
     const applyTaxCalc = input.applyTaxCalc ?? (input.applyGst !== undefined ? input.applyGst : Number(invoice.apply_tax_calc ?? 1) === 1);
@@ -164,6 +158,7 @@ async function updateProforma(
     }
 
     const amounts = computeInvoiceAmounts(lines, gstType, applyTaxCalc && applyGst);
+    assertPositiveTotal(amounts.totalAmount);
 
     const poNumbers = refs
       ? refs.poNumbers
@@ -244,12 +239,22 @@ async function updateProforma(
     }
 
     if (refs) {
+      const newPo = refs.poNumbers.length > 0 ? refs.poNumbers.join(",") : null;
+      // H10: a PO sign-off ("Approve PO") was for the old PO list; a changed list needs it again.
+      const poChanged = parsePoNumbers(invoice.po_numbers).join(",").toLowerCase() !== (newPo ?? "").toLowerCase();
+      if (poChanged && Number(invoice.po_approved ?? 0) === 1) {
+        await conn.execute<ResultSetHeader>(
+          `UPDATE client_invoice SET po_approved = 0, po_approved_by = NULL, po_approved_at = NULL WHERE id = ?`,
+          [input.invoiceId],
+        );
+        changed.push("PO approval cleared (PO numbers changed)");
+      }
       await conn.execute<ResultSetHeader>(
         `UPDATE client_invoice
          SET po_numbers = ?, grn_no = ?, grn_date = ?, jcc_no = ?, jcc_date = ?, rcm_applicable = ?
          WHERE id = ?`,
         [
-          refs.poNumbers.length > 0 ? refs.poNumbers.join(",") : null,
+          newPo,
           refs.grnNo,
           refs.grnDate,
           refs.jccNo,

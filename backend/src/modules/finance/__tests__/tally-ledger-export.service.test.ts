@@ -5,6 +5,7 @@ const h = vi.hoisted(() => {
   const run = vi.fn(async (sql: string, params: any[] = []) => {
     const pick = (rows: any[]) => rows.filter((r) => params.includes(r.id));
     if (/FROM journal_entry\s/.test(sql) && /source_type IN/.test(sql)) return [state.entries, undefined];
+    if (/FROM journal_entry\s/.test(sql) && /source_id IN/.test(sql)) return [state.entries.filter((e: any) => params.includes(e.source_id)), undefined];
     if (/FROM journal_entry_line/.test(sql)) return [state.lines, undefined];
     if (/FROM vendor_master/.test(sql)) return [pick([{ id: "v1", n: "OESPL Private Limited" }]), undefined];
     if (/FROM payable_account_master/.test(sql))
@@ -15,7 +16,9 @@ const h = vi.hoisted(() => {
       ]), undefined];
     if (/FROM company_bank_account/.test(sql)) return [pick([{ id: "b1", n: "HDFC Bank CA" }, { id: "b2", n: "ICICI Bank CA" }]), undefined];
     if (/FROM finance_expense_sub_head_master/.test(sql)) return [pick([{ id: "s1", n: "Office Rent", pnl_bucket: "bmc_non_people" }]), undefined];
-    if (/FROM branch_master/.test(sql)) return [pick([{ id: "br1", n: "NOIDA-2", branch_name: "NOIDA-2", code: null }, { id: "br2", n: "NOIDA-DIALDESK", branch_name: "NOIDA-DIALDESK", code: "NOIDAD" }]), undefined];
+    if (/FROM branch_master/.test(sql)) return [pick([{ id: "br1", n: "NOIDA-2", branch_name: "NOIDA-2", code: null }, { id: "br2", n: "NOIDA-DIALDESK", branch_name: "NOIDA-DIALDESK", code: null }]), undefined];
+    if (/FROM tally_legacy_name/.test(sql) && params?.[0] === "branch")
+      return [[{ entity_id: "br2", tally_name: "NOIDA-DIALDESK", tally_code: "NOIDAD" }].filter((r) => params.includes(r.entity_id)), undefined];
     if (/FROM payment_voucher/.test(sql)) return [pick(state.pvs), undefined];
     if (/FROM imprest_manager/.test(sql)) return [pick([{ id: "im1", n: "Aman Lawaniya" }]), undefined];
     if (/FROM client_invoice/.test(sql)) return [[], undefined];
@@ -45,7 +48,7 @@ vi.mock("../grn-tally-download.service.js", () => ({
   }),
 }));
 
-import { buildLedgerTallyExport } from "../tally-ledger-export.service.js";
+import { buildLedgerTallyExport, buildPaymentVoucherTallyXml } from "../tally-ledger-export.service.js";
 
 const entry = (id: string, source: string, sourceId: string | null, branch: string | null = null) =>
   ({ id, entry_date: "2026-09-15", narration: `${source} ${id}`, source_type: source, source_id: sourceId, branch_id: branch });
@@ -125,5 +128,21 @@ describe("buildLedgerTallyExport", () => {
     const { xml, summary } = await buildLedgerTallyExport({ month: "2026-09", kind: "payments" });
     expect(vouchers(xml)).toHaveLength(0);
     expect(summary.exceptions).toEqual([{ kind: "payments", ref: "PV/5", reason: expect.stringMatching(/no Tally ledger name/) }]);
+  });
+
+  it("Bank Ledger file: chosen payment vouchers, same voucher and REMOTEID as the month file, with masters", async () => {
+    h.state.entries = [entry("je1", "payment_voucher", "pv1"), entry("je9", "payment_voucher", "pv9")];
+    h.state.lines = [line("je1", 1, "vendor", "v1", 50000, 0), line("je1", 2, "bank_account", "b1", 0, 45000), line("je1", 3, "payable_account", "tds", 0, 5000)];
+    h.state.pvs = [{ id: "pv1", voucher_number: "PV/HQ/202609/0001", voucher_type: "payment", source_type: "vendor_grn" }];
+    const bank = await buildPaymentVoucherTallyXml(["pv1"]);
+    const month = await buildLedgerTallyExport({ month: "2026-09", kind: "payments" });
+    expect(bank.count).toBe(1);
+    expect(bank.exceptions).toEqual([]);
+    const [v] = vouchers(bank.xml);
+    expect(v).toContain('REMOTEID="HRMS-JE-je1"');
+    expect(v).toBe(vouchers(month.xml).find((x) => x.includes("HRMS-JE-je1")));
+    expect(bank.xml).toContain("<IMPORTDUPS>@@DUPIGNORE</IMPORTDUPS>");
+    expect(bank.xml).toContain('<LEDGER NAME="OESPL Private Limited" ACTION="Create">');
+    expect(bank.xml).not.toContain("je9");
   });
 });

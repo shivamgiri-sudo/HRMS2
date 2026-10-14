@@ -46,12 +46,12 @@ beforeEach(() => {
 });
 
 describe("cost centre L1 approval — maker-checker", () => {
-  it("refuses when the approver raised the cost centre", async () => {
+  it("exempts the Finance Head — they may approve a cost centre they raised (owner ruling 2026-10-14)", async () => {
     execute.mockResolvedValue([[rowInPendingL1()], []]);
     const svc = await service();
     await expect(
       svc.approveL1(CC_ID, { id: CREATOR, role: "finance_head" }),
-    ).rejects.toMatchObject({ statusCode: 403 });
+    ).resolves.toBeDefined();
   });
 
   it("refuses when the approver submitted it", async () => {

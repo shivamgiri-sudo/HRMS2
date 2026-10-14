@@ -10,6 +10,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { splitByLock, tallyExportLock, type LockItem } from "./tally-export-lock.service.js";
 import { salaryVoucherService, type Voucher } from "./salary-voucher.service.js";
 import { billSalaryVoucherService } from "./salary-voucher-bill.service.js";
+import { tallyCompanyName } from "./tally-ledger-export.service.js";
 
 /**
  * Payroll → Tally salary voucher API.
@@ -190,7 +191,7 @@ salaryVoucherRouter.get(
       if (format === "xml") {
         res.setHeader("Content-Type", "application/xml; charset=utf-8");
         res.setHeader("Content-Disposition", `attachment; filename="${base}.xml"`);
-        return res.send(buildTallyXml(vouchers));
+        return res.send(buildTallyXml(vouchers, tallyCompanyName(), req.params.runId));
       }
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${base}.csv"`);

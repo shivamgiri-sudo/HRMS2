@@ -9,6 +9,9 @@ import {
 } from "./client-billing-tax.js";
 import { checkPoCoverage, normaliseReferences, type InvoiceReferenceInput } from "./client-billing-po.js";
 import { clientBillingProvisionService } from "./client-billing-provision.service.js";
+import { assertDateInFinanceYear, assertDescription, validateBillLines } from "./client-billing-validation.js";
+import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
+import { toPaise } from "./client-billing-tax.js";
 
 export interface CostCentreTaxRow {
   gstType: string;
@@ -87,12 +90,10 @@ export function normaliseInvoiceType(value: unknown): InvoiceType {
   return match;
 }
 
-function validateLines(lines: ProformaLineInput[]): void {
-  if (lines.length === 0) throw clientError("At least one line item is required");
-  for (const line of lines) {
-    if (!String(line.particulars ?? "").trim()) throw clientError("Every line needs particulars");
-    if (!Number.isFinite(line.qty) || line.qty <= 0) throw clientError("Line quantity must be greater than zero");
-    if (!Number.isFinite(line.rate) || line.rate < 0) throw clientError("Line rate must be zero or more");
+/** H6: a proforma's taxable total (charges - deductions) must be above zero. */
+export function assertPositiveTotal(totalAmount: number): void {
+  if (toPaise(totalAmount) <= 0) {
+    throw clientError("The taxable total must be greater than zero — charges must outweigh deductions");
   }
 }
 
@@ -105,8 +106,10 @@ function validateLines(lines: ProformaLineInput[]): void {
  * taxable total is drawn from the cost centre's approved provision for the month.
  */
 async function createProforma(input: CreateProformaInput): Promise<ProformaResult> {
-  validateLines(input.lines);
+  validateBillLines(input.lines);
   assertMonthLabelInFinanceYear(input.monthLabel, input.financeYear);
+  assertDateInFinanceYear(input.invoiceDate, input.financeYear, "Invoice date");
+  assertDescription(input.description);
   // Category is no longer asked on the proforma (owner feedback 2026-10-14); the column is NOT NULL.
   const category = String(input.category ?? "").trim() || "Others";
   if (category.length > 50) throw clientError("category is at most 50 characters");
@@ -123,7 +126,8 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
       `SELECT cc.gst_type AS gstType, b.gst_state_code AS stateCode,
               cc.service_tax_no AS supplierGstin, cc.vendor_gst_no AS clientGstin,
               cc.vendor_state_code AS clientStateCode,
-              cc.tally_head AS tallyHead, cc.billing_client_name AS clientTallyName
+              cc.tally_head AS tallyHead, cc.billing_client_name AS clientTallyName,
+              cc.active_status AS activeStatus, (${ownCompanyCostCentreSql("cc")}) AS isMas
        FROM cost_centre_master cc
        LEFT JOIN branch_master b ON b.id = cc.branch_id
        WHERE cc.id = ?`,
@@ -131,9 +135,17 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
     );
     const costCentre = costCentreRows[0] as (CostCentreTaxRow & {
       tallyHead: string | null; clientTallyName: string | null;
+      activeStatus?: number | string | null; isMas?: number | string | null;
     }) | undefined;
     if (!costCentre) {
       throw clientError(`cost_centre_master ${input.costCentreId} not found`);
+    }
+    // M2: only an active MAS Callnet India cost centre can be billed (same predicate as the pickers).
+    if (Number(costCentre.activeStatus) !== 1) {
+      throw clientError("This cost centre is inactive — it cannot be billed");
+    }
+    if (Number(costCentre.isMas) !== 1) {
+      throw clientError("This cost centre is not a MAS Callnet India Pvt Ltd cost centre — it cannot be billed here");
     }
     if (!costCentre.stateCode) {
       throw clientError(`cost centre ${input.costCentreId} has no branch GST state code — cannot mint a proforma number`);
@@ -154,6 +166,7 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
     // One switch on the form: Apply GST. Apply Tax Calculation follows it unless sent explicitly.
     const applyTaxCalc = input.applyTaxCalc ?? applyGst;
     const amounts = computeInvoiceAmounts(input.lines, gstType, applyTaxCalc && applyGst);
+    assertPositiveTotal(amounts.totalAmount);
 
     if (refs && refs.poNumbers.length > 0) {
       const coverage = await checkPoCoverage(
@@ -173,7 +186,7 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
        VALUES (?, ?, 'proforma', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         invoiceId, input.costCentreId, category, input.financeYear, input.monthLabel,
-        input.invoiceDate, input.description ?? null, proformaNo, gstType,
+        input.invoiceDate, String(input.description ?? "").trim() || null, proformaNo, gstType,
         applyGst ? 1 : 0, amounts.totalAmount, amounts.igstAmount, amounts.cgstAmount,
         amounts.sgstAmount, amounts.grandTotal, input.createdBy,
         // Frozen at creation time, same as legacy's own cost_TallyHead/cost_client_tally_name

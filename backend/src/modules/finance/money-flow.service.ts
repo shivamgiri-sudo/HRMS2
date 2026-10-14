@@ -8,9 +8,9 @@
  * its funnel stage and the drill-down rows behind it always agree.
  *
  * Settled per bill = received + TDS + other deduction from HRMS receipts (SETTLEMENT_SQL). A bill
- * with no HRMS receipt allocation yet (I-Spark bills until their collections are imported, or bills
- * marked paid on the old Client Payments screen) falls back to client_invoice_payment_status, the
- * figure finance recorded there. Outstanding = grand total - settled - approved credit notes.
+ * never allocated on any HRMS receipt, not even a voided one (I-Spark bills until their collections
+ * are imported, or bills marked paid on the old Client Payments screen), falls back to
+ * client_invoice_payment_status, the figure finance recorded there. Outstanding = grand total - settled - approved credit notes.
  */
 import type { RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
@@ -87,7 +87,10 @@ export function ageBucket(daysOverdue: number): AgeBucket {
 
 /** Pure: one DB row -> BillRow with paise-exact maths. Exported for tests. */
 export function toBillRow(r: RowDataPacket, today: string): BillRow {
-  const fromReceipts = r.s_invoice_id != null;
+  // A bill ever allocated on an HRMS receipt is settled from receipts only, even when every
+  // receipt on it was voided (SETTLEMENT_SQL then has no row): falling back to the stale
+  // client_invoice_payment_status row there would resurrect money that was taken back.
+  const fromReceipts = r.s_invoice_id != null || Number(r.has_allocation ?? 0) === 1;
   const fromCips = !fromReceipts && r.cips_invoice_id != null;
   const received = fromReceipts ? toPaise(r.s_received) : fromCips ? toPaise(r.cips_received) : 0;
   const tds = fromReceipts ? toPaise(r.s_tds) : fromCips ? toPaise(r.cips_tds) : 0;
@@ -150,6 +153,7 @@ async function loadBills(q: MoneyFlowQuery, fy: string, today: string): Promise<
             s.invoice_id AS s_invoice_id, s.received AS s_received, s.tds AS s_tds, s.deduction AS s_deduction, s.banked AS s_banked,
             cips.invoice_id AS cips_invoice_id, cips.amount_received AS cips_received, cips.tds_deducted AS cips_tds,
             cips.other_deduction AS cips_deduction,
+            EXISTS (SELECT 1 FROM client_receipt_allocation ra WHERE ra.invoice_id = ci.id) AS has_allocation,
             COALESCE(cn.credited, 0) AS credited
      FROM client_invoice ci
      JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id

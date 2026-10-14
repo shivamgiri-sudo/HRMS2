@@ -10,6 +10,7 @@ import { getCurrentDateIST, getGeneratedAtIST } from "../../shared/istDate.js";
 import { fetchAllBranchHealthData } from "./query.js";
 import { buildBranchHealthReport, type BranchHealthReport } from "./metrics.js";
 import { renderEmail, subjectLine } from "./template.js";
+import { buildRawWorkbook, rawWorkbookFilename } from "./rawWorkbook.js";
 import { resolveRecipients, resolveEscalationRecipients } from "./recipients.js";
 import { summarisePeers } from "./rollup.js";
 import { attachStreaks, recordSnapshot, CHRONIC_DAYS } from "./history.js";
@@ -171,12 +172,21 @@ export async function sendBranchHealthReports(
         });
         continue;
       }
+      // Raw data behind every figure, so the team can validate the report.
+      const rawXlsx = await buildRawWorkbook(b.report, getGeneratedAtIST());
       const info = await transporter.sendMail({
         from: `"MAS Callnet Branch Health" <${env.SMTP_FROM || env.SMTP_USER}>`,
         to,
         cc: cc.length ? cc : undefined,
         subject,
         html: b.html,
+        attachments: [
+          {
+            filename: rawWorkbookFilename(b.branch, b.reportDate),
+            content: rawXlsx,
+            contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          },
+        ],
       });
       await opts.onSent?.(b.branch, b.reportDate);
       if (!redirected) {

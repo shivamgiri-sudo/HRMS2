@@ -1,5 +1,13 @@
 import type { ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { assertFinanceYear, normaliseCompanyKey } from "./client-billing-tax.js";
+
+export { normaliseCompanyKey };
+
+/** `state|company|fy` with the company normalised; the only key the bill / credit-note counters use. */
+export function counterScopeKey(stateCode: string, companyName: string | null | undefined, financeYear: string): string {
+  return `${stateCode}|${normaliseCompanyKey(companyName)}|${financeYear}`;
+}
 
 /**
  * Either the pool-level `db` or a `PoolConnection` already checked out of it by a caller
@@ -72,7 +80,8 @@ async function mintProformaNumber(stateCode: string, conn?: Executor): Promise<s
  * connection). Callers outside a transaction omit it and fall back to the pool, unchanged.
  */
 async function mintBillNumber(stateCode: string, companyName: string, financeYear: string, conn?: Executor): Promise<string> {
-  const scopeKey = `${stateCode}|${companyName}|${financeYear}`;
+  assertFinanceYear(financeYear);
+  const scopeKey = counterScopeKey(stateCode, companyName, financeYear);
   const n = await nextSequenceValue("bill", scopeKey, conn);
   const idx = n < 10 ? `0${n}` : String(n);
   const fyShort = financeYear.slice(2); // "2026-27" -> "26-27", matches legacy substr($f_year1,2,6)
@@ -90,7 +99,8 @@ async function mintBillNumber(stateCode: string, companyName: string, financeYea
  * `conn` through here, closing the pool-starvation hazard this docstring used to flag.
  */
 async function mintCreditNoteNumber(stateCode: string, companyName: string, financeYear: string, conn?: Executor): Promise<string> {
-  const scopeKey = `${stateCode}|${companyName}|${financeYear}`;
+  assertFinanceYear(financeYear);
+  const scopeKey = counterScopeKey(stateCode, companyName, financeYear);
   const n = await nextSequenceValue("credit_note", scopeKey, conn);
   const idx = n < 10 ? `0${n}` : String(n);
   const fyShort = financeYear.slice(2);

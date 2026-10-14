@@ -66,11 +66,11 @@ describe("filing guards", () => {
     expect(src).toContain("a return is filed per registration");
   });
 
-  it("scopes collection by the supplying branch GSTIN, not by company", () => {
+  it("scopes collection by the GSTIN the bill was issued under, not by company", () => {
     const src = read(SERVICE);
     // Two branches of one legal entity in different states file separate returns; mixing them
-    // is a misdeclaration in both.
-    expect(src).toContain("WHERE bm.gstin = ?");
+    // is a misdeclaration in both. The registration is the one the bill prints (ourGstinSql).
+    expect(src).toContain('WHERE ${ourGstinSql("cm", "bm")} = ?');
     expect(src).toContain("DATE_FORMAT(ci.invoice_date, '%Y-%m') = ?");
   });
 
@@ -78,6 +78,12 @@ describe("filing guards", () => {
     const src = read(SERVICE);
     // A proforma is not a tax invoice and creates no outward liability.
     expect(src).toContain("ci.invoice_status = 'approved'");
+  });
+
+  it("only picks up approved credit notes", () => {
+    const src = read(SERVICE);
+    // A draft or rejected credit note was never issued and reduces no liability.
+    expect(src).toContain("AND cn.credit_status = 'approved'");
   });
 
   it("carries credit notes negative so they reduce outward liability", () => {

@@ -1000,7 +1000,9 @@ export const budgetTopupService = {
       // P0P1-4: Maker-checker — the approver cannot be the person who raised the request,
       // regardless of role.  Applies to both approve and reject so a requester cannot
       // "reject" their own request to unblock a later re-submission either.
-      if (String(request.requested_by) === actorId) {
+      // Owner ruling 2026-10-14: the Finance Head is exempt from maker-checker. Applies only
+      // when the reviewer is acting at the finance_head stage.
+      if (effectiveRole !== "finance_head" && String(request.requested_by) === actorId) {
         throw refuse(
           409,
           "TOPUP_MAKER_CHECKER",
