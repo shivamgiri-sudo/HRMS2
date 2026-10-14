@@ -1,6 +1,7 @@
 import React, { Component, ReactNode } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { captureBoundaryError, isErrorTrackingEnabled } from "@/lib/errorTracking";
 
 type ErrorBoundaryProps = {
   children: ReactNode;
@@ -9,6 +10,8 @@ type ErrorBoundaryProps = {
 type ErrorBoundaryState = {
   hasError: boolean;
   error: Error | null;
+  /** Error-tracking event id, shown as a reference the user can quote to Helpdesk. */
+  eventId?: string;
 };
 
 const CHUNK_RELOAD_KEY = "chunk_reload";
@@ -34,6 +37,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error("ErrorBoundary caught:", error, errorInfo);
+    const chunkError = isChunkLoadError(error);
+    const reloadPending = chunkError && !sessionStorage.getItem(CHUNK_RELOAD_KEY);
+    // A stale chunk right after a deploy fixes itself with the reload below, so it is reported
+    // only when the reload has already been tried and the error is still here.
+    if (!reloadPending) {
+      const eventId = captureBoundaryError(error, errorInfo.componentStack, chunkError ? { chunk_reload: "failed" } : undefined);
+      if (eventId) this.setState({ eventId });
+    }
 
     // Chunk-load failure after a new deployment — the cached index.html references
     // a JS chunk that no longer exists on the server. A hard reload fetches the new
@@ -73,8 +84,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <AlertTriangle className="mx-auto h-12 w-12 text-rose-600" />
             <h1 className="mt-4 text-2xl font-black text-slate-950">Something went wrong</h1>
             <p className="mt-3 text-sm text-slate-600">
-              The page encountered an error and could not render. This has been logged.
+              The page encountered an error and could not render.
+              {isErrorTrackingEnabled() ? " The IT team has been sent the details automatically." : ""}
             </p>
+            {this.state.eventId && (
+              <p className="mt-3 text-xs text-slate-500">
+                If you raise a Helpdesk ticket, quote reference{" "}
+                <span className="font-mono font-semibold text-slate-800 select-all">{this.state.eventId.slice(0, 8)}</span>
+              </p>
+            )}
             {this.state.error?.message && (
               <div className="mt-4 rounded-xl bg-slate-50 p-3 text-left">
                 <p className="font-mono text-xs text-slate-700">{this.state.error.message}</p>

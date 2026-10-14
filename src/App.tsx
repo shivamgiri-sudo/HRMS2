@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ErrorTrackingUser } from "@/components/ErrorTrackingUser";
 import { AICommandBar } from "@/components/ai/AICommandBar";
 import CookieConsent from "@/components/layout/CookieConsent";
 import { OfflineFallback } from "@/components/layout/OfflineFallback";
@@ -53,6 +54,7 @@ const App = () => (
         <AuthProvider>
           <ViewAsProvider>
           <LocationHeartbeatRunner />
+          <ErrorTrackingUser />
           <ScrollToTop />
           <ErrorBoundary>
             <Suspense fallback={<PageLoader />}>

@@ -19,6 +19,7 @@ import {
   lmsAdminLinkLimiter,
 } from "./middleware/rateLimiter.js";
 import { healthRouter } from "./routes/health.routes.js";
+import { errorTunnelRouter } from "./routes/errorTunnel.routes.js";
 import { processRouter } from "./modules/process/process.routes.js";
 import { integrationRouter } from "./modules/integration-hub/integration.routes.js";
 import { wfmRouter } from "./modules/wfm/wfm.routes.js";
@@ -465,6 +466,10 @@ app.use(
     credentials: true,
   }),
 );
+// Browser error reports. Mounted before the body parsers (it reads its own raw body) and before
+// the global rate limiter (it has its own), so error bursts never eat into a user's API quota.
+// Returns 404 unless ERROR_TRACKING_FRONTEND_DSN is set.
+app.use("/api/error-tunnel", errorTunnelRouter);
 app.use(
   express.json({
     // Bumped from 5mb: high-volume raw-data bulk uploads (e.g. Onfido process reports,

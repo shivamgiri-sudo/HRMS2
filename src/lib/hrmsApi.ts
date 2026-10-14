@@ -1,4 +1,5 @@
 import { apiBaseUrl } from "@/lib/apiBase";
+import { captureApiFailure } from "@/lib/errorTracking";
 
 // Production uses the same-origin /api proxy when VITE_HRMS_API_URL is not set.
 const HRMS_API_URL = apiBaseUrl();
@@ -264,6 +265,8 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
   }
 
   if (!res.ok) {
+    // No-op unless error tracking is enabled; only 403 and 5xx are recorded.
+    captureApiFailure(method, normalizedPath, res.status, (payload as { reference?: string } | null)?.reference);
     throw buildApiError(res.status, payload, `HTTP ${res.status}`);
   }
 
@@ -410,6 +413,7 @@ async function requestForm<T>(path: string, body: FormData, timeoutMs = 60000): 
   }
   const payload = await parseResponse(res);
   if (!res.ok) {
+    captureApiFailure("POST", normalizedPath, res.status, (payload as { reference?: string } | null)?.reference);
     throw buildApiError(res.status, payload, `HTTP ${res.status}`);
   }
   return payload as T;
