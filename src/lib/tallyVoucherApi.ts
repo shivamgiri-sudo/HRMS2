@@ -103,9 +103,13 @@ export interface TallyConfig {
 
 const BASE = "/api/gst/tally-vouchers";
 
+/**
+ * hrmsApi already returns the parsed JSON envelope ({ success, data } or { success, ...fields }). Unwrapping
+ * `.data` here as well made every `{ success, data }` route read `.data` of the payload: voucher kinds and batches
+ * came back empty, so "Preview vouchers" silently did nothing and the batch list never showed a batch.
+ */
 function body<T>(res: unknown): T & { success?: boolean; error?: string } {
-  const b = (res as { data?: unknown })?.data ?? res;
-  return b as T & { success?: boolean; error?: string };
+  return res as T & { success?: boolean; error?: string };
 }
 
 function ensure<T extends { success?: boolean; error?: string }>(
