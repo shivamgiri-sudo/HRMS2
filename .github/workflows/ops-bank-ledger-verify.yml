@@ -32,6 +32,12 @@ jobs:
             const p = (n) => Math.round(Number(n || 0) * 100);
             const r = (x) => (x / 100).toFixed(2);
             const [accts] = await c.query("SELECT a.id, a.account_name, a.account_number_last4 l4, a.opening_balance, a.opening_balance_as_of, a.active_status, b.bank_name FROM company_bank_account a LEFT JOIN bank_master b ON b.id = a.bank_id ORDER BY a.active_status DESC, a.account_name");
+            const [hist] = await c.query("SELECT a.account_name, a.opening_balance, a.opening_balance_as_of, a.created_at, cu.email created_by, a.updated_at, uu.email updated_by FROM company_bank_account a LEFT JOIN auth_user cu ON cu.id = a.created_by LEFT JOIN auth_user uu ON uu.id = a.updated_by ORDER BY a.created_at");
+            console.log("### bank accounts: when created / last updated"); console.table(hist);
+            const [aud] = await c.query("SELECT l.acted_at, l.action_type, COALESCE(u.email, l.actor_user_id) actor, LEFT(CAST(l.change_summary AS CHAR), 230) change_summary FROM sensitive_action_log l LEFT JOIN auth_user u ON u.id = l.actor_user_id WHERE l.entity_type = \"company_bank_account\" ORDER BY l.acted_at");
+            console.log("### bank account audit trail (opening balance changes etc.)"); for (const x of aud) console.log(x.acted_at, x.action_type, x.actor, x.change_summary);
+            const [rp] = await c.query("SELECT a.account_name, MIN(e.created_at) first_created, MAX(e.created_at) last_created, COUNT(*) n FROM bank_account_ledger_entry e JOIN company_bank_account a ON a.id = e.bank_account_id GROUP BY a.account_name");
+            console.log("### when ledger rows were written into HRMS"); console.table(rp);
             const summary = [];
             for (const a of accts) {
               const [e] = await c.query("SELECT id, entry_date, created_at, debit_amount d, credit_amount cr, running_balance rb, source_type, voucher_id, matched_statement_line_id m, reconciliation_period_id rp, is_migrated FROM bank_account_ledger_entry WHERE bank_account_id = ? ORDER BY created_at, id", [a.id]);
