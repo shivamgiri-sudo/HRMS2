@@ -1,0 +1,44 @@
+name: Ops Boot Failure Logs (manual, read-only)
+
+# Prints the backend error/out log lines from the window of a failed boot (default: today's deploy
+# that rolled back at ~20:15-20:35 IST). Lines are cut to 240 chars with long digit runs masked.
+# Writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pattern:
+        description: "Timestamp prefix to match, as written in the log (e.g. 2026-10-14T20:)"
+        required: true
+        default: "2026-10-14T20:"
+        type: string
+
+concurrency:
+  group: ops-boot-failure-logs-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  logs:
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Validate input
+        shell: bash
+        env:
+          PATTERN: ${{ inputs.pattern }}
+        run: |
+          [[ "$PATTERN" =~ ^[0-9T:-]{4,20}$ ]] || { echo "pattern must be digits, T, : or - only"; exit 1; }
+      - name: Error log lines in the window
+        shell: bash
+        env:
+          PATTERN: ${{ inputs.pattern }}
+        run: |
+          set +e
+          for f in /home/masadmin/.pm2/logs/hrms2-backend-error.log /home/masadmin/.pm2/logs/hrms2-backend-out.log; do
+            echo "### $f"
+            grep -F -- "$PATTERN" "$f" | grep -v -E '"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /' | head -n 60 | cut -c1-240 | sed -E 's/[0-9]{9,}/#########/g'
+          done
