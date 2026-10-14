@@ -13,6 +13,7 @@ import {
 } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import { runEmployeeBankPennyDrop } from "./employeeBankPennyDrop.js";
+import { logLockContext } from "./lockContextLog.js";
 import { mobilityService } from "../mobility/mobility.service.js";
 import { employeeController as c } from "./employee.controller.js";
 import { employeeService } from "./employee.service.js";
@@ -1246,6 +1247,7 @@ router.put(
             continue;
           }
           if (lockError) {
+            await logLockContext(`PUT bank-details employee=${String(empId).slice(0, 8)} errno=${err?.errno}`);
             return res.status(503).json({
               success: false,
               error:
