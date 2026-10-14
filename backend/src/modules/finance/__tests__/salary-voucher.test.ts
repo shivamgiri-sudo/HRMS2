@@ -196,6 +196,17 @@ describe("advances are per employee", () => {
     expect(advances[0].ledger_name).toBe("Advance Against Salary (HEAD OFFICE)");
     expect(advances.map((a) => a.employee_code)).toEqual(["MAS-A", "MAS-B", "MAS-C"]);
   });
+
+  it("advance ledgers use the Tally company's own names", async () => {
+    const { advanceLedger } = await import("../salary-voucher.service.js");
+    expect(advanceLedger("AHMEDABAD-JALDARSHAN")).toBe("Advance Against Salary (Ahm)");
+    expect(advanceLedger("Delhi Office")).toBe("Advance Against Salary (Delhi)");
+    expect(advanceLedger("NOIDA")).toBe("Advance Against Salary - Noida");
+    expect(advanceLedger("NOIDA-2")).toBe("Advance Against Salary - Noida-2");
+    expect(advanceLedger("NOIDA-ISPARK")).toBe("Advance Against Salary - Noidaispark");
+    expect(advanceLedger("NOIDA-DIALDESK")).toBe("Advance Against Salary (NOIDA-DIALDESK)");
+    expect(advanceLedger("Some New Branch")).toBe("Advance Against Salary (Some New Branch)");
+  });
 });
 
 describe("the entity rule", () => {
