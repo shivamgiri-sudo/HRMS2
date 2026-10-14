@@ -49,7 +49,7 @@ const refBranch = new Set(ref.map((r) => key(r.branch_name)));
 console.log(`reference from migrated db_bill GRNs: ${refSub.size} sub-heads, ${refVendor.size} vendors, ${refBranch.size} branches`);
 
 for (const month of MONTHS) {
-  const data = await loadGrnTallyDownload({ branchScope: { mode: "all" } as any, month });
+  const data = await loadGrnTallyDownload({ branchScope: { mode: "all" } as any, month, grnType: "all" });
   console.log(`\n==================== posting month ${month} ====================`);
   console.log(JSON.stringify(grnTallyDownloadSummary(data)));
   const okRows = data.rows.filter((r) => !r.exception);

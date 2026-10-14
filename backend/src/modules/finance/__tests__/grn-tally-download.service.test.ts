@@ -18,11 +18,13 @@ const h = vi.hoisted(() => {
     if (/FROM imprest_transaction_ledger/.test(sql))
       return [[{ id: "led1", imprest_manager_id: "im1" }], undefined];
     if (/FROM imprest_manager WHERE id IN/.test(sql))
-      return [[{ id: "im1", employee_id: "e1", tally_name: null }, { id: "im2", employee_id: null, tally_name: "TRAVELLING A/C PAYABLE- HO" }], undefined];
+      return [[{ id: "im1", tally_name: "Aman Lawaniya" }, { id: "im2", tally_name: "Dharrmendra Kumar" }], undefined];
     if (/FROM imprest_manager WHERE branch_id IN/.test(sql))
       return [[{ id: "im2", branch_id: "b1", effective_from: "2026-01-01", effective_to: null }], undefined];
-    if (/FROM employees/.test(sql))
-      return [[{ id: "e1", n: "Deepak  Kashyap" }], undefined];
+    if (/FROM grn_request\s+WHERE bill_source_id IS NOT NULL/.test(sql))
+      return [[{ grn_number: "Mas/9/26/139", invoice_number: "THUP/55292/26-27", amount_with_tax: 6278, amount: 6278 }], undefined];
+    if (/FROM finance_expense_sub_head_master WHERE tds_enabled IS NOT NULL/.test(sql))
+      return [[{ sub_head_name: "Fee & Subscription", tds_enabled: 1, tds_rate: 2, tds_tally_ledger: "TDS CONTRACTOR 2021-22" }, { sub_head_name: "Parking Charges", tds_enabled: 0, tds_rate: null, tds_tally_ledger: null }], undefined];
     if (/FROM tds_section_master/.test(sql))
       return [[{ section_code: "194I_LB", rate_other: 10 }], undefined];
     return [[], undefined];
@@ -90,7 +92,7 @@ describe("loadGrnTallyDownload", () => {
     expect(select.sql).toMatch(/g\.status NOT IN/);
     // The month is the posting (approval) month, as in the legacy import.
     expect(select.sql).toMatch(/COALESCE\(g\.approved_at, g\.finance_head_reviewed_at\) >= \?/);
-    expect(select.params).toEqual(["cancelled", "consumption_reversed", "2026-09-01", "2026-09-30"]);
+    expect(select.params).toEqual(["cancelled", "consumption_reversed", "vendor", "2026-09-01", "2026-09-30"]);
     expect(h.state.calls.some((c) => /INSERT|UPDATE|DELETE/i.test(c.sql))).toBe(false);
   });
 
@@ -120,10 +122,41 @@ describe("imprest holder", () => {
       row("g2", "MAS/09/26/2", { ...imp }),
       row("g3", "MAS/09/26/3", { ...imp, bill_date: "2025-12-01" }),
     ];
-    const data = await loadGrnTallyDownload(all);
-    expect(data.rows[0].entries.at(-1)).toEqual({ ledger: "Deepak Kashyap Imp A/C", side: "Cr", amount: 1000 });
-    expect(data.rows[1].entries.at(-1)).toEqual({ ledger: "TRAVELLING A/C PAYABLE- HO", side: "Cr", amount: 1000 });
+    const data = await loadGrnTallyDownload({ ...all, grnType: "imprest" });
+    expect(data.rows[0].entries.at(-1)).toEqual({ ledger: "Aman Lawaniya", side: "Cr", amount: 1000 });
+    expect(data.rows[0].voucherType).toBe("JRNLIMP");
+    expect(data.rows[1].entries.at(-1)).toEqual({ ledger: "Dharrmendra Kumar", side: "Cr", amount: 1000 });
     expect(data.rows[2].exception).toMatch(/float holder/);
+    const select = h.state.calls.find((c) => /FROM grn_request g/.test(c.sql))!;
+    expect(select.params).toContain("imprest");
+  });
+
+  it("vendor GRNs only by default, as the legacy import", async () => {
+    await loadGrnTallyDownload(all);
+    const select = h.state.calls.find((c) => /FROM grn_request g/.test(c.sql))!;
+    expect(select.sql).toMatch(/g\.grn_type = \?/);
+    expect(select.params).toContain("vendor");
+  });
+});
+
+describe("legacy duplicates and legacy TDS", () => {
+  it("leaves out a bill the legacy system already sent to Tally", async () => {
+    h.state.rows = [row("g1", "MAS/09/26/0002", { invoice_number: "THUP 55292 26-27", amount_with_tax: 6278, amount: 6278, amount_without_tax: 5320, tax_amount: 957.6, round_off_amount: 0.4 })];
+    const data = await loadGrnTallyDownload(all);
+    expect(data.vouchersXml).toHaveLength(0);
+    expect(data.rows[0].exception).toMatch(/Already in Tally through legacy GRN Mas\/9\/26\/139/);
+  });
+
+  it("sub-head legacy TDS wins over the vendor, and a legacy 'no TDS' sub-head stops the engine default", async () => {
+    h.state.rows = [
+      row("g1", "MAS/09/26/1", { sub_head: "Fee & Subscription" }),
+      row("g2", "MAS/09/26/2", { sub_head: "Parking Charges", invoice_number: "P-1" }),
+    ];
+    const data = await loadGrnTallyDownload(all);
+    expect(data.rows[0].entries).toContainEqual({ ledger: "TDS CONTRACTOR 2021-22", side: "Cr", amount: 2000 });
+    expect(data.rows[0].tdsBasis).toMatch(/Sub-head \(legacy\)/);
+    expect(data.rows[1].tdsBasis).toBe("No TDS (legacy sub-head setting)");
+    expect(data.rows[1].entries.some((e) => /^TDS/.test(e.ledger))).toBe(false);
   });
 });
 

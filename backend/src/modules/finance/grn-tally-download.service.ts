@@ -17,6 +17,11 @@ import {
   toVoucherInput,
 } from "./grn-tally-context.js";
 import {
+  duplicateReason,
+  legacyDuplicate,
+  loadLegacyBills,
+} from "./grn-tally-legacy-dup.js";
+import {
   buildGrnVoucher,
   monthEnd,
   wrapTallyEnvelope,
@@ -51,6 +56,8 @@ export type GrnTallyDownloadFormat = "xml" | "xlsx" | "csv" | "check";
 export type GrnTallyDownloadFilters = {
   branchScope: FinanceBranchScope;
   branchId?: string;
+  /** Vendor GRNs only by default, as the legacy import; imprest GRNs go as JRNLIMP vouchers. */
+  grnType?: "vendor" | "imprest" | "all";
   /** Posting month, YYYY-MM: the month the GRN was approved in. */
   month?: string;
 };
@@ -88,6 +95,8 @@ export type GrnTallyDownloadRow = {
   entries: GrnVoucherEntry[];
   /** Why this GRN is left out of the XML; null when it is in it. */
   exception: string | null;
+  /** GST on the bill that is not claimed as input credit (recoverable below 100%) — for Accounts to check. */
+  gstNote: string;
 };
 
 export type GrnTallyDownloadData = {
@@ -124,6 +133,11 @@ export async function loadGrnTallyDownload(
     conditions.push(scope.sql);
     params.push(...scope.params);
   }
+  const grnType = filters.grnType ?? "vendor";
+  if (grnType !== "all") {
+    conditions.push("g.grn_type = ?");
+    params.push(grnType);
+  }
   if (filters.branchId) {
     conditions.push("g.branch_id = ?");
     params.push(filters.branchId);
@@ -150,6 +164,7 @@ export async function loadGrnTallyDownload(
 
   const config = readGrnTallyConfig();
   const context = await loadGrnTallyContext(db, picked);
+  const legacyBills = await loadLegacyBills(db, picked);
 
   const vouchersXml: string[] = [];
   const out: GrnTallyDownloadRow[] = picked.map((r) => {
@@ -158,8 +173,17 @@ export async function loadGrnTallyDownload(
       context,
       config.names,
     );
-    const built = buildGrnVoucher(input, config.names);
+    const duplicate = input.grnType === "vendor" ? legacyDuplicate(legacyBills, r.invoice_number, input.gross) : null;
+    const voucher = buildGrnVoucher(input, config.names);
+    const built = duplicate
+      ? ({ ok: false, grnId: input.grnId, grnNumber: input.grnNumber, reason: duplicateReason(duplicate) } as const)
+      : voucher;
     if (built.ok) vouchersXml.push(built.xml);
+    const recoverable = r.recoverable_tax_pct == null ? 100 : Number(r.recoverable_tax_pct);
+    const gstNote =
+      num(r.tax_amount) > 0 && recoverable < 100 && String(r.vendor_gstin ?? "").trim()
+        ? `GST ${num(r.tax_amount).toFixed(2)} on a GST-registered vendor is not claimed (recoverable ${recoverable}%); legacy claimed it — check`
+        : "";
     return {
       grnId: String(r.id),
       grnNumber: String(r.grn_number),
@@ -188,6 +212,7 @@ export async function loadGrnTallyDownload(
       header: built.ok ? built.header : null,
       entries: built.ok ? built.entries : [],
       exception: built.ok ? null : built.reason,
+      gstNote,
     };
   });
 
@@ -287,6 +312,7 @@ const CHECK_COLUMNS: { header: string; key: keyof GrnTallyDownloadRow; width: nu
   { header: "Gross Amount", key: "gross", width: 15, money: true },
   { header: "TDS", key: "tdsAmount", width: 12, money: true },
   { header: "TDS basis", key: "tdsBasis", width: 44 },
+  { header: "GST note", key: "gstNote", width: 50 },
 ];
 
 /** For Accounts, not for Tally: every GRN, TDS basis, exceptions. */

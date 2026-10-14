@@ -6,7 +6,7 @@
  *
  *   Dr expense ledger (sub-head)                 taxable + other charges + non-claimable GST
  *   Dr Input CGST @9%(Uttar Pradesh) / SGST / IGST @18%(Gujarat) ...   claimable GST
- *   Cr party (vendor, or the imprest holder's "<Name> Imp A/C")   gross - TDS
+ *   Cr party (vendor, or the imprest holder's own Tally ledger)   gross - TDS
  *   Cr TDS ledger (TDS CONTRACTOR 2021-22, TDS RENT 2022-23 ...)   TDS on the taxable value
  *   Dr/Cr Short/Excess Written off               round off
  *
@@ -33,6 +33,8 @@ export type GrnTdsRule = {
   /** Normalised section, e.g. 194C, 194I_LB. */
   section: string;
   ratePct: number;
+  /** Exact Tally TDS ledger when the master carries one (legacy settings); else named from the section. */
+  ledger?: string | null;
   /** Where the rule came from, shown on the check sheet. */
   basis: string;
 };
@@ -48,7 +50,7 @@ export type GrnVoucherInput = {
   accountingPeriod: string | null;
   invoiceNumber: string | null;
   vendorLedger: string | null; // vendor's Tally name; null for imprest
-  /** Imprest holder's Tally ledger ("<Name> Imp A/C"); null for vendor GRNs. */
+  /** Imprest holder's Tally ledger (imprest_manager.tally_name); null for vendor GRNs. */
   imprestLedger: string | null;
   expenseLedger: string; // sub-head name
   headName: string | null;
@@ -71,24 +73,24 @@ export type GrnVoucherInput = {
 
 export type GrnTallyLedgerNames = {
   voucherType: string;
+  /** Voucher type for imprest GRNs; the legacy import never carried them, Tally keeps JRNLIMP for them. */
+  imprestVoucherType: string;
   roundOff: string;
   /** Patterns: {rate} and {state} are filled in. */
   inputCgst: string;
   inputSgst: string;
   inputIgst: string;
-  /** Imprest holder ledger when imprest_manager has no tally_name: {name} is filled in. */
-  imprestLedgerPattern: string;
   /** Normalised TDS section -> Tally ledger. */
   tdsLedgers: Record<string, string>;
 };
 
 export const DEFAULT_LEDGER_NAMES: GrnTallyLedgerNames = {
   voucherType: "JrnlP",
+  imprestVoucherType: "JRNLIMP",
   roundOff: "Short/Excess Written off",
   inputCgst: "Input CGST @{rate}%({state})",
   inputSgst: "Input SGST @{rate}%({state})",
   inputIgst: "Input IGST @{rate}%({state})",
-  imprestLedgerPattern: "{name} Imp A/C",
   // Names as they stand in the MAS Callnet Tally company; the legacy sheet books bandwidth and
   // software subscriptions (194J technical) to the contractor ledger too.
   tdsLedgers: {
@@ -208,7 +210,7 @@ export function buildGrnVoucher(
   if (!credit)
     return fail(
       input.grnType === "imprest"
-        ? "Imprest GRN has no float holder, so there is no imprest ledger to credit."
+        ? "Imprest float holder has no Tally ledger name (set it on the imprest manager), so there is nothing to credit."
         : "Vendor has no name to credit.",
     );
 
@@ -250,7 +252,7 @@ export function buildGrnVoucher(
   let tdsAmount = 0;
   let tdsLedger = "";
   if (input.tds && input.tds.ratePct > 0) {
-    tdsLedger = names.tdsLedgers[input.tds.section] ?? "";
+    tdsLedger = input.tds.ledger?.trim() || names.tdsLedgers[input.tds.section] || "";
     if (!tdsLedger)
       return fail(`No Tally TDS ledger is set for section ${input.tds.section}.`);
     const base = input.amountWithoutTax > 0 ? input.amountWithoutTax + input.otherCharges : expense;
@@ -288,7 +290,7 @@ export function buildGrnVoucher(
     costCentre: `${(input.branchCode?.trim() || input.branchName.trim())}/${yyyy.slice(2)}${mm}`,
     narrationEntry: description,
     narration: `${description} GRN NO.: ${input.grnNumber}, Bill No.:${billNo} , Bill Date.:${dmy(input.billDate)}`,
-    voucherType: names.voucherType,
+    voucherType: input.grnType === "imprest" ? names.imprestVoucherType : names.voucherType,
   };
 
   const lines = entries.map((e) => {

@@ -158,6 +158,11 @@ async function downloadFilters(req: AuthenticatedRequest) {
   if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
     throw Object.assign(new Error("month must be YYYY-MM"), { status: 400 });
   }
+  const rawType = req.query.grnType ? String(req.query.grnType) : "vendor";
+  if (!["vendor", "imprest", "all"].includes(rawType)) {
+    throw Object.assign(new Error("grnType must be vendor, imprest or all"), { status: 400 });
+  }
+  const grnType = rawType as "vendor" | "imprest" | "all";
   const userId = req.authUser?.id;
   if (!userId) throw Object.assign(new Error("Not signed in"), { status: 401 });
   const branchScope = await resolveFinanceBranchScopeSet({
@@ -169,7 +174,7 @@ async function downloadFilters(req: AuthenticatedRequest) {
     // The only throw is a branch outside the caller's scope.
     throw Object.assign(error, { status: 403 });
   });
-  return { branchScope, branchId, month };
+  return { branchScope, branchId, month, grnType };
 }
 
 const statusOf = (error: unknown) =>
@@ -225,11 +230,12 @@ grnTallyRouter.get(
         change_summary: {
           format,
           month: filters.month ?? null,
+          grnType: filters.grnType,
           branchId: filters.branchId ?? null,
           ...summary,
         },
       });
-      const fileName = `GRN_Tally_${format === "check" ? "Check_" : ""}${filters.month ?? "all-months"}_${new Date().toISOString().slice(0, 10)}.${spec.ext}`;
+      const fileName = `GRN_Tally_${format === "check" ? "Check_" : ""}${filters.grnType === "vendor" ? "" : `${filters.grnType}_`}${filters.month ?? "all-months"}_${new Date().toISOString().slice(0, 10)}.${spec.ext}`;
       res.setHeader("Content-Type", spec.contentType);
       res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
       res.setHeader("X-Grn-Count", String(summary.grns));

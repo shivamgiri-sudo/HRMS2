@@ -49,12 +49,14 @@ export function GrnTallyDownloadPanel() {
   const { toast } = useToast();
   const [month, setMonth] = useState("");
   const [branchId, setBranchId] = useState("");
+  const [grnType, setGrnType] = useState<"vendor" | "imprest" | "all">("vendor");
   const [busy, setBusy] = useState<Format | null>(null);
 
   const query = () => {
     const params = new URLSearchParams();
     if (month) params.set("month", month);
     if (branchId) params.set("branchId", branchId);
+    params.set("grnType", grnType);
     return params;
   };
 
@@ -70,7 +72,7 @@ export function GrnTallyDownloadPanel() {
   });
 
   const summary = useQuery({
-    queryKey: ["grn-tally-download-summary", month, branchId],
+    queryKey: ["grn-tally-download-summary", month, branchId, grnType],
     queryFn: async () => {
       const response = await hrmsApi.get<any>(`/api/finance/grn-tally/download/summary?${query()}`);
       return ((response as any)?.data ?? response) as Summary;
@@ -126,6 +128,14 @@ export function GrnTallyDownloadPanel() {
             ))}
           </GrnSelect>
         </label>
+        <label className="text-[11px] font-semibold text-grn-ink">
+          GRN type
+          <GrnSelect className="mt-1 block w-[200px]" value={grnType} onChange={(e) => setGrnType(e.target.value as typeof grnType)}>
+            <option value="vendor">Vendor (JrnlP, as legacy)</option>
+            <option value="imprest">Imprest (JRNLIMP)</option>
+            <option value="all">All</option>
+          </GrnSelect>
+        </label>
         <div className="ml-auto flex flex-wrap gap-2">
           {FORMATS.map(({ format, label, icon: Icon }) => (
             <Button
@@ -155,8 +165,8 @@ export function GrnTallyDownloadPanel() {
         )}
         {!!s?.exceptions && (
           <GrnAlert tone="warn">
-            {s.exceptions} GRN{s.exceptions === 1 ? " is" : "s are"} left out of the import (missing sub-head, branch GST state, imprest
-            holder or TDS ledger, or amounts that don't add up). The Check sheet gives the reason for each.
+            {s.exceptions} GRN{s.exceptions === 1 ? " is" : "s are"} left out of the import (already sent by the legacy system, missing
+            sub-head, branch GST state, imprest holder ledger or TDS ledger, or amounts that don't add up). The Check sheet gives the reason for each.
           </GrnAlert>
         )}
         {s?.truncated && (

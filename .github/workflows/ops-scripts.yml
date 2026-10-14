@@ -153,6 +153,7 @@ on:
           - repair-migrated-grn-ex-gst
           - grn-tally-prod-dryrun
           - grn-tally-dbbill-probe
+          - backfill-grn-tally-from-dbbill
 
       mode:
         description: "dry-run reports what it would do and writes nothing"
@@ -338,6 +339,7 @@ jobs:
               ;;
             grn-tally-prod-dryrun) npx tsx scripts/grn-tally-prod-dryrun.ts ;;
             grn-tally-dbbill-probe) npx tsx scripts/grn-tally-dbbill-probe.ts ;;
+            backfill-grn-tally-from-dbbill) FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"; npx tsx scripts/backfill-grn-tally-from-dbbill.ts $FLAG ;;
             repair-migrated-grn-ex-gst)
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/repair-migrated-grn-ex-gst.ts $FLAG

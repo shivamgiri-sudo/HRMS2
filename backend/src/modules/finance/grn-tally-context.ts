@@ -73,12 +73,15 @@ export function normalizeTdsSection(raw: unknown, hint?: string | null): string 
 }
 
 export type GrnTallyContext = {
-  vendors: Map<string, { ledger: string; tdsEnabled: number | null; tdsSection: string | null; tdsRate: number | null }>;
+  vendors: Map<string, { ledger: string; tdsEnabled: number | null; tdsSection: string | null; tdsRate: number | null; tdsLedger?: string | null }>;
   branches: Map<string, { name: string; gstStateCode: string | null; state: string | null }>;
-  holders: Map<string, { tally: string | null; person: string | null }>;
+  /** imprest_manager id -> its Tally ledger (tally_name, carried over from db_bill imprest_manager.TallyHead). */
+  holders: Map<string, string | null>;
   /** GRN id -> imprest_manager id, resolved as approval resolves it (see resolveImprestHolders). */
   grnHolder: Map<string, string>;
   subHeadTds: Map<string, { section: string; confidence: string }>;
+  /** Legacy (db_bill) TDS setting per sub-head name, lower-cased; only sub-heads where it is known. */
+  subHeadLegacy: Map<string, { enabled: number; rate: number; ledger: string | null }>;
   sectionRates: Map<string, number>;
   branchCodeOverrides: Record<string, string>;
 };
@@ -121,6 +124,7 @@ export async function loadGrnTallyContext(
     holders: new Map(),
     grnHolder: new Map(),
     subHeadTds: new Map(),
+    subHeadLegacy: new Map(),
     sectionRates: new Map(),
     branchCodeOverrides: {},
   };
@@ -145,6 +149,15 @@ export async function loadGrnTallyContext(
         tdsRate: r.tds_rate == null ? null : Number(r.tds_rate),
       });
     }
+    // Separate read: the column arrives with migration 2205, and its absence must not lose the names above.
+    for (const r of await safeRows(
+      executor,
+      `SELECT id, tds_tally_ledger FROM vendor_master WHERE id IN (${inList(vendorIds)}) AND tds_tally_ledger IS NOT NULL`,
+      vendorIds,
+    )) {
+      const v = ctx.vendors.get(String(r.id));
+      if (v) v.tdsLedger = String(r.tds_tally_ledger).trim() || null;
+    }
   }
   if (branchIds.length) {
     for (const r of await safeRows(
@@ -162,26 +175,21 @@ export async function loadGrnTallyContext(
   ctx.grnHolder = await resolveImprestHolders(executor, rows);
   const holderIds = [...new Set(ctx.grnHolder.values())];
   if (holderIds.length) {
-    const holders = await safeRows(
+    for (const h of await safeRows(
       executor,
-      `SELECT id, employee_id, tally_name FROM imprest_manager WHERE id IN (${inList(holderIds)})`,
+      `SELECT id, tally_name FROM imprest_manager WHERE id IN (${inList(holderIds)})`,
       holderIds,
-    );
-    const empIds = [...new Set(holders.map((h) => String(h.employee_id ?? "")).filter(Boolean))];
-    const names = new Map<string, string>();
-    if (empIds.length) {
-      for (const e of await safeRows(
-        executor,
-        `SELECT id, TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) AS n FROM employees WHERE id IN (${inList(empIds)})`,
-        empIds,
-      )) names.set(String(e.id), String(e.n ?? "").replace(/\s+/g, " ").trim());
-    }
-    for (const h of holders) {
-      ctx.holders.set(String(h.id), {
-        tally: String(h.tally_name ?? "").trim() || null,
-        person: names.get(String(h.employee_id ?? "")) || null,
-      });
-    }
+    )) ctx.holders.set(String(h.id), String(h.tally_name ?? "").trim() || null);
+  }
+  for (const r of await safeRows(
+    executor,
+    `SELECT sub_head_name, tds_enabled, tds_rate, tds_tally_ledger FROM finance_expense_sub_head_master WHERE tds_enabled IS NOT NULL`,
+  )) {
+    ctx.subHeadLegacy.set(String(r.sub_head_name).trim().toLowerCase(), {
+      enabled: Number(r.tds_enabled),
+      rate: Number(r.tds_rate ?? 0),
+      ledger: r.tds_tally_ledger ? String(r.tds_tally_ledger).trim() : null,
+    });
   }
   for (const r of await safeRows(executor, `SELECT sub_head_name, section_code, confidence FROM tds_sub_head_default`)) {
     ctx.subHeadTds.set(String(r.sub_head_name).trim().toLowerCase(), {
@@ -240,15 +248,30 @@ async function resolveImprestHolders(executor: Executor, rows: RowDataPacket[]):
 }
 
 /**
- * TDS for one GRN: the vendor's own section and rate when the vendor master has one, else the
- * sub-head's default section when that default is firm. A sub-head whose default needs review
- * (labour vs materials, say) gets no TDS and says so on the check sheet.
+ * TDS for one GRN, in the legacy billing system's order:
+ *   1. the sub-head's legacy setting (db_bill SubHeadTDSEnabled / SubHeadTds / tds_master ledger) —
+ *      Office Rent -> TDS RENT 2022-23 @ 10%, Cafeteria -> TDS CONTRACTOR 2021-22 @ 2% ...
+ *   2. else the vendor's own legacy setting (OESPL parking -> TDS CONTRACTOR 2022-23-OESPL @ 2.5%)
+ *   3. a sub-head whose legacy setting is "no TDS" stops here: no TDS.
+ *   4. only where neither master carries legacy data: the vendor's section, else a firm sub-head
+ *      default from the TDS engine (a "review" default gets no TDS and says so on the check sheet).
  */
 export function resolveGrnTds(
   vendor: GrnTallyContext["vendors"] extends Map<string, infer V> ? V | undefined : never,
   subHead: string,
-  ctx: Pick<GrnTallyContext, "subHeadTds" | "sectionRates">,
+  ctx: Pick<GrnTallyContext, "subHeadTds" | "sectionRates"> & Partial<Pick<GrnTallyContext, "subHeadLegacy">>,
 ): { rule: GrnTdsRule | null; basis: string } {
+  const legacy = ctx.subHeadLegacy?.get(subHead.trim().toLowerCase());
+  if (legacy?.enabled === 1 && legacy.rate > 0 && legacy.ledger) {
+    const basis = `Sub-head (legacy): ${legacy.ledger} @ ${legacy.rate}%`;
+    return { rule: { section: "LEGACY", ratePct: legacy.rate, ledger: legacy.ledger, basis }, basis };
+  }
+  if (vendor?.tdsEnabled === 1 && vendor.tdsLedger && (vendor.tdsRate ?? 0) > 0) {
+    const basis = `Vendor (legacy): ${vendor.tdsLedger} @ ${vendor.tdsRate}%`;
+    return { rule: { section: "LEGACY", ratePct: Number(vendor.tdsRate), ledger: vendor.tdsLedger, basis }, basis };
+  }
+  if (legacy) return { rule: null, basis: "No TDS (legacy sub-head setting)" };
+
   const fallback = ctx.subHeadTds.get(subHead.trim().toLowerCase());
   if (vendor?.tdsSection && vendor.tdsEnabled !== 0) {
     const section = normalizeTdsSection(vendor.tdsSection, fallback?.section);
@@ -267,7 +290,6 @@ export function resolveGrnTds(
   return { rule: null, basis: "No TDS" };
 }
 
-
 export function toVoucherInput(
   r: RowDataPacket,
   ctx: GrnTallyContext,
@@ -279,9 +301,7 @@ export function toVoucherInput(
       : Number(r.amount);
   const vendor = ctx.vendors.get(String(r.vendor_id ?? ""));
   const branch = ctx.branches.get(String(r.branch_id ?? ""));
-  const holder = ctx.holders.get(ctx.grnHolder.get(String(r.id)) ?? "");
-  const imprestLedger =
-    holder?.tally ?? (holder?.person ? names.imprestLedgerPattern.replace("{name}", holder.person) : null);
+  const imprestLedger = ctx.holders.get(ctx.grnHolder.get(String(r.id)) ?? "") ?? null;
   const subHead = String(r.sub_head ?? "");
   const tds = resolveGrnTds(vendor, subHead, ctx);
   return {

@@ -17,6 +17,11 @@ import {
   type GrnTallyLedgerNames,
 } from "./grn-tally-voucher.js";
 import {
+  duplicateReason,
+  legacyDuplicate,
+  loadLegacyBills,
+} from "./grn-tally-legacy-dup.js";
+import {
   GRN_TALLY_COLUMNS,
   loadGrnTallyContext,
   toVoucherInput,
@@ -49,6 +54,13 @@ const VENDOR_FINAL = [
 ] as const;
 const IMPREST_FINAL = ["approved", "paid"] as const;
 const BATCH_LIMIT = 500;
+
+/**
+ * The legacy import carried vendor GRNs only (db_bill FY 2026-27: 1,268 vendor GRNs downloaded, 949
+ * imprest GRNs never), so the feed sends imprest GRNs only when switched on.
+ */
+const includeImprest = (env: NodeJS.ProcessEnv = process.env) =>
+  String(env.GRN_TALLY_INCLUDE_IMPREST ?? "").trim().toLowerCase() === "true";
 
 export type GrnTallyConfig = {
   dir: string | null;
@@ -88,7 +100,7 @@ function readLedgerNames(env: NodeJS.ProcessEnv): GrnTallyLedgerNames {
     inputCgst: pick("GRN_TALLY_INPUT_CGST", DEFAULT_LEDGER_NAMES.inputCgst),
     inputSgst: pick("GRN_TALLY_INPUT_SGST", DEFAULT_LEDGER_NAMES.inputSgst),
     inputIgst: pick("GRN_TALLY_INPUT_IGST", DEFAULT_LEDGER_NAMES.inputIgst),
-    imprestLedgerPattern: pick("GRN_TALLY_IMPREST_LEDGER", DEFAULT_LEDGER_NAMES.imprestLedgerPattern),
+    imprestVoucherType: pick("GRN_TALLY_IMPREST_VOUCHER_TYPE", DEFAULT_LEDGER_NAMES.imprestVoucherType),
     tdsLedgers,
   };
 }
@@ -135,11 +147,11 @@ async function selectCandidates(
        FROM grn_request g
       WHERE ${hrmsRaisedGrnSql("g")}
         AND g.grn_number IS NOT NULL AND TRIM(g.grn_number) <> ''
-        AND ((g.grn_type = 'vendor' AND g.status IN (${vendorIn})) OR (g.grn_type = 'imprest' AND g.status IN (${imprestIn})))
+        AND ((g.grn_type = 'vendor' AND g.status IN (${vendorIn}))${includeImprest() ? ` OR (g.grn_type = 'imprest' AND g.status IN (${imprestIn}))` : ""})
         AND COALESCE(g.approved_at, g.updated_at) >= ?
       ORDER BY approved_on ASC
       LIMIT ${BATCH_LIMIT * 4}`,
-    [...VENDOR_FINAL, ...IMPREST_FINAL, `${from} 00:00:00`],
+    [...VENDOR_FINAL, ...(includeImprest() ? IMPREST_FINAL : []), `${from} 00:00:00`],
   )) as [RowDataPacket[], unknown];
   return rows;
 }
@@ -220,15 +232,17 @@ export async function runGrnTallyExport(opts: {
       : { status: "nothing_to_export", exceptions: [] };
 
   const context = await loadGrnTallyContext(db, fresh);
+  const legacyBills = await loadLegacyBills(db, fresh);
 
   const built: { id: string; grnNumber: string; xml: string; gross: number }[] =
     [];
   const exceptions: ExportException[] = [];
   for (const row of fresh) {
-    const v = buildGrnVoucher(
-      toVoucherInput(row, context, config.names),
-      config.names,
-    );
+    const input = toVoucherInput(row, context, config.names);
+    const duplicate = input.grnType === "vendor" ? legacyDuplicate(legacyBills, row.invoice_number, input.gross) : null;
+    const v = duplicate
+      ? ({ ok: false, grnId: input.grnId, grnNumber: input.grnNumber, reason: duplicateReason(duplicate) } as const)
+      : buildGrnVoucher(input, config.names);
     if (v.ok)
       built.push({
         id: v.grnId,
