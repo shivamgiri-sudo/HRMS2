@@ -70,6 +70,8 @@ beforeEach(() => {
 describe("submitting a GRN", () => {
   it("records the draft -> submitted transition on the readable workflow trail", async () => {
     execute.mockImplementation(async (sql: string) => {
+      // The paid-twin duplicate guard also selects FROM grn_request: no twin in this fixture.
+      if (/JOIN grn_request g2/i.test(String(sql))) return [[], []];
       if (/FROM grn_request/i.test(String(sql)) && /SELECT/i.test(String(sql))) return [[DRAFT_GRN], []];
       if (/UPDATE grn_request/i.test(String(sql))) return [{ affectedRows: 1 } as any, []];
       return [[], []];

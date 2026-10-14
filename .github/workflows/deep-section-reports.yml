@@ -62,7 +62,10 @@ jobs:
         id: report-tests
         shell: bash
         run: |
-          if ! npm --prefix backend exec -- vitest run \
+          # Run from backend/: `npm --prefix backend exec` keeps the repo root as cwd, so the root vitest config
+          # (include src/**, exclude backend) matched none of these files and exited 1 with "No test files found".
+          cd backend
+          if ! npx vitest run \
             src/modules/reporting/__tests__/deep-report-packs.contract.test.ts \
             src/modules/reporting/__tests__/bpo-master-report-catalog.contract.test.ts \
             src/modules/reporting/__tests__/bpo-master-source-safety.contract.test.ts \

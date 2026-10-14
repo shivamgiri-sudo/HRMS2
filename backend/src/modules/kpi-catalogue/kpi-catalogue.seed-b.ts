@@ -29,6 +29,18 @@ function lpKpis(ref: string, onboarding: boolean) {
 }
 
 export const SEED_PROCESSES_B: CatalogueProcessDef[] = [
+  {
+    // ALT RX helpdesk: one Ticket Dump (db_masmis.altdump, sql/2117) is the whole dataset; the engine behind
+    // /alt-rx is process-performance/alt-rx/alt-rx.engine.ts. No agent roster on the dump, so management-only.
+    processKey: "alt_rx", processName: "ALT RX", processCodes: ["ALT_RX"],
+    kpis: [
+      k("altrx_tickets", "Tickets", "tickets", "volume", "count", H, "process", "upload", "db_masmis.altdump", "COUNT(DISTINCT ticket_id)", "upload", ["date", "status", "group"], A_MGMT),
+      k("altrx_resolved_pct", "Resolved %", "tickets", "rate", "percent", H, "process", "upload", "db_masmis.altdump", "resolved or closed tickets / tickets", "upload", ["date", "group"], A_MGMT),
+      k("altrx_first_response_sla_pct", "First response within SLA %", "tickets", "rate", "percent", H, "process", "upload", "db_masmis.altdump", "tickets with first_response_status = 'Within SLA' / tickets", "upload", ["date", "group"], A_MGMT),
+      k("altrx_resolution_sla_pct", "Resolution within SLA %", "tickets", "rate", "percent", H, "process", "upload", "db_masmis.altdump", "tickets with resolution_status = 'Within SLA' / resolved tickets", "upload", ["date", "group"], A_MGMT),
+      ...std(),
+    ],
+  },
   { processKey: "lp_feedback", processName: "Lawyer Panel - Feedback", processCodes: ["ERESOLUTION", "BSS_OB_NOIDA_1005"],
     kpis: [...lpKpis("db_masmis.lp_feedback_apr + lp_feedback_cdr (lp-call-dashboard.shared)", false), ...std()] },
   { processKey: "lp_onboarding", processName: "Lawyer Panel - Onboarding", processCodes: ["ERESOLUTION", "BSS_OB_NOIDA_1005"],
