@@ -1,0 +1,99 @@
+name: Ops boot probe (manual, read-only)
+
+# Why does a deploy's new backend never start listening? Takes the backend-dist artifact of a given
+# deploy run, and on the prod runner IMPORTS (never runs) the modules server.js imports, printing a
+# timestamp as each module starts evaluating, plus a diagnostic report (JS stack) at 60 s. main() is
+# never called: no migrations, no listen, no schedulers (ENABLE_SCHEDULERS=false). Hard timeout.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Deploy run id whose backend-dist artifact to probe"
+        required: true
+        type: string
+
+concurrency:
+  group: ops-boot-probe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  probe:
+    name: Boot probe
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Download backend-dist of the deploy run
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-dist
+          path: ${{ runner.temp }}/probe/backend/dist
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Import probe
+        shell: bash
+        working-directory: ${{ runner.temp }}/probe/backend
+        env:
+          ENABLE_SCHEDULERS: "false"
+          PORT: "5099"
+        run: |
+          set +e
+          cp /var/www/HRMS2/backend/package.json .
+          ln -sfn /var/www/HRMS2/backend/node_modules node_modules
+          cat > hooks.mjs <<'JS'
+          export async function load(url, context, nextLoad) {
+            const r = await nextLoad(url, context);
+            if (r.format === "module" && url.includes("/probe/backend/dist/") && r.source) {
+              const src = typeof r.source === "string" ? r.source : Buffer.from(r.source).toString("utf8");
+              const tag = url.split("/probe/backend/dist/")[1];
+              r.source = `process.stderr.write("[probe] " + Date.now() + " eval ${tag}\\n");\n` + src;
+            }
+            return r;
+          }
+          JS
+          cat > register.mjs <<'JS'
+          import { register } from "node:module";
+          register("./hooks.mjs", import.meta.url);
+          JS
+          cat > entry.mjs <<'JS'
+          import fs from "node:fs";
+          import dotenv from "dotenv";
+          dotenv.config({ path: "/var/www/HRMS2/backend/.env" });
+          process.env.ENABLE_SCHEDULERS = "false";
+          process.env.PORT = "5099";
+          const src = fs.readFileSync("./dist/src/server.js", "utf8");
+          const specs = [...src.matchAll(/^import[^;]*?from\s+"(\.[^"]+)"/gm)].map((m) => m[1]);
+          console.error(`[probe] server.js imports ${specs.length} local modules`);
+          for (const s of specs) {
+            const t = Date.now();
+            try { await import(new URL(s, new URL("./dist/src/", import.meta.url)).href); }
+            catch (e) { console.error(`[probe] IMPORT FAILED ${s}: ${e?.stack?.split("\n").slice(0, 4).join(" | ")}`); }
+            const ms = Date.now() - t;
+            console.error(`[probe] ${ms > 2000 ? "SLOW " : ""}import ${s} ${ms} ms`);
+          }
+          console.error("[probe] all imports done");
+          process.exit(0);
+          JS
+          node --import ./register.mjs --report-on-signal --report-signal=SIGUSR2 --report-directory=. entry.mjs > probe.out 2> probe.err &
+          PID=$!
+          for i in $(seq 1 60); do sleep 1; kill -0 $PID 2>/dev/null || break; done
+          if kill -0 $PID 2>/dev/null; then
+            echo "=== still running after 60 s: taking diagnostic report ==="
+            kill -USR2 $PID; sleep 5
+            for i in $(seq 1 60); do sleep 1; kill -0 $PID 2>/dev/null || break; done
+            kill -USR2 $PID 2>/dev/null; sleep 5
+            kill -9 $PID 2>/dev/null
+          fi
+          echo "=== probe stderr (last 120 lines) ==="; tail -n 120 probe.err | cut -c1-300
+          echo "=== probe stdout (last 30) ==="; tail -n 30 probe.out | cut -c1-300
+          for r in report*.json; do
+            [ -f "$r" ] || continue
+            echo "=== $r javascriptStack ==="
+            node -e 'const r=require(process.argv[1]);console.log(JSON.stringify(r.javascriptStack,null,1).slice(0,4000));console.log("libuv active handles:", (r.libuv||[]).filter(h=>h.is_active).map(h=>h.type+(h.remoteEndpoint?":"+JSON.stringify(h.remoteEndpoint):"")).join(", ").slice(0,1500));' "$PWD/$r"
+          done
+          rm -rf "${{ runner.temp }}/probe"
+          exit 0
