@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { budgetExGstSql, grnAllocationExGstSql } from "./pnl-ex-gst.js";
+import { hrmsAllocationSql } from "./hrms-only-grn.js";
 
 /**
  * Per-cost-centre budget vs actual for one branch budget, with a head / sub-head breakdown.
@@ -205,6 +206,7 @@ export const budgetCostCentreUtilizationService = {
          FROM grn_cost_allocation g
          JOIN finance_budget_line l ON l.id = g.budget_line_id
         WHERE l.budget_id = ? AND g.lifecycle_status IN ('reserved', 'consumed')
+          AND ${hrmsAllocationSql("g")}
         GROUP BY g.cost_centre_id, l.head, l.sub_head`,
       [budgetId]
     );
@@ -242,6 +244,7 @@ export const budgetCostCentreUtilizationService = {
           AND g.lifecycle_status IN ('reserved', 'consumed')
           AND g.budget_line_id IS NOT NULL
           AND NOT (COALESCE(g.funding_cost_centre_id, l.cost_centre_id) <=> g.cost_centre_id)
+          AND ${hrmsAllocationSql("g")}
         GROUP BY g.cost_centre_id, COALESCE(g.funding_cost_centre_id, l.cost_centre_id)`,
       [budgetId]
     );

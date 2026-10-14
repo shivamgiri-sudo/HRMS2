@@ -723,6 +723,9 @@ grnRouter.get(
         costClass:     req.query.costClass     ? String(req.query.costClass)     : undefined,
         financialYear: req.query.financialYear ? String(req.query.financialYear) : undefined,
         grnType:       req.query.grnType       ? String(req.query.grnType)       : undefined,
+        // Budget drill-down: migrated db_bill GRNs sit in grn_request too and must not be listed
+        // against an HRMS budget line (owner rule 2026-10-14).
+        hrmsOnly:      req.query.hrmsOnly === "true" ? true : undefined,
       };
 
       if (source === "new") {

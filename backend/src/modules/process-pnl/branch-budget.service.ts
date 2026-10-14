@@ -15,6 +15,7 @@ import {
 import { isPeriodLocked } from "./finance-period-lock.js";
 import { budgetExGstSql, grnAllocationExGstSql } from "./pnl-ex-gst.js";
 import { budgetLineAvailableSql } from "./budget-tax-basis.js";
+import { hrmsAllocationSql, legacyCountersByLine, withoutLegacy } from "./hrms-only-grn.js";
 
 import { refuse } from "./finance-error.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
@@ -1009,6 +1010,30 @@ export const branchBudgetService = {
         ORDER BY h.period_code DESC, h.created_at DESC`,
       params
     );
+    // Same HRMS-only rule as get(): the header totals must equal the sum of the lines it opens to.
+    const legacyByLine = await legacyCountersByLine(rows.map((r) => String(r.id)));
+    if (legacyByLine.size > 0) {
+      const legacyLineIds = [...legacyByLine.keys()];
+      const [lineHeaders] = await db.execute<RowDataPacket[]>(
+        `SELECT id, budget_id FROM finance_budget_line WHERE id IN (${legacyLineIds.map(() => "?").join(", ")})`,
+        legacyLineIds,
+      );
+      const perHeader = new Map<string, { reserved: number; consumed: number }>();
+      for (const lh of lineHeaders) {
+        const c = legacyByLine.get(String(lh.id));
+        if (!c) continue;
+        const cur = perHeader.get(String(lh.budget_id)) ?? { reserved: 0, consumed: 0 };
+        cur.reserved += c.reserved;
+        cur.consumed += c.consumed;
+        perHeader.set(String(lh.budget_id), cur);
+      }
+      for (const row of rows) {
+        const c = perHeader.get(String(row.id));
+        if (!c) continue;
+        row.reserved_amount = Math.max(0, Math.round((Number(row.reserved_amount) - c.reserved) * 100) / 100);
+        row.consumed_amount = Math.max(0, Math.round((Number(row.consumed_amount) - c.consumed) * 100) / 100);
+      }
+    }
     return rows;
   },
 
@@ -1120,8 +1145,12 @@ export const branchBudgetService = {
       [id]
     );
 
+    // HRMS budget = HRMS GRNs only: take the db_bill-migrated share out of reserved/consumed.
+    const legacyByLine = await legacyCountersByLine([id]);
+
     const linesWithAllocations = await Promise.all(
-      lines.map(async (line) => {
+      lines.map(async (rawLine) => {
+        const line = withoutLegacy(rawLine as Record<string, any>, legacyByLine.get(String(rawLine.id)));
         if (String(line.planning_level) !== "branch") return line;
         const allocations = await getLineAllocations(String(line.id));
         return { ...line, allocations };
@@ -2810,6 +2839,7 @@ export const branchBudgetService = {
          LEFT JOIN vendor_master vm ON vm.id = gr.vendor_id
          LEFT JOIN cost_centre_master incurred_ccm ON incurred_ccm.id = ca.cost_centre_id
         WHERE ca.budget_line_id = ?
+          AND ${hrmsAllocationSql("ca")}
         ORDER BY gr.bill_date DESC`,
       [lineId]
     );

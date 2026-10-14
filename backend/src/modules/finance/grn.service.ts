@@ -1951,6 +1951,8 @@ export const grnService = {
     limit?: number;
     /** Opt-in only — GRN Search and other existing callers must keep showing drafts by default. */
     excludeDraft?: boolean;
+    /** Opt-in: only GRNs raised in HRMS (drops the db_bill-migrated rows). Budget drill-down. */
+    hrmsOnly?: boolean;
   }) {
     // A GRN split across cost centres/heads keeps ONE header row but several grn_cost_allocation
     // rows, each with its own share. When a cost-centre drill-down is active (the case this exists
@@ -2090,6 +2092,9 @@ export const grnService = {
     }
     if (filters.excludeDraft) {
       conditions.push("g.status <> 'draft'");
+    }
+    if (filters.hrmsOnly) {
+      conditions.push(`(${hrmsRaisedGrnSql("g")})`);
     }
     if (filters.financialYear) {
       conditions.push("g.financial_year = ?");
