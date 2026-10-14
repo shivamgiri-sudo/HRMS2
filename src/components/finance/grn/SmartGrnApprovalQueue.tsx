@@ -1316,14 +1316,19 @@ export function SmartGrnApprovalQueue({
                           // states; deriveGstType is the same rule the raise form itself applies). Not
                           // shown before this: only the GSTIN was visible, which does not by itself say
                           // whether the recorded gst_type on THIS GRN actually matches.
-                          [
-                            "Vendor State",
-                            gstStateLabel(parent?.vendor_state_code),
-                          ],
-                          [
-                            "Billing State",
-                            gstStateLabel(parent?.billing_state_code),
-                          ],
+                          ...(parent?.gst_enabled == null ||
+                          Boolean(Number(parent.gst_enabled))
+                            ? ([
+                                [
+                                  "Vendor State",
+                                  gstStateLabel(parent?.vendor_state_code),
+                                ],
+                                [
+                                  "Billing State",
+                                  gstStateLabel(parent?.billing_state_code),
+                                ],
+                              ] as [string, string | null | undefined][])
+                            : []),
                         ] as [string, string | null | undefined][]
                       ).map(([label, val]) => (
                         <GrnKv key={label} label={label}>
