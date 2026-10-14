@@ -23,6 +23,7 @@ import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
 import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
+import { applyDraftHeaderEdit, type DraftHeaderInput } from "./grn-draft-header.js";
 import { assertBranchSplitAllowed, resolveBranchBackOffice } from "./grn-branch-split.js";
 import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
@@ -64,7 +65,7 @@ export interface SmartAllocationInput {
   remarks?: string;
 }
 
-export interface SmartGrnInvoiceInput {
+export interface SmartGrnInvoiceInput extends DraftHeaderInput {
   invoiceNumber?: string;
   /** E-invoice reference number (IRN) — optional, Finance Head visible. */
   irn?: string | null;
@@ -114,7 +115,7 @@ export interface CostCentreSplitRowInput {
   remarks?: string;
 }
 
-export interface SmartGrnComponentSplitInput {
+export interface SmartGrnComponentSplitInput extends DraftHeaderInput {
   invoiceNumber?: string;
   servicePeriodStart?: string | null;
   servicePeriodEnd?: string | null;
@@ -221,6 +222,21 @@ function normalizeInvoiceNumber(value: unknown) {
 function dateOrNull(value: unknown) {
   const text = String(value ?? "").trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
+}
+
+/** Applies a draft's header edits on the caller's transaction, updates the locked row in place
+ *  for the rest of the save, and audits what changed. */
+async function saveDraftHeader(
+  connection: PoolConnection,
+  grn: Record<string, any>,
+  input: DraftHeaderInput,
+  actorUserId: string,
+  actorRole: string
+) {
+  const { set, changes } = await applyDraftHeaderEdit(connection, grn, input);
+  if (!Object.keys(changes).length) return;
+  Object.assign(grn, set);
+  await writeAuditInTransaction(connection, "DRAFT_HEADER_UPDATED", String(grn.id), actorUserId, actorRole, changes);
 }
 
 async function lockGrn(connection: PoolConnection, grnId: string) {
@@ -1160,6 +1176,9 @@ export const grnSmartService = {
       if (String(grn.status) !== "draft") {
         throw new Error("Allocations can only be changed while the GRN is a draft");
       }
+      // Header edits on a re-opened draft (bill date, remarks) — applied first, so the period
+      // checks below read the header as saved. See grn-draft-header.ts.
+      await saveDraftHeader(connection, grn, input, actorUserId, actorRole);
       // Imprest = petty cash out of the branch float. No tax invoice, no ITC, so the funding
       // budget line's planned tax treatment must not split a GST component out of it and the
       // whole amount is P&L cost. See applyImprestNoGst for the full rationale.
@@ -1698,6 +1717,9 @@ export const grnSmartService = {
       if (String(grn.grn_type) !== "vendor") {
         throw new Error("Invoice-component GRNs are only supported for vendor GRNs");
       }
+      // Header edits on a re-opened draft (vendor, bill/due date, terms, remarks) — applied
+      // first, so the period checks below read the header as saved. See grn-draft-header.ts.
+      await saveDraftHeader(connection, grn, input, actorUserId, actorRole);
       // Derive GST type from state codes (same logic as saveAllocations).
       const _v2 = String(input.vendorStateCode?.trim() || grn.vendor_state_code || "").trim();
       const _b2 = String(input.billingStateCode?.trim() || grn.billing_state_code || "").trim();

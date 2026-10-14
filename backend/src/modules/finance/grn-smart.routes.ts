@@ -273,8 +273,12 @@ smartGrnRouter.put(
       // than 30 days. They must supply a lateInvoiceReason; Finance Head sees the flag in the
       // approval queue. Hard block replaced with a soft require-reason gate.
       const grn = req.financeGrn;
-      if (grn?.bill_date) {
-        const billDateMs = new Date(String(grn.bill_date)).getTime();
+      // A draft's bill date can now be edited on this same save; judge lateness by the date
+      // being saved, not the one on file.
+      const requestedBillDate = String(req.body?.billDate ?? "").trim();
+      const effectiveBillDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedBillDate) ? requestedBillDate : grn?.bill_date;
+      if (effectiveBillDate) {
+        const billDateMs = new Date(String(effectiveBillDate)).getTime();
         const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
         const isRestrictedRole = ["branch_admin", "branch_head"].includes(user.role)
           && !user.roles.some((r: string) => ["finance_head", "accounts_head", "super_admin"].includes(r));

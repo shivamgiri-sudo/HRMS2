@@ -35,6 +35,14 @@ import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import { GrnBudgetImportButton } from "@/components/finance/grn/GrnBudgetImportButton";
 import { checkTone } from "@/components/finance/grn/grn-format";
+import {
+  buildSavedCostCentreSplits,
+  buildVendorOptions,
+  mergeCostCentreSplits,
+  toDateInputValue,
+  type SavedSplitRow,
+} from "@/components/finance/grn/grn-draft-prefill";
+import { openDocumentInNewTab } from "@/lib/openDocumentInNewTab";
 // Aliased rather than renamed at the ~40 call sites: same props, same forwarded refs, so this is
 // a swap of appearance only.
 import {
@@ -486,7 +494,12 @@ export function BudgetLinkedGrnForm({
     editGrnId ? { id: editGrnId, grnNumber: "…", submitted: false } : null
   );
   const [prefilledForEdit, setPrefilledForEdit] = useState(!editGrnId);
-  const [autoAnalyze, setAutoAnalyze] = useState(true);
+  // Off by default: reading the invoice is an explicit choice, not something every upload triggers.
+  const [autoAnalyze, setAutoAnalyze] = useState(false);
+  // A re-opened draft's saved cost-centre split, held until the cost centres and budget lines it
+  // is merged into have loaded — the split rows themselves are wiped while those load.
+  const savedSplitsRef = useRef<SavedSplitRow[] | null>(null);
+  const [openingDocumentId, setOpeningDocumentId] = useState<string | null>(null);
   const [extractedFields, setExtractedFields] = useState<Record<string, any> | null>(null);
   const [showErrors, setShowErrors] = useState(false);
   // Item 10: fresh-create submit success no longer auto-resets silently — it opens this
@@ -771,7 +784,7 @@ export function BudgetLinkedGrnForm({
       ...EMPTY_FORM,
       grnType: (String(g.grn_type ?? "vendor")) as GrnType,
       branchId: String(g.branch_id ?? ""),
-      billDate: String(g.bill_date ?? "").slice(0, 10),
+      billDate: toDateInputValue(g.bill_date),
       accountingPeriod: String(g.accounting_period ?? ""),
       vendorId: String(g.vendor_id ?? ""),
       invoiceNumber: String(g.invoice_number ?? ""),
@@ -784,6 +797,8 @@ export function BudgetLinkedGrnForm({
       head: String(g.head ?? ""),
       subHead: String(g.sub_head ?? ""),
       paymentTermsDays: Number(g.payment_terms_days ?? 30),
+      // Saved on the draft (bill date + terms) but was never read back, so the field came up blank.
+      dueDate: toDateInputValue(g.due_date),
       remarks: String(g.remarks ?? ""),
       lateInvoiceReason: String(g.late_invoice_reason ?? ""),
       companyCode: String(g.company_code ?? ""),
@@ -804,29 +819,14 @@ export function BudgetLinkedGrnForm({
       );
     }
     if (workspace.allocations?.length) {
-      const ccMap = new Map<string, { budgetLineId: string; pct: number }>();
-      for (const alloc of workspace.allocations) {
-        const ccKey = String(alloc.cost_centre_id ?? "__none__");
-        const existing = ccMap.get(ccKey) ?? { budgetLineId: String(alloc.budget_line_id), pct: 0 };
-        existing.pct = Math.round((existing.pct + Number(alloc.allocation_percentage)) * 1_000_000) / 1_000_000;
-        ccMap.set(ccKey, existing);
-      }
-      setCostCentreSplits(
-        // included must be set here, not left to the re-seed effect. These rows are rebuilt from
-        // allocations already PERSISTED against the GRN, so by definition each was included when
-        // the GRN was saved. Omitting the field left it undefined, and the submit filter
-        // (`row.included && ...`) treats undefined as excluded — so whenever the re-seed effect
-        // did not happen to run after this prefill, editing a saved GRN dropped every
-        // cost-centre allocation on save. The re-seed effect's own default is
-        // `existing?.included ?? false`, which preserves whatever is set here.
-        [...ccMap.entries()].map(([ccKey, data]) => ({
-          key: crypto.randomUUID(),
-          costCentreKey: ccKey,
-          budgetLineId: data.budgetLineId,
-          percentage: Math.round(data.pct * 1000) / 1000,
-          included: true,
-        }))
-      );
+      // included is set on every saved row (they were all included when the GRN was saved — an
+      // undefined included reads as excluded and dropped every allocation on the next save).
+      // The rows are also held in savedSplitsRef: setting branch/head/sub-head above empties the
+      // cost-centre groups until cost centres and budget lines load, and the re-seed effect then
+      // clears these rows; it restores them from the ref once the groups arrive.
+      const savedRows = buildSavedCostCentreSplits(workspace.allocations);
+      savedSplitsRef.current = savedRows;
+      setCostCentreSplits(savedRows.map((row) => ({ key: crypto.randomUUID(), ...row })));
     }
     setPrefilledForEdit(true);
   }, [workspace, prefilledForEdit, editGrnId]);
@@ -1183,27 +1183,19 @@ export function BudgetLinkedGrnForm({
   // When budget lines are branch-common (no specific cost centre), all active cost centres are shown
   // and the user can split to any of them.
   useEffect(() => {
+    // Captured now: the updater may run after the ref is cleared below.
+    const saved = savedSplitsRef.current;
     setCostCentreSplits((current) => {
-      if (!vendorCostCentreGroups.length) return current.length ? [] : current;
-      return vendorCostCentreGroups.map((group) => {
-        const existing = current.find((row) => row.costCentreKey === group.costCentreKey);
-        // For branch-common expenses, lines may not have a specific budget line ID per CC
-        const firstLineId = group.lines[0]?.id ?? "";
-        // Only preserve an existing selection when the group still has budget lines AND the
-        // previously chosen line is still among them. When lines.length === 0 the old ID is stale
-        // (the line was depleted or the head/subhead no longer matches) and must be cleared.
-        const stillValid = existing && group.lines.length > 0 && group.lines.some((line) => line.id === existing.budgetLineId);
-        return {
-          key: existing?.key ?? crypto.randomUUID(),
-          costCentreKey: group.costCentreKey,
-          budgetLineId: stillValid ? existing!.budgetLineId : firstLineId,
-          // No cost centre is pre-selected: the raiser must tick each one themselves.
-          percentage: existing?.percentage ?? 0,
-          included: existing?.included ?? false,
-        };
-      });
+      // Groups are empty while cost centres / budget lines load (and when Head/Sub-head is
+      // cleared). A re-opened draft keeps its rows through the load; otherwise clear as before.
+      if (!vendorCostCentreGroups.length) return saved || !current.length ? current : [];
+      // An existing selection is kept only while its line can still fund this cost centre; a
+      // cost centre with no row yet takes the saved draft's values (see mergeCostCentreSplits).
+      return mergeCostCentreSplits(current, vendorCostCentreGroups, saved, () => crypto.randomUUID());
     });
-  }, [vendorCostCentreGroups]);
+    // Once merged against loaded budget lines the rows on screen carry everything; drop the copy.
+    if (vendorCostCentreGroups.length && !linesLoading) savedSplitsRef.current = null;
+  }, [vendorCostCentreGroups, linesLoading]);
 
   const costCentreSplitTotal = useMemo(
     () => Math.round(costCentreSplits.reduce((sum, row) => sum + Number(row.percentage || 0), 0) * 1_000_000) / 1_000_000,
@@ -1811,6 +1803,8 @@ export function BudgetLinkedGrnForm({
     setFiles([]);
     setCreated(null);
     setExtractedFields(null);
+    setAutoAnalyze(false);
+    savedSplitsRef.current = null;
     setSplitMode(false);
     setShowErrors(false);
     setPrefilledForEdit(true);
@@ -2026,6 +2020,31 @@ export function BudgetLinkedGrnForm({
         setCreated(current);
       }
 
+      // Attachments go up as soon as the GRN row exists — before the component/allocation save,
+      // which can still refuse (budget, late-invoice reason, split not 100%). Uploading last
+      // meant such a refusal left a draft with no attachment and the picked file quietly gone.
+      // Each file leaves the pending list the moment it is stored, so a retry never re-uploads.
+      let uploadedDocuments: WorkspaceDocument[] = [];
+      if (files.length) {
+        // One file at a time (large ones in pieces) — see uploadGrnDocument() for the 413 story.
+        for (const [index, file] of files.entries()) {
+          try {
+            const documents = await uploadGrnDocument(String(current.id), file, index === 0);
+            uploadedDocuments = [...uploadedDocuments, ...documents];
+            setFiles((prev) => prev.filter((pending) => pending !== file));
+          } catch (uploadError) {
+            const tooLarge =
+              (uploadError as { status?: number } | null)?.status === 413 ||
+              /413|too large/i.test(uploadError instanceof Error ? uploadError.message : String(uploadError));
+            throw new Error(
+              tooLarge
+                ? `"${file.name}" is too large to upload. Compress it and try again.`
+                : `Could not upload "${file.name}": ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`
+            );
+          }
+        }
+      }
+
       if (isVendor) {
         await hrmsApi.put(`/api/finance/grns/${current.id}/invoice-components`, {
           invoiceNumber: form.invoiceNumber,
@@ -2066,12 +2085,22 @@ export function BudgetLinkedGrnForm({
           // Legacy flag, kept for an older client; the server now derives this per row instead.
           isUnbudgeted: isUnbudgetedExpense || undefined,
           lateInvoiceReason: form.lateInvoiceReason.trim() || undefined,
+          // Draft header: create only runs on the first save, so without these a re-opened
+          // draft's vendor / dates / terms / remarks edits were silently discarded.
+          vendorId: form.vendorId || undefined,
+          billDate: form.billDate || undefined,
+          dueDate: form.dueDate || undefined,
+          paymentTermsDays: Number(resolvedPaymentTerms),
+          remarks: form.remarks,
           gstEnabled: form.gstEnabled,
           vendorStateCode: form.vendorStateCode || undefined,
           billingStateCode: form.billingStateCode || undefined,
         });
       } else {
         await hrmsApi.put(`/api/finance/grns/${current.id}/allocations`, {
+          // Draft header (see the vendor branch above); imprest has no vendor or terms.
+          billDate: form.billDate || undefined,
+          remarks: form.remarks,
           // Declared whenever there is more than one row to reconcile against — split mode's
           // manual allocations, and now the cost-centre-split flow's per-CC rows too. A true
           // single-line GRN (one row, one cost centre) still omits it: the amount drives the
@@ -2098,27 +2127,6 @@ export function BudgetLinkedGrnForm({
             remarks: item.remarks || undefined,
           })),
         });
-      }
-
-      let uploadedDocuments: WorkspaceDocument[] = [];
-      if (files.length) {
-        // One file at a time (large ones in pieces) — see uploadGrnDocument() for the 413 story.
-        for (const [index, file] of files.entries()) {
-          try {
-            const documents = await uploadGrnDocument(String(current.id), file, index === 0);
-            uploadedDocuments = [...uploadedDocuments, ...documents];
-          } catch (uploadError) {
-            const tooLarge =
-              (uploadError as { status?: number } | null)?.status === 413 ||
-              /413|too large/i.test(uploadError instanceof Error ? uploadError.message : String(uploadError));
-            throw new Error(
-              tooLarge
-                ? `"${file.name}" is too large to upload. Compress it and try again.`
-                : `Could not upload "${file.name}": ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`
-            );
-          }
-        }
-        setFiles([]);
       }
 
       if (autoAnalyze && uploadedDocuments[0]?.id) {
@@ -2190,6 +2198,9 @@ export function BudgetLinkedGrnForm({
       }
     },
     onError: (error: Error) => {
+      // A save that failed after the GRN row exists may already have stored attachments (they go
+      // up first) — refresh so they show as saved instead of looking lost.
+      void queryClient.invalidateQueries({ queryKey: ["smart-grn-workspace"] });
       const overBudget = /exceeds (the )?available budget/i.test(error.message);
       const lineId = attemptedLineIdRef.current;
       toast({
@@ -2270,6 +2281,29 @@ export function BudgetLinkedGrnForm({
     onError: (error: Error) =>
       toast({ title: "Validation failed", description: error.message, variant: "destructive" }),
   });
+
+  const legacyAttachmentName = String(
+    workspace?.grn?.attachment_original_name ?? workspace?.grn?.attachment_file_name ?? ""
+  ).trim();
+
+  async function openSavedDocument(documentId?: string) {
+    if (!created) return;
+    setOpeningDocumentId(documentId ?? "legacy");
+    try {
+      const endpoint = documentId
+        ? `/api/finance/grns/${created.id}/documents/${documentId}/file`
+        : `/api/finance/grns/${created.id}/attachment`;
+      await openDocumentInNewTab(() => hrmsApi.getBlob(endpoint));
+    } catch (error) {
+      toast({
+        title: "Attachment could not be opened",
+        description: error instanceof Error ? error.message : "File error",
+        variant: "destructive",
+      });
+    } finally {
+      setOpeningDocumentId(null);
+    }
+  }
 
   const primaryDocument =
     workspace?.documents?.find((item) => Number(item.is_primary) === 1) ?? workspace?.documents?.[0];
@@ -2767,18 +2801,15 @@ export function BudgetLinkedGrnForm({
                         aria-label="Vendor"
                         disabled={locked}
                         loading={vendorsLoading}
-                        options={Array.from(
-                          new Map(
-                            vendors.map((vendor) => [
-                              (vendor.vendor_name ?? vendor.name ?? "").trim().toUpperCase(),
-                              vendor,
-                            ])
-                          ).values()
-                        ).map((vendor) => ({
-                          value: vendor.id,
-                          label: (vendor.vendor_name ?? vendor.name ?? "").trim(),
-                          hint: undefined,
-                        }))}
+                        options={buildVendorOptions(
+                          vendors,
+                          form.vendorId,
+                          // A saved draft's vendor may not be in the 50-row search page; the
+                          // picker only labels a value it has as an option, so seed it by name.
+                          String(workspace?.grn?.vendor_id ?? "") === form.vendorId
+                            ? workspace?.grn?.vendor_name
+                            : undefined
+                        )}
                         value={form.vendorId}
                         onChange={(value) => {
                           const picked = vendors.find((vendor) => vendor.id === value);
@@ -3441,7 +3472,7 @@ export function BudgetLinkedGrnForm({
               </label>
 
               {/* Attached files list - compact */}
-              {(files.length > 0 || (workspace?.documents?.length ?? 0) > 0) && (
+              {(files.length > 0 || (workspace?.documents?.length ?? 0) > 0 || Boolean(legacyAttachmentName)) && (
                 <ul className="mt-2 space-y-1">
                   {files.map((file) => (
                     <li
@@ -3476,13 +3507,40 @@ export function BudgetLinkedGrnForm({
                               : "border-grn-crit-line bg-grn-crit-bg"
                         )}
                       >
-                        <span className="truncate font-semibold text-grn-ink">{document.original_name}</span>
-                        <StatusStamp tone={tone}>
-                          {Number(document.is_primary) === 1 ? "Primary" : "Support"}
-                        </StatusStamp>
+                        <button
+                          type="button"
+                          className="truncate text-left font-semibold text-grn-ink underline-offset-2 hover:underline"
+                          title="Open the saved attachment"
+                          disabled={openingDocumentId === document.id}
+                          onClick={() => void openSavedDocument(document.id)}
+                        >
+                          {document.original_name}
+                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {openingDocumentId === document.id && <Loader2 className="h-3 w-3 animate-spin" />}
+                          <StatusStamp tone="ok">Saved</StatusStamp>
+                          <StatusStamp tone={tone}>
+                            {Number(document.is_primary) === 1 ? "Primary" : "Support"}
+                          </StatusStamp>
+                        </div>
                       </li>
                     );
                   })}
+                  {/* A draft whose file sits only in the legacy attachment columns (no grn_document row). */}
+                  {!workspace?.documents?.length && legacyAttachmentName && (
+                    <li className="flex items-center justify-between gap-2 rounded-[6px] border border-grn-ok-line bg-grn-ok-bg px-2.5 py-1.5 text-[11px]">
+                      <button
+                        type="button"
+                        className="truncate text-left font-semibold text-grn-ink underline-offset-2 hover:underline"
+                        title="Open the saved attachment"
+                        disabled={openingDocumentId === "legacy"}
+                        onClick={() => void openSavedDocument()}
+                      >
+                        {legacyAttachmentName}
+                      </button>
+                      <StatusStamp tone="ok">Saved</StatusStamp>
+                    </li>
+                  )}
                 </ul>
               )}
 
