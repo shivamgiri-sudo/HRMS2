@@ -136,6 +136,19 @@ export function PnlReconciliationPanel({
       estimated: (data.totals.grnEstimated ?? 0) > 0,
     },
     {
+      // Running month: every open budget line is blocked at its full amount until it is closed.
+      label: "Budget blocked (allocated)",
+      value: money(data.totals.allocatedBudget ?? 0),
+      hint: "Total budget allocated to these cost centres for the month. Open lines count at their full amount in cost until they are closed.",
+    },
+    {
+      label: "Budget used so far (consumed + reserved)",
+      value: (data.totals.allocatedBudget ?? 0) > 0
+        ? `${money(data.totals.grnActual + (data.totals.grnEstimated ?? 0))} · ${percent(((data.totals.grnActual + (data.totals.grnEstimated ?? 0)) / data.totals.allocatedBudget) * 100)}`
+        : money(data.totals.grnActual + (data.totals.grnEstimated ?? 0)),
+      hint: "GRN consumed (bill booked) plus GRN reserved (approved, not yet consumed), till date, as a share of the allocated budget.",
+    },
+    {
       // Owner rule 2026-10-06: an OPEN budget line counts at full budget until it is closed, so its
       // unspent headroom is cost on top of the GRNs; closing the line releases it.
       label: "Open budget not yet spent",
@@ -246,6 +259,10 @@ export function PnlReconciliationPanel({
                   <th className="px-3 py-2">Branch</th>
                   <th className="px-3 py-2 text-right" title={pnlTooltip("RECOGNISED_REVENUE")}>{pnlLabel("RECOGNISED_REVENUE")}</th>
                   <th className="px-3 py-2 text-right" title={pnlTooltip("PEOPLE_COST")}>{pnlLabel("PEOPLE_COST")}</th>
+                  <th className="px-3 py-2 text-right" title="Budget allocated to the branch's cost centres for the month; open lines are blocked at this amount">Budget blocked</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("GRN_CONSUMED")}>Consumed</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("GRN_COMMITTED")}>Reserved</th>
+                  <th className="px-3 py-2 text-right" title="Unspent headroom of open budget lines, counted as cost until the line is closed">Unspent (blocked)</th>
                   <th className="px-3 py-2 text-right" title={pnlTooltip("INDIRECT_COST")}>{pnlLabel("INDIRECT_COST")}</th>
                   <th className="px-3 py-2 text-right" title={pnlTooltip("OPERATING_PROFIT_CONTRIBUTION")}>{pnlLabel("OPERATING_PROFIT_CONTRIBUTION")}</th>
                 </tr>
@@ -256,6 +273,10 @@ export function PnlReconciliationPanel({
                     <td className="px-3 py-2 font-medium text-slate-800">{branch.branchName}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(branch.revenue)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(branch.payrollCost)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">{money(branch.allocatedBudget)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{money(branch.grnActual)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{money(branch.grnEstimated ?? 0)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(branch.openBudgetReserve ?? 0)}</td>
                     <td className="px-3 py-2 text-right tabular-nums" title={branch.grnEstimated ? `Includes ${money(branch.grnEstimated)} reserved (not yet consumed)` : undefined}>
                       {money(branch.grnActual + (branch.grnEstimated ?? 0) + (branch.openBudgetReserve ?? 0))}
                       {(branch.grnEstimated ?? 0) > 0 && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>}
@@ -277,7 +298,7 @@ export function PnlReconciliationPanel({
             <span className="text-xs text-slate-500">Top {topRows.length} of {data.rows.length}</span>
           </div>
           <div className="max-h-[520px] overflow-auto">
-            <table className="w-full min-w-[980px] text-left text-xs">
+            <table className="w-full min-w-[1240px] text-left text-xs">
               <thead className="sticky top-0 bg-slate-50 text-[11px] uppercase text-slate-500">
                 <tr>
                   <th className="px-3 py-2">Cost centre</th>
@@ -287,8 +308,11 @@ export function PnlReconciliationPanel({
                   <th className="px-3 py-2 text-right" title={pnlTooltip("RECOGNISED_REVENUE")}>{pnlLabel("RECOGNISED_REVENUE")}</th>
                   <th className="px-3 py-2 text-right" title="Monthly seat billing divided by days in the month">Per day</th>
                   <th className="px-3 py-2 text-right" title={pnlTooltip("PEOPLE_COST")}>{pnlLabel("PEOPLE_COST")}</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("GRN_CONSUMED")}>Consumed</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("GRN_COMMITTED")}>Reserved</th>
+                  <th className="px-3 py-2 text-right" title="Unspent headroom of open budget lines, counted as cost until the line is closed">Unspent (blocked)</th>
                   <th className="px-3 py-2 text-right" title={pnlTooltip("INDIRECT_COST")}>{pnlLabel("INDIRECT_COST")}</th>
-                  <th className="px-3 py-2 text-right">Budget</th>
+                  <th className="px-3 py-2 text-right" title="Budget allocated for the month. Open = counted at this amount; Closed = counted at actual">Budget blocked</th>
                   <th className="px-3 py-2 text-right" title={pnlTooltip("OPERATING_PROFIT_CONTRIBUTION")}>{pnlLabel("OPERATING_PROFIT_CONTRIBUTION")}</th>
                   <th className="px-3 py-2">Issues</th>
                 </tr>
@@ -337,6 +361,9 @@ export function PnlReconciliationPanel({
                       })}
                       title="View the underlying rows"
                     >{money(row.payrollCost)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{money(row.grnActual)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{money(row.grnEstimated ?? 0)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(row.openBudgetReserve ?? 0)}</td>
                     <td
                       className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({
@@ -358,7 +385,14 @@ export function PnlReconciliationPanel({
                         label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
                       title="View the underlying rows"
-                    >{money(row.allocatedBudget)}</td>
+                    >
+                      {row.allocatedBudget > 0 && (
+                        <span className={`mr-1 rounded px-1 py-0.5 text-[9px] font-semibold uppercase ${(row.openBudgetReserve ?? 0) > 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                          {(row.openBudgetReserve ?? 0) > 0 ? "Open" : "Closed / used"}
+                        </span>
+                      )}
+                      {money(row.allocatedBudget)}
+                    </td>
                     <td className={`px-3 py-2 text-right font-semibold tabular-nums ${row.operatingProfit < 0 ? "text-rose-700" : "text-emerald-700"}`}>{money(row.operatingProfit)}</td>
                     <td className="px-3 py-2">
                       <div className="flex max-w-64 flex-wrap gap-1">
