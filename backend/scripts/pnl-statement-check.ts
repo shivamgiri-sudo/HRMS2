@@ -29,7 +29,7 @@ const r0 = (v: unknown) => Math.round(Number(v ?? 0));
           const row = s.rows.find((r: any) => r.componentKey === k);
           if (row && row.values && row.values[col.id] !== undefined) vals[k] = r0(row.values[col.id]);
         }
-        console.log("STM_COL " + JSON.stringify({ period, branch: col.name ?? col.label ?? col.id, ...vals }));
+        console.log("STM_COL " + JSON.stringify({ period, branch: col.name ?? col.label ?? col.id, ...vals, payrollNotProrated: col.payrollNotProrated ?? null }));
       }
     } catch (e) { console.log("STM_ERROR " + JSON.stringify({ period, error: e instanceof Error ? e.message : String(e) })); }
     try {
