@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1276,
-  "columnCount": 18578,
+  "tableCount": 1277,
+  "columnCount": 18585,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -21131,6 +21131,15 @@
       "received_amount",
       "tds_amount",
       "deduction_amount",
+      "created_at"
+    ],
+    "branch_health_snapshot": [
+      "id",
+      "branch_id",
+      "snap_date",
+      "score",
+      "pillars_json",
+      "metrics_json",
       "created_at"
     ]
   }
