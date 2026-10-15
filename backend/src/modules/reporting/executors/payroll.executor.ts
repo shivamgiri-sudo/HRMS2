@@ -1177,8 +1177,8 @@ export async function salarySheetExport(
       COALESCE(spl.special_allowance, 0) AS special_allowance,
       COALESCE(spl.gross_salary, 0) AS gross,
       COALESCE(spl.working_days, 0) AS working_days,
-      COALESCE(esa.ctc_annual, 0) AS ctc_offered,
-      COALESCE(esa.ctc_annual, 0) AS current_ctc,
+      ROUND(COALESCE(esa.ctc_annual, 0) / 12, 0) AS ctc_offered,
+      ROUND(COALESCE(esa.ctc_annual, 0) / 12, 0) AS current_ctc,
       COALESCE(spl.active_calendar_days, 30) AS actual_days,
       COALESCE(spl.final_payable_days, spl.present_days, 0) AS earned_days,
       COALESCE(spl.holiday_work_extra_payout, 0) AS extra_day,
@@ -1202,7 +1202,7 @@ export async function salarySheetExport(
       COALESCE(spl.esic_employer, 0) AS esic_company,
       COALESCE(spl.pf_employer, 0) AS epf_company,
       0 AS admin_chrg,
-      COALESCE(esa.ctc_annual, 0) AS ctc,
+      ROUND(COALESCE(esa.ctc_annual, 0) / 12, 0) AS ctc,
       spr.id AS run_id,
       DATE_FORMAT(spr.created_at, '%d-%m-%Y') AS sal_date,
       COALESCE(eu.uan, '') AS uan,
@@ -1274,10 +1274,10 @@ export async function salarySheetExport(
     const bonus = comp["BONUS"] || 0;
     const conv = comp["CONV"] || comp["TA"] || 0;
     const portfolio = comp["PORTFOLIO"] || 0;
-    const medAllw = comp["MA"] || 0;
+    const medAllw = comp["MEDICAL"] || comp["MA"] || 0;
     const lta = comp["LTA"] || 0;
     const special = Number(row.special_allowance) || comp["SPECIAL"] || comp["PA"] || 0;
-    const otherAllw = comp["OTHER"] || 0;
+    const otherAllw = comp["OTHER_ALLOW"] || comp["OTHER"] || 0;
     const pli1 = comp["PLI"] || 0;
     const gross = Number(row.gross)
       || (basic + hra + bonus + conv + portfolio + medAllw + lta + special + otherAllw + pli1);
