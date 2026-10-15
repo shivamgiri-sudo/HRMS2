@@ -85,7 +85,8 @@ const ist = (d = new Date()) => new Date(d.getTime() + 330 * 60_000).toISOString
 
   if (!APPLY) {
     console.log("\nDRY RUN - nothing written. Re-run with --apply to backfill October (and --deactivate to tidy the list).");
-    await c.end(); return;
+    await c.end();
+    process.exit(0); // importing the sync service leaves pools/timers open; do not hang the runner
   }
 
   // APPLY: scoped sync in 3-day windows, October only.
