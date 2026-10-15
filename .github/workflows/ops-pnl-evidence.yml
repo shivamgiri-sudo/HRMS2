@@ -60,6 +60,10 @@ on:
         description: "Set to 'yes' to print per-branch component P&L (revenue, agent, DSC, BMC, GRN, OP) and the non-MAS (DialDesk / I-Spark / IDC) leak check for 'periods' (read-only)."
         required: false
         default: ""
+      tallyxlsx:
+        description: "Set to 'yes' to build the Finance Ledger Tally Excel for the first month in 'periods' and print its sheets, counts and exception reasons (read-only)."
+        required: false
+        default: ""
       dbbillcm:
         description: "A db_bill cost master id: prints its master row(s) and the GRN lines booked to it by month (read-only, no person data)."
         required: false
@@ -137,6 +141,7 @@ jobs:
           INPUT_PROCBRANCH: ${{ inputs.procbranch }}
           INPUT_STMTTIMING: ${{ inputs.stmttiming }}
           INPUT_DBBILLCM: ${{ inputs.dbbillcm }}
+          INPUT_TALLYXLSX: ${{ inputs.tallyxlsx }}
           INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
           INPUT_DIAG: ${{ inputs.diag }}
           INPUT_BRANCHPLAN: ${{ inputs.branchplan }}
@@ -150,7 +155,9 @@ jobs:
           INPUT_BOOTDIAG: ${{ inputs.bootdiag }}
         run: |
           set -euo pipefail
-          if [ -n "$INPUT_DBBILLCM" ]; then
+          if [ "$INPUT_TALLYXLSX" = "yes" ]; then
+            npx tsx scripts/ledger-tally-xlsx-check.ts $INPUT_PERIODS
+          elif [ -n "$INPUT_DBBILLCM" ]; then
             npx tsx scripts/dbbill-cost-master-lookup.ts "$INPUT_DBBILLCM"
           elif [ "$INPUT_STMTTIMING" = "yes" ]; then
             npx tsx scripts/pnl-statement-timing.ts $INPUT_PERIODS
