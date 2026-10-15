@@ -27,6 +27,8 @@ const tally = (rows: any[], key: (r: any) => string) => {
   const [emp] = await q(`SELECT e.id, e.branch_id, b.branch_name FROM employees e LEFT JOIN branch_master b ON b.id = e.branch_id WHERE e.user_id = ? AND e.active_status = 1 LIMIT 1`, [uid]);
   console.log("own branch:", emp?.branch_name);
 
+  console.log("== departments where this user is head (grants org-wide via synthetic department_head role) ==");
+  console.table(await q(`SELECT d.id, d.dept_name, d.active_status FROM department_master d WHERE d.dept_head_employee_id = ?`, [emp?.id ?? ""]).catch(async () => q(`SELECT d.id, d.active_status FROM department_master d WHERE d.dept_head_employee_id = ?`, [emp?.id ?? ""])));
   console.log("== branch_head_assignments (legacy, any is_active) ==");
   console.table(await q(`SELECT branch_name, is_active FROM branch_head_assignments WHERE branch_head_id = ?`, [emp?.id ?? ""]));
   console.log("== resolveBranchHeadScope ==");
