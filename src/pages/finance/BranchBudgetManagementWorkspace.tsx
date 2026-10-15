@@ -2624,6 +2624,7 @@ export default function BranchBudgetManagementWorkspace() {
                     />
                   )}
 
+                  <div className="overflow-x-auto">
                   {budgets.map((budget) => {
                     const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount);
                     // Deliberately NOT role="button": this row contains real buttons (Review /
@@ -2640,7 +2641,7 @@ export default function BranchBudgetManagementWorkspace() {
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setUtilizationBudgetId(budget.id); }
                         }}
-                        className={`grid cursor-pointer gap-4 rounded-2xl border p-4 transition-colors xl:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr_auto] ${
+                        className={`grid min-w-[900px] cursor-pointer gap-4 rounded-2xl border p-4 transition-colors xl:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr_auto] ${
                           utilizationDetailId === budget.id
                             ? "border-blue-400 bg-blue-50/40 ring-1 ring-blue-200"
                             : "border-slate-200 hover:border-slate-300 hover:bg-slate-50/70"
@@ -2699,6 +2700,7 @@ export default function BranchBudgetManagementWorkspace() {
                       )}
                     </div>
                   )}
+                  </div>
 
                   <UtilizationBreakdown
                     rows={selectedUtilizationByHead}
