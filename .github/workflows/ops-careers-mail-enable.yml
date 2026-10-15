@@ -27,6 +27,17 @@ on:
         description: "SMTP port"
         required: true
         default: "25"
+      invite_mode:
+        description: "HE_EMAIL_INVITE_MODE: always (email invite to everyone, then WhatsApp) | fallback (email only if WhatsApp fails)"
+        required: true
+        type: choice
+        default: always
+        options: [always, fallback]
+      restart:
+        description: "Restart backend + workers now (false: the next deploy picks the .env up)"
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: ops-careers-mail-flag
@@ -50,6 +61,8 @@ jobs:
           HOST: ${{ inputs.host }}
           PORT: ${{ inputs.port }}
           PW: ${{ secrets.CAREERS_SMTP_PASS }}
+          INVITE_MODE: ${{ inputs.invite_mode }}
+          RESTART: ${{ inputs.restart }}
         run: |
           set -euo pipefail
           [[ "$PORT" =~ ^[0-9]{1,5}$ ]] || { echo "::error::port must be a number"; exit 1; }
@@ -63,12 +76,18 @@ jobs:
           BACKUP="${ENV_FILE}.bak-careers-$(date -u +%Y%m%dT%H%M%SZ)"
           cp -a "$ENV_FILE" "$BACKUP"; echo "Backed up to $BACKUP"
           if [[ -s "$ENV_FILE" && -n "$(tail -c 1 "$ENV_FILE")" ]]; then printf '\n' >> "$ENV_FILE"; fi
-          sed -i -E "/^CAREERS_SMTP_(ACCOUNTS|PASS|HOST|PORT|FROM_NAME)=/d" "$ENV_FILE"
+          sed -i -E "/^(CAREERS_SMTP_(ACCOUNTS|PASS|HOST|PORT|FROM_NAME)|HE_EMAIL_INVITE_MODE)=/d" "$ENV_FILE"
           if [[ "$MODE" != "remove" ]]; then
-            printf 'CAREERS_SMTP_ACCOUNTS=%s\nCAREERS_SMTP_PASS=%s\nCAREERS_SMTP_HOST=%s\nCAREERS_SMTP_PORT=%s\n' \
-              "$ACCOUNTS" "$PW" "$HOST" "$PORT" >> "$ENV_FILE"
+            # Single-quoted: the password contains '#' and '$', which dotenv would otherwise treat as a comment / expansion.
+            [[ "$PW" != *"'"* ]] || { echo "::error::password contains a single quote"; exit 1; }
+            printf "CAREERS_SMTP_ACCOUNTS=%s\nCAREERS_SMTP_PASS='%s'\nCAREERS_SMTP_HOST=%s\nCAREERS_SMTP_PORT=%s\nHE_EMAIL_INVITE_MODE=%s\n" \
+              "$ACCOUNTS" "$PW" "$HOST" "$PORT" "$INVITE_MODE" >> "$ENV_FILE"
           fi
-          echo "Careers settings now:"; grep -E "^CAREERS_SMTP_(ACCOUNTS|HOST|PORT)=" "$ENV_FILE" || echo "(none)"
-          pm2 restart hrms2-backend hrms2-workers --update-env --no-color
-          pm2 save --no-color
+          echo "Careers settings now:"; grep -E "^(CAREERS_SMTP_(ACCOUNTS|HOST|PORT)|HE_EMAIL_INVITE_MODE)=" "$ENV_FILE" || echo "(none)"
+          if [[ "$RESTART" == "true" ]]; then
+            pm2 restart hrms2-backend hrms2-workers --update-env --no-color
+            pm2 save --no-color
+          else
+            echo "No restart requested: the next deploy/restart loads the new .env."
+          fi
           pm2 status --no-color
