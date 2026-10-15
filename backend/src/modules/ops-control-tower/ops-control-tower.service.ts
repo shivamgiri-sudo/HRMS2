@@ -930,7 +930,7 @@ export async function getBgvPendingDetail(
 ): Promise<OnboardingDetailRow[]> {
   const rows = await query<RowDataPacket>(
     "bgv-pending-detail",
-    `SELECT e.id AS employee_id, e.employee_code, e.full_name, COALESCE(r.overall_status, 'pending') AS status,
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, b.candidate_id, COALESCE(r.overall_status, 'pending') AS status,
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
@@ -942,11 +942,21 @@ export async function getBgvPendingDetail(
       LIMIT 200`,
     [branchId, NEW_JOINER_WINDOW_DAYS, ...BGV_DONE],
   );
+  // Say WHAT is pending and who acts, not just the stored word. Falls back to that word if the lookup fails.
+  let items = new Map<string, import("../ats/bgv-pending-items.js").PendingItem[]>();
+  let summarise: ((i: import("../ats/bgv-pending-items.js").PendingItem[]) => string) | null = null;
+  try {
+    const mod = await import("../ats/bgv-pending-items.js");
+    items = await mod.getPendingItemsBatch(rows.map((r) => String(r.candidate_id ?? "")));
+    summarise = mod.summarisePending;
+  } catch {
+    summarise = null;
+  }
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
     employeeCode: String(r.employee_code ?? ""),
     employeeName: String(r.full_name ?? ""),
-    status: String(r.status),
+    status: summarise && items.has(String(r.candidate_id)) ? summarise(items.get(String(r.candidate_id))!) : String(r.status),
     daysOpen: Number(r.days_open ?? 0),
   }));
 }

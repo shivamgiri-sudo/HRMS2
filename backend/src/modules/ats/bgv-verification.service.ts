@@ -266,7 +266,7 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
 }
 
 // Normalize check_type aliases so they don't double-count the same verification category.
-function normalizeCheckType(checkType: string): string {
+export function normalizeCheckType(checkType: string): string {
   if (checkType === "aadhaar_offline") return "aadhaar";
   if (checkType === "address_doc") return "address";
   if (checkType === "education_doc") return "education";

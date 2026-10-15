@@ -103,8 +103,8 @@ export function DetailRowItem({ block, row, supported, pending, onNotify }: {
         <div className="min-w-0">
           <div className="text-sm font-semibold text-slate-900">{row.employeeName || "—"}</div>
           <div className="font-mono text-xs text-slate-500">{row.employeeCode}</div>
-          {selected.block === "docs-pending" ? (
-            <div className="mt-1 flex flex-wrap gap-1" aria-label="Pending documents">
+          {selected.block === "docs-pending" || selected.block === "bgv-pending" ? (
+            <div className="mt-1 flex flex-wrap gap-1" aria-label={selected.block === "bgv-pending" ? "Pending verifications" : "Pending documents"}>
               {pendingDocNames(row).map((name) => (
                 <span key={name} className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800">{name}</span>
               ))}
