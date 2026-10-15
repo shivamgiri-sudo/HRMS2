@@ -11,6 +11,7 @@ import PfBatchesPage from "./PfBatchesPage";
 import EcrDownloadTab from "./EcrDownloadTab";
 import PfEstablishmentsTab from "./PfEstablishmentsTab";
 import EsiRegDocsTab from "./EsiRegDocsTab";
+import EsicRegistrationBotTab from "./EsicRegistrationBotTab";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 /**
@@ -47,6 +48,7 @@ export default function PfManagement() {
             <TabsTrigger value="ecr">ECR Download</TabsTrigger>
             <TabsTrigger value="establishments">Establishments</TabsTrigger>
             {canSeeEsi && <TabsTrigger value="esi-reg">ESI Reg. Docs</TabsTrigger>}
+            {canSeeEsi && <TabsTrigger value="esi-bot">ESI Bot</TabsTrigger>}
           </TabsList>
           {/* Render children without their own DashboardLayout wrapping */}
           <TabsContent value="queue" className="mt-0">
@@ -68,6 +70,13 @@ export default function PfManagement() {
           {canSeeEsi && (
             <TabsContent value="esi-reg" className="mt-0">
               <EsiRegDocsTab />
+            </TabsContent>
+          )}
+          {canSeeEsi && (
+            <TabsContent value="esi-bot" className="mt-0">
+              <div className="py-4">
+                <EsicRegistrationBotTab />
+              </div>
             </TabsContent>
           )}
         </Tabs>
