@@ -15,6 +15,7 @@
  *
  * Pure functions; the loaders at the bottom only read.
  */
+import { randomUUID } from "node:crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { extractDigilockerDemographics, type DigilockerAddress } from "./digilocker-demographics.js";
@@ -176,4 +177,30 @@ export async function assessForCandidate(
 ): Promise<AddressAssessment> {
   const [declared, govt] = await Promise.all([loadDeclaredAddress(candidateId), loadGovtAddresses(candidateId)]);
   return assess({ distanceM, accuracyM, declared, govt });
+}
+
+/**
+ * Records the 'address' check on candidate_bgv_check. Updates the existing row if there is one, otherwise
+ * inserts WITH an id. The previous inline INSERT omitted `id`, which production's table has no default for
+ * ("Field 'id' doesn't have a default value"); the error was swallowed by a fire-and-forget catch, so a
+ * geo-selfie 'verified' never reached the BGV report or the appointment-letter gate.
+ */
+export async function upsertAddressCheck(
+  candidateId: string,
+  status: "verified" | "failed" | "not_run",
+  verifiedAt: Date | null,
+  summary: string | null,
+): Promise<void> {
+  const [res] = await db.execute(
+    `UPDATE candidate_bgv_check
+        SET status = ?, verified_at = ?, result_summary = ?, updated_at = NOW()
+      WHERE candidate_id = ? AND check_type = 'address'`,
+    [status, verifiedAt, summary, candidateId],
+  );
+  if (Number((res as { affectedRows?: number }).affectedRows ?? 0) > 0) return;
+  await db.execute(
+    `INSERT INTO candidate_bgv_check (id, candidate_id, check_type, status, verified_at, result_summary, updated_at)
+       VALUES (?, ?, 'address', ?, ?, ?, NOW())`,
+    [randomUUID(), candidateId, status, verifiedAt, summary],
+  );
 }

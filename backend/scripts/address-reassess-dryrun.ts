@@ -45,4 +45,10 @@ for (const r of rows) {
 console.log(`examined=${rows.length} apply=${APPLY} applied=${applied}`);
 console.table(tally);
 console.table(Object.entries(detail).sort((x, y) => y[1] - x[1]).map(([k, n]) => ({ outcome: k, n })));
+if (APPLY) {
+  // Re-apply any verified attempt the BGV report has not picked up (including ones left half-done by the
+  // earlier sync bug), through the same heal the worker uses. Unlocked reports only.
+  const { healAddress } = await import("../src/modules/ats/onboarding-bridge-heal.js");
+  console.log(`healed_reports=${await healAddress()}`);
+}
 await db.end();

@@ -16,7 +16,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
-import { assessForCandidate, summarise, type AddressAssessment } from "./address-verification-assessment.js";
+import { assessForCandidate, summarise, upsertAddressCheck, type AddressAssessment } from "./address-verification-assessment.js";
 
 // Branch scoping (owner ruling 2026-10-01): HR-facing address-verification actions are limited to candidates
 // inside the caller's own branch / assigned scope (org-wide roles unaffected).
@@ -175,13 +175,7 @@ export async function syncAddressBgvCheck(
       : status === "failed"
         ? "Address verification failed after max attempts"
         : null;
-  await db.execute(
-    `INSERT INTO candidate_bgv_check (candidate_id, check_type, status, verified_at, result_summary, updated_at)
-       VALUES (?, 'address', ?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE status = VALUES(status), verified_at = VALUES(verified_at),
-         result_summary = VALUES(result_summary), updated_at = NOW()`,
-    [candidateId, status, now, summary],
-  );
+  await upsertAddressCheck(candidateId, status, now, summary);
 
   // Propagate into candidate_bgv_report.address_status, which is what actually
   // gates appointment-letter eligibility (evaluateAppointmentLetterEligibility's
