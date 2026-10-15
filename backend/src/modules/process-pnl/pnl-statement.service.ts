@@ -17,6 +17,7 @@ import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { getApprovedAdjustmentsByProcess } from "./pnl-manual-adjustment.service.js";
 import { getForecastRevenueActuals, withoutCostCentres, type ForecastRevenueActuals } from "./pnl-forecast-overlay.js";
 import { nonVoidRunSql } from "../payroll/run-status.js";
+import { cachedPnlRead } from "./pnl-read-cache.js";
 
 /**
  * P&L redesign (PR 3): transposed statement — components as rows, entities as dynamic columns.
@@ -853,28 +854,40 @@ export async function getStatementPeopleCost(period: string): Promise<PeopleCost
   return actual;
 }
 
+/*
+ * PERF (2026-10-15): each Statement call re-ran its period-level readers from scratch. Measured on production
+ * (September, warm, one at a time): people cost 12.2 s, GRN consumed 5.7 s, seat revenue 4.9 s, invoiced revenue
+ * 3.4 s, GRN committed 2.1 s, unprorated payroll 2.1 s — the Statement took 13-15 s on EVERY load and a branch head
+ * waited that long for each tab. They are period-level, company-wide reads (no branch or user scope), so they go
+ * through the same 60 s single-flight cache the Live P&L and CEO Overview readers use, which keeps a month that
+ * has ended for 10 minutes. The canonical allocation summary keeps its own stale-while-revalidate cache.
+ */
+const cached = <T>(name: string, read: (period: string) => Promise<T>) =>
+  (period: string): Promise<T> => cachedPnlRead(`pnl-statement:${name}`, { period }, () => read(period));
+
 export const defaultDependencies: StatementDependencies = {
   getComponents,
   getSummary: (filters) => getStatementSummary(filters),
   getProcessSummary: (processId, period) => processLobService.getProcessSummary(processId, period),
-  getIndirectCost: (period) => getIndirectCostActuals(period),
-  getCommittedIndirectCost: (period) => getCommittedIndirectCostActuals(period),
+  getIndirectCost: cached("indirect", getIndirectCostActuals),
+  getCommittedIndirectCost: cached("committed", getCommittedIndirectCostActuals),
   getDriverRevenue: (period) => getDriverRevenueActuals(period),
-  getInvoicedRevenue: (period) => getInvoicedRevenueActuals(period),
+  getInvoicedRevenue: cached("invoiced", getInvoicedRevenueActuals),
   // Must be listed here: an injected getInvoicedRevenue without it reads as "test double, no
   // forecasts" (getStatement), and these defaults inject getInvoicedRevenue.
   getForecastRevenue: (period) => getForecastRevenueActuals(period),
   // Same reason: getStatement treats an injected getIndirectCost without this reader as "test double,
   // no open-budget reserve", and these defaults inject getIndirectCost. Without this line the
   // Statement never carried the unspent headroom of open budget lines in production.
-  getOpenBudgetReserve: (period) => getOpenBudgetReserveActuals(period),
-  // Same trap: with getInvoicedRevenue injected and no getBranchRevenue, getStatement reads "no
-  // reconciled branch revenue", so a running month showed the full-month plan (NOIDA-2 Oct 150.3 L
-  // against 56.4 L month-to-date on Live P&L). Branch columns now use Live P&L's revenue in every period.
+  getOpenBudgetReserve: cached("open-budget", getOpenBudgetReserveActuals),
+  // Same trap as the two readers above: with getInvoicedRevenue injected and no getBranchRevenue,
+  // getStatement reads "no reconciled branch revenue", so a running month showed the full-month plan
+  // (NOIDA-2 Oct 150.3 L against 56.4 L month-to-date on Live P&L). Branch columns now use Live P&L's
+  // revenue in every period.
   getBranchRevenue: (period) => getReconciledBranchRevenue(period),
-  // Same trap as the two readers above: list it here or the warning never reaches production.
-  getUnproratedPayroll: (period) => getUnproratedPayrollByBranch(period),
-  getSeatRevenue: (period) => getSeatRevenueActuals(period),
+  // Same trap as the readers above: list it here or the warning never reaches production.
+  getUnproratedPayroll: cached("unprorated-payroll", getUnproratedPayrollByBranch),
+  getSeatRevenue: cached("seat-revenue", getSeatRevenueActuals),
   /*
    * Actual payroll first; the recomputed snapshot only if payroll has nothing for the period.
    *
@@ -887,7 +900,7 @@ export const defaultDependencies: StatementDependencies = {
    * The snapshot is kept as the fallback rather than deleted: it still answers for a period whose
    * payroll run has not happened yet, where it is the only estimate available.
    */
-  getPeopleCost: (period) => getStatementPeopleCost(period),
+  getPeopleCost: cached("people-cost", getStatementPeopleCost),
   getManualAdjustments: (period) => getApprovedAdjustmentsByProcess(period),
 };
 
