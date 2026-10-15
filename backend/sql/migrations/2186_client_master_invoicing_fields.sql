@@ -103,7 +103,7 @@ PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
 UPDATE client_master cm
 JOIN (
-  SELECT client_name, client_gstin, client_state_code
+  SELECT client_name, MAX(client_gstin) AS client_gstin, MAX(client_state_code) AS client_state_code
   FROM gst_export_row
   WHERE client_gstin IS NOT NULL
     AND client_gstin != ''
