@@ -3,16 +3,16 @@ import path from "path";
 import { describe, expect, it } from "vitest";
 import { splitSql } from "../runPendingMigrations.js";
 
-// Migration 2215: branch_health_snapshot. Daily per-branch score + metrics for the Branch Head Health trend.
+// Migration 2216: branch_health_snapshot. Daily per-branch score + metrics for the Branch Head Health trend.
 // Additive side table: one CREATE TABLE, no FK, no ALTER of any existing table.
-const FILE = "2215_branch_health_snapshot.sql";
+const FILE = "2216_branch_health_snapshot.sql";
 const sqlPath = path.resolve(__dirname, "../../../sql/migrations", FILE);
 const manifest = fs.readFileSync(path.resolve(__dirname, "../runPendingMigrations.ts"), "utf8");
 const sql = fs.existsSync(sqlPath) ? fs.readFileSync(sqlPath, "utf8") : "";
 const code = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
 const statements = splitSql(code).map((s) => s.replace(/\s+/g, " ").trim());
 
-describe("migration 2215 branch_health_snapshot", () => {
+describe("migration 2216 branch_health_snapshot", () => {
   it("file exists and is registered right after 2214", () => {
     expect(fs.existsSync(sqlPath)).toBe(true);
     const entries = [...manifest.matchAll(/^\s*"(migrations\/[^"]+\.sql)",/gm)].map((m) => m[1]);

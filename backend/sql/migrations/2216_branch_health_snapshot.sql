@@ -1,4 +1,4 @@
--- 2215_branch_health_snapshot.sql
+-- 2216_branch_health_snapshot.sql
 --
 -- Branch Head Health page: one row per branch per day holding the health score, its pillar breakdown and a
 -- small set of headline metrics, so the page can draw a trend without recomputing history.
