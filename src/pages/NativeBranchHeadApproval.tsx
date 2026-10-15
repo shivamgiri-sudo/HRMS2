@@ -152,6 +152,7 @@ function OfferRow({
   remark,
   onRemarkChange,
   onOpenJourney,
+  canDecide,
 }: {
   offer: PendingOffer;
   acting: string | null;
@@ -164,6 +165,8 @@ function OfferRow({
   remark: string;
   onRemarkChange: (offerId: string, value: string) => void;
   onOpenJourney: (candidateId: string) => void;
+  /** Only branch heads (and super admin) may approve or reject an offer. */
+  canDecide: boolean;
 }) {
   const isActing = acting === offer.offer_id;
   const locked = isActing || busy;
@@ -305,8 +308,8 @@ function OfferRow({
           <Button
             size="sm"
             className="h-9 cursor-pointer bg-emerald-600 px-3 text-white shadow-sm transition-colors hover:bg-emerald-700"
-            disabled={locked || !payrollReady}
-            title={payrollReady ? undefined : 'Payroll HR must validate the salary before this can be approved'}
+            disabled={locked || !payrollReady || !canDecide}
+            title={!canDecide ? 'Only branch heads can approve offers' : payrollReady ? undefined : 'Payroll HR must validate the salary before this can be approved'}
             onClick={() => onAct(offer.offer_id, 'approve', remark)}
             aria-label={`Approve and activate ${offer.full_name}`}
           >
@@ -321,7 +324,8 @@ function OfferRow({
             size="sm"
             variant="outline"
             className="h-9 cursor-pointer border-rose-200 px-3 text-rose-700 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-800"
-            disabled={locked}
+            disabled={locked || !canDecide}
+            title={canDecide ? undefined : 'Only branch heads can reject offers'}
             onClick={() => onRejectClick(offer, remark)}
             aria-label={`Reject offer for ${offer.full_name}`}
           >
@@ -338,6 +342,8 @@ export default function NativeBranchHeadApproval() {
   const { user } = useAuth();
   const { roleKeys } = useWorkforceAccess();
   const ALLOWED = ["admin", "super_admin", "hr", "branch_head"];
+  // Approving / rejecting is a branch-head right (owner ruling 2026-10-15); other roles can only view.
+  const canDecide = roleKeys.includes("branch_head") || roleKeys.includes("super_admin");
 
   const [offers, setOffers]           = useState<PendingOffer[]>([]);
   const [loading, setLoading]         = useState(true);
@@ -759,7 +765,7 @@ export default function NativeBranchHeadApproval() {
                       <Button
                         size="sm"
                         className="h-9 cursor-pointer bg-emerald-600 px-3 text-white shadow-sm transition-colors hover:bg-emerald-700"
-                        disabled={bulkRunning || acting !== null}
+                        disabled={bulkRunning || acting !== null || !canDecide}
                         onClick={() => setBulkConfirm(true)}
                       >
                         {bulkRunning
@@ -840,6 +846,7 @@ export default function NativeBranchHeadApproval() {
                           onRejectClick={handleRejectClick}
                           remark={remarks[o.offer_id] || ''}
                           onRemarkChange={handleRemarkChange}
+                          canDecide={canDecide}
                           onOpenJourney={openJourney}
                         />
                       ))}

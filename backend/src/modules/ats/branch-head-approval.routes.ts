@@ -60,7 +60,9 @@ branchHeadApprovalRouter.get('/pending', h(async (req, res) => {
 }));
 
 // ── 2. Process approval (approve/reject) ──────────────────────────────────────
-branchHeadApprovalRouter.post('/process', h(async (req, res) => {
+// Approving / rejecting is a branch-head right only (owner ruling 2026-10-15); the router-level gate above
+// still lets other roles read the queue and history.
+branchHeadApprovalRouter.post('/process', requireRole('branch_head', 'super_admin'), h(async (req, res) => {
   try {
     const branchHeadEmployeeId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
     const input: ApprovalInput = {

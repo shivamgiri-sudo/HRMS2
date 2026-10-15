@@ -63,7 +63,7 @@ const SYSTEM_WIDE_ROLES = new Set(["super_admin"]);
  *
  * Membership is deliberately limited to titles with a branch-level counterpart already in
  * the model, so the distinction is structural rather than guesswork:
- *   operations_head / ho_operations  vs  branch_head
+ *   ho_operations  vs  branch_head   (operations_head is branch-scoped, ruling 2026-10-15)
  *   ho_hr                            vs  branch_hr, hr_branch
  *   finance_head                     vs  branch_finance
  *   ho_it                            vs  branch_it, it
@@ -77,7 +77,7 @@ const SYSTEM_WIDE_ROLES = new Set(["super_admin"]);
 const HEAD_OFFICE_ROLES = new Set([
   "ceo", "coo", "management",
   "ho_hr", "ho_payroll", "ho_operations", "ho_wfm", "ho_rta", "ho_it",
-  "compliance_head", "payroll_head", "finance_head", "accounts_head", "operations_head",
+  "compliance_head", "payroll_head", "finance_head", "accounts_head",
 ]);
 
 /**
@@ -89,7 +89,7 @@ const HEAD_OFFICE_ROLES = new Set([
 const ORG_ALL_ROLES = new Set([
   "super_admin", "admin", "ceo", "coo", "management", "ho_hr", "hr_admin", "hr",
   "ho_payroll", "payroll_head", "finance_head", "accounts_head", "payroll_admin",
-  "payroll_hr", "payroll", "finance", "ho_operations", "operations_head", "ho_wfm",
+  "payroll_hr", "payroll", "finance", "ho_operations", "ho_wfm",
   "ho_rta", "compliance_head", "ho_it",
   // Head-office function heads that were in no scope set at all, so they fell through the
   // whole ladder to the SELF_ONLY default at the bottom of resolveDashboardScope. Both are
@@ -106,6 +106,7 @@ const ORG_ALL_ROLES = new Set([
 // so that branch-scoped staff only see their own branch data.
 const BRANCH_ALL_ROLES = new Set([
   "branch_head", "bm", "branch_manager",
+  "operations_head", // owner ruling 2026-10-15: branch-scoped
   "branch_hr", "hr_branch",
   "branch_finance",
   "payroll_branch",

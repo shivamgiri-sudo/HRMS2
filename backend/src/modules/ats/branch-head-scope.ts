@@ -70,7 +70,11 @@ export async function resolveBranchHeadScope(authUserId: string): Promise<Branch
   // Org-wide roles (ORG_WIDE_EXEMPT_ROLES) are never restricted. Everyone else - hr, payroll_hr, manager,
   // branch_head - is limited to the branches they are assigned to; a user with no assignment at all falls
   // back to their OWN employees.branch_id, and with no resolvable branch sees nothing (fail closed).
-  if (roles.some((r) => UNRESTRICTED_ROLES.includes(r))) {
+  // Owner ruling 2026-10-15: the offer-approval right belongs to branch heads, and a branch head approves for
+  // their branch(es). Holding another org-wide role (e.g. a department head) must not widen that queue.
+  const isSuperAdmin = roles.includes("super_admin");
+  const isBranchHead = roles.includes("branch_head");
+  if (isSuperAdmin || (!isBranchHead && roles.some((r) => UNRESTRICTED_ROLES.includes(r)))) {
     return { unrestricted: true, employeeId, branchNames: [], branchIds: [] };
   }
 
