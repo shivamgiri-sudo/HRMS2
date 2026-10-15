@@ -214,19 +214,22 @@ interface SnapshotRow {
 async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: string): Promise<void> {
   if (rows.length === 0) return;
 
-  // For employees with no cost centre, the unique key includes NULL which MySQL won't
-  // match on upsert (NULL != NULL). Delete their existing rows first so INSERT creates a fresh one.
-  const nullCcEmployeeIds = rows
-    .filter((r) => !r.employee.cost_centre_id)
-    .map((r) => r.employee.id);
-  if (nullCcEmployeeIds.length > 0) {
-    const nullPlaceholders = nullCcEmployeeIds.map(() => "?").join(",");
-    await db.execute(
-      `DELETE FROM pnl_running_salary_snapshot
-        WHERE period_code = ? AND employee_id IN (${nullPlaceholders}) AND cost_centre_id IS NULL`,
-      [periodCode, ...nullCcEmployeeIds]
-    );
-  }
+  // Delete ALL existing rows for every employee in this batch before re-inserting.
+  //
+  // The upsert key is (period_code, employee_id, cost_centre_id). MySQL treats NULL as not equal
+  // to NULL in a unique-key match, so a NULL-CC row is never replaced by an INSERT … ON DUPLICATE
+  // KEY UPDATE; it accumulates. The same orphan problem occurs in the other direction: an employee
+  // who had CC_A on a previous refresh and now has NULL (or CC_B) keeps the old CC_A row alongside
+  // the new one, doubling their salary in every aggregation. The only safe contract is
+  // delete-then-insert: wipe every snapshot row for these employees first, then let the INSERT lay
+  // down exactly the rows this refresh computed — one per employee, or multiple for a mid-month
+  // cost-centre transfer (those are intentional and all land in the same batch).
+  const allEmployeeIds = [...new Set(rows.map((r) => r.employee.id))];
+  const deletePlaceholders = allEmployeeIds.map(() => "?").join(",");
+  await db.execute(
+    `DELETE FROM pnl_running_salary_snapshot WHERE period_code = ? AND employee_id IN (${deletePlaceholders})`,
+    [periodCode, ...allEmployeeIds],
+  );
 
   const placeholders = rows.map(() => "(UUID(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())").join(",");
   const params: unknown[] = [];
@@ -253,21 +256,7 @@ async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: stri
        (id, period_code, employee_id, employee_code, branch_id, process_id, cost_centre_id,
         department_name, designation_name, pnl_bucket, earned_salary_till_date, gross_monthly,
         earned_payable_days, total_payable_days, as_of_date, computed_at)
-     VALUES ${placeholders}
-     ON DUPLICATE KEY UPDATE
-       employee_code = VALUES(employee_code),
-       branch_id = VALUES(branch_id),
-       process_id = VALUES(process_id),
-       cost_centre_id = VALUES(cost_centre_id),
-       department_name = VALUES(department_name),
-       designation_name = VALUES(designation_name),
-       pnl_bucket = VALUES(pnl_bucket),
-       earned_salary_till_date = VALUES(earned_salary_till_date),
-       gross_monthly = VALUES(gross_monthly),
-       earned_payable_days = VALUES(earned_payable_days),
-       total_payable_days = VALUES(total_payable_days),
-       as_of_date = VALUES(as_of_date),
-       computed_at = NOW()`,
+     VALUES ${placeholders}`,
     params
   );
 }
