@@ -72,10 +72,15 @@ const ist = (d = new Date()) => new Date(d.getTime() + 330 * 60_000).toISOString
   console.log(lines.join("\n"));
   console.log(`October raw punch-days with no HRMS punch row: ${totalMissing} across ${lines.length} employees`);
 
-  const sep = await q(
-    `SELECT COUNT(*) n, SUM(adr.is_locked) locked FROM attendance_daily_record adr JOIN employees e ON e.id = adr.employee_id
-      WHERE (e.employee_code IN (?) OR e.biometric_code IN (?)) AND adr.record_date BETWEEN '2026-09-01' AND '2026-09-30'
-        AND adr.attendance_status = 'missing_punch'`, [active.length ? active : [""], active.length ? active : [""]]);
+  const empIds = active
+    .map((id) => (maps.byCosecId.get(id) ?? maps.byEmployeeCode.get(id))?.employee_id)
+    .filter((x): x is string | number => x !== undefined && x !== null)
+    .map(String);
+  const sep = empIds.length
+    ? await q(
+        `SELECT COUNT(*) n, COALESCE(SUM(is_locked),0) locked FROM attendance_daily_record
+          WHERE employee_id IN (?) AND record_date BETWEEN '2026-09-01' AND '2026-09-30' AND attendance_status = 'missing_punch'`, [empIds])
+    : [{ n: 0, locked: 0 }];
   console.log("September 'missing_punch' rows of the same employees (NOT touched here):", JSON.stringify(sep[0]));
 
   if (!APPLY) {
