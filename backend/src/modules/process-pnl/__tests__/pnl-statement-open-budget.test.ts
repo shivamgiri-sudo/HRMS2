@@ -107,9 +107,10 @@ describe("P&L Statement — open budget headroom is cost until the line is close
     });
   }
 
-  it("the production default dependencies carry the open-budget reader (an injected getIndirectCost would otherwise read as a test double)", async () => {
+  it("the production default dependencies carry the open-budget and reconciled-branch-revenue readers (an injected getIndirectCost / getInvoicedRevenue would otherwise read as a test double)", async () => {
     const { defaultDependencies } = await import("../pnl-statement.service.js");
     expect(typeof defaultDependencies.getOpenBudgetReserve).toBe("function");
+    expect(typeof defaultDependencies.getBranchRevenue).toBe("function");
   });
 
   it("a caller that injects only the consumed reader gets no open-budget reserve (never the live reader)", async () => {

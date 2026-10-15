@@ -827,6 +827,10 @@ export const defaultDependencies: StatementDependencies = {
   // no open-budget reserve", and these defaults inject getIndirectCost. Without this line the
   // Statement never carried the unspent headroom of open budget lines in production.
   getOpenBudgetReserve: (period) => getOpenBudgetReserveActuals(period),
+  // Same trap: with getInvoicedRevenue injected and no getBranchRevenue, getStatement reads "no
+  // reconciled branch revenue", so a running month showed the full-month plan (NOIDA-2 Oct 150.3 L
+  // against 56.4 L month-to-date on Live P&L). Branch columns now use Live P&L's revenue in every period.
+  getBranchRevenue: (period) => getReconciledBranchRevenue(period),
   getSeatRevenue: (period) => getSeatRevenueActuals(period),
   /*
    * Actual payroll first; the recomputed snapshot only if payroll has nothing for the period.
