@@ -67,5 +67,28 @@ const q = async (label: string, sql: string, p: unknown[] = []) => {
   await q("wfm_roster_notification_log (period)", `SELECT ${IST("created_at")} d, COUNT(*) n FROM wfm_roster_notification_log
       WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) GROUP BY d ORDER BY d DESC`, [DAYS]);
 
+
+  await q("dispatch_log email: per event_code x status (period)", `SELECT event_code, status, COUNT(*) envelopes, SUM(COALESCE(recipient_count,1)) recipients
+      FROM dispatch_log WHERE channel = 'email' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) GROUP BY event_code, status ORDER BY recipients DESC LIMIT 40`, [DAYS]);
+  await q("dispatch_log email: top recipient lists (period)", `SELECT LEFT(recipient_contact, 70) rc, COUNT(*) n FROM dispatch_log
+      WHERE channel = 'email' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) GROUP BY rc ORDER BY n DESC LIMIT 15`, [DAYS]);
+  await q("dispatch_log email: top subjects (period)", `SELECT LEFT(subject, 70) s, COUNT(*) n FROM dispatch_log
+      WHERE channel = 'email' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) GROUP BY s ORDER BY n DESC LIMIT 15`, [DAYS]);
+  await q("invite email recipients who also got a WhatsApp (period)", `SELECT
+        COUNT(DISTINCT e.lead_id) email_leads,
+        COUNT(DISTINCT CASE WHEN w.id IS NOT NULL THEN e.lead_id END) also_wa_sent,
+        COUNT(DISTINCT CASE WHEN w.delivery_status IN ('delivered','read') THEN e.lead_id END) wa_delivered_or_read
+      FROM he_message e LEFT JOIN he_message w ON w.lead_id = e.lead_id AND w.channel = 'whatsapp' AND w.direction = 'out' AND w.delivery_status <> 'failed'
+        AND w.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+      WHERE e.channel = 'email' AND e.direction = 'out' AND e.template_key = 'he_walkin_invite_email' AND e.delivery_status = 'sent' AND e.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`, [DAYS, DAYS]);
+  await q("invite email: opened/answered link? (leads with an inbound or event after invite)", `SELECT COUNT(DISTINCT e.lead_id) invited, COUNT(DISTINCT i.lead_id) replied_in
+      FROM he_message e LEFT JOIN he_message i ON i.lead_id = e.lead_id AND i.direction = 'in' AND i.created_at > e.created_at
+      WHERE e.channel = 'email' AND e.direction = 'out' AND e.template_key = 'he_walkin_invite_email' AND e.delivery_status = 'sent' AND e.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`, [DAYS]);
+  await q("ats_email_log: recruiter_notification distinct recipients and per candidate", `SELECT COUNT(*) n, COUNT(DISTINCT sent_to) recipients, COUNT(DISTINCT candidate_id) candidates
+      FROM ats_email_log WHERE email_type = 'recruiter_notification' AND sent_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`, [DAYS]);
+  await q("ats_email_log: empty type per day", `SELECT ${IST("sent_at")} d, status, COUNT(*) n FROM ats_email_log WHERE email_type = '' AND sent_at >= DATE_SUB(NOW(), INTERVAL ? DAY) GROUP BY d, status ORDER BY d DESC`, [DAYS]);
+  await q("ats_email_log: top errors", `SELECT LEFT(error_message, 90) msg, COUNT(*) n FROM ats_email_log WHERE status = 'failed' AND sent_at >= DATE_SUB(NOW(), INTERVAL ? DAY) GROUP BY msg ORDER BY n DESC LIMIT 8`, [DAYS]);
+  await q("report email deliveries (period)", `SELECT status, COUNT(*) n FROM report_request WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) GROUP BY status`, [DAYS]);
+
   await db.end?.();
 })();
