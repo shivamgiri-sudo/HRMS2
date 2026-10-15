@@ -1,0 +1,47 @@
+name: Ops HE Meta Calling File Export (manual, read-only)
+
+# Emails the Meta calling file (bulk-call format) to the requester.
+#
+# Read-only: backend/scripts/he-meta-callfile-export.mjs issues SELECTs in a READ ONLY session, using the app's own
+# DIALER_DB_* settings from the deployed .env (no credential is passed in or printed). workflow_dispatch only.
+# Its own workflow, not an option on ops-scripts.yml: that file is at GitHub's expression-length limit.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ops-he-meta-callfile-export-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: Export meta calling file
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          node scripts/he-meta-callfile-export.mjs
