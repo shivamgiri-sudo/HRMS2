@@ -721,6 +721,8 @@ export async function sendAddressBgvLinkEmail(params: {
   attemptNumber: number;
   maxAttempts: number;
   expiresAt: Date;
+  /** 1 or 2 when this is a reminder for a link already sent; omitted for the first send. */
+  reminderNo?: number;
 }): Promise<SendResult> {
   const { candidateName, declaredAddress, verificationLink, attemptNumber, maxAttempts, expiresAt } = params;
   const expiryStr = expiresAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
@@ -735,7 +737,7 @@ export async function sendAddressBgvLinkEmail(params: {
         <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#334155">Dear <strong>${escapeHtml(candidateName)}</strong>,</p>
         <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#334155">
           As part of your Background Verification (BGV), we need to verify your <strong>current residential address</strong>.
-          Please complete this step by clicking the button below.
+          Please complete this step by clicking the button below.${params.reminderNo ? " <strong>This is a reminder - your earlier link is still waiting for you.</strong>" : ""}
         </p>
 
         <div style="background:#fef9c3;border:1px solid #fde047;border-radius:12px;padding:16px 18px;margin:0 0 20px;color:#713f12;font-size:14px;line-height:1.6">
@@ -773,5 +775,5 @@ export async function sendAddressBgvLinkEmail(params: {
       </div>
     </div>
   </div>`;
-  return send(params.to, 'Action Required: Verify your current address — MAS Callnet BGV', html, params.candidateId, 'bgv_address_link');
+  return send(params.to, `${params.reminderNo ? 'Reminder: ' : ''}Action Required: Verify your current address — MAS Callnet BGV`, html, params.candidateId, 'bgv_address_link');
 }

@@ -287,7 +287,7 @@ export async function initiateAddressBgvForCandidate(
     `INSERT INTO candidate_bgv_address_verification
        (candidate_id, token, declared_address, ref_latitude, ref_longitude,
         attempt_number, sent_via, expires_at, unblocked_by)
-     VALUES (?, ?, ?, ?, ?, ?, 'link', ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       candidateId,
       token,
@@ -295,6 +295,8 @@ export async function initiateAddressBgvForCandidate(
       geo?.lat ?? null,
       geo?.lng ?? null,
       nextAttempt,
+      // 'copied' = HR took the link to hand over directly; those are never auto-reminded by email.
+      opts.skipEmail ? "copied" : "link",
       expiresAt,
       opts.forceUnblock ? (opts.unblockerId ?? null) : null,
     ],
@@ -398,6 +400,74 @@ export async function sweepMissingAddressBgvLinks(limit = 5): Promise<number> {
   );
   for (const row of rows) await autoSendAddressBgvLink(String(row.id), "sweep");
   return rows.length;
+}
+
+/**
+ * Reminds candidates whose emailed link is still unused: once 24h after it was sent and once more 72h
+ * after. Skips HR-copied links, expired or nearly expired ones, and candidates without an email. Each
+ * (link, reminder number) is claimed in address_bgv_reminder_log BEFORE sending (unique key), so two
+ * workers or a retry can never double-send. Capped per tick to stay inside the mail quota.
+ */
+export async function sendAddressBgvReminders(limit = 10): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT v.id, v.candidate_id, v.token, v.declared_address, v.attempt_number, v.expires_at, v.created_at,
+            c.email, c.full_name
+       FROM candidate_bgv_address_verification v
+       JOIN ats_candidate c ON c.id = v.candidate_id
+      WHERE v.status = 'pending' AND v.sent_via = 'link'
+        AND v.expires_at > NOW() + INTERVAL 6 HOUR
+        AND v.created_at <= NOW() - INTERVAL 24 HOUR
+        AND v.created_at >= NOW() - INTERVAL 7 DAY
+        AND c.email IS NOT NULL AND TRIM(c.email) <> ''
+        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification vv
+                         WHERE vv.candidate_id = v.candidate_id AND vv.status IN ('submitted', 'verified'))
+      ORDER BY v.created_at ASC
+      LIMIT 100`,
+  );
+  if (!rows.length) return 0;
+  const ids = rows.map((r) => String(r.id));
+  const [logged] = await db.execute<RowDataPacket[]>(
+    `SELECT verification_id, MAX(reminder_no) AS last_no, MAX(sent_at) AS last_at
+       FROM address_bgv_reminder_log WHERE verification_id IN (${ids.map(() => "?").join(",")})
+      GROUP BY verification_id`,
+    ids,
+  );
+  const lastBy = new Map(logged.map((l) => [String(l.verification_id), { no: Number(l.last_no), at: new Date(l.last_at as string) }]));
+  const appUrl = process.env.APP_URL ?? "https://mcnhrms.teammas.in";
+  let sent = 0;
+  for (const r of rows) {
+    if (sent >= limit) break;
+    const last = lastBy.get(String(r.id));
+    const ageH = (Date.now() - new Date(r.created_at as string).getTime()) / 3_600_000;
+    const next = !last ? 1 : last.no === 1 && ageH >= 72 && Date.now() - last.at.getTime() >= 24 * 3_600_000 ? 2 : 0;
+    if (next === 0) continue;
+    try {
+      await db.execute(
+        `INSERT INTO address_bgv_reminder_log (id, verification_id, candidate_id, reminder_no, outcome)
+         VALUES (?, ?, ?, ?, 'claimed')`,
+        [uuidv4(), r.id, r.candidate_id, next],
+      );
+    } catch {
+      continue; // already claimed by another worker / earlier tick
+    }
+    const out = await sendAddressBgvLinkEmail({
+      candidateId: String(r.candidate_id),
+      to: String(r.email),
+      candidateName: String(r.full_name ?? "Candidate"),
+      declaredAddress: String(r.declared_address ?? ""),
+      verificationLink: `${appUrl}/bgv-address-verify/${String(r.token)}`,
+      attemptNumber: Number(r.attempt_number ?? 1),
+      maxAttempts: MAX_ATTEMPTS,
+      expiresAt: new Date(r.expires_at as string),
+      reminderNo: next,
+    }).catch(() => ({ ok: false, skipped: false }));
+    await db.execute(
+      `UPDATE address_bgv_reminder_log SET outcome = ? WHERE verification_id = ? AND reminder_no = ?`,
+      [out.ok && !(out as { skipped?: boolean }).skipped ? "sent" : "failed", r.id, next],
+    ).catch(() => undefined);
+    if (out.ok) sent++;
+  }
+  return sent;
 }
 
 // ── HR: initiate ──────────────────────────────────────────────────────────────

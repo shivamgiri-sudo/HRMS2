@@ -5,6 +5,7 @@
  */
 const TICK_MS = 15 * 60 * 1000;
 const BATCH_SIZE = 5;
+const REMINDER_BATCH = 10;
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
@@ -19,8 +20,15 @@ export function startAddressBgvLinkSweepWorker(): void {
     if (running) return;
     running = true;
     void import("../modules/ats/bgv-address-verification.routes.js")
-      .then(({ sweepMissingAddressBgvLinks }) => sweepMissingAddressBgvLinks(BATCH_SIZE))
-      .then((n) => { if (n) console.log(`[address-bgv-sweep] tick processed ${n} candidate(s)`); })
+      .then(async ({ sweepMissingAddressBgvLinks, sendAddressBgvReminders }) => {
+        const n = await sweepMissingAddressBgvLinks(BATCH_SIZE);
+        if (n) console.log(`[address-bgv-sweep] tick processed ${n} candidate(s)`);
+        // Opt out of reminders alone with ADDRESS_BGV_REMINDERS_ENABLED=false.
+        if (process.env.ADDRESS_BGV_REMINDERS_ENABLED !== "false") {
+          const r = await sendAddressBgvReminders(REMINDER_BATCH);
+          if (r) console.log(`[address-bgv-sweep] sent ${r} reminder(s)`);
+        }
+      })
       .catch((error) => console.warn("[address-bgv-sweep] tick failed:", error))
       .finally(() => { running = false; });
   }, TICK_MS);

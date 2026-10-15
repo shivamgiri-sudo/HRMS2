@@ -1391,6 +1391,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2213_pnl_classification_rules_agent_roles.sql", // Registered 2026-10-15. Switches off five 2026-09-04 seeded P&L classification rules that booked every agent as DSC from Sep 2026 (designation EXECUTIVE / SENIOR EXECUTIVE, department OPERATIONS / CUSTOMER SERVICE / TELESALES). active_status only, idempotent, revert SQL in the file; dry-run verified on prod.
   "migrations/2214_cost_centre_process_link.sql", // Registered 2026-10-15. Additive: new cost_centre_process_link table (extra processes a cost centre also bills, e.g. Bella-Vita on 647, Reginald on 972) + 5 guarded seed rows. cost_centre_master.process_id and its readers untouched. Revert: DROP TABLE.
   "migrations/2216_branch_health_snapshot.sql", // Registered 2026-10-15. Additive side table: branch_health_snapshot (daily per-branch health score, pillars and headline metrics for the Branch Head Health trend). No FK, no ALTER. Revert: DROP TABLE.
+  "migrations/2217_address_bgv_reminder_log.sql", // Registered 2026-10-15. Additive: new address_bgv_reminder_log table (one row per reminder email sent for an unused address-verification link; unique per verification and reminder number).
 ];
 
 export type MigrationHealth = {
