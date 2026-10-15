@@ -30,7 +30,8 @@ interface Node {
 }
 interface Slot extends Node { shift: string }
 interface Mgr extends Node { managerId: string | null; manager: string }
-interface Proc extends Node { processId: string | null; process: string; slots: Slot[]; managers: Mgr[] }
+interface LobNode extends Node { lobId: string | null; lob: string }
+interface Proc extends Node { processId: string | null; process: string; slots: Slot[]; managers: Mgr[]; lobs: LobNode[] }
 interface Report {
   date: string; graceMinutes: number; generatedAt: string; totals: Node; processes: Proc[];
   lateBuckets: { key: string; label: string }[];
@@ -41,7 +42,7 @@ interface Emp {
   clockIn: string | null; clockOut: string | null; status: string; lateMin: number;
   leftEarly: boolean; earlyOutMin: number; missedLogout: boolean;
 }
-interface Drill { processId: string; title: string; status: DrillStatus; shift?: string; manager?: string }
+interface Drill { processId: string; title: string; status: DrillStatus; shift?: string; manager?: string; lob?: string }
 
 const GRACES = [0, 5, 10, 15];
 const BUCKET_COLOR: Record<string, string> = {
@@ -121,13 +122,14 @@ export function ShiftAdherenceSection() {
       const p = scopeParams({ branchId, processId: drill!.processId, lobId }, { grace: String(grace), status: drill!.status, date: day });
       if (drill!.shift) p.set("shift", drill!.shift);
       if (drill!.manager) p.set("manager", drill!.manager);
+      if (drill!.lob) p.set("drillLob", drill!.lob);
       return hrmsApi.get<{ total: number; employees: Emp[] }>(`/api/roster-intelligence/shift-adherence/employees?${p}`);
     },
     staleTime: 30_000,
   });
 
   const open_ = (proc: Proc, status: DrillStatus, extra: Partial<Drill> = {}) =>
-    proc.processId && setDrill({ processId: proc.processId, status, title: `${proc.process}${extra.shift ? ` · ${extra.shift}` : ""}${extra.manager ? ` · ${extra.manager}` : ""}`, ...extra });
+    proc.processId && setDrill({ processId: proc.processId, status, title: `${proc.process}${extra.shift ? ` · ${extra.shift}` : ""}${extra.manager ? ` · ${extra.manager}` : ""}${extra.lob ? ` · ${extra.lob}` : ""}`, ...extra });
 
   const headers = useMemo(() => ["Process", "Planned", "Present", "On time", "Late", "Avg late", "No show", "Not yet due", "Adherence", "Punctuality", "Late spread", "Logout issues"], []);
 
@@ -213,8 +215,9 @@ export function ShiftAdherenceSection() {
                     {isOpen && (
                       <tr className="border-t border-border bg-slate-50">
                         <td colSpan={headers.length} className="p-3">
-                          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
                             <SubTable title="By shift slot" labelHead="Shift" rows={p.slots.map((s) => ({ name: s.shift, n: s, drill: (st: DrillStatus) => open_(p, st, { shift: s.shift }) }))} lateBuckets={r.lateBuckets} />
+                            <SubTable title="By LOB" labelHead="LOB" rows={p.lobs.map((l) => ({ name: l.lob, n: l, drill: (st: DrillStatus) => open_(p, st, { lob: l.lob }) }))} lateBuckets={r.lateBuckets} />
                             <SubTable title="By reporting manager" labelHead="Manager" rows={p.managers.map((m) => ({ name: m.manager, n: m, drill: (st: DrillStatus) => open_(p, st, { manager: m.manager }) }))} lateBuckets={r.lateBuckets} />
                           </div>
                         </td>

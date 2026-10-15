@@ -219,6 +219,7 @@ router.get('/shift-adherence/employees', requireRole(...LIVE_MONITORING_ROLES), 
     res.json(await getShiftAdherenceEmployees(p.date, p.grace, scope, { branchId, processId, lob }, {
       shift: req.query.shift ? String(req.query.shift) : undefined,
       manager: req.query.manager ? String(req.query.manager) : undefined,
+      lob: req.query.drillLob ? String(req.query.drillLob) : undefined,
       status: status as AdherenceEmployeeFilter,
     }));
   } catch (err: any) {

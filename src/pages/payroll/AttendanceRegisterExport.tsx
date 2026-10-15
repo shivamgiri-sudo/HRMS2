@@ -1,3 +1,5 @@
+import { LobSelect } from '@/components/wfm/LobSelect';
+import { EmployeePicker, type EmployeeSearchResult } from '@/components/payroll/EmployeePicker';
 import { useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
@@ -120,6 +122,8 @@ export default function AttendanceRegisterExport() {
   const [costCentreId, setCostCentreId] = useState('all');
   const [empCode,      setEmpCode]      = useState('');
   const [empStatus,    setEmpStatus]    = useState('active');
+  const [lobId,        setLobId]        = useState('');
+  const [manager,      setManager]      = useState<EmployeeSearchResult | null>(null);
   const [queryKey,     setQueryKey]     = useState<string|null>(null);
 
   const branchesQ = useQuery({
@@ -146,6 +150,8 @@ export default function AttendanceRegisterExport() {
       if (branchId !== 'all')     p.set('branchId',     branchId);
       if (costCentreId !== 'all') p.set('costCentreId', costCentreId);
       if (empStatus !== 'all')    p.set('employeeStatus', empStatus);
+      if (lobId)                  p.set('lobId', lobId);
+      if (manager)                p.set('managerId', manager.id);
       if (empCode.trim()) {
         // If the value contains any digit it's an employee code; otherwise name search.
         // "MAS61061" / "24852C" → code  |  "shivam" / "John Smith" → name
@@ -159,7 +165,7 @@ export default function AttendanceRegisterExport() {
   });
 
   function handleShow() {
-    setQueryKey(`${month}|${branchId}|${costCentreId}|${empCode}|${empStatus}`);
+    setQueryKey(`${month}|${branchId}|${costCentreId}|${empCode}|${empStatus}|${lobId}|${manager?.id ?? ''}`);
   }
 
   const rows     = dataQ.data ?? [];
@@ -193,7 +199,7 @@ export default function AttendanceRegisterExport() {
               <Label className="text-xs font-medium text-slate-600">Month</Label>
               <Select value={month} onValueChange={v => {
                 setMonth(v);
-                if (queryKey !== null) setQueryKey(`${v}|${branchId}|${costCentreId}|${empCode}|${empStatus}`);
+                if (queryKey !== null) setQueryKey(`${v}|${branchId}|${costCentreId}|${empCode}|${empStatus}|${lobId}|${manager?.id ?? ''}`);
               }}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -228,6 +234,16 @@ export default function AttendanceRegisterExport() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-slate-600">LOB</Label>
+              <LobSelect processId="" value={lobId} onChange={setLobId} includeUnassigned className="h-9 text-sm" />
+            </div>
+
+            <div className="space-y-1 col-span-2 md:col-span-1">
+              <Label className="text-xs font-medium text-slate-600">Reporting Manager</Label>
+              <EmployeePicker placeholder="Search manager" value={manager} onSelect={setManager} />
             </div>
 
             <div className="space-y-1">
@@ -391,7 +407,7 @@ export default function AttendanceRegisterExport() {
           <div className="text-center py-16 text-slate-400">
             <CalendarDays className="h-10 w-10 mx-auto mb-3 opacity-30" />
             <p className="font-medium">No attendance records found for the selected filters.</p>
-            <p className="text-xs mt-1">Try a different month, branch or cost centre.</p>
+            <p className="text-xs mt-1">Try a different month, branch, cost centre, LOB or manager.</p>
           </div>
         )}
 

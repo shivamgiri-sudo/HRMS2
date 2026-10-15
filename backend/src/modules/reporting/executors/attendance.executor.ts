@@ -257,6 +257,12 @@ export async function attendanceRegisterMonthly(
   clauses.push(
     "(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))",
   );
+  // Left the company before the selected month began: never shown, whatever active_status says. Only
+  // counts when the exit date is on/after the joining date, so a rehired employee whose old exit date
+  // was never cleared (new DOJ later than that exit) is not hidden.
+  clauses.push(
+    "NOT (COALESCE(e.date_of_exit, e.date_of_leaving) IS NOT NULL AND COALESCE(e.date_of_exit, e.date_of_leaving) < ? AND (e.date_of_joining IS NULL OR COALESCE(e.date_of_exit, e.date_of_leaving) >= DATE(e.date_of_joining)))",
+  );
   // WHERE binds — positional order matches the three arms above:
   //   Arm 2: date_of_exit guard (firstDay), EXISTS BETWEEN (firstDay, lastDay)
   //   Arm 3: DATE(date_of_joining) BETWEEN (firstDay, lastDay), date_of_exit guard (firstDay)
@@ -269,6 +275,7 @@ export async function attendanceRegisterMonthly(
     firstDay,
     firstDay,
     lastDay,
+    firstDay, // exited-before-period guard
   ] as const;
   // WHERE-only params (no JOIN binds) — used by the pre-pagination count/page queries.
   const whereOnlyParams: unknown[] = [...preJoinParams, ...armBinds];
@@ -300,14 +307,17 @@ export async function attendanceRegisterMonthly(
     // attSql for exports. The fast guard correctly covers all active employees and
     // any recently exited employee whose last day falls inside the period.
     //
-    // clauses[0..n-2] holds: [e.id IS NOT NULL, ...scope, ...filter]
-    // clauses[n-2] = arm clause  (replaced below)
-    // clauses[n-1] = branch EXISTS clause (skipped — branch joins are done in attSql)
+    // clauses[0..n-4] holds: [e.id IS NOT NULL, ...scope, ...filter]; the last three are the arm clause,
+    // the branch EXISTS clause and the exited-before-period guard (re-expressed below with its binds).
+    // Mirrors the arms: an inactive employee with no exit date only appears when they have attendance in
+    // the period; anyone who left before the period began never appears.
     const fastWhere = [
-      ...clauses.slice(0, clauses.length - 2),
-      "(e.active_status = 1 OR (COALESCE(e.date_of_exit, e.date_of_leaving) IS NULL OR COALESCE(e.date_of_exit, e.date_of_leaving) >= ?))",
+      ...clauses.slice(0, clauses.length - 3),
+      "(NOT (COALESCE(e.date_of_exit, e.date_of_leaving) IS NOT NULL AND COALESCE(e.date_of_exit, e.date_of_leaving) < ? AND (e.date_of_joining IS NULL OR COALESCE(e.date_of_exit, e.date_of_leaving) >= DATE(e.date_of_joining))) AND " +
+        "(e.active_status = 1 OR COALESCE(e.date_of_exit, e.date_of_leaving) >= ? OR DATE(e.date_of_joining) BETWEEN ? AND ? OR " +
+        "EXISTS (SELECT 1 FROM attendance_daily_record _x WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?)))",
     ];
-    const fastParams = [...preJoinParams, firstDay];
+    const fastParams = [...preJoinParams, firstDay, firstDay, firstDay, lastDay, firstDay, lastDay];
 
     const [[countRow]] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(DISTINCT e.id) AS total FROM employees e WHERE ${fastWhere.join(" AND ")}`,
