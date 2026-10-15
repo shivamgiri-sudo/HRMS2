@@ -90,5 +90,16 @@ const q = async (label: string, sql: string, p: unknown[] = []) => {
   await q("ats_email_log: top errors", `SELECT LEFT(error_message, 90) msg, COUNT(*) n FROM ats_email_log WHERE status = 'failed' AND sent_at >= DATE_SUB(NOW(), INTERVAL ? DAY) GROUP BY msg ORDER BY n DESC LIMIT 8`, [DAYS]);
   await q("report email deliveries (period)", `SELECT status, COUNT(*) n FROM report_request WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) GROUP BY status`, [DAYS]);
 
+  // Which mailbox actually sent: nodemailer builds the Message-ID domain from the From address.
+  await q("he_message email out last 24h: Message-ID domain x status", `SELECT SUBSTRING_INDEX(REPLACE(provider_message_id, '>', ''), '@', -1) msgid_domain, delivery_status, COUNT(*) n, MAX(created_at) last_at
+      FROM he_message WHERE channel = 'email' AND direction = 'out' AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+      GROUP BY msgid_domain, delivery_status ORDER BY last_at DESC`);
+  await q("he_message email out: last 15 (newest first)", `SELECT created_at, template_key, delivery_status, SUBSTRING_INDEX(REPLACE(provider_message_id, '>', ''), '@', -1) msgid_domain, LEFT(error_message, 70) err
+      FROM he_message WHERE channel = 'email' AND direction = 'out' ORDER BY created_at DESC LIMIT 15`);
+  await q("qualified_followup email, last 3h: status x error", `SELECT email_status, LEFT(email_error, 40) err, COUNT(*) n FROM qualified_followup
+      WHERE updated_at >= DATE_SUB(NOW(), INTERVAL 3 HOUR) GROUP BY email_status, err ORDER BY n DESC LIMIT 20`);
+  await q("ats_email_log last 24h: status x error", `SELECT status, LEFT(error_message, 60) err, COUNT(*) n, MAX(sent_at) last_at FROM ats_email_log
+      WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 1 DAY) GROUP BY status, err ORDER BY last_at DESC LIMIT 10`);
+
   await db.end?.();
 })();
