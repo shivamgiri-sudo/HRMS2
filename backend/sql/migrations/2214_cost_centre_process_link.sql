@@ -10,6 +10,17 @@
 --     BSS/OB/Noida/968     (primary BSS_OB_NOIDA_968, VST INDUSTRIES) also bills the VST process
 -- Without this, those processes look "unbilled" to any page that goes cost centre -> process by process_id.
 --
+-- RELATION TO THE EXISTING MAPPING (read before adding anything similar):
+--   cost_centre_master.process_id + branch_id  = the CURRENT primary mapping, 1 process per cost centre.
+--   finance_cost_centre_mapping_history (428)  = effective-dated history OF THAT SAME single mapping, written
+--       by cost-centre-mapping.service.ts recordMappingChange(), which closes the open row and rewrites
+--       cost_centre_master.process_id. It cannot hold two concurrent processes: a second open row would be
+--       read as a mapping change and overwrite the primary, moving P&L / GRN / budget.
+--   cost_centre_process_link (this file)       = EXTRA processes a cost centre ALSO bills, concurrent with the
+--       primary, never read by P&L / GRN / budget and never written by the resolver worker.
+-- Primary question ("which process owns this cost centre") -> the first two. "Which other processes bill
+-- through it" -> this table. Do not use this table to change the primary mapping.
+--
 -- Additive only: one new table, five seed rows. No ALTER of cost_centre_master / process_master, no FK, no
 -- change to any existing row. share_pct stays NULL: a revenue split is not guessed here, it comes from the
 -- invoice lines later. GNC has no evidence in cost centres or invoices and is deliberately not seeded.
