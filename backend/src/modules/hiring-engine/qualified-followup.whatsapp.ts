@@ -10,7 +10,7 @@ import { dateLabel, sendTemplateToLead, timeLabel } from "./he-send.service.js";
 import { displayFirstName } from "./he-name.js";
 import { emptyCounts, ensureHeLead, loadSendContext, ROW_COLUMNS, toFollowupRow, type FollowupRow, type SendContext, type StepCounts } from "./qualified-followup.context.js";
 import { rowTag, type FollowupSwitches, type RowTag } from "./qualified-followup.policy.js";
-import { afterFailure, chooseWaTemplate, nextStepDue, nextWorkingDayIst } from "./qualified-followup.rules.js";
+import { afterFailure, chooseWaTemplate, nextStepDue, nextWorkingDayIst, REINSTATE_EMAIL_SQL } from "./qualified-followup.rules.js";
 import { assessmentText } from "./qualified-followup.cadence.js";
 import { releasePerson } from "./followup-person.service.js";
 import { releaseJourneyBooking } from "./followup-booking.service.js";
@@ -242,6 +242,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row0: Fol
       await db.execute(
         "UPDATE qualified_followup SET wa_status = 'failed', wa_attempts = ?, wa_error = ?, missing_details = ?, call_due_at = ?, step_claimed_at = NULL WHERE id = ?",
         [f.attempts, err.slice(0, 255), missing, next, row.id]);
+      await db.execute(REINSTATE_EMAIL_SQL, [row.id]).catch(() => { /* the mail is a bonus channel; never fail the WhatsApp step */ });
     }
   } else {
     // dry_run result cannot occur (dryRun is never passed); treat as a release rather than guess.

@@ -1,3 +1,4 @@
+process.env.HE_EMAIL_INVITE_MODE = "always"; // pins the email-first behaviour; fallback mode has its own tests
 import { beforeEach, describe, expect, it, vi, beforeAll, afterAll } from "vitest";
 
 /**

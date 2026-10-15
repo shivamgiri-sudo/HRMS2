@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+process.env.HE_EMAIL_INVITE_MODE = "always"; // pins the email-first behaviour; fallback mode has its own tests
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execute = vi.hoisted(() => vi.fn());
 const send = vi.hoisted(() => vi.fn());
@@ -321,5 +322,43 @@ describe("Reply-To on pipeline emails", () => {
     vi.stubEnv("INBOUND_EMAIL_REPLY_TO", "replies@x.in");
     await runEmailStep(readSwitches(liveEnv), "live", now);
     expect(send.mock.calls[0][0].replyTo).toBe("replies@x.in");
+  });
+});
+
+describe("runEmailStep - email is the WhatsApp fallback (default mode)", () => {
+  const prev = process.env.HE_EMAIL_INVITE_MODE;
+  beforeEach(() => { delete process.env.HE_EMAIL_INVITE_MODE; });
+  afterAll(() => { if (prev === undefined) delete process.env.HE_EMAIL_INVITE_MODE; else process.env.HE_EMAIL_INVITE_MODE = prev; });
+
+  it("a reachable mobile is parked as wa_primary: no mail, WhatsApp due now", async () => {
+    world();
+    const c = await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(send).not.toHaveBeenCalled();
+    const park = calls(/SET email_status = 'skipped', email_error = \?, wa_due_at = \?/)[0];
+    expect(park[1]).toEqual(["wa_primary", now, "0f1e2d3c-aaaa-bbbb-cccc-000000000000"]);
+    expect(c.blocked).toBe(1);
+  });
+
+  it("after the WhatsApp failed, the mail goes out", async () => {
+    world({ row: { wa_status: "failed" } });
+    const c = await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(c.sent).toBe(1);
+  });
+
+  it("no usable mobile: mail goes out (it is the only channel)", async () => {
+    world({ row: { mobile10: "" } });
+    await runEmailStep(readSwitches(liveEnv), "live", now);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("daily-limit error defers the row: no attempt counted, no failed status", async () => {
+    world({ row: { wa_status: "failed" } });
+    send.mockRejectedValue(Object.assign(new Error("limit"), { code: "EMAIL_QUOTA" }));
+    const c = await runEmailStep(readSwitches(liveEnv), "live", now);
+    const up = calls(/daily_limit_deferred|email_error = \?, step_claimed_at = NULL WHERE id = \?/).at(-1)!;
+    expect(String(up[0])).toContain("email_status = NULL");
+    expect(up[1][1]).toBe("daily_limit_deferred");
+    expect(c.failed).toBe(0);
   });
 });
