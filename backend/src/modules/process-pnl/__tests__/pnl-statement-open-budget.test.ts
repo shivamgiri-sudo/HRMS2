@@ -142,3 +142,20 @@ describe("P&L Statement — payroll not attendance-prorated is flagged on the br
     expect(typeof defaultDependencies.getUnproratedPayroll).toBe("function");
   });
 });
+
+describe("P&L Statement — statement-level payroll warning is scoped to the branches shown", () => {
+  it("process view carries the total for the shown branch and never another branch's staff", async () => {
+    const statement = await getStatement({ period: closedMonthOutsideWindow() } as never, "process",
+      deps({ getUnproratedPayroll: async () => new Map([[BRANCH_ID, { staff: 10, amount: 500 }], ["other-branch", { staff: 999, amount: 99999 }]]) }));
+    expect((statement as unknown as { payrollNotProrated?: unknown }).payrollNotProrated).toEqual({ staff: 10, amount: 500 });
+  });
+
+  it("branch view carries it too, and nothing when no shown branch is flagged", async () => {
+    const flagged = await getStatement({ period: closedMonthOutsideWindow() } as never, "branch",
+      deps({ getUnproratedPayroll: async () => new Map([[BRANCH_ID, { staff: 3, amount: 30 }]]) }));
+    expect((flagged as unknown as { payrollNotProrated?: unknown }).payrollNotProrated).toEqual({ staff: 3, amount: 30 });
+    const none = await getStatement({ period: closedMonthOutsideWindow() } as never, "branch",
+      deps({ getUnproratedPayroll: async () => new Map([["other-branch", { staff: 5, amount: 5 }]]) }));
+    expect((none as unknown as { payrollNotProrated?: unknown }).payrollNotProrated).toBeUndefined();
+  });
+});

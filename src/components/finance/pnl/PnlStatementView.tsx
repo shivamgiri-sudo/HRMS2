@@ -249,20 +249,25 @@ export function PnlStatementView({
         </div>
       ) : (
         <>
-        <p className="px-4 pb-1 text-[11px] text-slate-500" role="note">
-          Operating Profit here is revenue less people cost and GRN spend. Live P&amp;L and Branch Review also deduct the open-budget reserve (budgeted money not yet spent
-          on budget lines that are still open), so their profit for the same month and branch is lower by that amount until the lines are closed.
-        </p>
         {statement.revenueBasis && (
           <p className="px-4 pb-2 text-[11px] text-slate-500">
             {statement.revenueBasis === "invoiced"
               ? (statement.revenueEstimated ?? 0) > 0
                 ? `Revenue basis: this month is closed, so Recognised Revenue is what was invoiced, plus ₹${(statement.revenueEstimated! / 100000).toLocaleString("en-IN", { maximumFractionDigits: 2 })} L estimated (seat rate × seats) for cost centres not billed yet — the same figure Live P&L and CEO Overview use. It is replaced once those invoices arrive.`
                 : "Revenue basis: this month is closed, so Recognised Revenue is what was actually invoiced."
-              : "Revenue basis: this month is still running, so Recognised Revenue is the planned figure — invoicing lags delivery and is shown separately below it."}
+              : statement.viewBy === "branch"
+                ? "Revenue basis: this month is still running, so a branch's Recognised Revenue is month-to-date — the same figure Live P&L and CEO Overview show."
+                : "Revenue basis: this month is still running, so a process's Recognised Revenue is the planned figure — invoicing lags delivery and is shown separately below it. The Branch view shows the month-to-date figure Live P&L uses."}
             {(statement.forecastRevenue?.costCentres ?? 0) > 0
               ? ` For ${statement.forecastRevenue!.costCentres} cost centre${statement.forecastRevenue!.costCentres === 1 ? "" : "s"} the approved revenue forecast replaces that figure (₹${(statement.forecastRevenue!.amount / 100000).toLocaleString("en-IN", { maximumFractionDigits: 2 })} L; ${statement.forecastRevenue!.closed} closed at actual, the rest still open) — the same revenue Live P&L shows.`
               : ""}
+          </p>
+        )}
+        {statement.payrollNotProrated && (
+          <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800" role="alert" data-testid="statement-payroll-not-prorated">
+            ⚠ {statement.payrollNotProrated.staff.toLocaleString("en-IN")} staff on this month&apos;s payroll run carry their full monthly gross
+            (₹{(statement.payrollNotProrated.amount / 100000).toLocaleString("en-IN", { maximumFractionDigits: 2 })} L) with present days but no payable days,
+            so no attendance proration was applied. People cost is shown as the run stands and may be overstated until Payroll confirms it.
           </p>
         )}
         <p className="mb-2 text-[11px] text-slate-500" data-testid="statement-scope-note">

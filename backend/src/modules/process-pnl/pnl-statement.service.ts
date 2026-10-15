@@ -960,9 +960,7 @@ export async function getStatement(
   const branchRevenue = viewBy === "branch" ? await branchRevenueReader(periodCode).catch(() => undefined) : undefined;
   const unproratedReader = deps.getUnproratedPayroll
     ?? (deps.getIndirectCost ? async () => new Map<string, { staff: number; amount: number }>() : getUnproratedPayrollByBranch);
-  const unproratedByBranch = viewBy === "branch"
-    ? await unproratedReader(periodCode).catch(() => new Map<string, { staff: number; amount: number }>())
-    : new Map<string, { staff: number; amount: number }>();
+  const unproratedByBranch = await unproratedReader(periodCode).catch(() => new Map<string, { staff: number; amount: number }>());
   const forecastCcs = forecast ? [...forecast.byCostCentre.keys()] : [];
   const revenue = forecastCcs.length ? withoutCostCentres(driverRevenue, forecastCcs) : driverRevenue;
   const invoicedRevenue = forecastCcs.length ? withoutCostCentres(invoicedRevenueAll, forecastCcs) : invoicedRevenueAll;
@@ -1058,6 +1056,25 @@ export async function getStatement(
     periodOpen,
     /** Rs of Live P&L's seat-rate estimate included in Recognised Revenue (last month only). */
     revenueEstimated: columnData.reduce((t, item) => t + n(item.data.revenueEstimated), 0),
+    /*
+     * Payroll that carries no attendance proration, for the branches THIS statement shows only (a
+     * branch-scoped reader must never see another branch's staff count). Any view; a branch view's
+     * columns carry it as well so the figure sits next to the column that holds it.
+     */
+    ...(() => {
+      const shown = new Set<string>();
+      for (const item of columnData) {
+        const id = viewBy === "branch" ? item.column.id : (item.data.branchId as string | undefined);
+        if (id) shown.add(String(id));
+      }
+      let staff = 0;
+      let amount = 0;
+      for (const id of shown) {
+        const flag = unproratedByBranch.get(id);
+        if (flag) { staff += flag.staff; amount += flag.amount; }
+      }
+      return staff > 0 ? { payrollNotProrated: { staff, amount } } : {};
+    })(),
     columns: columnData.map((item) => item.column),
     rows: statementRows,
   };

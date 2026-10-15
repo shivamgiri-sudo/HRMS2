@@ -61,6 +61,8 @@ export interface PnlStatement {
   /** Rs of Live P&L's seat-rate estimate (not-yet-billed cost centres) inside Recognised Revenue.
    *  Non-zero only for the month just closed, while invoices may still arrive. */
   revenueEstimated?: number;
+  /** Staff on the run with no attendance proration, for the branches this statement shows (any view). */
+  payrollNotProrated?: { staff: number; amount: number };
   columns: PnlStatementColumn[];
   rows: PnlStatementRow[];
 }
