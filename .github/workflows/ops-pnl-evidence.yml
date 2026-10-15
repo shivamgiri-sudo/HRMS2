@@ -60,6 +60,10 @@ on:
         description: "Set to 'yes' to print per-branch component P&L (revenue, agent, DSC, BMC, GRN, OP) and the non-MAS (DialDesk / I-Spark / IDC) leak check for 'periods' (read-only)."
         required: false
         default: ""
+      statementcheck:
+        description: "Set to 'yes' to print the P&L Statement's own branch columns (cost waterfall incl. open-budget line) beside Live P&L for 'periods' (read-only)."
+        required: false
+        default: ""
       nonmasfix:
         description: "'dry-run' lists employees paid on a MAS cost centre whose master process is an Ispark / DialDesk process and the process it would be set to (read-only). 'apply' writes employees.process_id for exactly those rows. 'periods' = the payroll month to read."
         required: false
@@ -117,6 +121,7 @@ jobs:
           INPUT_PAYROLLGAP: ${{ inputs.payrollgap }}
           INPUT_NONMASPAY: ${{ inputs.nonmaspay }}
           INPUT_NONMASFIX: ${{ inputs.nonmasfix }}
+          INPUT_STATEMENTCHECK: ${{ inputs.statementcheck }}
           INPUT_NONPEOPLE: ${{ inputs.nonpeople }}
           INPUT_DIAG: ${{ inputs.diag }}
           INPUT_BRANCHPLAN: ${{ inputs.branchplan }}
@@ -130,7 +135,9 @@ jobs:
           INPUT_BOOTDIAG: ${{ inputs.bootdiag }}
         run: |
           set -euo pipefail
-          if [ "$INPUT_NONMASFIX" = "dry-run" ]; then
+          if [ "$INPUT_STATEMENTCHECK" = "yes" ]; then
+            npx tsx scripts/pnl-statement-check.ts $INPUT_PERIODS
+          elif [ "$INPUT_NONMASFIX" = "dry-run" ]; then
             npx tsx scripts/pnl-nonmas-employee-fix.ts $INPUT_PERIODS
           elif [ "$INPUT_NONMASFIX" = "apply" ]; then
             NONMAS_APPLY=yes npx tsx scripts/pnl-nonmas-employee-fix.ts $INPUT_PERIODS
