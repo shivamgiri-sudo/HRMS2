@@ -11,7 +11,7 @@ const files = readdirSync(dir).filter((f) => /hrms2-backend.*(error|out)\.log$/.
 console.log("log files:", files.join(", "));
 for (const f of files) {
   try {
-    const out = execFileSync("grep", ["-a", "-E", "requireRole\\] Denied.*(wfm|payroll_hr)", `${dir}/${f}`], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    const out = execFileSync("grep", ["-a", "-E", "requireRole\\] Denied.*requiring \\[[^]]*payroll_branch", `${dir}/${f}`], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     const lines = out.split("\n").filter(Boolean);
     const counts = new Map<string, number>();
     for (const l of lines) {
