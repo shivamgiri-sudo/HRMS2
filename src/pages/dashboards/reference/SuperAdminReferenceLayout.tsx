@@ -11,6 +11,7 @@ import {
 } from "./ReferenceSharedPanels";
 import { SystemsGrid } from "./superadmin/SystemsGrid";
 import { ErrorRates, IncidentFeed, IntegrationRegistry, JobHealth } from "./superadmin/PlatformPanels";
+import { DbPerformancePanel } from "./superadmin/DbPerformancePanel";
 import { DataQuality, SecurityAccess } from "./superadmin/AccessPanels";
 import { BlindSpots, ComplianceAlerts, OrgPulse, QuickActions, RecentActivity } from "./superadmin/OrgPulse";
 import { countLights, toSystems, type PayrollGap } from "./superadmin/superAdminModel";
@@ -79,6 +80,7 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
         <LazySection><IntegrationRegistry insights={insights} /></LazySection>
         <LazySection><JobHealth insights={insights} /></LazySection>
       </div>
+      <LazySection><DbPerformancePanel /></LazySection>
 
       <SectionTitle hint="Sign-ins, roles, audit trail">Security and access</SectionTitle>
       <SecurityAccess insights={insights} loading={loading} />
