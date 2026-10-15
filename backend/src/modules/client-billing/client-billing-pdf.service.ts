@@ -560,17 +560,41 @@ function drawLineItemsTable(doc: Doc, lines: LineRow[]): void {
   let y = headerY + rowH;
   const minBodyH = 90;
   const bodyTop = y;
-  lines.forEach((line, i) => {
-    const signedAmount = line.line_type === "deduction" ? -Number(line.amount) : Number(line.amount);
+
+  const charges = lines.filter(l => l.line_type !== "deduction");
+  const deductions = lines.filter(l => l.line_type === "deduction");
+
+  charges.forEach((line, i) => {
     x = left;
     const rowTop = y;
+    doc.font("Helvetica").fontSize(8).fillColor(INK);
     doc.text(String(i + 1) + ".", x, rowTop + 3, { width: cols.sno, align: "center" }); x += cols.sno;
     doc.text(line.particulars, x + 4, rowTop + 3, { width: cols.particulars - 8 }); x += cols.particulars;
     doc.text(plain(line.qty), x, rowTop + 3, { width: cols.qty, align: "center" }); x += cols.qty;
     doc.text(plain(line.rate), x, rowTop + 3, { width: cols.rate, align: "center" }); x += cols.rate;
-    doc.text(plain(signedAmount), x, rowTop + 3, { width: cols.amount, align: "center" });
+    doc.text(plain(Number(line.amount)), x, rowTop + 3, { width: cols.amount, align: "center" });
     y = Math.max(y + rowH, doc.y + 4);
   });
+
+  if (deductions.length > 0) {
+    // "Less" section header row — bold, spans full row, no S.No or numeric columns
+    const lessY = y;
+    doc.font("Helvetica-Bold").fontSize(8).fillColor(INK);
+    doc.text("Less", left + cols.sno + 4, lessY + 3, { width: cols.particulars - 8 });
+    y = Math.max(y + rowH, doc.y + 4);
+
+    deductions.forEach((line, i) => {
+      x = left;
+      const rowTop = y;
+      doc.font("Helvetica").fontSize(8).fillColor(INK);
+      doc.text(String(i + 1) + ".", x, rowTop + 3, { width: cols.sno, align: "center" }); x += cols.sno;
+      doc.text(line.particulars, x + 4, rowTop + 3, { width: cols.particulars - 8 }); x += cols.particulars;
+      doc.text(plain(line.qty), x, rowTop + 3, { width: cols.qty, align: "center" }); x += cols.qty;
+      doc.text(plain(line.rate), x, rowTop + 3, { width: cols.rate, align: "center" }); x += cols.rate;
+      doc.text(plain(Number(line.amount)), x, rowTop + 3, { width: cols.amount, align: "center" });
+      y = Math.max(y + rowH, doc.y + 4);
+    });
+  }
   const bodyH = Math.max(minBodyH, y - bodyTop);
   y = bodyTop + bodyH;
 
